@@ -45,6 +45,8 @@ pub mod comparer;
 pub mod comparison_log;
 /// Independent DOCX → PDF conversion (not LibreOffice).
 pub mod convert;
+/// `jubarte debug`: short Word-validity triage of a package, or two compared.
+pub mod debug;
 /// Byte-level package API: compare, list, accept, and reject revisions.
 pub mod document_comparer;
 /// Guarded, uniquely anchored edits applied to a copy and redlined by compare.

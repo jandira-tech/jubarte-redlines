@@ -409,3 +409,31 @@ fn powertools_faithful_with_explicit_threshold_uses_override() {
     common::assert_docx_structurally_eq(&cli_bytes, &lib_bytes);
     assert_loadable(&out_path);
 }
+
+#[test]
+fn debug_triages_one_package_and_compares_two() {
+    let d = tmpdir();
+    let (a, b) = seed(d.path());
+    let run = |args: &[&Path], extra: &[&str]| {
+        let out = Command::new(BIN)
+            .arg("debug")
+            .args(args)
+            .args(extra)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap()
+    };
+    assert_eq!(run(&[&a], &[]), "no findings\n");
+    let listed = run(&[&a], &["--list"]);
+    assert!(listed.contains(" word/document.xml\n"), "{listed}");
+    let compared = run(&[&a, &b], &["--list"]);
+    assert!(compared.contains(" changed, "), "{compared}");
+    assert!(compared.contains("word/document.xml"), "{compared}");
+    let counts = run(&[&a, &b], &["-c", "elements", "-p", "document.xml"]);
+    assert!(counts.starts_with("elements: "), "{counts}");
+}

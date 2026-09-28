@@ -162,8 +162,20 @@ def rev_inventory(root: ET.Element) -> Counter[str]:
     return c
 
 
+# Word writes these when it saves a redline. They are not revision content:
+# spellcheck marks, the last pagination cache, and header/footer pointers
+# Word adds when neither source document contains that element. A redline
+# must not invent them, and their absence is not a finding.
+WORD_ONLY_NON_REDLINE = {
+    f"{{{W}}}proofErr",
+    f"{{{W}}}lastRenderedPageBreak",
+    f"{{{W}}}footerReference",
+    f"{{{W}}}headerReference",
+}
+
+
 def qname_histogram(root: ET.Element) -> Counter[str]:
-    return Counter(el.tag for el in root.iter())
+    return Counter(el.tag for el in root.iter() if el.tag not in WORD_ONLY_NON_REDLINE)
 
 
 # ---------- signatures (each: fn(root) -> list of detail strings) ----------

@@ -7148,6 +7148,27 @@ fn detect_unrelated_sources_word_mode_inner(
                 }
             }
         }
+        // M339: Tab Alignment × Tab Tests. The title-token gate above only
+        // flips `free_mesh_demos`, and the flat word-LCS below then under-meshes
+        // (MIIM…, MIX=2). Word zips contentful paragraphs in order and mixes
+        // each pair, including CENTER TAB × "First Second End", which share
+        // no word. Document-title pairs (M327) and OOXML / table free-mesh
+        // keep the peel and flat paths; this zip runs only when the title
+        // token is the sole reason to free-mesh.
+        if free_mesh_demos
+            && short_demos_share_first_title_token(dom, cu1, cu2, n1, n2)
+            && !titles_share_last_sig(dom, cu1, cu2)
+            && !parallel_sectioned_demos(dom, cu1, cu2)
+            && !(short_ooxml_property_demo(dom, cu1) && short_ooxml_property_demo(dom, cu2))
+            && !ooxml_x_short_table_demo(dom, cu1, cu2)
+            && !ooxml_x_short_prose_demo(dom, cu1, cu2, n1, n2)
+            && !both_tables_unrelated_free_mesh(dom, cu1, cu2, n1, n2)
+            && !short_cell_table_x_long_table_doc(dom, cu1, cu2, n1, n2)
+            && !long_multitable_x_short_table_free_mesh(dom, cu1, cu2, n1, n2)
+            && let Some(out) = positional_title_token_zip(dom, cu1, cu2, settings)
+        {
+            return Some(out);
+        }
         // M329: free-mesh demos always free-mesh — do NOT gate on large_related.
         // highlight×bold has sig≥40 each and jaccard≈0.22 (shared sample/rstyle/
         // ooxml) so the old large_related guard skipped free-mesh and pure-I/D'd
@@ -7974,6 +7995,97 @@ fn short_ooxml_property_demo(dom: &Dom, cu: &[ComparisonUnit]) -> bool {
         || lower.contains("w:rfonts")
         || lower.contains("rfonts")
         || lower.contains("half-point")
+}
+
+/// Zip contentful paragraphs of a [`short_demos_share_first_title_token`] pair.
+/// Each pair is word-LCS'd, then fused on one pilcrow so a pair that shares
+/// no word is still one mixed paragraph (CENTER TAB × "First Second End").
+/// Residual contentful paragraphs are pure insert / delete. Textless
+/// paragraphs (the blank lines in Tab Alignment) stay as pure deletions /
+/// insertions so they are not dropped.
+fn positional_title_token_zip(
+    dom: &mut Dom,
+    cu1: &[ComparisonUnit],
+    cu2: &[ComparisonUnit],
+    settings: &WmlComparerSettings,
+) -> Option<Vec<CorrelatedSequence>> {
+    let contentful = |cu: &[ComparisonUnit]| -> Vec<ComparisonUnit> {
+        cu.iter()
+            .filter(|u| as_group(u).is_some() && unit_has_text_token(dom, u))
+            .cloned()
+            .collect()
+    };
+    let left_c = contentful(cu1);
+    let right_c = contentful(cu2);
+    if left_c.is_empty() || right_c.is_empty() {
+        return None;
+    }
+    let z = left_c.len().min(right_c.len());
+    let mut residual_settings = settings.clone();
+    residual_settings.detail_threshold = 0.0;
+    let mut out = Vec::new();
+    for i in 0..z {
+        let mut left = group_contents(&left_c[i]);
+        let mut right = group_contents(&right_c[i]);
+        let left_mark = take_paragraph_mark(dom, &mut left);
+        let right_mark = take_paragraph_mark(dom, &mut right);
+        rehash_words_by_text_content(dom, &mut left);
+        rehash_words_by_text_content(dom, &mut right);
+        if !left.is_empty() && !right.is_empty() {
+            out.extend(lcs(dom, left, right, &residual_settings));
+        } else if !right.is_empty() {
+            out.push(CorrelatedSequence::inserted(right));
+        } else if !left.is_empty() {
+            out.push(CorrelatedSequence::deleted(left));
+        }
+        match (left_mark, right_mark) {
+            (Some(mark_l), Some(mark_r)) => out.push(CorrelatedSequence::paired(
+                CorrelationStatus::Equal,
+                vec![mark_l],
+                vec![mark_r],
+            )),
+            (Some(mark_l), None) => out.push(CorrelatedSequence::deleted(vec![mark_l])),
+            (None, Some(mark_r)) => out.push(CorrelatedSequence::inserted(vec![mark_r])),
+            (None, None) => {}
+        }
+    }
+    for u in &right_c[z..] {
+        out.push(CorrelatedSequence::inserted(vec![u.clone()]));
+    }
+    for u in &left_c[z..] {
+        out.push(CorrelatedSequence::deleted(vec![u.clone()]));
+    }
+    for u in cu2
+        .iter()
+        .filter(|u| as_group(u).is_some() && !unit_has_text_token(dom, u))
+    {
+        out.push(CorrelatedSequence::inserted(vec![u.clone()]));
+    }
+    for u in cu1
+        .iter()
+        .filter(|u| as_group(u).is_some() && !unit_has_text_token(dom, u))
+    {
+        out.push(CorrelatedSequence::deleted(vec![u.clone()]));
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+/// A paragraph group's pilcrow, which this comparer stores as a one-atom
+/// `w:pPr` word at either end of the group's contents.
+fn take_paragraph_mark(dom: &Dom, units: &mut Vec<ComparisonUnit>) -> Option<ComparisonUnit> {
+    if units
+        .last()
+        .is_some_and(|u| unit_is_single_atom_ppr(dom, u))
+    {
+        return units.pop();
+    }
+    if units
+        .first()
+        .is_some_and(|u| unit_is_single_atom_ppr(dom, u))
+    {
+        return Some(units.remove(0));
+    }
+    None
 }
 
 /// Short demos sharing the **first** significant title token (Tab Alignment ×

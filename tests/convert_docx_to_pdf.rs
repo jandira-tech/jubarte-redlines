@@ -21020,7 +21020,9 @@ fn deleted_only_para_pbdr_stays_painted_after_mini_pbdrskip() {
 #[test]
 fn official_file_146_e2e8f0_rule_count_matches_word() {
     // Word's file_146 PDF paints 33 E2E8F0 rules wider than 200pt
-    // (per page 4 3 5 7 3 7 4); we paint 30 (short on pages 3 and 4).
+    // (per page 4 3 5 7 3 7 4). The three that used to go missing are
+    // the deleted cell bottoms: `bun run dev`, the npm/github pair, and
+    // the code cell's closing brace.
     let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source_randomized/file_146.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert file_146");
     assert_eq!(pdf_page_count(&pdf), 7, "Word file_146 is 7pp");

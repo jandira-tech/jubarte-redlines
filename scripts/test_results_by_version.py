@@ -21,9 +21,20 @@ def _fresh(monkeypatch, tmp_path: Path) -> Path:
     monkeypatch.setattr(rv, 'RES', tmp_path)
     monkeypatch.setattr(rv, 'METRICS', {})
     monkeypatch.setattr(rv, 'RUNS', [])
+    monkeypatch.setattr(rv, 'WORDAB', tmp_path / 'wordab')
     out = tmp_path / 'redline_wordpdf'
     out.mkdir()
     return out
+
+
+def test_redline_wordpdf_also_reads_runs_kept_outside_the_bench(monkeypatch, tmp_path):
+    _fresh(monkeypatch, tmp_path)
+    ext = tmp_path / 'wordab'
+    ext.mkdir()
+    (ext / 'A_redline-244103c_harness.json').write_text(json.dumps({'a': 70.0}))
+    rv.redline_wordpdf()
+    [run] = rv.RUNS
+    assert (run.metric, run.version, run.mean) == ('wordpdf::redlining:harness', 'jubarte@244103c', 70.0)
 
 
 def test_redline_wordpdf_reads_both_scorers_and_skips_jobs(monkeypatch, tmp_path):

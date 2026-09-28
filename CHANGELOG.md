@@ -15,11 +15,42 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+### Added
+
+- `jubarte inspect` reads a document as numbered paragraphs (JSON with a
+  source hash, or Markdown) with styles, numbering, formatting spans and
+  the structures an edit cannot address (fields, hyperlinks, content
+  controls, revisions); `jubarte capabilities` reports what the build can
+  do.
+- `jubarte edit` applies a JSON plan of uniquely anchored operations
+  (`replace`, `insert`, `delete`, `comment`, `insert_paragraph`,
+  `delete_paragraph`)
+  to a copy, previews it, and writes the clean copy, the tracked redline
+  and a per-operation report. A plan is bound to the source's SHA-256; an
+  anchor that is not unique, or text inside a field (simple or complex,
+  even one with an empty result), hyperlink, content control or revision,
+  is refused. Comment text must be nonempty without control characters,
+  and several `insert_paragraph` operations after one anchor keep plan
+  order.
+- `jubarte convert --png` renders pages to PNG (1–1200 dpi, at most 2^28
+  pixels a page) and checks every output path before the first write.
+- Python: `jubarte_redlines.read()` returns a `Document` with inspect, edit,
+  convert, compare and accept/reject methods, and `python -m
+  jubarte_redlines` exposes the same commands; `EditPlanError.message`
+  carries the engine's detail.
+- Adoption guides, workflow examples and a document-operations agent skill.
+
 ## [0.9.3] - 2026-09-27
 
 > **Summary.** Redlines are now scored against Word's own redline of each pair, rendered by Word, and this release fixes what that exposed: redlines Word refused to open, blank field codes, missing fonts, and misplaced equations.
 
 ### Fixed
+
+- A field whose code stayed while its result changed now stays one field, as in Word's redline. Only the result's words are marked. Before, the field's begin, separate and end were glued to the result's first and last words, so "Contaminated Sites Act 2003" against "Firearms Act 1973" (a STYLEREF title) matched only " Act ". That left a deleted and an inserted field whose ends crossed, and Word refused the redline (db433183 × 9377099d).
+
+- A field whose code changed is now replaced whole, nested fields included, as Word's redline does. Every part of a field carries the codes of the fields around it, so an `IF` that lost `\*MERGEFORMAT` no longer keeps its begin and inner DOCPROPERTY fields while the rest is half deleted (98bf5f3d × a3701d36).
+
+- A changed table of contents no longer opens inside its replacement. Word mode's head junction folds a short deleted title into the first inserted paragraph when both share a word. When that title was a TOC's first entry, the fold carried the deleted TOC's begin above the inserted TOC's end, and the two fields crossed (98bf5f3d × a3701d36, "Part 1—Preliminary" against "Part 1—Introduction"). A fold that would carry half a field across other fields no longer happens.
 
 - The same input writes the same bytes. Another dependency turns on the `zip` crate's `time` feature, and with it every package entry carried the time of the write, so two runs a second apart gave different files. Entries are now dated 1980-01-01, as Office dates its own.
 
@@ -120,6 +151,20 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   relationship and content-type attributes no longer gain an `&amp;` per
   round trip, a case-duplicate `Default` extension is merged, and
   relationship targets are relative to the source part's folder (904e989).
+- A deleted text box is deleted whole, as Word's Compare deletes it: every
+  run of its story sits in a `w:del` of its own and its paragraph marks are
+  deleted. A text box is a story of its own, so the `w:del` around its anchor
+  does not reach into it, and a field there kept its field code in a run no
+  deletion wrapped (`w:delInstrText` outside any `w:del`). Word refused both
+  English redlines that had one (30ff840c, bb113e88); the OpenXmlValidator
+  passed them. Both open now and score 0.673 and 0.557 jaccard against Word's
+  own redline, where every other tool scores 0.
+- A carried bookmark stays out of a content control its source bookmark was
+  not in. Placement follows the text, so B's body-level `_Toc` bookmarks
+  around a data-bound title control landed inside it (7b649361), and a
+  bookmark landed in a dropdown cell (57c181da). Word refused both redlines
+  and opened each once those bookmarks were dropped. An endpoint now leaves
+  the control: a start before it, an end after it.
 - Scratch `pt:Unid` attributes no longer leak into restored deleted-paragraph
   spacing, and every extension namespace (w14/w15/w16*/wp14) is listed in
   `mc:Ignorable` on each part root (b7fedc7); w16 serializes under Word's 2018
@@ -288,31 +333,78 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   It stores the answers of the family search, and a new release that changes
   the matching rules used to keep the old release's faces, or its misses,
   for as long as the font folders stayed unchanged.
+- An empty page break after a TextHeading now keeps the blank page Word
+  keeps. The break paragraph is about a line plus its space after (sd_2517's
+  breaks are line 276 and after 200, roughly 23pt on the 12pt face). When
+  less than that remains, Word moves the paragraph to the next page and the
+  break still fires. Those breaks had been kept on the current page, so
+  sd_2517 and its randomized copy came out 99 pages against Word's 107. A
+  full page of overflow still skips for every manual break. The wider
+  leftover applies only to TextHeading, so a short gap no longer invents a
+  blank page on the three-page and thirteen-page fixtures.
+- A bottom border on a paragraph inside a table cell is drawn once, on the
+  last paragraph of a run that shares that border, including when the
+  paragraph still has text. Deleted cell bottoms in file_146 — `bun run dev`,
+  the npm and github lines, and the code cell's closing brace — were missing,
+  so the pale rules wider than 200pt went from 30 to Word's 33. An empty
+  paragraph in the middle of that run no longer draws a rule of its own.
+- Tab Alignment against Tab Tests is mixed paragraph by paragraph, in order.
+  Word mixes the title and the three following tab lines with Tab Tests'
+  four paragraphs and deletes the rest. Flat word matching mixed only the
+  title and one empty line.
+- A folded Demo title keeps "Demo" inside the deletion. It used to be peeled
+  into a live " Demo", which is in neither document, so accepting the redline
+  left the word behind (double spacing × eigenpal, and document 100 × the
+  comments addition).
+- A sentence period shared by both documents stays on both sides when one
+  side continues into the next paragraph. The period goes to the side that
+  already finished its sentence, and the continuation gains its own period
+  at the end (font color × font family, italic underline × justified
+  underline, justified underline × justify alignment).
+- A deleted section that repeats the heading inserted in front of a table is
+  placed back before that heading. The comments redline had moved the
+  section to after the capability table, so the original's characters were
+  all present and in the wrong order.
+- An empty paragraph-property shell is left out. The mixed title on blue
+  centered title × blue italic carried an empty `pPrChange`, and center
+  bold × clear formatting carried three empty `w:pPr` elements. Word's
+  redlines of those pairs have neither. A pilcrow mark that is the only
+  thing in the property stays.
+- The 207-pair parity sweep reports 0 NEW keys, and
+  `tools/parity_baseline.tsv` is unchanged. Spellcheck marks, the
+  pagination cache, and header or footer references Word writes on its own
+  stay outside the histogram.
+- A merged table keeps `w:tblPrChange` last in `w:tblPr`. The default table
+  look is written before the change, and the old properties stored inside
+  the change are left without a synthesized look.
+- A bare `w:cantSplit` or `w:rtl` stays. On those elements a missing value
+  means on, and only an explicit false is dropped.
+- A table that already sets a nonzero top or bottom cell margin keeps it.
+  Row exceptions of zero are written only when the table did not set one.
+- PowerTools-faithful compares no longer receive Word's table look, row
+  margin exceptions, or the other Word-visual cleanup. That preset's
+  contract is that those passes stay off.
+- A paragraph whose deleted mark also holds inserted text keeps its
+  `line=276`, as Word's redline keeps it (simple_ordered_list ×
+  sublist_issue, "Lvl 1 – a"). Only a paragraph that inserts nothing drops
+  that restated Normal spacing.
 
 ### Added
 
-- `jubarte inspect` reads a document as numbered paragraphs (JSON with a
-  source hash, or Markdown) with styles, numbering, formatting spans and
-  the structures an edit cannot address (fields, hyperlinks, content
-  controls, revisions); `jubarte capabilities` reports what the build can
-  do.
-- `jubarte edit` applies a JSON plan of uniquely anchored operations
-  (`replace`, `insert`, `delete`, `comment`, `insert_paragraph`,
-  `delete_paragraph`)
-  to a copy, previews it, and writes the clean copy, the tracked redline
-  and a per-operation report. A plan is bound to the source's SHA-256; an
-  anchor that is not unique, or text inside a field (simple or complex,
-  even one with an empty result), hyperlink, content control or revision,
-  is refused. Comment text must be nonempty without control characters,
-  and several `insert_paragraph` operations after one anchor keep plan
-  order.
-- `jubarte convert --png` renders pages to PNG (1–1200 dpi, at most 2^28
-  pixels a page) and checks every output path before the first write.
-- Python: `jubarte_redlines.read()` returns a `Document` with inspect, edit,
-  convert, compare and accept/reject methods, and `python -m
-  jubarte_redlines` exposes the same commands; `EditPlanError.message`
-  carries the engine's detail.
-- Adoption guides, workflow examples and a document-operations agent skill.
+- `jubarte debug FILE [FILE2]`: a short Word-validity triage of a redline,
+  for the shapes Word refuses and the OpenXmlValidator passes. It prints
+  counts by kind with a few examples (`-n`), and with two files only what
+  differs. Checks (`-c`): `orphans` (deleted text outside its story's
+  deletion), `fields` (nesting per story, partly deleted fields),
+  `bookmarks` (unpaired, duplicate, crossing a control, cell, text box or
+  revision, or inside a plain-text or list control), `package` (content
+  types, relationships, dangling references, undeclared `mc:Ignorable`
+  prefixes), `structure` (blank field codes, cells not ending in a
+  paragraph, nested same-kind revisions), `ids` (revision and `docPr` ids
+  used twice; Word opens such files, so it is opt-in), `chains`, `elements`
+  and `textbox`. `--list` lists the entries, or with two files the ones that
+  differ. On the 450 English redlines of c6307ac, orphaned field codes and
+  bookmarks in single-value controls flag only files Word refused.
 - convert: Korean page and list number formats (b8a19b1).
 - RESULTS.md tables scored against Word truth: Word's redline of the pair,
   converted by Word. Rows split redlining (tool redline → Word PDF) from

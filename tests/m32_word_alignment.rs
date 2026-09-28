@@ -2437,3 +2437,102 @@ fn w9g_sectprchange_id_is_unique_among_document_revision_ids() {
         "sectPrChange's id is one of the document's tracked revision ids"
     );
 }
+
+/// A bare `w:cantSplit` or `w:rtl` is ST_OnOff true. Only an explicit false
+/// value is Word's unrecorded default.
+#[test]
+fn bare_onoff_cant_split_and_rtl_stay() {
+    use jubarte::comparer::finalize::strip_unrecorded_word_defaults;
+
+    let mut dom = Dom::new();
+    let (root, _) = doc_body(
+        &mut dom,
+        "<w:tbl><w:tr><w:trPr><w:cantSplit/></w:trPr>\
+         <w:tc><w:p><w:r><w:rPr><w:rtl/></w:rPr><w:t>a</w:t></w:r></w:p></w:tc></w:tr>\
+         <w:tr><w:trPr><w:cantSplit w:val=\"0\"/></w:trPr>\
+         <w:tc><w:p><w:r><w:rPr><w:rtl w:val=\"false\"/></w:rPr><w:t>b</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+    );
+    strip_unrecorded_word_defaults(&mut dom, root);
+    let xml = dom.serialize_element(root);
+    assert!(
+        xml.contains("<w:cantSplit/>") || xml.contains("<w:cantSplit />"),
+        "bare cantSplit means the row does not split: {xml}"
+    );
+    assert!(
+        xml.contains("<w:rtl/>") || xml.contains("<w:rtl />"),
+        "bare rtl means right-to-left: {xml}"
+    );
+    assert!(
+        !xml.contains("w:val=\"0\"") && !xml.contains("w:val=\"false\""),
+        "explicit false on/off values are the defaults Word omits: {xml}"
+    );
+}
+
+/// Word stamps row `tblPrEx` top/bottom 0 only when the table margin does
+/// not already set a nonzero top or bottom. A nonzero value is left alone
+/// (red_strikethrough × plate_30: top 80, no tblPrEx).
+#[test]
+fn nonzero_table_vertical_margins_are_not_zeroed_on_rows() {
+    use jubarte::comparer::finalize::align_word_table_and_comment_chrome;
+
+    let mut dom = Dom::new();
+    let (root, _) = doc_body(
+        &mut dom,
+        "<w:tbl><w:tblPr><w:tblCellMar>\
+         <w:top w:w=\"80\" w:type=\"dxa\"/><w:bottom w:w=\"80\" w:type=\"dxa\"/>\
+         <w:left w:w=\"10\" w:type=\"dxa\"/><w:right w:w=\"10\" w:type=\"dxa\"/>\
+         </w:tblCellMar></w:tblPr><w:tr><w:tc><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+         <w:tbl><w:tblPr><w:tblCellMar>\
+         <w:left w:w=\"10\" w:type=\"dxa\"/><w:right w:w=\"10\" w:type=\"dxa\"/>\
+         </w:tblCellMar></w:tblPr><w:tr><w:tc><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+    );
+    align_word_table_and_comment_chrome(&mut dom, root);
+    let xml = dom.serialize_element(root);
+    let tables = xml.split("<w:tbl>").skip(1).collect::<Vec<_>>();
+    assert_eq!(tables.len(), 2, "{xml}");
+    assert!(
+        !tables[0].contains("tblPrEx"),
+        "nonzero top/bottom stays the table margin: {}",
+        tables[0]
+    );
+    assert!(
+        tables[1].contains("tblPrEx") && tables[1].contains("w:w=\"0\""),
+        "left/right-only margins still get Word's zero top and bottom: {}",
+        tables[1]
+    );
+}
+
+/// `line=276` alone on a deleted mark restates Normal only when the paragraph
+/// inserts nothing. A paragraph that also holds inserted text keeps it, as
+/// Word's redline of simple_ordered_list × sublist_issue keeps it on
+/// "Lvl 1 – a".
+#[test]
+fn line_276_on_deleted_mark_stays_when_paragraph_inserts_text() {
+    use jubarte::comparer::finalize::strip_unrecorded_word_defaults;
+
+    let mut dom = Dom::new();
+    let (root, _) = doc_body(
+        &mut dom,
+        "<w:p><w:pPr><w:spacing w:line=\"276\" w:lineRule=\"auto\"/>\
+         <w:rPr><w:del w:id=\"1\" w:author=\"R\"/></w:rPr></w:pPr>\
+         <w:del w:id=\"2\" w:author=\"R\"><w:r><w:delText>Lvl 1</w:delText></w:r></w:del>\
+         <w:ins w:id=\"3\" w:author=\"R\"><w:r><w:t>One</w:t></w:r></w:ins></w:p>\
+         <w:p><w:pPr><w:spacing w:line=\"276\" w:lineRule=\"auto\"/>\
+         <w:rPr><w:del w:id=\"4\" w:author=\"R\"/></w:rPr></w:pPr>\
+         <w:del w:id=\"5\" w:author=\"R\"><w:r><w:delText>Item 4</w:delText></w:r></w:del></w:p>",
+    );
+    strip_unrecorded_word_defaults(&mut dom, root);
+    let xml = dom.serialize_element(root);
+    let paras = xml.split("<w:p>").skip(1).collect::<Vec<_>>();
+    assert_eq!(paras.len(), 2, "{xml}");
+    assert!(
+        paras[0].contains("w:line=\"276\""),
+        "a mixed paragraph keeps its line=276: {}",
+        paras[0]
+    );
+    assert!(
+        !paras[1].contains("w:spacing"),
+        "a pure deletion's line=276 restates Normal: {}",
+        paras[1]
+    );
+}

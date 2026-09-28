@@ -5200,6 +5200,15 @@ fn notes_part_names(pkg: &PartFs) -> (String, String) {
 
 /// True when any package part's XML carries tracked-change markup that Word
 /// Compare would fold into the final view before diffing.
+fn main_part_xml(docx: &[u8]) -> Option<String> {
+    let pkg = PartFs::open(docx).ok()?;
+    let main = pkg
+        .main_document_part()
+        .unwrap_or_else(|| "word/document.xml".to_string());
+    let xml = pkg.part_string(&main)?;
+    Some(normalize_strict_namespaces(&xml).into_owned())
+}
+
 fn docx_has_tracked_changes(docx: &[u8]) -> bool {
     let Ok(pkg) = PartFs::open(docx) else {
         return false;
@@ -5252,6 +5261,21 @@ fn compare_documents_impl(
     // golden/parity paths are unaffected; only Strict inputs are rewritten.
     let mut original_owned = crate::strict_translation::strict_to_transitional_docx(original);
     let mut modified_owned = crate::strict_translation::strict_to_transitional_docx(modified);
+
+    // Accept-before-diff flattens a revised insertion into live text, so a late
+    // pass can no longer see where that insertion ended. Keep both main parts
+    // from this moment. Faithful mode never reads them.
+    let ladder_sources = if settings.merge_replaced_paragraphs {
+        match (
+            main_part_xml(&original_owned),
+            main_part_xml(&modified_owned),
+        ) {
+            (Some(original_xml), Some(revised_xml)) => Some((original_xml, revised_xml)),
+            _ => None,
+        }
+    } else {
+        None
+    };
 
     // Word-visual mode + either side already carries track changes: accept both
     // packages first (Word Compare of *finals*). Without this, stamp/re-emit of
@@ -6435,6 +6459,58 @@ fn compare_documents_impl(
                 crate::comparer::finalize::hoist_hyperlinks_out_of_revisions(&mut vd, vr);
                 crate::comparer::finalize::enforce_deleted_text_kinds(&mut vd, vr);
                 crate::comparer::finalize::remove_powertools_scratch_markup(&mut vd, vr);
+                // Produce strips an empty pPr shell, then later package steps
+                // (style cascade, spacing restore) can take the live children
+                // back off and leave the shell. Word's redline of the short
+                // title mixes has neither the shell nor the children.
+                if part == main1 {
+                    crate::comparer::finalize::strip_propertyless_ppr(&mut vd, vr);
+                    // Word-visual chrome. Faithful mode runs none of these;
+                    // the body path already gates them the same way.
+                    if settings.merge_replaced_paragraphs {
+                        // Package steps can put a default nextPage back into the
+                        // recorded sectPr, or leave line=276 on a deleted mark.
+                        crate::comparer::finalize::strip_unrecorded_word_defaults(&mut vd, vr);
+                        let id_to_target: std::collections::HashMap<String, String> = out
+                            .read_rels_for(&main1)
+                            .map(|rels| {
+                                rels.items
+                                    .iter()
+                                    .filter(|r| r.rel_type.ends_with("/hyperlink"))
+                                    .map(|r| (r.id.clone(), r.target.clone()))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        let base_targets: std::collections::HashSet<String> = pkg1
+                            .read_rels_for(&main1)
+                            .map(|rels| {
+                                rels.items
+                                    .iter()
+                                    .filter(|r| r.rel_type.ends_with("/hyperlink"))
+                                    .map(|r| r.target.clone())
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        crate::comparer::finalize::rewrite_inserted_external_hyperlinks(
+                            &mut vd,
+                            vr,
+                            &id_to_target,
+                            &base_targets,
+                        );
+                        crate::comparer::finalize::align_word_table_and_comment_chrome(&mut vd, vr);
+                    }
+                    if let Some((original_xml, revised_xml)) = ladder_sources.as_ref() {
+                        crate::comparer::finalize::align_remaining_ladder_rungs(
+                            &mut vd,
+                            vr,
+                            &crate::comparer::finalize::LadderSources {
+                                original_xml,
+                                revised_xml,
+                                settings,
+                            },
+                        );
+                    }
+                }
                 // Last: every pass above may append properties out of order.
                 crate::comparer::finalize::enforce_part_schema_order(&mut vd, vr);
                 crate::comparer::finalize::declare_extension_namespaces_ignorable(&mut vd, vr);
