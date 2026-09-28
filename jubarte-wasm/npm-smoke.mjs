@@ -14,8 +14,10 @@ import { strict as assert } from "node:assert";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const full = require("./npm/node/jubarte_wasm.js");
-const slim = require("./npm/node-slim/jubarte_wasm.js");
+// SMOKE_FULL / SMOKE_SLIM point at fresh wasm-pack output (pkg/, pkg-slim/)
+// before build-npm.sh has assembled npm/.
+const full = require(process.env.SMOKE_FULL ?? "./npm/node/jubarte_wasm.js");
+const slim = require(process.env.SMOKE_SLIM ?? "./npm/node-slim/jubarte_wasm.js");
 
 const FIX = new URL("../tests/fixtures/redline/", import.meta.url);
 const original = readFileSync(new URL("original.docx", FIX));
@@ -31,6 +33,41 @@ for (const [name, mod] of [["full", full], ["slim", slim]]) {
   assert.ok(revs.length > 0, `${name}: revisions listed`);
   assert.equal(JSON.parse(mod.getRevisions(mod.acceptRevisions(redline))).length, 0, `${name}: accept drains revisions`);
   assert.equal(JSON.parse(mod.getRevisions(mod.rejectRevisions(redline))).length, 0, `${name}: reject drains revisions`);
+}
+
+// Agent surface (both builds): inspect, markdown, edit plans, capabilities.
+for (const [name, mod] of [["full", full], ["slim", slim]]) {
+  const snapshot = JSON.parse(mod.inspectDocument(original));
+  assert.equal(snapshot.source_sha256, mod.sourceSha256(original), `${name}: snapshot hash`);
+  assert.ok(snapshot.paragraphs.length > 0, `${name}: paragraphs inspected`);
+  assert.match(mod.documentMarkdown(original), /\[body:p:0\]/, `${name}: markdown carries ids`);
+
+  const first = snapshot.paragraphs.find((p) => p.text.trim().length > 0);
+  const plan = JSON.stringify({
+    schema_version: 1,
+    source_sha256: snapshot.source_sha256,
+    author: "smoke",
+    date: "2026-09-28T00:00:00Z",
+    operations: [{ id: "op-1", kind: "insert", paragraph: { id: first.id }, position: "end", text: " (smoke)" }],
+  });
+  const preview = mod.previewEditPlan(original, plan);
+  assert.ok(preview.ok && preview.clean === undefined, `${name}: preview resolves without documents`);
+  const out = mod.applyEditPlan(original, plan);
+  assert.ok(out.ok, `${name}: plan applied: ${out.json}`);
+  assert.equal(out.clean[0], 0x50, `${name}: clean copy is a zip`);
+  assert.ok(JSON.parse(mod.getRevisions(out.redline)).length > 0, `${name}: redline tracks the edit`);
+  assert.match(mod.editReportJsonl(out.json), /"summary"/, `${name}: report as JSON lines`);
+  assert.ok(JSON.parse(mod.inspectDocument(out.clean)).paragraphs.some((p) => p.text.endsWith("(smoke)")), `${name}: edit landed`);
+
+  const stale = mod.applyEditPlan(modified, plan);
+  assert.equal(stale.ok, false, `${name}: stale source refused`);
+  assert.equal(JSON.parse(stale.json).code, "STALE_SOURCE", `${name}: refusal code`);
+  assert.equal(JSON.parse(mod.applyEditPlan(new Uint8Array([1, 2, 3]), plan).json).code, "STALE_SOURCE");
+
+  const caps = JSON.parse(mod.capabilities());
+  assert.equal(caps.runtime, "wasm");
+  assert.equal(caps.operations.pdf, name === "full", `${name}: pdf capability matches the build`);
+  assert.equal(caps.operations.png, false);
 }
 
 // PDF surface: full-only.

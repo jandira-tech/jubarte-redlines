@@ -8,8 +8,10 @@ lossless, Word-compatible tracked-changes engine written in Rust. It compares
 two `.docx` files and produces a redline `.docx` with native Word revisions
 (`w:ins` / `w:del`), the same output model Microsoft Word itself uses. It can
 also accept or reject all tracked revisions in a document, list them as
-JSON, and render any DOCX to PDF (Word-style layout, embedded
-Carlito/Liberation fonts).
+JSON, render any DOCX to PDF (Word-style layout, embedded
+Carlito/Liberation fonts), and let an agent read a document by paragraph id
+and apply an edit plan that returns a clean copy, a Word redline and a
+per-operation report.
 
 Everything runs in-process — no Word, no LibreOffice, no server round-trip.
 Ships prebuilt binaries for **Node** (CommonJS, auto-initializing) and the
@@ -94,9 +96,38 @@ Document parameters and returns are `Uint8Array` holding complete `.docx`
 | `docxToPdf` | `(docx) → Uint8Array` | Render a DOCX → PDF (Word-style layout). Fonts come from the embedded Carlito/Liberation set. *Full builds only.* |
 | `pdfPageCount` | `(pdf) → number` | Page count of a PDF (`0` if the bytes are not a readable PDF). *Full builds only.* |
 | `initPanicHook` | `() → void` | Route wasm panics to `console.error`. Safe to call multiple times. |
+| `inspectDocument` | `(docx) → string` | Inspection snapshot as JSON: `source_sha256`, `summary`, and `paragraphs` with `body:p:N` ids, text, style, formatting spans and limitations. |
+| `documentMarkdown` | `(docx) → string` | Body as Markdown with a `[body:p:N]` id before every paragraph. |
+| `sourceSha256` | `(docx) → string` | SHA-256 of the bytes: the `source_sha256` guard an edit plan carries. |
+| `applyEditPlan` | `(docx, planJson) → EditOutput` | Apply an edit plan (`replace`, `insert`, `delete`, `comment`, `insert_paragraph`, `delete_paragraph`). `ok`, `clean`, `redline`, and `json` (the report, or the refusal with `code` and every operation's outcome). |
+| `previewEditPlan` | `(docx, planJson) → EditOutput` | Resolve every operation without producing documents. |
+| `editReportJsonl` | `(reportJson) → string` | A report as JSON lines (`load`, one `op` per operation, `summary`). |
+| `capabilities` | `() → string` | What this build can do, as JSON (`runtime: "wasm"`, operations, edit kinds, input budgets). |
 
 Errors (invalid/corrupt DOCX, unsupported constructs) are thrown as JS
-exceptions with a `jubarte-wasm: …` message.
+exceptions with a `jubarte-wasm: …` message. Edit plans are the exception:
+a refused plan is returned as data (`ok: false`) so its per-operation
+outcomes stay readable.
+
+`inspectDocument`, `documentMarkdown` and the edit functions refuse a
+package before parsing it when it exceeds the input budgets `capabilities`
+reports (64 MiB file, 10,000 entries, 64 MiB per inflated part, 256 MiB in
+total, XML nesting 256) or is not a Word package. The refusal codes are
+`INPUT_LIMIT`, `DUPLICATE_PART`, `UNSUPPORTED_PACKAGE`, `INVALID_PACKAGE`
+and `INVALID_XML`.
+
+```js
+const { inspectDocument, applyEditPlan } = require("jubarte-wasm");
+const snap = JSON.parse(inspectDocument(bytes));
+const out = applyEditPlan(bytes, JSON.stringify({
+  schema_version: 1,
+  source_sha256: snap.source_sha256,
+  author: "Reviewer",
+  operations: [{ kind: "replace", paragraph: { id: "body:p:3" }, find: "30 days", replacement: "45 days" }],
+}));
+if (out.ok) { writeFileSync("redline.docx", out.redline); }
+else { console.error(JSON.parse(out.json).code); }
+```
 
 ## Versioning
 
