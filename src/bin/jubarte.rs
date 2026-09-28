@@ -94,7 +94,7 @@ struct Cli {
     quiet: bool,
 
     /// LCS detail threshold [default: 0.02, or 0.15 under
-    /// --powertools-faithful]. 0.02 = Word-style within-paragraph word diffs
+    /// --mode powertools]. 0.02 = Word-style within-paragraph word diffs
     /// with weak-match voiding; 0.15 = the PowerTools-faithful coarse
     /// fallback; 0 = confetti with no voiding. An explicit value always wins
     /// over either preset (Option distinguishes unset from explicitly-set —
@@ -102,8 +102,13 @@ struct Cli {
     #[arg(long, value_name = "RATIO")]
     detail_threshold: Option<f64>,
 
-    /// PowerTools-faithful mode: coarse paragraph fallback (threshold 0.15)
-    /// and no Word-visual alignment passes. Default is Word-visual mode.
+    /// Whose redline to reproduce: `word` lays changes out as Microsoft Word
+    /// Compare does; `powertools` is the Open-Xml-PowerTools coarse fallback.
+    /// docs/WORD_DIFFERENCES.md lists where the two, and Word, differ.
+    #[arg(long, value_enum, value_name = "MODE", default_value_t = CompareMode::Word)]
+    mode: CompareMode,
+
+    /// Same as --mode powertools.
     #[arg(long)]
     powertools_faithful: bool,
 
@@ -353,6 +358,17 @@ impl From<DebugCheck> for jubarte::debug::Check {
             DebugCheck::Textbox => Check::Textbox,
         }
     }
+}
+
+/// `jubarte --mode` (compare).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+enum CompareMode {
+    /// Microsoft Word Compare's layout: word-level detail, replaced paragraphs
+    /// merged, Word's alignment passes.
+    Word,
+    /// Open-Xml-PowerTools: coarse paragraph fallback (threshold 0.15), no
+    /// Word alignment passes.
+    Powertools,
 }
 
 /// `jubarte convert --revisions`.
@@ -852,7 +868,7 @@ impl Cli {
             force: self.force,
             quiet: self.quiet,
             detail_threshold: self.detail_threshold,
-            powertools_faithful: self.powertools_faithful,
+            powertools_faithful: self.powertools_faithful || self.mode == CompareMode::Powertools,
             no_paragraph_merge: self.no_paragraph_merge,
         })
     }
@@ -1223,6 +1239,21 @@ mod tests {
         assert_eq!(j.author, "Jane Doe");
         assert_eq!(j.date, "2024-01-02T00:00:00Z");
         assert!(j.force && j.quiet);
+    }
+
+    #[test]
+    fn compare_mode_defaults_to_word_and_powertools_has_two_spellings() {
+        assert!(!job_of(&["jubarte", "a.docx", "b.docx"]).powertools_faithful);
+        assert!(!job_of(&["jubarte", "a.docx", "b.docx", "--mode", "word"]).powertools_faithful);
+        assert!(
+            job_of(&["jubarte", "a.docx", "b.docx", "--mode", "powertools"]).powertools_faithful
+        );
+        assert!(
+            job_of(&["jubarte", "a.docx", "b.docx", "--powertools-faithful"]).powertools_faithful
+        );
+        assert!(
+            Cli::try_parse_from(["jubarte", "a.docx", "b.docx", "--mode", "libreoffice"]).is_err()
+        );
     }
 
     #[test]

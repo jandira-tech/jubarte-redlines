@@ -190,7 +190,9 @@ image samples always deflate); `--font-report FILE` writes the per-document
 font-resolution table as JSON.
 
 Run `jubarte --help` for author/date stamping, `--detail-threshold`, and
-`--powertools-faithful` (classic PowerTools-compatible mode).
+`--mode word|powertools` (Word Compare's layout, the default, or classic
+PowerTools). [docs/WORD_DIFFERENCES.md](docs/WORD_DIFFERENCES.md) lists
+where jubarte's redline differs from Word's and which mode gives which.
 
 ### What `jubarte convert` renders
 
@@ -276,7 +278,7 @@ such row in the commit. Baselines: `tools/convert_baseline_{76,398}.tsv` and
 Both documents are atomized (runs, paragraph marks, table cells, …), aligned
 with an LCS pass, and re-expressed as Word revision markup on the **original**
 package. Default mode adds Word-visual alignment on top of the PowerTools
-algorithm; `WmlComparerSettings::powertools_faithful()` / `--powertools-faithful`
+algorithm; `WmlComparerSettings::powertools_faithful()` / `--mode powertools`
 reproduces classic PowerTools behavior.
 
 ## Benchmarks — scored against Microsoft Word

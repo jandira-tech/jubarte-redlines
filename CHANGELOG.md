@@ -17,6 +17,11 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Added
 
+- `jubarte A B --mode word|powertools` names the compare presets: `word`
+  (the default, Word Compare's layout) or `powertools` (the classic
+  PowerTools fallback, still also spelled `--powertools-faithful`).
+  `docs/WORD_DIFFERENCES.md` lists where jubarte's redline still differs
+  from Word's and which mode gives which.
 - `jubarte inspect` reads a document as numbered paragraphs (JSON with a
   source hash, or Markdown) with styles, numbering, formatting spans and
   the structures an edit cannot address (fields, hyperlinks, content
