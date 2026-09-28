@@ -106,6 +106,15 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- A text box whose text changed no longer disappears from a Word-mode
+  redline. Three late passes that rebuild a revised paragraph from the text
+  of its insertion and deletion also read the text inside the box, so the
+  drawing and its VML fallback were dropped and both copies of the box's
+  text landed in the anchoring paragraph ("…of the postOverall…"); accepting
+  the redline did not give the revised document. They now leave any
+  paragraph alone whose runs hold anything besides text. Present since at
+  least 0.7.1 (fixtures_500 00b81efae883).
+
 - Changes in a header or footer that carries a relationship (a logo, a
   hyperlink) are now in the redline. The comparer skipped every such part
   and kept the original's, so the redline silently lost the change and

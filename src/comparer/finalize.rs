@@ -2267,7 +2267,11 @@ pub fn free_mesh_shared_title_token_in_mix(dom: &mut Dom, root: NodeId) {
                 break;
             }
         }
-        if other || ins_nodes.is_empty() || del_nodes.is_empty() {
+        if other
+            || ins_nodes.is_empty()
+            || del_nodes.is_empty()
+            || !body_kids.iter().all(|&c| holds_only_text(dom, c))
+        {
             continue;
         }
         // Only wholesale 1+1 or small confetti of same status groups.
@@ -11274,6 +11278,27 @@ pub fn strip_leading_del_echoing_prev_pure_i(dom: &mut Dom, root: NodeId) {
     }
 }
 
+/// Whether a paragraph child holds only text: a run, or a revision wrapper
+/// of runs, whose content is run properties and `w:t`/`w:delText`. The
+/// free-mesh passes rebuild a paragraph from the text of its children, so
+/// anything else there (a text box, a drawing, a field, a tab) would be
+/// lost, and a text box's own text would land in the paragraph
+/// (fixtures_500 00b81efae883).
+fn holds_only_text(dom: &Dom, node: NodeId) -> bool {
+    let text_run = |r: NodeId| {
+        dom.name_is(r, &W::r())
+            && dom.elements(r, None).into_iter().all(|c| {
+                dom.name_is(c, &W::r_pr())
+                    || dom.name_is(c, &W::t())
+                    || dom.name_is(c, &W::del_text())
+            })
+    };
+    if dom.name_is(node, &W::r()) {
+        return text_run(node);
+    }
+    dom.elements(node, None).into_iter().all(text_run)
+}
+
 /// M462 (center_aligned_bold body2 residual after M461): wholesale body MIX
 /// free-mesh with coverage-gated word-LCS. M459 thrash'd file_163 (−29) and
 /// ooxml (−12) on single-sig / low-overlap free-mesh; this revival requires
@@ -11328,7 +11353,11 @@ pub fn free_mesh_wholesale_body_mix(dom: &mut Dom, root: NodeId) {
                 break;
             }
         }
-        if other || ins_nodes.len() != 1 || del_nodes.len() != 1 {
+        if other
+            || ins_nodes.len() != 1
+            || del_nodes.len() != 1
+            || !body_kids.iter().all(|&c| holds_only_text(dom, c))
+        {
             continue;
         }
         let ins = ins_nodes[0];
@@ -11750,7 +11779,12 @@ pub fn free_mesh_bookended_ins_del(dom: &mut Dom, root: NodeId) {
             }
         }
         // Bookend required (else M459 wholesale path). One ins + one del.
-        if other || !bare_alnum || ins_nodes.len() != 1 || del_nodes.len() != 1 {
+        if other
+            || !bare_alnum
+            || ins_nodes.len() != 1
+            || del_nodes.len() != 1
+            || !body_kids.iter().all(|&c| holds_only_text(dom, c))
+        {
             continue;
         }
         let ins = ins_nodes[0];
