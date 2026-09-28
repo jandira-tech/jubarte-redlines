@@ -20,6 +20,9 @@ Engine defects and unresolved design conflicts. Tests covering them are marked
 > Spellcheck marks, the pagination cache, and header or footer references
 > Word writes on its own are outside the histogram. Items 1, 2, and 5
 > stay as recorded below. Item 4 is still the Ring 2 ratchet.
+>
+> **Re-checked 2026-09-28 (release/0.10):** item 4 is closed (fixed by
+> b7fedc78; the Ring 2 baseline is re-blessed without it).
 
 ## 1. MovedSource / `w:moveFrom` text kind — **SETTLED 2026-07-16 (Word wins)**
 
@@ -103,57 +106,23 @@ element names Word writes on its own (`proofErr`, `lastRenderedPageBreak`,
 `footerReference`, `headerReference`). The ladder leaves those four names
 out of the histogram. `tools/parity_baseline.tsv` is unchanged.
 
-## 4. Internal `Unid` scratch ships as an undeclared `w:Unid` attribute
+## 4. Internal `Unid` scratch shipped as an undeclared `w:Unid` attribute — **FIXED (b7fedc78), closed 2026-09-28**
 
-**Symptom (Ring 2, `Sch_UndeclaredAttribute`):** 81 findings of
-`The 'http://…/wordprocessingml/2006/main:Unid' attribute is not declared.`
+**Symptom (Ring 2, `Sch_UndeclaredAttribute`):** `w:Unid` on
+`<w:spacing w:line="276">` in `word/document.xml`, in 12 of 207 corpus outputs
+(0 of 199 sources). Word opened the files, so it was a validity defect, not
+corruption.
 
-**Evidence it is ours, not inherited:** `Unid` appears in **0 of 192** corpus
-source documents and in **12 of 207** of our outputs.
+**Cause:** `restore_deleted_paragraph_spacing` copied every attribute of a
+deleted paragraph's spacing back onto the output, including the comparer's
+scratch `Unid`, re-bound to the element's own `w:` namespace, where the
+`pt:*` stripper never looked. It now copies only `w:` attributes; test
+`document_comparer::restored_deleted_spacing_leaves_scratch_unids_behind`.
 
-**Mechanism:** `unid.rs` stamps `PT::unid()` (`http://powertools.codeplex.com/2011`)
-and `document_comparer.rs` strips `pt:*` scratch before writing. But at least one
-attribute reaches the serializer bound to the **`w:` prefix** instead of `pt14:`,
-so it (a) escapes the `pt:*` stripper, which looks for the PT namespace, and
-(b) serializes as `w:Unid`, which is not in the wordprocessingml schema:
-
-```xml
-<w:spacing w:line="276" w:Unid="00000000000000000000000000000004" />
-```
-
-The root does declare `xmlns:pt14="http://powertools.codeplex.com/2011"`, and
-these documents contain exactly one `w:Unid` and zero `pt14:Unid`, so this is a
-single mis-namespaced stamp rather than a general serializer fault. Find the
-write site that builds the name in the element's own namespace instead of PT.
-
-**Narrowed 2026-09-05, still open.** Instrumenting `Dom::set_attribute_value` to
-trap any non-PT attribute with local name `Unid` confirms the attribute really is
-in the **wordprocessingml** namespace in the DOM — not a serializer prefix
-problem. `prefix_for_uri` cannot mis-resolve it (PT is not in the well-known
-prefix table, and an empty-namespace attribute would serialize unprefixed, not as
-`w:Unid`), and `repair_inherited_invalidity`'s unqualified-attribute sweep does
-not catch it precisely because it *is* qualified — just in the wrong namespace.
-
-The backtrace lands in `document_comparer::compare_documents_impl`, but release
-inlining hides the real frame; a `debug = true` release build will name it. The
-string `"Unid"` appears exactly once in the tree (`PT::unid()`), so the name is
-not written from a literal — it is either rebuilt from a local name onto a `w:`
-element, or parsed back in from text that already said `w:Unid`.
-
-Re-measured on the 0.8.0 corpus: **12 of 207** outputs, always exactly one
-occurrence, always on `<w:spacing w:line="276">`, always in `word/document.xml`,
-and **0 of 199** source documents carry it. Word's tolerance varies — these files
-still open — so it is a validity defect, not corruption.
-
-**Ring 2 note:** `tools/validity_baseline.tsv` was blessed for the first time on
-2026-09-05 (before that it said "initial bless is empty", describing a sweep that
-had never run — `tools/validate-docx/` was missing from this checkout, and from
-the remote; `wt-r2` was the only copy. It is now committed). That first bless
-keyed stems as `<stem>.ours`, which the sweep never emits, so the ratchet
-compared two disjoint key sets; re-blessed with the plain stems. Current state
-after the issue-5 fixes: 1183 findings, 46 pairs, 60 keys (was 1294/54/74). The
-dominant class (~495) is `r`/`g`/`b="0%"` colour attributes, which **are**
-inherited: 4 source documents carry them.
+**Verified 2026-09-28:** the Ring 2 sweep over the 207-pair corpus reports
+no `Sch_UndeclaredAttribute` at all (0 NEW, 40 FIXED keys; baseline
+re-blessed to 20 keys), and a scan of 803 bench pairs found no `Unid`
+outside the PowerTools namespace.
 
 ## 5. Ring 3: five corpus redlines Word refused to open — **FIXED 2026-09-05**
 
