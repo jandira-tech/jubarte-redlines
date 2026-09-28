@@ -24,7 +24,9 @@ Engine defects and unresolved design conflicts. Tests covering them are marked
 > **Re-checked 2026-09-28 (release/0.10):** item 4 is closed (fixed by
 > b7fedc78; the Ring 2 baseline is re-blessed without it), and item 2 is
 > resolved against Word's own redlines (one real defect fixed, two tests
-> corrected to Word's shape). Every item is now settled, fixed or resolved.
+> corrected to Word's shape). Every engine item is now settled, fixed or
+> resolved. Item 6, a dependency advisory in the desktop app, is blocked
+> upstream.
 
 ## 1. MovedSource / `w:moveFrom` text kind — **SETTLED 2026-07-16 (Word wins)**
 
@@ -196,6 +198,22 @@ start, which the probe's own 60s budget has to absorb, cascading into all-fail.
 directory generated on 12 July, two months stale — `tblGridChange` carrying
 `w:author`/`w:date` showed up in that triage although commit 236c5ed had already
 fixed it. Regenerate the sweep before trusting a Ring 3 number.
+
+## 6. Dependabot: glib 0.18.5 in the desktop app (RUSTSEC-2024-0429) — **OPEN, blocked upstream**
+
+**Alert:** GitHub reports one moderate vulnerability, `glib` ≥0.15 <0.20
+("Unsoundness in `Iterator` and `DoubleEndedIterator` impls for
+`glib::VariantStrIter`") in `jubarte-app/src-tauri/Cargo.lock`.
+
+**Why it stays open:** glib is only there through `gtk` 0.18, which Tauri 2
+uses for its Linux webview. gtk-rs/gtk3-rs was archived in March 2024, so no
+gtk release can ever move to glib ≥0.20. The alert clears only when Tauri
+moves its Linux build to GTK4. The engine, CLI, Python and WASM packages do
+not depend on glib. The desktop app compiles it for Linux only, and nothing
+in it calls `VariantStrIter`.
+
+**Action:** re-check on each Tauri upgrade. Dismissing the alert as
+"tolerable risk" is the maintainer's call.
 
 ## Notes
 

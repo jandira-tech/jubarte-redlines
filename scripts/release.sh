@@ -60,6 +60,10 @@
 #   PyPI       UV_PUBLISH_TOKEN=pypi-…            (uv publish --token)
 #   GitHub     `gh auth login`                    (drives the release + wheels)
 set -euo pipefail
+# Under pipefail, `producer | grep -q` fails when grep exits on its first
+# match and the producer dies of SIGPIPE, so a found line reads as missing
+# (a resumed 0.9.3 run redid its release commit that way). Match with
+# `grep … >/dev/null`, which reads the whole stream, never `grep -q`.
 cd "$(dirname "$0")/.."
 
 usage() { sed -n '6,41p' "$0" >&2; }
@@ -309,8 +313,14 @@ if [ "$SKIP_GATES" = 0 ]; then
   cargo test --all-features
   python3 scripts/test_convert_sweep.py
   python3 planning/test_sample50_check.py
+  # Python bindings: build the extension from this checkout and run pytest
+  # (uv run leaves a uv.lock the repo does not track).
+  (cd jubarte-python \
+    && uv run --with maturin maturin develop --release >/dev/null \
+    && uv run --with pytest pytest -q)
+  rm -f jubarte-python/uv.lock
   uv tool run --from 'reuse[charset-normalizer]' reuse lint >/dev/null
-  step "fmt / clippy / tests / sweep-units / REUSE all green"
+  step "fmt / clippy / tests / sweep-units / pytest / REUSE all green"
 else
   say "4. Gates — SKIPPED (--skip-gates)"
 fi
@@ -327,7 +337,7 @@ sdist=$(ls target/release-check/*.tar.gz 2>/dev/null | head -1)
 [ -n "$sdist" ] || die "maturin produced no sdist"
 member=$(tar -tzf "$sdist" | grep '/pyproject.toml$' | head -1)
 [ -n "$member" ] || die "sdist has no pyproject.toml"
-tar -xzOf "$sdist" "$member" | grep -qF "# release-notes v$VER" \
+tar -xzOf "$sdist" "$member" | grep -F "# release-notes v$VER" >/dev/null \
   || die "pypi summary comment did not make it into the sdist"
 step "cargo / npm / maturin dry-runs OK — sdist carries the pypi comment"
 
@@ -346,7 +356,7 @@ say "6. Release commit → wasm artifacts → annotated tag"
 # =============================================================================
 
 # A resumed run finds the release commit under the wasm-artifact commit.
-if ! git log -3 --format=%s | grep -qx "chore(release): v$VER"; then
+if ! git log -3 --format=%s | grep -x "chore(release): v$VER" >/dev/null; then
   git add Cargo.toml Cargo.lock CHANGELOG.md README.md VERSIONING.md \
     jubarte-python/Cargo.toml jubarte-python/Cargo.lock \
     jubarte-python/pyproject.toml \
@@ -370,9 +380,9 @@ step "npm artifacts rebuilt + smoke-tested (engine $(cat jubarte-wasm/npm/ENGINE
 # the release notes. An existing local tag that lacks it is re-created; a tag
 # already on origin cannot be changed and only earns a warning.
 if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-  if git tag -l --format='%(contents:body)' "$TAG" | grep -qF "$GITHUB_SUMMARY"; then
+  if git tag -l --format='%(contents:body)' "$TAG" | grep -F "$GITHUB_SUMMARY" >/dev/null; then
     step "tag $TAG exists and already carries the github summary"
-  elif git ls-remote --tags origin "$TAG" | grep -q .; then
+  elif git ls-remote --tags origin "$TAG" | grep . >/dev/null; then
     echo "  ! $TAG is already on origin without the summary — release notes will lack it" >&2
   else
     git tag -d "$TAG" >/dev/null
@@ -399,7 +409,7 @@ if [ "$YES" = 0 ]; then
 fi
 
 git push origin main
-if git ls-remote --tags origin "$TAG" | grep -q .; then
+if git ls-remote --tags origin "$TAG" | grep . >/dev/null; then
   step "tag $TAG already on origin — push skipped"
 else
   git push origin "$TAG"
@@ -417,7 +427,7 @@ else
   cargo package --locked --no-verify >/dev/null
   tar -xzOf "target/package/jubarte-redlines-$VER.crate" \
     "jubarte-redlines-$VER/Cargo.toml" \
-    | grep -qF "\"$VER\" = \"$CRATES_SUMMARY\"" \
+    | grep -F "\"$VER\" = \"$CRATES_SUMMARY\"" >/dev/null \
     || die "crates summary missing from the packaged manifest — not publishing"
   cargo publish --locked
   step "cargo publish done (index lags ~1 min)"
@@ -483,7 +493,7 @@ npm_note() {
 }
 gh_note() {
   gh release view "$TAG" --json body -q .body 2>/dev/null \
-    | grep -qF "$GITHUB_SUMMARY"
+    | grep -F "$GITHUB_SUMMARY" >/dev/null
 }
 
 ok=1
