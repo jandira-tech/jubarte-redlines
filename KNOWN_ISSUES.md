@@ -22,7 +22,9 @@ Engine defects and unresolved design conflicts. Tests covering them are marked
 > stay as recorded below. Item 4 is still the Ring 2 ratchet.
 >
 > **Re-checked 2026-09-28 (release/0.10):** item 4 is closed (fixed by
-> b7fedc78; the Ring 2 baseline is re-blessed without it).
+> b7fedc78; the Ring 2 baseline is re-blessed without it), and item 2 is
+> resolved against Word's own redlines (one real defect fixed, two tests
+> corrected to Word's shape). Every item is now settled, fixed or resolved.
 
 ## 1. MovedSource / `w:moveFrom` text kind — **SETTLED 2026-07-16 (Word wins)**
 
@@ -45,25 +47,36 @@ Hard tests:
 - Probes: `m_validity_ring1.rs::probe_deltext_under_movefrom_fails`,
   `probe_wt_under_movefrom_passes_ring1`
 
-## 2. Multi-del boundary fold — document-scale relatedness (narrowed)
+## 2. Multi-del boundary fold — **RESOLVED 2026-09-28 (Word wins)**
 
-**Status (2026-07-16):** Partially resolved (class C1). Multi-del boundary fold
-in `merge_replaced_in_container` is gated by
-`should_fold_multi_del_at_document_scale`:
+The four tests parked here were re-judged against Word's own redline of
+their inputs: the synthetic bodies built as `.docx`, compared by Word 16
+through neurotic_docx_bench `scripts/word_redline.py`, and checked with
+`check_redline_identity.py`.
 
-- related gap (any I×D pair with Jaccard) → still fold (M90 / M131);
-- large multi-paragraph asymmetric gaps (size ratio ≥ 4, gap > 60% of container
-  word atoms) with zero Jaccard → **no fold** (unrelated whole-document
-  short↔long replacement).
-
-Synthetic coverage: `tests/m146_wholedoc_replacement_no_fold.rs`.
-
-**Still ignored (re-check after Ratchet-1 re-score)**:
-
-- `m32_word_alignment.rs::w2_replaced_paragraphs_merge_pairwise`
-- `m32_word_alignment.rs::w20b_gap_partition_del_clusters_before_anchor`
-- `m32_word_alignment.rs::w23c_repeated_paragraph_real_word_never_bridges`
+- `m32_word_alignment.rs::w2_replaced_paragraphs_merge_pairwise`: we
+  already matched Word. Word does fuse the last inserted paragraph into the
+  first deleted one when the gap runs to the story end
+  (`[I:gamma]¶I | [I:delta]¶I | [I:epsilon][D:alpha]¶D | [D:beta]`). The
+  test asserted five separate paragraphs, which Word never produces; it now
+  asserts Word's shape.
+- `w23c_repeated_paragraph_real_word_never_bridges`: same story-end fusion
+  into the first of five identical copies, the other four whole. We match
+  the structure; Word also word-diffs inside the fused paragraph (a shared
+  " sample "), a detail difference recorded in `docs/WORD_DIFFERENCES.md`.
+- `w20b_gap_partition_del_clusters_before_anchor`: **a real defect.** With
+  identical first paragraphs, the M339 positional title-token zip
+  (`lcs::positional_title_token_zip`) paired paragraphs by index, so the
+  unchanged closing anchor was inserted into a deleted paragraph and then
+  deleted again. Only when that anchor was the document's last paragraph;
+  with a paragraph after it the normal LCS ran. The zip now declines when
+  it would pair a paragraph whose identical copy sits elsewhere on the
+  other side, and the output matches Word exactly.
 - `m42c_eigenpal_pkg.rs::eigenpal_batch_starts_with_ins_and_has_mixed_table`
+  was already un-ignored and passes.
+
+No test is ignored on this item. Parity ladder after the fix: 207 pairs,
+0 NEW.
 
 ## 3. Free-mesh double-consumption — one A-side atom claimed by two paragraphs
 

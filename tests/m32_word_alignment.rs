@@ -141,11 +141,13 @@ fn w2_replaced_paragraph_pair_merges_into_one() {
     assert!(x.contains("completely original wording here"), "{x}");
 }
 
-/// Multi-paragraph replacement gaps do NOT merge pairwise (M-PI): only the
-/// exact 1v1 pair merges (w2b); bigger gaps keep every paragraph separate,
-/// [all inserted, B order][all deleted, A order].
+/// Multi-paragraph replacement gaps do NOT merge pairwise (M-PI), but a gap
+/// that runs to the story end fuses its last inserted paragraph into the
+/// first deleted one. Word's own redline of these inputs (Word 16, via
+/// neurotic_docx_bench scripts/word_redline.py, 2026-09-28):
+/// `[I:gamma]¶I | [I:delta]¶I | [I:epsilon][D:alpha]¶D | [D:beta]`.
+/// The old expectation (five separate paragraphs) was never Word's.
 #[test]
-#[ignore = "KNOWN ISSUE 2 (KNOWN_ISSUES.md): M90 multi-del boundary fold lacks a relatedness gate; conflicts with the M-PI separate-paragraphs rule this test encodes"]
 fn w2_replaced_paragraphs_merge_pairwise() {
     let mut dom = Dom::new();
     let (r1, b1) = doc_body(
@@ -167,30 +169,28 @@ fn w2_replaced_paragraphs_merge_pairwise() {
     let out = compare_bodies_faithful(&mut dom, r1, r2, b1, b2, &s);
     let body = dom.element(out, &W::body()).unwrap();
     let paras: Vec<NodeId> = dom.elements(body, Some(&W::p()));
-    // M-PI (parity/_scratch/mpi_forensics.md): Word merges ONLY the exact
-    // 1v1 replacement pair. A 2-del/3-ins gap keeps every paragraph separate,
-    // ordered [all inserted, B order][all deleted, A order] (green-underline
-    // GT: 2 ins + 3 del all separate, dels immediately before the anchor).
-    // The old pairwise multi-merge invented mixed paragraphs Word never
-    // produces.
-    assert_eq!(
-        paras.len(),
-        5,
-        "no multi-merge: 3 ins + 2 del stay separate"
-    );
     let ser: Vec<String> = paras.iter().map(|&p| dom.serialize_element(p)).collect();
+    assert_eq!(ser.len(), 4, "3 ins + 2 del, one story-end fusion: {ser:?}");
     let pos = |probe: &str| ser.iter().position(|x| x.contains(probe)).unwrap();
     assert!(
-        pos("gamma replacement text") < pos("delta replacement text")
-            && pos("delta replacement text") < pos("epsilon extra new para")
-            && pos("epsilon extra new para") < pos("alpha original wording")
-            && pos("alpha original wording") < pos("beta original wording"),
-        "gap order is [ins B-order][del A-order]: {ser:?}"
+        pos("gamma replacement text") == 0
+            && pos("delta replacement text") == 1
+            && pos("epsilon extra new para") == 2
+            && pos("alpha original wording") == 2
+            && pos("beta original wording") == 3,
+        "gap order is [ins B-order][del A-order], epsilon fused into alpha: {ser:?}"
+    );
+    let fused = &ser[2];
+    assert!(
+        fused.find("epsilon extra new para").unwrap()
+            < fused.find("alpha original wording").unwrap()
+            && fused.contains("<w:ins")
+            && fused.contains("delText"),
+        "fused paragraph: inserted epsilon, then deleted alpha: {fused}"
     );
     assert!(
-        ser[pos("gamma replacement text")].contains("<w:ins")
-            && ser[pos("alpha original wording")].contains("delText"),
-        "pure ins / pure del blocks: {ser:?}"
+        !ser[0].contains("delText") && !ser[1].contains("delText") && !ser[3].contains("<w:t>"),
+        "pure ins / pure del around the fusion: {ser:?}"
     );
 }
 
@@ -1524,7 +1524,6 @@ fn w20a_positional_anchor_survives_unrelated_shortcut() {
 /// deleted cluster sits IMMEDIATELY before the closing anchor. 1 ins vs 2
 /// del so 1:1 paragraph-pair merging cannot collapse the whole gap.
 #[test]
-#[ignore = "KNOWN ISSUE 2 (KNOWN_ISSUES.md): ungated multi-del boundary fold merges the unrelated ins into the first del of the gap"]
 fn w20b_gap_partition_del_clusters_before_anchor() {
     let mut dom = Dom::new();
     let (r1, b1) = doc_body(
@@ -2110,15 +2109,16 @@ fn w23b_repeated_identical_deleted_paragraphs_survive_word_overlap() {
     );
 }
 
-/// M-BLK repetition guard (parity/_scratch/mblk_pairing_forensics.md): a
-/// word-level EQ island whose containing A paragraph is textually IDENTICAL
-/// to another A paragraph in the window never survives in Word's output —
-/// page-numbering GT keeps all five identical 'More sample…' paragraphs
-/// whole even though they share real words with B content; only the
-/// copy-unique ' Document' paragraph anchored. Ours let the shared word
-/// bridge a copy into a mixed paragraph (reject ≠ A).
+/// M-BLK repetition guard (parity/_scratch/mblk_pairing_forensics.md): the
+/// LCS never bridges a real word into one copy of a repeated paragraph in
+/// the middle of the run. The story-end fusion still joins B's paragraph to
+/// the FIRST copy, as Word does. Word's own redline of these inputs (Word
+/// 16, word_redline.py, 2026-09-28):
+/// `[I:end of][D:More][= sample ][I:story entirely][D:text for section 2...]¶D`
+/// then four whole deleted copies. Word also word-diffs inside that fused
+/// paragraph (the shared " sample "); we fuse it whole, which is a known
+/// detail difference (docs/WORD_DIFFERENCES.md), not a structure one.
 #[test]
-#[ignore = "KNOWN ISSUE 2 (KNOWN_ISSUES.md): ungated multi-del boundary fold folds the first repeated-del copy into the B paragraph (the LCS M-BLK guard itself works)"]
 fn w23c_repeated_paragraph_real_word_never_bridges() {
     let mut dom = Dom::new();
     let five = "<w:p><w:r><w:t>More sample text for section 2...</w:t></w:r></w:p>".repeat(5);
@@ -2130,20 +2130,26 @@ fn w23c_repeated_paragraph_real_word_never_bridges() {
     let s = WmlComparerSettings::default(); // word mode
     let out = compare_bodies_faithful(&mut dom, r1, r2, b1, b2, &s);
     let body = dom.element(out, &W::body()).unwrap();
-    let whole = dom
+    let ser: Vec<String> = dom
         .elements(body, Some(&W::p()))
         .iter()
-        .filter(|&&p| {
-            let x = dom.serialize_element(p);
-            x.contains("More sample text for section 2...") && !x.contains("<w:ins")
-        })
+        .map(|&p| dom.serialize_element(p))
+        .collect();
+    assert_eq!(ser.len(), 5, "five paragraphs, as in Word: {ser:?}");
+    assert!(
+        ser[0].contains("<w:ins")
+            && ser[0].contains("delText")
+            && ser[0].contains("story entirely"),
+        "B's paragraph fuses with the first copy: {}",
+        ser[0]
+    );
+    let whole = ser[1..]
+        .iter()
+        .filter(|x| x.contains("More sample text for section 2...") && !x.contains("<w:ins"))
         .count();
     assert_eq!(
-        whole,
-        5,
-        "all five identical deleted paragraphs stay WHOLE (no real-word \
-         bridge into B content): {}",
-        dom.serialize_element(body)
+        whole, 4,
+        "the other four copies stay whole deleted paragraphs: {ser:?}"
     );
 }
 

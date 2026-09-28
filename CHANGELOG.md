@@ -45,6 +45,13 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   updates in the background. Build with `--no-default-features --features
   cli` for a binary without it (docs/SELF_UPDATE.md).
 
+### Fixed
+
+- An unchanged last paragraph after a replaced block came out inserted
+  and deleted again when the documents' first paragraphs matched: the
+  positional paragraph zip no longer pairs a paragraph whose identical
+  copy sits elsewhere in the other document (Word keeps it unchanged).
+
 ## [0.9.3] - 2026-09-27
 
 > **Summary.** Redlines are now scored against Word's own redline of each pair, rendered by Word, and this release fixes what that exposed: redlines Word refused to open, blank field codes, missing fonts, and misplaced equations.
