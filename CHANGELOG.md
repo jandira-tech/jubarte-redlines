@@ -39,6 +39,11 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   jubarte_redlines` exposes the same commands; `EditPlanError.message`
   carries the engine's detail.
 - Adoption guides, workflow examples and a document-operations agent skill.
+- `jubarte self-update [--check] [--yes] [--version X]` installs a GitHub
+  release after checking its SHA-256 against the release's
+  `SHA256SUMS.txt`. It contacts GitHub only when run; nothing checks for
+  updates in the background. Build with `--no-default-features --features
+  cli` for a binary without it (docs/SELF_UPDATE.md).
 
 ## [0.9.3] - 2026-09-27
 

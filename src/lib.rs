@@ -67,6 +67,9 @@ pub mod revision_processor;
 pub mod strict_translation;
 /// Unique id helpers for revision markup.
 pub mod unid;
+/// `jubarte self-update`: install a GitHub release, only when asked.
+#[cfg(feature = "self-update")]
+pub mod update;
 /// Shared small utilities.
 pub mod util;
 /// `WmlDocument` — document bytes + lazily parsed main part.

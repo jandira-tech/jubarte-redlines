@@ -258,6 +258,24 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Install the latest jubarte release from GitHub. Contacts GitHub only
+    /// when run; nothing checks for updates otherwise.
+    #[command(after_help = "EXAMPLES:\n  \
+        jubarte self-update --check          installed and latest versions\n  \
+        jubarte self-update                  ask, then install the latest release\n  \
+        jubarte self-update --yes            install without asking\n  \
+        jubarte self-update --version 0.9.3  install that release (also older)")]
+    SelfUpdate {
+        /// Print the installed and latest versions; install nothing.
+        #[arg(long)]
+        check: bool,
+        /// Install without asking (needed without a terminal).
+        #[arg(long, short = 'y')]
+        yes: bool,
+        /// Install this release instead of the latest, older ones included.
+        #[arg(long, value_name = "VERSION")]
+        version: Option<String>,
+    },
     /// Triage a .docx Word refuses, or compare two builds of one. Short
     /// output: counts by kind, a few examples each; with two files, only
     /// what differs.
@@ -1034,6 +1052,11 @@ fn main() -> ExitCode {
             println!("{}", jubarte::capabilities::capabilities_json("cli"));
             return ExitCode::SUCCESS;
         }
+        Some(Command::SelfUpdate {
+            check,
+            yes,
+            version,
+        }) => return exit_code(run_self_update(check, yes, version)),
         Some(Command::Debug {
             files,
             list,
@@ -1057,10 +1080,49 @@ fn main() -> ExitCode {
     exit_code(run(&job))
 }
 
+#[cfg(feature = "self-update")]
+fn run_self_update(check: bool, yes: bool, version: Option<String>) -> Result<(), String> {
+    jubarte::update::run(&jubarte::update::Options {
+        check,
+        yes,
+        version,
+    })
+}
+
+#[cfg(not(feature = "self-update"))]
+fn run_self_update(_check: bool, _yes: bool, _version: Option<String>) -> Result<(), String> {
+    Err("this jubarte was built without the self-update feature; update it the way it was installed".into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use jubarte::convert::{MarkLines, RevisionStyle};
+
+    #[test]
+    fn self_update_parses_check_yes_and_a_pinned_version() {
+        let cli = Cli::try_parse_from(["jubarte", "self-update", "--check"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::SelfUpdate {
+                check: true,
+                yes: false,
+                version: None
+            })
+        ));
+        let cli =
+            Cli::try_parse_from(["jubarte", "self-update", "-y", "--version", "0.9.3"]).unwrap();
+        let Some(Command::SelfUpdate {
+            check,
+            yes,
+            version,
+        }) = cli.command
+        else {
+            panic!("expected self-update");
+        };
+        assert!(!check && yes);
+        assert_eq!(version.as_deref(), Some("0.9.3"));
+    }
 
     #[test]
     fn convert_revisions_default_to_conventional_and_validate_the_palette() {

@@ -71,6 +71,10 @@ cargo install jubarte-redlines
 jubarte --version
 ```
 
+From 0.10.0 on, `jubarte self-update` installs a newer release in place
+(`--check` only looks). It is the only command that goes online, and only
+when you run it ([docs/SELF_UPDATE.md](docs/SELF_UPDATE.md)).
+
 **Fonts for `jubarte convert`** — open fonts Word draws that macOS/Linux
 lack (Roboto Condensed; Selawik standing in for Segoe UI) are installed
 beside the binary instead of inside it:

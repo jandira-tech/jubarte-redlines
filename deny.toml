@@ -52,6 +52,9 @@ allow = [
     "OpenSSL",
     "BSL-1.0",
     "bzip2-1.0.6",
+    # webpki-roots (Mozilla's CA root list), pulled in by `self-update`'s
+    # rustls client: a permissive data license.
+    "CDLA-Permissive-2.0",
 ]
 
 [bans]
