@@ -6465,36 +6465,40 @@ fn compare_documents_impl(
                 // title mixes has neither the shell nor the children.
                 if part == main1 {
                     crate::comparer::finalize::strip_propertyless_ppr(&mut vd, vr);
-                    // Package steps can put a default nextPage back into the
-                    // recorded sectPr, or leave line=276 on a deleted mark.
-                    crate::comparer::finalize::strip_unrecorded_word_defaults(&mut vd, vr);
-                    let id_to_target: std::collections::HashMap<String, String> = out
-                        .read_rels_for(&main1)
-                        .map(|rels| {
-                            rels.items
-                                .iter()
-                                .filter(|r| r.rel_type.ends_with("/hyperlink"))
-                                .map(|r| (r.id.clone(), r.target.clone()))
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    let base_targets: std::collections::HashSet<String> = pkg1
-                        .read_rels_for(&main1)
-                        .map(|rels| {
-                            rels.items
-                                .iter()
-                                .filter(|r| r.rel_type.ends_with("/hyperlink"))
-                                .map(|r| r.target.clone())
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    crate::comparer::finalize::rewrite_inserted_external_hyperlinks(
-                        &mut vd,
-                        vr,
-                        &id_to_target,
-                        &base_targets,
-                    );
-                    crate::comparer::finalize::align_word_table_and_comment_chrome(&mut vd, vr);
+                    // Word-visual chrome. Faithful mode runs none of these;
+                    // the body path already gates them the same way.
+                    if settings.merge_replaced_paragraphs {
+                        // Package steps can put a default nextPage back into the
+                        // recorded sectPr, or leave line=276 on a deleted mark.
+                        crate::comparer::finalize::strip_unrecorded_word_defaults(&mut vd, vr);
+                        let id_to_target: std::collections::HashMap<String, String> = out
+                            .read_rels_for(&main1)
+                            .map(|rels| {
+                                rels.items
+                                    .iter()
+                                    .filter(|r| r.rel_type.ends_with("/hyperlink"))
+                                    .map(|r| (r.id.clone(), r.target.clone()))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        let base_targets: std::collections::HashSet<String> = pkg1
+                            .read_rels_for(&main1)
+                            .map(|rels| {
+                                rels.items
+                                    .iter()
+                                    .filter(|r| r.rel_type.ends_with("/hyperlink"))
+                                    .map(|r| r.target.clone())
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        crate::comparer::finalize::rewrite_inserted_external_hyperlinks(
+                            &mut vd,
+                            vr,
+                            &id_to_target,
+                            &base_targets,
+                        );
+                        crate::comparer::finalize::align_word_table_and_comment_chrome(&mut vd, vr);
+                    }
                     if let Some((original_xml, revised_xml)) = ladder_sources.as_ref() {
                         crate::comparer::finalize::align_remaining_ladder_rungs(
                             &mut vd,

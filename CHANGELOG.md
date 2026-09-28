@@ -352,6 +352,13 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 - A merged table keeps `w:tblPrChange` last in `w:tblPr`. The default table
   look is written before the change, and the old properties stored inside
   the change are left without a synthesized look.
+- A bare `w:cantSplit` or `w:rtl` stays. On those elements a missing value
+  means on, and only an explicit false is dropped.
+- A table that already sets a nonzero top or bottom cell margin keeps it.
+  Row exceptions of zero are written only when the table did not set one.
+- PowerTools-faithful compares no longer receive Word's table look, row
+  margin exceptions, or the other Word-visual cleanup. That preset's
+  contract is that those passes stay off.
 
 ### Added
 

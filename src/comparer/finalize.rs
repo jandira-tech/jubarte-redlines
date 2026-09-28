@@ -5109,8 +5109,10 @@ pub(crate) fn pg_num_type_is_implicit_decimal(dom: &Dom, n: NodeId) -> bool {
 /// Markup Word's redline leaves out once the text already matches.
 ///
 /// Default `w:type val=nextPage` is omitted on the live section and inside
-/// the recorded `sectPrChange`. `w:cantSplit` false and `w:rtl` 0 never
-/// appear in this corpus's Word redlines. Default table `w:jc` left/start
+/// the recorded `sectPrChange`. `w:cantSplit` and `w:rtl` are on/off
+/// elements: a missing `w:val` means true, and only an explicit false
+/// (`0`, `false`, `off`) is absent from this corpus's Word redlines.
+/// Default table `w:jc` left/start
 /// is omitted. `w:pgNumType` that is only `fmt=decimal` is omitted.
 /// `w:spacing` that is only `line=276` on a deleted paragraph mark restates
 /// Normal; pure insertions keep that spacing. An inserted pilcrow
@@ -5128,14 +5130,12 @@ pub fn strip_unrecorded_word_defaults(dom: &mut Dom, root: NodeId) {
         }
     }
     for el in dom.descendants(body, Some(&W::name("cantSplit"))) {
-        let v = dom.attribute(el, &W::val()).unwrap_or("");
-        if v.is_empty() || v == "0" || v == "false" || v == "off" {
+        if matches!(dom.attribute(el, &W::val()), Some("0" | "false" | "off")) {
             drop_nodes.push(el);
         }
     }
     for el in dom.descendants(body, Some(&W::name("rtl"))) {
-        let v = dom.attribute(el, &W::val()).unwrap_or("");
-        if v.is_empty() || v == "0" || v == "false" || v == "off" {
+        if matches!(dom.attribute(el, &W::val()), Some("0" | "false" | "off")) {
             drop_nodes.push(el);
         }
     }
@@ -5235,9 +5235,10 @@ fn paragraph_has_content_ins_and_del(dom: &Dom, p: NodeId, ppr: NodeId) -> bool 
 /// row, first column, no banding), inserted at schema rank 150 so
 /// `w:tblPrChange` stays last. The historical `w:tblPr` inside that change
 /// is the old snapshot and is left alone. A table whose `w:tblPr` carries
-/// `w:tblCellMar`
-/// gets `w:tblPrEx/w:tblCellMar` (top and bottom 0) on each direct row that
-/// lacks one. A run that holds `w:commentReference` gets a missing
+/// `w:tblCellMar` with no nonzero top or bottom gets
+/// `w:tblPrEx/w:tblCellMar` (top and bottom 0) on each direct row that
+/// lacks one. A nonzero vertical margin is left as the table set it. A run
+/// that holds `w:commentReference` gets a missing
 /// `w:rStyle`, `w:sz`, and `w:szCs`. Existing values are left alone, including
 /// a style id of `AnnotationReference`.
 pub fn align_word_table_and_comment_chrome(dom: &mut Dom, root: NodeId) {
@@ -5277,7 +5278,18 @@ pub fn align_word_table_and_comment_chrome(dom: &mut Dom, root: NodeId) {
         let Some(tbl_pr) = dom.element(tbl, &W::tbl_pr()) else {
             continue;
         };
-        if dom.element(tbl_pr, &W::name("tblCellMar")).is_none() {
+        let Some(tbl_mar) = dom.element(tbl_pr, &W::name("tblCellMar")) else {
+            continue;
+        };
+        // A row exception replaces the table margin. Word writes top/bottom
+        // 0 only when the table did not already set a nonzero one
+        // (red_strikethrough × plate_30 keeps top 80 and has no tblPrEx).
+        let vertical_set = ["top", "bottom"].iter().any(|side| {
+            dom.element(tbl_mar, &W::name(side))
+                .and_then(|edge| dom.attribute(edge, &W::name("w")))
+                .is_some_and(|w| w != "0")
+        });
+        if vertical_set {
             continue;
         }
         let rows: Vec<NodeId> = dom.elements(tbl, Some(&W::tr()));

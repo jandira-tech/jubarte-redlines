@@ -13,7 +13,8 @@
 use std::io::Read;
 use std::path::PathBuf;
 
-use jubarte::document_comparer::compare_documents;
+use jubarte::comparer::WmlComparerSettings;
+use jubarte::document_comparer::{compare_documents, compare_documents_with_settings};
 
 fn document_xml(docx: &[u8]) -> String {
     let mut zip = zip::ZipArchive::new(std::io::Cursor::new(docx.to_vec())).expect("zip");
@@ -441,5 +442,31 @@ fn ladder_trailing_empty_paragraph_keeps_numbering() {
     assert!(
         !ppr.contains("style0"),
         "Normal is not the trailing paragraph's only property: {ppr}"
+    );
+}
+
+#[test]
+fn faithful_preset_does_not_stamp_word_table_chrome() {
+    let src = source_dir();
+    let Some(src) = src else {
+        eprintln!("skip: fixtures missing");
+        return;
+    };
+    let a = src.join("multi_section.docx");
+    let b = src.join("nested_table_rowspan.docx");
+    if !a.exists() || !b.exists() {
+        eprintln!("skip: fixtures missing");
+        return;
+    }
+    let out = compare_documents_with_settings(
+        &std::fs::read(&a).unwrap(),
+        &std::fs::read(&b).unwrap(),
+        &WmlComparerSettings::powertools_faithful(),
+    )
+    .expect("compare");
+    let xml = document_xml(&out);
+    assert!(
+        !xml.contains("tblLook") && !xml.contains("tblPrEx"),
+        "faithful mode does not add Word's table chrome"
     );
 }

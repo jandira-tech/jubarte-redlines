@@ -2437,3 +2437,67 @@ fn w9g_sectprchange_id_is_unique_among_document_revision_ids() {
         "sectPrChange's id is one of the document's tracked revision ids"
     );
 }
+
+/// A bare `w:cantSplit` or `w:rtl` is ST_OnOff true. Only an explicit false
+/// value is Word's unrecorded default.
+#[test]
+fn bare_onoff_cant_split_and_rtl_stay() {
+    use jubarte::comparer::finalize::strip_unrecorded_word_defaults;
+
+    let mut dom = Dom::new();
+    let (root, _) = doc_body(
+        &mut dom,
+        "<w:tbl><w:tr><w:trPr><w:cantSplit/></w:trPr>\
+         <w:tc><w:p><w:r><w:rPr><w:rtl/></w:rPr><w:t>a</w:t></w:r></w:p></w:tc></w:tr>\
+         <w:tr><w:trPr><w:cantSplit w:val=\"0\"/></w:trPr>\
+         <w:tc><w:p><w:r><w:rPr><w:rtl w:val=\"false\"/></w:rPr><w:t>b</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+    );
+    strip_unrecorded_word_defaults(&mut dom, root);
+    let xml = dom.serialize_element(root);
+    assert!(
+        xml.contains("<w:cantSplit/>") || xml.contains("<w:cantSplit />"),
+        "bare cantSplit means the row does not split: {xml}"
+    );
+    assert!(
+        xml.contains("<w:rtl/>") || xml.contains("<w:rtl />"),
+        "bare rtl means right-to-left: {xml}"
+    );
+    assert!(
+        !xml.contains("w:val=\"0\"") && !xml.contains("w:val=\"false\""),
+        "explicit false on/off values are the defaults Word omits: {xml}"
+    );
+}
+
+/// Word stamps row `tblPrEx` top/bottom 0 only when the table margin does
+/// not already set a nonzero top or bottom. A nonzero value is left alone
+/// (red_strikethrough × plate_30: top 80, no tblPrEx).
+#[test]
+fn nonzero_table_vertical_margins_are_not_zeroed_on_rows() {
+    use jubarte::comparer::finalize::align_word_table_and_comment_chrome;
+
+    let mut dom = Dom::new();
+    let (root, _) = doc_body(
+        &mut dom,
+        "<w:tbl><w:tblPr><w:tblCellMar>\
+         <w:top w:w=\"80\" w:type=\"dxa\"/><w:bottom w:w=\"80\" w:type=\"dxa\"/>\
+         <w:left w:w=\"10\" w:type=\"dxa\"/><w:right w:w=\"10\" w:type=\"dxa\"/>\
+         </w:tblCellMar></w:tblPr><w:tr><w:tc><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+         <w:tbl><w:tblPr><w:tblCellMar>\
+         <w:left w:w=\"10\" w:type=\"dxa\"/><w:right w:w=\"10\" w:type=\"dxa\"/>\
+         </w:tblCellMar></w:tblPr><w:tr><w:tc><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+    );
+    align_word_table_and_comment_chrome(&mut dom, root);
+    let xml = dom.serialize_element(root);
+    let tables = xml.split("<w:tbl>").skip(1).collect::<Vec<_>>();
+    assert_eq!(tables.len(), 2, "{xml}");
+    assert!(
+        !tables[0].contains("tblPrEx"),
+        "nonzero top/bottom stays the table margin: {}",
+        tables[0]
+    );
+    assert!(
+        tables[1].contains("tblPrEx") && tables[1].contains("w:w=\"0\""),
+        "left/right-only margins still get Word's zero top and bottom: {}",
+        tables[1]
+    );
+}
