@@ -94,6 +94,16 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   the most text, instead of its first run, so a bold lead-in such as
   "(f) Notice of Inability to Comply." no longer makes the whole new
   paragraph bold.
+- Comments carried into a redline land on their own occurrence of repeated
+  text, not the first one: two comments on the same words in different
+  places no longer collapse into one (Word keeps all six in the M35
+  renumbered pair; jubarte kept four). A long commented range whose inside
+  changed now maps by the text at its two ends instead of being dropped.
+- Word mode keeps the built-in ids of styles whose id differs from their
+  name (`CommentText` for "annotation text", `CommentReference`,
+  `CommentSubject`, `MacroText`, `TOAHeading`, `TableofFigures`,
+  `TableofAuthorities`). Renaming them left `comments.xml` pointing at
+  undefined styles, which stripped the comment formatting.
 - An unchanged last paragraph after a replaced block came out inserted
   and deleted again when the documents' first paragraphs matched: the
   positional paragraph zip no longer pairs a paragraph whose identical

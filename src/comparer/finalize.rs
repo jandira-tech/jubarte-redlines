@@ -2397,9 +2397,11 @@ pub fn free_mesh_shared_title_token_in_mix(dom: &mut Dom, root: NodeId) {
             &del_prefix,
             &eq_label,
             &ins_after,
-            &author,
-            &date,
-            sample_rpr,
+            RevStamp {
+                author: &author,
+                date: &date,
+                sample_rpr,
+            },
         );
     }
 }
@@ -2449,8 +2451,16 @@ fn split_around_token(text: &str, label: &str) -> Option<(String, String)> {
     None
 }
 
+/// Who and when a rebuilt revision run is attributed to, and the run
+/// properties its text copies.
+#[derive(Clone, Copy)]
+struct RevStamp<'a> {
+    author: &'a str,
+    date: &'a str,
+    sample_rpr: Option<NodeId>,
+}
+
 /// Rebuild short-title MIX free-mesh body on `p`.
-#[allow(clippy::too_many_arguments)]
 fn rebuild_title_free_mesh(
     dom: &mut Dom,
     p: NodeId,
@@ -2458,25 +2468,14 @@ fn rebuild_title_free_mesh(
     del_prefix: &str,
     eq_label: &str,
     ins_after: &str,
-    author: &str,
-    date: &str,
-    sample_rpr: Option<NodeId>,
+    stamp: RevStamp<'_>,
 ) {
+    let sample_rpr = stamp.sample_rpr;
     let mut next_id = 1u32;
     // Word: ins_before (trim end space — space moves into EQ)
     let ib = ins_before.trim_end();
     if !ib.is_empty() {
-        add_revision_text_run(
-            dom,
-            p,
-            W::ins(),
-            ib,
-            false,
-            author,
-            date,
-            &mut next_id,
-            sample_rpr,
-        );
+        add_revision_text_run(dom, p, W::ins(), ib, false, stamp, &mut next_id);
     }
     let dp = del_prefix.trim_end();
     if !dp.is_empty() {
@@ -2486,10 +2485,12 @@ fn rebuild_title_free_mesh(
             W::del(),
             dp,
             true,
-            author,
-            date,
+            // del runs usually bare of fancy rPr
+            RevStamp {
+                sample_rpr: None,
+                ..stamp
+            },
             &mut next_id,
-            None, // del runs usually bare of fancy rPr
         );
     }
     // EQ with leading space + label (Word " document")
@@ -2506,32 +2507,24 @@ fn rebuild_title_free_mesh(
     dom.add(p, eq_r);
     // ins_after keeps leading space if any (" with:")
     if !ins_after.is_empty() {
-        add_revision_text_run(
-            dom,
-            p,
-            W::ins(),
-            ins_after,
-            false,
-            author,
-            date,
-            &mut next_id,
-            sample_rpr,
-        );
+        add_revision_text_run(dom, p, W::ins(), ins_after, false, stamp, &mut next_id);
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn add_revision_text_run(
     dom: &mut Dom,
     p: NodeId,
     wrapper: crate::xmllinq::XName,
     text: &str,
     deleted: bool,
-    author: &str,
-    date: &str,
+    stamp: RevStamp<'_>,
     next_id: &mut u32,
-    sample_rpr: Option<NodeId>,
 ) {
+    let RevStamp {
+        author,
+        date,
+        sample_rpr,
+    } = stamp;
     let w = dom.new_element(wrapper);
     dom.set_attribute_value(w, &W::author(), Some(author));
     dom.set_attribute_value(w, &W::date(), Some(date));
@@ -11423,9 +11416,11 @@ pub fn free_mesh_wholesale_body_mix(dom: &mut Dom, root: NodeId) {
             &ins_words,
             &del_words,
             &lcs,
-            &author,
-            &date,
-            sample_rpr,
+            RevStamp {
+                author: &author,
+                date: &date,
+                sample_rpr,
+            },
             trailing_period,
         );
     }
@@ -11496,18 +11491,20 @@ fn word_lcs_indices_eligible(a: &[String], b: &[String], boiler: &[&str]) -> Vec
 /// Rebuild free-mesh from word LCS. Emits: ins-runs, del-runs, EQ runs with
 /// single spaces. Order at each step: flush pending del then ins before EQ
 /// when both pending at an anchor (Word often shows del residual then ins).
-#[allow(clippy::too_many_arguments)]
 fn rebuild_body_free_mesh_lcs(
     dom: &mut Dom,
     p: NodeId,
     ins_words: &[String],
     del_words: &[String],
     lcs: &[(usize, usize)],
-    author: &str,
-    date: &str,
-    sample_rpr: Option<NodeId>,
+    stamp: RevStamp<'_>,
     trailing_period: bool,
 ) {
+    let RevStamp {
+        author,
+        date,
+        sample_rpr,
+    } = stamp;
     let mut next_id = 1u32;
     let mut ii = 0usize;
     let mut di = 0usize;
@@ -11872,47 +11869,20 @@ pub fn free_mesh_bookended_ins_del(dom: &mut Dom, root: NodeId) {
         }
         let mut next_id = 1u32;
         // Word order: INS before, DEL before, EQ, INS after, DEL after.
-        m460_push_rev_text(
-            dom,
-            p,
-            "ins",
-            &ins_before,
-            &author,
-            &date,
-            &mut next_id,
-            &None,
-        );
-        m460_push_rev_text(
-            dom,
-            p,
-            "del",
-            &del_before,
-            &author,
-            &date,
-            &mut next_id,
-            &del_rpr,
-        );
+        let ins_stamp = RevStamp {
+            author: &author,
+            date: &date,
+            sample_rpr: None,
+        };
+        let del_stamp = RevStamp {
+            sample_rpr: del_rpr,
+            ..ins_stamp
+        };
+        m460_push_rev_text(dom, p, "ins", &ins_before, ins_stamp, &mut next_id);
+        m460_push_rev_text(dom, p, "del", &del_before, del_stamp, &mut next_id);
         m460_push_eq_text(dom, p, anchor, &eq_rpr);
-        m460_push_rev_text(
-            dom,
-            p,
-            "ins",
-            &ins_after,
-            &author,
-            &date,
-            &mut next_id,
-            &None,
-        );
-        m460_push_rev_text(
-            dom,
-            p,
-            "del",
-            &del_after,
-            &author,
-            &date,
-            &mut next_id,
-            &del_rpr,
-        );
+        m460_push_rev_text(dom, p, "ins", &ins_after, ins_stamp, &mut next_id);
+        m460_push_rev_text(dom, p, "del", &del_after, del_stamp, &mut next_id);
         for c in suffix_clones {
             dom.add(p, c);
         }
@@ -11967,17 +11937,20 @@ fn m460_push_eq_text(dom: &mut Dom, p: NodeId, text: &str, sample_rpr: &Option<N
     dom.add(p, r);
 }
 
-#[allow(clippy::too_many_arguments)]
 fn m460_push_rev_text(
     dom: &mut Dom,
     p: NodeId,
     kind: &str,
     text: &str,
-    author: &str,
-    date: &str,
+    stamp: RevStamp<'_>,
     next_id: &mut u32,
-    sample_rpr: &Option<NodeId>,
 ) {
+    let RevStamp {
+        author,
+        date,
+        sample_rpr,
+    } = stamp;
+    let sample_rpr = &sample_rpr;
     if text.is_empty() {
         return;
     }

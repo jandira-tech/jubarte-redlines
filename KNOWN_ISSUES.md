@@ -78,7 +78,7 @@ through neurotic_docx_bench `scripts/word_redline.py`, and checked with
 No test is ignored on this item. Parity ladder after the fix: 207 pairs,
 0 NEW.
 
-## 3. Free-mesh double-consumption — one A-side atom claimed by two paragraphs
+## 3. Free-mesh double-consumption — one A-side atom claimed by two paragraphs — **FIXED, closed 2026-09-27**
 
 **Symptom (Ring 1, L0-original):** the del-stream no longer reconstructs A —
 a word appears twice where A has it once. `parity_ladder.py sweep` reports

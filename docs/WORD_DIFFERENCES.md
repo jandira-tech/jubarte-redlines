@@ -120,7 +120,11 @@ These are in Word's own redlines, so jubarte producing them is not a bug
 - a changed field laid out as the whole new field inserted, then the whole
   old field deleted;
 - a changed multi-paragraph table of contents laid out as the whole new TOC,
-  then the whole old TOC.
+  then the whole old TOC;
+- two paragraphs joined into one laid out as the first paragraph's mark
+  deleted and only the separator inserted, with the second paragraph's
+  words left unchanged (checked in Word 16 on 2026-09-28; jubarte matches
+  this in both modes since 0.10.0).
 
 Word's redlines never contain a complex field whose begin and end are in
 different revision states, or crossed fields. jubarte never emits either.

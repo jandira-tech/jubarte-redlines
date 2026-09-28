@@ -1015,10 +1015,7 @@ pub fn coalesce_recurse(
         } else {
             &[]
         };
-        let pict_props = aname == W::pict();
-        let recon = reconstruct_element(
-            dom, &g, ancestor, props, pict_props, level, settings, id_gen,
-        );
+        let recon = reconstruct_element(dom, &g, ancestor, props, level, settings, id_gen);
         out.push(recon);
     }
     out
@@ -1026,13 +1023,11 @@ pub fn coalesce_recurse(
 
 /// M4.E.6 — `ReconstructElement` (:6984): rebuild a container element, hoisting
 /// the named property children first, then the recursively-coalesced children.
-#[allow(clippy::too_many_arguments)]
 fn reconstruct_element(
     dom: &mut Dom,
     g: &[&ComparisonUnitAtom],
     ancestor: NodeId,
     props: &[&str],
-    pict_props: bool,
     level: usize,
     settings: &WmlComparerSettings,
     id_gen: &mut u32,
@@ -1044,7 +1039,7 @@ fn reconstruct_element(
         dom.set_attribute_value(ne, &an, Some(&av));
     }
     // hoist property children (in declared order)
-    if pict_props {
+    if aname == W::pict() {
         for p in dom.elements(ancestor, Some(&crate::namespaces::VML::name("shapetype"))) {
             let c = dom.clone_subtree(p);
             dom.add(ne, c);

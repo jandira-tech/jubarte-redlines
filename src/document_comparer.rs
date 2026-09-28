@@ -2858,6 +2858,16 @@ fn word_canonical_style_id(name: &str) -> String {
         "quote" => return "Quote".into(),
         "intense quote" => return "IntenseQuote".into(),
         "caption" => return "Caption".into(),
+        // Built-ins whose id is not their PascalCased name: the comment
+        // styles above all (B's comments.xml keeps `CommentReference`, and
+        // renaming it to `AnnotationReference` stranded every reference).
+        "annotation text" => return "CommentText".into(),
+        "annotation reference" => return "CommentReference".into(),
+        "annotation subject" => return "CommentSubject".into(),
+        "macro" => return "MacroText".into(),
+        "toa heading" => return "TOAHeading".into(),
+        "table of figures" => return "TableofFigures".into(),
+        "table of authorities" => return "TableofAuthorities".into(),
         "text body" => return "Textbody".into(),
         "preformatted text" => return "PreformattedText".into(),
         "document title" => return "DocumentTitle".into(),
@@ -5450,12 +5460,9 @@ fn compare_documents_impl(
     crate::comparer::comments::carry_comments(
         &mut dom,
         result_root,
-        &pkg1,
-        &main1,
-        &pkg2,
-        &main2,
-        &mut out,
-        &main1,
+        (&pkg1, &main1),
+        (&pkg2, &main2),
+        (&mut out, &main1),
         &settings.author_for_revisions,
     );
     if has_comments {
@@ -6825,6 +6832,30 @@ mod tests {
         assert_eq!(word_canonical_style_id("heading 1"), "Heading1");
         assert_eq!(word_canonical_style_id("document title"), "DocumentTitle");
         assert_eq!(word_canonical_style_id("my custom style"), "MyCustomStyle");
+    }
+
+    #[test]
+    fn word_canonical_style_id_keeps_builtin_ids_that_differ_from_their_names() {
+        // Word's own ids; the PascalCased name would rename a live built-in.
+        assert_eq!(
+            word_canonical_style_id("annotation reference"),
+            "CommentReference"
+        );
+        assert_eq!(word_canonical_style_id("annotation text"), "CommentText");
+        assert_eq!(
+            word_canonical_style_id("annotation subject"),
+            "CommentSubject"
+        );
+        assert_eq!(word_canonical_style_id("macro"), "MacroText");
+        assert_eq!(word_canonical_style_id("toa heading"), "TOAHeading");
+        assert_eq!(
+            word_canonical_style_id("table of figures"),
+            "TableofFigures"
+        );
+        assert_eq!(
+            word_canonical_style_id("table of authorities"),
+            "TableofAuthorities"
+        );
     }
 
     /// Word's style ids hold letters and digits only: "Normal (Web)" is

@@ -321,19 +321,87 @@ fn map_range(src: &[char], merged: &[char], r: &Range) -> Option<(usize, usize)>
         if needle.is_empty() {
             continue;
         }
-        if let Some(pos) = find_chars(merged, &needle) {
+        if let Some(pos) =
+            find_chars_nearest(merged, &needle, expected(src, merged, r.start, pre.len()))
+        {
             let s = pos + pre.len();
             return Some((s, s + inner.len()));
+        }
+    }
+    map_range_ends(src, merged, r)
+}
+
+/// Where a needle starting `pre` chars before source offset `at` should sit
+/// in `merged`, scaled by the two projections' lengths. Repeated text (a
+/// copied section under its own comments) maps to the copy at its own place.
+fn expected(src: &[char], merged: &[char], at: usize, pre: usize) -> usize {
+    let scaled = if src.is_empty() {
+        0
+    } else {
+        (at as u128 * merged.len() as u128 / src.len() as u128) as usize
+    };
+    scaled.saturating_sub(pre)
+}
+
+/// Longest head or tail of a range that anchors one of its ends.
+const END_ANCHOR_CHARS: usize = 40;
+
+/// Map a long range whose text changed inside (a comment over several
+/// paragraphs and tables): its start by context + head, its end by tail +
+/// context found after the start. The mapped span must stay within half to
+/// twice the source span, plus the anchors' slack.
+fn map_range_ends(src: &[char], merged: &[char], r: &Range) -> Option<(usize, usize)> {
+    let end = r.end.min(src.len());
+    let inner = &src[r.start..end];
+    if inner.len() <= 2 * END_ANCHOR_CHARS {
+        return None;
+    }
+    let head = &inner[..END_ANCHOR_CHARS];
+    let tail = &inner[inner.len() - END_ANCHOR_CHARS..];
+    for ctx in [40usize, 20, 10] {
+        let pre = &src[r.start.saturating_sub(ctx)..r.start];
+        let post = &src[end..(end + ctx).min(src.len())];
+        let start_needle: Vec<char> = pre.iter().chain(head).copied().collect();
+        let end_needle: Vec<char> = tail.iter().chain(post).copied().collect();
+        let target = expected(src, merged, r.start, pre.len());
+        let Some(pos) = find_chars_nearest(merged, &start_needle, target) else {
+            continue;
+        };
+        let s = pos + pre.len();
+        let Some(tail_at) = find_chars_from(merged, &end_needle, s + head.len()) else {
+            continue;
+        };
+        let e = tail_at + tail.len();
+        let span = e - s;
+        let slack = 2 * END_ANCHOR_CHARS;
+        if span + slack >= inner.len() / 2 && span <= 2 * inner.len() + slack {
+            return Some((s, e));
         }
     }
     None
 }
 
-fn find_chars(haystack: &[char], needle: &[char]) -> Option<usize> {
-    if needle.len() > haystack.len() {
+/// The occurrence of `needle` nearest to `target` (the earlier one on a tie).
+fn find_chars_nearest(haystack: &[char], needle: &[char], target: usize) -> Option<usize> {
+    let mut best: Option<usize> = None;
+    let mut from = 0;
+    while let Some(i) = find_chars_from(haystack, needle, from) {
+        if best.is_none_or(|b| i.abs_diff(target) < b.abs_diff(target)) {
+            best = Some(i);
+        }
+        if i >= target {
+            break;
+        }
+        from = i + 1;
+    }
+    best
+}
+
+fn find_chars_from(haystack: &[char], needle: &[char], from: usize) -> Option<usize> {
+    if needle.len() > haystack.len() || from > haystack.len() - needle.len() {
         return None;
     }
-    (0..=haystack.len() - needle.len()).find(|&i| haystack[i..i + needle.len()] == *needle)
+    (from..=haystack.len() - needle.len()).find(|&i| haystack[i..i + needle.len()] == *needle)
 }
 
 /// A counted text leaf in the merged body: the `w:t`/`w:delText` element, its
@@ -587,12 +655,10 @@ type FingerprintGroups = HashMap<String, Vec<(String, AnchorInterval)>>;
 
 /// Inject one side's anchor events into the merged body. Returns the ids and
 /// mapped intervals that were anchored.
-#[allow(clippy::too_many_arguments)]
 fn inject_side(
     dom: &mut Dom,
     result_root: NodeId,
-    src_pkg: &PartFs,
-    src_main: &str,
+    (src_pkg, src_main): (&PartFs, &str),
     b_side: bool,
     author: &str,
     id_map: &HashMap<String, String>,
@@ -1286,16 +1352,12 @@ fn select_anchor_aware_comments(out: &PartFs, anchored: &AnchoredRanges) -> Hash
 
 /// Entry point — run after the diff produced `result_root` but BEFORE it is
 /// serialized into `out` (anchors are injected into the result DOM).
-#[allow(clippy::too_many_arguments)]
 pub fn carry_comments(
     dom: &mut Dom,
     result_root: NodeId,
-    pkg1: &PartFs,
-    main1: &str,
-    pkg2: &PartFs,
-    main2: &str,
-    out: &mut PartFs,
-    out_main: &str,
+    (pkg1, main1): (&PartFs, &str),
+    (pkg2, main2): (&PartFs, &str),
+    (out, out_main): (&mut PartFs, &str),
     author: &str,
 ) {
     let ids_a = comment_ids_of(pkg1);
@@ -1306,7 +1368,15 @@ pub fn carry_comments(
     let no_map = HashMap::new();
     let anchored = if ids_b.is_empty() {
         // only A has comments; its parts are already in out (out is A's clone)
-        inject_side(dom, result_root, pkg1, main1, false, author, &no_map, None)
+        inject_side(
+            dom,
+            result_root,
+            (pkg1, main1),
+            false,
+            author,
+            &no_map,
+            None,
+        )
     } else if ids_a.is_empty()
         || b_carries_same_comments_as_a(pkg1, pkg2)
         || b_covers_comment_identities_of_a(pkg1, main1, pkg2, main2)
@@ -1317,18 +1387,18 @@ pub fn carry_comments(
         //      comment sets across redline sources.
         // Bare numeric-id superset alone is still not enough.
         install_parts_from(out, out_main, pkg2);
-        inject_side(dom, result_root, pkg2, main2, true, author, &no_map, None)
+        inject_side(dom, result_root, (pkg2, main2), true, author, &no_map, None)
     } else {
         // true union: B's parts as base + A-only comments appended
         install_parts_from(out, out_main, pkg2);
         let id_map = union_comments_xml(out, out_main, pkg1);
-        let mut anchored = inject_side(dom, result_root, pkg2, main2, true, author, &no_map, None);
+        let mut anchored =
+            inject_side(dom, result_root, (pkg2, main2), true, author, &no_map, None);
         let a_only: HashSet<String> = id_map.keys().cloned().collect();
         anchored.extend(inject_side(
             dom,
             result_root,
-            pkg1,
-            main1,
+            (pkg1, main1),
             false,
             author,
             &id_map,
@@ -1389,6 +1459,62 @@ mod tests {
     /// Splitting a run moves its trailing leaves into the new run; a later
     /// split of one of those leaves must happen in the run that now holds it,
     /// or the suffix lands before the moved text.
+    /// A comment over several paragraphs keeps its anchors when text inside
+    /// it changed: its ends map by their own context (the 23,600-char range
+    /// of docx_lots_of_comments_addition's comments 19 and 20).
+    #[test]
+    fn a_long_range_with_changed_text_inside_maps_by_its_ends() {
+        let chars = |s: &str| s.chars().collect::<Vec<_>>();
+        let head = "Word advantage: Track Changes controls, compare/combine, ";
+        let tail = "and every table after it stays inside the comment range.";
+        let src = chars(&format!(
+            "Intro text. {head}middle one two three {tail} Outro."
+        ));
+        let merged = chars(&format!(
+            "Intro text. {head}middle ONE TWO three {tail} Outro."
+        ));
+        let start = "Intro text. ".chars().count();
+        let end = src.len() - " Outro.".chars().count();
+        let r = Range {
+            id: "19".into(),
+            start,
+            end,
+        };
+        assert_eq!(map_range(&src, &merged, &r), Some((start, end)));
+        // The tail must follow the head: a merged text holding only the tail
+        // before the head has nowhere to end the range.
+        let swapped = chars(&format!("Intro text. {tail} Outro. {head}middle"));
+        assert_eq!(map_range(&src, &swapped, &r), None);
+    }
+
+    /// A copied section under its own comment maps to the copy, not to the
+    /// first section with the same text (docx_lots_of_comments_addition's
+    /// comments 19 and 20 landed on comments 3 and 4's range and were then
+    /// collapsed as duplicates).
+    #[test]
+    fn repeated_text_maps_to_the_occurrence_at_its_own_place() {
+        let chars = |s: &str| s.chars().collect::<Vec<_>>();
+        let section = "Word advantage: Track Changes controls.";
+        let src = chars(&format!("Intro. {section} Middle part. {section} End."));
+        let merged = chars(&format!(
+            "Intro. {section} Middle part added. {section} End."
+        ));
+        let second = format!("Intro. {section} Middle part. ").chars().count();
+        let len = section.chars().count();
+        let r = Range {
+            id: "19".into(),
+            start: second,
+            end: second + len,
+        };
+        let merged_second = format!("Intro. {section} Middle part added. ")
+            .chars()
+            .count();
+        assert_eq!(
+            map_range(&src, &merged, &r),
+            Some((merged_second, merged_second + len))
+        );
+    }
+
     /// Moved text belongs to A at its source and to B at its destination.
     #[test]
     fn each_side_counts_moved_text_once_at_its_own_location() {
