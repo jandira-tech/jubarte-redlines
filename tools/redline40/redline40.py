@@ -131,6 +131,20 @@ def run(args) -> int:
     if not jubarte.is_file():
         print(f"missing binary {jubarte}; cargo build --release", file=sys.stderr)
         return 2
+    # Pick the baseline before this run is appended, so a run can never be
+    # its own baseline (same label, or a later run reusing the label).
+    base = None
+    if args.against:
+        if args.against == args.label:
+            print(f"--label and --against are both {args.label!r}", file=sys.stderr)
+            return 2
+        for l in RUNS.read_text(encoding="utf-8").splitlines() if RUNS.exists() else []:
+            rec = json.loads(l)
+            if rec["label"] == args.against:
+                base = rec
+        if base is None:
+            print(f"no run labelled {args.against!r}", file=sys.stderr)
+            return 2
     rows = load_sample()
     work = Path(tempfile.mkdtemp(prefix="redline40_"))
     try:
@@ -199,16 +213,8 @@ def run(args) -> int:
         f.write(json.dumps(line, sort_keys=True) + "\n")
     print(f"{args.label}: n={line['n']} mean={line['mean']} median={line['median']} failures={len(failed)}")
 
-    if not args.against:
-        return 0
-    base = None
-    for l in RUNS.read_text(encoding="utf-8").splitlines():
-        rec = json.loads(l)
-        if rec["label"] == args.against:
-            base = rec
     if base is None:
-        print(f"no run labelled {args.against!r}", file=sys.stderr)
-        return 2
+        return 0
     bad = []
     for stem, v in per.items():
         b = base["per_pair"].get(stem, {}).get("score")

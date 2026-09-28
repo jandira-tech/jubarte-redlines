@@ -25,8 +25,8 @@
 > `comments_on_source_text_and_on_inserted_text_survive_compare`;
 > (2) patch 0005's "plain paragraph only" rule is replaced by a projection
 > that ignores zero-width markers and refuses only ranges crossing opaque
-> structures; (3) `expected_text` dropped in favor of the hash guard plus
-> unique anchors. Not implemented: `merge_paragraphs`, `format_paragraph`
+> structures; (3) `expected_text` dropped in favor of the hash guard (applied
+> when the plan supplies `source_sha256`) plus unique anchors. Not implemented: `merge_paragraphs`, `format_paragraph`
 > (E4 paragraph formatting), rich formatting on inline `insert`/`replace`,
 > `Preview.build`/`write_new_directory` (the CLI's `--out-dir` bundle covers
 > the atomic-write need for now). Known renderer gap: balloons for comments

@@ -45,7 +45,9 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   (`replace`, `insert`, `delete`, `comment`, `insert_paragraph`,
   `delete_paragraph`)
   to a copy, previews it, and writes the clean copy, the tracked redline
-  and a per-operation report. A plan is bound to the source's SHA-256; an
+  and a per-operation report. A plan that carries the source's SHA-256
+  (`source_sha256`) is refused for any other source; without it the plan
+  runs unguarded and the report flags that. An
   anchor that is not unique, or text inside a field (simple or complex,
   even one with an empty result), hyperlink, content control or revision,
   is refused. Comment text must be nonempty without control characters,
@@ -55,7 +57,8 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   pixels a page) and checks every output path before the first write.
 - Python: `jubarte_redlines.read()` returns a `Document` with inspect, edit,
   convert, compare and accept/reject methods, and `python -m
-  jubarte_redlines` exposes the same commands; `EditPlanError.message`
+  jubarte_redlines` exposes the same commands (compare is the explicit
+  `compare` subcommand there); `EditPlanError.message`
   carries the engine's detail.
 - Adoption guides, workflow examples and a document-operations agent skill.
 - `jubarte self-update [--check] [--yes] [--version X]` installs a GitHub

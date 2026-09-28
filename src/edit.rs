@@ -616,7 +616,8 @@ struct Transaction<'p> {
     outcomes: Vec<EditOutcome>,
     resolved: Vec<(usize, Resolved)>,
     comments: Vec<(u32, String)>,
-    next_comment_id: u32,
+    /// One past the highest source comment id; u64 so it cannot overflow.
+    next_comment_id: u64,
     comments_added: usize,
 }
 
@@ -692,7 +693,7 @@ impl<'p> Transaction<'p> {
                 .collect::<String>()
                 .to_uppercase()
         });
-        let next_comment_id = existing_comment_ids(&opened).map_or(0, |max| max + 1);
+        let next_comment_id = existing_comment_ids(&opened).map_or(0, |max| u64::from(max) + 1);
         Ok(Self {
             plan,
             source_sha256: source_hash,
@@ -1191,11 +1192,16 @@ impl<'p> Transaction<'p> {
 
     fn check_conflicts(&self) -> Result<(), EditError> {
         let mut deleted: Vec<usize> = Vec::new();
-        for (_, r) in &self.resolved {
+        for (i, r) in &self.resolved {
             if let Resolved::DeleteParagraph { para } = r {
+                if deleted.contains(para) {
+                    return Err(self.conflict(*i, "deletes a paragraph another operation deletes"));
+                }
                 deleted.push(*para);
             }
         }
+        self.check_deletions_leave_valid_containers(&deleted)?;
+        self.check_comment_ids_fit()?;
         let mut ranges: BTreeMap<usize, Vec<(usize, usize, usize)>> = BTreeMap::new();
         for (i, r) in &self.resolved {
             let (para, start, end) = match r {
@@ -1234,6 +1240,81 @@ impl<'p> Transaction<'p> {
                     return Err(self.conflict(i1, "overlaps an earlier edit's text range"));
                 }
             }
+        }
+        // A comment boundary strictly inside a changed range has no position
+        // in the edited text. Containing or touching an edit is fine.
+        for (i, r) in &self.resolved {
+            let Resolved::CommentRange {
+                para, start, end, ..
+            } = r
+            else {
+                continue;
+            };
+            let cuts =
+                ranges.get(para).into_iter().flatten().any(|&(s, e, _)| {
+                    e > s && ((*start > s && *start < e) || (*end > s && *end < e))
+                });
+            if cuts {
+                return Err(self.conflict(*i, "comment range cuts through an edited range"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Deletions, taken together, must leave every table cell they touch
+    /// ending in a paragraph, and the body with a paragraph.
+    fn check_deletions_leave_valid_containers(&self, deleted: &[usize]) -> Result<(), EditError> {
+        let dom = &self.opened.dom;
+        let gone: Vec<NodeId> = deleted.iter().map(|&p| self.paragraph_nodes[p]).collect();
+        for (i, r) in &self.resolved {
+            let Resolved::DeleteParagraph { para } = r else {
+                continue;
+            };
+            let node = self.paragraph_nodes[*para];
+            if let Some(&cell) = dom.ancestors(node, Some(&W::tc())).first() {
+                let children = dom.elements(cell, None);
+                let before = children.last().copied();
+                let after = children.into_iter().rev().find(|c| !gone.contains(c));
+                if after != before && !after.is_some_and(|c| dom.name_is(c, &W::p())) {
+                    return Err(self.conflict(
+                        *i,
+                        "the plan's deletions leave a table cell without a closing paragraph",
+                    ));
+                }
+            } else if dom
+                .elements(self.opened.body, Some(&W::p()))
+                .iter()
+                .all(|p| gone.contains(p))
+            {
+                return Err(self.conflict(
+                    *i,
+                    "the plan's deletions leave the body without a paragraph",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// New comments take ids after the source's highest; refuse a plan whose
+    /// comments would not fit in `w:id`'s 32 bits.
+    fn check_comment_ids_fit(&self) -> Result<(), EditError> {
+        let needed = self
+            .resolved
+            .iter()
+            .filter(|(_, r)| match r {
+                Resolved::Text { comment, .. } | Resolved::InsertParagraph { comment, .. } => {
+                    comment.is_some()
+                }
+                Resolved::CommentRange { .. } => true,
+                Resolved::DeleteParagraph { .. } => false,
+            })
+            .count() as u64;
+        if needed > 0 && self.next_comment_id + needed - 1 > u64::from(u32::MAX) {
+            return Err(err(
+                "INVALID_DOCUMENT",
+                None,
+                "the source's comment ids leave no room for new comments",
+            ));
         }
         Ok(())
     }
@@ -1393,7 +1474,8 @@ impl<'p> Transaction<'p> {
     }
 
     fn new_comment(&mut self, text: String) -> u32 {
-        let id = self.next_comment_id;
+        // check_conflicts proved every new id fits in u32.
+        let id = u32::try_from(self.next_comment_id).unwrap_or(u32::MAX);
         self.next_comment_id += 1;
         self.comments_added += 1;
         self.comments.push((id, text));
@@ -1556,7 +1638,9 @@ fn excerpt(text: &str, max: usize) -> String {
 
 /// Position `pos` of the source projection after `edits` were applied.
 /// `inclusive` shifts past insertions sitting exactly at `pos`; `own` is the
-/// operation whose own insertion must not shift its comment start.
+/// operation whose own insertion must not shift its comment start. Insertions
+/// sharing a point land in plan order, so `own` shifts only past the ones
+/// planned before it.
 fn new_position(edits: &[ScheduledEdit], pos: usize, inclusive: bool, own: Option<usize>) -> usize {
     let mut delta: i64 = 0;
     for (start, end, i, replacement, ..) in edits {
@@ -1566,7 +1650,7 @@ fn new_position(edits: &[ScheduledEdit], pos: usize, inclusive: bool, own: Optio
         let shifts = if start == end {
             // insertion
             if inclusive {
-                *start <= pos
+                *start < pos || (*start == pos && own.is_none_or(|o| *i < o))
             } else {
                 *start < pos
             }

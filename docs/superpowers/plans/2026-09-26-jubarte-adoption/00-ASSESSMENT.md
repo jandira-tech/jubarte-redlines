@@ -147,8 +147,10 @@ on the inspection tests added here, not on RESULTS.md. Say so.
   from the runs (zero-width markers ignored, `w:tab` as `\t`, `w:br` as `\n`)
   and refuse only when the matched range crosses a run that is not plain
   text or sits inside a field, hyperlink, content control or revision.
-- `TextEdit.expected_text` (echo the whole paragraph) is redundant once
-  `source_sha256` guards the snapshot; agents will get it wrong on smart quotes
+- `TextEdit.expected_text` (echo the whole paragraph) is redundant for a
+  plan that carries `source_sha256`, which guards the snapshot (the field is
+  optional; an unguarded plan relies on unique anchors alone and its report
+  says so); agents will get it wrong on smart quotes
   and pay tokens for it. Correction: drop it; `paragraph` accepts an id, an
   index, or a unique `starts_with`/`contains` selector.
 - Replacement text is inserted into the first affected `w:t`, so it inherits

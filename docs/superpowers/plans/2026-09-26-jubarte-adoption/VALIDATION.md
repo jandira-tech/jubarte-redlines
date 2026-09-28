@@ -3,11 +3,17 @@
 <!-- SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC -->
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 
-This document reports what was actually checked while preparing the plan. It is not a product release certificate. All product changes remain proposed patch artifacts; no product source/license change or publication was performed by this planning work.
+This document reports what was actually checked while preparing the plan. It is not a product release certificate.
 
-## Patch inventory
+> **Historical record.** The inventory below describes the planning bundle
+> as it stood before implementation. Patches 0001, 0005 and 0006 have since
+> been superseded by implemented source (see `patches/implemented/` and the
+> status notes further down). Do not apply the patches below to the current
+> tree; they are kept to show what was planned and checked at the time.
 
-Apply in numeric order after reviewing current source status. Patches 0001–0004 and 0006–0007 are independent of each other's source semantics; patch 0005 expects 0001's inspection/export/dependency changes. Never `git am` an old attached patch on top of the superseding inspection patch.
+## Patch inventory (historical)
+
+At planning time the patches were meant to be applied in numeric order after reviewing current source status. Patches 0001–0004 and 0006–0007 are independent of each other's source semantics; patch 0005 expects 0001's inspection/export/dependency changes. Never `git am` an old attached patch on top of the superseding inspection patch.
 
 | Patch | Concrete contents | Verification achieved | Remaining release work |
 |---|---|---|---|

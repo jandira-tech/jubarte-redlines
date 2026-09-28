@@ -901,3 +901,144 @@ fn edits_crossing_an_empty_complex_field_are_refused_but_text_beside_it_stays_ed
     let result = apply_plan(&source, &beside).unwrap();
     assert!(texts(&result.clean).iter().any(|t| t.contains("Prior")));
 }
+
+/// Visible text between `commentRangeStart` and `commentRangeEnd` of `id`.
+fn commented_text(xml: &str, id: u32) -> String {
+    let start = xml
+        .find(&format!(r#"<w:commentRangeStart w:id="{id}""#))
+        .expect("range start");
+    let end = xml
+        .find(&format!(r#"<w:commentRangeEnd w:id="{id}""#))
+        .expect("range end");
+    let mut text = String::new();
+    let mut in_tag = false;
+    for c in xml[start..end].chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            c if !in_tag => text.push(c),
+            _ => {}
+        }
+    }
+    text
+}
+
+#[test]
+fn deletions_are_checked_together_so_a_cell_keeps_a_closing_paragraph() {
+    // Two paragraphs in one cell: each deletion alone is fine, both empty it.
+    let table = format!(
+        "<w:tbl><w:tr><w:tc>{}{}</w:tc></w:tr></w:tbl>{}",
+        para("cell one"),
+        para("cell two"),
+        para("after")
+    );
+    let source = docx(&table);
+    let both = r#"[{"kind":"delete_paragraph","paragraph":{"index":0}},
+                   {"kind":"delete_paragraph","paragraph":{"index":1}}]"#;
+    let err = apply_plan(&source, &plan(&source, both)).unwrap_err();
+    assert_eq!(err.code, "OVERLAPPING_EDITS");
+    let one = r#"[{"kind":"delete_paragraph","paragraph":{"index":1}}]"#;
+    assert!(apply_plan(&source, &plan(&source, one)).is_ok());
+
+    // The same paragraph twice would report two deletions of one paragraph.
+    let twice = r#"[{"kind":"delete_paragraph","paragraph":{"index":2}},
+                    {"kind":"delete_paragraph","paragraph":{"index":2}}]"#;
+    let source2 = docx(&(para("keep") + &para("x") + &para("gone")));
+    assert_eq!(
+        apply_plan(&source2, &plan(&source2, twice))
+            .unwrap_err()
+            .code,
+        "OVERLAPPING_EDITS"
+    );
+
+    // A cell ending in a nested table after its last paragraph goes: Word
+    // requires the cell to close with a paragraph.
+    let nested = format!(
+        "<w:tbl><w:tr><w:tc>{}<w:tbl><w:tr><w:tc>{}</w:tc></w:tr></w:tbl>{}</w:tc></w:tr></w:tbl>{}",
+        para("outer first"),
+        para("inner"),
+        para("outer last"),
+        para("after")
+    );
+    let source3 = docx(&nested);
+    let last = r#"[{"kind":"delete_paragraph","paragraph":{"index":2}}]"#;
+    assert_eq!(
+        apply_plan(&source3, &plan(&source3, last))
+            .unwrap_err()
+            .code,
+        "OVERLAPPING_EDITS"
+    );
+    let first = r#"[{"kind":"delete_paragraph","paragraph":{"index":0}}]"#;
+    let kept = apply_plan(&source3, &plan(&source3, first)).unwrap();
+    assert_word_valid_package(&kept.clean);
+}
+
+#[test]
+fn a_comment_may_contain_or_touch_an_edit_but_not_cut_through_one() {
+    let source = docx(&para("retained experts and process servers"));
+    let cut = r#"[{"kind":"comment","paragraph":{"index":0},"find":"experts and","text":"n"},
+                  {"kind":"replace","paragraph":{"index":0},"find":"and process","replacement":"x"}]"#;
+    assert_eq!(
+        apply_plan(&source, &plan(&source, cut)).unwrap_err().code,
+        "OVERLAPPING_EDITS"
+    );
+    let contains = r#"[{"kind":"comment","paragraph":{"index":0},"find":"experts and process","text":"n"},
+                       {"kind":"replace","paragraph":{"index":0},"find":"and","replacement":"or"}]"#;
+    let result = apply_plan(&source, &plan(&source, contains)).unwrap();
+    let xml = part_string(&result.clean, "word/document.xml").unwrap();
+    assert_eq!(commented_text(&xml, 0), "experts or process");
+    let touches = r#"[{"kind":"comment","paragraph":{"index":0},"find":"experts","text":"n"},
+                      {"kind":"replace","paragraph":{"index":0},"find":" and","replacement":","}]"#;
+    let result = apply_plan(&source, &plan(&source, touches)).unwrap();
+    let xml = part_string(&result.clean, "word/document.xml").unwrap();
+    assert_eq!(commented_text(&xml, 0), "experts");
+}
+
+#[test]
+fn a_comment_on_the_first_of_two_inserts_at_one_point_anchors_its_own_text() {
+    let source = docx(&para("Sections 1(g), 2(e), 3 survive."));
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"kind":"insert","paragraph":{"index":0},"after":"1(g), ","text":"2(c), ","comment":"first"},
+                {"kind":"insert","paragraph":{"index":0},"after":"1(g), ","text":"2(d), ","comment":"second"}]"#,
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        texts(&result.clean)[0],
+        "Sections 1(g), 2(c), 2(d), 2(e), 3 survive."
+    );
+    let xml = part_string(&result.clean, "word/document.xml").unwrap();
+    assert_eq!(commented_text(&xml, 0), "2(c), ");
+    assert_eq!(commented_text(&xml, 1), "2(d), ");
+}
+
+#[test]
+fn comment_ids_at_the_top_of_the_range_refuse_new_comments_only() {
+    let comments = format!(
+        r#"<w:comments xmlns:w="{}"><w:comment w:id="4294967295" w:author="O" w:date="2020-01-01T00:00:00Z">{}</w:comment></w:comments>"#,
+        common::docx::W_NS,
+        para("Existing"),
+    );
+    let source = common::docx::docx_with(
+        &para("Contract text"),
+        &[common::docx::Part {
+            name: "word/comments.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            xml: &comments,
+        }],
+    );
+    let note = r#"[{"kind":"comment","paragraph":{"index":0},"find":"Contract","text":"n"}]"#;
+    assert_eq!(
+        preview_plan(&source, &plan(&source, note))
+            .unwrap_err()
+            .code,
+        "INVALID_DOCUMENT"
+    );
+    let plain =
+        r#"[{"kind":"replace","paragraph":{"index":0},"find":"text","replacement":"terms"}]"#;
+    assert!(apply_plan(&source, &plan(&source, plain)).is_ok());
+}

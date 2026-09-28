@@ -6,8 +6,8 @@ license: Proprietary. LICENSE.txt has complete terms
 
 # DOCX with jubarte: read, edit as tracked changes, verify
 
-`jubarte` is one binary (or `python -m jubarte_redlines`, same commands, same
-flags, same files) that reads a `.docx` into addressable paragraphs, applies a
+`jubarte` is one binary (or `python -m jubarte_redlines`, the same commands
+and files; only compare differs, see below) that reads a `.docx` into addressable paragraphs, applies a
 plan of exact edits as Word tracked changes with comments, produces the clean
 copy, and renders pages to PDF and PNG from its own layout engine. You never
 touch `word/document.xml`.
@@ -18,7 +18,7 @@ touch `word/document.xml`.
 | Edit (tracked changes + comments) | `jubarte edit file.docx --plan plan.json --out-dir review --pdf --png` |
 | Look at pages | `jubarte convert file.docx --png --dpi 100` then `Read` the PNGs |
 | Page count / page text | `jubarte convert file.docx --png --report pages.json` |
-| Compare two versions | `jubarte a.docx b.docx -o redline.docx --author "Name"` |
+| Compare two versions | `jubarte a.docx b.docx -o redline.docx --author "Name"` (Python: `python -m jubarte_redlines compare a.docx b.docx -o redline.docx --author "Name"`) |
 | Clean copy of a redline | `jubarte accept redline.docx -o clean.docx` (or `reject`) |
 | What can this build do | `jubarte capabilities --json` |
 
@@ -150,6 +150,8 @@ Gotchas:
 
 ```bash
 jubarte original.docx revised.docx -o redline.docx --author "Legal"
+# Python CLI: compare is a subcommand there
+python -m jubarte_redlines compare original.docx revised.docx -o redline.docx --author "Legal"
 jubarte revisions redline.docx --json
 jubarte accept redline.docx -o clean.docx
 jubarte reject redline.docx -o base.docx
@@ -175,5 +177,5 @@ Then verify with `jubarte convert output.docx --png --dpi 100` and `Read` the pa
 ## Dependencies
 
 `jubarte` (single binary) or `pip install jubarte-redlines` (`python -m
-jubarte_redlines`, same commands) · `docx` (npm) for new documents. Legacy
+jubarte_redlines`, same commands; compare is `compare A B` there) · `docx` (npm) for new documents. Legacy
 `.doc` is not read; ask for a `.docx`.
