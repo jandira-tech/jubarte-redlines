@@ -30461,6 +30461,27 @@ fn shipped_docx_to_pdf_places_comment_on_range_page() {
 }
 
 #[test]
+fn a_comment_anchored_inside_an_insertion_becomes_a_pdf_note() {
+    // Edit plans and the comparer put the comment range inside the w:ins
+    // of the text it comments on, which Word accepts.
+    let body = "<w:p><w:r><w:t xml:space=\"preserve\">Seuls les dossiers </w:t></w:r>\
+           <w:ins w:id=\"1\" w:author=\"Claude\" w:date=\"2026-09-28T12:00:00Z\">\
+             <w:commentRangeStart w:id=\"4\"/>\
+             <w:r><w:t>complets</w:t></w:r>\
+             <w:commentRangeEnd w:id=\"4\"/>\
+             <w:r><w:rPr><w:rStyle w:val=\"CommentReference\"/></w:rPr>\
+               <w:commentReference w:id=\"4\"/></w:r>\
+           </w:ins>\
+           <w:r><w:t xml:space=\"preserve\"> seront analyses.</w:t></w:r></w:p><w:sectPr/>";
+    let comments = comments_part("4", "Claude", "Added per policy");
+    let pdf = docx_to_pdf(&comments_docx(body, &comments)).expect("convert");
+    let notes = pdf_notes(&pdf);
+    assert_eq!(notes.len(), 1, "notes={notes:?}");
+    assert!(notes[0].contents.contains("Added per policy"), "{notes:?}");
+    assert!(notes[0].author.contains("Claude"), "{notes:?}");
+}
+
+#[test]
 fn shipped_docx_to_pdf_migrates_word_based_comments() {
     let path = "../neurotic_docx_bench/corpus/word_based/docx_source/comments.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert word_based comments");

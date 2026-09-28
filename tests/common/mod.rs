@@ -116,12 +116,12 @@ fn canonicalize_xml(bytes: &[u8]) -> String {
             }
             Ok(Event::End(e)) => {
                 out.push_str("</");
-                out.push_str(&String::from_utf8_lossy(e.name().as_ref()));
+                out.push_str(e.name().into_inner());
                 out.push('>');
             }
             Ok(Event::Text(e)) => {
                 let raw = e.into_inner();
-                let s = String::from_utf8_lossy(&raw);
+                let s = raw;
                 if !s.trim().is_empty() {
                     // significant text — keep verbatim (leading/trailing spaces matter in w:t)
                     out.push_str(&s);
@@ -129,13 +129,13 @@ fn canonicalize_xml(bytes: &[u8]) -> String {
             }
             Ok(Event::CData(e)) => {
                 out.push_str("<![CDATA[");
-                out.push_str(&String::from_utf8_lossy(&e.into_inner()));
+                out.push_str(&e.into_inner());
                 out.push_str("]]>");
             }
             Ok(Event::GeneralRef(e)) => {
                 // Entity / character reference (e.g. &amp;, &#65;) — re-emit verbatim.
                 out.push('&');
-                out.push_str(&String::from_utf8_lossy(&e.into_inner()));
+                out.push_str(&e.into_inner());
                 out.push(';');
             }
             // Drop decl / comments / PIs / doctype — not structurally meaningful.
@@ -152,18 +152,18 @@ fn canonicalize_xml(bytes: &[u8]) -> String {
 }
 
 fn emit_start(out: &mut String, e: &BytesStart, self_closing: bool, rev_counter: &mut u64) {
-    let qname = String::from_utf8_lossy(e.name().as_ref()).into_owned();
+    let qname = e.name().into_inner().to_string();
     let renumber_id = REVISION_ELEMENTS.contains(&local_name(&qname));
 
     // Collect, filter, and sort attributes.
     let mut attrs: Vec<(String, String)> = Vec::new();
     for a in e.attributes().with_checks(false) {
         let a = a.expect("attribute");
-        let key = String::from_utf8_lossy(a.key.as_ref()).into_owned();
+        let key = a.key.into_inner().to_string();
         if is_volatile_attr(&key) {
             continue;
         }
-        let val = String::from_utf8_lossy(&a.value).into_owned();
+        let val = a.value.into_owned();
         if renumber_id && key == "w:id" {
             *rev_counter += 1;
             attrs.push((key, rev_counter.to_string()));

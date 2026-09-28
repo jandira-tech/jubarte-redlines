@@ -17,6 +17,7 @@
 //! bindings over them) admit with [`InputLimits::default`]. The redline
 //! comparer keeps its historical tolerance.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::io::{Cursor, Read};
@@ -338,16 +339,36 @@ fn check_part_name(name: &str) -> Result<(), AdmissionError> {
     Ok(())
 }
 
+/// A part's text for scanning. Word writes UTF-8, but a part may be UTF-16
+/// with a byte-order mark (SharePoint's `customXml` items often are) and
+/// Word opens it, so it is transcoded; other bytes decode lossily, as the
+/// rest of the engine reads them.
+fn part_text(xml: &[u8]) -> Cow<'_, str> {
+    let utf16 = |rest: &[u8], unit: fn([u8; 2]) -> u16| {
+        let units = rest.chunks_exact(2).map(|pair| unit([pair[0], pair[1]]));
+        Cow::Owned(
+            char::decode_utf16(units)
+                .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
+                .collect(),
+        )
+    };
+    match xml {
+        [0xFF, 0xFE, rest @ ..] => utf16(rest, u16::from_le_bytes),
+        [0xFE, 0xFF, rest @ ..] => utf16(rest, u16::from_be_bytes),
+        _ => String::from_utf8_lossy(xml),
+    }
+}
+
 /// Well-formed enough to scan, and no deeper than `max_depth` elements.
 fn check_xml_depth(name: &str, xml: &[u8], max_depth: usize) -> Result<(), AdmissionError> {
     let invalid =
         |why: String| AdmissionError::new(AdmissionErrorKind::InvalidXml, format!("{name}: {why}"));
-    let mut reader = Reader::from_reader(xml);
+    let text = part_text(xml);
+    let mut reader = Reader::from_str(&text);
     reader.config_mut().check_end_names = false;
-    let mut buf = Vec::new();
     let mut depth = 0usize;
     loop {
-        match reader.read_event_into(&mut buf) {
+        match reader.read_event() {
             Ok(Event::Start(_)) => {
                 depth += 1;
                 if depth > max_depth {
@@ -359,7 +380,6 @@ fn check_xml_depth(name: &str, xml: &[u8], max_depth: usize) -> Result<(), Admis
             Ok(_) => {}
             Err(e) => return Err(invalid(e.to_string())),
         }
-        buf.clear();
     }
 }
 
@@ -375,7 +395,7 @@ fn main_part<R: Read + std::io::Seek>(
         .get("[content_types].xml")
         .ok_or_else(|| AdmissionError::new(K::UnsupportedPackage, "no [Content_Types].xml"))?;
     let from_rels = kept.get("_rels/.rels").and_then(|rels| {
-        elements(rels, b"Relationship")
+        elements(rels, "Relationship")
             .into_iter()
             .find_map(|attrs| {
                 let is_main = attrs
@@ -413,7 +433,7 @@ fn main_part<R: Read + std::io::Seek>(
 /// else the Default for its extension.
 fn content_type_of(types: &[u8], part: &str) -> Option<String> {
     let wanted = format!("/{part}");
-    let overridden = elements(types, b"Override").into_iter().find_map(|attrs| {
+    let overridden = elements(types, "Override").into_iter().find_map(|attrs| {
         attrs
             .get("PartName")
             .filter(|p| p.eq_ignore_ascii_case(&wanted))
@@ -421,7 +441,7 @@ fn content_type_of(types: &[u8], part: &str) -> Option<String> {
     });
     overridden.or_else(|| {
         let ext = part.rsplit_once('.')?.1;
-        elements(types, b"Default").into_iter().find_map(|attrs| {
+        elements(types, "Default").into_iter().find_map(|attrs| {
             attrs
                 .get("Extension")
                 .filter(|e| e.eq_ignore_ascii_case(ext))
@@ -431,18 +451,18 @@ fn content_type_of(types: &[u8], part: &str) -> Option<String> {
 }
 
 /// Attributes of every element with local name `local` (namespace ignored).
-fn elements(xml: &[u8], local: &[u8]) -> Vec<BTreeMap<String, String>> {
-    let mut reader = Reader::from_reader(xml);
-    let mut buf = Vec::new();
+fn elements(xml: &[u8], local: &str) -> Vec<BTreeMap<String, String>> {
+    let text = part_text(xml);
+    let mut reader = Reader::from_str(&text);
     let mut found = Vec::new();
     loop {
-        match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(e) | Event::Empty(e)) if e.local_name().as_ref() == local => {
+        match reader.read_event() {
+            Ok(Event::Start(e) | Event::Empty(e)) if e.local_name().into_inner() == local => {
                 let attrs = e
                     .attributes()
                     .flatten()
                     .filter_map(|a| {
-                        let key = String::from_utf8(a.key.local_name().as_ref().to_vec()).ok()?;
+                        let key = a.key.local_name().into_inner().to_string();
                         let value = a
                             .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                             .ok()?
@@ -455,7 +475,6 @@ fn elements(xml: &[u8], local: &[u8]) -> Vec<BTreeMap<String, String>> {
             Ok(Event::Eof) | Err(_) => return found,
             Ok(_) => {}
         }
-        buf.clear();
     }
 }
 
@@ -798,6 +817,35 @@ mod tests {
         let broken = docx_with(&[("word/broken.xml", b"<a><b attr=\"x></a>")]);
         assert_eq!(
             kind(&broken, InputLimits::default()),
+            AdmissionErrorKind::InvalidXml
+        );
+    }
+
+    #[test]
+    fn utf16_and_non_utf8_parts_are_scanned_not_refused() {
+        // SharePoint writes customXml items as UTF-16 and Word opens them;
+        // a stray Latin-1 byte decodes lossily, as the engine reads it.
+        let utf16 = |xml: &str, le: bool| -> Vec<u8> {
+            let bom = if le { [0xFF, 0xFE] } else { [0xFE, 0xFF] };
+            bom.into_iter()
+                .chain(
+                    xml.encode_utf16()
+                        .flat_map(|u| if le { u.to_le_bytes() } else { u.to_be_bytes() }),
+                )
+                .collect()
+        };
+        let item = r#"<?xml version="1.0" encoding="utf-16"?><p:properties xmlns:p="urn:x"><p:a>é</p:a></p:properties>"#;
+        for le in [true, false] {
+            let bytes = docx_with(&[("customXml/item1.xml", &utf16(item, le))]);
+            assert!(admit(&bytes, InputLimits::default()).is_ok(), "le={le}");
+        }
+        let latin1 = docx_with(&[("word/latin1.xml", b"<a>caf\xe9</a>")]);
+        assert!(admit(&latin1, InputLimits::default()).is_ok());
+        // The depth budget still applies through the transcoding.
+        let deep = format!("{}{}", "<a>".repeat(300), "</a>".repeat(300));
+        let deep = docx_with(&[("customXml/item2.xml", &utf16(&deep, true))]);
+        assert_eq!(
+            kind(&deep, InputLimits::default()),
             AdmissionErrorKind::InvalidXml
         );
     }

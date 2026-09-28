@@ -96,6 +96,14 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   updates in the background. Build with `--no-default-features --features
   cli` for a binary without it (docs/SELF_UPDATE.md).
 
+### Changed
+
+- quick-xml 0.41 → 0.42 for input admission and XML checks. Admission now
+  transcodes UTF-16 parts (SharePoint `customXml` items, which Word opens)
+  before scanning them, so the new release's UTF-8 validation refuses none
+  of the 500 fixture documents; bytes that are not UTF-8 still decode
+  lossily, as before.
+
 ### Fixed
 
 - Changes in a header or footer that carries a relationship (a logo, a

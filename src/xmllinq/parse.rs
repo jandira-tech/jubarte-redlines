@@ -450,12 +450,12 @@ pub fn validate_xml(xml: &str) -> Result<(), String> {
             }
             Event::DocType(_) => return Err("DTD declarations are unsupported".to_string()),
             Event::GeneralRef(reference) => {
-                let name = std::str::from_utf8(reference.as_ref()).map_err(|e| e.to_string())?;
+                let name: &str = &reference;
                 if depth == 0 || decode_entity(name).is_none() {
                     return Err(format!("unsupported XML entity reference: {name}"));
                 }
             }
-            Event::Text(text) if depth == 0 && text.iter().any(|b| !b.is_ascii_whitespace()) => {
+            Event::Text(text) if depth == 0 && text.bytes().any(|b| !b.is_ascii_whitespace()) => {
                 return Err("text outside XML root".to_string());
             }
             Event::CData(_) if depth == 0 => return Err("CDATA outside XML root".to_string()),

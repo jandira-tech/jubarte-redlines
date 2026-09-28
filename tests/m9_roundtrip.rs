@@ -58,22 +58,22 @@ fn reconstruct(docx: &[u8]) -> (String, String) {
     loop {
         match reader.read_event() {
             Ok(Event::Start(e)) => match e.name().as_ref() {
-                b"w:ins" => ins += 1,
-                b"w:del" => del += 1,
-                b"w:delText" => in_del_text += 1,
-                b"w:t" => in_t += 1,
+                "w:ins" => ins += 1,
+                "w:del" => del += 1,
+                "w:delText" => in_del_text += 1,
+                "w:t" => in_t += 1,
                 _ => {}
             },
             Ok(Event::End(e)) => match e.name().as_ref() {
-                b"w:ins" => ins -= 1,
-                b"w:del" => del -= 1,
-                b"w:delText" => in_del_text -= 1,
-                b"w:t" => in_t -= 1,
+                "w:ins" => ins -= 1,
+                "w:del" => del -= 1,
+                "w:delText" => in_del_text -= 1,
+                "w:t" => in_t -= 1,
                 _ => {}
             },
             Ok(Event::Text(t)) => {
                 let raw = t.into_inner();
-                let s = String::from_utf8_lossy(&raw).into_owned();
+                let s = raw.into_owned();
                 if in_del_text > 0 {
                     orig.push_str(&s); // deleted == original-only
                 } else if in_t > 0 && ins > 0 {

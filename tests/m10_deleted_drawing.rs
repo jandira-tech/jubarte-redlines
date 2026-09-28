@@ -28,7 +28,7 @@ use quick_xml::name::{Namespace, ResolveResult};
 
 /// WordprocessingML main namespace — OOXML validity is keyed on this URI, not on
 /// the `w:` prefix, so the scan resolves namespaces instead of matching prefixes.
-const W_NS: &[u8] = b"http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
 const STRICT_ORIGINAL: &[u8] = include_bytes!("fixtures/strict/Strict01.docx");
 const MODIFIED: &[u8] = include_bytes!("fixtures/strict/sd-2517-localized-heading-styles.docx");
@@ -57,21 +57,21 @@ fn w_t_under_w_del(docx: &[u8]) -> (usize, Vec<String>) {
     loop {
         match reader.read_resolved_event() {
             Ok((ns, Event::Start(e))) if is_w(&ns) => match e.local_name().as_ref() {
-                b"del" => del_depth += 1,
-                b"t" if del_depth > 0 => {
+                "del" => del_depth += 1,
+                "t" if del_depth > 0 => {
                     count += 1;
                     in_offending_t = true;
                 }
                 _ => {}
             },
             Ok((ns, Event::End(e))) if is_w(&ns) => match e.local_name().as_ref() {
-                b"del" => del_depth -= 1,
-                b"t" => in_offending_t = false,
+                "del" => del_depth -= 1,
+                "t" => in_offending_t = false,
                 _ => {}
             },
             Ok((_, Event::Text(t))) if in_offending_t && samples.len() < 5 => {
                 let raw = t.into_inner();
-                let s = String::from_utf8_lossy(&raw).trim().to_string();
+                let s = raw.trim().to_string();
                 if !s.is_empty() {
                     samples.push(s);
                 }

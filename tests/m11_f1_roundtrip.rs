@@ -63,19 +63,19 @@ fn reconstruct(docx: &[u8]) -> (String, String) {
     loop {
         match r.read_event() {
             Ok(Event::Start(e)) => match e.name().as_ref() {
-                b"w:ins" => ins += 1,
-                b"w:delText" => dt += 1,
-                b"w:t" => t += 1,
+                "w:ins" => ins += 1,
+                "w:delText" => dt += 1,
+                "w:t" => t += 1,
                 _ => {}
             },
             Ok(Event::End(e)) => match e.name().as_ref() {
-                b"w:ins" => ins -= 1,
-                b"w:delText" => dt -= 1,
-                b"w:t" => t -= 1,
+                "w:ins" => ins -= 1,
+                "w:delText" => dt -= 1,
+                "w:t" => t -= 1,
                 _ => {}
             },
             Ok(Event::Text(x)) => {
-                let s = String::from_utf8_lossy(&x.into_inner()).into_owned();
+                let s = x.into_inner().into_owned();
                 if dt > 0 {
                     o.push_str(&s);
                 } else if t > 0 && ins > 0 {

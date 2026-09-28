@@ -33,9 +33,9 @@
 > a deleted mark; the comparer now shows a join as Word Compare does: first
 > mark deleted, separator inserted) and `format` on inline `insert`/`replace`.
 > Not implemented: `Preview.build`/`write_new_directory` (the CLI's `--out-dir` bundle covers
-> the atomic-write need for now). Known renderer gap: balloons for comments
-> anchored inside inserted runs are not painted (the comments are in the
-> file). Verified: `tests/edit_plan.rs` (18), module unit tests.
+> the atomic-write need for now). Comments anchored inside inserted runs
+> become PDF notes like any other comment (the renderer gap once noted here
+> no longer reproduces). Verified: `tests/edit_plan.rs` (18), module unit tests.
 
 <!-- SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC -->
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->

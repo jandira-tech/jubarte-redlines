@@ -264,7 +264,9 @@ Known gaps found while verifying, left open on purpose:
   paragraphs but not for comments anchored inside inserted runs (the
   comparer places `commentRangeStart` inside `w:ins`, which Word accepts).
   The comments are in the DOCX; `jubarte inspect` counts them. Renderer work,
-  not edit work.
+  not edit work. (Closed on release/0.10: re-checked with an edit plan whose
+  comments sit inside `w:ins`; every comment becomes a PDF note on its range,
+  locked by `a_comment_anchored_inside_an_insertion_becomes_a_pdf_note`.)
 - Compare-based redlines show a long replacement as a word-level diff, as
   Word Compare does. (Closed on release/0.10: `replace` takes
   `"whole": true`, which shows the whole old clause deleted and then the
