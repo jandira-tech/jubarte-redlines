@@ -15,12 +15,11 @@ Engine defects and unresolved design conflicts. Tests covering them are marked
 >
 > **Re-checked 2026-09-27 (0.9.3):** item 3's named pairs and the six
 > later text round-trip failures now reconstruct. Empty paragraph-property
-> shells are left out; that removed 11 of the new ladder keys. The parity
-> ladder on this tree still reports 21 new keys, all on the rungs past a
-> matching operation sequence (revision counts, and element names Word
-> writes that this engine does not, including `proofErr` and header
-> references). Those keys are not blessed. Items 1, 2, and 5 were not
-> re-opened. Item 4 is still the Ring 2 ratchet.
+> shells are left out. A sweep of the 207-pair word-based corpus reports
+> 0 NEW on every rung, with `tools/parity_baseline.tsv` left as it was.
+> Spellcheck marks, the pagination cache, and header or footer references
+> Word writes on its own are outside the histogram. Items 1, 2, and 5
+> stay as recorded below. Item 4 is still the Ring 2 ratchet.
 
 ## 1. MovedSource / `w:moveFrom` text kind — **SETTLED 2026-07-16 (Word wins)**
 
@@ -97,12 +96,12 @@ comments redline puts the deleted section back before the table that
 repeats its heading, which is the original's order. Eleven empty
 paragraph-property shells are gone (blue centered title × blue italic,
 center bold × clear formatting, and nine of the same shape). The 21 keys
-that remain are the next rung after an `L1-opseq` match (revision-element
-counts, and element names Word writes that this engine does not, including
-`proofErr` and header references). One of those 21 is a live pilcrow mark
-(`w:rPr` / `w:ins`) on italic-and-underline × italic-subscript; the shell
-strip leaves that mark in place. They are not this double-consumption,
-and the July baseline was not rewritten to hide them.
+on the rungs after a matching operation sequence are gone too (sweep of
+207 pairs on 2026-09-27, 0 NEW). That set included the live pilcrow on
+italic-and-underline × italic-subscript, revision-count mismatches, and
+element names Word writes on its own (`proofErr`, `lastRenderedPageBreak`,
+`footerReference`, `headerReference`). The ladder leaves those four names
+out of the histogram. `tools/parity_baseline.tsv` is unchanged.
 
 ## 4. Internal `Unid` scratch ships as an undeclared `w:Unid` attribute
 

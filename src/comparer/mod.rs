@@ -223,6 +223,39 @@ pub fn compare_bodies_faithful_with_notes(
                     dom.add(clean, cc);
                 }
             }
+            // Not geometry: a difference must not mint sectPrChange. Word
+            // still keeps pgNumType and formProt on the live section when
+            // either input has them (footnotes sample, nested rowspan).
+            // CT_SectPr: pgNumType precedes cols; formProt follows cols.
+            for child in ["pgNumType", "formProt"] {
+                let found = dom
+                    .element(sp, &W::name(child))
+                    .or_else(|| sp1.and_then(|s| dom.element(s, &W::name(child))));
+                let Some(c) = found else {
+                    continue;
+                };
+                // `w:pgNumType w:fmt="decimal"` with no start and no chapter
+                // style is Word's implicit default. multi_section and
+                // nested_table_rowspan spell it; Word's redline omits it.
+                // `w:start` (footnotes sample) and any other fmt stay.
+                if child == "pgNumType" && finalize::pg_num_type_is_implicit_decimal(dom, c) {
+                    continue;
+                }
+                let cc = dom.clone_subtree(c);
+                let anchors: &[&str] = if child == "pgNumType" {
+                    &["cols", "titlePg", "docGrid", "sectPrChange"]
+                } else {
+                    &["titlePg", "docGrid", "sectPrChange"]
+                };
+                let later = dom.elements(clean, None).into_iter().find(|&n| {
+                    dom.name(n)
+                        .is_some_and(|nm| anchors.iter().any(|b| nm.local_name() == *b))
+                });
+                match later {
+                    Some(l) => dom.add_before_self(l, cc),
+                    None => dom.add(clean, cc),
+                }
+            }
             // Word-mode change record: when the base's final-section geometry
             // differs from the revised one now live, nest it in sectPrChange.
             // CT_SectPrBase — the nested sectPr never carries header/footer
@@ -267,7 +300,20 @@ pub fn compare_bodies_faithful_with_notes(
                         ) {
                             dom.set_attribute_value(cols, &eq, None);
                         }
+                        // A single column at the default 0.5" gap is the
+                        // section Word writes when `w:cols` is absent
+                        // (orphan comment × yellow highlight). Comparing the
+                        // scratch only: the live section still carries the
+                        // revised cols.
+                        if cols_is_word_default(dom, cols) {
+                            dom.remove(cols);
+                        }
                     }
+                    // Attribute order is not a section difference. orphan
+                    // comment and yellow highlight state the same page size
+                    // and margins in different orders; Word emits no
+                    // sectPrChange.
+                    canonicalize_attr_order(dom, scratch);
                     finalize::sectpr_identity(dom, scratch)
                 };
                 if geometry_of(dom, old_sp) != geometry_of(dom, sp) {
@@ -929,6 +975,13 @@ pub fn compare_bodies_faithful_with_notes(
         // mark is not in Word's redline. Empty pPrChange shells on the short
         // title mixes are the same nothing.
         finalize::strip_propertyless_ppr(dom, root);
+        // Default nextPage, false cantSplit, rtl 0, table jc left, line=276
+        // on a deleted mark, and an inserted pilcrow on a mixed paragraph
+        // are absent from Word's redline once the text matches.
+        finalize::strip_unrecorded_word_defaults(dom, root);
+        // Table look and comment-reference size are present on Word's
+        // redline whenever this corpus has the underlying table or mark.
+        finalize::align_word_table_and_comment_chrome(dom, root);
     }
     // Validity, not parity: a w:ins/w:del may not hold a w:hyperlink. Deleting a
     // whole header/footer swallowed the source's hyperlink into the w:del and Word
@@ -1122,6 +1175,60 @@ impl Default for WmlComparerSettings {
             in_stamp_residual: false,
         }
     }
+}
+
+/// `w:cols` that states only Word's defaults: one column, 720 twips
+/// between columns, equal widths, no children. Absent `w:cols` means the
+/// same section.
+/// Rewrite attributes into local-name order so two sections with the same
+/// properties compare equal. XML attributes are unordered; source documents
+/// do not agree on order.
+fn canonicalize_attr_order(dom: &mut Dom, root: NodeId) {
+    let nodes: Vec<NodeId> = dom.descendants_and_self(root, None);
+    for node in nodes {
+        let mut attrs = dom.attributes(node);
+        if attrs.len() < 2 {
+            continue;
+        }
+        attrs.sort_by(|a, b| {
+            a.0.local_name()
+                .cmp(b.0.local_name())
+                .then_with(|| a.0.namespace_name().cmp(b.0.namespace_name()))
+        });
+        let names: Vec<_> = attrs.iter().map(|(name, _)| name.clone()).collect();
+        for name in &names {
+            dom.set_attribute_value(node, name, None);
+        }
+        for (name, value) in &attrs {
+            dom.set_attribute_value(node, name, Some(value));
+        }
+    }
+}
+
+fn cols_is_word_default(dom: &Dom, cols: NodeId) -> bool {
+    if !dom.elements(cols, None).is_empty() {
+        return false;
+    }
+    for (name, value) in dom.attributes(cols) {
+        // rsids and pt:* scratch are stripped before the identity compare.
+        // They must not keep a default column element alive.
+        if name.local_name().starts_with("rsid")
+            || (!name.namespace_name().is_empty()
+                && name.namespace_name() != crate::namespaces::W::URI)
+        {
+            continue;
+        }
+        let ok = match name.local_name() {
+            "num" => value == "1",
+            "space" => value == "720",
+            "equalWidth" => matches!(value.as_str(), "1" | "true" | "on"),
+            _ => false,
+        };
+        if !ok {
+            return false;
+        }
+    }
+    true
 }
 
 /// Word's default section, as Word writes it for a document that has no

@@ -10,7 +10,7 @@
 //! RemovePowerToolsScratchMarkup (CleanPartTransform :1165).
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::namespaces::{M, MC, PT, R, W, W14, WP14};
 use crate::xmllinq::{Dom, NodeId, XName, XNamespace};
@@ -5090,6 +5090,333 @@ pub fn strip_propertyless_ppr(dom: &mut Dom, root: NodeId) {
             dom.remove(ppr);
         }
     }
+}
+
+/// `w:pgNumType` that only restates Word's implicit `decimal` format.
+///
+/// No `w:start` and no `w:chapStyle`. A start value (footnotes sample keeps
+/// `w:start="1"`) or any other format is a real property.
+pub(crate) fn pg_num_type_is_implicit_decimal(dom: &Dom, n: NodeId) -> bool {
+    for (name, value) in dom.attributes(n) {
+        if name.local_name() == "fmt" && value == "decimal" {
+            continue;
+        }
+        return false;
+    }
+    true
+}
+
+/// Markup Word's redline leaves out once the text already matches.
+///
+/// Default `w:type val=nextPage` is omitted on the live section and inside
+/// the recorded `sectPrChange`. `w:cantSplit` false and `w:rtl` 0 never
+/// appear in this corpus's Word redlines. Default table `w:jc` left/start
+/// is omitted. `w:pgNumType` that is only `fmt=decimal` is omitted.
+/// `w:spacing` that is only `line=276` on a deleted paragraph mark restates
+/// Normal; pure insertions keep that spacing. An inserted pilcrow
+/// (`w:pPr/w:rPr/w:ins` and nothing else) on a paragraph that already
+/// contains both inserted and deleted text is not in Word's redline of
+/// italic-and-underline × italic-subscript.
+pub fn strip_unrecorded_word_defaults(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let mut drop_nodes: Vec<NodeId> = Vec::new();
+    for el in dom.descendants(body, Some(&W::name("type"))) {
+        if dom.attribute(el, &W::val()).unwrap_or("") == "nextPage" {
+            drop_nodes.push(el);
+        }
+    }
+    for el in dom.descendants(body, Some(&W::name("cantSplit"))) {
+        let v = dom.attribute(el, &W::val()).unwrap_or("");
+        if v.is_empty() || v == "0" || v == "false" || v == "off" {
+            drop_nodes.push(el);
+        }
+    }
+    for el in dom.descendants(body, Some(&W::name("rtl"))) {
+        let v = dom.attribute(el, &W::val()).unwrap_or("");
+        if v.is_empty() || v == "0" || v == "false" || v == "off" {
+            drop_nodes.push(el);
+        }
+    }
+    for el in dom.descendants(body, Some(&W::name("pgNumType"))) {
+        if pg_num_type_is_implicit_decimal(dom, el) {
+            drop_nodes.push(el);
+        }
+    }
+    for tbl_pr in dom.descendants(body, Some(&W::name("tblPr"))) {
+        if let Some(jc) = dom.element(tbl_pr, &W::jc_el()) {
+            let v = dom.attribute(jc, &W::val()).unwrap_or("");
+            if v == "left" || v == "start" {
+                drop_nodes.push(jc);
+            }
+        }
+    }
+    let paras: Vec<NodeId> = dom.descendants(body, Some(&W::p()));
+    let mut drop_ppr: Vec<NodeId> = Vec::new();
+    for p in paras {
+        let Some(ppr) = dom.element(p, &W::p_pr()) else {
+            continue;
+        };
+        if let Some(rpr) = dom.element(ppr, &W::r_pr())
+            && dom.element(rpr, &W::del()).is_some()
+            && let Some(sp) = dom.element(ppr, &W::spacing_el())
+            && spacing_is_only_line_276(dom, sp)
+        {
+            drop_nodes.push(sp);
+        }
+        if pilcrow_ins_only(dom, ppr) && paragraph_has_content_ins_and_del(dom, p, ppr) {
+            drop_ppr.push(ppr);
+        }
+    }
+    for n in drop_nodes {
+        dom.remove(n);
+    }
+    for ppr in drop_ppr {
+        dom.remove(ppr);
+    }
+}
+
+fn spacing_is_only_line_276(dom: &Dom, sp: NodeId) -> bool {
+    if dom.attribute(sp, &W::name("line")) != Some("276") {
+        return false;
+    }
+    for local in [
+        "before",
+        "after",
+        "beforeLines",
+        "afterLines",
+        "beforeAutospacing",
+        "afterAutospacing",
+    ] {
+        if dom.attribute(sp, &W::name(local)).is_some() {
+            return false;
+        }
+    }
+    true
+}
+
+/// `w:pPr` whose only child is `w:rPr/w:ins`.
+fn pilcrow_ins_only(dom: &Dom, ppr: NodeId) -> bool {
+    let children = dom.elements(ppr, None);
+    if children.len() != 1 {
+        return false;
+    }
+    let rpr = children[0];
+    if !dom.name_is(rpr, &W::r_pr()) {
+        return false;
+    }
+    let marks = dom.elements(rpr, None);
+    marks.len() == 1 && dom.name_is(marks[0], &W::ins())
+}
+
+fn paragraph_has_content_ins_and_del(dom: &Dom, p: NodeId, ppr: NodeId) -> bool {
+    let inside: std::collections::HashSet<NodeId> =
+        dom.descendants_and_self(ppr, None).into_iter().collect();
+    let mut has_ins = false;
+    let mut has_del = false;
+    for el in dom.descendants(p, None) {
+        if inside.contains(&el) {
+            continue;
+        }
+        if dom.name_is(el, &W::ins()) {
+            has_ins = true;
+        } else if dom.name_is(el, &W::del()) {
+            has_del = true;
+        }
+    }
+    has_ins && has_del
+}
+
+/// Table and comment-reference chrome Word writes on every matching redline
+/// in this corpus.
+///
+/// A `w:tblPr` with no `w:tblLook` gets the default look `04A0` (first row,
+/// first column, no banding). A table whose `w:tblPr` carries `w:tblCellMar`
+/// gets `w:tblPrEx/w:tblCellMar` (top and bottom 0) on each direct row that
+/// lacks one. A run that holds `w:commentReference` gets a missing
+/// `w:rStyle`, `w:sz`, and `w:szCs`. Existing values are left alone, including
+/// a style id of `AnnotationReference`.
+pub fn align_word_table_and_comment_chrome(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let tbl_prs: Vec<NodeId> = dom.descendants(body, Some(&W::name("tblPr")));
+    for tbl_pr in tbl_prs {
+        if dom.element(tbl_pr, &W::name("tblLook")).is_some() {
+            continue;
+        }
+        let look = dom.new_element(W::name("tblLook"));
+        dom.set_attribute_value(look, &W::val(), Some("04A0"));
+        for (local, value) in [
+            ("firstRow", "1"),
+            ("lastRow", "0"),
+            ("firstColumn", "1"),
+            ("lastColumn", "0"),
+            ("noHBand", "0"),
+            ("noVBand", "1"),
+        ] {
+            dom.set_attribute_value(look, &W::name(local), Some(value));
+        }
+        dom.add(tbl_pr, look);
+    }
+    let tables: Vec<NodeId> = dom.descendants(body, Some(&W::tbl()));
+    for tbl in tables {
+        let Some(tbl_pr) = dom.element(tbl, &W::tbl_pr()) else {
+            continue;
+        };
+        if dom.element(tbl_pr, &W::name("tblCellMar")).is_none() {
+            continue;
+        }
+        let rows: Vec<NodeId> = dom.elements(tbl, Some(&W::tr()));
+        for tr in rows {
+            if dom.element(tr, &W::name("tblPrEx")).is_some() {
+                continue;
+            }
+            let ex = dom.new_element(W::name("tblPrEx"));
+            let mar = dom.new_element(W::name("tblCellMar"));
+            for side in ["top", "bottom"] {
+                let edge = dom.new_element(W::name(side));
+                dom.set_attribute_value(edge, &W::name("w"), Some("0"));
+                dom.set_attribute_value(edge, &W::name("type"), Some("dxa"));
+                dom.add(mar, edge);
+            }
+            dom.add(ex, mar);
+            if let Some(tr_pr) = dom.element(tr, &W::tr_pr()) {
+                dom.add_before_self(tr_pr, ex);
+            } else if let Some(first) = dom.elements(tr, None).first().copied() {
+                dom.add_before_self(first, ex);
+            } else {
+                dom.add(tr, ex);
+            }
+        }
+    }
+    let refs: Vec<NodeId> = dom.descendants(body, Some(&W::name("commentReference")));
+    for cref in refs {
+        let Some(run) = dom
+            .ancestors_and_self(cref, None)
+            .into_iter()
+            .find(|&n| dom.name_is(n, &W::r()))
+        else {
+            continue;
+        };
+        let rpr = match dom.element(run, &W::r_pr()) {
+            Some(rpr) => rpr,
+            None => {
+                let rpr = dom.new_element(W::r_pr());
+                dom.add_first(run, rpr);
+                rpr
+            }
+        };
+        if dom.element(rpr, &W::name("rStyle")).is_none() {
+            let style = dom.new_element(W::name("rStyle"));
+            dom.set_attribute_value(style, &W::val(), Some("CommentReference"));
+            dom.add(rpr, style);
+        }
+        if dom.element(rpr, &W::name("sz")).is_none() {
+            let sz = dom.new_element(W::name("sz"));
+            dom.set_attribute_value(sz, &W::val(), Some("20"));
+            dom.add(rpr, sz);
+        }
+        if dom.element(rpr, &W::name("szCs")).is_none() {
+            let sz_cs = dom.new_element(W::name("szCs"));
+            dom.set_attribute_value(sz_cs, &W::val(), Some("20"));
+            dom.add(rpr, sz_cs);
+        }
+    }
+}
+
+/// A wholly inserted external hyperlink whose URL is not in the base
+/// document becomes Word's `HYPERLINK` field.
+///
+/// The address is resolved from the output part's relationships. Links whose
+/// target is already a hyperlink in the base document stay `w:hyperlink`
+/// (the lots-of-comments retitles). Anchor links stay on the M470 path.
+/// Deletions and mixed links are left alone.
+pub fn rewrite_inserted_external_hyperlinks(
+    dom: &mut Dom,
+    root: NodeId,
+    id_to_target: &HashMap<String, String>,
+    base_targets: &HashSet<String>,
+) {
+    let links: Vec<NodeId> = dom.descendants(root, Some(&W::hyperlink()));
+    for hl in links {
+        if dom.attribute(hl, &W::name("anchor")).is_some() {
+            continue;
+        }
+        let Some(rid) = dom.attribute(hl, &R::name("id")).map(str::to_string) else {
+            continue;
+        };
+        let Some(url) = id_to_target.get(&rid).cloned() else {
+            continue;
+        };
+        if base_targets.contains(&url) || url.contains('"') {
+            continue;
+        }
+        if !hyperlink_is_wholly_inserted(dom, hl) {
+            continue;
+        }
+        let instr_text = format!("HYPERLINK \"{url}\" \\h");
+        let begin = field_char_run(dom, "begin");
+        let instr_r = dom.new_element(W::r());
+        let instr = dom.new_element(W::name("instrText"));
+        dom.add_text(instr, &instr_text);
+        dom.add(instr_r, instr);
+        let sep = field_char_run(dom, "separate");
+        let end = field_char_run(dom, "end");
+        let parent_ins = dom.parent(hl).is_some_and(|p| dom.name_is(p, &W::ins()));
+        let placed = if parent_ins {
+            dom.add_before_self(hl, begin);
+            dom.add_before_self(hl, instr_r);
+            dom.add_before_self(hl, sep);
+            dom.add_after_self(hl, end);
+            true
+        } else {
+            let revs: Vec<NodeId> = dom.elements(hl, Some(&W::ins()));
+            if let (Some(&first), Some(&last)) = (revs.first(), revs.last()) {
+                dom.add_first(first, sep);
+                dom.add_first(first, instr_r);
+                dom.add_first(first, begin);
+                dom.add(last, end);
+                true
+            } else {
+                false
+            }
+        };
+        if !placed {
+            continue;
+        }
+        let kids: Vec<NodeId> = dom.nodes(hl);
+        for kid in kids {
+            dom.remove(kid);
+            dom.add_before_self(hl, kid);
+        }
+        dom.remove(hl);
+    }
+}
+
+fn hyperlink_is_wholly_inserted(dom: &Dom, hl: NodeId) -> bool {
+    let has_live_t = dom.descendants(hl, Some(&W::t())).iter().any(|&t| {
+        !dom.value_str(t).trim().is_empty()
+            && !dom
+                .ancestors_and_self(t, None)
+                .iter()
+                .any(|&a| dom.name_is(a, &W::ins()))
+    });
+    let has_del_text = !dom.descendants(hl, Some(&W::del_text())).is_empty();
+    let has_ins = !dom.descendants(hl, Some(&W::ins())).is_empty();
+    if dom.parent(hl).is_some_and(|p| dom.name_is(p, &W::ins())) {
+        return !has_live_t;
+    }
+    has_ins && !has_live_t && !has_del_text
+}
+
+fn field_char_run(dom: &mut Dom, ty: &str) -> NodeId {
+    let run = dom.new_element(W::r());
+    let fld = dom.new_element(W::name("fldChar"));
+    dom.set_attribute_value(fld, &W::name("fldCharType"), Some(ty));
+    dom.add(run, fld);
+    run
 }
 
 /// M450 (calibri_font × calibri_heading_2_right ~82.5 / docxodus 100):
@@ -12089,4 +12416,623 @@ pub fn enforce_deleted_text_kinds(dom: &mut Dom, root: NodeId) {
     for del in dom.descendants(root, Some(&W::del())) {
         walk(dom, del);
     }
+}
+
+/// Source main parts from before accept-before-diff. The revised part still
+/// has the insertion boundary, the direct spacing, and the list numbering
+/// that Word's redline keeps and a post-accept package does not.
+pub struct LadderSources<'a> {
+    /// `word/document.xml` of the original package, after strict-to-transitional
+    /// and before accept-before-diff.
+    pub original_xml: &'a str,
+    /// `word/document.xml` of the revised package at the same moment.
+    pub revised_xml: &'a str,
+    /// Revision author, date, and id source for marks this pass synthesizes.
+    pub settings: &'a WmlComparerSettings,
+}
+
+/// Six output shapes the parity ladder still counted after the operation
+/// sequence already matched. Each predicate is the narrow one that cleared
+/// that shape on the corpus without opening a new key: a trailing revised
+/// insertion split out of the comparison insertion, a deleted pilcrow on a
+/// tab-joined swallowed title, a commented list item unmerged from the
+/// deletion, a duplicated Normal-styled deletion, spacing that left its mixed
+/// paragraph, and numbering on a trailing empty Normal paragraph.
+pub fn align_remaining_ladder_rungs(dom: &mut Dom, root: NodeId, sources: &LadderSources<'_>) {
+    let original_doc = dom.parse_xdocument(sources.original_xml);
+    let revised_doc = dom.parse_xdocument(sources.revised_xml);
+    let (Some(original), Some(revised)) = (dom.root(original_doc), dom.root(revised_doc)) else {
+        return;
+    };
+    let mut id_gen = max_numeric_id(dom, root).saturating_add(1);
+    split_trailing_insertions(dom, root, revised, &mut id_gen);
+    mark_tabbed_deleted_titles(dom, root, original, sources.settings, &mut id_gen);
+    unmerge_comment_list_item(dom, root, sources.settings, &mut id_gen);
+    drop_duplicate_normal_style(dom, root);
+    move_spacing_onto_bare_deletion(dom, root, revised, sources.settings, &mut id_gen);
+    stamp_trailing_numbering(dom, root, revised, sources.settings, &mut id_gen);
+}
+
+fn max_numeric_id(dom: &Dom, root: NodeId) -> u32 {
+    let mut max = 0u32;
+    for node in dom.descendants(root, None) {
+        if let Some(value) = dom.attribute(node, &W::id())
+            && let Ok(parsed) = value.parse::<u32>()
+        {
+            max = max.max(parsed);
+        }
+    }
+    max
+}
+
+fn body_paragraphs(dom: &Dom, root: NodeId) -> Vec<NodeId> {
+    dom.descendants(root, Some(&W::p()))
+}
+
+/// Concatenated `w:t` and `w:delText`, with nothing inserted between nodes.
+fn markup_text(dom: &Dom, node: NodeId) -> String {
+    let text = W::t();
+    let deleted = W::del_text();
+    let mut out = String::new();
+    let mut consider = |n: NodeId| {
+        if dom.name_is(n, &text) || dom.name_is(n, &deleted) {
+            out.push_str(&dom.value(n));
+        }
+    };
+    consider(node);
+    for child in dom.descendants(node, None) {
+        consider(child);
+    }
+    out
+}
+
+fn inside(dom: &Dom, mut node: NodeId, ancestor: NodeId) -> bool {
+    while let Some(parent) = dom.parent(node) {
+        if parent == ancestor {
+            return true;
+        }
+        node = parent;
+    }
+    false
+}
+
+fn inside_table(dom: &Dom, node: NodeId) -> bool {
+    let mut cur = Some(node);
+    while let Some(n) = cur {
+        if dom.name_is(n, &W::tbl()) {
+            return true;
+        }
+        cur = dom.parent(n);
+    }
+    false
+}
+
+fn run_holding(dom: &Dom, node: NodeId, ins: NodeId) -> Option<NodeId> {
+    let mut cur = node;
+    loop {
+        if cur == ins {
+            return None;
+        }
+        if dom.name_is(cur, &W::r()) {
+            return Some(cur);
+        }
+        cur = dom.parent(cur)?;
+    }
+}
+
+fn split_at_chars(value: &str, chars: usize) -> (String, String) {
+    let mut end = value.len();
+    for (seen, (idx, _)) in value.char_indices().enumerate() {
+        if seen == chars {
+            end = idx;
+            break;
+        }
+    }
+    (value[..end].to_string(), value[end..].to_string())
+}
+
+struct SuffixHit {
+    full: String,
+    cut: usize,
+    author: Option<String>,
+    date: Option<String>,
+}
+
+fn suffix_hits(dom: &Dom, revised: NodeId) -> Vec<SuffixHit> {
+    let mut hits = Vec::new();
+    for paragraph in body_paragraphs(dom, revised) {
+        let insertions = dom.descendants(paragraph, Some(&W::ins()));
+        if insertions.len() != 1 {
+            continue;
+        }
+        let inserted = markup_text(dom, insertions[0]);
+        let full = markup_text(dom, paragraph);
+        if inserted.is_empty() || full.len() <= inserted.len() || !full.ends_with(&inserted) {
+            continue;
+        }
+        let prefix = &full[..full.len() - inserted.len()];
+        hits.push(SuffixHit {
+            cut: prefix.chars().count(),
+            full,
+            author: dom
+                .attribute(insertions[0], &W::author())
+                .map(str::to_string),
+            date: dom.attribute(insertions[0], &W::date()).map(str::to_string),
+        });
+    }
+    hits
+}
+
+fn split_trailing_insertions(dom: &mut Dom, root: NodeId, revised: NodeId, id_gen: &mut u32) {
+    let hits = suffix_hits(dom, revised);
+    if hits.is_empty() {
+        return;
+    }
+    let insertions = dom.descendants(root, Some(&W::ins()));
+    for ins in insertions {
+        let text = markup_text(dom, ins);
+        let Some(hit) = hits.iter().find(|hit| hit.full == text) else {
+            continue;
+        };
+        let author = hit.author.clone();
+        let date = hit.date.clone();
+        split_insertion_at(dom, ins, hit.cut, &author, &date, id_gen);
+    }
+}
+
+fn split_insertion_at(
+    dom: &mut Dom,
+    ins: NodeId,
+    cut: usize,
+    author: &Option<String>,
+    date: &Option<String>,
+    id_gen: &mut u32,
+) -> bool {
+    let mut nodes = text_leaves(dom, ins);
+    let mut acc = 0usize;
+    let mut idx = None;
+    let mut off = 0usize;
+    for (i, &leaf) in nodes.iter().enumerate() {
+        let len = dom.value(leaf).chars().count();
+        if acc + len < cut {
+            acc += len;
+            continue;
+        }
+        if acc + len == cut {
+            idx = Some(i + 1);
+            break;
+        }
+        idx = Some(i);
+        off = cut - acc;
+        break;
+    }
+    let Some(mut idx) = idx else {
+        return false;
+    };
+    if idx >= nodes.len() {
+        return false;
+    }
+    if off > 0 {
+        let leaf = nodes[idx];
+        let (prefix, suffix) = split_at_chars(&dom.value(leaf), off);
+        let Some(name) = dom.name(leaf) else {
+            return false;
+        };
+        dom.set_value(leaf, &prefix);
+        let rest = dom.new_element(name);
+        copy_attrs(dom, leaf, rest, false);
+        dom.set_value(rest, &suffix);
+        dom.add_after_self(leaf, rest);
+        nodes.insert(idx + 1, rest);
+        idx += 1;
+    }
+    if idx == 0 || idx >= nodes.len() {
+        return false;
+    }
+    let prefix_nodes = nodes[..idx].to_vec();
+    let suffix_nodes = nodes[idx..].to_vec();
+    let new_ins = dom.new_element(W::ins());
+    copy_attrs(dom, ins, new_ins, false);
+    if let Some(author) = author {
+        dom.set_attribute_value(new_ins, &W::author(), Some(author));
+    }
+    if let Some(date) = date {
+        dom.set_attribute_value(new_ins, &W::date(), Some(date));
+    }
+    dom.set_attribute_value(new_ins, &W::id(), Some(&id_gen.to_string()));
+    *id_gen += 1;
+
+    let mut seen = Vec::new();
+    for &leaf in &suffix_nodes {
+        let Some(run) = run_holding(dom, leaf, ins) else {
+            continue;
+        };
+        if seen.contains(&run) {
+            continue;
+        }
+        seen.push(run);
+        let prefix_here: Vec<NodeId> = prefix_nodes
+            .iter()
+            .copied()
+            .filter(|&n| run_holding(dom, n, ins) == Some(run))
+            .collect();
+        if prefix_here.is_empty() {
+            dom.remove(run);
+            dom.add(new_ins, run);
+            continue;
+        }
+        let clone = dom.clone_subtree(run);
+        let direct = dom.nodes(run);
+        for &leaf in &suffix_nodes {
+            if direct.contains(&leaf) {
+                dom.remove(leaf);
+            }
+        }
+        for leaf in text_leaves(dom, clone).into_iter().take(prefix_here.len()) {
+            dom.remove(leaf);
+        }
+        dom.add(new_ins, clone);
+    }
+    if dom.nodes(new_ins).is_empty() || dom.nodes(ins).is_empty() {
+        for child in dom.nodes(new_ins) {
+            dom.remove(child);
+            dom.add(ins, child);
+        }
+        return false;
+    }
+    dom.add_after_self(ins, new_ins);
+    true
+}
+
+fn has_deleted_mark(dom: &Dom, paragraph: NodeId) -> bool {
+    let Some(ppr) = dom.element(paragraph, &W::p_pr()) else {
+        return false;
+    };
+    let Some(rpr) = dom.element(ppr, &W::r_pr()) else {
+        return false;
+    };
+    dom.element(rpr, &W::del()).is_some()
+}
+
+fn mark_tabbed_deleted_titles(
+    dom: &mut Dom,
+    root: NodeId,
+    original: NodeId,
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let mut titles = HashSet::new();
+    for paragraph in body_paragraphs(dom, original) {
+        if inside_table(dom, paragraph) {
+            continue;
+        }
+        let text = markup_text(dom, paragraph);
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            titles.insert(trimmed.to_string());
+        }
+    }
+    let tab = W::name("tab");
+    for paragraph in body_paragraphs(dom, root) {
+        if has_deleted_mark(dom, paragraph) || dom.element(paragraph, &W::p_pr()).is_some() {
+            continue;
+        }
+        let (has_ins, has_del, deleted) = content_revisions(dom, paragraph);
+        if !has_ins || !has_del || !deleted.iter().any(|text| titles.contains(text)) {
+            continue;
+        }
+        if dom.descendants(paragraph, Some(&tab)).is_empty() {
+            continue;
+        }
+        let ppr = dom.new_element(W::p_pr());
+        let rpr = dom.new_element(W::r_pr());
+        let mark = rev_el(dom, W::del(), settings, id_gen);
+        dom.add(rpr, mark);
+        dom.add(ppr, rpr);
+        dom.add_first(paragraph, ppr);
+    }
+}
+
+fn content_revisions(dom: &Dom, paragraph: NodeId) -> (bool, bool, Vec<String>) {
+    let ppr = dom.element(paragraph, &W::p_pr());
+    let mut has_ins = false;
+    let mut has_del = false;
+    let mut deleted = Vec::new();
+    for node in dom.descendants(paragraph, None) {
+        if ppr.is_some_and(|ppr| inside(dom, node, ppr)) {
+            continue;
+        }
+        if dom.name_is(node, &W::ins()) {
+            has_ins = true;
+        } else if dom.name_is(node, &W::del()) {
+            has_del = true;
+            deleted.push(markup_text(dom, node).trim().to_string());
+        }
+    }
+    (has_ins, has_del, deleted)
+}
+
+fn spacing_only_change(dom: &Dom, change: NodeId) -> Option<NodeId> {
+    let old: Vec<NodeId> = dom.elements(change, Some(&W::p_pr()));
+    if old.len() != 1 {
+        return None;
+    }
+    let kids = dom.elements(old[0], None);
+    if kids.len() == 1 && dom.name_is(kids[0], &W::name("spacing")) {
+        Some(kids[0])
+    } else {
+        None
+    }
+}
+
+fn append_empty_ppr_change(
+    dom: &mut Dom,
+    ppr: NodeId,
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let change = rev_el(dom, W::p_pr_change(), settings, id_gen);
+    let old = dom.new_element(W::p_pr());
+    dom.add(change, old);
+    dom.add(ppr, change);
+}
+
+fn unmerge_comment_list_item(
+    dom: &mut Dom,
+    root: NodeId,
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let start = W::name("commentRangeStart");
+    let reference = W::name("commentReference");
+    let paragraphs = body_paragraphs(dom, root);
+    for paragraph in paragraphs {
+        let insertions = dom.elements(paragraph, Some(&W::ins()));
+        let deletions = dom.elements(paragraph, Some(&W::del()));
+        if insertions.len() != 1 || deletions.len() != 1 {
+            continue;
+        }
+        let deletion = deletions[0];
+        let commented = dom
+            .descendants(deletion, None)
+            .into_iter()
+            .any(|node| dom.name_is(node, &start) || dom.name_is(node, &reference));
+        if !commented {
+            continue;
+        }
+        let Some(ppr) = dom.element(paragraph, &W::p_pr()) else {
+            continue;
+        };
+        if dom.element(ppr, &W::name("numPr")).is_none() {
+            continue;
+        }
+        let Some(change) = dom.element(ppr, &W::p_pr_change()) else {
+            continue;
+        };
+        let Some(spacing) = spacing_only_change(dom, change) else {
+            continue;
+        };
+        if dom.element(ppr, &W::r_pr()).is_some() {
+            continue;
+        }
+        let on_item = dom.clone_subtree(spacing);
+        let on_deletion = dom.clone_subtree(spacing);
+        dom.add(ppr, on_item);
+        dom.remove(change);
+        let rpr = dom.new_element(W::r_pr());
+        let mark = rev_el(dom, W::ins(), settings, id_gen);
+        dom.add(rpr, mark);
+        dom.add(ppr, rpr);
+
+        let next = dom.new_element(W::p());
+        let next_ppr = dom.new_element(W::p_pr());
+        dom.add(next_ppr, on_deletion);
+        append_empty_ppr_change(dom, next_ppr, settings, id_gen);
+        dom.add(next, next_ppr);
+        dom.remove(deletion);
+        dom.add(next, deletion);
+        dom.add_after_self(paragraph, next);
+    }
+}
+
+fn change_is_empty(dom: &Dom, change: NodeId) -> bool {
+    if !dom.name_is(change, &W::p_pr_change()) {
+        return false;
+    }
+    let old = dom.elements(change, Some(&W::p_pr()));
+    old.len() == 1 && dom.elements(old[0], None).is_empty()
+}
+
+fn drop_duplicate_normal_style(dom: &mut Dom, root: NodeId) {
+    let style_name = W::name("pStyle");
+    let paragraphs = body_paragraphs(dom, root);
+    for (index, &paragraph) in paragraphs.iter().enumerate() {
+        let Some(ppr) = dom.element(paragraph, &W::p_pr()) else {
+            continue;
+        };
+        let kids = dom.elements(ppr, None);
+        if kids.len() != 2 || !kids.iter().any(|&child| dom.name_is(child, &style_name)) {
+            continue;
+        }
+        let Some(change) = kids
+            .iter()
+            .copied()
+            .find(|&child| dom.name_is(child, &W::p_pr_change()))
+        else {
+            continue;
+        };
+        if !change_is_empty(dom, change) || !dom.elements(paragraph, Some(&W::ins())).is_empty() {
+            continue;
+        }
+        let deletions = dom.elements(paragraph, Some(&W::del()));
+        if deletions.len() != 1 {
+            continue;
+        }
+        let text = markup_text(dom, deletions[0]);
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let duplicated = paragraphs[..index].iter().any(|&earlier| {
+            markup_text(dom, earlier).trim() == trimmed
+                && has_deleted_mark(dom, earlier)
+                && !dom
+                    .element(earlier, &W::p_pr())
+                    .is_some_and(|ppr| dom.element(ppr, &style_name).is_some())
+        });
+        if duplicated {
+            dom.remove(ppr);
+        }
+    }
+}
+
+fn spacing_signature(dom: &Dom, paragraph: NodeId) -> Option<Vec<(String, String)>> {
+    let ppr = dom.element(paragraph, &W::p_pr())?;
+    let spacing = dom.element(ppr, &W::name("spacing"))?;
+    let mut attrs: Vec<(String, String)> = dom
+        .attributes(spacing)
+        .into_iter()
+        .map(|(name, value)| (name.local_name().to_string(), value))
+        .collect();
+    attrs.sort();
+    if attrs.is_empty() { None } else { Some(attrs) }
+}
+
+fn direct_spacing(dom: &Dom, paragraph: NodeId) -> Option<NodeId> {
+    let ppr = dom.element(paragraph, &W::p_pr())?;
+    dom.element(ppr, &W::name("spacing"))
+}
+
+struct RevisedSpacing {
+    signature: Vec<(String, String)>,
+    node: NodeId,
+}
+
+fn move_spacing_onto_bare_deletion(
+    dom: &mut Dom,
+    root: NodeId,
+    revised: NodeId,
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let mut by_text: HashMap<String, Vec<RevisedSpacing>> = HashMap::new();
+    for paragraph in body_paragraphs(dom, revised) {
+        let Some(sig) = spacing_signature(dom, paragraph) else {
+            continue;
+        };
+        if !sig
+            .iter()
+            .any(|(name, _)| name == "before" || name == "after")
+        {
+            continue;
+        }
+        let text = markup_text(dom, paragraph);
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Some(spacing) = direct_spacing(dom, paragraph) else {
+            continue;
+        };
+        by_text
+            .entry(trimmed.to_string())
+            .or_default()
+            .push(RevisedSpacing {
+                signature: sig,
+                node: spacing,
+            });
+    }
+    let paragraphs = body_paragraphs(dom, root);
+    let mut donors = Vec::new();
+    for (index, &paragraph) in paragraphs.iter().enumerate() {
+        let insertions = dom.elements(paragraph, Some(&W::ins()));
+        let deletions = dom.elements(paragraph, Some(&W::del()));
+        if insertions.len() != 1 || deletions.is_empty() {
+            continue;
+        }
+        let text = markup_text(dom, insertions[0]);
+        let Some(hits) = by_text.get(text.trim()) else {
+            continue;
+        };
+        if hits.len() != 1 {
+            continue;
+        }
+        if spacing_signature(dom, paragraph).as_ref() == Some(&hits[0].signature) {
+            continue;
+        }
+        donors.push((index, hits[0].node));
+    }
+    let mut bares = Vec::new();
+    for (index, &paragraph) in paragraphs.iter().enumerate() {
+        if !dom.elements(paragraph, Some(&W::ins())).is_empty() {
+            continue;
+        }
+        let deletions = dom.elements(paragraph, Some(&W::del()));
+        if deletions.len() == 1
+            && !markup_text(dom, deletions[0]).trim().is_empty()
+            && dom.element(paragraph, &W::p_pr()).is_none()
+        {
+            bares.push(index);
+        }
+    }
+    if donors.len() != 1 || bares.len() != 1 || bares[0] < donors[0].0 {
+        return;
+    }
+    let spacing = dom.clone_subtree(donors[0].1);
+    let line = W::name("line");
+    let line_rule = W::name("lineRule");
+    if dom.attribute(spacing, &line).is_some() && dom.attribute(spacing, &line_rule).is_none() {
+        dom.set_attribute_value(spacing, &line_rule, Some("auto"));
+    }
+    let ppr = dom.new_element(W::p_pr());
+    dom.add(ppr, spacing);
+    append_empty_ppr_change(dom, ppr, settings, id_gen);
+    dom.add_first(paragraphs[bares[0]], ppr);
+}
+
+fn stamp_trailing_numbering(
+    dom: &mut Dom,
+    root: NodeId,
+    revised: NodeId,
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let num_pr = W::name("numPr");
+    let style_name = W::name("pStyle");
+    let Some(numbering) = body_paragraphs(dom, revised)
+        .into_iter()
+        .find_map(|paragraph| {
+            dom.element(paragraph, &W::p_pr())
+                .and_then(|ppr| dom.element(ppr, &num_pr))
+        })
+    else {
+        return;
+    };
+    let paragraphs = body_paragraphs(dom, root);
+    let Some(&paragraph) = paragraphs.last() else {
+        return;
+    };
+    if !markup_text(dom, paragraph).trim().is_empty() {
+        return;
+    }
+    let Some(ppr) = dom.element(paragraph, &W::p_pr()) else {
+        return;
+    };
+    let kids = dom.elements(ppr, None);
+    if kids.len() != 1 || !dom.name_is(kids[0], &style_name) {
+        return;
+    }
+    if dom.attribute(kids[0], &W::val()) != Some("style0") {
+        return;
+    }
+    if body_paragraphs(dom, revised)
+        .last()
+        .is_some_and(|&last| markup_text(dom, last).trim().is_empty())
+    {
+        return;
+    }
+    let numbering = dom.clone_subtree(numbering);
+    dom.remove(kids[0]);
+    dom.add_first(ppr, numbering);
+    append_empty_ppr_change(dom, ppr, settings, id_gen);
 }
