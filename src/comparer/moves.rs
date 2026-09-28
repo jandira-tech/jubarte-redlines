@@ -60,6 +60,39 @@ pub fn count_words(text: &str, settings: &WmlComparerSettings) -> usize {
         .count()
 }
 
+/// [`count_words`] and [`tokenize`] in one walk, without `split_by_chars`'
+/// `Vec<String>`: a maximal non-empty run between separators is one word
+/// (counted every time) and one token (deduped, uppercased when
+/// `case_insensitive`); empty segments count as neither.
+pub fn count_words_and_tokenize(
+    text: &str,
+    settings: &WmlComparerSettings,
+) -> (usize, HashSet<String>) {
+    let mut words = 0;
+    let mut tokens = HashSet::new();
+    let mut cur = String::new();
+    let mut flush = |cur: &mut String| {
+        if !cur.is_empty() {
+            words += 1;
+            let word = std::mem::take(cur);
+            tokens.insert(if settings.case_insensitive {
+                word.to_uppercase()
+            } else {
+                word
+            });
+        }
+    };
+    for ch in text.chars() {
+        if settings.word_separators.contains(&ch) {
+            flush(&mut cur);
+        } else {
+            cur.push(ch);
+        }
+    }
+    flush(&mut cur);
+    (words, tokens)
+}
+
 /// Collapse runs of whitespace so reformatted charter paragraphs (dense vs
 /// spaced) compare as the same text for move detection.
 fn collapse_ws(text: &str) -> String {
@@ -349,8 +382,7 @@ fn precompute_block(
 ) -> BlockText {
     let text = extract_text_from_atom_block(dom, atoms, block);
     let collapsed = collapse_ws(&text);
-    let words = count_words(&collapsed, settings);
-    let tokens = tokenize(&collapsed, settings);
+    let (words, tokens) = count_words_and_tokenize(&collapsed, settings);
     let chars = text.chars().count();
     BlockText {
         text,

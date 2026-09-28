@@ -514,11 +514,14 @@ fn group_by_key_stable<'a, K: Eq + std::hash::Hash + Clone>(
     let mut map: std::collections::HashMap<K, Vec<&'a ComparisonUnitAtom>> =
         std::collections::HashMap::new();
     for it in items {
-        let k = key(it);
-        if !map.contains_key(&k) {
-            order.push(k.clone());
+        // One hash of the key per atom: the vacant arm records first-seen order.
+        match map.entry(key(it)) {
+            std::collections::hash_map::Entry::Vacant(e) => {
+                order.push(e.key().clone());
+                e.insert(vec![*it]);
+            }
+            std::collections::hash_map::Entry::Occupied(mut e) => e.get_mut().push(*it),
         }
-        map.entry(k).or_default().push(*it);
     }
     order
         .into_iter()
@@ -976,6 +979,13 @@ pub fn coalesce_recurse(
                                 if an.namespace_name() != PT::URI {
                                     dom.set_attribute_value(dup, &an, Some(&av));
                                 }
+                            }
+                            // The leaf's content rides along: an inserted or
+                            // deleted w:instrText without its text is a field
+                            // with no code (blank page numbers, citations).
+                            for n in dom.nodes(gcc.content_element) {
+                                let c = dom.clone_subtree(n);
+                                dom.add(dup, c);
                             }
                             tag_status(dom, dup, gcc.correlation_status, gcc);
                             out.push(dup);

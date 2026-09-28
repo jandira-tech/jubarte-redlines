@@ -21,6 +21,7 @@ mod word_subst;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::namespaces::{A, M, MC, R, W, W14, WNE, WP};
@@ -558,6 +559,9 @@ impl RunStyle {
 
 #[derive(Clone)]
 struct ParaStyle {
+    /// The paragraph carries a tracked formatting change (`w:pPrChange` or a
+    /// `w:rPrChange`): Word bars it like an insertion or deletion.
+    fmt_rev: bool,
     /// The paragraph mark's own run style (pPr/rPr with a size or face):
     /// a picture-only line takes its multiple's leading from it (0023298b).
     mark_run: Option<std::rc::Rc<RunStyle>>,
@@ -800,6 +804,10 @@ enum PageNumFmt {
     HindiVowels,
     HindiConsonants,
     HindiCounting,
+    KoreanCounting,
+    KoreanDigital,
+    KoreanDigital2,
+    KoreanLegal,
 }
 
 struct NamedStyle {
@@ -1052,6 +1060,7 @@ impl Defaults {
                 ideograph_words: false,
             },
             para: ParaStyle {
+                fmt_rev: false,
                 mark_run: None,
                 hrule: None,
                 align: Align::Left,
@@ -1492,6 +1501,8 @@ impl TableCell {
     /// nested tables anchored among them (00297360's letter row splits
     /// around its small nested table).
     fn split_at(&self, k: usize) -> (TableCell, TableCell) {
+        // A cell holding only a nested table has no paragraphs to split.
+        let k = k.min(self.paras.len());
         let mut head = self.with_paras(self.paras[..k].to_vec());
         let mut tail = self.with_paras(self.paras[k..].to_vec());
         for (table, &at) in self.nested.iter().zip(&self.nested_at) {
@@ -3197,9 +3208,9 @@ fn first_named(dom: &Dom, node: NodeId, local: &str) -> Option<NodeId> {
     // w:pPrChange / rPrChange / tblPrChange hold the *previous* pPr.
     // file_146 live pPr is pBdr+spacing; ListParagraph hanging lives
     // only in pPrChange. Stealing that ghost indented Hello at 90.
-    dom.descendants(node, Some(&W::name(local)))
-        .into_iter()
-        .find(|&cand| !under_prior_change(dom, node, cand))
+    dom.find_descendant_element(node, Some(&W::name(local)), |cand| {
+        !under_prior_change(dom, node, cand)
+    })
 }
 
 /// The body's section properties in document order, without the old
@@ -4035,6 +4046,10 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
             "hindiVowels" => PageNumFmt::HindiVowels,
             "hindiConsonants" => PageNumFmt::HindiConsonants,
             "hindiCounting" => PageNumFmt::HindiCounting,
+            "koreanCounting" => PageNumFmt::KoreanCounting,
+            "koreanDigital" => PageNumFmt::KoreanDigital,
+            "koreanDigital2" => PageNumFmt::KoreanDigital2,
+            "koreanLegal" => PageNumFmt::KoreanLegal,
             _ => PageNumFmt::Decimal,
         };
         if let Some(ch) = attr_any(dom, num, "chapStyle").and_then(|s| s.parse::<u32>().ok())
@@ -4333,6 +4348,10 @@ enum NumFmt {
     HindiVowels,
     HindiConsonants,
     HindiCounting,
+    KoreanCounting,
+    KoreanDigital,
+    KoreanDigital2,
+    KoreanLegal,
     LowerLetter,
     UpperLetter,
     LowerRoman,
@@ -4646,6 +4665,10 @@ fn parse_num_fmt(val: &str) -> NumFmt {
         "hindiVowels" => NumFmt::HindiVowels,
         "hindiConsonants" => NumFmt::HindiConsonants,
         "hindiCounting" => NumFmt::HindiCounting,
+        "koreanCounting" => NumFmt::KoreanCounting,
+        "koreanDigital" => NumFmt::KoreanDigital,
+        "koreanDigital2" => NumFmt::KoreanDigital2,
+        "koreanLegal" => NumFmt::KoreanLegal,
         _ => NumFmt::Decimal,
     }
 }
@@ -4690,6 +4713,10 @@ fn format_num(fmt: NumFmt, n: u32) -> String {
         NumFmt::HindiVowels => cycle_cjk(&HINDI_VOWELS, n),
         NumFmt::HindiConsonants => cycle_cjk(&HINDI_CONSONANTS, n),
         NumFmt::HindiCounting => hindi_counting_label(n),
+        NumFmt::KoreanCounting => korean_counting_label(n),
+        NumFmt::KoreanDigital => korean_digital_label(n),
+        NumFmt::KoreanDigital2 => korean_digital2_label(n),
+        NumFmt::KoreanLegal => korean_legal_label(n),
         NumFmt::LowerLetter => alpha_label(n, false),
         NumFmt::UpperLetter => alpha_label(n, true),
         NumFmt::LowerRoman => roman_label(n, false),
@@ -5216,6 +5243,74 @@ fn hindi_counting_label(n: u32) -> String {
     }
 }
 
+/// MS-DOCX koreanCounting: 일, 이, 삼, 십, 십일, 백 (U+C77C). Not digit-wise 일영.
+/// A unit multiplier of one is dropped (십, 백, 천, never 일십).
+fn korean_counting_label(n: u32) -> String {
+    const DIGITS: [&str; 10] = ["영", "일", "이", "삼", "사", "오", "육", "칠", "팔", "구"];
+    const UNITS: [(u32, &str); 3] = [(1000, "천"), (100, "백"), (10, "십")];
+    if n == 0 || n > 9999 {
+        return if n == 0 { "영".into() } else { n.to_string() };
+    }
+    let mut s = String::new();
+    let mut rest = n;
+    for (unit, name) in UNITS {
+        let d = rest / unit;
+        rest %= unit;
+        if d > 1 {
+            s.push_str(DIGITS[d as usize]);
+        }
+        if d > 0 {
+            s.push_str(name);
+        }
+    }
+    if rest > 0 {
+        s.push_str(DIGITS[rest as usize]);
+    }
+    s
+}
+
+/// MS-DOCX koreanDigital: 일, 일영, 일영영… Hangul digits with 영 for 0.
+fn korean_digital_label(n: u32) -> String {
+    const DIGITS: [&str; 10] = ["영", "일", "이", "삼", "사", "오", "육", "칠", "팔", "구"];
+    n.to_string()
+        .bytes()
+        .map(|b| DIGITS[usize::from(b - b'0')])
+        .collect()
+}
+
+/// MS-DOCX koreanDigital2: 一, 一零… (U+96F6), not ideographDigital 一〇 (U+3007).
+fn korean_digital2_label(n: u32) -> String {
+    const DIGITS: [char; 10] = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+    n.to_string()
+        .bytes()
+        .map(|b| DIGITS[usize::from(b - b'0')])
+        .collect()
+}
+
+/// MS-DOCX koreanLegal: 하나, 둘, 셋… (U+D558 U+B098). Native Korean.
+fn korean_legal_label(n: u32) -> String {
+    const ONES: [&str; 10] = [
+        "", "하나", "둘", "셋", "넷", "다섯", "여섯", "일곱", "여덟", "아홉",
+    ];
+    const TENS: [&str; 10] = [
+        "", "열", "스물", "서른", "마흔", "쉰", "예순", "일흔", "여든", "아흔",
+    ];
+    match n {
+        0 => "영".into(),
+        1..=9 => ONES[n as usize].into(),
+        10..=99 => {
+            let tens = n / 10;
+            let ones = n % 10;
+            if ones == 0 {
+                TENS[tens as usize].into()
+            } else {
+                format!("{}{}", TENS[tens as usize], ONES[ones as usize])
+            }
+        }
+        n => n.to_string(),
+    }
+}
+
 fn alpha_label(mut n: u32, upper: bool) -> String {
     if n == 0 {
         n = 1;
@@ -5585,16 +5680,34 @@ fn lvl_indent(dom: &Dom, lvl: NodeId) -> (f32, f32) {
 }
 
 /// `word/settings.xml` parsed once per reader; `None` when the part is absent.
-fn settings_dom(pkg: &PartFs) -> Option<(Dom, NodeId)> {
+fn settings_dom(pkg: &PartFs) -> Option<ParsedSettings> {
     let xml = pkg.part_string(&settings_part(pkg))?;
     settings_dom_xml(&xml)
 }
 
-fn settings_dom_xml(xml: &str) -> Option<(Dom, NodeId)> {
+/// A parsed settings part and its root element.
+type ParsedSettings = Rc<(Dom, NodeId)>;
+
+/// `xml` parsed, memoised per thread on the text: a conversion asks a dozen
+/// settings questions of the same part, and parsing it each time was 11% of
+/// a one-page conversion (samply, fixtures_500 0081ba58).
+fn settings_dom_xml(xml: &str) -> Option<ParsedSettings> {
+    thread_local! {
+        static LAST: RefCell<Option<(String, ParsedSettings)>> = const { RefCell::new(None) };
+    }
+    if let Some(hit) = LAST.with_borrow(|last| {
+        last.as_ref()
+            .filter(|(text, _)| text == xml)
+            .map(|(_, parsed)| Rc::clone(parsed))
+    }) {
+        return Some(hit);
+    }
     let mut dom = Dom::new();
     let doc = dom.parse_xdocument(xml);
     let root = dom.root(doc)?;
-    Some((dom, root))
+    let parsed = Rc::new((dom, root));
+    LAST.set(Some((xml.to_string(), Rc::clone(&parsed))));
+    Some(parsed)
 }
 
 /// ST_OnOff `w:<local>` under `w:settings` (direct or inside `w:compat`):
@@ -5602,11 +5715,12 @@ fn settings_dom_xml(xml: &str) -> Option<(Dom, NodeId)> {
 /// (ECMA-376 17.17.4). Matched as elements, so quoting style, attribute
 /// order and look-alike names cannot flip it.
 fn settings_flag_xml(xml: &str, local: &str) -> bool {
-    settings_dom_xml(xml).is_some_and(|(dom, root)| {
+    settings_dom_xml(xml).is_some_and(|s| {
+        let (dom, root) = (&s.0, s.1);
         dom.descendants(root, Some(&W::name(local)))
             .into_iter()
             .next()
-            .is_some_and(|n| !val_is_false(&dom, Some(n)))
+            .is_some_and(|n| !val_is_false(dom, Some(n)))
     })
 }
 
@@ -5671,13 +5785,14 @@ fn mark_ideograph_words(blocks: &mut [Block], fonts: &Fonts, compat_mode: u8) {
 /// `D:\CASA ... .dotx`); Word cannot load it and keeps the file's styles.
 fn settings_link_styles(pkg: &PartFs) -> bool {
     pkg.part_string(&settings_part(pkg)).is_some_and(|xml| {
-        settings_dom_xml(&xml).is_some_and(|(dom, root)| {
+        settings_dom_xml(&xml).is_some_and(|s| {
+            let (dom, root) = (&s.0, s.1);
             dom.descendants(root, Some(&W::name("attachedTemplate")))
                 .is_empty()
                 && dom
                     .descendants(root, Some(&W::name("linkStyles")))
                     .into_iter()
-                    .any(|n| !matches!(attr_any(&dom, n, "val"), Some("0" | "false" | "off")))
+                    .any(|n| !matches!(attr_any(dom, n, "val"), Some("0" | "false" | "off")))
         })
     })
 }
@@ -5747,13 +5862,14 @@ fn settings_compat_mode(pkg: &PartFs) -> u8 {
 const WORD_COMPAT_SETTING_URI: &str = "http://schemas.microsoft.com/office/word";
 
 fn settings_compat_mode_xml(xml: &str) -> u8 {
-    let Some((dom, root)) = settings_dom_xml(xml) else {
+    let Some(s) = settings_dom_xml(xml) else {
         return 12;
     };
+    let (dom, root) = (&s.0, s.1);
     for node in dom.descendants(root, Some(&W::name("compatSetting"))) {
-        if attr_any(&dom, node, "name") == Some("compatibilityMode")
-            && attr_any(&dom, node, "uri") == Some(WORD_COMPAT_SETTING_URI)
-            && let Some(mode) = attr_any(&dom, node, "val").and_then(|s| s.parse().ok())
+        if attr_any(dom, node, "name") == Some("compatibilityMode")
+            && attr_any(dom, node, "uri") == Some(WORD_COMPAT_SETTING_URI)
+            && let Some(mode) = attr_any(dom, node, "val").and_then(|s| s.parse().ok())
         {
             return mode;
         }
@@ -5769,15 +5885,16 @@ fn settings_override_table_style_size(pkg: &PartFs) -> bool {
 }
 
 fn settings_override_table_style_size_xml(xml: &str) -> bool {
-    let Some((dom, root)) = settings_dom_xml(xml) else {
+    let Some(s) = settings_dom_xml(xml) else {
         return false;
     };
+    let (dom, root) = (&s.0, s.1);
     dom.descendants(root, Some(&W::name("compatSetting")))
         .into_iter()
         .any(|node| {
-            attr_any(&dom, node, "name") == Some("overrideTableStyleFontSizeAndJustification")
-                && attr_any(&dom, node, "uri") == Some(WORD_COMPAT_SETTING_URI)
-                && matches!(attr_any(&dom, node, "val"), Some("1" | "true" | "on"))
+            attr_any(dom, node, "name") == Some("overrideTableStyleFontSizeAndJustification")
+                && attr_any(dom, node, "uri") == Some(WORD_COMPAT_SETTING_URI)
+                && matches!(attr_any(dom, node, "val"), Some("1" | "true" | "on"))
         })
 }
 
@@ -5935,7 +6052,8 @@ fn settings_character_spacing(pkg: &PartFs) -> CharacterSpacing {
 }
 
 fn settings_character_spacing_xml(xml: &str) -> CharacterSpacing {
-    let val = settings_dom_xml(xml).and_then(|(dom, root)| {
+    let val = settings_dom_xml(xml).and_then(|s| {
+        let (dom, root) = (&s.0, s.1);
         dom.descendants(root, Some(&W::name("characterSpacingControl")))
             .into_iter()
             .next()
@@ -5979,9 +6097,10 @@ fn character_spacing_scale(mode: CharacterSpacing, ch: char) -> f32 {
 
 /// Word factory is 720 twips (0.5in). Strict01 writes `36pt`; mcdoc `420`.
 fn settings_default_tab_pt(pkg: &PartFs) -> Option<f32> {
-    let (dom, root) = settings_dom(pkg)?;
-    let stop = first_named(&dom, root, "defaultTabStop")?;
-    attr_any(&dom, stop, "val")
+    let s = settings_dom(pkg)?;
+    let (dom, root) = (&s.0, s.1);
+    let stop = first_named(dom, root, "defaultTabStop")?;
+    attr_any(dom, stop, "val")
         .and_then(parse_len)
         .filter(|pt| *pt > 0.5)
 }
@@ -8405,6 +8524,17 @@ fn o_attr<'a>(dom: &'a Dom, node: NodeId, local: &str) -> Option<&'a str> {
     )
 }
 
+/// A tracked formatting change on the paragraph or any of its runs
+/// (`w:pPrChange`, `w:rPrChange`). Word draws the change bar beside such a
+/// paragraph even when no text was inserted or deleted (pool p0016, p0033,
+/// p0111, p0225).
+fn para_formatting_changed(dom: &Dom, para: NodeId) -> bool {
+    [W::p_pr_change(), W::name("rPrChange")].iter().any(|n| {
+        dom.find_descendant_element(para, Some(n), |cand| !under_prior_change(dom, para, cand))
+            .is_some()
+    })
+}
+
 /// The paragraph's `v:rect o:hr="t"` (not a Fallback copy), if any.
 fn para_hrule(dom: &Dom, para: NodeId) -> Option<HRule> {
     let rect = descendants_local(dom, para, "rect").into_iter().find(|r| {
@@ -8458,6 +8588,7 @@ fn paragraph_block(
     let sheet = ctx.sheet;
     let (mut pstyle, rstyle) = para_base(dom, para, sheet, None);
     pstyle.hrule = para_hrule(dom, para);
+    pstyle.fmt_rev = para_formatting_changed(dom, para);
     let (marker, num_id, ilvl) = list_marker(dom, para, sheet, numbering);
     // numId=0 over a numbered style removes the list and the style's list
     // indent with it (000ebd12 Förslagstext: ind 397/397 renders flush
@@ -9803,6 +9934,7 @@ fn table_block(
                         .map_or([false; 2], |t| [t.sets_space, t.sets_line]),
                 };
                 let (mut pstyle, mut r) = para_base(dom, child, sheet, Some(&table_spacing));
+                pstyle.fmt_rev = para_formatting_changed(dom, child);
                 // An explicit table style's size beats the default paragraph
                 // style's in a paragraph with no pStyle (checked in Word on
                 // 00004116: Normal 12pt, docDefaults 11pt, cells paint 11pt;
@@ -15384,7 +15516,7 @@ fn first_named_any(dom: &Dom, node: NodeId, local: &str) -> Option<NodeId> {
         A::name(local),
         WNE::name(local),
     ] {
-        if let Some(found) = dom.descendants(node, Some(&idx_walk)).into_iter().next() {
+        if let Some(found) = dom.find_descendant_element(node, Some(&idx_walk), |_| true) {
             return Some(found);
         }
     }
@@ -16550,6 +16682,7 @@ fn first_para_align(dom: &Dom, root: NodeId) -> Align {
         return Align::Left;
     };
     let mut style = ParaStyle {
+        fmt_rev: false,
         mark_run: None,
         hrule: None,
         align: Align::Left,
@@ -18222,17 +18355,17 @@ impl<'a> Layout<'a> {
         // starts on the next page and still breaks — one skipped page
         // (sd_2517 1-4 / 13-9). Only explicit page breaks (not sectPr).
         let remaining = self.y - self.body_floor;
-        // Word: empty `w:br type=page` after TextHeading* whose leftover
-        // is under the empty para's line=276/after=200 box (~23pt) starts
-        // on the next page and still breaks (sd_2517 1-4 / 1-6). Ungated
-        // leftover in (0,22) extra-skipped file_78 (−6) / file_196 (−10).
-        // Título1/Heading1 exact leftover was the wrong skip (ITT −0.02).
-        // TextHeading after=120 can overflow the floor by <5pt
-        // (sd_2517 1-4 rem=-4.29). remaining < -5 missed that skip;
-        // remaining < 23 hit 5 sites (111pp). remaining < 0 after
-        // TextHeading skips the three near-overflows (109). Only
-        // rem=-4.29 is the Word 1-4 site in our layout (+1 → 107).
-        let leftover_heading = leftover_break_heading(&self.last_style_id) && remaining < -4.0;
+        // Word: an empty `w:br type=page` after TextHeading* takes its own
+        // line (sd_2517's break paragraphs are line=276 / after=200, about
+        // 16pt on the 12pt face, ~23pt with the space after). When less
+        // than that box remains, Word moves the paragraph to the next page
+        // and the break still fires, leaving a blank page. Word's own PDF
+        // of sd_2517 leaves those blanks where 1.8–12.6pt remain; the next
+        // TextHeading break it keeps has 28.9pt left. Ungated leftover in
+        // (0, 22) invented blanks on file_78 and file_196, so only
+        // TextHeading* takes this path. A full-page overflow (remaining
+        // under -5) still skips for every manual break.
+        let leftover_heading = leftover_break_heading(&self.last_style_id) && remaining < 23.0;
         // pageBreakBefore (manual=false) never skips: 00a46f85's heading
         // after an empty paragraph 5pt past the foot opens the next page.
         let skip_blank = manual
@@ -19635,7 +19768,7 @@ impl<'a> Layout<'a> {
             bdr_top.is_some(),
             bdr_bottom.is_some(),
         );
-        if runs.iter().any(|r| r.rev) {
+        if style.fmt_rev || runs.iter().any(|r| r.rev) {
             self.paint_rev_bar(self.rev_bar_x(), text_bottom, y_top);
         }
         self.y -= style.after;
@@ -23538,6 +23671,16 @@ impl<'a> Layout<'a> {
                         let para_top = y_line;
                         let text_h = cell_para_text_h(self.fonts, para, wrap_w, self.space_for_ul);
                         let mut float_bottom = 0.0_f32;
+                        // Word joins consecutive cell paragraphs that share a
+                        // pBdr into one box and draws the bottom edge once, on
+                        // the last (file_146's deleted code cell ends on `}`,
+                        // and each npm/github cell is its own one-line box).
+                        // An empty paragraph in the middle of that run is not
+                        // a separate rule.
+                        let joined_below = cell
+                            .paras
+                            .get(pi + 1)
+                            .is_some_and(|next| same_pbdr(&para.style, &next.style));
                         for img in para
                             .images
                             .iter()
@@ -23595,7 +23738,9 @@ impl<'a> Layout<'a> {
                                 } else {
                                     0.0
                                 };
-                            if let Some((color, width)) = line.iter().find_map(|r| r.rule) {
+                            if !joined_below
+                                && let Some((color, width)) = line.iter().find_map(|r| r.rule)
+                            {
                                 let inner_w = (w - pad_l - pad_r).max(1.0);
                                 self.current().ops.push(Op::FillRect {
                                     x: x + pad_l,
@@ -23739,6 +23884,24 @@ impl<'a> Layout<'a> {
                             self.clip_right = None;
                             y_line -= line_box;
                         }
+                        // A non-empty cell paragraph keeps its pBdr on the
+                        // style (only an empty one is folded into a run
+                        // rule above). Draw that bottom edge under the line
+                        // box, `space` pt clear of the text, across the cell.
+                        let carried_rule = para.runs.iter().any(|r| r.rule.is_some());
+                        if !joined_below
+                            && !carried_rule
+                            && let Some((color, width, space)) = para.style.border_bottom
+                        {
+                            let inner_w = (w - pad_l - pad_r).max(1.0);
+                            self.hairline_h(
+                                x + pad_l,
+                                y_line - space,
+                                x + pad_l + inner_w,
+                                width,
+                                color,
+                            );
+                        }
                         y_line = y_line.min(para_top - float_bottom);
                         y_line -= para.style.after;
                     }
@@ -23752,7 +23915,10 @@ impl<'a> Layout<'a> {
                         y_line -= used;
                     }
                 }
-                if row.iter().any(|c| c.runs().any(|r| r.rev)) {
+                if row
+                    .iter()
+                    .any(|c| c.paras.iter().any(|p| p.style.fmt_rev) || c.runs().any(|r| r.rev))
+                {
                     self.paint_rev_bar(self.rev_bar_x(), self.y, y_top);
                 }
             }
@@ -24795,6 +24961,10 @@ impl<'a> Layout<'a> {
             PageNumFmt::HindiVowels => format_num(NumFmt::HindiVowels, self.section_page),
             PageNumFmt::HindiConsonants => format_num(NumFmt::HindiConsonants, self.section_page),
             PageNumFmt::HindiCounting => format_num(NumFmt::HindiCounting, self.section_page),
+            PageNumFmt::KoreanCounting => format_num(NumFmt::KoreanCounting, self.section_page),
+            PageNumFmt::KoreanDigital => format_num(NumFmt::KoreanDigital, self.section_page),
+            PageNumFmt::KoreanDigital2 => format_num(NumFmt::KoreanDigital2, self.section_page),
+            PageNumFmt::KoreanLegal => format_num(NumFmt::KoreanLegal, self.section_page),
         }
     }
 
@@ -28909,6 +29079,28 @@ mod page_num_fmt_labels {
         assert_eq!(format_num(NumFmt::HindiCounting, 2), "दो");
         assert_eq!(format_num(NumFmt::HindiCounting, 3), "तीन");
         assert_eq!(format_num(NumFmt::HindiCounting, 10), "दस");
+    }
+
+    #[test]
+    fn korean_counting_uses_sip_not_digital_zero() {
+        assert_eq!(format_num(NumFmt::KoreanCounting, 1), "일");
+        assert_eq!(format_num(NumFmt::KoreanCounting, 10), "십");
+        assert_eq!(format_num(NumFmt::KoreanCounting, 11), "십일");
+        assert_eq!(format_num(NumFmt::KoreanCounting, 20), "이십");
+        assert_eq!(format_num(NumFmt::KoreanCounting, 100), "백");
+        assert_eq!(format_num(NumFmt::KoreanCounting, 305), "삼백오");
+        assert_eq!(format_num(NumFmt::KoreanCounting, 1010), "천십");
+        assert_eq!(format_num(NumFmt::KoreanDigital, 10), "일영");
+        assert_eq!(ideograph_digital_label(10), "一〇");
+        assert_eq!(format_num(NumFmt::KoreanDigital2, 10), "一零");
+    }
+
+    #[test]
+    fn korean_legal_is_native_hangul() {
+        assert_eq!(format_num(NumFmt::KoreanLegal, 1), "하나");
+        assert_eq!(format_num(NumFmt::KoreanLegal, 2), "둘");
+        assert_eq!(format_num(NumFmt::KoreanLegal, 3), "셋");
+        assert_eq!(format_num(NumFmt::KoreanLegal, 10), "열");
     }
 }
 
@@ -37837,5 +38029,404 @@ mod comments_spacing_tests {
         let big = face.single_line_pt(40.0);
         assert!(big > 30.0, "precondition natural={big}");
         assert!((super::para_line_box(face, 40.0, &style) - big).abs() < 0.01);
+    }
+}
+
+#[cfg(test)]
+mod regression_tests {
+    use super::*;
+
+    #[test]
+    fn raster_formats_preserve_dimensions_and_rgb_samples() {
+        let pixels = vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255];
+        for format in [
+            image::ImageFormat::Bmp,
+            image::ImageFormat::Gif,
+            image::ImageFormat::Tiff,
+        ] {
+            let img = image::RgbImage::from_raw(2, 2, pixels.clone()).unwrap();
+            let mut encoded = std::io::Cursor::new(Vec::new());
+            image::DynamicImage::ImageRgb8(img)
+                .write_to(&mut encoded, format)
+                .unwrap();
+            let Some(ImageKind::Rgb {
+                width,
+                height,
+                bytes,
+                alpha,
+            }) = decode_image(encoded.into_inner())
+            else {
+                panic!("{format:?} must decode as RGB");
+            };
+            assert_eq!((width, height), (2, 2), "{format:?}");
+            assert_eq!(bytes, pixels, "{format:?}");
+            assert!(alpha.is_none_or(|a| a == [255; 4]), "{format:?}");
+        }
+    }
+
+    #[test]
+    fn transparent_gif_preserves_the_alpha_mask() {
+        let img = image::RgbaImage::from_raw(2, 1, vec![255, 0, 0, 255, 0, 0, 0, 0]).unwrap();
+        let mut encoded = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut encoded, image::ImageFormat::Gif)
+            .unwrap();
+        let Some(ImageKind::Rgb {
+            width,
+            height,
+            bytes,
+            alpha,
+        }) = decode_image(encoded.into_inner())
+        else {
+            panic!("GIF must decode as RGB with alpha");
+        };
+        assert_eq!((width, height), (2, 1));
+        assert_eq!(&bytes[..3], &[255, 0, 0]);
+        assert_eq!(alpha, Some(vec![255, 0]));
+    }
+
+    #[test]
+    fn truncated_raster_headers_do_not_decode_as_images() {
+        for bytes in [b"".as_slice(), b"BM", b"GIF89a", b"II*\0", b"not an image"] {
+            assert!(decode_image(bytes.to_vec()).is_none(), "{bytes:?}");
+        }
+    }
+
+    #[test]
+    fn washout_clamps_highlights_and_preserves_transparency() {
+        let image = ImageKind::Rgb {
+            width: 2,
+            height: 1,
+            bytes: vec![0, 100, 255, 50, 200, 128],
+            alpha: Some(vec![0, 128]),
+        };
+        let ImageKind::Rgb {
+            width,
+            height,
+            bytes,
+            alpha,
+        } = washed_out(image)
+        else {
+            panic!("washed image remains RGB");
+        };
+        assert_eq!((width, height), (2, 1));
+        assert_eq!(bytes, [207, 236, 255, 221, 255, 244]);
+        assert_eq!(alpha, Some(vec![0, 128]));
+    }
+
+    #[test]
+    fn soft_edges_multiply_existing_alpha_without_changing_color() {
+        let image = ImageKind::Rgb {
+            width: 5,
+            height: 5,
+            bytes: vec![42; 75],
+            alpha: Some(vec![128; 25]),
+        };
+        let ImageKind::Rgb {
+            width,
+            height,
+            bytes,
+            alpha,
+        } = soften_edges(image, 0.4, 0.4)
+        else {
+            panic!("softened image remains RGB");
+        };
+        assert_eq!((width, height), (5, 5));
+        assert_eq!(bytes, vec![42; 75]);
+        let alpha = alpha.unwrap();
+        assert_eq!(
+            alpha,
+            vec![
+                32, 32, 32, 32, 32, 32, 96, 96, 96, 32, 32, 96, 128, 96, 32, 32, 96, 96, 96, 32,
+                32, 32, 32, 32, 32
+            ]
+        );
+    }
+
+    #[test]
+    fn soft_edges_create_a_mask_for_an_opaque_single_pixel() {
+        let image = ImageKind::Rgb {
+            width: 1,
+            height: 1,
+            bytes: vec![1, 2, 3],
+            alpha: None,
+        };
+        let ImageKind::Rgb { bytes, alpha, .. } = soften_edges(image, 0.1, 0.1) else {
+            panic!("softened image remains RGB");
+        };
+        assert_eq!(bytes, [1, 2, 3]);
+        assert_eq!(alpha, Some(vec![128]));
+    }
+
+    #[test]
+    fn image_effects_keep_placeholder_kinds() {
+        assert!(matches!(washed_out(ImageKind::Reserve), ImageKind::Reserve));
+        assert!(matches!(washed_out(ImageKind::Broken), ImageKind::Broken));
+        assert!(matches!(
+            soften_edges(ImageKind::Reserve, 0.1, 0.1),
+            ImageKind::Reserve
+        ));
+        assert!(matches!(
+            soften_edges(ImageKind::Broken, 0.1, 0.1),
+            ImageKind::Broken
+        ));
+    }
+
+    fn paragraph_with_breaks(text: &str) -> Block {
+        let defaults = Defaults::word();
+        let mut style = defaults.para.clone();
+        style.before = 12.0;
+        style.after = 18.0;
+        style.before_auto = true;
+        style.after_auto = true;
+        Block::Paragraph {
+            runs: vec![TextRun::new(text, defaults.run)],
+            style,
+            list: true,
+            images: Vec::new(),
+            boxes: Vec::new(),
+            bookmarks: vec!["bookmark".into()],
+        }
+    }
+
+    #[test]
+    fn page_and_column_breaks_split_unicode_text_and_keep_paragraph_metadata() {
+        let text = format!("Č前{PAGE_BREAK_MARK}中{COLUMN_BREAK_MARK}後");
+        let (pieces, separators, trailing) =
+            split_page_breaks(paragraph_with_breaks(&text), true, true, false);
+        assert_eq!(separators, [false, true]);
+        assert_eq!(trailing, None);
+        assert_eq!(pieces.len(), 3);
+        for (i, (piece, expected)) in pieces.iter().zip(["Č前", "中", "後"]).enumerate() {
+            let Block::Paragraph {
+                runs,
+                style,
+                list,
+                bookmarks,
+                ..
+            } = piece
+            else {
+                panic!("paragraph piece");
+            };
+            assert_eq!(
+                runs.iter().map(|r| r.text.as_str()).collect::<String>(),
+                expected
+            );
+            assert_eq!(*list, i == 0);
+            assert_eq!(bookmarks.len(), usize::from(i == 0));
+            assert_eq!(style.before, if i == 0 { 12.0 } else { 0.0 });
+            assert_eq!(style.after, if i == 2 { 18.0 } else { 0.0 });
+            assert_eq!(style.before_auto, i == 0);
+            assert_eq!(style.after_auto, i == 2);
+        }
+    }
+
+    #[test]
+    fn trailing_breaks_do_not_create_empty_paragraphs() {
+        for (mark, column) in [(PAGE_BREAK_MARK, false), (COLUMN_BREAK_MARK, true)] {
+            let text = format!("Text{mark}   ");
+            let (pieces, separators, trailing) =
+                split_page_breaks(paragraph_with_breaks(&text), !column, column, false);
+            assert_eq!(pieces.len(), 1);
+            assert!(separators.is_empty());
+            assert_eq!(trailing, Some(column));
+        }
+    }
+
+    #[test]
+    fn a_leading_page_break_keeps_the_following_text() {
+        let text = format!("{PAGE_BREAK_MARK}Next page");
+        let (pieces, separators, trailing) =
+            split_page_breaks(paragraph_with_breaks(&text), true, false, false);
+        assert_eq!(pieces.len(), 2);
+        assert_eq!(separators, [false]);
+        assert_eq!(trailing, None);
+        let Block::Paragraph { runs, .. } = &pieces[1] else {
+            panic!("paragraph")
+        };
+        assert_eq!(runs[0].text, "Next page");
+    }
+
+    #[test]
+    fn failed_conversion_restores_the_previous_revision_style() {
+        let previous = REVISIONS.with(|r| r.get());
+        let result = docx_to_pdf_with(
+            b"not a docx",
+            PdfOptions {
+                revisions: RevisionStyle::Word,
+                ..PdfOptions::default()
+            },
+        );
+        assert!(matches!(result, Err(ConvertError::OpenPackage(_))));
+        assert_eq!(REVISIONS.with(|r| r.get()), previous);
+    }
+
+    fn percent_table(pref: Vec<PrefWidth>) -> TableGeom {
+        TableGeom {
+            row_min: Vec::new(),
+            bottom_above: Vec::new(),
+            row_exact: Vec::new(),
+            row_cant_split: Vec::new(),
+            pad_v: 0.0,
+            width: TblWidth::Pct(1.0),
+            unstyled: true,
+            header_rows: 0,
+            table_grid: false,
+            tbl_ind: 0.0,
+            mar_l: 0.0,
+            pref,
+            rules: [0.0; 3],
+            grid_padded: false,
+            fixed: true,
+            float: None,
+            keep_at_margin: false,
+            rtl: false,
+            pct_margins: 0.0,
+            content_autofit: false,
+            cell_spacing: 0.0,
+        }
+    }
+
+    #[test]
+    fn legacy_percent_tables_include_cell_margins_in_the_target_width() {
+        let mut geom = percent_table(vec![PrefWidth::Pct(0.5), PrefWidth::Pct(0.5)]);
+        assert_eq!(
+            table_col_widths(&[50.0, 50.0], &geom, 200.0),
+            [100.0, 100.0]
+        );
+        geom.pct_margins = 12.0;
+        assert_eq!(
+            table_col_widths(&[50.0, 50.0], &geom, 200.0),
+            [106.0, 106.0]
+        );
+        geom.width = TblWidth::Pct(0.5);
+        assert_eq!(table_col_widths(&[50.0, 50.0], &geom, 200.0), [53.0, 53.0]);
+    }
+
+    #[test]
+    fn percent_overflow_is_removed_from_the_last_columns_first() {
+        let geom = percent_table(vec![PrefWidth::Pct(0.6), PrefWidth::Pct(0.6)]);
+        let widths = table_col_widths(&[50.0, 50.0], &geom, 100.0);
+        assert!((widths[0] - 60.0).abs() < 0.001);
+        assert!((widths[1] - 40.0).abs() < 0.001);
+        let geom = percent_table(vec![
+            PrefWidth::Pct(0.99),
+            PrefWidth::Pct(0.5),
+            PrefWidth::Pct(0.5),
+        ]);
+        let widths = table_col_widths(&[33.0; 3], &geom, 100.0);
+        for (actual, expected) in widths.iter().zip([98.0, 1.0, 1.0]) {
+            assert!((actual - expected).abs() < 0.001, "{widths:?}");
+        }
+    }
+
+    #[test]
+    fn an_autofit_percent_table_keeps_its_already_resolved_grid() {
+        let mut geom = percent_table(vec![PrefWidth::Pct(0.48), PrefWidth::Pct(0.52)]);
+        geom.fixed = false;
+        assert_eq!(table_col_widths(&[50.0, 50.0], &geom, 100.0), [50.0, 50.0]);
+        geom.pref = vec![PrefWidth::Pct(0.4), PrefWidth::Pct(0.6)];
+        let widths = table_col_widths(&[50.0, 50.0], &geom, 100.0);
+        assert!((widths[0] - 40.0).abs() < 0.001);
+        assert!((widths[1] - 60.0).abs() < 0.001);
+    }
+
+    fn with_revision_style(style: RevisionStyle, test: impl FnOnce()) {
+        struct Restore(RevisionStyle);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                REVISIONS.with(|r| r.set(self.0));
+            }
+        }
+        let _restore = Restore(REVISIONS.with(|r| r.replace(style)));
+        test();
+    }
+
+    #[test]
+    fn custom_marks_replace_existing_run_decorations_for_each_revision_kind() {
+        let palette = RevisionPalette::parse("deleted=#102030:plain,inserted=#405060:strike,moved-from=#708090:double-strike:underline,moved-to=#a0b0c0:double-underline").unwrap();
+        with_revision_style(RevisionStyle::Custom(palette), || {
+            for (kind, color, lines) in [
+                (
+                    RevMark::Del,
+                    [0x10_u8, 0x20, 0x30],
+                    [false, false, false, false],
+                ),
+                (
+                    RevMark::Ins,
+                    [0x40, 0x50, 0x60],
+                    [true, false, false, false],
+                ),
+                (
+                    RevMark::MoveFrom,
+                    [0x70, 0x80, 0x90],
+                    [true, true, true, false],
+                ),
+                (
+                    RevMark::MoveTo,
+                    [0xa0, 0xb0, 0xc0],
+                    [false, false, true, true],
+                ),
+            ] {
+                let mut style = Defaults::word().run;
+                style.strike = true;
+                style.strike_double = true;
+                style.underline = true;
+                style.underline_double = true;
+                style.underline_wave = true;
+                apply_rev(&mut style, kind, [1.0, 0.0, 0.0]);
+                assert_eq!(style.color, color.map(|c| f32::from(c) / 255.0));
+                assert_eq!(
+                    [
+                        style.strike,
+                        style.strike_double,
+                        style.underline,
+                        style.underline_double
+                    ],
+                    lines
+                );
+                assert!(!style.underline_wave);
+            }
+        });
+    }
+
+    #[test]
+    fn word_marks_use_author_ink_for_insertions_and_deletions() {
+        with_revision_style(RevisionStyle::Word, || {
+            for kind in [RevMark::Ins, RevMark::MoveTo] {
+                let mut style = Defaults::word().run;
+                apply_rev(&mut style, kind, [0.1, 0.2, 0.3]);
+                assert_eq!(style.color, [0.1, 0.2, 0.3]);
+                assert!(style.underline && !style.underline_double && !style.strike);
+            }
+            // Live Word: a second author's deletion is 0078D4 beside the
+            // first author's D13438, so a deletion takes its author's ink.
+            for kind in [RevMark::Del, RevMark::MoveFrom] {
+                let mut style = Defaults::word().run;
+                apply_rev(&mut style, kind, [0.1, 0.2, 0.3]);
+                assert_eq!(style.color, [0.1, 0.2, 0.3]);
+                assert!(style.strike && !style.strike_double && !style.underline);
+            }
+        });
+    }
+
+    #[test]
+    fn unmarked_text_keeps_its_own_decorations_in_every_revision_mode() {
+        for mode in [
+            RevisionStyle::Conventional,
+            RevisionStyle::Word,
+            RevisionStyle::Custom(RevisionPalette::CONVENTIONAL),
+        ] {
+            with_revision_style(mode, || {
+                let mut style = Defaults::word().run;
+                style.color = [0.2, 0.4, 0.6];
+                style.underline_wave = true;
+                style.strike_double = true;
+                apply_rev(&mut style, RevMark::None, [1.0, 0.0, 0.0]);
+                assert_eq!(style.color, [0.2, 0.4, 0.6]);
+                assert!(style.underline_wave && style.strike_double);
+                assert!(!style.underline && !style.strike);
+            });
+        }
     }
 }

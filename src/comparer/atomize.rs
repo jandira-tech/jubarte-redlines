@@ -154,7 +154,97 @@ fn atom_hash(dom: &Dom, content: NodeId, settings: &WmlComparerSettings) -> Atom
     if let Some(h) = dom.attribute(content, &PT::sha1_hash()) {
         return AtomHash::from_hex(h);
     }
+    // A field's begin, separate and end carry no text; without the type they
+    // hash alike and one document's separate can pair with the other's begin.
+    if local == "fldChar"
+        && let Some(ty) = dom.attribute(content, &W::name("fldCharType"))
+    {
+        text.push_str(ty);
+    }
     AtomHash::of_bytes(format!("{local}{text}").as_bytes())
+}
+
+/// Salts every atom of a complex field with the codes of the fields around it.
+///
+/// Word replaces a field whose code changed as a whole, nested fields included.
+/// Matching the result text of two different fields (" Act " in `STYLEREF
+/// "Name Of Act/Reg"` and in `STYLEREF "PrincipalAct_Reg`) leaves an inserted
+/// and a deleted `begin` side by side, two `separate`s and crossed `end`s,
+/// which crashes Word once the instructions are present. Matching the begin of
+/// an `IF` whose code lost `\*MERGEFORMAT`, or its unchanged inner fields,
+/// leaves fields half deleted (98bf5f3d×a3701d36). So begin, code, separate,
+/// end and result all carry the whole chain of codes, outermost first: a
+/// field's shell matches only when every enclosing code is the same.
+fn salt_field_results(dom: &Dom, list: &mut [ComparisonUnitAtom]) {
+    let fld_char = W::name("fldChar");
+    let fld_char_type = W::name("fldCharType");
+    let instr = W::name("instrText");
+    let del_instr = W::name("delInstrText");
+    let kind = |el: NodeId| -> Option<&str> {
+        if dom.name(el)? == fld_char {
+            dom.attribute(el, &fld_char_type)
+        } else {
+            None
+        }
+    };
+    // Pass 1: each begin's code — every instruction up to its own separate
+    // (or end), nested fields' codes and results included.
+    let mut codes: Vec<String> = Vec::new();
+    let mut code_of: Vec<Option<usize>> = vec![None; list.len()];
+    // Open fields, innermost last: (index into codes, inside the result).
+    let mut open: Vec<(usize, bool)> = Vec::new();
+    for (i, atom) in list.iter().enumerate() {
+        let el = atom.content_element;
+        match kind(el) {
+            Some("begin") => {
+                code_of[i] = Some(codes.len());
+                open.push((codes.len(), false));
+                codes.push(String::new());
+            }
+            Some("separate") => {
+                if let Some(field) = open.last_mut() {
+                    field.1 = true;
+                }
+            }
+            Some("end") => {
+                open.pop();
+            }
+            _ => {
+                if dom.name(el).is_some_and(|n| n == instr || n == del_instr) {
+                    let text = dom.value(el);
+                    for &(c, _) in open.iter().filter(|(_, in_result)| !in_result) {
+                        codes[c].push_str(&text);
+                    }
+                }
+            }
+        }
+    }
+    if codes.is_empty() {
+        return;
+    }
+    // Pass 2: salt every atom inside a field with the chain of open codes.
+    let mut chain: Vec<usize> = Vec::new();
+    for (i, atom) in list.iter_mut().enumerate() {
+        let ty = kind(atom.content_element);
+        if ty == Some("begin")
+            && let Some(c) = code_of[i]
+        {
+            chain.push(c);
+        }
+        if !chain.is_empty() {
+            let mut salted = String::from("FIELD");
+            for &c in &chain {
+                salted.push('|');
+                salted.push_str(codes[c].trim());
+            }
+            salted.push('|');
+            salted.push_str(&atom.sha1_hash.to_hex_string());
+            atom.sha1_hash = AtomHash::of_bytes(salted.as_bytes());
+        }
+        if ty == Some("end") {
+            chain.pop();
+        }
+    }
 }
 
 /// `CreateComparisonUnitAtomList(contentParent)` — assign unids, then flatten.
@@ -172,6 +262,7 @@ pub fn create_comparison_unit_atom_list(
     // re-walking `ancestors_and_self` for every character atom.
     let mut path = Vec::new();
     recurse(dom, content_parent, &mut list, settings, &mut path);
+    salt_field_results(dom, &mut list);
     list
 }
 
@@ -239,6 +330,27 @@ fn chain_with(path: &[NodeId], element: NodeId) -> Arc<[NodeId]> {
     Arc::from(c)
 }
 
+/// Recurses into each named child of `element` except one named `exclude`.
+/// Non-allocating (see `Dom::child_at`): `recurse` never adds or removes
+/// children of `element`, so the index walk equals `elements(element, None)`
+/// without the Vec.
+fn recurse_children(
+    dom: &mut Dom,
+    element: NodeId,
+    exclude: Option<&XName>,
+    list: &mut Vec<ComparisonUnitAtom>,
+    settings: &WmlComparerSettings,
+    path: &mut Vec<NodeId>,
+) {
+    for i in 0..dom.child_count(element) {
+        let item = dom.child_at(element, i);
+        match dom.name(item) {
+            Some(n) if exclude != Some(&n) => recurse(dom, item, list, settings, path),
+            _ => {}
+        }
+    }
+}
+
 fn recurse(
     dom: &mut Dom,
     element: NodeId,
@@ -261,56 +373,27 @@ fn recurse(
     // note wrapper (parity CRASH regression when path stayed empty here).
     if name == W::body() || name == W::name("hdr") || name == W::name("ftr") {
         // True path-stop containers: path stays empty underneath.
-        let mut i = 0;
-        while i < dom.child_count(element) {
-            let item = dom.child_at(element, i);
-            i += 1;
-            if dom.name(item).is_some() {
-                recurse(dom, item, list, settings, path);
-            }
-        }
+        recurse_children(dom, element, None, list, settings, path);
         return;
     }
     if name == W::footnote() || name == W::endnote() {
         // Walk children only (no atom for the note itself), but push onto path.
         path.push(element);
-        let mut i = 0;
-        while i < dom.child_count(element) {
-            let item = dom.child_at(element, i);
-            i += 1;
-            if dom.name(item).is_some() {
-                recurse(dom, item, list, settings, path);
-            }
-        }
+        recurse_children(dom, element, None, list, settings, path);
         path.pop();
         return;
     }
     // w:footnotes / w:endnotes parts: if ever used as content_parent, mirror
     // the old stop set (exclude the part from descendant paths).
     if name == W::name("footnotes") || name == W::name("endnotes") {
-        let mut i = 0;
-        while i < dom.child_count(element) {
-            let item = dom.child_at(element, i);
-            i += 1;
-            if dom.name(item).is_some() {
-                recurse(dom, item, list, settings, path);
-            }
-        }
+        recurse_children(dom, element, None, list, settings, path);
         return;
     }
 
     if name == W::p() {
-        // children except pPr (non-allocating; see the body branch above)
+        // children except pPr
         path.push(element);
-        let mut i = 0;
-        while i < dom.child_count(element) {
-            let item = dom.child_at(element, i);
-            i += 1;
-            match dom.name(item) {
-                Some(n) if n != W::p_pr() => recurse(dom, item, list, settings, path),
-                _ => {}
-            }
-        }
+        recurse_children(dom, element, Some(&W::p_pr()), list, settings, path);
         path.pop();
         // the paragraph mark atom (pPr, or a fresh empty pPr). Faithful to
         // WmlComparer.ts: the atom's ancestor chain is the PARAGRAPH's
@@ -328,17 +411,9 @@ fn recurse(
     }
 
     if name == W::r() {
-        // children except rPr (non-allocating; see the body branch above)
+        // children except rPr
         path.push(element);
-        let mut i = 0;
-        while i < dom.child_count(element) {
-            let item = dom.child_at(element, i);
-            i += 1;
-            match dom.name(item) {
-                Some(n) if n != W::r_pr() => recurse(dom, item, list, settings, path),
-                _ => {}
-            }
-        }
+        recurse_children(dom, element, Some(&W::r_pr()), list, settings, path);
         path.pop();
         return;
     }

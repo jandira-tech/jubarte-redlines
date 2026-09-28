@@ -1,0 +1,1514 @@
+// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+//
+// SPDX-License-Identifier: AGPL-3.0-only
+
+//! `jubarte debug`: triage a `.docx` that Word refuses, or compare two builds of
+//! one. Every report is short on purpose. It counts findings by kind, shows a
+//! few examples of each (`limit`), and with two files prints only what differs.
+//!
+//! The checks are the Word-validity shapes the OpenXmlValidator does not see
+//! (see `AGENTS.md`, "When Word cannot open a jubarte file"):
+//!
+//! - `orphans`: `w:delText`/`w:delInstrText` with no `w:del`/`w:moveFrom` in
+//!   its own story, `w:t`/`w:instrText` under a `w:del`, and bare runs in a
+//!   text box whose anchor is deleted. `w:txbxContent` is a story of its own:
+//!   the deletion around its anchor does not reach into it.
+//! - `fields`: `begin`/`separate`/`end` nesting per story, and fields whose
+//!   parts disagree on being deleted.
+//! - `bookmarks`: duplicate or unpaired names and ids, an end before its start,
+//!   a start and end in different `w:sdt`, `w:tc`, `w:txbxContent` or
+//!   revision containers, and a bookmark in a single-value content control
+//!   (plain text, list, date, picture, checkbox).
+//! - `package`: parts without a content type, overrides without a part,
+//!   duplicate relationship ids, relationship targets and `r:` ids that name
+//!   nothing, dangling note and comment references, unpaired comment ranges,
+//!   undeclared `mc:Ignorable` prefixes.
+//! - `structure`: empty field codes, cells that do not end in a paragraph,
+//!   rows without cells, a revision nested in one of its own kind, a body
+//!   `w:sectPr` that is not last.
+//! - `ids`: revision and `wp:docPr` ids used twice in the package. Word opens
+//!   files that repeat them, so they are leads, not causes.
+//! - `chains`: where bookmark starts and ends sit (parent chains, tallied).
+//! - `elements`: element counts (with two files, only the ones that differ).
+//! - `textbox`: the XML of each text box story (namespace declarations
+//!   dropped), filtered by `grep`.
+
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fmt::Write as _;
+use std::io::{Cursor, Read};
+
+use crate::xmllinq::{Dom, NodeId};
+
+/// Which reports to print.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Check {
+    /// Deleted text outside its story's deletion, live text inside one.
+    Orphans,
+    /// Field structure and deletion state.
+    Fields,
+    /// Bookmark integrity and crossings.
+    Bookmarks,
+    /// Content types, relationships, cross-part references.
+    Package,
+    /// Cell, row, revision and section shapes Word rejects.
+    Structure,
+    /// Revision and drawing ids used twice.
+    Ids,
+    /// Bookmark parent chains, tallied.
+    Chains,
+    /// Element counts.
+    Elements,
+    /// Text box stories as XML.
+    Textbox,
+}
+
+/// The checks a bare `jubarte debug FILE` runs.
+pub const TRIAGE: [Check; 5] = [
+    Check::Orphans,
+    Check::Fields,
+    Check::Bookmarks,
+    Check::Package,
+    Check::Structure,
+];
+
+/// Report options.
+#[derive(Clone, Debug)]
+pub struct Options {
+    /// Reports to print.
+    pub checks: Vec<Check>,
+    /// Only parts whose name contains this.
+    pub part: Option<String>,
+    /// `textbox`: only stories whose text contains this.
+    pub grep: Option<String>,
+    /// Examples per finding kind, lines per listing.
+    pub limit: usize,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Options {
+            checks: TRIAGE.to_vec(),
+            part: None,
+            grep: None,
+            limit: 5,
+        }
+    }
+}
+
+/// Longest line a report prints.
+const WIDTH: usize = 200;
+/// Longest text box XML a report prints.
+const TEXTBOX_XML: usize = 1500;
+
+/// One zip entry.
+struct Entry {
+    name: String,
+    size: u64,
+    packed: u64,
+    data: Vec<u8>,
+}
+
+/// A package's zip entries, in archive order.
+struct Package {
+    entries: Vec<Entry>,
+}
+
+impl Package {
+    fn open(bytes: &[u8]) -> Result<Self, String> {
+        let mut zip =
+            zip::ZipArchive::new(Cursor::new(bytes)).map_err(|e| format!("not a zip: {e}"))?;
+        let mut entries = Vec::with_capacity(zip.len());
+        for i in 0..zip.len() {
+            let mut f = zip.by_index(i).map_err(|e| format!("zip entry {i}: {e}"))?;
+            let mut data = Vec::with_capacity(f.size() as usize);
+            f.read_to_end(&mut data)
+                .map_err(|e| format!("{}: {e}", f.name()))?;
+            entries.push(Entry {
+                name: f.name().to_string(),
+                size: f.size(),
+                packed: f.compressed_size(),
+                data,
+            });
+        }
+        Ok(Package { entries })
+    }
+
+    /// XML parts selected by `part`, parsed. A part that does not parse is
+    /// reported as a finding instead.
+    fn xml_parts(&self, part: Option<&str>, findings: &mut Findings) -> Vec<(String, Dom, NodeId)> {
+        let mut out = Vec::new();
+        for e in &self.entries {
+            if !(e.name.ends_with(".xml") || e.name.ends_with(".rels")) {
+                continue;
+            }
+            if part.is_some_and(|p| !e.name.contains(p)) {
+                continue;
+            }
+            let Some(xml) = decode_xml(&e.data) else {
+                findings.add("xml-undecodable", &e.name, String::new());
+                continue;
+            };
+            let parsed = std::panic::catch_unwind(|| {
+                let mut dom = Dom::new();
+                let doc = dom.parse_xdocument(&xml);
+                let root = dom.root(doc);
+                (dom, root)
+            });
+            match parsed {
+                Ok((dom, Some(root))) => out.push((e.name.clone(), dom, root)),
+                _ => findings.add("xml-unparsable", &e.name, String::new()),
+            }
+        }
+        out
+    }
+}
+
+/// A part's XML text: UTF-8, or UTF-16 behind its byte order mark (custom
+/// XML parts are often UTF-16).
+fn decode_xml(data: &[u8]) -> Option<String> {
+    let utf16 = |be: bool| {
+        let (chunks, _) = data[2..].as_chunks::<2>();
+        let units: Vec<u16> = chunks
+            .iter()
+            .map(|c| {
+                if be {
+                    u16::from_be_bytes(*c)
+                } else {
+                    u16::from_le_bytes(*c)
+                }
+            })
+            .collect();
+        String::from_utf16(&units).ok()
+    };
+    match data {
+        [0xFF, 0xFE, ..] => utf16(false),
+        [0xFE, 0xFF, ..] => utf16(true),
+        [0xEF, 0xBB, 0xBF, rest @ ..] => std::str::from_utf8(rest).ok().map(str::to_string),
+        _ => std::str::from_utf8(data).ok().map(str::to_string),
+    }
+}
+
+/// Findings by kind, each with its examples in document order.
+#[derive(Default)]
+struct Findings {
+    by_kind: BTreeMap<String, Vec<(String, String)>>,
+}
+
+impl Findings {
+    fn add(&mut self, kind: &str, part: &str, detail: String) {
+        self.by_kind
+            .entry(kind.to_string())
+            .or_default()
+            .push((part.to_string(), detail));
+    }
+}
+
+fn local(dom: &Dom, n: NodeId) -> String {
+    dom.name(n)
+        .map(|x| x.local_name().to_string())
+        .unwrap_or_default()
+}
+
+/// Story boundaries: a text box is a story inside the story that anchors it.
+const STORIES: [&str; 7] = [
+    "txbxContent",
+    "body",
+    "hdr",
+    "ftr",
+    "footnote",
+    "endnote",
+    "comment",
+];
+const REVISIONS: [&str; 4] = ["ins", "del", "moveFrom", "moveTo"];
+
+/// `n`'s last few ancestors and itself, outermost first: `p/del/r/delText`.
+fn path(dom: &Dom, n: NodeId) -> String {
+    let mut names: Vec<String> = dom
+        .ancestors(n, None)
+        .iter()
+        .take(5)
+        .map(|&a| local(dom, a))
+        .collect();
+    names.reverse();
+    names.push(local(dom, n));
+    names.join("/")
+}
+
+fn clip(s: &str, max: usize) -> String {
+    let s: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if s.chars().count() <= max {
+        s
+    } else {
+        format!("{}…", s.chars().take(max).collect::<String>())
+    }
+}
+
+/// The nearest story boundary above `n`.
+fn story_of(dom: &Dom, n: NodeId) -> Option<NodeId> {
+    dom.ancestors(n, None)
+        .into_iter()
+        .find(|&a| STORIES.contains(&local(dom, a).as_str()))
+}
+
+/// `D` (deleted), `I` (inserted) or `-`, from the nearest revision container in
+/// `n`'s own story.
+fn state(dom: &Dom, n: NodeId) -> char {
+    for a in dom.ancestors(n, None) {
+        match local(dom, a).as_str() {
+            "del" | "moveFrom" => return 'D',
+            "ins" | "moveTo" => return 'I',
+            s if STORIES.contains(&s) => return '-',
+            _ => {}
+        }
+    }
+    '-'
+}
+
+/// The deletion around a text box's anchor, in the story that holds it.
+fn anchor_deleted(dom: &Dom, tb: NodeId) -> bool {
+    for a in dom.ancestors(tb, None) {
+        match local(dom, a).as_str() {
+            "del" => return true,
+            "txbxContent" => return false,
+            _ => {}
+        }
+    }
+    false
+}
+
+fn check_orphans(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
+    for n in dom.descendants(root, None) {
+        let name = local(dom, n);
+        match name.as_str() {
+            "delText" | "delInstrText" if state(dom, n) != 'D' => f.add(
+                &format!("orphan-{name}"),
+                part,
+                format!("{} \"{}\"", path(dom, n), clip(&dom.value(n), 40)),
+            ),
+            "t" | "instrText"
+                if state(dom, n) == 'D'
+                    && dom
+                        .ancestors(n, None)
+                        .iter()
+                        .any(|&a| local(dom, a) == "del") =>
+            {
+                f.add(
+                    &format!("{name}-under-del"),
+                    part,
+                    format!("{} \"{}\"", path(dom, n), clip(&dom.value(n), 40)),
+                );
+            }
+            "r" => {
+                // A bare run in a text box whose anchor is deleted.
+                let mut tb = None;
+                for a in dom.ancestors(n, None) {
+                    let an = local(dom, a);
+                    if REVISIONS.contains(&an.as_str()) {
+                        break;
+                    }
+                    if an == "txbxContent" {
+                        tb = Some(a);
+                        break;
+                    }
+                }
+                if let Some(tb) = tb
+                    && anchor_deleted(dom, tb)
+                {
+                    let kids: Vec<String> = dom
+                        .elements(n, None)
+                        .into_iter()
+                        .map(|c| local(dom, c))
+                        .filter(|c| c != "rPr")
+                        .collect();
+                    f.add(
+                        "bare-run-in-deleted-textbox",
+                        part,
+                        format!(
+                            "{} [{}] \"{}\"",
+                            path(dom, n),
+                            kids.join(","),
+                            clip(&dom.value(n), 30)
+                        ),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+struct OpenField {
+    begin: char,
+    separate: Option<char>,
+    instr: Vec<(bool, char)>,
+    code: String,
+    at: String,
+}
+
+fn check_fields(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
+    let mut stacks: HashMap<Option<NodeId>, Vec<OpenField>> = HashMap::new();
+    for n in dom.descendants(root, None) {
+        let name = local(dom, n);
+        let is_instr = name == "instrText" || name == "delInstrText";
+        if name != "fldChar" && !is_instr {
+            continue;
+        }
+        let stack = stacks.entry(story_of(dom, n)).or_default();
+        let st = state(dom, n);
+        if is_instr {
+            match stack.last_mut() {
+                Some(open) => {
+                    open.instr.push((name == "delInstrText", st));
+                    open.code.push_str(&dom.value(n));
+                }
+                None => f.add("field-code-outside-field", part, path(dom, n)),
+            }
+            continue;
+        }
+        let kind = dom
+            .attributes(n)
+            .into_iter()
+            .find(|(k, _)| k.local_name() == "fldCharType")
+            .map(|(_, v)| v)
+            .unwrap_or_default();
+        match kind.as_str() {
+            "begin" => stack.push(OpenField {
+                begin: st,
+                separate: None,
+                instr: Vec::new(),
+                code: String::new(),
+                at: path(dom, n),
+            }),
+            "separate" => match stack.last_mut() {
+                Some(open) => open.separate = Some(st),
+                None => f.add("field-separate-without-begin", part, path(dom, n)),
+            },
+            "end" => {
+                let Some(open) = stack.pop() else {
+                    f.add("field-end-without-begin", part, path(dom, n));
+                    continue;
+                };
+                let states: String = std::iter::once(open.begin)
+                    .chain(open.instr.iter().map(|&(_, s)| s))
+                    .chain(open.separate)
+                    .chain(std::iter::once(st))
+                    .collect();
+                let code = clip(&open.code, 40);
+                if states.contains('D') && states.chars().any(|c| c != 'D') {
+                    f.add(
+                        "field-partly-deleted",
+                        part,
+                        format!("begin/code/separate/end={states} \"{code}\" at {}", open.at),
+                    );
+                }
+                if open.instr.iter().any(|&(del, s)| del != (s == 'D')) {
+                    f.add(
+                        "field-code-kind-vs-state",
+                        part,
+                        format!("states={states} \"{code}\" at {}", open.at),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+    for open in stacks.into_values().flatten() {
+        f.add(
+            "field-unclosed",
+            part,
+            format!("\"{}\" at {}", clip(&open.code, 40), open.at),
+        );
+    }
+}
+
+fn attr(dom: &Dom, n: NodeId, name: &str) -> String {
+    dom.attributes(n)
+        .into_iter()
+        .find(|(k, _)| k.local_name() == name)
+        .map(|(_, v)| v)
+        .unwrap_or_default()
+}
+
+fn check_bookmarks(
+    dom: &Dom,
+    root: NodeId,
+    part: &str,
+    f: &mut Findings,
+    chains: Option<&mut BTreeMap<String, usize>>,
+) {
+    let marks: Vec<NodeId> = dom
+        .descendants(root, None)
+        .into_iter()
+        .filter(|&n| matches!(local(dom, n).as_str(), "bookmarkStart" | "bookmarkEnd"))
+        .collect();
+    let mut starts: HashMap<String, NodeId> = HashMap::new();
+    let mut names: HashSet<String> = HashSet::new();
+    let mut ended: HashSet<String> = HashSet::new();
+    for &m in &marks {
+        let id = attr(dom, m, "id");
+        if local(dom, m) == "bookmarkStart" {
+            let name = attr(dom, m, "name");
+            if !names.insert(name.clone()) {
+                f.add("bookmark-duplicate-name", part, name.clone());
+            }
+            if starts.insert(id.clone(), m).is_some() {
+                f.add("bookmark-duplicate-id", part, format!("id {id} ({name})"));
+            }
+            if ended.contains(&id) {
+                f.add(
+                    "bookmark-end-before-start",
+                    part,
+                    format!("id {id} ({name})"),
+                );
+            }
+        } else if !ended.insert(id.clone()) {
+            f.add("bookmark-duplicate-end", part, format!("id {id}"));
+        }
+    }
+    for (id, &s) in &starts {
+        if !ended.contains(id) {
+            f.add(
+                "bookmark-start-without-end",
+                part,
+                format!("id {id} ({})", attr(dom, s, "name")),
+            );
+        }
+    }
+    for id in &ended {
+        if !starts.contains_key(id) {
+            f.add("bookmark-end-without-start", part, format!("id {id}"));
+        }
+    }
+    let within = |n: NodeId, set: &[&str]| -> Vec<NodeId> {
+        dom.ancestors(n, None)
+            .into_iter()
+            .filter(|&a| set.contains(&local(dom, a).as_str()))
+            .collect()
+    };
+    for &e in marks.iter().filter(|&&m| local(dom, m) == "bookmarkEnd") {
+        let Some(&s) = starts.get(&attr(dom, e, "id")) else {
+            continue;
+        };
+        for (label, set) in [
+            ("sdt", &["sdtContent"][..]),
+            ("cell", &["tc"][..]),
+            ("textbox", &["txbxContent"][..]),
+            ("revision", &REVISIONS[..]),
+        ] {
+            if within(s, set) != within(e, set) {
+                f.add(
+                    &format!("bookmark-crosses-{label}"),
+                    part,
+                    format!(
+                        "{}: start {} and end {} sit in different {label} containers",
+                        attr(dom, s, "name"),
+                        path(dom, s),
+                        path(dom, e)
+                    ),
+                );
+            }
+        }
+    }
+    for &m in &marks {
+        let control = dom
+            .ancestors(m, None)
+            .into_iter()
+            .filter(|&a| local(dom, a) == "sdt")
+            .find_map(|sdt| single_value_control(dom, sdt));
+        if let Some(control) = control {
+            let id = attr(dom, m, "id");
+            let name = starts
+                .get(&id)
+                .map_or(String::new(), |&s| attr(dom, s, "name"));
+            f.add(
+                &format!("bookmark-in-{control}-control"),
+                part,
+                format!("{name} (id {id}) {}", path(dom, m)),
+            );
+        }
+    }
+    if let Some(chains) = chains {
+        for &m in &marks {
+            let mut names: Vec<String> = dom
+                .ancestors(m, None)
+                .into_iter()
+                .map(|a| local(dom, a))
+                .take_while(|a| !STORIES.contains(&a.as_str()))
+                .collect();
+            names.reverse();
+            let kind = if local(dom, m) == "bookmarkStart" {
+                "start"
+            } else {
+                "end"
+            };
+            *chains
+                .entry(format!("{part} {kind} {}", names.join("/")))
+                .or_default() += 1;
+        }
+    }
+}
+
+/// Content controls that hold one value. Word keeps no bookmark in one: it
+/// refused en 7b649361 and 57c181da until those bookmarks were dropped.
+const SINGLE_VALUE_CONTROLS: [&str; 6] = [
+    "text",
+    "dropDownList",
+    "comboBox",
+    "date",
+    "picture",
+    "checkbox",
+];
+
+/// The single-value kind `sdt` declares in its `w:sdtPr`, if any.
+fn single_value_control(dom: &Dom, sdt: NodeId) -> Option<String> {
+    let pr = dom
+        .elements(sdt, None)
+        .into_iter()
+        .find(|&c| local(dom, c) == "sdtPr")?;
+    dom.elements(pr, None)
+        .into_iter()
+        .map(|c| local(dom, c))
+        .find(|k| SINGLE_VALUE_CONTROLS.contains(&k.as_str()))
+}
+
+const RELATIONSHIPS_NS: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+/// `%XX` escapes decoded, so a rel target and a zip entry name compare as the
+/// part names they are.
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let hex = |c: u8| (c as char).to_digit(16);
+        if b[i] == b'%'
+            && i + 2 < b.len()
+            && let (Some(h), Some(l)) = (hex(b[i + 1]), hex(b[i + 2]))
+        {
+            out.push((h * 16 + l) as u8);
+            i += 3;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// The part a rel target names: relative to the folder of the rels file's
+/// source part, `.`/`..` resolved, no leading slash.
+fn resolve_target(rels: &str, target: &str) -> String {
+    let source_dir = rels
+        .rsplit_once("_rels/")
+        .map_or("", |(dir, _)| dir.trim_end_matches('/'));
+    let joined = match target.strip_prefix('/') {
+        Some(abs) => abs.to_string(),
+        None if source_dir.is_empty() => target.to_string(),
+        None => format!("{source_dir}/{target}"),
+    };
+    let mut segments: Vec<&str> = Vec::new();
+    for seg in joined.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            s => segments.push(s),
+        }
+    }
+    segments.join("/")
+}
+
+/// The rels file that holds `part`'s relationships.
+fn rels_of(part: &str) -> String {
+    match part.rsplit_once('/') {
+        Some((dir, name)) => format!("{dir}/_rels/{name}.rels"),
+        None => format!("_rels/{part}.rels"),
+    }
+}
+
+fn elements_named<'a>(
+    dom: &'a Dom,
+    root: NodeId,
+    name: &'a str,
+) -> impl Iterator<Item = NodeId> + 'a {
+    dom.descendants(root, None)
+        .into_iter()
+        .filter(move |&n| local(dom, n) == name)
+}
+
+fn check_package(pkg: &Package, parts: &[(String, Dom, NodeId)], f: &mut Findings) {
+    const CT: &str = "[Content_Types].xml";
+    let names: HashSet<String> = pkg
+        .entries
+        .iter()
+        // Office's legacy `[trash]/` folder is no part; Word ignores it.
+        .filter(|e| !e.name.ends_with('/') && !e.name.starts_with("[trash]/"))
+        .map(|e| percent_decode(&e.name))
+        .collect();
+    let by_name: HashMap<&str, (&Dom, NodeId)> = parts
+        .iter()
+        .map(|(n, d, r)| (n.as_str(), (d, *r)))
+        .collect();
+
+    if let Some(&(dom, root)) = by_name.get(CT) {
+        let mut defaults = HashSet::new();
+        let mut overrides = HashSet::new();
+        for n in dom.elements(root, None) {
+            match local(dom, n).as_str() {
+                "Default" => {
+                    defaults.insert(attr(dom, n, "Extension").to_ascii_lowercase());
+                }
+                "Override" => {
+                    overrides.insert(percent_decode(
+                        attr(dom, n, "PartName").trim_start_matches('/'),
+                    ));
+                }
+                _ => {}
+            }
+        }
+        for name in names.iter().filter(|n| n.as_str() != CT) {
+            let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase());
+            if !overrides.contains(name) && !ext.is_some_and(|e| defaults.contains(&e)) {
+                f.add("part-without-content-type", name, String::new());
+            }
+        }
+        for o in overrides.iter().filter(|o| !names.contains(*o)) {
+            f.add("override-without-part", CT, o.clone());
+        }
+    } else {
+        f.add("content-types-missing", CT, String::new());
+    }
+
+    // Relationship ids per rels file, and targets that name no part.
+    let mut rel_ids: HashMap<&str, HashSet<String>> = HashMap::new();
+    for (name, dom, root) in parts.iter().filter(|(n, ..)| n.ends_with(".rels")) {
+        let ids = rel_ids.entry(name.as_str()).or_default();
+        for r in dom.elements(*root, None) {
+            let id = attr(dom, r, "Id");
+            if !ids.insert(id.clone()) {
+                f.add("rel-duplicate-id", name, id.clone());
+            }
+            if attr(dom, r, "TargetMode") == "External" {
+                continue;
+            }
+            let target = attr(dom, r, "Target");
+            if !names.contains(&percent_decode(&resolve_target(name, &target))) {
+                f.add("rel-target-missing", name, format!("{id} → {target}"));
+            }
+        }
+    }
+
+    // Ids a note or comment reference can name.
+    let ids_in = |part: &str, tag: &str| -> Option<HashSet<String>> {
+        by_name.get(part).map(|&(dom, root)| {
+            elements_named(dom, root, tag)
+                .map(|n| attr(dom, n, "id"))
+                .collect()
+        })
+    };
+    let targets = [
+        (
+            "footnoteReference",
+            ids_in("word/footnotes.xml", "footnote"),
+        ),
+        ("endnoteReference", ids_in("word/endnotes.xml", "endnote")),
+        ("commentReference", ids_in("word/comments.xml", "comment")),
+    ];
+    for (name, dom, root) in parts
+        .iter()
+        .filter(|(n, ..)| !n.ends_with(".rels") && n.as_str() != CT)
+    {
+        let rels = rel_ids.get(rels_of(name).as_str());
+        let (mut range_starts, mut range_ends) = (HashSet::new(), HashSet::new());
+        for n in dom.descendants(*root, None) {
+            for (k, v) in dom.attributes(n) {
+                // Diagram layouts write empty `r:blip=""` placeholders.
+                if k.namespace_name() == RELATIONSHIPS_NS
+                    && !v.is_empty()
+                    && !rels.is_some_and(|ids| ids.contains(&v))
+                {
+                    f.add(
+                        "rid-not-in-rels",
+                        name,
+                        format!("{} r:{}=\"{v}\"", path(dom, n), k.local_name()),
+                    );
+                }
+            }
+            let tag = local(dom, n);
+            match tag.as_str() {
+                "commentRangeStart" => {
+                    range_starts.insert(attr(dom, n, "id"));
+                }
+                "commentRangeEnd" => {
+                    range_ends.insert(attr(dom, n, "id"));
+                }
+                _ => {}
+            }
+            if let Some((_, ids)) = targets.iter().find(|(t, _)| *t == tag) {
+                let id = attr(dom, n, "id");
+                if !ids.as_ref().is_some_and(|ids| ids.contains(&id)) {
+                    f.add(&format!("{tag}-dangling"), name, format!("id {id}"));
+                }
+            }
+        }
+        for id in range_starts.symmetric_difference(&range_ends) {
+            f.add("comment-range-unpaired", name, format!("id {id}"));
+        }
+        if let Some(e) = pkg.entries.iter().find(|e| &e.name == name) {
+            let xml = decode_xml(&e.data).unwrap_or_default();
+            for prefix in undeclared_ignorable_prefixes(&xml) {
+                f.add("ignorable-prefix-undeclared", name, prefix);
+            }
+        }
+    }
+}
+
+/// `mc:Ignorable` prefixes that the element carrying the attribute does not
+/// declare.
+fn undeclared_ignorable_prefixes(xml: &str) -> Vec<String> {
+    let Some(at) = xml.find("mc:Ignorable=\"") else {
+        return Vec::new();
+    };
+    let tag_start = xml[..at].rfind('<').unwrap_or(0);
+    let tag_end = xml[at..].find('>').map_or(xml.len(), |e| at + e);
+    let tag = &xml[tag_start..tag_end];
+    let value_start = at + "mc:Ignorable=\"".len();
+    let value = xml[value_start..].split('"').next().unwrap_or_default();
+    value
+        .split_whitespace()
+        .filter(|p| !tag.contains(&format!("xmlns:{p}=")))
+        .map(str::to_string)
+        .collect()
+}
+
+fn check_structure(dom: &Dom, root: NodeId, part: &str, f: &mut Findings) {
+    for n in dom.descendants(root, None) {
+        let name = local(dom, n);
+        match name.as_str() {
+            "instrText" | "delInstrText" if dom.value(n).is_empty() => {
+                f.add(&format!("{name}-empty"), part, path(dom, n));
+            }
+            "tc" => {
+                let last = dom
+                    .elements(n, None)
+                    .into_iter()
+                    .map(|c| local(dom, c))
+                    .rfind(|c| c.as_str() != "tcPr");
+                if last.as_deref() != Some("p") {
+                    f.add(
+                        "cell-not-ending-in-p",
+                        part,
+                        format!("{} last={}", path(dom, n), last.unwrap_or_default()),
+                    );
+                }
+            }
+            "tr" if !dom
+                .descendants(n, None)
+                .iter()
+                .any(|&c| local(dom, c) == "tc") =>
+            {
+                f.add("row-without-cell", part, path(dom, n));
+            }
+            "ins" | "del"
+                if dom
+                    .ancestors(n, None)
+                    .into_iter()
+                    .take_while(|&a| !STORIES.contains(&local(dom, a).as_str()))
+                    .any(|a| local(dom, a) == name) =>
+            {
+                f.add(&format!("{name}-nested-in-{name}"), part, path(dom, n));
+            }
+            "body" => {
+                let kids = dom.elements(n, None);
+                if let Some(i) = kids.iter().position(|&k| local(dom, k) == "sectPr")
+                    && i + 1 != kids.len()
+                {
+                    f.add(
+                        "body-sectPr-not-last",
+                        part,
+                        format!("at {i} of {}", kids.len()),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Revision elements: they share one id space across the package.
+const REVISION_IDS: [&str; 18] = [
+    "ins",
+    "del",
+    "rPrChange",
+    "pPrChange",
+    "sectPrChange",
+    "tblPrChange",
+    "trPrChange",
+    "tcPrChange",
+    "tblGridChange",
+    "numberingChange",
+    "moveFrom",
+    "moveTo",
+    "moveFromRangeStart",
+    "moveToRangeStart",
+    "cellIns",
+    "cellDel",
+    "cellMerge",
+    "tblPrExChange",
+];
+
+/// Ids one package should hold once: revision ids and drawing `wp:docPr`
+/// ids. Word opens files that repeat either, so these are leads, not causes.
+#[derive(Default)]
+struct IdUses {
+    revisions: BTreeMap<String, Vec<String>>,
+    drawings: BTreeMap<String, usize>,
+}
+
+fn collect_ids(dom: &Dom, root: NodeId, part: &str, seen: &mut IdUses) {
+    for n in dom.descendants(root, None) {
+        let name = local(dom, n);
+        if name == "docPr" {
+            *seen.drawings.entry(attr(dom, n, "id")).or_default() += 1;
+        } else if REVISION_IDS.contains(&name.as_str()) {
+            let id = attr(dom, n, "id");
+            if !id.is_empty() {
+                seen.revisions
+                    .entry(id)
+                    .or_default()
+                    .push(format!("{part}:{name}"));
+            }
+        }
+    }
+}
+
+/// Everything one package yields for the selected checks.
+struct Analysis {
+    findings: Findings,
+    elements: BTreeMap<String, usize>,
+    chains: BTreeMap<String, usize>,
+    textboxes: Vec<String>,
+}
+
+fn analyze(pkg: &Package, opts: &Options) -> Analysis {
+    let mut a = Analysis {
+        findings: Findings::default(),
+        elements: BTreeMap::new(),
+        chains: BTreeMap::new(),
+        textboxes: Vec::new(),
+    };
+    let on = |c: Check| opts.checks.contains(&c);
+    let parts = pkg.xml_parts(opts.part.as_deref(), &mut a.findings);
+    if on(Check::Package) {
+        // Cross-part references need every part, whatever `part` selects.
+        match opts.part {
+            None => check_package(pkg, &parts, &mut a.findings),
+            Some(_) => {
+                let all = pkg.xml_parts(None, &mut Findings::default());
+                check_package(pkg, &all, &mut a.findings);
+            }
+        }
+    }
+    let mut ids = IdUses::default();
+    for (part, dom, root) in &parts {
+        let (part, dom, root) = (part.as_str(), dom, *root);
+        if on(Check::Orphans) {
+            check_orphans(dom, root, part, &mut a.findings);
+        }
+        if on(Check::Fields) {
+            check_fields(dom, root, part, &mut a.findings);
+        }
+        if on(Check::Structure) {
+            check_structure(dom, root, part, &mut a.findings);
+        }
+        if on(Check::Ids) {
+            collect_ids(dom, root, part, &mut ids);
+        }
+        if on(Check::Bookmarks) || on(Check::Chains) {
+            let chains = on(Check::Chains).then_some(&mut a.chains);
+            let mut scratch = Findings::default();
+            let sink = if on(Check::Bookmarks) {
+                &mut a.findings
+            } else {
+                &mut scratch
+            };
+            check_bookmarks(dom, root, part, sink, chains);
+        }
+        if on(Check::Elements) {
+            for n in dom.descendants(root, None) {
+                *a.elements.entry(local(dom, n)).or_default() += 1;
+            }
+        }
+        if on(Check::Textbox) {
+            for tb in dom
+                .descendants(root, None)
+                .into_iter()
+                .filter(|&n| local(dom, n) == "txbxContent")
+            {
+                if opts
+                    .grep
+                    .as_deref()
+                    .is_some_and(|g| !dom.value(tb).contains(g))
+                {
+                    continue;
+                }
+                let deleted = if anchor_deleted(dom, tb) {
+                    " (anchor deleted)"
+                } else {
+                    ""
+                };
+                let xml = strip_namespace_declarations(&dom.serialize_element(tb));
+                let shown = if xml.chars().count() > TEXTBOX_XML {
+                    format!(
+                        "{}… ({} chars; narrow with --grep)",
+                        xml.chars().take(TEXTBOX_XML).collect::<String>(),
+                        xml.chars().count()
+                    )
+                } else {
+                    xml
+                };
+                a.textboxes
+                    .push(format!("{part} {}{deleted}\n  {shown}", path(dom, tb)));
+            }
+        }
+    }
+    for (id, uses) in ids.revisions.into_iter().filter(|(_, u)| u.len() > 1) {
+        a.findings.add(
+            "revision-duplicate-id",
+            "package",
+            format!("id {id} ×{}: {}", uses.len(), uses.join(", ")),
+        );
+    }
+    for (id, n) in ids.drawings.into_iter().filter(|&(_, n)| n > 1) {
+        a.findings
+            .add("docpr-duplicate-id", "package", format!("id {id} ×{n}"));
+    }
+    a
+}
+
+/// Drop every ` xmlns…="…"` so the XML shows only content.
+fn strip_namespace_declarations(xml: &str) -> String {
+    let mut out = String::with_capacity(xml.len());
+    let mut rest = xml;
+    while let Some(i) = rest.find(" xmlns") {
+        out.push_str(&rest[..i]);
+        let tail = &rest[i..];
+        let Some(q) = tail.find('"') else {
+            rest = tail;
+            break;
+        };
+        match tail[q + 1..].find('"') {
+            Some(e) => rest = &tail[q + 1 + e + 1..],
+            None => {
+                rest = tail;
+                break;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn line(out: &mut String, s: &str) {
+    let _ = writeln!(out, "{}", clip_line(s));
+}
+
+fn clip_line(s: &str) -> String {
+    if s.chars().count() <= WIDTH {
+        s.to_string()
+    } else {
+        format!("{}…", s.chars().take(WIDTH).collect::<String>())
+    }
+}
+
+/// `--list`: the package's entries (archive order, sizes). With a second
+/// package, every entry by name with its state: `=` identical, `~` changed,
+/// `A`/`B` only in one.
+pub fn list(a: &[u8], b: Option<&[u8]>, opts: &Options) -> Result<String, String> {
+    let pa = Package::open(a)?;
+    let mut out = String::new();
+    let Some(b) = b else {
+        let total: u64 = pa.entries.iter().map(|e| e.size).sum();
+        line(
+            &mut out,
+            &format!("{} entries, {total} bytes unpacked", pa.entries.len()),
+        );
+        for e in &pa.entries {
+            if opts.part.as_deref().is_some_and(|p| !e.name.contains(p)) {
+                continue;
+            }
+            line(
+                &mut out,
+                &format!("{:>10} {:>9} {}", e.size, e.packed, e.name),
+            );
+        }
+        return Ok(out);
+    };
+    let pb = Package::open(b)?;
+    let bm: HashMap<&str, &Entry> = pb.entries.iter().map(|e| (e.name.as_str(), e)).collect();
+    let am: HashSet<&str> = pa.entries.iter().map(|e| e.name.as_str()).collect();
+    let mut rows = Vec::new();
+    let (mut same, mut changed, mut only_a, mut only_b) = (0, 0, 0, 0);
+    for e in &pa.entries {
+        match bm.get(e.name.as_str()) {
+            Some(o) if o.data == e.data => {
+                same += 1;
+                rows.push(format!("= {:>10} {}", e.size, e.name));
+            }
+            Some(o) => {
+                changed += 1;
+                rows.push(format!("~ {:>10} → {:<10} {}", e.size, o.size, e.name));
+            }
+            None => {
+                only_a += 1;
+                rows.push(format!("A {:>10} {}", e.size, e.name));
+            }
+        }
+    }
+    for e in pb.entries.iter().filter(|e| !am.contains(e.name.as_str())) {
+        only_b += 1;
+        rows.push(format!("B {:>10} {}", e.size, e.name));
+    }
+    line(
+        &mut out,
+        &format!("{same} identical, {changed} changed, {only_a} only in A, {only_b} only in B"),
+    );
+    for r in rows {
+        if r.starts_with('=') || opts.part.as_deref().is_some_and(|p| !r.contains(p)) {
+            continue;
+        }
+        line(&mut out, &r);
+    }
+    Ok(out)
+}
+
+/// The report for one package, or the differences between two.
+pub fn report(a: &[u8], b: Option<&[u8]>, opts: &Options) -> Result<String, String> {
+    let ra = analyze(&Package::open(a)?, opts);
+    let rb = match b {
+        Some(b) => Some(analyze(&Package::open(b)?, opts)),
+        None => None,
+    };
+    let mut out = String::new();
+    let limit = opts.limit;
+    match &rb {
+        None => {
+            if ra.findings.by_kind.is_empty()
+                && !opts
+                    .checks
+                    .iter()
+                    .all(|c| matches!(c, Check::Elements | Check::Chains | Check::Textbox))
+            {
+                line(&mut out, "no findings");
+            }
+            for (kind, items) in &ra.findings.by_kind {
+                line(&mut out, &format!("{kind}: {}", items.len()));
+                for (part, d) in items.iter().take(limit) {
+                    line(&mut out, &format!("  {part} {d}"));
+                }
+            }
+            if opts.checks.contains(&Check::Elements) {
+                let mut v: Vec<_> = ra.elements.iter().collect();
+                v.sort_by(|x, y| y.1.cmp(x.1).then(x.0.cmp(y.0)));
+                let top: Vec<String> = v
+                    .iter()
+                    .take(limit.max(20))
+                    .map(|(k, n)| format!("{k} {n}"))
+                    .collect();
+                line(&mut out, &format!("elements: {}", top.join(", ")));
+            }
+            print_counts(&mut out, "chains", &ra.chains, None, limit.max(20));
+        }
+        Some(rb) => {
+            let kinds: std::collections::BTreeSet<&String> = ra
+                .findings
+                .by_kind
+                .keys()
+                .chain(rb.findings.by_kind.keys())
+                .collect();
+            let mut any = false;
+            for kind in kinds {
+                let (xa, xb) = (
+                    ra.findings.by_kind.get(kind).map_or(&[][..], |v| &v[..]),
+                    rb.findings.by_kind.get(kind).map_or(&[][..], |v| &v[..]),
+                );
+                if xa == xb {
+                    continue;
+                }
+                any = true;
+                line(&mut out, &format!("{kind}: {} → {}", xa.len(), xb.len()));
+                // Examples that are new in B, else gone from A.
+                let new: Vec<_> = xb.iter().filter(|x| !xa.contains(x)).collect();
+                let gone: Vec<_> = xa.iter().filter(|x| !xb.contains(x)).collect();
+                for (part, d) in new.iter().take(limit) {
+                    line(&mut out, &format!("  +B {part} {d}"));
+                }
+                for (part, d) in gone.iter().take(limit) {
+                    line(&mut out, &format!("  -A {part} {d}"));
+                }
+            }
+            if !any
+                && !opts
+                    .checks
+                    .iter()
+                    .all(|c| matches!(c, Check::Elements | Check::Chains | Check::Textbox))
+            {
+                line(&mut out, "findings identical");
+            }
+            print_counts(
+                &mut out,
+                "elements",
+                &ra.elements,
+                Some(&rb.elements),
+                usize::MAX,
+            );
+            print_counts(&mut out, "chains", &ra.chains, Some(&rb.chains), usize::MAX);
+            if opts.checks.contains(&Check::Textbox) {
+                let only_b: Vec<_> = rb
+                    .textboxes
+                    .iter()
+                    .filter(|t| !ra.textboxes.contains(t))
+                    .collect();
+                let only_a: Vec<_> = ra
+                    .textboxes
+                    .iter()
+                    .filter(|t| !rb.textboxes.contains(t))
+                    .collect();
+                line(
+                    &mut out,
+                    &format!("textbox: {} differ", only_a.len().max(only_b.len())),
+                );
+                for t in only_a.iter().take(limit) {
+                    let _ = writeln!(out, "-A {t}");
+                }
+                for t in only_b.iter().take(limit) {
+                    let _ = writeln!(out, "+B {t}");
+                }
+            }
+            return Ok(out);
+        }
+    }
+    if opts.checks.contains(&Check::Textbox) {
+        line(&mut out, &format!("textbox: {}", ra.textboxes.len()));
+        for t in ra.textboxes.iter().take(limit) {
+            let _ = writeln!(out, "{t}");
+        }
+    }
+    Ok(out)
+}
+
+/// Counts; with a second map, only the keys whose counts differ (`a → b`).
+fn print_counts(
+    out: &mut String,
+    label: &str,
+    a: &BTreeMap<String, usize>,
+    b: Option<&BTreeMap<String, usize>>,
+    limit: usize,
+) {
+    match b {
+        None => {
+            if a.is_empty() {
+                return;
+            }
+            let mut v: Vec<_> = a.iter().collect();
+            v.sort_by(|x, y| y.1.cmp(x.1).then(x.0.cmp(y.0)));
+            line(out, &format!("{label}:"));
+            for (k, n) in v.into_iter().take(limit) {
+                line(out, &format!("  {n:>6} {k}"));
+            }
+        }
+        Some(b) => {
+            let keys: std::collections::BTreeSet<&String> = a.keys().chain(b.keys()).collect();
+            let rows: Vec<String> = keys
+                .into_iter()
+                .filter_map(|k| {
+                    let (x, y) = (
+                        a.get(k).copied().unwrap_or(0),
+                        b.get(k).copied().unwrap_or(0),
+                    );
+                    (x != y).then(|| format!("  {k} {x} → {y}"))
+                })
+                .collect();
+            if a.is_empty() && b.is_empty() {
+                return;
+            }
+            line(out, &format!("{label}: {} differ", rows.len()));
+            for r in rows.into_iter().take(limit) {
+                line(out, &r);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    const TYPES: &str = r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#;
+    const ROOT_RELS: &str = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
+
+    fn zip_of(entries: &[(&str, &str)]) -> Vec<u8> {
+        let mut buf = Cursor::new(Vec::new());
+        {
+            let mut z = zip::ZipWriter::new(&mut buf);
+            let opt = zip::write::SimpleFileOptions::default();
+            for (name, data) in entries {
+                z.start_file(*name, opt).unwrap();
+                z.write_all(data.as_bytes()).unwrap();
+            }
+            z.finish().unwrap();
+        }
+        buf.into_inner()
+    }
+
+    fn document(body: &str) -> String {
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><w:body>{body}</w:body></w:document>"#
+        )
+    }
+
+    fn docx(body: &str) -> Vec<u8> {
+        zip_of(&[
+            ("[Content_Types].xml", TYPES),
+            ("_rels/.rels", ROOT_RELS),
+            ("word/document.xml", &document(body)),
+        ])
+    }
+
+    const CLEAN: &str = r#"<w:p><w:r><w:t>kept</w:t></w:r><w:del w:id="1" w:author="A"><w:r><w:delText>gone</w:delText></w:r></w:del></w:p>"#;
+
+    /// en bb113e88's deleted FILENAME text box: the field code is
+    /// delInstrText in a run no deletion of the text box's story wraps.
+    const ORPHAN: &str = r#"<w:p><w:del w:id="1" w:author="A"><w:r><w:pict><v:shape><v:textbox><w:txbxContent><w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:delInstrText> FILENAME </w:delInstrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:del w:id="2" w:author="A"><w:r><w:delText>AG</w:delText></w:r></w:del><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:del></w:p>"#;
+
+    #[test]
+    fn a_clean_package_has_no_findings() {
+        let out = report(&docx(CLEAN), None, &Options::default()).unwrap();
+        assert_eq!(out, "no findings\n");
+    }
+
+    #[test]
+    fn a_deleted_text_box_field_left_bare_is_reported() {
+        let out = report(&docx(ORPHAN), None, &Options::default()).unwrap();
+        assert!(out.contains("orphan-delInstrText: 1\n"), "{out}");
+        assert!(out.contains("bare-run-in-deleted-textbox: 4\n"), "{out}");
+        assert!(out.contains("field-code-kind-vs-state: 1\n"), "{out}");
+        assert!(
+            out.contains("txbxContent/p/r/delInstrText \"FILENAME\""),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn two_files_print_only_what_differs() {
+        let (a, b) = (docx(CLEAN), docx(ORPHAN));
+        let out = report(&a, Some(&b), &Options::default()).unwrap();
+        assert!(
+            out.starts_with("bare-run-in-deleted-textbox: 0 → 4\n"),
+            "{out}"
+        );
+        assert!(out.contains("  +B word/document.xml "), "{out}");
+        assert_eq!(
+            report(&a, Some(&a), &Options::default()).unwrap(),
+            "findings identical\n"
+        );
+        let opts = Options {
+            checks: vec![Check::Elements],
+            ..Default::default()
+        };
+        let out = report(&a, Some(&b), &opts).unwrap();
+        assert!(out.contains("  delInstrText 0 → 1\n"), "{out}");
+        assert!(!out.contains("  body "), "unchanged counts stay out: {out}");
+    }
+
+    #[test]
+    fn list_shows_entries_and_with_two_files_only_changed_ones() {
+        let (a, b) = (docx(CLEAN), docx(ORPHAN));
+        let one = list(&a, None, &Options::default()).unwrap();
+        assert!(one.starts_with("3 entries, "), "{one}");
+        assert!(one.contains(" word/document.xml\n"), "{one}");
+        let two = list(&a, Some(&b), &Options::default()).unwrap();
+        assert!(
+            two.starts_with("2 identical, 1 changed, 0 only in A, 0 only in B\n"),
+            "{two}"
+        );
+        assert!(
+            two.contains("~ ") && two.contains("word/document.xml"),
+            "{two}"
+        );
+        assert!(
+            !two.contains("[Content_Types]"),
+            "identical entries stay out: {two}"
+        );
+    }
+
+    #[test]
+    fn a_partly_deleted_field_is_reported() {
+        let body = r#"<w:p><w:del w:id="1" w:author="A"><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:delInstrText> PAGE </w:delInstrText></w:r></w:del><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#;
+        let out = report(&docx(body), None, &Options::default()).unwrap();
+        assert!(out.contains("field-partly-deleted: 1\n"), "{out}");
+        assert!(out.contains("begin/code/separate/end=DD-"), "{out}");
+    }
+
+    #[test]
+    fn broken_bookmarks_are_reported() {
+        let body = r#"<w:p><w:bookmarkStart w:id="1" w:name="x"/><w:r><w:t>a</w:t></w:r><w:bookmarkEnd w:id="1"/><w:bookmarkStart w:id="2" w:name="x"/><w:bookmarkEnd w:id="2"/><w:bookmarkEnd w:id="9"/></w:p>"#;
+        let out = report(&docx(body), None, &Options::default()).unwrap();
+        assert!(out.contains("bookmark-duplicate-name: 1\n"), "{out}");
+        assert!(out.contains("bookmark-end-without-start: 1\n"), "{out}");
+    }
+
+    #[test]
+    fn textbox_prints_the_story_without_namespace_declarations() {
+        let opts = Options {
+            checks: vec![Check::Textbox],
+            grep: Some("AG".into()),
+            ..Default::default()
+        };
+        let out = report(&docx(ORPHAN), None, &opts).unwrap();
+        assert!(out.starts_with("textbox: 1\n"), "{out}");
+        assert!(out.contains("(anchor deleted)"), "{out}");
+        assert!(out.contains("<w:txbxContent><w:p>"), "{out}");
+        assert!(!out.contains("xmlns"), "{out}");
+        let none = Options {
+            grep: Some("absent".into()),
+            ..opts
+        };
+        assert_eq!(report(&docx(ORPHAN), None, &none).unwrap(), "textbox: 0\n");
+    }
+
+    #[test]
+    fn package_references_that_name_nothing_are_reported() {
+        let body = r#"<w:p><w:r><w:footnoteReference w:id="7"/></w:r><w:r><w:drawing><wp:inline><wp:docPr id="1" name="a"/></wp:inline></w:drawing></w:r><w:r><w:drawing><wp:inline><wp:docPr id="1" name="b"/></wp:inline></w:drawing></w:r><w:hyperlink r:id="rId9"><w:r><w:t>x</w:t></w:r></w:hyperlink><w:commentRangeStart w:id="3"/></w:p>"#;
+        let rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="t" Target="media/image%201.png"/><Relationship Id="rId1" Type="t" Target="../customXml/item1.xml"/><Relationship Id="rId2" Type="t" Target="https://x" TargetMode="External"/></Relationships>"#;
+        let pkg = zip_of(&[
+            ("[Content_Types].xml", TYPES),
+            ("_rels/.rels", ROOT_RELS),
+            ("word/document.xml", &document(body)),
+            ("word/_rels/document.xml.rels", rels),
+            ("word/media/image 1.png", "png"),
+        ]);
+        let out = report(&pkg, None, &Options::default()).unwrap();
+        for expected in [
+            "footnoteReference-dangling: 1\n",
+            "rid-not-in-rels: 1\n",
+            "  word/document.xml document/body/p/hyperlink r:id=\"rId9\"",
+            "comment-range-unpaired: 1\n",
+            "rel-duplicate-id: 1\n",
+            "rel-target-missing: 1\n",
+            "rId1 → ../customXml/item1.xml",
+            "part-without-content-type: 1\n  word/media/image 1.png",
+        ] {
+            assert!(out.contains(expected), "{expected:?} in {out}");
+        }
+        // Word opens 66 of the English outputs that repeat a docPr id.
+        assert!(!out.contains("docpr-duplicate-id"), "{out}");
+    }
+
+    #[test]
+    fn what_word_ignores_is_not_reported() {
+        // Office's `[trash]/` folder, a diagram's empty `r:embed=""`.
+        let body = r#"<w:p><w:r><w:drawing><wp:inline><a:blip xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" r:embed=""/></wp:inline></w:drawing></w:r></w:p>"#;
+        let pkg = zip_of(&[
+            ("[Content_Types].xml", TYPES),
+            ("_rels/.rels", ROOT_RELS),
+            ("word/document.xml", &document(body)),
+            ("[trash]/0001.dat", "junk"),
+        ]);
+        let out = report(&pkg, None, &Options::default()).unwrap();
+        assert_eq!(out, "no findings\n");
+    }
+
+    #[test]
+    fn utf16_parts_are_decoded_behind_their_byte_order_mark() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-16"?><r/>"#;
+        let le: Vec<u8> = [0xFF, 0xFE]
+            .into_iter()
+            .chain(xml.encode_utf16().flat_map(u16::to_le_bytes))
+            .collect();
+        let be: Vec<u8> = [0xFE, 0xFF]
+            .into_iter()
+            .chain(xml.encode_utf16().flat_map(u16::to_be_bytes))
+            .collect();
+        let bom8: Vec<u8> = [0xEF, 0xBB, 0xBF].into_iter().chain(xml.bytes()).collect();
+        for data in [le, be, bom8] {
+            assert_eq!(decode_xml(&data).as_deref(), Some(xml));
+        }
+        assert_eq!(decode_xml(&[0xFF, 0xFE, 0x00, 0xD8]), None);
+    }
+
+    #[test]
+    fn a_bookmark_in_a_single_value_control_is_reported() {
+        // Word keeps no bookmark in a plain-text or list control (en
+        // 7b649361, 57c181da); a rich-text control may hold one.
+        let control = |kind: &str, id: u32| {
+            format!(
+                r#"<w:sdt><w:sdtPr>{kind}</w:sdtPr><w:sdtContent><w:p><w:bookmarkStart w:id="{id}" w:name="b{id}"/><w:r><w:t>x</w:t></w:r><w:bookmarkEnd w:id="{id}"/></w:p></w:sdtContent></w:sdt>"#
+            )
+        };
+        let body = [
+            control("<w:text/>", 1),
+            control(
+                r#"<w:dropDownList><w:listItem w:value="a"/></w:dropDownList>"#,
+                2,
+            ),
+            control(r#"<w:alias w:val="rich"/>"#, 3),
+        ]
+        .concat();
+        let out = report(&docx(&body), None, &Options::default()).unwrap();
+        assert!(out.contains("bookmark-in-text-control: 2\n"), "{out}");
+        assert!(
+            out.contains("bookmark-in-dropDownList-control: 2\n"),
+            "{out}"
+        );
+        assert!(!out.contains("b3"), "{out}");
+    }
+
+    #[test]
+    fn undeclared_ignorable_prefixes_are_found_on_the_carrying_element() {
+        let xml = r#"<w:document xmlns:mc="m" xmlns:w14="x" mc:Ignorable="w14 wp14"><w:body/></w:document>"#;
+        assert_eq!(undeclared_ignorable_prefixes(xml), vec!["wp14".to_string()]);
+    }
+
+    #[test]
+    fn structures_word_rejects_are_reported() {
+        let body = r#"<w:tbl><w:tr><w:tc><w:tcPr/><w:tbl/></w:tc></w:tr><w:tr/></w:tbl><w:p><w:r><w:instrText/></w:r><w:r><w:instrText xml:space="preserve"> </w:instrText></w:r><w:ins w:id="1" w:author="A"><w:ins w:id="2" w:author="A"><w:r><w:t>x</w:t></w:r></w:ins></w:ins></w:p><w:sectPr/><w:p/>"#;
+        let out = report(&docx(body), None, &Options::default()).unwrap();
+        for expected in [
+            "cell-not-ending-in-p: 1\n",
+            "row-without-cell: 1\n",
+            // Word writes " " codes itself; only a code with no text is blank.
+            "instrText-empty: 1\n",
+            "ins-nested-in-ins: 1\n",
+            "body-sectPr-not-last: 1\n",
+        ] {
+            assert!(out.contains(expected), "{expected:?} in {out}");
+        }
+    }
+
+    #[test]
+    fn duplicate_revision_ids_are_reported_only_when_asked() {
+        let body = r#"<w:p><w:ins w:id="4" w:author="A"><w:r><w:t>a</w:t></w:r></w:ins><w:del w:id="4" w:author="A"><w:r><w:delText>b</w:delText></w:r></w:del><w:r><w:drawing><wp:inline><wp:docPr id="1" name="a"/></wp:inline></w:drawing></w:r><w:r><w:drawing><wp:inline><wp:docPr id="1" name="b"/></wp:inline></w:drawing></w:r></w:p>"#;
+        assert_eq!(
+            report(&docx(body), None, &Options::default()).unwrap(),
+            "no findings\n"
+        );
+        let opts = Options {
+            checks: vec![Check::Ids],
+            ..Default::default()
+        };
+        let out = report(&docx(body), None, &opts).unwrap();
+        assert!(out.contains("revision-duplicate-id: 1\n"), "{out}");
+        assert!(
+            out.contains("id 4 ×2: word/document.xml:ins, word/document.xml:del"),
+            "{out}"
+        );
+        assert!(
+            out.contains("docpr-duplicate-id: 1\n  package id 1 ×2"),
+            "{out}"
+        );
+    }
+}

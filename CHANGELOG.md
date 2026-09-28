@@ -15,6 +15,426 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-09-27
+
+> **Summary.** Redlines are now scored against Word's own redline of each pair, rendered by Word, and this release fixes what that exposed: redlines Word refused to open, blank field codes, missing fonts, and misplaced equations.
+
+### Fixed
+
+- A field whose code stayed while its result changed now stays one field, as in Word's redline. Only the result's words are marked. Before, the field's begin, separate and end were glued to the result's first and last words, so "Contaminated Sites Act 2003" against "Firearms Act 1973" (a STYLEREF title) matched only " Act ". That left a deleted and an inserted field whose ends crossed, and Word refused the redline (db433183 × 9377099d).
+
+- A field whose code changed is now replaced whole, nested fields included, as Word's redline does. Every part of a field carries the codes of the fields around it, so an `IF` that lost `\*MERGEFORMAT` no longer keeps its begin and inner DOCPROPERTY fields while the rest is half deleted (98bf5f3d × a3701d36).
+
+- A changed table of contents no longer opens inside its replacement. Word mode's head junction folds a short deleted title into the first inserted paragraph when both share a word. When that title was a TOC's first entry, the fold carried the deleted TOC's begin above the inserted TOC's end, and the two fields crossed (98bf5f3d × a3701d36, "Part 1—Preliminary" against "Part 1—Introduction"). A fold that would carry half a field across other fields no longer happens.
+
+- The same input writes the same bytes. Another dependency turns on the `zip` crate's `time` feature, and with it every package entry carried the time of the write, so two runs a second apart gave different files. Entries are now dated 1980-01-01, as Office dates its own.
+
+- Two point comments inside one run now keep their places. An anchor that ended one text piece of a multi-piece run went after the whole run, so "Note" landed after "東京" and behind "Second note". The run now splits between the pieces.
+
+- Rejecting every change in center_alignment × center_aligned_bold now restores the original. A pass forced the inserted "This" and "text" into kept text while the next paragraph still deleted them, so the rejected document read "This text This document …". The cross-paragraph stream already keeps those words where Word does, so the pass is gone. The revised tail now fuses into the sole deleted paragraph and keeps that paragraph's deleted mark, so accepting no longer leaves an empty last paragraph.
+
+- Replaced regions now follow Word's replace-gap grammar, which Docxodus 12 decodes.
+  - **Empty paragraphs.** An empty paragraph found in both documents no longer anchors two unrelated regions. It pairs only as part of Word's pilcrow chain, or as the two stories' final marks. The chain breaks when an original paragraph with words faces an empty one.
+  - **Interior replaces.** Inside the body, a replaced region keeps every old and new paragraph whole: new paragraphs first, each under an inserted mark, then the old ones under deleted marks. Before, "TWO" fused into "e" and "A" into "a" (list_with_table_break × broken_complex_list, docxide 13.2 vs Docxodus 93.3).
+  - **The story's tail.** When the revised document's last paragraph holds text, that text fuses into the first deleted paragraph of the tail, even across a deleted table. That paragraph keeps its own properties and deleted mark, so accepting every change no longer leaves a stray empty paragraph (support_tickets_table × support_tickets_summary, diff_doc2 × numwords). The same holds when the original runs on past it to its own end (bullet_list × calibri_bold_italic: "Calibri bold italic …" opens "Apples", then "Bananas" to "Grapes" deleted). A new title facing an unrelated old one is inserted whole before the old one's deletion (pirates × table_left_indent, as Word does).
+  - **Final empty paragraphs.** When both documents end on an empty paragraph, those two final marks stay paired behind a trailing deletion.
+  - **Result.** Paragraph-structure agreement with Word's own redlines over 747 pool pairs rose from 0.9276 to 0.9331: 50 pairs improved and 9 dropped, none by more than 0.08.
+
+- Redlines keep the bookmarks of both documents, as Word's Compare does. The WmlComparer port dropped every bookmark, so each updated TOC line, `PAGEREF` and `REF` printed "Error! Bookmark not defined." (file_21 × file_22 lost all 582). A bookmark in both documents appears once, at its place in the revised text. A bookmark only in the original stays beside its deleted text. Ids never collide with revision ids, and Word's hidden `_GoBack` is dropped, as Word does. Pool pairs with more broken references than Word's own redline went from 29 to 0. Comment anchors gain two fixes from the same pass: moved text now counts once on each side, and a second anchor inside a run that holds several text pieces no longer reorders that text.
+
+- The redline's Normal style now follows Word's rules for merging the two
+  documents' defaults. Word writes B's docDefaults indents, justification,
+  line-unit spacing and borders into Normal (and neutralizes the ones only A
+  sets), writes B's run defaults whenever either Normal stores paragraph or
+  run properties, writes only the language attributes that change, writes the
+  implicit 10pt complex-script size, reads a document with no docDefaults at
+  Word's factory values (after 160, line 278, kern 2), and finds a
+  LibreOffice Normal (`style0`) by its name. Across 738 corpus pairs, Normal
+  run properties that differ from Word's drop from 79 to 38 and paragraph
+  properties from 54 to 46.
+
+- Point comments (a comment reference with no range markers) survive the
+  redline. The carryover only mapped ranges, so a point comment was dropped,
+  and with it the whole comments part when it was the only one. It is now
+  written as an empty range right after the text it follows, the form
+  Word's own redline uses (comments.docx comment 2, in comments ×
+  complex_style_attr and clear_formatting × comments). An empty range is
+  written as one group: a lone start used to land in the next paragraph.
+
+- A list copied from the revised document keeps its picture bullets: the
+  bullet definitions and their images now travel with the list. The list's
+  levels had named a picture bullet the merged numbering never defined, and
+  Word refused to open the redline (italic_rstyle_combos ×
+  paragraph_indent_normal_styles: harness 0 → 53.2; Docxodus 0). When both
+  documents define the same bullet id, the revised bullet takes a fresh id
+  and keeps its own image. A part's first new relationship is now `rId1`, as
+  Word numbers them, not `rId0`.
+
+- The final paragraph marks are also paired when the replaced original has a
+  single paragraph: its text is deleted into the revised empty final
+  paragraph. The deleted text had joined the revised document's last content
+  paragraph and the revised final paragraph was dropped, so accepting the
+  redline lost that paragraph (fields_attrs1 × cli_legacy sample: harness
+  23.4, Docxodus 73.1).
+- A paragraph property the revised document adds to a kept paragraph is
+  recorded in `w:pPrChange` whatever it is, as Word records it; only added
+  alignment or spacing were recorded, so rejecting the redline kept, for
+  example, an added outline level.
+- When an unrelated document replaces the original and ends on an empty
+  paragraph, the two final paragraph marks are paired as Word pairs them:
+  the original's last paragraph is deleted into the revised final paragraph,
+  which keeps the revised properties. The redline had given that paragraph
+  the original's bare properties, and Word's taller final line, which moves
+  the redline onto a second page, was missing (diff_after8 ×
+  doc_with_spacing: harness 2.8, Docxodus 93.9). The revised document's last
+  content paragraph keeps its own inserted mark instead of folding into the
+  first deleted paragraph; a head junction on a shared word still folds.
+- A run of changed body paragraphs is compared as one stream of words and
+  paragraph marks, as Word does (port of Docxodus's DocxDiff in-gap pairing
+  and cross-paragraph segmenter, `comparer::cross_para`): a kept word may now
+  sit across a paragraph mark, and rejecting the redline restores the
+  original instead of repeating a re-kept phrase. Word-faithful gates keep a
+  gap unpaired where Word does: a region with no paragraph pair streams only
+  when the revised side has no more paragraphs and its first kept word opens
+  a paragraph on both sides; a lopsided same-slot pair needs three shared
+  content words; a window of function words alone carries nothing across a
+  mark; a table between two changed runs keeps the LCS pairing; and the next
+  paragraph takes a same-slot pair when it shares at least twice the content
+  words in order (bold_rstyle × bold_vals).
+- An inserted tail ahead of a deleted tail pairs the two final paragraph
+  marks, as Word does: the last inserted paragraph joins the first deleted
+  one with a deleted mark, so accepting the redline no longer leaves an
+  empty paragraph the revised document never had (bullet_list_bold ×
+  bullet_list).
+- Word-mode table margins follow Word: `tblInd`/`tblCellMar` of 10 twips is
+  stamped on a bordered table only when the document the table comes from
+  (the original for a wholly deleted table) has no default table style. 94
+  bordered tables from `TableNormal` documents stay bare in Word's redlines;
+  stamping them shifted every row below (file_46 × file_47).
+- Synthesized numbering for a dangling `numId` copies Word's level geometry:
+  a `num` tab at the text indent and a full 720-twip hanging indent, so level
+  0 puts its number at the margin.
+- Redlines no longer cross or pack complex fields, which crashed Word
+  ("Connection is invalid", English pair 57f96361×3832d290) once field codes
+  were kept: a field result only matches text inside a field with the same
+  code, the insert-before-delete swap leaves `fldChar` wrappers in place,
+  and `SetAfterUnids` aligns the two ancestor chains at the paragraph instead
+  of the top (an SDT-wrapped paragraph against a bare one gave every revised
+  run one Unid, packing a footer's text, field begins, codes and tabs into
+  one run).
+- Redlines Word refused to open now open (14 of 19 English failures):
+  relationship and content-type attributes no longer gain an `&amp;` per
+  round trip, a case-duplicate `Default` extension is merged, and
+  relationship targets are relative to the source part's folder (904e989).
+- A deleted text box is deleted whole, as Word's Compare deletes it: every
+  run of its story sits in a `w:del` of its own and its paragraph marks are
+  deleted. A text box is a story of its own, so the `w:del` around its anchor
+  does not reach into it, and a field there kept its field code in a run no
+  deletion wrapped (`w:delInstrText` outside any `w:del`). Word refused both
+  English redlines that had one (30ff840c, bb113e88); the OpenXmlValidator
+  passed them. Both open now and score 0.673 and 0.557 jaccard against Word's
+  own redline, where every other tool scores 0.
+- A carried bookmark stays out of a content control its source bookmark was
+  not in. Placement follows the text, so B's body-level `_Toc` bookmarks
+  around a data-bound title control landed inside it (7b649361), and a
+  bookmark landed in a dropdown cell (57c181da). Word refused both redlines
+  and opened each once those bookmarks were dropped. An endpoint now leaves
+  the control: a start before it, an end after it.
+- Scratch `pt:Unid` attributes no longer leak into restored deleted-paragraph
+  spacing, and every extension namespace (w14/w15/w16*/wp14) is listed in
+  `mc:Ignorable` on each part root (b7fedc7); w16 serializes under Word's 2018
+  wordml namespace (722de2a).
+- Changed field codes keep their instruction text. An inserted or deleted
+  `w:instrText` was re-emitted empty, so tracked PAGE, REF and TOC fields
+  rendered blank in Word (8ab1df8).
+- Footnote ids renumbered by the comparer stay clear of the revised
+  document's `continuationNotice` id (fee9411).
+- The revised document's fonts join the output font table. A font used only
+  by B had no `w:font` entry, so Word substituted Times New Roman (2eb24d5).
+- A base made only of display equations counts as content, so an unrelated
+  pair keeps Word's order (inserted text first, deleted equations after)
+  instead of merging the first equation into the first inserted paragraph
+  (e4610b0).
+- `get_revisions` and `compare` return an error on bad input instead of
+  panicking (cb33d11).
+- sha1 0.11 drops the vulnerable block-buffer 0.10.4 (GHSA-qwgh-2vcv-g2f7)
+  from the engine, Python and WASM locks (9cddeb3).
+- convert: a cell holding only a nested table splits without panicking
+  (4dda25e); rotated oval pictures, comments on vertical pages and scaled
+  vertical runs follow Word (832eac9, c8a878e, b41cb35); pie and gear text
+  rectangles follow Word (2e4cd8f); altChunk decodes base64 MHT parts and
+  tolerates omitted end tags (93643b5, 30d595f).
+- Redline and other rewritten packages are byte-reproducible: zip entries are
+  written in the source package's order, added parts after them by name,
+  instead of in hash-map order that changed on every run.
+- Changed paragraphs that all correspond position by position (each shares a
+  content word with its counterpart, docxodus's same-slot rule decoded from
+  Word) are paired in place, as Word pairs them, instead of one body pairing
+  with the next on a shared trailing word and the rest falling out
+  whole-inserted and whole-deleted. file_111×file_112 scores 0.108 → 0.538
+  Jaccard against Word's redline; +0.35 summed over the 1,195 pool and
+  English pairs (8 changed).
+- When the revised document names its default fonts by theme
+  (`w:asciiTheme="minorHAnsi"`, as Word writes them), the redline's Normal
+  style now carries those theme fonts instead of keeping the original's named
+  face, so the text renders in Calibri as Word's redline does rather than in
+  Times New Roman. +2.96 Jaccard summed over the 1,195 pool and English pairs
+  (126 changed, 26 better, 2 worse); instrtext_angled_brackets_bug ×
+  table_merged_cells 0.13 → 0.82.
+- A paragraph whose layout changes on both sides (double spacing replacing
+  heading spacing) now keeps the new layout and records the old one as a
+  paragraph-property change, as Word does. Equal properties had looked
+  different because of the comparer's internal `pt14` bookkeeping attributes;
+  those no longer count. A revised paragraph with layout of its own no longer
+  inherits the original's small `after` spacing. +0.59 Jaccard summed over the
+  1,195 pool and English pairs (197 changed, 0 worse by more than 0.005);
+  document_100 × double_spacing_bold 0.48 → 0.85, file_111 × file_112
+  0.54 → 0.75. Paragraph-property changes that disagree with Word's count
+  fall from 1,784 to 1,420.
+- Recorded old run and paragraph properties no longer carry a stray
+  `xmlns:ns0="http://powertools.codeplex.com/2011"` declaration left over from
+  the comparer's internal bookkeeping (349 of the 1,195 pool and English
+  redlines had one in the body; now none). Rendering is unchanged.
+- When two unrelated documents both end in an empty paragraph, the wholesale
+  replacement now keeps that story-final paragraph live after the deletions,
+  as Word does, instead of welding the revised document's trailing empty
+  paragraph onto the original's first deleted paragraph (which then kept a
+  live mark and the revised styling). +0.86 Jaccard summed over the 1,195
+  pool and English pairs (96 changed, 13 better, 4 worse);
+  line_break × line_space_table 0.29 → 0.51.
+- A redline no longer invents two empty inserted paragraphs before a deleted
+  title when the table after that title is deleted wholesale. Word adds those
+  spacers only when it pairs the table cell by cell. quarterly report table ×
+  red bold heading demo 0.24 → 0.26; no other pair of the 1,195 changes.
+- Unrelated documents too short for the wholesale shortcut (for example a
+  title and a table against three headings) now get Word's junction when they
+  share no word of four letters or more. The revised document's last
+  paragraph joins the original's first paragraph, whose mark is deleted.
+  Previously full LCS paired a stray digit and kept the two apart. +1.24
+  Jaccard summed over the 1,195 pool and English pairs (33 changed, 4 better,
+  1 worse); sd_1494 table left indent × sdpr title-only 0.22 → 0.84,
+  quarterly report table × red bold heading 0.26 → 0.68. The one loss
+  (−0.025) is an NDIS footer whose junction now matches Word's redline
+  paragraph for paragraph.
+- A single shared word of four or more letters or digits that opens or
+  closes a paragraph on both sides now stays an anchor in a long unrelated
+  window, as in Word's redline ("Second" opening both "Second green
+  underlined item" and "Second page"). The detail threshold had voided it at
+  one word in 54. green underline bullet list × header without relationships
+  +0.09; no other pair of the 1,195 changes. A general lone-word anchor was
+  tried and rejected (−3.07 summed, 30 worse).
+- A wholesale replacement between unrelated documents now anchors on a word
+  that ends a paragraph on both sides and applies Word's seam on each side of
+  it: "2026" closes both "Product Roadmap 2026" and "Date: February 1, 2026",
+  so that paragraph keeps "2026" and its mark and replaces the words before
+  it. +0.31 Jaccard summed over the 1,195 pool and English pairs (2 changed,
+  both better); product roadmap × project plan +0.28.
+- When the revised document ends inside a stretch the original continues past
+  (a Greek alphabet list against "Meeting Agenda" and a table), the two final
+  paragraph marks now pair as Word pairs them: the revised last paragraph joins
+  the original's first deleted paragraph under the original's properties with
+  a deleted mark, and the paragraph after the deleted table takes the revised
+  properties. The table and everything after it no longer sit a line high.
+  +0.91 Jaccard summed over the 1,195 pool and English pairs (2 changed, both
+  better).
+- Short unrelated documents that both end on an empty paragraph no longer weld
+  the original's first paragraph onto the revised document's last one. Word
+  inserts the revised document whole, deletes the original, and pairs the two
+  final empties (a titled table against an item list). +0.93 Jaccard summed
+  over the 1,195 pool and English pairs (7 changed: 5 better, 2 slightly
+  worse).
+- Stamped demo bodies zip positionally only when a body pair shares a word of
+  five letters or more. Sentences that share just "This" and a full stop
+  (Calibri heading × underline) now take Word's shape: the revised first body
+  inserted whole, the revised last body joined to the original's first.
+  +0.14 Jaccard on the one pair that changed.
+- Custom style ids derived from style names keep only letters and digits, as
+  Word's do. "Normal (Web)" became `Normal(Web)`, which orphaned the revised
+  document's live `NormalWeb` paragraphs onto a custom style. +0.82 Jaccard
+  summed over the pool and English pairs (8 better, none worse).
+- A list whose `numId` both documents use but define differently (a circle
+  bullet against a disc) now moves the unchanged items to the revised
+  definition and records the original `numId` in a `w:pPrChange`, as Word's
+  own redline does. They used to keep the original's bullet with no change
+  recorded. The PDF converter does not yet paint Word's struck-old /
+  inserted-new marker pair, so its own proxy scores the pair mixed
+  (circle × disc +0.36, disc × square −0.47; +0.05 summed).
+- Redefined paragraph styles now carry the revised document's effective
+  fonts, sizes and spacing as a delta against the output's own chain and
+  docDefaults, which is Word's rule (mined over 4,924 tracked styles in the 747
+  pool redlines; our style values now match Word's on 42,542 of 42,993, up
+  from 33,681). A revised heading that inherited Arial and line 276 from its
+  own docDefaults used to render in the original's theme font and line pitch.
+  +3.73 Jaccard summed over the pool and English pairs (45 better, 15 worse,
+  every loss under 0.04).
+- A revised document without any `w:sectPr` now gets Word's default section
+  (Letter, one-inch margins, one column) as the live body section, with the
+  original's section recorded in a `w:sectPrChange`. Word's redline does the
+  same in all six such pool pairs. The body used to keep the original's
+  section with no change record, so a two-column original stayed two columns
+  and 0.5-inch margins stayed narrow (invalid_list_def × tiff +0.08; sd_1480
+  × missing_sectpr now paginates like Word, but the converter's proxy scores
+  it −0.07 because it does not yet paint Word's formatting change bar on the
+  second page).
+- Direct `line=276` spacing is dropped as a restated default only when the
+  paragraph's own source document (the original for deleted paragraphs, the
+  revised one otherwise) resolves line 276 for an unstyled paragraph. A 276
+  over a single-spaced Normal is a real value and Word keeps it; the strip
+  used to remove it regardless (sd_2517_localized_heading_styles: 30 inserted
+  paragraphs in each of four pool pairs lost their line pitch). Our paragraph
+  line spacing now matches Word's on 8,895 of 8,944 inserted pool paragraphs,
+  up from 8,779. +1.03 Jaccard summed (16 better, 5 worse, every loss under
+  0.03).
+- `convert --revisions word` now paints the change bar beside paragraphs,
+  including paragraphs in table cells, whose only revision is a formatting
+  change (`w:pPrChange` or `w:rPrChange`), as Word does. Such paragraphs used
+  to get no bar. Converting the same redlines, 177 pool PDFs changed:
+  +1.41 Jaccard summed, 27 better, 1 worse (-0.026). The worse pair carries a
+  `firstLine="0"` paragraph change that Word's compare does not record.
+- A trailing empty paragraph that ends both documents with the same spacing
+  keeps that spacing live, unrevised, as Word does. It used to be moved into
+  a `w:pPrChange` over an empty paragraph, which also drew a change bar Word
+  does not show (super_editor complex2×complexexport1, +0.009).
+- A deleted Title or Heading that opens a run of deleted paragraphs is no
+  longer mistaken for a checklist cell ("Table Widths" has only two short
+  words). Word mixes it with the last inserted paragraph, and the mixed
+  paragraph keeps the deleted heading's properties and deleted mark. It used
+  to stay a separate paragraph and push every line below it down
+  (file_134×file_135 0.12 → 0.41). +0.37 Jaccard summed over 14 changed
+  redlines, 3 better, 2 worse. The larger loss comes from an inserted
+  text-box paragraph that we already mixed wrongly, where Word keeps it
+  inserted.
+- The installed-font index (`font-index.tsv`) is rebuilt after an upgrade.
+  It stores the answers of the family search, and a new release that changes
+  the matching rules used to keep the old release's faces, or its misses,
+  for as long as the font folders stayed unchanged.
+- An empty page break after a TextHeading now keeps the blank page Word
+  keeps. The break paragraph is about a line plus its space after (sd_2517's
+  breaks are line 276 and after 200, roughly 23pt on the 12pt face). When
+  less than that remains, Word moves the paragraph to the next page and the
+  break still fires. Those breaks had been kept on the current page, so
+  sd_2517 and its randomized copy came out 99 pages against Word's 107. A
+  full page of overflow still skips for every manual break. The wider
+  leftover applies only to TextHeading, so a short gap no longer invents a
+  blank page on the three-page and thirteen-page fixtures.
+- A bottom border on a paragraph inside a table cell is drawn once, on the
+  last paragraph of a run that shares that border, including when the
+  paragraph still has text. Deleted cell bottoms in file_146 — `bun run dev`,
+  the npm and github lines, and the code cell's closing brace — were missing,
+  so the pale rules wider than 200pt went from 30 to Word's 33. An empty
+  paragraph in the middle of that run no longer draws a rule of its own.
+- Tab Alignment against Tab Tests is mixed paragraph by paragraph, in order.
+  Word mixes the title and the three following tab lines with Tab Tests'
+  four paragraphs and deletes the rest. Flat word matching mixed only the
+  title and one empty line.
+- A folded Demo title keeps "Demo" inside the deletion. It used to be peeled
+  into a live " Demo", which is in neither document, so accepting the redline
+  left the word behind (double spacing × eigenpal, and document 100 × the
+  comments addition).
+- A sentence period shared by both documents stays on both sides when one
+  side continues into the next paragraph. The period goes to the side that
+  already finished its sentence, and the continuation gains its own period
+  at the end (font color × font family, italic underline × justified
+  underline, justified underline × justify alignment).
+- A deleted section that repeats the heading inserted in front of a table is
+  placed back before that heading. The comments redline had moved the
+  section to after the capability table, so the original's characters were
+  all present and in the wrong order.
+- An empty paragraph-property shell is left out. The mixed title on blue
+  centered title × blue italic carried an empty `pPrChange`, and center
+  bold × clear formatting carried three empty `w:pPr` elements. Word's
+  redlines of those pairs have neither. A pilcrow mark that is the only
+  thing in the property stays.
+- The 207-pair parity sweep reports 0 NEW keys, and
+  `tools/parity_baseline.tsv` is unchanged. Spellcheck marks, the
+  pagination cache, and header or footer references Word writes on its own
+  stay outside the histogram.
+- A merged table keeps `w:tblPrChange` last in `w:tblPr`. The default table
+  look is written before the change, and the old properties stored inside
+  the change are left without a synthesized look.
+- A bare `w:cantSplit` or `w:rtl` stays. On those elements a missing value
+  means on, and only an explicit false is dropped.
+- A table that already sets a nonzero top or bottom cell margin keeps it.
+  Row exceptions of zero are written only when the table did not set one.
+- PowerTools-faithful compares no longer receive Word's table look, row
+  margin exceptions, or the other Word-visual cleanup. That preset's
+  contract is that those passes stay off.
+- A paragraph whose deleted mark also holds inserted text keeps its
+  `line=276`, as Word's redline keeps it (simple_ordered_list ×
+  sublist_issue, "Lvl 1 – a"). Only a paragraph that inserts nothing drops
+  that restated Normal spacing.
+
+### Added
+
+- `jubarte debug FILE [FILE2]`: a short Word-validity triage of a redline,
+  for the shapes Word refuses and the OpenXmlValidator passes. It prints
+  counts by kind with a few examples (`-n`), and with two files only what
+  differs. Checks (`-c`): `orphans` (deleted text outside its story's
+  deletion), `fields` (nesting per story, partly deleted fields),
+  `bookmarks` (unpaired, duplicate, crossing a control, cell, text box or
+  revision, or inside a plain-text or list control), `package` (content
+  types, relationships, dangling references, undeclared `mc:Ignorable`
+  prefixes), `structure` (blank field codes, cells not ending in a
+  paragraph, nested same-kind revisions), `ids` (revision and `docPr` ids
+  used twice; Word opens such files, so it is opt-in), `chains`, `elements`
+  and `textbox`. `--list` lists the entries, or with two files the ones that
+  differ. On the 450 English redlines of c6307ac, orphaned field codes and
+  bookmarks in single-value controls flag only files Word refused.
+- convert: Korean page and list number formats (b8a19b1).
+- RESULTS.md tables scored against Word truth: Word's redline of the pair,
+  converted by Word. Rows split redlining (tool redline → Word PDF) from
+  conversion (Word redline → tool PDF) (6b72be2, a6953f1).
+
+### Changed
+
+- RESULTS.md applies one rule to every tool. Each table keeps a tool's
+  latest run: jubarte no longer shows its best run of each week. The pooled
+  docx→pdf tables rank only on the corpora every ranked tool converted, over
+  the same documents, and a document a tool has no score for counts 0. Each
+  corpus gets its own column, so jubarte's clean ranking now covers 1,204
+  documents (English a + b and docxide's suite) instead of 2,102.
+  - Competitors join fixtures_500 from their 2026-09-22 run: docxide 0.2673,
+    soffice 0.3365, jubarte 0.6524.
+  - A run over 7 days older than its table's newest is marked †.
+  - Harness Docs counts every attempted document; failures already scored 0.
+  - Redline speed is split by pair set, so a 5,000-pair run is never ranked
+    against a 90-pair one, and 2-pair probes are dropped.
+  - `--compress` is listed unranked.
+  - Tables with no jubarte-redlines run, and the retired TypeScript ports
+    (jubarte-first, -native, -lossless, dist/jubarte-final), are left out.
+
+### Performance
+
+- LCS keys follow their word hash in one walk; `group_by_key_stable` hashes
+  each key once; move detection counts words and tokens in one walk (3d4ef7f,
+  4a05c21, 241e9ac).
+- PDF conversion parses `settings.xml` once per document instead of once per
+  setting it reads, and the XML name interner hashes with foldhash. Cold
+  one-shot conversion is 4.4% faster over 80 fixtures_500 documents; the
+  output PDFs are byte-identical on 150.
+- A font face looks its glyphs up in the cmap when asked instead of listing
+  every mapped codepoint when it loads: a further 4.2% off cold conversion
+  over 80 documents, PDFs byte-identical on all 500 fixtures_500 documents.
+- An on-disk font index (`font-index.tsv` beside jubarte's font folder)
+  remembers which files each font family resolved to. Later processes read
+  those files directly instead of listing and opening every candidate in the
+  system, Word and cloud-font folders; a changed folder or file sends the
+  family back to the full search. Cold conversion median 46.9 → 21.4 ms over
+  80 fixtures_500 documents, PDFs byte-identical on all 500.
+  `JUBARTE_FONT_INDEX` moves it, `off` disables it.
+- Each document remembers which face a catalogue font lands on instead of
+  string-matching the family for every glyph, and the PDF writer prints glyph
+  ids, pen moves and text state without per-glyph allocation. Together they cut
+  another 9.5% off cold conversion (median 22.1 → 18.0 ms over 80 documents);
+  PDFs byte-identical on all 500 fixtures_500 documents.
+- An image repeated across pages (a header logo) is compressed once, not once
+  per page before its duplicates were dropped: 2.1% off cold conversion over
+  80 documents, PDFs byte-identical on all 500.
+- The first-descendant lookups style and run-property reads make stop at the
+  first match instead of walking the rest of the subtree: 1.6% off cold
+  conversion over 80 documents, PDFs byte-identical on all 500 and redlines
+  identical on 300 pool pairs.
+
 ## [0.9.2] - 2026-09-26
 
 > **Summary.** A Word-fidelity pass on jubarte convert: layout rules reconstructed from live-Word probes, painted revision marks (--revisions conventional|word|custom), Word's comment balloons and change bars, East Asian layout, and smaller PDFs (--compress averages 0.70x Word's size on 2,102 documents). The redline engine is unchanged from 0.9.0.
@@ -610,6 +1030,7 @@ measured Q0 performance stack) plus release tooling (`VERSIONING.md`,
 - See [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the covering tests are marked
   `#[ignore]` with matching reasons.
 
+[0.9.3]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.9.3
 [0.9.2]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.9.2
 [0.9.1]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.9.1
 [0.9.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.9.0

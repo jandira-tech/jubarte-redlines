@@ -30,7 +30,7 @@ SPDX-License-Identifier = "LicenseRef-Microsoft-MIT"
 [[annotations]]
 path = "LICENSES/LicenseRef-Docxodus-MIT.txt"
 precedence = "override"
-SPDX-FileCopyrightText = "Microsoft Corporation"
+SPDX-FileCopyrightText = ["Microsoft Corporation", "2025-2026 John Scrudato IV"]
 SPDX-License-Identifier = "LicenseRef-Docxodus-MIT"
 
 # Metric-compatible Calibri substitute used by LibreOffice (same files soffice embeds).

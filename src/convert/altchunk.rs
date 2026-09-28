@@ -77,14 +77,42 @@ fn chunk_html(bytes: &[u8]) -> Option<String> {
         .or_else(|| text[html_at..].find("\n\n").map(|i| html_at + i + 2))?;
     let headers = &lower[..head_end];
     let part_start = headers.rfind("------").unwrap_or(0);
-    let qp = headers[part_start..].contains("quoted-printable");
+    let part_headers = &headers[part_start..];
     let body = &text[head_end..];
     let body = body.find("\n------").map_or(body, |end| &body[..end]);
-    Some(if qp {
+    Some(if part_headers.contains("quoted-printable") {
         quoted_printable(body)
+    } else if part_headers.contains("base64") {
+        String::from_utf8_lossy(&base64_decode(body)).into_owned()
     } else {
         body.to_string()
     })
+}
+
+/// RFC 2045 base64: line breaks and other non-alphabet bytes are skipped,
+/// and decoding stops at the first `=` pad.
+fn base64_decode(s: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(s.len() / 4 * 3);
+    let (mut acc, mut bits) = (0u32, 0u32);
+    for b in s.bytes() {
+        let v = match b {
+            b'A'..=b'Z' => b - b'A',
+            b'a'..=b'z' => b - b'a' + 26,
+            b'0'..=b'9' => b - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            b'=' => break,
+            _ => continue,
+        };
+        acc = (acc << 6) | u32::from(v);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+            acc &= (1 << bits) - 1;
+        }
+    }
+    out
 }
 
 fn quoted_printable(s: &str) -> String {
@@ -233,6 +261,8 @@ struct Cell {
 struct Table {
     border: bool,
     rows: Vec<Vec<Cell>>,
+    /// `sinks.len()` when the table opened; a deeper sink is an open cell.
+    depth: usize,
 }
 
 struct Builder {
@@ -405,7 +435,26 @@ impl Builder {
         }
     }
 
+    /// Whether the innermost table has a cell open.
+    fn in_open_cell(&self) -> bool {
+        self.tables
+            .last()
+            .is_some_and(|t| self.sinks.len() > t.depth)
+    }
+
+    /// Ends the innermost table's open cell, whose end tag HTML lets a
+    /// document leave out: a new cell, a new row or the table's end does.
+    fn close_open_cell(&mut self) {
+        if self.in_open_cell() {
+            if let Some(i) = self.fmts.iter().rposition(|(t, _)| t == "td" || t == "th") {
+                self.fmts.truncate(i);
+            }
+            self.end_cell();
+        }
+    }
+
     fn end_table(&mut self) {
+        self.close_open_cell();
         self.flush();
         let Some(table) = self.tables.pop() else {
             return;
@@ -490,14 +539,17 @@ impl Builder {
                 self.tables.push(Table {
                     border,
                     rows: Vec::new(),
+                    depth: self.sinks.len(),
                 });
             }
             "tr" => {
+                self.close_open_cell();
                 if let Some(t) = self.tables.last_mut() {
                     t.rows.push(Vec::new());
                 }
             }
             "td" | "th" => {
+                self.close_open_cell();
                 self.flush();
                 self.sinks.push(String::new());
                 self.cell_spans.push(
@@ -533,7 +585,11 @@ impl Builder {
         }
         match tag {
             t if BLOCKS.contains(&t) => self.flush(),
-            "td" | "th" => self.end_cell(),
+            "td" | "th" => {
+                if self.in_open_cell() {
+                    self.end_cell();
+                }
+            }
             "table" => self.end_table(),
             _ => {}
         }
@@ -596,11 +652,16 @@ pub(crate) fn html_to_wml(html: &str) -> String {
             continue;
         }
         if name == "script" || name == "style" {
-            let close = format!("</{name}");
-            i = src[i..]
-                .to_ascii_lowercase()
-                .find(&close)
-                .map_or(src.len(), |e| i + e);
+            // Skip the element's raw text and its closing tag; a stray or
+            // self-closed tag has no body to skip.
+            if !closing && !inner.ends_with('/') {
+                let close = format!("</{name}");
+                i = src[i..]
+                    .to_ascii_lowercase()
+                    .find(&close)
+                    .and_then(|e| src[i + e..].find('>').map(|g| i + e + g + 1))
+                    .unwrap_or(src.len());
+            }
             continue;
         }
         if closing {
@@ -749,5 +810,244 @@ mod tests {
                    =C4=8Clanak</p>\r\n------b--\r\n";
         let html = chunk_html(mht.as_bytes()).expect("html");
         assert!(html.contains("<p class=\"x\">Članak</p>"), "{html}");
+    }
+
+    mod regression_tests {
+        use super::*;
+
+        #[test]
+        fn expansion_keeps_surrounding_content_and_chunk_order() {
+            let xml = "<w:body><w:p/><w:altChunk r:id='first'/><w:altChunk r:id='missing'/>\
+                   <w:altChunk r:id='last'><w:altChunkPr/></w:altChunk><w:sectPr/></w:body>";
+            let out = expand(xml, |id| match id {
+                "first" => Some(b"<p>First</p>".to_vec()),
+                "last" => Some(b"<p>Last</p>".to_vec()),
+                _ => None,
+            });
+            assert!(out.starts_with("<w:body><w:p/>"));
+            assert!(out.ends_with("<w:sectPr/></w:body>"));
+            assert!(!out.contains("altChunk"));
+            assert!(out.find(">First</w:t>").unwrap() < out.find(">Last</w:t>").unwrap());
+        }
+
+        #[test]
+        fn expansion_without_chunks_does_not_load_any_parts() {
+            let xml = "<w:body><w:p/><w:sectPr/></w:body>";
+            assert_eq!(expand(xml, |_| panic!("no relationship to load")), xml);
+        }
+
+        #[test]
+        fn missing_id_does_not_load_an_unrelated_part() {
+            assert_eq!(
+                expand("<w:body><w:altChunk/><w:p/></w:body>", |_| panic!(
+                    "missing id"
+                )),
+                "<w:body><w:p/></w:body>"
+            );
+        }
+
+        #[test]
+        fn mime_without_an_html_part_or_header_separator_is_not_imported() {
+            for input in [
+                "MIME-Version: 1.0\r\nContent-Type: image/png\r\n\r\nimage",
+                "Content-Type: text/html\r\n<p>Missing separator</p>",
+            ] {
+                assert!(chunk_html(input.as_bytes()).is_none(), "{input}");
+            }
+        }
+
+        #[test]
+        fn mime_part_encoding_does_not_leak_from_a_previous_attachment() {
+            let mht = "MIME-Version: 1.0\n\n------part\nContent-Type: text/plain\n\
+                   Content-Transfer-Encoding: quoted-printable\n\nattachment\n\
+                   ------part\nContent-Type: text/html\n\n<p>literal=41</p>\n\
+                   ------part\nContent-Type: image/png\n\nnot HTML";
+            let html = chunk_html(mht.as_bytes()).unwrap();
+            assert_eq!(html, "<p>literal=41</p>");
+        }
+
+        #[test]
+        fn omitted_cell_and_row_end_tags_keep_the_table() {
+            // HTML lets </td>, </th> and </tr> go unwritten.
+            let wml = html_to_wml("<table><tr><th>H1<th>H2<tr><td>A<td>B</table><p>After</p>");
+            assert_eq!(wml.matches("<w:tbl>").count(), 1, "{wml}");
+            assert_eq!(wml.matches("<w:tr>").count(), 2, "{wml}");
+            assert_eq!(wml.matches("<w:tc>").count(), 4, "{wml}");
+            for t in ["H1", "H2", "A", "B", "After"] {
+                assert!(wml.contains(&format!(">{t}</w:t>")), "{t}: {wml}");
+            }
+            let after = &wml[wml.find(">After<").unwrap() - 400..];
+            assert!(!after.contains("<w:b/>"), "th bold must not leak: {wml}");
+            assert!(wml.find("</w:tbl>").unwrap() < wml.find(">After<").unwrap());
+            // A nested table with implicit ends stays inside its outer cell.
+            let wml = html_to_wml(
+                "<table><tr><td>Out<table><tr><td>In1<td>In2</table></td><td>Next</table>",
+            );
+            assert_eq!(wml.matches("<w:tbl>").count(), 2, "{wml}");
+            for t in ["Out", "In1", "In2", "Next"] {
+                assert!(wml.contains(&format!(">{t}</w:t>")), "{t}: {wml}");
+            }
+        }
+
+        #[test]
+        fn a_base64_html_part_is_decoded() {
+            // "<p>Olá</p>" in UTF-8, wrapped the way MIME writers wrap it.
+            let mht = "MIME-Version: 1.0\r\n\r\n------=_NextPart\r\n\
+                   Content-Type: text/html; charset=\"utf-8\"\r\n\
+                   Content-Transfer-Encoding: base64\r\n\r\n\
+                   PHA+T2zDoTwv\r\ncD4=\r\n------=_NextPart--";
+            assert_eq!(chunk_html(mht.as_bytes()).unwrap(), "<p>Olá</p>");
+        }
+
+        #[test]
+        fn quoted_printable_handles_soft_breaks_utf8_and_incomplete_escapes() {
+            assert_eq!(
+                quoted_printable("=C4=8Clanak=20one=\r\n=20two=\n!"),
+                "Članak one two!"
+            );
+            for literal in ["=", "=A", "=XZ", "x=y", "=\r"] {
+                assert_eq!(quoted_printable(literal), literal);
+            }
+        }
+
+        #[test]
+        fn entities_preserve_unknown_and_invalid_unicode_references() {
+            assert_eq!(
+                decode_entities("&amp;&lt;&gt;&quot;&apos;&nbsp;&#65;&#x1F600;&#X41;"),
+                "&<>\"'\u{a0}A😀A"
+            );
+            let invalid = "&unknown; &#xD800; &#1114112; &#xZZ; &unfinished";
+            assert_eq!(decode_entities(invalid), invalid);
+            let wml = html_to_wml("<p>&lt;tag&gt; &amp; &unknown;</p>");
+            assert!(
+                wml.contains(">&lt;tag&gt; &amp; &amp;unknown;</w:t>"),
+                "{wml}"
+            );
+        }
+
+        #[test]
+        fn css_lengths_convert_physical_units_and_decimal_commas() {
+            for (length, points) in [
+                ("12pt", 12.0),
+                ("16PX", 12.0),
+                ("1in", 72.0),
+                ("2.54cm", 72.0),
+                ("25.4mm", 72.0),
+                ("1.5em", 18.0),
+                ("14,4px", 10.8),
+            ] {
+                assert!((css_pt(length).unwrap() - points).abs() < 0.001, "{length}");
+            }
+            assert_eq!(css_pt("auto"), None);
+            assert_eq!(css_pt(""), None);
+        }
+
+        #[test]
+        fn nested_inline_formatting_is_restored_after_closing_tags() {
+            let wml = html_to_wml("<p><b>bold<i>both</i>bold again</b>plain</p>");
+            let runs: Vec<&str> = wml.split("<w:r>").skip(1).collect();
+            assert_eq!(runs.len(), 4, "{wml}");
+            for (run, bold, italic) in [
+                (runs[0], true, false),
+                (runs[1], true, true),
+                (runs[2], true, false),
+                (runs[3], false, false),
+            ] {
+                assert_eq!(run.contains("<w:b/>"), bold, "{run}");
+                assert_eq!(run.contains("<w:i/>"), italic, "{run}");
+            }
+        }
+
+        #[test]
+        fn inline_css_overrides_class_and_tag_rules() {
+            let wml = html_to_wml(
+                "<html><head><style>p {font-size:10pt} .large {font-size:14pt; font-weight:bold}\
+            p.large {font-size:18pt}</style></head><body><p class='large' style='font-size:20pt; font-weight:normal'>Text</p></body></html>",
+            );
+            assert!(wml.contains("<w:sz w:val=\"40\"/>"), "{wml}");
+            assert!(!wml.contains("<w:b/>"), "{wml}");
+            assert!(!wml.contains("<w:sz w:val=\"28\"/>"));
+        }
+
+        #[test]
+        fn paragraph_css_controls_spacing_alignment_and_indent() {
+            let wml = html_to_wml(
+                "<p style='margin-top:0; margin-bottom:6pt; margin-left:1in; line-height:150%; text-align:justify'>Text</p>",
+            );
+            assert!(
+                wml.contains(
+                    "<w:spacing w:before=\"0\" w:after=\"120\" w:line=\"360\" w:lineRule=\"auto\"/>"
+                ),
+                "{wml}"
+            );
+            assert!(wml.contains("<w:ind w:left=\"1440\"/>"));
+            assert!(wml.contains("<w:jc w:val=\"both\"/>"));
+            assert!(!wml.contains("Autospacing"));
+        }
+
+        #[test]
+        fn comments_scripts_and_styles_do_not_become_document_text() {
+            let wml = html_to_wml(
+                "<html><head><style>p {font-size:12pt}</style></head><body><!-- hidden -->\
+            <p>Before<script>secret()</script><br/>After</p></body></html>",
+            );
+            assert!(
+                wml.contains(">Before</w:t>") && wml.contains(">After</w:t>"),
+                "text on both sides of the script must survive: {wml}"
+            );
+            assert_eq!(wml.matches("<w:br/>").count(), 1);
+            for hidden in ["secret", "hidden", "font-size"] {
+                assert!(!wml.contains(hidden), "{wml}");
+            }
+        }
+
+        #[test]
+        fn style_in_an_html_fragment_preserves_following_content() {
+            let wml = html_to_wml("<style>p {font-size:12pt}</style><p>After</p>");
+            assert!(
+                wml.contains(">After</w:t>"),
+                "style content is skipped, but the following paragraph must survive: {wml}"
+            );
+            // A self-closed or stray closing tag has no body to swallow.
+            let wml = html_to_wml("<p>A<script/>B</script>C</p><p>D</p>");
+            assert!(
+                wml.contains(">A</w:t>") && wml.contains(">D</w:t>"),
+                "{wml}"
+            );
+            assert!(wml.contains("B") && wml.contains("C"), "{wml}");
+        }
+
+        #[test]
+        fn html_tables_keep_spans_empty_cells_and_header_formatting() {
+            let wml = html_to_wml(
+                "<table border='1'><tr><th colspan='2'>Heading</th></tr>\
+            <tr><td>A</td><td></td></tr></table><p>After</p>",
+            );
+            assert_eq!(wml.matches("<w:gridCol ").count(), 2, "{wml}");
+            assert!(wml.contains("<w:tcW w:w=\"9360\" w:type=\"dxa\"/><w:gridSpan w:val=\"2\"/>"));
+            assert!(wml.contains("<w:tcW w:w=\"4680\" w:type=\"dxa\"/></w:tcPr><w:p/></w:tc>"));
+            assert!(wml.contains("<w:tblBorders>"));
+            let heading = wml
+                .split("<w:r>")
+                .nth(1)
+                .unwrap()
+                .split("</w:r>")
+                .next()
+                .unwrap();
+            assert!(heading.contains("<w:b/>") && heading.contains(">Heading</w:t>"));
+            assert!(wml.find("</w:tbl>").unwrap() < wml.find(">After</w:t>").unwrap());
+        }
+
+        #[test]
+        fn invalid_or_zero_colspan_falls_back_to_one_column() {
+            for span in ["0", "invalid", "-1"] {
+                let wml = html_to_wml(&format!(
+                    "<table border='0'><tr><td colspan='{span}'>A</td></tr></table>"
+                ));
+                assert_eq!(wml.matches("<w:gridCol ").count(), 1, "{span}: {wml}");
+                assert!(!wml.contains("<w:gridSpan"), "{wml}");
+                assert!(!wml.contains("<w:tblBorders>"));
+            }
+        }
     }
 }

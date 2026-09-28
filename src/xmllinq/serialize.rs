@@ -47,8 +47,10 @@ fn well_known_prefix(ns: &str) -> Option<&'static str> {
         "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup" => "wpg",
         "http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas" => "wpc",
         "http://schemas.microsoft.com/office/word/2010/wordprocessingInk" => "wpi",
-        "http://schemas.microsoft.com/office/word/2016/wordml" => "w16",
+        "http://schemas.microsoft.com/office/word/2018/wordml" => "w16",
         "http://schemas.microsoft.com/office/word/2020/wordml/sdtdatahash" => "w16sdtdh",
+        "http://schemas.microsoft.com/office/word/2024/wordml/sdtformatlock" => "w16sdtfl",
+        "http://schemas.microsoft.com/office/word/2023/wordml/word16du" => "w16du",
         "http://schemas.microsoft.com/office/drawing/2010/main" => "a14",
         "http://schemas.microsoft.com/office/drawing/2016/ink" => "aink",
         "http://schemas.microsoft.com/office/drawing/2017/model3d" => "am3d",
@@ -667,4 +669,38 @@ pub fn serialize_document(dom: &Dom, doc: NodeId) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::xmllinq::{Dom, XNamespace};
+
+    /// Word binds `w16` to the 2018 wordml namespace (and writes `w16sdtfl`,
+    /// `w16du` for its 2024/2023 ones); an unbound use gets Word's prefix.
+    #[test]
+    fn word_2016_plus_namespaces_serialize_with_word_prefixes() {
+        for (uri, prefix) in [
+            (
+                "http://schemas.microsoft.com/office/word/2018/wordml",
+                "w16",
+            ),
+            (
+                "http://schemas.microsoft.com/office/word/2024/wordml/sdtformatlock",
+                "w16sdtfl",
+            ),
+            (
+                "http://schemas.microsoft.com/office/word/2023/wordml/word16du",
+                "w16du",
+            ),
+        ] {
+            let mut dom = Dom::new();
+            let el = dom.new_element(XNamespace::get(uri).name("x"));
+            let xml = serialize_element(&dom, el);
+            assert!(
+                xml.starts_with(&format!("<{prefix}:x xmlns:{prefix}=\"{uri}\"")),
+                "{xml}"
+            );
+        }
+    }
 }

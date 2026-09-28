@@ -9,6 +9,7 @@ build-backend = "maturin"
 [project]
 name = "jubarte-redlines"
 description = "Lossless DOCX redline engine — compare two Word documents into a tracked-changes document that opens cleanly in Microsoft Word; list, accept, or reject revisions; render DOCX to PDF"
+# release-notes v0.9.3 — Redlines Word refused to open now open. A field whose code changed is replaced whole, and a same-code field stays whole, as in Word's redline. Table, list and section markup follow Word, and the same input writes the same bytes.
 # release-notes v0.9.2 — docx_to_pdf gains revisions= and revision_palette=; PDFs follow Word's layout more closely and are smaller. Redline output unchanged.
 readme = "README.md"
 requires-python = ">=3.10"

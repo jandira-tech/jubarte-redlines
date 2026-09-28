@@ -573,9 +573,12 @@ pub fn strict_to_transitional_docx(bytes: &[u8]) -> Vec<u8> {
         return bytes.to_vec();
     }
 
-    // Rebuild the package with translated parts.
+    // Rebuild the package with translated parts, dated as `PartFs::to_zip`
+    // dates its entries (no wall-clock time).
     let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
-    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+    let options = SimpleFileOptions::default()
+        .compression_method(CompressionMethod::Deflated)
+        .last_modified_time(zip::DateTime::default());
     for (name, data) in &entries {
         if writer.start_file(name, options).is_err() {
             return bytes.to_vec();
@@ -732,5 +735,14 @@ mod tests {
             "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"
         ));
         assert!(!rels.contains(STRICT_MARKER));
+        for i in 0..reread.len() {
+            let entry = reread.by_index(i).unwrap();
+            assert_eq!(
+                entry.last_modified(),
+                Some(zip::DateTime::default()),
+                "{} carries no wall-clock time",
+                entry.name()
+            );
+        }
     }
 }
