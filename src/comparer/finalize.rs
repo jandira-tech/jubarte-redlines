@@ -5231,8 +5231,11 @@ fn paragraph_has_content_ins_and_del(dom: &Dom, p: NodeId, ppr: NodeId) -> bool 
 /// Table and comment-reference chrome Word writes on every matching redline
 /// in this corpus.
 ///
-/// A `w:tblPr` with no `w:tblLook` gets the default look `04A0` (first row,
-/// first column, no banding). A table whose `w:tblPr` carries `w:tblCellMar`
+/// A live `w:tblPr` with no `w:tblLook` gets the default look `04A0` (first
+/// row, first column, no banding), inserted at schema rank 150 so
+/// `w:tblPrChange` stays last. The historical `w:tblPr` inside that change
+/// is the old snapshot and is left alone. A table whose `w:tblPr` carries
+/// `w:tblCellMar`
 /// gets `w:tblPrEx/w:tblCellMar` (top and bottom 0) on each direct row that
 /// lacks one. A run that holds `w:commentReference` gets a missing
 /// `w:rStyle`, `w:sz`, and `w:szCs`. Existing values are left alone, including
@@ -5243,6 +5246,15 @@ pub fn align_word_table_and_comment_chrome(dom: &mut Dom, root: NodeId) {
     };
     let tbl_prs: Vec<NodeId> = dom.descendants(body, Some(&W::name("tblPr")));
     for tbl_pr in tbl_prs {
+        // CT_TblPr requires tblPrChange last. The nested tblPr is the
+        // previous snapshot; a look stamped there, or appended on the live
+        // tblPr, lands after the change.
+        if !dom
+            .ancestors(tbl_pr, Some(&W::name("tblPrChange")))
+            .is_empty()
+        {
+            continue;
+        }
         if dom.element(tbl_pr, &W::name("tblLook")).is_some() {
             continue;
         }
@@ -5258,7 +5270,7 @@ pub fn align_word_table_and_comment_chrome(dom: &mut Dom, root: NodeId) {
         ] {
             dom.set_attribute_value(look, &W::name(local), Some(value));
         }
-        dom.add(tbl_pr, look);
+        insert_tblpr_child_in_order(dom, tbl_pr, look, 150);
     }
     let tables: Vec<NodeId> = dom.descendants(body, Some(&W::tbl()));
     for tbl in tables {
@@ -8769,8 +8781,10 @@ pub fn ensure_default_page_size(dom: &mut Dom, root: NodeId) {
 }
 
 /// `w:tblPr` child ranks (PtOpenXmlUtil.cs Order_tblPr) — shared between
-/// [`wml_order_elements_per_standard`] and [`synthesize_table_cell_margins`]
-/// so the two can't drift apart.
+/// [`wml_order_elements_per_standard`], [`synthesize_table_cell_margins`]
+/// and [`align_word_table_and_comment_chrome`] so the three can't drift
+/// apart. Names absent from this list rank 999, which keeps `w:tblPrChange`
+/// after `w:tblLook` (150).
 const TBLPR_ORDER: [(&str, i32); 17] = [
     ("tblStyle", 10),
     ("tblpPr", 20),
@@ -8790,6 +8804,25 @@ const TBLPR_ORDER: [(&str, i32); 17] = [
     ("tblCaption", 160),
     ("tblDescription", 170),
 ];
+
+/// Insert `child` among `tblpr`'s children so every later sibling outranks it.
+fn insert_tblpr_child_in_order(dom: &mut Dom, tblpr: NodeId, child: NodeId, rank: i32) {
+    let later = dom.elements(tblpr, None).into_iter().find(|&c| {
+        dom.name(c)
+            .map(|n| {
+                TBLPR_ORDER
+                    .iter()
+                    .find(|(l, _)| *l == n.local_name())
+                    .map_or(999, |(_, r)| *r)
+            })
+            .unwrap_or(999)
+            > rank
+    });
+    match later {
+        Some(l) => dom.add_before_self(l, child),
+        None => dom.add(tblpr, child),
+    }
+}
 
 /// Faithful port of `WordprocessingMLUtil.WmlOrderElementsPerStandard`
 /// (PtOpenXmlUtil.cs:1440), called by the C# produce path (WmlComparer.cs
@@ -9529,23 +9562,6 @@ pub fn synthesize_table_cell_margins(
         dom.set_attribute_value(e, &W::name("type"), Some("dxa"));
         e
     }
-    fn insert_in_order(dom: &mut Dom, tblpr: NodeId, child: NodeId, rank: i32) {
-        let later = dom.elements(tblpr, None).into_iter().find(|&c| {
-            dom.name(c)
-                .map(|n| {
-                    TBLPR_ORDER
-                        .iter()
-                        .find(|(l, _)| *l == n.local_name())
-                        .map_or(999, |(_, r)| *r)
-                })
-                .unwrap_or(999)
-                > rank
-        });
-        match later {
-            Some(l) => dom.add_before_self(l, child),
-            None => dom.add(tblpr, child),
-        }
-    }
     let tbls: Vec<NodeId> = dom.descendants(root, Some(&W::tbl()));
     for tbl in tbls {
         let Some(tblpr) = dom.element(tbl, &W::name("tblPr")) else {
@@ -9574,7 +9590,7 @@ pub fn synthesize_table_cell_margins(
         }
         if dom.element(tblpr, &W::name("tblInd")).is_none() {
             let ind = dxa(dom, "tblInd", "10");
-            insert_in_order(dom, tblpr, ind, 100);
+            insert_tblpr_child_in_order(dom, tblpr, ind, 100);
         }
         if dom.element(tblpr, &W::name("tblCellMar")).is_none() {
             let mar = dom.new_element(W::name("tblCellMar"));
@@ -9582,7 +9598,7 @@ pub fn synthesize_table_cell_margins(
             dom.add(mar, l);
             let r = dxa(dom, "right", "10");
             dom.add(mar, r);
-            insert_in_order(dom, tblpr, mar, 140);
+            insert_tblpr_child_in_order(dom, tblpr, mar, 140);
         }
     }
 }

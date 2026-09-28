@@ -167,13 +167,14 @@ impl Package {
 /// XML parts are often UTF-16).
 fn decode_xml(data: &[u8]) -> Option<String> {
     let utf16 = |be: bool| {
-        let units: Vec<u16> = data[2..]
-            .chunks_exact(2)
+        let (chunks, _) = data[2..].as_chunks::<2>();
+        let units: Vec<u16> = chunks
+            .iter()
             .map(|c| {
                 if be {
-                    u16::from_be_bytes([c[0], c[1]])
+                    u16::from_be_bytes(*c)
                 } else {
-                    u16::from_le_bytes([c[0], c[1]])
+                    u16::from_le_bytes(*c)
                 }
             })
             .collect();

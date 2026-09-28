@@ -345,6 +345,13 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   bold × clear formatting carried three empty `w:pPr` elements. Word's
   redlines of those pairs have neither. A pilcrow mark that is the only
   thing in the property stays.
+- The 207-pair parity sweep reports 0 NEW keys, and
+  `tools/parity_baseline.tsv` is unchanged. Spellcheck marks, the
+  pagination cache, and header or footer references Word writes on its own
+  stay outside the histogram.
+- A merged table keeps `w:tblPrChange` last in `w:tblPr`. The default table
+  look is written before the change, and the old properties stored inside
+  the change are left without a synthesized look.
 
 ### Added
 
