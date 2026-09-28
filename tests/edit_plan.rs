@@ -601,6 +601,37 @@ fn macro_packages_are_refused() {
 }
 
 #[test]
+fn admission_refusals_keep_their_code_through_inspect_and_edit() {
+    // A second copy of the main part under another case: one OPC part name.
+    let mut out = zip::ZipWriter::new_append(std::io::Cursor::new(docx(&para("x")))).unwrap();
+    out.start_file(
+        "Word/Document.xml",
+        zip::write::SimpleFileOptions::default(),
+    )
+    .unwrap();
+    std::io::Write::write_all(&mut out, b"<w:document/>").unwrap();
+    let source = out.finish().unwrap().into_inner();
+
+    let refused = paragraphs(&source).unwrap_err();
+    assert!(
+        matches!(
+            &refused,
+            jubarte::inspect::InspectError::Admission(a) if a.code() == "DUPLICATE_PART"
+        ),
+        "{refused}"
+    );
+    let err = preview_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"kind":"delete","paragraph":{"index":0},"find":"x"}]"#,
+        ),
+    )
+    .unwrap_err();
+    assert_eq!(err.code, "DUPLICATE_PART");
+}
+
+#[test]
 fn report_serializes_to_json_lines_an_agent_can_log() {
     let source = docx(&para("alpha beta"));
     let result = apply_plan(

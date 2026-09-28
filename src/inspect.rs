@@ -123,6 +123,9 @@ pub enum InspectError {
     MissingDocument,
     /// Invalid XML, encoding or setting value, including the part name.
     Invalid(String),
+    /// Refused before parsing by [`crate::admission`] (a resource budget,
+    /// duplicate or unsafe part, or not a Word package).
+    Admission(crate::admission::AdmissionError),
 }
 
 impl fmt::Display for InspectError {
@@ -131,6 +134,7 @@ impl fmt::Display for InspectError {
             Self::Package(message) => write!(f, "opening DOCX: {message}"),
             Self::MissingDocument => f.write_str("DOCX has no main document part or body"),
             Self::Invalid(message) => write!(f, "invalid DOCX content: {message}"),
+            Self::Admission(refused) => write!(f, "DOCX refused: {refused}"),
         }
     }
 }
@@ -252,6 +256,8 @@ pub(crate) struct Opened {
 
 impl Opened {
     pub(crate) fn open(bytes: &[u8]) -> Result<Self, InspectError> {
+        crate::admission::admit(bytes, crate::admission::InputLimits::default())
+            .map_err(InspectError::Admission)?;
         let normalized = crate::strict_translation::strict_to_transitional_docx(bytes);
         let pkg =
             PartFs::open(&normalized).map_err(|error| InspectError::Package(error.to_string()))?;

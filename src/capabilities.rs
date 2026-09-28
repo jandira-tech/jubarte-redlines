@@ -65,6 +65,37 @@ pub struct Limits {
     pub refuses_opaque_ranges: bool,
     /// Legacy `.doc` input is not read.
     pub reads_legacy_doc: bool,
+    /// Package budgets `inspect` and `edit` admit (larger input is refused
+    /// with `INPUT_LIMIT`).
+    #[serde(default)]
+    pub input: InputBudget,
+}
+
+/// [`crate::admission::InputLimits`] as the manifest reports them.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InputBudget {
+    /// Size of the .docx file.
+    pub max_compressed_bytes: u64,
+    /// ZIP entries.
+    pub max_entries: usize,
+    /// Inflated size of any one part.
+    pub max_part_bytes: u64,
+    /// Inflated size of all parts together.
+    pub max_uncompressed_bytes: u64,
+    /// Element nesting in any XML part.
+    pub max_xml_depth: usize,
+}
+
+impl From<crate::admission::InputLimits> for InputBudget {
+    fn from(l: crate::admission::InputLimits) -> Self {
+        Self {
+            max_compressed_bytes: l.max_compressed_bytes,
+            max_entries: l.max_entries,
+            max_part_bytes: l.max_part_bytes,
+            max_uncompressed_bytes: l.max_uncompressed_bytes,
+            max_xml_depth: l.max_xml_depth,
+        }
+    }
 }
 
 /// The manifest for `runtime`.
@@ -103,6 +134,7 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             plain_text_runs: true,
             refuses_opaque_ranges: true,
             reads_legacy_doc: false,
+            input: crate::admission::InputLimits::default().into(),
         },
     }
 }
@@ -128,7 +160,10 @@ mod tests {
         assert_eq!(json["runtime"], "cli");
         assert_eq!(json["operations"]["png"], true);
         assert_eq!(json["limits"]["reads_legacy_doc"], false);
+        assert_eq!(json["limits"]["input"]["max_entries"], 10_000);
+        assert_eq!(json["limits"]["input"]["max_xml_depth"], 256);
         let back: Capabilities = serde_json::from_value(json).unwrap();
         assert_eq!(back.limits.stories, ["body"]);
+        assert_eq!(back.limits.input.max_part_bytes, 64 * 1024 * 1024);
     }
 }

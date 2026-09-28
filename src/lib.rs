@@ -37,6 +37,8 @@
 //! (MIT). The repository itself is AGPL-3.0-only; `LICENSES/` preserves those
 //! upstream attribution texts without changing the repository license.
 
+/// Resource admission for untrusted DOCX input (ZIP and XML budgets).
+pub mod admission;
 /// Machine-readable manifest of what this build can do.
 pub mod capabilities;
 /// Core WmlComparer engine (atomize → LCS → produce → finalize).

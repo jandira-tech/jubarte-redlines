@@ -22,6 +22,15 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   PowerTools fallback, still also spelled `--powertools-faithful`).
   `docs/WORD_DIFFERENCES.md` lists where jubarte's redline still differs
   from Word's and which mode gives which.
+- Input admission for the agent surfaces: `inspect`, `text`, `edit` and
+  the Python/WASM facades over them refuse a package before parsing it when
+  it breaks a resource budget (64 MiB file, 10,000 entries, 64 MiB per
+  inflated part, 256 MiB inflated in total, XML nesting 256), repeats a
+  part name, uses an unsafe entry path, encryption or compression other
+  than deflate, or is not a WordprocessingML package. Refusals carry the
+  codes `INPUT_LIMIT`, `DUPLICATE_PART`, `UNSUPPORTED_PACKAGE`,
+  `INVALID_PACKAGE` and `INVALID_XML`; `capabilities` reports the budgets.
+  Compare keeps its historical tolerance.
 - `jubarte inspect` reads a document as numbered paragraphs (JSON with a
   source hash, or Markdown) with styles, numbering, formatting spans and
   the structures an edit cannot address (fields, hyperlinks, content

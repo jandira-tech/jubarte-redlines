@@ -91,6 +91,8 @@ Read the central directory before inflation; reject duplicate canonical entry pa
 - [ ] Run coverage for admission and edit together, then the same-input legacy regressions. Require ≥90/85 line/branch on policy logic. Keep resource stress tests in integration lanes under process/memory limits; they are not wall-clock unit tests.
 - [ ] Commit admission separately from inspection and from any rendering change.
 
+**Status 2026-09-28: implemented** in `src/admission.rs` (wired into `inspect::Opened::open`, so inspect, edit and the bindings admit first). One addition to the codes above: `INVALID_PACKAGE` for bytes that are not a readable ZIP or fail a CRC. Exact duplicate names are caught by comparing the end-of-central-directory entry count with the reader's name map, which silently keeps one of them. A scan of 4,953 corpus and test documents refused none.
+
 This task is a fully specified engineering work item, not claimed as implemented by patch 0001. The patch cannot be advertised as a comprehensive untrusted-upload solution until this task passes.
 
 ## Fidelity matrix and evidence ownership

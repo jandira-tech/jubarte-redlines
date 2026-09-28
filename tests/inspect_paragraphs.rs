@@ -133,9 +133,10 @@ fn fields_hyperlinks_and_content_controls_project_text_and_flag() {
 
 #[test]
 fn not_a_docx_and_malformed_xml_are_errors() {
+    // Admission refuses bytes that are not a ZIP before the reader sees them.
     assert!(matches!(
         paragraphs(b"not a zip"),
-        Err(InspectError::Package(_))
+        Err(InspectError::Admission(a)) if a.code() == "INVALID_PACKAGE"
     ));
     let broken = docx("<w:p><w:r><w:t>unclosed</w:t></w:r>");
     assert!(matches!(paragraphs(&broken), Err(InspectError::Invalid(_))));

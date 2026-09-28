@@ -416,6 +416,17 @@ impl fmt::Display for EditError {
 
 impl std::error::Error for EditError {}
 
+/// An unopenable source: admission refusals keep their own code
+/// (`INPUT_LIMIT`, …), anything else is `INVALID_DOCUMENT`.
+fn open_error(error: crate::inspect::InspectError) -> EditError {
+    match error {
+        crate::inspect::InspectError::Admission(refused) => {
+            err(refused.code(), None, refused.message)
+        }
+        other => err("INVALID_DOCUMENT", None, other.to_string()),
+    }
+}
+
 fn err(code: &str, operation: Option<&str>, message: impl Into<String>) -> EditError {
     EditError {
         code: code.to_string(),
@@ -631,8 +642,7 @@ impl<'p> Transaction<'p> {
         if plan.author.trim().is_empty() {
             return Err(err("INVALID_PLAN", None, "author must be nonempty"));
         }
-        let probe =
-            Opened::open(source).map_err(|e| err("INVALID_DOCUMENT", None, e.to_string()))?;
+        let probe = Opened::open(source).map_err(open_error)?;
         if probe
             .pkg
             .parts()
@@ -661,8 +671,7 @@ impl<'p> Transaction<'p> {
                     _ => crate::document_comparer::reject_revisions(source),
                 }
                 .map_err(|e| err("INVALID_DOCUMENT", None, e.to_string()))?;
-                let reopened = Opened::open(&flattened)
-                    .map_err(|e| err("INVALID_DOCUMENT", None, e.to_string()))?;
+                let reopened = Opened::open(&flattened).map_err(open_error)?;
                 (flattened, reopened)
             }
         };
