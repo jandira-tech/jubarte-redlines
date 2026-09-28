@@ -108,7 +108,7 @@ required-features = ["cli"]
 criterion = "0.8"
 # XML assertions in integration tests; production parsing uses xmllinq's
 # purpose-built scanner instead.
-quick-xml = "0.41"
+quick-xml = "0.42"
 # Round-trip validation of produced .docx files in integration tests; only the
 # `parts` feature (= dep:zip) is built.
 ooxmlsdk = { version = "0.11", default-features = false, features = ["parts"] }
