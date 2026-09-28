@@ -106,12 +106,38 @@ fn unanchored_pair_still_folds_demo_title() {
     ) else {
         return;
     };
-    let folded = body_paras(&xml).iter().any(|p| {
+    let folded = body_paras(&xml).into_iter().find(|p| {
         let t = text_of(p);
         t.contains("What this is") && t.contains("Double Spacing Bold")
     });
+    let Some(p) = folded else {
+        panic!(
+            "unanchored pair must still fold the demo title into the numbered heading (M143 oracle)"
+        );
+    };
+    // M179 used to peel the trailing "Demo" out of delText and emit a live
+    // EQ run. That run is in neither source, so accept-all and the original
+    // reconstruction both grow a word. The fold stays; "Demo" stays deleted.
+    let del_demo = {
+        let mut t = String::new();
+        let mut r = p.as_str();
+        while let Some(i) = r.find("<w:delText") {
+            let r2 = &r[i..];
+            let Some(gt) = r2.find('>') else { break };
+            let Some(end) = r2[gt + 1..].find("</w:delText>") else {
+                break;
+            };
+            t.push_str(&r2[gt + 1..gt + 1 + end]);
+            r = &r2[gt + 1 + end..];
+        }
+        t
+    };
     assert!(
-        folded,
-        "unanchored pair must still fold the demo title into the numbered heading (M143 oracle)"
+        del_demo.contains("Demo"),
+        "folded title must keep Demo inside delText, got: {p}"
+    );
+    assert!(
+        !p.contains("> Demo</w:t>") && !p.contains(">Demo</w:t>"),
+        "folded title must not grow a live Demo run, got: {p}"
     );
 }

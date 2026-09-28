@@ -18355,17 +18355,17 @@ impl<'a> Layout<'a> {
         // starts on the next page and still breaks — one skipped page
         // (sd_2517 1-4 / 13-9). Only explicit page breaks (not sectPr).
         let remaining = self.y - self.body_floor;
-        // Word: empty `w:br type=page` after TextHeading* whose leftover
-        // is under the empty para's line=276/after=200 box (~23pt) starts
-        // on the next page and still breaks (sd_2517 1-4 / 1-6). Ungated
-        // leftover in (0,22) extra-skipped file_78 (−6) / file_196 (−10).
-        // Título1/Heading1 exact leftover was the wrong skip (ITT −0.02).
-        // TextHeading after=120 can overflow the floor by <5pt
-        // (sd_2517 1-4 rem=-4.29). remaining < -5 missed that skip;
-        // remaining < 23 hit 5 sites (111pp). remaining < 0 after
-        // TextHeading skips the three near-overflows (109). Only
-        // rem=-4.29 is the Word 1-4 site in our layout (+1 → 107).
-        let leftover_heading = leftover_break_heading(&self.last_style_id) && remaining < -4.0;
+        // Word: an empty `w:br type=page` after TextHeading* takes its own
+        // line (sd_2517's break paragraphs are line=276 / after=200, about
+        // 16pt on the 12pt face, ~23pt with the space after). When less
+        // than that box remains, Word moves the paragraph to the next page
+        // and the break still fires, leaving a blank page. Word's own PDF
+        // of sd_2517 leaves those blanks where 1.8–12.6pt remain; the next
+        // TextHeading break it keeps has 28.9pt left. Ungated leftover in
+        // (0, 22) invented blanks on file_78 and file_196, so only
+        // TextHeading* takes this path. A full-page overflow (remaining
+        // under -5) still skips for every manual break.
+        let leftover_heading = leftover_break_heading(&self.last_style_id) && remaining < 23.0;
         // pageBreakBefore (manual=false) never skips: 00a46f85's heading
         // after an empty paragraph 5pt past the foot opens the next page.
         let skip_blank = manual
@@ -23671,6 +23671,16 @@ impl<'a> Layout<'a> {
                         let para_top = y_line;
                         let text_h = cell_para_text_h(self.fonts, para, wrap_w, self.space_for_ul);
                         let mut float_bottom = 0.0_f32;
+                        // Word joins consecutive cell paragraphs that share a
+                        // pBdr into one box and draws the bottom edge once, on
+                        // the last (file_146's deleted code cell ends on `}`,
+                        // and each npm/github cell is its own one-line box).
+                        // An empty paragraph in the middle of that run is not
+                        // a separate rule.
+                        let joined_below = cell
+                            .paras
+                            .get(pi + 1)
+                            .is_some_and(|next| same_pbdr(&para.style, &next.style));
                         for img in para
                             .images
                             .iter()
@@ -23728,7 +23738,9 @@ impl<'a> Layout<'a> {
                                 } else {
                                     0.0
                                 };
-                            if let Some((color, width)) = line.iter().find_map(|r| r.rule) {
+                            if !joined_below
+                                && let Some((color, width)) = line.iter().find_map(|r| r.rule)
+                            {
                                 let inner_w = (w - pad_l - pad_r).max(1.0);
                                 self.current().ops.push(Op::FillRect {
                                     x: x + pad_l,
@@ -23871,6 +23883,24 @@ impl<'a> Layout<'a> {
                             }
                             self.clip_right = None;
                             y_line -= line_box;
+                        }
+                        // A non-empty cell paragraph keeps its pBdr on the
+                        // style (only an empty one is folded into a run
+                        // rule above). Draw that bottom edge under the line
+                        // box, `space` pt clear of the text, across the cell.
+                        let carried_rule = para.runs.iter().any(|r| r.rule.is_some());
+                        if !joined_below
+                            && !carried_rule
+                            && let Some((color, width, space)) = para.style.border_bottom
+                        {
+                            let inner_w = (w - pad_l - pad_r).max(1.0);
+                            self.hairline_h(
+                                x + pad_l,
+                                y_line - space,
+                                x + pad_l + inner_w,
+                                width,
+                                color,
+                            );
                         }
                         y_line = y_line.min(para_top - float_bottom);
                         y_line -= para.style.after;

@@ -12,6 +12,15 @@ Engine defects and unresolved design conflicts. Tests covering them are marked
 > **Re-checked 2026-09-26 (0.9.2):** all open items below are on the
 > compare/validity path. The 0.9.2 release was confined to `src/convert`,
 > the CLI and the OPC layer — the statuses here are unchanged.
+>
+> **Re-checked 2026-09-27 (0.9.3):** item 3's named pairs and the six
+> later text round-trip failures now reconstruct. Empty paragraph-property
+> shells are left out; that removed 11 of the new ladder keys. The parity
+> ladder on this tree still reports 21 new keys, all on the rungs past a
+> matching operation sequence (revision counts, and element names Word
+> writes that this engine does not, including `proofErr` and header
+> references). Those keys are not blessed. Items 1, 2, and 5 were not
+> re-opened. Item 4 is still the Ring 2 ratchet.
 
 ## 1. MovedSource / `w:moveFrom` text kind — **SETTLED 2026-07-16 (Word wins)**
 
@@ -78,9 +87,22 @@ correct mesh must consume each A atom exactly once across the whole body.
 CHANGELOG 0.8.0); this survives them and needs its own bisect over the range
 after `c2547f4a`.
 
-**Status:** open. 17 L0 rows remain corpus-wide; 15 of them predate `042089c`
-(2026-07-24), so losslessness has been partially broken for some time. These
-two are the only L0 regressions still outstanding against that build.
+**Status:** the double-consumption on the two pairs above is fixed, and so
+are the six text round-trips found on the 0.9.3 candidate (re-checked
+2026-09-27, `tools/parity_ladder.py sweep`, 0 `L0` keys). A folded Demo
+title kept `Demo` inside the deletion instead of growing a live " Demo".
+A sentence period that one side continues into the next paragraph is given
+to the side that already finished and appended to the continuation. The
+comments redline puts the deleted section back before the table that
+repeats its heading, which is the original's order. Eleven empty
+paragraph-property shells are gone (blue centered title × blue italic,
+center bold × clear formatting, and nine of the same shape). The 21 keys
+that remain are the next rung after an `L1-opseq` match (revision-element
+counts, and element names Word writes that this engine does not, including
+`proofErr` and header references). One of those 21 is a live pilcrow mark
+(`w:rPr` / `w:ins`) on italic-and-underline × italic-subscript; the shell
+strip leaves that mark in place. They are not this double-consumption,
+and the July baseline was not rewritten to hide them.
 
 ## 4. Internal `Unid` scratch ships as an undeclared `w:Unid` attribute
 

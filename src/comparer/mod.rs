@@ -897,14 +897,12 @@ pub fn compare_bodies_faithful_with_notes(
         // gave "This text This document …". The cross-paragraph stream keeps
         // those words where Word does.)
         finalize::free_mesh_wholesale_body_mix(dom, root);
-        // M463 (fold bare boiler EQ between consecutive ins, and attach a
-        // trailing bare `.` onto the last ins/del) is deliberately absent: it
-        // moved a shared EQ run's text into a one-sided w:ins/w:del and then
-        // deleted the run, so the text left the other side's stream entirely.
-        // A redline must reconstruct both inputs — del-stream == A, ins-stream
-        // == B — and the fold broke that on 19 corpus pairs (sentence-final
-        // `.` silently dropped). Reassigning an EQ atom to one side is only
-        // lossless if the other side still carries it.
+        // A shared sentence-final `.` stays equal unless the next paragraph
+        // continues exactly one side. `repair_borrowed_sentence_period` then
+        // gives the period to the finished side and appends one to the
+        // continuation, so neither stream loses it. Folding the period onto
+        // one side and deleting the run dropped it from 19 pairs; that stays
+        // out.
         // M464: peel trailing ` for <word>` from MIX ins onto following MIX as
         // EQ for + INS word (center_bold p2/p3 residual).
         finalize::peel_trailing_for_word_onto_next_mix(dom, root);
@@ -921,6 +919,16 @@ pub fn compare_bodies_faithful_with_notes(
         // M376: after merge/park peels — strip list line=240/jc that mid pure-D
         // absorbed from pure-I list residual (bookmark×broken_complex −0.6).
         finalize::strip_list_layout_from_mid_pure_del(dom, root);
+        // After the peels above have moved a continuation into the next
+        // paragraph, put a borrowed sentence period back on both sides.
+        finalize::repair_borrowed_sentence_period(dom, root, settings, &mut id);
+        // A deleted section that echoes the inserted heading belongs before
+        // the table, in the original's order (lots-of-comments).
+        finalize::restore_echoed_heading_deletions_before_table(dom, root);
+        // After every peel: a pPr that carries neither layout nor a pilcrow
+        // mark is not in Word's redline. Empty pPrChange shells on the short
+        // title mixes are the same nothing.
+        finalize::strip_propertyless_ppr(dom, root);
     }
     // Validity, not parity: a w:ins/w:del may not hold a w:hyperlink. Deleting a
     // whole header/footer swallowed the source's hyperlink into the w:del and Word

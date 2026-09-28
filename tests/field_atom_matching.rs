@@ -70,14 +70,22 @@ fn instruction_run_boundaries_and_surrounding_whitespace_do_not_change_matching(
 }
 
 #[test]
-fn nested_field_uses_its_own_code_then_restores_the_outer_code() {
+fn nested_field_carries_every_enclosing_code_then_restores_the_outer() {
+    // A nested result is salted with the whole chain, outermost first.
+    // Matching it to a standalone PAGE left IF fields half deleted
+    // (98bf5f3d × a3701d36). After the inner field ends, the outer result
+    // is salted with the outer code alone again.
     let inner = field(&instruction("PAGE"), &run("1"));
     let outer = field(&instruction("REF outer"), &(run("1") + &inner + &run("1")));
     let result = hashes(&(outer + &run("1")), "t");
     assert_eq!(result.len(), 4);
     assert_eq!(result[0], result[2]);
-    assert_eq!(result[1], hashes(&inner, "t")[0]);
+    assert_ne!(result[1], hashes(&inner, "t")[0]);
     assert_ne!(result[0], result[1]);
+    let same = field(&instruction("REF outer"), &inner);
+    assert_eq!(result[1], hashes(&same, "t")[0]);
+    let other = field(&instruction("REF other"), &inner);
+    assert_ne!(result[1], hashes(&other, "t")[0]);
     assert_eq!(result[3], hashes(&run("1"), "t")[0]);
 }
 

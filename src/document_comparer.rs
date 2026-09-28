@@ -6435,6 +6435,13 @@ fn compare_documents_impl(
                 crate::comparer::finalize::hoist_hyperlinks_out_of_revisions(&mut vd, vr);
                 crate::comparer::finalize::enforce_deleted_text_kinds(&mut vd, vr);
                 crate::comparer::finalize::remove_powertools_scratch_markup(&mut vd, vr);
+                // Produce strips an empty pPr shell, then later package steps
+                // (style cascade, spacing restore) can take the live children
+                // back off and leave the shell. Word's redline of the short
+                // title mixes has neither the shell nor the children.
+                if part == main1 {
+                    crate::comparer::finalize::strip_propertyless_ppr(&mut vd, vr);
+                }
                 // Last: every pass above may append properties out of order.
                 crate::comparer::finalize::enforce_part_schema_order(&mut vd, vr);
                 crate::comparer::finalize::declare_extension_namespaces_ignorable(&mut vd, vr);

@@ -308,6 +308,43 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   It stores the answers of the family search, and a new release that changes
   the matching rules used to keep the old release's faces, or its misses,
   for as long as the font folders stayed unchanged.
+- An empty page break after a TextHeading now keeps the blank page Word
+  keeps. The break paragraph is about a line plus its space after (sd_2517's
+  breaks are line 276 and after 200, roughly 23pt on the 12pt face). When
+  less than that remains, Word moves the paragraph to the next page and the
+  break still fires. Those breaks had been kept on the current page, so
+  sd_2517 and its randomized copy came out 99 pages against Word's 107. A
+  full page of overflow still skips for every manual break. The wider
+  leftover applies only to TextHeading, so a short gap no longer invents a
+  blank page on the three-page and thirteen-page fixtures.
+- A bottom border on a paragraph inside a table cell is drawn once, on the
+  last paragraph of a run that shares that border, including when the
+  paragraph still has text. Deleted cell bottoms in file_146 — `bun run dev`,
+  the npm and github lines, and the code cell's closing brace — were missing,
+  so the pale rules wider than 200pt went from 30 to Word's 33. An empty
+  paragraph in the middle of that run no longer draws a rule of its own.
+- Tab Alignment against Tab Tests is mixed paragraph by paragraph, in order.
+  Word mixes the title and the three following tab lines with Tab Tests'
+  four paragraphs and deletes the rest. Flat word matching mixed only the
+  title and one empty line.
+- A folded Demo title keeps "Demo" inside the deletion. It used to be peeled
+  into a live " Demo", which is in neither document, so accepting the redline
+  left the word behind (double spacing × eigenpal, and document 100 × the
+  comments addition).
+- A sentence period shared by both documents stays on both sides when one
+  side continues into the next paragraph. The period goes to the side that
+  already finished its sentence, and the continuation gains its own period
+  at the end (font color × font family, italic underline × justified
+  underline, justified underline × justify alignment).
+- A deleted section that repeats the heading inserted in front of a table is
+  placed back before that heading. The comments redline had moved the
+  section to after the capability table, so the original's characters were
+  all present and in the wrong order.
+- An empty paragraph-property shell is left out. The mixed title on blue
+  centered title × blue italic carried an empty `pPrChange`, and center
+  bold × clear formatting carried three empty `w:pPr` elements. Word's
+  redlines of those pairs have neither. A pilcrow mark that is the only
+  thing in the property stays.
 
 ### Added
 

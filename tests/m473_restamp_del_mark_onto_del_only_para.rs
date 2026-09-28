@@ -118,15 +118,21 @@ fn del_mark_sits_on_its_own_deleted_content() {
         );
     }
 
-    // Specific: both fully-deleted base paragraphs carry their own MARK-DEL.
+    // Word free-meshes the early size lines with the strike samples, so
+    // "Sample size text" also appears inside mixed paragraphs whose marks
+    // stay live. The fully-deleted leftovers (the 36pt sample, and
+    // "Styled 18pt text") are the ones whose own mark is deleted.
     for needle in ["Sample size text", "Styled 18pt text"] {
-        let p = paras
+        let dels: Vec<_> = paras
             .iter()
-            .find(|p| p.contains(needle))
-            .unwrap_or_else(|| panic!("{needle} paragraph missing"));
-        assert!(
-            mark_del(p),
-            "{needle} paragraph must carry MARK-DEL on its own mark"
-        );
+            .filter(|p| p.contains(needle) && !p.contains("<w:ins ") && p.contains("<w:delText"))
+            .collect();
+        assert!(!dels.is_empty(), "{needle} fully-deleted paragraph missing");
+        for p in dels {
+            assert!(
+                mark_del(p),
+                "{needle} paragraph must carry MARK-DEL on its own mark"
+            );
+        }
     }
 }

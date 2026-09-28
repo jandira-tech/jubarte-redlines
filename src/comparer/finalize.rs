@@ -5042,6 +5042,56 @@ pub fn strip_empty_pprchange_on_mix_with_live_jc(dom: &mut Dom, root: NodeId) {
     }
 }
 
+/// Drop a `w:pPr` that records nothing Word keeps.
+///
+/// A property-less `<w:pPr/>`, or one whose only child is a `w:pPrChange`
+/// with an empty inner `w:pPr`, is absent from Word's redline of the short
+/// title mixes (blue centered title × blue italic, and the same shape on the
+/// heading and subtitle demos) and from the pairs whose whole document has
+/// no `w:pPr`. A live `w:rPr` pilcrow mark stays: that mark is the deletion
+/// or insertion record, not an empty shell. A `w:pPrChange` that still holds
+/// layout (spacing, jc, a style) stays too.
+pub fn strip_propertyless_ppr(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let paras: Vec<NodeId> = dom.descendants(body, Some(&W::p()));
+    for p in paras {
+        let Some(ppr) = dom.element(p, &W::p_pr()) else {
+            continue;
+        };
+        let children = dom.elements(ppr, None);
+        let mut structural = false;
+        let mut empty_changes: Vec<NodeId> = Vec::new();
+        let mut keep_change = false;
+        for c in children {
+            if dom.name_is(c, &W::p_pr_change()) {
+                let inner_has_layout = dom.element(c, &W::p_pr()).is_some_and(|inner| {
+                    dom.elements(inner, None)
+                        .iter()
+                        .any(|&k| dom.name(k).is_some_and(|n| n != W::r_pr()))
+                });
+                if inner_has_layout {
+                    keep_change = true;
+                } else {
+                    empty_changes.push(c);
+                }
+            } else if !dom.name_is(c, &W::r_pr()) {
+                structural = true;
+            }
+        }
+        if structural || keep_change {
+            continue;
+        }
+        for c in empty_changes {
+            dom.remove(c);
+        }
+        if dom.elements(ppr, None).is_empty() {
+            dom.remove(ppr);
+        }
+    }
+}
+
 /// M450 (calibri_font × calibri_heading_2_right ~82.5 / docxodus 100):
 /// last MIX free-mesh parks **Heading residual** spacing
 /// (`before≥200` + `line=240`) into `pPrChange` only; Word keeps it **live**
@@ -10259,94 +10309,264 @@ pub fn fold_midstream_demo_title_into_numbered_heading(dom: &mut Dom, root: Node
             }
         }
         dom.remove(d);
-        // M179: Word EQs trailing " Demo" on the folded Demo title
-        // (double_spacing×eigenpal: DEL "Double Spacing Bold" + EQ " Demo").
-        mesh_trailing_demo_eq_in_para(dom, h);
     }
 }
 
-/// M179 — after folding a pure-D Demo title into a pure-I carrier, convert a
-/// trailing `Demo` token from delText into an unrevised EQ run. Word Compare
-/// keeps last-sig `Demo` as Equal on double_spacing×eigenpal (~52→higher).
-fn mesh_trailing_demo_eq_in_para(dom: &mut Dom, p: NodeId) {
-    // Collect delText leaves under this para in document order.
-    let del_texts: Vec<NodeId> = dom
-        .descendants(p, Some(&W::del_text()))
-        .into_iter()
-        .collect();
-    if del_texts.is_empty() {
-        return;
-    }
-    let mut full = String::new();
-    for &dt in &del_texts {
-        full.push_str(&dom.value_str(dt));
-    }
-    let trimmed = full.trim_end();
-    // Must end with Demo as last significant token and have content before it.
-    let Some((head, demo_suffix)) = trimmed.rsplit_once(char::is_whitespace) else {
+/// A sentence-final equal `.` belongs to both inputs. When the next paragraph
+/// continues exactly one side (a leading space or a lowercase letter, and that
+/// side does not already end in `.!?`), the period cannot stay equal: it would
+/// sit in the middle of the continued sentence and be missing from the end.
+/// Move it onto the side that already finished its sentence, and append `.` to
+/// the continuation, so both reconstructions keep a period.
+///
+/// The following paragraph must not itself start with equal text — that period
+/// is the previous sentence's shared stop (`font color` p1 `.` before
+/// `This text`), and the continuation's own period is still ahead of it.
+pub fn repair_borrowed_sentence_period(
+    dom: &mut Dom,
+    root: NodeId,
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let Some(body) = dom.element(root, &W::body()) else {
         return;
     };
-    if !demo_suffix.eq_ignore_ascii_case("demo") || head.trim().is_empty() {
-        return;
-    }
-    // Prefer exact " Demo" / "Demo" strip from the concatenated tail.
-    let strip_from = if full.ends_with(" Demo") {
-        full.len().saturating_sub(" Demo".len())
-    } else if full.ends_with("Demo") {
-        full.len().saturating_sub("Demo".len())
-    } else if full.to_ascii_lowercase().ends_with(" demo") {
-        // mixed case
-        full.len().saturating_sub(5)
-    } else {
-        return;
-    };
-    // Walk delTexts from the end, consuming chars to strip.
-    let mut remain = full.len() - strip_from;
-    let mut last_touched: Option<NodeId> = None;
-    for &dt in del_texts.iter().rev() {
-        if remain == 0 {
-            break;
+    let kids: Vec<NodeId> = dom.elements(body, None);
+    for w in kids.windows(2) {
+        let (prev, next) = (w[0], w[1]);
+        if !dom.name_is(prev, &W::p()) || !dom.name_is(next, &W::p()) {
+            continue;
         }
-        let t = dom.value_str(dt);
-        if t.len() <= remain {
-            remain -= t.len();
-            // empty this delText
-            dom.set_value(dt, "");
-            last_touched = Some(dt);
+        let Some(period_t) = trailing_equal_period(dom, prev) else {
+            continue;
+        };
+        let leaves = text_leaves(dom, next);
+        if leaves
+            .first()
+            .is_some_and(|&t| text_side(dom, t, next) == "eq")
+        {
+            continue;
+        }
+        let ins = side_text(dom, next, "ins");
+        let del = side_text(dom, next, "del");
+        let ins_needs = side_needs_borrowed_period(&ins);
+        let del_needs = side_needs_borrowed_period(&del);
+        if ins_needs == del_needs {
+            continue;
+        }
+        let (wrapper, keep) = if del_needs {
+            (W::ins(), "del")
         } else {
-            let keep = t.len() - remain;
-            let new_t = t[..keep].to_string();
-            dom.set_value(dt, &new_t);
-            remain = 0;
-            last_touched = Some(dt);
+            (W::del(), "ins")
+        };
+        wrap_run(dom, period_t, wrapper, settings, id_gen);
+        append_period(dom, next, keep);
+    }
+}
+
+fn trailing_equal_period(dom: &Dom, p: NodeId) -> Option<NodeId> {
+    let t = *text_leaves(dom, p).last()?;
+    if !dom.name_is(t, &W::t()) || text_side(dom, t, p) != "eq" || dom.value_str(t) != "." {
+        return None;
+    }
+    let r = dom.parent(t)?;
+    if !dom.name_is(r, &W::r()) || dom.parent(r) != Some(p) {
+        return None;
+    }
+    Some(t)
+}
+
+fn side_needs_borrowed_period(text: &str) -> bool {
+    let trimmed = text.trim_end();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if matches!(trimmed.chars().last(), Some('.' | '!' | '?')) {
+        return false;
+    }
+    text.starts_with(char::is_whitespace) || trimmed.chars().next().is_some_and(char::is_lowercase)
+}
+
+fn text_leaves(dom: &Dom, p: NodeId) -> Vec<NodeId> {
+    dom.descendants(p, None)
+        .into_iter()
+        .filter(|&n| dom.name_is(n, &W::t()) || dom.name_is(n, &W::del_text()))
+        .collect()
+}
+
+fn text_side(dom: &Dom, t: NodeId, stop: NodeId) -> &'static str {
+    if dom.name_is(t, &W::del_text()) {
+        return "del";
+    }
+    for a in dom.ancestors_and_self(t, None) {
+        if a == stop {
+            break;
+        }
+        if dom.name_is(a, &W::ins()) || dom.name_is(a, &W::name("moveTo")) {
+            return "ins";
+        }
+        if dom.name_is(a, &W::del()) || dom.name_is(a, &W::name("moveFrom")) {
+            return "del";
         }
     }
-    let Some(dt) = last_touched else {
+    "eq"
+}
+
+fn side_text(dom: &Dom, p: NodeId, side: &str) -> String {
+    let mut s = String::new();
+    for t in text_leaves(dom, p) {
+        if text_side(dom, t, p) == side {
+            s.push_str(&dom.value_str(t));
+        }
+    }
+    s
+}
+
+fn wrap_run(
+    dom: &mut Dom,
+    t: NodeId,
+    wrapper_name: crate::xmllinq::XName,
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let Some(r) = dom.parent(t) else {
         return;
     };
-    // Anchor: parent w:del of the last touched delText (or the run's del).
-    let mut anchor = dt;
-    while let Some(par) = dom.parent(anchor) {
-        if dom.name_is(par, &W::del()) {
-            anchor = par;
-            break;
+    let w = dom.new_element(wrapper_name);
+    dom.set_attribute_value(w, &W::id(), Some(&id_gen.to_string()));
+    *id_gen += 1;
+    dom.set_attribute_value(w, &W::author(), Some(&settings.author_for_revisions));
+    dom.set_attribute_value(w, &W::date(), Some(&settings.date_time_for_revisions));
+    dom.add_before_self(r, w);
+    dom.remove(r);
+    dom.add(w, r);
+}
+
+fn append_period(dom: &mut Dom, p: NodeId, side: &str) {
+    let Some(t) = text_leaves(dom, p)
+        .into_iter()
+        .rev()
+        .find(|&n| text_side(dom, n, p) == side)
+    else {
+        return;
+    };
+    let next = format!("{}.", dom.value_str(t));
+    dom.set_value(t, &next);
+}
+
+/// The comments redline aligns B's capability table with A's and emits A's
+/// preceding section (Parity through the old "3. Capability matrix" heading)
+/// as pure deletions *after* the table. Those deletions are original-only, so
+/// their order is the original's order: the section, then the table's own
+/// deleted rows. When the deleted run repeats the inserted heading, move the
+/// run back in front of that heading.
+pub fn restore_echoed_heading_deletions_before_table(dom: &mut Dom, root: NodeId) {
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let kids: Vec<NodeId> = dom.elements(body, None);
+    let mut plans: Vec<(Vec<NodeId>, NodeId)> = Vec::new();
+    let mut i = 0;
+    while i < kids.len() {
+        if !table_has_both_sides(dom, kids[i]) {
+            i += 1;
+            continue;
         }
-        anchor = par;
-        if dom.name_is(par, &W::p()) {
-            break;
+        let mut ins_start = i;
+        while ins_start > 0 && para_is_pure_inserted(dom, kids[ins_start - 1]) {
+            ins_start -= 1;
+        }
+        if ins_start == i {
+            i += 1;
+            continue;
+        }
+        let mut del_end = i + 1;
+        while del_end < kids.len() && block_is_original_only(dom, kids[del_end]) {
+            del_end += 1;
+        }
+        if del_end == i + 1 {
+            i += 1;
+            continue;
+        }
+        let inserted: Vec<String> = kids[ins_start..i]
+            .iter()
+            .map(|&p| collapsed_text(dom, p))
+            .filter(|s| !s.is_empty())
+            .collect();
+        let echoed = kids[i + 1..del_end].iter().any(|&b| {
+            paragraph_texts(dom, b)
+                .iter()
+                .any(|t| inserted.iter().any(|s| s == t))
+        });
+        if echoed {
+            plans.push((kids[i + 1..del_end].to_vec(), kids[ins_start]));
+        }
+        i = del_end;
+    }
+    for (blocks, anchor) in plans {
+        // Each insert lands immediately before the anchor, so walking the
+        // blocks forward leaves them in their original relative order.
+        for b in blocks {
+            dom.remove(b);
+            dom.add_before_self(anchor, b);
         }
     }
-    // EQ run with leading space + Demo (Word shape " Demo").
-    let eq_r = dom.new_element(W::r());
-    let eq_t = dom.new_element(W::t());
-    dom.set_attribute_value(eq_t, &XNamespace::xml().name("space"), Some("preserve"));
-    dom.add_text(eq_t, " Demo");
-    dom.add(eq_r, eq_t);
-    if dom.name_is(anchor, &W::del()) {
-        dom.add_after_self(anchor, eq_r);
-    } else {
-        dom.add(p, eq_r);
+}
+
+fn table_has_both_sides(dom: &Dom, n: NodeId) -> bool {
+    if !dom.name_is(n, &W::tbl()) {
+        return false;
     }
+    let mut ins = false;
+    let mut del = false;
+    for t in text_leaves(dom, n) {
+        match text_side(dom, t, n) {
+            "ins" if !dom.value_str(t).trim().is_empty() => ins = true,
+            "del" if !dom.value_str(t).trim().is_empty() => del = true,
+            _ => {}
+        }
+        if ins && del {
+            return true;
+        }
+    }
+    false
+}
+
+/// Original-only body block: deleted or moved-from text, and no inserted or
+/// moved-to text. The echoed heading in the comments pair is a `w:moveFrom`
+/// paragraph, which a pure-`w:del` check misses.
+fn block_is_original_only(dom: &Dom, n: NodeId) -> bool {
+    if !dom.name_is(n, &W::p()) && !dom.name_is(n, &W::tbl()) {
+        return false;
+    }
+    if !dom.descendants(n, Some(&W::ins())).is_empty()
+        || !dom.descendants(n, Some(&W::name("moveTo"))).is_empty()
+    {
+        return false;
+    }
+    text_leaves(dom, n)
+        .into_iter()
+        .any(|t| !dom.value_str(t).trim().is_empty() && text_side(dom, t, n) == "del")
+}
+
+fn collapsed_text(dom: &Dom, n: NodeId) -> String {
+    let mut s = String::new();
+    for t in text_leaves(dom, n) {
+        s.push_str(&dom.value_str(t));
+    }
+    s.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+fn paragraph_texts(dom: &Dom, block: NodeId) -> Vec<String> {
+    if dom.name_is(block, &W::p()) {
+        let t = collapsed_text(dom, block);
+        return if t.is_empty() { Vec::new() } else { vec![t] };
+    }
+    dom.descendants(block, Some(&W::p()))
+        .into_iter()
+        .map(|p| collapsed_text(dom, p))
+        .filter(|t| !t.is_empty())
+        .collect()
 }
 
 /// M452 (right_aligned_italic × right_alignment_2 ~84.3 residual):
