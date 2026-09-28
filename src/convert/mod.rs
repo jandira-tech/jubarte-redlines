@@ -37644,7 +37644,7 @@ mod comments_spacing_tests {
 
     #[test]
     fn potpourri_listnumber_gets_numbering_hanging() {
-        let path = "../neurotic_docx_bench/corpus/no_comments_pdf_was_generated_by_word/docx_source/potpourritest.docx";
+        let path = "../neurotic_docx_bench/corpus/word/tracking_without_comments/docx/32997dd3c9_potpourritest.docx";
         let Some(bytes) = sibling_bytes(path) else {
             return;
         };
