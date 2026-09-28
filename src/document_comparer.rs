@@ -18,6 +18,52 @@ use crate::namespaces::{R, W, W14};
 use crate::opc::{OpcError, PartFs};
 use crate::xmllinq::{Dom, NodeId};
 
+/// Every relationship `xml` (part `part_b` of `pkg2`) references resolves in
+/// `part_a`'s rels to the same type, mode and target, and an internal target
+/// to the same bytes. A redlined part written over `part_a` keeps A's rels,
+/// so B's references then still mean what they meant in B.
+fn part_rels_agree(
+    (pkg1, part_a): (&PartFs, &str),
+    (pkg2, part_b): (&PartFs, &str),
+    xml: &str,
+) -> bool {
+    let mut dom = Dom::new();
+    let document = dom.parse_xdocument(xml);
+    let Some(root) = dom.root(document) else {
+        return false;
+    };
+    let ids: std::collections::BTreeSet<String> = dom
+        .descendants_and_self(root, None)
+        .into_iter()
+        .flat_map(|e| dom.attributes(e))
+        .filter(|(name, _)| crate::comparer::tables::S_RELATIONSHIP_ATTRIBUTE_NAMES.contains(name))
+        .map(|(_, value)| value)
+        .collect();
+    if ids.is_empty() {
+        return true;
+    }
+    let (Some(rels_a), Some(rels_b)) = (pkg1.read_rels_for(part_a), pkg2.read_rels_for(part_b))
+    else {
+        return false;
+    };
+    ids.iter().all(|id| {
+        let find =
+            |rels: &crate::opc::Relationships| rels.items.iter().find(|r| &r.id == id).cloned();
+        let (Some(a), Some(b)) = (find(rels_a), find(rels_b)) else {
+            return false;
+        };
+        if a.rel_type != b.rel_type || a.target_mode != b.target_mode {
+            return false;
+        }
+        if a.target_mode.as_deref() == Some("External") {
+            return a.target == b.target;
+        }
+        let bytes_a = pkg1.part_bytes(&pkg1.resolve_rel_target(part_a, &a.target));
+        let bytes_b = pkg2.part_bytes(&pkg2.resolve_rel_target(part_b, &b.target));
+        bytes_a.is_some() && bytes_a == bytes_b
+    })
+}
+
 /// The header/footer parts a document references, as (kind, type, part-name):
 /// kind ∈ {"header","footer"}, type ∈ {"default","even","first"}. Read from the
 /// `headerReference`/`footerReference` elements in the main document, resolved to
@@ -6310,9 +6356,9 @@ fn compare_documents_impl(
     }
     // M4.H.x: header/footer CONTENT diff (Word redlines header/footer changes; we
     // previously only copied the original's). Match A's parts to B's by reference
-    // (kind,type). v1: for matched TEXT-ONLY parts (no relationship refs — the
-    // redlined part keeps the original's rels, so ref-bearing parts could dangle),
-    // diff the content and write the redline into the output's (original's) part.
+    // (kind,type), diff the content and write the redline into the output's
+    // (original's) part. That part keeps A's rels, so a part whose B references
+    // (a logo, a hyperlink) would resolve to something else there is skipped.
     {
         let refs_b: std::collections::HashMap<(String, String), String> = header_footer_refs(&pkg2)
             .into_iter()
@@ -6323,12 +6369,8 @@ fn compare_documents_impl(
                 continue;
             };
             if let (Some(xa), Some(xb)) = (pkg1.part_string(&part_a), pkg2.part_string(part_b)) {
-                if xa.contains("r:id=")
-                    || xa.contains("r:embed=")
-                    || xb.contains("r:id=")
-                    || xb.contains("r:embed=")
-                {
-                    continue; // v1: skip relationship-bearing header/footer parts
+                if !part_rels_agree((&pkg1, &part_a), (&pkg2, part_b), &xb) {
+                    continue;
                 }
                 let mut hd = Dom::new();
                 let da = hd.parse_xdocument(&xa);

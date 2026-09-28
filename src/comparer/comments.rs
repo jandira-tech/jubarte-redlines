@@ -423,9 +423,8 @@ pub(super) fn collect_segments(
     b_side: bool,
     author: &str,
 ) -> (String, Vec<Seg>) {
-    let Some(body) = dom.element(result_root, &W::body()) else {
-        return (String::new(), Vec::new());
-    };
+    // The document's body, or a header, footer or notes part's root.
+    let body = dom.element(result_root, &W::body()).unwrap_or(result_root);
     let del_text = W::name("delText");
     let (move_from, move_to) = (W::name("moveFrom"), W::name("moveTo"));
     let mut text = String::new();

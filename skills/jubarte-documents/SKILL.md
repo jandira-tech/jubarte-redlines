@@ -38,11 +38,14 @@ The id is the coordinate an edit uses. `**bold**`, `*italic*` and
 a bold heading run ends. `jubarte inspect contract.docx --json` gives the same
 paragraphs as data (`text`, `style`, `numbered`, `in_table`, `runs` with char
 offsets, `limitations`) plus `summary` (tables, comments, revisions, headers,
-footnotes) and `source_sha256`.
+footnotes) and `source_sha256`. After the body, `jubarte text` prints each
+header, footer and notes part as its own story (`[header1:p:0] ...`,
+`[footnotes:p:0] ...`), and `inspect` lists them under `stories`.
 
 Gotchas:
-- Only the body story is addressable. Headers, footers, footnotes and text
-  boxes are counted in `summary` but not printed and not editable.
+- Headers, footers, footnotes and endnotes are editable stories; text boxes
+  are counted in `summary` but not printed and not editable. Comments can
+  only be anchored in the body (Word cannot anchor one in a header).
 - `limitations` on a paragraph (`field`, `hyperlink`, `content_control`,
   `sym`, `drawing`, `revision`) tell you which ranges an edit will refuse.
 - Text is exact: tabs stay `\t`, smart quotes stay `“ ”`, a Symbol-font
@@ -106,8 +109,10 @@ paragraph onto this one; optional `separator`, usually `" "`). `replace` and
 `insert` take an optional `format` (`bold`/`italic`/`underline`/`highlight`)
 that applies to the new text only. `replace` takes `"whole": true` to show
 the change as the whole old text deleted, then the whole new text inserted.
-Paragraph selectors: `"body:p:N"`, `{"index": N}`, `{"starts_with": "..."}`,
-`{"contains": "..."}`; the last two must match exactly one paragraph.
+Paragraph selectors: `"body:p:N"` (or `"header1:p:0"`, `"footnotes:p:2"`),
+`{"index": N}`, `{"starts_with": "..."}`, `{"contains": "..."}`; the last two
+must match exactly one paragraph. Those three search the body unless they
+name a story: `{"story": "footer1", "contains": "Page"}`.
 
 Gotchas:
 - `find` must occur exactly once in that paragraph; overlapping occurrences

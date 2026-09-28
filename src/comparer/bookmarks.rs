@@ -73,7 +73,8 @@ fn extract(pkg: &PartFs, main: &str) -> (Vec<char>, Vec<Marker>) {
     };
     let mut dom = Dom::new();
     let d = dom.parse_xdocument(&xml);
-    let Some(body) = dom.root(d).and_then(|r| dom.element(r, &W::body())) else {
+    // The main part's body, or a header, footer or notes part's root.
+    let Some(body) = dom.root(d).map(|r| dom.element(r, &W::body()).unwrap_or(r)) else {
         return (Vec::new(), Vec::new());
     };
     let (start, end, t) = (W::name("bookmarkStart"), W::name("bookmarkEnd"), W::t());
@@ -326,8 +327,31 @@ pub fn carry_bookmarks(
     (pkg2, main2): (&PartFs, &str),
     author: &str,
 ) {
-    let (a_text, a_marks) = extract(pkg1, main1);
-    let (b_text, b_marks) = extract(pkg2, main2);
+    carry_matching_bookmarks(
+        dom,
+        result_root,
+        (pkg1, main1),
+        (pkg2, main2),
+        author,
+        |_| true,
+    );
+}
+
+/// [`carry_bookmarks`] for the bookmarks whose name passes `keep`, in the
+/// body or in one header, footer or notes part (`result_root` is then that
+/// part's root and `main1`/`main2` its name in each source).
+pub fn carry_matching_bookmarks(
+    dom: &mut Dom,
+    result_root: NodeId,
+    (pkg1, main1): (&PartFs, &str),
+    (pkg2, main2): (&PartFs, &str),
+    author: &str,
+    keep: impl Fn(&str) -> bool,
+) {
+    let (a_text, mut a_marks) = extract(pkg1, main1);
+    let (b_text, mut b_marks) = extract(pkg2, main2);
+    a_marks.retain(|m| keep(&m.name));
+    b_marks.retain(|m| keep(&m.name));
     let (present, mut next_id) = settle_present_bookmarks(dom, result_root);
     if a_marks.is_empty() && b_marks.is_empty() {
         return;

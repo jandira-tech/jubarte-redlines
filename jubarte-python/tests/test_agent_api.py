@@ -261,6 +261,29 @@ def test_whole_replace_shows_one_deletion_then_one_insertion() -> None:
     ]
 
 
+def test_header_story_is_inspected_and_edited_as_a_tracked_change() -> None:
+    doc = Document.from_bytes(docx(para("Body text."), header="Confidential draft"))
+    snap = doc.inspect()
+    (story,) = snap.stories
+    assert (story.id, story.kind, story.part) == ("header1", "header", "word/header1.xml")
+    assert snap.paragraph("header1:p:0").text == "Confidential draft"
+    plan = (
+        EditPlan(author="Claude", date="2026-09-28T12:00:00Z")
+        .for_document(doc)
+        .replace("header1:p:0", find="Confidential", replacement="Privileged")
+        .insert({"story": "header1", "index": 0}, position="end", text=" v2")
+    )
+    assert plan.operations[1]["paragraph"] == {"index": 0, "story": "header1"}
+    result = doc.edit(plan)
+    assert result.report.ok, result.report.operations
+    assert [op.paragraph for op in result.report.operations] == ["header1:p:0", "header1:p:0"]
+    assert result.clean.inspect().stories[0].paragraphs[0].text == "Privileged draft v2"
+    assert result.redline.accept().inspect().stories[0].paragraphs[0].text == "Privileged draft v2"
+    assert result.redline.reject().inspect().stories[0].paragraphs[0].text == "Confidential draft"
+    with pytest.raises(TypeError):
+        EditPlan(author="A").delete_paragraph({"story": "header1", "id": "header1:p:0"})
+
+
 def test_capabilities_manifest_reports_python_runtime() -> None:
     caps = jubarte.capabilities()
     assert caps["schema_version"] == 1

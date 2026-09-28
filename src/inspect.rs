@@ -26,12 +26,14 @@ use crate::xmllinq::{Dom, NodeId, XName};
 /// Wire schema of [`inspect_json`] and of the edit plan that consumes it.
 pub const SCHEMA_VERSION: u32 = 1;
 
-/// One body paragraph. `index` and `id` are valid for this exact snapshot.
+/// One paragraph of the body or a story. `index` and `id` are valid for this
+/// exact snapshot.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Paragraph {
-    /// Zero-based body order, table-cell paragraphs included.
+    /// Zero-based order in its story, table-cell paragraphs included.
     pub index: usize,
-    /// `body:p:{index}`; the edit plan's paragraph selector.
+    /// `body:p:{index}` (or `header1:p:{index}`, ...); the edit plan's
+    /// paragraph selector.
     pub id: String,
     /// Visible text (see module docs for the projection rules).
     pub text: String,
@@ -112,6 +114,22 @@ pub struct Snapshot {
     pub summary: Summary,
     /// Body paragraphs.
     pub paragraphs: Vec<Paragraph>,
+    /// Header, footer and note stories, each with its own paragraphs.
+    pub stories: Vec<Story>,
+}
+
+/// A header, footer or notes part an edit plan can address. Its paragraph
+/// ids are `{id}:p:{index}`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Story {
+    /// The part's file stem: `header1`, `footer2`, `footnotes`, `endnotes`.
+    pub id: String,
+    /// `header`, `footer`, `footnotes` or `endnotes`.
+    pub kind: String,
+    /// Package part name, e.g. `word/header1.xml`.
+    pub part: String,
+    /// The story's paragraphs; separator notes are left out.
+    pub paragraphs: Vec<Paragraph>,
 }
 
 /// An invalid package or XML part.
@@ -161,10 +179,22 @@ pub fn summary(docx: &[u8]) -> Result<Summary, InspectError> {
     opened.summary()
 }
 
+/// Header, footer and note stories in a stable order (headers, footers,
+/// footnotes, endnotes).
+pub fn stories(docx: &[u8]) -> Result<Vec<Story>, InspectError> {
+    Opened::open(docx)?.stories()
+}
+
 /// Paragraphs prefixed with their ids and direct formatting as Markdown
 /// marks: `[body:p:12 Heading1] (a) **Confidentiality.** You will ...`.
+/// Story paragraphs (`[header1:p:0] ...`) follow the body's.
 pub fn markdown(docx: &[u8]) -> Result<String, InspectError> {
-    Ok(render_markdown(&paragraphs(docx)?))
+    let opened = Opened::open(docx)?;
+    let mut all = body_paragraphs(&opened.dom, opened.body);
+    for story in opened.stories()? {
+        all.extend(story.paragraphs);
+    }
+    Ok(render_markdown(&all))
 }
 
 /// The full snapshot as JSON (`schema_version`, `source_sha256`, `summary`,
@@ -176,6 +206,7 @@ pub fn inspect_json(docx: &[u8]) -> Result<String, InspectError> {
         source_sha256: source_sha256(docx),
         summary: opened.summary()?,
         paragraphs: body_paragraphs(&opened.dom, opened.body),
+        stories: opened.stories()?,
     };
     serde_json::to_string(&snapshot).map_err(|e| InspectError::Invalid(e.to_string()))
 }
@@ -370,6 +401,38 @@ impl Opened {
     }
 
     /// Internal targets of the main part's relationships of one kind.
+    /// Header, footer and note parts: `(story id, kind, part name)`. The id
+    /// is the part's file stem; `header2` sorts before `header10`.
+    pub(crate) fn story_parts(&self) -> Vec<(String, &'static str, String)> {
+        let mut out = Vec::new();
+        for kind in ["header", "footer", "footnotes", "endnotes"] {
+            let mut parts: Vec<String> = self.related(kind).into_iter().collect();
+            parts.sort_by_key(|part| (part.len(), part.clone()));
+            for part in parts {
+                let stem = part.rsplit('/').next().unwrap_or(&part);
+                let id = stem.strip_suffix(".xml").unwrap_or(stem).to_string();
+                out.push((id, kind, part));
+            }
+        }
+        out
+    }
+
+    fn stories(&self) -> Result<Vec<Story>, InspectError> {
+        self.story_parts()
+            .into_iter()
+            .map(|(id, kind, part)| {
+                let (dom, _, root) = parse_part(&self.pkg, &part)?;
+                let paragraphs = paragraphs_of(&dom, story_paragraph_nodes(&dom, root), &id);
+                Ok(Story {
+                    id,
+                    kind: kind.to_string(),
+                    part,
+                    paragraphs,
+                })
+            })
+            .collect()
+    }
+
     pub(crate) fn related(&self, kind: &str) -> BTreeSet<String> {
         self.pkg
             .read_rels_for(&self.main)
@@ -464,8 +527,28 @@ pub(crate) fn body_paragraph_nodes(dom: &Dom, body: NodeId) -> Vec<NodeId> {
         .collect()
 }
 
+/// A header, footer or notes part's paragraphs, separator notes left out.
+pub(crate) fn story_paragraph_nodes(dom: &Dom, root: NodeId) -> Vec<NodeId> {
+    body_paragraph_nodes(dom, root)
+        .into_iter()
+        .filter(|&p| {
+            !dom.ancestors(p, None).into_iter().any(|a| {
+                (dom.name_is(a, &W::name("footnote")) || dom.name_is(a, &W::name("endnote")))
+                    && matches!(
+                        dom.attribute(a, &W::name("type")),
+                        Some("separator" | "continuationSeparator" | "continuationNotice")
+                    )
+            })
+        })
+        .collect()
+}
+
 fn body_paragraphs(dom: &Dom, body: NodeId) -> Vec<Paragraph> {
-    body_paragraph_nodes(dom, body)
+    paragraphs_of(dom, body_paragraph_nodes(dom, body), "body")
+}
+
+fn paragraphs_of(dom: &Dom, nodes: Vec<NodeId>, story: &str) -> Vec<Paragraph> {
+    nodes
         .into_iter()
         .enumerate()
         .map(|(index, p)| {
@@ -478,7 +561,7 @@ fn body_paragraphs(dom: &Dom, body: NodeId) -> Vec<Paragraph> {
             let numbered = ppr.is_some_and(|ppr| dom.element(ppr, &W::num_pr()).is_some());
             Paragraph {
                 index,
-                id: format!("body:p:{index}"),
+                id: format!("{story}:p:{index}"),
                 text: projection.text,
                 style,
                 numbered,

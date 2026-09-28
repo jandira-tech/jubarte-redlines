@@ -96,8 +96,8 @@ Document parameters and returns are `Uint8Array` holding complete `.docx`
 | `docxToPdf` | `(docx) → Uint8Array` | Render a DOCX → PDF (Word-style layout). Fonts come from the embedded Carlito/Liberation set. *Full builds only.* |
 | `pdfPageCount` | `(pdf) → number` | Page count of a PDF (`0` if the bytes are not a readable PDF). *Full builds only.* |
 | `initPanicHook` | `() → void` | Route wasm panics to `console.error`. Safe to call multiple times. |
-| `inspectDocument` | `(docx) → string` | Inspection snapshot as JSON: `source_sha256`, `summary`, and `paragraphs` with `body:p:N` ids, text, style, formatting spans and limitations. |
-| `documentMarkdown` | `(docx) → string` | Body as Markdown with a `[body:p:N]` id before every paragraph. |
+| `inspectDocument` | `(docx) → string` | Inspection snapshot as JSON: `source_sha256`, `summary`, `paragraphs` with `body:p:N` ids, text, style, formatting spans and limitations, and `stories` (headers, footers, notes) with `header1:p:N`-style ids. |
+| `documentMarkdown` | `(docx) → string` | Body, then every header, footer and notes story, as Markdown with a `[body:p:N]` / `[header1:p:N]` id before every paragraph. |
 | `sourceSha256` | `(docx) → string` | SHA-256 of the bytes: the `source_sha256` guard an edit plan carries. |
 | `applyEditPlan` | `(docx, planJson) → EditOutput` | Apply an edit plan (`replace`, `insert`, `delete`, `comment`, `insert_paragraph`, `delete_paragraph`, `format_paragraph`, `merge_paragraphs`; `replace`/`insert` take an optional run `format`; `replace` takes `whole: true` for one deletion then one insertion). `ok`, `clean`, `redline`, and `json` (the report, or the refusal with `code` and every operation's outcome). |
 | `previewEditPlan` | `(docx, planJson) → EditOutput` | Resolve every operation without producing documents. |

@@ -324,29 +324,42 @@ pub enum Side {
     After,
 }
 
-/// Paragraph selector; every form must match exactly one body paragraph.
+/// Paragraph selector; every form must match exactly one paragraph. Ids
+/// name their story (`body:p:3`, `header1:p:0`); the other forms search the
+/// body unless they carry a `story` (`header1`, `footnotes`, ...).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(untagged, deny_unknown_fields)]
 pub enum Selector {
+    /// `"body:p:12"`, the same as `{"id": "body:p:12"}`.
+    Name(String),
     /// `{"id": "body:p:12"}`.
     Id {
-        /// `body:p:N`.
+        /// `{story}:p:N`.
         id: String,
     },
     /// `{"index": 12}`.
     Index {
-        /// Zero-based body index.
+        /// Zero-based index in the story.
         index: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Story to search; the body when omitted.
+        story: Option<String>,
     },
     /// `{"starts_with": "..."}`; unique prefix match.
     StartsWith {
         /// Unique paragraph text prefix.
         starts_with: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Story to search; the body when omitted.
+        story: Option<String>,
     },
     /// `{"contains": "..."}`; unique substring match.
     Contains {
         /// Unique paragraph text substring.
         contains: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Story to search; the body when omitted.
+        story: Option<String>,
     },
 }
 
@@ -692,8 +705,13 @@ pub fn apply_plan(source: &[u8], plan: &EditPlan) -> Result<EditResult, EditErro
         crate::document_comparer::compare_documents_with_settings(&tx.base, revised, &settings)
             .map_err(|e| err("COMPARE_FAILED", None, e.to_string()))?;
     if marked.is_some() {
-        let (rewritten, fallbacks) =
-            whole::rewrite(&redline, &tx.whole_marks, &plan.author, &tx.date)?;
+        let (rewritten, fallbacks) = whole::rewrite(
+            &redline,
+            (&tx.base, revised),
+            &tx.whole_marks,
+            &plan.author,
+            &tx.date,
+        )?;
         redline = rewritten;
         for (op, reason) in fallbacks {
             tx.outcomes[op].message = Some(format!("shown as a word-level diff: {reason}"));
@@ -742,6 +760,30 @@ fn revision_counts(redline: &[u8], settings: &WmlComparerSettings) -> RevisionCo
             .len();
         counts.format_changed += paragraph_changes;
         counts.total += paragraph_changes;
+        // get_revisions reads the body and notes only; count headers and
+        // footers by their revision elements.
+        for (_, kind, part) in opened.story_parts() {
+            if !matches!(kind, "header" | "footer") {
+                continue;
+            }
+            let Ok((dom, _, root)) = crate::inspect::parse_part(&opened.pkg, &part) else {
+                continue;
+            };
+            for node in dom.descendants(root, None) {
+                let Some(name) = dom.name(node) else { continue };
+                let slot = match name.local_name() {
+                    "ins" => &mut counts.inserted,
+                    "del" => &mut counts.deleted,
+                    "moveFrom" | "moveTo" => &mut counts.moved,
+                    "rPrChange" | "pPrChange" => &mut counts.format_changed,
+                    _ => continue,
+                };
+                if name.namespace_name() == W::URI {
+                    *slot += 1;
+                    counts.total += 1;
+                }
+            }
+        }
     }
     counts
 }
@@ -817,7 +859,12 @@ struct Transaction<'p> {
     date: String,
     initials: String,
     opened: Opened,
+    /// The body first, then every header, footer and notes part.
+    stories: Vec<StoryPart>,
+    /// Every addressable paragraph: the body's, then each story's.
     paragraph_nodes: Vec<NodeId>,
+    /// `(story, index in that story)` per entry of `paragraph_nodes`.
+    paragraph_story: Vec<(usize, usize)>,
     projections: Vec<Projection>,
     outcomes: Vec<EditOutcome>,
     resolved: Vec<(usize, Resolved)>,
@@ -827,6 +874,16 @@ struct Transaction<'p> {
     comments_added: usize,
     /// Helper bookmarks around `whole` replacements, one per operation.
     whole_marks: Vec<whole::Mark>,
+}
+
+/// The body, or a header, footer or notes part, parsed into the plan's DOM.
+struct StoryPart {
+    /// `body`, or the part's file stem (`header1`, `footnotes`).
+    id: String,
+    /// Package part name.
+    part: String,
+    document: NodeId,
+    root: NodeId,
 }
 
 impl<'p> Transaction<'p> {
@@ -864,8 +921,15 @@ impl<'p> Transaction<'p> {
                 "signed or macro-bearing package",
             ));
         }
-        let has_revisions = crate::inspect::revision_count(&probe.dom, probe.body) > 0;
-        let (base, opened) = match (has_revisions, plan.existing_revisions) {
+        let story_revisions: usize = probe
+            .story_parts()
+            .iter()
+            .filter_map(|(_, _, part)| crate::inspect::parse_part(&probe.pkg, part).ok())
+            .map(|(dom, _, root)| crate::inspect::revision_count(&dom, root))
+            .sum();
+        let has_revisions =
+            crate::inspect::revision_count(&probe.dom, probe.body) + story_revisions > 0;
+        let (base, mut opened) = match (has_revisions, plan.existing_revisions) {
             (false, _) => (source.to_vec(), probe),
             (true, ExistingRevisions::Refuse) => {
                 return Err(err(
@@ -885,7 +949,44 @@ impl<'p> Transaction<'p> {
             }
         };
         let base_sha256 = source_sha256(&base);
-        let paragraph_nodes = crate::inspect::body_paragraph_nodes(&opened.dom, opened.body);
+        let mut stories = vec![StoryPart {
+            id: "body".to_string(),
+            part: opened.main.clone(),
+            document: opened.document,
+            root: opened.body,
+        }];
+        for (id, _, part) in opened.story_parts() {
+            let invalid = |m: String| err("INVALID_DOCUMENT", None, format!("{part}: {m}"));
+            let xml = opened
+                .pkg
+                .part_string(&part)
+                .ok_or_else(|| invalid("missing part".into()))?;
+            crate::xmllinq::parse::validate_xml(&xml).map_err(|e| invalid(e.to_string()))?;
+            let document = opened.dom.parse_xdocument(&xml);
+            let root = opened
+                .dom
+                .root(document)
+                .ok_or_else(|| invalid("missing XML root".into()))?;
+            stories.push(StoryPart {
+                id,
+                part,
+                document,
+                root,
+            });
+        }
+        let mut paragraph_nodes = Vec::new();
+        let mut paragraph_story = Vec::new();
+        for (index, story) in stories.iter().enumerate() {
+            let nodes = if index == 0 {
+                crate::inspect::body_paragraph_nodes(&opened.dom, story.root)
+            } else {
+                crate::inspect::story_paragraph_nodes(&opened.dom, story.root)
+            };
+            for (local, node) in nodes.into_iter().enumerate() {
+                paragraph_nodes.push(node);
+                paragraph_story.push((index, local));
+            }
+        }
         let projections = paragraph_nodes
             .iter()
             .map(|&p| project_paragraph(&opened.dom, p))
@@ -910,7 +1011,9 @@ impl<'p> Transaction<'p> {
             date,
             initials,
             opened,
+            stories,
             paragraph_nodes,
+            paragraph_story,
             projections,
             outcomes: Vec::new(),
             resolved: Vec::new(),
@@ -932,8 +1035,8 @@ impl<'p> Transaction<'p> {
             date: self.date.clone(),
             existing_revisions: self.plan.existing_revisions,
             paragraphs: ParagraphDelta {
-                from: self.paragraph_nodes.len(),
-                to: self.paragraph_nodes.len(),
+                from: self.body_paragraph_count(),
+                to: self.body_paragraph_count(),
             },
             operations: self.outcomes.clone(),
             comments_added: self.comments_added,
@@ -1015,7 +1118,21 @@ impl<'p> Transaction<'p> {
                 return Err(fail(&code, msg, outcome));
             }
         };
-        outcome.paragraph = Some(format!("body:p:{para}"));
+        outcome.paragraph = Some(self.paragraph_id(para));
+        let comments = match kind {
+            OperationKind::Replace { comment, .. }
+            | OperationKind::Insert { comment, .. }
+            | OperationKind::InsertParagraph { comment, .. } => comment.is_some(),
+            OperationKind::Comment { .. } => true,
+            _ => false,
+        };
+        if comments && self.paragraph_story[para].0 != 0 {
+            return Err(fail(
+                "UNSUPPORTED_STRUCTURE",
+                "comments are supported in the body only".into(),
+                outcome,
+            ));
+        }
         let projection = &self.projections[para];
         let text = &projection.text;
         match kind {
@@ -1201,11 +1318,12 @@ impl<'p> Transaction<'p> {
                         outcome,
                     ));
                 }
-                let body_children = dom.elements(self.opened.body, Some(&W::p()));
-                if body_children.len() == 1 && body_children[0] == node {
+                let (container, what) = self.story_container(node);
+                let siblings = dom.elements(container, Some(&W::p()));
+                if siblings.len() == 1 && siblings[0] == node {
                     return Err(fail(
                         "UNSUPPORTED_STRUCTURE",
-                        "the body must keep one paragraph".into(),
+                        format!("{what} must keep one paragraph"),
                         outcome,
                     ));
                 }
@@ -1413,78 +1531,121 @@ impl<'p> Transaction<'p> {
     }
 
     fn select(&self, selector: &Selector) -> Result<usize, (String, String, usize)> {
-        let count = self.paragraph_nodes.len();
-        let by_index = |index: usize| {
-            if index < count {
-                Ok(index)
-            } else {
-                Err((
-                    "ANCHOR_NOT_FOUND".to_string(),
-                    format!("paragraph index {index} does not exist ({count} paragraphs)"),
-                    0,
-                ))
+        let not_found = |message: String| Err(("ANCHOR_NOT_FOUND".to_string(), message, 0));
+        let (story, index) = match selector {
+            Selector::Name(id) | Selector::Id { id } => match id
+                .rsplit_once(":p:")
+                .and_then(|(story, n)| Some((story, n.parse::<usize>().ok()?)))
+            {
+                Some((story, n)) => (story, Some(n)),
+                None => return not_found(format!("unknown paragraph id {id}")),
+            },
+            Selector::Index { index, story } => (story.as_deref().unwrap_or("body"), Some(*index)),
+            Selector::StartsWith { story, .. } | Selector::Contains { story, .. } => {
+                (story.as_deref().unwrap_or("body"), None)
             }
         };
-        match selector {
-            Selector::Index { index } => by_index(*index),
-            Selector::Id { id } => match id
-                .strip_prefix("body:p:")
-                .and_then(|n| n.parse::<usize>().ok())
-            {
-                Some(index) => by_index(index),
-                None => Err((
-                    "ANCHOR_NOT_FOUND".into(),
-                    format!("unknown paragraph id {id}"),
-                    0,
+        let Some(story_index) = self.stories.iter().position(|s| s.id == story) else {
+            let known: Vec<&str> = self.stories.iter().map(|s| s.id.as_str()).collect();
+            return not_found(format!(
+                "unknown story {story:?}; this document has {}",
+                known.join(", ")
+            ));
+        };
+        let members: Vec<usize> = (0..self.paragraph_nodes.len())
+            .filter(|&g| self.paragraph_story[g].0 == story_index)
+            .collect();
+        if let Some(index) = index {
+            return match members.get(index) {
+                Some(&g) => Ok(g),
+                None => not_found(format!(
+                    "paragraph index {index} does not exist in {story} ({} paragraphs)",
+                    members.len()
                 )),
-            },
-            Selector::StartsWith { starts_with }
-            | Selector::Contains {
-                contains: starts_with,
-            } => {
-                let prefix = matches!(selector, Selector::StartsWith { .. });
-                if starts_with.is_empty() {
-                    return Err((
-                        "INVALID_EDIT".into(),
-                        "paragraph selector text must be nonempty".into(),
-                        0,
-                    ));
+            };
+        }
+        let (wanted, prefix) = match selector {
+            Selector::StartsWith { starts_with, .. } => (starts_with, true),
+            Selector::Contains { contains, .. } => (contains, false),
+            _ => unreachable!("ids and indexes returned above"),
+        };
+        if wanted.is_empty() {
+            return Err((
+                "INVALID_EDIT".into(),
+                "paragraph selector text must be nonempty".into(),
+                0,
+            ));
+        }
+        let hits: Vec<usize> = members
+            .into_iter()
+            .filter(|&g| {
+                let text = &self.projections[g].text;
+                if prefix {
+                    text.starts_with(wanted.as_str())
+                } else {
+                    text.contains(wanted.as_str())
                 }
-                let hits: Vec<usize> = self
-                    .projections
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, p)| {
-                        if prefix {
-                            p.text.starts_with(starts_with.as_str())
-                        } else {
-                            p.text.contains(starts_with.as_str())
-                        }
-                    })
-                    .map(|(i, _)| i)
-                    .collect();
-                match hits.as_slice() {
-                    [one] => Ok(*one),
-                    [] => Err((
-                        "ANCHOR_NOT_FOUND".into(),
-                        format!("no paragraph matches {starts_with:?}"),
-                        0,
-                    )),
-                    many => Err((
-                        "AMBIGUOUS_ANCHOR".into(),
-                        format!(
-                            "{} paragraphs match {starts_with:?}: {}",
-                            many.len(),
-                            many.iter()
-                                .map(|i| format!("body:p:{i}"))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        ),
-                        many.len(),
-                    )),
-                }
+            })
+            .collect();
+        match hits.as_slice() {
+            [one] => Ok(*one),
+            [] => not_found(format!("no paragraph matches {wanted:?}")),
+            many => Err((
+                "AMBIGUOUS_ANCHOR".into(),
+                format!(
+                    "{} paragraphs match {wanted:?}: {}",
+                    many.len(),
+                    many.iter()
+                        .map(|&g| self.paragraph_id(g))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                many.len(),
+            )),
+        }
+    }
+
+    fn body_paragraph_count(&self) -> usize {
+        self.paragraph_story.iter().filter(|(s, _)| *s == 0).count()
+    }
+
+    /// Stories an operation of the plan edits.
+    fn touched_stories(&self) -> std::collections::BTreeSet<usize> {
+        self.resolved
+            .iter()
+            .map(|(_, r)| match r {
+                Resolved::Text { para, .. }
+                | Resolved::CommentRange { para, .. }
+                | Resolved::DeleteParagraph { para }
+                | Resolved::FormatParagraph { para, .. }
+                | Resolved::MergeParagraphs { para, .. } => *para,
+                Resolved::InsertParagraph { anchor, .. } => *anchor,
+            })
+            .map(|para| self.paragraph_story[para].0)
+            .collect()
+    }
+
+    /// `{story}:p:{index}` of a paragraph.
+    fn paragraph_id(&self, para: usize) -> String {
+        let (story, local) = self.paragraph_story[para];
+        format!("{}:p:{local}", self.stories[story].id)
+    }
+
+    /// The body, header, footer or note a paragraph belongs to, for the
+    /// "keeps one paragraph" checks.
+    fn story_container(&self, node: NodeId) -> (NodeId, &'static str) {
+        let dom = &self.opened.dom;
+        for (name, what) in [
+            ("footnote", "a footnote"),
+            ("endnote", "an endnote"),
+            ("hdr", "a header"),
+            ("ftr", "a footer"),
+        ] {
+            if let Some(&found) = dom.ancestors(node, Some(&W::name(name))).first() {
+                return (found, what);
             }
         }
+        (self.opened.body, "the body")
     }
 
     /// The unique occurrence of `find` (overlapping occurrences count), checked
@@ -1728,15 +1889,18 @@ impl<'p> Transaction<'p> {
                         "the plan's deletions leave a table cell without a closing paragraph",
                     ));
                 }
-            } else if dom
-                .elements(self.opened.body, Some(&W::p()))
-                .iter()
-                .all(|p| gone.contains(p))
-            {
-                return Err(self.conflict(
-                    *i,
-                    "the plan's deletions leave the body without a paragraph",
-                ));
+            } else {
+                let (container, what) = self.story_container(node);
+                if dom
+                    .elements(container, Some(&W::p()))
+                    .iter()
+                    .all(|p| gone.contains(p))
+                {
+                    return Err(self.conflict(
+                        *i,
+                        &format!("the plan's deletions leave {what} without a paragraph"),
+                    ));
+                }
             }
         }
         Ok(())
@@ -1891,11 +2055,13 @@ impl<'p> Transaction<'p> {
                 }
                 let s = new_position(&edits, edit.start, true, Some(edit.op));
                 let end = s + edit.replacement.len();
+                let story = self.paragraph_story[para].0;
+                let part = (story != 0).then(|| self.stories[story].part.clone());
                 if let Some(mark) = whole::mark(
                     &mut self.opened.dom,
                     node,
                     (s, end),
-                    edit.op,
+                    (edit.op, part),
                     (find, &edit.replacement),
                 ) {
                     self.whole_marks.push(mark);
@@ -2019,28 +2185,39 @@ impl<'p> Transaction<'p> {
         if !self.comments.is_empty() {
             self.write_comments_part()?;
         }
-        let main = self.opened.main.clone();
+        // The body is always written; a story part only when an operation
+        // edits it, so untouched parts keep their exact bytes.
+        let mut written = self.touched_stories();
+        written.insert(0);
         let marked = if self.whole_marks.is_empty() {
             None
         } else {
-            let xml = self.opened.dom.serialize_document(self.opened.document);
-            self.opened.pkg.set_part(&main, xml.into_bytes());
+            self.write_stories(&written);
             let bytes = self
                 .opened
                 .pkg
                 .to_zip()
                 .map_err(|e| err("PACKAGE_WRITE", None, e.to_string()))?;
-            whole::strip(&mut self.opened.dom, self.opened.body);
+            for &story in &written {
+                whole::strip(&mut self.opened.dom, self.stories[story].root);
+            }
             Some(bytes)
         };
-        let xml = self.opened.dom.serialize_document(self.opened.document);
-        self.opened.pkg.set_part(&main, xml.into_bytes());
+        self.write_stories(&written);
         let clean = self
             .opened
             .pkg
             .to_zip()
             .map_err(|e| err("PACKAGE_WRITE", None, e.to_string()))?;
         Ok((clean, marked))
+    }
+
+    fn write_stories(&mut self, stories: &std::collections::BTreeSet<usize>) {
+        for &story in stories {
+            let StoryPart { part, document, .. } = &self.stories[story];
+            let xml = self.opened.dom.serialize_document(*document);
+            self.opened.pkg.set_part(part, xml.into_bytes());
+        }
     }
 
     fn write_comments_part(&mut self) -> Result<(), EditError> {

@@ -78,6 +78,15 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   and a comment on the change stays on the inserted text. When the diff
   cannot be regrouped the operation keeps the word-level redline and its
   report line carries a `message` saying why.
+- Headers, footers, footnotes and endnotes are editable stories. `inspect`
+  lists them under `stories` and `jubarte text` prints them after the body,
+  each paragraph under an id such as `header1:p:0` or `footnotes:p:2`. An
+  edit plan addresses them by that id or by adding `"story": "footer1"` to
+  an `index`, `starts_with` or `contains` selector (those search the body
+  otherwise). The change is tracked in the story's own part, `"whole": true`
+  included, and the report counts header and footer revisions. Comments
+  stay body-only, since Word cannot anchor one in a header or footer. The
+  Python `Snapshot` gains `stories`.
 - Adoption guides, workflow examples and a document-operations agent skill.
   The Acme letter example now ships `make_letter.py`, which writes its
   source letter byte for byte, and its plan runs all twelve edits.
@@ -89,6 +98,17 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- Changes in a header or footer that carries a relationship (a logo, a
+  hyperlink) are now in the redline. The comparer skipped every such part
+  and kept the original's, so the redline silently lost the change and
+  accepting it did not give the revised document. It now diffs the part
+  whenever each relationship the revised part uses means the same thing in
+  the original's (same type and target, same bytes for an image), which is
+  the case for an edit plan and for most comparisons of two versions.
+- A paragraph selector given as a bare id string (`"paragraph": "body:p:88"`,
+  as the agent skill's own example writes it) failed to parse with "data did
+  not match any variant"; only `{"id": ...}` worked. Both forms are
+  accepted now.
 - Two paragraphs joined into one now read as Word's Compare shows a join:
   the first paragraph's mark is deleted and only the separator is inserted.
   The paragraph LCS paired the joined paragraph with the first original,

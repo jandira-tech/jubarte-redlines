@@ -157,7 +157,7 @@ class Span:
 
 @dataclass(frozen=True, slots=True)
 class Paragraph:
-    """One body paragraph; ``index``/``id`` are valid for this snapshot only."""
+    """One paragraph (``body:p:N``, ``header1:p:N``...); ``index``/``id`` are valid for this snapshot only."""
 
     index: int
     id: str
@@ -168,6 +168,16 @@ class Paragraph:
     page_break: bool
     runs: tuple[Span, ...]
     limitations: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Story:
+    """A header, footer or notes part an edit plan can address by ``story``."""
+
+    id: str
+    kind: str
+    part: str
+    paragraphs: tuple[Paragraph, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,12 +207,17 @@ class Snapshot:
     source_sha256: str
     summary: Summary
     paragraphs: tuple[Paragraph, ...]
+    stories: tuple[Story, ...] = ()
 
     def paragraph(self, id_or_index: str | int) -> Paragraph:
-        """The paragraph with this id (``body:p:N``) or index."""
+        """The paragraph with this id (``body:p:N``, ``header1:p:0``) or body index."""
         for p in self.paragraphs:
             if p.id == id_or_index or p.index == id_or_index:
                 return p
+        for story in self.stories:
+            for p in story.paragraphs:
+                if p.id == id_or_index:
+                    return p
         raise LookupError(f"no paragraph {id_or_index!r} in this snapshot")
 
     def unique(self, *, starts_with: str | None = None, contains: str | None = None) -> Paragraph:
@@ -221,25 +236,35 @@ class Snapshot:
         return hits[0]
 
 
+def _decode_paragraph(p: dict[str, object]) -> Paragraph:
+    return Paragraph(
+        index=p["index"],
+        id=p["id"],
+        text=p["text"],
+        style=p["style"],
+        numbered=p["numbered"],
+        in_table=p["in_table"],
+        page_break=p["page_break"],
+        runs=tuple(Span(**s) for s in p["runs"]),
+        limitations=tuple(p["limitations"]),
+    )
+
+
 def _decode_snapshot(payload: str) -> Snapshot:
     data = json.loads(payload)
     return Snapshot(
         schema_version=data["schema_version"],
         source_sha256=data["source_sha256"],
         summary=Summary(**data["summary"]),
-        paragraphs=tuple(
-            Paragraph(
-                index=p["index"],
-                id=p["id"],
-                text=p["text"],
-                style=p["style"],
-                numbered=p["numbered"],
-                in_table=p["in_table"],
-                page_break=p["page_break"],
-                runs=tuple(Span(**s) for s in p["runs"]),
-                limitations=tuple(p["limitations"]),
+        paragraphs=tuple(_decode_paragraph(p) for p in data["paragraphs"]),
+        stories=tuple(
+            Story(
+                id=s["id"],
+                kind=s["kind"],
+                part=s["part"],
+                paragraphs=tuple(_decode_paragraph(p) for p in s["paragraphs"]),
             )
-            for p in data["paragraphs"]
+            for s in data.get("stories", ())
         ),
     )
 
@@ -249,7 +274,8 @@ def _decode_snapshot(payload: str) -> Snapshot:
 # ---------------------------------------------------------------------------
 
 Selector = str | int | dict[str, str | int]
-"""A paragraph id (``body:p:N``), an index, or ``{"starts_with"|"contains"|"id"|"index": ...}``."""
+"""A paragraph id (``body:p:N``, ``header1:p:0``), a body index, or ``{"starts_with"|"contains"|"id"|"index": ...}``;
+``index``/``starts_with``/``contains`` also take ``"story": "header1"`` (default: the body)."""
 
 ExistingRevisions = Literal["refuse", "accept", "reject"]
 
@@ -261,13 +287,22 @@ def _selector(value: Selector) -> dict[str, str | int]:
         return {"index": value}
     if isinstance(value, str):
         return {"id": value}
-    if isinstance(value, dict) and len(value) == 1:
-        key, inner = next(iter(value.items()))
-        if key in ("id", "starts_with", "contains") and isinstance(inner, str):
-            return {key: inner}
-        if key == "index" and isinstance(inner, int) and not isinstance(inner, bool):
-            return {key: inner}
-    raise TypeError("paragraph selector must be an id, an index or one of {id|index|starts_with|contains: ...}")
+    if isinstance(value, dict):
+        rest = dict(value)
+        story = rest.pop("story", None)
+        if len(rest) == 1 and (story is None or isinstance(story, str)):
+            key, inner = next(iter(rest.items()))
+            scoped = {} if story is None else {"story": story}
+            if key == "id" and story is None and isinstance(inner, str):
+                return {key: inner}
+            if key in ("starts_with", "contains") and isinstance(inner, str):
+                return {key: inner, **scoped}
+            if key == "index" and isinstance(inner, int) and not isinstance(inner, bool):
+                return {key: inner, **scoped}
+    raise TypeError(
+        "paragraph selector must be an id, an index or one of {id|index|starts_with|contains: ...}"
+        " (index/starts_with/contains may add story)"
+    )
 
 
 _FORMAT_FIELDS = frozenset({"bold", "italic", "underline", "highlight"})

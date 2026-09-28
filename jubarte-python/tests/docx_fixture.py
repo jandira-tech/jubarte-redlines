@@ -31,13 +31,20 @@ def run(text: str, bold: bool, italic: bool, highlight: str | None) -> str:
     return f'<w:r>{rpr}<w:t xml:space="preserve">{escape(text)}</w:t></w:r>'
 
 
-def docx(body_xml: str) -> bytes:
+def docx(body_xml: str, header: str | None = None) -> bytes:
+    """A one-section document; ``header`` adds a default header paragraph."""
+    header_ref = '<w:headerReference w:type="default" r:id="rIdH1"/>' if header is not None else ""
     document = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         f'<w:document xmlns:w="{W_NS}" xmlns:r="{R_NS}"><w:body>{body_xml}'
-        '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/>'
+        f'<w:sectPr>{header_ref}<w:pgSz w:w="12240" w:h="15840"/>'
         '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>'
         "</w:sectPr></w:body></w:document>"
+    )
+    header_type = (
+        '<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>'
+        if header is not None
+        else ""
     )
     content_types = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -45,7 +52,7 @@ def docx(body_xml: str) -> bytes:
         '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
         '<Default Extension="xml" ContentType="application/xml"/>'
         '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
-        "</Types>"
+        f"{header_type}</Types>"
     )
     rels = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -53,9 +60,12 @@ def docx(body_xml: str) -> bytes:
         '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
         "</Relationships>"
     )
+    header_rel = (
+        f'<Relationship Id="rIdH1" Type="{R_NS}/header" Target="header1.xml"/>' if header is not None else ""
+    )
     doc_rels = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>'
+        f'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{header_rel}</Relationships>'
     )
     buffer = BytesIO()
     with ZipFile(buffer, "w", ZIP_DEFLATED) as zf:
@@ -63,4 +73,10 @@ def docx(body_xml: str) -> bytes:
         zf.writestr("_rels/.rels", rels)
         zf.writestr("word/document.xml", document)
         zf.writestr("word/_rels/document.xml.rels", doc_rels)
+        if header is not None:
+            zf.writestr(
+                "word/header1.xml",
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                f'<w:hdr xmlns:w="{W_NS}">{para(header)}</w:hdr>',
+            )
     return buffer.getvalue()

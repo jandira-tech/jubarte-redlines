@@ -188,7 +188,7 @@ on the inspection tests added here, not on RESULTS.md. Say so.
 
 | Tool | Skill use | Replacement | Status after this branch |
 |---|---|---|---|
-| pandoc | `pandoc -t markdown file.docx` to read | `jubarte text file.docx` (Markdown with paragraph ids); `jubarte inspect --json` | implemented; body story only, headers/footers/notes reported in `summary` |
+| pandoc | `pandoc -t markdown file.docx` to read | `jubarte text file.docx` (Markdown with paragraph ids); `jubarte inspect --json` | implemented; body, headers, footers and notes as stories with their own ids; text boxes reported in `summary` only |
 | pandoc | `--track-changes=accept` | `jubarte accept` (RevisionProcessor port) | already existed |
 | soffice | `--convert-to pdf` | `jubarte convert --pdf` | already existed; page count and page starts added to the report |
 | soffice | `accept_changes.py` macro | `jubarte accept` | already existed |
@@ -270,9 +270,10 @@ Known gaps found while verifying, left open on purpose:
   `"whole": true`, which shows the whole old clause deleted and then the
   whole new clause inserted; a diff that cannot be regrouped stays
   word-level and the report says why.)
-- Headers/footers/notes/text boxes as editable stories. (`merge_paragraphs`,
+- Text boxes as editable stories. (Headers, footers and notes became
+  editable stories on release/0.10, as did `merge_paragraphs`,
   `format_paragraph`, formatting on inline `insert`/`replace` and the ZIP
-  admission limits of 01 C2 landed on release/0.10.)
+  admission limits of 01 C2.)
 - `RESULTS.md`'s `accepted_changes` tables score compare output after
   acceptance; they are not a test of the accept operation on arbitrary
   redlines. The claim "toss LibreOffice for accept" rests on the

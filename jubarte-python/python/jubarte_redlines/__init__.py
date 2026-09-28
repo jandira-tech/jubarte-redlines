@@ -74,6 +74,7 @@ from .models import (
     RevisionCounts,
     Snapshot,
     Span,
+    Story,
     Summary,
 )
 
@@ -93,6 +94,7 @@ __all__ += [
     "RevisionCounts",
     "ParagraphDelta",
     "Snapshot",
+    "Story",
     "Summary",
     "Paragraph",
     "Span",

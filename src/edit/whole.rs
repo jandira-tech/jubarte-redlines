@@ -41,6 +41,8 @@ const REFERENCES: &[&str] = &["commentReference", "footnoteReference", "endnoteR
 #[derive(Clone, Debug)]
 pub(super) struct Mark {
     op: usize,
+    /// The header, footer or notes part holding the text; `None` for the body.
+    part: Option<String>,
     name: String,
     find: String,
     replacement: String,
@@ -52,7 +54,7 @@ pub(super) fn mark(
     dom: &mut Dom,
     paragraph: NodeId,
     (start, end): (usize, usize),
-    op: usize,
+    (op, part): (usize, Option<String>),
     (find, replacement): (&str, &str),
 ) -> Option<Mark> {
     let root = dom
@@ -75,6 +77,7 @@ pub(super) fn mark(
     dom.set_attribute_value(close, &W::id(), Some(&id));
     wrap_range(dom, paragraph, start, end, open, close).then(|| Mark {
         op,
+        part,
         name,
         find: find.to_string(),
         replacement: replacement.to_string(),
@@ -126,16 +129,43 @@ pub(super) type Fallback = (usize, String);
 /// comparer's word-level diff and comes back with the reason.
 pub(super) fn rewrite(
     redline: &[u8],
+    (base, marked): (&[u8], &[u8]),
     marks: &[Mark],
     author: &str,
     date: &str,
 ) -> Result<(Vec<u8>, Vec<Fallback>), EditError> {
     let mut opened =
         Opened::open(redline).map_err(|e| err("COMPARE_FAILED", None, e.to_string()))?;
-    let mut next_id = opened
-        .dom
-        .descendants(opened.body, None)
-        .into_iter()
+    // The body, then every story part a mark lives in.
+    let mut parts = vec![(opened.main.clone(), opened.document, opened.body)];
+    let stories: std::collections::BTreeSet<&String> =
+        marks.iter().filter_map(|m| m.part.as_ref()).collect();
+    if !stories.is_empty() {
+        let open = |bytes| {
+            crate::opc::PartFs::open(bytes).map_err(|e| err("COMPARE_FAILED", None, e.to_string()))
+        };
+        let (base, marked) = (open(base)?, open(marked)?);
+        for part in stories {
+            let missing = || err("COMPARE_FAILED", None, format!("redline lost {part}"));
+            let xml = opened.pkg.part_string(part).ok_or_else(missing)?;
+            let document = opened.dom.parse_xdocument(&xml);
+            let root = opened.dom.root(document).ok_or_else(missing)?;
+            // The comparer carries bookmarks in the body only; place the
+            // helper bookmarks of this part by their text, as it does there.
+            crate::comparer::bookmarks::carry_matching_bookmarks(
+                &mut opened.dom,
+                root,
+                (&base, part),
+                (&marked, part),
+                author,
+                |name| name.starts_with(PREFIX),
+            );
+            parts.push((part.clone(), document, root));
+        }
+    }
+    let mut next_id = parts
+        .iter()
+        .flat_map(|&(_, _, root)| opened.dom.descendants(root, None))
         .filter_map(|n| opened.dom.attribute(n, &W::id())?.parse::<u64>().ok())
         .max()
         .map_or(1, |max| max + 1);
@@ -146,14 +176,19 @@ pub(super) fn rewrite(
             date,
             next_id: &mut next_id,
         };
-        if let Err(reason) = rewrite_one(&mut opened.dom, opened.body, mark, stamp) {
+        let root = parts
+            .iter()
+            .find(|(part, ..)| mark.part.as_ref() == Some(part))
+            .map_or(opened.body, |&(_, _, root)| root);
+        if let Err(reason) = rewrite_one(&mut opened.dom, root, mark, stamp) {
             fallbacks.push((mark.op, reason));
         }
     }
-    strip(&mut opened.dom, opened.body);
-    let xml = opened.dom.serialize_document(opened.document);
-    let main = opened.main.clone();
-    opened.pkg.set_part(&main, xml.into_bytes());
+    for (part, document, root) in parts {
+        strip(&mut opened.dom, root);
+        let xml = opened.dom.serialize_document(document);
+        opened.pkg.set_part(&part, xml.into_bytes());
+    }
     let bytes = opened
         .pkg
         .to_zip()
@@ -422,6 +457,7 @@ mod tests {
     fn mark(find: &str, replacement: &str) -> Mark {
         Mark {
             op: 0,
+            part: None,
             name: format!("{PREFIX}0"),
             find: find.to_string(),
             replacement: replacement.to_string(),
