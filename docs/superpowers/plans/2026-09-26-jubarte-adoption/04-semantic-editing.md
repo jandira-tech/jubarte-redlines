@@ -26,9 +26,13 @@
 > (2) patch 0005's "plain paragraph only" rule is replaced by a projection
 > that ignores zero-width markers and refuses only ranges crossing opaque
 > structures; (3) `expected_text` dropped in favor of the hash guard (applied
-> when the plan supplies `source_sha256`) plus unique anchors. Not implemented: `merge_paragraphs`, `format_paragraph`
-> (E4 paragraph formatting), rich formatting on inline `insert`/`replace`,
-> `Preview.build`/`write_new_directory` (the CLI's `--out-dir` bundle covers
+> when the plan supplies `source_sha256`) plus unique anchors.
+> Added 2026-09-28 (release/0.10): `format_paragraph` (style, alignment,
+> line spacing, space before/after as a tracked `w:pPrChange`),
+> `merge_paragraphs` (second paragraph's properties win, as Word's accept of
+> a deleted mark; the comparer now shows a join as Word Compare does: first
+> mark deleted, separator inserted) and `format` on inline `insert`/`replace`.
+> Not implemented: `Preview.build`/`write_new_directory` (the CLI's `--out-dir` bundle covers
 > the atomic-write need for now). Known renderer gap: balloons for comments
 > anchored inside inserted runs are not painted (the comments are in the
 > file). Verified: `tests/edit_plan.rs` (18), module unit tests.

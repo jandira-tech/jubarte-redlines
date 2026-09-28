@@ -270,6 +270,19 @@ def _selector(value: Selector) -> dict[str, str | int]:
     raise TypeError("paragraph selector must be an id, an index or one of {id|index|starts_with|contains: ...}")
 
 
+_FORMAT_FIELDS = frozenset({"bold", "italic", "underline", "highlight"})
+
+
+def _format(value: Mapping[str, object]) -> dict[str, object]:
+    spec = dict(value)
+    unknown = set(spec) - _FORMAT_FIELDS
+    if unknown:
+        raise ValueError(f"unknown format fields: {sorted(unknown)}")
+    if not spec:
+        raise ValueError("format needs at least one of bold, italic, underline, highlight")
+    return spec
+
+
 def _run_specs(runs: Sequence[Mapping[str, object] | str]) -> tuple[dict[str, object], ...]:
     out: list[dict[str, object]] = []
     for r in runs:
@@ -279,7 +292,7 @@ def _run_specs(runs: Sequence[Mapping[str, object] | str]) -> tuple[dict[str, ob
         spec = dict(r)
         if not isinstance(spec.get("text"), str):
             raise ValueError("every run needs a text string")
-        unknown = set(spec) - {"text", "bold", "italic", "underline", "highlight"}
+        unknown = set(spec) - {"text", *_FORMAT_FIELDS}
         if unknown:
             raise ValueError(f"unknown run fields: {sorted(unknown)}")
         out.append(spec)
@@ -318,9 +331,20 @@ class EditPlan:
         digest = document if isinstance(document, str) else document.sha256()  # type: ignore[attr-defined]
         return replace(self, source_sha256=digest)
 
-    def replace(self, paragraph: Selector, *, find: str, replacement: str, comment: str | None = None, id: str | None = None) -> EditPlan:
-        """Replace the unique occurrence of ``find`` in the paragraph."""
+    def replace(
+        self,
+        paragraph: Selector,
+        *,
+        find: str,
+        replacement: str,
+        format: Mapping[str, object] | None = None,
+        comment: str | None = None,
+        id: str | None = None,
+    ) -> EditPlan:
+        """Replace the unique occurrence of ``find``; ``format`` styles only the new text."""
         op: dict[str, object] = {"kind": "replace", "paragraph": _selector(paragraph), "find": find, "replacement": replacement}
+        if format is not None:
+            op["format"] = _format(format)
         return self._with(_with_optional(op, id=id, comment=comment))
 
     def insert(
@@ -331,10 +355,11 @@ class EditPlan:
         after: str | None = None,
         before: str | None = None,
         position: Literal["start", "end"] | None = None,
+        format: Mapping[str, object] | None = None,
         comment: str | None = None,
         id: str | None = None,
     ) -> EditPlan:
-        """Insert ``text`` after/before a unique anchor or at the paragraph edge."""
+        """Insert ``text`` after/before a unique anchor or at the paragraph edge; ``format`` styles it."""
         given = [k for k, v in (("after", after), ("before", before), ("position", position)) if v is not None]
         if len(given) != 1:
             raise ValueError("insert needs exactly one of after, before, position")
@@ -345,6 +370,8 @@ class EditPlan:
             op["before"] = before
         if position is not None:
             op["position"] = position
+        if format is not None:
+            op["format"] = _format(format)
         return self._with(_with_optional(op, id=id, comment=comment))
 
     def delete(self, paragraph: Selector, *, find: str, id: str | None = None) -> EditPlan:
@@ -379,6 +406,43 @@ class EditPlan:
         """Delete a whole paragraph, mark included."""
         op: dict[str, object] = {"kind": "delete_paragraph", "paragraph": _selector(paragraph)}
         return self._with(_with_optional(op, id=id))
+
+    def format_paragraph(
+        self,
+        paragraph: Selector,
+        *,
+        style: str | None = None,
+        alignment: Literal["left", "center", "right", "justify"] | None = None,
+        line_spacing: float | None = None,
+        space_before: float | None = None,
+        space_after: float | None = None,
+        id: str | None = None,
+    ) -> EditPlan:
+        """Restyle a paragraph as a tracked property change.
+
+        ``style`` is a paragraph style id or name, ``line_spacing`` a multiple
+        (1.15), ``space_before``/``space_after`` points.
+        """
+        fields: dict[str, object] = {
+            k: v
+            for k, v in (
+                ("style", style),
+                ("alignment", alignment),
+                ("line_spacing", line_spacing),
+                ("space_before", space_before),
+                ("space_after", space_after),
+            )
+            if v is not None
+        }
+        if not fields:
+            raise ValueError("format_paragraph needs at least one of style, alignment, line_spacing, space_before, space_after")
+        op: dict[str, object] = {"kind": "format_paragraph", "paragraph": _selector(paragraph), **fields}
+        return self._with(_with_optional(op, id=id))
+
+    def merge_paragraphs(self, paragraph: Selector, *, separator: str | None = None, id: str | None = None) -> EditPlan:
+        """Join the next paragraph onto this one; the redline deletes this paragraph's mark."""
+        op: dict[str, object] = {"kind": "merge_paragraphs", "paragraph": _selector(paragraph)}
+        return self._with(_with_optional(op, separator=separator, id=id))
 
     def to_dict(self) -> dict[str, object]:
         """The wire form."""

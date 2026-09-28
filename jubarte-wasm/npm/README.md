@@ -99,7 +99,7 @@ Document parameters and returns are `Uint8Array` holding complete `.docx`
 | `inspectDocument` | `(docx) → string` | Inspection snapshot as JSON: `source_sha256`, `summary`, and `paragraphs` with `body:p:N` ids, text, style, formatting spans and limitations. |
 | `documentMarkdown` | `(docx) → string` | Body as Markdown with a `[body:p:N]` id before every paragraph. |
 | `sourceSha256` | `(docx) → string` | SHA-256 of the bytes: the `source_sha256` guard an edit plan carries. |
-| `applyEditPlan` | `(docx, planJson) → EditOutput` | Apply an edit plan (`replace`, `insert`, `delete`, `comment`, `insert_paragraph`, `delete_paragraph`). `ok`, `clean`, `redline`, and `json` (the report, or the refusal with `code` and every operation's outcome). |
+| `applyEditPlan` | `(docx, planJson) → EditOutput` | Apply an edit plan (`replace`, `insert`, `delete`, `comment`, `insert_paragraph`, `delete_paragraph`, `format_paragraph`, `merge_paragraphs`; `replace`/`insert` take an optional run `format`). `ok`, `clean`, `redline`, and `json` (the report, or the refusal with `code` and every operation's outcome). |
 | `previewEditPlan` | `(docx, planJson) → EditOutput` | Resolve every operation without producing documents. |
 | `editReportJsonl` | `(reportJson) → string` | A report as JSON lines (`load`, one `op` per operation, `summary`). |
 | `capabilities` | `() → string` | What this build can do, as JSON (`runtime: "wasm"`, operations, edit kinds, input budgets). |

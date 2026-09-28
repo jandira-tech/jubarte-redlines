@@ -125,6 +125,8 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             "comment",
             "insert_paragraph",
             "delete_paragraph",
+            "format_paragraph",
+            "merge_paragraphs",
         ]
         .iter()
         .map(|s| (*s).to_string())
@@ -155,7 +157,7 @@ mod tests {
         assert_eq!(c.engine_version, env!("CARGO_PKG_VERSION"));
         assert_eq!(c.runtime, "rust");
         assert_eq!(c.edit_plan_versions, [1]);
-        assert_eq!(c.edit_operations.len(), 6);
+        assert_eq!(c.edit_operations.len(), 8);
         let json: serde_json::Value = serde_json::from_str(&capabilities_json("cli")).unwrap();
         assert_eq!(json["runtime"], "cli");
         assert_eq!(json["operations"]["png"], true);

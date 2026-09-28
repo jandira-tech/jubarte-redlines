@@ -10,9 +10,9 @@
 
 mod common;
 
-use common::docx::{docx, para, part_string, run};
+use common::docx::{Part, docx, docx_with, para, part_string, run};
 use common::validity::assert_word_valid_package;
-use jubarte::document_comparer::accept_revisions;
+use jubarte::document_comparer::{accept_revisions, reject_revisions};
 use jubarte::edit::{EditPlan, apply_plan, apply_plan_json, preview_plan};
 use jubarte::inspect::{paragraphs, source_sha256, summary};
 
@@ -253,7 +253,7 @@ fn missing_anchor_and_bad_selectors_are_reported_with_codes() {
             "INVALID_EDIT",
         ),
         (
-            r#"[{"kind":"merge_paragraphs","paragraph":{"index":0}}]"#,
+            r#"[{"kind":"split_paragraph","paragraph":{"index":0}}]"#,
             "INVALID_PLAN",
         ),
     ] {
@@ -413,11 +413,13 @@ fn delete_paragraph_refuses_section_and_table_cell_last_paragraphs() {
     assert_eq!(err.code, "UNSUPPORTED_STRUCTURE");
 }
 
+/// New runs start from the anchor's body run, not its bold lead-in: only the
+/// run asking for bold is bold.
 #[test]
 fn insert_paragraph_copies_anchor_properties_and_sets_run_formatting() {
     let body = format!(
         r#"<w:p><w:pPr><w:pStyle w:val="Sub"/><w:ind w:left="720" w:hanging="360"/><w:sectPr/></w:pPr>{}{}</w:p>"#,
-        run("(f) ", false, false, None),
+        run("(f) ", true, false, None),
         run(
             "Notice of Inability to Comply. You will notify us.",
             false,
@@ -442,7 +444,10 @@ fn insert_paragraph_copies_anchor_properties_and_sets_run_formatting() {
         "(g) Automated Tools. You will not upload the Information to any AI service."
     );
     assert_eq!(new.style.as_deref(), Some("Sub"));
-    assert!(new.runs.len() == 3 && new.runs[1].bold && !new.runs[0].bold);
+    assert_eq!(
+        new.runs.iter().map(|r| r.bold).collect::<Vec<_>>(),
+        [false, true, false]
+    );
     let clean_xml = part_string(&result.clean, "word/document.xml").unwrap();
     assert_eq!(
         clean_xml.matches("<w:sectPr").count(),
@@ -1041,4 +1046,435 @@ fn comment_ids_at_the_top_of_the_range_refuse_new_comments_only() {
     let plain =
         r#"[{"kind":"replace","paragraph":{"index":0},"find":"text","replacement":"terms"}]"#;
     assert!(apply_plan(&source, &plan(&source, plain)).is_ok());
+}
+
+/// The span of `paragraph`'s run formatting that covers char `at`.
+fn span_at(bytes: &[u8], paragraph: usize, at: usize) -> jubarte::inspect::Span {
+    paragraphs(bytes).unwrap()[paragraph]
+        .runs
+        .iter()
+        .find(|s| s.start <= at && at < s.end)
+        .cloned()
+        .unwrap_or_else(|| panic!("no span covers char {at}"))
+}
+
+#[test]
+fn insert_and_replace_format_only_their_new_text() {
+    let source = docx(&para("The fee is ten dollars per month."));
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"kind":"replace","paragraph":{"index":0},"find":"ten","replacement":"twenty","format":{"bold":true}},
+                {"kind":"insert","paragraph":{"index":0},"after":"fee","text":" (net)","format":{"italic":true,"highlight":"yellow"}}]"#,
+        ),
+    )
+    .unwrap();
+    let text = &texts(&result.clean)[0];
+    assert_eq!(text, "The fee (net) is twenty dollars per month.");
+    let at = |needle: &str| text.find(needle).unwrap();
+    let twenty = span_at(&result.clean, 0, at("twenty"));
+    assert!(twenty.bold && !twenty.italic, "{twenty:?}");
+    assert_eq!(&text[twenty.start..twenty.end], "twenty");
+    let net = span_at(&result.clean, 0, at("(net)"));
+    assert!(net.italic && !net.bold, "{net:?}");
+    assert_eq!(net.highlight.as_deref(), Some("yellow"));
+    assert_eq!(&text[net.start..net.end], " (net)");
+    for plain in ["The fee", " is ", " dollars"] {
+        let s = span_at(&result.clean, 0, at(plain));
+        assert!(
+            !s.bold && !s.italic && s.highlight.is_none(),
+            "{plain}: {s:?}"
+        );
+    }
+    let accepted = accept_revisions(&result.redline).unwrap();
+    assert_eq!(texts(&accepted), texts(&result.clean));
+    let rejected = reject_revisions(&result.redline).unwrap();
+    assert_eq!(texts(&rejected), texts(&source));
+    let redline_xml = part_string(&result.redline, "word/document.xml").unwrap();
+    assert!(redline_xml.contains("<w:b />") || redline_xml.contains("<w:b/>"));
+    assert_word_valid_package(&result.clean);
+    assert_word_valid_package(&result.redline);
+}
+
+#[test]
+fn a_format_needs_a_word_highlight_colour_and_text() {
+    let source = docx(&para("Plain words here."));
+    for ops in [
+        r#"[{"kind":"insert","paragraph":{"index":0},"after":"Plain","text":"!","format":{"highlight":"yelow"}}]"#,
+        r#"[{"kind":"replace","paragraph":{"index":0},"find":"words","replacement":"","format":{"bold":true}}]"#,
+        r#"[{"kind":"insert_paragraph","paragraph":{"index":0},"runs":[{"text":"x","highlight":"neon"}]}]"#,
+    ] {
+        let err = apply_plan(&source, &plan(&source, ops)).unwrap_err();
+        assert_eq!(err.code, "INVALID_EDIT", "{ops}");
+    }
+    let json = r#"{"schema_version":1,"author":"a","operations":[{"kind":"insert","paragraph":{"index":0},"after":"Plain","text":"!","format":{"bold":true,"size":12}}]}"#;
+    assert_eq!(EditPlan::from_json(json).unwrap_err().code, "INVALID_PLAN");
+}
+
+const STYLES_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:rPr><w:b/></w:rPr></w:style><w:style w:type="character" w:styleId="Strong"><w:name w:val="Strong"/></w:style></w:styles>"#;
+
+fn styled_docx(body: &str) -> Vec<u8> {
+    docx_with(
+        body,
+        &[Part {
+            name: "word/styles.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+            xml: STYLES_XML,
+        }],
+    )
+}
+
+#[test]
+fn format_paragraph_sets_style_and_alignment_and_the_redline_keeps_the_old_ones() {
+    let source = styled_docx(&(para("Master Services Agreement") + &para("Body text.")));
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"kind":"format_paragraph","paragraph":{"index":0},"style":"heading 1","alignment":"center"}]"#,
+        ),
+    )
+    .unwrap();
+    let paras = paragraphs(&result.clean).unwrap();
+    assert_eq!(
+        paras[0].style.as_deref(),
+        Some("Heading1"),
+        "name resolves to id"
+    );
+    assert_eq!(paras[1].style, None);
+    let clean_xml = part_string(&result.clean, "word/document.xml").unwrap();
+    assert!(clean_xml.contains(r#"<w:jc w:val="center""#), "{clean_xml}");
+    let redline_xml = part_string(&result.redline, "word/document.xml").unwrap();
+    assert!(
+        redline_xml.contains("<w:pPrChange"),
+        "old properties recorded"
+    );
+    assert_eq!(result.report.revisions.format_changed, 1);
+    let rejected = reject_revisions(&result.redline).unwrap();
+    assert_eq!(paragraphs(&rejected).unwrap()[0].style, None);
+    assert!(
+        !part_string(&rejected, "word/document.xml")
+            .unwrap()
+            .contains("<w:jc")
+    );
+    let accepted = accept_revisions(&result.redline).unwrap();
+    assert_eq!(
+        paragraphs(&accepted).unwrap()[0].style.as_deref(),
+        Some("Heading1")
+    );
+    assert_eq!(
+        result.report.operations[0].context.as_deref(),
+        Some("{¶ style=Heading1 alignment=center} Master Services Agreement")
+    );
+    assert_word_valid_package(&result.clean);
+    assert_word_valid_package(&result.redline);
+}
+
+#[test]
+fn format_paragraph_refuses_unknown_styles_and_empty_formats() {
+    let source = styled_docx(&(para("Title") + &para("Body")));
+    for (ops, code) in [
+        (
+            r#"[{"kind":"format_paragraph","paragraph":{"index":0},"style":"Heading 9"}]"#,
+            "UNKNOWN_STYLE",
+        ),
+        (
+            r#"[{"kind":"format_paragraph","paragraph":{"index":0},"style":"Strong"}]"#,
+            "UNKNOWN_STYLE",
+        ),
+        (
+            r#"[{"kind":"insert_paragraph","paragraph":{"index":0},"style":"Nope","runs":[{"text":"x"}]}]"#,
+            "UNKNOWN_STYLE",
+        ),
+        (
+            r#"[{"kind":"format_paragraph","paragraph":{"index":0}}]"#,
+            "INVALID_EDIT",
+        ),
+        (
+            r#"[{"kind":"format_paragraph","paragraph":{"index":0},"alignment":"center"},
+             {"kind":"format_paragraph","paragraph":{"index":0},"style":"Heading1"}]"#,
+            "OVERLAPPING_EDITS",
+        ),
+    ] {
+        let err = apply_plan(&source, &plan(&source, ops)).unwrap_err();
+        assert_eq!(err.code, code, "{ops}");
+    }
+    let err = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"kind":"format_paragraph","paragraph":{"index":0},"style":"Heading 9"}]"#,
+        ),
+    )
+    .unwrap_err();
+    assert!(
+        err.message.contains("Heading1"),
+        "lists the defined styles: {}",
+        err.message
+    );
+}
+
+#[test]
+fn merge_paragraphs_joins_the_next_paragraph_and_the_redline_deletes_the_mark() {
+    let source = docx(
+        &(r#"<w:p><w:pPr><w:keepNext/></w:pPr><w:r><w:t>1. The Supplier shall deliver the Goods.</w:t></w:r></w:p>"#
+            .to_string()
+            + &para("Delivery is DDP to the Buyer's site.")
+            + &para("2. Price.")),
+    );
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"kind":"merge_paragraphs","paragraph":{"index":0},"separator":" "}]"#,
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        texts(&result.clean),
+        [
+            "1. The Supplier shall deliver the Goods. Delivery is DDP to the Buyer's site.",
+            "2. Price."
+        ]
+    );
+    assert_eq!(result.report.paragraphs.from, 3);
+    assert_eq!(result.report.paragraphs.to, 2);
+    assert_eq!(
+        result.report.operations[0].context.as_deref(),
+        Some("l deliver the Goods.{¶→ }Delivery is DDP to t…")
+    );
+    let accepted = accept_revisions(&result.redline).unwrap();
+    assert_eq!(texts(&accepted), texts(&result.clean));
+    let rejected = reject_revisions(&result.redline).unwrap();
+    assert_eq!(texts(&rejected), texts(&source));
+    // The second paragraph's mark survives, as when Word accepts a deleted
+    // mark: the first's keepNext goes, and no property change is recorded.
+    let clean_xml = part_string(&result.clean, "word/document.xml").unwrap();
+    assert!(!clean_xml.contains("keepNext"), "{clean_xml}");
+    let redline_xml = part_string(&result.redline, "word/document.xml").unwrap();
+    assert!(!redline_xml.contains("pPrChange"), "{redline_xml}");
+    assert_eq!(result.report.revisions.format_changed, 0);
+    assert!(
+        !part_string(&accepted, "word/document.xml")
+            .unwrap()
+            .contains("keepNext")
+    );
+    assert_word_valid_package(&result.clean);
+    assert_word_valid_package(&result.redline);
+}
+
+#[test]
+fn merging_into_a_section_break_keeps_the_break() {
+    let body = format!(
+        "{}<w:p><w:pPr><w:sectPr/></w:pPr><w:r><w:t>end of section</w:t></w:r></w:p>{}",
+        para("start"),
+        para("next section")
+    );
+    let source = docx(&body);
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"kind":"merge_paragraphs","paragraph":{"index":0},"separator":" "}]"#,
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        texts(&result.clean),
+        ["start end of section", "next section"]
+    );
+    let clean_xml = part_string(&result.clean, "word/document.xml").unwrap();
+    assert_eq!(clean_xml.matches("<w:sectPr").count(), 2, "{clean_xml}");
+    let rejected = reject_revisions(&result.redline).unwrap();
+    assert_eq!(texts(&rejected), texts(&source));
+    assert_word_valid_package(&result.redline);
+}
+
+#[test]
+fn merges_chain_and_carry_range_markup_to_the_join() {
+    let body = format!(
+        r#"{}<w:bookmarkStart w:id="7" w:name="clause"/>{}<w:bookmarkEnd w:id="7"/>{}{}"#,
+        para("a"),
+        para("b"),
+        para("c"),
+        para("d")
+    );
+    let source = docx(&body);
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"kind":"merge_paragraphs","paragraph":{"index":0},"separator":"-"},
+                {"kind":"merge_paragraphs","paragraph":{"index":1},"separator":"+"}]"#,
+        ),
+    )
+    .unwrap();
+    assert_eq!(texts(&result.clean), ["a-b+c", "d"]);
+    let clean_xml = part_string(&result.clean, "word/document.xml").unwrap();
+    let merged = &clean_xml[clean_xml.find("<w:p>").unwrap()..clean_xml.find("</w:p>").unwrap()];
+    assert!(
+        merged.contains("bookmarkStart") && merged.contains("bookmarkEnd"),
+        "the bookmark moves into the merged paragraph: {merged}"
+    );
+    let rejected = reject_revisions(&result.redline).unwrap();
+    assert_eq!(texts(&rejected), ["a", "b", "c", "d"]);
+    assert_word_valid_package(&result.clean);
+    assert_word_valid_package(&result.redline);
+}
+
+#[test]
+fn merge_paragraphs_refuses_what_it_cannot_join() {
+    let table = format!(
+        "{}<w:tbl><w:tr><w:tc>{}</w:tc></w:tr></w:tbl>{}",
+        para("before table"),
+        para("cell"),
+        para("after")
+    );
+    let section = format!(
+        "{}<w:p><w:pPr><w:sectPr/></w:pPr><w:r><w:t>end of section</w:t></w:r></w:p>{}",
+        para("start"),
+        para("next section")
+    );
+    let three = para("one") + &para("two") + &para("three");
+    for (body, ops, code) in [
+        (
+            three.as_str(),
+            r#"[{"kind":"merge_paragraphs","paragraph":{"index":2}}]"#,
+            "UNSUPPORTED_STRUCTURE",
+        ),
+        (
+            table.as_str(),
+            r#"[{"kind":"merge_paragraphs","paragraph":{"index":0}}]"#,
+            "UNSUPPORTED_STRUCTURE",
+        ),
+        (
+            table.as_str(),
+            r#"[{"kind":"merge_paragraphs","paragraph":{"index":1}}]"#,
+            "UNSUPPORTED_STRUCTURE",
+        ),
+        (
+            section.as_str(),
+            r#"[{"kind":"merge_paragraphs","paragraph":{"index":1}}]"#,
+            "UNSUPPORTED_STRUCTURE",
+        ),
+        (
+            three.as_str(),
+            r#"[{"kind":"merge_paragraphs","paragraph":{"index":0},"separator":"\t"}]"#,
+            "INVALID_EDIT",
+        ),
+        (
+            three.as_str(),
+            r#"[{"kind":"merge_paragraphs","paragraph":{"index":0}},{"kind":"delete_paragraph","paragraph":{"index":1}}]"#,
+            "OVERLAPPING_EDITS",
+        ),
+        (
+            three.as_str(),
+            r#"[{"kind":"merge_paragraphs","paragraph":{"index":0}},{"kind":"merge_paragraphs","paragraph":{"index":0}}]"#,
+            "OVERLAPPING_EDITS",
+        ),
+        (
+            three.as_str(),
+            r#"[{"kind":"merge_paragraphs","paragraph":{"index":0}},{"kind":"insert_paragraph","paragraph":{"index":0},"runs":[{"text":"x"}]}]"#,
+            "OVERLAPPING_EDITS",
+        ),
+        (
+            three.as_str(),
+            r#"[{"kind":"merge_paragraphs","paragraph":{"index":0}},{"kind":"format_paragraph","paragraph":{"index":0},"alignment":"right"}]"#,
+            "OVERLAPPING_EDITS",
+        ),
+        (
+            three.as_str(),
+            r#"[{"kind":"merge_paragraphs","paragraph":{"index":0}},{"kind":"insert_paragraph","paragraph":{"index":1},"position":"before","runs":[{"text":"x"}]}]"#,
+            "OVERLAPPING_EDITS",
+        ),
+    ] {
+        let source = docx(body);
+        let err = apply_plan(&source, &plan(&source, ops)).unwrap_err();
+        assert_eq!(err.code, code, "{ops}");
+    }
+    // Text edits on either paragraph, formatting the surviving one and
+    // insertions outside the pair are fine.
+    let source = docx(&three);
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"kind":"merge_paragraphs","paragraph":{"index":0},"separator":" "},
+                {"kind":"replace","paragraph":{"index":1},"find":"two","replacement":"TWO","format":{"bold":true}},
+                {"kind":"format_paragraph","paragraph":{"index":1},"alignment":"right"},
+                {"kind":"insert_paragraph","paragraph":{"index":0},"position":"before","runs":[{"text":"zero"}]},
+                {"kind":"insert_paragraph","paragraph":{"index":1},"position":"after","runs":[{"text":"two and a half"}]}]"#,
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        texts(&result.clean),
+        ["zero", "one TWO", "two and a half", "three"]
+    );
+    assert_word_valid_package(&result.redline);
+}
+
+#[test]
+fn format_paragraph_sets_spacing_in_points_and_multiples() {
+    let body = format!(
+        r#"<w:p><w:pPr><w:spacing w:before="100" w:beforeAutospacing="1" w:after="200"/></w:pPr><w:r><w:t>Drafting note: confirm the notice address.</w:t></w:r></w:p>{}"#,
+        para("Body.")
+    );
+    let source = docx(&body);
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"kind":"format_paragraph","paragraph":{"starts_with":"Drafting note"},"line_spacing":1.15,"space_before":6,"space_after":0}]"#,
+        ),
+    )
+    .unwrap();
+    let clean_xml = part_string(&result.clean, "word/document.xml").unwrap();
+    let spacing = &clean_xml[clean_xml.find("<w:spacing").unwrap()..];
+    let spacing = &spacing[..spacing.find("/>").unwrap()];
+    for attr in [
+        r#"w:before="120""#,
+        r#"w:after="0""#,
+        r#"w:line="276""#,
+        r#"w:lineRule="auto""#,
+    ] {
+        assert!(spacing.contains(attr), "{attr} in {spacing}");
+    }
+    assert!(
+        !spacing.contains("Autospacing"),
+        "autospacing would override: {spacing}"
+    );
+    assert_eq!(
+        result.report.operations[0].context.as_deref(),
+        Some(
+            "{¶ line_spacing=1.15 space_before=6pt space_after=0pt} Drafting note: confirm the notice addres…"
+        )
+    );
+    let rejected = reject_revisions(&result.redline).unwrap();
+    let rejected_xml = part_string(&rejected, "word/document.xml").unwrap();
+    assert!(
+        rejected_xml.contains(r#"w:beforeAutospacing="1""#),
+        "reject restores the old spacing"
+    );
+    assert_word_valid_package(&result.redline);
+    for bad in [
+        r#""line_spacing":0"#,
+        r#""line_spacing":11"#,
+        r#""space_after":-1"#,
+    ] {
+        let json = format!(
+            r#"{{"schema_version":1,"author":"a","operations":[{{"kind":"format_paragraph","paragraph":{{"index":0}},{bad}}}]}}"#
+        );
+        assert_eq!(
+            EditPlan::from_json(&json).unwrap_err().code,
+            "INVALID_PLAN",
+            "{bad}"
+        );
+    }
+    let json = r#"{"schema_version":1,"author":"a","operations":[{"kind":"format_paragraph","paragraph":{"index":0},"line_spacing":1.15,"space_after":7.5}]}"#;
+    let parsed = EditPlan::from_json(json).unwrap();
+    assert_eq!(EditPlan::from_json(&parsed.to_json()).unwrap(), parsed);
 }

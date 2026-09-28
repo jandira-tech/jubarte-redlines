@@ -98,7 +98,13 @@ to see the report without writing.
 Operation kinds: `replace`, `insert` (one of `after`, `before`,
 `position: start|end`), `delete`, `comment` (`find` optional: whole
 paragraph), `insert_paragraph` (`runs` with `bold`/`italic`/`underline`/
-`highlight`; copies the anchor's paragraph properties), `delete_paragraph`.
+`highlight`; copies the anchor's paragraph properties), `delete_paragraph`,
+`format_paragraph` (any of `style` (id or name), `alignment`
+`left|center|right|justify`, `line_spacing` as a multiple such as `1.15`,
+`space_before`/`space_after` in points), `merge_paragraphs` (joins the next
+paragraph onto this one; optional `separator`, usually `" "`). `replace` and
+`insert` take an optional `format` (`bold`/`italic`/`underline`/`highlight`)
+that applies to the new text only.
 Paragraph selectors: `"body:p:N"`, `{"index": N}`, `{"starts_with": "..."}`,
 `{"contains": "..."}`; the last two must match exactly one paragraph.
 
@@ -108,8 +114,8 @@ Gotchas:
   guessing.
 - Inserted text takes the formatting of the run it lands in (`after` and
   `end` extend the preceding run; `before` and `start` join the following
-  one). To insert bold or highlighted text, use `insert_paragraph` runs or
-  put the text in plain and add a `comment` asking the reviewer to format.
+  one). To insert bold or highlighted text, give the operation a `format`
+  (`{"bold": true}`, `{"highlight": "yellow"}`); only the new text changes.
 - Run text is plain: no `\t` or `\n` inside `text`/`replacement`. A range
   that crosses a tab, a break, a field, a hyperlink or a content control is
   refused (`UNSUPPORTED_STRUCTURE`); edit the words on either side.
@@ -125,8 +131,15 @@ Gotchas:
   shows them normally). The current PDF/PNG renderer paints balloons for
   comments on inserted paragraphs but not yet for comments inside inserted
   runs; the comments are in the file.
-- Merging two paragraphs and tracked paragraph-formatting changes are not
-  operations yet; say so rather than hand-rolling XML.
+- `format_paragraph` is a tracked property change: the redline keeps the
+  old style, alignment and spacing for reject. An unknown style is refused
+  with `UNKNOWN_STYLE` and the list of defined style ids.
+- `merge_paragraphs` keeps the second paragraph's properties (what Word's
+  accept of a deleted paragraph mark does); the redline deletes the first
+  paragraph's mark and inserts only the separator, as Word Compare shows a
+  join. It refuses a paragraph that carries a section break or is not
+  followed by a plain paragraph. Do not format, delete or insert after a
+  paragraph you merge in the same plan (`OVERLAPPING_EDITS`).
 
 ## 3. Verify
 

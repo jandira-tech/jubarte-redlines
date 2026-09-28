@@ -43,7 +43,7 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   do.
 - `jubarte edit` applies a JSON plan of uniquely anchored operations
   (`replace`, `insert`, `delete`, `comment`, `insert_paragraph`,
-  `delete_paragraph`)
+  `delete_paragraph`, `format_paragraph`, `merge_paragraphs`)
   to a copy, previews it, and writes the clean copy, the tracked redline
   and a per-operation report. A plan that carries the source's SHA-256
   (`source_sha256`) is refused for any other source; without it the plan
@@ -60,7 +60,19 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   jubarte_redlines` exposes the same commands (compare is the explicit
   `compare` subcommand there); `EditPlanError.message`
   carries the engine's detail.
+- Edit plans restyle and join paragraphs. `format_paragraph` sets a
+  paragraph style (by id or name; an unknown one is refused with
+  `UNKNOWN_STYLE` and the defined ids), alignment, line spacing as a
+  multiple and space before/after in points, as one tracked property change
+  that reject undoes. `merge_paragraphs` joins the next paragraph onto one,
+  with an optional separator; the joined paragraph keeps the second one's
+  properties, as Word's accept of a deleted mark does, and bookmarks and
+  comment ranges between the two move to the join. `replace` and `insert`
+  take a `format` (bold, italic, underline, a Word highlight colour) for the
+  new text only. The Python `EditPlan` gains the matching builders.
 - Adoption guides, workflow examples and a document-operations agent skill.
+  The Acme letter example now ships `make_letter.py`, which writes its
+  source letter byte for byte, and its plan runs all twelve edits.
 - `jubarte self-update [--check] [--yes] [--version X]` installs a GitHub
   release after checking its SHA-256 against the release's
   `SHA256SUMS.txt`. It contacts GitHub only when run; nothing checks for
@@ -69,6 +81,19 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- Two paragraphs joined into one now read as Word's Compare shows a join:
+  the first paragraph's mark is deleted and only the separator is inserted.
+  The paragraph LCS paired the joined paragraph with the first original,
+  which stranded the second one's words behind that mark, so Word mode
+  showed them as a move ("Delivery is DDP to the Buyer's site.", six words
+  and more) or deleted and inserted them again. The cross-paragraph stream
+  now also tries the region without that pairing and keeps whichever keeps
+  more text, and it no longer fuses the last word of one paragraph and the
+  first of the next ("TRIAL." + "Each") into one compound.
+- `insert_paragraph` runs start from the anchor's body run, the one with
+  the most text, instead of its first run, so a bold lead-in such as
+  "(f) Notice of Inability to Comply." no longer makes the whole new
+  paragraph bold.
 - An unchanged last paragraph after a replaced block came out inserted
   and deleted again when the documents' first paragraphs matched: the
   positional paragraph zip no longer pairs a paragraph whose identical

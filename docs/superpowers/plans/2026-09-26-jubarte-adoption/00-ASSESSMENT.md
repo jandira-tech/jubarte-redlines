@@ -268,9 +268,9 @@ Known gaps found while verifying, left open on purpose:
 - Compare-based redlines show a long replacement as a word-level diff, as
   Word Compare does. Agents that need a "delete whole clause, insert whole
   clause" presentation need a direct-authoring mode, which does not exist.
-- `merge_paragraphs`, `format_paragraph`, formatting on inline
-  `insert`/`replace`, headers/footers/notes/text boxes as editable stories,
-  ZIP admission limits (01 C2).
+- Headers/footers/notes/text boxes as editable stories. (`merge_paragraphs`,
+  `format_paragraph`, formatting on inline `insert`/`replace` and the ZIP
+  admission limits of 01 C2 landed on release/0.10.)
 - `RESULTS.md`'s `accepted_changes` tables score compare output after
   acceptance; they are not a test of the accept operation on arbitrary
   redlines. The claim "toss LibreOffice for accept" rests on the

@@ -10,6 +10,9 @@
 //! re-kept "This text" without restoring it on reject: rejecting the redline
 //! read "This text  This text is both centered and bold.".
 
+mod common;
+
+use common::docx::{docx_with, para};
 use jubarte::comparer::WmlComparerSettings;
 use jubarte::document_comparer::compare_documents_with_settings;
 use jubarte::namespaces::W;
@@ -38,6 +41,31 @@ fn redline_xml_in(dir: &str, original: &str, revised: &str) -> String {
         .read_to_string(&mut xml)
         .unwrap();
     xml
+}
+
+/// Body paragraphs of the redline of two in-memory bodies, marked as in
+/// `marked`, under `settings`.
+fn marked_bodies(
+    original: &[&str],
+    revised: &[&str],
+    settings: &WmlComparerSettings,
+) -> Vec<String> {
+    let body = |ps: &[&str]| ps.iter().map(|t| para(t)).collect::<String>();
+    let out = compare_documents_with_settings(
+        &docx_with(&body(original), &[]),
+        &docx_with(&body(revised), &[]),
+        settings,
+    )
+    .unwrap();
+    let mut xml = String::new();
+    zip::ZipArchive::new(Cursor::new(out))
+        .unwrap()
+        .by_name("word/document.xml")
+        .unwrap()
+        .read_to_string(&mut xml)
+        .unwrap();
+    let (dom, root) = parse(&xml);
+    marked(&dom, root)
 }
 
 fn paragraphs(dom: &Dom, root: NodeId) -> Vec<NodeId> {
@@ -272,5 +300,52 @@ fn reverse_cross_paragraph_comparison_restores_each_side_without_extra_paragraph
                 "All text in this document is centered on the page.".to_string(),
             ],
         ),
+    );
+}
+
+/// Joining two paragraphs deletes the first one's mark and inserts only the
+/// separator; every word stays. Word 16's Compare of both pairs (2026-09-28)
+/// gave exactly this. The paragraph LCS paired the joined paragraph with the
+/// first original and stranded the second one's words behind that mark:
+/// a moveFrom/moveTo of "Delivery is DDP to the Buyer's site." (six words),
+/// or " Each party waives." deleted and inserted again. The heading pair also
+/// fused "TRIAL." and "Each" into one compound across the paragraph boundary.
+#[test]
+fn a_merged_paragraph_deletes_the_first_mark_like_word() {
+    let merge = |a: &[&str], b: &[&str], expected: [&str; 3]| {
+        for settings in [
+            WmlComparerSettings::default(),
+            WmlComparerSettings {
+                detect_moves: false,
+                ..WmlComparerSettings::default()
+            },
+        ] {
+            assert_eq!(marked_bodies(a, b, &settings), expected);
+        }
+    };
+    merge(
+        &[
+            "1. The Supplier shall deliver the Goods.",
+            "Delivery is DDP to the Buyer's site.",
+            "2. Price.",
+        ],
+        &[
+            "1. The Supplier shall deliver the Goods. Delivery is DDP to the Buyer's site.",
+            "2. Price.",
+        ],
+        [
+            "1. The Supplier shall deliver the Goods.{+ +}¶-",
+            "Delivery is DDP to the Buyer's site.¶",
+            "2. Price.¶",
+        ],
+    );
+    merge(
+        &["WAIVER OF JURY TRIAL.", "Each party waives.", "Next."],
+        &["WAIVER OF JURY TRIAL. Each party waives.", "Next."],
+        [
+            "WAIVER OF JURY TRIAL.{+ +}¶-",
+            "Each party waives.¶",
+            "Next.¶",
+        ],
     );
 }

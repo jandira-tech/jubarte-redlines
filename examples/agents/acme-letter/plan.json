@@ -99,6 +99,14 @@
       "comment": "The original required a courier copy of every notice but gave no Acme postal address. Courier now applies only to indemnity and termination notices; fill in the address."
     },
     {
+      "id": "E5-jury-merge",
+      "kind": "merge_paragraphs",
+      "paragraph": {
+        "starts_with": "(g) Waiver of Jury Trial."
+      },
+      "separator": " "
+    },
+    {
       "id": "E6-pronoun",
       "kind": "replace",
       "paragraph": {
@@ -106,6 +114,15 @@
       },
       "find": "his or her",
       "replacement": "an"
+    },
+    {
+      "id": "E7-notes-spacing",
+      "kind": "format_paragraph",
+      "paragraph": {
+        "starts_with": "[Drafting note:"
+      },
+      "line_spacing": 1.0,
+      "space_after": 6
     }
   ]
 }

@@ -95,6 +95,9 @@ pub enum OperationKind {
         /// Plain replacement text (may be empty).
         replacement: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Formatting of the replacement on top of the replaced run's.
+        format: Option<RunFormat>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         /// Comment text anchored to the changed text.
         comment: Option<String>,
     },
@@ -115,6 +118,9 @@ pub enum OperationKind {
         position: Option<Edge>,
         /// Plain text to insert.
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Formatting of the new text on top of the neighbouring run's.
+        format: Option<RunFormat>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         /// Comment text anchored to the changed text.
         comment: Option<String>,
@@ -159,6 +165,136 @@ pub enum OperationKind {
         /// Paragraph to delete; must match exactly one.
         paragraph: Selector,
     },
+    /// Change a paragraph's style, alignment or spacing; the redline records
+    /// the old properties (`w:pPrChange`). At least one field besides
+    /// `paragraph`.
+    FormatParagraph {
+        /// Paragraph to format; must match exactly one.
+        paragraph: Selector,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Paragraph style, by id (`Heading1`) or name (`heading 1`).
+        style: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Horizontal alignment.
+        alignment: Option<Alignment>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Line spacing as a multiple of single spacing (`1.5`, `2`).
+        line_spacing: Option<LineSpacing>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Space before the paragraph, in points.
+        space_before: Option<Points>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Space after the paragraph, in points.
+        space_after: Option<Points>,
+    },
+    /// Join the paragraph with the one right after it. The first's text moves
+    /// to the start of the second, whose paragraph properties (and section
+    /// break) survive, as when Word accepts a deleted paragraph mark. The
+    /// redline deletes the first paragraph's mark.
+    MergeParagraphs {
+        /// First paragraph; the next paragraph must follow it directly.
+        paragraph: Selector,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Plain text placed between the two (for example `" "`).
+        separator: Option<String>,
+    },
+}
+
+/// Line spacing, stored as `w:line` (240 = single); JSON is the multiple.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LineSpacing(pub u32);
+
+impl Serialize for LineSpacing {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_f64(f64::from(self.0) / 240.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for LineSpacing {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let multiple = f64::deserialize(d)?;
+        if !(0.25..=10.0).contains(&multiple) {
+            return Err(serde::de::Error::custom(format!(
+                "line_spacing {multiple} is outside 0.25..=10"
+            )));
+        }
+        Ok(Self((multiple * 240.0).round() as u32))
+    }
+}
+
+/// A length stored in twips (1/20 pt); JSON is points.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Points(pub u32);
+
+impl Serialize for Points {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_f64(f64::from(self.0) / 20.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for Points {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let points = f64::deserialize(d)?;
+        if !(0.0..=1584.0).contains(&points) {
+            return Err(serde::de::Error::custom(format!(
+                "spacing {points}pt is outside 0..=1584"
+            )));
+        }
+        Ok(Self((points * 20.0).round() as u32))
+    }
+}
+
+/// Paragraph spacing changes for [`OperationKind::FormatParagraph`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Spacing {
+    line: Option<LineSpacing>,
+    before: Option<Points>,
+    after: Option<Points>,
+}
+
+/// Paragraph alignment for [`OperationKind::FormatParagraph`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Alignment {
+    /// Left (start) aligned.
+    Left,
+    /// Centered.
+    Center,
+    /// Right (end) aligned.
+    Right,
+    /// Justified.
+    Justify,
+}
+
+impl Alignment {
+    /// The `w:jc` value Word writes.
+    fn jc(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Center => "center",
+            Self::Right => "right",
+            Self::Justify => "both",
+        }
+    }
+}
+
+/// Run formatting for inserted or replacement text. Fields not given keep
+/// the neighbouring run's formatting.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunFormat {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Set or clear bold.
+    pub bold: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Set or clear italic.
+    pub italic: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Set or clear single underline.
+    pub underline: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Highlight color name (`yellow`, ...) or `none`.
+    pub highlight: Option<String>,
 }
 
 /// Paragraph edge for an insertion without a text anchor.
@@ -229,6 +365,18 @@ pub struct RunSpec {
     pub highlight: Option<String>,
 }
 
+impl RunSpec {
+    /// The run's formatting toggles.
+    pub fn format(&self) -> RunFormat {
+        RunFormat {
+            bold: self.bold,
+            italic: self.italic,
+            underline: self.underline,
+            highlight: self.highlight.clone(),
+        }
+    }
+}
+
 /// Outcome of one operation.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EditOutcome {
@@ -268,7 +416,8 @@ pub struct RevisionCounts {
     pub deleted: usize,
     /// Moves.
     pub moved: usize,
-    /// Formatting changes.
+    /// Formatting changes: run (`w:rPrChange`) and paragraph
+    /// (`w:pPrChange`) properties.
     pub format_changed: usize,
     /// All revision records.
     pub total: usize,
@@ -480,12 +629,20 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
         };
         let kind = map.get("kind").and_then(|k| k.as_str()).unwrap_or("");
         let allowed: &[&str] = match kind {
-            "replace" => &["find", "replacement", "comment"],
-            "insert" => &["after", "before", "position", "text", "comment"],
+            "replace" => &["find", "replacement", "format", "comment"],
+            "insert" => &["after", "before", "position", "text", "format", "comment"],
             "delete" => &["find"],
             "comment" => &["find", "text"],
             "insert_paragraph" => &["position", "runs", "style", "comment"],
             "delete_paragraph" => &[],
+            "format_paragraph" => &[
+                "style",
+                "alignment",
+                "line_spacing",
+                "space_before",
+                "space_after",
+            ],
+            "merge_paragraphs" => &["separator"],
             other => {
                 return Err(err(
                     "INVALID_PLAN",
@@ -560,12 +717,31 @@ fn revision_counts(redline: &[u8], settings: &WmlComparerSettings) -> RevisionCo
             counts.total += 1;
         }
     }
+    // get_revisions follows Open-Xml-PowerTools and lists run formatting
+    // only; a format_paragraph plan must not report zero changes.
+    if let Ok(opened) = Opened::open(redline) {
+        let paragraph_changes = opened
+            .dom
+            .descendants(opened.body, Some(&W::p_pr_change()))
+            .len();
+        counts.format_changed += paragraph_changes;
+        counts.total += paragraph_changes;
+    }
     counts
 }
 
-/// A text edit scheduled on one paragraph: `(start, end, op, replacement,
-/// attach_before, comment)` in source projection bytes.
-type ScheduledEdit = (usize, usize, usize, String, bool, Option<String>);
+/// A text edit scheduled on one paragraph, in source projection bytes.
+#[derive(Clone, Debug)]
+struct ScheduledEdit {
+    start: usize,
+    end: usize,
+    /// Index of the operation in the plan.
+    op: usize,
+    replacement: String,
+    attach_before: bool,
+    comment: Option<String>,
+    format: Option<RunFormat>,
+}
 
 /// A resolved operation, in source coordinates (bytes of the projection).
 #[derive(Clone, Debug)]
@@ -580,6 +756,8 @@ enum Resolved {
         comment: Option<String>,
         /// `Insert` attaches to the preceding run when true.
         attach_before: bool,
+        /// Formatting of the new text.
+        format: Option<RunFormat>,
     },
     CommentRange {
         para: usize,
@@ -590,6 +768,18 @@ enum Resolved {
     },
     DeleteParagraph {
         para: usize,
+    },
+    FormatParagraph {
+        para: usize,
+        /// Resolved style id.
+        style: Option<String>,
+        alignment: Option<Alignment>,
+        spacing: Spacing,
+    },
+    MergeParagraphs {
+        para: usize,
+        next: usize,
+        separator: String,
     },
     InsertParagraph {
         anchor: usize,
@@ -795,7 +985,9 @@ impl<'p> Transaction<'p> {
             | OperationKind::Delete { paragraph, .. }
             | OperationKind::Comment { paragraph, .. }
             | OperationKind::InsertParagraph { paragraph, .. }
-            | OperationKind::DeleteParagraph { paragraph } => paragraph,
+            | OperationKind::DeleteParagraph { paragraph }
+            | OperationKind::FormatParagraph { paragraph, .. }
+            | OperationKind::MergeParagraphs { paragraph, .. } => paragraph,
         };
         let para = match self.select(selector) {
             Ok(p) => p,
@@ -811,10 +1003,15 @@ impl<'p> Transaction<'p> {
             OperationKind::Replace {
                 find,
                 replacement,
+                format,
                 comment,
                 ..
             } => {
                 check_text(replacement).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+                if let Some(format) = format {
+                    check_format(format, replacement)
+                        .map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+                }
                 if let Some(note) = comment {
                     check_comment(note).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
                 }
@@ -835,6 +1032,7 @@ impl<'p> Transaction<'p> {
                         replacement: replacement.clone(),
                         comment: comment.clone(),
                         attach_before: true,
+                        format: format.clone(),
                     },
                     outcome,
                 ))
@@ -857,6 +1055,7 @@ impl<'p> Transaction<'p> {
                         replacement: String::new(),
                         comment: None,
                         attach_before: true,
+                        format: None,
                     },
                     outcome,
                 ))
@@ -866,10 +1065,15 @@ impl<'p> Transaction<'p> {
                 before,
                 position,
                 text: new,
+                format,
                 comment,
                 ..
             } => {
                 check_text(new).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+                if let Some(format) = format {
+                    check_format(format, new)
+                        .map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+                }
                 if let Some(note) = comment {
                     check_comment(note).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
                 }
@@ -920,6 +1124,7 @@ impl<'p> Transaction<'p> {
                         replacement: new.clone(),
                         comment: comment.clone(),
                         attach_before,
+                        format: format.clone(),
                     },
                     outcome,
                 ))
@@ -1001,10 +1206,19 @@ impl<'p> Transaction<'p> {
                 }
                 for r in runs {
                     check_text(&r.text).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+                    check_format(&r.format(), &r.text)
+                        .map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
                 }
                 if let Some(note) = comment {
                     check_comment(note).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
                 }
+                let style = match style {
+                    Some(style) => Some(
+                        self.resolve_style(style)
+                            .map_err(|m| fail("UNKNOWN_STYLE", m, outcome.clone()))?,
+                    ),
+                    None => None,
+                };
                 let joined: String = runs.iter().map(|r| r.text.as_str()).collect();
                 outcome.context = Some(format!("{{+¶ {}}}", excerpt(&joined, 60)));
                 Ok((
@@ -1012,13 +1226,171 @@ impl<'p> Transaction<'p> {
                         anchor: para,
                         side: *position,
                         runs: runs.clone(),
-                        style: style.clone(),
+                        style,
                         comment: comment.clone(),
                     },
                     outcome,
                 ))
             }
+            OperationKind::FormatParagraph {
+                style,
+                alignment,
+                line_spacing,
+                space_before,
+                space_after,
+                ..
+            } => {
+                outcome.matches = 1;
+                let spacing = Spacing {
+                    line: *line_spacing,
+                    before: *space_before,
+                    after: *space_after,
+                };
+                if style.is_none() && alignment.is_none() && spacing == Spacing::default() {
+                    return Err(fail(
+                        "INVALID_EDIT",
+                        "format_paragraph needs style, alignment, line_spacing, space_before or space_after".into(),
+                        outcome,
+                    ));
+                }
+                let style = match style {
+                    Some(style) => Some(
+                        self.resolve_style(style)
+                            .map_err(|m| fail("UNKNOWN_STYLE", m, outcome.clone()))?,
+                    ),
+                    None => None,
+                };
+                let mut changes = Vec::new();
+                if let Some(style) = &style {
+                    changes.push(format!("style={style}"));
+                }
+                if let Some(alignment) = alignment {
+                    changes.push(format!("alignment={}", alignment.jc()));
+                }
+                if let Some(LineSpacing(line)) = spacing.line {
+                    changes.push(format!("line_spacing={}", f64::from(line) / 240.0));
+                }
+                if let Some(Points(before)) = spacing.before {
+                    changes.push(format!("space_before={}pt", f64::from(before) / 20.0));
+                }
+                if let Some(Points(after)) = spacing.after {
+                    changes.push(format!("space_after={}pt", f64::from(after) / 20.0));
+                }
+                outcome.context =
+                    Some(format!("{{¶ {}}} {}", changes.join(" "), excerpt(text, 40)));
+                Ok((
+                    Resolved::FormatParagraph {
+                        para,
+                        style,
+                        alignment: *alignment,
+                        spacing,
+                    },
+                    outcome,
+                ))
+            }
+            OperationKind::MergeParagraphs { separator, .. } => {
+                outcome.matches = 1;
+                let separator = separator.clone().unwrap_or_default();
+                check_text(&separator).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+                let next = self
+                    .merge_partner(para)
+                    .map_err(|m| fail("UNSUPPORTED_STRUCTURE", m, outcome.clone()))?;
+                let tail: String = text
+                    .chars()
+                    .rev()
+                    .take(20)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect();
+                outcome.context = Some(format!(
+                    "{tail}{{¶→{separator}}}{}",
+                    excerpt(&self.projections[next].text, 20)
+                ));
+                Ok((
+                    Resolved::MergeParagraphs {
+                        para,
+                        next,
+                        separator,
+                    },
+                    outcome,
+                ))
+            }
         }
+    }
+
+    /// The paragraph `para` merges with: the next sibling paragraph, with only
+    /// range markup (bookmarks, comment ranges, ...) between them. `para`'s
+    /// properties are discarded, so it may not carry a section break.
+    fn merge_partner(&self, para: usize) -> Result<usize, String> {
+        let dom = &self.opened.dom;
+        let node = self.paragraph_nodes[para];
+        let mut next_node = dom.next_element(node);
+        while let Some(n) = next_node.filter(|&n| is_range_markup(dom, n)) {
+            next_node = dom.next_element(n);
+        }
+        let next_node = next_node
+            .filter(|&n| dom.name_is(n, &W::p()))
+            .ok_or_else(|| {
+                "the next element is not a paragraph in the same container".to_string()
+            })?;
+        let next = self
+            .paragraph_nodes
+            .iter()
+            .position(|&n| n == next_node)
+            .ok_or_else(|| "the next paragraph is not addressable".to_string())?;
+        let ppr = dom.element(node, &W::p_pr());
+        if ppr.is_some_and(|ppr| dom.element(ppr, &W::sect_pr()).is_some()) {
+            return Err("the paragraph carries section properties a merge would drop".into());
+        }
+        Ok(next)
+    }
+
+    /// A paragraph style id from its id or its name (case-insensitive).
+    fn resolve_style(&self, requested: &str) -> Result<String, String> {
+        let styles = self.paragraph_styles();
+        if styles.iter().any(|(id, _)| id == requested) {
+            return Ok(requested.to_string());
+        }
+        if let Some((id, _)) = styles
+            .iter()
+            .find(|(_, name)| name.eq_ignore_ascii_case(requested))
+        {
+            return Ok(id.clone());
+        }
+        let known: Vec<&str> = styles.iter().map(|(id, _)| id.as_str()).take(12).collect();
+        Err(format!(
+            "no paragraph style has id or name {requested:?}; defined: {}",
+            known.join(", ")
+        ))
+    }
+
+    /// `(styleId, name)` of every paragraph style in the styles part.
+    fn paragraph_styles(&self) -> Vec<(String, String)> {
+        let Some(name) = self.opened.related("styles").into_iter().next() else {
+            return Vec::new();
+        };
+        let Some(xml) = self.opened.pkg.part_string(&name) else {
+            return Vec::new();
+        };
+        let mut dom = Dom::new();
+        let document = dom.parse_xdocument(&xml);
+        let Some(root) = dom.root(document) else {
+            return Vec::new();
+        };
+        dom.elements(root, Some(&W::name("style")))
+            .into_iter()
+            .filter(|&s| dom.attribute(s, &W::name("type")).unwrap_or("paragraph") == "paragraph")
+            .filter_map(|s| {
+                let id = dom.attribute(s, &W::name("styleId"))?.to_string();
+                let name = dom
+                    .element(s, &W::name("name"))
+                    .and_then(|n| dom.attribute(n, &W::val()))
+                    .unwrap_or("")
+                    .to_string();
+                Some((id, name))
+            })
+            .collect()
     }
 
     fn select(&self, selector: &Selector) -> Result<usize, (String, String, usize)> {
@@ -1201,6 +1573,7 @@ impl<'p> Transaction<'p> {
             }
         }
         self.check_deletions_leave_valid_containers(&deleted)?;
+        self.check_paragraph_ops(&deleted)?;
         self.check_comment_ids_fit()?;
         let mut ranges: BTreeMap<usize, Vec<(usize, usize, usize)>> = BTreeMap::new();
         for (i, r) in &self.resolved {
@@ -1222,7 +1595,9 @@ impl<'p> Transaction<'p> {
                     }
                     continue;
                 }
-                Resolved::DeleteParagraph { .. } => continue,
+                Resolved::DeleteParagraph { .. }
+                | Resolved::FormatParagraph { .. }
+                | Resolved::MergeParagraphs { .. } => continue,
             };
             if deleted.contains(&para) {
                 return Err(self.conflict(*i, "edits text of a deleted paragraph"));
@@ -1256,6 +1631,59 @@ impl<'p> Transaction<'p> {
                 });
             if cuts {
                 return Err(self.conflict(*i, "comment range cuts through an edited range"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Formatting and merging, checked against each other, against deletions
+    /// and against paragraph insertions.
+    fn check_paragraph_ops(&self, deleted: &[usize]) -> Result<(), EditError> {
+        let mut formatted: Vec<usize> = Vec::new();
+        let mut merge_heads: Vec<usize> = Vec::new();
+        let mut merge_tails: Vec<usize> = Vec::new();
+        for (i, r) in &self.resolved {
+            match r {
+                Resolved::FormatParagraph { para, .. } => {
+                    if deleted.contains(para) {
+                        return Err(self.conflict(*i, "formats a deleted paragraph"));
+                    }
+                    if formatted.contains(para) {
+                        return Err(
+                            self.conflict(*i, "formats a paragraph another operation formats")
+                        );
+                    }
+                    formatted.push(*para);
+                }
+                Resolved::MergeParagraphs { para, next, .. } => {
+                    if deleted.contains(para) || deleted.contains(next) {
+                        return Err(self.conflict(*i, "merges a deleted paragraph"));
+                    }
+                    if merge_heads.contains(para) {
+                        return Err(
+                            self.conflict(*i, "merges a paragraph another operation merges")
+                        );
+                    }
+                    merge_heads.push(*para);
+                    merge_tails.push(*next);
+                }
+                _ => {}
+            }
+        }
+        for (i, r) in &self.resolved {
+            match r {
+                Resolved::FormatParagraph { para, .. } if merge_heads.contains(para) => {
+                    return Err(
+                        self.conflict(*i, "formats a paragraph whose properties a merge discards")
+                    );
+                }
+                Resolved::InsertParagraph { anchor, side, .. }
+                    if (*side == Side::After && merge_heads.contains(anchor))
+                        || (*side == Side::Before && merge_tails.contains(anchor)) =>
+                {
+                    return Err(self.conflict(*i, "inserts a paragraph between two a merge joins"));
+                }
+                _ => {}
             }
         }
         Ok(())
@@ -1306,7 +1734,9 @@ impl<'p> Transaction<'p> {
                     comment.is_some()
                 }
                 Resolved::CommentRange { .. } => true,
-                Resolved::DeleteParagraph { .. } => false,
+                Resolved::DeleteParagraph { .. }
+                | Resolved::FormatParagraph { .. }
+                | Resolved::MergeParagraphs { .. } => false,
             })
             .count() as u64;
         if needed > 0 && self.next_comment_id + needed - 1 > u64::from(u32::MAX) {
@@ -1342,7 +1772,9 @@ impl<'p> Transaction<'p> {
                         Resolved::Text { comment, .. }
                         | Resolved::InsertParagraph { comment, .. } => comment.clone(),
                         Resolved::CommentRange { text, .. } => Some(text.clone()),
-                        Resolved::DeleteParagraph { .. } => None,
+                        Resolved::DeleteParagraph { .. }
+                        | Resolved::FormatParagraph { .. }
+                        | Resolved::MergeParagraphs { .. } => None,
                     };
                     text.map(|t| (*i, t))
                 })
@@ -1365,14 +1797,16 @@ impl<'p> Transaction<'p> {
                     replacement,
                     attach_before,
                     comment,
-                } => by_para.entry(*para).or_default().push((
-                    *start,
-                    *end,
-                    *i,
-                    replacement.clone(),
-                    *attach_before,
-                    comment.clone(),
-                )),
+                    format,
+                } => by_para.entry(*para).or_default().push(ScheduledEdit {
+                    start: *start,
+                    end: *end,
+                    op: *i,
+                    replacement: replacement.clone(),
+                    attach_before: *attach_before,
+                    comment: comment.clone(),
+                    format: format.clone(),
+                }),
                 Resolved::CommentRange {
                     para,
                     start,
@@ -1397,25 +1831,38 @@ impl<'p> Transaction<'p> {
         for para in touched {
             let node = self.paragraph_nodes[para];
             let mut edits = by_para.remove(&para).unwrap_or_default();
-            edits.sort_by_key(|&(s, e, i, ..)| (s, e, i));
+            edits.sort_by_key(|e| (e.start, e.end, e.op));
             // Apply in reverse so earlier source offsets stay valid.
-            for (start, end, _, replacement, attach_before, _) in edits.iter().rev() {
+            for edit in edits.iter().rev() {
                 let projection = project_paragraph(&self.opened.dom, node);
                 apply_text_edit(
                     &mut self.opened.dom,
                     &projection,
-                    *start,
-                    *end,
-                    replacement,
-                    *attach_before,
+                    edit.start,
+                    edit.end,
+                    &edit.replacement,
+                    edit.attach_before,
                 );
+            }
+            // Formatting of new text, in new coordinates.
+            for edit in &edits {
+                if let Some(format) = &edit.format {
+                    let s = new_position(&edits, edit.start, true, Some(edit.op));
+                    format_range(
+                        &mut self.opened.dom,
+                        node,
+                        s,
+                        s + edit.replacement.len(),
+                        format,
+                    );
+                }
             }
             // Comment ranges, in new coordinates.
             let mut pending: Vec<(usize, usize, usize, String)> = Vec::new();
-            for (start, _, i, replacement, _, comment) in &edits {
-                if let Some(text) = comment {
-                    let s = new_position(&edits, *start, true, Some(*i));
-                    pending.push((s, s + replacement.len(), *i, text.clone()));
+            for edit in &edits {
+                if let Some(text) = &edit.comment {
+                    let s = new_position(&edits, edit.start, true, Some(edit.op));
+                    pending.push((s, s + edit.replacement.len(), edit.op, text.clone()));
                 }
             }
             for (start, end, i, text) in comment_ranges.remove(&para).unwrap_or_default() {
@@ -1464,7 +1911,47 @@ impl<'p> Transaction<'p> {
                 }
             }
         }
-        // 3. Paragraph deletions.
+        // 3. Paragraph formatting.
+        for (_, r) in &self.resolved {
+            if let Resolved::FormatParagraph {
+                para,
+                style,
+                alignment,
+                spacing,
+            } = r
+            {
+                format_paragraph(
+                    &mut self.opened.dom,
+                    self.paragraph_nodes[*para],
+                    style.as_deref(),
+                    *alignment,
+                    *spacing,
+                );
+            }
+        }
+        // 4. Merges, first first, so a chain folds into its last paragraph.
+        let mut merges: Vec<(usize, usize, String)> = self
+            .resolved
+            .iter()
+            .filter_map(|(_, r)| match r {
+                Resolved::MergeParagraphs {
+                    para,
+                    next,
+                    separator,
+                } => Some((*para, *next, separator.clone())),
+                _ => None,
+            })
+            .collect();
+        merges.sort_by_key(|&(para, ..)| para);
+        for (para, next, separator) in merges {
+            merge_into(
+                &mut self.opened.dom,
+                self.paragraph_nodes[para],
+                self.paragraph_nodes[next],
+                &separator,
+            );
+        }
+        // 5. Paragraph deletions.
         for (_, r) in &self.resolved {
             if let Resolved::DeleteParagraph { para } = r {
                 self.opened.dom.remove(self.paragraph_nodes[*para]);
@@ -1582,6 +2069,21 @@ fn existing_comment_ids(opened: &Opened) -> Option<u32> {
         .max()
 }
 
+/// Markup that may sit between two block paragraphs and also inside one.
+fn is_range_markup(dom: &Dom, node: NodeId) -> bool {
+    const RANGES: &[&str] = &[
+        "bookmarkStart",
+        "bookmarkEnd",
+        "commentRangeStart",
+        "commentRangeEnd",
+        "permStart",
+        "permEnd",
+        "proofErr",
+    ];
+    dom.name(node)
+        .is_some_and(|n| n.namespace_name() == W::URI && RANGES.contains(&n.local_name()))
+}
+
 fn kind_name(kind: &OperationKind) -> &'static str {
     match kind {
         OperationKind::Replace { .. } => "replace",
@@ -1590,6 +2092,8 @@ fn kind_name(kind: &OperationKind) -> &'static str {
         OperationKind::Comment { .. } => "comment",
         OperationKind::InsertParagraph { .. } => "insert_paragraph",
         OperationKind::DeleteParagraph { .. } => "delete_paragraph",
+        OperationKind::FormatParagraph { .. } => "format_paragraph",
+        OperationKind::MergeParagraphs { .. } => "merge_paragraphs",
     }
 }
 
@@ -1643,22 +2147,23 @@ fn excerpt(text: &str, max: usize) -> String {
 /// planned before it.
 fn new_position(edits: &[ScheduledEdit], pos: usize, inclusive: bool, own: Option<usize>) -> usize {
     let mut delta: i64 = 0;
-    for (start, end, i, replacement, ..) in edits {
-        if Some(*i) == own {
+    for edit in edits {
+        let (start, end, i) = (edit.start, edit.end, edit.op);
+        if Some(i) == own {
             continue;
         }
         let shifts = if start == end {
             // insertion
             if inclusive {
-                *start < pos || (*start == pos && own.is_none_or(|o| *i < o))
+                start < pos || (start == pos && own.is_none_or(|o| i < o))
             } else {
-                *start < pos
+                start < pos
             }
         } else {
-            *end <= pos
+            end <= pos
         };
         if shifts {
-            delta += replacement.len() as i64 - (*end - *start) as i64;
+            delta += edit.replacement.len() as i64 - (end - start) as i64;
         }
     }
     (pos as i64 + delta).max(0) as usize
@@ -1830,6 +2335,220 @@ fn run_of(piece: &Piece) -> NodeId {
     }
 }
 
+/// Apply `format` to the runs holding projection range `[start, end)` of
+/// `paragraph`, splitting runs at the boundaries first.
+fn format_range(dom: &mut Dom, paragraph: NodeId, start: usize, end: usize, format: &RunFormat) {
+    if start >= end {
+        return;
+    }
+    for at in [start, end] {
+        let projection = project_paragraph(dom, paragraph);
+        if let Some(seg) = projection
+            .segments
+            .iter()
+            .find(|s| s.start < at && at < s.end)
+            .cloned()
+        {
+            split_run_at(dom, &seg, at);
+        }
+    }
+    let projection = project_paragraph(dom, paragraph);
+    let mut runs: Vec<NodeId> = Vec::new();
+    for seg in &projection.segments {
+        if seg.start >= start && seg.end <= end && seg.end > seg.start {
+            let run = run_of(&seg.piece);
+            if !runs.contains(&run) {
+                runs.push(run);
+            }
+        }
+    }
+    for run in runs {
+        let rpr = match dom.element(run, &W::r_pr()) {
+            Some(rpr) => rpr,
+            None => {
+                let rpr = dom.new_element(W::r_pr());
+                dom.add_first(run, rpr);
+                rpr
+            }
+        };
+        apply_run_format(dom, rpr, format);
+        if dom.elements(rpr, None).is_empty() {
+            dom.remove(rpr);
+        }
+    }
+}
+
+/// Set the paragraph style, alignment and spacing in `paragraph`'s `w:pPr`.
+fn format_paragraph(
+    dom: &mut Dom,
+    paragraph: NodeId,
+    style: Option<&str>,
+    alignment: Option<Alignment>,
+    spacing: Spacing,
+) {
+    let ppr = match dom.element(paragraph, &W::p_pr()) {
+        Some(ppr) => ppr,
+        None => {
+            let ppr = dom.new_element(W::p_pr());
+            dom.add_first(paragraph, ppr);
+            ppr
+        }
+    };
+    if let Some(style) = style {
+        if let Some(existing) = dom.element(ppr, &W::p_style()) {
+            dom.set_attribute_value(existing, &W::val(), Some(style));
+        } else {
+            let el = dom.new_element(W::p_style());
+            dom.set_attribute_value(el, &W::val(), Some(style));
+            dom.add_first(ppr, el);
+        }
+    }
+    if let Some(alignment) = alignment {
+        if let Some(existing) = dom.element(ppr, &W::name("jc")) {
+            dom.set_attribute_value(existing, &W::val(), Some(alignment.jc()));
+        } else {
+            let el = dom.new_element(W::name("jc"));
+            dom.set_attribute_value(el, &W::val(), Some(alignment.jc()));
+            insert_ppr_child(dom, ppr, el);
+        }
+    }
+    if spacing != Spacing::default() {
+        let el = match dom.element(ppr, &W::name("spacing")) {
+            Some(el) => el,
+            None => {
+                let el = dom.new_element(W::name("spacing"));
+                insert_ppr_child(dom, ppr, el);
+                el
+            }
+        };
+        if let Some(LineSpacing(line)) = spacing.line {
+            dom.set_attribute_value(el, &W::name("line"), Some(&line.to_string()));
+            dom.set_attribute_value(el, &W::name("lineRule"), Some("auto"));
+        }
+        // An autospacing flag overrides the explicit value, so it goes.
+        if let Some(Points(before)) = spacing.before {
+            dom.set_attribute_value(el, &W::name("before"), Some(&before.to_string()));
+            dom.set_attribute_value(el, &W::name("beforeAutospacing"), None);
+        }
+        if let Some(Points(after)) = spacing.after {
+            dom.set_attribute_value(el, &W::name("after"), Some(&after.to_string()));
+            dom.set_attribute_value(el, &W::name("afterAutospacing"), None);
+        }
+    }
+}
+
+/// Schema order of `w:pPr` children (CT_PPrBase, then rPr/sectPr/pPrChange).
+const PPR_ORDER: &[&str] = &[
+    "pStyle",
+    "keepNext",
+    "keepLines",
+    "pageBreakBefore",
+    "framePr",
+    "widowControl",
+    "numPr",
+    "suppressLineNumbers",
+    "pBdr",
+    "shd",
+    "tabs",
+    "suppressAutoHyphens",
+    "kinsoku",
+    "wordWrap",
+    "overflowPunct",
+    "topLinePunct",
+    "autoSpaceDE",
+    "autoSpaceDN",
+    "bidi",
+    "adjustRightInd",
+    "snapToGrid",
+    "spacing",
+    "ind",
+    "contextualSpacing",
+    "mirrorIndents",
+    "suppressOverlap",
+    "jc",
+    "textDirection",
+    "textAlignment",
+    "textboxTightWrap",
+    "outlineLvl",
+    "divId",
+    "cnfStyle",
+    "rPr",
+    "sectPr",
+    "pPrChange",
+];
+
+/// Insert `child` into `ppr` at its schema position.
+fn insert_ppr_child(dom: &mut Dom, ppr: NodeId, child: NodeId) {
+    let rank = |local: &str| {
+        PPR_ORDER
+            .iter()
+            .position(|&n| n == local)
+            .unwrap_or(PPR_ORDER.len())
+    };
+    let my_rank = dom.name(child).map_or(usize::MAX, |n| rank(n.local_name()));
+    let after = dom.elements(ppr, None).into_iter().rev().find(|&c| {
+        dom.name(c)
+            .is_some_and(|n| n.namespace_name() == W::URI && rank(n.local_name()) <= my_rank)
+    });
+    match after {
+        Some(after) => dom.add_after_self(after, child),
+        None => dom.add_first(ppr, child),
+    }
+}
+
+/// Move `head`'s content, then `separator` as a run, then any range markup
+/// between the two, to the start of `next`, and drop `head`. `next` keeps
+/// its own paragraph properties.
+fn merge_into(dom: &mut Dom, head: NodeId, next: NodeId, separator: &str) {
+    let mut moved: Vec<NodeId> = dom
+        .nodes(head)
+        .into_iter()
+        .filter(|&c| !dom.name_is(c, &W::p_pr()))
+        .collect();
+    if !separator.is_empty() {
+        let r = dom.new_element(W::r());
+        let last_rpr = dom
+            .elements(head, Some(&W::r()))
+            .last()
+            .and_then(|&r| dom.element(r, &W::r_pr()));
+        if let Some(rpr) = last_rpr {
+            let rpr = dom.clone_subtree(rpr);
+            for child in dom.elements(rpr, None) {
+                if dom.name_is(child, &W::r_pr_change())
+                    || dom.name_is(child, &W::ins())
+                    || dom.name_is(child, &W::del())
+                {
+                    dom.remove(child);
+                }
+            }
+            dom.add(r, rpr);
+        }
+        let t = dom.new_element(W::t());
+        set_text(dom, t, separator);
+        dom.add(r, t);
+        moved.push(r);
+    }
+    let mut cursor = dom.next_element(head);
+    while let Some(n) = cursor.filter(|&n| n != next) {
+        moved.push(n);
+        cursor = dom.next_element(n);
+    }
+    let first_content = dom
+        .nodes(next)
+        .into_iter()
+        .find(|&c| !dom.name_is(c, &W::p_pr()));
+    for n in moved {
+        if dom.parent(n).is_some() {
+            dom.remove(n);
+        }
+        match first_content {
+            Some(anchor) => dom.add_before_self(anchor, n),
+            None => dom.add(next, n),
+        }
+    }
+    dom.remove(head);
+}
+
 /// A new paragraph modeled on `anchor`: its `pPr` minus section break and
 /// revision marks, runs formatted like the anchor's first run plus the
 /// requested toggles.
@@ -1862,10 +2581,20 @@ fn build_paragraph(dom: &mut Dom, anchor: NodeId, runs: &[RunSpec], style: Optio
         dom.add(ppr, el);
         dom.add(p, ppr);
     }
+    // New runs start from the anchor's dominant run, the one holding the most
+    // text: a bold lead-in ("(f) Notice of Inability to Comply.") must not make
+    // every inserted run bold.
     let base_rpr = dom
         .elements(anchor, Some(&W::r()))
-        .first()
-        .and_then(|&r| dom.element(r, &W::r_pr()));
+        .into_iter()
+        .rev()
+        .max_by_key(|&r| {
+            dom.elements(r, Some(&W::t()))
+                .iter()
+                .map(|&t| dom.value(t).chars().count())
+                .sum::<usize>()
+        })
+        .and_then(|r| dom.element(r, &W::r_pr()));
     for spec in runs {
         if spec.text.is_empty() {
             continue;
@@ -1883,30 +2612,7 @@ fn build_paragraph(dom: &mut Dom, anchor: NodeId, runs: &[RunSpec], style: Optio
                 dom.remove(child);
             }
         }
-        toggle(dom, rpr, "b", spec.bold);
-        toggle(dom, rpr, "bCs", spec.bold);
-        toggle(dom, rpr, "i", spec.italic);
-        toggle(dom, rpr, "iCs", spec.italic);
-        if let Some(underline) = spec.underline {
-            if let Some(u) = dom.element(rpr, &W::name("u")) {
-                dom.remove(u);
-            }
-            if underline {
-                let u = dom.new_element(W::name("u"));
-                dom.set_attribute_value(u, &W::val(), Some("single"));
-                insert_rpr_child(dom, rpr, u);
-            }
-        }
-        if let Some(highlight) = &spec.highlight {
-            if let Some(h) = dom.element(rpr, &W::name("highlight")) {
-                dom.remove(h);
-            }
-            if highlight != "none" {
-                let h = dom.new_element(W::name("highlight"));
-                dom.set_attribute_value(h, &W::val(), Some(highlight));
-                insert_rpr_child(dom, rpr, h);
-            }
-        }
+        apply_run_format(dom, rpr, &spec.format());
         if dom.elements(rpr, None).is_empty() {
             dom.remove(rpr);
         } else {
@@ -1919,6 +2625,71 @@ fn build_paragraph(dom: &mut Dom, anchor: NodeId, runs: &[RunSpec], style: Optio
         dom.add(p, r);
     }
     p
+}
+
+/// Set or clear the requested properties in `rpr`.
+fn apply_run_format(dom: &mut Dom, rpr: NodeId, format: &RunFormat) {
+    toggle(dom, rpr, "b", format.bold);
+    toggle(dom, rpr, "bCs", format.bold);
+    toggle(dom, rpr, "i", format.italic);
+    toggle(dom, rpr, "iCs", format.italic);
+    if let Some(underline) = format.underline {
+        if let Some(u) = dom.element(rpr, &W::name("u")) {
+            dom.remove(u);
+        }
+        if underline {
+            let u = dom.new_element(W::name("u"));
+            dom.set_attribute_value(u, &W::val(), Some("single"));
+            insert_rpr_child(dom, rpr, u);
+        }
+    }
+    if let Some(highlight) = &format.highlight {
+        if let Some(h) = dom.element(rpr, &W::name("highlight")) {
+            dom.remove(h);
+        }
+        if highlight != "none" {
+            let h = dom.new_element(W::name("highlight"));
+            dom.set_attribute_value(h, &W::val(), Some(highlight));
+            insert_rpr_child(dom, rpr, h);
+        }
+    }
+}
+
+/// `ST_HighlightColor`.
+const HIGHLIGHTS: &[&str] = &[
+    "black",
+    "blue",
+    "cyan",
+    "green",
+    "magenta",
+    "red",
+    "yellow",
+    "white",
+    "darkBlue",
+    "darkCyan",
+    "darkGreen",
+    "darkMagenta",
+    "darkRed",
+    "darkYellow",
+    "darkGray",
+    "lightGray",
+    "none",
+];
+
+/// A format must name a real highlight colour and apply to some text.
+fn check_format(format: &RunFormat, text: &str) -> Result<(), String> {
+    if let Some(highlight) = &format.highlight
+        && !HIGHLIGHTS.contains(&highlight.as_str())
+    {
+        return Err(format!(
+            "highlight {highlight:?} is not a Word highlight colour ({})",
+            HIGHLIGHTS.join(", ")
+        ));
+    }
+    if text.is_empty() && *format != RunFormat::default() {
+        return Err("format needs nonempty text".into());
+    }
+    Ok(())
 }
 
 /// Schema order of the `w:rPr` children this module writes.
@@ -2035,11 +2806,19 @@ mod tests {
 
     #[test]
     fn new_position_accounts_for_earlier_edits_and_insertions() {
-        // (start, end, op, replacement, attach_before, comment)
+        let edit = |start, end, op, replacement: &str| ScheduledEdit {
+            start,
+            end,
+            op,
+            replacement: replacement.to_string(),
+            attach_before: true,
+            comment: None,
+            format: None,
+        };
         let edits = vec![
-            (2, 4, 0, "XYZ".to_string(), true, None), // +1
-            (6, 6, 1, "++".to_string(), true, None),  // insertion at 6
-            (8, 9, 2, String::new(), true, None),     // -1
+            edit(2, 4, 0, "XYZ"), // +1
+            edit(6, 6, 1, "++"),  // insertion at 6
+            edit(8, 9, 2, ""),    // -1
         ];
         assert_eq!(new_position(&edits, 1, true, None), 1);
         assert_eq!(new_position(&edits, 5, true, None), 6);

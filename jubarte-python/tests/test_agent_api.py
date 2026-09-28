@@ -193,6 +193,59 @@ def test_png_pages_and_render_report_come_from_one_layout() -> None:
         Document.from_bytes(b"nope").to_png()
 
 
+def test_format_and_merge_builders_serialize_the_wire_schema() -> None:
+    plan = (
+        EditPlan(author="A")
+        .replace(2, find="his or her", replacement="an", format={"bold": True})
+        .insert(3, position="end", text=" (as amended)", format={"italic": True, "highlight": "yellow"})
+        .format_paragraph(0, style="Heading1", alignment="center", line_spacing=1.15, space_before=6, space_after=0)
+        .merge_paragraphs(0, separator=" ", id="join")
+    )
+    ops = plan.to_dict()["operations"]
+    assert ops[0]["format"] == {"bold": True}
+    assert ops[1]["format"] == {"italic": True, "highlight": "yellow"}
+    assert ops[2] == {
+        "kind": "format_paragraph",
+        "paragraph": {"index": 0},
+        "style": "Heading1",
+        "alignment": "center",
+        "line_spacing": 1.15,
+        "space_before": 6,
+        "space_after": 0,
+    }
+    assert ops[3] == {"id": "join", "kind": "merge_paragraphs", "paragraph": {"index": 0}, "separator": " "}
+    assert EditPlan(author="A").merge_paragraphs(1).operations[0] == {"kind": "merge_paragraphs", "paragraph": {"index": 1}}
+    with pytest.raises(ValueError):
+        EditPlan(author="A").format_paragraph(0)
+    with pytest.raises(ValueError):
+        EditPlan(author="A").replace(0, find="a", replacement="b", format={})
+    with pytest.raises(ValueError):
+        EditPlan(author="A").insert(0, position="end", text="x", format={"size": 12})
+
+
+def test_merge_and_format_paragraph_apply_as_tracked_changes() -> None:
+    doc = letter()
+    plan = (
+        EditPlan(author="Claude", date="2026-09-25T12:00:00Z")
+        .for_document(doc)
+        .format_paragraph(0, alignment="center")
+        .merge_paragraphs(2, separator=" ")
+        .replace(1, find="attorneys", replacement="counsel", format={"bold": True})
+    )
+    result = doc.edit(plan)
+    assert result.report.ok, result.report.operations
+    texts = [p.text for p in result.clean.inspect().paragraphs]
+    assert texts[2] == "The individual signs in his or her individual capacity. Sections 1(g), 2(e), 3 survive."
+    assert len(texts) == 3
+    assert [p.text for p in result.redline.accept().inspect().paragraphs] == texts
+    original = [p.text for p in doc.inspect().paragraphs]
+    assert [p.text for p in result.redline.reject().inspect().paragraphs] == original
+    assert result.report.revisions.format_changed >= 1
+    p1 = result.clean.inspect().paragraphs[1]
+    at = p1.text.index("counsel")
+    assert [(r.start, r.end, r.bold) for r in p1.runs if r.start <= at < r.end] == [(at, at + len("counsel"), True)]
+
+
 def test_capabilities_manifest_reports_python_runtime() -> None:
     caps = jubarte.capabilities()
     assert caps["schema_version"] == 1
