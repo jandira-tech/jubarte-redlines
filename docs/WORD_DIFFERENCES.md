@@ -111,6 +111,34 @@ The other 3 of the 32 are not differences:
   the number like any other revised text.
 - **Which is better.** Ours; Word's version hides a revision.
 
+## Accept All / Reject All: where Word's result is worse (not copied yet)
+
+`jubarte accept` / `jubarte reject` (and per-change accept/reject) follow
+Word's Accept All / Reject All wherever Word keeps what the revision says.
+The cases below are where Word loses or invents something. We do the
+sensible thing today; each belongs in a future Word mode, never in the
+default. Found by accepting our redlines in Word and comparing with Word's
+accept of its own redline (`_to_improve_accepted_changes`, 2026-09-29).
+
+| # | Word does | We do | Seen in |
+|---|---|---|---|
+| A1 | Leaves phantom `pPrChange`/`rPrChange` records after Accept All (22/51 files) and Reject All (44/100) | No change records left | b42b and others |
+| A2 | Reject of an `rPrChange` whose old rPr lacks a property writes the docDefaults value (sz=20 over Normal's 24, Calibri) instead of removing it | Restores the old rPr exactly as recorded, so the style shows through | reject corpus |
+| A3 | An outer `pPrChange` reject bleeds into a text-box paragraph | Text box keeps its own pPr | 618a11caa3 |
+| A4 | Drops B's `hanging=360` from inserted numbered paragraphs that have no left indent | Keeps B's hanging indent | 3866 (74 paragraphs) |
+| A5 | Drops B's run `sz`/`szCs` from text it threads into A's paragraphs (11pt instead of B's 12pt) | Keeps B's size | 440c |
+| A6 | Drops `szCs`/`cs` from the paragraph-mark rPr | Keeps B's mark rPr | b4cd |
+| A7 | Writes 333 "no difference" `tcPrChange` records | Only records real differences | 5b87 |
+| A8 | Gives 5b87's Q2/Q3 cells spacing 200/276 and Calibri, which neither A nor B has | Keeps B's cell formatting | 5b87 |
+| A9 | Gives a blank header paragraph a leftover style (the last paragraph's pStyle is a lottery: garbage, Footer, AdoptionDate) | Keeps B's style | f125, b4cd, d8b0 |
+| A10 | Adds blank default header/footer/endnote parts, and header/footer parts neither side had | Writes only the parts the document uses | 440c and others |
+| A11 | Auto-creates `HeaderChar`/`FooterChar` styles | Adds no styles the document doesn't use | cda1 |
+| A12 | Prunes style properties that repeat Normal | Keeps the style's own properties | several |
+
+Word behaviour that *is* copied (it keeps what the revision says): see the
+rules pinned in `tests/m_accept_word_parity.rs`, `tests/m_reject_word_parity.rs`
+and `tests/m_accept_own_redlines.rs`.
+
 ## Shapes Word itself produces
 
 These are in Word's own redlines, so jubarte producing them is not a bug
