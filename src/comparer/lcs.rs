@@ -8021,6 +8021,19 @@ fn positional_title_token_zip(
         return None;
     }
     let z = left_c.len().min(right_c.len());
+    // Never pair a paragraph by position when its identical copy sits
+    // elsewhere on the other side: Word keeps that copy unchanged and the
+    // replacement between the copies stays a gap (w20b: "stable anchor two"
+    // came out inserted into "legacy clause sigma" and deleted again).
+    let left_h: std::collections::HashSet<&str> = left_c.iter().map(ComparisonUnit::sha1).collect();
+    let right_h: std::collections::HashSet<&str> =
+        right_c.iter().map(ComparisonUnit::sha1).collect();
+    if (0..z).any(|i| {
+        let (l, r) = (left_c[i].sha1(), right_c[i].sha1());
+        l != r && (right_h.contains(l) || left_h.contains(r))
+    }) {
+        return None;
+    }
     let mut residual_settings = settings.clone();
     residual_settings.detail_threshold = 0.0;
     let mut out = Vec::new();

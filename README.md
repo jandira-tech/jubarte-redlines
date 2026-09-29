@@ -1,3 +1,6 @@
+> **See every page side by side: [jandira-tech.github.io/jubarte-redlines](https://jandira-tech.github.io/jubarte-redlines/)**  
+> jubarte vs Microsoft Word, docxide-pdf, LibreOffice, PyMuPDF Pro, MiniPdf, rdocx and office2pdf on 808 documents, DOCX to PDF, scored per page.
+
 # jubarte-redlines — #1 DOCX → PDF & #1 DOCX-vs-DOCX Comparison (Redlines) Rust Tool
 
 *Benchmarked against Microsoft Word®'s own output across an aggregate of 3,500+
@@ -7,7 +10,7 @@ document fixtures — full tables in [RESULTS.md](RESULTS.md).*
 [![REUSE status](https://api.reuse.software/badge/github.com/jandira-tech/jubarte-redlines)](https://api.reuse.software/info/github.com/jandira-tech/jubarte-redlines)
 [![codecov](https://codecov.io/gh/jandira-tech/jubarte-redlines/branch/main/graph/badge.svg)](https://codecov.io/gh/jandira-tech/jubarte-redlines)
 [![crates.io](https://img.shields.io/crates/v/jubarte-redlines.svg)](https://crates.io/crates/jubarte-redlines)
-[![Socket Badge](https://badge.socket.dev/cargo/package/jubarte-redlines/0.9.3)](https://badge.socket.dev/cargo/package/jubarte-redlines/0.9.3)
+[![Socket Badge](https://badge.socket.dev/cargo/package/jubarte-redlines/0.10.0)](https://badge.socket.dev/cargo/package/jubarte-redlines/0.10.0)
 [![docs.rs](https://docs.rs/jubarte-redlines/badge.svg)](https://docs.rs/jubarte-redlines)
 [![PyPI](https://img.shields.io/pypi/v/jubarte-redlines.svg)](https://pypi.org/project/jubarte-redlines/)
 [![npm](https://img.shields.io/npm/v/jubarte-wasm.svg)](https://www.npmjs.com/package/jubarte-wasm)
@@ -70,6 +73,10 @@ cargo install jubarte-redlines
 # binary name is still `jubarte`
 jubarte --version
 ```
+
+From 0.10.0 on, `jubarte self-update` installs a newer release in place
+(`--check` only looks). It is the only command that goes online, and only
+when you run it ([docs/SELF_UPDATE.md](docs/SELF_UPDATE.md)).
 
 **Fonts for `jubarte convert`** — open fonts Word draws that macOS/Linux
 lack (Roboto Condensed; Selawik standing in for Segoe UI) are installed
@@ -186,7 +193,9 @@ image samples always deflate); `--font-report FILE` writes the per-document
 font-resolution table as JSON.
 
 Run `jubarte --help` for author/date stamping, `--detail-threshold`, and
-`--powertools-faithful` (classic PowerTools-compatible mode).
+`--mode word|powertools` (Word Compare's layout, the default, or classic
+PowerTools). [docs/WORD_DIFFERENCES.md](docs/WORD_DIFFERENCES.md) lists
+where jubarte's redline differs from Word's and which mode gives which.
 
 ### What `jubarte convert` renders
 
@@ -272,7 +281,7 @@ such row in the commit. Baselines: `tools/convert_baseline_{76,398}.tsv` and
 Both documents are atomized (runs, paragraph marks, table cells, …), aligned
 with an LCS pass, and re-expressed as Word revision markup on the **original**
 package. Default mode adds Word-visual alignment on top of the PowerTools
-algorithm; `WmlComparerSettings::powertools_faithful()` / `--powertools-faithful`
+algorithm; `WmlComparerSettings::powertools_faithful()` / `--mode powertools`
 reproduces classic PowerTools behavior.
 
 ## Benchmarks — scored against Microsoft Word
@@ -281,7 +290,8 @@ Independent harnesses render each tool's output and score it against PDFs
 exported by **Microsoft Word** itself. Numbers below are the current **0.9.x**
 convert rows plus the latest **jubarte-rust** stamps (this engine's native
 benchmark lane); full tables, corpus provenance, and per-version history:
-[RESULTS.md](RESULTS.md).
+[RESULTS.md](RESULTS.md). Every scored page, side by side with Word's and the
+other engines': [jandira-tech.github.io/jubarte-redlines](https://jandira-tech.github.io/jubarte-redlines/).
 
 ### docx→pdf — Jaccard vs Word's own export (0–1, higher is better)
 
@@ -449,6 +459,7 @@ Copyright (c) 2026 Jandira Technologies, LLC for its contributions.
 
 ## Find us
 
+[Engine comparison site](https://jandira-tech.github.io/jubarte-redlines/) ·
 [jandira.tech](https://www.jandira.tech) · [arthur.law](https://arthur.law) ·
 [Cicero](https://www.cicero.im) · [LinkedIn](https://linkedin.com/in/arthrod) ·
 `contact@arthur.law`

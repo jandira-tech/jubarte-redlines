@@ -15,6 +15,16 @@
 //! // pdf: Uint8Array
 //! ```
 //!
+//! Agents read and edit through the same surface as the CLI and Python:
+//!
+//! ```js
+//! const snapshot = JSON.parse(inspectDocument(bytes));  // ids, text, spans
+//! const text = documentMarkdown(bytes);                 // [body:p:N] ids
+//! const out = applyEditPlan(bytes, JSON.stringify(plan));
+//! if (out.ok) { out.clean; out.redline; JSON.parse(out.json) }  // report
+//! else { JSON.parse(out.json).code }                    // e.g. AMBIGUOUS_ANCHOR
+//! ```
+//!
 //! # Build
 //!
 //! ```sh
@@ -123,4 +133,167 @@ pub fn docx_to_pdf(
 #[wasm_bindgen(js_name = pdfPageCount)]
 pub fn pdf_page_count(pdf: &[u8]) -> usize {
     jubarte::convert::pdf_page_count(pdf)
+}
+
+/// SHA-256 (lowercase hex) of the bytes: the `source_sha256` guard an edit
+/// plan carries.
+///
+/// Mirrors `jubarte::inspect::source_sha256`.
+#[wasm_bindgen(js_name = sourceSha256)]
+pub fn source_sha256(docx: &[u8]) -> String {
+    jubarte::inspect::source_sha256(docx)
+}
+
+/// The inspection snapshot as JSON: `schema_version`, `source_sha256`,
+/// `summary` and `paragraphs` (ids, text, style, formatting spans,
+/// limitations). Oversized or malformed packages are refused before parsing.
+///
+/// Mirrors `jubarte::inspect::inspect_json`.
+#[wasm_bindgen(js_name = inspectDocument)]
+pub fn inspect_document(docx: &[u8]) -> Result<String, JsValue> {
+    jubarte::inspect::inspect_json(docx).map_err(js_err)
+}
+
+/// Body paragraphs as Markdown, each preceded by its `[body:p:N]` id: the
+/// coordinates an edit plan uses.
+///
+/// Mirrors `jubarte::inspect::markdown`.
+#[wasm_bindgen(js_name = documentMarkdown)]
+pub fn document_markdown(docx: &[u8]) -> Result<String, JsValue> {
+    jubarte::inspect::markdown(docx).map_err(js_err)
+}
+
+/// What [`applyEditPlan`](apply_edit_plan) and
+/// [`previewEditPlan`](preview_edit_plan) return. A refused plan is data, not
+/// an exception, so every operation's outcome stays readable.
+#[wasm_bindgen]
+pub struct EditOutput {
+    ok: bool,
+    clean: Option<Vec<u8>>,
+    redline: Option<Vec<u8>>,
+    json: String,
+}
+
+#[wasm_bindgen]
+impl EditOutput {
+    /// `true` when the plan was applied (or resolved, for a preview).
+    #[wasm_bindgen(getter)]
+    pub fn ok(&self) -> bool {
+        self.ok
+    }
+
+    /// The edited document without tracked changes; `undefined` on refusal
+    /// and for previews.
+    #[wasm_bindgen(getter)]
+    pub fn clean(&self) -> Option<Vec<u8>> {
+        self.clean.clone()
+    }
+
+    /// The source compared against the clean copy (Word tracked changes);
+    /// `undefined` on refusal and for previews.
+    #[wasm_bindgen(getter)]
+    pub fn redline(&self) -> Option<Vec<u8>> {
+        self.redline.clone()
+    }
+
+    /// The report JSON when `ok`, else the error JSON (`code`, `operation`,
+    /// `message`, `outcomes`).
+    #[wasm_bindgen(getter)]
+    pub fn json(&self) -> String {
+        self.json.clone()
+    }
+}
+
+fn to_json(value: &impl serde::Serialize) -> Result<String, JsValue> {
+    serde_json::to_string(value).map_err(js_err)
+}
+
+/// Apply an edit plan (JSON) to a DOCX: the clean copy, the Word redline and
+/// the per-operation report.
+///
+/// Mirrors `jubarte::edit::apply_plan_json`.
+#[wasm_bindgen(js_name = applyEditPlan)]
+pub fn apply_edit_plan(docx: &[u8], plan_json: &str) -> Result<EditOutput, JsValue> {
+    Ok(match jubarte::edit::apply_plan_json(docx, plan_json) {
+        Ok(result) => EditOutput {
+            ok: true,
+            json: to_json(&result.report)?,
+            clean: Some(result.clean),
+            redline: Some(result.redline),
+        },
+        Err(error) => EditOutput {
+            ok: false,
+            clean: None,
+            redline: None,
+            json: to_json(&error)?,
+        },
+    })
+}
+
+/// Resolve every operation of an edit plan without producing documents.
+///
+/// Mirrors `jubarte::edit::preview_plan`.
+#[wasm_bindgen(js_name = previewEditPlan)]
+pub fn preview_edit_plan(docx: &[u8], plan_json: &str) -> Result<EditOutput, JsValue> {
+    let resolved = jubarte::edit::EditPlan::from_json(plan_json)
+        .and_then(|plan| jubarte::edit::preview_plan(docx, &plan));
+    Ok(EditOutput {
+        ok: resolved.is_ok(),
+        clean: None,
+        redline: None,
+        json: match resolved {
+            Ok(report) => to_json(&report)?,
+            Err(error) => to_json(&error)?,
+        },
+    })
+}
+
+/// The JSON-lines form of a report (`load`, one `op` per operation,
+/// `summary`), for agent logs.
+#[wasm_bindgen(js_name = editReportJsonl)]
+pub fn edit_report_jsonl(report_json: &str) -> Result<String, JsValue> {
+    let report: jubarte::edit::EditReport = serde_json::from_str(report_json).map_err(js_err)?;
+    Ok(report.to_jsonl())
+}
+
+/// What this build can do, as JSON (`runtime: "wasm"`): PDF only in the full
+/// build, PNG never.
+///
+/// Mirrors `jubarte::capabilities::capabilities`.
+#[wasm_bindgen]
+pub fn capabilities() -> Result<String, JsValue> {
+    let mut manifest = jubarte::capabilities::capabilities("wasm");
+    manifest.operations.pdf = cfg!(feature = "pdf");
+    manifest.operations.png = false;
+    serde_json::to_string_pretty(&manifest).map_err(js_err)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capabilities_report_the_wasm_runtime_without_png() {
+        let manifest: serde_json::Value = serde_json::from_str(&capabilities().unwrap()).unwrap();
+        assert_eq!(manifest["runtime"], "wasm");
+        assert_eq!(manifest["operations"]["png"], false);
+        assert_eq!(manifest["operations"]["pdf"], cfg!(feature = "pdf"));
+        assert_eq!(manifest["operations"]["edit"], true);
+    }
+
+    #[test]
+    fn a_refused_plan_is_data_with_its_code() {
+        let out = apply_edit_plan(
+            b"not a zip",
+            r#"{"schema_version":1,"author":"A","operations":[]}"#,
+        )
+        .unwrap();
+        assert!(!out.ok());
+        assert!(out.clean().is_none() && out.redline().is_none());
+        let error: serde_json::Value = serde_json::from_str(&out.json()).unwrap();
+        assert_eq!(error["code"], "INVALID_PACKAGE");
+        let preview = preview_edit_plan(b"x", "{").unwrap();
+        assert!(!preview.ok());
+        assert!(preview.json().contains("INVALID_PLAN"));
+    }
 }

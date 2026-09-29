@@ -176,7 +176,7 @@ fn restream(
                     if replaced.last().is_some_and(|r| r.1 > start) {
                         return None;
                     }
-                    Some((end, start, stop, render(&st, &region)?))
+                    Some((end, start, stop, render_best(&st, &region)?))
                 });
             if let Some((end, start, stop, (out, paired))) = shipped {
                 replaced.push((start, stop, out));
@@ -660,6 +660,38 @@ fn render(st: &Stream, region: &Region) -> Option<Rendered> {
         return None;
     }
     Some((out, marks))
+}
+
+/// Render `region`, or the same paragraphs without their LCS pairs when that
+/// keeps more of the text. The paragraph LCS pairs a merged paragraph with
+/// the original it starts with, which strands the folded-in paragraph's
+/// words behind that pair's mark; Word deletes the first mark instead and
+/// keeps every word ("Goods." + "Delivery …" → "Goods. Delivery …").
+fn render_best(st: &Stream, region: &Region) -> Option<Rendered> {
+    let paired = render(st, region);
+    if region.pairs.is_empty() || region.left.len() <= region.right.len() {
+        return paired;
+    }
+    let bare = Region {
+        left: region.left.clone(),
+        right: region.right.clone(),
+        pairs: Vec::new(),
+        run_ends_story: region.run_ends_story,
+    };
+    let Some(streamed) = render(st, &bare) else {
+        return paired;
+    };
+    let kept = |r: &Rendered| -> usize {
+        r.0.iter()
+            .filter(|s| s.correlation_status == CorrelationStatus::Equal)
+            .flat_map(|s| s.com_units_1.iter().flatten())
+            .map(ComparisonUnit::descendant_content_atoms_count)
+            .sum()
+    };
+    match &paired {
+        Some(p) if kept(p) >= kept(&streamed) => paired,
+        _ => Some(streamed),
+    }
 }
 
 /// A rendered region: its sequences, and each right paragraph's mark with
@@ -1286,7 +1318,10 @@ struct Unit {
     last: String,
 }
 
-fn build_units(flat: &[&Tok], from: usize, to: usize) -> Vec<Unit> {
+fn build_units(flat: &[&Tok], off: &[usize], from: usize, to: usize) -> Vec<Unit> {
+    // The flat stream runs member paragraphs together with no mark between
+    // them; a compound stops where a member starts ("TRIAL." + "Each").
+    let starts_member = |i: usize| off.binary_search(&i).is_ok();
     let mut units = Vec::new();
     let mut i = from;
     while i < to {
@@ -1304,6 +1339,8 @@ fn build_units(flat: &[&Tok], from: usize, to: usize) -> Vec<Unit> {
             && flat[i].kind == Kind::Sep
             && !flat[i].connective()
             && flat[i + 1].kind == Kind::Word
+            && !starts_member(i)
+            && !starts_member(i + 1)
         {
             key.push_str(&flat[i].key);
             key.push_str(&flat[i + 1].key);
@@ -1489,8 +1526,8 @@ fn segment_region(
     // anchors only its common unit prefix.
     let mut pass1: Vec<(usize, usize)> = Vec::new();
     for (pi, &(li, ri)) in pairs.iter().enumerate() {
-        let ul = build_units(&flat_l, off_l[li], off_l[li + 1]);
-        let ur = build_units(&flat_r, off_r[ri], off_r[ri + 1]);
+        let ul = build_units(&flat_l, &off_l, off_l[li], off_l[li + 1]);
+        let ur = build_units(&flat_r, &off_r, off_r[ri], off_r[ri + 1]);
         if run_ends_story && !has_tail && pi == pairs.len() - 1 {
             for k in 0..ul.len().min(ur.len()) {
                 if ul[k].key != ur[k].key {
@@ -1522,8 +1559,8 @@ fn segment_region(
             if bail || l_to <= l_from || r_to <= r_from {
                 return;
             }
-            let ul = build_units(&flat_l, l_from, l_to);
-            let ur = build_units(&flat_r, r_from, r_to);
+            let ul = build_units(&flat_l, &off_l, l_from, l_to);
+            let ur = build_units(&flat_r, &off_r, r_from, r_to);
             if ul.is_empty() || ur.is_empty() {
                 return;
             }

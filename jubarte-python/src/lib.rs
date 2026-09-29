@@ -2,14 +2,17 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Python bindings for the canonical **jubarte-redlines** Word-mode compare.
+//! Python bindings for the canonical **jubarte-redlines** engine.
 //!
 //! Built with **PyO3** + **maturin** as the `jubarte_redlines._native`
-//! extension module; the public Python surface (including `get_revisions`
-//! returning parsed objects) lives in `python/jubarte_redlines/__init__.py`.
+//! extension module; the public Python surface (typed `Document`, edit plans,
+//! the `python -m jubarte_redlines` CLI) lives in `python/jubarte_redlines/`.
 //!
-//! Every entry point copies nothing extra and detaches from the interpreter for the whole
-//! pure-Rust compute, so long compares don't block other Python threads.
+//! Every entry point detaches from the interpreter for the whole pure-Rust
+//! compute, so long operations don't block other Python threads. Structured
+//! results cross the boundary as JSON strings produced by the engine's own
+//! serializers; the Python layer turns them into frozen dataclasses and never
+//! interprets OOXML itself.
 
 use pyo3::create_exception;
 use pyo3::exceptions::PyException;
@@ -25,6 +28,19 @@ create_exception!(
 
 fn err(e: impl std::fmt::Display) -> PyErr {
     JubarteError::new_err(e.to_string())
+}
+
+fn pdf_options(
+    compress: bool,
+    revisions: &str,
+    revision_palette: Option<&str>,
+) -> PyResult<jubarte::convert::PdfOptions> {
+    let revisions = jubarte::convert::RevisionStyle::from_choice(revisions, revision_palette)
+        .map_err(JubarteError::new_err)?;
+    Ok(jubarte::convert::PdfOptions {
+        compress,
+        revisions,
+    })
 }
 
 /// Compare two DOCX packages (bytes) → redline DOCX bytes (`w:ins`/`w:del`).
@@ -100,16 +116,136 @@ fn docx_to_pdf(
     revisions: &str,
     revision_palette: Option<&str>,
 ) -> PyResult<Py<PyBytes>> {
-    let revisions = jubarte::convert::RevisionStyle::from_choice(revisions, revision_palette)
-        .map_err(JubarteError::new_err)?;
-    let options = jubarte::convert::PdfOptions {
-        compress,
-        revisions,
-    };
+    let options = pdf_options(compress, revisions, revision_palette)?;
     let out = py
         .detach(|| jubarte::convert::docx_to_pdf_with(docx, options))
         .map_err(err)?;
     Ok(PyBytes::new(py, &out).unbind())
+}
+
+/// Rasterize every page to PNG at `dpi` → list of PNG bytes, page order.
+#[pyfunction]
+#[pyo3(signature = (docx, dpi = 96.0, revisions = "conventional", revision_palette = None))]
+fn docx_to_png(
+    py: Python<'_>,
+    docx: &[u8],
+    dpi: f32,
+    revisions: &str,
+    revision_palette: Option<&str>,
+) -> PyResult<Vec<Py<PyBytes>>> {
+    let options = pdf_options(false, revisions, revision_palette)?;
+    let pages = py
+        .detach(|| jubarte::convert::docx_to_png(docx, options, dpi))
+        .map_err(err)?;
+    Ok(pages
+        .iter()
+        .map(|png| PyBytes::new(py, png).unbind())
+        .collect())
+}
+
+/// `render`'s result: the PDF (when asked for), one PNG per page, and the
+/// layout report as JSON.
+type Rendered = (Option<Py<PyBytes>>, Vec<Py<PyBytes>>, String);
+
+/// `edit_json`'s result: ok, the clean copy and the tracked redline (both
+/// `None` on refusal), and the report or the structured refusal as JSON.
+type EditOutcome = (bool, Option<Py<PyBytes>>, Option<Py<PyBytes>>, String);
+
+/// One layout pass → `(pdf_bytes | None, [png_bytes, ...], report_json)`.
+///
+/// `report_json` is `{"page_count", "pages": [{"index", "text"}], "fonts": [...]}`.
+#[pyfunction]
+#[pyo3(signature = (docx, pdf = true, png_dpi = None, compress = false, revisions = "conventional", revision_palette = None))]
+fn render(
+    py: Python<'_>,
+    docx: &[u8],
+    pdf: bool,
+    png_dpi: Option<f32>,
+    compress: bool,
+    revisions: &str,
+    revision_palette: Option<&str>,
+) -> PyResult<Rendered> {
+    let options = pdf_options(compress, revisions, revision_palette)?;
+    let request = jubarte::convert::RenderRequest { pdf, png_dpi };
+    let rendered = py
+        .detach(|| jubarte::convert::render(docx, options, request))
+        .map_err(err)?;
+    Ok((
+        rendered.pdf.map(|b| PyBytes::new(py, &b).unbind()),
+        rendered
+            .pngs
+            .iter()
+            .map(|png| PyBytes::new(py, png).unbind())
+            .collect(),
+        rendered.report.to_json(),
+    ))
+}
+
+/// SHA-256 (lowercase hex) of the bytes: the snapshot guard of edit plans.
+#[pyfunction]
+fn source_sha256(docx: &[u8]) -> String {
+    jubarte::inspect::source_sha256(docx)
+}
+
+/// The inspection snapshot as JSON (`schema_version`, `source_sha256`,
+/// `summary`, `paragraphs`).
+#[pyfunction]
+fn inspect_json(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
+    py.detach(|| jubarte::inspect::inspect_json(docx))
+        .map_err(err)
+}
+
+/// Body paragraphs as Markdown with `[body:p:N]` ids.
+#[pyfunction]
+fn markdown(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
+    py.detach(|| jubarte::inspect::markdown(docx)).map_err(err)
+}
+
+/// Apply an edit plan (JSON) → `(ok, clean | None, redline | None, json)`.
+///
+/// On success `json` is the report; on refusal it is the structured error
+/// (`code`, `operation`, `message`, `outcomes`) and both documents are `None`.
+/// Refusals are data, not exceptions: the Python layer raises
+/// `EditPlanError` from them so the outcomes stay attached.
+#[pyfunction]
+fn edit_json(py: Python<'_>, docx: &[u8], plan_json: &str) -> PyResult<EditOutcome> {
+    let result = py.detach(|| jubarte::edit::apply_plan_json(docx, plan_json));
+    Ok(match result {
+        Ok(r) => (
+            true,
+            Some(PyBytes::new(py, &r.clean).unbind()),
+            Some(PyBytes::new(py, &r.redline).unbind()),
+            serde_json::to_string(&r.report).map_err(err)?,
+        ),
+        Err(e) => (false, None, None, serde_json::to_string(&e).map_err(err)?),
+    })
+}
+
+/// Resolve an edit plan without producing documents → `(ok, json)`; `json`
+/// is the report or the structured error.
+#[pyfunction]
+fn preview_json(py: Python<'_>, docx: &[u8], plan_json: &str) -> PyResult<(bool, String)> {
+    let result = py.detach(|| {
+        let plan = jubarte::edit::EditPlan::from_json(plan_json)?;
+        jubarte::edit::preview_plan(docx, &plan)
+    });
+    Ok(match result {
+        Ok(report) => (true, serde_json::to_string(&report).map_err(err)?),
+        Err(e) => (false, serde_json::to_string(&e).map_err(err)?),
+    })
+}
+
+/// The JSON-lines form of a report JSON (`load`, `op`..., `summary`).
+#[pyfunction]
+fn report_jsonl(report_json: &str) -> PyResult<String> {
+    let report: jubarte::edit::EditReport = serde_json::from_str(report_json).map_err(err)?;
+    Ok(report.to_jsonl())
+}
+
+/// What this build can do (`runtime: "python"`).
+#[pyfunction]
+fn capabilities_json() -> String {
+    jubarte::capabilities::capabilities_json("python")
 }
 
 #[pymodule]
@@ -121,5 +257,14 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(reject_revisions, m)?)?;
     m.add_function(wrap_pyfunction!(get_revisions_json, m)?)?;
     m.add_function(wrap_pyfunction!(docx_to_pdf, m)?)?;
+    m.add_function(wrap_pyfunction!(docx_to_png, m)?)?;
+    m.add_function(wrap_pyfunction!(render, m)?)?;
+    m.add_function(wrap_pyfunction!(source_sha256, m)?)?;
+    m.add_function(wrap_pyfunction!(inspect_json, m)?)?;
+    m.add_function(wrap_pyfunction!(markdown, m)?)?;
+    m.add_function(wrap_pyfunction!(edit_json, m)?)?;
+    m.add_function(wrap_pyfunction!(preview_json, m)?)?;
+    m.add_function(wrap_pyfunction!(report_jsonl, m)?)?;
+    m.add_function(wrap_pyfunction!(capabilities_json, m)?)?;
     Ok(())
 }

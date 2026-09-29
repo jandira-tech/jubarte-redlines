@@ -176,20 +176,20 @@ impl Page {
 /// docxide case63/64 mr 90: 229/300; fixtures_500 00b0c1ee A4: 228/300;
 /// landscape mr 36: 230/300).
 #[derive(Clone, Copy)]
-struct MarkupChrome {
-    gx: f32,
-    gy: f32,
-    gw: f32,
-    gh: f32,
-    k: f32,
-    tx: f32,
-    ty: f32,
+pub(crate) struct MarkupChrome {
+    pub(crate) gx: f32,
+    pub(crate) gy: f32,
+    pub(crate) gw: f32,
+    pub(crate) gh: f32,
+    pub(crate) k: f32,
+    pub(crate) tx: f32,
+    pub(crate) ty: f32,
 }
 
 const MARKUP_PANE_W: f32 = 257.3;
 const MARKUP_PANE_GAP: f32 = 9.15;
 
-fn markup_chrome(width: f32, height: f32, margin_r: f32) -> Option<MarkupChrome> {
+pub(crate) fn markup_chrome(width: f32, height: f32, margin_r: f32) -> Option<MarkupChrome> {
     let span = width - margin_r + MARKUP_PANE_GAP + MARKUP_PANE_W;
     if span <= 0.0 {
         return None;
