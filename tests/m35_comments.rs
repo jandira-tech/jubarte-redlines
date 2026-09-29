@@ -105,7 +105,13 @@ fn optional_bench_docx(name: &str) -> Option<Vec<u8>> {
                 std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../neurotic_docx_bench");
             p.is_dir().then_some(p)
         })?;
-    std::fs::read(root.join("corpus/word_based/docx_source").join(name)).ok()
+    // The corpus copy moved; the fixtures folder keeps the originals.
+    [
+        "corpus/word_based/docx_source",
+        "grok_run/_fixtures/fresh_docx_fixtures_and_redlines",
+    ]
+    .iter()
+    .find_map(|dir| std::fs::read(root.join(dir).join(name)).ok())
 }
 
 #[test]
@@ -206,45 +212,38 @@ fn w2_single_side_comments_carried_with_anchors_not_orphaned() {
     );
 }
 
-/// accept_revisions must not drop comment range markers (nested ends after
-/// tables; starts inside w:del). Regression: outer nested ends and del-hoisted
-/// starts were lost → comment carry 2/6 on document_100×lots_of_comments.
-/// (document_100 × lots_of_comments redline: all 6 B comments should anchor.)
+/// accept_revisions keeps every comment whose reference survives, with its
+/// range markers (nested ends after tables; starts inside w:del), and drops
+/// the ones whose reference goes with deleted text, as Word's Accept All
+/// does. Regression: outer nested ends and del-hoisted starts were lost.
+/// The lots_of_comments redline anchors comments 9/10 in deleted text and
+/// 2/3/66/67 in live text; the survivors are renumbered, as Word does.
 #[test]
 fn accept_revisions_preserves_comment_range_markers() {
-    let Some(b_path) =
+    let Some(b) =
         optional_bench_docx("docx_lots_of_comments_addition_redline_addition_v_removal.docx")
     else {
         eprintln!("skip: missing bench fixture");
         return;
     };
-    let b = b_path.clone();
-    let list_ids = |bytes: &[u8], tag: &str| -> HashSet<String> {
-        let pkg = PartFs::open(bytes).unwrap();
-        let xml = pkg.part_string("word/document.xml").unwrap();
-        let mut dom = Dom::new();
-        let d = dom.parse_xdocument(&xml);
-        let root = dom.root(d).unwrap();
-        dom.descendants(root, Some(&W::name(tag)))
-            .into_iter()
-            .filter_map(|e| dom.attribute(e, &W::name("id")).map(str::to_string))
-            .collect()
-    };
-    let before_s = list_ids(&b, "commentRangeStart");
-    let before_e = list_ids(&b, "commentRangeEnd");
     let accepted = jubarte::document_comparer::accept_revisions(&b).unwrap();
-    let after_s = list_ids(&accepted, "commentRangeStart");
-    let after_e = list_ids(&accepted, "commentRangeEnd");
-    let dropped_s: Vec<_> = before_s.difference(&after_s).collect();
-    let dropped_e: Vec<_> = before_e.difference(&after_e).collect();
-    assert_eq!(
-        after_s, before_s,
-        "accept dropped commentRangeStart ids: {dropped_s:?}"
-    );
-    assert_eq!(
-        after_e, before_e,
-        "accept dropped commentRangeEnd ids: {dropped_e:?}"
-    );
+    let pkg = PartFs::open(&accepted).unwrap();
+    let ids = comment_ids(&pkg);
+    let (starts, ends, refs) = anchor_ids(&pkg);
+    assert_eq!(ids.len(), 4, "the four live comments stay: {ids:?}");
+    for (tag, found) in [("start", starts), ("end", ends), ("reference", refs)] {
+        assert_eq!(found.len(), 4, "one {tag} each: {found:?}");
+        assert_eq!(found.into_iter().collect::<HashSet<_>>(), ids, "{tag} ids");
+    }
+    let xml = pkg.part_string("word/comments.xml").unwrap();
+    for body in [
+        "Comment on table.",
+        "Threaded comment on table.",
+        "Complex comment.",
+        "Threaded over complex comment.",
+    ] {
+        assert!(xml.contains(body), "{body} kept");
+    }
 }
 
 /// document_100 (no comments) × lots_of_comments redline (6 comment *ids* on B,
@@ -289,7 +288,8 @@ fn document100_vs_lots_of_comments_carries_unique_bodies() {
 
 /// Same comment *texts* on A and B under different ids (Word renumbered the
 /// set across two redline-derived sources). Union-by-id produces 12 comments;
-/// Word's own redline of this pair keeps 6 with 6 anchors: B's set, where the
+/// Word's own redline of this pair keeps 6 with 6 anchors: B's set (with
+/// Word's renumbered ids), where the
 /// Complex/Threaded bodies appear twice because a copied section carries its
 /// own pair. A range maps to the copy at its own place, so the two pairs are
 /// not collapsed as duplicates (this test once asserted 4, which was that
@@ -322,9 +322,15 @@ fn renumbered_same_text_comments_prefer_b_not_double_union() {
     let pkg = open_valid_output(&out);
     let ids = comment_ids(&pkg);
     let (s, e, r) = anchor_ids(&pkg);
+    // Word's redline of this pair (corpus/word_based/docx_redlines_word)
+    // keeps B's six comments renumbered in document order: 0 1 3 4 10 11.
+    let word: HashSet<String> = ["0", "1", "3", "4", "10", "11"]
+        .into_iter()
+        .map(String::from)
+        .collect();
     assert_eq!(
-        ids, b_ids,
-        "must not double-union: exactly B's six comments, as Word's redline"
+        ids, word,
+        "must not double-union: B's six comments with Word's ids"
     );
     assert_eq!(s.len(), 6, "starts={s:?}");
     assert_eq!(e.len(), 6, "ends={e:?}");

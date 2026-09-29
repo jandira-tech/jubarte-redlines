@@ -727,10 +727,54 @@ fn inject_side(
                 }
                 let refrun = new_reference_run(dom, &out_id);
                 dom.add_after_self(anchor, refrun);
+                if ev.kind == Kind::Point {
+                    step_out_of_deletion_end(dom, anchor);
+                }
             }
         }
     }
     anchored_ranges
+}
+
+/// A point comment (no range) that lands at the end of deleted text sits
+/// just after the deletion in Word's redline, so accepting it keeps the
+/// comment (145b9e67e2, ff27140d0a). A range comment's reference stays in
+/// the deletion it ends in, as Word writes it (11 of 11 in Word's redlines).
+fn step_out_of_deletion_end(dom: &mut Dom, end: NodeId) {
+    let Some(del) = dom.parent(end).filter(|&d| dom.name(d) == Some(W::del())) else {
+        return;
+    };
+    let marker = |dom: &Dom, n: NodeId| {
+        dom.name(n).is_some_and(|nm| {
+            nm == W::name("commentRangeStart")
+                || nm == W::name("commentRangeEnd")
+                || (nm == W::r()
+                    && dom.elements(n, None).into_iter().all(|c| {
+                        dom.name(c)
+                            .is_some_and(|cn| cn == W::r_pr() || cn == W::name("commentReference"))
+                    }))
+        })
+    };
+    let kids = dom.elements(del, None);
+    let Some(at) = kids.iter().position(|&k| k == end) else {
+        return;
+    };
+    if !kids[at..].iter().all(|&k| marker(dom, k)) {
+        return;
+    }
+    // The point's own start marker precedes its end; move the markers from
+    // there on, in order, after the deletion.
+    let from = kids[..at]
+        .iter()
+        .rposition(|&k| dom.name(k) != Some(W::name("commentRangeStart")))
+        .map_or(0, |i| i + 1);
+    let moving: Vec<NodeId> = kids[from..].to_vec();
+    let mut after = del;
+    for n in moving {
+        dom.remove(n);
+        dom.add_after_self(after, n);
+        after = n;
+    }
 }
 
 /// Copy `src`'s comment family into `out` (overwriting), wire content-type
@@ -1309,10 +1353,16 @@ fn drop_orphans(out: &mut PartFs, out_main: &str, anchored: &HashSet<String>) {
 }
 
 /// Select comments using both their definition fingerprint and mapped anchor.
-/// Equal bodies on distinct non-empty ranges are independent comments. Exact
-/// duplicate anchors collapse deterministically, and a live non-empty anchor
-/// supersedes a stale zero-length revision copy of the same comment.
-fn select_anchor_aware_comments(out: &PartFs, anchored: &AnchoredRanges) -> HashSet<String> {
+/// Equal bodies on distinct non-empty ranges are independent comments, and so
+/// are equal bodies one document stacks on one range (Word keeps each). An
+/// A-side comment (`a_side`, the union's appended ids) whose body and range
+/// equal a B-side one is B's copy and collapses into it; a live non-empty
+/// anchor supersedes a stale zero-length revision copy of the same comment.
+fn select_anchor_aware_comments(
+    out: &PartFs,
+    anchored: &AnchoredRanges,
+    a_side: &HashSet<String>,
+) -> HashSet<String> {
     let Some(xml) = out.part_string("word/comments.xml") else {
         return anchored.keys().cloned().collect();
     };
@@ -1336,14 +1386,19 @@ fn select_anchor_aware_comments(out: &PartFs, anchored: &AnchoredRanges) -> Hash
     let mut keep = HashSet::new();
     for candidates in groups.values() {
         let has_nonempty = candidates.iter().any(|(_, (start, end))| end > start);
-        let mut seen_ranges = HashSet::new();
+        let b_ranges: HashSet<_> = candidates
+            .iter()
+            .filter(|(id, _)| !a_side.contains(id))
+            .map(|(_, range)| *range)
+            .collect();
         for (id, range) in candidates {
             if has_nonempty && range.0 == range.1 {
                 continue;
             }
-            if seen_ranges.insert(*range) {
-                keep.insert(id.clone());
+            if a_side.contains(id) && b_ranges.contains(range) {
+                continue;
             }
+            keep.insert(id.clone());
         }
     }
     keep
@@ -1365,6 +1420,7 @@ pub fn carry_comments(
         return;
     }
     let no_map = HashMap::new();
+    let mut a_side = HashSet::new();
     let anchored = if ids_b.is_empty() {
         // only A has comments; its parts are already in out (out is A's clone)
         inject_side(
@@ -1394,6 +1450,7 @@ pub fn carry_comments(
         let mut anchored =
             inject_side(dom, result_root, (pkg2, main2), true, author, &no_map, None);
         let a_only: HashSet<String> = id_map.keys().cloned().collect();
+        a_side = id_map.values().cloned().collect();
         anchored.extend(inject_side(
             dom,
             result_root,
@@ -1405,7 +1462,7 @@ pub fn carry_comments(
         ));
         anchored
     };
-    let anchored = select_anchor_aware_comments(out, &anchored);
+    let anchored = select_anchor_aware_comments(out, &anchored, &a_side);
     // Also strip body anchors for dropped ids so they don't linger orphan-free
     // as range markers without a comments.xml entry (Ring-1).
     strip_unanchored_comment_markers(dom, result_root, &anchored);

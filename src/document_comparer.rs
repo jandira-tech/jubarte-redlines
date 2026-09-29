@@ -16,7 +16,7 @@
 use crate::comparer::{WmlComparerSettings, compare_bodies_faithful};
 use crate::namespaces::{R, W, W14};
 use crate::opc::{OpcError, PartFs};
-use crate::xmllinq::{Dom, NodeId};
+use crate::xmllinq::{Dom, NodeId, XName};
 
 /// Every relationship `xml` (part `part_b` of `pkg2`) references resolves in
 /// `part_a`'s rels to the same type, mode and target, and an internal target
@@ -4676,6 +4676,15 @@ fn mark_a_only_hf_content_as_deleted(
     }
 }
 
+/// Word's redline of a header/footer the revised document drops: the
+/// content goes pure-D and every paragraph mark but the story's last is
+/// deleted (a paragraph without `pPr` included). The last mark stays: it is
+/// the blank paragraph the revised side implies, so its properties reset to
+/// that paragraph's (the kind's own `Header`/`Footer` style at most) with
+/// the old ones in a `pPrChange` and `rPrChange`. The last paragraph of a
+/// content control keeps its mark as well. (Word also restyles that blank
+/// paragraph with a style it picks by index from the other document, e.g.
+/// `ListParagraph` for a footer; that is not copied.)
 fn mark_hf_part_content_as_deleted(out: &mut PartFs, part: &str, settings: &WmlComparerSettings) {
     let Some(xml) = out.part_string(part) else {
         return;
@@ -4688,6 +4697,20 @@ fn mark_hf_part_content_as_deleted(out: &mut PartFs, part: &str, settings: &WmlC
     let mut next_id: u32 = 1;
     let author = settings.author_for_revisions.as_str();
     let date = settings.date_time_for_revisions.as_str();
+    let mut revision = |dom: &mut Dom, name: XName| -> NodeId {
+        let mark = dom.new_element(name);
+        dom.set_attribute_value(mark, &W::author(), Some(author));
+        dom.set_attribute_value(mark, &W::date(), Some(date));
+        dom.set_attribute_value(mark, &W::id(), Some(&next_id.to_string()));
+        next_id += 1;
+        mark
+    };
+    let own_style = if dom.name(root) == Some(W::name("ftr")) {
+        "Footer"
+    } else {
+        "Header"
+    };
+    let story_last = dom.elements(root, Some(&W::p())).last().copied();
     let paras: Vec<NodeId> = dom.descendants(root, Some(&W::p()));
     for p in paras {
         if !dom.descendants(p, Some(&W::ins())).is_empty()
@@ -4700,9 +4723,6 @@ fn mark_hf_part_content_as_deleted(out: &mut PartFs, part: &str, settings: &WmlC
             .into_iter()
             .filter(|&c| dom.name(c) != Some(W::p_pr()))
             .collect();
-        if kids.is_empty() {
-            continue;
-        }
         let has_content = kids.iter().any(|&c| {
             let Some(n) = dom.name(c) else {
                 return false;
@@ -4713,65 +4733,139 @@ fn mark_hf_part_content_as_deleted(out: &mut PartFs, part: &str, settings: &WmlC
                 || n == W::name("drawing")
                 || n.local_name() == "AlternateContent"
         });
-        if !has_content {
-            continue;
-        }
-        let del = dom.new_element(W::del());
-        dom.set_attribute_value(del, &W::author(), Some(author));
-        dom.set_attribute_value(del, &W::date(), Some(date));
-        let id = next_id.to_string();
-        next_id += 1;
-        dom.set_attribute_value(del, &W::id(), Some(&id));
-        if let Some(&first) = kids.first() {
-            if dom.parent(first).is_some() {
-                dom.add_before_self(first, del);
-            } else {
-                dom.add(p, del);
-            }
-        } else {
-            dom.add(p, del);
-        }
-        for c in kids {
-            if dom.parent(c).is_none() {
-                continue;
-            }
-            dom.remove(c);
-            // Rename w:t → w:delText under this run tree for pure-D.
-            for t in dom.descendants(c, Some(&W::t())) {
-                dom.set_name(t, W::name("delText"));
-            }
-            dom.add(del, c);
-        }
-        // Mark del on pPr/rPr (Word PAGE + label shape).
-        if let Some(ppr) = dom.element(p, &W::p_pr()) {
-            let rpr = match dom.element(ppr, &W::r_pr()) {
-                Some(r) => r,
-                None => {
-                    let r = dom.new_element(W::r_pr());
-                    if let Some(ppc) = dom.element(ppr, &W::name("pPrChange")) {
-                        dom.add_before_self(ppc, r);
-                    } else {
-                        dom.add(ppr, r);
-                    }
-                    r
+        if has_content {
+            let del = revision(&mut dom, W::del());
+            dom.add_before_self(kids[0], del);
+            for c in kids {
+                dom.remove(c);
+                // Rename w:t → w:delText under this run tree for pure-D.
+                for t in dom.descendants(c, Some(&W::t())) {
+                    dom.set_name(t, W::name("delText"));
                 }
-            };
+                dom.add(del, c);
+            }
+        }
+        let ends_content_control = dom.parent(p).is_some_and(|c| {
+            dom.name(c) == Some(W::name("sdtContent"))
+                && dom.elements(c, Some(&W::p())).last() == Some(&p)
+        });
+        if Some(p) == story_last {
+            reset_to_blank_paragraph(&mut dom, p, own_style, &mut revision);
+        } else if !ends_content_control {
+            // Word's PAGE + label shape: the mark goes with the content.
+            let ppr = child_or_first(&mut dom, p, W::p_pr());
+            let rpr = child_before(&mut dom, ppr, W::r_pr(), &["sectPr", "pPrChange"]);
             if dom.element(rpr, &W::ins()).is_none() && dom.element(rpr, &W::del()).is_none() {
-                let mark = dom.new_element(W::del());
-                dom.set_attribute_value(mark, &W::author(), Some(author));
-                dom.set_attribute_value(mark, &W::date(), Some(date));
-                let mid = next_id.to_string();
-                next_id += 1;
-                dom.set_attribute_value(mark, &W::id(), Some(&mid));
-                if let Some(first) = dom.elements(rpr, None).first().copied() {
-                    dom.add_before_self(first, mark);
-                } else {
-                    dom.add(rpr, mark);
+                let mark = revision(&mut dom, W::del());
+                match dom.elements(rpr, None).first().copied() {
+                    Some(first) => dom.add_before_self(first, mark),
+                    None => dom.add(rpr, mark),
                 }
             }
         }
     }
     out.set_part(part, dom.serialize_element(root).into_bytes());
+}
+
+/// Reset the story's last paragraph to the blank one Word's redline keeps:
+/// no properties but the kind's own style, the old paragraph properties in
+/// a `pPrChange` and the old mark formatting in an `rPrChange`.
+fn reset_to_blank_paragraph(
+    dom: &mut Dom,
+    p: NodeId,
+    own_style: &str,
+    revision: &mut impl FnMut(&mut Dom, XName) -> NodeId,
+) {
+    let Some(ppr) = dom.element(p, &W::p_pr()) else {
+        return;
+    };
+    let keep = |dom: &Dom, c: NodeId| {
+        let Some(n) = dom.name(c) else {
+            return true;
+        };
+        matches!(n.local_name(), "rPr" | "sectPr" | "pPrChange")
+            || (n == W::name("pStyle") && dom.attribute(c, &W::val()) == Some(own_style))
+    };
+    let old: Vec<NodeId> = dom
+        .elements(ppr, None)
+        .into_iter()
+        .filter(|&c| !keep(dom, c))
+        .collect();
+    if !old.is_empty() && dom.element(ppr, &W::name("pPrChange")).is_none() {
+        let change = revision(dom, W::name("pPrChange"));
+        let recorded = dom.new_element(W::p_pr());
+        // The recorded properties are the whole old set, the kept style
+        // included.
+        for c in dom.elements(ppr, None) {
+            if !matches!(
+                dom.name(c).map(|n| n.local_name().to_string()).as_deref(),
+                Some("rPr" | "sectPr" | "pPrChange")
+            ) {
+                let copy = dom.clone_subtree(c);
+                dom.add(recorded, copy);
+            }
+        }
+        for c in old {
+            dom.remove(c);
+        }
+        dom.add(change, recorded);
+        dom.add(ppr, change);
+    }
+    if let Some(rpr) = dom.element(ppr, &W::r_pr()) {
+        let props: Vec<NodeId> = dom
+            .elements(rpr, None)
+            .into_iter()
+            .filter(|&c| {
+                !dom.name(c).is_some_and(|n| {
+                    matches!(
+                        n.local_name(),
+                        "ins" | "del" | "moveFrom" | "moveTo" | "rPrChange"
+                    )
+                })
+            })
+            .collect();
+        if !props.is_empty() && dom.element(rpr, &W::name("rPrChange")).is_none() {
+            let change = revision(dom, W::name("rPrChange"));
+            let recorded = dom.new_element(W::r_pr());
+            for c in props {
+                dom.remove(c);
+                dom.add(recorded, c);
+            }
+            dom.add(change, recorded);
+            dom.add(rpr, change);
+        }
+    }
+}
+
+/// `parent`'s `name` child, created as its first child when absent.
+fn child_or_first(dom: &mut Dom, parent: NodeId, name: XName) -> NodeId {
+    if let Some(c) = dom.element(parent, &name) {
+        return c;
+    }
+    let c = dom.new_element(name);
+    match dom.elements(parent, None).first().copied() {
+        Some(first) => dom.add_before_self(first, c),
+        None => dom.add(parent, c),
+    }
+    c
+}
+
+/// `parent`'s `name` child, created before the first of `later` (schema
+/// order) or last when none is present.
+fn child_before(dom: &mut Dom, parent: NodeId, name: XName, later: &[&str]) -> NodeId {
+    if let Some(c) = dom.element(parent, &name) {
+        return c;
+    }
+    let c = dom.new_element(name);
+    let anchor = dom.elements(parent, None).into_iter().find(|&n| {
+        dom.name(n)
+            .is_some_and(|nm| later.contains(&nm.local_name()))
+    });
+    match anchor {
+        Some(a) => dom.add_before_self(a, c),
+        None => dom.add(parent, c),
+    }
+    c
 }
 
 /// M379 — when the original has no real footnotes/endnotes separators but the

@@ -642,3 +642,102 @@ fn orphan_cleanup_removes_parent_edges_to_dropped_comment_paragraphs() {
         "orphan cleanup must remove extensible metadata keyed by the dead durableId"
     );
 }
+
+/// Comments one document stacks on one range with the same body are
+/// distinct comments: Word's redline keeps every one (01f3deda92, 15
+/// comments in nested threes, empty bodies included). Only a copy of the
+/// same comment from the other document collapses.
+#[test]
+fn same_body_comments_stacked_in_one_document_are_all_carried() {
+    let start: String = (0..3)
+        .map(|i| format!(r#"<w:commentRangeStart w:id="{i}"/>"#))
+        .collect();
+    let ends: String = (0..3)
+        .rev()
+        .map(|i| {
+            format!(r#"<w:commentRangeEnd w:id="{i}"/><w:r><w:commentReference w:id="{i}"/></w:r>"#)
+        })
+        .collect();
+    let body = format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Lead </w:t></w:r>{start}<w:r><w:t>target</w:t></w:r>{ends}</w:p>"#
+    );
+    let defs: String = (0..3)
+        .map(|i| {
+            format!(r#"<w:comment w:id="{i}" w:author="A" w:initials="A"><w:p><w:r><w:t>same</w:t></w:r></w:p></w:comment>"#)
+        })
+        .collect();
+    let comments = format!(
+        r#"<w:comments xmlns:w="{}">{defs}</w:comments>"#,
+        common::docx::W_NS
+    );
+    let b = common::docx::docx_with(
+        &body,
+        &[common::docx::Part {
+            name: "word/comments.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            xml: &comments,
+        }],
+    );
+    let a =
+        common::docx::docx(r#"<w:p><w:r><w:t xml:space="preserve">Lead target</w:t></w:r></w:p>"#);
+    let out = compare_documents_with_settings(&a, &b, &word_mode()).expect("compare");
+    let pkg = open_valid_output(&out);
+    let defs = comment_ids(&pkg);
+    assert_eq!(
+        defs.len(),
+        3,
+        "all three stacked comments carried: {defs:?}"
+    );
+    assert_eq!(anchor_ids(&pkg), defs, "each comment anchored");
+}
+
+/// A point comment (no range) right after text the revision deletes stays
+/// outside the deletion in Word's redline, so Accept All keeps it; a range
+/// comment's reference inside the deleted text goes with it (145b9e67e2,
+/// ff27140d0a: Word's redline and Word's Accept All of it).
+#[test]
+fn a_point_comment_after_deleted_text_stays_live() {
+    let body = r#"<w:p><w:r><w:t xml:space="preserve">Keep. </w:t></w:r><w:commentRangeStart w:id="0"/><w:r><w:t>Ouch</w:t></w:r><w:commentRangeEnd w:id="0"/><w:r><w:commentReference w:id="0"/></w:r><w:r><w:t>.</w:t></w:r><w:commentRangeStart w:id="1"/><w:commentRangeEnd w:id="1"/><w:r><w:commentReference w:id="1"/></w:r></w:p>"#;
+    let comments = format!(
+        r#"<w:comments xmlns:w="{}"><w:comment w:id="0" w:author="A" w:initials="A"><w:p><w:r><w:t>on ouch</w:t></w:r></w:p></w:comment><w:comment w:id="1" w:author="A" w:initials="A"><w:p><w:r><w:t>point</w:t></w:r></w:p></w:comment></w:comments>"#,
+        common::docx::W_NS
+    );
+    let a = common::docx::docx_with(
+        body,
+        &[common::docx::Part {
+            name: "word/comments.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            xml: &comments,
+        }],
+    );
+    let b = common::docx::docx(r#"<w:p><w:r><w:t>Keep.</w:t></w:r></w:p>"#);
+    let out = compare_documents_with_settings(&a, &b, &word_mode()).expect("compare");
+    let pkg = open_valid_output(&out);
+    let xml = pkg.part_string("word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    let in_del = |id: &str| {
+        let r = dom
+            .descendants(root, Some(&W::name("commentReference")))
+            .into_iter()
+            .find(|&r| dom.attribute(r, &W::name("id")) == Some(id))
+            .unwrap_or_else(|| panic!("reference {id}"));
+        !dom.ancestors(r, Some(&W::name("del"))).is_empty()
+    };
+    let ids = comment_ids(&pkg);
+    let live: Vec<&String> = ids.iter().filter(|id| !in_del(id)).collect();
+    assert_eq!(live.len(), 1, "only the point comment is live: {ids:?}");
+    assert_eq!(comment_ids(&pkg).len(), 2);
+    let accepted = jubarte::document_comparer::accept_revisions(&out).unwrap();
+    let left = PartFs::open(&accepted).unwrap();
+    let kept = left
+        .part_string("word/comments.xml")
+        .expect("a comment stays");
+    assert!(
+        kept.contains("point") && !kept.contains("on ouch"),
+        "{kept}"
+    );
+}
