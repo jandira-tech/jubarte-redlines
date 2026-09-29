@@ -812,3 +812,44 @@ fn comments_ending_after_a_table_stay_after_it() {
         "references stay after the table, in order"
     );
 }
+
+/// The original's comments cover a table and end in the paragraph after
+/// it; the revision deletes all of that. Word writes the references inside
+/// that paragraph's deletion, so accepting the redline drops the comments
+/// with the text they covered (29e3872eed, 4eff11f045, 5f0fed8e2a). Placed
+/// after the paragraph's properties but outside its deletion, they stayed
+/// live and survived the accept.
+#[test]
+fn comments_ending_in_a_deleted_paragraph_after_a_table_are_deleted() {
+    let comments = format!(
+        r#"<w:comments xmlns:w="{}"><w:comment w:id="0" w:author="A" w:initials="A"><w:p><w:r><w:t>first</w:t></w:r></w:p></w:comment><w:comment w:id="1" w:author="A" w:initials="A"><w:p><w:r><w:t>second</w:t></w:r></w:p></w:comment></w:comments>"#,
+        common::docx::W_NS
+    );
+    let body = r#"<w:p><w:r><w:t>Intro</w:t></w:r></w:p><w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p><w:commentRangeStart w:id="0"/><w:commentRangeStart w:id="1"/><w:r><w:t>Status</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:commentRangeEnd w:id="0"/><w:p><w:r><w:commentReference w:id="0"/></w:r><w:commentRangeEnd w:id="1"/><w:r><w:commentReference w:id="1"/></w:r><w:r><w:br w:type="page"/></w:r></w:p><w:p><w:r><w:t>Table of Contents</w:t></w:r></w:p>"#;
+    let a = common::docx::docx_with(
+        body,
+        &[common::docx::Part {
+            name: "word/comments.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            xml: &comments,
+        }],
+    );
+    let b = common::docx::docx(r#"<w:p><w:r><w:t>Intro</w:t></w:r></w:p>"#);
+    let out = compare_documents_with_settings(&a, &b, &word_mode()).expect("compare");
+    let pkg = open_valid_output(&out);
+    let xml = pkg.part_string("word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    for r in dom.descendants(root, Some(&W::name("commentReference"))) {
+        assert!(
+            !dom.ancestors(r, Some(&W::del())).is_empty(),
+            "reference {:?} outside the deletion: {xml}",
+            dom.attribute(r, &W::name("id"))
+        );
+    }
+    let accepted = jubarte::document_comparer::accept_revisions(&out).expect("accept");
+    let accepted_xml = common::docx::part_string(&accepted, "word/document.xml").unwrap();
+    assert!(!accepted_xml.contains("commentReference"), "{accepted_xml}");
+}

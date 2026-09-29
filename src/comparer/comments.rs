@@ -687,9 +687,16 @@ pub(super) fn place_after_offset(dom: &mut Dom, segs: &mut Vec<Seg>, o: usize, n
         Some(i) if segs[i].is_mark() => match segs.get(i + 1) {
             Some(next) if next.is_mark() => {
                 let p = next.leaf;
-                match dom.element(p, &W::p_pr()) {
-                    Some(ppr) => dom.add_after_self(ppr, node),
-                    None => dom.add_first(p, node),
+                // A paragraph whose content opens with a deletion takes the
+                // end inside it, as Word writes a range's end in deleted text.
+                let content = dom
+                    .elements(p, None)
+                    .into_iter()
+                    .find(|&c| dom.name(c) != Some(W::p_pr()));
+                match (content, dom.element(p, &W::p_pr())) {
+                    (Some(del), _) if dom.name(del) == Some(W::del()) => dom.add_first(del, node),
+                    (_, Some(ppr)) => dom.add_after_self(ppr, node),
+                    (_, None) => dom.add_first(p, node),
                 }
             }
             Some(_) => {
