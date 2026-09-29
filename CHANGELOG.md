@@ -45,6 +45,25 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
     order, as Word numbers them.
   - A paragraph style naming a character style is dropped, and no empty
     `w:rPr` / `w:pPr` is written.
+- `jubarte reject` matches Word's Reject All on the text and mark state of
+  all 100 of Word's redlines in the bench's `rejected_tracking` set (12
+  differed). All outputs but one pass the OOXML validator; that one's input
+  and Word's own Reject All fail it too.
+  - A move range that ends inside a table no longer takes the table's
+    `tblPr` and `tblGrid` with it (Word refused the file), and an emptied
+    moved heading before a table goes instead of keeping a live `moveFrom`
+    mark.
+  - A footnote or endnote whose reference was resolved away goes.
+  - Adjacent tables alike in every whole-table property (style, float,
+    direction) become one table, as Word holds them; a later table's own
+    borders, widths and margins ride on its rows as `tblPrEx`.
+  - Rejecting a section change keeps the section's header and footer
+    references. When a section break goes, the next section takes its
+    headers and footers if it had none of its own. Header and footer parts
+    no section shows are not written.
+- `jubarte debug A B -c text` / `-c runs` pairs header and footer parts by
+  the section reference that shows them, so Word's renumbered parts compare
+  with their counterparts.
 
 ## [0.10.0] - 2026-09-28
 

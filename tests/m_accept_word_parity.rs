@@ -8,7 +8,7 @@
 
 mod common;
 
-use common::docx::{Part, docx, docx_with, part_string};
+use common::docx::{Part, docx, docx_with, docx_with_sect, part_string};
 use common::validity::assert_word_valid_package;
 use jubarte::document_comparer::{accept_revisions, reject_revisions};
 use jubarte::namespaces::W;
@@ -538,4 +538,35 @@ fn accept_leaves_no_empty_property_elements() {
         assert!(!doc.contains(empty), "{empty} in {doc}");
     }
     assert_eq!(paragraphs(&accepted), ["new", "old"]);
+}
+
+/// R9: a section without a header reference shows its predecessor's ("link
+/// to previous"). Accepting a deleted section break removes the predecessor,
+/// so Word writes the header the last section showed into it
+/// (`_to_improve_accepted_changes` 29e3872eed, 4eff11f045) and keeps the part.
+#[test]
+fn accept_of_a_deleted_section_break_carries_its_header_on() {
+    let body = format!(
+        r#"<w:p><w:pPr><w:sectPr><w:headerReference w:type="default" r:id="rIdX0"/></w:sectPr><w:rPr><w:del w:id="1" {REV}/></w:rPr></w:pPr><w:r><w:t>One</w:t></w:r></w:p><w:p><w:r><w:t>Two</w:t></w:r></w:p>"#
+    );
+    let header = Part {
+        name: "word/header1.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+        xml: r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>Header</w:t></w:r></w:p></w:hdr>"#,
+    };
+    let accepted = accept_revisions(&docx_with_sect(&body, &[header], "")).unwrap();
+    assert_word_valid_package(&accepted);
+    assert_eq!(paragraphs(&accepted), ["OneTwo"]);
+    let xml = part_string(&accepted, "word/document.xml").unwrap();
+    assert_eq!(xml.matches("<w:sectPr>").count(), 1, "{xml}");
+    assert!(
+        xml.contains(r#"<w:headerReference w:type="default" r:id="rIdX0""#),
+        "{xml}"
+    );
+    assert!(
+        part_string(&accepted, "word/header1.xml").is_some(),
+        "header lost"
+    );
 }

@@ -1178,6 +1178,14 @@ fn a11_package_accept_cleans_every_part() {
     let original = std::fs::read("tests/fixtures/f4/original.docx").unwrap();
     let mut pkg = PartFs::open(&original).unwrap();
 
+    // Reference the injected footnote: Word drops a note nothing references.
+    let document = pkg.part_string("word/document.xml").unwrap().replacen(
+        "</w:p>",
+        "<w:r><w:footnoteReference w:id=\"1\"/></w:r></w:p>",
+        1,
+    );
+    pkg.set_part("word/document.xml", document.into_bytes());
+
     // Inject a footnotes part with an inserted run, wired via rels + CT.
     let footnotes_xml = format!(
         "<w:footnotes xmlns:w=\"{w}\">\

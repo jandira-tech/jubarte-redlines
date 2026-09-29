@@ -1381,6 +1381,115 @@ fn diff_lines<'a>(a: &'a [String], b: &'a [String]) -> Vec<Hunk<'a>> {
     hunks
 }
 
+type PartLines = BTreeMap<String, (Vec<String>, usize)>;
+
+/// Rekey both packages' header and footer parts by their role (the first
+/// section reference that shows them); a pair whose part names differ shows
+/// both.
+fn pair_by_role(a: PartLines, pa: &Package, b: PartLines, pb: &Package) -> (PartLines, PartLines) {
+    let (ra, rb) = (story_roles(pa), story_roles(pb));
+    let name_of = |roles: &HashMap<String, String>, role: &str| {
+        roles
+            .iter()
+            .find(|(_, r)| r.as_str() == role)
+            .map(|(n, _)| n.clone())
+    };
+    let rekey = |lines: PartLines, roles: &HashMap<String, String>| -> PartLines {
+        lines
+            .into_iter()
+            .map(|(name, v)| {
+                let Some(role) = roles.get(&name) else {
+                    return (name, v);
+                };
+                let (na, nb) = (name_of(&ra, role), name_of(&rb, role));
+                let key = match (na, nb) {
+                    (Some(x), Some(y)) if x != y => format!("{role} (A {x}, B {y})"),
+                    _ => name,
+                };
+                (key, v)
+            })
+            .collect()
+    };
+    (rekey(a, &ra), rekey(b, &rb))
+}
+
+/// Header and footer part name → "section N TYPE header|footer", from the
+/// first section reference that shows it.
+fn story_roles(pkg: &Package) -> HashMap<String, String> {
+    let parse = |name: &str| -> Option<(Dom, NodeId)> {
+        let e = pkg.entries.iter().find(|e| e.name == name)?;
+        let xml = decode_xml(&e.data)?;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let root = dom.root(doc)?;
+        Some((dom, root))
+    };
+    let rel_targets = |rels: &str| -> Vec<(String, String, String)> {
+        let Some((dom, root)) = parse(rels) else {
+            return Vec::new();
+        };
+        dom.elements(root, None)
+            .into_iter()
+            .map(|r| {
+                (
+                    attr(&dom, r, "Id"),
+                    attr(&dom, r, "Type"),
+                    attr(&dom, r, "Target"),
+                )
+            })
+            .collect()
+    };
+    let mut roles = HashMap::new();
+    let Some(main) = rel_targets("_rels/.rels")
+        .into_iter()
+        .find(|(_, t, _)| t.ends_with("/officeDocument"))
+        .map(|(_, _, target)| target.trim_start_matches('/').to_string())
+    else {
+        return roles;
+    };
+    let (dir, file) = main.rsplit_once('/').unwrap_or(("", main.as_str()));
+    let targets: HashMap<String, String> = rel_targets(&format!("{dir}/_rels/{file}.rels"))
+        .into_iter()
+        .map(|(id, _, target)| {
+            let part = match target.strip_prefix('/') {
+                Some(absolute) => absolute.to_string(),
+                None if dir.is_empty() => target,
+                None => format!("{dir}/{target}"),
+            };
+            (id, part)
+        })
+        .collect();
+    let Some((dom, root)) = parse(&main) else {
+        return roles;
+    };
+    let sections = dom
+        .descendants(root, None)
+        .into_iter()
+        .filter(|&e| local(&dom, e) == "sectPr");
+    for (i, sect) in sections.enumerate() {
+        for r in dom.elements(sect, None) {
+            let kind = match local(&dom, r).as_str() {
+                "headerReference" => "header",
+                "footerReference" => "footer",
+                _ => continue,
+            };
+            // w:type and r:id share no local name, so `attr` tells them apart.
+            let ty = attr(&dom, r, "type");
+            let ty = if ty.is_empty() {
+                "default".to_string()
+            } else {
+                ty
+            };
+            if let Some(part) = targets.get(&attr(&dom, r, "id")) {
+                roles
+                    .entry(part.clone())
+                    .or_insert_with(|| format!("section {} {ty} {kind}", i + 1));
+            }
+        }
+    }
+    roles
+}
+
 /// `text` / `xml` for one package, or their per-part differences between two.
 fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options) -> String {
     let lines_of = |pkg: &Package| -> BTreeMap<String, (Vec<String>, usize)> {
@@ -1429,6 +1538,13 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
         return out;
     };
     let b = lines_of(pb);
+    // Header and footer parts pair by the section that shows them (Word
+    // renumbers them on save); XML stays by part name.
+    let (a, b) = if check == Check::Xml {
+        (a, b)
+    } else {
+        pair_by_role(a, pa, b, pb)
+    };
     let names: std::collections::BTreeSet<&String> = a.keys().chain(b.keys()).collect();
     for name in names {
         let (la, lb) = match (a.get(name), b.get(name)) {
@@ -2062,6 +2178,46 @@ mod tests {
         let out = report(&docx(body), None, &opts_for(Check::Runs)).unwrap();
         let expected = "  ¶- [jc=both pStyle=Body] ¶«sz=20» «b rFonts(ascii=Arial,cs=Arial) sz=24»Bold too«»plain end\n";
         assert!(out.contains(expected), "{expected:?} in\n{out}");
+    }
+
+    /// A package whose one section shows `header_text` from the header part
+    /// `part`, related as `rid`.
+    fn docx_with_header(part: &str, rid: &str, header_text: &str) -> Vec<u8> {
+        let body = format!(
+            r#"<w:p><w:r><w:t>Body</w:t></w:r></w:p><w:sectPr><w:headerReference w:type="first" r:id="{rid}"/></w:sectPr>"#
+        );
+        let rels = format!(
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="{rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="{}"/></Relationships>"#,
+            part.trim_start_matches("word/")
+        );
+        let header = format!(
+            r#"<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>{header_text}</w:t></w:r></w:p></w:hdr>"#
+        );
+        zip_of(&[
+            ("[Content_Types].xml", TYPES),
+            ("_rels/.rels", ROOT_RELS),
+            ("word/document.xml", &document(&body)),
+            ("word/_rels/document.xml.rels", &rels),
+            (part, &header),
+        ])
+    }
+
+    /// Word renumbers header and footer parts on save: two packages pair
+    /// them by the section reference that shows them, not by part name.
+    #[test]
+    fn text_pairs_headers_by_the_section_that_shows_them() {
+        let a = docx_with_header("word/header1.xml", "rId7", "Top");
+        let b = docx_with_header("word/header3.xml", "rId10", "Top");
+        let same = report(&a, Some(&b), &opts_for(Check::Text)).unwrap();
+        assert_eq!(same, "text identical\n");
+        let c = docx_with_header("word/header3.xml", "rId10", "Topper");
+        let out = report(&a, Some(&c), &opts_for(Check::Text)).unwrap();
+        assert!(
+            out.starts_with(
+                "section 1 first header (A word/header1.xml, B word/header3.xml): 1 line differs\n"
+            ),
+            "{out}"
+        );
     }
 
     #[test]

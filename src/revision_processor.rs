@@ -10,6 +10,8 @@
 mod annotation_ids;
 mod bookmarks;
 mod comments;
+mod notes;
+mod sections;
 mod word_save;
 
 use std::collections::{HashMap, HashSet};
@@ -546,6 +548,24 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
         {
             let rpr_clone = dom.clone_subtree(rpr);
             dom.add(new_prop, rpr_clone);
+        }
+        // R9: a sectPrChange records the section's properties, never its
+        // header and footer references (CT_SectPrBase has none): the live
+        // ones stay, first as the schema orders them (205503ead9).
+        if name == W::sect_pr() {
+            let refs: Vec<NodeId> = dom
+                .elements(node, None)
+                .into_iter()
+                .filter(|&e| {
+                    dom.name(e).is_some_and(|n| {
+                        n == W::name("headerReference") || n == W::name("footerReference")
+                    })
+                })
+                .collect();
+            for r in refs.into_iter().rev() {
+                let c = dom.clone_subtree(r);
+                dom.add_first(new_prop, c);
+            }
         }
         return reject_revisions_for_part_transform(dom, new_prop);
     }
@@ -2311,6 +2331,51 @@ pub fn accept_deleted_cells_transform(dom: &mut Dom, node: NodeId) -> NodeId {
 
 // ─────────────── A.8 — merge adjacent tables ────────────────────────────────
 
+/// R8: the `tblPrEx`-able properties of `member` that `first` (whose
+/// `tblPr` the merged table keeps) does not share.
+fn own_tbl_pr_ex(dom: &Dom, first: NodeId, member: NodeId) -> Vec<NodeId> {
+    let ex_of = |t: NodeId| -> Vec<NodeId> {
+        dom.element(t, &W::tbl_pr())
+            .map(|pr| {
+                dom.elements(pr, None)
+                    .into_iter()
+                    .filter(|&c| tbl_pr_ex_rank(dom, c).is_some())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let shared: HashSet<String> = ex_of(first)
+        .into_iter()
+        .map(|c| dom.serialize_element(c))
+        .collect();
+    ex_of(member)
+        .into_iter()
+        .filter(|&c| !shared.contains(&dom.serialize_element(c)))
+        .collect()
+}
+
+/// R8: row `tr`'s `tblPrEx` with its table's `own` properties under the
+/// row's own, in schema order.
+fn row_tbl_pr_ex(dom: &mut Dom, tr: NodeId, own: &[NodeId]) -> NodeId {
+    let row_ex: Vec<NodeId> = dom
+        .element(tr, &W::name("tblPrEx"))
+        .map(|ex| dom.elements(ex, None))
+        .unwrap_or_default();
+    let mut kids: Vec<NodeId> = row_ex.clone();
+    for &c in own {
+        if !row_ex.iter().any(|&r| dom.name(r) == dom.name(c)) {
+            kids.push(c);
+        }
+    }
+    kids.sort_by_key(|&c| tbl_pr_ex_rank(dom, c).unwrap_or(TBL_PR_EX.len()));
+    let ex = dom.new_element(W::name("tblPrEx"));
+    for c in kids {
+        let cc = dom.clone_subtree(c);
+        dom.add(ex, cc);
+    }
+    ex
+}
+
 /// A.8 — `FixWidths` (:1484): clone the table and rewrite each `w:tcW`'s
 /// `w:w` to the sum of the grid columns its cell spans (per the ORIGINAL
 /// table's `tblGrid`). FAITHFUL: cells without a `tcW` do not advance the
@@ -2367,40 +2432,104 @@ fn table_has_revision_marks(dom: &Dom, tbl: NodeId) -> bool {
     false
 }
 
+/// Which runs of adjacent tables A.8 merges.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TableMerge {
+    /// M112 (compare): a run with a revision-marked member.
+    Revised,
+    /// Word's save after Accept / Reject All: a run of tables alike in every
+    /// property only a whole table carries (R8).
+    WordSave,
+}
+
+/// The `tblPr` children a row can override through `w:tblPrEx`
+/// (`CT_TblPrExBase`), in schema order.
+const TBL_PR_EX: [&str; 9] = [
+    "tblW",
+    "jc",
+    "tblCellSpacing",
+    "tblInd",
+    "tblBorders",
+    "shd",
+    "tblLayout",
+    "tblCellMar",
+    "tblLook",
+];
+
+fn tbl_pr_ex_rank(dom: &Dom, e: NodeId) -> Option<usize> {
+    let n = dom.name(e)?;
+    (n.namespace_name() == W::URI)
+        .then(|| TBL_PR_EX.iter().position(|&l| l == n.local_name()))
+        .flatten()
+}
+
+/// A table's whole-table properties (its `tblPr` minus what `tblPrEx` can
+/// carry), serialized: Word joins adjacent tables whose keys agree.
+fn whole_table_key(dom: &Dom, tbl: NodeId) -> String {
+    let mut key = String::from("tbl");
+    if let Some(pr) = dom.element(tbl, &W::tbl_pr()) {
+        for c in dom.elements(pr, None) {
+            if tbl_pr_ex_rank(dom, c).is_none() {
+                key.push_str(&dom.serialize_element(c));
+            }
+        }
+    }
+    key
+}
+
+/// The grouping key of A.8 for `e` (empty: not a table).
+fn table_merge_key(dom: &Dom, e: NodeId, mode: TableMerge) -> String {
+    if dom.name(e) != Some(W::tbl()) {
+        return String::new();
+    }
+    if mode == TableMerge::WordSave {
+        return whole_table_key(dom, e);
+    }
+    let bidi = dom
+        .elements(e, Some(&W::tbl_pr()))
+        .into_iter()
+        .any(|p| dom.element(p, &W::name("bidiVisual")).is_some());
+    if bidi {
+        "tbl|bidiVisual".to_string()
+    } else {
+        "tbl".to_string()
+    }
+}
+
 /// True if any element under `root` has ≥2 adjacent direct `w:tbl` children
-/// where at least one member carries revision marks (the only case A.8 merges).
-fn subtree_needs_adjacent_table_merge(dom: &Dom, root: NodeId) -> bool {
-    let tbl_name = W::tbl();
-    fn walk(dom: &Dom, id: NodeId, tbl_name: &XName) -> bool {
+/// that A.8 merges in `mode`.
+fn subtree_needs_adjacent_table_merge(dom: &Dom, root: NodeId, mode: TableMerge) -> bool {
+    fn walk(dom: &Dom, id: NodeId, mode: TableMerge) -> bool {
         if !dom.is_element(id) {
             return false;
         }
         // Scan direct element children for adjacent tbl runs.
         let kids = dom.elements(id, None);
-        let mut run = 0usize;
+        let mut prev_key = String::new();
         let mut run_has_rev = false;
         for &k in &kids {
-            if dom.name(k).as_ref() == Some(tbl_name) {
-                run += 1;
-                if table_has_revision_marks(dom, k) {
-                    run_has_rev = true;
-                }
-                if run >= 2 && run_has_rev {
-                    return true;
-                }
-            } else {
-                run = 0;
+            let key = table_merge_key(dom, k, mode);
+            if key.is_empty() {
+                prev_key = key;
                 run_has_rev = false;
+                continue;
             }
-        }
-        for &k in &kids {
-            if walk(dom, k, tbl_name) {
-                return true;
+            let joins = key == prev_key;
+            match mode {
+                TableMerge::WordSave if joins => return true,
+                TableMerge::WordSave => {}
+                TableMerge::Revised => {
+                    run_has_rev = (joins && run_has_rev) || table_has_revision_marks(dom, k);
+                    if joins && run_has_rev {
+                        return true;
+                    }
+                }
             }
+            prev_key = key;
         }
-        false
+        kids.into_iter().any(|k| walk(dom, k, mode))
     }
-    walk(dom, root, &tbl_name)
+    walk(dom, root, mode)
 }
 
 /// A.8 — `MergeAdjacentTablesTransform` (:464): where an element has direct
@@ -2420,8 +2549,20 @@ fn subtree_needs_adjacent_table_merge(dom: &Dom, root: NodeId) -> bool {
 /// ACCEPT-SKIP-A8: when no mergeable adjacent revision-bearing table group
 /// exists anywhere under `node`, transfer without a full-tree rebuild.
 pub fn merge_adjacent_tables_transform(dom: &mut Dom, node: NodeId) -> NodeId {
+    merge_adjacent_tables(dom, node, TableMerge::Revised)
+}
+
+/// R8 — Word's save after Accept / Reject All: adjacent tables alike in every
+/// whole-table property are one table in Word's model (72cc9f4ac6,
+/// 3d4318d7e9); a later member's own `tblPrEx`-able properties ride on its
+/// rows. Identity when nothing merges.
+fn merge_adjacent_tables_like_word(dom: &mut Dom, node: NodeId) -> NodeId {
+    merge_adjacent_tables(dom, node, TableMerge::WordSave)
+}
+
+fn merge_adjacent_tables(dom: &mut Dom, node: NodeId, mode: TableMerge) -> NodeId {
     // ACCEPT-SKIP-A8: nothing to merge → identity (keep parent links).
-    if !subtree_needs_adjacent_table_merge(dom, node) {
+    if !subtree_needs_adjacent_table_merge(dom, node, mode) {
         return node;
     }
     if !dom.is_element(node) {
@@ -2435,27 +2576,14 @@ pub fn merge_adjacent_tables_transform(dom: &mut Dom, node: NodeId) -> NodeId {
             dom.set_attribute_value(ne, &an, Some(&av));
         }
         for c in dom.nodes(node) {
-            let tc = merge_adjacent_tables_transform(dom, c);
+            let tc = merge_adjacent_tables(dom, c, mode);
             dom.add(ne, tc);
         }
         return ne;
     }
 
     let children = dom.elements(node, None);
-    let grouped = crate::util::group_adjacent(children, |&e| {
-        if dom.name(e) != Some(tbl_name.clone()) {
-            return String::new();
-        }
-        let bidi = dom
-            .elements(e, Some(&W::tbl_pr()))
-            .into_iter()
-            .any(|p| dom.element(p, &W::name("bidiVisual")).is_some());
-        if bidi {
-            "tbl|bidiVisual".to_string()
-        } else {
-            "tbl".to_string()
-        }
-    });
+    let grouped = crate::util::group_adjacent(children, |&e| table_merge_key(dom, e, mode));
 
     let ne = dom.new_element(name);
     for (an, av) in dom.attributes(node) {
@@ -2470,7 +2598,7 @@ pub fn merge_adjacent_tables_transform(dom: &mut Dom, node: NodeId) -> NodeId {
             continue;
         }
         // M112: leave clean adjacent tables unmerged (Word Compare shape).
-        if !group.iter().any(|&t| table_has_revision_marks(dom, t)) {
+        if mode == TableMerge::Revised && !group.iter().any(|&t| table_has_revision_marks(dom, t)) {
             for e in group {
                 let c = dom.clone_subtree(e);
                 dom.add(ne, c);
@@ -2510,16 +2638,28 @@ pub fn merge_adjacent_tables_transform(dom: &mut Dom, node: NodeId) -> NodeId {
         dom.add(new_table, new_grid);
 
         for &tbl in &group {
+            let own_ex = if mode == TableMerge::WordSave && tbl != group[0] {
+                own_tbl_pr_ex(dom, group[0], tbl)
+            } else {
+                Vec::new()
+            };
             let fixed = fix_widths(dom, tbl);
             for tr in dom.elements(fixed, Some(&W::tr())) {
                 let new_row = dom.new_element(W::tr());
                 for (an, av) in dom.attributes(tr) {
                     dom.set_attribute_value(new_row, &an, Some(&av));
                 }
+                if !own_ex.is_empty() {
+                    let ex = row_tbl_pr_ex(dom, tr, &own_ex);
+                    dom.add(new_row, ex);
+                }
                 let non_cells: Vec<NodeId> = dom
                     .elements(tr, None)
                     .into_iter()
-                    .filter(|&e| dom.name(e) != Some(W::tc()))
+                    .filter(|&e| {
+                        dom.name(e) != Some(W::tc())
+                            && (own_ex.is_empty() || dom.name(e) != Some(W::name("tblPrEx")))
+                    })
                     .collect();
                 for e in non_cells {
                     let c = dom.clone_subtree(e);
@@ -2888,12 +3028,18 @@ pub fn accept_revisions_package(pkg: &mut crate::opc::PartFs) {
             });
         } else {
             process_part(pkg, &part, |dom, root| {
+                sections::carry_vanishing_section_references(
+                    dom,
+                    root,
+                    sections::Resolution::Accept,
+                );
                 Some(accept_revisions_for_part_content(dom, root))
             });
         }
     }
     let stories = story_parts(&parts);
     comments::prune_orphan_comments(pkg, &stories);
+    notes::prune_orphan_notes(pkg, &stories);
     annotation_ids::renumber(pkg, &stories);
     word_save::tidy(pkg, &stories);
 }
@@ -2922,12 +3068,18 @@ pub fn reject_revisions_package(pkg: &mut crate::opc::PartFs) {
             });
         } else {
             process_part(pkg, &part, |dom, root| {
+                sections::carry_vanishing_section_references(
+                    dom,
+                    root,
+                    sections::Resolution::Reject,
+                );
                 Some(reject_revisions_document(dom, root))
             });
         }
     }
     let stories = story_parts(&parts);
     comments::prune_orphan_comments(pkg, &stories);
+    notes::prune_orphan_notes(pkg, &stories);
     annotation_ids::renumber(pkg, &stories);
     word_save::tidy(pkg, &stories);
 }

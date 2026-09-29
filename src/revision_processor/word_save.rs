@@ -7,17 +7,23 @@
 //! - a `w:pStyle` naming a style that is not a paragraph style: Word reads it
 //!   as no style (its own redlines carry `HeaderChar` there,
 //!   `_to_improve_accepted_changes` 6fb9bbdb49, bc0135eaa1);
-//! - an empty `w:rPr` (run or paragraph mark) and an empty `w:pPr`.
+//! - an empty `w:rPr` (run or paragraph mark) and an empty `w:pPr`;
+//! - the boundary between adjacent tables alike in every whole-table
+//!   property: Word's model holds them as one table (R8, bench
+//!   `rejected_tracking` 72cc9f4ac6, 3d4318d7e9; the 11 adjacent pairs in
+//!   Word's own outputs all differ in `tblStyle`);
+//! - a header or footer part no section references (R9, 205503ead9).
 
 use std::collections::HashSet;
 
 use super::comments::Parsed;
-use crate::namespaces::W;
+use crate::namespaces::{R, W};
 use crate::opc::PartFs;
 use crate::xmllinq::{Dom, NodeId};
 
 /// Tidy `story_parts` as Word saves them (module docs).
 pub(super) fn tidy(pkg: &mut PartFs, story_parts: &[String]) {
+    drop_unreferenced_headers_footers(pkg);
     let foreign = non_paragraph_styles(pkg);
     for part in story_parts {
         let Some(mut s) = Parsed::load(pkg, part) else {
@@ -35,10 +41,45 @@ pub(super) fn tidy(pkg: &mut PartFs, story_parts: &[String]) {
                 }
             }
         }
+        let merged = super::merge_adjacent_tables_like_word(&mut s.dom, s.root);
+        if merged != s.root {
+            s.dom.replace_with(s.root, &[merged]);
+            s.root = merged;
+            changed = true;
+        }
         changed |= drop_empty(&mut s.dom, s.root);
         if changed {
             s.store(pkg);
         }
+    }
+}
+
+/// Remove the header and footer parts no section references any more.
+fn drop_unreferenced_headers_footers(pkg: &mut PartFs) {
+    let main = pkg
+        .main_document_part()
+        .unwrap_or_else(|| "word/document.xml".to_string());
+    let Some(doc) = Parsed::load(pkg, &main) else {
+        return;
+    };
+    let referenced: HashSet<String> = ["headerReference", "footerReference"]
+        .into_iter()
+        .flat_map(|local| doc.w(local))
+        .filter_map(|r| doc.dom.attribute(r, &R::name("id")).map(str::to_string))
+        .collect();
+    let orphans: Vec<String> = pkg
+        .read_rels_for(&main)
+        .map(|rels| {
+            rels.items
+                .iter()
+                .filter(|r| r.rel_type.ends_with("/header") || r.rel_type.ends_with("/footer"))
+                .filter(|r| !referenced.contains(&r.id))
+                .map(|r| r.id.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    for id in orphans {
+        pkg.remove_related_part(&main, &id);
     }
 }
 
