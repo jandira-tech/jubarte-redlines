@@ -415,3 +415,36 @@ fn unrelated_documents_pair_their_opening_blanks() {
     assert!(!tracked(paras[0]), "the opening blanks pair: {red}");
     assert!(tracked(paras[1]), "B's second blank is inserted: {red}");
 }
+
+/// The revision ends at a table both documents share; the original goes on
+/// with a blank paragraph and more content. The revised closing mark is the
+/// story's: Word pairs it with the original's closing mark and deletes the
+/// blank after the table (92075b7449). Pairing it with that blank, which
+/// opens the window after the table, left the blank live after accept.
+#[test]
+fn a_shared_closing_table_keeps_the_final_marks_paired() {
+    let p = |t: &str| format!("<w:p><w:r><w:t>{t}</w:t></w:r></w:p>");
+    let shared = table(&[&["Business owner", ""], &["Legal and compliance", ""]]);
+    let a = common::docx::docx(&format!(
+        "{}{shared}<w:p/>{}{}{}<w:p/>",
+        p("Word versus Docs"),
+        p("Executive summary"),
+        p("Word should be positioned as the premium platform."),
+        p("Parity: coauthoring, comments and version history."),
+    ));
+    let b = common::docx::docx(&format!("{}{shared}<w:p/>", p("Word versus Docs")));
+    let out = compare_documents(&a, &b, "Redline").expect("compare");
+    assert_word_valid_package(&out);
+    let accepted = accept_revisions(&out).expect("accept");
+    let xml = part_string(&accepted, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    let body = dom.element(root, &W::body()).unwrap();
+    let kids: Vec<String> = dom
+        .elements(body, None)
+        .into_iter()
+        .map(|k| dom.name(k).unwrap().local_name().to_string())
+        .collect();
+    assert_eq!(kids, ["p", "tbl", "p", "sectPr"], "{xml}");
+}

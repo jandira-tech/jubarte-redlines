@@ -8680,13 +8680,55 @@ pub fn process_correlated_hashes(unknown: &CorrelatedSequence) -> Option<Vec<Cor
     Some(out)
 }
 
-/// Ownership-only production form of [`process_correlated_hashes`]. A decline
+#[cfg(test)]
+/// Ownership-only form of [`process_correlated_hashes`], kept for the
+/// CORR-IDX tests; production runs [`process_correlated_hashes_in_story`]. A decline
 /// returns the original sequence intact so the next resolver can inspect it;
 /// an accepted run is split into the same regions while moving every unit.
 fn process_correlated_hashes_owned(
-    mut unknown: CorrelatedSequence,
+    unknown: CorrelatedSequence,
 ) -> Result<Vec<CorrelatedSequence>, CorrelatedSequence> {
-    let Some(run) = correlated_hash_run(&unknown) else {
+    let run = correlated_hash_run(&unknown);
+    split_at_correlated_run(unknown, run)
+}
+
+/// [`process_correlated_hashes_owned`] with Word's structural final pair: a
+/// run ending on the revised story's closing mark against a blank the
+/// original runs on past stops before that pair, which then goes to the two
+/// closing marks (92075b7449: the blank after a shared closing table).
+fn process_correlated_hashes_in_story(
+    dom: &Dom,
+    unknown: CorrelatedSequence,
+    settings: &WmlComparerSettings,
+) -> Result<Vec<CorrelatedSequence>, CorrelatedSequence> {
+    let mut run = correlated_hash_run(&unknown);
+    if let Some(r) = run.as_mut()
+        && settings.merge_replaced_paragraphs
+        && r.len > 0
+    {
+        let cul1 = unknown.com_units_1.as_deref().unwrap_or(&[]);
+        let cul2 = unknown.com_units_2.as_deref().unwrap_or(&[]);
+        let (l, rr) = (
+            &cul1[r.left_start + r.len - 1],
+            &cul2[r.right_start + r.len - 1],
+        );
+        if unit_closes_story(dom, rr)
+            && !unit_closes_story(dom, l)
+            && unit_is_textless_paragraph_matter(dom, l)
+            && cul1.last().is_some_and(|u| unit_closes_story(dom, u))
+        {
+            r.len -= 1;
+        }
+    }
+    let run = run.filter(|r| r.len > 0);
+    split_at_correlated_run(unknown, run)
+}
+
+fn split_at_correlated_run(
+    mut unknown: CorrelatedSequence,
+    run: Option<CorrelatedHashRun>,
+) -> Result<Vec<CorrelatedSequence>, CorrelatedSequence> {
+    let Some(run) = run else {
         return Err(unknown);
     };
 
@@ -8844,6 +8886,19 @@ pub fn find_common_at_beginning_and_end(
     }
     if ccb != 0 && (ccb as f64) / (length_to_compare as f64) < settings.detail_threshold {
         ccb = 0;
+    }
+    // The revised story's closing mark is no prefix match for a blank the
+    // original runs on past: Word pairs the two closing marks and deletes
+    // the blank (92075b7449).
+    if ccb != 0
+        && settings.merge_replaced_paragraphs
+        && ccb < n1
+        && unit_closes_story(dom, &cul2[ccb - 1])
+        && !unit_closes_story(dom, &cul1[ccb - 1])
+        && unit_is_textless_paragraph_matter(dom, &cul1[ccb - 1])
+        && unit_closes_story(dom, &cul1[n1 - 1])
+    {
+        ccb -= 1;
     }
     if ccb != 0 {
         let mut out = Vec::new();
@@ -9020,7 +9075,7 @@ pub fn resolve_correlated_sequences(
         // The correlated-hash fast path consumes and splits its unit vectors so
         // large paragraph/table groups are moved, not deep-cloned. On decline it
         // returns the original sequence intact for the remaining resolvers.
-        let resolved = match process_correlated_hashes_owned(unknown) {
+        let resolved = match process_correlated_hashes_in_story(dom, unknown, settings) {
             Ok(r) => r,
             Err(unknown) => match find_common_at_beginning_and_end(dom, &unknown, settings) {
                 Some(r) => r,
