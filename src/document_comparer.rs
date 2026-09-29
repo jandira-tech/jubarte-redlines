@@ -1579,7 +1579,7 @@ fn merge_revised_style_definitions(
     out_root: NodeId,
     b_root: NodeId,
     settings: &WmlComparerSettings,
-    a_declared_ids: &std::collections::HashSet<String>,
+    a_declared_keys: &std::collections::HashSet<(String, String)>,
 ) -> bool {
     let style_nm = W::name("style");
     let style_id = W::name("styleId");
@@ -1875,12 +1875,18 @@ fn merge_revised_style_definitions(
         let b_lang = b_dd.or(a_dd).and_then(|d| dom.element(d, &W::name("lang")));
         if fonts_differ || !deltas.is_empty() || ligs.0 != ligs.1 || !sp_deltas.is_empty() {
             for style in dom.elements(out_root, Some(&style_nm)) {
-                let Some(id) = dom.attribute(style, &style_id).map(str::to_string) else {
+                // Styles pair by (type, name), never id: the revision's
+                // header may be `Encabezado` where the output says `Header`
+                // (cda19d51ed), the original's List Paragraph `a4`.
+                let Some(key) = style_match_key(dom, style) else {
                     continue;
                 };
-                if a_declared_ids.contains(&id) || !b_by_id.contains_key(&id) {
+                if a_declared_keys.contains(&key) {
                     continue;
                 }
+                let Some(&b_side) = b_by_key.get(&key) else {
+                    continue;
+                };
                 if Some(style) == normal_out {
                     continue;
                 }
@@ -1920,7 +1926,7 @@ fn merge_revised_style_definitions(
                         r
                     }
                 };
-                let b_side = b_by_id_for_chain.get(&id).copied();
+                let b_side = Some(b_side);
                 let b_chain_has = |dom: &Dom, name: &crate::xmllinq::XName| -> bool {
                     b_side.is_some_and(|bs| b_chain_has_rpr_elem(dom, bs, name))
                 };
@@ -6456,21 +6462,26 @@ fn compare_documents_impl(
             // A's definitions: `merge_normal_style_*` below rewrites Normal to
             // B's values, and every style based on Normal would then resolve its
             // "original" chain against the already-revised Normal.
-            // S2: ids A actually declared — styles in `or` beyond this set
-            // were copied from B and take the phase-2 docDefaults bake.
-            let a_declared_ids: std::collections::HashSet<String> = pkg1
+            // S2: the styles A actually declared, by (type, name) — styles in
+            // `or` beyond this set were copied from B and take the phase-2
+            // docDefaults bake.
+            let a_declared_keys: std::collections::HashSet<(String, String)> = pkg1
                 .part_string("word/styles.xml")
                 .map(|xml| {
-                    xml.match_indices("w:styleId=\"")
-                        .filter_map(|(i, m)| {
-                            let rest = &xml[i + m.len()..];
-                            rest.find('"').map(|e| rest[..e].to_string())
+                    let mut ad = Dom::new();
+                    let doc = ad.parse_xdocument(&xml);
+                    ad.root(doc)
+                        .map(|r| {
+                            ad.elements(r, Some(&W::name("style")))
+                                .into_iter()
+                                .filter_map(|s| style_match_key(&ad, s))
+                                .collect()
                         })
-                        .collect()
+                        .unwrap_or_default()
                 })
                 .unwrap_or_default();
             let mut changed =
-                merge_revised_style_definitions(&mut sd, or, br, settings, &a_declared_ids);
+                merge_revised_style_definitions(&mut sd, or, br, settings, &a_declared_keys);
             changed |= merge_normal_style_spacing(&mut sd, or, br, settings);
             // M-PAG mechanism 2b / M71: rewrite Normal rPr to B's effective
             // metrics when they differ. Formerly gated on header/footer→Normal

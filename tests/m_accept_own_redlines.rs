@@ -1199,3 +1199,72 @@ fn an_item_inserted_in_a_table_keeps_the_table_style_spacing() {
     // overrides) takes nothing.
     assert_eq!(spacing_of(&accepted, "Type of mobility"), None);
 }
+
+/// The `w:spacing` of the style named `name` in the package's stylesheet.
+fn style_spacing(pkg: &[u8], name: &str) -> Option<String> {
+    let xml = part_string(pkg, "word/styles.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    let style = dom
+        .elements(root, Some(&W::name("style")))
+        .into_iter()
+        .find(|&s| {
+            dom.element(s, &W::name("name"))
+                .and_then(|n| dom.attribute(n, &W::val()))
+                == Some(name)
+        })?;
+    let sp = dom.element(dom.element(style, &W::p_pr())?, &W::name("spacing"))?;
+    let mut attrs: Vec<String> = dom
+        .attributes(sp)
+        .into_iter()
+        .map(|(k, v)| format!("{}={v}", k.local_name()))
+        .collect();
+    attrs.sort();
+    Some(attrs.join(" "))
+}
+
+/// A style the revision brings that the original lacks is copied with the
+/// revision's look baked in against the original's docDefaults: the
+/// revision's header style resolves spacing through its own docDefaults
+/// (none: 0/240), the output's docDefaults say 160/259, so Word writes
+/// `after=0 line=240` on the copy and records the revision's definition
+/// (cda19d51ed, whose revision calls it `Encabezado`). Ours looked the
+/// copied style up in the revision by the output's id, `Header`, found
+/// nothing and left it at 160/259.
+#[test]
+fn a_style_copied_from_the_revision_keeps_its_spacing_whatever_its_id() {
+    let a = common::docx::docx_with(
+        r#"<w:p><w:r><w:t>Body text</w:t></w:r></w:p>"#,
+        &[Part {
+            name: "word/styles.xml",
+            content_type: STYLES,
+            rel_type: STYLES_REL,
+            xml: &format!(
+                r#"<w:styles xmlns:w="{w}"><w:docDefaults><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="259" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="a"><w:name w:val="Normal"/></w:style></w:styles>"#,
+                w = common::docx::W_NS
+            ),
+        }],
+    );
+    let b = common::docx::docx_with(
+        r#"<w:p><w:r><w:t>Body text</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Encabezado"/></w:pPr><w:r><w:t>Running head</w:t></w:r></w:p>"#,
+        &[Part {
+            name: "word/styles.xml",
+            content_type: STYLES,
+            rel_type: STYLES_REL,
+            xml: &format!(
+                r#"<w:styles xmlns:w="{w}"><w:docDefaults><w:pPrDefault><w:pPr/></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Encabezado"><w:name w:val="header"/><w:pPr><w:tabs><w:tab w:val="center" w:pos="4419"/></w:tabs></w:pPr></w:style></w:styles>"#,
+                w = common::docx::W_NS
+            ),
+        }],
+    );
+    let out = compare_documents(&a, &b, "Redline").expect("compare");
+    assert_word_valid_package(&out);
+    let accepted = accept_revisions(&out).expect("accept");
+    assert_eq!(
+        style_spacing(&accepted, "header").as_deref(),
+        Some("after=0 line=240 lineRule=auto"),
+        "{}",
+        part_string(&out, "word/styles.xml").unwrap()
+    );
+}
