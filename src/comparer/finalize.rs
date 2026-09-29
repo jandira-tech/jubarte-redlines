@@ -16,6 +16,7 @@ use crate::namespaces::{M, MC, PT, R, W, W14, WP14};
 use crate::xmllinq::{Dom, NodeId, XName, XNamespace};
 
 use super::WmlComparerSettings;
+use super::formatchg;
 use super::tables::ALLOWABLE_RUN_CHILDREN;
 
 // Per-paragraph pure-del / mixed classification cache for finalize peels.
@@ -2726,6 +2727,128 @@ pub fn trailing_empty_spacing_to_pprchange(
     {
         dom.remove(rpr);
     }
+}
+
+/// The paragraph properties of the story's closing paragraph, cloned
+/// without scratch attributes before atomize consumes `body`: `None` when
+/// the story does not end on a paragraph, an empty `w:pPr` when the
+/// paragraph has none.
+pub fn closing_paragraph_properties(dom: &mut Dom, body: NodeId) -> Option<NodeId> {
+    let last = dom
+        .elements(body, None)
+        .into_iter()
+        .rev()
+        .find(|&k| !dom.name_is(k, &W::sect_pr()))?;
+    if !dom.name_is(last, &W::p()) {
+        return None;
+    }
+    Some(match dom.element(last, &W::p_pr()) {
+        Some(ppr) => drop_pt_bookkeeping(dom, ppr),
+        None => dom.new_element(W::p_pr()),
+    })
+}
+
+/// The story's closing mark is never revised: accepted, it closes the
+/// revision; rejected, the original. Word writes the revision's closing
+/// paragraph properties live on it and records the original's in a
+/// `pPrChange` (cda19d51ed: `pStyle=Cuerpo jc=both` live over the
+/// original's `spacing line=276`). A revision whose closing paragraph folded
+/// into the original's left the original's properties live, so accepting
+/// dropped the revision's style and alignment.
+pub fn closing_mark_takes_revised_properties(
+    dom: &mut Dom,
+    root: NodeId,
+    original: Option<NodeId>,
+    revised: Option<NodeId>,
+    default_lines: (Option<&str>, Option<&str>),
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let (Some(original), Some(revised)) = (original, revised) else {
+        return;
+    };
+    // The revision's properties in the form every revised paragraph took
+    // above: twips, no demo-default line, spacing with its line rule.
+    let scratch = dom.new_element(W::body());
+    let scratch_p = dom.new_element(W::p());
+    dom.add(scratch, scratch_p);
+    let revised = dom.clone_subtree(revised);
+    dom.add(scratch_p, revised);
+    normalize_universal_measures(dom, scratch);
+    strip_redundant_demo_default_spacing(dom, scratch, default_lines);
+    normalize_incomplete_spacing(dom, scratch);
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let Some(last) = dom
+        .elements(body, None)
+        .into_iter()
+        .rev()
+        .find(|&k| !dom.name_is(k, &W::sect_pr()))
+    else {
+        return;
+    };
+    if !dom.name_is(last, &W::p()) {
+        return;
+    }
+    let ppr = match dom.element(last, &W::p_pr()) {
+        Some(p) => p,
+        None => {
+            let p = dom.new_element(W::p_pr());
+            dom.add_first(last, p);
+            p
+        }
+    };
+    let mark = dom.element(ppr, &W::r_pr());
+    if mark.is_some_and(|m| {
+        ["ins", "del", "moveFrom", "moveTo"]
+            .iter()
+            .any(|k| dom.element(m, &W::name(k)).is_some())
+    }) {
+        return;
+    }
+    // Revised text on the closing paragraph is the revision's own paragraph
+    // run into it (the comment list item `unmerge_comment_list_item` splits
+    // back out): its properties are that paragraph's, not the closing one's.
+    if dom.elements(last, Some(&W::ins())).len()
+        + dom.elements(last, Some(&W::name("moveTo"))).len()
+        > 0
+    {
+        return;
+    }
+    let live = formatchg::normalize_para_properties(dom, ppr);
+    let new = formatchg::normalize_para_properties(dom, revised);
+    if live == new {
+        return;
+    }
+    let old = formatchg::project_para_properties_for_change(dom, original);
+    let old_sig = formatchg::normalize_para_properties(dom, old);
+    let keep: Vec<NodeId> = [W::r_pr(), W::sect_pr()]
+        .iter()
+        .filter_map(|n| dom.element(ppr, n))
+        .collect();
+    for c in dom.elements(ppr, None) {
+        dom.remove(c);
+    }
+    let fresh = formatchg::project_para_properties_for_change(dom, revised);
+    for c in dom.elements(fresh, None) {
+        dom.remove(c);
+        dom.add(ppr, c);
+    }
+    for c in keep {
+        dom.add(ppr, c);
+    }
+    if old_sig != new {
+        let chg = dom.new_element(W::p_pr_change());
+        dom.set_attribute_value(chg, &W::id(), Some(&id_gen.to_string()));
+        *id_gen += 1;
+        dom.set_attribute_value(chg, &W::author(), Some(&settings.author_for_revisions));
+        dom.set_attribute_value(chg, &W::date(), Some(&settings.date_time_for_revisions));
+        dom.add(chg, old);
+        dom.add(ppr, chg);
+    }
+    // The original's, in twips like every other recorded change.
+    normalize_universal_measures(dom, ppr);
 }
 
 /// Sorted `(namespace, local name, value)` attributes of the last body

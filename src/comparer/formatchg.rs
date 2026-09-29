@@ -285,7 +285,7 @@ fn normalize_para_properties_without_jc(dom: &mut Dom, ppr: NodeId) -> String {
 }
 
 /// Project old-side pPr children for `w:pPrChange` (CT_PPrBase noise-stripped).
-fn project_para_properties_for_change(dom: &mut Dom, ppr: NodeId) -> NodeId {
+pub(crate) fn project_para_properties_for_change(dom: &mut Dom, ppr: NodeId) -> NodeId {
     let out = dom.new_element(W::p_pr());
     for c in dom.elements(ppr, None) {
         if is_para_comparison_noise(dom, c) {
@@ -305,7 +305,7 @@ fn project_para_properties_for_change(dom: &mut Dom, ppr: NodeId) -> NodeId {
 }
 
 /// Canonical form of comparable pPr children for equality (local name + attrs).
-fn normalize_para_properties(dom: &mut Dom, ppr: NodeId) -> String {
+pub(crate) fn normalize_para_properties(dom: &mut Dom, ppr: NodeId) -> String {
     let mut parts: Vec<String> = Vec::new();
     for c in dom.elements(ppr, None) {
         if is_para_comparison_noise(dom, c) {

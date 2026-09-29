@@ -155,6 +155,12 @@ pub fn compare_bodies_faithful_with_notes(
     // M92 guard: the revised document's own final-paragraph spacing, read
     // before atomize consumes body2.
     let revised_tail_spacing = finalize::last_body_para_spacing(dom, body2);
+    // The closing paragraphs' properties: the revision's go live on the
+    // story's closing mark, the original's into its pPrChange.
+    let closing_pprs = (
+        finalize::closing_paragraph_properties(dom, body1),
+        finalize::closing_paragraph_properties(dom, body2),
+    );
     // M454 guard: the original's aligned paragraphs, read before the compare
     // consumes body1.
     let original_alignment = finalize::paragraph_alignments(dom, body1);
@@ -1019,6 +1025,25 @@ pub fn compare_bodies_faithful_with_notes(
         // A deleted section that echoes the inserted heading belongs before
         // the table, in the original's order (lots-of-comments).
         finalize::restore_echoed_heading_deletions_before_table(dom, root);
+        // After every peel, the closing mark carries the revision's
+        // properties live and the original's in its pPrChange.
+        let default_line = |dom: &Dom, r: NodeId| {
+            dom.attribute(r, &crate::namespaces::PT::default_line())
+                .map(str::to_string)
+        };
+        let lines = (
+            default_line(dom, source_root1),
+            default_line(dom, source_root2),
+        );
+        finalize::closing_mark_takes_revised_properties(
+            dom,
+            root,
+            closing_pprs.0,
+            closing_pprs.1,
+            (lines.0.as_deref(), lines.1.as_deref()),
+            settings,
+            &mut id,
+        );
         // After every peel: a pPr that carries neither layout nor a pilcrow
         // mark is not in Word's redline. Empty pPrChange shells on the short
         // title mixes are the same nothing.

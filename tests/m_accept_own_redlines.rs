@@ -564,6 +564,51 @@ fn a_one_paragraph_revision_pairs_the_closing_marks() {
     );
 }
 
+/// The body's top-level paragraph properties, serialized.
+fn body_pprs(pkg: &[u8]) -> Vec<String> {
+    let xml = part_string(pkg, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    let body = dom.element(root, &W::body()).unwrap();
+    dom.elements(body, Some(&W::p()))
+        .into_iter()
+        .map(|p| {
+            dom.element(p, &W::p_pr())
+                .and_then(|ppr| dom.element(ppr, &W::name("jc")))
+                .map(|n| dom.serialize_element(n))
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+/// A one-paragraph revision of an unrelated document: Word pairs the
+/// closing marks, writes the revised paragraph's properties live on the
+/// original's closing mark and records the original's in a `pPrChange`
+/// (cda19d51ed: `jc=both pStyle=Cuerpo` live, `spacing line=276` old).
+/// Accepted, the paragraph keeps the revision's alignment; ours kept the
+/// original's bare properties live.
+#[test]
+fn a_paired_closing_mark_takes_the_revised_paragraph_properties() {
+    let a = common::docx::docx(concat!(
+        "<w:p><w:pPr><w:spacing w:line=\"276\" w:lineRule=\"auto\"/></w:pPr><w:r><w:t>Participation is free; register online.</w:t></w:r></w:p>",
+        "<w:p><w:r><w:t>Documentation was submitted for accreditation.</w:t></w:r></w:p>",
+    ));
+    let b = common::docx::docx(
+        "<w:p><w:pPr><w:jc w:val=\"both\"/></w:pPr><w:r><w:t>We are pleased to launch this new service, concluded the official.</w:t></w:r></w:p>",
+    );
+    let out = compare_documents(&a, &b, "Redline").expect("compare");
+    assert_word_valid_package(&out);
+    let accepted = accept_revisions(&out).expect("accept");
+    assert_eq!(body_texts(&accepted), body_texts(&b));
+    assert_eq!(
+        body_pprs(&accepted),
+        body_pprs(&b),
+        "{}",
+        part_string(&out, "word/document.xml").unwrap()
+    );
+}
+
 /// The body's live `w:cols`, serialized.
 fn live_cols(pkg: &[u8]) -> String {
     let xml = part_string(pkg, "word/document.xml").unwrap();
