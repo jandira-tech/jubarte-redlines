@@ -80,6 +80,10 @@ pub enum Check {
     /// …): where each sits and what the live properties add and drop
     /// against the recorded ones.
     Changes,
+    /// Style definitions by type and name (ids name nothing across
+    /// documents): docDefaults, then each style's default flag, basedOn and
+    /// link by name, and its pPr/rPr/tblPr/trPr/tcPr items.
+    StyleDefs,
 }
 
 /// The checks a bare `jubarte debug FILE` runs.
@@ -1277,6 +1281,77 @@ fn change_lines(dom: &Dom, root: NodeId) -> (Vec<String>, usize) {
     (lines, n)
 }
 
+/// `styledefs`: the docDefaults' blocks, then each style of a stylesheet
+/// as lines that name it by type and name: one with `default` and
+/// `basedOn`/`link` by the name they point at, one per property block
+/// (pPr and rPr always, tblPr/trPr/tcPr when present) and per conditional
+/// `tblStylePr` block. Sorted, so a style's lines stay together. Returns
+/// the lines and the style count.
+fn style_lines(dom: &Dom, root: NodeId) -> (Vec<String>, usize) {
+    let child = |n: NodeId, name: &str| {
+        dom.nodes(n)
+            .into_iter()
+            .find(|&c| dom.is_element(c) && local(dom, c) == name)
+    };
+    let items = |n: Option<NodeId>| n.map(|b| prop_items(dom, b).join(" ")).unwrap_or_default();
+    let styles: Vec<NodeId> = dom
+        .nodes(root)
+        .into_iter()
+        .filter(|&c| dom.is_element(c) && local(dom, c) == "style")
+        .collect();
+    let name_of = |s: NodeId| -> String {
+        child(s, "name")
+            .map(|n| attr(dom, n, "val"))
+            .unwrap_or_else(|| attr(dom, s, "styleId"))
+    };
+    let name_for_id = |id: &str| -> String {
+        styles
+            .iter()
+            .find(|&&s| attr(dom, s, "styleId") == id)
+            .map(|&s| name_of(s))
+            .unwrap_or_else(|| id.to_string())
+    };
+    // One line per property block of a style or conditional block.
+    let blocks = |head: &str, s: NodeId, out: &mut Vec<String>| {
+        for k in ["pPr", "rPr", "tblPr", "trPr", "tcPr"] {
+            let b = child(s, k);
+            if b.is_some() || matches!(k, "pPr" | "rPr") {
+                out.push(format!("{head} {k}[{}]", items(b)));
+            }
+        }
+    };
+    let mut lines = Vec::new();
+    if let Some(dd) = child(root, "docDefaults") {
+        let p = child(dd, "pPrDefault").and_then(|x| child(x, "pPr"));
+        let r = child(dd, "rPrDefault").and_then(|x| child(x, "rPr"));
+        lines.push(format!("  docDefaults pPr[{}]", items(p)));
+        lines.push(format!("  docDefaults rPr[{}]", items(r)));
+    }
+    let mut rows: Vec<String> = Vec::new();
+    for &s in &styles {
+        let head = format!("  {} \"{}\"", attr(dom, s, "type"), name_of(s));
+        let mut l = head.clone();
+        if matches!(attr(dom, s, "default").as_str(), "1" | "true") {
+            l.push_str(" default");
+        }
+        for k in ["basedOn", "link"] {
+            if let Some(b) = child(s, k) {
+                l.push_str(&format!(" {k}=\"{}\"", name_for_id(&attr(dom, b, "val"))));
+            }
+        }
+        rows.push(l);
+        blocks(&head, s, &mut rows);
+        for c in dom.nodes(s) {
+            if dom.is_element(c) && local(dom, c) == "tblStylePr" {
+                blocks(&format!("{head} {}", attr(dom, c, "type")), c, &mut rows);
+            }
+        }
+    }
+    rows.sort();
+    lines.extend(rows);
+    (lines, styles.len())
+}
+
 /// `text`: one line per paragraph, table and row of a story part, indented
 /// by table and text box depth; with `props`, the `runs` view. Returns the
 /// lines and the paragraph count.
@@ -1727,6 +1802,12 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
                 }
                 continue;
             }
+            if check == Check::StyleDefs {
+                if local(&dom, root) == "styles" {
+                    map.insert(e.name.clone(), style_lines(&dom, root));
+                }
+                continue;
+            }
             if TEXT_PARTS.contains(&local(&dom, root).as_str()) {
                 map.insert(e.name.clone(), text_lines(&dom, root, check == Check::Runs));
             }
@@ -1737,6 +1818,7 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
         Check::Xml => "xml",
         Check::Runs => "runs",
         Check::Changes => "changes",
+        Check::StyleDefs => "styledefs",
         _ => "text",
     };
     let mut out = String::new();
@@ -1747,6 +1829,8 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
                 line(&mut out, part);
             } else if check == Check::Changes {
                 line(&mut out, &format!("{part}: {paras} property changes"));
+            } else if check == Check::StyleDefs {
+                line(&mut out, &format!("{part}: {paras} styles"));
             } else {
                 line(&mut out, &format!("{part}: {paras} paragraphs"));
             }
@@ -1919,8 +2003,12 @@ pub fn list(a: &[u8], b: Option<&[u8]>, opts: &Options) -> Result<String, String
 
 /// The report for one package, or the differences between two.
 pub fn report(a: &[u8], b: Option<&[u8]>, opts: &Options) -> Result<String, String> {
-    let is_listing =
-        |c: &Check| matches!(c, Check::Text | Check::Xml | Check::Runs | Check::Changes);
+    let is_listing = |c: &Check| {
+        matches!(
+            c,
+            Check::Text | Check::Xml | Check::Runs | Check::Changes | Check::StyleDefs
+        )
+    };
     if opts.checks.iter().any(is_listing) {
         let pa = Package::open(a)?;
         let pb = match b {
@@ -2449,6 +2537,63 @@ mod tests {
         }
         let same = report(&docx(body), Some(&docx(body)), &opts_for(Check::Changes)).unwrap();
         assert!(!same.contains("Change"), "{same}");
+    }
+
+    /// A package whose stylesheet is `styles` (the `w:styles` children).
+    fn docx_with_styles(styles: &str) -> Vec<u8> {
+        zip_of(&[
+            ("[Content_Types].xml", TYPES),
+            ("_rels/.rels", ROOT_RELS),
+            ("word/document.xml", &document(CLEAN)),
+            (
+                "word/styles.xml",
+                &format!(
+                    r#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">{styles}</w:styles>"#
+                ),
+            ),
+        ])
+    }
+
+    /// Styles list by type and name, whatever their ids: a localized
+    /// stylesheet (`Norml`, `Listaszerbekezds`) and an English one compare
+    /// on what each style defines.
+    #[test]
+    fn styledefs_list_each_style_by_name() {
+        let hu = r#"<w:docDefaults><w:pPrDefault><w:pPr><w:spacing w:after="200" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Norml"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Listaszerbekezds"><w:name w:val="List Paragraph"/><w:basedOn w:val="Norml"/><w:pPr><w:ind w:left="720"/></w:pPr><w:rPr><w:b/></w:rPr></w:style>"#;
+        let out = report(&docx_with_styles(hu), None, &opts_for(Check::StyleDefs)).unwrap();
+        for expected in [
+            "word/styles.xml: 2 styles\n",
+            "  docDefaults pPr[spacing(after=200,line=276,lineRule=auto)]\n",
+            "  docDefaults rPr[]\n",
+            "  paragraph \"Normal\" default\n",
+            "  paragraph \"Normal\" pPr[]\n",
+            "  paragraph \"List Paragraph\" basedOn=\"Normal\"\n",
+            "  paragraph \"List Paragraph\" pPr[ind(left=720)]\n",
+            "  paragraph \"List Paragraph\" rPr[b]\n",
+        ] {
+            assert!(out.contains(expected), "{expected:?} in\n{out}");
+        }
+        let en = hu
+            .replace("Norml", "Normal")
+            .replace("Listaszerbekezds", "ListParagraph");
+        let same = report(
+            &docx_with_styles(hu),
+            Some(&docx_with_styles(&en)),
+            &opts_for(Check::StyleDefs),
+        )
+        .unwrap();
+        assert_eq!(same, "styledefs identical\n");
+        let bolder = en.replace("<w:b/>", "<w:b/><w:i/>");
+        let out = report(
+            &docx_with_styles(hu),
+            Some(&docx_with_styles(&bolder)),
+            &opts_for(Check::StyleDefs),
+        )
+        .unwrap();
+        assert!(
+            out.contains("+B   paragraph \"List Paragraph\" rPr[b i]\n"),
+            "{out}"
+        );
     }
 
     /// A package whose one section shows `header_text` from the header part

@@ -311,6 +311,7 @@ enum Command {
         jubarte debug a.docx b.docx -c text       paragraphs that differ, per part\n  \
         jubarte debug a.docx b.docx -c runs       the same, with direct formatting\n  \
         jubarte debug out.docx -c changes         what each pPrChange/tcPrChange/… records\n  \
+        jubarte debug a.docx b.docx -c styledefs  style definitions that differ, paired by name\n  \
         jubarte debug a.docx b.docx -c xml -p document.xml")]
     Debug {
         /// One package, or two to compare (A then B).
@@ -382,6 +383,10 @@ enum DebugCheck {
     /// where each sits and what the live properties add (+) and drop (-)
     /// against the recorded ones; with two files, the lines that differ.
     Changes,
+    /// Style definitions by type and name (localized ids pair): docDefaults,
+    /// then each style's default flag and basedOn/link by name, and a line
+    /// per pPr/rPr/tblPr/… block; with two files, the lines that differ.
+    Styledefs,
 }
 
 impl From<DebugCheck> for jubarte::debug::Check {
@@ -402,6 +407,7 @@ impl From<DebugCheck> for jubarte::debug::Check {
             DebugCheck::Xml => Check::Xml,
             DebugCheck::Runs => Check::Runs,
             DebugCheck::Changes => Check::Changes,
+            DebugCheck::Styledefs => Check::StyleDefs,
         }
     }
 }
