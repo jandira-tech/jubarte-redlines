@@ -19,9 +19,16 @@ use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
 fn docx(styles_body: &str, text: &str) -> Vec<u8> {
+    docx_body(
+        styles_body,
+        &format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>"),
+    )
+}
+
+fn docx_body(styles_body: &str, body: &str) -> Vec<u8> {
     let doc = format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>{text}</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body></w:document>"#
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{body}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body></w:document>"#
     );
     let styles = format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -168,4 +175,93 @@ fn copied_styles_are_based_on_the_paired_style() {
         !all.iter().any(|(_, id, _, _)| id == "a"),
         "no second Normal: {all:?}"
     );
+}
+
+/// A style id names nothing across documents: a Russian original's `a3` is
+/// Normal (Web) while its revision's `a3` is "Прижатый влево" and its
+/// Normal (Web) is `ab` (1b4d). The redefined Normal (Web) takes the
+/// revision's Normal (Web) metrics; reading B's `a3` gave it 12pt complex
+/// script Times and dropped the 100/100 spacing.
+#[test]
+fn redefined_styles_read_the_revision_style_of_the_same_name() {
+    let normal = r#"<w:style w:type="paragraph" w:default="1" w:styleId="a"><w:name w:val="Normal"/><w:qFormat/></w:style>"#;
+    let a = format!(
+        r#"{normal}<w:style w:type="paragraph" w:styleId="a3"><w:name w:val="Normal (Web)"/><w:basedOn w:val="a"/><w:rPr><w:sz w:val="22"/></w:rPr></w:style>"#
+    );
+    let b = format!(
+        r#"{normal}<w:style w:type="paragraph" w:styleId="a3"><w:name w:val="Прижатый влево"/><w:basedOn w:val="a"/><w:rPr><w:rFonts w:cs="Times New Roman"/><w:sz w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="ab"><w:name w:val="Normal (Web)"/><w:basedOn w:val="a"/><w:pPr><w:spacing w:before="100" w:beforeAutospacing="1" w:after="100" w:afterAutospacing="1"/></w:pPr><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="26"/></w:rPr></w:style>"#
+    );
+    let para = |id: &str, text: &str| {
+        format!(r#"<w:p><w:pPr><w:pStyle w:val="{id}"/></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#)
+    };
+    let out = compare_documents(
+        &docx_body(&a, &para("a3", "Hello world.")),
+        &docx_body(
+            &b,
+            &format!(
+                "{}{}",
+                para("ab", "Hello brave world."),
+                para("a3", "Left.")
+            ),
+        ),
+        "Redline",
+    )
+    .expect("compare ok");
+    let all = styles(&styles_xml(&out));
+    let web: Vec<_> = all
+        .iter()
+        .filter(|(t, _, n, _)| t == "paragraph" && n == "Normal (Web)")
+        .collect();
+    assert_eq!(web.len(), 1, "one Normal (Web): {all:?}");
+    let live = web[0].3.split("<w:rPrChange").next().unwrap();
+    let live_ppr = web[0].3.split("<w:pPrChange").next().unwrap();
+    for want in [r#"w:after="100""#, r#"w:before="100""#] {
+        assert!(
+            live_ppr.contains(want),
+            "Normal (Web) lacks {want}: {}",
+            web[0].3
+        );
+    }
+    for want in [r#"w:ascii="Times New Roman""#, r#"<w:sz w:val="26""#] {
+        assert!(
+            live.contains(want),
+            "Normal (Web) lacks {want}: {}",
+            web[0].3
+        );
+    }
+    assert!(!live.contains(r#"<w:sz w:val="24""#), "{}", web[0].3);
+}
+
+/// A stylesheet whose docDefaults has no pPrDefault gets Word's built-in
+/// paragraph defaults, 160 after and 278 auto lines, while a present empty
+/// pPrDefault means single spacing. Word's redline writes the original's
+/// built-in defaults out and gives Normal the revision's single spacing
+/// with a tracked change (221577c35b: the accepted page ran onto a second
+/// one at 160/278).
+#[test]
+fn a_missing_paragraph_default_is_words_built_in_spacing() {
+    let a = r#"<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:sz w:val="20"/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>"#;
+    let b = r#"<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/></w:rPr></w:rPrDefault><w:pPrDefault/></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="a"><w:name w:val="Normal"/><w:qFormat/><w:rPr><w:sz w:val="18"/></w:rPr></w:style>"#;
+    let out = compare_documents(
+        &docx(a, "Hello world."),
+        &docx(b, "Hello brave world."),
+        "Redline",
+    )
+    .expect("compare ok");
+    let xml = styles_xml(&out);
+    let dd = &xml[xml.find("<w:docDefaults").unwrap()..xml.find("</w:docDefaults>").unwrap()];
+    let ppr_default = &dd[dd.find("<w:pPrDefault").expect("a paragraph default")..];
+    for want in [r#"w:after="160""#, r#"w:line="278""#] {
+        assert!(ppr_default.contains(want), "pPrDefault lacks {want}: {dd}");
+    }
+    let all = styles(&xml);
+    let (_, _, _, normal) = all
+        .iter()
+        .find(|(t, _, n, _)| t == "paragraph" && n == "Normal")
+        .expect("a Normal style");
+    let live = normal.split("<w:pPrChange").next().unwrap();
+    for want in [r#"w:after="0""#, r#"w:line="240""#] {
+        assert!(live.contains(want), "Normal lacks {want}: {normal}");
+    }
+    assert!(normal.contains("<w:pPrChange"), "{normal}");
 }

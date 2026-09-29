@@ -3178,6 +3178,30 @@ fn remap_style_refs(
     n
 }
 
+/// Word reads a docDefaults with no pPrDefault as its built-in paragraph
+/// defaults, 160 after and 278 auto lines, while a present empty pPrDefault
+/// means single spacing (ceaf5f4). Word's redline writes the original's
+/// built-in defaults out and tracks the revision's Normal against them
+/// (221577c35b), so every style merge below reads the values Word lays out.
+fn materialize_builtin_paragraph_defaults(dom: &mut Dom, root: NodeId) -> bool {
+    let Some(dd) = dom.element(root, &W::name("docDefaults")) else {
+        return false;
+    };
+    if dom.element(dd, &W::name("pPrDefault")).is_some() {
+        return false;
+    }
+    let spacing = dom.new_element(W::name("spacing"));
+    for (k, v) in [("after", "160"), ("line", "278"), ("lineRule", "auto")] {
+        dom.set_attribute_value(spacing, &W::name(k), Some(v));
+    }
+    let ppr = dom.new_element(W::p_pr());
+    dom.add(ppr, spacing);
+    let pd = dom.new_element(W::name("pPrDefault"));
+    dom.add(pd, ppr);
+    dom.add(dd, pd);
+    true
+}
+
 /// When the A-based styles part lacks `docDefaults` or `latentStyles`, copy
 /// them from B (Word redlines always carry both when B has a full stylesheet).
 /// Full styles swap is intentionally avoided — it regressed sales_report pairs.
@@ -3455,13 +3479,10 @@ fn bake_bothsides_dd_disabling_neutralizers(
 /// docDefaults, then the factory defaults (sz 20, spacing 0/0/240 auto). A
 /// font slot resolves from the nearest rFonts declaring its concrete or theme
 /// name. Parents run first, so a child reads its parent's resolved values.
-/// `renames` maps B's style ids to the output's canonical ids.
-fn resolve_redefined_style_metrics(
-    dom: &mut Dom,
-    out_root: NodeId,
-    b_root: NodeId,
-    renames: &std::collections::HashMap<String, String>,
-) -> bool {
+/// B's counterpart is the style of the same (type, name), as Word pairs
+/// them: ids name nothing across documents (1b4d's original `a3` is
+/// Normal (Web), its revision's `a3` another style).
+fn resolve_redefined_style_metrics(dom: &mut Dom, out_root: NodeId, b_root: NodeId) -> bool {
     let style_nm = W::name("style");
     let index = |dom: &Dom, root: NodeId| -> std::collections::HashMap<String, NodeId> {
         dom.elements(root, Some(&style_nm))
@@ -3470,10 +3491,12 @@ fn resolve_redefined_style_metrics(
             .collect()
     };
     let out_idx = index(dom, out_root);
-    let mut b_idx = index(dom, b_root);
-    for (old, new) in renames {
-        if let Some(&n) = b_idx.get(old) {
-            b_idx.entry(new.clone()).or_insert(n);
+    let b_idx = index(dom, b_root);
+    let mut b_by_key: std::collections::HashMap<(String, String), NodeId> =
+        std::collections::HashMap::new();
+    for s in dom.elements(b_root, Some(&style_nm)) {
+        if let Some(k) = style_match_key(dom, s) {
+            b_by_key.entry(k).or_insert(s);
         }
     }
     let parent = |dom: &Dom, idx: &std::collections::HashMap<String, NodeId>, s: NodeId| {
@@ -3600,13 +3623,7 @@ fn resolve_redefined_style_metrics(
             || dom
                 .element(style, &W::r_pr())
                 .is_some_and(|r| dom.element(r, &W::name("rPrChange")).is_some());
-        let Some(sid) = dom
-            .attribute(style, &W::name("styleId"))
-            .map(str::to_string)
-        else {
-            continue;
-        };
-        let Some(&b_style) = b_idx.get(&sid) else {
+        let Some(&b_style) = style_match_key(dom, style).and_then(|k| b_by_key.get(&k)) else {
             continue;
         };
         if !tracked {
@@ -5858,6 +5875,8 @@ fn compare_documents_impl(
                     if is_styles {
                         if settings.merge_replaced_paragraphs {
                             let a_ids = crate::comparer::footnotes::defined_style_ids(&sd, tr);
+                            materialize_builtin_paragraph_defaults(&mut sd, tr);
+                            materialize_builtin_paragraph_defaults(&mut sd, fr);
                             let b_to_out = copy_missing_styles_by_name(&mut sd, tr, fr);
                             let _ = adopt_missing_styles_structure(&mut sd, tr, fr);
                             style_renames = canonicalize_style_ids(&mut sd, tr);
@@ -6363,7 +6382,7 @@ fn compare_documents_impl(
             // Redefined styles take B's effective metrics as a delta against
             // the output context (Word's rule, mined over 4,924 styles). Runs
             // last so it settles what the heuristic passes above wrote.
-            changed |= resolve_redefined_style_metrics(&mut sd, or, br, &style_renames);
+            changed |= resolve_redefined_style_metrics(&mut sd, or, br);
             // M483: re-cache themed color hexes against the shipped theme —
             // must run AFTER the merge writes B's blocks (their w:val hexes
             // were cached under B's theme).
