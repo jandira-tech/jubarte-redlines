@@ -4,9 +4,9 @@
 
 //! Reject All against Word's own, on the neurotic_docx_bench
 //! `rejected_tracking` corpus (Word's redlines and Word's Reject All of each;
-//! not shipped, the test skips without it): every story paragraph's text and
-//! mark state match (`jubarte debug WORD JUB -c text` prints
-//! `text identical`).
+//! not shipped, the test skips without it): every listed pair is present,
+//! and every story paragraph's text and mark state match (`jubarte debug
+//! WORD JUB -c text` prints `text identical`).
 
 use std::path::PathBuf;
 
@@ -48,17 +48,26 @@ fn reject_matches_words_reject_all_on_words_redlines() {
     };
     let mut pairs = 0;
     let mut differ = Vec::new();
-    for row in rows {
+    // Every listed pair is tested: a malformed row or a missing file is a
+    // failure, never a silent skip.
+    for row in rows.filter(|r| !r.trim().is_empty()) {
         let fields: Vec<&str> = row.split(',').collect();
         let (Some(docx), Some(id)) = (fields.get(docx_col), fields.get(id_col)) else {
+            differ.push(format!("malformed row: {row}"));
             continue;
         };
         let word = words.join(format!("{id}_rejected_tracking.docx"));
         let redline = bench.join("corpus/word").join(docx);
-        if !word.is_file() || !redline.is_file() {
+        pairs += 1;
+        let missing: Vec<String> = [&word, &redline]
+            .into_iter()
+            .filter(|p| !p.is_file())
+            .map(|p| p.display().to_string())
+            .collect();
+        if !missing.is_empty() {
+            differ.push(format!("{id}: missing {}", missing.join(", ")));
             continue;
         }
-        pairs += 1;
         let ours = reject_revisions(&std::fs::read(&redline).unwrap()).unwrap();
         let out = report(&std::fs::read(&word).unwrap(), Some(&ours), &opts).unwrap();
         if out != "text identical\n" {
