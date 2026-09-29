@@ -70,7 +70,7 @@ impl Relationships {
 
         loop {
             match reader.read_event_into(&mut buf) {
-                Ok(Event::Empty(ref e)) if e.name().as_ref() == b"Relationship" => {
+                Ok(Event::Empty(ref e)) if e.name().as_ref() == "Relationship" => {
                     let mut id = None;
                     let mut rel_type = None;
                     let mut target = None;
@@ -79,8 +79,8 @@ impl Relationships {
                     for attr in e.attributes() {
                         let attr = attr?;
                         match attr.key.as_ref() {
-                            b"Id" => {
-                                let val = std::str::from_utf8(&attr.value)?.to_string();
+                            "Id" => {
+                                let val = attr.normalized_value(quick_xml::XmlVersion::Implicit1_0)?.into_owned();
                                 // Extract numeric suffix for next_id tracking
                                 if let Some(num_str) = val.strip_prefix("rId")
                                     && let Ok(n) = num_str.parse::<u32>()
@@ -89,14 +89,14 @@ impl Relationships {
                                 }
                                 id = Some(val);
                             }
-                            b"Type" => {
-                                rel_type = Some(std::str::from_utf8(&attr.value)?.to_string());
+                            "Type" => {
+                                rel_type = Some(attr.normalized_value(quick_xml::XmlVersion::Implicit1_0)?.into_owned());
                             }
-                            b"Target" => {
-                                target = Some(std::str::from_utf8(&attr.value)?.to_string());
+                            "Target" => {
+                                target = Some(attr.normalized_value(quick_xml::XmlVersion::Implicit1_0)?.into_owned());
                             }
-                            b"TargetMode" => {
-                                target_mode = Some(std::str::from_utf8(&attr.value)?.to_string());
+                            "TargetMode" => {
+                                target_mode = Some(attr.normalized_value(quick_xml::XmlVersion::Implicit1_0)?.into_owned());
                             }
                             _ => {}
                         }
@@ -228,6 +228,22 @@ mod tests {
         assert_eq!(parsed.items[0].id, "rId1");
         assert_eq!(parsed.items[0].target, "word/document.xml");
         assert_eq!(parsed.items[1].id, "rId2");
+    }
+
+    #[test]
+    fn escaped_target_round_trips_once() {
+        // Hyperlink targets carry `&` as `&amp;`: parsing must unescape it,
+        // or writing escapes it a second time into `&amp;amp;`.
+        let xml = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com/?a=1&amp;b=2" TargetMode="External"/>
+</Relationships>"#;
+
+        let parsed = Relationships::from_xml(xml).unwrap();
+        assert_eq!(parsed.items[0].target, "https://example.com/?a=1&b=2");
+
+        let out = String::from_utf8(parsed.to_xml().unwrap()).unwrap();
+        assert!(out.contains(r#"Target="https://example.com/?a=1&amp;b=2""#), "{out}");
     }
 
     #[test]
