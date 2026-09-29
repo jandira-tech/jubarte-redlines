@@ -150,8 +150,8 @@ pub fn quota_status(app: tauri::AppHandle) -> QuotaStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
     use std::thread;
 
     fn tmp_file(name: &str) -> PathBuf {

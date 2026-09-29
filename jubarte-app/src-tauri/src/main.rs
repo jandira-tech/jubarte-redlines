@@ -133,21 +133,18 @@ fn author_from_core_xml(xml: &str) -> Option<String> {
         match reader.read_event() {
             Ok(Event::Start(e)) => {
                 cur = match e.local_name().as_ref() {
-                    b"creator" => 1,
-                    b"lastModifiedBy" => 2,
+                    "creator" => 1,
+                    "lastModifiedBy" => 2,
                     _ => cur,
                 };
             }
             Ok(Event::End(e)) => {
-                if matches!(e.local_name().as_ref(), b"creator" | b"lastModifiedBy") {
+                if matches!(e.local_name().as_ref(), "creator" | "lastModifiedBy") {
                     cur = 0;
                 }
             }
             Ok(Event::Text(t)) if cur != 0 => {
-                let text = t
-                    .xml10_content()
-                    .map(|c| c.into_owned())
-                    .unwrap_or_else(|_| String::from_utf8_lossy(t.as_ref()).into_owned());
+                let text = t.xml10_content().into_owned();
                 if cur == 1 {
                     creator.push_str(&text)
                 } else {
@@ -156,15 +153,15 @@ fn author_from_core_xml(xml: &str) -> Option<String> {
             }
             // 0.40 surfaces entities as their own event between text chunks.
             Ok(Event::GeneralRef(r)) if cur != 0 => {
-                let name: &[u8] = r.as_ref();
+                let name: &str = &r;
                 let resolved = match r.resolve_char_ref() {
                     Ok(Some(c)) => Some(c),
                     _ => match name {
-                        b"amp" => Some('&'),
-                        b"lt" => Some('<'),
-                        b"gt" => Some('>'),
-                        b"quot" => Some('"'),
-                        b"apos" => Some('\''),
+                        "amp" => Some('&'),
+                        "lt" => Some('<'),
+                        "gt" => Some('>'),
+                        "quot" => Some('"'),
+                        "apos" => Some('\''),
                         _ => None,
                     },
                 };
@@ -228,9 +225,7 @@ async fn create_redline(
         run_compare(&original, &modified, &author, filename.as_deref(), &out_dir)
     })
     .await
-    .map_err(|_| {
-        "The comparison crashed — this document pair may hit an engine bug.".to_string()
-    });
+    .map_err(|_| "The comparison crashed — this document pair may hit an engine bug.".to_string());
     match outcome {
         Ok(Ok(outcome)) => {
             // Free-tier already counted via try_reserve; entitled path still
@@ -490,73 +485,70 @@ fn parse_preview(xml: &str) -> (Vec<PreviewParagraph>, bool) {
         let author = author_stack.iter().rev().flatten().next().cloned();
         match reader.read_event() {
             Ok(Event::Start(e)) => match e.local_name().as_ref() {
-                b"ins" => {
+                "ins" => {
                     ins_d += 1;
                     author_stack.push(attr_author(&e));
                 }
-                b"del" => {
+                "del" => {
                     del_d += 1;
                     author_stack.push(attr_author(&e));
                 }
-                b"moveTo" => {
+                "moveTo" => {
                     mvto_d += 1;
                     author_stack.push(attr_author(&e));
                 }
-                b"moveFrom" => {
+                "moveFrom" => {
                     mvfrom_d += 1;
                     author_stack.push(attr_author(&e));
                 }
-                b"r" => run_d += 1,
-                b"t" | b"delText" if run_d > 0 => in_text = true,
+                "r" => run_d += 1,
+                "t" | "delText" if run_d > 0 => in_text = true,
                 _ => {}
             },
             Ok(Event::End(e)) => match e.local_name().as_ref() {
-                b"ins" => {
+                "ins" => {
                     ins_d -= 1;
                     author_stack.pop();
                 }
-                b"del" => {
+                "del" => {
                     del_d -= 1;
                     author_stack.pop();
                 }
-                b"moveTo" => {
+                "moveTo" => {
                     mvto_d -= 1;
                     author_stack.pop();
                 }
-                b"moveFrom" => {
+                "moveFrom" => {
                     mvfrom_d -= 1;
                     author_stack.pop();
                 }
-                b"r" => run_d -= 1,
-                b"t" | b"delText" => in_text = false,
-                b"p" => paragraphs.push(PreviewParagraph {
+                "r" => run_d -= 1,
+                "t" | "delText" => in_text = false,
+                "p" => paragraphs.push(PreviewParagraph {
                     runs: std::mem::take(&mut runs),
                 }),
                 _ => {}
             },
             Ok(Event::Empty(e)) if run_d > 0 => match e.local_name().as_ref() {
-                b"tab" => push_text(&mut runs, kind, author, "\t", &mut total_chars),
-                b"br" | b"cr" => push_text(&mut runs, kind, author, "\n", &mut total_chars),
+                "tab" => push_text(&mut runs, kind, author, "\t", &mut total_chars),
+                "br" | "cr" => push_text(&mut runs, kind, author, "\n", &mut total_chars),
                 _ => {}
             },
             Ok(Event::Text(t)) if in_text => {
-                let text = t
-                    .xml10_content()
-                    .map(|c| c.into_owned())
-                    .unwrap_or_else(|_| String::from_utf8_lossy(t.as_ref()).into_owned());
+                let text = t.xml10_content().into_owned();
                 push_text(&mut runs, kind, author, &text, &mut total_chars);
             }
             // 0.40 reports entities as separate events between Text chunks.
             Ok(Event::GeneralRef(r)) if in_text => {
-                let name: &[u8] = r.as_ref();
+                let name: &str = &r;
                 let resolved = match r.resolve_char_ref() {
                     Ok(Some(c)) => Some(c),
                     _ => match name {
-                        b"amp" => Some('&'),
-                        b"lt" => Some('<'),
-                        b"gt" => Some('>'),
-                        b"quot" => Some('"'),
-                        b"apos" => Some('\''),
+                        "amp" => Some('&'),
+                        "lt" => Some('<'),
+                        "gt" => Some('>'),
+                        "quot" => Some('"'),
+                        "apos" => Some('\''),
                         _ => None,
                     },
                 };
@@ -631,7 +623,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::author_from_core_xml;
+    use super::{author_from_core_xml, parse_preview};
 
     const NS: &str = "xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\"";
 
@@ -700,5 +692,32 @@ mod tests {
             "<dc:title>Master Services Agreement</dc:title><dc:subject>none</dc:subject><cp:keywords>a b c</cp:keywords><dc:creator>Acme Counsel</dc:creator>",
         );
         assert_eq!(author_from_core_xml(&xml).as_deref(), Some("Acme Counsel"));
+    }
+
+    #[test]
+    fn preview_classifies_revisions_and_decodes_text() {
+        let xml = concat!(
+            r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>"#,
+            r#"<w:p><w:r><w:t>Terms &amp; </w:t></w:r><w:r><w:tab/></w:r>"#,
+            r#"<w:ins w:author="A &amp; B"><w:r><w:t>new</w:t></w:r></w:ins>"#,
+            r#"<w:del w:author="Cy"><w:r><w:delText>old</w:delText></w:r></w:del></w:p>"#,
+            r#"</w:body></w:document>"#,
+        );
+        let (paragraphs, truncated) = parse_preview(xml);
+        assert!(!truncated);
+        assert_eq!(paragraphs.len(), 1);
+        let runs: Vec<(&str, &str, Option<&str>)> = paragraphs[0]
+            .runs
+            .iter()
+            .map(|r| (r.kind, r.text.as_str(), r.author.as_deref()))
+            .collect();
+        assert_eq!(
+            runs,
+            [
+                ("same", "Terms & \t", None),
+                ("ins", "new", Some("A & B")),
+                ("del", "old", Some("Cy")),
+            ]
+        );
     }
 }
