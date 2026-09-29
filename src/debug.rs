@@ -98,6 +98,9 @@ pub struct Options {
     pub grep: Option<String>,
     /// Examples per finding kind, lines per listing.
     pub limit: usize,
+    /// `text`/`xml`/`runs` of two files: common lines shown around each
+    /// change.
+    pub context: usize,
 }
 
 impl Default for Options {
@@ -107,6 +110,7 @@ impl Default for Options {
             part: None,
             grep: None,
             limit: 5,
+            context: 0,
         }
     }
 }
@@ -1401,8 +1405,9 @@ fn xml_lines(xml: &str) -> Vec<String> {
     out
 }
 
-/// One change hunk: the lines only in A, then the lines only in B.
-type Hunk<'a> = (Vec<&'a str>, Vec<&'a str>);
+/// One change hunk: where it starts in A, the lines only in A, then the
+/// lines only in B.
+type Hunk<'a> = (usize, Vec<&'a str>, Vec<&'a str>);
 
 /// Line diff: common prefix and suffix trimmed, LCS on the rest (a middle
 /// too large for LCS is one replaced block).
@@ -1421,6 +1426,7 @@ fn diff_lines<'a>(a: &'a [String], b: &'a [String]) -> Vec<Hunk<'a>> {
     let (n, m) = (am.len(), bm.len());
     if n.saturating_mul(m) > 4_000_000 {
         return vec![(
+            pre,
             am.iter().map(String::as_str).collect(),
             bm.iter().map(String::as_str).collect(),
         )];
@@ -1436,24 +1442,29 @@ fn diff_lines<'a>(a: &'a [String], b: &'a [String]) -> Vec<Hunk<'a>> {
             };
         }
     }
-    let (mut hunks, mut cur): (Vec<Hunk>, Hunk) = (Vec::new(), (Vec::new(), Vec::new()));
+    let (mut hunks, mut cur): (Vec<Hunk>, Hunk) = (Vec::new(), (pre, Vec::new(), Vec::new()));
     let (mut i, mut j) = (0, 0);
     while i < n || j < m {
         if i < n && j < m && am[i] == bm[j] {
-            if !cur.0.is_empty() || !cur.1.is_empty() {
+            if !cur.1.is_empty() || !cur.2.is_empty() {
                 hunks.push(std::mem::take(&mut cur));
             }
             i += 1;
             j += 1;
-        } else if j == m || (i < n && lcs[(i + 1) * (m + 1) + j] >= lcs[i * (m + 1) + j + 1]) {
-            cur.0.push(&am[i]);
+            continue;
+        }
+        if cur.1.is_empty() && cur.2.is_empty() {
+            cur.0 = pre + i;
+        }
+        if j == m || (i < n && lcs[(i + 1) * (m + 1) + j] >= lcs[i * (m + 1) + j + 1]) {
+            cur.1.push(&am[i]);
             i += 1;
         } else {
-            cur.1.push(&bm[j]);
+            cur.2.push(&bm[j]);
             j += 1;
         }
     }
-    if !cur.0.is_empty() || !cur.1.is_empty() {
+    if !cur.1.is_empty() || !cur.2.is_empty() {
         hunks.push(cur);
     }
     hunks
@@ -1640,8 +1651,8 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
         if hunks.is_empty() {
             continue;
         }
-        let dels: usize = hunks.iter().map(|h| h.0.len()).sum();
-        let adds: usize = hunks.iter().map(|h| h.1.len()).sum();
+        let dels: usize = hunks.iter().map(|h| h.1.len()).sum();
+        let adds: usize = hunks.iter().map(|h| h.2.len()).sum();
         let n = dels.max(adds);
         line(
             &mut out,
@@ -1651,7 +1662,7 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
                 if n == 1 { "s" } else { "" }
             ),
         );
-        for (k, (del, add)) in hunks.iter().enumerate() {
+        for (k, (at, del, add)) in hunks.iter().enumerate() {
             if k == opts.limit {
                 line(
                     &mut out,
@@ -1673,11 +1684,18 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
                     .saturating_sub(WIDTH / 3),
                 _ => 0,
             };
+            for l in &la[at.saturating_sub(opts.context)..*at] {
+                line(&mut out, &format!("   {l}"));
+            }
             for (i, l) in del.iter().enumerate() {
                 line(&mut out, &format!("-A {}", clip_from(l, from(i))));
             }
             for (i, l) in add.iter().enumerate() {
                 line(&mut out, &format!("+B {}", clip_from(l, from(i))));
+            }
+            let after = at + del.len();
+            for l in &la[after..(after + opts.context).min(la.len())] {
+                line(&mut out, &format!("   {l}"));
             }
         }
     }
@@ -2338,6 +2356,25 @@ mod tests {
         assert!(!out.contains("Plain"), "unchanged lines stay out: {out}");
         let same = report(&a, Some(&a), &opts_for(Check::Text)).unwrap();
         assert_eq!(same, "text identical\n");
+    }
+
+    #[test]
+    fn context_shows_the_common_lines_around_a_change() {
+        let body = |x: &str| {
+            ["one", "two", x, "four", "five"]
+                .map(|t| format!("<w:p><w:r><w:t>{t}</w:t></w:r></w:p>"))
+                .concat()
+        };
+        let opts = Options {
+            context: 1,
+            ..opts_for(Check::Text)
+        };
+        let out = report(&docx(&body("three")), Some(&docx(&body("3"))), &opts).unwrap();
+        assert!(
+            out.contains("     ¶  two\n-A   ¶  three\n+B   ¶  3\n     ¶  four\n"),
+            "{out}"
+        );
+        assert!(!out.contains("one") && !out.contains("five"), "{out}");
     }
 
     #[test]

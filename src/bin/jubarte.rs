@@ -332,6 +332,9 @@ enum Command {
         /// Examples per finding kind.
         #[arg(short = 'n', long, value_name = "N", default_value_t = 5)]
         limit: usize,
+        /// text/xml/runs of two files: common lines shown around each change.
+        #[arg(short = 'C', long, value_name = "N", default_value_t = 0)]
+        context: usize,
     },
 }
 
@@ -1061,6 +1064,7 @@ fn run_debug(
     part: Option<String>,
     grep: Option<String>,
     limit: usize,
+    context: usize,
 ) -> Result<(), String> {
     let read = |p: &PathBuf| std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()));
     let a = read(&files[0])?;
@@ -1069,6 +1073,7 @@ fn run_debug(
         part,
         grep,
         limit,
+        context,
         ..Default::default()
     };
     if !checks.is_empty() {
@@ -1204,8 +1209,9 @@ fn main() -> ExitCode {
             part,
             grep,
             limit,
+            context,
         }) => {
-            return exit_code(run_debug(&files, list, checks, part, grep, limit));
+            return exit_code(run_debug(&files, list, checks, part, grep, limit, context));
         }
         None => {}
     }
