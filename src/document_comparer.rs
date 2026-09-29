@@ -7381,7 +7381,14 @@ fn compare_documents_impl(
                     if settings.merge_replaced_paragraphs {
                         // Package steps can put a default nextPage back into the
                         // recorded sectPr, or leave line=276 on a deleted mark.
-                        crate::comparer::finalize::strip_unrecorded_word_defaults(&mut vd, vr);
+                        let original_line = pkg1
+                            .part_string("word/styles.xml")
+                            .map(|x| default_paragraph_line(&x));
+                        crate::comparer::finalize::strip_unrecorded_word_defaults(
+                            &mut vd,
+                            vr,
+                            original_line.as_deref(),
+                        );
                         let id_to_target: std::collections::HashMap<String, String> = out
                             .read_rels_for(&main1)
                             .map(|rels| {

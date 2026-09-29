@@ -5276,14 +5276,18 @@ pub(crate) fn pg_num_type_is_implicit_decimal(dom: &Dom, n: NodeId) -> bool {
 /// Default table `w:jc` left/start
 /// is omitted. `w:pgNumType` that is only `fmt=decimal` is omitted.
 /// `w:spacing` that is only `line=276` on a deleted paragraph mark restates
-/// Normal when the paragraph inserts nothing. Pure insertions keep that
+/// Normal when the paragraph inserts nothing, and only where the original's
+/// unstyled paragraphs are 276 themselves (`original_line`, `None` when
+/// unknown): over a single-spaced Normal Word keeps it, and Reject All gives
+/// the original's 1.15 lines back (221997f1c7). Pure insertions keep that
 /// spacing, and so does a paragraph that also holds inserted text: Word's
 /// redline keeps `line=276` there (simple_ordered_list × sublist_issue,
 /// "Lvl 1 – a"). An inserted pilcrow
 /// (`w:pPr/w:rPr/w:ins` and nothing else) on a paragraph that already
 /// contains both inserted and deleted text is not in Word's redline of
 /// italic-and-underline × italic-subscript.
-pub fn strip_unrecorded_word_defaults(dom: &mut Dom, root: NodeId) {
+pub fn strip_unrecorded_word_defaults(dom: &mut Dom, root: NodeId, original_line: Option<&str>) {
+    let line_restates_normal = original_line.is_none_or(|l| l == "276");
     let Some(body) = dom.element(root, &W::body()) else {
         return;
     };
@@ -5325,6 +5329,7 @@ pub fn strip_unrecorded_word_defaults(dom: &mut Dom, root: NodeId) {
         if let Some(rpr) = dom.element(ppr, &W::r_pr())
             && dom.element(rpr, &W::del()).is_some()
             && let Some(sp) = dom.element(ppr, &W::spacing_el())
+            && line_restates_normal
             && spacing_is_only_line_276(dom, sp)
             && !content_revision_marks(dom, p, ppr).0
         {

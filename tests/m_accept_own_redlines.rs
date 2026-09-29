@@ -1623,12 +1623,22 @@ fn a_bare_paragraph_break_travels_with_its_insertion() {
 /// A one-paragraph document whose stylesheet has the given docDefaults pPr
 /// and rPr and Normal pPr and rPr.
 fn docx_with_stylesheet(dd_ppr: &str, dd_rpr: &str, normal_ppr: &str, normal_rpr: &str) -> Vec<u8> {
+    docx_with_stylesheet_body(
+        r#"<w:p><w:r><w:t>Body text</w:t></w:r></w:p>"#,
+        [dd_ppr, dd_rpr, normal_ppr, normal_rpr],
+    )
+}
+
+/// [`docx_with_stylesheet`] with its own body; `sheet` is the docDefaults
+/// pPr and rPr, then Normal's pPr and rPr.
+fn docx_with_stylesheet_body(body: &str, sheet: [&str; 4]) -> Vec<u8> {
+    let [dd_ppr, dd_rpr, normal_ppr, normal_rpr] = sheet;
     let styles = format!(
         r#"<w:styles xmlns:w="{w}"><w:docDefaults><w:rPrDefault><w:rPr>{dd_rpr}</w:rPr></w:rPrDefault><w:pPrDefault><w:pPr>{dd_ppr}</w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/><w:pPr>{normal_ppr}</w:pPr><w:rPr>{normal_rpr}</w:rPr></w:style></w:styles>"#,
         w = common::docx::W_NS
     );
     common::docx::docx_with(
-        r#"<w:p><w:r><w:t>Body text</w:t></w:r></w:p>"#,
+        body,
         &[Part {
             name: "word/styles.xml",
             content_type: STYLES,
@@ -1850,3 +1860,37 @@ fn a_paragraph_style_the_original_does_not_define_is_dropped() {
         body_ppr_xml(&rejected)
     );
 }
+
+/// The original's paragraphs set `w:spacing w:line="276"` directly over a
+/// single-spaced Normal; the revision replaces every paragraph. Word's
+/// redline keeps the deleted paragraphs' spacing, so Reject All gives back
+/// their 1.15 lines. Ours stripped it as a restated demo default, and the
+/// original's page closed up (221997f1c7: 46.24 against A's own PDF; Word's
+/// redline 67.06).
+#[test]
+fn a_deleted_paragraph_keeps_its_line_pitch_over_a_single_spaced_normal() {
+    let base = docx_with_stylesheet_body(
+        r#"<w:p><w:r><w:t>Minutes of the first owners' meeting.</w:t></w:r></w:p><w:p><w:pPr><w:ind w:firstLine="720"/><w:jc w:val="both"/><w:spacing w:line="276" w:lineRule="auto"/></w:pPr><w:r><w:t>The meeting was called to elect a building manager under the housing act.</w:t></w:r></w:p><w:p><w:r><w:t>The owners present voted on the agenda.</w:t></w:r></w:p>"#,
+        ["", r#"<w:sz w:val="24"/>"#, "", ""],
+    );
+    let next = docx_with_stylesheet_body(
+        r#"<w:p><w:r><w:t>Course syllabus form for human rights and democracy.</w:t></w:r></w:p>"#,
+        [
+            r#"<w:spacing w:after="160" w:line="259" w:lineRule="auto"/>"#,
+            r#"<w:sz w:val="22"/>"#,
+            r#"<w:jc w:val="both"/><w:spacing w:after="0" w:line="240" w:lineRule="auto"/>"#,
+            r#"<w:sz w:val="20"/>"#,
+        ],
+    );
+    let redline = compare_documents(&base, &next, "Redline").unwrap();
+    assert_word_valid_package(&redline);
+    let pprs = body_ppr_xml(&redline);
+    let deleted = pprs
+        .iter()
+        .find(|p| p.contains("firstLine"))
+        .unwrap_or_else(|| panic!("{pprs:?}"));
+    assert!(deleted.contains(r#"w:line="276""#), "{pprs:?}");
+    let rejected = reject_revisions(&redline).unwrap();
+    assert!(body_ppr_xml(&rejected)[1].contains(r#"w:line="276""#));
+}
+

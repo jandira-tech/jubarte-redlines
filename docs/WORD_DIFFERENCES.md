@@ -138,6 +138,7 @@ reject should give A back.
 | A12 | Prunes style properties that repeat Normal | Keeps the style's own properties | several |
 | A13 | Reject All of its own redline drops the paragraphs' direct spacing A had (after=0, line=240) and restores Normal to the docDefaults spacing (after=200, line=276), so A's 4 pages come back as 6 (33.79 against A's own PDF) | Reject gives back A's layout (99.96 against A's PDF) | 1b4d |
 | A14 | Records an old rPr for a style only B has (`List Paragraph`: Arial, sz=18, neither side's value), which Reject All then writes | Leaves a style A lacks as B wrote it | 1b4d |
+| A15 | Drops a deleted paragraph's direct properties that repeat the revision's Normal (`jc=both`, run `sz=20`), so Reject All loses the original's justification and 10pt size | Keeps the original's direct properties on deleted text | 2219 |
 
 Word behaviour that *is* copied (it keeps what the revision says): see the
 rules pinned in `tests/m_accept_word_parity.rs`, `tests/m_reject_word_parity.rs`

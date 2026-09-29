@@ -2458,7 +2458,7 @@ fn bare_onoff_cant_split_and_rtl_stay() {
          <w:tr><w:trPr><w:cantSplit w:val=\"0\"/></w:trPr>\
          <w:tc><w:p><w:r><w:rPr><w:rtl w:val=\"false\"/></w:rPr><w:t>b</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
     );
-    strip_unrecorded_word_defaults(&mut dom, root);
+    strip_unrecorded_word_defaults(&mut dom, root, None);
     let xml = dom.serialize_element(root);
     assert!(
         xml.contains("<w:cantSplit/>") || xml.contains("<w:cantSplit />"),
@@ -2527,7 +2527,8 @@ fn line_276_on_deleted_mark_stays_when_paragraph_inserts_text() {
          <w:rPr><w:del w:id=\"4\" w:author=\"R\"/></w:rPr></w:pPr>\
          <w:del w:id=\"5\" w:author=\"R\"><w:r><w:delText>Item 4</w:delText></w:r></w:del></w:p>",
     );
-    strip_unrecorded_word_defaults(&mut dom, root);
+    // The original's unstyled paragraphs are 276 too.
+    strip_unrecorded_word_defaults(&mut dom, root, Some("276"));
     let xml = dom.serialize_element(root);
     let paras = xml.split("<w:p>").skip(1).collect::<Vec<_>>();
     assert_eq!(paras.len(), 2, "{xml}");

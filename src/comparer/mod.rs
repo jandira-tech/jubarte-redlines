@@ -1063,7 +1063,7 @@ pub fn compare_bodies_faithful_with_notes(
         // Default nextPage, false cantSplit, rtl 0, table jc left, line=276
         // on a deleted mark, and an inserted pilcrow on a mixed paragraph
         // are absent from Word's redline once the text matches.
-        finalize::strip_unrecorded_word_defaults(dom, root);
+        finalize::strip_unrecorded_word_defaults(dom, root, lines.0.as_deref());
         // Table look and comment-reference size are present on Word's
         // redline whenever this corpus has the underlying table or mark.
         finalize::align_word_table_and_comment_chrome(dom, root);
