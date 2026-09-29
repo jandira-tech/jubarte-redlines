@@ -132,7 +132,9 @@ die()  { printf '\033[31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 crate_ver() { grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2; }
 
 # --- registry liveness probes (idempotent resume) -----------------------------
-crates_has()  { curl -sf "https://crates.io/api/v1/crates/jubarte-redlines/$VER" >/dev/null; }
+# crates.io answers 403 to a request without a User-Agent.
+crates_has()  { curl -sf -A "jubarte-release (github.com/jandira-tech/jubarte-redlines)" \
+                  "https://crates.io/api/v1/crates/jubarte-redlines/$VER" >/dev/null; }
 pypi_has()    { curl -sf "https://pypi.org/pypi/jubarte-redlines/$VER/json" >/dev/null; }
 npm_has()     { [ "$(npm view "jubarte-wasm@$VER" version 2>/dev/null)" = "$VER" ]; }
 ghrel_has()   { gh release view "$TAG" >/dev/null 2>&1; }
@@ -458,6 +460,9 @@ say "7. crates.io"
 if crates_has; then
   step "jubarte-redlines $VER already on crates.io — skipped"
 else
+  # Finder litter under an include glob is "uncommitted" to cargo and stops
+  # the publish (gitignored, so the clean-tree preflight never sees it).
+  find . -name .DS_Store -not -path './target/*' -not -path './.worktrees/*' -delete
   # Prove the summary survived cargo's manifest normalization before shipping.
   cargo package --locked --no-verify >/dev/null
   tar -xzOf "target/package/jubarte-redlines-$VER.crate" \

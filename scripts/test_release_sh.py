@@ -97,5 +97,21 @@ class ResumeDryRuns(unittest.TestCase):
         )
 
 
+class RegistryProbes(unittest.TestCase):
+    """crates.io answers 403 to a request without a User-Agent, so a bare
+    curl probe calls every published version missing."""
+
+    def test_crates_probe_sends_a_user_agent(self) -> None:
+        line = next(
+            l for l in RELEASE_SH.read_text().splitlines() if l.startswith("crates_has()")
+        )
+        self.assertRegex(line, r"curl [^|]*(-A|--user-agent) ")
+
+    def test_publish_purges_finder_litter_first(self) -> None:
+        text = RELEASE_SH.read_text()
+        step7 = text[text.index('say "7. crates.io"'):text.index('say "8.')]
+        self.assertIn(".DS_Store", step7.split("cargo publish")[0])
+
+
 if __name__ == "__main__":
     unittest.main()
