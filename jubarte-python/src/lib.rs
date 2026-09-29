@@ -143,6 +143,14 @@ fn docx_to_png(
         .collect())
 }
 
+/// `render`'s result: the PDF (when asked for), one PNG per page, and the
+/// layout report as JSON.
+type Rendered = (Option<Py<PyBytes>>, Vec<Py<PyBytes>>, String);
+
+/// `edit_json`'s result: ok, the clean copy and the tracked redline (both
+/// `None` on refusal), and the report or the structured refusal as JSON.
+type EditOutcome = (bool, Option<Py<PyBytes>>, Option<Py<PyBytes>>, String);
+
 /// One layout pass → `(pdf_bytes | None, [png_bytes, ...], report_json)`.
 ///
 /// `report_json` is `{"page_count", "pages": [{"index", "text"}], "fonts": [...]}`.
@@ -156,7 +164,7 @@ fn render(
     compress: bool,
     revisions: &str,
     revision_palette: Option<&str>,
-) -> PyResult<(Option<Py<PyBytes>>, Vec<Py<PyBytes>>, String)> {
+) -> PyResult<Rendered> {
     let options = pdf_options(compress, revisions, revision_palette)?;
     let request = jubarte::convert::RenderRequest { pdf, png_dpi };
     let rendered = py
@@ -200,11 +208,7 @@ fn markdown(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
 /// Refusals are data, not exceptions: the Python layer raises
 /// `EditPlanError` from them so the outcomes stay attached.
 #[pyfunction]
-fn edit_json(
-    py: Python<'_>,
-    docx: &[u8],
-    plan_json: &str,
-) -> PyResult<(bool, Option<Py<PyBytes>>, Option<Py<PyBytes>>, String)> {
+fn edit_json(py: Python<'_>, docx: &[u8], plan_json: &str) -> PyResult<EditOutcome> {
     let result = py.detach(|| jubarte::edit::apply_plan_json(docx, plan_json));
     Ok(match result {
         Ok(r) => (

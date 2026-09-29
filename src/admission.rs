@@ -345,7 +345,7 @@ fn check_part_name(name: &str) -> Result<(), AdmissionError> {
 /// rest of the engine reads them.
 fn part_text(xml: &[u8]) -> Cow<'_, str> {
     let utf16 = |rest: &[u8], unit: fn([u8; 2]) -> u16| {
-        let units = rest.chunks_exact(2).map(|pair| unit([pair[0], pair[1]]));
+        let units = rest.as_chunks::<2>().0.iter().map(|&pair| unit(pair));
         Cow::Owned(
             char::decode_utf16(units)
                 .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
