@@ -310,6 +310,7 @@ enum Command {
         jubarte debug out.docx -c text            paragraphs with ins/del marks\n  \
         jubarte debug a.docx b.docx -c text       paragraphs that differ, per part\n  \
         jubarte debug a.docx b.docx -c runs       the same, with direct formatting\n  \
+        jubarte debug out.docx -c changes         what each pPrChange/tcPrChange/… records\n  \
         jubarte debug a.docx b.docx -c xml -p document.xml")]
     Debug {
         /// One package, or two to compare (A then B).
@@ -377,6 +378,10 @@ enum DebugCheck {
     /// and each run's direct formatting «..»; with two files, the lines that
     /// differ.
     Runs,
+    /// Property-change records (pPrChange, tcPrChange, sectPrChange, …):
+    /// where each sits and what the live properties add (+) and drop (-)
+    /// against the recorded ones; with two files, the lines that differ.
+    Changes,
 }
 
 impl From<DebugCheck> for jubarte::debug::Check {
@@ -396,6 +401,7 @@ impl From<DebugCheck> for jubarte::debug::Check {
             DebugCheck::Text => Check::Text,
             DebugCheck::Xml => Check::Xml,
             DebugCheck::Runs => Check::Runs,
+            DebugCheck::Changes => Check::Changes,
         }
     }
 }

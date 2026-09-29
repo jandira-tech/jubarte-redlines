@@ -76,6 +76,10 @@ pub enum Check {
     /// formatting, revision marks left out; adjacent runs formatted alike
     /// merge.
     Runs,
+    /// Property-change records (`pPrChange`, `tcPrChange`, `sectPrChange`,
+    /// …): where each sits and what the live properties add and drop
+    /// against the recorded ones.
+    Changes,
 }
 
 /// The checks a bare `jubarte debug FILE` runs.
@@ -1157,6 +1161,122 @@ fn props_line(dom: &Dom, pr: NodeId) -> String {
     items.join(" ")
 }
 
+/// The property-change records `changes` lists.
+const CHANGE_RECORDS: [&str; 8] = [
+    "pPrChange",
+    "rPrChange",
+    "tblPrChange",
+    "tblPrExChange",
+    "trPrChange",
+    "tcPrChange",
+    "sectPrChange",
+    "tblGridChange",
+];
+
+/// Each child of the property block `pr` as one item: `name`, `name=val`
+/// or `name(attr=value,…)`, its own children in braces; revision records,
+/// the mark's `rPr` and `sectPr` left out. Sorted.
+fn prop_items(dom: &Dom, pr: NodeId) -> Vec<String> {
+    fn item(dom: &Dom, c: NodeId) -> String {
+        let name = local(dom, c);
+        let mut attrs: Vec<(String, String)> = dom
+            .attributes(c)
+            .into_iter()
+            .filter(|(n, _)| {
+                !n.local_name().starts_with("rsid") && !dom.is_namespace_declaration(n)
+            })
+            .map(|(n, v)| (n.local_name().to_string(), v))
+            .collect();
+        attrs.sort();
+        let mut s = match attrs.as_slice() {
+            [] => name,
+            [(k, v)] if k == "val" => format!("{name}={v}"),
+            _ => {
+                let a: Vec<String> = attrs.iter().map(|(k, v)| format!("{k}={v}")).collect();
+                format!("{name}({})", a.join(","))
+            }
+        };
+        let kids: Vec<String> = dom
+            .nodes(c)
+            .into_iter()
+            .filter(|&k| dom.is_element(k))
+            .map(|k| item(dom, k))
+            .collect();
+        if !kids.is_empty() {
+            s.push('{');
+            s.push_str(&kids.join(" "));
+            s.push('}');
+        }
+        s
+    }
+    let mut items: Vec<String> = dom
+        .nodes(pr)
+        .into_iter()
+        .filter(|&c| dom.is_element(c))
+        .filter(|&c| {
+            let n = local(dom, c);
+            !CHANGE_RECORDS.contains(&n.as_str())
+                && !matches!(
+                    n.as_str(),
+                    "ins" | "del" | "moveFrom" | "moveTo" | "rPr" | "sectPr"
+                )
+        })
+        .map(|c| item(dom, c))
+        .collect();
+    items.sort();
+    items
+}
+
+/// `changes`: one line per property-change record of a part — its kind,
+/// where it sits (style id, or the start of the cell, row, table or
+/// paragraph text) and what the live properties add (`+`) and drop (`-`)
+/// against the recorded old ones. Returns the lines and the record count.
+fn change_lines(dom: &Dom, root: NodeId) -> (Vec<String>, usize) {
+    let text_of = |n: NodeId| -> String {
+        let t: String = dom
+            .descendants(n, None)
+            .into_iter()
+            .filter(|&d| matches!(local(dom, d).as_str(), "t" | "delText"))
+            .map(|d| dom.value(d))
+            .collect();
+        t.chars().take(30).collect()
+    };
+    let mut lines = Vec::new();
+    for rec in dom.descendants(root, None) {
+        let kind = local(dom, rec);
+        if !CHANGE_RECORDS.contains(&kind.as_str()) {
+            continue;
+        }
+        let Some(live) = dom.parent(rec) else {
+            continue;
+        };
+        let old = dom.nodes(rec).into_iter().find(|&c| dom.is_element(c));
+        let place = dom
+            .ancestors(rec, None)
+            .into_iter()
+            .find_map(|a| match local(dom, a).as_str() {
+                "style" => Some(format!("style={}", attr(dom, a, "styleId"))),
+                "p" | "tc" | "tr" | "tbl" => Some(format!("{} \"{}\"", local(dom, a), text_of(a))),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let l = prop_items(dom, live);
+        let o = old.map(|o| prop_items(dom, o)).unwrap_or_default();
+        let mut diff: Vec<String> = l
+            .iter()
+            .filter(|x| !o.contains(x))
+            .map(|x| format!("+{x}"))
+            .collect();
+        diff.extend(o.iter().filter(|x| !l.contains(x)).map(|x| format!("-{x}")));
+        if diff.is_empty() {
+            diff.push("(no difference)".to_string());
+        }
+        lines.push(format!("  {kind} {place}: {}", diff.join(" ")));
+    }
+    let n = lines.len();
+    (lines, n)
+}
+
 /// `text`: one line per paragraph, table and row of a story part, indented
 /// by table and text box depth; with `props`, the `runs` view. Returns the
 /// lines and the paragraph count.
@@ -1600,6 +1720,13 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
             let mut dom = Dom::new();
             let doc = dom.parse_xdocument(&xml);
             let Some(root) = dom.root(doc) else { continue };
+            if check == Check::Changes {
+                let (lines, n) = change_lines(&dom, root);
+                if n > 0 {
+                    map.insert(e.name.clone(), (lines, n));
+                }
+                continue;
+            }
             if TEXT_PARTS.contains(&local(&dom, root).as_str()) {
                 map.insert(e.name.clone(), text_lines(&dom, root, check == Check::Runs));
             }
@@ -1609,6 +1736,7 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
     let label = match check {
         Check::Xml => "xml",
         Check::Runs => "runs",
+        Check::Changes => "changes",
         _ => "text",
     };
     let mut out = String::new();
@@ -1617,6 +1745,8 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
         for (part, (lines, paras)) in &a {
             if check == Check::Xml {
                 line(&mut out, part);
+            } else if check == Check::Changes {
+                line(&mut out, &format!("{part}: {paras} property changes"));
             } else {
                 line(&mut out, &format!("{part}: {paras} paragraphs"));
             }
@@ -1789,7 +1919,8 @@ pub fn list(a: &[u8], b: Option<&[u8]>, opts: &Options) -> Result<String, String
 
 /// The report for one package, or the differences between two.
 pub fn report(a: &[u8], b: Option<&[u8]>, opts: &Options) -> Result<String, String> {
-    let is_listing = |c: &Check| matches!(c, Check::Text | Check::Xml | Check::Runs);
+    let is_listing =
+        |c: &Check| matches!(c, Check::Text | Check::Xml | Check::Runs | Check::Changes);
     if opts.checks.iter().any(is_listing) {
         let pa = Package::open(a)?;
         let pb = match b {
@@ -2303,6 +2434,21 @@ mod tests {
         let out = report(&docx(body), None, &opts_for(Check::Runs)).unwrap();
         let expected = "  ¶- [jc=both pStyle=Body] ¶«sz=20» «b rFonts(ascii=Arial,cs=Arial) sz=24»Bold too«»plain end\n";
         assert!(out.contains(expected), "{expected:?} in\n{out}");
+    }
+
+    #[test]
+    fn changes_list_what_each_property_record_changed() {
+        let body = r#"<w:tbl><w:tr><w:tc><w:tcPr><w:tcW w:w="3120" w:type="dxa"/><w:tcPrChange w:id="1" w:author="A"><w:tcPr><w:tcW w:w="3120" w:type="dxa"/><w:shd w:val="clear" w:fill="F8FAFC"/></w:tcPr></w:tcPrChange></w:tcPr><w:p><w:r><w:t>Name</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:pPr><w:jc w:val="center"/><w:pPrChange w:id="2" w:author="A"><w:pPr/></w:pPrChange></w:pPr><w:r><w:t>Title</w:t></w:r></w:p>"#;
+        let out = report(&docx(body), None, &opts_for(Check::Changes)).unwrap();
+        for expected in [
+            "word/document.xml: 2 property changes\n",
+            "  tcPrChange tc \"Name\": -shd(fill=F8FAFC,val=clear)\n",
+            "  pPrChange p \"Title\": +jc=center\n",
+        ] {
+            assert!(out.contains(expected), "{expected:?} in\n{out}");
+        }
+        let same = report(&docx(body), Some(&docx(body)), &opts_for(Check::Changes)).unwrap();
+        assert!(!same.contains("Change"), "{same}");
     }
 
     /// A package whose one section shows `header_text` from the header part
