@@ -5,7 +5,11 @@
 * case filters in the side panel: group, reference page count, one engine's score at most
   X on one metric, the engine's page count differing from Word's; a count of the cases
   shown, a random-case button (key ``r``) and a clear button;
-* a random case when the page opens without a ``#group/case`` link, instead of the first.
+* a random case when the page opens without a ``#group/case`` link, instead of the first;
+* prev / random / next buttons with the position in the filtered list;
+* a button (key ``s``) that hides the side panel, and the long note folded into an
+  accordion (the keyboard hints move into it, the engine versions into tooltips) so the
+  pages get the room.
 
 ``patch(html, mode)`` works on the template and on an already built page alike (the data
 sits between the anchors, never inside them); it is idempotent. ``build_site.py`` applies
@@ -20,7 +24,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-MARKER = "/* viewer-features v1 */"
+MARKER = "/* viewer-features v2 */"
 MODES = {
     "convert": ("Convert DOCX → PDF", {"convert": "./", "redline": "redlines/"}),
     "redline": ("Compare (redline) two documents", {"convert": "../", "redline": "./"}),
@@ -30,15 +34,41 @@ CSS = MARKER + """
 #bar select#mode { font-weight:600; }
 #sidehead { position:sticky; top:0; z-index:2; background:var(--panel); border-bottom:1px solid var(--border); }
 #sidehead #filter { position:static; }
-#fx { display:grid; grid-template-columns:auto 1fr; gap:4px 6px; padding:6px 8px; font-size:12px; align-items:center; }
+#fx { display:grid; grid-template-columns:auto minmax(0, 1fr); gap:4px 6px; padding:6px 8px; font-size:12px; align-items:center; }
 #fx label { color:var(--muted); }
 #fx select, #fx input, #fx button { background:#333; color:var(--fg); border:1px solid #555; border-radius:3px; padding:1px 4px; font:inherit; width:auto; position:static; }
-#fx .row { display:flex; gap:4px; align-items:center; flex-wrap:wrap; }
+#fx .row { display:flex; gap:4px; align-items:center; flex-wrap:wrap; min-width:0; }
+#fx select { max-width:100%; min-width:0; }
 #fx input[type=number] { width:4.5em; }
 #fx .foot { grid-column:1/3; display:flex; gap:6px; align-items:center; flex-wrap:wrap; padding-right:4px; }
 #fx .foot #fxn { color:var(--muted); margin-right:auto; }
 #fx button:hover { background:#444; }
 #list .case { scroll-margin-top:var(--headh, 0px); }
+body.noside { grid-template-columns:0 1fr; }
+body.noside #side { display:none; }
+body.noside #main { grid-column:1/3; }
+#nav { gap:4px; }
+#nav #navPos { color:var(--muted); font-size:11px; min-width:6.5em; text-align:center; font-variant-numeric:tabular-nums; }
+#sideToggle { font-size:14px; line-height:1; padding:2px 7px; }
+body.noside #sideToggle { background:#094771; border-color:var(--accent); }
+#engines .ver { display:none; }
+#legend { padding:0; }
+#legend summary { list-style:none; cursor:pointer; user-select:none; }
+#legend summary::-webkit-details-marker { display:none; }
+#legend .chev { display:inline-block; transition:transform .18s ease; color:var(--accent); }
+#legend details[open] > summary .chev { transform:rotate(90deg); }
+#legend .about > summary { display:flex; flex-wrap:wrap; gap:6px 10px; align-items:center; padding:3px 10px; }
+#legend .about > summary .ttl { color:var(--fg); font-weight:600; }
+#legend .about > summary .hint { color:var(--muted); }
+#legend .about > summary a, #legend .pill { display:inline-block; padding:0 9px; border:1px solid var(--border); border-radius:999px; background:#2d2d30; color:var(--accent); text-decoration:none; }
+#legend .about > summary a:hover { background:#34343a; }
+#legend .items { display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:6px; padding:2px 10px 8px; align-items:start; }
+#legend .item { border:1px solid var(--border); border-radius:10px; background:#2a2a2d; overflow:hidden; }
+#legend .item > summary { padding:4px 10px; color:var(--fg); display:flex; gap:7px; align-items:baseline; }
+#legend .item > summary:hover { background:#313136; }
+#legend .item > summary .dot { width:8px; height:8px; border-radius:50%; flex:none; align-self:center; }
+#legend .item > summary .sub { color:var(--muted); font-weight:400; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#legend .item > div { padding:2px 12px 8px 25px; color:#bbb; }
 """
 
 FX_HTML = """<div id="sidehead"><input id="filter" placeholder="filter cases (name, group)…"><div id="fx">
@@ -85,7 +115,7 @@ function pickRandom() {
 function fxChanged() {
   const vis = visibleCases().map(([, i]) => i);
   if (vis.length && !vis.includes(state.sel)) { state.sel = vis[0]; state.shown = PAGE_STEP; }
-  render();
+  render(); showSel();
 }
 function setupFx() {
   const fx = state.fx, groups = [...new Set(DATA.map(c => c.group))].sort();
@@ -110,8 +140,52 @@ function setupFx() {
     fxChanged();
   };
   $('#mode').onchange = e => { location.href = e.target.value; };
+  $('#navPrev').onclick = () => step(-1);
+  $('#navNext').onclick = () => step(1);
+  $('#navRand').onclick = $('#fxRand').onclick;
+  $('#sideToggle').onclick = toggleSide;
+  // The versions stay readable in each page column's header; in the bar they are tooltips.
+  document.querySelectorAll('#engines label').forEach(l => { const v = l.querySelector('.ver'); if (v) l.title = v.textContent; });
+}
+// Prev / next through the filtered list, wrapping at both ends.
+function step(d) {
+  const vis = visibleCases().map(([, i]) => i); if (!vis.length) return;
+  const at = vis.indexOf(state.sel);
+  state.sel = at < 0 ? vis[0] : vis[(at + d + vis.length) % vis.length];
+  state.view = 'viewer'; state.shown = PAGE_STEP; render(); showSel();
+}
+function toggleSide() { state.noside = !state.noside; render(); showSel(); }
+// The legend's spans become an accordion: link-only spans stay visible as pills, every
+// other span (and the keyboard hints) is one fold, all of it closed by default.
+function accordionLegend() {
+  const lg = $('#legend'), colors = ['#4ea1ff', '#c586c0', '#4ec9b0', '#dcdcaa', '#ce9178', '#9cdcfe', '#b5cea8', '#f48771'];
+  const esc = t => t.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const links = [], items = [];
+  for (const sp of [...lg.children]) {
+    const a = sp.querySelector('a');
+    if (a && sp.textContent.trim() === a.textContent.trim()) { links.push(a.outerHTML); continue; }
+    const b = sp.firstElementChild?.tagName === 'B' && sp.innerHTML.startsWith('<b>') ? sp.firstElementChild : null;
+    let title = 'How the scores work', body = sp.innerHTML, sub = '';
+    if (b) { title = b.textContent; b.remove(); body = sp.innerHTML.replace(/^\s*:\s*/, ''); }
+    if (b && title.length <= 5) sub = sp.textContent.trim().split(/[:.,;]/)[0];  // metric: J, SSIM, TB, s
+    items.push([title, sub, body]);
+  }
+  const keys = $('#keys'); if (keys) { items.push(['Keyboard', '', keys.innerHTML]); keys.remove(); }
+  lg.innerHTML = `<details class="about"${state.about ? ' open' : ''}><summary><span class="chev">&#9656;</span>`
+    + `<span class="ttl">About these scores</span><span class="hint">${items.length} notes</span>${links.join('')}</summary>`
+    + `<div class="items">${items.map(([t, sub, body], i) => `<details class="item"><summary><span class="chev">&#9656;</span>`
+      + `<span class="dot" style="background:${colors[i % colors.length]}"></span><b>${t}</b>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</summary>`
+      + `<div>${body}</div></details>`).join('')}</div></details>`;
+  const about = lg.querySelector('.about');
+  about.ontoggle = () => { state.about = about.open; save('state', state); showSel(); };
 }
 """
+
+
+NAV = ('<span class="grp" id="nav"><button id="sideToggle" title="hide / show the case list (s)">&#9776;</button>'
+       '<button id="navPrev" title="previous case (&uarr;)">&lsaquo; prev</button>'
+       '<button id="navRand" title="random case (r)">random</button>'
+       '<button id="navNext" title="next case (&darr;)">next &rsaquo;</button><span id="navPos"></span></span>')
 
 
 def mode_select(mode: str) -> str:
@@ -128,7 +202,7 @@ def swaps(mode: str) -> list[tuple[str, str]]:
     """(anchor, replacement) pairs; every anchor must occur exactly once."""
     return [
         ("</style>", CSS + "</style>"),
-        ('<div id="bar">\n', '<div id="bar">\n  ' + mode_select(mode) + "\n"),
+        ('<div id="bar">\n', '<div id="bar">\n  ' + mode_select(mode) + "\n  " + NAV + "\n"),
         ('<input id="filter" placeholder="filter cases (name, group)…">', FX_HTML),  # FX_HTML wraps the same input
         ("for (const [k] of ENGINES) if (state.on[k] == null) state.on[k] = true;",
          "for (const [k] of ENGINES) if (state.on[k] == null) state.on[k] = true;\n"
@@ -139,15 +213,22 @@ def swaps(mode: str) -> list[tuple[str, str]]:
          + FX_JS),
         ("  const list = $('#list'); list.innerHTML = '';",
          "  const list = $('#list'); list.innerHTML = '';\n"
-         "  $('#fxn').textContent = `${visibleCases().length} of ${DATA.length} cases`;"),
+         "  const shownCases = visibleCases(), at = shownCases.findIndex(([, i]) => i === state.sel);\n"
+         "  $('#fxn').textContent = `${shownCases.length} of ${DATA.length} cases`;\n"
+         "  $('#navPos').textContent = `${at < 0 ? '–' : at + 1} / ${shownCases.length}`;\n"
+         "  document.body.classList.toggle('noside', !!state.noside);"),
         ("$('#filter').oninput = e => { state.filter = e.target.value; renderList(); };",
          "$('#filter').oninput = e => { state.filter = e.target.value; renderList(); };\n"
          "setupFx();\nif (!linked) pickRandom();"),
         ("if (e.target.tagName === 'INPUT' && e.target.type === 'text') return;",
          "if (e.target.tagName === 'SELECT' || (e.target.tagName === 'INPUT' && ['text', 'number'].includes(e.target.type))) return;"),
         ("  else if (e.key === 'o') state.ovl = !state.ovl;",
-         "  else if (e.key === 'r') pickRandom();\n  else if (e.key === 'o') state.ovl = !state.ovl;"),
-        ("<kbd>o</kbd> overlay", "<kbd>r</kbd> random &nbsp;<kbd>o</kbd> overlay"),
+         "  else if (e.key === 'r') pickRandom();\n  else if (e.key === 's') state.noside = !state.noside;\n"
+         "  else if (e.key === 'o') state.ovl = !state.ovl;"),
+        ("<kbd>o</kbd> overlay", "<kbd>r</kbd> random &nbsp;<kbd>s</kbd> side panel &nbsp;<kbd>o</kbd> overlay"),
+        ('<span style="color:var(--muted)"><kbd>1</kbd>', '<span id="keys" style="color:var(--muted)"><kbd>1</kbd>'),
+        ("TABLE_COLS.map(m => `<span><b>${METRIC_LABEL[m]}</b> ${METRIC_INFO[m]}</span>`).join('');\n",
+         "TABLE_COLS.map(m => `<span><b>${METRIC_LABEL[m]}</b> ${METRIC_INFO[m]}</span>`).join('');\naccordionLegend();\n"),
         # The opening (random) case is somewhere down the list: bring it into view.
         ("\nrender();\n</script>",
          "\nrender();\nshowSel();\n</script>"),

@@ -49,22 +49,49 @@ kbd { background:#333; border:1px solid #555; border-radius:3px; padding:0 4px; 
 .hidden { display:none !important; }
 #more { display:block; margin:4px 0 24px; padding:8px 18px; background:#333; color:var(--fg); border:1px solid #555; border-radius:4px; font:inherit; cursor:pointer; }
 #more:hover { background:#444; }
-/* viewer-features v1 */
+/* viewer-features v2 */
 #bar select#mode { font-weight:600; }
 #sidehead { position:sticky; top:0; z-index:2; background:var(--panel); border-bottom:1px solid var(--border); }
 #sidehead #filter { position:static; }
-#fx { display:grid; grid-template-columns:auto 1fr; gap:4px 6px; padding:6px 8px; font-size:12px; align-items:center; }
+#fx { display:grid; grid-template-columns:auto minmax(0, 1fr); gap:4px 6px; padding:6px 8px; font-size:12px; align-items:center; }
 #fx label { color:var(--muted); }
 #fx select, #fx input, #fx button { background:#333; color:var(--fg); border:1px solid #555; border-radius:3px; padding:1px 4px; font:inherit; width:auto; position:static; }
-#fx .row { display:flex; gap:4px; align-items:center; flex-wrap:wrap; }
+#fx .row { display:flex; gap:4px; align-items:center; flex-wrap:wrap; min-width:0; }
+#fx select { max-width:100%; min-width:0; }
 #fx input[type=number] { width:4.5em; }
 #fx .foot { grid-column:1/3; display:flex; gap:6px; align-items:center; flex-wrap:wrap; padding-right:4px; }
 #fx .foot #fxn { color:var(--muted); margin-right:auto; }
 #fx button:hover { background:#444; }
 #list .case { scroll-margin-top:var(--headh, 0px); }
+body.noside { grid-template-columns:0 1fr; }
+body.noside #side { display:none; }
+body.noside #main { grid-column:1/3; }
+#nav { gap:4px; }
+#nav #navPos { color:var(--muted); font-size:11px; min-width:6.5em; text-align:center; font-variant-numeric:tabular-nums; }
+#sideToggle { font-size:14px; line-height:1; padding:2px 7px; }
+body.noside #sideToggle { background:#094771; border-color:var(--accent); }
+#engines .ver { display:none; }
+#legend { padding:0; }
+#legend summary { list-style:none; cursor:pointer; user-select:none; }
+#legend summary::-webkit-details-marker { display:none; }
+#legend .chev { display:inline-block; transition:transform .18s ease; color:var(--accent); }
+#legend details[open] > summary .chev { transform:rotate(90deg); }
+#legend .about > summary { display:flex; flex-wrap:wrap; gap:6px 10px; align-items:center; padding:3px 10px; }
+#legend .about > summary .ttl { color:var(--fg); font-weight:600; }
+#legend .about > summary .hint { color:var(--muted); }
+#legend .about > summary a, #legend .pill { display:inline-block; padding:0 9px; border:1px solid var(--border); border-radius:999px; background:#2d2d30; color:var(--accent); text-decoration:none; }
+#legend .about > summary a:hover { background:#34343a; }
+#legend .items { display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:6px; padding:2px 10px 8px; align-items:start; }
+#legend .item { border:1px solid var(--border); border-radius:10px; background:#2a2a2d; overflow:hidden; }
+#legend .item > summary { padding:4px 10px; color:var(--fg); display:flex; gap:7px; align-items:baseline; }
+#legend .item > summary:hover { background:#313136; }
+#legend .item > summary .dot { width:8px; height:8px; border-radius:50%; flex:none; align-self:center; }
+#legend .item > summary .sub { color:var(--muted); font-weight:400; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#legend .item > div { padding:2px 12px 8px 25px; color:#bbb; }
 </style>
 <div id="bar">
   <span class="grp"><select id="mode" autocomplete="off" title="what to compare"><option value="./" selected>Convert DOCX → PDF</option><option value="redlines/">Compare (redline) two documents</option></select></span>
+  <span class="grp" id="nav"><button id="sideToggle" title="hide / show the case list (s)">&#9776;</button><button id="navPrev" title="previous case (&uarr;)">&lsaquo; prev</button><button id="navRand" title="random case (r)">random</button><button id="navNext" title="next case (&darr;)">next &rsaquo;</button><span id="navPos"></span></span>
   <span class="grp" id="engines"></span>
   <span class="grp">
     <span id="pageinfo"></span>
@@ -77,7 +104,7 @@ kbd { background:#333; border:1px solid #555; border-radius:3px; padding:0 4px; 
     <input type="range" id="alpha" min="0" max="100" value="50">
   </span>
   <span class="grp"><button id="viewToggle">Scores table</button></span>
-  <span style="color:var(--muted)"><kbd>1</kbd>-<kbd>8</kbd> engines &nbsp;<kbd>&uarr;</kbd><kbd>&darr;</kbd> cases &nbsp;<kbd>r</kbd> random &nbsp;<kbd>o</kbd> overlay &nbsp;<kbd>m</kbd> more pages &nbsp;<kbd>t</kbd> scores table</span>
+  <span id="keys" style="color:var(--muted)"><kbd>1</kbd>-<kbd>8</kbd> engines &nbsp;<kbd>&uarr;</kbd><kbd>&darr;</kbd> cases &nbsp;<kbd>r</kbd> random &nbsp;<kbd>s</kbd> side panel &nbsp;<kbd>o</kbd> overlay &nbsp;<kbd>m</kbd> more pages &nbsp;<kbd>t</kbd> scores table</span>
 </div>
 <div id="legend"></div>
 <div id="side"><div id="sidehead"><input id="filter" placeholder="filter cases (name, group)…"><div id="fx">
@@ -174,7 +201,7 @@ function pickRandom() {
 function fxChanged() {
   const vis = visibleCases().map(([, i]) => i);
   if (vis.length && !vis.includes(state.sel)) { state.sel = vis[0]; state.shown = PAGE_STEP; }
-  render();
+  render(); showSel();
 }
 function setupFx() {
   const fx = state.fx, groups = [...new Set(DATA.map(c => c.group))].sort();
@@ -199,6 +226,44 @@ function setupFx() {
     fxChanged();
   };
   $('#mode').onchange = e => { location.href = e.target.value; };
+  $('#navPrev').onclick = () => step(-1);
+  $('#navNext').onclick = () => step(1);
+  $('#navRand').onclick = $('#fxRand').onclick;
+  $('#sideToggle').onclick = toggleSide;
+  // The versions stay readable in each page column's header; in the bar they are tooltips.
+  document.querySelectorAll('#engines label').forEach(l => { const v = l.querySelector('.ver'); if (v) l.title = v.textContent; });
+}
+// Prev / next through the filtered list, wrapping at both ends.
+function step(d) {
+  const vis = visibleCases().map(([, i]) => i); if (!vis.length) return;
+  const at = vis.indexOf(state.sel);
+  state.sel = at < 0 ? vis[0] : vis[(at + d + vis.length) % vis.length];
+  state.view = 'viewer'; state.shown = PAGE_STEP; render(); showSel();
+}
+function toggleSide() { state.noside = !state.noside; render(); showSel(); }
+// The legend's spans become an accordion: link-only spans stay visible as pills, every
+// other span (and the keyboard hints) is one fold, all of it closed by default.
+function accordionLegend() {
+  const lg = $('#legend'), colors = ['#4ea1ff', '#c586c0', '#4ec9b0', '#dcdcaa', '#ce9178', '#9cdcfe', '#b5cea8', '#f48771'];
+  const esc = t => t.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const links = [], items = [];
+  for (const sp of [...lg.children]) {
+    const a = sp.querySelector('a');
+    if (a && sp.textContent.trim() === a.textContent.trim()) { links.push(a.outerHTML); continue; }
+    const b = sp.firstElementChild?.tagName === 'B' && sp.innerHTML.startsWith('<b>') ? sp.firstElementChild : null;
+    let title = 'How the scores work', body = sp.innerHTML, sub = '';
+    if (b) { title = b.textContent; b.remove(); body = sp.innerHTML.replace(/^\s*:\s*/, ''); }
+    if (b && title.length <= 5) sub = sp.textContent.trim().split(/[:.,;]/)[0];  // metric: J, SSIM, TB, s
+    items.push([title, sub, body]);
+  }
+  const keys = $('#keys'); if (keys) { items.push(['Keyboard', '', keys.innerHTML]); keys.remove(); }
+  lg.innerHTML = `<details class="about"${state.about ? ' open' : ''}><summary><span class="chev">&#9656;</span>`
+    + `<span class="ttl">About these scores</span><span class="hint">${items.length} notes</span>${links.join('')}</summary>`
+    + `<div class="items">${items.map(([t, sub, body], i) => `<details class="item"><summary><span class="chev">&#9656;</span>`
+      + `<span class="dot" style="background:${colors[i % colors.length]}"></span><b>${t}</b>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</summary>`
+      + `<div>${body}</div></details>`).join('')}</div></details>`;
+  const about = lg.querySelector('.about');
+  about.ontoggle = () => { state.about = about.open; save('state', state); showSel(); };
 }
 function fmt(v) { return v == null ? '–' : v.toFixed(1) + '%'; }
 function fmtM(m, v) { return m === 'time' ? (v == null ? '–' : v.toFixed(2) + ' s') : fmt(v); }
@@ -206,7 +271,10 @@ function val(c, k, m) { return (m === 'time' ? c.times?.[k] : c.scores[k]?.[m]) 
 
 function renderList() {
   const list = $('#list'); list.innerHTML = '';
-  $('#fxn').textContent = `${visibleCases().length} of ${DATA.length} cases`;
+  const shownCases = visibleCases(), at = shownCases.findIndex(([, i]) => i === state.sel);
+  $('#fxn').textContent = `${shownCases.length} of ${DATA.length} cases`;
+  $('#navPos').textContent = `${at < 0 ? '–' : at + 1} / ${shownCases.length}`;
+  document.body.classList.toggle('noside', !!state.noside);
   for (const [c,i] of visibleCases()) {
     const d = document.createElement('div');
     d.className = 'case' + (i === state.sel ? ' sel' : '');
@@ -331,6 +399,7 @@ $('#blend').onchange = e => { state.blend = e.target.value; render(); };
 $('#alpha').oninput = e => { state.alpha = +e.target.value; render(); };
 $('#legend').innerHTML = '<span>All scores are against the Word reference, averaged over the pages both PDFs have; extra pages are ignored.</span><span><b><a href="speed/">Speed on 10,000 inputs &rarr;</a></b></span> <span><b><a href="redlines/">Redlines vs Microsoft Word (jubarte, docxodus, SuperDoc) &rarr;</a></b></span> <span><b>What this is</b>: every DOCX to PDF engine we measure, scored against Microsoft Word&#8217;s own PDF with docxide-pdf&#8217;s page-metrics at 150 DPI over every page. Two document sets: the 208 <b>docxide fixtures</b> of docxide-pdf&#8217;s published comparison (its engines and scores as published on 2026-09-15; jubarte and PyMuPDF Pro added here) and a 600-document random <b>corpus sample</b> of neurotic-docx-bench corpus/word, stratified by state and page count. Only the first 3 pages are shown, at 100 DPI. PyMuPDF Pro runs unlicensed (first 3 pages only), so it is measured only on documents of at most 3 pages. Viewer, scorer and docxide fixtures: <a href="https://github.com/sverrejb/docxide-pdf" style="color:var(--accent)">sverrejb/docxide-pdf</a> (Apache-2.0, see NOTICE.md).</span>' +
   TABLE_COLS.map(m => `<span><b>${METRIC_LABEL[m]}</b> ${METRIC_INFO[m]}</span>`).join('');
+accordionLegend();
 $('#filter').value = state.filter;
 $('#filter').oninput = e => { state.filter = e.target.value; renderList(); };
 setupFx();
@@ -341,6 +410,7 @@ document.onkeydown = e => {
   if (e.key === 'ArrowDown') { state.sel = vis[Math.min(at+1, vis.length-1)] ?? state.sel; state.shown = PAGE_STEP; }
   else if (e.key === 'ArrowUp') { state.sel = vis[Math.max(at-1, 0)] ?? state.sel; state.shown = PAGE_STEP; }
   else if (e.key === 'r') pickRandom();
+  else if (e.key === 's') state.noside = !state.noside;
   else if (e.key === 'o') state.ovl = !state.ovl;
   else if (e.key === 'm') state.shown += PAGE_STEP;
   else if (e.key === 't') state.view = state.view === 'scores' ? 'viewer' : 'scores';

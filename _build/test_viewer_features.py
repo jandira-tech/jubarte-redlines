@@ -80,3 +80,31 @@ def test_the_opening_case_is_scrolled_into_the_list(pages):
     js = vf.patch(pages["index.html"], "convert")
     tail = js[js.rindex("render();"):]
     assert tail.startswith("render();\nshowSel();") and "function showSel()" in js
+
+
+def test_the_legend_folds_into_an_accordion_with_the_key_hints(pages):
+    for rel, mode in (("index.html", "convert"), ("redlines/index.html", "redline")):
+        js = vf.patch(pages[rel], mode)
+        assert "function accordionLegend()" in js
+        legend = js.index("$('#legend').innerHTML")
+        assert js.index("accordionLegend();", legend) > legend
+        assert '<span id="keys" style="color:var(--muted)">' in js  # moved into the accordion at runtime
+
+
+def test_prev_next_random_buttons_step_through_the_filtered_list(pages):
+    js = vf.patch(pages["index.html"], "convert")
+    for el in ("navPrev", "navRand", "navNext", "navPos"):
+        assert f'id="{el}"' in js
+    assert "function step(d)" in js and "(at + d + vis.length) % vis.length" in js
+
+
+def test_the_side_panel_can_be_hidden(pages):
+    js = vf.patch(pages["redlines/index.html"], "redline")
+    assert 'id="sideToggle"' in js and "body.noside" in js
+    assert "e.key === 's'" in js and "classList.toggle('noside', !!state.noside)" in js
+
+
+def test_a_filter_change_scrolls_the_selected_case_into_view(pages):
+    js = vf.patch(pages["index.html"], "convert")
+    body = js[js.index("function fxChanged()"):]
+    assert "render(); showSel();" in body[: body.index("\n}\n")]
