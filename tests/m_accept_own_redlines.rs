@@ -1268,3 +1268,59 @@ fn a_style_copied_from_the_revision_keeps_its_spacing_whatever_its_id() {
         part_string(&out, "word/styles.xml").unwrap()
     );
 }
+
+/// A one-paragraph document whose Normal carries `normal_rpr` as its rPr.
+fn docx_with_normal_rpr(normal_rpr: &str) -> Vec<u8> {
+    let styles = format!(
+        r#"<w:styles xmlns:w="{w}"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:asciiTheme="minorHAnsi" w:hAnsiTheme="minorHAnsi"/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/><w:rPr>{normal_rpr}</w:rPr></w:style></w:styles>"#,
+        w = common::docx::W_NS
+    );
+    common::docx::docx_with(
+        r#"<w:p><w:r><w:t>Body text</w:t></w:r></w:p>"#,
+        &[Part {
+            name: "word/styles.xml",
+            content_type: STYLES,
+            rel_type: STYLES_REL,
+            xml: &styles,
+        }],
+    )
+}
+
+/// Normal's rPr as xml.
+fn normal_rpr(pkg: &[u8]) -> String {
+    let xml = part_string(pkg, "word/styles.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    dom.elements(root, Some(&W::name("style")))
+        .into_iter()
+        .find(|&s| dom.attribute(s, &W::name("styleId")) == Some("Normal"))
+        .and_then(|s| dom.element(s, &W::r_pr()))
+        .map(|p| dom.serialize_element(p))
+        .unwrap_or_default()
+}
+
+/// The original's Normal is blue; the revision's Normal sets no colour.
+/// Word's redline records the colour in Normal's `rPrChange` and leaves
+/// it off the live rPr (d8b0c2ae01), so the accepted text is black. The
+/// Normal merge rewrote only the font slots and sizes, so the blue stayed
+/// live and every accepted paragraph stayed blue.
+#[test]
+fn a_colour_the_revision_drops_from_normal_is_recorded() {
+    let base = docx_with_normal_rpr(r#"<w:color w:val="0000FF"/><w:sz w:val="24"/>"#);
+    let next = docx_with_normal_rpr("");
+    let redline = compare_documents(&base, &next, "Redline").unwrap();
+    assert_word_valid_package(&redline);
+    let rpr = normal_rpr(&redline);
+    let (live, change) = rpr.split_once("<w:rPrChange").expect("rPrChange");
+    assert!(!live.contains("<w:color"), "{rpr}");
+    assert!(change.contains(r#"<w:color w:val="0000FF""#), "{rpr}");
+
+    let accepted = accept_revisions(&redline).unwrap();
+    assert_word_valid_package(&accepted);
+    let rpr = normal_rpr(&accepted);
+    assert!(
+        !rpr.contains("<w:color") && !rpr.contains("rPrChange"),
+        "{rpr}"
+    );
+}

@@ -3946,14 +3946,36 @@ fn merge_normal_style_rpr(
     // disagree on them (oracle Normal: Liberation fonts + color 00000A +
     // kern 2 + lang zh-CN/hi-IN + ligatures with A-dd declaring none).
     let lig_name = W14::name("ligatures");
-    if let Some(b_rpr) = b_style.and_then(|s| dom.element(s, &W::name("rPr"))) {
+    let b_rpr = b_style.and_then(|s| dom.element(s, &W::name("rPr")));
+    let metric = |n: &crate::xmllinq::XName| {
+        ["rFonts", "sz", "szCs", "lang", "kern", "rPrChange"]
+            .iter()
+            .any(|s| *n == W::name(s))
+    };
+    // d8b0c2ae01: a property only A's Normal stores (color 0000FF) is not
+    // B's; Word records it in the rPrChange and leaves it off the live rPr,
+    // or writes B's docDefaults value when B declares one there.
+    for ac in dom.elements(rpr, None) {
+        let Some(n) = dom.name(ac) else { continue };
+        if metric(&n) || n != W::name(n.local_name()) {
+            continue;
+        }
+        if b_rpr.is_some_and(|b| dom.element(b, &n).is_some()) {
+            continue;
+        }
+        match rpr_default(dom, b_root).and_then(|r| dom.element(r, &n)) {
+            Some(bd) => {
+                let clone = dom.clone_subtree(bd);
+                dom.replace_with(ac, &[clone]);
+            }
+            None => dom.remove(ac),
+        }
+    }
+    if let Some(b_rpr) = b_rpr {
         let b_kids: Vec<NodeId> = dom.elements(b_rpr, None);
         for bc in b_kids {
             let Some(n) = dom.name(bc) else { continue };
-            if ["rFonts", "sz", "szCs", "lang", "rPrChange"]
-                .iter()
-                .any(|s| n == W::name(s))
-            {
+            if metric(&n) && n != W::name("kern") {
                 continue; // metric slots written above
             }
             if n == lig_name {
@@ -3964,9 +3986,11 @@ fn merge_normal_style_rpr(
                 continue;
             }
             let local = n.local_name().to_string();
-            if dom.element(rpr, &W::name(&local)).is_none() {
-                let clone = dom.clone_subtree(bc);
-                add_rpr_child_in_order(dom, rpr, clone, &local);
+            let clone = dom.clone_subtree(bc);
+            match dom.element(rpr, &W::name(&local)) {
+                // B's value wins over A's (Word's live Normal is B's).
+                Some(old) => dom.replace_with(old, &[clone]),
+                None => add_rpr_child_in_order(dom, rpr, clone, &local),
             }
         }
     }
