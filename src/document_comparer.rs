@@ -1523,6 +1523,53 @@ fn effective_style_props(
 /// (`SD_StrikeChar` → `SDStrikeChar`) while the revised package still holds the
 /// originals. The canonical id is a pure function of the name, so equal names
 /// are exactly the styles that canonicalization would have unified.
+/// Detached copies of the styles of `out_root` whose type and name `b_root`
+/// does not define, each with the key that finds it again.
+fn styles_the_revision_lacks(
+    dom: &mut Dom,
+    out_root: NodeId,
+    b_root: NodeId,
+) -> Vec<((String, String), NodeId)> {
+    let b_keys: std::collections::HashSet<(String, String)> = dom
+        .elements(b_root, Some(&W::name("style")))
+        .into_iter()
+        .filter_map(|s| style_match_key(dom, s))
+        .collect();
+    let only_a: Vec<((String, String), NodeId)> = dom
+        .elements(out_root, Some(&W::name("style")))
+        .into_iter()
+        .filter_map(|s| style_match_key(dom, s).map(|k| (k, s)))
+        .filter(|(k, _)| !b_keys.contains(k))
+        .collect();
+    only_a
+        .into_iter()
+        .map(|(k, s)| (k, dom.clone_subtree(s)))
+        .collect()
+}
+
+/// Put each saved style back in place of the one its key finds.
+fn restore_styles(
+    dom: &mut Dom,
+    styles_root: NodeId,
+    saved: Vec<((String, String), NodeId)>,
+) -> bool {
+    let mut changed = false;
+    for (key, copy) in saved {
+        let Some(live) = dom
+            .elements(styles_root, Some(&W::name("style")))
+            .into_iter()
+            .find(|&s| style_match_key(dom, s).as_ref() == Some(&key))
+        else {
+            continue;
+        };
+        if dom.serialize_element(live) != dom.serialize_element(copy) {
+            dom.replace_with(live, &[copy]);
+            changed = true;
+        }
+    }
+    changed
+}
+
 fn style_match_key(dom: &Dom, style: NodeId) -> Option<(String, String)> {
     let ty = dom
         .attribute(style, &W::name("type"))
@@ -6834,6 +6881,11 @@ fn compare_documents_impl(
                         .unwrap_or_default()
                 })
                 .unwrap_or_default();
+            // Word leaves a style the revision's stylesheet lacks as the
+            // original defines it, without a change record (51 of 51 accept
+            // pairs), whatever Normal and the docDefaults become under it:
+            // the passes below only see it to be put back.
+            let only_a = styles_the_revision_lacks(&mut sd, or, br);
             let mut changed =
                 merge_revised_style_definitions(&mut sd, or, br, settings, &a_declared_keys);
             changed |= merge_normal_style_spacing(&mut sd, or, br, settings);
@@ -6865,6 +6917,7 @@ fn compare_documents_impl(
             // Root styles record their old properties in full against the
             // docDefaults, the way Word's Reject All needs them.
             changed |= complete_root_style_change_records(&mut sd, or, settings);
+            changed |= restore_styles(&mut sd, or, only_a);
             // M483: re-cache themed color hexes against the shipped theme —
             // must run AFTER the merge writes B's blocks (their w:val hexes
             // were cached under B's theme).

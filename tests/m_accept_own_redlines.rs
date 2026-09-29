@@ -1632,9 +1632,15 @@ fn docx_with_stylesheet(dd_ppr: &str, dd_rpr: &str, normal_ppr: &str, normal_rpr
 /// [`docx_with_stylesheet`] with its own body; `sheet` is the docDefaults
 /// pPr and rPr, then Normal's pPr and rPr.
 fn docx_with_stylesheet_body(body: &str, sheet: [&str; 4]) -> Vec<u8> {
+    docx_with_stylesheet_styles(body, sheet, "")
+}
+
+/// [`docx_with_stylesheet_body`] with `styles` (whole `w:style` elements)
+/// after Normal.
+fn docx_with_stylesheet_styles(body: &str, sheet: [&str; 4], styles: &str) -> Vec<u8> {
     let [dd_ppr, dd_rpr, normal_ppr, normal_rpr] = sheet;
     let styles = format!(
-        r#"<w:styles xmlns:w="{w}"><w:docDefaults><w:rPrDefault><w:rPr>{dd_rpr}</w:rPr></w:rPrDefault><w:pPrDefault><w:pPr>{dd_ppr}</w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/><w:pPr>{normal_ppr}</w:pPr><w:rPr>{normal_rpr}</w:rPr></w:style></w:styles>"#,
+        r#"<w:styles xmlns:w="{w}"><w:docDefaults><w:rPrDefault><w:rPr>{dd_rpr}</w:rPr></w:rPrDefault><w:pPrDefault><w:pPr>{dd_ppr}</w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/><w:pPr>{normal_ppr}</w:pPr><w:rPr>{normal_rpr}</w:rPr></w:style>{styles}</w:styles>"#,
         w = common::docx::W_NS
     );
     common::docx::docx_with(
@@ -1892,4 +1898,67 @@ fn a_deleted_paragraph_keeps_its_line_pitch_over_a_single_spaced_normal() {
     assert!(deleted.contains(r#"w:line="276""#), "{pprs:?}");
     let rejected = reject_revisions(&redline).unwrap();
     assert!(body_ppr_xml(&rejected)[1].contains(r#"w:line="276""#));
+}
+
+/// The serialized `w:style` with this id in the package's stylesheet.
+fn style_xml(pkg: &[u8], id: &str) -> String {
+    let xml = part_string(pkg, "word/styles.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    dom.elements(root, Some(&W::name("style")))
+        .into_iter()
+        .find(|&s| dom.attribute(s, &W::name("styleId")) == Some(id))
+        .map(|s| dom.serialize_element(s))
+        .unwrap_or_default()
+}
+
+/// A style only the original defines keeps the original's definition and
+/// gets no change record, however Normal changes under it. Word's redlines
+/// of all 51 accept pairs record nothing on such a style; ours cascaded
+/// Normal's old fonts onto them (c719b900f0 heading 1, Body Text, List
+/// Paragraph; 20-33 styles in 29e3, 4eff, a524, bf3d) and wrote Normal's
+/// new fonts into List Paragraph's live rPr.
+#[test]
+fn a_style_the_revision_lacks_keeps_the_original_definition_unrecorded() {
+    let dd_rpr = r#"<w:rFonts w:asciiTheme="minorHAnsi" w:eastAsiaTheme="minorHAnsi" w:hAnsiTheme="minorHAnsi" w:cstheme="minorBidi"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="en-US" w:eastAsia="en-US" w:bidi="ar-SA"/>"#;
+    let only_a = r#"<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:jc w:val="right"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:bCs/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/></w:pPr></w:style>"#;
+    let body = r#"<w:p><w:r><w:t>Body text</w:t></w:r></w:p>"#;
+    let base = docx_with_stylesheet_styles(
+        body,
+        [
+            "",
+            dd_rpr,
+            "",
+            r#"<w:rFonts w:ascii="Arial" w:eastAsia="Arial" w:hAnsi="Arial" w:cs="Arial"/><w:lang w:val="es-ES"/>"#,
+        ],
+        only_a,
+    );
+    let next = docx_with_stylesheet_styles(
+        body,
+        [
+            "",
+            dd_rpr,
+            "",
+            r#"<w:rFonts w:ascii="Times New Roman" w:eastAsia="Arial Unicode MS" w:hAnsi="Times New Roman" w:cs="Times New Roman"/><w:sz w:val="24"/><w:szCs w:val="24"/>"#,
+        ],
+        "",
+    );
+    let redline = compare_documents(&base, &next, "Redline").unwrap();
+    assert_word_valid_package(&redline);
+    assert!(
+        normal_change_record(&redline, "rPr", "rPrChange").contains("Arial"),
+        "Normal itself records its change"
+    );
+    for (id, own) in [
+        ("Heading1", r#"<w:rPr><w:b /><w:bCs /></w:rPr>"#),
+        ("ListParagraph", r#"<w:pPr><w:ind w:left="720" /></w:pPr>"#),
+    ] {
+        let style = style_xml(&redline, id);
+        assert!(style.contains(own), "{id} keeps its own: {style}");
+        assert!(
+            !style.contains("PrChange") && !style.contains("rFonts"),
+            "{id}: {style}"
+        );
+    }
 }
