@@ -102,7 +102,9 @@ pub struct Options {
     pub checks: Vec<Check>,
     /// Only parts whose name contains this.
     pub part: Option<String>,
-    /// `textbox`: only stories whose text contains this.
+    /// `textbox`: only stories whose text contains this; `text`, `runs`,
+    /// `xml`, `changes`, `styledefs`: only lines that hold it, a `runs`
+    /// line read as plain text, printed whole.
     pub grep: Option<String>,
     /// Examples per finding kind, lines per listing.
     pub limit: usize,
@@ -1812,6 +1814,12 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
                 map.insert(e.name.clone(), text_lines(&dom, root, check == Check::Runs));
             }
         }
+        if let Some(g) = opts.grep.as_deref() {
+            for (lines, _) in map.values_mut() {
+                lines.retain(|l| line_has(l, g));
+            }
+            map.retain(|_, (lines, _)| !lines.is_empty());
+        }
         map
     };
     let label = match check {
@@ -1835,7 +1843,12 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
                 line(&mut out, &format!("{part}: {paras} paragraphs"));
             }
             for l in lines {
-                line(&mut out, l);
+                if opts.grep.is_some() {
+                    // Asked for by name: the whole paragraph.
+                    let _ = writeln!(out, "{l}");
+                } else {
+                    line(&mut out, l);
+                }
             }
         }
         return out;
@@ -1917,6 +1930,29 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
         line(&mut out, &format!("{label} identical"));
     }
     out
+}
+
+/// `l` holds `g`, read as plain text when `l` is a `runs` line: run
+/// properties (`«…»`) and revision marks (`{+ +}`, `[- -]`) dropped, so a
+/// phrase split over runs still matches.
+fn line_has(l: &str, g: &str) -> bool {
+    if l.contains(g) {
+        return true;
+    }
+    let mut plain = String::with_capacity(l.len());
+    let mut depth = 0usize;
+    for c in l.chars() {
+        match c {
+            '«' => depth += 1,
+            '»' => depth = depth.saturating_sub(1),
+            _ if depth == 0 => plain.push(c),
+            _ => {}
+        }
+    }
+    ["{+", "+}", "[-", "-]"]
+        .iter()
+        .fold(plain, |t, m| t.replace(m, ""))
+        .contains(g)
 }
 
 fn line(out: &mut String, s: &str) {
@@ -2594,6 +2630,22 @@ mod tests {
             out.contains("+B   paragraph \"List Paragraph\" rPr[b i]\n"),
             "{out}"
         );
+    }
+
+    #[test]
+    fn grep_narrows_runs_to_the_paragraphs_whose_text_has_it() {
+        let long = "x".repeat(300);
+        let body = format!(
+            r#"<w:p><w:r><w:rPr><w:sz w:val="24"/></w:rPr><w:t xml:space="preserve">{long} Q: Can you do PT/</w:t></w:r><w:r><w:rPr><w:b/><w:sz w:val="24"/></w:rPr><w:t>INRs?</w:t></w:r></w:p><w:p><w:r><w:t>Q: Other</w:t></w:r></w:p>"#
+        );
+        let opts = Options {
+            grep: Some("PT/INRs".into()),
+            ..opts_for(Check::Runs)
+        };
+        let out = report(&docx(&body), None, &opts).unwrap();
+        assert!(out.contains("«b sz=24»INRs?"), "{out}");
+        assert!(out.contains(&long), "printed whole: {out}");
+        assert!(!out.contains("Other"), "{out}");
     }
 
     /// A package whose one section shows `header_text` from the header part

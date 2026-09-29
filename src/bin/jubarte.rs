@@ -310,6 +310,7 @@ enum Command {
         jubarte debug out.docx -c text            paragraphs with ins/del marks\n  \
         jubarte debug a.docx b.docx -c text       paragraphs that differ, per part\n  \
         jubarte debug a.docx b.docx -c runs       the same, with direct formatting\n  \
+        jubarte debug out.docx -c runs -g \"Q: Can\"   one paragraph's runs, whole\n  \
         jubarte debug out.docx -c changes         what each pPrChange/tcPrChange/… records\n  \
         jubarte debug a.docx b.docx -c styledefs  style definitions that differ, paired by name\n  \
         jubarte debug a.docx b.docx -c xml -p document.xml")]
@@ -328,7 +329,7 @@ enum Command {
         /// Only parts whose name contains this (e.g. document.xml).
         #[arg(short = 'p', long, value_name = "NAME")]
         part: Option<String>,
-        /// textbox: only stories whose text contains this.
+        /// Only what contains this: textbox stories; text/runs/xml/changes/styledefs lines (a runs paragraph matched on its plain text, printed whole).
         #[arg(short = 'g', long, value_name = "TEXT")]
         grep: Option<String>,
         /// Examples per finding kind.
