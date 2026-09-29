@@ -3036,6 +3036,50 @@ fn word_canonical_style_id(name: &str) -> String {
         .collect()
 }
 
+/// Word mode: copy the revised stylesheet's styles that the output lacks,
+/// pairing styles by type and name as Word does, not by id. A B style whose
+/// name the output already holds (Brazilian `Normal` against Dutch
+/// `Standaard`, both named "Normal") is not copied; the returned map sends
+/// its B id to the output style's id. Styles the names do not pair fall back
+/// to the id rule of [`crate::comparer::footnotes::copy_missing_styles`].
+fn copy_missing_styles_by_name(
+    dom: &mut Dom,
+    to_root: NodeId,
+    from_root: NodeId,
+) -> std::collections::HashMap<String, String> {
+    let style_nm = W::name("style");
+    let style_id = W::name("styleId");
+    let mut by_name: std::collections::HashMap<(String, String), String> =
+        std::collections::HashMap::new();
+    for s in dom.elements(to_root, Some(&style_nm)) {
+        if let (Some(key), Some(id)) = (style_match_key(dom, s), dom.attribute(s, &style_id)) {
+            by_name.entry(key).or_insert_with(|| id.to_string());
+        }
+    }
+    let mut b_to_out = std::collections::HashMap::new();
+    let mut unpaired = Vec::new();
+    for s in dom.elements(from_root, Some(&style_nm)) {
+        let paired = style_match_key(dom, s).and_then(|k| by_name.get(&k));
+        match (paired, dom.attribute(s, &style_id)) {
+            (Some(out_id), Some(b_id)) => {
+                if b_id != out_id {
+                    b_to_out.insert(b_id.to_string(), out_id.clone());
+                }
+            }
+            _ => unpaired.push(s),
+        }
+    }
+    // Copy the unpaired styles from a scratch stylesheet so the id rule sees
+    // only them.
+    let scratch = dom.new_element(W::name("styles"));
+    for s in unpaired {
+        let clone = dom.clone_subtree(s);
+        dom.add(scratch, clone);
+    }
+    crate::comparer::footnotes::copy_missing_styles(dom, to_root, scratch);
+    b_to_out
+}
+
 /// Rename `w:styleId` values to Word-canonical ids derived from `w:name`.
 ///
 /// Returns the old→new map (only entries that actually change). Also rewrites
@@ -5748,10 +5792,35 @@ fn compare_documents_impl(
                 let fd = sd.parse_xdocument(&from_xml);
                 if let (Some(tr), Some(fr)) = (sd.root(td), sd.root(fd)) {
                     if is_styles {
-                        crate::comparer::footnotes::copy_missing_styles(&mut sd, tr, fr);
                         if settings.merge_replaced_paragraphs {
+                            let a_ids = crate::comparer::footnotes::defined_style_ids(&sd, tr);
+                            let b_to_out = copy_missing_styles_by_name(&mut sd, tr, fr);
                             let _ = adopt_missing_styles_structure(&mut sd, tr, fr);
                             style_renames = canonicalize_style_ids(&mut sd, tr);
+                            // B's content names paired styles by B's ids; send
+                            // them to the output style's final id. An id A
+                            // also declares names A's own style: leave it. The
+                            // copied B styles link to them by B's ids too.
+                            let mut b_renames = std::collections::HashMap::new();
+                            for (b_id, out_id) in b_to_out {
+                                let target = style_renames.get(&out_id).cloned().unwrap_or(out_id);
+                                if b_id != target && !a_ids.contains(&b_id) {
+                                    b_renames.insert(b_id, target);
+                                }
+                            }
+                            for local in ["basedOn", "next", "link"] {
+                                for e in sd.descendants(tr, Some(&W::name(local))) {
+                                    if let Some(to) =
+                                        sd.attribute(e, &W::val()).and_then(|v| b_renames.get(v))
+                                    {
+                                        let to = to.clone();
+                                        sd.set_attribute_value(e, &W::val(), Some(&to));
+                                    }
+                                }
+                            }
+                            style_renames.extend(b_renames);
+                        } else {
+                            crate::comparer::footnotes::copy_missing_styles(&mut sd, tr, fr);
                         }
                     } else {
                         let (num_remap, copied_bullets) =

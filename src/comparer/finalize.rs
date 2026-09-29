@@ -13113,7 +13113,9 @@ fn stamp_trailing_numbering(
     if kids.len() != 1 || !dom.name_is(kids[0], &style_name) {
         return;
     }
-    if dom.attribute(kids[0], &W::val()) != Some("style0") {
+    // The default paragraph style: LibreOffice's `style0`, or its canonical
+    // id once the stylesheets are paired by name.
+    if !matches!(dom.attribute(kids[0], &W::val()), Some("style0" | "Normal")) {
         return;
     }
     if body_paragraphs(dom, revised)
