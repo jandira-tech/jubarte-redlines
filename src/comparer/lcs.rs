@@ -3515,13 +3515,42 @@ fn peel_story_final_groups<K: PartialEq>(
     lg: &mut Vec<(K, Vec<ComparisonUnit>)>,
     rg: &mut Vec<(K, Vec<ComparisonUnit>)>,
 ) -> Option<(Vec<ComparisonUnit>, Vec<ComparisonUnit>)> {
-    if lg.len() == rg.len() || lg.len() < 2 || rg.len() < 2 {
-        return None;
-    }
     let closes = |g: &(K, Vec<ComparisonUnit>)| {
         g.1.last()
             .is_some_and(|u| unit_is_paragraph_matter(dom, u) && unit_closes_story(dom, u))
     };
+    // A revision that is one paragraph of words: its closing mark pairs with the
+    // original's, and its words zip with the original's first run, whose
+    // mark is deleted (bc0135eaa1: one revised paragraph against a picture
+    // paragraph, a table and more paragraphs). Zipping the whole run paired
+    // the revised mark with the picture paragraph's and left the original's
+    // closing paragraph live.
+    let bare_mark =
+        |g: &(K, Vec<ComparisonUnit>)| g.1.last().is_some_and(|u| unit_is_single_atom_ppr(dom, u));
+    if let ([r], Some(l)) = (rg.as_slice(), lg.last())
+        && lg.len() >= 2
+        && r.1.len() >= 2
+        && r.1
+            .iter()
+            .filter(|u| unit_is_single_atom_ppr(dom, u))
+            .count()
+            == 1
+        && closes(r)
+        && closes(l)
+        && bare_mark(r)
+        && bare_mark(l)
+    {
+        let mark_b = rg[0].1.pop()?;
+        let last_a = lg.last_mut()?;
+        let mark_a = last_a.1.pop()?;
+        if last_a.1.is_empty() {
+            lg.pop();
+        }
+        return Some((vec![mark_a], vec![mark_b]));
+    }
+    if lg.len() == rg.len() || lg.len() < 2 || rg.len() < 2 {
+        return None;
+    }
     let blank = |g: &(K, Vec<ComparisonUnit>)| g.1.iter().all(|u| unit_is_textless(dom, u));
     let (l, r) = (lg.last()?, rg.last()?);
     if l.0 != r.0 || !closes(l) || !closes(r) || !(blank(l) || blank(r)) {

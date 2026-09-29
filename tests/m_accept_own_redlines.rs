@@ -526,3 +526,40 @@ fn unrelated_documents_keep_the_blank_the_closing_pair_leaves() {
         part_string(&out, "word/document.xml").unwrap()
     );
 }
+
+/// A one-paragraph revision of a document that opens on a paragraph with no
+/// text (a picture in bc0135eaa1, a tab here) and a table, with no word in
+/// common: Word pairs the revised mark with the original's closing mark and
+/// writes the revised words into the opening paragraph, whose mark it
+/// deletes (bc0135eaa1, ece42865e7). Pairing the revised mark with the
+/// opening paragraph's left the original's closing blank live after accept.
+#[test]
+fn a_one_paragraph_revision_pairs_the_closing_marks() {
+    let p = |t: &str| format!("<w:p><w:r><w:t>{t}</w:t></w:r></w:p>");
+    let rows: String = [
+        "Bars Round Here",
+        "Partner dance, 48 counts",
+        "Music: Bar Round Here",
+    ]
+    .iter()
+    .map(|t| format!("<w:tr><w:tc>{}<w:p/></w:tc></w:tr>", p(t)))
+    .collect();
+    let a = common::docx::docx(&format!(
+        "<w:p><w:r><w:tab/></w:r></w:p><w:tbl><w:tblGrid><w:gridCol w:w=\"9000\"/></w:tblGrid>{rows}</w:tbl>{}{}{}<w:p/><w:p/><w:p/>",
+        p("Take the man's right hand and turn."),
+        p("Shuffle forward left, right, left, quarter turn."),
+        p("Shuffle forward right, left, right, quarter turn."),
+    ));
+    let b = common::docx::docx(
+        "<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>CHAIN ACTUATOR TURN RIGHT</w:t><w:br/><w:t>24 V DC SHUFFLE FORWARD</w:t><w:br/><w:t>ELECTRIC MOTOR QUARTER TURN</w:t></w:r></w:p>",
+    );
+    let out = compare_documents(&a, &b, "Redline").expect("compare");
+    assert_word_valid_package(&out);
+    let accepted = accept_revisions(&out).expect("accept");
+    assert_eq!(
+        body_texts(&accepted),
+        body_texts(&b),
+        "{}",
+        part_string(&out, "word/document.xml").unwrap()
+    );
+}
