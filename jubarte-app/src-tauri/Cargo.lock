@@ -1819,7 +1819,7 @@ name = "jubarte-app"
 version = "0.9.3"
 dependencies = [
  "jubarte-redlines",
- "quick-xml 0.41.0",
+ "quick-xml 0.42.0",
  "serde",
  "serde_json",
  "swift-rs",
