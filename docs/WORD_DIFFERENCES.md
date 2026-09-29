@@ -119,6 +119,8 @@ The cases below are where Word loses or invents something. We do the
 sensible thing today; each belongs in a future Word mode, never in the
 default. Found by accepting our redlines in Word and comparing with Word's
 accept of its own redline (`_to_improve_accepted_changes`, 2026-09-29).
+Where Word's reject strays, the tie-breaker is Word's PDF of A itself: a
+reject should give A back.
 
 | # | Word does | We do | Seen in |
 |---|---|---|---|
@@ -134,6 +136,8 @@ accept of its own redline (`_to_improve_accepted_changes`, 2026-09-29).
 | A10 | Adds blank default header/footer/endnote parts, and header/footer parts neither side had. Not always invisible: a later section inherits the blank default header, and under a small top margin it pushes the body down (f8c1: top=284, header=142) | Writes only the parts the document uses, so the layout stays the revision's | 440c, f8c1 |
 | A11 | Auto-creates `HeaderChar`/`FooterChar` styles | Adds no styles the document doesn't use | cda1 |
 | A12 | Prunes style properties that repeat Normal | Keeps the style's own properties | several |
+| A13 | Reject All of its own redline drops the paragraphs' direct spacing A had (after=0, line=240) and restores Normal to the docDefaults spacing (after=200, line=276), so A's 4 pages come back as 6 (33.79 against A's own PDF) | Reject gives back A's layout (99.96 against A's PDF) | 1b4d |
+| A14 | Records an old rPr for a style only B has (`List Paragraph`: Arial, sz=18, neither side's value), which Reject All then writes | Leaves a style A lacks as B wrote it | 1b4d |
 
 Word behaviour that *is* copied (it keeps what the revision says): see the
 rules pinned in `tests/m_accept_word_parity.rs`, `tests/m_reject_word_parity.rs`

@@ -12,7 +12,7 @@ mod common;
 
 use common::docx::{Part, docx_with_sect, part_string};
 use common::validity::assert_word_valid_package;
-use jubarte::document_comparer::{accept_revisions, compare_documents};
+use jubarte::document_comparer::{accept_revisions, compare_documents, reject_revisions};
 use jubarte::namespaces::W;
 use jubarte::xmllinq::Dom;
 
@@ -1566,4 +1566,56 @@ fn a_carried_insertion_keeps_its_leading_space() {
         unpreserved_texts(&redline, "word/document.xml"),
         Vec::<String>::new()
     );
+}
+
+/// The names of the elements that hold each `w:br` of the body, innermost
+/// first up to the paragraph (`["r", "ins"]` for a break inside an insertion).
+fn break_holders(pkg: &[u8]) -> Vec<Vec<String>> {
+    let xml = part_string(pkg, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    dom.descendants(root, Some(&W::name("br")))
+        .into_iter()
+        .map(|br| {
+            let mut holders = Vec::new();
+            let mut at = dom.parent(br);
+            while let Some(node) = at {
+                let Some(name) = dom.name(node) else { break };
+                if name == W::p() {
+                    break;
+                }
+                holders.push(name.local_name().to_string());
+                at = dom.parent(node);
+            }
+            holders
+        })
+        .collect()
+}
+
+/// The revision holds line breaks directly under its paragraph, which the
+/// schema forbids. Word's redline wraps each in a run of its own with no
+/// properties, `<w:r><w:br/></w:r>`, inside the insertion. Ours copied them
+/// bare, outside it, so Word's Reject All kept all 89 inserted breaks and
+/// ran bc0135eaa1 to 5 pages instead of 2.
+#[test]
+fn a_bare_paragraph_break_travels_with_its_insertion() {
+    let base = docx_with_sect(r#"<w:p><w:r><w:t>Old heading</w:t></w:r></w:p>"#, &[], "");
+    let next = docx_with_sect(
+        r#"<w:p><w:r><w:t>New line one</w:t></w:r><w:br/><w:r><w:t>New line two</w:t></w:r><w:br/><w:br/><w:r><w:t>New line three</w:t></w:r></w:p>"#,
+        &[],
+        "",
+    );
+    let redline = compare_documents(&base, &next, "Redline").unwrap();
+    assert_word_valid_package(&redline);
+    assert_eq!(
+        break_holders(&redline),
+        vec![vec!["r".to_string(), "ins".to_string()]; 3],
+        "{}",
+        part_string(&redline, "word/document.xml").unwrap()
+    );
+    let accepted = accept_revisions(&redline).unwrap();
+    assert_eq!(break_holders(&accepted), vec![vec!["r".to_string()]; 3]);
+    let rejected = reject_revisions(&redline).unwrap();
+    assert_eq!(break_holders(&rejected), Vec::<Vec<String>>::new());
 }

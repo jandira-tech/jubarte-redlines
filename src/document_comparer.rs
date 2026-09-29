@@ -4178,6 +4178,29 @@ fn merged_body(dom: &mut Dom, root: NodeId) -> Option<NodeId> {
     Some(target)
 }
 
+/// Wrap each `w:br` a producer left directly under a paragraph (the schema
+/// forbids it) in a run of its own with no properties, `<w:r><w:br/></w:r>`,
+/// the way Word reads it. Left bare, the break sat outside the insertion or
+/// deletion around it, so Word's Reject All kept every inserted break
+/// (bc0135eaa1: 89 of them, 5 pages instead of 2).
+fn wrap_bare_breaks(dom: &mut Dom, root: NodeId) {
+    let bare: Vec<NodeId> = dom
+        .descendants(root, Some(&W::name("br")))
+        .into_iter()
+        .filter(|&br| {
+            dom.parent(br)
+                .and_then(|p| dom.name(p))
+                .is_some_and(|n| n == W::p())
+        })
+        .collect();
+    for br in bare {
+        let run = dom.new_element(W::r());
+        dom.add_before_self(br, run);
+        dom.remove(br);
+        dom.add(run, br);
+    }
+}
+
 /// C.1/C.2 — `WmlComparer.PreProcessMarkup` (:434) at package level:
 /// `ChangeFootnoteEndnoteReferencesToUniqueRange` (:1627) then
 /// `AddFootnotesEndnotesParts` (:1604). C.3–C.5 extend it with
@@ -4249,6 +4272,11 @@ pub fn pre_process_markup(
             false,
         )
         .map_err(invalid_content)?;
+    }
+
+    // Before the unids, so the runs the repair adds get theirs.
+    for r in [Some(main_root), fn_root, en_root].into_iter().flatten() {
+        wrap_bare_breaks(&mut dom, r);
     }
 
     // C.5 — `AddUnidsToMarkupInContentParts` (:600): stamp `pt:Unid` on every
