@@ -1540,6 +1540,78 @@ fn a5b_fully_deleted_content_control_is_skipped_not_panicked() {
     );
 }
 
+/// Three run-level content controls with the same placeholder text in one
+/// paragraph, the header layout Word's "Blank (Three Columns)" gallery
+/// writes (3bfcb371e2 against aa5340125d's header1). Rejecting must restore
+/// all three instead of panicking with "No parent for AddBeforeSelf".
+#[test]
+fn a5b_three_identical_run_controls_in_one_paragraph_are_all_restored() {
+    let mut d = Dom::new();
+    let control = "<w:sdt><w:sdtPr/><w:sdtContent><w:r><w:t>[Escriba texto]</w:t></w:r></w:sdtContent></w:sdt>";
+    let body = body_from(
+        &mut d,
+        &format!(
+            "<w:p>{control}<w:r><w:ptab w:relativeTo=\"margin\" w:alignment=\"center\" w:leader=\"none\"/></w:r>\
+             {control}<w:r><w:ptab w:relativeTo=\"margin\" w:alignment=\"right\" w:leader=\"none\"/></w:r>\
+             {control}</w:p>"
+        ),
+    );
+
+    let out = reject_revisions_document(&mut d, body);
+
+    assert_eq!(d.descendants(out, Some(&W::name("sdt"))).len(), 3);
+    let texts: Vec<String> = d
+        .descendants(out, Some(&W::t()))
+        .iter()
+        .map(|&t| d.value(t))
+        .collect();
+    assert_eq!(texts, vec!["[Escriba texto]"; 3]);
+}
+
+/// Two nested block controls (Word's "Page Numbers" gallery parts) whose
+/// every paragraph is inserted, before a paragraph that stays, as
+/// 3bfcb371e2 against aa5340125d's footer2. Rejecting removes the inserted
+/// paragraphs and must not panic with "No parent for AddBeforeSelf".
+#[test]
+fn a5b_nested_controls_of_inserted_paragraphs_reject_without_panic() {
+    let mut d = Dom::new();
+    let ins = |id: u32, text: &str| {
+        format!(
+            "<w:p><w:pPr><w:rPr><w:ins w:id=\"{id}\" w:author=\"x\"/></w:rPr></w:pPr>\
+             <w:ins w:id=\"{}\" w:author=\"x\"><w:r><w:t>{text}</w:t></w:r></w:ins></w:p>",
+            id + 100
+        )
+    };
+    let body = body_from(
+        &mut d,
+        &format!(
+            "<w:sdt><w:sdtPr/><w:sdtContent><w:sdt><w:sdtPr/><w:sdtContent>{}{}\
+             </w:sdtContent></w:sdt></w:sdtContent></w:sdt>\
+             <w:p><w:pPr><w:jc w:val=\"center\"/><w:pPrChange w:id=\"7\" w:author=\"x\">\
+             <w:pPr><w:ind w:right=\"360\"/></w:pPr></w:pPrChange></w:pPr></w:p>",
+            ins(1, "one"),
+            ins(2, "two")
+        ),
+    );
+
+    let out = reject_revisions_document(&mut d, body);
+
+    let texts: Vec<String> = d
+        .descendants(out, Some(&W::t()))
+        .iter()
+        .map(|&t| d.value(t))
+        .collect();
+    assert!(texts.is_empty(), "{texts:?}");
+    // Both inserted paragraphs and their controls go; the paragraph their
+    // marks merged into stays, with its old properties.
+    assert!(d.descendants(out, Some(&W::name("sdt"))).is_empty());
+    let paragraphs = d.descendants(out, Some(&W::p()));
+    assert_eq!(paragraphs.len(), 1);
+    let xml = d.serialize_element(paragraphs[0]);
+    assert!(xml.contains("w:right=\"360\""), "{xml}");
+    assert!(!xml.contains("w:jc"), "{xml}");
+}
+
 /// A.5b regression, mixed (CHANGED CODE + PRIOR BEHAVIOR side by side): one
 /// content control is fully deleted (nuked, must be skipped gracefully — the
 /// fix) while a PRECEDING, untouched content control must still be restored

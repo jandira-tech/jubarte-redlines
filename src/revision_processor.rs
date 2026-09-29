@@ -2020,9 +2020,22 @@ pub fn add_block_level_content_controls(
         // revision no longer exist after acceptance — filter_map skips them
         // and empty controls fall through to `continue` below (upstream C#
         // used .First() and crashed on fully-deleted sdt).
+        // Only runs that stay anchor the control: deleted or moved-away text
+        // goes later, and a run an earlier whole-paragraph wrap took out of
+        // the document (a control nested in one already restored from its
+        // clone) is gone. A control holding nothing else is skipped, else its
+        // clone would replace the paragraph its deleted marks merged into.
         let runs_in_new_document: Vec<NodeId> = runs
             .iter()
             .filter_map(|id| run_by_id.get(id).copied())
+            .filter(|&r| {
+                let ancestors = dom.ancestors(r, None);
+                ancestors.contains(&new_document)
+                    && !ancestors.iter().any(|&a| {
+                        dom.name(a)
+                            .is_some_and(|n| n == W::del() || n == W::move_from())
+                    })
+            })
             .collect();
 
         // deepest common ancestor of all the runs (nearest-first intersection)
