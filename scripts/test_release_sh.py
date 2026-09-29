@@ -77,5 +77,69 @@ class ReleaseArgs(unittest.TestCase):
         self.assertIn(DOCS_FLAG, r.stderr)
 
 
+class ResumeDryRuns(unittest.TestCase):
+    """A resumed release must not die in step 5 on a registry that already
+    holds the version (npm refuses even a dry run over a published version)."""
+
+    def step6(self) -> str:
+        text = RELEASE_SH.read_text()
+        start = text.index('say "6. Publish dry-runs"')
+        return text[start:text.index('say "7.', start)]
+
+    def test_npm_dry_run_skips_a_published_version(self) -> None:
+        self.assertRegex(
+            self.step6(), r"if npm_has; then[^\n]*\n(?:[^\n]*\n)*?else\n[^\n]*npm publish --dry-run"
+        )
+
+    def test_cargo_dry_run_skips_a_published_version(self) -> None:
+        self.assertRegex(
+            self.step6(), r"if crates_has; then[^\n]*\n(?:[^\n]*\n)*?else\n[^\n]*cargo publish --dry-run"
+        )
+
+
+class ApiDocDrift(unittest.TestCase):
+    """Step 5 is a required release review: the rendered rustdoc is opened for
+    the releaser, and a machine-readable API snapshot lands in docs/api/ so the
+    next release can diff the surface."""
+
+    def step5(self) -> str:
+        text = RELEASE_SH.read_text()
+        start = text.index('say "5. API docs')
+        return text[start:text.index('say "6.', start)]
+
+    def test_opens_rendered_docs_for_review(self) -> None:
+        self.assertIn(
+            "cargo doc --no-deps --document-private-items --open", self.step5()
+        )
+
+    def test_snapshots_machine_readable_api(self) -> None:
+        self.assertIn("scripts/api_snapshot.py", self.step5())
+
+    def test_diffs_against_previous_release_snapshot(self) -> None:
+        self.assertIn("docs/api/jubarte-", self.step5())
+        self.assertIn("diff -u", self.step5())
+
+    def test_release_commit_adds_docs_api(self) -> None:
+        text = RELEASE_SH.read_text()
+        step7 = text[text.index('say "7. Release commit'):text.index('say "8.')]
+        self.assertIn("docs/api", step7.split("git commit")[0])
+
+
+class RegistryProbes(unittest.TestCase):
+    """crates.io answers 403 to a request without a User-Agent, so a bare
+    curl probe calls every published version missing."""
+
+    def test_crates_probe_sends_a_user_agent(self) -> None:
+        line = next(
+            l for l in RELEASE_SH.read_text().splitlines() if l.startswith("crates_has()")
+        )
+        self.assertRegex(line, r"curl [^|]*(-A|--user-agent) ")
+
+    def test_publish_purges_finder_litter_first(self) -> None:
+        text = RELEASE_SH.read_text()
+        step8 = text[text.index('say "8. crates.io"'):text.index('say "9.')]
+        self.assertIn(".DS_Store", step8.split("cargo publish")[0])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -43,18 +43,24 @@
 #      then the five summaries + the docs statement land in their channels
 #   4. gates — fmt, clippy -D warnings, test --all-features, convert-sweep
 #      unit tests, REUSE lint (sequential cargo per AGENTS.md)
-#   5. publish dry-runs — cargo publish --dry-run, npm --dry-run, maturin sdist
+#   5. api docs drift — REQUIRED review: `cargo doc --no-deps
+#      --document-private-items --open` opens the rendered docs for the
+#      releaser to assess drift against what this release ships; a
+#      machine-readable snapshot lands in docs/api/ (rustdoc JSON + flat
+#      api.txt + the wasm .d.ts files) and is diffed against the previous
+#      release's copy
+#   6. publish dry-runs — cargo publish --dry-run, npm --dry-run, maturin sdist
 #      (with the pypi comment proven inside the sdist)
-#   6. `chore(release): vX.Y.Z` commit, wasm npm rebuild (stamps the release
+#   7. `chore(release): vX.Y.Z` commit, wasm npm rebuild (stamps the release
 #      commit into ENGINE_COMMIT.txt), npm smoke test, artifacts commit,
 #      annotated `vX.Y.Z` tag whose body is the github summary
-#   7. point of no return — type `vX.Y.Z` to confirm, then push; release.yml
+#   8. point of no return — type `vX.Y.Z` to confirm, then push; release.yml
 #      builds the five CLI binaries + four PyPI wheels + sdist and creates
 #      the `jubarte vX.Y.Z` GitHub release itself
-#   8. publishes — crates.io (`cargo publish`, after proving the summary is
+#   9. publishes — crates.io (`cargo publish`, after proving the summary is
 #      inside the .crate), npm (`npm publish` on jubarte-wasm/npm), PyPI
 #      (CI wheels + sdist via `uv publish`)
-#   9. verify — every registry answers with the new version AND its summary
+#  10. verify — every registry answers with the new version AND its summary
 #
 # Idempotent: each publish checks the registry first and skips a version
 # that is already live, so a failed run can simply be re-run.
@@ -351,7 +357,44 @@ else
 fi
 # =============================================================================
 
-say "5. Publish dry-runs"
+# =============================================================================
+say "5. API docs — drift assessment"
+# =============================================================================
+
+# Required release review: the releaser reads the rendered docs (--open) and
+# assesses the drift between them and what this release actually ships —
+# before the point of no return. Re-running a failed release does not reopen
+# the browser: the assessment already happened on the first run.
+if [ "$SKIP_GATES" = 0 ]; then
+  cargo doc --no-deps --document-private-items --open
+else
+  step "doc review skipped (--skip-gates — assessed on the first run)"
+fi
+
+# Machine-friendly copy of the API (gzipped rustdoc JSON + a flat, sorted
+# listing) kept under docs/api/ so the next release can diff the surface.
+python3 scripts/api_snapshot.py "$VER"
+
+PREV_API=""
+if [ -n "$PREV_TAG" ] \
+   && [ -f "docs/api/jubarte-$PREV_TAG.api.txt" ] \
+   && [ "$PREV_TAG" != "$TAG" ]; then
+  PREV_API="docs/api/jubarte-$PREV_TAG.api.txt"
+fi
+if [ "$SKIP_GATES" = 0 ]; then
+  if [ -n "$PREV_API" ]; then
+    step "API drift since $PREV_TAG — review before confirming the push:"
+    { diff -u "$PREV_API" "docs/api/jubarte-v$VER.api.txt" || true; } \
+      | tail -n +3 | sed 's/^/        /'
+  elif [ "$PREV_TAG" = "$TAG" ]; then
+    step "snapshot already exists for $TAG (resumed run)"
+  else
+    step "no previous-release snapshot — docs/api/jubarte-v$VER.api.txt is the baseline"
+  fi
+fi
+
+# =============================================================================
+say "6. Publish dry-runs"
 # The bump and summaries are staged but not committed until step 6, so the
 # dry run packages the dirty tree; the real publish (step 8) stays clean.
 cargo publish --dry-run --locked --allow-dirty
@@ -377,7 +420,7 @@ EOF
 fi
 
 # =============================================================================
-say "6. Release commit → wasm artifacts → annotated tag"
+say "7. Release commit → wasm artifacts → annotated tag"
 # =============================================================================
 
 # A resumed run finds the release commit under the wasm-artifact commit.
@@ -386,7 +429,8 @@ if ! git log -3 --format=%s | grep -x "chore(release): v$VER" >/dev/null; then
     jubarte-python/Cargo.toml jubarte-python/Cargo.lock \
     jubarte-python/pyproject.toml \
     jubarte-wasm/Cargo.lock jubarte-wasm/npm/package.json \
-    jubarte-rust-inproc/Cargo.lock
+    jubarte-rust-inproc/Cargo.lock \
+    docs/api
   git commit -m "chore(release): v$VER" -m "Docs: $DOCS_UPDATED"
 fi
 step "release commit $(git rev-parse --short HEAD)"
@@ -395,8 +439,13 @@ step "release commit $(git rev-parse --short HEAD)"
 # commit — the commit the published artifacts can be rebuilt from.
 jubarte-wasm/build-npm.sh
 node jubarte-wasm/npm-smoke.mjs
-if [ -n "$(git status --porcelain -- jubarte-wasm/npm)" ]; then
-  git add jubarte-wasm/npm
+# Snapshot the shipped wasm typings beside the rust API dump, after the
+# rebuild so docs/api/ records what npm actually publishes.
+for t in node node-slim web web-slim; do
+  cp "jubarte-wasm/npm/$t/jubarte_wasm.d.ts" "docs/api/jubarte-wasm-$t-v$VER.d.ts"
+done
+if [ -n "$(git status --porcelain -- jubarte-wasm/npm docs/api)" ]; then
+  git add jubarte-wasm/npm docs/api
   git commit -m "build(wasm): regenerate npm artifacts for v$VER"
 fi
 step "npm artifacts rebuilt + smoke-tested (engine $(cat jubarte-wasm/npm/ENGINE_COMMIT.txt | cut -c1-7))"
@@ -427,6 +476,7 @@ cat <<EOF
     PyPI       jubarte-redlines $VER
     GitHub     release $TAG (release.yml builds binaries + wheels)
   Summaries ride along on every channel — verify greps them afterwards.
+  The rustdoc drift review (step 5) is a required sign-off on this release.
 EOF
 if [ "$YES" = 0 ]; then
   read -r -p "  type 'v$VER' to confirm: " a
@@ -442,7 +492,7 @@ fi
 step "pushed — release workflow started"
 
 # =============================================================================
-say "7. crates.io"
+say "8. crates.io"
 # =============================================================================
 
 if crates_has; then
@@ -459,7 +509,7 @@ else
 fi
 
 # =============================================================================
-say "8. npm"
+say "9. npm"
 # =============================================================================
 
 if npm_has; then
@@ -470,7 +520,7 @@ else
 fi
 
 # =============================================================================
-say "9. PyPI"
+say "10. PyPI"
 # =============================================================================
 
 if pypi_has; then
@@ -503,7 +553,7 @@ else
 fi
 
 # =============================================================================
-say "10. Verify — versions AND summaries"
+say "11. Verify — versions AND summaries"
 # =============================================================================
 
 npm_note() {
