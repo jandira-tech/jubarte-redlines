@@ -5497,6 +5497,84 @@ fn reresolve_theme_color_hexes(dom: &mut Dom, styles_root: NodeId, theme_xml: &s
 /// document renders in fallback fonts. Word repairs the relationship on
 /// open (oracle rels: rId1 -> styles.xml), so match it at compare time —
 /// same family as the dangling-numbering repair.
+const CUSTOM_PROPS_REL: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/custom-properties";
+
+/// The part the package's custom-properties relationship reaches.
+fn custom_props_part(pkg: &PartFs) -> Option<String> {
+    pkg.package_relationships()
+        .items
+        .iter()
+        .find(|r| r.rel_type == CUSTOM_PROPS_REL)
+        .map(|r| r.target.trim_start_matches('/').to_string())
+        .filter(|p| pkg.part_bytes(p).is_some())
+}
+
+/// Word's redline keeps the custom document properties of both sides: the
+/// revision's alone when the original has none (83 of the 96 Word redlines
+/// where only the revision has them), else the union, the original's value
+/// winning where both name a property (every conflict among the 47 with
+/// both). Without them a `DOCPROPERTY` field of the accepted text reads
+/// "Error! Unknown document property name." (f8c1ce3e92).
+fn merge_custom_properties(out: &mut PartFs, pkg2: &PartFs) {
+    let Some(b_part) = custom_props_part(pkg2) else {
+        return;
+    };
+    let Some(b_xml) = pkg2.part_string(&b_part) else {
+        return;
+    };
+    let Some(a_part) = custom_props_part(out) else {
+        if out.part_bytes(&b_part).is_some() {
+            return;
+        }
+        out.set_part(&b_part, b_xml.into_bytes());
+        out.add_content_type_override(
+            &format!("/{b_part}"),
+            "application/vnd.openxmlformats-officedocument.custom-properties+xml",
+        );
+        out.add_package_relationship(CUSTOM_PROPS_REL, &b_part);
+        return;
+    };
+    let Some(a_xml) = out.part_string(&a_part) else {
+        return;
+    };
+    let mut dom = Dom::new();
+    let a_doc = dom.parse_xdocument(&a_xml);
+    let b_doc = dom.parse_xdocument(&b_xml);
+    let (Some(a_root), Some(b_root)) = (dom.root(a_doc), dom.root(b_doc)) else {
+        return;
+    };
+    let name = XName::get("name", "");
+    let pid = XName::get("pid", "");
+    let a_props = dom.elements(a_root, None);
+    let mut next_pid = a_props
+        .iter()
+        .filter_map(|&p| dom.attribute(p, &pid)?.parse::<u32>().ok())
+        .max()
+        .unwrap_or(1);
+    let a_names: std::collections::HashSet<String> = a_props
+        .iter()
+        .filter_map(|&p| dom.attribute(p, &name).map(str::to_string))
+        .collect();
+    let mut added = false;
+    for bp in dom.elements(b_root, None) {
+        let Some(n) = dom.attribute(bp, &name) else {
+            continue;
+        };
+        if a_names.contains(n) {
+            continue;
+        }
+        let clone = dom.clone_subtree(bp);
+        next_pid += 1;
+        dom.set_attribute_value(clone, &pid, Some(&next_pid.to_string()));
+        dom.add(a_root, clone);
+        added = true;
+    }
+    if added {
+        out.set_part(&a_part, dom.serialize_document(a_doc).into_bytes());
+    }
+}
+
 fn repair_missing_core_relationships(out: &mut PartFs, out_main: &str) {
     const CORE: [(&str, &str); 5] = [
         ("word/styles.xml", "styles"),
@@ -6323,6 +6401,7 @@ fn compare_documents_impl(
         adopt_revised_styles_chrome(&mut out, &pkg2, &main1);
         ensure_factory_package_chrome(&mut out, &main1);
         repair_missing_core_relationships(&mut out, &main1);
+        merge_custom_properties(&mut out, &pkg2);
         // M492: deleted paragraphs keep their A-ORIGINAL direct spacing.
         if let (Some(a_xml), Some(out_xml)) = (
             pkg1.part_string("word/document.xml"),

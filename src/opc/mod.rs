@@ -418,6 +418,16 @@ impl PartFs {
         self.part_rels_mut(source_part).add(rel_type, target)
     }
 
+    /// The package's own relationships (`_rels/.rels`).
+    pub fn package_relationships(&self) -> &Relationships {
+        &self.pkg.package_rels
+    }
+
+    /// Add a package-level relationship, returning its id.
+    pub fn add_package_relationship(&mut self, rel_type: &str, target: &str) -> String {
+        self.pkg.package_rels.add(rel_type, target)
+    }
+
     /// A part's relationships, created empty when missing. Created through
     /// `Relationships::new`, which numbers from `rId1` as Word does; the
     /// dependency's `get_or_create_part_rels` defaults to `rId0`.

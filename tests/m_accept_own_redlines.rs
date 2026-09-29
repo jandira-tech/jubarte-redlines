@@ -1387,3 +1387,132 @@ fn a_colour_the_revision_drops_from_normal_is_recorded() {
         "{rpr}"
     );
 }
+
+const CUSTOM_PROPS_REL: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/custom-properties";
+
+/// `docx` with `docProps/custom.xml` holding `props` (name, text), reached
+/// from the package relationships as Word saves it.
+fn with_custom_props(docx: &[u8], props: &[(&str, &str)]) -> Vec<u8> {
+    use std::io::{Cursor, Read, Write};
+    let body: String = props
+        .iter()
+        .enumerate()
+        .map(|(i, (n, v))| {
+            format!(
+                r#"<property fmtid="{{D5CDD505-2E9C-101B-9397-08002B2CF9AE}}" pid="{}" name="{n}"><vt:lpwstr>{v}</vt:lpwstr></property>"#,
+                i + 2
+            )
+        })
+        .collect();
+    let custom = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">{body}</Properties>"#
+    );
+    let mut src = zip::ZipArchive::new(Cursor::new(docx)).unwrap();
+    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let opts = zip::write::SimpleFileOptions::default();
+    for i in 0..src.len() {
+        let mut f = src.by_index(i).unwrap();
+        let name = f.name().to_string();
+        let mut s = String::new();
+        f.read_to_string(&mut s).unwrap();
+        if name == "_rels/.rels" {
+            s = s.replace(
+                "</Relationships>",
+                &format!(
+                    r#"<Relationship Id="rId9" Type="{CUSTOM_PROPS_REL}" Target="docProps/custom.xml"/></Relationships>"#
+                ),
+            );
+        } else if name == "[Content_Types].xml" {
+            s = s.replace(
+                "</Types>",
+                r#"<Override PartName="/docProps/custom.xml" ContentType="application/vnd.openxmlformats-officedocument.custom-properties+xml"/></Types>"#,
+            );
+        }
+        out.start_file(name, opts).unwrap();
+        out.write_all(s.as_bytes()).unwrap();
+    }
+    out.start_file("docProps/custom.xml", opts).unwrap();
+    out.write_all(custom.as_bytes()).unwrap();
+    out.finish().unwrap().into_inner()
+}
+
+/// (name, text) of each custom property the package's relationship reaches.
+fn custom_props(pkg: &[u8]) -> Vec<(String, String)> {
+    let rels = part_string(pkg, "_rels/.rels").unwrap();
+    let Some(at) = rels.find(CUSTOM_PROPS_REL) else {
+        return Vec::new();
+    };
+    let rel = &rels[rels[..at].rfind('<').unwrap()..];
+    let target = rel
+        .split("Target=\"")
+        .nth(1)
+        .unwrap()
+        .split('"')
+        .next()
+        .unwrap();
+    let xml = part_string(pkg, target.trim_start_matches('/')).unwrap();
+    xml.split("<property ")
+        .skip(1)
+        .map(|p| {
+            let name = p
+                .split("name=\"")
+                .nth(1)
+                .unwrap()
+                .split('"')
+                .next()
+                .unwrap();
+            let text = p
+                .split("<vt:lpwstr>")
+                .nth(1)
+                .unwrap()
+                .split('<')
+                .next()
+                .unwrap();
+            (name.to_string(), text.to_string())
+        })
+        .collect()
+}
+
+/// Only the revision carries custom document properties: Word's redline
+/// takes them (83 of the 96 Word redlines where only the revision has
+/// them), so a `DOCPROPERTY` field in the accepted text still resolves
+/// (f8c1ce3e92's footer read "Error! Unknown document property name.").
+#[test]
+fn custom_properties_only_the_revision_has_are_carried() {
+    let base = docx_with_sect(r#"<w:p><w:r><w:t>Old text</w:t></w:r></w:p>"#, &[], "");
+    let next = with_custom_props(
+        &docx_with_sect(r#"<w:p><w:r><w:t>New text</w:t></w:r></w:p>"#, &[], ""),
+        &[("Objective-Id", "A597249")],
+    );
+    let redline = compare_documents(&base, &next, "Redline").unwrap();
+    assert_word_valid_package(&redline);
+    assert_eq!(
+        custom_props(&redline),
+        [("Objective-Id".to_string(), "A597249".to_string())]
+    );
+}
+
+/// Both sides carry custom properties: Word's redline keeps the union, the
+/// original's value winning where both name a property (28 of 47 Word
+/// redlines with both; every conflict went to the original).
+#[test]
+fn custom_properties_merge_with_the_original_winning() {
+    let base = with_custom_props(
+        &docx_with_sect(r#"<w:p><w:r><w:t>Old text</w:t></w:r></w:p>"#, &[], ""),
+        &[("Owner", "Alice"), ("Status", "Draft")],
+    );
+    let next = with_custom_props(
+        &docx_with_sect(r#"<w:p><w:r><w:t>New text</w:t></w:r></w:p>"#, &[], ""),
+        &[("Status", "Final"), ("Ref", "R-7")],
+    );
+    let redline = compare_documents(&base, &next, "Redline").unwrap();
+    assert_word_valid_package(&redline);
+    let props = custom_props(&redline);
+    let get = |n: &str| props.iter().find(|p| p.0 == n).map(|p| p.1.as_str());
+    assert_eq!(get("Owner"), Some("Alice"), "{props:?}");
+    assert_eq!(get("Status"), Some("Draft"), "{props:?}");
+    assert_eq!(get("Ref"), Some("R-7"), "{props:?}");
+    assert_eq!(props.len(), 3, "{props:?}");
+}
