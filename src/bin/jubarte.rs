@@ -290,7 +290,10 @@ enum Command {
         jubarte debug old.docx new.docx --list    entries that differ\n  \
         jubarte debug old.docx new.docx -c elements -p document.xml\n  \
         jubarte debug out.docx -c ids             revision/docPr ids used twice\n  \
-        jubarte debug out.docx -c textbox -g FILENAME")]
+        jubarte debug out.docx -c textbox -g FILENAME\n  \
+        jubarte debug out.docx -c text            paragraphs with ins/del marks\n  \
+        jubarte debug a.docx b.docx -c text       paragraphs that differ, per part\n  \
+        jubarte debug a.docx b.docx -c xml -p document.xml")]
     Debug {
         /// One package, or two to compare (A then B).
         #[arg(value_name = "FILE", num_args = 1..=2, required = true)]
@@ -341,6 +344,12 @@ enum DebugCheck {
     Elements,
     /// Text box stories as XML (see --grep).
     Textbox,
+    /// Paragraph text per story part, with {+inserted+} / [-deleted-] runs
+    /// and the mark state; with two files, the lines that differ.
+    Text,
+    /// Part XML one element per line, without namespace declarations,
+    /// rsids or paraIds; with two files, the lines that differ.
+    Xml,
 }
 
 impl From<DebugCheck> for jubarte::debug::Check {
@@ -356,6 +365,8 @@ impl From<DebugCheck> for jubarte::debug::Check {
             DebugCheck::Chains => Check::Chains,
             DebugCheck::Elements => Check::Elements,
             DebugCheck::Textbox => Check::Textbox,
+            DebugCheck::Text => Check::Text,
+            DebugCheck::Xml => Check::Xml,
         }
     }
 }

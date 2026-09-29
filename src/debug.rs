@@ -60,6 +60,12 @@ pub enum Check {
     Elements,
     /// Text box stories as XML.
     Textbox,
+    /// Paragraph text per story with revision marks (`{+ins+}`, `[-del-]`,
+    /// a deleted or inserted paragraph mark as `¶-` / `¶+`).
+    Text,
+    /// Part XML without namespace declarations, rsids and paragraph ids, one
+    /// element per line.
+    Xml,
 }
 
 /// The checks a bare `jubarte debug FILE` runs.
@@ -1011,6 +1017,378 @@ fn strip_namespace_declarations(xml: &str) -> String {
     out
 }
 
+/// Root elements of the parts `text` walks.
+const TEXT_PARTS: [&str; 6] = [
+    "document",
+    "hdr",
+    "ftr",
+    "footnotes",
+    "endnotes",
+    "comments",
+];
+
+/// `text`: one line per paragraph, table and row of a story part, indented
+/// by table and text box depth. Returns the lines and the paragraph count.
+fn text_lines(dom: &Dom, root: NodeId) -> (Vec<String>, usize) {
+    fn mark(dom: &Dom, n: NodeId, props: &str) -> &'static str {
+        let Some(pr) = dom.nodes(n).into_iter().find(|&c| local(dom, c) == props) else {
+            return " ";
+        };
+        let holder = if props == "pPr" {
+            match dom.nodes(pr).into_iter().find(|&c| local(dom, c) == "rPr") {
+                Some(r) => r,
+                None => return " ",
+            }
+        } else {
+            pr
+        };
+        for c in dom.nodes(holder) {
+            match local(dom, c).as_str() {
+                "del" | "moveFrom" => return "-",
+                "ins" | "moveTo" => return "+",
+                _ => {}
+            }
+        }
+        " "
+    }
+    /// Text of `n`'s subtree, nested paragraphs left out; `kind` is 0 plain,
+    /// 1 inserted, 2 deleted.
+    fn runs(dom: &Dom, n: NodeId, kind: u8, out: &mut Vec<(u8, String)>) {
+        let push = |k: u8, t: &str, out: &mut Vec<(u8, String)>| match out.last_mut() {
+            Some((lk, lt)) if *lk == k => lt.push_str(t),
+            _ => out.push((k, t.to_string())),
+        };
+        for c in dom.nodes(n) {
+            if dom.is_text(c) {
+                continue;
+            }
+            match local(dom, c).as_str() {
+                "p" | "txbxContent" | "pPr" | "rPr" | "instrText" | "delInstrText" => {}
+                "t" | "delText" => push(kind, &dom.value(c), out),
+                "tab" => push(kind, "→", out),
+                "br" | "cr" => push(kind, "↵", out),
+                "commentReference" => push(kind, &format!("[c{}]", attr(dom, c, "id")), out),
+                "footnoteReference" => push(kind, &format!("[f{}]", attr(dom, c, "id")), out),
+                "endnoteReference" => push(kind, &format!("[e{}]", attr(dom, c, "id")), out),
+                "ins" | "moveTo" => runs(dom, c, 1, out),
+                "del" | "moveFrom" => runs(dom, c, 2, out),
+                _ => runs(dom, c, kind, out),
+            }
+        }
+    }
+    fn nested(dom: &Dom, n: NodeId, depth: usize, out: &mut Vec<String>, paras: &mut usize) {
+        for c in dom.nodes(n) {
+            match local(dom, c).as_str() {
+                "p" => {}
+                "txbxContent" => walk(dom, c, depth + 1, out, paras),
+                _ => nested(dom, c, depth, out, paras),
+            }
+        }
+    }
+    fn walk(dom: &Dom, n: NodeId, depth: usize, out: &mut Vec<String>, paras: &mut usize) {
+        let pad = " ".repeat(2 + 2 * depth);
+        for c in dom.nodes(n) {
+            match local(dom, c).as_str() {
+                "p" => {
+                    *paras += 1;
+                    let mut segs = Vec::new();
+                    runs(dom, c, 0, &mut segs);
+                    let text: String = segs
+                        .iter()
+                        .map(|(k, t)| match k {
+                            1 => format!("{{+{t}+}}"),
+                            2 => format!("[-{t}-]"),
+                            _ => t.clone(),
+                        })
+                        .collect();
+                    out.push(format!("{pad}¶{} {text}", mark(dom, c, "pPr")));
+                    nested(dom, c, depth, out, paras);
+                }
+                "tbl" => {
+                    out.push(format!("{pad}table"));
+                    for tr in dom.nodes(c).into_iter().filter(|&r| local(dom, r) == "tr") {
+                        out.push(format!("{pad} row{}", mark(dom, tr, "trPr").trim()));
+                        for tc in dom.nodes(tr).into_iter().filter(|&t| local(dom, t) == "tc") {
+                            walk(dom, tc, depth + 1, out, paras);
+                        }
+                    }
+                }
+                _ if dom.is_element(c) => walk(dom, c, depth, out, paras),
+                _ => {}
+            }
+        }
+    }
+    let (mut out, mut paras) = (Vec::new(), 0);
+    walk(dom, root, 0, &mut out, &mut paras);
+    (out, paras)
+}
+
+/// `xml`: `xml` without its declaration, namespace declarations,
+/// `mc:Ignorable`, rsids and paragraph ids; attributes sorted, one element
+/// per line indented by depth, an element holding only text on one line.
+fn xml_lines(xml: &str) -> Vec<String> {
+    enum Tok {
+        Open(String, bool),
+        Close(String),
+        Text(String),
+    }
+    fn noise(name: &str) -> bool {
+        let local = name.rsplit(':').next().unwrap_or(name);
+        name.starts_with("xmlns")
+            || name == "mc:Ignorable"
+            || local.starts_with("rsid")
+            || name == "w14:paraId"
+            || name == "w14:textId"
+    }
+    /// `<name a="1" b='2'/>` → the rebuilt tag text and whether it closes itself.
+    fn open_tag(inner: &str) -> (String, bool) {
+        let (inner, closed) = match inner.strip_suffix('/') {
+            Some(i) => (i, true),
+            None => (inner, false),
+        };
+        let inner = inner.trim();
+        let name_end = inner.find(char::is_whitespace).unwrap_or(inner.len());
+        let name = &inner[..name_end];
+        let mut attrs = Vec::new();
+        let mut rest = inner[name_end..].trim_start();
+        while let Some(eq) = rest.find('=') {
+            let key = rest[..eq].trim();
+            let after = rest[eq + 1..].trim_start();
+            let Some(q) = after.chars().next() else { break };
+            let Some(end) = after[1..].find(q) else { break };
+            let value = &after[1..1 + end];
+            if !noise(key) {
+                attrs.push(format!("{key}=\"{value}\""));
+            }
+            rest = after[1 + end + 1..].trim_start();
+        }
+        attrs.sort();
+        let mut tag = format!("<{name}");
+        for a in attrs {
+            tag.push(' ');
+            tag.push_str(&a);
+        }
+        (tag, closed)
+    }
+    let mut toks = Vec::new();
+    let mut rest = xml;
+    while let Some(lt) = rest.find('<') {
+        let text = &rest[..lt];
+        if !text.trim().is_empty() {
+            toks.push(Tok::Text(text.to_string()));
+        }
+        // The tag ends at the first `>` outside quotes.
+        let bytes = rest.as_bytes();
+        let (mut i, mut quote) = (lt + 1, 0u8);
+        while i < bytes.len() {
+            match bytes[i] {
+                b'"' | b'\'' if quote == 0 => quote = bytes[i],
+                c if c == quote => quote = 0,
+                b'>' if quote == 0 => break,
+                _ => {}
+            }
+            i += 1;
+        }
+        let inner = &rest[lt + 1..i.min(rest.len())];
+        rest = &rest[(i + 1).min(rest.len())..];
+        if inner.starts_with('?') || inner.starts_with('!') {
+            continue;
+        }
+        match inner.strip_prefix('/') {
+            Some(name) => toks.push(Tok::Close(name.trim().to_string())),
+            None => {
+                let (tag, closed) = open_tag(inner);
+                toks.push(Tok::Open(tag, closed));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let mut i = 0;
+    while i < toks.len() {
+        let pad = "  ".repeat(depth);
+        match &toks[i] {
+            Tok::Open(tag, true) => out.push(format!("{pad}{tag}/>")),
+            Tok::Open(tag, false) => match (toks.get(i + 1), toks.get(i + 2)) {
+                (Some(Tok::Close(_)), _) => {
+                    out.push(format!("{pad}{tag}/>"));
+                    i += 1;
+                }
+                (Some(Tok::Text(t)), Some(Tok::Close(c))) => {
+                    out.push(format!("{pad}{tag}>{t}</{c}>"));
+                    i += 2;
+                }
+                _ => {
+                    out.push(format!("{pad}{tag}>"));
+                    depth += 1;
+                }
+            },
+            Tok::Close(name) => {
+                depth = depth.saturating_sub(1);
+                out.push(format!("{}</{name}>", "  ".repeat(depth)));
+            }
+            Tok::Text(t) => out.push(format!("{pad}{}", t.trim())),
+        }
+        i += 1;
+    }
+    out
+}
+
+/// One change hunk: the lines only in A, then the lines only in B.
+type Hunk<'a> = (Vec<&'a str>, Vec<&'a str>);
+
+/// Line diff: common prefix and suffix trimmed, LCS on the rest (a middle
+/// too large for LCS is one replaced block).
+fn diff_lines<'a>(a: &'a [String], b: &'a [String]) -> Vec<Hunk<'a>> {
+    let pre = a.iter().zip(b).take_while(|(x, y)| x == y).count();
+    let suf = a[pre..]
+        .iter()
+        .rev()
+        .zip(b[pre..].iter().rev())
+        .take_while(|(x, y)| x == y)
+        .count();
+    let (am, bm) = (&a[pre..a.len() - suf], &b[pre..b.len() - suf]);
+    if am.is_empty() && bm.is_empty() {
+        return Vec::new();
+    }
+    let (n, m) = (am.len(), bm.len());
+    if n.saturating_mul(m) > 4_000_000 {
+        return vec![(
+            am.iter().map(String::as_str).collect(),
+            bm.iter().map(String::as_str).collect(),
+        )];
+    }
+    // lcs[i][j]: LCS length of am[i..] and bm[j..].
+    let mut lcs = vec![0u32; (n + 1) * (m + 1)];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            lcs[i * (m + 1) + j] = if am[i] == bm[j] {
+                lcs[(i + 1) * (m + 1) + j + 1] + 1
+            } else {
+                lcs[(i + 1) * (m + 1) + j].max(lcs[i * (m + 1) + j + 1])
+            };
+        }
+    }
+    let (mut hunks, mut cur): (Vec<Hunk>, Hunk) = (Vec::new(), (Vec::new(), Vec::new()));
+    let (mut i, mut j) = (0, 0);
+    while i < n || j < m {
+        if i < n && j < m && am[i] == bm[j] {
+            if !cur.0.is_empty() || !cur.1.is_empty() {
+                hunks.push(std::mem::take(&mut cur));
+            }
+            i += 1;
+            j += 1;
+        } else if j == m || (i < n && lcs[(i + 1) * (m + 1) + j] >= lcs[i * (m + 1) + j + 1]) {
+            cur.0.push(&am[i]);
+            i += 1;
+        } else {
+            cur.1.push(&bm[j]);
+            j += 1;
+        }
+    }
+    if !cur.0.is_empty() || !cur.1.is_empty() {
+        hunks.push(cur);
+    }
+    hunks
+}
+
+/// `text` / `xml` for one package, or their per-part differences between two.
+fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options) -> String {
+    let lines_of = |pkg: &Package| -> BTreeMap<String, (Vec<String>, usize)> {
+        let mut map = BTreeMap::new();
+        for e in &pkg.entries {
+            if opts.part.as_deref().is_some_and(|p| !e.name.contains(p)) {
+                continue;
+            }
+            if !(e.name.ends_with(".xml") || e.name.ends_with(".rels")) {
+                continue;
+            }
+            let Some(xml) = decode_xml(&e.data) else {
+                continue;
+            };
+            if check == Check::Xml {
+                map.insert(e.name.clone(), (xml_lines(&xml), 0));
+                continue;
+            }
+            let mut dom = Dom::new();
+            let doc = dom.parse_xdocument(&xml);
+            let Some(root) = dom.root(doc) else { continue };
+            if TEXT_PARTS.contains(&local(&dom, root).as_str()) {
+                map.insert(e.name.clone(), text_lines(&dom, root));
+            }
+        }
+        map
+    };
+    let label = if check == Check::Xml { "xml" } else { "text" };
+    let mut out = String::new();
+    let a = lines_of(pa);
+    let Some(pb) = pb else {
+        for (part, (lines, paras)) in &a {
+            if check == Check::Xml {
+                line(&mut out, part);
+            } else {
+                line(&mut out, &format!("{part}: {paras} paragraphs"));
+            }
+            for l in lines {
+                line(&mut out, l);
+            }
+        }
+        return out;
+    };
+    let b = lines_of(pb);
+    let names: std::collections::BTreeSet<&String> = a.keys().chain(b.keys()).collect();
+    for name in names {
+        let (la, lb) = match (a.get(name), b.get(name)) {
+            (Some(x), Some(y)) => (&x.0, &y.0),
+            (Some(_), None) => {
+                line(&mut out, &format!("{name}: only in A"));
+                continue;
+            }
+            (None, _) => {
+                line(&mut out, &format!("{name}: only in B"));
+                continue;
+            }
+        };
+        let hunks = diff_lines(la, lb);
+        if hunks.is_empty() {
+            continue;
+        }
+        let dels: usize = hunks.iter().map(|h| h.0.len()).sum();
+        let adds: usize = hunks.iter().map(|h| h.1.len()).sum();
+        let n = dels.max(adds);
+        line(
+            &mut out,
+            &format!(
+                "{name}: {n} line{} differ{}",
+                if n == 1 { "" } else { "s" },
+                if n == 1 { "s" } else { "" }
+            ),
+        );
+        for (k, (del, add)) in hunks.iter().enumerate() {
+            if k == opts.limit {
+                line(
+                    &mut out,
+                    &format!("  … {} more hunks (raise --limit)", hunks.len() - k),
+                );
+                break;
+            }
+            if k > 0 {
+                line(&mut out, "  ~");
+            }
+            for l in del {
+                line(&mut out, &format!("-A {l}"));
+            }
+            for l in add {
+                line(&mut out, &format!("+B {l}"));
+            }
+        }
+    }
+    if out.is_empty() {
+        line(&mut out, &format!("{label} identical"));
+    }
+    out
+}
+
 fn line(out: &mut String, s: &str) {
     let _ = writeln!(out, "{}", clip_line(s));
 }
@@ -1086,6 +1464,32 @@ pub fn list(a: &[u8], b: Option<&[u8]>, opts: &Options) -> Result<String, String
 
 /// The report for one package, or the differences between two.
 pub fn report(a: &[u8], b: Option<&[u8]>, opts: &Options) -> Result<String, String> {
+    let is_listing = |c: &Check| matches!(c, Check::Text | Check::Xml);
+    if opts.checks.iter().any(is_listing) {
+        let pa = Package::open(a)?;
+        let pb = match b {
+            Some(b) => Some(Package::open(b)?),
+            None => None,
+        };
+        let mut out = String::new();
+        for c in opts.checks.iter().filter(|c| is_listing(c)) {
+            out.push_str(&text_or_xml(&pa, pb.as_ref(), *c, opts));
+        }
+        let rest: Vec<Check> = opts
+            .checks
+            .iter()
+            .copied()
+            .filter(|c| !is_listing(c))
+            .collect();
+        if !rest.is_empty() {
+            let more = Options {
+                checks: rest,
+                ..opts.clone()
+            };
+            out.push_str(&report(a, b, &more)?);
+        }
+        return Ok(out);
+    }
     let ra = analyze(&Package::open(a)?, opts);
     let rb = match b {
         Some(b) => Some(analyze(&Package::open(b)?, opts)),
@@ -1510,5 +1914,86 @@ mod tests {
             out.contains("docpr-duplicate-id: 1\n  package id 1 ×2"),
             "{out}"
         );
+    }
+
+    fn opts_for(check: Check) -> Options {
+        Options {
+            checks: vec![check],
+            ..Default::default()
+        }
+    }
+
+    /// A deleted paragraph mark, inserted and deleted text, a comment
+    /// reference and a table whose one row is deleted.
+    const TRACKED: &str = r#"<w:p><w:r><w:t>Plain</w:t></w:r></w:p><w:p><w:pPr><w:rPr><w:del w:id="1" w:author="A"/></w:rPr></w:pPr><w:ins w:id="2" w:author="A"><w:r><w:t>Track</w:t></w:r></w:ins><w:del w:id="3" w:author="A"><w:r><w:delText>old</w:delText></w:r></w:del><w:r><w:commentReference w:id="7"/></w:r></w:p><w:tbl><w:tr><w:trPr><w:del w:id="4" w:author="A"/></w:trPr><w:tc><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#;
+
+    #[test]
+    fn text_lists_paragraphs_with_their_revision_marks() {
+        let out = report(&docx(TRACKED), None, &opts_for(Check::Text)).unwrap();
+        for expected in [
+            "word/document.xml: 4 paragraphs\n",
+            "  ¶  Plain\n",
+            "  ¶- {+Track+}[-old-][c7]\n",
+            "  table\n",
+            "   row-\n",
+            "    ¶  cell\n",
+            "  ¶  \n",
+        ] {
+            assert!(out.contains(expected), "{expected:?} in\n{out}");
+        }
+    }
+
+    #[test]
+    fn text_of_two_packages_shows_only_the_changed_lines() {
+        let a = docx(TRACKED);
+        let b = docx(&TRACKED.replace("cell", "cellar"));
+        let out = report(&a, Some(&b), &opts_for(Check::Text)).unwrap();
+        assert!(out.contains("word/document.xml: 1 line differs\n"), "{out}");
+        assert!(out.contains("-A     ¶  cell\n"), "{out}");
+        assert!(out.contains("+B     ¶  cellar\n"), "{out}");
+        assert!(!out.contains("Plain"), "unchanged lines stay out: {out}");
+        let same = report(&a, Some(&a), &opts_for(Check::Text)).unwrap();
+        assert_eq!(same, "text identical\n");
+    }
+
+    #[test]
+    fn xml_prints_one_element_per_line_without_noise() {
+        let body = r#"<w:p w:rsidR="00AB12CD" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" w14:paraId="1A2B3C4D" w14:textId="77777777"><w:pPr><w:jc w:val="center"/></w:pPr><w:r w:rsidRPr="00FF00FF"><w:t xml:space="preserve">Hi </w:t></w:r></w:p>"#;
+        let out = report(&docx(body), None, &opts_for(Check::Xml)).unwrap();
+        for expected in [
+            "word/document.xml\n",
+            "<w:document>\n",
+            "  <w:body>\n",
+            "    <w:p>\n",
+            "      <w:pPr>\n",
+            "        <w:jc w:val=\"center\"/>\n",
+            "        <w:t xml:space=\"preserve\">Hi </w:t>\n",
+            "    </w:p>\n",
+        ] {
+            assert!(out.contains(expected), "{expected:?} in\n{out}");
+        }
+        for noise in ["xmlns", "rsid", "paraId", "textId"] {
+            assert!(!out.contains(noise), "{noise} in\n{out}");
+        }
+    }
+
+    #[test]
+    fn xml_of_two_packages_diffs_only_what_changed() {
+        let a = docx(
+            r#"<w:p><w:pPr><w:pStyle w:val="X"/><w:rPr/></w:pPr><w:r><w:t>same</w:t></w:r></w:p>"#,
+        );
+        let b = docx(r#"<w:p w:rsidR="00000001"><w:r><w:t>same</w:t></w:r></w:p>"#);
+        let out = report(&a, Some(&b), &opts_for(Check::Xml)).unwrap();
+        assert!(out.contains("word/document.xml: 4 lines differ\n"), "{out}");
+        let pad = " ".repeat(8);
+        assert!(
+            out.contains(&format!("-A {pad}<w:pStyle w:val=\"X\"/>\n")),
+            "{out}"
+        );
+        assert!(out.contains(&format!("-A {pad}<w:rPr/>\n")), "{out}");
+        assert!(!out.contains("+B"), "{out}");
+        assert!(!out.contains("same"), "{out}");
+        let same = report(&b, Some(&b), &opts_for(Check::Xml)).unwrap();
+        assert_eq!(same, "xml identical\n");
     }
 }

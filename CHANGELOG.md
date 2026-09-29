@@ -15,6 +15,14 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+### Added
+
+- `jubarte debug FILE -c text` prints each story part's paragraphs with
+  `{+inserted+}` / `[-deleted-]` runs, the paragraph mark's revision state
+  and table rows; `-c xml` prints part XML one element per line without
+  namespace declarations, rsids or paragraph ids. With two files both print
+  only the lines that differ, part by part.
+
 ## [0.10.0] - 2026-09-28
 
 > **Summary.** Documents are now editable by agents: inspect, JSON edit plans that write a clean copy plus a tracked redline, and headers, footers and notes as editable stories, from the CLI, Python and WASM alike; Word-mode redlines keep changed text boxes, per-section headers and footers, and comment anchors where Word does.
