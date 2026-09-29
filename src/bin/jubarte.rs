@@ -313,6 +313,7 @@ enum Command {
         jubarte debug out.docx -c runs -g \"Q: Can\"   one paragraph's runs, whole\n  \
         jubarte debug out.docx -c changes         what each pPrChange/tcPrChange/… records\n  \
         jubarte debug a.docx b.docx -c styledefs  style definitions that differ, paired by name\n  \
+        jubarte debug a.docx b.docx -c numbering  list levels that differ, by numId\n  \
         jubarte debug a.docx b.docx -c xml -p document.xml")]
     Debug {
         /// One package, or two to compare (A then B).
@@ -329,7 +330,7 @@ enum Command {
         /// Only parts whose name contains this (e.g. document.xml).
         #[arg(short = 'p', long, value_name = "NAME")]
         part: Option<String>,
-        /// Only what contains this: textbox stories; text/runs/xml/changes/styledefs lines (a runs paragraph matched on its plain text, printed whole).
+        /// Only what contains this: textbox stories; text/runs/xml/changes/styledefs/numbering lines (a runs paragraph matched on its plain text, printed whole).
         #[arg(short = 'g', long, value_name = "TEXT")]
         grep: Option<String>,
         /// Examples per finding kind.
@@ -388,6 +389,10 @@ enum DebugCheck {
     /// then each style's default flag and basedOn/link by name, and a line
     /// per pPr/rPr/tblPr/… block; with two files, the lines that differ.
     Styledefs,
+    /// List levels by numId and level as paragraphs see them (abstract
+    /// definition plus the list's overrides; abstract ids renumber, so
+    /// they are left out); with two files, the lines that differ.
+    Numbering,
 }
 
 impl From<DebugCheck> for jubarte::debug::Check {
@@ -409,6 +414,7 @@ impl From<DebugCheck> for jubarte::debug::Check {
             DebugCheck::Runs => Check::Runs,
             DebugCheck::Changes => Check::Changes,
             DebugCheck::Styledefs => Check::StyleDefs,
+            DebugCheck::Numbering => Check::Numbering,
         }
     }
 }

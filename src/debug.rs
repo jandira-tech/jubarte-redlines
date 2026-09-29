@@ -84,6 +84,9 @@ pub enum Check {
     /// documents): docDefaults, then each style's default flag, basedOn and
     /// link by name, and its pPr/rPr/tblPr/trPr/tcPr items.
     StyleDefs,
+    /// List levels by `numId` and level, as paragraphs see them: the
+    /// abstract definition with the list's overrides applied.
+    Numbering,
 }
 
 /// The checks a bare `jubarte debug FILE` runs.
@@ -103,7 +106,7 @@ pub struct Options {
     /// Only parts whose name contains this.
     pub part: Option<String>,
     /// `textbox`: only stories whose text contains this; `text`, `runs`,
-    /// `xml`, `changes`, `styledefs`: only lines that hold it, a `runs`
+    /// `xml`, `changes`, `styledefs`, `numbering`: only lines that hold it, a `runs`
     /// line read as plain text, printed whole.
     pub grep: Option<String>,
     /// Examples per finding kind, lines per listing.
@@ -1354,6 +1357,68 @@ fn style_lines(dom: &Dom, root: NodeId) -> (Vec<String>, usize) {
     (lines, styles.len())
 }
 
+/// `numbering`: one line per level of each list (`w:num`), keyed by the
+/// `numId` paragraphs point at: the abstract definition's level, or the
+/// list's `lvlOverride` level when it brings one, with a `startOverride`
+/// applied. The abstract's id is left out: Word renumbers it on save.
+/// Returns the lines and the list count.
+fn numbering_lines(dom: &Dom, root: NodeId) -> (Vec<String>, usize) {
+    let kids = |n: NodeId, name: &str| -> Vec<NodeId> {
+        dom.nodes(n)
+            .into_iter()
+            .filter(|&c| dom.is_element(c) && local(dom, c) == name)
+            .collect()
+    };
+    let child = |n: NodeId, name: &str| kids(n, name).into_iter().next();
+    let val = |n: NodeId, name: &str| child(n, name).map(|c| attr(dom, c, "val"));
+    let items = |n: Option<NodeId>| n.map(|b| prop_items(dom, b).join(" ")).unwrap_or_default();
+    let abstracts = kids(root, "abstractNum");
+    let nums = kids(root, "num");
+    let mut rows = Vec::new();
+    for &num in &nums {
+        let id = attr(dom, num, "numId");
+        let abs_id = val(num, "abstractNumId").unwrap_or_default();
+        let Some(abs) = abstracts
+            .iter()
+            .copied()
+            .find(|&a| attr(dom, a, "abstractNumId") == abs_id)
+        else {
+            rows.push(format!("  num {id} abstract {abs_id} missing"));
+            continue;
+        };
+        let overrides = kids(num, "lvlOverride");
+        for lvl in kids(abs, "lvl") {
+            let ilvl = attr(dom, lvl, "ilvl");
+            let ov = overrides
+                .iter()
+                .copied()
+                .find(|&o| attr(dom, o, "ilvl") == ilvl);
+            let lvl = ov.and_then(|o| child(o, "lvl")).unwrap_or(lvl);
+            let start = ov
+                .and_then(|o| val(o, "startOverride"))
+                .or_else(|| val(lvl, "start"))
+                .unwrap_or_default();
+            rows.push(format!(
+                "  num {id} lvl {ilvl} start={start} {} \"{}\" jc={} pPr[{}] rPr[{}]",
+                val(lvl, "numFmt").unwrap_or_default(),
+                val(lvl, "lvlText").unwrap_or_default(),
+                val(lvl, "lvlJc").unwrap_or_default(),
+                items(child(lvl, "pPr")),
+                items(child(lvl, "rPr")),
+            ));
+        }
+    }
+    // Numerically by list, then level.
+    let key = |l: &String| -> (u32, u32) {
+        let mut w = l.split_whitespace().skip(1);
+        let n = w.next().and_then(|x| x.parse().ok()).unwrap_or(u32::MAX);
+        let v = w.nth(1).and_then(|x| x.parse().ok()).unwrap_or(0);
+        (n, v)
+    };
+    rows.sort_by_key(key);
+    (rows, nums.len())
+}
+
 /// `text`: one line per paragraph, table and row of a story part, indented
 /// by table and text box depth; with `props`, the `runs` view. Returns the
 /// lines and the paragraph count.
@@ -1810,6 +1875,12 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
                 }
                 continue;
             }
+            if check == Check::Numbering {
+                if local(&dom, root) == "numbering" {
+                    map.insert(e.name.clone(), numbering_lines(&dom, root));
+                }
+                continue;
+            }
             if TEXT_PARTS.contains(&local(&dom, root).as_str()) {
                 map.insert(e.name.clone(), text_lines(&dom, root, check == Check::Runs));
             }
@@ -1827,6 +1898,7 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
         Check::Runs => "runs",
         Check::Changes => "changes",
         Check::StyleDefs => "styledefs",
+        Check::Numbering => "numbering",
         _ => "text",
     };
     let mut out = String::new();
@@ -1839,6 +1911,8 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
                 line(&mut out, &format!("{part}: {paras} property changes"));
             } else if check == Check::StyleDefs {
                 line(&mut out, &format!("{part}: {paras} styles"));
+            } else if check == Check::Numbering {
+                line(&mut out, &format!("{part}: {paras} lists"));
             } else {
                 line(&mut out, &format!("{part}: {paras} paragraphs"));
             }
@@ -2042,7 +2116,12 @@ pub fn report(a: &[u8], b: Option<&[u8]>, opts: &Options) -> Result<String, Stri
     let is_listing = |c: &Check| {
         matches!(
             c,
-            Check::Text | Check::Xml | Check::Runs | Check::Changes | Check::StyleDefs
+            Check::Text
+                | Check::Xml
+                | Check::Runs
+                | Check::Changes
+                | Check::StyleDefs
+                | Check::Numbering
         )
     };
     if opts.checks.iter().any(is_listing) {
@@ -2628,6 +2707,57 @@ mod tests {
         .unwrap();
         assert!(
             out.contains("+B   paragraph \"List Paragraph\" rPr[b i]\n"),
+            "{out}"
+        );
+    }
+
+    fn docx_with_numbering(numbering: &str) -> Vec<u8> {
+        zip_of(&[
+            ("[Content_Types].xml", TYPES),
+            ("_rels/.rels", ROOT_RELS),
+            ("word/document.xml", &document(CLEAN)),
+            (
+                "word/numbering.xml",
+                &format!(
+                    r#"<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">{numbering}</w:numbering>"#
+                ),
+            ),
+        ])
+    }
+
+    /// Each list level as the paragraphs naming the list see it: the
+    /// abstract definition with the list's overrides applied, by `numId`
+    /// (what paragraphs point at), never by the abstract's id, which Word
+    /// renumbers.
+    #[test]
+    fn numbering_lists_each_level_a_list_resolves_to() {
+        let abs = |id: &str, left: &str| {
+            format!(
+                r#"<w:abstractNum w:abstractNumId="{id}"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1)"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="{left}" w:hanging="360"/></w:pPr></w:lvl><w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="lowerLetter"/><w:lvlText w:val="%2."/><w:lvlJc w:val="left"/><w:rPr><w:b/></w:rPr></w:lvl></w:abstractNum>"#
+            )
+        };
+        let num = r#"<w:num w:numId="20"><w:abstractNumId w:val="9"/><w:lvlOverride w:ilvl="0"><w:startOverride w:val="3"/></w:lvlOverride></w:num>"#;
+        let a = docx_with_numbering(&format!("{}{num}", abs("9", "1069")));
+        let out = report(&a, None, &opts_for(Check::Numbering)).unwrap();
+        for expected in [
+            "word/numbering.xml: 1 lists\n",
+            "  num 20 lvl 0 start=3 decimal \"%1)\" jc=left pPr[ind(hanging=360,left=1069)] rPr[]\n",
+            "  num 20 lvl 1 start=1 lowerLetter \"%2.\" jc=left pPr[] rPr[b]\n",
+        ] {
+            assert!(out.contains(expected), "{expected:?} in\n{out}");
+        }
+        // The same list under another abstract id reads the same.
+        let renumbered = docx_with_numbering(&format!(
+            "{}{}",
+            abs("4", "1069"),
+            num.replace(r#"w:val="9""#, r#"w:val="4""#)
+        ));
+        let same = report(&a, Some(&renumbered), &opts_for(Check::Numbering)).unwrap();
+        assert_eq!(same, "numbering identical\n");
+        let wider = docx_with_numbering(&format!("{}{num}", abs("9", "1800")));
+        let out = report(&a, Some(&wider), &opts_for(Check::Numbering)).unwrap();
+        assert!(
+            out.contains("+B   num 20 lvl 0 start=3 decimal \"%1)\" jc=left pPr[ind(hanging=360,left=1800)] rPr[]\n"),
             "{out}"
         );
     }
