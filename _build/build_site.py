@@ -36,6 +36,7 @@ from pathlib import Path
 from PIL import Image
 
 import add_jubarte as aj
+import viewer_features
 
 HERE = aj.HERE
 OUT = HERE / "jubarte_site"
@@ -215,7 +216,7 @@ def pdf_creator(pdf: Path) -> str:
     return ""
 
 
-def patched_template(note: str) -> str:
+def patched_template(note: str, mode: str = "convert") -> str:
     t = aj.ec.HTML_TEMPLATE
     swaps = [
         ("<title>Engine comparison</title>", "<title>jubarte DOCX to PDF vs Microsoft Word: engine comparison</title>"),
@@ -234,7 +235,7 @@ def patched_template(note: str) -> str:
         if t.count(old) != 1:
             raise SystemExit(f"template anchor not found once: {old[:70]}")
         t = t.replace(old, new)
-    return t
+    return viewer_features.patch(t, mode)  # mode drop-down, case filters, random first case
 
 
 def main() -> None:

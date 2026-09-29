@@ -170,7 +170,7 @@ def main() -> None:
             "the same way): " + summary_line("rejected") if rej_groups else "") + ". SuperDoc (latest SDK) "
             "refuses most pairs, so its column is often empty. Scores: _build/redlines/.</span>")
     note = note.replace("'", "&#8217;")
-    aj.ec.HTML_TEMPLATE = bs.patched_template(note).replace(
+    aj.ec.HTML_TEMPLATE = bs.patched_template(note, mode="redline").replace(
         "<title>jubarte DOCX to PDF vs Microsoft Word: engine comparison</title>",
         "<title>Redlines vs Microsoft Word: jubarte, docxodus, SuperDoc</title>").replace(
         "<kbd>1</kbd>-<kbd>8</kbd> engines", "<kbd>1</kbd>-<kbd>4</kbd> engines")
