@@ -354,8 +354,18 @@ fi
 say "5. Publish dry-runs"
 # The bump and summaries are staged but not committed until step 6, so the
 # dry run packages the dirty tree; the real publish (step 8) stays clean.
-cargo publish --dry-run --locked --allow-dirty
-(cd jubarte-wasm/npm && npm publish --dry-run >/dev/null)
+# A resumed run skips the dry run of a registry that already holds $VER:
+# npm refuses even a dry run over a published version.
+if crates_has; then
+  step "jubarte-redlines $VER already on crates.io — dry run skipped"
+else
+  cargo publish --dry-run --locked --allow-dirty
+fi
+if npm_has; then
+  step "jubarte-wasm $VER already on npm — dry run skipped"
+else
+  (cd jubarte-wasm/npm && npm publish --dry-run >/dev/null)
+fi
 uvx maturin sdist --manifest-path jubarte-python/Cargo.toml --out target/release-check >/dev/null
 # The pypi summary must survive into the sdist or we stop here.
 sdist=$(ls target/release-check/*.tar.gz 2>/dev/null | head -1)

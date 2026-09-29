@@ -77,5 +77,25 @@ class ReleaseArgs(unittest.TestCase):
         self.assertIn(DOCS_FLAG, r.stderr)
 
 
+class ResumeDryRuns(unittest.TestCase):
+    """A resumed release must not die in step 5 on a registry that already
+    holds the version (npm refuses even a dry run over a published version)."""
+
+    def step5(self) -> str:
+        text = RELEASE_SH.read_text()
+        start = text.index('say "5. Publish dry-runs"')
+        return text[start:text.index('say "6.', start)]
+
+    def test_npm_dry_run_skips_a_published_version(self) -> None:
+        self.assertRegex(
+            self.step5(), r"if npm_has; then[^\n]*\n(?:[^\n]*\n)*?else\n[^\n]*npm publish --dry-run"
+        )
+
+    def test_cargo_dry_run_skips_a_published_version(self) -> None:
+        self.assertRegex(
+            self.step5(), r"if crates_has; then[^\n]*\n(?:[^\n]*\n)*?else\n[^\n]*cargo publish --dry-run"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
