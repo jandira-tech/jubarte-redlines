@@ -4,14 +4,29 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
+// ###########################################################################
+// ##                                                                       ##
+// ##   WARNING — scripts/release.sh IS THE SOURCE OF TRUTH FOR RELEASES.   ##
+// ##                                                                       ##
+// ##   This script is only the Cargo.toml + README codemod that            ##
+// ##   release.sh calls in its version-sync step. On its own it does NOT   ##
+// ##   bump jubarte-python, jubarte-wasm/npm or the four Cargo.lock        ##
+// ##   files, write the six required release notes, run the gates, tag,   ##
+// ##   push or publish. A version bumped here alone is a half release.     ##
+// ##                                                                       ##
+// ##   Release with:  scripts/release.sh x.y.z --changelog-summary "…" …   ##
+// ##                  (see VERSIONING.md step 8; --dry-run rehearses it)   ##
+// ##                                                                       ##
+// ###########################################################################
+//
 // Bump the crate version in every hard-coded location, in one shot.
 //
 //   bun scripts/bump-version.mjs 0.2.0
 //
 // Touches: Cargo.toml ([package] version) and the README's version pins,
 // including the Socket badge (badge.socket.dev/cargo/package/jubarte-redlines/<version>).
-// CHANGELOG.md is NOT auto-written —
-// add the Keep-a-Changelog section yourself, then commit + tag.
+// CHANGELOG.md is NOT auto-written — add the Keep-a-Changelog section
+// yourself, then let scripts/release.sh commit, tag and publish.
 // See VERSIONING.md.
 
 import { readFileSync, writeFileSync } from "node:fs";
@@ -19,6 +34,25 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+// release.sh sets JUBARTE_RELEASE_SH=1 when it calls this codemod; any other
+// caller is running half a release and gets the banner.
+const viaRelease = process.env.JUBARTE_RELEASE_SH === "1";
+const banner = [
+  "",
+  "#".repeat(75),
+  "##  WARNING: scripts/release.sh IS THE SOURCE OF TRUTH FOR RELEASES.",
+  "##",
+  "##  bump-version.mjs only rewrites Cargo.toml and the README pins. It does",
+  "##  NOT sync jubarte-python, jubarte-wasm/npm or the Cargo.lock files, write",
+  "##  the required release notes, run the gates, tag, push or publish.",
+  "##",
+  "##  Release with:  scripts/release.sh x.y.z --changelog-summary \"…\" …",
+  "##                 (VERSIONING.md step 8; --dry-run rehearses it)",
+  "#".repeat(75),
+  "",
+].join("\n");
+if (!viaRelease) console.error(banner);
 const next = process.argv[2];
 if (!/^\d+\.\d+\.\d+$/.test(next ?? "")) {
   console.error(`usage: bun scripts/bump-version.mjs <x.y.z>   (got: ${next ?? "nothing"})`);
@@ -69,9 +103,9 @@ try {
 }
 
 console.log(`bumped jubarte ${prev} → ${next}`);
-console.log("next:");
-console.log("  1. Edit CHANGELOG.md (## [x.y.z] - YYYY-MM-DD)");
-console.log("  2. cargo build --release --bin jubarte");
-console.log("  3. git commit -am 'chore(release): v" + next + "'");
-console.log("  4. git tag -a v" + next + " -m 'v" + next + "'");
-console.log("  5. Install binary into neurotic_docx_bench (see VERSIONING.md)");
+if (!viaRelease) {
+  console.error(banner);
+  console.error(
+    `Do not commit or tag this by hand: run scripts/release.sh ${next} with its six required notes.`,
+  );
+}
