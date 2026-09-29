@@ -367,6 +367,16 @@ pub fn compare_bodies_faithful_with_notes(
                             }
                         }
                     }
+                    // Likewise a docGrid the live section leaves out: Accept
+                    // All kept the old `type="lines" linePitch="312"` grid
+                    // (bf3d5eb650). Word's redline writes the default grid.
+                    let grid = W::name("docGrid");
+                    if dom.element(clean, &grid).is_none() && dom.element(old_sp, &grid).is_some() {
+                        let g = dom.new_element(grid);
+                        dom.set_attribute_value(g, &W::name("linePitch"), Some("0"));
+                        dom.set_attribute_value(g, &W::name("type"), Some("default"));
+                        dom.add_before_self(change, g);
+                    }
                 }
             }
             clean

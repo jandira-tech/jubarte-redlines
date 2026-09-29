@@ -609,15 +609,15 @@ fn a_paired_closing_mark_takes_the_revised_paragraph_properties() {
     );
 }
 
-/// The body's live `w:cols`, serialized.
-fn live_cols(pkg: &[u8]) -> String {
+/// The body's live section child `name` (`cols`, `docGrid`), serialized.
+fn live_sect_child(pkg: &[u8], name: &str) -> String {
     let xml = part_string(pkg, "word/document.xml").unwrap();
     let mut dom = Dom::new();
     let doc = dom.parse_xdocument(&xml);
     let root = dom.root(doc).unwrap();
     let body = dom.element(root, &W::body()).unwrap();
     let sect = dom.element(body, &W::sect_pr()).unwrap();
-    dom.element(sect, &W::name("cols"))
+    dom.element(sect, &W::name(name))
         .map(|c| dom.serialize_element(c))
         .unwrap_or_default()
 }
@@ -646,11 +646,44 @@ fn a_section_leaving_columns_spells_out_one_column() {
     let b = common::docx::docx_with_sect_pr(body, &[], &sect(r#"<w:cols w:space="720"/>"#));
     let out = compare_documents(&a, &b, "Redline").expect("compare");
     assert_word_valid_package(&out);
-    let cols = live_cols(&out);
+    let cols = live_sect_child(&out, "cols");
     assert!(
         cols.contains(r#"w:num="1""#) && cols.contains(r#"w:equalWidth="1""#),
         "{cols}"
     );
+}
+
+/// A revision that drops the original's line grid (`w:docGrid
+/// w:type="lines" w:linePitch="312"`, bf3d5eb650): Word's Accept All fills
+/// a docGrid the live section leaves out from the recorded old section, so
+/// our redline, accepted in Word, kept the grid and every line grew to
+/// 15.6pt. Word's redline writes the default grid live: `w:type="default"
+/// w:linePitch="0"`.
+#[test]
+fn a_section_leaving_its_line_grid_spells_out_the_default_grid() {
+    let sect = |grid: &str| {
+        format!(
+            r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>{grid}</w:sectPr>"#
+        )
+    };
+    let body = "<w:p><w:r><w:t>Press release.</w:t></w:r></w:p>";
+    let a = common::docx::docx_with_sect_pr(
+        body,
+        &[],
+        &sect(r#"<w:docGrid w:type="lines" w:linePitch="312"/>"#),
+    );
+    let b = common::docx::docx_with_sect_pr(body, &[], &sect(""));
+    let out = compare_documents(&a, &b, "Redline").expect("compare");
+    assert_word_valid_package(&out);
+    let grid = live_sect_child(&out, "docGrid");
+    assert!(
+        grid.contains(r#"w:type="default""#) && grid.contains(r#"w:linePitch="0""#),
+        "{}",
+        part_string(&out, "word/document.xml").unwrap()
+    );
+    let accepted = accept_revisions(&out).unwrap();
+    assert_word_valid_package(&accepted);
+    assert!(!live_sect_child(&accepted, "docGrid").contains("lines"));
 }
 
 /// A centred paragraph whose words give way to a left-aligned revision:
