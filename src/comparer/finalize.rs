@@ -289,13 +289,10 @@ pub fn mark_content_transform(
         };
         // M81: paragraph-formatting-only change — live pPr is MODIFIED (B);
         // w:pPrChange records ORIGINAL (A) from pt:OldPPr (docxodus :5040).
-        //
-        // M81c (file_69): when B clears spacing and A had **after-only** small
-        // spacing (`after≤40`, no before/line), also materialize it live.
-        // Word keeps live after=20 on the drawing residual; pPrChange alone
-        // does not affect LO line boxes (score stuck 89.89). Do **not**
-        // re-promote Heading residuals (before=400…) — that re-bloats file_33
-        // (−15 score when ungated).
+        // A spacing B cleared stays out of the live pPr: Word's redline of
+        // file_69 × file_70 (ac6cd8d92f) keeps after=20 live only on the
+        // deleted drawing residual, and the title's pPrChange alone; copying
+        // it live left it on the accepted title.
         if status == "FormatChanged" {
             let ppr = dom.clone_subtree(node);
             // Drop internal pt: attrs used only for the transform pipeline.
@@ -339,27 +336,6 @@ pub fn mark_content_transform(
                 .map(|s| s.to_string())
             {
                 dom.set_attribute_value(ppr, &PT::name("OldPPr"), None);
-                let old_ppr = parse_ppr(dom, Some(&old_s));
-                // Only a bare new pPr inherits the micro spacing: when B has
-                // layout of its own (file_143_144 jc=both), Word keeps B's pPr.
-                let new_is_bare = dom
-                    .elements(ppr, None)
-                    .into_iter()
-                    .all(|c| dom.name_is(c, &W::r_pr()));
-                if new_is_bare
-                    && dom.element(ppr, &W::spacing_el()).is_none()
-                    && let Some(old_sp) = dom.element(old_ppr, &W::spacing_el())
-                {
-                    let after = dom.attribute(old_sp, &W::name("after")).unwrap_or("");
-                    let before = dom.attribute(old_sp, &W::name("before")).unwrap_or("");
-                    let line = dom.attribute(old_sp, &W::name("line")).unwrap_or("");
-                    let after_n: i64 = after.parse().unwrap_or(i64::MAX);
-                    // after-only micro spacing (file_69 after=20)
-                    if before.is_empty() && line.is_empty() && after_n > 0 && after_n <= 40 {
-                        let sp = dom.clone_subtree(old_sp);
-                        dom.add_first(ppr, sp);
-                    }
-                }
                 let chg = dom.new_element(W::p_pr_change());
                 dom.set_attribute_value(chg, &W::id(), Some(&id_gen.to_string()));
                 *id_gen += 1;

@@ -718,3 +718,48 @@ fn a_rewritten_centred_paragraph_mid_body_takes_the_revised_alignment() {
         part_string(&out, "word/document.xml").unwrap()
     );
 }
+
+/// Each top-level body paragraph's live `w:spacing`, serialized.
+fn body_spacing(pkg: &[u8]) -> Vec<String> {
+    let xml = part_string(pkg, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    let body = dom.element(root, &W::body()).unwrap();
+    dom.elements(body, Some(&W::p()))
+        .into_iter()
+        .map(|p| {
+            dom.element(p, &W::p_pr())
+                .and_then(|ppr| dom.element(ppr, &W::name("spacing")))
+                .map(|n| dom.serialize_element(n))
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+/// A revised paragraph that drops the original's small space after: Word
+/// records the old `after=20` in a `pPrChange` over the revision's bare
+/// properties (ac6cd8d92f, file_69 × file_70), and Accept All leaves no
+/// spacing. Ours also wrote the old spacing live, so the accepted title kept
+/// it and the text box below sat a point low.
+#[test]
+fn a_dropped_space_after_is_recorded_not_kept_live() {
+    let a = common::docx::docx(concat!(
+        "<w:p><w:pPr><w:spacing w:after=\"20\"/></w:pPr><w:r><w:t>file_69.docx</w:t></w:r></w:p>",
+        "<w:p><w:r><w:t>Project charter.</w:t></w:r></w:p>",
+    ));
+    let b = common::docx::docx(concat!(
+        "<w:p><w:r><w:t>file_70.docx</w:t></w:r></w:p>",
+        "<w:p><w:r><w:t>Project charter.</w:t></w:r></w:p>",
+    ));
+    let out = compare_documents(&a, &b, "Redline").expect("compare");
+    assert_word_valid_package(&out);
+    let accepted = accept_revisions(&out).expect("accept");
+    assert_eq!(body_texts(&accepted), body_texts(&b));
+    assert_eq!(
+        body_spacing(&accepted),
+        body_spacing(&b),
+        "{}",
+        part_string(&out, "word/document.xml").unwrap()
+    );
+}
