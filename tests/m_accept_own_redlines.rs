@@ -2164,3 +2164,52 @@ fn the_normal_cascade_keeps_normal_s_old_language_slots_the_style_leaves_open() 
         assert!(record.contains(want), "{want}: {record}");
     }
 }
+
+/// A document whose stylesheet is Normal with `normal_rpr` and Body Text
+/// (based on Normal) with `body_rpr`, and one Body Text paragraph.
+fn docx_body_text_style(normal_rpr: &str, body_rpr: &str) -> Vec<u8> {
+    let styles = format!(
+        r#"<w:styles xmlns:w="{w}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:rPr>{normal_rpr}</w:rPr></w:style><w:style w:type="paragraph" w:styleId="BodyText"><w:name w:val="Body Text"/><w:basedOn w:val="Normal"/><w:rPr>{body_rpr}</w:rPr></w:style></w:styles>"#,
+        w = common::docx::W_NS
+    );
+    common::docx::docx_with(
+        r#"<w:p><w:pPr><w:pStyle w:val="BodyText"/></w:pPr><w:r><w:t>Press release body.</w:t></w:r></w:p>"#,
+        &[Part {
+            name: "word/styles.xml",
+            content_type: STYLES,
+            rel_type: STYLES_REL,
+            xml: &styles,
+        }],
+    )
+}
+
+/// The original's Body Text restates its Normal (Arial, es-ES); the
+/// revision's Body Text declares nothing and its Normal moves to Times New
+/// Roman. The change lives in Normal, which records it; Word's redline leaves
+/// Body Text without a record. Ours recorded the restated Arial on Body Text
+/// too, and Word's Reject All of that record wrote garbage of its own (sz=20,
+/// widowControl, autoSpaceDE/DN) onto the style: the original's 11pt press
+/// release came back at 10pt (c719b900f0: 48.42 against A's own PDF; Word's
+/// redline 90.13).
+#[test]
+fn a_style_restating_its_parent_records_no_change_of_its_own() {
+    let arial = r#"<w:rFonts w:ascii="Arial" w:eastAsia="Arial" w:hAnsi="Arial" w:cs="Arial"/><w:lang w:val="es-ES"/>"#;
+    let base = docx_body_text_style(arial, arial);
+    let next = docx_body_text_style(
+        r#"<w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/><w:sz w:val="24"/>"#,
+        "",
+    );
+    let redline = compare_documents(&base, &next, "Redline").unwrap();
+    assert_word_valid_package(&redline);
+    let styles = part_string(&redline, "word/styles.xml").unwrap();
+    let body_text = styles
+        .split("<w:style ")
+        .find(|s| s.contains(r#"w:styleId="BodyText""#))
+        .expect("Body Text kept");
+    assert!(!body_text.contains("rPrChange"), "{body_text}");
+    let normal = styles
+        .split("<w:style ")
+        .find(|s| s.contains(r#"w:styleId="Normal""#))
+        .unwrap();
+    assert!(normal.contains("rPrChange"), "{normal}");
+}

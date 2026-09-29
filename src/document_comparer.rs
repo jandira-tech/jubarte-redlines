@@ -1530,10 +1530,46 @@ fn effective_style_props(
     local: &str,
     default_local: &str,
 ) -> std::collections::BTreeMap<String, String> {
+    effective_chain_props(dom, styles_root, by_id, Some(style), local, default_local)
+}
+
+/// What `style` declares beyond its parent: each effective property of
+/// [`effective_style_props`] whose value its `basedOn` parent (the
+/// docDefaults for a root style) does not already give. A restatement of the
+/// parent drops out.
+fn own_style_props(
+    dom: &Dom,
+    styles_root: NodeId,
+    by_id: &std::collections::HashMap<String, NodeId>,
+    style: NodeId,
+    local: &str,
+    default_local: &str,
+) -> std::collections::BTreeMap<String, String> {
+    let parent = dom
+        .element(style, &W::name("basedOn"))
+        .and_then(|b| dom.attribute(b, &W::val()))
+        .and_then(|v| by_id.get(v).copied())
+        .filter(|&p| p != style);
+    let inherited = effective_chain_props(dom, styles_root, by_id, parent, local, default_local);
+    let mut own = effective_style_props(dom, styles_root, by_id, style, local, default_local);
+    own.retain(|k, v| inherited.get(k) != Some(v));
+    own
+}
+
+/// [`effective_style_props`] from `start` up its `basedOn` chain; `None`
+/// resolves the docDefaults alone.
+fn effective_chain_props(
+    dom: &Dom,
+    styles_root: NodeId,
+    by_id: &std::collections::HashMap<String, NodeId>,
+    start: Option<NodeId>,
+    local: &str,
+    default_local: &str,
+) -> std::collections::BTreeMap<String, String> {
     // Walk basedOn to the root of the chain, guarding against cycles.
     let mut chain: Vec<NodeId> = Vec::new();
     let mut seen: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
-    let mut cur = Some(style);
+    let mut cur = start;
     while let Some(s) = cur {
         if !seen.insert(s) || chain.len() >= MAX_STYLE_CHAIN_DEPTH {
             break;
@@ -2042,6 +2078,16 @@ fn merge_revised_style_definitions(
                 effective_style_props(dom, out_root, &out_by_id, style, local, default_local);
             let b_eff = effective_style_props(dom, b_root, &b_by_id, b_style, local, default_local);
             if a_eff == b_eff {
+                continue;
+            }
+            // The difference lives in an ancestor when what each side adds
+            // to its parent is the same: a style restating its parent adds
+            // nothing (c719b900f0's Body Text repeats Normal's Arial). Word
+            // records no change there, and its Reject All of one writes
+            // values of its own onto the style.
+            if own_style_props(dom, out_root, &out_by_id, style, local, default_local)
+                == own_style_props(dom, b_root, &b_by_id, b_style, local, default_local)
+            {
                 continue;
             }
             // Already tracked (an inbound stylesheet with pending redline, or an
