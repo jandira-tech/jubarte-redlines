@@ -103,6 +103,15 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   before scanning them, so the new release's UTF-8 validation refuses none
   of the 500 fixture documents; bytes that are not UTF-8 still decode
   lossily, as before.
+- Dependencies: clap 4.6.7, flate2 1.1.10 and serde_json 1.0.151 across the
+  engine, Python, WASM, in-process and app workspaces; quick-xml 0.42 in
+  the app and in the WASM build's patched `rdocx-opc`; the ooxmlsdk test
+  oracle 0.12.
+- `scripts/release.sh` requires a sixth note,
+  `--how-readme-and-other-docs-were-updated`, written under the changelog
+  summary and into the release commit, next to a list of the docs changed
+  since the previous tag. `scripts/bump-version.mjs` warns that
+  `release.sh` is the source of truth for releases.
 
 ### Fixed
 
