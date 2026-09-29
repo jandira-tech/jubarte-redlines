@@ -1171,6 +1171,9 @@ fn reconstruct_element(
     for c in new_children {
         dom.add(ne, c);
     }
+    if settings.merge_replaced_paragraphs && (aname == W::tr() || aname == W::tc()) {
+        record_revised_row_cell_props(dom, ne, g, ancestor, level, settings, id_gen);
+    }
     // Word-alignment (M-TBL rule 4, parity/_scratch/table_class_forensics.md):
     // a DEGENERATE grid — fewer w:gridCol entries than the real column count
     // implied by the rows' gridSpan/tc structure — is rebuilt Word's way:
@@ -1181,6 +1184,124 @@ fn reconstruct_element(
         rebuild_degenerate_grid(dom, ne, ancestor);
     }
     ne
+}
+
+/// Word-alignment: a merged row or cell shows the revision's `trPr` /
+/// `tcPr` and records the original's in `trPrChange` / `tcPrChange`
+/// (ff42b4a7a3's rewritten header row; 117 of the 300 table-bearing Word
+/// redlines of 500_extra carry a `tcPrChange`). The container is rebuilt
+/// from its first atom's ancestor — the original's when that atom is
+/// deleted — so accepting kept the original's shading and widths.
+fn record_revised_row_cell_props(
+    dom: &mut Dom,
+    ne: NodeId,
+    g: &[&ComparisonUnitAtom],
+    ancestor: NodeId,
+    level: usize,
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let Some(aname) = dom.name(ancestor) else {
+        return;
+    };
+    let (pr_local, change_local) = if aname == W::tr() {
+        ("trPr", "trPrChange")
+    } else {
+        ("tcPr", "tcPrChange")
+    };
+    let same_kind = |anc: &NodeId| dom.name(*anc).as_ref() == Some(&aname);
+    // The original's container: a deleted atom's own ancestor, or an equal
+    // atom's before-side one. The revision's: any other atom's ancestor.
+    let old = g.iter().find_map(|a| match a.correlation_status {
+        CorrelationStatus::Deleted | CorrelationStatus::MovedSource => {
+            a.ancestor_elements.get(level).copied().filter(same_kind)
+        }
+        _ => a
+            .comparison_unit_atom_before
+            .as_ref()?
+            .ancestor_elements
+            .get(level)
+            .copied()
+            .filter(same_kind),
+    });
+    let new = g.iter().find_map(|a| match a.correlation_status {
+        CorrelationStatus::Deleted | CorrelationStatus::MovedSource => None,
+        _ => a.ancestor_elements.get(level).copied().filter(same_kind),
+    });
+    let (Some(old), Some(new)) = (old, new) else {
+        return;
+    };
+    if old == new {
+        return;
+    }
+    let pr_name = W::name(pr_local);
+    if ancestor != new {
+        for hoisted in dom.elements(ne, Some(&pr_name)) {
+            dom.remove(hoisted);
+        }
+        if let Some(p) = dom.element(new, &pr_name) {
+            let c = dom.clone_subtree(p);
+            place_row_cell_props(dom, ne, c);
+        }
+    }
+    // The record's inner block may carry no revision of its own
+    // (CT_TrPrBase has no ins/del; CT_TcPrInner no tcPrChange).
+    let old_pr = match dom.element(old, &pr_name) {
+        Some(p) => dom.clone_subtree(p),
+        None => dom.new_element(pr_name.clone()),
+    };
+    for c in dom.elements(old_pr, None) {
+        if dom
+            .name(c)
+            .is_some_and(|n| matches!(n.local_name(), "ins" | "del" | "trPrChange" | "tcPrChange"))
+        {
+            dom.remove(c);
+        }
+    }
+    let live = match dom.element(ne, &pr_name) {
+        Some(p) => p,
+        None => {
+            let p = dom.new_element(pr_name.clone());
+            place_row_cell_props(dom, ne, p);
+            p
+        }
+    };
+    let live_sig: String = dom
+        .elements(live, None)
+        .into_iter()
+        .filter(|&c| {
+            dom.name(c).is_some_and(|n| {
+                !matches!(n.local_name(), "ins" | "del" | "trPrChange" | "tcPrChange")
+            })
+        })
+        .map(|c| dom.serialize_element(c))
+        .collect();
+    let old_sig: String = dom
+        .elements(old_pr, None)
+        .into_iter()
+        .map(|c| dom.serialize_element(c))
+        .collect();
+    if live_sig == old_sig {
+        if dom.elements(live, None).is_empty() {
+            dom.remove(live);
+        }
+        return;
+    }
+    let change = dom.new_element(W::name(change_local));
+    dom.set_attribute_value(change, &W::id(), Some(&id_gen.to_string()));
+    *id_gen += 1;
+    dom.set_attribute_value(change, &W::author(), Some(&settings.author_for_revisions));
+    dom.set_attribute_value(change, &W::date(), Some(&settings.date_time_for_revisions));
+    dom.add(change, old_pr);
+    dom.add(live, change);
+}
+
+/// Put a row's `trPr` after its `tblPrEx`, a cell's `tcPr` first.
+fn place_row_cell_props(dom: &mut Dom, container: NodeId, pr: NodeId) {
+    match dom.element(container, &W::name("tblPrEx")) {
+        Some(ex) => dom.add_after_self(ex, pr),
+        None => dom.add_first(container, pr),
+    }
 }
 
 /// CT_TblPrBase child order (wml.xsd). A synthesized child must be inserted

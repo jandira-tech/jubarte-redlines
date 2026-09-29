@@ -948,3 +948,108 @@ fn a_final_section_keeps_the_first_page_footer_the_revision_gives_it() {
     let footer = final_slot_text(&accepted, "footerReference", "first");
     assert_eq!(footer.as_deref(), Some("Page 2 of 2"));
 }
+
+/// A one-table document: `rows` of (tcPr, text) cells after `tbl_pr`.
+fn docx_with_table(tbl_pr: &str, grid: &[u32], rows: &[&[(&str, &str)]]) -> Vec<u8> {
+    let grid: String = grid
+        .iter()
+        .map(|w| format!(r#"<w:gridCol w:w="{w}"/>"#))
+        .collect();
+    let rows: String = rows
+        .iter()
+        .map(|cells| {
+            let tcs: String = cells
+                .iter()
+                .map(|(pr, text)| {
+                    format!(r#"<w:tc><w:tcPr>{pr}</w:tcPr><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"#)
+                })
+                .collect();
+            format!("<w:tr>{tcs}</w:tr>")
+        })
+        .collect();
+    common::docx::docx(&format!(
+        r#"<w:p><w:r><w:t>Directory</w:t></w:r></w:p><w:tbl><w:tblPr>{tbl_pr}</w:tblPr><w:tblGrid>{grid}</w:tblGrid>{rows}</w:tbl><w:p/>"#
+    ))
+}
+
+/// The live tcPr of every cell of the body's first table, row by row.
+fn cell_pprs(pkg: &[u8]) -> Vec<Vec<String>> {
+    let xml = part_string(pkg, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    let tbl = dom.descendants(root, Some(&W::tbl()))[0];
+    dom.elements(tbl, Some(&W::tr()))
+        .into_iter()
+        .map(|tr| {
+            dom.elements(tr, Some(&W::tc()))
+                .into_iter()
+                .map(|tc| {
+                    dom.element(tc, &W::tc_pr())
+                        .map(|p| dom.serialize_element(p))
+                        .unwrap_or_default()
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// A row the revision rewrites into more, differently formatted cells:
+/// Word's redline gives each paired cell the revision's tcPr and records
+/// the original's in a `tcPrChange` (ff42b4a7a3: the shaded two-cell
+/// "npm / github" row becomes the bordered three-cell header row).
+/// Accepted, no cell keeps the original's shading or width. The cells took
+/// the tcPr of their first atom — a deleted one, so the original's.
+#[test]
+fn a_rewritten_row_takes_the_revised_cell_properties() {
+    let shaded =
+        r#"<w:tcW w:w="4680" w:type="dxa"/><w:shd w:val="clear" w:color="auto" w:fill="F8FAFC"/>"#;
+    let bordered = r#"<w:tcW w:w="3120" w:type="dxa"/><w:tcBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="000000"/></w:tcBorders>"#;
+    let tbl_pr = r#"<w:tblW w:w="9360" w:type="dxa"/>"#;
+    let base = docx_with_table(
+        tbl_pr,
+        &[4680, 4680],
+        &[&[(shaded, "npm package"), (shaded, "github repository")]],
+    );
+    let next = docx_with_table(
+        tbl_pr,
+        &[3120, 3120, 3120],
+        &[
+            &[
+                (bordered, "Name"),
+                (bordered, "Department"),
+                (bordered, "Role"),
+            ],
+            &[
+                (bordered, "Alice Johnson"),
+                (bordered, "Engineering"),
+                (bordered, "Senior Dev"),
+            ],
+        ],
+    );
+    let redline = compare_documents(&base, &next, "Redline").unwrap();
+    assert_word_valid_package(&redline);
+    let cells = cell_pprs(&redline);
+    for pr in &cells[0] {
+        let live = pr.split("<w:tcPrChange").next().unwrap();
+        assert!(live.contains(r#"w:w="3120""#), "{cells:?}");
+        assert!(!live.contains("F8FAFC"), "{cells:?}");
+    }
+    assert!(
+        cells[0]
+            .iter()
+            .any(|pr| pr.contains("<w:tcPrChange") && pr.contains("F8FAFC")),
+        "{cells:?}"
+    );
+
+    let accepted = accept_revisions(&redline).unwrap();
+    assert_word_valid_package(&accepted);
+    let cells = cell_pprs(&accepted);
+    assert!(
+        cells
+            .iter()
+            .flatten()
+            .all(|pr| !pr.contains("F8FAFC") && !pr.contains("4680")),
+        "{cells:?}"
+    );
+}
