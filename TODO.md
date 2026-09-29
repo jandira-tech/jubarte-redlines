@@ -256,3 +256,27 @@ a10 RP baseline + this D-2 sweep) + a folio judge pass.
 passes but the folio lens fails, the divergence is in folio's ProseMirror
 resolver (non-atomic PM join — folio TODO §2/§4), not jubarte. That work lives in
 the folio repo, not this one.
+
+## 6. Comment workflow in `jubarte edit` and the APIs (NEXT VERSION — not 0.10.x)
+
+Requested 2026-09-29. Today an edit plan can only **add** a comment (the
+`Comment` op, plus the `comment` field on inserts and replacements), and
+Accept/Reject All drop comments with their anchors. Still to add, in the CLI
+edit plans and the Rust, Python and WASM APIs:
+
+- [ ] **Add** — keep the existing op; also add a comment to a range spanning
+  several paragraphs.
+- [ ] **Delete** a comment by id, together with its anchors, its
+  commentsExtended / commentsIds / commentsExtensible entries and its replies.
+- [ ] **Modify** a comment's text, keeping its id, author and thread.
+- [ ] **Reply** to a comment (a sub-comment: `w15:paraIdParent` in
+  commentsExtended, the way Word threads replies).
+- [ ] **List** comments: all of them, only the latest, or only those of one
+  author name.
+- [ ] **See surroundings** — for a comment anchored to a few words, return
+  the anchored text plus the context around it (the enclosing paragraph and
+  its neighbours), so a reader can tell what the comment is about.
+- [ ] **Resolve** comments and sub-comments (`w15:done="1"`), and reopen them.
+- [ ] **Remember which party cares a lot** — keep a per-party (author) record
+  of which points that party presses hard on, so later edits and replies can
+  take it into account.
