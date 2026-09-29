@@ -130,8 +130,8 @@ const METRIC_INFO = {
 };
 const PAGE_STEP = 10;
 const $ = s => document.querySelector(s);
-const store = k => { try { return JSON.parse(localStorage.getItem('ec.'+k)); } catch { return null; } };
-const save = (k,v) => { try { localStorage.setItem('ec.'+k, JSON.stringify(v)); } catch {} };
+const store = k => { try { return JSON.parse(localStorage.getItem('ec.redline.'+k)); } catch { return null; } };
+const save = (k,v) => { try { localStorage.setItem('ec.redline.'+k, JSON.stringify(v)); } catch {} };
 
 let state = Object.assign({ on: {},
   shown: PAGE_STEP, zoom: 600, ovl: false, ovlA: 'reference', ovlB: 'generated', blend: 'normal', alpha: 50, sel: 0, filter: '',
@@ -211,6 +211,9 @@ function setupFx() {
   if (!groups.includes(fx.group)) fx.group = '';
   if (!ENGINES.some(([k]) => k === fx.eng && k !== 'reference')) fx.eng = ENGINES.find(([k]) => k !== 'reference')?.[0] ?? '';
   if (!METRICS.includes(fx.metric)) fx.metric = METRICS[0];
+  // Filters saved by an earlier visit that hide every case would open on an empty page.
+  if (!visibleCases().length) { Object.assign(fx, { group: '', pages: '', max: '', differ: false }); state.filter = ''; $('#filter').value = ''; }
+  if (!DATA[state.sel]) state.sel = 0;
   $('#fxGroup').value = fx.group; $('#fxPages').value = fx.pages; $('#fxEng').value = fx.eng;
   $('#fxMetric').value = fx.metric; $('#fxMax').value = fx.max; $('#fxDiffer').checked = fx.differ;
   $('#fxGroup').onchange = e => { fx.group = e.target.value; fxChanged(); };

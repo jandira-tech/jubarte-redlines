@@ -125,6 +125,9 @@ function setupFx() {
   if (!groups.includes(fx.group)) fx.group = '';
   if (!ENGINES.some(([k]) => k === fx.eng && k !== 'reference')) fx.eng = ENGINES.find(([k]) => k !== 'reference')?.[0] ?? '';
   if (!METRICS.includes(fx.metric)) fx.metric = METRICS[0];
+  // Filters saved by an earlier visit that hide every case would open on an empty page.
+  if (!visibleCases().length) { Object.assign(fx, { group: '', pages: '', max: '', differ: false }); state.filter = ''; $('#filter').value = ''; }
+  if (!DATA[state.sel]) state.sel = 0;
   $('#fxGroup').value = fx.group; $('#fxPages').value = fx.pages; $('#fxEng').value = fx.eng;
   $('#fxMetric').value = fx.metric; $('#fxMax').value = fx.max; $('#fxDiffer').checked = fx.differ;
   $('#fxGroup').onchange = e => { fx.group = e.target.value; fxChanged(); };
@@ -200,7 +203,12 @@ def mode_select(mode: str) -> str:
 
 def swaps(mode: str) -> list[tuple[str, str]]:
     """(anchor, replacement) pairs; every anchor must occur exactly once."""
+    # Both pages share one origin: the redline page saves under its own key, so a filter or
+    # case index of one page never lands on the other. The convert page keeps "ec.".
+    key = "'ec.'" if mode == "convert" else "'ec.redline.'"
     return [
+        ("localStorage.getItem('ec.'+k)", f"localStorage.getItem({key}+k)"),
+        ("localStorage.setItem('ec.'+k", f"localStorage.setItem({key}+k"),
         ("</style>", CSS + "</style>"),
         ('<div id="bar">\n', '<div id="bar">\n  ' + mode_select(mode) + "\n  " + NAV + "\n"),
         ('<input id="filter" placeholder="filter cases (name, group)…">', FX_HTML),  # FX_HTML wraps the same input

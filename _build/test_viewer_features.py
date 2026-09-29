@@ -108,3 +108,17 @@ def test_a_filter_change_scrolls_the_selected_case_into_view(pages):
     js = vf.patch(pages["index.html"], "convert")
     body = js[js.index("function fxChanged()"):]
     assert "render(); showSel();" in body[: body.index("\n}\n")]
+
+
+def test_each_page_keeps_its_own_saved_state(pages):
+    red = vf.patch(pages["redlines/index.html"], "redline")
+    conv = vf.patch(pages["index.html"], "convert")
+    assert "localStorage.getItem('ec.redline.'+k)" in red and "localStorage.setItem('ec.redline.'+k" in red
+    assert "localStorage.getItem('ec.'+k)" in conv  # the convert page keeps its visitors' state
+
+
+def test_saved_filters_that_hide_every_case_are_dropped_on_load(pages):
+    js = vf.patch(pages["index.html"], "convert")
+    body = js[js.index("function setupFx()"):]
+    body = body[: body.index("\n}\n")]
+    assert "if (!visibleCases().length)" in body
