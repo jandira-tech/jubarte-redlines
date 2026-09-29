@@ -129,8 +129,8 @@ accept of its own redline (`_to_improve_accepted_changes`, 2026-09-29).
 | A5 | Drops B's run `sz`/`szCs` from text it threads into A's paragraphs (11pt instead of B's 12pt) | Keeps B's size | 440c |
 | A6 | Drops `szCs`/`cs` from the paragraph-mark rPr | Keeps B's mark rPr | b4cd |
 | A7 | Writes 333 "no difference" `tcPrChange` records | Only records real differences | 5b87 |
-| A8 | Gives 5b87's Q2/Q3 cells spacing 200/276 and Calibri, which neither A nor B has | Keeps B's cell formatting | 5b87 |
-| A9 | Gives a blank header paragraph a leftover style (the last paragraph's pStyle is a lottery: garbage, Footer, AdoptionDate) | Keeps B's style | f125, b4cd, d8b0 |
+| A8 | Gives inserted or rebuilt cells the Word 2007 defaults (spacing 200/276, Calibri), which neither A nor B has | Keeps B's cell formatting | 5b87, ff42 (an inserted cell) |
+| A9 | Gives a blank header or footer paragraph a leftover style (a lottery: garbage, Footer, AdoptionDate, BodyTextIndent, ListParagraph); in f125 that header grows and pushes the last line onto a second page | Keeps B's style | f125, b4cd, d8b0, ff42, 5b87 |
 | A10 | Adds blank default header/footer/endnote parts, and header/footer parts neither side had | Writes only the parts the document uses | 440c and others |
 | A11 | Auto-creates `HeaderChar`/`FooterChar` styles | Adds no styles the document doesn't use | cda1 |
 | A12 | Prunes style properties that repeat Normal | Keeps the style's own properties | several |
