@@ -69,6 +69,13 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- Rejecting a redline in which Normal changed no longer strips the run
+  properties of the styles based on Normal: the change record each of them
+  gets keeps the style's own fonts and sizes, font slot by font slot, over
+  Normal's old ones, as Word records them (a67dcf9e05's Balloon Text went
+  from Tahoma 8 pt to Times New Roman 12 pt). Paragraph-style property
+  mismatches against the original after our own reject, over the same 150
+  pairs: 298 to 236.
 - `jubarte reject` no longer panics ("No parent for AddBeforeSelf") on
   nested block content controls whose every paragraph is inserted, as in
   Word's "Page Numbers" footer parts. A control holding only removed text is
