@@ -1962,3 +1962,56 @@ fn a_style_the_revision_lacks_keeps_the_original_definition_unrecorded() {
         );
     }
 }
+
+/// A style both documents declare alike keeps its own run properties in the
+/// record the Normal cascade gives it. Word's redline of a67dcf9e05 against
+/// 2773adf157 records Balloon Text's own Tahoma 8 pt; ours recorded Normal's
+/// old rPr alone (Times New Roman 12 pt), so Reject All set Balloon Text in
+/// 12 pt Times New Roman.
+#[test]
+fn the_normal_cascade_keeps_a_style_s_own_run_properties_in_its_record() {
+    let balloon = r#"<w:style w:type="paragraph" w:styleId="BalloonText"><w:name w:val="Balloon Text"/><w:basedOn w:val="Normal"/><w:rPr><w:rFonts w:ascii="Tahoma" w:hAnsi="Tahoma" w:cs="Tahoma"/><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr></w:style>"#;
+    let body = r#"<w:p><w:r><w:t>Body text</w:t></w:r></w:p>"#;
+    let base = docx_with_stylesheet_styles(
+        body,
+        [
+            "",
+            r#"<w:rFonts w:ascii="Calibri" w:eastAsia="Calibri" w:hAnsi="Calibri" w:cs="Times New Roman"/><w:lang w:val="en-US" w:eastAsia="en-US" w:bidi="ar-SA"/>"#,
+            "",
+            r#"<w:rFonts w:eastAsiaTheme="minorHAnsi"/><w:sz w:val="24"/>"#,
+        ],
+        balloon,
+    );
+    let next = docx_with_stylesheet_styles(
+        body,
+        [
+            "",
+            r#"<w:rFonts w:ascii="Times New Roman" w:eastAsia="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/><w:lang w:val="ru-RU" w:eastAsia="ru-RU" w:bidi="ar-SA"/>"#,
+            "",
+            r#"<w:rFonts w:ascii="Arial" w:eastAsia="Times New Roman" w:hAnsi="Arial" w:cs="Arial"/><w:sz w:val="18"/><w:szCs w:val="18"/>"#,
+        ],
+        balloon,
+    );
+    let redline = compare_documents(&base, &next, "Redline").unwrap();
+    assert_word_valid_package(&redline);
+    // A font slot the style leaves open keeps Normal's old face.
+    let recorded = style_xml(&redline, "BalloonText");
+    assert!(
+        recorded.contains(r#"w:eastAsiaTheme="minorHAnsi""#),
+        "{recorded}"
+    );
+    let rejected = reject_revisions(&redline).unwrap();
+    let style = style_xml(&rejected, "BalloonText");
+    for own in [
+        r#"w:ascii="Tahoma""#,
+        r#"w:hAnsi="Tahoma""#,
+        r#"<w:sz w:val="16" />"#,
+        r#"<w:szCs w:val="16" />"#,
+    ] {
+        assert!(
+            style.contains(own),
+            "{own}: {style}\nredline: {}",
+            style_xml(&redline, "BalloonText")
+        );
+    }
+}

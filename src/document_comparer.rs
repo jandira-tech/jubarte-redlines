@@ -1145,6 +1145,25 @@ fn cascade_normal_change_to_based_styles(
                 for c in dom.descendants(clone, Some(&W::name("rPrChange"))) {
                     dom.remove(c);
                 }
+                // The style's own properties replace Normal's: Word records
+                // Balloon Text's Tahoma 8 pt (a67dcf9e05), and Reject All
+                // must give it back.
+                for own in dom.elements(rpr, None) {
+                    let Some(name) = dom.name(own) else { continue };
+                    if name == W::name("rPrChange") {
+                        continue;
+                    }
+                    let copy = dom.clone_subtree(own);
+                    if let Some(stale) = dom.element(clone, &name) {
+                        // Per font slot: a slot the style leaves open keeps
+                        // Normal's old face (eastAsiaTheme, 0800162a66).
+                        if name == W::name("rFonts") {
+                            complete_attributes(dom, copy, stale, "rFonts");
+                        }
+                        dom.remove(stale);
+                    }
+                    add_rpr_child_in_order(dom, clone, copy, name.local_name());
+                }
                 dom.add(chg, clone);
                 dom.add(rpr, chg);
                 changed = true;
