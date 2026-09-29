@@ -12,6 +12,7 @@ mod bookmarks;
 mod comments;
 mod notes;
 mod sections;
+mod style_records;
 mod word_save;
 
 pub(crate) use sections::Resolution;
@@ -3099,7 +3100,9 @@ pub(crate) fn resolve_package(
             let resolved = match (is_styles, resolution) {
                 (true, Resolution::Accept) => accept_revisions_for_styles_transform(dom, root),
                 (true, Resolution::Reject) => {
+                    let recorded = style_records::recorded_blocks(dom, root);
                     let rejected = reject_revisions_for_styles_transform(dom, root)?;
+                    style_records::restore_against_built_ins(dom, rejected, &recorded);
                     accept_revisions_for_styles_transform(dom, rejected)
                 }
                 (false, _) => {

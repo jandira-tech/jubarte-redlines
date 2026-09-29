@@ -283,3 +283,132 @@ fn reject_keeps_a_header_part_a_referenced_relationship_still_targets() {
     assert!(rels.contains(r#"Id="rIdX0""#), "{rels}");
     assert!(!rels.contains(&format!(r#"Id="{spare}""#)), "{rels}");
 }
+/// The properties of one style's `block` (`pPr`/`rPr`) in `styles_xml`, each
+/// as `name(attr=value,…)` with the attributes sorted, in document order.
+fn style_props(styles_xml: &str, id: &str, block: &str) -> Vec<String> {
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(styles_xml);
+    let root = dom.root(doc).unwrap();
+    let style = dom
+        .elements(root, Some(&W::name("style")))
+        .into_iter()
+        .find(|&s| dom.attribute(s, &W::name("styleId")) == Some(id))
+        .unwrap_or_else(|| panic!("no style {id}:\n{styles_xml}"));
+    let Some(block) = dom.element(style, &W::name(block)) else {
+        return Vec::new();
+    };
+    dom.elements(block, None)
+        .into_iter()
+        .map(|p| {
+            let mut attrs: Vec<String> = dom
+                .attributes(p)
+                .into_iter()
+                .map(|(a, v)| format!("{}={v}", a.local_name()))
+                .collect();
+            attrs.sort();
+            format!("{}({})", dom.name(p).unwrap().local_name(), attrs.join(","))
+        })
+        .collect()
+}
+
+fn styles_part(xml: &str) -> Part<'_> {
+    Part {
+        name: "word/styles.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+        xml,
+    }
+}
+
+/// R27: a style change record holds the style's old properties ABSOLUTELY,
+/// against Word's built-in defaults (Times New Roman, 10pt, single spacing,
+/// widow control on): what the old style left unsaid was the built-in value,
+/// not whatever the style chain says now. Rejecting the record writes each
+/// property whose old value differs from what the style would inherit, and
+/// only those, attribute by attribute for rFonts, lang and spacing. Read off
+/// Word's Reject All of its own redlines: b42b3ae070 (Normal back to sz=20,
+/// Times New Roman and single spacing exactly as the original has them, a
+/// based List Paragraph gains jc=left over Normal's both), c719b900f0 (dropped
+/// docDefaults restatements, header gains widowControl), 1b4dd65cb9,
+/// 2288f27be1, 6fb9bbdb49 (lineRule stays with a different line).
+#[test]
+fn reject_of_a_style_record_restores_the_old_style_against_word_built_ins() {
+    let w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    let styles = format!(
+        r#"<w:styles xmlns:w="{w}"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:asciiTheme="minorHAnsi" w:eastAsiaTheme="minorEastAsia" w:hAnsiTheme="minorHAnsi" w:cstheme="minorBidi"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="en-US" w:eastAsia="en-US" w:bidi="ar-SA"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:widowControl w:val="0"/><w:spacing w:after="200" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/><w:pPrChange w:id="1" {REV}><w:pPr><w:widowControl w:val="0"/><w:spacing w:after="200" w:line="276" w:lineRule="auto"/><w:jc w:val="both"/></w:pPr></w:pPrChange></w:pPr><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="24"/><w:rPrChange w:id="2" {REV}><w:rPr><w:rFonts w:ascii="Aptos" w:eastAsiaTheme="minorEastAsia" w:hAnsi="Aptos" w:cstheme="minorBidi"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="es-ES" w:eastAsia="en-US" w:bidi="ar-SA"/></w:rPr></w:rPrChange></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:pPrChange w:id="3" {REV}><w:pPr><w:keepNext/><w:spacing w:before="240"/></w:pPr></w:pPrChange></w:pPr><w:rPr><w:sz w:val="32"/><w:rPrChange w:id="4" {REV}><w:rPr><w:b/><w:sz w:val="32"/><w:lang w:val="es-ES"/></w:rPr></w:rPrChange></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Tight"><w:name w:val="Tight"/><w:pPr><w:spacing w:after="200" w:line="276" w:lineRule="auto"/><w:pPrChange w:id="5" {REV}><w:pPr><w:widowControl w:val="0"/><w:spacing w:after="200" w:line="280" w:lineRule="auto"/></w:pPr></w:pPrChange></w:pPr></w:style><w:style w:type="paragraph" w:styleId="Plain"><w:name w:val="Plain"/><w:rPr><w:sz w:val="22"/></w:rPr></w:style></w:styles>"#
+    );
+    let rejected = reject_revisions(&docx_with(
+        r#"<w:p><w:r><w:t>Text</w:t></w:r></w:p>"#,
+        &[styles_part(&styles)],
+    ))
+    .unwrap();
+    assert_word_valid_package(&rejected);
+    let xml = part_string(&rejected, "word/styles.xml").unwrap();
+    assert!(!xml.contains("Change"), "record left:\n{xml}");
+    // A root style inherits the docDefaults: their restatements go.
+    assert_eq!(style_props(&xml, "Normal", "pPr"), ["jc(val=both)"]);
+    assert_eq!(
+        style_props(&xml, "Normal", "rPr"),
+        ["rFonts(ascii=Aptos,hAnsi=Aptos)", "lang(val=es-ES)"]
+    );
+    // A based style: what the old record left unsaid was the built-in value.
+    assert_eq!(
+        style_props(&xml, "Heading1", "pPr"),
+        [
+            "keepNext()",
+            "widowControl()",
+            "spacing(after=0,before=240,line=240,lineRule=auto)",
+            "jc(val=left)",
+        ]
+    );
+    assert_eq!(
+        style_props(&xml, "Heading1", "rPr"),
+        [
+            "rFonts(ascii=Times New Roman,cs=Times New Roman,eastAsia=Times New Roman,hAnsi=Times New Roman)",
+            "b()",
+            "sz(val=32)",
+            "szCs(val=20)",
+        ]
+    );
+    // lineRule stays with a line that differs; the docDefaults' after goes.
+    assert_eq!(
+        style_props(&xml, "Tight", "pPr"),
+        ["spacing(line=280,lineRule=auto)"]
+    );
+    // A style without a record is left alone.
+    assert_eq!(style_props(&xml, "Plain", "rPr"), ["sz(val=22)"]);
+}
+
+/// R28: Word keeps a linked pair in step. Rejecting a paragraph style's rPr
+/// record gives its linked character style the same old rPr, replacing the
+/// character style's own, each resolved against its own chain: the
+/// paragraph style drops the color its parent holds, the character style
+/// keeps it (Word's Reject All of its redlines of d8b0c2ae01, Heading 1 Char;
+/// bf3d5eb650, Header Char; 3866f441cc, Comment Text Char). A character
+/// style whose paragraph style kept its rPr is left alone.
+#[test]
+fn reject_of_a_paragraph_style_record_resyncs_its_linked_character_style() {
+    let w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    let styles = format!(
+        r#"<w:styles xmlns:w="{w}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:rPr><w:color w:val="000000"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:link w:val="Heading1Char"/><w:rPr><w:sz w:val="24"/><w:rPrChange w:id="1" {REV}><w:rPr><w:b/><w:color w:val="000000"/><w:kern w:val="32"/><w:sz w:val="32"/></w:rPr></w:rPrChange></w:rPr></w:style><w:style w:type="character" w:customStyle="1" w:styleId="Heading1Char"><w:name w:val="Heading 1 Char"/><w:link w:val="Heading1"/><w:rPr><w:color w:val="000000"/><w:sz w:val="24"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:link w:val="Heading2Char"/><w:pPr><w:keepNext/><w:pPrChange w:id="2" {REV}><w:pPr/></w:pPrChange></w:pPr><w:rPr><w:sz w:val="28"/></w:rPr></w:style><w:style w:type="character" w:customStyle="1" w:styleId="Heading2Char"><w:name w:val="Heading 2 Char"/><w:link w:val="Heading2"/><w:rPr><w:color w:val="000000"/></w:rPr></w:style></w:styles>"#
+    );
+    let rejected = reject_revisions(&docx_with(
+        r#"<w:p><w:r><w:t>Text</w:t></w:r></w:p>"#,
+        &[styles_part(&styles)],
+    ))
+    .unwrap();
+    assert_word_valid_package(&rejected);
+    let xml = part_string(&rejected, "word/styles.xml").unwrap();
+    assert_eq!(
+        style_props(&xml, "Heading1", "rPr"),
+        ["b()", "kern(val=32)", "sz(val=32)"]
+    );
+    assert_eq!(
+        style_props(&xml, "Heading1Char", "rPr"),
+        ["b()", "color(val=000000)", "kern(val=32)", "sz(val=32)"]
+    );
+    assert_eq!(
+        style_props(&xml, "Heading2Char", "rPr"),
+        ["color(val=000000)"]
+    );
+}

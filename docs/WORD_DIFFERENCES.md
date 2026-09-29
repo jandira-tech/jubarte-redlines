@@ -125,7 +125,7 @@ reject should give A back.
 | # | Word does | We do | Seen in |
 |---|---|---|---|
 | A1 | Leaves phantom `pPrChange`/`rPrChange` records after Accept All (22/51 files) and Reject All (44/100) | No change records left | b42b and others |
-| A2 | Reject of an `rPrChange` whose old rPr lacks a property writes the docDefaults value (sz=20 over Normal's 24, Calibri) instead of removing it | Restores the old rPr exactly as recorded, so the style shows through | reject corpus |
+| A2 | *Withdrawn 2026-09-29: not a Word defect.* Word records a style's old properties against its built-in defaults (Times New Roman, 10pt, single spacing), so an old rPr without `sz` meant 10pt, and writing sz=20 on reject gives the original back (b42b3ae070's Normal). Reject now does the same (R27, `tests/m_reject_word_parity.rs`); the redline side must record style changes the same way | — | b42b3ae070, c719b900f0, 1b4dd65cb9, 2288f27be1 |
 | A3 | An outer `pPrChange` reject bleeds into a text-box paragraph | Text box keeps its own pPr | 618a11caa3 |
 | A4 | Drops B's `hanging=360` from inserted numbered paragraphs that have no left indent | Keeps B's hanging indent | 3866 (74 paragraphs) |
 | A5 | Drops B's run `sz`/`szCs` from text it threads into A's paragraphs (11pt instead of B's 12pt) | Keeps B's size | 440c |

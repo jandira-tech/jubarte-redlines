@@ -91,6 +91,12 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
     references. When a section break goes, the next section takes its
     headers and footers if it had none of its own. Header and footer parts
     no section shows are not written.
+  - Rejecting a paragraph style's recorded change restores its old
+    properties the way Word reads them: against Word's built-in defaults
+    (Times New Roman, 10pt, single spacing, left-aligned), not against the
+    style's ancestors. A property the old record lacks takes the built-in
+    value, and a value the style would inherit anyway is dropped. The
+    style's linked character style takes the restored run properties.
 - `jubarte debug A B -c text` / `-c runs` pairs header and footer parts by
   the section reference that shows them, so Word's renumbered parts compare
   with their counterparts.
