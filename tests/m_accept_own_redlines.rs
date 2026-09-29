@@ -43,6 +43,24 @@ fn story(pkg: &[u8], part: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// The body's top-level paragraph texts.
+fn body_texts(pkg: &[u8]) -> Vec<String> {
+    let xml = part_string(pkg, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    let body = dom.element(root, &W::body()).unwrap();
+    dom.elements(body, Some(&W::p()))
+        .into_iter()
+        .map(|p| {
+            dom.descendants(p, Some(&W::t()))
+                .into_iter()
+                .map(|t| dom.value(t))
+                .collect()
+        })
+        .collect()
+}
+
 /// A header the revised document drops (it has no headers at all): Word
 /// deletes the header's content and every paragraph mark but the last. The
 /// last paragraph stays, its properties reset to the blank paragraph the
@@ -447,4 +465,64 @@ fn a_shared_closing_table_keeps_the_final_marks_paired() {
         .map(|k| dom.name(k).unwrap().local_name().to_string())
         .collect();
     assert_eq!(kids, ["p", "tbl", "p", "sectPr"], "{xml}");
+}
+
+/// Unrelated documents whose revision ends in two blank paragraphs: Word
+/// pairs the closing marks and inserts the blank before them (73105518ef,
+/// 6fb9bbdb49). Accepted, the redline keeps every revised paragraph; the
+/// inserted blank was lost, one paragraph short of the revision.
+#[test]
+fn unrelated_documents_keep_the_blank_before_the_closing_mark() {
+    let p = |t: &str| format!("<w:p><w:r><w:t>{t}</w:t></w:r></w:p>");
+    let a = common::docx::docx(&format!(
+        "<w:p/><w:p/>{}<w:p/>{}",
+        p("Your contact details and profession"),
+        p("May we contact you later about the camp?"),
+    ));
+    let b = common::docx::docx(&format!(
+        "{}<w:p><w:pPr><w:rPr><w:sz w:val=\"24\"/></w:rPr></w:pPr></w:p><w:p><w:pPr><w:jc w:val=\"both\"/></w:pPr></w:p>",
+        p("Chairman of the municipal council"),
+    ));
+    let out = compare_documents(&a, &b, "Redline").expect("compare");
+    assert_word_valid_package(&out);
+    let accepted = accept_revisions(&out).expect("accept");
+    assert_eq!(
+        body_texts(&accepted),
+        body_texts(&b),
+        "{}",
+        part_string(&out, "word/document.xml").unwrap()
+    );
+}
+
+/// The same closing blank after a revision long enough for the
+/// unrelated-documents path (73105518ef in full): the inserted blank was
+/// folded into the first deleted paragraph, whose deleted mark took it away.
+#[test]
+fn unrelated_documents_keep_the_blank_the_closing_pair_leaves() {
+    let p = |t: &str| format!("<w:p><w:r><w:t>{t}</w:t></w:r></w:p>");
+    let a = common::docx::docx(&format!(
+        "<w:p/>{}<w:p/>{}<w:p/>{}<w:p/>{}<w:p/>{}",
+        p("Family members, names and ages"),
+        p("How are you involved in the family?"),
+        p("The family's current situation"),
+        p("Your contact details and profession"),
+        p("May we contact you later about the camp?"),
+    ));
+    let b = common::docx::docx(&format!(
+        "<w:p/><w:p/><w:p/>{}{}{}{}{}<w:p><w:pPr><w:rPr><w:sz w:val=\"24\"/></w:rPr></w:pPr></w:p><w:p><w:pPr><w:jc w:val=\"both\"/></w:pPr></w:p>",
+        p("Municipal council"),
+        p("Fifth convocation"),
+        p("Draft decision"),
+        p("On amending the regulation on landscaping"),
+        p("Chairman of the municipal council"),
+    ));
+    let out = compare_documents(&a, &b, "Redline").expect("compare");
+    assert_word_valid_package(&out);
+    let accepted = accept_revisions(&out).expect("accept");
+    assert_eq!(
+        body_texts(&accepted),
+        body_texts(&b),
+        "{}",
+        part_string(&out, "word/document.xml").unwrap()
+    );
 }

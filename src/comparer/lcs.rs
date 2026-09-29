@@ -2761,6 +2761,21 @@ pub fn do_lcs_algorithm(
                     }
                     let carrier_b = paras_b.last().unwrap();
                     let carrier_a = &paras_a[0];
+                    // A revision that closes on a textless paragraph carries
+                    // nothing: Word pairs the story's closing marks and
+                    // deletes the rest of the original (73105518ef, 6fb9bbdb49).
+                    // The carrier absorbed B's closing mark, and finalize then
+                    // fused B's paragraph before it into the story tail.
+                    if carrier_b.len() == 1 && paras_a.len() > 1 {
+                        let (close_a, rest_a) = cul1.split_last().unwrap();
+                        out.push(CorrelatedSequence::deleted(rest_a.to_vec()));
+                        out.push(CorrelatedSequence::paired(
+                            CorrelationStatus::Equal,
+                            vec![close_a.clone()],
+                            vec![carrier_b[0].clone()],
+                        ));
+                        return out;
+                    }
                     let b_words: Vec<ComparisonUnit> = carrier_b[..carrier_b.len() - 1].to_vec();
                     if !b_words.is_empty() {
                         out.push(CorrelatedSequence::inserted(b_words));

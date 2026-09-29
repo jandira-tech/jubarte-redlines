@@ -577,6 +577,16 @@ pub fn compare_bodies_faithful_with_notes(
     if settings.merge_replaced_paragraphs && !story_final_paired {
         story_final_paired = final_empty_paragraphs_paired(dom, &seqs);
     }
+    // The revised story's closing mark is paired: every inserted paragraph
+    // before the trailing deletions is the revision's own, none stands in
+    // for its closing paragraph (73105518ef, 6fb9bbdb49).
+    let revised_close_paired = seqs.last().is_some_and(|s| {
+        s.correlation_status == CorrelationStatus::Equal
+            && s.com_units_2
+                .as_deref()
+                .and_then(<[atoms::ComparisonUnit]>::last)
+                .is_some_and(|u| lcs::unit_closes_story(dom, u))
+    });
     // Word skip-ahead moves: Equal after pure A-only deletes → ins early +
     // del late so detect_moves can emit moveTo/moveFrom (page-order parity).
     moves::promote_skip_ahead_equals(&mut seqs, settings);
@@ -781,11 +791,17 @@ pub fn compare_bodies_faithful_with_notes(
         // base title (Word IIIIM). Strip-first removed the empty, then
         // merge_replaced MIX-ed "something" into the del (~66 vs e3 ~97).
         // M86: whitespace pure-ins + following pure-del → mixed (file_88).
-        finalize::fold_whitespace_pure_ins_into_following_pure_del(dom, root);
+        // Only B's closing paragraph folds; a paired closing mark leaves none.
+        if !revised_close_paired {
+            finalize::fold_whitespace_pure_ins_into_following_pure_del(dom, root);
+        }
         // M392: restore empty pure-I spacers before short pure-D title (file_36).
         finalize::ensure_empty_pure_i_before_short_title_del(dom, root, settings, &mut id);
-        // M85a: empty pure-ins before trailing pure-del residual (file_49).
-        finalize::strip_empty_pure_ins_before_trailing_pure_dels(dom, root);
+        // M85a: empty pure-ins before trailing pure-del residual (file_49),
+        // unless the revision's closing mark is paired: then they are its own.
+        if !revised_close_paired {
+            finalize::strip_empty_pure_ins_before_trailing_pure_dels(dom, root);
+        }
         // M85b: last pure-del mark-only pPr → bare del (file_186/49).
         finalize::strip_last_pure_del_mark_only_ppr(dom, root);
         finalize::strip_last_pure_del_mark_when_pprchange(dom, root);
@@ -898,10 +914,14 @@ pub fn compare_bodies_faithful_with_notes(
         // Structure-mutating peels (invalidate pure-del/mixed classification).
         finalize::strip_trailing_empty_pure_ins(dom, root);
         // M341: fold before strip (see pre-merge order note above).
-        finalize::fold_whitespace_pure_ins_into_following_pure_del(dom, root);
+        if !revised_close_paired {
+            finalize::fold_whitespace_pure_ins_into_following_pure_del(dom, root);
+        }
         // M392: restore empty pure-I spacers before short pure-D title (file_36).
         finalize::ensure_empty_pure_i_before_short_title_del(dom, root, settings, &mut id);
-        finalize::strip_empty_pure_ins_before_trailing_pure_dels(dom, root);
+        if !revised_close_paired {
+            finalize::strip_empty_pure_ins_before_trailing_pure_dels(dom, root);
+        }
         // M438: title-page pure-I e×6 DD E — relocate last empty pure-I after
         // pure-D as bare trailing empty (doc_with_spaces×spacing Word shape).
         // The paired story-final mark is already that trailing paragraph.
