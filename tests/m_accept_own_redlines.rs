@@ -1516,3 +1516,54 @@ fn custom_properties_merge_with_the_original_winning() {
     assert_eq!(get("Ref"), Some("R-7"), "{props:?}");
     assert_eq!(props.len(), 3, "{props:?}");
 }
+
+/// Every `w:t`/`w:delText` of `part` whose text starts or ends with
+/// whitespace but lacks `xml:space="preserve"` (Word trims those).
+fn unpreserved_texts(pkg: &[u8], part: &str) -> Vec<String> {
+    let xml = part_string(pkg, part).unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    let space = jubarte::xmllinq::XNamespace::xml().name("space");
+    let mut bad = Vec::new();
+    for name in [W::t(), W::del_text()] {
+        for t in dom.descendants(root, Some(&name)) {
+            let text = dom.value_str(t).into_owned();
+            let edge = text.starts_with(char::is_whitespace) || text.ends_with(char::is_whitespace);
+            if edge && dom.attribute(t, &space) != Some("preserve") {
+                bad.push(text);
+            }
+        }
+    }
+    bad
+}
+
+/// The revision's paragraph ends in its own tracked insertion that opens
+/// with a space. Word's redline keeps that insertion under its author, and
+/// so does ours, but the split lost `xml:space="preserve"`: Word trimmed
+/// the space and accepted "4-hour SLAand bi-annual audits" (1bbdcbcf65,
+/// ddd1e0f952 "In Progress(Week 1)").
+#[test]
+fn a_carried_insertion_keeps_its_leading_space() {
+    let base = docx_with_sect(
+        r#"<w:p><w:r><w:t>Something else entirely</w:t></w:r></w:p>"#,
+        &[],
+        "",
+    );
+    let next = docx_with_sect(
+        r#"<w:p><w:r><w:t>Incident Response: 4-hour SLA</w:t></w:r><w:ins w:id="0" w:author="Online User" w:date="2026-05-14T18:20:00Z"><w:r><w:t xml:space="preserve"> and bi-annual audits</w:t></w:r></w:ins></w:p>"#,
+        &[],
+        "",
+    );
+    let redline = compare_documents(&base, &next, "Redline").unwrap();
+    assert_word_valid_package(&redline);
+    let xml = part_string(&redline, "word/document.xml").unwrap();
+    assert!(
+        xml.contains("Online User"),
+        "the revision's own insertion is carried: {xml}"
+    );
+    assert_eq!(
+        unpreserved_texts(&redline, "word/document.xml"),
+        Vec::<String>::new()
+    );
+}

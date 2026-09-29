@@ -12913,6 +12913,14 @@ fn split_insertion_at(
         let rest = dom.new_element(name);
         copy_attrs(dom, leaf, rest, false);
         dom.set_value(rest, &suffix);
+        // Either half may now start or end with a space Word would trim
+        // (1bbdcbcf65 accepted "4-hour SLAand").
+        let space = XNamespace::xml().name("space");
+        for (half, text) in [(leaf, &prefix), (rest, &suffix)] {
+            if let Some(sp) = xml_space_attr(text) {
+                dom.set_attribute_value(half, &space, Some(sp));
+            }
+        }
         dom.add_after_self(leaf, rest);
         nodes.insert(idx + 1, rest);
         idx += 1;
