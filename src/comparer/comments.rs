@@ -230,6 +230,8 @@ struct Event {
     offset: usize,
     kind: Kind,
     id: String,
+    /// Document order of the range's start in its source.
+    seq: usize,
 }
 
 /// A comment's [start, end) character interval in its source projection.
@@ -237,6 +239,8 @@ struct Range {
     id: String,
     start: usize,
     end: usize,
+    /// Document order of the start among the source's starts.
+    seq: usize,
 }
 
 /// The paragraph mark in a projection: a marker after it sits in a later
@@ -259,7 +263,7 @@ fn extract_events(pkg: &PartFs, main: &str) -> Option<(String, Vec<Range>)> {
     let mut references: Vec<(String, usize)> = Vec::new();
     let mut text = String::new();
     let mut offset = 0usize;
-    let mut starts: HashMap<String, usize> = HashMap::new();
+    let mut starts: HashMap<String, (usize, usize)> = HashMap::new();
     let mut ranges: Vec<Range> = Vec::new();
     let mut open: Vec<NodeId> = Vec::new();
     for n in dom.descendant_nodes(body) {
@@ -278,16 +282,18 @@ fn extract_events(pkg: &PartFs, main: &str) -> Option<(String, Vec<Range>)> {
             let name = dom.name(n).unwrap();
             if name == start {
                 if let Some(id) = dom.attribute(n, &W::name("id")) {
-                    starts.entry(id.to_string()).or_insert(offset);
+                    let seq = starts.len();
+                    starts.entry(id.to_string()).or_insert((offset, seq));
                 }
             } else if name == end
                 && let Some(id) = dom.attribute(n, &W::name("id"))
-                && let Some(s) = starts.get(id)
+                && let Some(&(s, seq)) = starts.get(id)
             {
                 ranges.push(Range {
                     id: id.to_string(),
-                    start: *s,
+                    start: s,
                     end: offset,
+                    seq,
                 });
             } else if name == reference
                 && let Some(id) = dom.attribute(n, &W::name("id"))
@@ -314,6 +320,7 @@ fn extract_events(pkg: &PartFs, main: &str) -> Option<(String, Vec<Range>)> {
                 id,
                 start: at,
                 end: at,
+                seq: usize::MAX, // no start marker
             });
         }
     }
@@ -693,6 +700,18 @@ pub(super) fn place_after_offset(dom: &mut Dom, segs: &mut Vec<Seg>, o: usize, n
                     .elements(p, None)
                     .into_iter()
                     .find(|&c| dom.name(c) != Some(W::p_pr()));
+                // A range ending on a deleted mark, before a paragraph with
+                // no content and a deleted mark, ends in a deletion of its
+                // own there (5f0fed8e2a).
+                let ends_deleted = mark_deletion(dom, segs[i].leaf).is_some();
+                let content = match (content, mark_deletion(dom, p)) {
+                    (None, Some(mark)) if ends_deleted => {
+                        let del = dom.clone_subtree(mark);
+                        dom.add(p, del);
+                        Some(del)
+                    }
+                    (c, _) => c,
+                };
                 match (content, dom.element(p, &W::p_pr())) {
                     (Some(del), _) if dom.name(del) == Some(W::del()) => dom.add_first(del, node),
                     (_, Some(ppr)) => dom.add_after_self(ppr, node),
@@ -793,6 +812,7 @@ fn inject_side(
                 offset: e,
                 kind: Kind::Point,
                 id: r.id.clone(),
+                seq: r.seq,
             });
             continue;
         }
@@ -800,15 +820,25 @@ fn inject_side(
             offset: s,
             kind: Kind::Start,
             id: r.id.clone(),
+            seq: r.seq,
         });
         events.push(Event {
             offset: e,
             kind: Kind::End,
             id: r.id.clone(),
+            seq: r.seq,
         });
     }
     let mut order: Vec<usize> = (0..events.len()).collect();
     order.sort_by_key(|&i| (events[i].offset, i));
+    // Ranges come in the order they end; starts at one place follow the
+    // order they start in (01f3deda92's nested comments).
+    for run in order.chunk_by_mut(|&a, &b| {
+        let (a, b) = (&events[a], &events[b]);
+        a.kind == Kind::Start && b.kind == Kind::Start && a.offset == b.offset
+    }) {
+        run.sort_by_key(|&i| events[i].seq);
+    }
 
     // The reference run of the last end placed, by offset: a second end at
     // the same place follows it, so the source order holds.
@@ -842,6 +872,13 @@ fn inject_side(
         }
     }
     anchored_ranges
+}
+
+/// The `w:del` recording a paragraph's deleted mark.
+fn mark_deletion(dom: &Dom, p: NodeId) -> Option<NodeId> {
+    dom.element(p, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+        .and_then(|rpr| dom.element(rpr, &W::del()))
 }
 
 /// A point comment (no range) that lands at the end of deleted text sits
@@ -1643,6 +1680,7 @@ mod tests {
             id: "19".into(),
             start,
             end,
+            seq: 0,
         };
         assert_eq!(map_range(&src, &merged, &r), Some((start, end)));
         // The tail must follow the head: a merged text holding only the tail
@@ -1669,6 +1707,7 @@ mod tests {
             id: "19".into(),
             start: second,
             end: second + len,
+            seq: 0,
         };
         let merged_second = format!("Intro. {section} Middle part added. ")
             .chars()

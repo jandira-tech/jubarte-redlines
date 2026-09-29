@@ -799,6 +799,29 @@ fn comments_ending_together_keep_their_order() {
     assert_eq!(ids, ["0", "1"], "{refs:?}");
 }
 
+/// Nested comments starting together keep their starts in order, so the
+/// accepted document numbers them as Word does: Word's accept of 01f3deda92
+/// writes `[c2][c1][c0]` for three comments nested on one range.
+#[test]
+fn comments_starting_together_keep_their_order() {
+    let body = r#"<w:p><w:commentRangeStart w:id="0"/><w:commentRangeStart w:id="1"/><w:r><w:t>Shared range</w:t></w:r><w:commentRangeEnd w:id="1"/><w:r><w:commentReference w:id="1"/></w:r><w:commentRangeEnd w:id="0"/><w:r><w:commentReference w:id="0"/></w:r></w:p>"#;
+    let out = same_comments_both_sides(body);
+    let xml = open_valid_output(&out)
+        .part_string("word/document.xml")
+        .unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    let ids = |name: &str| -> Vec<String> {
+        dom.descendants(root, Some(&W::name(name)))
+            .into_iter()
+            .map(|n| dom.attribute(n, &W::name("id")).unwrap_or("").to_string())
+            .collect()
+    };
+    assert_eq!(ids("commentRangeStart"), ["0", "1"], "{xml}");
+    assert_eq!(ids("commentReference"), ["1", "0"], "{xml}");
+}
+
 /// Comments over a table that end in the paragraph after it keep their
 /// ends and references there, where both documents have them; placed after
 /// the table's last text they moved into its last cell (92075b7449).
@@ -821,13 +844,26 @@ fn comments_ending_after_a_table_stay_after_it() {
 /// live and survived the accept.
 #[test]
 fn comments_ending_in_a_deleted_paragraph_after_a_table_are_deleted() {
+    assert_comments_after_a_deleted_table_are_deleted(r#"<w:r><w:br w:type="page"/></w:r>"#);
+}
+
+/// 5f0fed8e2a: the paragraph after the table holds only the references.
+/// Word wraps them in a deletion of their own there.
+#[test]
+fn comments_ending_in_an_empty_deleted_paragraph_after_a_table_are_deleted() {
+    assert_comments_after_a_deleted_table_are_deleted("");
+}
+
+fn assert_comments_after_a_deleted_table_are_deleted(tail: &str) {
     let comments = format!(
         r#"<w:comments xmlns:w="{}"><w:comment w:id="0" w:author="A" w:initials="A"><w:p><w:r><w:t>first</w:t></w:r></w:p></w:comment><w:comment w:id="1" w:author="A" w:initials="A"><w:p><w:r><w:t>second</w:t></w:r></w:p></w:comment></w:comments>"#,
         common::docx::W_NS
     );
-    let body = r#"<w:p><w:r><w:t>Intro</w:t></w:r></w:p><w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p><w:commentRangeStart w:id="0"/><w:commentRangeStart w:id="1"/><w:r><w:t>Status</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:commentRangeEnd w:id="0"/><w:p><w:r><w:commentReference w:id="0"/></w:r><w:commentRangeEnd w:id="1"/><w:r><w:commentReference w:id="1"/></w:r><w:r><w:br w:type="page"/></w:r></w:p><w:p><w:r><w:t>Table of Contents</w:t></w:r></w:p>"#;
+    let body = format!(
+        r#"<w:p><w:r><w:t>Intro</w:t></w:r></w:p><w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p><w:commentRangeStart w:id="0"/><w:commentRangeStart w:id="1"/><w:r><w:t>Status</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:commentRangeEnd w:id="0"/><w:p><w:pPr><w:spacing w:before="160"/></w:pPr><w:r><w:commentReference w:id="0"/></w:r><w:commentRangeEnd w:id="1"/><w:r><w:commentReference w:id="1"/></w:r>{tail}</w:p><w:p><w:r><w:t>Table of Contents</w:t></w:r></w:p>"#
+    );
     let a = common::docx::docx_with(
-        body,
+        &body,
         &[common::docx::Part {
             name: "word/comments.xml",
             content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
