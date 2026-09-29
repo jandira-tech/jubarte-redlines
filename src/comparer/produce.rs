@@ -1274,12 +1274,12 @@ fn record_revised_row_cell_props(
                 !matches!(n.local_name(), "ins" | "del" | "trPrChange" | "tcPrChange")
             })
         })
-        .map(|c| dom.serialize_element(c))
+        .map(|c| props_signature(dom, c))
         .collect();
     let old_sig: String = dom
         .elements(old_pr, None)
         .into_iter()
-        .map(|c| dom.serialize_element(c))
+        .map(|c| props_signature(dom, c))
         .collect();
     if live_sig == old_sig {
         if dom.elements(live, None).is_empty() {
@@ -1296,6 +1296,27 @@ fn record_revised_row_cell_props(
     dom.add(live, change);
 }
 
+/// A property element's name, sorted attributes and children, recursively:
+/// the comparer's scratch `pt14:*` ids and rsids are no properties, so two
+/// clones of the same `w:tcW` compare equal whatever Unid each carries.
+fn props_signature(dom: &Dom, n: NodeId) -> String {
+    let Some(name) = dom.name(n) else {
+        return String::new();
+    };
+    let mut attrs: Vec<String> = dom
+        .attributes(n)
+        .into_iter()
+        .filter(|(k, _)| k.namespace_name() != PT::URI && !k.local_name().starts_with("rsid"))
+        .map(|(k, v)| format!("{}={v}", k.local_name()))
+        .collect();
+    attrs.sort();
+    let kids: String = dom
+        .elements(n, None)
+        .into_iter()
+        .map(|c| props_signature(dom, c))
+        .collect();
+    format!("<{}{}>{kids}</>", name.local_name(), attrs.join(" "))
+}
 /// Put a row's `trPr` after its `tblPrEx`, a cell's `tcPr` first.
 fn place_row_cell_props(dom: &mut Dom, container: NodeId, pr: NodeId) {
     match dom.element(container, &W::name("tblPrEx")) {

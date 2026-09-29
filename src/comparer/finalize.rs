@@ -2792,6 +2792,7 @@ pub fn closing_mark_takes_revised_properties(
     {
         return;
     }
+    closing_mark_takes_revised_mark_formatting(dom, ppr, revised, settings, id_gen);
     let live = formatchg::normalize_para_properties(dom, ppr);
     let new = formatchg::normalize_para_properties(dom, revised);
     if live == new {
@@ -2825,6 +2826,60 @@ pub fn closing_mark_takes_revised_properties(
     }
     // The original's, in twips like every other recorded change.
     normalize_universal_measures(dom, ppr);
+}
+
+/// The closing mark's own formatting follows the same way: Word writes the
+/// revised closing paragraph's mark `rPr` live and records the original's
+/// in a `rPrChange` (b4cd671041: `sz=28` live over the original's
+/// `b rFonts=Arial sz=24 u`). A mark that already records a change keeps it.
+fn closing_mark_takes_revised_mark_formatting(
+    dom: &mut Dom,
+    ppr: NodeId,
+    revised: NodeId,
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let live = dom.element(ppr, &W::r_pr());
+    if live.is_some_and(|m| dom.element(m, &W::name("rPrChange")).is_some()) {
+        return;
+    }
+    let new = dom.element(revised, &W::r_pr());
+    if formatchg::are_run_properties_equal(dom, live, new) {
+        return;
+    }
+    let fresh = dom.new_element(W::r_pr());
+    if let Some(n) = new {
+        for c in dom.elements(n, None) {
+            let skip = ["ins", "del", "moveFrom", "moveTo", "rPrChange"]
+                .iter()
+                .any(|k| dom.name_is(c, &W::name(k)));
+            if !skip {
+                let c = dom.clone_subtree(c);
+                dom.add(fresh, c);
+            }
+        }
+    }
+    let old = match live {
+        Some(m) => dom.clone_subtree(m),
+        None => dom.new_element(W::r_pr()),
+    };
+    let chg = dom.new_element(W::name("rPrChange"));
+    dom.set_attribute_value(chg, &W::id(), Some(&id_gen.to_string()));
+    *id_gen += 1;
+    dom.set_attribute_value(chg, &W::author(), Some(&settings.author_for_revisions));
+    dom.set_attribute_value(chg, &W::date(), Some(&settings.date_time_for_revisions));
+    dom.add(chg, old);
+    dom.add(fresh, chg);
+    match live {
+        Some(m) => dom.replace_with(m, &[fresh]),
+        None => match [W::sect_pr(), W::p_pr_change()]
+            .iter()
+            .find_map(|n| dom.element(ppr, n))
+        {
+            Some(next) => dom.add_before_self(next, fresh),
+            None => dom.add(ppr, fresh),
+        },
+    }
 }
 
 /// Sorted `(namespace, local name, value)` attributes of the last body

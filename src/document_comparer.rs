@@ -269,59 +269,93 @@ fn docdefaults_ppr_spacing(dom: &Dom, styles_root: NodeId) -> Option<(String, St
 /// (after, before, line, lineRule), each resolved through the basedOn chain
 /// then docDefaults, with OOXML implicit defaults materialized ("0", "0",
 /// "240", "auto") so two stylesheets always compare attr-by-attr.
+///
+/// In a table, `table_style`'s pPr sits between the two, as Word applies
+/// it: over the default paragraph style's chain, under any other style's
+/// chain (b4cd671041: a Table Grid cell's Normal paragraph shows the
+/// table's `after=0 line=240` over Normal's 200/276; a List Paragraph
+/// based on that Normal shows 200/276).
+///
+/// Also returns, per attr, whether B declares it in the style chain or its
+/// docDefaults, and whether the table style supplied it.
 fn effective_para_spacing(
     dom: &Dom,
     styles_root: NodeId,
     by_id: &std::collections::HashMap<String, NodeId>,
     style_id: &str,
-) -> ([String; 4], [bool; 4]) {
+    table_style: Option<&str>,
+) -> ([String; 4], [bool; 4], [bool; 4]) {
     let attr_names = ["after", "before", "line", "lineRule"];
-    let mut vals: [Option<String>; 4] = [None, None, None, None];
-    let mut cur = by_id.get(style_id).copied();
-    for _ in 0..12 {
-        let Some(s) = cur else { break };
-        if let Some(ppr) = dom.element(s, &W::p_pr())
-            && let Some(sp) = dom.element(ppr, &W::name("spacing"))
-        {
-            for (i, n) in attr_names.iter().enumerate() {
-                if vals[i].is_none()
-                    && let Some(v) = dom.attribute(sp, &W::name(n))
-                {
-                    vals[i] = Some(v.to_string());
+    let chain_vals = |start: Option<NodeId>| -> [Option<String>; 4] {
+        let mut vals: [Option<String>; 4] = [None, None, None, None];
+        let mut cur = start;
+        for _ in 0..12 {
+            let Some(s) = cur else { break };
+            if let Some(ppr) = dom.element(s, &W::p_pr())
+                && let Some(sp) = dom.element(ppr, &W::name("spacing"))
+            {
+                for (i, n) in attr_names.iter().enumerate() {
+                    if vals[i].is_none()
+                        && let Some(v) = dom.attribute(sp, &W::name(n))
+                    {
+                        vals[i] = Some(v.to_string());
+                    }
                 }
             }
+            cur = dom
+                .element(s, &W::name("basedOn"))
+                .and_then(|b| dom.attribute(b, &W::val()))
+                .and_then(|v| by_id.get(v).copied());
         }
-        cur = dom
-            .element(s, &W::name("basedOn"))
-            .and_then(|b| dom.attribute(b, &W::val()))
-            .and_then(|v| by_id.get(v).copied());
-    }
-    if vals.iter().any(Option::is_none)
-        && let Some(dd) = dom.element(styles_root, &W::name("docDefaults"))
-        && let Some(pd) = dom.element(dd, &W::name("pPrDefault"))
+        vals
+    };
+    let style = by_id.get(style_id).copied();
+    let para = chain_vals(style);
+    let table = chain_vals(table_style.and_then(|t| by_id.get(t).copied()));
+    let mut dd: [Option<String>; 4] = [None, None, None, None];
+    if let Some(d) = dom.element(styles_root, &W::name("docDefaults"))
+        && let Some(pd) = dom.element(d, &W::name("pPrDefault"))
         && let Some(ppr) = dom.element(pd, &W::p_pr())
         && let Some(sp) = dom.element(ppr, &W::name("spacing"))
     {
         for (i, n) in attr_names.iter().enumerate() {
-            if vals[i].is_none()
-                && let Some(v) = dom.attribute(sp, &W::name(n))
-            {
-                vals[i] = Some(v.to_string());
-            }
+            dd[i] = dom.attribute(sp, &W::name(n)).map(str::to_string);
         }
     }
-    // provenance: true = declared SOMEWHERE in B (style chain or dd).
+    let is_default = style.is_some_and(|s| {
+        dom.attribute(s, &W::name("type")) == Some("paragraph")
+            && matches!(dom.attribute(s, &W::name("default")), Some("1" | "true"))
+    });
+    // provenance: declared = SOMEWHERE in B's style chain or dd.
     // Word bakes an attr onto inserted paragraphs ONLY when B is entirely
     // silent on it — the paragraph's look is the OOXML implicit default and
     // the output's dd would override it (rstyle_combos: implicit 0/240 IS
-    // baked). Values B declares — even in its dd — are never baked (m370:
+    // baked) — or when B's table style gave it (b4cd671041). Values B
+    // declares — even in its dd — are otherwise never baked (m370:
     // dd-declared after=200/line=276 stays off the pure-I title).
-    let declared: [bool; 4] = std::array::from_fn(|i| vals[i].is_some());
     let defaults = ["0", "0", "240", "auto"];
-    (
-        std::array::from_fn(|i| vals[i].clone().unwrap_or_else(|| defaults[i].to_string())),
-        declared,
-    )
+    let mut vals: [String; 4] = std::array::from_fn(|i| defaults[i].to_string());
+    let mut declared = [false; 4];
+    let mut from_table = [false; 4];
+    for i in 0..4 {
+        let first = if is_default {
+            table[i]
+                .as_ref()
+                .map(|v| (v, true))
+                .or(para[i].as_ref().map(|v| (v, false)))
+        } else {
+            para[i]
+                .as_ref()
+                .map(|v| (v, false))
+                .or(table[i].as_ref().map(|v| (v, true)))
+        };
+        if let Some((v, t)) = first.or(dd[i].as_ref().map(|v| (v, false))) {
+            vals[i] = v.clone();
+            from_table[i] = t;
+            declared[i] = !t;
+        }
+    }
+    (vals, declared, from_table)
 }
 
 /// Revision record element local names that carry a `w:id` identifying the
@@ -6493,7 +6527,25 @@ fn compare_documents_impl(
                     };
                 let out_idx = index(&sd, or);
                 let b_idx = index(&sd, br);
-                let b_default = {
+                // B's counterpart of an output style id: the style of the same
+                // (type, name), as Word pairs them — ids name nothing across
+                // documents (b4cd671041's revision calls List Paragraph
+                // `Listaszerbekezds` and Table Grid `Rcsostblzat`).
+                let mut b_by_key: std::collections::HashMap<(String, String), String> =
+                    std::collections::HashMap::new();
+                for (id, &s) in &b_idx {
+                    if let Some(k) = style_match_key(&sd, s) {
+                        b_by_key.entry(k).or_insert_with(|| id.clone());
+                    }
+                }
+                let b_id_for = |out_id: &str| -> Option<String> {
+                    out_idx
+                        .get(out_id)
+                        .and_then(|&s| style_match_key(&sd, s))
+                        .and_then(|k| b_by_key.get(&k).cloned())
+                        .or_else(|| b_idx.contains_key(out_id).then(|| out_id.to_string()))
+                };
+                let (b_default, out_default) = {
                     let dp = |dom: &Dom, root: NodeId| -> Option<String> {
                         dom.elements(root, Some(&W::name("style")))
                             .into_iter()
@@ -6506,7 +6558,7 @@ fn compare_documents_impl(
                             })
                             .and_then(|s| dom.attribute(s, &W::name("styleId")).map(str::to_string))
                     };
-                    dp(&sd, br)
+                    (dp(&sd, br), dp(&sd, or))
                 };
                 if let Some(doc_xml) = out.part_string(&main1) {
                     let mut pd = Dom::new();
@@ -6550,15 +6602,35 @@ fn compare_documents_impl(
                             if pstyle.is_none() && !has_numpr {
                                 continue;
                             }
-                            let Some(style_id) = pstyle.or_else(|| b_default.clone()) else {
-                                continue;
-                            };
-                            if !b_idx.contains_key(&style_id) {
+                            let (Some(out_style), Some(b_style)) = (match pstyle {
+                                Some(id) => (Some(id.clone()), b_id_for(&id)),
+                                None => (out_default.clone(), b_default.clone()),
+                            }) else {
                                 continue; // style not from B — no B-effective target
-                            }
-                            let (b_eff, b_declared) =
-                                effective_para_spacing(&sd, br, &b_idx, &style_id);
-                            let (o_eff, _) = effective_para_spacing(&sd, or, &out_idx, &style_id);
+                            };
+                            // The innermost table's style, on each side.
+                            let out_table = pd
+                                .ancestors(p, Some(&W::tbl()))
+                                .first()
+                                .and_then(|&t| pd.element(t, &W::tbl_pr()))
+                                .and_then(|t| pd.element(t, &W::name("tblStyle")))
+                                .and_then(|t| pd.attribute(t, &W::val()))
+                                .map(str::to_string);
+                            let b_table = out_table.as_deref().and_then(b_id_for);
+                            let (b_eff, b_declared, _) = effective_para_spacing(
+                                &sd,
+                                br,
+                                &b_idx,
+                                &b_style,
+                                b_table.as_deref(),
+                            );
+                            let (o_eff, _, _) = effective_para_spacing(
+                                &sd,
+                                or,
+                                &out_idx,
+                                &out_style,
+                                out_table.as_deref(),
+                            );
                             if b_eff == o_eff {
                                 continue;
                             }

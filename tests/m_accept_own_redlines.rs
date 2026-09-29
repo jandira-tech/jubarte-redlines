@@ -1053,3 +1053,149 @@ fn a_rewritten_row_takes_the_revised_cell_properties() {
         "{cells:?}"
     );
 }
+
+/// The body's closing paragraph mark `w:rPr` children (local names with
+/// their `w:val`), sorted; `w:rPrChange` excluded.
+fn closing_mark_rpr(pkg: &[u8]) -> Vec<String> {
+    let xml = part_string(pkg, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    let body = dom.element(root, &W::body()).unwrap();
+    let last = *dom.elements(body, Some(&W::p())).last().unwrap();
+    let mut v: Vec<String> = dom
+        .element(last, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+        .map(|rpr| dom.elements(rpr, None))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|&c| !dom.name_is(c, &W::name("rPrChange")))
+        .map(|c| {
+            let n = dom.name(c).unwrap().local_name().to_string();
+            match dom.attribute(c, &W::val()) {
+                Some(v) => format!("{n}={v}"),
+                None => n,
+            }
+        })
+        .collect();
+    v.sort();
+    v
+}
+
+/// The paired closing mark takes the revision's mark formatting too: Word
+/// writes the revised closing paragraph's mark `rPr` live and records the
+/// original's in a `rPrChange` (b4cd671041: `sz=28` live over the
+/// original's `b rFonts=Arial sz=24 u`). Ours kept the original's mark
+/// live with no record, so accepting left the original's bold mark.
+#[test]
+fn a_paired_closing_mark_takes_the_revised_mark_formatting() {
+    let a = common::docx::docx(concat!(
+        "<w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr><w:r><w:t>Participation is free; register online.</w:t></w:r></w:p>",
+        "<w:p><w:pPr><w:jc w:val=\"right\"/><w:rPr><w:b/><w:sz w:val=\"24\"/></w:rPr></w:pPr><w:r><w:rPr><w:b/><w:sz w:val=\"24\"/></w:rPr><w:t>Documentation was submitted for accreditation.</w:t></w:r></w:p>",
+    ));
+    let b = common::docx::docx(
+        "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/><w:rPr><w:sz w:val=\"28\"/></w:rPr></w:pPr><w:r><w:rPr><w:sz w:val=\"28\"/></w:rPr><w:t>We are pleased to launch this new service, concluded the official.</w:t></w:r></w:p>",
+    );
+    let out = compare_documents(&a, &b, "Redline").expect("compare");
+    assert_word_valid_package(&out);
+    let accepted = accept_revisions(&out).expect("accept");
+    assert_eq!(body_texts(&accepted), body_texts(&b));
+    assert_eq!(
+        closing_mark_rpr(&accepted),
+        closing_mark_rpr(&b),
+        "{}",
+        part_string(&out, "word/document.xml").unwrap()
+    );
+    let rejected = jubarte::document_comparer::reject_revisions(&out).expect("reject");
+    assert_eq!(closing_mark_rpr(&rejected), closing_mark_rpr(&a));
+}
+
+/// A document with `styles` as its stylesheet and a one-cell `Table Grid`
+/// table (styled `table_style`) holding `cell`, between two paragraphs.
+fn docx_with_styled_table(styles: &str, table_style: &str, cell: &str) -> Vec<u8> {
+    let styles = format!(
+        r#"<w:styles xmlns:w="{w}">{styles}</w:styles>"#,
+        w = common::docx::W_NS
+    );
+    common::docx::docx_with(
+        &format!(
+            r#"<w:p><w:r><w:t>Mobility details</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblStyle w:val="{table_style}"/><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr>{cell}</w:tc></w:tr></w:tbl><w:p/>"#
+        ),
+        &[Part {
+            name: "word/styles.xml",
+            content_type: STYLES,
+            rel_type: STYLES_REL,
+            xml: &styles,
+        }],
+    )
+}
+
+/// The direct `w:spacing` of the body paragraph whose text is `text`.
+fn spacing_of(pkg: &[u8], text: &str) -> Option<String> {
+    let xml = part_string(pkg, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    let p = dom
+        .descendants(root, Some(&W::p()))
+        .into_iter()
+        .find(|&p| {
+            dom.descendants(p, Some(&W::t()))
+                .iter()
+                .map(|&t| dom.value_str(t).to_string())
+                .collect::<String>()
+                == text
+        })?;
+    let sp = dom.element(dom.element(p, &W::p_pr())?, &W::name("spacing"))?;
+    let mut attrs: Vec<String> = dom
+        .attributes(sp)
+        .into_iter()
+        .map(|(k, v)| format!("{}={v}", k.local_name()))
+        .collect();
+    attrs.sort();
+    Some(attrs.join(" "))
+}
+
+/// A List Paragraph the revision inserts into a Table Grid cell: in the
+/// revision, whose Normal declares no spacing, the table style's
+/// `after=0 line=240` is what the item shows; in the merged stylesheet the
+/// original's Normal spells out `after=200 line=276`, which a List Paragraph
+/// (not the default paragraph style) takes over the table style. Word
+/// keeps the revision's look by writing the table's spacing on the
+/// inserted item (b4cd671041, whose revision names its styles in
+/// Hungarian: `Listaszerbekezds`, `Norml`, `Rcsostblzat`). Ours matched
+/// styles by id, found no B style and left the item at 200/276.
+#[test]
+fn an_item_inserted_in_a_table_keeps_the_table_style_spacing() {
+    let grid_pr = r#"<w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders></w:tblPr>"#;
+    let a = docx_with_styled_table(
+        &format!(
+            r#"<w:docDefaults><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="259" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:pPr><w:spacing w:after="200" w:line="276" w:lineRule="auto"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:pPr><w:ind w:left="720"/><w:contextualSpacing/></w:pPr></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/></w:style><w:style w:type="table" w:styleId="TableGrid"><w:name w:val="Table Grid"/><w:basedOn w:val="TableNormal"/>{grid_pr}</w:style>"#
+        ),
+        "TableGrid",
+        r#"<w:p><w:r><w:t>Type of mobility</w:t></w:r></w:p>"#,
+    );
+    let b = docx_with_styled_table(
+        &format!(
+            r#"<w:docDefaults><w:pPrDefault><w:pPr><w:spacing w:after="200" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Norml"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Listaszerbekezds"><w:name w:val="List Paragraph"/><w:basedOn w:val="Norml"/><w:pPr><w:ind w:left="720"/><w:contextualSpacing/></w:pPr></w:style><w:style w:type="table" w:default="1" w:styleId="Normltblzat"><w:name w:val="Normal Table"/></w:style><w:style w:type="table" w:styleId="Rcsostblzat"><w:name w:val="Table Grid"/><w:basedOn w:val="Normltblzat"/>{grid_pr}</w:style>"#
+        ),
+        "Rcsostblzat",
+        r#"<w:p><w:r><w:t>Type of mobility</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Listaszerbekezds"/></w:pPr><w:r><w:t>language course</w:t></w:r></w:p>"#,
+    );
+    let out = compare_documents(&a, &b, "Redline").expect("compare");
+    assert_word_valid_package(&out);
+    // The cell's properties did not change: no record, whatever scratch ids
+    // the two sides' clones carry.
+    let doc = part_string(&out, "word/document.xml").unwrap();
+    assert!(!doc.contains("tcPrChange"), "{doc}");
+    let accepted = accept_revisions(&out).expect("accept");
+    assert_eq!(
+        spacing_of(&accepted, "language course").as_deref(),
+        Some("after=0 line=240 lineRule=auto"),
+        "{}",
+        part_string(&out, "word/document.xml").unwrap()
+    );
+    // The original's own cell paragraph (Normal, which the table style
+    // overrides) takes nothing.
+    assert_eq!(spacing_of(&accepted, "Type of mobility"), None);
+}
