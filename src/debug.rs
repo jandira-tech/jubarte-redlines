@@ -1375,11 +1375,22 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
             if k > 0 {
                 line(&mut out, "  ~");
             }
-            for l in del {
-                line(&mut out, &format!("-A {l}"));
+            // A line paired with its counterpart is clipped from a little
+            // before their first difference, so the change stays visible.
+            let from = |i: usize| match (del.get(i), add.get(i)) {
+                (Some(x), Some(y)) => x
+                    .chars()
+                    .zip(y.chars())
+                    .take_while(|(c, d)| c == d)
+                    .count()
+                    .saturating_sub(WIDTH / 3),
+                _ => 0,
+            };
+            for (i, l) in del.iter().enumerate() {
+                line(&mut out, &format!("-A {}", clip_from(l, from(i))));
             }
-            for l in add {
-                line(&mut out, &format!("+B {l}"));
+            for (i, l) in add.iter().enumerate() {
+                line(&mut out, &format!("+B {}", clip_from(l, from(i))));
             }
         }
     }
@@ -1391,6 +1402,15 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
 
 fn line(out: &mut String, s: &str) {
     let _ = writeln!(out, "{}", clip_line(s));
+}
+
+/// `s` from its `from`-th character, the dropped head marked `…`.
+fn clip_from(s: &str, from: usize) -> String {
+    if from == 0 || s.chars().count() <= WIDTH {
+        s.to_string()
+    } else {
+        format!("…{}", s.chars().skip(from).collect::<String>())
+    }
 }
 
 fn clip_line(s: &str) -> String {
@@ -1954,6 +1974,21 @@ mod tests {
         assert!(!out.contains("Plain"), "unchanged lines stay out: {out}");
         let same = report(&a, Some(&a), &opts_for(Check::Text)).unwrap();
         assert_eq!(same, "text identical\n");
+    }
+
+    #[test]
+    fn a_long_changed_line_is_clipped_around_its_first_difference() {
+        let long = "word ".repeat(80);
+        let body = |tail: &str| format!(r#"<w:p><w:r><w:t>{long}{tail}</w:t></w:r></w:p>"#);
+        let out = report(
+            &docx(&body("apples")),
+            Some(&docx(&body("pears"))),
+            &opts_for(Check::Text),
+        )
+        .unwrap();
+        assert!(out.contains("apples"), "{out}");
+        assert!(out.contains("pears"), "{out}");
+        assert!(out.contains("-A …"), "the clipped head is marked: {out}");
     }
 
     #[test]
