@@ -28,6 +28,9 @@
 //!   `w:sectPr` that is not last.
 //! - `ids`: revision and `wp:docPr` ids used twice in the package. Word opens
 //!   files that repeat them, so they are leads, not causes.
+//! - `styles`: `basedOn`/`next`/`link` and `pStyle`/`rStyle`/`tblStyle`
+//!   values naming no style, and two styles of one type whose names match
+//!   case-insensitively (Word pairs styles by type and name, not by id).
 //! - `chains`: where bookmark starts and ends sit (parent chains, tallied).
 //! - `elements`: element counts (with two files, only the ones that differ).
 //! - `textbox`: the XML of each text box story (namespace declarations
@@ -54,6 +57,9 @@ pub enum Check {
     Structure,
     /// Revision and drawing ids used twice.
     Ids,
+    /// Style links and references naming no style; two styles with one type
+    /// and name.
+    Styles,
     /// Bookmark parent chains, tallied.
     Chains,
     /// Element counts.
@@ -894,6 +900,68 @@ fn collect_ids(dom: &Dom, root: NodeId, part: &str, seen: &mut IdUses) {
     }
 }
 
+const STYLES_PART: &str = "word/styles.xml";
+
+/// Style links in `styles.xml` and style references in every part that name
+/// no defined style, and styles of one type whose names match
+/// case-insensitively. Word resolves a dangling reference to the default
+/// style and pairs stylesheets by type and name, so twins merge in Word's
+/// compare while jubarte keeps both.
+fn check_styles(parts: &[(String, Dom, NodeId)], f: &mut Findings) {
+    let Some((_, sd, sr)) = parts.iter().find(|(p, _, _)| p == STYLES_PART) else {
+        return;
+    };
+    let styles: Vec<NodeId> = sd
+        .descendants(*sr, None)
+        .into_iter()
+        .filter(|&n| local(sd, n) == "style")
+        .collect();
+    let ids: HashSet<String> = styles.iter().map(|&s| attr(sd, s, "styleId")).collect();
+    let mut twins: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
+    for &s in &styles {
+        let id = attr(sd, s, "styleId");
+        let mut ty = attr(sd, s, "type");
+        if ty.is_empty() {
+            ty = "paragraph".to_string();
+        }
+        let mut name = String::new();
+        for c in sd.elements(s, None) {
+            let what = local(sd, c);
+            let val = attr(sd, c, "val");
+            match what.as_str() {
+                "name" => name = val.to_lowercase(),
+                "basedOn" | "next" | "link" if !ids.contains(&val) => {
+                    f.add(
+                        "style-link-dangling",
+                        STYLES_PART,
+                        format!("{id} {what} {val}"),
+                    );
+                }
+                _ => {}
+            }
+        }
+        twins.entry((ty, name)).or_default().push(id);
+    }
+    for ((ty, name), ids) in twins.into_iter().filter(|(_, v)| v.len() > 1) {
+        f.add(
+            "style-name-twin",
+            STYLES_PART,
+            format!("{ty} {name:?}: {}", ids.join(", ")),
+        );
+    }
+    for (part, dom, root) in parts {
+        for n in dom.descendants(*root, None) {
+            let what = local(dom, n);
+            if matches!(what.as_str(), "pStyle" | "rStyle" | "tblStyle") {
+                let val = attr(dom, n, "val");
+                if !ids.contains(&val) {
+                    f.add("style-ref-dangling", part, format!("{what} {val}"));
+                }
+            }
+        }
+    }
+}
+
 /// Everything one package yields for the selected checks.
 struct Analysis {
     findings: Findings,
@@ -918,6 +986,16 @@ fn analyze(pkg: &Package, opts: &Options) -> Analysis {
             Some(_) => {
                 let all = pkg.xml_parts(None, &mut Findings::default());
                 check_package(pkg, &all, &mut a.findings);
+            }
+        }
+    }
+    if on(Check::Styles) {
+        // References need the stylesheet, whatever `part` selects.
+        match opts.part {
+            None => check_styles(&parts, &mut a.findings),
+            Some(_) => {
+                let all = pkg.xml_parts(None, &mut Findings::default());
+                check_styles(&all, &mut a.findings);
             }
         }
     }
@@ -2143,6 +2221,35 @@ mod tests {
             out.contains("docpr-duplicate-id: 1\n  package id 1 ×2"),
             "{out}"
         );
+    }
+
+    #[test]
+    fn dangling_style_links_and_twin_names_are_reported_only_when_asked() {
+        let styles = r#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="a"><w:name w:val="normal"/></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="a0"/><w:next w:val="Normal"/></w:style><w:style w:type="character" w:styleId="Normal0"><w:name w:val="Normal"/></w:style></w:styles>"#;
+        let body = r#"<w:p><w:pPr><w:pStyle w:val="Missing"/></w:pPr><w:r><w:rPr><w:rStyle w:val="Normal0"/></w:rPr><w:t>x</w:t></w:r></w:p>"#;
+        let pkg = zip_of(&[
+            ("[Content_Types].xml", TYPES),
+            ("_rels/.rels", ROOT_RELS),
+            ("word/document.xml", &document(body)),
+            ("word/styles.xml", styles),
+        ]);
+        let out = report(&pkg, None, &opts_for(Check::Styles)).unwrap();
+        assert!(
+            out.contains("style-link-dangling: 1\n  word/styles.xml Quote basedOn a0"),
+            "{out}"
+        );
+        assert!(
+            out.contains("style-ref-dangling: 1\n  word/document.xml pStyle Missing"),
+            "{out}"
+        );
+        // Word pairs styles by type and name, case-insensitively; a character
+        // style may share a paragraph style's name.
+        assert!(
+            out.contains("style-name-twin: 1\n  word/styles.xml paragraph \"normal\": Normal, a"),
+            "{out}"
+        );
+        let triage = report(&pkg, None, &Options::default()).unwrap();
+        assert!(!triage.contains("style-"), "{triage}");
     }
 
     fn opts_for(check: Check) -> Options {

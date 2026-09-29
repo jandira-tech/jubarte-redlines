@@ -355,6 +355,9 @@ enum DebugCheck {
     /// Revision and docPr ids used twice (not in the default triage: Word
     /// opens such files).
     Ids,
+    /// Style links and references naming no style; two styles with one type
+    /// and name (Word pairs styles by name).
+    Styles,
     /// Where bookmark starts and ends sit (parent chains, tallied).
     Chains,
     /// Element counts.
@@ -383,6 +386,7 @@ impl From<DebugCheck> for jubarte::debug::Check {
             DebugCheck::Package => Check::Package,
             DebugCheck::Structure => Check::Structure,
             DebugCheck::Ids => Check::Ids,
+            DebugCheck::Styles => Check::Styles,
             DebugCheck::Chains => Check::Chains,
             DebugCheck::Elements => Check::Elements,
             DebugCheck::Textbox => Check::Textbox,
