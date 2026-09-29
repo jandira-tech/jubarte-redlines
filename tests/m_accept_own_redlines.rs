@@ -867,6 +867,36 @@ fn a_normal_style_the_revision_stops_justifying_is_recorded() {
     );
 }
 
+/// The original's docDefaults turn widow control and East Asian
+/// auto-spacing off and align text to the baseline; the revision declares
+/// none of them, so it reads with Word's defaults: on, on, auto. Word's
+/// redline writes those defaults on Normal (440c36d875, and 38 of the 470
+/// Word redlines whose original alone declares one). Ours wrote the
+/// original's `w:val="0"` back, so the accepted text kept widow control
+/// off.
+#[test]
+fn normal_takes_the_defaults_the_revision_reads_with() {
+    let base = docx_with_normal(
+        "",
+        r#"<w:widowControl w:val="0"/><w:autoSpaceDE w:val="0"/><w:autoSpaceDN w:val="0"/><w:textAlignment w:val="baseline"/>"#,
+    );
+    let next = docx_with_normal(
+        "",
+        r#"<w:spacing w:after="160" w:line="259" w:lineRule="auto"/>"#,
+    );
+    let redline = compare_documents(&base, &next, "Redline").unwrap();
+    assert_word_valid_package(&redline);
+    let ppr = normal_ppr(&redline);
+    let live = ppr.split_once("<w:pPrChange").map_or(ppr.as_str(), |p| p.0);
+    for on in ["widowControl", "autoSpaceDE", "autoSpaceDN"] {
+        assert!(
+            live.contains(&format!("<w:{on} />")) || live.contains(&format!("<w:{on}/>")),
+            "{on}: {ppr}"
+        );
+    }
+    assert!(live.contains(r#"<w:textAlignment w:val="auto""#), "{ppr}");
+}
+
 /// The text of the part the final section's `slot` (`headerReference` or
 /// `footerReference`, `w:type` `ty`) names, or None when it names none.
 fn final_slot_text(pkg: &[u8], slot: &str, ty: &str) -> Option<String> {

@@ -425,6 +425,17 @@ const PPR_ON_OFF: &[&str] = &[
     "suppressOverlap",
 ];
 
+/// `w:pPr` on/off children a document that never declares them reads as on
+/// (Word's defaults): an original that turns one off in its docDefaults,
+/// against a revision silent on it, gets it written on in Normal (38 of the
+/// 470 Word redlines whose original alone declares one, 440c36d875).
+const PPR_DEFAULT_ON: &[&str] = &["widowControl", "autoSpaceDE", "autoSpaceDN"];
+
+/// An on/off element set to off.
+fn on_off_is_off(dom: &Dom, el: NodeId) -> bool {
+    matches!(dom.attribute(el, &W::val()), Some("0" | "false" | "off"))
+}
+
 /// What [`doc_default_ppr_delta`] writes into the live Normal pPr.
 struct DocDefaultPprDelta {
     /// Whole pPr children, by local name.
@@ -495,6 +506,16 @@ fn doc_default_ppr_delta(
                     "jc" => {
                         dom.set_attribute_value(el, &W::val(), Some("left"));
                     }
+                    // Word's default font alignment (440c36d875: baseline
+                    // in the original's docDefaults, auto in Word's Normal).
+                    "textAlignment" => {
+                        dom.set_attribute_value(el, &W::val(), Some("auto"));
+                    }
+                    l if PPR_DEFAULT_ON.contains(&l) => {
+                        if !on_off_is_off(dom, a) {
+                            continue; // already the default
+                        }
+                    }
                     "pBdr" => {
                         for edge in dom.elements(a, None) {
                             let Some(n) = dom.name(edge) else { continue };
@@ -504,6 +525,9 @@ fn doc_default_ppr_delta(
                         }
                     }
                     l if PPR_ON_OFF.contains(&l) => {
+                        if on_off_is_off(dom, a) {
+                            continue; // already the default
+                        }
                         dom.set_attribute_value(el, &W::val(), Some("0"));
                     }
                     _ => continue,
