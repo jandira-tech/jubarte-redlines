@@ -8,6 +8,16 @@ features bump the **minor**, fixes bump the **patch**).
 See [README → Versioning & release](README.md#versioning--release) for how to cut
 a new version.
 
+## [0.10.0] — 2026-09-28
+
+### Changed
+- **Engine upgraded to jubarte-redlines 0.10.0**: a changed text box stays one
+  box with its changed words marked inside it, each section's headers and
+  footers are compared with their own section's, changes in a header or
+  footer holding a logo or hyperlink now reach the redline, and comments stay
+  on their own occurrence of repeated text. Redline output changes from 0.9.3.
+- The document preview and the author lookup read with quick-xml 0.42.
+
 ## [0.9.3] — 2026-09-27
 
 ### Changed

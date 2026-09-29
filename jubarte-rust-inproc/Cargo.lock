@@ -412,7 +412,7 @@ dependencies = [
 
 [[package]]
 name = "jubarte-redlines"
-version = "0.9.3"
+version = "0.10.0"
 dependencies = [
  "flate2",
  "foldhash",
@@ -431,7 +431,7 @@ dependencies = [
 
 [[package]]
 name = "jubarte-rust-inproc"
-version = "0.9.3"
+version = "0.10.0"
 dependencies = [
  "jubarte-redlines",
  "mimalloc",
