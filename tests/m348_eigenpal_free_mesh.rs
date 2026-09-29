@@ -43,9 +43,9 @@ fn body_para_seq(xml: &str) -> String {
 #[test]
 fn eigenpal_x_employee_directory_has_mix() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let a = root.join("../neurotic_docx_bench/corpus/word_based/docx_source/eigenpal_docx_editor_suggesting_mixed_edits.docx");
+    let a = root.join("tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source/eigenpal_docx_editor_suggesting_mixed_edits.docx");
     let b = root.join(
-        "../neurotic_docx_bench/corpus/word_based/docx_source/employee_directory_table_2.docx",
+        "tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source/employee_directory_table_2.docx",
     );
     if !a.exists() || !b.exists() {
         eprintln!("skip: fixtures missing");

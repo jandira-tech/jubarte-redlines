@@ -17,7 +17,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn image_doc_x_document_last_mix_keeps_live_numpr() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__image_doc_c7d007ac.docx");
     let b = src.join("evals__document_9bff7e1b.docx");
     if !a.exists() || !b.exists() {

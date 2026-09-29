@@ -16,7 +16,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn list_spacer_last_pure_d_has_live_numpr() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__list_spacer1_06383c66.docx");
     let b = src.join("super_editor__list_with_break_exported_broken_45f7bd19.docx");
     if !a.exists() || !b.exists() {
@@ -76,7 +77,8 @@ fn list_spacer_last_pure_d_has_live_numpr() {
 #[test]
 fn list_def_trailing_num4_has_live_numpr() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__list_def_mix_d7cec092.docx");
     let b = src.join("super_editor__list_numbering_reimport_d788d573.docx");
     if !a.exists() || !b.exists() {

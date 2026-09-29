@@ -17,7 +17,7 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn center_bold_peels_for_document_onto_next_mix() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_based/docx_source");
+    let src = root.join("tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source");
     let a = src.join("center_alignment_demo_id_paraid_overflow.docx");
     let b = src.join("center_bold_demo_id_paraid_overflow.docx");
     if !a.exists() || !b.exists() {

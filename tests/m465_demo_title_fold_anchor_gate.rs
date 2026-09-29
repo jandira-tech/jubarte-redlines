@@ -51,7 +51,9 @@ fn text_of(p: &str) -> String {
 
 fn compare_pair(dir: &str, a: &str, b: &str) -> Option<String> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus").join(dir);
+    let src = root
+        .join("tests/corpus/neurotic_docx_bench/corpus")
+        .join(dir);
     let ap = src.join(a);
     let bp = src.join(b);
     if !ap.exists() || !bp.exists() {

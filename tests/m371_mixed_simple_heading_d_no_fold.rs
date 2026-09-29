@@ -17,7 +17,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn mixed_x_simple_heading_title_stays_pure_d() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__sd_1919_word_mixed_33e049ca.docx");
     let b = src.join("super_editor__sd_1919_word_simple_e3a4a818.docx");
     if !a.exists() || !b.exists() {

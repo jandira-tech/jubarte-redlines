@@ -98,7 +98,7 @@ fn recon(docx: &[u8]) -> (String, String) {
 
 fn load(name: &str) -> Option<Vec<u8>> {
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../neurotic_docx_bench/corpus/word_based/docx_source")
+        .join("tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source")
         .join(name);
     if !p.exists() {
         eprintln!("skip: missing {name}");

@@ -18,7 +18,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn diff_before16_x_19_mix_keeps_heading1() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__diff_before16_f518c031.docx");
     let b = src.join("super_editor__diff_before19_97e0f4e6.docx");
     if !a.exists() || !b.exists() {

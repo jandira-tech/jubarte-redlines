@@ -44,7 +44,8 @@ fn fmt_of(numbering: &str, num_id: &str) -> Option<String> {
 #[test]
 fn inserted_list_refs_follow_renumbered_defs() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__complex_list_def_short_fde20a67.docx");
     let b = src.join("super_editor__basic_list_0fcfe705.docx");
     if !a.exists() || !b.exists() {

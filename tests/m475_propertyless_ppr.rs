@@ -42,7 +42,7 @@ fn paragraphs(xml: &str) -> Vec<String> {
 
 fn compare_pair(a_name: &str, b_name: &str) -> Option<String> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_based/docx_source");
+    let src = root.join("tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source");
     let a = src.join(a_name);
     let b = src.join(b_name);
     if !a.exists() || !b.exists() {

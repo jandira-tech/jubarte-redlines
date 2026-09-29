@@ -20,7 +20,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn table_border_x_toc_sd2343_title_keeps_heading1() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("behavior__sd_2343_table_border_widths_b5148e83.docx");
     let b = src.join("behavior__sd_2447_toc_tab_alignment_8319c14c.docx");
     if !a.exists() || !b.exists() {

@@ -2,9 +2,9 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Accept All against Word's own, on the local `_to_improve_accepted_changes`
-//! corpus (Word's redlines and Word's Accept All of each; not shipped, the
-//! test skips without it): every story paragraph's text and mark state match
+//! Accept All against Word's own, on the `_to_improve_accepted_changes`
+//! corpus copied into `tests/corpus` (Word's redlines and Word's Accept All
+//! of each): every story paragraph's text and mark state match
 //! (`jubarte debug WORD JUB -c text` prints `text identical`).
 
 use std::path::PathBuf;
@@ -12,23 +12,14 @@ use std::path::PathBuf;
 use jubarte::debug::{Check, Options, report};
 use jubarte::document_comparer::accept_revisions;
 
-/// The corpus in this checkout, or in the main checkout from a worktree.
-fn corpus() -> Option<PathBuf> {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    [
-        root.join("_to_improve_accepted_changes"),
-        root.join("../../_to_improve_accepted_changes"),
-    ]
-    .into_iter()
-    .find(|p| p.join("_word_sot_accepted_docx").is_dir())
+/// Word's accepted redlines, copied into this repository.
+fn corpus() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/_to_improve_accepted_changes")
 }
 
 #[test]
 fn accept_matches_words_accept_all_on_words_redlines() {
-    let Some(dir) = corpus() else {
-        eprintln!("skip: _to_improve_accepted_changes missing");
-        return;
-    };
+    let dir = corpus();
     let opts = Options {
         checks: vec![Check::Text],
         ..Default::default()

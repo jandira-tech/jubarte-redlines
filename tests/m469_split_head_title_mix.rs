@@ -23,8 +23,9 @@ use jubarte::document_comparer::compare_documents;
 #[test]
 fn head_title_mix_splits_long_del_into_bare_paragraph() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
-    let a = src.join("super_editor__ooxml_rfonts_rstyle_linked_combos_dem_213298de.docx");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let a = src.join("super_editor__ooxml_rFonts_rstyle_linked_combos_dem_213298de.docx");
     let b = src.join("behavior__sd_2672_rtl_table_63bd9d10.docx");
     if !a.exists() || !b.exists() {
         eprintln!("skip: fixtures missing");

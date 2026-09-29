@@ -16,7 +16,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn fields_x_localized_keeps_line276_over_single_spaced_normal() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__fields_test_4a8ffd8c.docx");
     let b = src.join("behavior__sd_2517_localized_heading_styles_39c2e4a1.docx");
     if !a.exists() || !b.exists() {
@@ -47,7 +48,8 @@ fn fields_x_localized_keeps_line276_over_single_spaced_normal() {
 #[test]
 fn line_break_still_keeps_bare_pure_i_line276() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__line_break_627a7159.docx");
     let b = src.join("super_editor__line_space_table_9b1ee54b.docx");
     if !a.exists() || !b.exists() {

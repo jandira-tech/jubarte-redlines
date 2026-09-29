@@ -16,7 +16,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn file45_x_46_times_body_mixes_with_first_item() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_based/docx_source_randomized");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
     let a = src.join("file_45.docx");
     let b = src.join("file_46.docx");
     if !a.exists() || !b.exists() {

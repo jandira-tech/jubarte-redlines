@@ -37,7 +37,8 @@ fn live(style: &str) -> String {
 #[test]
 fn normal_rpr_merge_carries_b_kern_and_ligatures() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__basic_comment_d3ba5f1e.docx");
     let b = src.join("cli_legacy__sample_3a8f1f93.docx");
     if !a.exists() || !b.exists() {

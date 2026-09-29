@@ -15,7 +15,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn hummingbird_x_employment_no_mid_email_wrap_mix() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__hummingbird_c5e5ac81.docx");
     let b = src.join("evals__employment_offer_4cf5a872.docx");
     if !a.exists() || !b.exists() {
@@ -53,7 +54,8 @@ fn hummingbird_x_employment_no_mid_email_wrap_mix() {
 #[test]
 fn tiff_x_hf_normal_no_mid_body_mix_of_tiff_title() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("behavior__tiff_image_2d531f83.docx");
     let b = src.join("super_editor__h_f_normal_5d2a8d96.docx");
     if !a.exists() || !b.exists() {

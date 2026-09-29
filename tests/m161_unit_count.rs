@@ -12,7 +12,8 @@ fn bench_docx(name: &str) -> Option<PathBuf> {
     let root = std::env::var_os("BENCH_DIR")
         .map(PathBuf::from)
         .or_else(|| {
-            let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../neurotic_docx_bench");
+            let p =
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/neurotic_docx_bench");
             p.is_dir().then_some(p)
         })?;
     let path = root.join("corpus/word_based/docx_source").join(name);

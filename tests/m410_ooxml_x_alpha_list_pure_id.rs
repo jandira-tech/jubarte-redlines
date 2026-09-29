@@ -52,7 +52,8 @@ fn body_paras(xml: &str) -> Vec<(bool, bool, String)> {
 #[test]
 fn bold_vals_x_complex_list_is_pure_id() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__ooxml_bold_vals_demo_9e688d8f.docx");
     let b = src.join("super_editor__complex_list_def_issue_326369f9.docx");
     if !a.exists() || !b.exists() {

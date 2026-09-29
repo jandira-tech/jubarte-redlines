@@ -44,7 +44,8 @@ fn body_para_classes(xml: &str) -> Vec<char> {
 #[test]
 fn tab_alignment_x_tab_test_multi_mix() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__tab_alignment_test_184edb5d.docx");
     let b = src.join("super_editor__tab_test_576c8317.docx");
     if !a.exists() || !b.exists() {
@@ -77,7 +78,7 @@ fn tab_alignment_x_tab_test_multi_mix() {
 #[test]
 fn left_alignment_x_line_spacing_still_mmim() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_based/docx_source");
+    let src = root.join("tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source");
     let a = src.join("left_alignment_demo_id_paraid_overflow.docx");
     let b = src.join("line_spacing_demo_id_paraid_overflow.docx");
     if !a.exists() || !b.exists() {
@@ -107,7 +108,7 @@ fn left_alignment_x_line_spacing_still_mmim() {
 fn font_family_x_font_size_not_overmeshed() {
     // M339b: generic "Font" first-token must not free-mesh (Word MMDM).
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_based/docx_source");
+    let src = root.join("tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source");
     let a = src.join("font_family_demo_id_paraid_overflow.docx");
     let b = src.join("font_size_12_demo_id_paraid_overflow.docx");
     if !a.exists() || !b.exists() {

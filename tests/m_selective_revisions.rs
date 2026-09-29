@@ -228,32 +228,18 @@ fn an_empty_list_selects_nothing() {
     assert!(ids(&accept_changes(&pkg, &all).unwrap()).is_empty());
 }
 
-/// The bench beside this checkout, or beside the main checkout from a
-/// worktree.
-fn bench() -> Option<std::path::PathBuf> {
-    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    [
-        root.join("../neurotic_docx_bench"),
-        root.join("../../../neurotic_docx_bench"),
-    ]
-    .into_iter()
-    .find(|p| {
-        p.join("corpus/word/notices/rejected_tracking_selection.csv")
-            .is_file()
-    })
+/// The bench fixtures copied into this repository.
+fn bench() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/neurotic_docx_bench")
 }
 
-/// On Word's own redlines (the bench's `rejected_tracking` set; skipped
-/// without it): resolving every other change first and the rest after ends
+/// On Word's own redlines (the bench's `rejected_tracking` set): resolving every other change first and the rest after ends
 /// where resolving them all at once does, and the half-way document is
 /// Word-valid with every unselected id still listed.
 #[test]
 fn resolving_in_two_halves_ends_where_resolving_all_does() {
     use jubarte::debug::{Check, Options, report};
-    let Some(bench) = bench() else {
-        eprintln!("skip: neurotic_docx_bench missing");
-        return;
-    };
+    let bench = bench();
     let selection =
         std::fs::read_to_string(bench.join("corpus/word/notices/rejected_tracking_selection.csv"))
             .unwrap();

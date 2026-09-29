@@ -15,6 +15,18 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+### Changed
+
+- The tests no longer need neurotic_docx_bench (or the local
+  `_to_improve_accepted_changes` folder) checked out beside this repository.
+  The 537 documents they read are copied into `tests/corpus/` under the
+  relative paths the tests name. Their provenance, including the
+  docx-corpus ODC-By attribution, is in
+  `LICENSES/LicenseRef-Bench-Fixtures.txt`. About 180 fixtures had
+  moved in the bench, so the tests naming them skipped without a word;
+  they run again, and `tests/bench_fixture_paths_resolve.rs` fails on any
+  named copy that is missing.
+
 ### Added
 
 - `jubarte debug diff A B [C …]` compares two or more packages element by

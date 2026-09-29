@@ -14,7 +14,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn italic_rstyle_x_base_ordered_no_list_item_title_mix() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__ooxml_italic_rstyle_combos_demo_90894ac1.docx");
     let b = src.join("super_editor__base_ordered_fdff1fb2.docx");
     if !a.exists() || !b.exists() {

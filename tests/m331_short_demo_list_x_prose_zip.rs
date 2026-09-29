@@ -44,7 +44,7 @@ fn body_para_classes(xml: &str) -> Vec<char> {
 #[test]
 fn numbered_list_italic_x_open_sans_mmmdd() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_based/docx_source");
+    let src = root.join("tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source");
     let a = src.join("numbered_list_italic_demo_id_paraid_overflow.docx");
     let b = src.join("open_sans_bold_underline_id_paraid_overflow.docx");
     if !a.exists() || !b.exists() {

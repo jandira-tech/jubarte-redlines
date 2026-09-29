@@ -16,7 +16,7 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn broken_media_x_dup_ppr_pure_i_b() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_based/docx_source");
+    let src = root.join("tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source");
     let a = src.join("word_tolerated_broken_media_rel.docx");
     let b = src.join("word_tolerated_duplicate_ppr.docx");
     if !a.exists() || !b.exists() {

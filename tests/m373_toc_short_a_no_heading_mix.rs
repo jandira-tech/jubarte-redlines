@@ -17,7 +17,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn toc_x_broken_list_short_a_stays_pure_i() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("behavior__sd_2447_toc_tab_alignment_8319c14c.docx");
     let b = src.join("super_editor__broken_complex_list_293fda86.docx");
     if !a.exists() || !b.exists() {

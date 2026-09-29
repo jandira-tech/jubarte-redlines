@@ -55,7 +55,8 @@ fn body_paras(xml: &str) -> Vec<(bool, bool, String)> {
 #[test]
 fn lease_x_memo_is_pure_i_then_pure_d() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("evals__lease_agreement_7081191d.docx");
     let b = src.join("evals__memorandum_258c774a.docx");
     if !a.exists() || !b.exists() {

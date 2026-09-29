@@ -17,7 +17,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn file36_x_37_empty_pure_i_spacers_before_contract_review_del() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_based/docx_source_randomized");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
     let a = src.join("file_36.docx");
     let b = src.join("file_37.docx");
     if !a.exists() || !b.exists() {

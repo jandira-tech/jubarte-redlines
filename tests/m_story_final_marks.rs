@@ -135,7 +135,7 @@ fn inserted_tail_ahead_of_deleted_tail_pairs_the_final_marks() {
 /// The super_editor corpus in the sibling benchmark checkout; `None` (skip)
 /// when it is not there.
 fn superdoc_redline(original: &str, revised: &str) -> Option<(Dom, jubarte::xmllinq::NodeId)> {
-    let dir = "../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source";
+    let dir = "tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source";
     let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(dir);
     if !src.join(original).exists() || !src.join(revised).exists() {
         eprintln!("skip: {dir} missing");

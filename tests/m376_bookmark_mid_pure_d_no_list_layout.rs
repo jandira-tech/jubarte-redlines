@@ -17,7 +17,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn bookmark_mid_pure_d_no_line240_list_layout() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__bookmark_use_cases_d20f31f6.docx");
     let b = src.join("super_editor__broken_complex_list_293fda86.docx");
     if !a.exists() || !b.exists() {

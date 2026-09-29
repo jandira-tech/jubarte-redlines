@@ -47,7 +47,8 @@ fn body_para_seq(xml: &str) -> String {
 #[test]
 fn pirates_x_border_pure_i_titles_first() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__sd_2766_pirates_tracked_changes_3285d875.docx");
     let b = src.join("behavior__sd_2343_table_border_widths_b5148e83.docx");
     if !a.exists() || !b.exists() {

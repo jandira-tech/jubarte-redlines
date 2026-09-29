@@ -17,7 +17,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn file54_x_55_short_b_mixes_with_line_spacing_demo() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_based/docx_source_randomized");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
     let a = src.join("file_54.docx");
     let b = src.join("file_55.docx");
     if !a.exists() || !b.exists() {

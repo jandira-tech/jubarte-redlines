@@ -16,7 +16,7 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn calibri_mid_mix_empty_pprchange_with_heading_spacing() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_based/docx_source");
+    let src = root.join("tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source");
     let a = src.join("calibri_font_demo_id_paraid_overflow.docx");
     let b = src.join("calibri_heading_2_right_id_paraid_overflow.docx");
     if !a.exists() || !b.exists() {

@@ -82,7 +82,8 @@ fn body_para_classes(xml: &str) -> Vec<(char, String)> {
 #[test]
 fn two_column_x_nested_table_title_pure_i_then_pure_d() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__two_column_two_page_0b8a37c5.docx");
     let b = src.join("behavior__sd_2672_nested_table_dfac08bb.docx");
     if !a.exists() || !b.exists() {
@@ -144,7 +145,8 @@ fn two_column_x_nested_table_title_pure_i_then_pure_d() {
 fn broken_list_x_nested_table_title_pure_i_then_pure_d() {
     // Same M312 gate; base is medium list (contentful ~18 < old n≥20 floor).
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__broken_complex_list_293fda86.docx");
     let b = src.join("behavior__sd_2672_nested_table_dfac08bb.docx");
     if !a.exists() || !b.exists() {
@@ -191,7 +193,8 @@ fn broken_list_x_nested_table_title_pure_i_then_pure_d() {
 fn hyperlink_x_rtl_table_title_pure_i_then_pure_d() {
     // M313: base may have a table; next short rtl_table title; jaccard 0.
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__superdoc_hyperlink_cases_1dde9cd3.docx");
     let b = src.join("behavior__sd_2672_rtl_table_63bd9d10.docx");
     if !a.exists() || !b.exists() {
@@ -234,7 +237,8 @@ fn hyperlink_x_rtl_table_title_pure_i_then_pure_d() {
 fn list_with_table_break_x_plain_3x3_title_pure_i() {
     // Medium list+table base (contentful ~4–6) × short plain_3x3 next.
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__list_with_table_break_ff0c4c1f.docx");
     let b = src.join("behavior__sd_2672_plain_3x3_87943d5d.docx");
     if !a.exists() || !b.exists() {
@@ -272,7 +276,8 @@ fn table_autofit_x_merged_cells_keeps_table_not_body_pure_id_stream() {
     // Wholesale pure-I/D would emit many top-level pure-I then pure-D paras
     // instead of keeping a `w:tbl` shell. Nested cell markup still has ins/del.
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__table_autofit_colspan_1fd7723c.docx");
     let b = src.join("super_editor__table_merged_cells_9c349334.docx");
     if !a.exists() || !b.exists() {

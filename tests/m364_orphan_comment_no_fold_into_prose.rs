@@ -18,7 +18,7 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn orphan_comment_x_yellow_highlight_ouch_stays_pure_d() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_based/docx_source");
+    let src = root.join("tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source");
     let a = src.join("word_tolerated_orphan_comment.docx");
     let b = src.join("yellow_highlight_demo_id_paraid_overflow.docx");
     if !a.exists() || !b.exists() {

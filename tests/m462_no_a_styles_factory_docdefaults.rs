@@ -43,7 +43,8 @@ fn live(style: &str) -> String {
 #[test]
 fn factory_docdefaults_and_style_bake_when_a_has_no_styles() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("behavior__tiff_image_2d531f83.docx");
     let b = src.join("behavior__two_column_simple_e77be963.docx");
     if !a.exists() || !b.exists() {

@@ -44,7 +44,8 @@ fn body_paras(xml: &str) -> Vec<String> {
 #[test]
 fn ins_mark_paragraph_never_holds_only_deleted_content() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__diff_after19_79c6b379.docx");
     let b = src.join("super_editor__diff_after2_fc1e0763.docx");
     if !a.exists() || !b.exists() {

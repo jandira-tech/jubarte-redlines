@@ -19,7 +19,8 @@ use jubarte::document_comparer::compare_documents;
 #[test]
 fn content_bearing_field_ins_keeps_heading_ppr_and_mark() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("behavior__sd_2672_plain_3x3_87943d5d.docx");
     let b = src.join("super_editor__hyperlink_node_internal_1c0232f9.docx");
     if !a.exists() || !b.exists() {

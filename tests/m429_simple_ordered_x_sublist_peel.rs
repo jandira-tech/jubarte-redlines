@@ -10,7 +10,8 @@ use std::path::PathBuf;
 #[test]
 fn simple_ordered_x_sublist_pure_i_one_two_before_base_del() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__simple_ordered_list_8288421a.docx");
     let b = src.join("super_editor__sublist_issue_66a1800a.docx");
     if !a.exists() || !b.exists() {

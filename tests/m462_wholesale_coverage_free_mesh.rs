@@ -17,9 +17,9 @@ use jubarte::document_comparer::compare_documents_with_settings;
 fn body_xml(a: &str, b: &str, randomized: bool) -> Option<String> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src = if randomized {
-        root.join("../neurotic_docx_bench/corpus/word_based/docx_source_randomized")
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source_randomized")
     } else {
-        root.join("../neurotic_docx_bench/corpus/word_based/docx_source")
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source")
     };
     let ap = src.join(a);
     let bp = src.join(b);

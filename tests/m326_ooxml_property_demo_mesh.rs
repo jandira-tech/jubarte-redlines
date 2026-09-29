@@ -44,7 +44,8 @@ fn body_para_classes(xml: &str) -> Vec<char> {
 #[test]
 fn bold_vals_x_color_multi_mix() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__ooxml_bold_vals_demo_9e688d8f.docx");
     let b = src.join("super_editor__ooxml_color_rstyle_linked_combos_demo_23e43bed.docx");
     if !a.exists() || !b.exists() {

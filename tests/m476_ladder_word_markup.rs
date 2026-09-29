@@ -53,8 +53,8 @@ fn slices_between(xml: &str, open_a: &str, open_b: &str, close: &str) -> Vec<Str
 fn source_dir() -> Option<PathBuf> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     for rel in [
-        "../neurotic_docx_bench/grok_run/word_based/docx_source",
-        "../neurotic_docx_bench/corpus/word_based/docx_source",
+        "tests/corpus/neurotic_docx_bench/grok_run/word_based/docx_source",
+        "tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source",
     ] {
         let p = root.join(rel);
         if p.is_dir() {

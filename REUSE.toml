@@ -75,3 +75,12 @@ path = "assets/fonts/extra/Selawik-*.ttf"
 precedence = "override"
 SPDX-FileCopyrightText = "2015 Microsoft Corporation"
 SPDX-License-Identifier = "OFL-1.1"
+
+# Test fixtures copied from neurotic_docx_bench (third-party documents and
+# Microsoft Word's output). Not licensed by Jandira; provenance and the
+# docx-corpus ODC-By attribution are in LICENSES/LicenseRef-Bench-Fixtures.txt.
+[[annotations]]
+path = ["tests/corpus/neurotic_docx_bench/**", "tests/corpus/_to_improve_accepted_changes/**"]
+precedence = "override"
+SPDX-FileCopyrightText = "NOASSERTION"
+SPDX-License-Identifier = "LicenseRef-Bench-Fixtures"

@@ -45,8 +45,9 @@ fn body_para_classes(xml: &str) -> Vec<char> {
 #[test]
 fn rfonts_x_table_left_indent_not_wholesale_pure_id() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
-    let a = src.join("super_editor__ooxml_rfonts_rstyle_linked_combos_dem_213298de.docx");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let a = src.join("super_editor__ooxml_rFonts_rstyle_linked_combos_dem_213298de.docx");
     let b = src.join("super_editor__sd_1494_table_left_indent_03277d35.docx");
     if !a.exists() || !b.exists() {
         eprintln!("skip: corpus missing");

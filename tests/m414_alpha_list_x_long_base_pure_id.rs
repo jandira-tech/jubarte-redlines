@@ -55,7 +55,8 @@ fn body_paras(xml: &str) -> Vec<(bool, bool, String)> {
 #[test]
 fn pageref_x_restart_list_pure_i_c() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("behavior__pageref_standalone_uppercase_h_7701e07f.docx");
     let b = src.join("super_editor__restart_numbering_sub_list_85ddcb79.docx");
     if !a.exists() || !b.exists() {

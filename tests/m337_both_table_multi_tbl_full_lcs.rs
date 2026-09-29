@@ -45,7 +45,8 @@ fn body_para_classes(xml: &str) -> Vec<char> {
 #[test]
 fn pirates_x_table_left_not_wholesale_pure_id() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__sd_2766_pirates_tracked_changes_3285d875.docx");
     let b = src.join("super_editor__sd_1494_table_left_indent_11bb24c7.docx");
     if !a.exists() || !b.exists() {
@@ -89,7 +90,8 @@ fn pirates_x_table_left_not_wholesale_pure_id() {
 fn hyperlink_x_rtl_still_pure_id() {
     // Single-table next stays on M313 pure-I/D (MIX=0).
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__superdoc_hyperlink_cases_1dde9cd3.docx");
     let b = src.join("behavior__sd_2672_rtl_table_63bd9d10.docx");
     if !a.exists() || !b.exists() {

@@ -41,7 +41,8 @@ fn live_of(style: &str, block: &str, change: &str) -> String {
 #[test]
 fn merged_heading_gets_dd_neutralizers() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("evals__memorandum_258c774a.docx");
     let b = src.join("evals__nda_7f304918.docx");
     if !a.exists() || !b.exists() {

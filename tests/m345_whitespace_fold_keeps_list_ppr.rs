@@ -44,7 +44,8 @@ fn compare(a: &PathBuf, b: &PathBuf) -> String {
 #[test]
 fn basic_list_first_pure_del_keeps_list_ppr() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__basic_list_0fcfe705.docx");
     let b = src.join("super_editor__sd_1707_list_enter_track_changes_with_fd93fd8b.docx");
     if !a.exists() || !b.exists() {
@@ -73,7 +74,8 @@ fn basic_list_first_pure_del_keeps_list_ppr() {
 #[test]
 fn two_column_x_vrect_first_del_no_ins_spacing() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__two_column_two_page_0b8a37c5.docx");
     let b = src.join("super_editor__vrect_node_c8e51f22.docx");
     if !a.exists() || !b.exists() {

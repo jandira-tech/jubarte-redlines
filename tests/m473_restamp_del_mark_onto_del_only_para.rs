@@ -89,7 +89,8 @@ fn contentless(p: &str) -> bool {
 #[test]
 fn del_mark_sits_on_its_own_deleted_content() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__ooxml_size_rstyle_linked_combos_demo_017c9552.docx");
     let b = src.join("super_editor__ooxml_strike_rstyle_linked_combos_dem_b8167cd3.docx");
     if !a.exists() || !b.exists() {

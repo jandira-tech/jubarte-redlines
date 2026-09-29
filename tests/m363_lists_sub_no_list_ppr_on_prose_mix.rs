@@ -19,7 +19,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn lists_sub_x_word_mixed_prose_stays_pure_i() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__lists_sub_paragraph_31ff3fed.docx");
     let b = src.join("super_editor__sd_1919_word_mixed_33e049ca.docx");
     if !a.exists() || !b.exists() {

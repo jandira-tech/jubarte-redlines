@@ -18,7 +18,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn spaces_x_spacing_keeps_trailing_empty_pure_i_before_base_del() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__doc_with_spaces_from_styles_734ca26f.docx");
     let b = src.join("super_editor__doc_with_spacing_e3d47bd7.docx");
     if !a.exists() || !b.exists() {

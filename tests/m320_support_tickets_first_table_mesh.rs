@@ -16,7 +16,7 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn support_tickets_x_table_bookmark_no_test1_title_mix() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_based/docx_source");
+    let src = root.join("tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source");
     let a = src.join("support_tickets_table.docx");
     let b = src.join("table_bookmark_end.docx");
     if !a.exists() || !b.exists() {
@@ -52,7 +52,7 @@ fn support_tickets_x_table_bookmark_no_test1_title_mix() {
 #[test]
 fn support_tickets_x_table_bookmark_first_table_cell_mesh() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_based/docx_source");
+    let src = root.join("tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source");
     let a = src.join("support_tickets_table.docx");
     let b = src.join("table_bookmark_end.docx");
     if !a.exists() || !b.exists() {

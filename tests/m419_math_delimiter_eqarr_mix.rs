@@ -18,7 +18,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn math_delimiter_x_eqarr_mixes_title() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("behavior__math_delimiter_tests_c9d034dc.docx");
     let b = src.join("behavior__math_eqarr_tests_40a1adb0.docx");
     // Note: pair order in corpus is delimiter base × eqarr next in some maps;

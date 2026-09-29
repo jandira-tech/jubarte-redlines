@@ -37464,7 +37464,7 @@ mod comments_spacing_tests {
     use super::*;
 
     const COMMENTS: &str =
-        "../neurotic_docx_bench/corpus/word_based/docx_source/docx_lots_of_comments.docx";
+        "tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source/docx_lots_of_comments.docx";
 
     /// Sibling `neurotic_docx_bench` fixtures exist locally, not in GitHub Actions.
     /// Only an absent file skips; any other read error fails the test.
@@ -37644,7 +37644,7 @@ mod comments_spacing_tests {
 
     #[test]
     fn potpourri_listnumber_gets_numbering_hanging() {
-        let path = "../neurotic_docx_bench/corpus/word/tracking_without_comments/docx/32997dd3c9_potpourritest.docx";
+        let path = "tests/corpus/neurotic_docx_bench/corpus/word/tracking_without_comments/docx/32997dd3c9_potpourritest.docx";
         let Some(bytes) = sibling_bytes(path) else {
             return;
         };
@@ -37888,7 +37888,7 @@ mod comments_spacing_tests {
 
     #[test]
     fn sd_2517_pagebreak_census() {
-        let path = "../neurotic_docx_bench/corpus/word_based/docx_source/sd_2517_localized_heading_styles.docx";
+        let path = "tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source/sd_2517_localized_heading_styles.docx";
         let Some(bytes) = sibling_bytes(path) else {
             return;
         };

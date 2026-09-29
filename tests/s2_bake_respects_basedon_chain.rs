@@ -40,7 +40,8 @@ fn live_rpr(style: &str) -> String {
 #[test]
 fn bake_never_overrides_attrs_the_chain_provides() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_based/docx_source_randomized");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
     let a = src.join("file_198.docx");
     let b = src.join("file_199.docx");
     if !a.exists() || !b.exists() {

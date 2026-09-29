@@ -65,7 +65,8 @@ fn body_paras(xml: &str) -> Vec<(bool, bool, String)> {
 #[test]
 fn complex2_x_fields_meshes_html_with_one() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__complex2_dbba7f05.docx");
     let b = src.join("super_editor__fields_test_4a8ffd8c.docx");
     if !a.exists() || !b.exists() {

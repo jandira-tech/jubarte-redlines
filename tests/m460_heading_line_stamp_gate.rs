@@ -30,7 +30,8 @@ fn style_elem(xml: &str, sid: &str) -> Option<String> {
 #[test]
 fn heading_line_stamp_skipped_when_normal_not_240() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__basic_comment_d3ba5f1e.docx");
     let b = src.join("cli_legacy__sample_3a8f1f93.docx");
     if !a.exists() || !b.exists() {

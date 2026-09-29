@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! Reject All against Word's own, on the neurotic_docx_bench
-//! `rejected_tracking` corpus (Word's redlines and Word's Reject All of each;
-//! not shipped, the test skips without it): every listed pair is present,
+//! `rejected_tracking` corpus copied into `tests/corpus` (Word's redlines and
+//! Word's Reject All of each): every listed pair is present,
 //! and every story paragraph's text and mark state match (`jubarte debug
 //! WORD JUB -c text` prints `text identical`).
 
@@ -13,27 +13,14 @@ use std::path::PathBuf;
 use jubarte::debug::{Check, Options, report};
 use jubarte::document_comparer::reject_revisions;
 
-/// The bench beside this checkout, or beside the main checkout from a
-/// worktree.
-fn bench() -> Option<PathBuf> {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    [
-        root.join("../neurotic_docx_bench"),
-        root.join("../../../neurotic_docx_bench"),
-    ]
-    .into_iter()
-    .find(|p| {
-        p.join("corpus/word/notices/rejected_tracking_selection.csv")
-            .is_file()
-    })
+/// The bench fixtures copied into this repository.
+fn bench() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/neurotic_docx_bench")
 }
 
 #[test]
 fn reject_matches_words_reject_all_on_words_redlines() {
-    let Some(bench) = bench() else {
-        eprintln!("skip: neurotic_docx_bench missing");
-        return;
-    };
+    let bench = bench();
     let words = bench.join("grok_run/wr0928/rejected_tracking/docx");
     let selection =
         std::fs::read_to_string(bench.join("corpus/word/notices/rejected_tracking_selection.csv"))

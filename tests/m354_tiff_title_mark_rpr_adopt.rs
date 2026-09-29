@@ -18,7 +18,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn tiff_x_h_f_first_mix_has_mark_rpr() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("behavior__tiff_image_2d531f83.docx");
     let b = src.join("super_editor__h_f_normal_5d2a8d96.docx");
     if !a.exists() || !b.exists() {

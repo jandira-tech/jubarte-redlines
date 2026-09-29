@@ -1,0 +1,37 @@
+Test fixtures copied from neurotic_docx_bench
+=============================================
+
+The files under tests/corpus/neurotic_docx_bench/ and
+tests/corpus/_to_improve_accepted_changes/ are test inputs copied from the
+neurotic_docx_bench benchmark (the public dataset
+arthrod/neurotic_docx_bench-fixtures on the Hugging Face Hub, ODC-By 1.0) so
+that jubarte's tests do not depend on a checkout of the benchmark. They keep
+the relative paths they have in the benchmark. Jandira Technologies, LLC does
+not license them under this repository's AGPL-3.0-only license, and nothing
+here grants rights in them. They are used only as test inputs.
+
+Where they come from:
+
+- tests/corpus/neurotic_docx_bench/grok_run/fixtures_500/ and the
+  hash-named documents under corpus/word/: documents from docx-corpus
+  (superdoc-dev/docx-corpus, https://huggingface.co/datasets/superdoc-dev/docx-corpus),
+  and Microsoft Word's saves, compares, Accept All and Reject All of them.
+  docx-corpus is made available under the ODC Attribution License
+  (ODC-By v1.0, https://opendatacommons.org/licenses/by/1.0/). Cite the
+  dataset as superdoc-dev/docx-corpus. Built by SuperDoc. ODC-By covers the
+  database (the collection, its selection and arrangement). It does not
+  license copyright in the individual .docx files, which were collected from
+  the public web and may have their own rights (section 2.4 of the license).
+- corpus/word_redlines_superdoc/ and the super_editor__, behavior__, evals__,
+  doc_api_stories__ and cli_legacy__ documents: test documents of SuperDoc
+  (https://github.com/Harbour-Enterprises/SuperDoc, AGPL-3.0), and Word's
+  compares of them.
+- corpus/word_based/, grok_run/word_based/,
+  grok_run/no_comments_pdf_was_generated_by_word/ and grok_run/_fixtures/:
+  the jubarte-first fixture documents (some generated for the benchmark,
+  some collected under their original names) and Word's saves and compares
+  of them.
+- grok_run/wr0928/rejected_tracking/ and tests/corpus/_to_improve_accepted_changes/:
+  Word's compares of benchmark pairs, and Word's Reject All or Accept All of
+  those compares.
+- corpus/word/notices/: the benchmark's own selection tables.

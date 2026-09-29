@@ -46,7 +46,8 @@ fn body_para_seq(xml: &str) -> String {
 #[test]
 fn bold_vals_x_diff_before8_free_meshes() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__ooxml_bold_vals_demo_9e688d8f.docx");
     let b = src.join("super_editor__diff_before8_ba5faa9e.docx");
     if !a.exists() || !b.exists() {

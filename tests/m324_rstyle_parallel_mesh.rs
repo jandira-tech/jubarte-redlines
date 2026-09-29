@@ -44,12 +44,13 @@ fn body_para_classes(xml: &str) -> Vec<char> {
 #[test]
 fn highlight_x_bold_rstyle_multi_mix() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__ooxml_highlight_rstyle_linked_combos__eb448e21.docx");
     let b = src.join("super_editor__ooxml_bold_rstyle_linked_combos_demo_90819822.docx");
     if !a.exists() || !b.exists() {
         // try word_based
-        let src2 = root.join("../neurotic_docx_bench/corpus/word_based/docx_source");
+        let src2 = root.join("tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source");
         let a2 = src2.join("super_editor__ooxml_highlight_rstyle_linked_combos__eb448e21.docx");
         let b2 = src2.join("super_editor__ooxml_bold_rstyle_linked_combos_demo_90819822.docx");
         if !a2.exists() || !b2.exists() {

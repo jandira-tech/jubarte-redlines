@@ -16,7 +16,8 @@ use jubarte::document_comparer::compare_documents_with_settings;
 #[test]
 fn diff_after8_no_trailing_bare_empty_after_pure_d() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("super_editor__diff_after8_58e5c288.docx");
     let b = src.join("super_editor__doc_with_spacing_e3d47bd7.docx");
     if !a.exists() || !b.exists() {

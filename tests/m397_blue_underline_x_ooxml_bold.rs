@@ -47,7 +47,8 @@ fn body_classes(xml: &str) -> Vec<char> {
 #[test]
 fn file_2_center_bold_demo_pure_i_short_first_not_ooxml_head_mesh() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_based/docx_source_randomized");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
     let a = src.join("file_2.docx");
     let b = src.join("file_3.docx");
     if !a.exists() || !b.exists() {
@@ -91,7 +92,8 @@ fn file_2_center_bold_demo_pure_i_short_first_not_ooxml_head_mesh() {
 #[test]
 fn file_34_still_multi_mix_after_m397b() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_based/docx_source_randomized");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source_randomized");
     let a = src.join("file_34.docx");
     let b = src.join("file_35.docx");
     if !a.exists() || !b.exists() {

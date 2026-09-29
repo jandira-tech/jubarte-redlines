@@ -44,7 +44,8 @@ fn body_para_classes(xml: &str) -> Vec<char> {
 #[test]
 fn report_x_table_doc_meshes_cells() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = root.join("../neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
+    let src =
+        root.join("tests/corpus/neurotic_docx_bench/corpus/word_redlines_superdoc/docx_source");
     let a = src.join("evals__report_with_formatting_03f385ed.docx");
     let b = src.join("evals__table_doc_4d728d83.docx");
     if !a.exists() || !b.exists() {
