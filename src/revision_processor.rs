@@ -2999,6 +2999,19 @@ fn reject_revisions_for_styles_transform(dom: &mut Dom, node: NodeId) -> Option<
 
 /// The parts `AcceptRevisions`/`RejectRevisions` (:1277/:31) walk, in the C#
 /// order: main, headers, footers, endnotes, footnotes, then styles (flagged).
+/// The main document's numbering part, when it has one.
+fn numbering_part(pkg: &crate::opc::PartFs) -> Option<String> {
+    let main = pkg.main_document_part()?;
+    let rels = pkg.read_rels_for(&main)?;
+    rels.items
+        .iter()
+        .find(|r| {
+            r.target_mode.as_deref() != Some("External")
+                && r.rel_type.rsplit('/').next() == Some("numbering")
+        })
+        .map(|r| pkg.resolve_rel_target(&main, &r.target))
+}
+
 pub(crate) fn revision_bearing_parts(pkg: &crate::opc::PartFs) -> Vec<(String, bool)> {
     let main = pkg
         .main_document_part()
@@ -3091,6 +3104,10 @@ pub(crate) fn resolve_package(
     freeze: Option<Freeze<'_>>,
 ) {
     let parts = revision_bearing_parts(pkg);
+    let levels = numbering_part(pkg)
+        .and_then(|p| pkg.part_string(&p))
+        .map(|xml| style_records::Levels::parse(&xml))
+        .unwrap_or_default();
     let mut kept = false;
     for (part, is_styles) in parts.clone() {
         process_part(pkg, &part, |dom, root| {
@@ -3102,7 +3119,7 @@ pub(crate) fn resolve_package(
                 (true, Resolution::Reject) => {
                     let recorded = style_records::recorded_blocks(dom, root);
                     let rejected = reject_revisions_for_styles_transform(dom, root)?;
-                    style_records::restore_against_built_ins(dom, rejected, &recorded);
+                    style_records::restore_against_built_ins(dom, rejected, &recorded, &levels);
                     accept_revisions_for_styles_transform(dom, rejected)
                 }
                 (false, _) => {

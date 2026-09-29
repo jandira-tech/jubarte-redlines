@@ -109,6 +109,8 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
     style's ancestors. A property the old record lacks takes the built-in
     value, and a value the style would inherit anyway is dropped. The
     style's linked character style takes the restored run properties.
+  - A numbered style's restored paragraph properties drop what its numbering
+    level already says (the level's indents, tabs and spacing), as Word does.
 - `jubarte debug A B -c text` / `-c runs` pairs header and footer parts by
   the section reference that shows them, so Word's renumbered parts compare
   with their counterparts.

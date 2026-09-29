@@ -17,6 +17,10 @@
 //! A paragraph style's linked character style takes the same old rPr,
 //! resolved against its own chain (R28: d8b0c2ae01's Heading 1 Char,
 //! bf3d5eb650's Header Char, 3866f441cc's Comment Text Char).
+//!
+//! A numbered style's restored slot also goes where it equals its numbering
+//! level's pPr, which supplies it anyway (R29: 2288f27be1 and 2e3f1e261d's
+//! List Bullet / List Number indents and num tabs, 512b24be1e, f8c1ce3e92).
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -194,11 +198,13 @@ fn slot_values(dom: &Dom, block: NodeId) -> HashMap<Slot, String> {
                 }
             }
             None => {
-                let children: String = dom
+                let mut children: Vec<String> = dom
                     .elements(prop, None)
                     .into_iter()
-                    .map(|c| dom.serialize_element(c))
+                    .map(|c| signature(dom, c))
                     .collect();
+                children.sort();
+                let children = children.concat();
                 let slot = slot("");
                 let value = slot.value(attrs, &children);
                 out.insert(slot, value);
@@ -206,6 +212,90 @@ fn slot_values(dom: &Dom, block: NodeId) -> HashMap<Slot, String> {
         }
     }
     out
+}
+
+/// An element's name, sorted attributes and sorted child signatures: equal
+/// for the same property whatever the attribute or child order (tabs).
+fn signature(dom: &Dom, e: NodeId) -> String {
+    let mut attrs: Vec<String> = dom
+        .attributes(e)
+        .into_iter()
+        .filter(|(a, _)| !dom.is_namespace_declaration(a))
+        .map(|(a, v)| format!("{}={v}", a.local_name()))
+        .collect();
+    attrs.sort();
+    let mut children: Vec<String> = dom
+        .elements(e, None)
+        .into_iter()
+        .map(|c| signature(dom, c))
+        .collect();
+    children.sort();
+    let name = dom
+        .name(e)
+        .map_or(String::new(), |n| n.local_name().to_string());
+    format!("{name}({}){{{}}}", attrs.join(","), children.concat())
+}
+
+/// The pPr slots of each numbering level by `(numId, ilvl)`, a
+/// `lvlOverride`'s level taking over the abstract one.
+#[derive(Default)]
+pub(super) struct Levels(HashMap<(String, String), HashMap<Slot, String>>);
+
+impl Levels {
+    pub(super) fn parse(numbering_xml: &str) -> Self {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(numbering_xml);
+        let Some(root) = dom.root(doc) else {
+            return Self::default();
+        };
+        let level_pprs = |dom: &Dom, parent: NodeId| -> Vec<(String, NodeId)> {
+            dom.elements(parent, Some(&W::name("lvl")))
+                .into_iter()
+                .filter_map(|l| {
+                    let ilvl = dom.attribute(l, &W::name("ilvl")).unwrap_or("0");
+                    Some((ilvl.to_string(), dom.element(l, &W::name("pPr"))?))
+                })
+                .collect()
+        };
+        let abstracts: HashMap<String, Vec<(String, NodeId)>> = dom
+            .elements(root, Some(&W::name("abstractNum")))
+            .into_iter()
+            .filter_map(|a| {
+                let id = dom.attribute(a, &W::name("abstractNumId"))?;
+                Some((id.to_string(), level_pprs(&dom, a)))
+            })
+            .collect();
+        let mut out = HashMap::new();
+        for num in dom.elements(root, Some(&W::name("num"))) {
+            let Some(num_id) = dom.attribute(num, &W::name("numId")) else {
+                continue;
+            };
+            let mut levels: HashMap<String, NodeId> = dom
+                .element(num, &W::name("abstractNumId"))
+                .and_then(|a| dom.attribute(a, &W::val()))
+                .and_then(|a| abstracts.get(a))
+                .map(|l| l.iter().cloned().collect())
+                .unwrap_or_default();
+            for over in dom.elements(num, Some(&W::name("lvlOverride"))) {
+                levels.extend(level_pprs(&dom, over));
+            }
+            for (ilvl, ppr) in levels {
+                out.insert((num_id.to_string(), ilvl), slot_values(&dom, ppr));
+            }
+        }
+        Self(out)
+    }
+
+    /// The level `pPr` numPr names: its numId and ilvl (0 when absent).
+    fn of(&self, dom: &Dom, num_pr: NodeId) -> Option<&HashMap<Slot, String>> {
+        let val = |local: &str| {
+            dom.element(num_pr, &W::name(local))
+                .and_then(|e| dom.attribute(e, &W::val()))
+        };
+        let num_id = val("numId")?;
+        self.0
+            .get(&(num_id.to_string(), val("ilvl").unwrap_or("0").to_string()))
+    }
 }
 
 /// The `(styleId, block)` pairs of paragraph styles whose `pPr`/`rPr` holds
@@ -242,6 +332,7 @@ pub(super) fn restore_against_built_ins(
     dom: &mut Dom,
     styles_root: NodeId,
     restored: &[(String, &'static str)],
+    levels: &Levels,
 ) {
     let by_id: HashMap<String, NodeId> = dom
         .elements(styles_root, Some(&W::name("style")))
@@ -273,7 +364,7 @@ pub(super) fn restore_against_built_ins(
         })
         .collect();
     for (_, style, block) in order {
-        resolve(dom, styles_root, &by_id, style, block);
+        resolve(dom, styles_root, &by_id, levels, style, block);
     }
     for (chr, old) in linked {
         if let Some(own) = dom.element(chr, &W::name("rPr")) {
@@ -283,7 +374,7 @@ pub(super) fn restore_against_built_ins(
             let block = ensure_block(dom, chr, "rPr");
             dom.replace_with(block, &[old]);
         }
-        resolve(dom, styles_root, &by_id, chr, "rPr");
+        resolve(dom, styles_root, &by_id, levels, chr, "rPr");
     }
 }
 
@@ -307,11 +398,13 @@ fn ancestors(dom: &Dom, by_id: &HashMap<String, NodeId>, style: NodeId) -> Vec<N
 }
 
 /// Rewrite `style`'s `block_local` so each slot says what its old value was
-/// only where the chain would say otherwise.
+/// only where the chain, or for a pPr the style's numbering level, would say
+/// otherwise.
 fn resolve(
     dom: &mut Dom,
     styles_root: NodeId,
     by_id: &HashMap<String, NodeId>,
+    levels: &Levels,
     style: NodeId,
     block_local: &str,
 ) {
@@ -319,6 +412,16 @@ fn resolve(
         .into_iter()
         .filter_map(|a| dom.element(a, &W::name(block_local)))
         .collect();
+    let own_block = dom.element(style, &W::name(block_local));
+    // The level of the nearest numPr naming a list, own first.
+    let level = (block_local == "pPr")
+        .then(|| {
+            own_block.iter().chain(&inherited).find_map(|&b| {
+                let num_pr = dom.element(b, &W::name("numPr"))?;
+                levels.of(dom, num_pr)
+            })
+        })
+        .flatten();
     if let Some(dd) = dom
         .element(styles_root, &W::name("docDefaults"))
         .and_then(|d| dom.element(d, &W::name(&format!("{block_local}Default"))))
@@ -326,7 +429,6 @@ fn resolve(
     {
         inherited.push(dd);
     }
-    let own_block = dom.element(style, &W::name(block_local));
     let own = own_block.map(|b| slot_values(dom, b)).unwrap_or_default();
     let chain: Vec<HashMap<Slot, String>> =
         inherited.iter().map(|&b| slot_values(dom, b)).collect();
@@ -341,7 +443,10 @@ fn resolve(
             .find_map(|c| c.get(&slot).cloned())
             .or_else(|| slot.built_in_value());
         match own.get(&slot) {
-            Some(value) if inherits.as_ref() == Some(value) => {
+            Some(value)
+                if inherits.as_ref() == Some(value)
+                    || level.and_then(|l| l.get(&slot)) == Some(value) =>
+            {
                 if let Some(block) = own_block {
                     drop_slot(dom, block, &slot);
                 }

@@ -412,3 +412,101 @@ fn reject_of_a_paragraph_style_record_resyncs_its_linked_character_style() {
         ["color(val=000000)"]
     );
 }
+
+fn numbering_part(xml: &str) -> Part<'_> {
+    Part {
+        name: "word/numbering.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering",
+        xml,
+    }
+}
+
+/// R29: a numbered style's restored indent and tabs go where they equal its
+/// numbering level's, since the level supplies them anyway. The level is the
+/// style's own numPr or the one it inherits, with a `lvlOverride` level
+/// taking over the abstract one; tabs compare by value, not attribute order.
+/// Only equal values go: a style's own tabs other than the level's stay, and
+/// the level never adds a value the old record lacks. Read off Word's Reject
+/// All of its own redlines: 2288f27be1 and 2e3f1e261d (List Bullet / List
+/// Number 1-3 lose ind and the num tab), 512b24be1e (Bullets loses its
+/// ind=170, keeps its own 252/284 tabs), f8c1ce3e92 (LAP Table Bullet).
+#[test]
+fn reject_of_a_numbered_style_record_drops_what_its_numbering_level_says() {
+    let w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    let old = |num: &str, body: &str| {
+        format!(
+            r#"<w:pPr><w:numPr>{num}</w:numPr><w:contextualSpacing/><w:pPrChange w:id="1" {REV}><w:pPr><w:numPr>{num}</w:numPr>{body}<w:contextualSpacing/></w:pPr></w:pPrChange></w:pPr>"#
+        )
+    };
+    let bullet = old(
+        r#"<w:numId w:val="1"/>"#,
+        r#"<w:tabs><w:tab w:pos="360" w:val="num"/></w:tabs><w:ind w:hanging="360" w:left="360"/>"#,
+    );
+    let own_tabs = old(
+        r#"<w:numId w:val="1"/>"#,
+        r#"<w:tabs><w:tab w:val="left" w:pos="252"/></w:tabs><w:ind w:left="360" w:hanging="360"/>"#,
+    );
+    let second = old(
+        r#"<w:ilvl w:val="1"/><w:numId w:val="1"/>"#,
+        r#"<w:ind w:left="720" w:hanging="360"/>"#,
+    );
+    let overridden = old(
+        r#"<w:numId w:val="2"/>"#,
+        r#"<w:spacing w:before="120"/><w:ind w:left="360" w:hanging="360"/>"#,
+    );
+    let derived = format!(
+        r#"<w:pPr><w:pPrChange w:id="2" {REV}><w:pPr><w:ind w:left="360" w:hanging="360"/></w:pPr></w:pPrChange></w:pPr>"#
+    );
+    let style = |id: &str, based: &str, ppr: &str| {
+        format!(
+            r#"<w:style w:type="paragraph" w:styleId="{id}"><w:name w:val="{id}"/><w:basedOn w:val="{based}"/>{ppr}</w:style>"#
+        )
+    };
+    let styles = format!(
+        r#"<w:styles xmlns:w="{w}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>{}{}{}{}{}</w:styles>"#,
+        style("ListBullet", "Normal", &bullet),
+        style("OwnTabs", "Normal", &own_tabs),
+        style("Second", "Normal", &second),
+        style("Overridden", "Normal", &overridden),
+        style("Derived", "ListBullet", &derived),
+    );
+    let level = |ilvl: u8, left: u16| {
+        format!(
+            r#"<w:lvl w:ilvl="{ilvl}"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="-"/><w:lvlJc w:val="left"/><w:pPr><w:tabs><w:tab w:val="num" w:pos="{left}"/></w:tabs><w:ind w:left="{left}" w:hanging="360"/></w:pPr></w:lvl>"#
+        )
+    };
+    let numbering = format!(
+        r#"<w:numbering xmlns:w="{w}"><w:abstractNum w:abstractNumId="0">{}{}</w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num><w:num w:numId="2"><w:abstractNumId w:val="0"/><w:lvlOverride w:ilvl="0">{}</w:lvlOverride></w:num></w:numbering>"#,
+        level(0, 360),
+        level(1, 720),
+        level(0, 1080),
+    );
+    let rejected = reject_revisions(&docx_with(
+        r#"<w:p><w:r><w:t>Text</w:t></w:r></w:p>"#,
+        &[styles_part(&styles), numbering_part(&numbering)],
+    ))
+    .unwrap();
+    assert_word_valid_package(&rejected);
+    let xml = part_string(&rejected, "word/styles.xml").unwrap();
+    let pairs = [
+        ("ListBullet", vec!["numPr()", "contextualSpacing()"]),
+        ("OwnTabs", vec!["numPr()", "tabs()", "contextualSpacing()"]),
+        ("Second", vec!["numPr()", "contextualSpacing()"]),
+        (
+            "Overridden",
+            vec![
+                "numPr()",
+                "spacing(before=120)",
+                "ind(hanging=360,left=360)",
+                "contextualSpacing()",
+            ],
+        ),
+        // Its old record leaves contextualSpacing unsaid, which is the
+        // built-in off against ListBullet's on (R27).
+        ("Derived", vec!["contextualSpacing(val=0)"]),
+    ];
+    for (id, want) in pairs {
+        assert_eq!(style_props(&xml, id, "pPr"), want, "{id}");
+    }
+}
