@@ -115,6 +115,9 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- `jubarte-wasm`: the patched `rdocx-opc` decodes escaped attribute values
+  when it reads relationships and content types, so a hyperlink target
+  holding `&amp;` is written back once instead of as `&amp;amp;`.
 - A text box whose text changed no longer disappears from a Word-mode
   redline. Three late passes that rebuild a revised paragraph from the text
   of its insertion and deletion also read the text inside the box, so the
