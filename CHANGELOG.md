@@ -114,6 +114,28 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   the redline did not give the revised document. They now leave any
   paragraph alone whose runs hold anything besides text. Present since at
   least 0.7.1 (fixtures_500 00b81efae883).
+- Word mode marks a text box's changed words inside the one box, as Word
+  does, in the DrawingML shape and its VML fallback alike, instead of
+  deleting the old box and inserting the new one. A shape wrapped in
+  `mc:AlternateContent` is now a word of its own in the Word-mode diff, as
+  a bare drawing already was, so a changed box no longer takes the
+  unchanged shape or text beside it into its replacement (a deleted and
+  reinserted VML group repeated its shape id; fixtures_500 003329b501a7).
+  Changing one word in every text box of the fixture documents now keeps
+  all their boxes (22 of 22 documents).
+- A document whose sections have their own headers or footers no longer
+  redlines them against the wrong section's: they were paired by kind and
+  type alone, so every section's default footer met the last section's,
+  and an unchanged "Page 1 of 4" footer came out deleted and reinserted as
+  "Page 4 of 4". Parts pair by section now, and an unchanged part is left
+  alone.
+- Word mode no longer invents paragraph property changes. The last
+  paragraph of a story with a few words revised kept its spacing live only
+  when the paragraph was replaced whole; otherwise its space before moved
+  into a `w:pPrChange`, and an unchanged justified paragraph got an empty
+  one. Word records neither (Word's own redlines of a body, a header and a
+  text box), and the parity ladder's heading-4 pair drops the two
+  `w:pPrChange`s Word does not write.
 
 - Changes in a header or footer that carries a relationship (a logo, a
   hyperlink) are now in the redline. The comparer skipped every such part

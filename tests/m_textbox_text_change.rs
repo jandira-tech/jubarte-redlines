@@ -66,8 +66,19 @@ fn pkg(body: &str) -> Vec<u8> {
 /// text again in the VML fallback.
 fn text_box(text: &str) -> String {
     let content = format!("<w:txbxContent><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:txbxContent>");
+    shape(&content, &content)
+}
+
+/// A linked text box: the text lives in the DrawingML shape, and the VML
+/// fallback holds an empty story.
+fn linked_text_box(text: &str) -> String {
+    let content = format!("<w:txbxContent><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:txbxContent>");
+    shape(&content, "<w:txbxContent/>")
+}
+
+fn shape(content: &str, fallback: &str) -> String {
     format!(
-        r#"<w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="1" behindDoc="1" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>829310</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>228600</wp:posOffset></wp:positionV><wp:extent cx="5904230" cy="218440"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapTopAndBottom/><wp:docPr id="12" name="Text Box 3"/><wp:cNvGraphicFramePr/><a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp><wps:cNvSpPr txBox="1"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="5904230" cy="218440"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx>{content}</wps:txbx><wps:bodyPr rot="0" vert="horz" wrap="square" lIns="0" tIns="0" rIns="0" bIns="0" anchor="t" anchorCtr="0" upright="1"><a:noAutofit/></wps:bodyPr></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></mc:Choice><mc:Fallback><w:pict><v:shape id="Text Box 3" style="position:absolute;margin-left:65.3pt;margin-top:18pt;width:464.9pt;height:17.2pt;z-index:-1"><v:textbox inset="0,0,0,0">{content}</v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r>"#
+        r#"<w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="1" behindDoc="1" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>829310</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>228600</wp:posOffset></wp:positionV><wp:extent cx="5904230" cy="218440"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapTopAndBottom/><wp:docPr id="12" name="Text Box 3"/><wp:cNvGraphicFramePr/><a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp><wps:cNvSpPr txBox="1"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="5904230" cy="218440"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx>{content}</wps:txbx><wps:bodyPr rot="0" vert="horz" wrap="square" lIns="0" tIns="0" rIns="0" bIns="0" anchor="t" anchorCtr="0" upright="1"><a:noAutofit/></wps:bodyPr></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></mc:Choice><mc:Fallback><w:pict><v:shape id="Text Box 3" style="position:absolute;margin-left:65.3pt;margin-top:18pt;width:464.9pt;height:17.2pt;z-index:-1"><v:textbox inset="0,0,0,0">{fallback}</v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r>"#
     )
 }
 
@@ -75,15 +86,28 @@ const OLD: &str = "Overall purpose of the post";
 const NEW: &str = "Overall aim of the post";
 
 fn documents(lead: &str) -> (Vec<u8>, Vec<u8>) {
+    documents_with(lead, text_box, "")
+}
+
+fn documents_with(lead: &str, make: fn(&str) -> String, trail: &str) -> (Vec<u8>, Vec<u8>) {
     let around = |text: &str| {
         format!(
             "<w:p><w:r><w:t>Intro paragraph here.</w:t></w:r></w:p>\
-             <w:p>{lead}{}</w:p>\
+             <w:p>{lead}{}{trail}</w:p>\
              <w:p><w:r><w:t>After paragraph here.</w:t></w:r></w:p>",
-            text_box(text)
+            make(text)
         )
     };
     (pkg(&around(OLD)), pkg(&around(NEW)))
+}
+
+fn redline(a: &[u8], b: &[u8]) -> String {
+    let out = compare_documents_with_settings(a, b, &settings(true)).expect("compare");
+    assert_word_valid_package(&out);
+    PartFs::open(&out)
+        .expect("open")
+        .part_string("word/document.xml")
+        .unwrap()
 }
 
 fn inside(dom: &Dom, node: NodeId, name: &jubarte::xmllinq::XName) -> bool {
@@ -176,6 +200,34 @@ fn check(word_mode: bool, lead: &str) {
         assert_eq!(accepted, [NEW], "{label} after accept: {xml}");
         assert_eq!(rejected, [OLD], "{label} after reject: {xml}");
     }
+
+    // Word keeps the one box and marks the changed words inside it, in the
+    // shape and the fallback alike; PowerTools replaces the box whole.
+    if word_mode {
+        assert_eq!((drawings, picts), (1, 1), "Word keeps one box: {xml}");
+        for b in dom.descendants(root, Some(&W::name("txbxContent"))) {
+            let marked =
+                |kind: &jubarte::xmllinq::XName, text: &str, name: &jubarte::xmllinq::XName| {
+                    dom.descendants(b, Some(name))
+                        .into_iter()
+                        .any(|t| dom.value(t).trim() == text && inside(&dom, t, kind))
+                };
+            assert!(
+                marked(&W::ins(), "aim", &W::t()),
+                "aim inserted in the box: {xml}"
+            );
+            assert!(
+                marked(&W::del(), "purpose", &W::del_text()),
+                "purpose deleted in the box: {xml}"
+            );
+        }
+    } else {
+        assert_eq!(
+            (drawings, picts),
+            (2, 2),
+            "PowerTools replaces the box: {xml}"
+        );
+    }
 }
 
 #[test]
@@ -191,4 +243,63 @@ fn word_mode_keeps_a_changed_text_box_after_lead_text() {
 #[test]
 fn conventional_mode_keeps_a_changed_text_box() {
     check(false, "");
+}
+
+/// A linked box's fallback story is empty in both documents; the box is
+/// still kept once, its words marked in the shape.
+#[test]
+fn word_mode_keeps_a_changed_linked_text_box() {
+    let (a, b) = documents_with("", linked_text_box, "");
+    let xml = redline(&a, &b);
+    let mut dom = Dom::new();
+    let d = dom.parse_xdocument(&xml);
+    let root = dom.root(d).unwrap();
+    let count = |name: &jubarte::xmllinq::XName| dom.descendants(root, Some(name)).len();
+    assert_eq!(
+        (count(&W::drawing()), count(&W::pict())),
+        (1, 1),
+        "Word keeps one box: {xml}"
+    );
+    let marked = |kind: &jubarte::xmllinq::XName, text: &str| {
+        dom.descendants(root, None).into_iter().any(|t| {
+            dom.value(t).trim() == text && inside(&dom, t, kind) && inside(&dom, t, &W::drawing())
+        })
+    };
+    assert!(marked(&W::ins(), "aim"), "aim inserted in the box: {xml}");
+    assert!(
+        marked(&W::del(), "purpose"),
+        "purpose deleted in the box: {xml}"
+    );
+}
+
+/// A shape with no text box beside a changed box, and the text glued after
+/// it, are unchanged: none of them sits in a revision (fixtures_500
+/// 003329b501a7: a group shape and "NOS" were deleted and inserted again,
+/// and the group's copy repeated its VML shape id).
+#[test]
+fn word_mode_leaves_a_shape_beside_a_changed_text_box_alone() {
+    let group = r#"<w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="2" behindDoc="1" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>189873</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>55880</wp:posOffset></wp:positionV><wp:extent cx="254000" cy="254000"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapNone/><wp:docPr id="13" name="Rectangle 1"/><wp:cNvGraphicFramePr/><a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp><wps:cNvSpPr/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="254000" cy="254000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></mc:Choice><mc:Fallback><w:pict><v:rect id="Rectangle 1" style="position:absolute;width:20pt;height:20pt"/></w:pict></mc:Fallback></mc:AlternateContent></w:r><w:r><w:t>NOS</w:t></w:r>"#;
+    let (a, b) = documents_with("", text_box, group);
+    let xml = redline(&a, &b);
+    let mut dom = Dom::new();
+    let d = dom.parse_xdocument(&xml);
+    let root = dom.root(d).unwrap();
+    let rects = dom.descendants(
+        root,
+        Some(&jubarte::xmllinq::XName::get(
+            "rect",
+            "urn:schemas-microsoft-com:vml",
+        )),
+    );
+    assert_eq!(rects.len(), 1, "one rectangle: {xml}");
+    for n in rects.into_iter().chain(
+        dom.descendants(root, Some(&W::t()))
+            .into_iter()
+            .filter(|&t| dom.value(t) == "NOS"),
+    ) {
+        assert!(
+            !inside(&dom, n, &W::ins()) && !inside(&dom, n, &W::del()),
+            "unchanged content sits in a revision: {xml}"
+        );
+    }
 }

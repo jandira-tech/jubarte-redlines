@@ -11,7 +11,7 @@ between `jubarte A.docx B.docx` and Word's own redline of the same pair, says
 which side we think is better, and names the mode that picks each behavior.
 
 The evidence is the parity ladder (`tools/parity_ladder.py sweep`, baseline
-`tools/parity_baseline.tsv`, 148 findings on 2026-09-28) over the
+`tools/parity_baseline.tsv`, 146 findings on 2026-09-28) over the
 neurotic_docx_bench `word_based` corpus, plus the 40-pair Word-redline guard
 (`tools/redline40`).
 
@@ -77,8 +77,10 @@ The other 3 of the 32 are not differences:
 ### 3. Formatting-change records (L2/L3)
 
 - **Paragraph formatting (`w:pPrChange`).** Word records the change in 8
-  pairs where we record none, and we record it in 5 pairs where Word
-  doesn't.
+  pairs where we record none, and we record it in 4 pairs where Word
+  doesn't. We no longer record one on a paragraph whose properties did not
+  change (a story's last paragraph with a few words revised, an unchanged
+  justified paragraph); Word never does.
 - **Table formatting (`w:tblPrChange`, `w:tblGridChange`).** We record more
   than Word does (5 pairs).
 - **Row and cell formatting (`w:trPrChange`, `w:tcPrChange`).** Word records

@@ -1808,6 +1808,18 @@ fn para_side_word_count(dom: &Dom, p: NodeId, ins_side: bool) -> usize {
     text.split_whitespace().filter(|w| !w.is_empty()).count()
 }
 
+/// True when a paragraph holds live text outside any `w:ins`/`w:del`.
+fn para_keeps_unchanged_words(dom: &Dom, p: NodeId) -> bool {
+    dom.descendants(p, Some(&W::t())).into_iter().any(|t| {
+        !dom.value_str(t).trim().is_empty()
+            && !dom
+                .ancestors(t, None)
+                .into_iter()
+                .take_while(|&a| a != p)
+                .any(|a| dom.name_is(a, &W::ins()) || dom.name_is(a, &W::del()))
+    })
+}
+
 /// M439 (list_def_mix × list_numbering_reimport ~50.5 / docxodus 90):
 /// pure-I list items with live `numPr` and **no** spacing inherit bloated
 /// package `pPrDefault` (before=240 after=240 line=288) under LO. Word stamps
@@ -4298,6 +4310,14 @@ pub fn last_pure_del_spacing_to_pprchange(
     // - M444: short ins title (1..=4) × long del cover (≥5)
     // - M446a: long ins body (≥5) × short del residual (1..=4) — subtitle
     if is_mixed {
+        // A mixed paragraph that keeps unchanged words is one paragraph with
+        // a few words revised, not a replaced one: Word leaves its properties
+        // live, in the body, a header and a text box alike (fixtures_500
+        // 00b81efae883 "Overall purpose of the post" → "Overall aim of the
+        // post"). file_139's last paragraph was replaced whole.
+        if para_keeps_unchanged_words(dom, last) {
+            return;
+        }
         let ins_w = para_side_word_count(dom, last, true);
         let del_w = para_side_word_count(dom, last, false);
         if (1..=4).contains(&ins_w) && del_w >= 5 {
@@ -11128,14 +11148,35 @@ pub fn ensure_empty_pprchange_on_live_heading_spacing(
     }
 }
 
+/// Each paragraph's text and `w:jc` value, for paragraphs with a `w:jc`.
+pub fn paragraph_alignments(dom: &Dom, body: NodeId) -> HashSet<(String, String)> {
+    dom.descendants(body, Some(&W::p()))
+        .into_iter()
+        .filter_map(|p| {
+            let jc = dom.element(dom.element(p, &W::p_pr())?, &W::jc_el())?;
+            let text: String = dom
+                .descendants(p, Some(&W::t()))
+                .into_iter()
+                .map(|t| dom.value(t))
+                .collect();
+            Some((text, dom.attribute(jc, &W::val()).unwrap_or("").to_string()))
+        })
+        .collect()
+}
+
 /// M454 (center_alignment_2 residual ~87 → 100):
 /// Word EQ title keeps live `jc` + empty `pPrChange`. Engine had live jc only.
+/// The title gained its `jc=center` in the revision; a paragraph the
+/// original already aligned the same way is unchanged, and Word records no
+/// property change on it (fixtures_500 00b81efae883's empty justified
+/// paragraphs), so `original` — the original's (text, jc) pairs — gates it.
 ///
 /// Gate: **EQ only** (no ins/del content or marks) — pure-I empty shells
 /// thrash'd comments subset (−6). No MIX (M451). No rPr mark.
 pub fn ensure_empty_pprchange_on_eq_with_live_jc(
     dom: &mut Dom,
     root: NodeId,
+    original: &HashSet<(String, String)>,
     settings: &WmlComparerSettings,
     id_gen: &mut u32,
 ) {
@@ -11168,7 +11209,16 @@ pub fn ensure_empty_pprchange_on_eq_with_live_jc(
         let Some(ppr) = dom.element(p, &W::p_pr()) else {
             continue;
         };
-        if dom.element(ppr, &W::jc_el()).is_none() {
+        let Some(jc) = dom.element(ppr, &W::jc_el()) else {
+            continue;
+        };
+        let text: String = dom
+            .descendants(p, Some(&W::t()))
+            .into_iter()
+            .map(|t| dom.value(t))
+            .collect();
+        let jc = dom.attribute(jc, &W::val()).unwrap_or("").to_string();
+        if original.contains(&(text, jc)) {
             continue;
         }
         if dom.element(ppr, &W::p_pr_change()).is_some() {

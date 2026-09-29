@@ -9,7 +9,7 @@
 //! elements), then nests words into paragraph/table/row/cell/textbox groups via
 //! the hierarchical grouping key.
 
-use crate::namespaces::{PT, W};
+use crate::namespaces::{MC, PT, W};
 use crate::util::group_adjacent;
 use crate::xmllinq::{Dom, NodeId, XName};
 
@@ -70,6 +70,11 @@ pub fn get_comparison_unit_list(
     // 2003" → "Firearms Act 1973", db433183×9377099d) matched only " Act ":
     // a deleted and an inserted field with crossed ends, which Word refuses.
     let fld_char = W::name("fldChar");
+    // Word mode: a shape wrapped in `mc:AlternateContent` is a word of its own,
+    // as a bare `w:drawing` or `w:pict` already is. Glued to the text beside
+    // it, a changed text box took its unchanged neighbours ("NOS", a group
+    // shape) into the same replaced word (fixtures_500 003329b501a7).
+    let alternate_content = MC::name("AlternateContent");
     let mut next_index: i64 = 0;
     let mut keyed: Vec<(i64, ComparisonUnitAtom)> = Vec::with_capacity(atoms.len());
     let mut prev_t_char: Option<char> = None;
@@ -153,7 +158,9 @@ pub fn get_comparison_unit_list(
                 key = next_index;
                 prev_t_char = Some(ch);
             }
-        } else if is_word_break_element(&cname) || (word_mode && cname == fld_char) {
+        } else if is_word_break_element(&cname)
+            || (word_mode && (cname == fld_char || cname == alternate_content))
+        {
             next_index += 1;
             key = next_index;
             next_index += 1;

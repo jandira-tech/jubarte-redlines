@@ -113,6 +113,34 @@ fn header_footer_refs(pkg: &PartFs) -> Vec<(String, String, String)> {
     out
 }
 
+/// The revised part a header/footer part is diffed against: the one the
+/// same section references for the same kind and type (the `at`-th such
+/// reference in each document), or none when A's part is unchanged in B.
+/// Keyed by kind and type alone, every section's default footer met the last
+/// section's ("Page 1 of 4" against "Page 4 of 4"), and an unchanged footer
+/// came out deleted and inserted again.
+fn pair_header_footer(
+    pkg1: &PartFs,
+    pkg2: &PartFs,
+    refs_b: &[(String, String, String)],
+    (kind, ty, part_a): (&str, &str, &str),
+    at: usize,
+) -> Option<String> {
+    let same_slot: Vec<&str> = refs_b
+        .iter()
+        .filter(|(k, t, _)| k == kind && t == ty)
+        .map(|(_, _, p)| p.as_str())
+        .collect();
+    let bytes_a = pkg1.part_bytes(part_a);
+    if same_slot.iter().any(|&p| pkg2.part_bytes(p) == bytes_a) {
+        return None;
+    }
+    same_slot
+        .get(at)
+        .or(same_slot.last())
+        .map(|p| p.to_string())
+}
+
 /// Default pinned revision date when the caller doesn't specify one.
 pub const DEFAULT_DATE: &str = "1970-01-01T00:00:00Z";
 
@@ -6360,14 +6388,22 @@ fn compare_documents_impl(
     // (original's) part. That part keeps A's rels, so a part whose B references
     // (a logo, a hyperlink) would resolve to something else there is skipped.
     {
-        let refs_b: std::collections::HashMap<(String, String), String> = header_footer_refs(&pkg2)
-            .into_iter()
-            .map(|(k, t, p)| ((k, t), p))
-            .collect();
+        let refs_b = header_footer_refs(&pkg2);
+        let mut ordinals: std::collections::HashMap<(String, String), usize> =
+            std::collections::HashMap::new();
+        let mut diffed = std::collections::HashSet::new();
         for (kind, ty, part_a) in header_footer_refs(&pkg1) {
-            let Some(part_b) = refs_b.get(&(kind.clone(), ty.clone())) else {
+            let ordinal = ordinals.entry((kind.clone(), ty.clone())).or_default();
+            let at = *ordinal;
+            *ordinal += 1;
+            if !diffed.insert(part_a.clone()) {
+                continue;
+            }
+            let Some(part_b) = pair_header_footer(&pkg1, &pkg2, &refs_b, (&kind, &ty, &part_a), at)
+            else {
                 continue;
             };
+            let part_b = &part_b;
             if let (Some(xa), Some(xb)) = (pkg1.part_string(&part_a), pkg2.part_string(part_b)) {
                 if !part_rels_agree((&pkg1, &part_a), (&pkg2, part_b), &xb) {
                     continue;

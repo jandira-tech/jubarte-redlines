@@ -23,6 +23,7 @@ pub mod preprocess;
 pub mod produce;
 pub mod revisions;
 pub mod tables;
+pub mod textbox;
 pub mod units;
 
 use crate::xmllinq::{Dom, NodeId};
@@ -154,6 +155,9 @@ pub fn compare_bodies_faithful_with_notes(
     // M92 guard: the revised document's own final-paragraph spacing, read
     // before atomize consumes body2.
     let revised_tail_spacing = finalize::last_body_para_spacing(dom, body2);
+    // M454 guard: the original's aligned paragraphs, read before the compare
+    // consumes body1.
+    let original_alignment = finalize::paragraph_alignments(dom, body1);
     let saved_sectpr: Option<NodeId> = {
         let last_sect = |dom: &mut Dom, body: NodeId| {
             dom.element(body, &W::sect_pr())
@@ -878,7 +882,13 @@ pub fn compare_bodies_faithful_with_notes(
         finalize::ensure_empty_pprchange_on_live_heading_spacing(dom, root, settings, &mut id);
         // M454: EQ with live jc missing empty pPrChange (center2 title → 100).
         // EQ only — pure-I empty shells thrash'd comments subset.
-        finalize::ensure_empty_pprchange_on_eq_with_live_jc(dom, root, settings, &mut id);
+        finalize::ensure_empty_pprchange_on_eq_with_live_jc(
+            dom,
+            root,
+            &original_alignment,
+            settings,
+            &mut id,
+        );
         // M451: strip empty pPrChange on mid MIX with live jc (center_alignment_2).
         finalize::strip_empty_pprchange_on_mix_with_live_jc(dom, root);
         finalize::strip_last_pure_del_mark_only_ppr(dom, root);
@@ -988,6 +998,11 @@ pub fn compare_bodies_faithful_with_notes(
     // refused to open the result. Unconditional and last, so it catches the shape
     // whichever pass above produced it, and before the renumber below fixes up the
     // duplicate w:ids the split leaves behind.
+    // Word marks a changed text box's words inside the one box; the diff
+    // sees the box as one opaque run and deletes and inserts it whole.
+    if settings.merge_replaced_paragraphs {
+        textbox::diff_inside_replaced_text_boxes(dom, root, settings);
+    }
     finalize::hoist_hyperlinks_out_of_revisions(dom, root);
     // Same class: w:t/w:instrText under w:del must be delText/delInstrText, or Word
     // offers to repair the file. The schema validator cannot see this, so it has to
