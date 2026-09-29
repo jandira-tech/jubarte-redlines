@@ -66,6 +66,10 @@ pub enum Check {
     /// Part XML without namespace declarations, rsids and paragraph ids, one
     /// element per line.
     Xml,
+    /// `Text` with each paragraph's direct properties and each run's direct
+    /// formatting, revision marks left out; adjacent runs formatted alike
+    /// merge.
+    Runs,
 }
 
 /// The checks a bare `jubarte debug FILE` runs.
@@ -1027,9 +1031,54 @@ const TEXT_PARTS: [&str; 6] = [
     "comments",
 ];
 
+/// Direct properties of `pr` (a `pPr` or `rPr`) on one line: children sorted,
+/// `name`, `name=val` or `name(attr=value,…)`; revision records, the mark's
+/// `rPr` and `sectPr` left out.
+fn props_line(dom: &Dom, pr: NodeId) -> String {
+    let mut items: Vec<String> = dom
+        .nodes(pr)
+        .into_iter()
+        .filter(|&c| dom.is_element(c))
+        .filter(|&c| {
+            !matches!(
+                local(dom, c).as_str(),
+                "ins"
+                    | "del"
+                    | "moveFrom"
+                    | "moveTo"
+                    | "rPrChange"
+                    | "pPrChange"
+                    | "rPr"
+                    | "sectPr"
+            )
+        })
+        .map(|c| {
+            let name = local(dom, c);
+            let mut attrs: Vec<(String, String)> = dom
+                .attributes(c)
+                .into_iter()
+                .filter(|(n, _)| !n.local_name().starts_with("rsid"))
+                .map(|(n, v)| (n.local_name().to_string(), v))
+                .collect();
+            attrs.sort();
+            match attrs.as_slice() {
+                [] => name,
+                [(k, v)] if k == "val" => format!("{name}={v}"),
+                _ => {
+                    let a: Vec<String> = attrs.iter().map(|(k, v)| format!("{k}={v}")).collect();
+                    format!("{name}({})", a.join(","))
+                }
+            }
+        })
+        .collect();
+    items.sort();
+    items.join(" ")
+}
+
 /// `text`: one line per paragraph, table and row of a story part, indented
-/// by table and text box depth. Returns the lines and the paragraph count.
-fn text_lines(dom: &Dom, root: NodeId) -> (Vec<String>, usize) {
+/// by table and text box depth; with `props`, the `runs` view. Returns the
+/// lines and the paragraph count.
+fn text_lines(dom: &Dom, root: NodeId, props: bool) -> (Vec<String>, usize) {
     fn mark(dom: &Dom, n: NodeId, props: &str) -> &'static str {
         let Some(pr) = dom.nodes(n).into_iter().find(|&c| local(dom, c) == props) else {
             return " ";
@@ -1051,12 +1100,14 @@ fn text_lines(dom: &Dom, root: NodeId) -> (Vec<String>, usize) {
         }
         " "
     }
-    /// Text of `n`'s subtree, nested paragraphs left out; `kind` is 0 plain,
-    /// 1 inserted, 2 deleted.
-    fn runs(dom: &Dom, n: NodeId, kind: u8, out: &mut Vec<(u8, String)>) {
-        let push = |k: u8, t: &str, out: &mut Vec<(u8, String)>| match out.last_mut() {
-            Some((lk, lt)) if *lk == k => lt.push_str(t),
-            _ => out.push((k, t.to_string())),
+    /// A stretch of text: revision kind (0 plain, 1 inserted, 2 deleted),
+    /// the run's direct formatting (`runs` view only), the text.
+    type Seg = (u8, Option<String>, String);
+    /// Text of `n`'s subtree, nested paragraphs left out.
+    fn runs(dom: &Dom, n: NodeId, kind: u8, fmt: &Option<String>, props: bool, out: &mut Vec<Seg>) {
+        let push = |t: &str, out: &mut Vec<Seg>| match out.last_mut() {
+            Some((lk, lf, lt)) if *lk == kind && lf == fmt => lt.push_str(t),
+            _ => out.push((kind, fmt.clone(), t.to_string())),
         };
         for c in dom.nodes(n) {
             if dom.is_text(c) {
@@ -1064,63 +1115,101 @@ fn text_lines(dom: &Dom, root: NodeId) -> (Vec<String>, usize) {
             }
             match local(dom, c).as_str() {
                 "p" | "txbxContent" | "pPr" | "rPr" | "instrText" | "delInstrText" => {}
-                "t" | "delText" => push(kind, &dom.value(c), out),
-                "tab" => push(kind, "→", out),
-                "br" | "cr" => push(kind, "↵", out),
-                "commentReference" => push(kind, &format!("[c{}]", attr(dom, c, "id")), out),
-                "footnoteReference" => push(kind, &format!("[f{}]", attr(dom, c, "id")), out),
-                "endnoteReference" => push(kind, &format!("[e{}]", attr(dom, c, "id")), out),
-                "ins" | "moveTo" => runs(dom, c, 1, out),
-                "del" | "moveFrom" => runs(dom, c, 2, out),
-                _ => runs(dom, c, kind, out),
+                "t" | "delText" => push(&dom.value(c), out),
+                "tab" => push("→", out),
+                "br" | "cr" => push("↵", out),
+                "commentReference" => push(&format!("[c{}]", attr(dom, c, "id")), out),
+                "footnoteReference" => push(&format!("[f{}]", attr(dom, c, "id")), out),
+                "endnoteReference" => push(&format!("[e{}]", attr(dom, c, "id")), out),
+                "ins" | "moveTo" => runs(dom, c, 1, fmt, props, out),
+                "del" | "moveFrom" => runs(dom, c, 2, fmt, props, out),
+                "r" if props => {
+                    let rpr = dom.nodes(c).into_iter().find(|&x| local(dom, x) == "rPr");
+                    let f = Some(rpr.map(|r| props_line(dom, r)).unwrap_or_default());
+                    runs(dom, c, kind, &f, props, out);
+                }
+                _ => runs(dom, c, kind, fmt, props, out),
             }
         }
     }
-    fn nested(dom: &Dom, n: NodeId, depth: usize, out: &mut Vec<String>, paras: &mut usize) {
+    /// `[pPr] ¶«mark rPr» ` for the `runs` view.
+    fn para_props(dom: &Dom, p: NodeId) -> String {
+        let Some(ppr) = dom.nodes(p).into_iter().find(|&c| local(dom, c) == "pPr") else {
+            return "[] ¶«» ".to_string();
+        };
+        let mark = dom
+            .nodes(ppr)
+            .into_iter()
+            .find(|&c| local(dom, c) == "rPr")
+            .map(|r| props_line(dom, r))
+            .unwrap_or_default();
+        format!("[{}] ¶«{mark}» ", props_line(dom, ppr))
+    }
+    /// Walk state: the lines, the paragraph count, the `runs` view flag.
+    struct Walk {
+        out: Vec<String>,
+        paras: usize,
+        props: bool,
+    }
+    fn nested(dom: &Dom, n: NodeId, depth: usize, w: &mut Walk) {
         for c in dom.nodes(n) {
             match local(dom, c).as_str() {
                 "p" => {}
-                "txbxContent" => walk(dom, c, depth + 1, out, paras),
-                _ => nested(dom, c, depth, out, paras),
+                "txbxContent" => walk(dom, c, depth + 1, w),
+                _ => nested(dom, c, depth, w),
             }
         }
     }
-    fn walk(dom: &Dom, n: NodeId, depth: usize, out: &mut Vec<String>, paras: &mut usize) {
+    fn walk(dom: &Dom, n: NodeId, depth: usize, w: &mut Walk) {
         let pad = " ".repeat(2 + 2 * depth);
         for c in dom.nodes(n) {
             match local(dom, c).as_str() {
                 "p" => {
-                    *paras += 1;
+                    w.paras += 1;
                     let mut segs = Vec::new();
-                    runs(dom, c, 0, &mut segs);
+                    runs(dom, c, 0, &None, w.props, &mut segs);
                     let text: String = segs
                         .iter()
-                        .map(|(k, t)| match k {
-                            1 => format!("{{+{t}+}}"),
-                            2 => format!("[-{t}-]"),
-                            _ => t.clone(),
+                        .map(|(k, f, t)| {
+                            let f = f.as_ref().map(|f| format!("«{f}»")).unwrap_or_default();
+                            match k {
+                                1 => format!("{{+{f}{t}+}}"),
+                                2 => format!("[-{f}{t}-]"),
+                                _ => format!("{f}{t}"),
+                            }
                         })
                         .collect();
-                    out.push(format!("{pad}¶{} {text}", mark(dom, c, "pPr")));
-                    nested(dom, c, depth, out, paras);
+                    let pp = if w.props {
+                        para_props(dom, c)
+                    } else {
+                        String::new()
+                    };
+                    w.out
+                        .push(format!("{pad}¶{} {pp}{text}", mark(dom, c, "pPr")));
+                    nested(dom, c, depth, w);
                 }
                 "tbl" => {
-                    out.push(format!("{pad}table"));
+                    w.out.push(format!("{pad}table"));
                     for tr in dom.nodes(c).into_iter().filter(|&r| local(dom, r) == "tr") {
-                        out.push(format!("{pad} row{}", mark(dom, tr, "trPr").trim()));
+                        w.out
+                            .push(format!("{pad} row{}", mark(dom, tr, "trPr").trim()));
                         for tc in dom.nodes(tr).into_iter().filter(|&t| local(dom, t) == "tc") {
-                            walk(dom, tc, depth + 1, out, paras);
+                            walk(dom, tc, depth + 1, w);
                         }
                     }
                 }
-                _ if dom.is_element(c) => walk(dom, c, depth, out, paras),
+                _ if dom.is_element(c) => walk(dom, c, depth, w),
                 _ => {}
             }
         }
     }
-    let (mut out, mut paras) = (Vec::new(), 0);
-    walk(dom, root, 0, &mut out, &mut paras);
-    (out, paras)
+    let mut w = Walk {
+        out: Vec::new(),
+        paras: 0,
+        props,
+    };
+    walk(dom, root, 0, &mut w);
+    (w.out, w.paras)
 }
 
 /// `xml`: `xml` without its declaration, namespace declarations,
@@ -1314,12 +1403,16 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
             let doc = dom.parse_xdocument(&xml);
             let Some(root) = dom.root(doc) else { continue };
             if TEXT_PARTS.contains(&local(&dom, root).as_str()) {
-                map.insert(e.name.clone(), text_lines(&dom, root));
+                map.insert(e.name.clone(), text_lines(&dom, root, check == Check::Runs));
             }
         }
         map
     };
-    let label = if check == Check::Xml { "xml" } else { "text" };
+    let label = match check {
+        Check::Xml => "xml",
+        Check::Runs => "runs",
+        _ => "text",
+    };
     let mut out = String::new();
     let a = lines_of(pa);
     let Some(pb) = pb else {
@@ -1484,7 +1577,7 @@ pub fn list(a: &[u8], b: Option<&[u8]>, opts: &Options) -> Result<String, String
 
 /// The report for one package, or the differences between two.
 pub fn report(a: &[u8], b: Option<&[u8]>, opts: &Options) -> Result<String, String> {
-    let is_listing = |c: &Check| matches!(c, Check::Text | Check::Xml);
+    let is_listing = |c: &Check| matches!(c, Check::Text | Check::Xml | Check::Runs);
     if opts.checks.iter().any(is_listing) {
         let pa = Package::open(a)?;
         let pb = match b {
@@ -1961,6 +2054,14 @@ mod tests {
         ] {
             assert!(out.contains(expected), "{expected:?} in\n{out}");
         }
+    }
+
+    #[test]
+    fn runs_show_each_paragraph_with_its_direct_formatting() {
+        let body = r#"<w:p><w:pPr><w:pStyle w:val="Body"/><w:jc w:val="both"/><w:rPr><w:del w:id="1" w:author="A"/><w:sz w:val="20"/></w:rPr></w:pPr><w:r><w:rPr><w:b/><w:rFonts w:cs="Arial" w:ascii="Arial"/><w:sz w:val="24"/></w:rPr><w:t>Bold</w:t></w:r><w:r><w:rPr><w:sz w:val="24"/><w:b/><w:rFonts w:ascii="Arial" w:cs="Arial"/><w:rPrChange w:id="2" w:author="A"><w:rPr/></w:rPrChange></w:rPr><w:t> too</w:t></w:r><w:r><w:t>plain</w:t></w:r><w:r><w:rPr/><w:t> end</w:t></w:r></w:p>"#;
+        let out = report(&docx(body), None, &opts_for(Check::Runs)).unwrap();
+        let expected = "  ¶- [jc=both pStyle=Body] ¶«sz=20» «b rFonts(ascii=Arial,cs=Arial) sz=24»Bold too«»plain end\n";
+        assert!(out.contains(expected), "{expected:?} in\n{out}");
     }
 
     #[test]

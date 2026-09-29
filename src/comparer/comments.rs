@@ -32,7 +32,7 @@ use crate::opc::PartFs;
 use crate::xmllinq::{Dom, NodeId, XName, XNamespace};
 
 /// (part name, content type, relationship type) for the comment part family.
-const FAMILY: [(&str, &str, &str); 4] = [
+pub(crate) const FAMILY: [(&str, &str, &str); 4] = [
     (
         "word/comments.xml",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",

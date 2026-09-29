@@ -293,6 +293,7 @@ enum Command {
         jubarte debug out.docx -c textbox -g FILENAME\n  \
         jubarte debug out.docx -c text            paragraphs with ins/del marks\n  \
         jubarte debug a.docx b.docx -c text       paragraphs that differ, per part\n  \
+        jubarte debug a.docx b.docx -c runs       the same, with direct formatting\n  \
         jubarte debug a.docx b.docx -c xml -p document.xml")]
     Debug {
         /// One package, or two to compare (A then B).
@@ -350,6 +351,10 @@ enum DebugCheck {
     /// Part XML one element per line, without namespace declarations,
     /// rsids or paraIds; with two files, the lines that differ.
     Xml,
+    /// `text` with each paragraph's direct properties [..], its mark's «..»
+    /// and each run's direct formatting «..»; with two files, the lines that
+    /// differ.
+    Runs,
 }
 
 impl From<DebugCheck> for jubarte::debug::Check {
@@ -367,6 +372,7 @@ impl From<DebugCheck> for jubarte::debug::Check {
             DebugCheck::Textbox => Check::Textbox,
             DebugCheck::Text => Check::Text,
             DebugCheck::Xml => Check::Xml,
+            DebugCheck::Runs => Check::Runs,
         }
     }
 }

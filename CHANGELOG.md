@@ -21,7 +21,30 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   `{+inserted+}` / `[-deleted-]` runs, the paragraph mark's revision state
   and table rows; `-c xml` prints part XML one element per line without
   namespace declarations, rsids or paragraph ids. With two files both print
-  only the lines that differ, part by part.
+  only the lines that differ, part by part. `-c runs` is `text` with each
+  paragraph's direct properties and each run's direct formatting, so two
+  builds compare formatting without XML noise.
+
+### Fixed
+
+- `jubarte accept` / `reject` (and `accept_revisions` / `reject_revisions`)
+  now save what Word's Accept All / Reject All save. Measured against Word on
+  51 of Word's own redlines: every paragraph's text and mark state match
+  (5 files differed), 46 match run formatting too, and all 51 pass the
+  OOXML validator.
+  - A comment whose reference was deleted (or, on reject, inserted) goes with
+    its anchors and its commentsExtended / commentsIds / commentsExtensible
+    entries; with no comment left the comment parts are not written;
+    people.xml keeps only the remaining authors.
+  - A run of deleted paragraph marks continues through moved-from marks and
+    across a table whose rows are all deleted.
+  - A bookmark whose span was wholly deleted goes; an empty bookmark inside
+    deleted text now survives, where the deletion was. No half bookmark is
+    left behind.
+  - Bookmarks and comments are renumbered from one counter in document
+    order, as Word numbers them.
+  - A paragraph style naming a character style is dropped, and no empty
+    `w:rPr` / `w:pPr` is written.
 
 ## [0.10.0] - 2026-09-28
 

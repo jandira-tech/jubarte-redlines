@@ -7,6 +7,11 @@
 //! Scope (per the implementation plan): the ACCEPT path only. Reject,
 //! consolidate, and the HTML/markdown surfaces are out of scope.
 
+mod annotation_ids;
+mod bookmarks;
+mod comments;
+mod word_save;
+
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -114,7 +119,18 @@ pub fn accept_move_from_move_to_transform(dom: &mut Dom, node: NodeId) -> Vec<No
         return out;
     }
     if name == W::move_from() {
-        return vec![];
+        // A moved-from paragraph mark (`pPr/rPr/moveFrom`) stays for A.5a,
+        // which joins that paragraph with the next as Word does; dropping it
+        // here left an empty paragraph behind.
+        let is_mark = dom.parent(node).is_some_and(|rpr| {
+            dom.name(rpr) == Some(W::r_pr())
+                && dom.parent(rpr).and_then(|ppr| dom.name(ppr)) == Some(W::p_pr())
+        });
+        return if is_mark {
+            take_subtree(dom, node)
+        } else {
+            vec![]
+        };
     }
     let ne = dom.new_element(name);
     for (an, av) in dom.attributes(node) {
@@ -266,9 +282,11 @@ pub fn accept_all_other_revisions_transform(dom: &mut Dom, node: NodeId) -> Vec<
     // Accept deleted text: drop w:del. Hoist comment range markers that lived
     // inside the deletion so nested/table comment anchors survive accept
     // (docx_lots_of_comments redline: starts 9/10 sit between delText runs;
-    // dropping the whole w:del orphaned those comments → carry 2/6).
+    // dropping the whole w:del orphaned those comments → carry 2/6), and the
+    // bookmarks left there: `bookmarks::drop_wholly_deleted_bookmarks` has
+    // already removed those whose every character went.
     if name == W::del() {
-        return hoist_comment_markers_from(dom, node);
+        return hoist_range_markers_from(dom, node);
     }
 
     // Vertically-merged cell markers.
@@ -1025,9 +1043,17 @@ pub fn accept_move_from_ranges(dom: &mut Dom, document: NodeId) -> NodeId {
     }
 
     let end_set: HashSet<NodeId> = end_tags_in_range.into_iter().collect();
+    // A paragraph's pPr inside the range is its mark, not moved text: its
+    // deleted or moved-from state is what A.5a joins paragraphs by (Word),
+    // and a paragraph that survives keeps its formatting.
+    let ppr = W::p_pr();
     let to_delete: HashSet<NodeId> = start_tags_in_range
         .into_iter()
-        .filter(|e| end_set.contains(e))
+        .filter(|&e| {
+            end_set.contains(&e)
+                && dom.name(e).as_ref() != Some(&ppr)
+                && dom.ancestors(e, Some(&ppr)).is_empty()
+        })
         .collect();
     if to_delete.is_empty() {
         return document;
@@ -1511,6 +1537,16 @@ fn all_para_content_is_deleted(dom: &mut Dom, p: NodeId) -> bool {
     })
 }
 
+/// Does every row of `tbl` carry `trPr/w:del` (and is there a row)?
+fn table_rows_all_deleted(dom: &Dom, tbl: NodeId) -> bool {
+    let rows = dom.elements(tbl, Some(&W::tr()));
+    !rows.is_empty()
+        && rows.into_iter().all(|tr| {
+            dom.element(tr, &W::tr_pr())
+                .is_some_and(|pr| dom.element(pr, &W::del()).is_some())
+        })
+}
+
 /// `p / pPr / rPr / (del | moveFrom)` — is the paragraph mark deleted or
 /// moved from?
 fn paragraph_mark_is_deleted_or_moved_from(dom: &Dom, p: NodeId) -> bool {
@@ -1619,6 +1655,16 @@ pub fn accept_deleted_and_move_from_paragraph_marks_transform(
                     }
                 }
             }
+        } else if tn == W::tbl()
+            && state == 1
+            && c.next_block_content_element
+                .is_some_and(|n| dom.name(n) == Some(W::p()))
+            && table_rows_all_deleted(dom, this)
+        {
+            // Word: a table whose rows are all deleted vanishes on accept
+            // and does not end the deleted-mark run, which goes on to join
+            // the paragraph after it.
+            infos.push((true, current_key));
         } else if tn == W::tbl() || tn.namespace_name() == M::URI {
             current_key += 1;
             infos.push((false, current_key));
@@ -1651,6 +1697,10 @@ pub fn accept_deleted_and_move_from_paragraph_marks_transform(
             for z in group {
                 let this = z.0.this_block_content_element.unwrap();
                 orig_ids.push(this);
+                if dom.name(this) == Some(W::tbl()) {
+                    // A wholly deleted table absorbed into the run.
+                    continue;
+                }
                 for collapsed in collapse_paragraph_transform(dom, this) {
                     dom.add(np, collapsed);
                 }
@@ -1664,8 +1714,9 @@ pub fn accept_deleted_and_move_from_paragraph_marks_transform(
                 next.is_none() || next.is_some_and(|n| dom.name(n) == Some(W::tbl()));
             if all_para_content_is_deleted(dom, np) && last_mark_is_del && next_is_none_or_tbl {
                 // Nuke empty deleted para, but keep comment anchors that lived
-                // inside its w:del runs (starts 9/10 between delText).
-                let markers = hoist_comment_markers_from(dom, np);
+                // and bookmarks that lived inside its w:del runs (starts 9/10
+                // between delText).
+                let markers = hoist_range_markers_from(dom, np);
                 rebuilt.push((orig_ids, None, markers));
             } else {
                 rebuilt.push((orig_ids, Some(np), Vec::new()));
@@ -1771,16 +1822,19 @@ fn is_body_level_range_marker(name: &XName) -> bool {
         )
 }
 
-/// Pull comment range markers out of a subtree being discarded (e.g. accepted
-/// `w:del`) so nested anchors between delText runs are not lost.
-fn hoist_comment_markers_from(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
+/// Pull comment range and bookmark markers out of a subtree being discarded
+/// (e.g. accepted `w:del`) so anchors between delText runs are not lost.
+fn hoist_range_markers_from(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
     let mut out = Vec::new();
     for e in dom.descendants(node, None) {
         let Some(n) = dom.name(e) else {
             continue;
         };
         if n.namespace_name() == W::URI
-            && matches!(n.local_name(), "commentRangeStart" | "commentRangeEnd")
+            && matches!(
+                n.local_name(),
+                "commentRangeStart" | "commentRangeEnd" | "bookmarkStart" | "bookmarkEnd"
+            )
         {
             out.push(dom.clone_subtree(e));
         }
@@ -2632,6 +2686,7 @@ pub fn accept_revisions_for_part_content(dom: &mut Dom, root: NodeId) -> NodeId 
     let has_rev = element_has_tracked_revisions(dom, root);
     let e = remove_rsid_transform(dom, root).expect("root not dropped by rsid removal");
     let e = if has_rev {
+        bookmarks::drop_wholly_deleted_bookmarks(dom, e);
         let e = fix_up_deleted_or_inserted_field_codes_transform(dom, e);
         let contains_move_from = !dom.descendants(e, Some(&W::move_from())).is_empty();
         let e = {
@@ -2654,7 +2709,9 @@ pub fn accept_revisions_for_part_content(dom: &mut Dom, root: NodeId) -> NodeId 
             v[0]
         };
         let e = accept_deleted_cells_transform(dom, e);
-        merge_adjacent_tables_transform(dom, e)
+        let e = merge_adjacent_tables_transform(dom, e);
+        bookmarks::drop_unpaired_bookmarks(dom, e);
+        e
     } else {
         e
     };
@@ -2804,7 +2861,8 @@ where
 /// pipeline over main + headers + footers + endnotes + footnotes, and the
 /// styles transform over the styles part.
 pub fn accept_revisions_package(pkg: &mut crate::opc::PartFs) {
-    for (part, is_styles) in revision_bearing_parts(pkg) {
+    let parts = revision_bearing_parts(pkg);
+    for (part, is_styles) in parts.clone() {
         if is_styles {
             process_part(pkg, &part, |dom, root| {
                 accept_revisions_for_styles_transform(dom, root)
@@ -2815,6 +2873,19 @@ pub fn accept_revisions_package(pkg: &mut crate::opc::PartFs) {
             });
         }
     }
+    let stories = story_parts(&parts);
+    comments::prune_orphan_comments(pkg, &stories);
+    annotation_ids::renumber(pkg, &stories);
+    word_save::tidy(pkg, &stories);
+}
+
+/// The content parts of [`revision_bearing_parts`] (styles left out).
+fn story_parts(parts: &[(String, bool)]) -> Vec<String> {
+    parts
+        .iter()
+        .filter(|(_, is_styles)| !is_styles)
+        .map(|(p, _)| p.clone())
+        .collect()
 }
 
 /// A.11 — `RejectRevisions` (:31) at package scope: per content part, the
@@ -2823,7 +2894,8 @@ pub fn accept_revisions_package(pkg: &mut crate::opc::PartFs) {
 /// is equivalent); the styles part reverts its property changes then accepts
 /// the leftovers.
 pub fn reject_revisions_package(pkg: &mut crate::opc::PartFs) {
-    for (part, is_styles) in revision_bearing_parts(pkg) {
+    let parts = revision_bearing_parts(pkg);
+    for (part, is_styles) in parts.clone() {
         if is_styles {
             process_part(pkg, &part, |dom, root| {
                 let rejected = reject_revisions_for_styles_transform(dom, root)?;
@@ -2835,4 +2907,8 @@ pub fn reject_revisions_package(pkg: &mut crate::opc::PartFs) {
             });
         }
     }
+    let stories = story_parts(&parts);
+    comments::prune_orphan_comments(pkg, &stories);
+    annotation_ids::renumber(pkg, &stories);
+    word_save::tidy(pkg, &stories);
 }
