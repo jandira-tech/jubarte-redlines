@@ -4377,6 +4377,21 @@ fn wrap_bare_breaks(dom: &mut Dom, root: NodeId) {
     }
 }
 
+/// The styleIds the package's stylesheet defines, or `None` without one.
+fn defined_style_ids(pkg: &PartFs, main: &str) -> Option<std::collections::HashSet<String>> {
+    let part = pkg.read_rels_for(main).and_then(|rels| {
+        rels.items
+            .iter()
+            .find(|r| r.target_mode.is_none() && r.rel_type.ends_with("/styles"))
+            .map(|r| pkg.resolve_rel_target(main, &r.target))
+    })?;
+    let xml = pkg.part_string(&part)?;
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc)?;
+    Some(crate::comparer::footnotes::defined_style_ids(&dom, root))
+}
+
 /// C.1/C.2 — `WmlComparer.PreProcessMarkup` (:434) at package level:
 /// `ChangeFootnoteEndnoteReferencesToUniqueRange` (:1627) then
 /// `AddFootnotesEndnotesParts` (:1604). C.3–C.5 extend it with
@@ -4451,8 +4466,16 @@ pub fn pre_process_markup(
     }
 
     // Before the unids, so the runs the repair adds get theirs.
+    let style_ids = defined_style_ids(pkg, &main);
     for r in [Some(main_root), fn_root, en_root].into_iter().flatten() {
         wrap_bare_breaks(&mut dom, r);
+        // Word reads a paragraph or run naming a style its own stylesheet
+        // lacks as unstyled. Kept until the stylesheets merge, the reference
+        // took the other document's style of that id (221577c35b: the
+        // original's Normal text turned into the revision's headings).
+        if let Some(ids) = &style_ids {
+            crate::comparer::footnotes::strip_unresolved_style_refs(&mut dom, r, ids);
+        }
     }
 
     // C.5 — `AddUnidsToMarkupInContentParts` (:600): stamp `pt:Unid` on every

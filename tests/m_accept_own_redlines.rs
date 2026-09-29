@@ -1777,3 +1777,76 @@ fn normal_records_both_blocks_against_the_docdefaults() {
         "{r}"
     );
 }
+
+/// A document whose stylesheet defines only Normal, or also `Heading1`.
+fn docx_heading_styles(body: &str, with_heading: bool) -> Vec<u8> {
+    let heading = if with_heading {
+        r#"<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="32"/></w:rPr></w:style>"#
+    } else {
+        ""
+    };
+    let styles = format!(
+        r#"<w:styles xmlns:w="{w}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>{heading}</w:styles>"#,
+        w = common::docx::W_NS
+    );
+    common::docx::docx_with(
+        body,
+        &[Part {
+            name: "word/styles.xml",
+            content_type: STYLES,
+            rel_type: STYLES_REL,
+            xml: &styles,
+        }],
+    )
+}
+
+/// Each top-level body paragraph's whole `w:pPr` as xml.
+fn body_ppr_xml(pkg: &[u8]) -> Vec<String> {
+    let xml = part_string(pkg, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    let body = dom.element(root, &W::body()).unwrap();
+    dom.elements(body, Some(&W::p()))
+        .into_iter()
+        .map(|p| {
+            dom.element(p, &W::p_pr())
+                .map(|n| dom.serialize_element(n))
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+/// The original's paragraphs name `Heading1`, which its stylesheet does not
+/// define, so Word reads them as Normal; the revision defines `Heading1` as
+/// 16pt Times New Roman. Word's redline drops the dangling reference. Ours
+/// kept it, so once the revision's style arrived the original's text turned
+/// into headings, in the redline and in Reject All (221577c35b: 62.18
+/// against A's own PDF; Word's redline 99.10).
+#[test]
+fn a_paragraph_style_the_original_does_not_define_is_dropped() {
+    let base = docx_heading_styles(
+        r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Shared line</w:t></w:r></w:p>"#,
+        false,
+    );
+    let next = docx_heading_styles(
+        r#"<w:p><w:r><w:t>Shared line</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>New heading</w:t></w:r></w:p>"#,
+        true,
+    );
+    let redline = compare_documents(&base, &next, "Redline").unwrap();
+    assert_word_valid_package(&redline);
+    let pprs = body_ppr_xml(&redline);
+    assert!(
+        !pprs[0].contains("Heading1"),
+        "the shared line is Normal on both sides: {pprs:?}"
+    );
+    assert!(pprs[1].contains("Heading1"), "{pprs:?}");
+    let rejected = reject_revisions(&redline).unwrap();
+    assert!(
+        body_ppr_xml(&rejected)
+            .iter()
+            .all(|p| !p.contains("Heading1")),
+        "{:?}",
+        body_ppr_xml(&rejected)
+    );
+}
