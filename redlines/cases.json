@@ -3808,17 +3808,28 @@
     "rejected/with_comments_tracking/0f031c23c3/jubarte-rust/page_001.webp",
     "rejected/with_comments_tracking/0f031c23c3/jubarte-rust/page_002.webp",
     "rejected/with_comments_tracking/0f031c23c3/jubarte-rust/page_003.webp"
+   ],
+   "docxodus": [
+    "rejected/with_comments_tracking/0f031c23c3/docxodus/page_001.webp",
+    "rejected/with_comments_tracking/0f031c23c3/docxodus/page_002.webp",
+    "rejected/with_comments_tracking/0f031c23c3/docxodus/page_003.webp"
    ]
   },
   "page_counts": {
    "reference": 11,
-   "jubarte-rust": 10
+   "jubarte-rust": 10,
+   "docxodus": 11
   },
   "scores": {
    "jubarte-rust": {
     "jaccard": 4.5,
     "ssim": 12.7,
     "text_boundary": 53.0
+   },
+   "docxodus": {
+    "jaccard": 4.3,
+    "ssim": 12.4,
+    "text_boundary": 11.6
    }
   },
   "times": {},
@@ -3833,14 +3844,23 @@
    ],
    "jubarte-rust": [
     "rejected/with_comments_tracking/1dbbf3be63/jubarte-rust/page_001.webp"
+   ],
+   "docxodus": [
+    "rejected/with_comments_tracking/1dbbf3be63/docxodus/page_001.webp"
    ]
   },
   "page_counts": {
    "reference": 1,
-   "jubarte-rust": 1
+   "jubarte-rust": 1,
+   "docxodus": 1
   },
   "scores": {
    "jubarte-rust": {
+    "jaccard": 99.5,
+    "ssim": 99.9,
+    "text_boundary": 100.0
+   },
+   "docxodus": {
     "jaccard": 99.5,
     "ssim": 99.9,
     "text_boundary": 100.0
@@ -3858,16 +3878,25 @@
    ],
    "jubarte-rust": [
     "rejected/with_comments_tracking/7cc19c9376/jubarte-rust/page_001.webp"
+   ],
+   "docxodus": [
+    "rejected/with_comments_tracking/7cc19c9376/docxodus/page_001.webp"
    ]
   },
   "page_counts": {
    "reference": 1,
-   "jubarte-rust": 1
+   "jubarte-rust": 1,
+   "docxodus": 1
   },
   "scores": {
    "jubarte-rust": {
     "jaccard": 4.6,
     "ssim": 22.4,
+    "text_boundary": 100.0
+   },
+   "docxodus": {
+    "jaccard": 11.3,
+    "ssim": 28.5,
     "text_boundary": 100.0
    }
   },
@@ -3883,17 +3912,25 @@
    ],
    "jubarte-rust": [
     "rejected/with_comments_tracking/7da45f822a/jubarte-rust/page_001.webp"
+   ],
+   "docxodus": [
+    "rejected/with_comments_tracking/7da45f822a/docxodus/page_001.webp"
    ]
   },
   "page_counts": {
    "reference": 1,
-   "jubarte-rust": 1
+   "jubarte-rust": 1,
+   "docxodus": 1
   },
   "scores": {
    "jubarte-rust": {
     "jaccard": 95.9,
     "ssim": 96.9,
     "text_boundary": 66.7
+   },
+   "docxodus": {
+    "jaccard": 0.9,
+    "ssim": 6.2
    }
   },
   "times": {},
@@ -3912,17 +3949,28 @@
     "rejected/with_comments_tracking/30f20e787b/jubarte-rust/page_001.webp",
     "rejected/with_comments_tracking/30f20e787b/jubarte-rust/page_002.webp",
     "rejected/with_comments_tracking/30f20e787b/jubarte-rust/page_003.webp"
+   ],
+   "docxodus": [
+    "rejected/with_comments_tracking/30f20e787b/docxodus/page_001.webp",
+    "rejected/with_comments_tracking/30f20e787b/docxodus/page_002.webp",
+    "rejected/with_comments_tracking/30f20e787b/docxodus/page_003.webp"
    ]
   },
   "page_counts": {
    "reference": 11,
-   "jubarte-rust": 12
+   "jubarte-rust": 12,
+   "docxodus": 11
   },
   "scores": {
    "jubarte-rust": {
     "jaccard": 3.8,
     "ssim": 12.6,
     "text_boundary": 21.5
+   },
+   "docxodus": {
+    "jaccard": 6.2,
+    "ssim": 12.5,
+    "text_boundary": 90.8
    }
   },
   "times": {},
@@ -3941,17 +3989,28 @@
     "rejected/with_comments_tracking/58c827e77a/jubarte-rust/page_001.webp",
     "rejected/with_comments_tracking/58c827e77a/jubarte-rust/page_002.webp",
     "rejected/with_comments_tracking/58c827e77a/jubarte-rust/page_003.webp"
+   ],
+   "docxodus": [
+    "rejected/with_comments_tracking/58c827e77a/docxodus/page_001.webp",
+    "rejected/with_comments_tracking/58c827e77a/docxodus/page_002.webp",
+    "rejected/with_comments_tracking/58c827e77a/docxodus/page_003.webp"
    ]
   },
   "page_counts": {
    "reference": 11,
-   "jubarte-rust": 9
+   "jubarte-rust": 9,
+   "docxodus": 10
   },
   "scores": {
    "jubarte-rust": {
     "jaccard": 4.7,
     "ssim": 13.0,
     "text_boundary": 23.1
+   },
+   "docxodus": {
+    "jaccard": 4.7,
+    "ssim": 12.5,
+    "text_boundary": 33.9
    }
   },
   "times": {},
@@ -3966,14 +4025,23 @@
    ],
    "jubarte-rust": [
     "rejected/with_comments_tracking/69a4d71d6f/jubarte-rust/page_001.webp"
+   ],
+   "docxodus": [
+    "rejected/with_comments_tracking/69a4d71d6f/docxodus/page_001.webp"
    ]
   },
   "page_counts": {
    "reference": 1,
-   "jubarte-rust": 1
+   "jubarte-rust": 1,
+   "docxodus": 1
   },
   "scores": {
    "jubarte-rust": {
+    "jaccard": 100.0,
+    "ssim": 100.0,
+    "text_boundary": 100.0
+   },
+   "docxodus": {
     "jaccard": 100.0,
     "ssim": 100.0,
     "text_boundary": 100.0
@@ -3991,14 +4059,23 @@
    ],
    "jubarte-rust": [
     "rejected/with_comments_tracking/79f93926e2/jubarte-rust/page_001.webp"
+   ],
+   "docxodus": [
+    "rejected/with_comments_tracking/79f93926e2/docxodus/page_001.webp"
    ]
   },
   "page_counts": {
    "reference": 1,
-   "jubarte-rust": 1
+   "jubarte-rust": 1,
+   "docxodus": 1
   },
   "scores": {
    "jubarte-rust": {
+    "jaccard": 100.0,
+    "ssim": 100.0,
+    "text_boundary": 100.0
+   },
+   "docxodus": {
     "jaccard": 100.0,
     "ssim": 100.0,
     "text_boundary": 100.0
@@ -4016,17 +4093,25 @@
    ],
    "jubarte-rust": [
     "rejected/with_comments_tracking/589b832f86/jubarte-rust/page_001.webp"
+   ],
+   "docxodus": [
+    "rejected/with_comments_tracking/589b832f86/docxodus/page_001.webp"
    ]
   },
   "page_counts": {
    "reference": 1,
-   "jubarte-rust": 1
+   "jubarte-rust": 1,
+   "docxodus": 1
   },
   "scores": {
    "jubarte-rust": {
     "jaccard": 40.5,
     "ssim": 50.8,
     "text_boundary": 100.0
+   },
+   "docxodus": {
+    "jaccard": 5.7,
+    "ssim": 12.3
    }
   },
   "times": {},
@@ -4041,14 +4126,23 @@
    ],
    "jubarte-rust": [
     "rejected/with_comments_tracking/849e0cb7c4/jubarte-rust/page_001.webp"
+   ],
+   "docxodus": [
+    "rejected/with_comments_tracking/849e0cb7c4/docxodus/page_001.webp"
    ]
   },
   "page_counts": {
    "reference": 1,
-   "jubarte-rust": 1
+   "jubarte-rust": 1,
+   "docxodus": 1
   },
   "scores": {
    "jubarte-rust": {
+    "jaccard": 100.0,
+    "ssim": 100.0,
+    "text_boundary": 100.0
+   },
+   "docxodus": {
     "jaccard": 100.0,
     "ssim": 100.0,
     "text_boundary": 100.0
@@ -4066,14 +4160,23 @@
    ],
    "jubarte-rust": [
     "rejected/with_comments_tracking/2061218d44/jubarte-rust/page_001.webp"
+   ],
+   "docxodus": [
+    "rejected/with_comments_tracking/2061218d44/docxodus/page_001.webp"
    ]
   },
   "page_counts": {
    "reference": 1,
-   "jubarte-rust": 1
+   "jubarte-rust": 1,
+   "docxodus": 1
   },
   "scores": {
    "jubarte-rust": {
+    "jaccard": 100.0,
+    "ssim": 100.0,
+    "text_boundary": 100.0
+   },
+   "docxodus": {
     "jaccard": 100.0,
     "ssim": 100.0,
     "text_boundary": 100.0
@@ -4091,14 +4194,23 @@
    ],
    "jubarte-rust": [
     "rejected/with_comments_tracking/71159007ab/jubarte-rust/page_001.webp"
+   ],
+   "docxodus": [
+    "rejected/with_comments_tracking/71159007ab/docxodus/page_001.webp"
    ]
   },
   "page_counts": {
    "reference": 1,
-   "jubarte-rust": 1
+   "jubarte-rust": 1,
+   "docxodus": 1
   },
   "scores": {
    "jubarte-rust": {
+    "jaccard": 94.3,
+    "ssim": 96.6,
+    "text_boundary": 100.0
+   },
+   "docxodus": {
     "jaccard": 94.3,
     "ssim": 96.6,
     "text_boundary": 100.0
@@ -4116,17 +4228,25 @@
    ],
    "jubarte-rust": [
     "rejected/with_comments_tracking/7787357743/jubarte-rust/page_001.webp"
+   ],
+   "docxodus": [
+    "rejected/with_comments_tracking/7787357743/docxodus/page_001.webp"
    ]
   },
   "page_counts": {
    "reference": 1,
-   "jubarte-rust": 1
+   "jubarte-rust": 1,
+   "docxodus": 1
   },
   "scores": {
    "jubarte-rust": {
     "jaccard": 44.9,
     "ssim": 60.3,
     "text_boundary": 100.0
+   },
+   "docxodus": {
+    "jaccard": 3.7,
+    "ssim": 9.2
    }
   },
   "times": {},
@@ -4145,17 +4265,28 @@
     "rejected/with_comments_tracking/a6aab38897/jubarte-rust/page_001.webp",
     "rejected/with_comments_tracking/a6aab38897/jubarte-rust/page_002.webp",
     "rejected/with_comments_tracking/a6aab38897/jubarte-rust/page_003.webp"
+   ],
+   "docxodus": [
+    "rejected/with_comments_tracking/a6aab38897/docxodus/page_001.webp",
+    "rejected/with_comments_tracking/a6aab38897/docxodus/page_002.webp",
+    "rejected/with_comments_tracking/a6aab38897/docxodus/page_003.webp"
    ]
   },
   "page_counts": {
    "reference": 9,
-   "jubarte-rust": 8
+   "jubarte-rust": 8,
+   "docxodus": 8
   },
   "scores": {
    "jubarte-rust": {
     "jaccard": 4.6,
     "ssim": 12.0,
     "text_boundary": 39.3
+   },
+   "docxodus": {
+    "jaccard": 5.1,
+    "ssim": 12.7,
+    "text_boundary": 41.3
    }
   },
   "times": {},
@@ -4170,14 +4301,23 @@
    ],
    "jubarte-rust": [
     "rejected/with_comments_tracking/c69908f44a/jubarte-rust/page_001.webp"
+   ],
+   "docxodus": [
+    "rejected/with_comments_tracking/c69908f44a/docxodus/page_001.webp"
    ]
   },
   "page_counts": {
    "reference": 1,
-   "jubarte-rust": 1
+   "jubarte-rust": 1,
+   "docxodus": 1
   },
   "scores": {
    "jubarte-rust": {
+    "jaccard": 100.0,
+    "ssim": 100.0,
+    "text_boundary": 100.0
+   },
+   "docxodus": {
     "jaccard": 100.0,
     "ssim": 100.0,
     "text_boundary": 100.0
@@ -4199,16 +4339,27 @@
     "rejected/with_comments_tracking/cbd854cb68/jubarte-rust/page_001.webp",
     "rejected/with_comments_tracking/cbd854cb68/jubarte-rust/page_002.webp",
     "rejected/with_comments_tracking/cbd854cb68/jubarte-rust/page_003.webp"
+   ],
+   "docxodus": [
+    "rejected/with_comments_tracking/cbd854cb68/docxodus/page_001.webp",
+    "rejected/with_comments_tracking/cbd854cb68/docxodus/page_002.webp",
+    "rejected/with_comments_tracking/cbd854cb68/docxodus/page_003.webp"
    ]
   },
   "page_counts": {
    "reference": 3,
-   "jubarte-rust": 3
+   "jubarte-rust": 3,
+   "docxodus": 3
   },
   "scores": {
    "jubarte-rust": {
     "jaccard": 87.6,
     "ssim": 92.3,
+    "text_boundary": 98.7
+   },
+   "docxodus": {
+    "jaccard": 21.2,
+    "ssim": 41.4,
     "text_boundary": 98.7
    }
   },
@@ -4228,17 +4379,28 @@
     "rejected/with_comments_tracking/cbf73c2d81/jubarte-rust/page_001.webp",
     "rejected/with_comments_tracking/cbf73c2d81/jubarte-rust/page_002.webp",
     "rejected/with_comments_tracking/cbf73c2d81/jubarte-rust/page_003.webp"
+   ],
+   "docxodus": [
+    "rejected/with_comments_tracking/cbf73c2d81/docxodus/page_001.webp",
+    "rejected/with_comments_tracking/cbf73c2d81/docxodus/page_002.webp",
+    "rejected/with_comments_tracking/cbf73c2d81/docxodus/page_003.webp"
    ]
   },
   "page_counts": {
    "reference": 11,
-   "jubarte-rust": 9
+   "jubarte-rust": 9,
+   "docxodus": 9
   },
   "scores": {
    "jubarte-rust": {
     "jaccard": 4.1,
     "ssim": 12.4,
     "text_boundary": 68.8
+   },
+   "docxodus": {
+    "jaccard": 5.2,
+    "ssim": 12.4,
+    "text_boundary": 68.4
    }
   },
   "times": {},
@@ -4253,17 +4415,25 @@
    ],
    "jubarte-rust": [
     "rejected/with_comments_tracking/d20ada3e0a/jubarte-rust/page_001.webp"
+   ],
+   "docxodus": [
+    "rejected/with_comments_tracking/d20ada3e0a/docxodus/page_001.webp"
    ]
   },
   "page_counts": {
    "reference": 1,
-   "jubarte-rust": 1
+   "jubarte-rust": 1,
+   "docxodus": 1
   },
   "scores": {
    "jubarte-rust": {
     "jaccard": 89.7,
     "ssim": 94.8,
     "text_boundary": 60.0
+   },
+   "docxodus": {
+    "jaccard": 0.5,
+    "ssim": 5.3
    }
   },
   "times": {},
@@ -4282,17 +4452,28 @@
     "rejected/with_comments_tracking/db13a691da/jubarte-rust/page_001.webp",
     "rejected/with_comments_tracking/db13a691da/jubarte-rust/page_002.webp",
     "rejected/with_comments_tracking/db13a691da/jubarte-rust/page_003.webp"
+   ],
+   "docxodus": [
+    "rejected/with_comments_tracking/db13a691da/docxodus/page_001.webp",
+    "rejected/with_comments_tracking/db13a691da/docxodus/page_002.webp",
+    "rejected/with_comments_tracking/db13a691da/docxodus/page_003.webp"
    ]
   },
   "page_counts": {
    "reference": 11,
-   "jubarte-rust": 8
+   "jubarte-rust": 8,
+   "docxodus": 9
   },
   "scores": {
    "jubarte-rust": {
     "jaccard": 3.7,
     "ssim": 12.1,
     "text_boundary": 68.8
+   },
+   "docxodus": {
+    "jaccard": 5.2,
+    "ssim": 12.4,
+    "text_boundary": 68.4
    }
   },
   "times": {},
@@ -4307,41 +4488,25 @@
    ],
    "jubarte-rust": [
     "rejected/with_comments_tracking/e212b559b2/jubarte-rust/page_001.webp"
+   ],
+   "docxodus": [
+    "rejected/with_comments_tracking/e212b559b2/docxodus/page_001.webp"
    ]
   },
   "page_counts": {
    "reference": 1,
-   "jubarte-rust": 1
+   "jubarte-rust": 1,
+   "docxodus": 1
   },
   "scores": {
    "jubarte-rust": {
     "jaccard": 86.8,
     "ssim": 94.0,
     "text_boundary": 33.3
-   }
-  },
-  "times": {},
-  "reference_app": "macOS Version 26.6.2 (Build 25G83) Quartz PDFContext"
- },
- {
-  "group": "rejected/tracking_without_comments",
-  "case": "1b993fd50b",
-  "pages": {
-   "reference": [
-    "rejected/tracking_without_comments/1b993fd50b/reference/page_001.webp"
-   ],
-   "jubarte-rust": [
-    "rejected/tracking_without_comments/1b993fd50b/jubarte-rust/page_001.webp"
-   ]
-  },
-  "page_counts": {
-   "reference": 1,
-   "jubarte-rust": 1
-  },
-  "scores": {
-   "jubarte-rust": {
-    "jaccard": 14.2,
-    "ssim": 28.9,
+   },
+   "docxodus": {
+    "jaccard": 99.9,
+    "ssim": 100.0,
     "text_boundary": 100.0
    }
   },
@@ -4350,133 +4515,114 @@
  },
  {
   "group": "rejected/tracking_without_comments",
-  "case": "3c920d5996",
+  "case": "3bc839e440",
   "pages": {
    "reference": [
-    "rejected/tracking_without_comments/3c920d5996/reference/page_001.webp",
-    "rejected/tracking_without_comments/3c920d5996/reference/page_002.webp"
+    "rejected/tracking_without_comments/3bc839e440/reference/page_001.webp"
    ],
    "jubarte-rust": [
-    "rejected/tracking_without_comments/3c920d5996/jubarte-rust/page_001.webp",
-    "rejected/tracking_without_comments/3c920d5996/jubarte-rust/page_002.webp"
-   ]
-  },
-  "page_counts": {
-   "reference": 2,
-   "jubarte-rust": 2
-  },
-  "scores": {
-   "jubarte-rust": {
-    "jaccard": 28.6,
-    "ssim": 39.6,
-    "text_boundary": 92.7
-   }
-  },
-  "times": {},
-  "reference_app": "macOS Version 26.6.2 (Build 25G83) Quartz PDFContext"
- },
- {
-  "group": "rejected/tracking_without_comments",
-  "case": "4aca112da9",
-  "pages": {
-   "reference": [
-    "rejected/tracking_without_comments/4aca112da9/reference/page_001.webp",
-    "rejected/tracking_without_comments/4aca112da9/reference/page_002.webp"
+    "rejected/tracking_without_comments/3bc839e440/jubarte-rust/page_001.webp"
    ],
-   "jubarte-rust": [
-    "rejected/tracking_without_comments/4aca112da9/jubarte-rust/page_001.webp",
-    "rejected/tracking_without_comments/4aca112da9/jubarte-rust/page_002.webp"
-   ]
-  },
-  "page_counts": {
-   "reference": 2,
-   "jubarte-rust": 2
-  },
-  "scores": {
-   "jubarte-rust": {
-    "jaccard": 7.3,
-    "ssim": 19.5,
-    "text_boundary": 51.5
-   }
-  },
-  "times": {},
-  "reference_app": "macOS Version 26.6.2 (Build 25G83) Quartz PDFContext"
- },
- {
-  "group": "rejected/tracking_without_comments",
-  "case": "6ff02404c2",
-  "pages": {
-   "reference": [
-    "rejected/tracking_without_comments/6ff02404c2/reference/page_001.webp",
-    "rejected/tracking_without_comments/6ff02404c2/reference/page_002.webp"
-   ],
-   "jubarte-rust": [
-    "rejected/tracking_without_comments/6ff02404c2/jubarte-rust/page_001.webp",
-    "rejected/tracking_without_comments/6ff02404c2/jubarte-rust/page_002.webp",
-    "rejected/tracking_without_comments/6ff02404c2/jubarte-rust/page_003.webp"
-   ]
-  },
-  "page_counts": {
-   "reference": 2,
-   "jubarte-rust": 5
-  },
-  "scores": {
-   "jubarte-rust": {
-    "jaccard": 0.0,
-    "ssim": 1.5
-   }
-  },
-  "times": {},
-  "reference_app": "macOS Version 26.6.2 (Build 25G83) Quartz PDFContext"
- },
- {
-  "group": "rejected/tracking_without_comments",
-  "case": "7a60ec99bd",
-  "pages": {
-   "reference": [
-    "rejected/tracking_without_comments/7a60ec99bd/reference/page_001.webp",
-    "rejected/tracking_without_comments/7a60ec99bd/reference/page_002.webp",
-    "rejected/tracking_without_comments/7a60ec99bd/reference/page_003.webp"
-   ],
-   "jubarte-rust": [
-    "rejected/tracking_without_comments/7a60ec99bd/jubarte-rust/page_001.webp",
-    "rejected/tracking_without_comments/7a60ec99bd/jubarte-rust/page_002.webp",
-    "rejected/tracking_without_comments/7a60ec99bd/jubarte-rust/page_003.webp"
-   ]
-  },
-  "page_counts": {
-   "reference": 5,
-   "jubarte-rust": 4
-  },
-  "scores": {
-   "jubarte-rust": {
-    "jaccard": 10.7,
-    "ssim": 29.3
-   }
-  },
-  "times": {},
-  "reference_app": "macOS Version 26.6.2 (Build 25G83) Quartz PDFContext"
- },
- {
-  "group": "rejected/tracking_without_comments",
-  "case": "7eeb92a3e0",
-  "pages": {
-   "reference": [
-    "rejected/tracking_without_comments/7eeb92a3e0/reference/page_001.webp"
-   ],
-   "jubarte-rust": [
-    "rejected/tracking_without_comments/7eeb92a3e0/jubarte-rust/page_001.webp"
+   "docxodus": [
+    "rejected/tracking_without_comments/3bc839e440/docxodus/page_001.webp"
    ]
   },
   "page_counts": {
    "reference": 1,
-   "jubarte-rust": 1
+   "jubarte-rust": 1,
+   "docxodus": 1
   },
   "scores": {
    "jubarte-rust": {
-    "jaccard": 15.2,
-    "ssim": 20.5,
-    "text_boundary": 11.8
+    "jaccard": 100.0,
+    "ssim": 100.0,
+    "text_boundary": 100.0
+   },
+   "docxodus": {
+    "jaccard": 100.0,
+    "ssim": 100.0,
+    "text_boundary": 100.0
+   }
+  },
+  "times": {},
+  "reference_app": "macOS Version 26.6.2 (Build 25G83) Quartz PDFContext"
+ },
+ {
+  "group": "rejected/tracking_without_comments",
+  "case": "5b44fd7ae2",
+  "pages": {
+   "reference": [
+    "rejected/tracking_without_comments/5b44fd7ae2/reference/page_001.webp",
+    "rejected/tracking_without_comments/5b44fd7ae2/reference/page_002.webp",
+    "rejected/tracking_without_comments/5b44fd7ae2/reference/page_003.webp"
+   ],
+   "jubarte-rust": [
+    "rejected/tracking_without_comments/5b44fd7ae2/jubarte-rust/page_001.webp",
+    "rejected/tracking_without_comments/5b44fd7ae2/jubarte-rust/page_002.webp",
+    "rejected/tracking_without_comments/5b44fd7ae2/jubarte-rust/page_003.webp"
+   ],
+   "docxodus": [
+    "rejected/tracking_without_comments/5b44fd7ae2/docxodus/page_001.webp",
+    "rejected/tracking_without_comments/5b44fd7ae2/docxodus/page_002.webp",
+    "rejected/tracking_without_comments/5b44fd7ae2/docxodus/page_003.webp"
+   ]
+  },
+  "page_counts": {
+   "reference": 3,
+   "jubarte-rust": 3,
+   "docxodus": 3
+  },
+  "scores": {
+   "jubarte-rust": {
+    "jaccard": 3.6,
+    "ssim": 14.3,
+    "text_boundary": 100.0
+   },
+   "docxodus": {
+    "jaccard": 4.0,
+    "ssim": 14.3
+   }
+  },
+  "times": {},
+  "reference_app": "macOS Version 26.6.2 (Build 25G83) Quartz PDFContext"
+ },
+ {
+  "group": "rejected/tracking_without_comments",
+  "case": "9abf4fa5b5",
+  "pages": {
+   "reference": [
+    "rejected/tracking_without_comments/9abf4fa5b5/reference/page_001.webp"
+   ],
+   "jubarte-rust": [
+    "rejected/tracking_without_comments/9abf4fa5b5/jubarte-rust/page_001.webp"
+   ],
+   "docxodus": [
+    "rejected/tracking_without_comments/9abf4fa5b5/docxodus/page_001.webp"
+   ],
+   "superdoc": [
+    "rejected/tracking_without_comments/9abf4fa5b5/superdoc/page_001.webp"
+   ]
+  },
+  "page_counts": {
+   "reference": 1,
+   "jubarte-rust": 1,
+   "docxodus": 1,
+   "superdoc": 1
+  },
+  "scores": {
+   "jubarte-rust": {
+    "jaccard": 100.0,
+    "ssim": 100.0,
+    "text_boundary": 100.0
+   },
+   "docxodus": {
+    "jaccard": 100.0,
+    "ssim": 100.0,
+    "text_boundary": 100.0
+   },
+   "superdoc": {
+    "jaccard": 91.9,
+    "ssim": 100.0
    }
   },
   "times": {},
@@ -4491,14 +4637,23 @@
    ],
    "jubarte-rust": [
     "rejected/tracking_without_comments/14f0524539/jubarte-rust/page_001.webp"
+   ],
+   "docxodus": [
+    "rejected/tracking_without_comments/14f0524539/docxodus/page_001.webp"
    ]
   },
   "page_counts": {
    "reference": 1,
-   "jubarte-rust": 1
+   "jubarte-rust": 1,
+   "docxodus": 1
   },
   "scores": {
    "jubarte-rust": {
+    "jaccard": 100.0,
+    "ssim": 100.0,
+    "text_boundary": 100.0
+   },
+   "docxodus": {
     "jaccard": 100.0,
     "ssim": 100.0,
     "text_boundary": 100.0
@@ -4509,26 +4664,42 @@
  },
  {
   "group": "rejected/tracking_without_comments",
-  "case": "24d37f7b5e",
+  "case": "26fa719cba",
   "pages": {
    "reference": [
-    "rejected/tracking_without_comments/24d37f7b5e/reference/page_001.webp",
-    "rejected/tracking_without_comments/24d37f7b5e/reference/page_002.webp"
+    "rejected/tracking_without_comments/26fa719cba/reference/page_001.webp"
    ],
    "jubarte-rust": [
-    "rejected/tracking_without_comments/24d37f7b5e/jubarte-rust/page_001.webp",
-    "rejected/tracking_without_comments/24d37f7b5e/jubarte-rust/page_002.webp",
-    "rejected/tracking_without_comments/24d37f7b5e/jubarte-rust/page_003.webp"
+    "rejected/tracking_without_comments/26fa719cba/jubarte-rust/page_001.webp"
+   ],
+   "docxodus": [
+    "rejected/tracking_without_comments/26fa719cba/docxodus/page_001.webp"
+   ],
+   "superdoc": [
+    "rejected/tracking_without_comments/26fa719cba/superdoc/page_001.webp"
    ]
   },
   "page_counts": {
-   "reference": 2,
-   "jubarte-rust": 4
+   "reference": 1,
+   "jubarte-rust": 1,
+   "docxodus": 1,
+   "superdoc": 1
   },
   "scores": {
    "jubarte-rust": {
-    "jaccard": 5.6,
-    "ssim": 18.5
+    "jaccard": 100.0,
+    "ssim": 100.0,
+    "text_boundary": 100.0
+   },
+   "docxodus": {
+    "jaccard": 100.0,
+    "ssim": 100.0,
+    "text_boundary": 100.0
+   },
+   "superdoc": {
+    "jaccard": 97.8,
+    "ssim": 99.6,
+    "text_boundary": 100.0
    }
   },
   "times": {},
@@ -4536,25 +4707,42 @@
  },
  {
   "group": "rejected/tracking_without_comments",
-  "case": "72cc9f4ac6",
+  "case": "75c971b32c",
   "pages": {
    "reference": [
-    "rejected/tracking_without_comments/72cc9f4ac6/reference/page_001.webp",
-    "rejected/tracking_without_comments/72cc9f4ac6/reference/page_002.webp"
+    "rejected/tracking_without_comments/75c971b32c/reference/page_001.webp"
    ],
    "jubarte-rust": [
-    "rejected/tracking_without_comments/72cc9f4ac6/jubarte-rust/page_001.webp",
-    "rejected/tracking_without_comments/72cc9f4ac6/jubarte-rust/page_002.webp"
+    "rejected/tracking_without_comments/75c971b32c/jubarte-rust/page_001.webp"
+   ],
+   "docxodus": [
+    "rejected/tracking_without_comments/75c971b32c/docxodus/page_001.webp"
+   ],
+   "superdoc": [
+    "rejected/tracking_without_comments/75c971b32c/superdoc/page_001.webp"
    ]
   },
   "page_counts": {
-   "reference": 2,
-   "jubarte-rust": 2
+   "reference": 1,
+   "jubarte-rust": 1,
+   "docxodus": 1,
+   "superdoc": 1
   },
   "scores": {
    "jubarte-rust": {
-    "jaccard": 0.9,
-    "ssim": 14.0
+    "jaccard": 100.0,
+    "ssim": 100.0,
+    "text_boundary": 100.0
+   },
+   "docxodus": {
+    "jaccard": 100.0,
+    "ssim": 100.0,
+    "text_boundary": 100.0
+   },
+   "superdoc": {
+    "jaccard": 96.7,
+    "ssim": 99.5,
+    "text_boundary": 100.0
    }
   },
   "times": {},
@@ -4569,16 +4757,34 @@
    ],
    "jubarte-rust": [
     "rejected/tracking_without_comments/77fb9bd2e1/jubarte-rust/page_001.webp"
+   ],
+   "docxodus": [
+    "rejected/tracking_without_comments/77fb9bd2e1/docxodus/page_001.webp"
+   ],
+   "superdoc": [
+    "rejected/tracking_without_comments/77fb9bd2e1/superdoc/page_001.webp"
    ]
   },
   "page_counts": {
    "reference": 1,
-   "jubarte-rust": 1
+   "jubarte-rust": 1,
+   "docxodus": 1,
+   "superdoc": 1
   },
   "scores": {
    "jubarte-rust": {
     "jaccard": 100.0,
     "ssim": 100.0,
+    "text_boundary": 100.0
+   },
+   "docxodus": {
+    "jaccard": 100.0,
+    "ssim": 100.0,
+    "text_boundary": 100.0
+   },
+   "superdoc": {
+    "jaccard": 99.1,
+    "ssim": 99.8,
     "text_boundary": 100.0
    }
   },
@@ -4594,16 +4800,59 @@
    ],
    "jubarte-rust": [
     "rejected/tracking_without_comments/97e2fdc9ba/jubarte-rust/page_001.webp"
+   ],
+   "docxodus": [
+    "rejected/tracking_without_comments/97e2fdc9ba/docxodus/page_001.webp"
    ]
   },
   "page_counts": {
    "reference": 1,
-   "jubarte-rust": 1
+   "jubarte-rust": 1,
+   "docxodus": 1
   },
   "scores": {
    "jubarte-rust": {
     "jaccard": 100.0,
     "ssim": 100.0,
+    "text_boundary": 100.0
+   },
+   "docxodus": {
+    "jaccard": 62.0,
+    "ssim": 58.7,
+    "text_boundary": 100.0
+   }
+  },
+  "times": {},
+  "reference_app": "macOS Version 26.6.2 (Build 25G83) Quartz PDFContext"
+ },
+ {
+  "group": "rejected/tracking_without_comments",
+  "case": "159ce5c93c",
+  "pages": {
+   "reference": [
+    "rejected/tracking_without_comments/159ce5c93c/reference/page_001.webp"
+   ],
+   "jubarte-rust": [
+    "rejected/tracking_without_comments/159ce5c93c/jubarte-rust/page_001.webp"
+   ],
+   "docxodus": [
+    "rejected/tracking_without_comments/159ce5c93c/docxodus/page_001.webp"
+   ]
+  },
+  "page_counts": {
+   "reference": 1,
+   "jubarte-rust": 1,
+   "docxodus": 1
+  },
+  "scores": {
+   "jubarte-rust": {
+    "jaccard": 8.7,
+    "ssim": 20.6,
+    "text_boundary": 100.0
+   },
+   "docxodus": {
+    "jaccard": 8.7,
+    "ssim": 20.6,
     "text_boundary": 100.0
    }
   },
@@ -4619,68 +4868,33 @@
    ],
    "jubarte-rust": [
     "rejected/tracking_without_comments/340dd11242/jubarte-rust/page_001.webp"
+   ],
+   "docxodus": [
+    "rejected/tracking_without_comments/340dd11242/docxodus/page_001.webp"
+   ],
+   "superdoc": [
+    "rejected/tracking_without_comments/340dd11242/superdoc/page_001.webp"
    ]
   },
   "page_counts": {
    "reference": 1,
-   "jubarte-rust": 1
+   "jubarte-rust": 1,
+   "docxodus": 1,
+   "superdoc": 1
   },
   "scores": {
    "jubarte-rust": {
     "jaccard": 70.6,
     "ssim": 84.0
-   }
-  },
-  "times": {},
-  "reference_app": "macOS Version 26.6.2 (Build 25G83) Quartz PDFContext"
- },
- {
-  "group": "rejected/tracking_without_comments",
-  "case": "23127ea8e1",
-  "pages": {
-   "reference": [
-    "rejected/tracking_without_comments/23127ea8e1/reference/page_001.webp"
-   ],
-   "jubarte-rust": [
-    "rejected/tracking_without_comments/23127ea8e1/jubarte-rust/page_001.webp",
-    "rejected/tracking_without_comments/23127ea8e1/jubarte-rust/page_002.webp",
-    "rejected/tracking_without_comments/23127ea8e1/jubarte-rust/page_003.webp"
-   ]
-  },
-  "page_counts": {
-   "reference": 1,
-   "jubarte-rust": 3
-  },
-  "scores": {
-   "jubarte-rust": {
-    "jaccard": 0.0,
-    "ssim": 2.2
-   }
-  },
-  "times": {},
-  "reference_app": "macOS Version 26.6.2 (Build 25G83) Quartz PDFContext"
- },
- {
-  "group": "rejected/tracking_without_comments",
-  "case": "434990bdb3",
-  "pages": {
-   "reference": [
-    "rejected/tracking_without_comments/434990bdb3/reference/page_001.webp",
-    "rejected/tracking_without_comments/434990bdb3/reference/page_002.webp"
-   ],
-   "jubarte-rust": [
-    "rejected/tracking_without_comments/434990bdb3/jubarte-rust/page_001.webp",
-    "rejected/tracking_without_comments/434990bdb3/jubarte-rust/page_002.webp"
-   ]
-  },
-  "page_counts": {
-   "reference": 2,
-   "jubarte-rust": 2
-  },
-  "scores": {
-   "jubarte-rust": {
-    "jaccard": 98.2,
-    "ssim": 99.0,
+   },
+   "docxodus": {
+    "jaccard": 100.0,
+    "ssim": 100.0,
+    "text_boundary": 100.0
+   },
+   "superdoc": {
+    "jaccard": 94.7,
+    "ssim": 99.4,
     "text_boundary": 100.0
    }
   },
@@ -4689,25 +4903,67 @@
  },
  {
   "group": "rejected/tracking_without_comments",
-  "case": "aa270fe985",
+  "case": "823e29543e",
   "pages": {
    "reference": [
-    "rejected/tracking_without_comments/aa270fe985/reference/page_001.webp"
+    "rejected/tracking_without_comments/823e29543e/reference/page_001.webp"
    ],
    "jubarte-rust": [
-    "rejected/tracking_without_comments/aa270fe985/jubarte-rust/page_001.webp",
-    "rejected/tracking_without_comments/aa270fe985/jubarte-rust/page_002.webp",
-    "rejected/tracking_without_comments/aa270fe985/jubarte-rust/page_003.webp"
+    "rejected/tracking_without_comments/823e29543e/jubarte-rust/page_001.webp"
+   ],
+   "docxodus": [
+    "rejected/tracking_without_comments/823e29543e/docxodus/page_001.webp"
    ]
   },
   "page_counts": {
    "reference": 1,
-   "jubarte-rust": 4
+   "jubarte-rust": 1,
+   "docxodus": 1
+  },
+  "scores": {
+   "jubarte-rust": {
+    "jaccard": 9.6,
+    "ssim": 19.3
+   },
+   "docxodus": {
+    "jaccard": 3.5,
+    "ssim": 18.4,
+    "text_boundary": 75.0
+   }
+  },
+  "times": {},
+  "reference_app": "macOS Version 26.6.2 (Build 25G83) Quartz PDFContext"
+ },
+ {
+  "group": "rejected/tracking_without_comments",
+  "case": "16833a9d55",
+  "pages": {
+   "reference": [
+    "rejected/tracking_without_comments/16833a9d55/reference/page_001.webp"
+   ],
+   "jubarte-rust": [
+    "rejected/tracking_without_comments/16833a9d55/jubarte-rust/page_001.webp",
+    "rejected/tracking_without_comments/16833a9d55/jubarte-rust/page_002.webp",
+    "rejected/tracking_without_comments/16833a9d55/jubarte-rust/page_003.webp"
+   ],
+   "docxodus": [
+    "rejected/tracking_without_comments/16833a9d55/docxodus/page_001.webp"
+   ]
+  },
+  "page_counts": {
+   "reference": 1,
+   "jubarte-rust": 3,
+   "docxodus": 1
   },
   "scores": {
    "jubarte-rust": {
     "jaccard": 0.0,
-    "ssim": 1.8
+    "ssim": 2.0
+   },
+   "docxodus": {
+    "jaccard": 100.0,
+    "ssim": 100.0,
+    "text_boundary": 100.0
    }
   },
   "times": {},
@@ -4715,28 +4971,38 @@
  },
  {
   "group": "rejected/tracking_without_comments",
-  "case": "c0d5b06bcf",
+  "case": "205503ead9",
   "pages": {
    "reference": [
-    "rejected/tracking_without_comments/c0d5b06bcf/reference/page_001.webp",
-    "rejected/tracking_without_comments/c0d5b06bcf/reference/page_002.webp",
-    "rejected/tracking_without_comments/c0d5b06bcf/reference/page_003.webp"
+    "rejected/tracking_without_comments/205503ead9/reference/page_001.webp",
+    "rejected/tracking_without_comments/205503ead9/reference/page_002.webp",
+    "rejected/tracking_without_comments/205503ead9/reference/page_003.webp"
    ],
    "jubarte-rust": [
-    "rejected/tracking_without_comments/c0d5b06bcf/jubarte-rust/page_001.webp",
-    "rejected/tracking_without_comments/c0d5b06bcf/jubarte-rust/page_002.webp",
-    "rejected/tracking_without_comments/c0d5b06bcf/jubarte-rust/page_003.webp"
+    "rejected/tracking_without_comments/205503ead9/jubarte-rust/page_001.webp",
+    "rejected/tracking_without_comments/205503ead9/jubarte-rust/page_002.webp",
+    "rejected/tracking_without_comments/205503ead9/jubarte-rust/page_003.webp"
+   ],
+   "docxodus": [
+    "rejected/tracking_without_comments/205503ead9/docxodus/page_001.webp",
+    "rejected/tracking_without_comments/205503ead9/docxodus/page_002.webp",
+    "rejected/tracking_without_comments/205503ead9/docxodus/page_003.webp"
    ]
   },
   "page_counts": {
-   "reference": 7,
-   "jubarte-rust": 5
+   "reference": 3,
+   "jubarte-rust": 3,
+   "docxodus": 4
   },
   "scores": {
    "jubarte-rust": {
-    "jaccard": 5.6,
-    "ssim": 17.3,
-    "text_boundary": 0.0
+    "jaccard": 3.4,
+    "ssim": 13.9,
+    "text_boundary": 100.0
+   },
+   "docxodus": {
+    "jaccard": 3.9,
+    "ssim": 19.4
    }
   },
   "times": {},
@@ -4744,23 +5010,199 @@
  },
  {
   "group": "rejected/tracking_without_comments",
-  "case": "cb0c07e105",
+  "case": "a2fa2445c6",
   "pages": {
    "reference": [
-    "rejected/tracking_without_comments/cb0c07e105/reference/page_001.webp"
+    "rejected/tracking_without_comments/a2fa2445c6/reference/page_001.webp",
+    "rejected/tracking_without_comments/a2fa2445c6/reference/page_002.webp",
+    "rejected/tracking_without_comments/a2fa2445c6/reference/page_003.webp"
    ],
    "jubarte-rust": [
-    "rejected/tracking_without_comments/cb0c07e105/jubarte-rust/page_001.webp"
+    "rejected/tracking_without_comments/a2fa2445c6/jubarte-rust/page_001.webp",
+    "rejected/tracking_without_comments/a2fa2445c6/jubarte-rust/page_002.webp"
+   ],
+   "docxodus": [
+    "rejected/tracking_without_comments/a2fa2445c6/docxodus/page_001.webp",
+    "rejected/tracking_without_comments/a2fa2445c6/docxodus/page_002.webp"
+   ]
+  },
+  "page_counts": {
+   "reference": 3,
+   "jubarte-rust": 2,
+   "docxodus": 2
+  },
+  "scores": {
+   "jubarte-rust": {
+    "jaccard": 4.4,
+    "ssim": 14.7
+   },
+   "docxodus": {
+    "jaccard": 4.4,
+    "ssim": 14.7
+   }
+  },
+  "times": {},
+  "reference_app": "macOS Version 26.6.2 (Build 25G83) Quartz PDFContext"
+ },
+ {
+  "group": "rejected/tracking_without_comments",
+  "case": "a33b3d7ea2",
+  "pages": {
+   "reference": [
+    "rejected/tracking_without_comments/a33b3d7ea2/reference/page_001.webp",
+    "rejected/tracking_without_comments/a33b3d7ea2/reference/page_002.webp"
+   ],
+   "jubarte-rust": [
+    "rejected/tracking_without_comments/a33b3d7ea2/jubarte-rust/page_001.webp",
+    "rejected/tracking_without_comments/a33b3d7ea2/jubarte-rust/page_002.webp"
+   ],
+   "docxodus": [
+    "rejected/tracking_without_comments/a33b3d7ea2/docxodus/page_001.webp",
+    "rejected/tracking_without_comments/a33b3d7ea2/docxodus/page_002.webp"
+   ]
+  },
+  "page_counts": {
+   "reference": 2,
+   "jubarte-rust": 2,
+   "docxodus": 2
+  },
+  "scores": {
+   "jubarte-rust": {
+    "jaccard": 7.7,
+    "ssim": 19.8,
+    "text_boundary": 5.2
+   },
+   "docxodus": {
+    "jaccard": 9.5,
+    "ssim": 21.4,
+    "text_boundary": 5.2
+   }
+  },
+  "times": {},
+  "reference_app": "macOS Version 26.6.2 (Build 25G83) Quartz PDFContext"
+ },
+ {
+  "group": "rejected/tracking_without_comments",
+  "case": "c8bef3772a",
+  "pages": {
+   "reference": [
+    "rejected/tracking_without_comments/c8bef3772a/reference/page_001.webp"
+   ],
+   "jubarte-rust": [
+    "rejected/tracking_without_comments/c8bef3772a/jubarte-rust/page_001.webp"
+   ],
+   "docxodus": [
+    "rejected/tracking_without_comments/c8bef3772a/docxodus/page_001.webp"
+   ],
+   "superdoc": [
+    "rejected/tracking_without_comments/c8bef3772a/superdoc/page_001.webp"
    ]
   },
   "page_counts": {
    "reference": 1,
-   "jubarte-rust": 1
+   "jubarte-rust": 1,
+   "docxodus": 1,
+   "superdoc": 1
   },
   "scores": {
    "jubarte-rust": {
     "jaccard": 100.0,
     "ssim": 100.0,
+    "text_boundary": 100.0
+   },
+   "docxodus": {
+    "jaccard": 100.0,
+    "ssim": 100.0,
+    "text_boundary": 100.0
+   },
+   "superdoc": {
+    "jaccard": 98.3,
+    "ssim": 99.8,
+    "text_boundary": 100.0
+   }
+  },
+  "times": {},
+  "reference_app": "macOS Version 26.6.2 (Build 25G83) Quartz PDFContext"
+ },
+ {
+  "group": "rejected/tracking_without_comments",
+  "case": "c58edd95f2",
+  "pages": {
+   "reference": [
+    "rejected/tracking_without_comments/c58edd95f2/reference/page_001.webp"
+   ],
+   "jubarte-rust": [
+    "rejected/tracking_without_comments/c58edd95f2/jubarte-rust/page_001.webp"
+   ],
+   "docxodus": [
+    "rejected/tracking_without_comments/c58edd95f2/docxodus/page_001.webp"
+   ],
+   "superdoc": [
+    "rejected/tracking_without_comments/c58edd95f2/superdoc/page_001.webp"
+   ]
+  },
+  "page_counts": {
+   "reference": 1,
+   "jubarte-rust": 1,
+   "docxodus": 1,
+   "superdoc": 1
+  },
+  "scores": {
+   "jubarte-rust": {
+    "jaccard": 45.1,
+    "ssim": 62.4
+   },
+   "docxodus": {
+    "jaccard": 100.0,
+    "ssim": 100.0,
+    "text_boundary": 100.0
+   },
+   "superdoc": {
+    "jaccard": 98.8,
+    "ssim": 99.9,
+    "text_boundary": 100.0
+   }
+  },
+  "times": {},
+  "reference_app": "macOS Version 26.6.2 (Build 25G83) Quartz PDFContext"
+ },
+ {
+  "group": "rejected/tracking_without_comments",
+  "case": "c964f553ef",
+  "pages": {
+   "reference": [
+    "rejected/tracking_without_comments/c964f553ef/reference/page_001.webp"
+   ],
+   "jubarte-rust": [
+    "rejected/tracking_without_comments/c964f553ef/jubarte-rust/page_001.webp"
+   ],
+   "docxodus": [
+    "rejected/tracking_without_comments/c964f553ef/docxodus/page_001.webp"
+   ],
+   "superdoc": [
+    "rejected/tracking_without_comments/c964f553ef/superdoc/page_001.webp"
+   ]
+  },
+  "page_counts": {
+   "reference": 1,
+   "jubarte-rust": 1,
+   "docxodus": 1,
+   "superdoc": 1
+  },
+  "scores": {
+   "jubarte-rust": {
+    "jaccard": 100.0,
+    "ssim": 100.0,
+    "text_boundary": 100.0
+   },
+   "docxodus": {
+    "jaccard": 100.0,
+    "ssim": 100.0,
+    "text_boundary": 100.0
+   },
+   "superdoc": {
+    "jaccard": 98.3,
+    "ssim": 99.9,
     "text_boundary": 100.0
    }
   },
@@ -4776,45 +5218,25 @@
    ],
    "jubarte-rust": [
     "rejected/tracking_without_comments/e91e3ea7f6/jubarte-rust/page_001.webp"
+   ],
+   "docxodus": [
+    "rejected/tracking_without_comments/e91e3ea7f6/docxodus/page_001.webp"
    ]
   },
   "page_counts": {
    "reference": 1,
-   "jubarte-rust": 1
+   "jubarte-rust": 1,
+   "docxodus": 1
   },
   "scores": {
    "jubarte-rust": {
     "jaccard": 100.0,
     "ssim": 100.0,
     "text_boundary": 100.0
-   }
-  },
-  "times": {},
-  "reference_app": "macOS Version 26.6.2 (Build 25G83) Quartz PDFContext"
- },
- {
-  "group": "rejected/tracking_without_comments",
-  "case": "ecad91f16e",
-  "pages": {
-   "reference": [
-    "rejected/tracking_without_comments/ecad91f16e/reference/page_001.webp",
-    "rejected/tracking_without_comments/ecad91f16e/reference/page_002.webp",
-    "rejected/tracking_without_comments/ecad91f16e/reference/page_003.webp"
-   ],
-   "jubarte-rust": [
-    "rejected/tracking_without_comments/ecad91f16e/jubarte-rust/page_001.webp",
-    "rejected/tracking_without_comments/ecad91f16e/jubarte-rust/page_002.webp",
-    "rejected/tracking_without_comments/ecad91f16e/jubarte-rust/page_003.webp"
-   ]
-  },
-  "page_counts": {
-   "reference": 4,
-   "jubarte-rust": 4
-  },
-  "scores": {
-   "jubarte-rust": {
-    "jaccard": 99.5,
-    "ssim": 99.7,
+   },
+   "docxodus": {
+    "jaccard": 100.0,
+    "ssim": 100.0,
     "text_boundary": 100.0
    }
   },
@@ -4833,16 +5255,26 @@
     "rejected/tracking_without_comments/ede1920163/jubarte-rust/page_001.webp",
     "rejected/tracking_without_comments/ede1920163/jubarte-rust/page_002.webp",
     "rejected/tracking_without_comments/ede1920163/jubarte-rust/page_003.webp"
+   ],
+   "docxodus": [
+    "rejected/tracking_without_comments/ede1920163/docxodus/page_001.webp",
+    "rejected/tracking_without_comments/ede1920163/docxodus/page_002.webp"
    ]
   },
   "page_counts": {
    "reference": 2,
-   "jubarte-rust": 4
+   "jubarte-rust": 4,
+   "docxodus": 2
   },
   "scores": {
    "jubarte-rust": {
     "jaccard": 3.2,
     "ssim": 6.7
+   },
+   "docxodus": {
+    "jaccard": 99.6,
+    "ssim": 99.5,
+    "text_boundary": 100.0
    }
   },
   "times": {},
