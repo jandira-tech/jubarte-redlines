@@ -131,7 +131,7 @@ accept of its own redline (`_to_improve_accepted_changes`, 2026-09-29).
 | A7 | Writes 333 "no difference" `tcPrChange` records | Only records real differences | 5b87 |
 | A8 | Gives inserted or rebuilt cells the Word 2007 defaults (spacing 200/276, Calibri), which neither A nor B has | Keeps B's cell formatting | 5b87, ff42 (an inserted cell) |
 | A9 | Gives a blank header or footer paragraph a leftover style (a lottery: garbage, Footer, AdoptionDate, BodyTextIndent, ListParagraph); in f125 that header grows and pushes the last line onto a second page | Keeps B's style | f125, b4cd, d8b0, ff42, 5b87 |
-| A10 | Adds blank default header/footer/endnote parts, and header/footer parts neither side had | Writes only the parts the document uses | 440c and others |
+| A10 | Adds blank default header/footer/endnote parts, and header/footer parts neither side had. Not always invisible: a later section inherits the blank default header, and under a small top margin it pushes the body down (f8c1: top=284, header=142) | Writes only the parts the document uses, so the layout stays the revision's | 440c, f8c1 |
 | A11 | Auto-creates `HeaderChar`/`FooterChar` styles | Adds no styles the document doesn't use | cda1 |
 | A12 | Prunes style properties that repeat Normal | Keeps the style's own properties | several |
 
