@@ -73,8 +73,11 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 - `jubarte reject` no longer panics ("No parent for AddBeforeSelf") on
   nested block content controls whose every paragraph is inserted, as in
-  Word's "Page Numbers" footer parts. A control holding only removed text is
-  dropped with it instead of being restored over the paragraph that follows.
+  Word's "Page Numbers" footer parts. A control whose every paragraph goes
+  is dropped with them instead of being restored over the paragraph that
+  follows. A control whose text alone is deleted, or that holds no run,
+  stays (emptied) even when another paragraph mark of the part is deleted,
+  as it already did otherwise.
 - `jubarte accept` / `reject` (and `accept_revisions` / `reject_revisions`)
   now save what Word's Accept All / Reject All save. Measured against Word on
   51 of Word's own redlines: every paragraph's text and mark state match

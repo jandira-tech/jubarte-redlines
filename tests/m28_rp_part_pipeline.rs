@@ -1612,6 +1612,109 @@ fn a5b_nested_controls_of_inserted_paragraphs_reject_without_panic() {
     assert!(!xml.contains("w:jc"), "{xml}");
 }
 
+/// A control whose text alone is deleted keeps its paragraph mark, so the
+/// control stays, emptied, even when another paragraph of the part has a
+/// deleted mark (PR #243 review): only a control whose every paragraph goes
+/// is dropped with them.
+#[test]
+fn a5b_control_whose_text_alone_is_deleted_stays_beside_a_deleted_mark() {
+    let mut d = Dom::new();
+    let body = body_from(
+        &mut d,
+        "<w:sdt><w:sdtPr><w:alias w:val=\"Client\"/></w:sdtPr><w:sdtContent>\
+         <w:p><w:del w:id=\"1\" w:author=\"x\"><w:r><w:delText>Acme</w:delText></w:r></w:del></w:p>\
+         </w:sdtContent></w:sdt>\
+         <w:p><w:pPr><w:rPr><w:del w:id=\"2\" w:author=\"x\"/></w:rPr></w:pPr><w:r><w:t>one</w:t></w:r></w:p>\
+         <w:p><w:r><w:t>two</w:t></w:r></w:p>",
+    );
+
+    let out = accept_revisions_document(&mut d, body);
+
+    let controls = d.descendants(out, Some(&W::name("sdt")));
+    assert_eq!(controls.len(), 1, "{}", d.serialize_element(out));
+    assert!(
+        d.serialize_element(controls[0]).contains("Client"),
+        "{}",
+        d.serialize_element(out)
+    );
+    let texts: Vec<String> = d
+        .descendants(out, Some(&W::t()))
+        .iter()
+        .map(|&t| d.value(t))
+        .collect();
+    assert_eq!(texts.concat(), "onetwo");
+}
+
+/// A control with no run at all (an empty paragraph) stands on its
+/// paragraph beside a deleted mark, as it does when no mark is deleted.
+#[test]
+fn a5b_control_without_runs_stays_beside_a_deleted_mark() {
+    let mut d = Dom::new();
+    let body = body_from(
+        &mut d,
+        "<w:sdt><w:sdtPr><w:alias w:val=\"Client\"/></w:sdtPr><w:sdtContent>\
+         <w:p/></w:sdtContent></w:sdt>\
+         <w:p><w:pPr><w:rPr><w:del w:id=\"2\" w:author=\"x\"/></w:rPr></w:pPr><w:r><w:t>one</w:t></w:r></w:p>\
+         <w:p><w:r><w:t>two</w:t></w:r></w:p>",
+    );
+
+    let out = accept_revisions_document(&mut d, body);
+
+    let controls = d.descendants(out, Some(&W::name("sdt")));
+    assert_eq!(controls.len(), 1, "{}", d.serialize_element(out));
+    assert_eq!(
+        d.parent(controls[0]),
+        Some(out),
+        "{}",
+        d.serialize_element(out)
+    );
+    assert_eq!(d.descendants(controls[0], Some(&W::p())).len(), 1);
+    assert_eq!(
+        d.elements(out, Some(&W::p())).len(),
+        1,
+        "{}",
+        d.serialize_element(out)
+    );
+}
+
+/// A control whose only run is inserted stays a block control around its
+/// paragraph beside a deleted mark: it is not rebuilt inside the `w:ins`,
+/// which accepting unwraps into the paragraph.
+#[test]
+fn a5b_control_of_one_inserted_run_stays_a_block_control() {
+    let mut d = Dom::new();
+    let body = body_from(
+        &mut d,
+        "<w:sdt><w:sdtPr><w:alias w:val=\"Client\"/></w:sdtPr><w:sdtContent>\
+         <w:p><w:ins w:id=\"1\" w:author=\"x\"><w:r><w:t>Acme</w:t></w:r></w:ins></w:p>\
+         </w:sdtContent></w:sdt>\
+         <w:p><w:pPr><w:rPr><w:del w:id=\"2\" w:author=\"x\"/></w:rPr></w:pPr><w:r><w:t>one</w:t></w:r></w:p>\
+         <w:p><w:r><w:t>two</w:t></w:r></w:p>",
+    );
+
+    let out = accept_revisions_document(&mut d, body);
+
+    let controls = d.descendants(out, Some(&W::name("sdt")));
+    assert_eq!(controls.len(), 1, "{}", d.serialize_element(out));
+    assert_eq!(
+        d.parent(controls[0]),
+        Some(out),
+        "{}",
+        d.serialize_element(out)
+    );
+    let texts: Vec<String> = d
+        .descendants(controls[0], Some(&W::t()))
+        .iter()
+        .map(|&t| d.value(t))
+        .collect();
+    assert_eq!(texts.concat(), "Acme");
+    assert!(
+        d.descendants(out, Some(&W::ins())).is_empty(),
+        "{}",
+        d.serialize_element(out)
+    );
+}
+
 /// A.5b regression, mixed (CHANGED CODE + PRIOR BEHAVIOR side by side): one
 /// content control is fully deleted (nuked, must be skipped gracefully — the
 /// fix) while a PRECEDING, untouched content control must still be restored
