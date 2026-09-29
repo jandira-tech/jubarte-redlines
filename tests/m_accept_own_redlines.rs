@@ -94,3 +94,101 @@ fn a_dropped_header_keeps_its_last_paragraph_mark() {
     assert_eq!(paras[0].0, "");
     assert!(!paras[0].1.contains("pBdr"), "{:?}", paras[0]);
 }
+
+const RELS_CT: &str = "application/vnd.openxmlformats-package.relationships+xml";
+const IMAGE_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+
+/// A header holding `text` (when any) and a picture of `rId1`, with
+/// `rId1` pointing at `media` holding `bytes`.
+fn header_with_picture(text: &str, media: &str, bytes: &str) -> Vec<u8> {
+    let run = if text.is_empty() {
+        String::new()
+    } else {
+        format!("<w:r><w:t>{text}</w:t></w:r>")
+    };
+    let header = format!(
+        r#"<w:hdr xmlns:w="{w}" xmlns:r="{r}" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><w:p>{run}<w:r><w:drawing><wp:inline><wp:extent cx="100" cy="100"/><wp:docPr id="1" name="{media}"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="{media}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rId1"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="100" cy="100"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p></w:hdr>"#,
+        w = common::docx::W_NS,
+        r = common::docx::R_NS,
+    );
+    let rels = format!(
+        r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{IMAGE_REL}" Target="media/{media}"/></Relationships>"#
+    );
+    let media_part = format!("word/media/{media}");
+    docx_with_sect(
+        r#"<w:p><w:r><w:t>Body text</w:t></w:r></w:p>"#,
+        &[
+            Part {
+                name: "word/header1.xml",
+                content_type: HEADER,
+                rel_type: HEADER_REL,
+                xml: &header,
+            },
+            Part {
+                name: "word/_rels/header1.xml.rels",
+                content_type: RELS_CT,
+                rel_type: "",
+                xml: &rels,
+            },
+            Part {
+                name: &media_part,
+                content_type: "image/png",
+                rel_type: "",
+                xml: bytes,
+            },
+        ],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    )
+}
+
+/// Both headers picture `rId1`, each its own logo, and the revised one
+/// drops the text: Word's redline deletes the text and the old logo and
+/// inserts the new one (1855b51281). The header used to be skipped because
+/// the two `rId1` disagree, leaving the original header live.
+#[test]
+fn a_header_whose_picture_ids_clash_is_still_compared() {
+    let base = header_with_picture("MASSACHUSETTS DEPARTMENT", "a.png", "LOGO-A");
+    let next = header_with_picture("", "b.png", "LOGO-B");
+    let redline = compare_documents(&base, &next, "Redline").unwrap();
+    assert_word_valid_package(&redline);
+    let xml = part_string(&redline, "word/header1.xml").unwrap();
+    assert!(
+        xml.contains("<w:delText>MASSACHUSETTS DEPARTMENT</w:delText>"),
+        "{xml}"
+    );
+
+    let accepted = accept_revisions(&redline).unwrap();
+    assert_word_valid_package(&accepted);
+    let pkg = jubarte::opc::PartFs::open(&accepted).unwrap();
+    let header = pkg.part_string("word/header1.xml").unwrap();
+    assert!(!header.contains("MASSACHUSETTS"), "{header}");
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&header);
+    let root = dom.root(doc).unwrap();
+    let embeds: Vec<String> = dom
+        .descendants(
+            root,
+            Some(&jubarte::xmllinq::XName::get(
+                "blip",
+                "http://schemas.openxmlformats.org/drawingml/2006/main",
+            )),
+        )
+        .into_iter()
+        .filter_map(|b| {
+            dom.attribute(
+                b,
+                &jubarte::xmllinq::XName::get("embed", common::docx::R_NS),
+            )
+            .map(str::to_string)
+        })
+        .collect();
+    assert_eq!(embeds.len(), 1, "one picture left: {header}");
+    let rels = pkg.read_rels_for("word/header1.xml").unwrap();
+    let target = rels.items.iter().find(|r| r.id == embeds[0]).unwrap();
+    let media = pkg.resolve_rel_target("word/header1.xml", &target.target);
+    assert_eq!(
+        pkg.part_bytes(&media),
+        Some(&b"LOGO-B"[..]),
+        "the revised logo"
+    );
+}

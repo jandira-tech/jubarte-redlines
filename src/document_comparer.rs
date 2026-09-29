@@ -18,6 +18,51 @@ use crate::namespaces::{R, W, W14};
 use crate::opc::{OpcError, PartFs};
 use crate::xmllinq::{Dom, NodeId, XName};
 
+/// `xml` (part `part_b` of `pkg2`) with each relationship it references
+/// carried onto `part_a` of `out` under a fresh id (an image with A's bytes
+/// reuses A's relationship), so B's content means what it meant in B once
+/// it is diffed into A's part. None when a relationship cannot be carried.
+fn carry_revised_part_relationships(
+    out: &mut PartFs,
+    part_a: &str,
+    (pkg2, part_b): (&PartFs, &str),
+    xml: &str,
+) -> Option<String> {
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(xml);
+    let root = dom.root(doc)?;
+    let mut minted: std::collections::HashMap<(String, Option<&str>), String> =
+        std::collections::HashMap::new();
+    for el in dom.descendants_and_self(root, None) {
+        for (name, rid) in dom.attributes(el) {
+            if !crate::comparer::tables::S_RELATIONSHIP_ATTRIBUTE_NAMES.contains(&name) {
+                continue;
+            }
+            let suffix = dom
+                .name(el)
+                .and_then(|n| crate::comparer::parts::required_rel_type_suffix(n.local_name()));
+            let key = (rid.clone(), suffix);
+            let id = match minted.get(&key) {
+                Some(id) => id.clone(),
+                None => {
+                    let id = crate::comparer::parts::carry_relationship(
+                        out,
+                        part_a,
+                        pkg2,
+                        part_b,
+                        &rid,
+                        |ty| suffix.is_none_or(|s| ty.ends_with(s)),
+                    )?;
+                    minted.insert(key, id.clone());
+                    id
+                }
+            };
+            dom.set_attribute_value(el, &name, Some(&id));
+        }
+    }
+    Some(dom.serialize_document(doc))
+}
+
 /// Every relationship `xml` (part `part_b` of `pkg2`) references resolves in
 /// `part_a`'s rels to the same type, mode and target, and an internal target
 /// to the same bytes. A redlined part written over `part_a` keeps A's rels,
@@ -6499,9 +6544,17 @@ fn compare_documents_impl(
             };
             let part_b = &part_b;
             if let (Some(xa), Some(xb)) = (pkg1.part_string(&part_a), pkg2.part_string(part_b)) {
-                if !part_rels_agree((&pkg1, &part_a), (&pkg2, part_b), &xb) {
-                    continue;
-                }
+                // B's references that mean something else in A's part (both
+                // headers picture their own logo as rId1) move to fresh ids.
+                let xb = if part_rels_agree((&pkg1, &part_a), (&pkg2, part_b), &xb) {
+                    xb
+                } else {
+                    match carry_revised_part_relationships(&mut out, &part_a, (&pkg2, part_b), &xb)
+                    {
+                        Some(x) => x,
+                        None => continue,
+                    }
+                };
                 let mut hd = Dom::new();
                 let da = hd.parse_xdocument(&xa);
                 let db = hd.parse_xdocument(&xb);
