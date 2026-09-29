@@ -224,22 +224,28 @@ fn slot_values(dom: &Dom, block: NodeId) -> HashMap<Slot, String> {
     let mut out = HashMap::new();
     for prop in dom.elements(block, None) {
         for (slot, attrs) in prop_slots(dom, prop) {
-            let children = if slot.group.is_empty() {
-                let mut children: Vec<String> = dom
-                    .elements(prop, None)
-                    .into_iter()
-                    .map(|c| signature(dom, c))
-                    .collect();
-                children.sort();
-                children.concat()
-            } else {
-                String::new()
-            };
-            let value = slot.value(attrs, &children);
+            let value = slot_value(dom, prop, &slot, attrs);
             out.insert(slot, value);
         }
     }
     out
+}
+
+/// The value `prop` gives `slot`: its attributes, and for a whole element
+/// its sorted child signatures (tabs).
+fn slot_value(dom: &Dom, prop: NodeId, slot: &Slot, attrs: Vec<(String, String)>) -> String {
+    let children = if slot.group.is_empty() {
+        let mut children: Vec<String> = dom
+            .elements(prop, None)
+            .into_iter()
+            .map(|c| signature(dom, c))
+            .collect();
+        children.sort();
+        children.concat()
+    } else {
+        String::new()
+    };
+    slot.value(attrs, &children)
 }
 
 /// An element's name, sorted attributes and sorted child signatures: equal
@@ -393,6 +399,88 @@ pub(super) fn restore_against_built_ins(
         resolve(dom, styles_root, &by_id, levels, style, block);
     }
     resync_linked_character_styles(dom, styles_root, &by_id, &recorded_rpr);
+}
+
+/// Give the old `block_local` record `old` every slot the original's style
+/// `a_style` (in the original's stylesheet `a_root`) resolved to through its
+/// docDefaults and `basedOn` chain and `old` leaves unsaid, except built-in
+/// values, which Reject All supplies itself, and the flipping toggles, which
+/// read against the restored ancestors (R30) and so stay as declared. Word's
+/// Reject All reads the record against its built-ins (R27): without this a
+/// based style lost everything it inherited (b6f757462e's List Paragraph,
+/// `jc both` and 1.08 lines from Normal, rejected to `jc left`, single).
+/// Returns whether `old` changed.
+pub(crate) fn complete_from_original_chain(
+    dom: &mut Dom,
+    old: NodeId,
+    a_root: NodeId,
+    a_style: NodeId,
+    block_local: &str,
+) -> bool {
+    let by_id: HashMap<String, NodeId> = dom
+        .elements(a_root, Some(&W::name("style")))
+        .into_iter()
+        .filter_map(|s| Some((dom.attribute(s, &W::name("styleId"))?.to_string(), s)))
+        .collect();
+    let mut layers: Vec<NodeId> = Vec::new();
+    if let Some(dd) = dom
+        .element(a_root, &W::name("docDefaults"))
+        .and_then(|d| dom.element(d, &W::name(&format!("{block_local}Default"))))
+        .and_then(|d| dom.element(d, &W::name(block_local)))
+    {
+        layers.push(dd);
+    }
+    let mut chain = ancestors(dom, &by_id, a_style);
+    chain.reverse();
+    chain.push(a_style);
+    layers.extend(
+        chain
+            .into_iter()
+            .filter_map(|s| dom.element(s, &W::name(block_local))),
+    );
+    // Each slot's nearest declaration: the property and its attributes.
+    let mut effective: HashMap<Slot, (NodeId, Vec<(String, String)>)> = HashMap::new();
+    for layer in layers {
+        for prop in dom.elements(layer, None) {
+            for (slot, attrs) in prop_slots(dom, prop) {
+                effective.insert(slot, (prop, attrs));
+            }
+        }
+    }
+    let recorded = slot_values(dom, old);
+    let mut slots: Vec<Slot> = effective
+        .keys()
+        .filter(|s| {
+            !recorded.contains_key(*s)
+                && !(s.ns == W::URI && XOR_TOGGLES.contains(&s.local.as_str()))
+        })
+        .cloned()
+        .collect();
+    slots.sort();
+    let mut changed = false;
+    for slot in slots {
+        let (prop, attrs) = &effective[&slot];
+        if slot.built_in_value() == Some(slot_value(dom, *prop, &slot, attrs.clone())) {
+            continue;
+        }
+        if slot.group.is_empty() {
+            let copy = dom.clone_subtree(*prop);
+            let order = if block_local == "rPr" {
+                RPR_ORDER
+            } else {
+                PPR_ORDER
+            };
+            insert_in_order(dom, old, copy, order);
+        } else {
+            let attrs: Vec<(&str, &str)> = attrs
+                .iter()
+                .map(|(a, v)| (a.as_str(), v.as_str()))
+                .collect();
+            write_slot(dom, old, block_local, &slot, &attrs);
+        }
+        changed = true;
+    }
+    changed
 }
 
 /// `style`'s `w:link` target, when it is of type `kind`.

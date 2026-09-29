@@ -1690,6 +1690,51 @@ fn complete_root_style_change_records(
     changed
 }
 
+/// Complete the old records of each paragraph style with a `w:basedOn` from
+/// what the original's docDefaults and chain gave the same style (matched by
+/// type and name), so Reject All gives back the original's look rather than
+/// Word's built-ins: see
+/// [`crate::revision_processor::style_records::complete_from_original_chain`].
+/// Styles the original lacks keep their records as written.
+fn complete_based_style_change_records(dom: &mut Dom, styles_root: NodeId, a_root: NodeId) -> bool {
+    let a_by_key: std::collections::HashMap<(String, String), NodeId> = dom
+        .elements(a_root, Some(&W::name("style")))
+        .into_iter()
+        .filter_map(|s| Some((style_match_key(dom, s)?, s)))
+        .collect();
+    let mut changed = false;
+    for style in dom.elements(styles_root, Some(&W::name("style"))) {
+        if dom
+            .attribute(style, &W::name("type"))
+            .unwrap_or("paragraph")
+            != "paragraph"
+            || dom.element(style, &W::name("basedOn")).is_none()
+        {
+            continue;
+        }
+        let Some(&a_style) = style_match_key(dom, style).and_then(|k| a_by_key.get(&k)) else {
+            continue;
+        };
+        for (block_local, change_local) in [("pPr", "pPrChange"), ("rPr", "rPrChange")] {
+            let Some(old) = dom
+                .element(style, &W::name(block_local))
+                .and_then(|b| dom.element(b, &W::name(change_local)))
+                .and_then(|c| dom.element(c, &W::name(block_local)))
+            else {
+                continue;
+            };
+            changed |= crate::revision_processor::style_records::complete_from_original_chain(
+                dom,
+                old,
+                a_root,
+                a_style,
+                block_local,
+            );
+        }
+    }
+    changed
+}
+
 /// The properties whose recorded old value Word completes attribute by
 /// attribute from the docDefaults.
 const RECORD_COMPLETED_PROPS: &[&str] = &["rFonts", "lang", "spacing"];
@@ -6869,6 +6914,15 @@ fn compare_documents_impl(
             // Root styles record their old properties in full against the
             // docDefaults, the way Word's Reject All needs them.
             changed |= complete_root_style_change_records(&mut sd, or, settings);
+            // Below the roots, the record carries what the original's chain
+            // gave the style, which Reject All would otherwise read as built-in.
+            let a_styles = pkg1.part_string("word/styles.xml").and_then(|xml| {
+                let doc = sd.parse_xdocument(&xml);
+                sd.root(doc)
+            });
+            if let Some(a_root) = a_styles {
+                changed |= complete_based_style_change_records(&mut sd, or, a_root);
+            }
             changed |= restore_styles(&mut sd, or, only_a);
             // M483: re-cache themed color hexes against the shipped theme —
             // must run AFTER the merge writes B's blocks (their w:val hexes

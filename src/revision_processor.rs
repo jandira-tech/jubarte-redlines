@@ -12,7 +12,7 @@ mod bookmarks;
 mod comments;
 mod notes;
 mod sections;
-mod style_records;
+pub(crate) mod style_records;
 mod word_save;
 
 pub(crate) use sections::Resolution;

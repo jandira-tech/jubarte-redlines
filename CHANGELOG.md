@@ -69,6 +69,15 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- Rejecting a redline gives back what a changed style inherited in the
+  original. Word's Reject All reads a style's old record against its
+  built-in defaults, so a record holding only the style's own properties
+  rejected to Times New Roman 10 pt, left-aligned and single-spaced
+  (b6f757462e's List Paragraph lost Normal's justification and 1.08 lines).
+  The records of styles based on another now carry what the original's
+  docDefaults and chain gave them, less the built-in values. Paragraph-style
+  mismatches against the original after our own reject, 150 pairs: 267 to
+  30, and every pPr now matches.
 - Rejecting a redline in which Normal changed no longer strips the run
   properties of the styles based on Normal: the change record each of them
   gets keeps the style's own fonts and sizes, font slot by font slot, over

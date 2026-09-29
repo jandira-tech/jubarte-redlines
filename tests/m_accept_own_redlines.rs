@@ -2015,3 +2015,48 @@ fn the_normal_cascade_keeps_a_style_s_own_run_properties_in_its_record() {
         );
     }
 }
+
+/// Reject All reads a style's old record against Word's built-ins, so the
+/// record of a style based on another must carry what the original's chain
+/// gave it. b6f757462e's List Paragraph inherits Normal's `jc both` and
+/// 1.08 lines; its record held only its own indent, so Reject All wrote the
+/// built-in `jc left` and single spacing over it.
+#[test]
+fn a_based_style_s_record_rejects_to_what_its_original_chain_said() {
+    let list = |ind: &str| {
+        format!(
+            r#"<w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:pPr><w:ind w:left="{ind}"/><w:contextualSpacing/></w:pPr></w:style>"#
+        )
+    };
+    let body =
+        r#"<w:p><w:pPr><w:pStyle w:val="ListParagraph"/></w:pPr><w:r><w:t>Item</w:t></w:r></w:p>"#;
+    let base = docx_with_stylesheet_styles(
+        body,
+        [
+            "",
+            r#"<w:sz w:val="22"/>"#,
+            r#"<w:jc w:val="both"/><w:spacing w:after="120" w:before="120" w:line="259" w:lineRule="auto"/>"#,
+            "",
+        ],
+        &list("720"),
+    );
+    let next = docx_with_stylesheet_styles(
+        body,
+        ["", r#"<w:sz w:val="22"/>"#, r#"<w:jc w:val="left"/>"#, ""],
+        &list("708"),
+    );
+    let redline = compare_documents(&base, &next, "Redline").unwrap();
+    assert_word_valid_package(&redline);
+    let rejected = reject_revisions(&redline).unwrap();
+    let normal = style_xml(&rejected, "Normal");
+    assert!(normal.contains(r#"w:val="both""#), "{normal}");
+    let style = style_xml(&rejected, "ListParagraph");
+    assert!(style.contains(r#"w:left="720""#), "{style}");
+    for inherited in ["<w:jc", "<w:spacing"] {
+        assert!(
+            !style.contains(inherited),
+            "{inherited} comes from Normal: {style}\nredline: {}",
+            style_xml(&redline, "ListParagraph")
+        );
+    }
+}
