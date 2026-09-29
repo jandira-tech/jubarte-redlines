@@ -17,6 +17,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [0.10.0] - 2026-09-28
 
+> **Summary.** Documents are now editable by agents: inspect, JSON edit plans that write a clean copy plus a tracked redline, and headers, footers and notes as editable stories, from the CLI, Python and WASM alike; Word-mode redlines keep changed text boxes, per-section headers and footers, and comment anchors where Word does.
+>
+> **Docs.** README links the page-by-page engine comparison site (top banner, Benchmarks, Find us) and documents self-update and --mode word|powertools; new docs/WORD_DIFFERENCES.md, docs/SELF_UPDATE.md, the jubarte-documents agent skill and the Acme letter example; the jubarte-wasm npm README covers the agent API; VERSIONING.md and bump-version.mjs make release.sh the source of truth.
+
 ### Added
 
 - `jubarte A B --mode word|powertools` names the compare presets: `word`
