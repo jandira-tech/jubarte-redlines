@@ -17,6 +17,19 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Added
 
+- `jubarte debug diff A B [C …]` compares two or more packages element by
+  element instead of line by line: styles pair by type and name, paragraphs
+  by their text (a rewritten one meets the one it replaced), tables by
+  their first text, cells by position, notes and comments by text, headers
+  and footers by the section role that shows them. Each hunk names the
+  element's path (`word/styles.xml › style paragraph "Body Text" › rPr`)
+  and prints the property items or run segments not every file holds; with
+  three or more files each line names the files holding it. rsids,
+  paragraph ids, revision ids/authors/dates, relationship ids, attribute
+  order, on/off values and empty property blocks are dropped unless
+  `--raw`; `--style`, `--para-text` and `-p` narrow the report, `--full`
+  prints the shown elements' common lines too. The same in the library
+  (`jubarte::debug::diff::diff`).
 - Tracked changes one at a time, as Word's Accept / Reject This Change:
   `jubarte changes FILE` lists every change with an id (`body:rev:12`,
   `header1:rev:3`), its kind, target, author and text (`--json` for JSON

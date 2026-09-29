@@ -314,8 +314,12 @@ enum Command {
         jubarte debug out.docx -c changes         what each pPrChange/tcPrChange/… records\n  \
         jubarte debug a.docx b.docx -c styledefs  style definitions that differ, paired by name\n  \
         jubarte debug a.docx b.docx -c numbering  list levels that differ, by numId\n  \
-        jubarte debug a.docx b.docx -c xml -p document.xml")]
+        jubarte debug a.docx b.docx -c xml -p document.xml\n  \
+        jubarte debug diff a.docx ours.docx word.docx   element by element, three-way")]
+    #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
     Debug {
+        #[command(subcommand)]
+        sub: Option<DebugCommand>,
         /// One package, or two to compare (A then B).
         #[arg(value_name = "FILE", num_args = 1..=2, required = true)]
         files: Vec<PathBuf>,
@@ -339,6 +343,47 @@ enum Command {
         /// text/xml/runs of two files: common lines shown around each change.
         #[arg(short = 'C', long, value_name = "N", default_value_t = 0)]
         context: usize,
+    },
+}
+
+/// `jubarte debug` subcommands.
+#[derive(clap::Subcommand, Debug)]
+enum DebugCommand {
+    /// What differs between two or more packages, element by element:
+    /// styles paired by type and name, paragraphs by their text, headers
+    /// and footers by section role. Each hunk prints the lines not every
+    /// file holds; with three or more files each line names the files that
+    /// hold it. rsids, paragraph ids, revision ids/authors/dates,
+    /// relationship ids, attribute order, on/off values and empty property
+    /// blocks are dropped unless --raw.
+    #[command(after_help = "EXAMPLES:\n  \
+        jubarte debug diff a.docx b.docx\n  \
+        jubarte debug diff a.docx ours_rej.docx word_rej.docx -p styles\n  \
+        jubarte debug diff a.docx ours_rej.docx word_rej.docx --style \"Body Text\" --full\n  \
+        jubarte debug diff a.docx ours.docx --para-text \"Section 4\"")]
+    Diff {
+        /// Two or more packages; the first is the reference (`-` lines).
+        #[arg(value_name = "FILE", num_args = 2.., required = true)]
+        files: Vec<PathBuf>,
+        /// Only parts whose name or role contains this (e.g. styles,
+        /// document.xml, "default header").
+        #[arg(short = 'p', long, value_name = "NAME")]
+        part: Option<String>,
+        /// Only the style with this name or id (case-insensitive).
+        #[arg(long, value_name = "NAME")]
+        style: Option<String>,
+        /// Only paragraphs whose text contains this, in any file.
+        #[arg(long = "para-text", value_name = "TEXT")]
+        para_text: Option<String>,
+        /// Keep rsids, ids, authors, dates, on/off values and empty blocks.
+        #[arg(long)]
+        raw: bool,
+        /// Print each shown element's common lines too.
+        #[arg(long)]
+        full: bool,
+        /// Hunks per part (0: all).
+        #[arg(short = 'n', long, value_name = "N", default_value_t = 60)]
+        limit: usize,
     },
 }
 
@@ -1107,6 +1152,54 @@ fn run_debug(
     Ok(())
 }
 
+/// `jubarte debug diff`: each file labelled by its stem (by its folder too
+/// when stems repeat, by position when both do).
+fn run_debug_diff(
+    files: &[PathBuf],
+    opts: &jubarte::debug::diff::DiffOptions,
+) -> Result<(), String> {
+    let stem = |p: &PathBuf| {
+        p.file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    };
+    let with_dir = |p: &PathBuf| {
+        let dir = p
+            .parent()
+            .and_then(|d| d.file_name())
+            .map(|d| d.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        format!("{dir}/{}", stem(p))
+    };
+    let unique = |labels: &[String]| {
+        labels
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            == labels.len()
+    };
+    let mut labels: Vec<String> = files.iter().map(stem).collect();
+    if !unique(&labels) {
+        labels = files.iter().map(with_dir).collect();
+    }
+    if !unique(&labels) {
+        labels = (0..files.len())
+            .map(|i| char::from(b'A' + (i % 26) as u8).to_string())
+            .collect();
+    }
+    let bytes = files
+        .iter()
+        .map(|p| std::fs::read(p).map_err(|e| format!("{}: {e}", p.display())))
+        .collect::<Result<Vec<_>, _>>()?;
+    let pairs: Vec<(&str, &[u8])> = labels
+        .iter()
+        .map(String::as_str)
+        .zip(bytes.iter().map(Vec::as_slice))
+        .collect();
+    print!("{}", jubarte::debug::diff::diff(&pairs, opts)?);
+    Ok(())
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
@@ -1222,6 +1315,30 @@ fn main() -> ExitCode {
             version,
         }) => return exit_code(run_self_update(check, yes, version)),
         Some(Command::Debug {
+            sub:
+                Some(DebugCommand::Diff {
+                    files,
+                    part,
+                    style,
+                    para_text,
+                    raw,
+                    full,
+                    limit,
+                }),
+            ..
+        }) => {
+            let opts = jubarte::debug::diff::DiffOptions {
+                part,
+                style,
+                para_text,
+                raw,
+                full,
+                limit,
+            };
+            return exit_code(run_debug_diff(&files, &opts));
+        }
+        Some(Command::Debug {
+            sub: None,
             files,
             list,
             checks,

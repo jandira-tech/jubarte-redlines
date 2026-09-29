@@ -1893,4 +1893,3 @@ fn a_deleted_paragraph_keeps_its_line_pitch_over_a_single_spaced_normal() {
     let rejected = reject_revisions(&redline).unwrap();
     assert!(body_ppr_xml(&rejected)[1].contains(r#"w:line="276""#));
 }
-

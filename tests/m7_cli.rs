@@ -437,3 +437,40 @@ fn debug_triages_one_package_and_compares_two() {
     let counts = run(&[&a, &b], &["-c", "elements", "-p", "document.xml"]);
     assert!(counts.starts_with("elements: "), "{counts}");
 }
+
+#[test]
+fn debug_diff_compares_packages_element_by_element() {
+    let d = tmpdir();
+    let (a, b) = seed(d.path());
+    let diff = |files: &[&Path], extra: &[&str]| {
+        let out = Command::new(BIN)
+            .args(["debug", "diff"])
+            .args(files)
+            .args(extra)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap()
+    };
+    let same = diff(&[&a, &a], &[]);
+    assert!(same.ends_with("no differences\n"), "{same}");
+    let two = diff(&[&a, &b], &["-p", "document.xml"]);
+    assert!(two.contains("word/document.xml › body › p#"), "{two}");
+    let three = diff(&[&a, &b, &a], &["-p", "document.xml"]);
+    let labels = three.lines().next().unwrap();
+    assert_eq!(labels.matches(" · ").count(), 2, "{three}");
+    assert!(
+        three.contains("  ["),
+        "three files tag their lines: {three}"
+    );
+    let lone = Command::new(BIN)
+        .args(["debug", "diff"])
+        .arg(&a)
+        .output()
+        .unwrap();
+    assert!(!lone.status.success(), "one file is not a diff");
+}

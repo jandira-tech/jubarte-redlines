@@ -42,6 +42,8 @@ use std::io::{Cursor, Read};
 
 use crate::xmllinq::{Dom, NodeId};
 
+pub mod diff;
+
 /// Which reports to print.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Check {
