@@ -512,6 +512,84 @@ fn doc_default_ppr_delta(
     }
 }
 
+/// M64/M70/M72: after the spacing merge, Normal's other declared pPr
+/// children follow the revision — B's `w:ind` replaces A's, A-only children
+/// drop into the pPrChange record, B's own children are copied in schema
+/// order.
+fn sync_normal_ppr_with_revised(dom: &mut Dom, ppr: NodeId, b_style: Option<NodeId>) {
+    // M64/M70: Normal `w:ind` follows B.
+    // - B has ind (file_196 firstLine=432) → copy B's ind onto merged Normal.
+    // - B has no ind (file_197 bare Normal) → drop A's leftover firstLine so
+    //   Word's after/line-only Normal is not polluted with A ind.
+    let b_ind = b_style
+        .and_then(|bs| dom.element(bs, &W::name("pPr")))
+        .and_then(|bppr| dom.element(bppr, &W::name("ind")));
+    if let Some(old_ind) = dom.element(ppr, &W::name("ind")) {
+        dom.remove(old_ind);
+    }
+    if let Some(bind) = b_ind {
+        let clone = dom.clone_subtree(bind);
+        // ind follows spacing in CT_PPr; place before pPrChange (added below).
+        if let Some(sp) = dom.element(ppr, &W::name("spacing")) {
+            let after_sp = {
+                let kids = dom.nodes(ppr);
+                kids.iter()
+                    .position(|&n| n == sp)
+                    .and_then(|i| kids.get(i + 1).copied())
+            };
+            match after_sp {
+                Some(next) => dom.add_before_self(next, clone),
+                None => dom.add(ppr, clone),
+            }
+        } else {
+            dom.add_first(ppr, clone);
+        }
+    }
+    // M72 refined by file_198: Word's live Normal after the merge is B's
+    // EFFECTIVE block — spacing (computed above) plus B's OWN declared
+    // pPr children. A-origin non-spacing props (widowControl/tabs/
+    // suppressAutoHyphens on file_77, where B declares none) drop into
+    // pPrChange old; B-origin ones (the same names on file_198's
+    // LO-flavored B Normal) SURVIVE live — dropping them loses widow
+    // control and drifts pagination.
+    let keep: &[&str] = if b_ind.is_some() {
+        &["spacing", "ind", "pPrChange"]
+    } else {
+        &["spacing", "pPrChange"]
+    };
+    let drop: Vec<NodeId> = dom
+        .elements(ppr, None)
+        .into_iter()
+        .filter(|&c| {
+            let Some(n) = dom.name(c) else {
+                return false;
+            };
+            !keep.iter().any(|k| n == W::name(k))
+        })
+        .collect();
+    for c in drop {
+        dom.remove(c);
+    }
+    // Copy B Normal's remaining declared pPr children (widowControl,
+    // tabs, suppressAutoHyphens, …) in schema order.
+    if let Some(bppr) = b_style.and_then(|bs| dom.element(bs, &W::name("pPr"))) {
+        let skip = ["spacing", "ind", "pPrChange", "rPr"];
+        let b_kids: Vec<NodeId> = dom.elements(bppr, None);
+        for bc in b_kids {
+            let Some(n) = dom.name(bc) else { continue };
+            if skip.iter().any(|s| n == W::name(s)) {
+                continue;
+            }
+            let local = n.local_name().to_string();
+            if dom.element(ppr, &W::name(&local)).is_some() {
+                continue;
+            }
+            let clone = dom.clone_subtree(bc);
+            insert_child_by_rank(dom, ppr, clone, &local, &ppr_child_rank);
+        }
+    }
+}
+
 /// M-PAG mechanism 2: rewrite the output stylesheet's Normal to B's target
 /// spacing with a `w:pPrChange` holding A's old pPr. Returns true when the
 /// stylesheet was modified.
@@ -686,9 +764,30 @@ fn merge_normal_style_spacing(
         spacing: dd_spacing,
     } = doc_default_ppr_delta(dom, out_root, b_root, b_style);
     let dd_delta = !dd_elements.is_empty() || !dd_spacing.is_empty();
+    // Normal's other declared paragraph properties follow B as well (M72):
+    // b42b3ae070's revision keeps the spacing but drops `jc=both`, and
+    // Word's redline records the justification in a pPrChange.
+    let rest_signature = |dom: &Dom, style: Option<NodeId>| -> Vec<String> {
+        let skip = ["spacing", "pPrChange", "rPr"];
+        let mut sig: Vec<String> = style
+            .and_then(|s| dom.element(s, &W::name("pPr")))
+            .map(|p| dom.elements(p, None))
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|&c| {
+                dom.name(c)
+                    .is_some_and(|n| !skip.iter().any(|k| n == W::name(k)))
+            })
+            .map(|c| style_prop_signature(dom, c))
+            .collect();
+        sig.sort();
+        sig
+    };
+    let rest_differs = rest_signature(dom, Some(a_style)) != rest_signature(dom, b_style);
     // Identity: A already has the same explicit spacing we would write.
     if target_before.is_empty()
         && !dd_delta
+        && !rest_differs
         && let (Some(a), Some(b)) = (&a_stored, &b_target)
         && a == b
     {
@@ -703,6 +802,7 @@ fn merge_normal_style_spacing(
         && !m106_same_dd_clear
         && target_before.is_empty()
         && !dd_delta
+        && !rest_differs
     {
         return false;
     }
@@ -777,77 +877,7 @@ fn merge_normal_style_spacing(
         set(dom, "after", after);
         set(dom, "line", line);
         set(dom, "lineRule", rule);
-        // M64/M70: Normal `w:ind` follows B.
-        // - B has ind (file_196 firstLine=432) → copy B's ind onto merged Normal.
-        // - B has no ind (file_197 bare Normal) → drop A's leftover firstLine so
-        //   Word's after/line-only Normal is not polluted with A ind.
-        let b_ind = b_style
-            .and_then(|bs| dom.element(bs, &W::name("pPr")))
-            .and_then(|bppr| dom.element(bppr, &W::name("ind")));
-        if let Some(old_ind) = dom.element(ppr, &W::name("ind")) {
-            dom.remove(old_ind);
-        }
-        if let Some(bind) = b_ind {
-            let clone = dom.clone_subtree(bind);
-            // ind follows spacing in CT_PPr; place before pPrChange (added below).
-            if let Some(sp) = dom.element(ppr, &W::name("spacing")) {
-                let after_sp = {
-                    let kids = dom.nodes(ppr);
-                    kids.iter()
-                        .position(|&n| n == sp)
-                        .and_then(|i| kids.get(i + 1).copied())
-                };
-                match after_sp {
-                    Some(next) => dom.add_before_self(next, clone),
-                    None => dom.add(ppr, clone),
-                }
-            } else {
-                dom.add_first(ppr, clone);
-            }
-        }
-        // M72 refined by file_198: Word's live Normal after the merge is B's
-        // EFFECTIVE block — spacing (computed above) plus B's OWN declared
-        // pPr children. A-origin non-spacing props (widowControl/tabs/
-        // suppressAutoHyphens on file_77, where B declares none) drop into
-        // pPrChange old; B-origin ones (the same names on file_198's
-        // LO-flavored B Normal) SURVIVE live — dropping them loses widow
-        // control and drifts pagination.
-        let keep: &[&str] = if b_ind.is_some() {
-            &["spacing", "ind", "pPrChange"]
-        } else {
-            &["spacing", "pPrChange"]
-        };
-        let drop: Vec<NodeId> = dom
-            .elements(ppr, None)
-            .into_iter()
-            .filter(|&c| {
-                let Some(n) = dom.name(c) else {
-                    return false;
-                };
-                !keep.iter().any(|k| n == W::name(k))
-            })
-            .collect();
-        for c in drop {
-            dom.remove(c);
-        }
-        // Copy B Normal's remaining declared pPr children (widowControl,
-        // tabs, suppressAutoHyphens, …) in schema order.
-        if let Some(bppr) = b_style.and_then(|bs| dom.element(bs, &W::name("pPr"))) {
-            let skip = ["spacing", "ind", "pPrChange", "rPr"];
-            let b_kids: Vec<NodeId> = dom.elements(bppr, None);
-            for bc in b_kids {
-                let Some(n) = dom.name(bc) else { continue };
-                if skip.iter().any(|s| n == W::name(s)) {
-                    continue;
-                }
-                let local = n.local_name().to_string();
-                if dom.element(ppr, &W::name(&local)).is_some() {
-                    continue;
-                }
-                let clone = dom.clone_subtree(bc);
-                insert_child_by_rank(dom, ppr, clone, &local, &ppr_child_rank);
-            }
-        }
+        sync_normal_ppr_with_revised(dom, ppr, b_style);
     } else if !target_before.is_empty() {
         // M479 — before-only delta: write the lone neutralizer, clearing any
         // stale after/line (paragraph_spacing_missing × pci_table oracle:
@@ -867,6 +897,9 @@ fn merge_normal_style_spacing(
     } else if let Some(sp) = dom.element(ppr, &W::name("spacing")) {
         // Clear explicit spacing — Word leaves empty pPr (file_22).
         dom.remove(sp);
+    }
+    if b_target.is_none() && rest_differs {
+        sync_normal_ppr_with_revised(dom, ppr, b_style);
     }
     if !dd_spacing.is_empty() {
         let spacing = match dom.element(ppr, &W::name("spacing")) {
@@ -4317,7 +4350,14 @@ fn unique_part_name(out: &PartFs, want: &str, bytes: &[u8]) -> String {
 /// Our pipeline sometimes leaves A's (or adopted) refs on the final as well,
 /// which dual-binds chrome and diverges from Word. Strip only the **body
 /// direct-child** final; mid multi-section even/default/first copies stay.
-fn strip_final_sectpr_inherited_header_footer(dom: &mut Dom, result_root: NodeId) {
+/// A slot the revision's own final `sectPr` sets (`revised_final`) stays:
+/// Word's redline sections are the revision's (f8c1ce3e92 keeps the final
+/// section's first-page header and footer after a title-page section).
+fn strip_final_sectpr_inherited_header_footer(
+    dom: &mut Dom,
+    result_root: NodeId,
+    revised_final: &std::collections::HashSet<(bool, String)>,
+) {
     let href = W::name("headerReference");
     let fref = W::name("footerReference");
     let type_name = W::name("type");
@@ -4367,13 +4407,49 @@ fn strip_final_sectpr_inherited_header_footer(dom: &mut Dom, result_root: NodeId
             .attribute(e, &type_name)
             .unwrap_or("default")
             .to_string();
-        if earlier_slots.contains(&(is_header, ty)) {
+        let slot = (is_header, ty);
+        if earlier_slots.contains(&slot) && !revised_final.contains(&slot) {
             to_remove.push(e);
         }
     }
     for n in to_remove {
         dom.remove(n);
     }
+}
+
+/// The (is header, `w:type`) header/footer slots the body-level final
+/// `sectPr` of `pkg`'s main document sets explicitly.
+fn final_header_footer_slots(pkg: &PartFs) -> std::collections::HashSet<(bool, String)> {
+    let main = pkg
+        .main_document_part()
+        .unwrap_or_else(|| "word/document.xml".to_string());
+    let Some(xml) = pkg.part_string(&main) else {
+        return Default::default();
+    };
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let Some(sect) = dom
+        .root(doc)
+        .and_then(|r| dom.element(r, &W::body()))
+        .and_then(|b| dom.element(b, &W::name("sectPr")))
+    else {
+        return Default::default();
+    };
+    dom.elements(sect, None)
+        .into_iter()
+        .filter_map(|e| {
+            let n = dom.name(e)?;
+            let is_header = if n == W::name("headerReference") {
+                true
+            } else if n == W::name("footerReference") {
+                false
+            } else {
+                return None;
+            };
+            let ty = dom.attribute(e, &W::name("type")).unwrap_or("default");
+            Some((is_header, ty.to_string()))
+        })
+        .collect()
 }
 
 /// Word-alignment mode (settings-gated): Word's Compare presents the REVISED
@@ -5783,7 +5859,11 @@ fn compare_documents_impl(
         adopt_revised_header_footer(&mut dom, result_root, &pkg2, &mut out, &main1, settings);
         // Word inheritance: drop body-final HF slots already set on an earlier
         // mid-section break (dual chrome otherwise). Mid multi-section copies stay.
-        strip_final_sectpr_inherited_header_footer(&mut dom, result_root);
+        strip_final_sectpr_inherited_header_footer(
+            &mut dom,
+            result_root,
+            &final_header_footer_slots(&pkg2),
+        );
         // M383: A-only HF (B has no headers/footers) → pure-D (Word).
         mark_a_only_hf_content_as_deleted(&mut out, &pkg1, &pkg2, settings);
     }

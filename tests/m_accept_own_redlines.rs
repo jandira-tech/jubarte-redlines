@@ -763,3 +763,188 @@ fn a_dropped_space_after_is_recorded_not_kept_live() {
         part_string(&out, "word/document.xml").unwrap()
     );
 }
+
+const STYLES: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml";
+const STYLES_REL: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles";
+
+/// A one-paragraph document whose stylesheet has `normal_ppr` as Normal's
+/// pPr and `dd_spacing` as the docDefaults paragraph spacing.
+fn docx_with_normal(normal_ppr: &str, dd_spacing: &str) -> Vec<u8> {
+    let styles = format!(
+        r#"<w:styles xmlns:w="{w}"><w:docDefaults><w:pPrDefault><w:pPr>{dd_spacing}</w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/><w:pPr>{normal_ppr}</w:pPr></w:style></w:styles>"#,
+        w = common::docx::W_NS
+    );
+    common::docx::docx_with(
+        r#"<w:p><w:r><w:t>Body text</w:t></w:r></w:p>"#,
+        &[Part {
+            name: "word/styles.xml",
+            content_type: STYLES,
+            rel_type: STYLES_REL,
+            xml: &styles,
+        }],
+    )
+}
+
+/// Normal's pPr as xml.
+fn normal_ppr(pkg: &[u8]) -> String {
+    let xml = part_string(pkg, "word/styles.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    dom.elements(root, Some(&W::name("style")))
+        .into_iter()
+        .find(|&s| dom.attribute(s, &W::name("styleId")) == Some("Normal"))
+        .and_then(|s| dom.element(s, &W::p_pr()))
+        .map(|p| dom.serialize_element(p))
+        .unwrap_or_default()
+}
+
+/// The revision's Normal keeps the original's spacing but drops its
+/// justification: Word's redline writes the revision's pPr live and records
+/// the justification in a `pPrChange` (b42b3ae070); accepted, the text is
+/// left aligned. Identical spacing made the Normal merge a no-op, so the
+/// original's `jc=both` stayed live and every accepted paragraph stayed
+/// justified.
+#[test]
+fn a_normal_style_the_revision_stops_justifying_is_recorded() {
+    let spacing = r#"<w:spacing w:after="0" w:line="240" w:lineRule="auto"/>"#;
+    let base = docx_with_normal(
+        &format!(r#"{spacing}<w:jc w:val="both"/>"#),
+        r#"<w:spacing w:after="200" w:line="276" w:lineRule="auto"/>"#,
+    );
+    let next = docx_with_normal(
+        spacing,
+        r#"<w:spacing w:after="160" w:line="259" w:lineRule="auto"/>"#,
+    );
+    let redline = compare_documents(&base, &next, "Redline").unwrap();
+    assert_word_valid_package(&redline);
+    let ppr = normal_ppr(&redline);
+    let (live, change) = ppr.split_once("<w:pPrChange").expect("pPrChange");
+    assert!(!live.contains("<w:jc"), "{ppr}");
+    assert!(live.contains(r#"w:line="240""#), "{ppr}");
+    assert!(change.contains(r#"<w:jc w:val="both""#), "{ppr}");
+
+    let accepted = accept_revisions(&redline).unwrap();
+    assert_word_valid_package(&accepted);
+    let ppr = normal_ppr(&accepted);
+    assert!(
+        !ppr.contains("<w:jc") && !ppr.contains("pPrChange"),
+        "{ppr}"
+    );
+}
+
+/// The text of the part the final section's `slot` (`headerReference` or
+/// `footerReference`, `w:type` `ty`) names, or None when it names none.
+fn final_slot_text(pkg: &[u8], slot: &str, ty: &str) -> Option<String> {
+    let xml = part_string(pkg, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    let body = dom.element(root, &W::body()).unwrap();
+    let sect = dom.element(body, &W::name("sectPr")).unwrap();
+    let r_id = jubarte::namespaces::R::name("id");
+    let rid = dom
+        .elements(sect, Some(&W::name(slot)))
+        .into_iter()
+        .find(|&e| dom.attribute(e, &W::name("type")) == Some(ty))
+        .and_then(|e| dom.attribute(e, &r_id).map(str::to_string))?;
+    let rels = part_string(pkg, "word/_rels/document.xml.rels").unwrap();
+    let at = rels.find(&format!("Id=\"{rid}\""))?;
+    let rel = &rels[rels[..at].rfind('<')?..];
+    let target = rel.split("Target=\"").nth(1)?.split('"').next()?;
+    let part = part_string(pkg, &format!("word/{target}"))?;
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&part);
+    let root = dom.root(doc).unwrap();
+    Some(
+        dom.descendants(root, Some(&W::t()))
+            .into_iter()
+            .map(|t| dom.value(t))
+            .collect(),
+    )
+}
+
+/// The revision splits the document into a title-page section and a final
+/// section, each with its own first-page header and footer; the original
+/// has one section. Word's redline keeps the revision's final first-page
+/// footer on the final section (f8c1ce3e92: page 2 reads "Page 2 of 3").
+/// The final section dropped every slot an earlier section already set, so
+/// page 2 repeated the title page's footer, logo header included.
+#[test]
+fn a_final_section_keeps_the_first_page_footer_the_revision_gives_it() {
+    let hf = |root: &str, text: &str| {
+        format!(
+            r#"<w:{root} xmlns:w="{w}"><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:{root}>"#,
+            w = common::docx::W_NS
+        )
+    };
+    let (a_even, a_first) = (hf("hdr", "A even"), hf("hdr", "A first"));
+    let base = docx_with_sect(
+        r#"<w:p><w:r><w:t>Title page</w:t></w:r></w:p><w:p><w:r><w:t>Body text</w:t></w:r></w:p>"#,
+        &[
+            Part {
+                name: "word/header1.xml",
+                content_type: HEADER,
+                rel_type: HEADER_REL,
+                xml: &a_even,
+            },
+            Part {
+                name: "word/header2.xml",
+                content_type: HEADER,
+                rel_type: HEADER_REL,
+                xml: &a_first,
+            },
+        ],
+        r#"<w:headerReference w:type="even" r:id="rIdX0"/><w:headerReference w:type="first" r:id="rIdX1"/>"#,
+    );
+    let (title_hdr, title_ftr) = (hf("hdr", "Logo"), hf("ftr", "1 of 2"));
+    let (next_hdr, next_ftr) = (hf("hdr", ""), hf("ftr", "Page 2 of 2"));
+    let parts = [
+        Part {
+            name: "word/header1.xml",
+            content_type: HEADER,
+            rel_type: HEADER_REL,
+            xml: &title_hdr,
+        },
+        Part {
+            name: "word/footer1.xml",
+            content_type: FOOTER,
+            rel_type: FOOTER_REL,
+            xml: &title_ftr,
+        },
+        Part {
+            name: "word/header2.xml",
+            content_type: HEADER,
+            rel_type: HEADER_REL,
+            xml: &next_hdr,
+        },
+        Part {
+            name: "word/footer2.xml",
+            content_type: FOOTER,
+            rel_type: FOOTER_REL,
+            xml: &next_ftr,
+        },
+    ];
+    let next = common::docx::docx_with_sect_pr(
+        r#"<w:p><w:pPr><w:sectPr><w:headerReference w:type="first" r:id="rIdX0"/><w:footerReference w:type="first" r:id="rIdX1"/><w:pgSz w:w="12240" w:h="15840"/><w:titlePg/></w:sectPr></w:pPr><w:r><w:t>Title page</w:t></w:r></w:p><w:p><w:r><w:t>Body text</w:t></w:r></w:p>"#,
+        &parts,
+        r#"<w:sectPr><w:headerReference w:type="first" r:id="rIdX2"/><w:footerReference w:type="first" r:id="rIdX3"/><w:pgSz w:w="12240" w:h="15840"/><w:titlePg/></w:sectPr>"#,
+    );
+    let redline = compare_documents(&base, &next, "Redline").unwrap();
+    assert_word_valid_package(&redline);
+    let footer = final_slot_text(&redline, "footerReference", "first");
+    assert!(
+        footer.as_deref().is_some_and(|t| t.contains("Page 2 of 2")),
+        "{footer:?}"
+    );
+    assert!(
+        final_slot_text(&redline, "headerReference", "first").is_some(),
+        "the final section keeps a first-page header"
+    );
+
+    let accepted = accept_revisions(&redline).unwrap();
+    assert_word_valid_package(&accepted);
+    let footer = final_slot_text(&accepted, "footerReference", "first");
+    assert_eq!(footer.as_deref(), Some("Page 2 of 2"));
+}
