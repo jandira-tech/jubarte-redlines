@@ -3923,30 +3923,20 @@ pub fn rotate_ins_mark_del_only_paragraph(dom: &mut Dom, root: NodeId) {
                 continue;
             }
             // --- rewrite ---
-            // Pi mark MD → MI (copy attrs).
-            let flip_mark = |dom: &mut Dom,
-                             p: NodeId,
-                             from: &crate::xmllinq::XName,
-                             to: crate::xmllinq::XName| {
-                let Some(ppr) = dom.element(p, &W::p_pr()) else {
-                    return;
-                };
-                let Some(rpr) = dom.element(ppr, &W::r_pr()) else {
-                    return;
-                };
-                let Some(old) = dom.element(rpr, from) else {
-                    return;
-                };
-                let attrs: Vec<_> = dom.attributes(old).into_iter().collect();
-                dom.remove(old);
-                let neu = dom.new_element(to);
-                for (n, v) in attrs {
-                    dom.set_attribute_value(neu, &n, Some(&v));
-                }
-                dom.add_first(rpr, neu);
+            // The marks trade places with their properties: Pi takes the
+            // inserted mark's pPr (the revision's), Pi+1 the deleted mark's
+            // (29e3872eed: the deleted title's jc=center stays on the deleted
+            // mark; flipping only the revision marks left it live on the
+            // inserted paragraph, so accept-all centred it).
+            let (Some(ppr0), Some(ppr1)) =
+                (dom.element(p0, &W::p_pr()), dom.element(p1, &W::p_pr()))
+            else {
+                continue;
             };
-            flip_mark(dom, p0, &W::del(), W::ins());
-            flip_mark(dom, p1, &W::ins(), W::del());
+            dom.remove(ppr0);
+            dom.remove(ppr1);
+            dom.add_first(p0, ppr1);
+            dom.add_first(p1, ppr0);
             // p1's old del-blocks → front of p2 (in order).
             for &d in c1.iter().rev() {
                 dom.remove(d);
@@ -5678,7 +5668,15 @@ pub fn promote_heading_spacing_from_pprchange_on_last_mix(dom: &mut Dom, root: N
 /// Gate: **non-last** MIX with `pPrChange` carrying `jc`, no live `jc`, and
 /// ins_side+del_side tokens ≥6. Promote live `jc`; if old pPr is jc-only,
 /// drop `pPrChange` (Word mid-body shape).
-pub fn promote_live_jc_from_pprchange_on_body_mix(dom: &mut Dom, root: NodeId) {
+///
+/// A MIX whose revised text is a paragraph the revision leaves unaligned
+/// keeps the `pPrChange`: Word records the old centring over the revision's
+/// bare properties (29e3872eed), and promoting it centred the accepted text.
+pub fn promote_live_jc_from_pprchange_on_body_mix(
+    dom: &mut Dom,
+    root: NodeId,
+    revised_unaligned: &HashSet<String>,
+) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
     };
@@ -5721,7 +5719,7 @@ pub fn promote_live_jc_from_pprchange_on_body_mix(dom: &mut Dom, root: NodeId) {
             continue;
         };
         let val = dom.attribute(old_jc, &W::val()).unwrap_or("").to_string();
-        if val.is_empty() {
+        if val.is_empty() || revised_unaligned.contains(&accepted_text(dom, &kids, p)) {
             continue;
         }
         // Live jc before pPrChange.
@@ -11269,6 +11267,54 @@ pub fn ensure_empty_pprchange_on_live_heading_spacing(
         dom.add(chg, old_inner);
         dom.add(ppr, chg);
     }
+}
+
+/// The text of each paragraph that sets no `w:jc`.
+pub fn unaligned_paragraph_texts(dom: &Dom, body: NodeId) -> HashSet<String> {
+    dom.descendants(body, Some(&W::p()))
+        .into_iter()
+        .filter(|&p| {
+            dom.element(p, &W::p_pr())
+                .and_then(|ppr| dom.element(ppr, &W::jc_el()))
+                .is_none()
+        })
+        .map(|p| {
+            dom.descendants(p, Some(&W::t()))
+                .into_iter()
+                .map(|t| dom.value(t))
+                .collect()
+        })
+        .collect()
+}
+
+/// The text `p` holds once accepted: its revised text after that of the
+/// paragraphs before it whose deleted marks merge them into `p`.
+fn accepted_text(dom: &Dom, kids: &[NodeId], p: NodeId) -> String {
+    let Some(at) = kids.iter().position(|&k| k == p) else {
+        return revised_text(dom, p);
+    };
+    let first = kids[..at]
+        .iter()
+        .rposition(|&k| !dom.name_is(k, &W::p()) || !para_mark_revision(dom, k, &W::del()))
+        .map_or(0, |i| i + 1);
+    kids[first..=at]
+        .iter()
+        .map(|&k| revised_text(dom, k))
+        .collect()
+}
+
+/// A redline paragraph's revised text: its live and inserted `w:t`.
+fn revised_text(dom: &Dom, p: NodeId) -> String {
+    dom.descendants(p, Some(&W::t()))
+        .into_iter()
+        .filter(|&t| {
+            !dom.ancestors(t, None)
+                .into_iter()
+                .take_while(|&a| a != p)
+                .any(|a| dom.name_is(a, &W::del()))
+        })
+        .map(|t| dom.value(t))
+        .collect()
 }
 
 /// Each paragraph's text and `w:jc` value, for paragraphs with a `w:jc`.

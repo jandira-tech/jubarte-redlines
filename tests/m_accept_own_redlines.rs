@@ -652,3 +652,69 @@ fn a_section_leaving_columns_spells_out_one_column() {
         "{cols}"
     );
 }
+
+/// A centred paragraph whose words give way to a left-aligned revision:
+/// Word writes the revised paragraph's properties live on the surviving
+/// mark and records the centring in a `pPrChange` (29e3872eed, 4eff11f045).
+/// Accepted, the paragraph is left-aligned; ours kept the centring live.
+#[test]
+fn a_rewritten_centred_paragraph_takes_the_revised_alignment() {
+    let a = common::docx::docx(concat!(
+        "<w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>Microsoft Word vs. Google Docs</w:t></w:r></w:p>",
+        "<w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr><w:r><w:t>A comprehensive, evidence-backed demonstration document</w:t></w:r></w:p>",
+        "<w:p><w:r><w:t>Prepared for decision-makers.</w:t></w:r></w:p>",
+    ));
+    let b = common::docx::docx(concat!(
+        "<w:p><w:r><w:t>Left Alignment Demo</w:t></w:r></w:p>",
+        "<w:p><w:r><w:t>This document demonstrates left text alignment.</w:t></w:r></w:p>",
+        "<w:p><w:r><w:t>All text in this document is aligned to the left margin.</w:t></w:r></w:p>",
+    ));
+    let out = compare_documents(&a, &b, "Redline").expect("compare");
+    assert_word_valid_package(&out);
+    let accepted = accept_revisions(&out).expect("accept");
+    assert_eq!(body_texts(&accepted), body_texts(&b));
+    assert_eq!(
+        body_pprs(&accepted),
+        body_pprs(&b),
+        "{}",
+        part_string(&out, "word/document.xml").unwrap()
+    );
+}
+
+/// The same rewrite with the original's deleted body after it: the centred
+/// paragraph meets the revised one mid-body, and Word still records the
+/// centring in a `pPrChange` over the revision's bare properties
+/// (29e3872eed). Promoting the old `jc` live, as for a right-aligned pair
+/// whose revision is right-aligned too (M449), centred the accepted text.
+#[test]
+fn a_rewritten_centred_paragraph_mid_body_takes_the_revised_alignment() {
+    let a = common::docx::docx(concat!(
+        "<w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>file_6.docx</w:t></w:r></w:p>",
+        "<w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>Microsoft Word vs. Google Docs</w:t></w:r></w:p>",
+        "<w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr><w:r><w:t>A comprehensive, evidence-backed demonstration document</w:t></w:r></w:p>",
+        "<w:p><w:r><w:t>Prepared for executive, sales and IT decision-makers.</w:t></w:r></w:p>",
+        "<w:p><w:r><w:t>Table of Contents</w:t></w:r></w:p>",
+        "<w:p><w:r><w:t>Executive summary of the platform comparison.</w:t></w:r></w:p>",
+        "<w:p><w:r><w:t>Evidence base and source notes.</w:t></w:r></w:p>",
+    ));
+    let b = common::docx::docx(concat!(
+        "<w:p><w:r><w:t>file_7.docx</w:t></w:r></w:p>",
+        "<w:p><w:r><w:t>Left Alignment Demo</w:t></w:r></w:p>",
+        "<w:p><w:r><w:t>This document demonstrates left text alignment.</w:t></w:r></w:p>",
+        "<w:p><w:r><w:t>All text in this document is aligned to the left margin.</w:t></w:r></w:p>",
+    ));
+    let out = compare_documents(&a, &b, "Redline").expect("compare");
+    assert_word_valid_package(&out);
+    let accepted = accept_revisions(&out).expect("accept");
+    let texts = body_texts(&accepted);
+    let at = texts
+        .iter()
+        .position(|t| t == "This document demonstrates left text alignment.")
+        .expect("the rewritten paragraph");
+    assert_eq!(
+        body_pprs(&accepted)[at],
+        "",
+        "{}",
+        part_string(&out, "word/document.xml").unwrap()
+    );
+}

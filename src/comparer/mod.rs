@@ -164,6 +164,8 @@ pub fn compare_bodies_faithful_with_notes(
     // M454 guard: the original's aligned paragraphs, read before the compare
     // consumes body1.
     let original_alignment = finalize::paragraph_alignments(dom, body1);
+    // M449 guard: the revision's paragraphs that set no alignment.
+    let revised_unaligned = finalize::unaligned_paragraph_texts(dom, body2);
     let saved_sectpr: Option<NodeId> = {
         let last_sect = |dom: &mut Dom, body: NodeId| {
             dom.element(body, &W::sect_pr())
@@ -909,7 +911,7 @@ pub fn compare_bodies_faithful_with_notes(
         // M102c: last pure-del inherits prev live jc (file_148 center+spacing).
         finalize::last_pure_del_inherit_prev_jc(dom, root);
         // M449: body MIX parks jc in pPrChange; Word keeps live jc (right-align).
-        finalize::promote_live_jc_from_pprchange_on_body_mix(dom, root);
+        finalize::promote_live_jc_from_pprchange_on_body_mix(dom, root, &revised_unaligned);
         // M452: short title MIX has no pPr; Word parks body live jc into
         // pPrChange only (right_aligned_italic×right_alignment_2 residual).
         // Park-only — live title jc thrash'd (abandoned M451 title attempt).
