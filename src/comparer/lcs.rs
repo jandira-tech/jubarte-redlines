@@ -3353,22 +3353,26 @@ fn containing_paragraph_is_duplicated(dom: &Dom, units: &[ComparisonUnit], pos: 
 /// A word unit or paragraph group with no visible text: a bare paragraph
 /// mark, an empty paragraph.
 pub(super) fn unit_is_textless_paragraph_matter(dom: &Dom, u: &ComparisonUnit) -> bool {
-    unit_is_paragraph_matter(dom, u)
-        && u.descendant_atoms().iter().all(|a| {
-            let e = a.content_element;
-            if dom.name_is(e, &W::t()) {
-                return dom.value_str(e).trim().is_empty();
-            }
-            // Visible non-text content is words to Word's chain rule.
-            let visible = [
-                W::name("drawing"),
-                W::pict(),
-                W::name("object"),
-                W::name("sym"),
-            ];
-            !visible.iter().any(|n| dom.name_is(e, n))
-                && dom.name(e).is_none_or(|n| n.namespace_name() != MATH_URI)
-        })
+    unit_is_paragraph_matter(dom, u) && unit_is_textless(dom, u)
+}
+
+/// No visible text in the unit: whitespace, marks, properties.
+fn unit_is_textless(dom: &Dom, u: &ComparisonUnit) -> bool {
+    u.descendant_atoms().iter().all(|a| {
+        let e = a.content_element;
+        if dom.name_is(e, &W::t()) {
+            return dom.value_str(e).trim().is_empty();
+        }
+        // Visible non-text content is words to Word's chain rule.
+        let visible = [
+            W::name("drawing"),
+            W::pict(),
+            W::name("object"),
+            W::name("sym"),
+        ];
+        !visible.iter().any(|n| dom.name_is(e, n))
+            && dom.name(e).is_none_or(|n| n.namespace_name() != MATH_URI)
+    })
 }
 
 const MATH_URI: &str = "http://schemas.openxmlformats.org/officeDocument/2006/math";
@@ -3382,32 +3386,60 @@ fn unit_is_paragraph_matter(dom: &Dom, u: &ComparisonUnit) -> bool {
     }
 }
 
+/// The whole paragraphs that close `us`, last first, as (start, blank): a
+/// paragraph group alone, or a paragraph mark with the words before it. A
+/// paragraph is blank when none of its units has visible text. The walk
+/// stops at a table, row or text box, or at words with no mark after them.
+fn closing_paragraphs(dom: &Dom, us: &[ComparisonUnit]) -> Vec<(usize, bool)> {
+    let mut out = Vec::new();
+    let mut end = us.len();
+    while end > 0 && unit_is_paragraph_matter(dom, &us[end - 1]) {
+        let mut start = end - 1;
+        if as_group(&us[start]).is_none() {
+            while start > 0
+                && as_group(&us[start - 1]).is_none()
+                && !unit_is_paragraph_matter(dom, &us[start - 1])
+            {
+                start -= 1;
+            }
+        }
+        out.push((
+            start,
+            us[start..end].iter().all(|u| unit_is_textless(dom, u)),
+        ));
+        end = start;
+    }
+    out
+}
+
 /// Word's interior pilcrow chain (decoded by Docxodus 12's EmitGapArranged):
 /// a blank pair that closes a replace region holds while, walking back over
 /// the region, each original paragraph is blank. An original paragraph with
 /// words facing a blank cancels the chain; two paragraphs with words stop it,
 /// and it holds only if the paragraphs left before them balance. A revised
 /// paragraph with words facing a blank needs a deleted paragraph with words
-/// at the region's head to fuse into.
+/// at the region's head to fuse into. The walk steps over whole paragraphs:
+/// a heading's bare mark is not a blank (ff42: "Project Charter" and
+/// "Employee Directory" stop the chain, and the unbalanced region releases
+/// the blank before the table).
 fn interior_blank_chain_holds(
     dom: &Dom,
     before1: &[ComparisonUnit],
     before2: &[ComparisonUnit],
 ) -> bool {
+    let (ps1, ps2) = (
+        closing_paragraphs(dom, before1),
+        closing_paragraphs(dom, before2),
+    );
     let (mut a, mut b) = (before1.len(), before2.len());
     let mut fusion = false;
-    while a > 0 && b > 0 {
-        let (u, v) = (&before1[a - 1], &before2[b - 1]);
-        if !unit_is_paragraph_matter(dom, u) || !unit_is_paragraph_matter(dom, v) {
-            break;
-        }
-        if unit_is_textless_paragraph_matter(dom, u) {
-            fusion |= !unit_is_textless_paragraph_matter(dom, v);
-            a -= 1;
-            b -= 1;
+    for (&(s1, blank1), &(s2, blank2)) in ps1.iter().zip(&ps2) {
+        if blank1 {
+            fusion |= !blank2;
+            (a, b) = (s1, s2);
             continue;
         }
-        if unit_is_textless_paragraph_matter(dom, v) {
+        if blank2 {
             return false;
         }
         let paragraphs = |us: &[ComparisonUnit]| {
@@ -3420,10 +3452,13 @@ fn interior_blank_chain_holds(
         }
         break;
     }
+    // The region's head: its first paragraph, whole and with words.
+    let head = before1
+        .iter()
+        .position(|u| unit_is_paragraph_matter(dom, u))
+        .filter(|&e| before1[..e].iter().all(|u| as_group(u).is_none()));
     !fusion
-        || (a > 0
-            && unit_is_paragraph_matter(dom, &before1[0])
-            && !unit_is_textless_paragraph_matter(dom, &before1[0]))
+        || (a > 0 && head.is_some_and(|e| !before1[..=e].iter().all(|u| unit_is_textless(dom, u))))
 }
 
 /// The unit's last atom sits in its story's last paragraph: nothing but the
@@ -3452,6 +3487,43 @@ pub(super) fn story_closing_paragraph(dom: &Dom, u: &ComparisonUnit) -> Option<N
             .skip(1)
             .all(|c| dom.name_is(c, &W::sect_pr()));
     last_in_story.then_some(para)
+}
+
+/// Word pairs the two stories' closing paragraphs whatever precedes them. A
+/// structural zip of paragraph and table (or word and row) runs would meet
+/// the revised closing run with the original's first run after the paired
+/// table and delete the rest, the closing mark included (ff42b4a7a3: an
+/// accepted blank paragraph after the new table). When both last runs close
+/// their stories and either is blank, they come off the zip and pair last.
+fn peel_story_final_groups<K: PartialEq>(
+    dom: &Dom,
+    lg: &mut Vec<(K, Vec<ComparisonUnit>)>,
+    rg: &mut Vec<(K, Vec<ComparisonUnit>)>,
+) -> Option<(Vec<ComparisonUnit>, Vec<ComparisonUnit>)> {
+    if lg.len() == rg.len() || lg.len() < 2 || rg.len() < 2 {
+        return None;
+    }
+    let closes = |g: &(K, Vec<ComparisonUnit>)| {
+        g.1.last()
+            .is_some_and(|u| unit_is_paragraph_matter(dom, u) && unit_closes_story(dom, u))
+    };
+    let blank = |g: &(K, Vec<ComparisonUnit>)| g.1.iter().all(|u| unit_is_textless(dom, u));
+    let (l, r) = (lg.last()?, rg.last()?);
+    if l.0 != r.0 || !closes(l) || !closes(r) || !(blank(l) || blank(r)) {
+        return None;
+    }
+    Some((lg.pop()?.1, rg.pop()?.1))
+}
+
+/// `out` with the peeled closing runs paired after it.
+fn with_story_final_pair(
+    mut out: Vec<CorrelatedSequence>,
+    tail: Option<(Vec<ComparisonUnit>, Vec<ComparisonUnit>)>,
+) -> Vec<CorrelatedSequence> {
+    if let Some((l, r)) = tail {
+        out.push(CorrelatedSequence::paired(CorrelationStatus::Unknown, l, r));
+    }
+    out
 }
 
 /// M4.C.8-C.10 — `DoLcsAlgorithm` Step H: the no-common-run structural dispatch
@@ -3496,8 +3568,9 @@ fn step_h(
                 },
             }
         };
-        let lg = crate::util::group_adjacent(cul1.iter().cloned(), |u| key(u));
-        let rg = crate::util::group_adjacent(cul2.iter().cloned(), |u| key(u));
+        let mut lg = crate::util::group_adjacent(cul1.iter().cloned(), |u| key(u));
+        let mut rg = crate::util::group_adjacent(cul2.iter().cloned(), |u| key(u));
+        let tail = peel_story_final_groups(dom, &mut lg, &mut rg);
         if std::env::var("JUBARTE_TRACE").is_ok() {
             let toks = |units: &[ComparisonUnit]| -> Vec<String> {
                 let raw = para_text_tokens_from_units(dom, units);
@@ -3581,19 +3654,19 @@ fn step_h(
                 ir += 1;
             }
             if il == lg.len() && ir == rg.len() {
-                return out;
+                return with_story_final_pair(out, tail);
             }
             if ir == rg.len() {
                 for g in &lg[il..] {
                     out.push(CorrelatedSequence::deleted(g.1.clone()));
                 }
-                return out;
+                return with_story_final_pair(out, tail);
             }
             if il == lg.len() {
                 for g in &rg[ir..] {
                     out.push(CorrelatedSequence::inserted(g.1.clone()));
                 }
-                return out;
+                return with_story_final_pair(out, tail);
             }
             if il == before_l && ir == before_r {
                 // defensive: no progress (e.g. Row vs Textbox) — flush remainder.
@@ -3603,7 +3676,7 @@ fn step_h(
                 out.push(CorrelatedSequence::inserted(
                     rg[ir..].iter().flat_map(|g| g.1.clone()).collect(),
                 ));
-                return out;
+                return with_story_final_pair(out, tail);
             }
         }
     }
@@ -3642,8 +3715,9 @@ fn step_h(
                     .map(|u| para_text_tokens(dom, u))
                     .unwrap_or_default()
             };
-        let lg = crate::util::group_adjacent(cul1.iter().cloned(), |u| key(u));
-        let rg = crate::util::group_adjacent(cul2.iter().cloned(), |u| key(u));
+        let mut lg = crate::util::group_adjacent(cul1.iter().cloned(), |u| key(u));
+        let mut rg = crate::util::group_adjacent(cul2.iter().cloned(), |u| key(u));
+        let tail = peel_story_final_groups(dom, &mut lg, &mut rg);
         let (mut il, mut ir) = (0usize, 0usize);
         loop {
             if lg[il].0 == rg[ir].0 {
@@ -3734,19 +3808,19 @@ fn step_h(
                 ir += 1;
             }
             if il == lg.len() && ir == rg.len() {
-                return out;
+                return with_story_final_pair(out, tail);
             }
             if ir == rg.len() {
                 for g in &lg[il..] {
                     out.push(CorrelatedSequence::deleted(g.1.clone()));
                 }
-                return out;
+                return with_story_final_pair(out, tail);
             }
             if il == lg.len() {
                 for g in &rg[ir..] {
                     out.push(CorrelatedSequence::inserted(g.1.clone()));
                 }
-                return out;
+                return with_story_final_pair(out, tail);
             }
         }
     }
@@ -5776,6 +5850,41 @@ pub fn detect_unrelated_sources_word_mode(
                 .flatten()
                 .any(|u| u.len() == side.len())
     };
+    // Both stories open on blank paragraphs: Word pairs them as it pairs the
+    // final marks, and the replacement starts after them (f1257ca7ea: one
+    // opening blank against six, the first pair kept, five inserted).
+    let mut head = Vec::new();
+    let (mut cu1, mut cu2) = (cu1, cu2);
+    if let [ins, del] = seqs.as_slice()
+        && whole(ins, CorrelationStatus::Inserted, cu2)
+        && whole(del, CorrelationStatus::Deleted, cu1)
+    {
+        let blanks = |cu: &[ComparisonUnit]| {
+            cu.iter()
+                .take_while(|u| {
+                    as_group(u).is_some_and(|g| g.group_type == ComparisonUnitGroupType::Paragraph)
+                        && unit_is_textless_paragraph_matter(dom, u)
+                })
+                .count()
+        };
+        let k = blanks(cu1).min(blanks(cu2));
+        if k > 0 && k < cu1.len() && k < cu2.len() {
+            head = resolve_correlated_sequences(
+                dom,
+                vec![CorrelatedSequence::paired(
+                    CorrelationStatus::Unknown,
+                    cu1[..k].to_vec(),
+                    cu2[..k].to_vec(),
+                )],
+                settings,
+            );
+            (cu1, cu2) = (&cu1[k..], &cu2[k..]);
+            seqs = vec![
+                CorrelatedSequence::inserted(cu2.to_vec()),
+                CorrelatedSequence::deleted(cu1.to_vec()),
+            ];
+        }
+    }
     // A final paragraph split into its content and its mark.
     let final_para = |u: Option<&ComparisonUnit>| {
         let u = u?;
@@ -5809,9 +5918,11 @@ pub fn detect_unrelated_sources_word_mode(
             vec![pa],
             vec![pb],
         ));
-        return Some((seqs, true));
+        head.extend(seqs);
+        return Some((head, true));
     }
-    Some((seqs, false))
+    head.extend(seqs);
+    Some((head, false))
 }
 
 fn detect_unrelated_sources_word_mode_inner(

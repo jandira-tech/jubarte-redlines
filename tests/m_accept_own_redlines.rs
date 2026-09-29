@@ -294,3 +294,124 @@ fn a_header_whose_picture_ids_clash_is_still_compared() {
         "the revised logo"
     );
 }
+
+fn table(rows: &[&[&str]]) -> String {
+    let cell = |c: &&str| {
+        format!(
+            r#"<w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>{c}</w:t></w:r></w:p></w:tc>"#
+        )
+    };
+    let rows: String = rows
+        .iter()
+        .map(|r| format!("<w:tr>{}</w:tr>", r.iter().map(cell).collect::<String>()))
+        .collect();
+    format!(r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="3000"/></w:tblGrid>{rows}</w:tbl>"#)
+}
+
+/// Both documents end with a table and the empty paragraph Word requires
+/// after it; the revision replaces everything before that paragraph with a
+/// new table. Word pairs the two closing paragraphs, so the accepted
+/// document ends with the new table and one paragraph (ff42b4a7a3,
+/// 92075b7449). An inserted copy of the closing paragraph before the
+/// deleted content left a blank paragraph after the table.
+#[test]
+fn a_replaced_ending_table_keeps_one_closing_paragraph() {
+    let p = |t: &str| format!("<w:p><w:r><w:t>{t}</w:t></w:r></w:p>");
+    let a = common::docx::docx(&format!(
+        "{}{}<w:p/>{}{}{}<w:p/>{}<w:p/>{}<w:p/>{}<w:p/>",
+        p("docx-editor"),
+        p("Project Charter"),
+        table(&[&["npm package", "github repository"]]),
+        p("What this is"),
+        (1..=24)
+            .map(|i| p(&format!(
+                "Section {i} explains feature number {i} of the editor."
+            )))
+            .collect::<String>(),
+        table(&[&["import editor"], &["render editor"]]),
+        p("Sign-off"),
+        table(&[&["on behalf of the community", "signature and date"]]),
+    ));
+    let b = common::docx::docx(&format!(
+        "{}<w:p/>{}<w:p/>",
+        p("Employee Directory"),
+        table(&[
+            &["Name", "Department", "Role"],
+            &["Alice Brown", "Engineering", "Senior Dev"],
+            &["Carol White", "Sales", "Director"],
+        ])
+    ));
+    let out = compare_documents(&a, &b, "Redline").expect("compare");
+    assert_word_valid_package(&out);
+    // Word releases the blank before the table: "Project Charter" and
+    // "Employee Directory" stop its pilcrow chain, and the region's
+    // paragraphs do not balance. B's blank is inserted, A's deleted.
+    let red = part_string(&out, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&red);
+    let root = dom.root(doc).unwrap();
+    let body = dom.element(root, &W::body()).unwrap();
+    let mark = |p: jubarte::xmllinq::NodeId| {
+        let rpr = dom
+            .element(p, &W::p_pr())
+            .and_then(|ppr| dom.element(ppr, &W::r_pr()));
+        [W::ins(), W::del()].map(|n| rpr.is_some_and(|r| dom.element(r, &n).is_some()))
+    };
+    let paras = dom.elements(body, Some(&W::p()));
+    assert_eq!(mark(paras[1]), [true, false], "B's blank inserted: {red}");
+    assert_eq!(mark(paras[4]), [false, true], "A's blank deleted: {red}");
+    let accepted = accept_revisions(&out).expect("accept");
+    let xml = part_string(&accepted, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    let body = dom.element(root, &W::body()).unwrap();
+    let kids: Vec<String> = dom
+        .elements(body, None)
+        .into_iter()
+        .map(|k| dom.name(k).unwrap().local_name().to_string())
+        .collect();
+    assert_eq!(kids, ["p", "p", "tbl", "p", "sectPr"], "{xml}");
+}
+
+/// Two unrelated documents that both open on a blank paragraph: Word pairs
+/// the story-start blanks and inserts the revision's other ones after it,
+/// as it pairs the story-final marks (f1257ca7ea: the original's plumbing
+/// list against a council decision that opens on six blanks). Inserting
+/// every revised paragraph and deleting the original's opening blank moved
+/// the accepted document's blank paragraphs.
+#[test]
+fn unrelated_documents_pair_their_opening_blanks() {
+    let p = |t: &str| format!("<w:p><w:r><w:t>{t}</w:t></w:r></w:p>");
+    let a = common::docx::docx(&format!(
+        "<w:p/>{}{}{}{}{}",
+        p("Half inch stopcock"),
+        p("Ceramic valve head"),
+        p("Chrome plated brass body"),
+        p("Thirty year warranty"),
+        p("Backflow prevention device"),
+    ));
+    let b = common::docx::docx(&format!(
+        "<w:p/><w:p/><w:p/>{}{}{}{}{}<w:p/>",
+        p("Municipal council"),
+        p("Fifth convocation"),
+        p("Draft decision"),
+        p("On amending the regulation on landscaping"),
+        p("Head of the municipality"),
+    ));
+    let out = compare_documents(&a, &b, "Redline").expect("compare");
+    assert_word_valid_package(&out);
+    let red = part_string(&out, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&red);
+    let root = dom.root(doc).unwrap();
+    let body = dom.element(root, &W::body()).unwrap();
+    let paras = dom.elements(body, Some(&W::p()));
+    let tracked = |p: jubarte::xmllinq::NodeId| {
+        dom.descendants(p, None)
+            .into_iter()
+            .any(|e| dom.name_is(e, &W::ins()) || dom.name_is(e, &W::del()))
+    };
+    assert!(!tracked(paras[0]), "the opening blanks pair: {red}");
+    assert!(tracked(paras[1]), "B's second blank is inserted: {red}");
+}
