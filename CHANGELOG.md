@@ -117,6 +117,14 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
     reads against the nearest ancestor the same reject restores, as Word
     reads it. The built-in off hyphenation suppression, auto text alignment
     and auto colour are written where the style chain says otherwise.
+- A redline re-caches every themed colour its styles carry against the theme
+  it ships, as Word does: table-style shading fills and colours and border
+  colours too, not only text colours. Tints and shades are truncated per
+  channel the way Word writes them (accent 156082, tint 3F: B2DEF2).
+- A redline whose original has no theme (or only one nothing references)
+  ships Word's own default Office theme, byte for byte, instead of the
+  revision's theme; Word never takes the revision's (664 of 664 bench
+  redlines, and Word probes with a custom revision theme).
 - `jubarte debug A B -c text` / `-c runs` pairs header and footer parts by
   the section reference that shows them, so Word's renumbered parts compare
   with their counterparts.

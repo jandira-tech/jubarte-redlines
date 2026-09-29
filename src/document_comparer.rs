@@ -2260,24 +2260,6 @@ fn merge_revised_style_definitions(
 /// renders as it did in B (tiff_image × two_column oracle).
 const FACTORY_DD_RPR: &str = r#"<w:rPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"><w:rFonts w:asciiTheme="minorHAnsi" w:eastAsiaTheme="minorEastAsia" w:hAnsiTheme="minorHAnsi" w:cstheme="minorBidi"/><w:kern w:val="2"/><w:sz w:val="24"/><w:szCs w:val="24"/><w:lang w:val="en-US" w:eastAsia="en-US" w:bidi="ar-SA"/><w14:ligatures w14:val="standardContextual"/></w:rPr>"#;
 const FACTORY_DD_PPR: &str = r#"<w:pPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:spacing w:after="160" w:line="278" w:lineRule="auto"/></w:pPr>"#;
-/// Office 2024 factory theme fonts + palette (oracle: Word writes its own
-/// theme when A has none, not B's).
-const FACTORY_THEME_APTOS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Office Theme">
-  <a:themeElements>
-    <a:clrScheme name="Office"><a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1><a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="0E2841"/></a:dk2><a:lt2><a:srgbClr val="E8E8E8"/></a:lt2><a:accent1><a:srgbClr val="156082"/></a:accent1><a:accent2><a:srgbClr val="E97132"/></a:accent2><a:accent3><a:srgbClr val="196B24"/></a:accent3><a:accent4><a:srgbClr val="0F9ED5"/></a:accent4><a:accent5><a:srgbClr val="A02B93"/></a:accent5><a:accent6><a:srgbClr val="4EA72E"/></a:accent6><a:hlink><a:srgbClr val="467886"/></a:hlink><a:folHlink><a:srgbClr val="96607D"/></a:folHlink></a:clrScheme>
-    <a:fontScheme name="Office">
-      <a:majorFont><a:latin typeface="Aptos Display"/><a:ea typeface=""/><a:cs typeface=""/></a:majorFont>
-      <a:minorFont><a:latin typeface="Aptos"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont>
-    </a:fontScheme>
-    <a:fmtScheme name="Office">
-      <a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:fillStyleLst>
-      <a:lnStyleLst><a:ln w="6350"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln><a:ln w="12700"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln><a:ln w="19050"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln></a:lnStyleLst>
-      <a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst>
-      <a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:bgFillStyleLst>
-    </a:fmtScheme>
-  </a:themeElements>
-</a:theme>"#;
 
 /// M462 — A has no styles part: rewrite the adopted B stylesheet so its
 /// docDefaults become Word's FACTORY defaults, baking each style's
@@ -3013,13 +2995,12 @@ fn add_rpr_child_in_order(dom: &mut Dom, rpr: NodeId, child: NodeId, local: &str
 /// values with a `w:rPrChange` holding the old rPr. Originally scoped to
 /// Copy B's package chrome when the A-based package lacks it.
 ///
-/// Theme fonts (major/minor HAnsi) drive Title/Heading faces; missing theme
-/// leaves LO on factory faces. Settings/fontTable/webSettings are likewise
-/// present on Word redlines whenever the revised side carries them (C3).
+/// Settings/fontTable/webSettings are present on Word redlines whenever the
+/// revised side carries them (C3). The theme is not: Word never takes B's
+/// (see [`ensure_factory_package_chrome`]).
 /// Full docDefaults swap regressed sales_report×sample_document — leave
 /// docDefaults to the Normal merge path; only fill **missing** chrome parts.
 fn adopt_revised_styles_chrome(out: &mut PartFs, pkg2: &PartFs, out_main: &str) {
-    adopt_missing_theme_parts(out, pkg2, out_main);
     // people.xml: Word redlines always carry author identity when B has comments
     // (C2 residual layout for document_100×lots_of_comments).
     const CHROME: [(&str, &str, &str, &str); 4] = [
@@ -3062,45 +3043,6 @@ fn adopt_revised_styles_chrome(out: &mut PartFs, pkg2: &PartFs, out_main: &str) 
             .is_some_and(|r| r.items.iter().any(|i| i.rel_type == rel_type));
         if !has_rel {
             out.add_document_relationship(out_main, rel_type, target);
-        }
-    }
-}
-
-fn adopt_missing_theme_parts(out: &mut PartFs, pkg2: &PartFs, out_main: &str) {
-    let out_has_theme = out
-        .parts()
-        .iter()
-        .any(|p| p.starts_with("word/theme/") && p.ends_with(".xml"));
-    if out_has_theme {
-        return;
-    }
-    let b_themes: Vec<String> = pkg2
-        .parts()
-        .iter()
-        .filter(|p| p.starts_with("word/theme/") && p.ends_with(".xml"))
-        .cloned()
-        .collect();
-    for part in b_themes {
-        let Some(bytes) = pkg2.part_bytes(&part).map(<[u8]>::to_vec) else {
-            continue;
-        };
-        out.set_part(&part, bytes);
-        out.add_content_type_override(
-            &format!("/{part}"),
-            "application/vnd.openxmlformats-officedocument.theme+xml",
-        );
-        let has_theme_rel = out.read_rels_for(out_main).is_some_and(|r| {
-            r.items
-                .iter()
-                .any(|i| i.rel_type.ends_with("/theme") || i.target.contains("theme"))
-        });
-        if !has_theme_rel {
-            let target = crate::opc::relative_rel_target(out_main, &part);
-            out.add_document_relationship(
-                out_main,
-                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme",
-                &target,
-            );
         }
     }
 }
@@ -3185,78 +3127,49 @@ fn ensure_factory_package_chrome(out: &mut PartFs, out_main: &str) {
             );
         }
     }
-    // theme
-    let out_has_theme = out
-        .parts()
-        .iter()
-        .any(|p| p.starts_with("word/theme/") && p.ends_with(".xml"));
-    if !out_has_theme {
-        // Compact Office Theme (major/minor Latin faces Word and LO both
-        // resolve). The format scheme is the complete Word-produced shape from
-        // the local redline corpus; DrawingML requires all four style lists.
-        const THEME: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Office Theme">
-  <a:themeElements>
-    <a:clrScheme name="Office">
-      <a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1>
-      <a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1>
-      <a:dk2><a:srgbClr val="1F497D"/></a:dk2>
-      <a:lt2><a:srgbClr val="EEECE1"/></a:lt2>
-      <a:accent1><a:srgbClr val="4F81BD"/></a:accent1>
-      <a:accent2><a:srgbClr val="C0504D"/></a:accent2>
-      <a:accent3><a:srgbClr val="9BBB59"/></a:accent3>
-      <a:accent4><a:srgbClr val="8064A2"/></a:accent4>
-      <a:accent5><a:srgbClr val="4BACC6"/></a:accent5>
-      <a:accent6><a:srgbClr val="F79646"/></a:accent6>
-      <a:hlink><a:srgbClr val="0000FF"/></a:hlink>
-      <a:folHlink><a:srgbClr val="800080"/></a:folHlink>
-    </a:clrScheme>
-    <a:fontScheme name="Office">
-      <a:majorFont><a:latin typeface="Calibri Light"/><a:ea typeface=""/><a:cs typeface=""/></a:majorFont>
-      <a:minorFont><a:latin typeface="Calibri"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont>
-    </a:fontScheme>
-    <a:fmtScheme name="Office">
-      <a:fillStyleLst>
-        <a:solidFill><a:schemeClr val="phClr"/></a:solidFill>
-        <a:gradFill rotWithShape="1"><a:gsLst><a:gs pos="0"><a:schemeClr val="phClr"><a:lumMod val="110000"/><a:satMod val="105000"/><a:tint val="67000"/></a:schemeClr></a:gs><a:gs pos="50000"><a:schemeClr val="phClr"><a:lumMod val="105000"/><a:satMod val="103000"/><a:tint val="73000"/></a:schemeClr></a:gs><a:gs pos="100000"><a:schemeClr val="phClr"><a:lumMod val="105000"/><a:satMod val="109000"/><a:tint val="81000"/></a:schemeClr></a:gs></a:gsLst><a:lin ang="5400000" scaled="0"/></a:gradFill>
-        <a:gradFill rotWithShape="1"><a:gsLst><a:gs pos="0"><a:schemeClr val="phClr"><a:satMod val="103000"/><a:lumMod val="102000"/><a:tint val="94000"/></a:schemeClr></a:gs><a:gs pos="50000"><a:schemeClr val="phClr"><a:satMod val="110000"/><a:lumMod val="100000"/><a:shade val="100000"/></a:schemeClr></a:gs><a:gs pos="100000"><a:schemeClr val="phClr"><a:lumMod val="99000"/><a:satMod val="120000"/><a:shade val="78000"/></a:schemeClr></a:gs></a:gsLst><a:lin ang="5400000" scaled="0"/></a:gradFill>
-      </a:fillStyleLst>
-      <a:lnStyleLst>
-        <a:ln w="12700" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/><a:miter lim="800000"/></a:ln>
-        <a:ln w="19050" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/><a:miter lim="800000"/></a:ln>
-        <a:ln w="25400" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/><a:miter lim="800000"/></a:ln>
-      </a:lnStyleLst>
-      <a:effectStyleLst>
-        <a:effectStyle><a:effectLst/></a:effectStyle>
-        <a:effectStyle><a:effectLst/></a:effectStyle>
-        <a:effectStyle><a:effectLst><a:outerShdw blurRad="57150" dist="19050" dir="5400000" algn="ctr" rotWithShape="0"><a:srgbClr val="000000"><a:alpha val="63000"/></a:srgbClr></a:outerShdw></a:effectLst></a:effectStyle>
-      </a:effectStyleLst>
-      <a:bgFillStyleLst>
-        <a:solidFill><a:schemeClr val="phClr"/></a:solidFill>
-        <a:solidFill><a:schemeClr val="phClr"><a:tint val="95000"/><a:satMod val="170000"/></a:schemeClr></a:solidFill>
-        <a:gradFill rotWithShape="1"><a:gsLst><a:gs pos="0"><a:schemeClr val="phClr"><a:tint val="93000"/><a:satMod val="150000"/><a:shade val="98000"/><a:lumMod val="102000"/></a:schemeClr></a:gs><a:gs pos="50000"><a:schemeClr val="phClr"><a:tint val="98000"/><a:satMod val="130000"/><a:shade val="90000"/><a:lumMod val="103000"/></a:schemeClr></a:gs><a:gs pos="100000"><a:schemeClr val="phClr"><a:shade val="63000"/><a:satMod val="120000"/></a:schemeClr></a:gs></a:gsLst><a:lin ang="5400000" scaled="0"/></a:gradFill>
-      </a:bgFillStyleLst>
-    </a:fmtScheme>
-  </a:themeElements>
-</a:theme>"#;
-        out.set_part("word/theme/theme1.xml", THEME.as_bytes().to_vec());
+    // theme: Word gives an original without a referenced theme its own
+    // default theme, never the revision's (an unreferenced theme part does
+    // not count).
+    if referenced_theme_part(out, out_main).is_none() {
+        const THEME_PART: &str = "word/theme/theme1.xml";
+        out.set_part(
+            THEME_PART,
+            crate::word_default_theme::WORD_DEFAULT_THEME
+                .as_bytes()
+                .to_vec(),
+        );
         out.add_content_type_override(
-            "/word/theme/theme1.xml",
+            &format!("/{THEME_PART}"),
             "application/vnd.openxmlformats-officedocument.theme+xml",
         );
-        let has_theme_rel = out.read_rels_for(out_main).is_some_and(|r| {
-            r.items
-                .iter()
-                .any(|i| i.rel_type.ends_with("/theme") || i.target.contains("theme"))
-        });
-        if !has_theme_rel {
-            out.add_document_relationship(
-                out_main,
-                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme",
-                "theme/theme1.xml",
-            );
+        let stale: Vec<String> = out
+            .read_rels_for(out_main)
+            .map(|r| {
+                r.items
+                    .iter()
+                    .filter(|i| i.rel_type.ends_with("/relationships/theme"))
+                    .map(|i| i.rel_type.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        for rel_type in stale {
+            out.remove_relationships_by_type(out_main, &rel_type);
         }
+        let target = crate::opc::relative_rel_target(out_main, THEME_PART);
+        out.add_document_relationship(out_main, THEME_REL, &target);
     }
+}
+
+const THEME_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme";
+
+/// The theme part `main` references, when the package holds it.
+fn referenced_theme_part(out: &PartFs, main: &str) -> Option<String> {
+    out.read_rels_for(main)?
+        .items
+        .iter()
+        .filter(|r| r.rel_type.ends_with("/relationships/theme"))
+        .map(|r| out.resolve_rel_target(main, &r.target))
+        .find(|part| out.part_bytes(part).is_some())
 }
 
 /// Word-canonical `w:styleId` for a human-readable `w:name` (C3 / C5).
@@ -5653,8 +5566,9 @@ fn reresolve_theme_color_hexes(dom: &mut Dom, styles_root: NodeId, theme_xml: &s
         })
     };
     // Word applies themeShade/themeTint as HSL LUMINANCE scaling, not RGB
-    // multiply (accent1 4F81BD shade BF = "Darker 25%" = 365F91; linear RGB
-    // would give 3B618E).
+    // multiply (linear RGB would give accent1 4F81BD shade BF = 3B618E), and
+    // truncates each channel: 156082 tint 3F = B2DEF2, shade BF = 0F4761
+    // (139 Word samples: 86 exact, the rest one step off; rounding gets 22).
     let apply = |hex: &str, factor: &str, toward_white: bool| -> Option<String> {
         let f = u32::from_str_radix(factor, 16).ok()? as f64 / 255.0;
         let r = u32::from_str_radix(&hex[0..2], 16).ok()? as f64 / 255.0;
@@ -5720,45 +5634,59 @@ fn reresolve_theme_color_hexes(dom: &mut Dom, styles_root: NodeId, theme_xml: &s
         Some(
             [r2, g2, b2]
                 .iter()
-                .map(|c| format!("{:02X}", (c * 255.0).round().clamp(0.0, 255.0) as u32))
+                .map(|c| format!("{:02X}", (c * 255.0).floor().clamp(0.0, 255.0) as u32))
                 .collect(),
         )
     };
 
+    // Every themed hex a style carries, not only `w:color`'s: shading
+    // colours and fills and border colours are re-cached too (2e3f1e26,
+    // 512b24be: Word's redline leaves none stale).
     let color_name = W::name("color");
-    let theme_color = W::name("themeColor");
-    let theme_shade = W::name("themeShade");
-    let theme_tint = W::name("themeTint");
+    let slots = [
+        ("themeColor", "themeShade", "themeTint", "color"),
+        ("themeFill", "themeFillShade", "themeFillTint", "fill"),
+    ]
+    .map(|(t, sh, ti, hex)| (W::name(t), W::name(sh), W::name(ti), W::name(hex)));
     let mut changed = false;
-    for e in dom.descendants(styles_root, Some(&color_name)) {
-        let Some(name) = dom.attribute(e, &theme_color).map(str::to_string) else {
-            continue;
-        };
-        let Some(slot) = slot_of(&name) else { continue };
-        let Some(base) = slot_hex(&slot[2..]) else {
-            continue;
-        };
-        let expect = if let Some(sh) = dom.attribute(e, &theme_shade).map(str::to_string) {
-            apply(&base, &sh, false)
-        } else if let Some(ti) = dom.attribute(e, &theme_tint).map(str::to_string) {
-            apply(&base, &ti, true)
-        } else {
-            Some(base)
-        };
-        let Some(expect) = expect else { continue };
-        let cur = dom.attribute(e, &W::val()).unwrap_or("").to_uppercase();
-        // rounding tolerance: correctly-cached values may differ by ±2 per
-        // channel from our HSL math — leave those (they're already right);
-        // only genuinely stale caches (different theme) get rewritten.
-        let close = cur.len() == 6
-            && (0..3).all(|i| {
-                let a = u32::from_str_radix(&cur[i * 2..i * 2 + 2], 16).unwrap_or(999);
-                let b = u32::from_str_radix(&expect[i * 2..i * 2 + 2], 16).unwrap_or(0);
-                a.abs_diff(b) <= 2
-            });
-        if !close && cur != "AUTO" {
-            dom.set_attribute_value(e, &W::val(), Some(&expect));
-            changed = true;
+    for e in dom.descendants(styles_root, None) {
+        for (theme_attr, shade_attr, tint_attr, hex_attr) in &slots {
+            let Some(name) = dom.attribute(e, theme_attr).map(str::to_string) else {
+                continue;
+            };
+            let Some(slot) = slot_of(&name) else { continue };
+            let Some(base) = slot_hex(&slot[2..]) else {
+                continue;
+            };
+            let hex_attr = if dom.name(e).as_ref() == Some(&color_name) {
+                W::val()
+            } else {
+                hex_attr.clone()
+            };
+            let Some(cur) = dom.attribute(e, &hex_attr).map(str::to_uppercase) else {
+                continue;
+            };
+            let expect = if let Some(sh) = dom.attribute(e, shade_attr).map(str::to_string) {
+                apply(&base, &sh, false)
+            } else if let Some(ti) = dom.attribute(e, tint_attr).map(str::to_string) {
+                apply(&base, &ti, true)
+            } else {
+                Some(base)
+            };
+            let Some(expect) = expect else { continue };
+            // rounding tolerance: correctly-cached values may differ by ±2 per
+            // channel from our HSL math — leave those (they're already right);
+            // only genuinely stale caches (different theme) get rewritten.
+            let close = cur.len() == 6
+                && (0..3).all(|i| {
+                    let a = u32::from_str_radix(&cur[i * 2..i * 2 + 2], 16).unwrap_or(999);
+                    let b = u32::from_str_radix(&expect[i * 2..i * 2 + 2], 16).unwrap_or(0);
+                    a.abs_diff(b) <= 2
+                });
+            if !close && cur != "AUTO" {
+                dom.set_attribute_value(e, &hex_attr, Some(&expect));
+                changed = true;
+            }
         }
     }
     changed
@@ -6594,7 +6522,12 @@ fn compare_documents_impl(
                         .filter(|p| p.starts_with("word/theme/") && p.ends_with(".xml"))
                         .collect();
                     for tp in theme_parts {
-                        out.set_part(&tp, FACTORY_THEME_APTOS.as_bytes().to_vec());
+                        out.set_part(
+                            &tp,
+                            crate::word_default_theme::WORD_DEFAULT_THEME
+                                .as_bytes()
+                                .to_vec(),
+                        );
                     }
                     out.set_part(part, sd.serialize_element(fr).into_bytes());
                     out.add_content_type_override(

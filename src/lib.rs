@@ -78,6 +78,8 @@ pub mod update;
 pub mod util;
 /// `WmlDocument` — document bytes + lazily parsed main part.
 pub mod wml_document;
+/// Word's default theme part, for originals without one.
+mod word_default_theme;
 /// Arena DOM (`xmllinq`) used by the comparer.
 pub mod xmllinq;
 
