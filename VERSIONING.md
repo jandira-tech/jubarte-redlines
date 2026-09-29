@@ -20,7 +20,7 @@ All products under `jubarte*` share **Semantic Versioning**
 
 | repo | artifact | version files | bump tool |
 |---|---|---|---|
-| **jubarte-redlines** (this repo) | crates.io crate + CLI `jubarte` | `Cargo.toml` `[package].version`, `CHANGELOG.md` | `bun scripts/bump-version.mjs x.y.z` |
+| **jubarte-redlines** (this repo) | crates.io crate + CLI `jubarte` | `Cargo.toml` `[package].version`, `CHANGELOG.md` | `scripts/release.sh x.y.z …` (calls `bump-version.mjs`) |
 | **jubarte-app** (`jubarte-app/` submodule) | Mac App Store / Tauri shell | `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `src/index.html`, `CHANGELOG.md` | `bun run bump x.y.z` |
 | **jubarte-site** (`jubarte-app/jubarte-site/`) | marketing/site (optional) | `package.json` | manual / site deploy only |
 
@@ -34,6 +34,14 @@ So **always version and release jubarte-rs first**, then bump the app if the
 shell needs a store build that embeds the new engine.
 
 ## Step-by-step: cut an engine release (jubarte-redlines)
+
+> [!WARNING]
+> **`scripts/release.sh` is the source of truth for releases.** It owns the
+> version sync, the six required release notes, the gates, the commit, the
+> tag and every publish. `scripts/bump-version.mjs` is only the Cargo.toml +
+> README codemod `release.sh` calls; run on its own it leaves
+> jubarte-python, jubarte-wasm/npm and the lockfiles behind. Steps 3 and 6
+> below describe what `release.sh` does, not a manual alternative.
 
 1. **Quality gate (do not skip)**  
    - `cargo test --all-features` (only known pre-existing failures allowed)
@@ -53,10 +61,9 @@ shell needs a store build that embeds the new engine.
    - New public API or features (e.g. the `convert` revision-painting options)
      → **minor** is the safer call even when behavior is additive.
 
-3. **Codemod the version**  
-   ```bash
-   bun scripts/bump-version.mjs 0.2.0
-   ```
+3. **Codemod the version** — done by `release.sh` step 1, which runs
+   `bun scripts/bump-version.mjs x.y.z` and then syncs the manifests and
+   lockfiles that script does not own. Do not run it by hand.
 
 4. **Write CHANGELOG.md**  
    Add `## [0.2.0] - YYYY-MM-DD` with `### Added` / `### Changed` / `### Fixed` /
@@ -74,7 +81,7 @@ shell needs a store build that embeds the new engine.
    cp -f target/release/jubarte "$HOME/.local/bin/jubarte"  # optional
    ```
 
-6. **Commit + tag**  
+6. **Commit + tag** — done by `release.sh`; shown for reference only.
    ```bash
    git add Cargo.toml CHANGELOG.md VERSIONING.md scripts/bump-version.mjs
    git commit -m "chore(release): v0.2.0"
@@ -102,7 +109,7 @@ shell needs a store build that embeds the new engine.
    while `.github/workflows/release.yml` builds the binaries/wheels and
    creates the GitHub release.
 
-   Five per-release summaries are **required flags** — each lands in the
+   Six per-release notes are **required flags** — each lands in the
    channel its registry accepts:
 
    | flag | lands in |
@@ -112,6 +119,11 @@ shell needs a store build that embeds the new engine.
    | `--npm-summary` | `releaseNotes."x.y.z"` in the npm package.json (published packument) |
    | `--pypi-summary` | `# release-notes` comment in `jubarte-python/pyproject.toml` (ships in the sdist) |
    | `--github-summary` | annotated-tag body → top of the GitHub release notes |
+   | `--how-readme-and-other-docs-were-updated` | `> **Docs.** …` under the summary in CHANGELOG.md + the release commit body |
+
+   Before it writes the notes, `release.sh` lists the README, `docs/` and
+   `skills/` files changed since the previous tag, so the docs statement is
+   checked against what actually changed. A blank value counts as missing.
 
    `--*-comments` aliases work too. The verify step greps each registry/
    artifact to prove the note shipped. `scripts/release.sh x.y.z --dry-run`

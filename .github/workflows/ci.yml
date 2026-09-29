@@ -123,6 +123,24 @@ jobs:
       - uses: fsfe/reuse-action@v6
         if: ${{ !cancelled() }}
 
+  python:
+    name: python bindings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: jubarte-python
+      - uses: astral-sh/setup-uv@v10.2.0
+      - name: build the extension and run pytest
+        working-directory: jubarte-python
+        run: |
+          uv run --with maturin maturin develop --release
+          uv run --with pytest pytest -q
+
   convert-sweep-unit:
     name: convert-sweep unit
     runs-on: ubuntu-latest
@@ -132,3 +150,4 @@ jobs:
           persist-credentials: false
       - run: python3 scripts/test_convert_sweep.py
       - run: python3 planning/test_sample50_check.py
+      - run: python3 scripts/test_release_sh.py

@@ -30,10 +30,10 @@ fn source_text(docx: &[u8]) -> String {
     loop {
         use quick_xml::events::Event;
         match reader.read_event() {
-            Ok(Event::Start(e)) if e.name().as_ref() == b"w:t" => in_t += 1,
-            Ok(Event::End(e)) if e.name().as_ref() == b"w:t" => in_t -= 1,
+            Ok(Event::Start(e)) if e.name().as_ref() == "w:t" => in_t += 1,
+            Ok(Event::End(e)) if e.name().as_ref() == "w:t" => in_t -= 1,
             Ok(Event::Text(t)) if in_t > 0 => {
-                out.push_str(&String::from_utf8_lossy(&t.into_inner()));
+                out.push_str(&t.into_inner());
             }
             Ok(Event::Eof) => break,
             Err(e) => panic!("xml: {e}"),
@@ -64,21 +64,21 @@ fn recon(docx: &[u8]) -> (String, String) {
         use quick_xml::events::Event;
         match reader.read_event() {
             Ok(Event::Start(e)) => match e.name().as_ref() {
-                b"w:ins" | b"w:moveTo" => ins += 1,
-                b"w:del" | b"w:moveFrom" => del += 1,
-                b"w:delText" => in_del_text += 1,
-                b"w:t" => in_t += 1,
+                "w:ins" | "w:moveTo" => ins += 1,
+                "w:del" | "w:moveFrom" => del += 1,
+                "w:delText" => in_del_text += 1,
+                "w:t" => in_t += 1,
                 _ => {}
             },
             Ok(Event::End(e)) => match e.name().as_ref() {
-                b"w:ins" | b"w:moveTo" => ins -= 1,
-                b"w:del" | b"w:moveFrom" => del -= 1,
-                b"w:delText" => in_del_text -= 1,
-                b"w:t" => in_t -= 1,
+                "w:ins" | "w:moveTo" => ins -= 1,
+                "w:del" | "w:moveFrom" => del -= 1,
+                "w:delText" => in_del_text -= 1,
+                "w:t" => in_t -= 1,
                 _ => {}
             },
             Ok(Event::Text(t)) => {
-                let s = String::from_utf8_lossy(&t.into_inner()).into_owned();
+                let s = t.into_inner().into_owned();
                 if in_del_text > 0 || (in_t > 0 && del > 0 && ins == 0) {
                     orig.push_str(&s);
                 } else if in_t > 0 && ins > 0 {

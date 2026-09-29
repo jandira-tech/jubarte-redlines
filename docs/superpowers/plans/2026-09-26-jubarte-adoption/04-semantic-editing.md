@@ -10,6 +10,33 @@
 
 ---
 
+> **Status 2026-09-26 (branch `feat/agent-adoption`):** E1 and the core of
+> E2/E3/E5 implemented in `src/edit.rs` with corrections; see
+> [00-ASSESSMENT.md](00-ASSESSMENT.md) §3. Shipped plan schema v1:
+> `replace`, `insert` (`after`/`before`/`position`), `delete`, `comment`,
+> `insert_paragraph` (runs with `bold`/`italic`/`underline`/`highlight`,
+> anchor `pPr` copied minus section break and revision marks),
+> `delete_paragraph`; selectors `id`/`index`/`starts_with`/`contains`;
+> `source_sha256` guard; `existing_revisions: refuse|accept|reject`;
+> overlap detection; per-operation report with `to_jsonl()`.
+> Corrections applied: (1) comments, including on text an earlier operation
+> inserted, are authored in the clean copy and carried by the comparer
+> (m35), so E5's provenance mapping is unnecessary; verified by
+> `comments_on_source_text_and_on_inserted_text_survive_compare`;
+> (2) patch 0005's "plain paragraph only" rule is replaced by a projection
+> that ignores zero-width markers and refuses only ranges crossing opaque
+> structures; (3) `expected_text` dropped in favor of the hash guard (applied
+> when the plan supplies `source_sha256`) plus unique anchors.
+> Added 2026-09-28 (release/0.10): `format_paragraph` (style, alignment,
+> line spacing, space before/after as a tracked `w:pPrChange`),
+> `merge_paragraphs` (second paragraph's properties win, as Word's accept of
+> a deleted mark; the comparer now shows a join as Word Compare does: first
+> mark deleted, separator inserted) and `format` on inline `insert`/`replace`.
+> Not implemented: `Preview.build`/`write_new_directory` (the CLI's `--out-dir` bundle covers
+> the atomic-write need for now). Comments anchored inside inserted runs
+> become PDF notes like any other comment (the renderer gap once noted here
+> no longer reproduces). Verified: `tests/edit_plan.rs` (18), module unit tests.
+
 <!-- SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC -->
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 
@@ -83,12 +110,12 @@ A minimal exact plan:
 ```json
 {
   "schema_version": 1,
-  "source_sha256": "4b4dd3c5015e2a62c5cf5c673f04e4a679c188f8ed238b8fce0cc6e81a43d8e937",
+  "source_sha256": "4b4dd3c5015e2a62c5cf5c673f04e4a679c188f8ed238b8fce0cc6e81a43d8e9",
   "author": "Legal review",
   "date": "2026-09-26T14:30:00Z",
-  "existing_revisions": "reject_input",
+  "existing_revisions": "refuse",
   "operations": [
-    {"id":"op-1","kind":"replace","paragraph":"body:p:18","find":"retained experts","replacement":"retained experts and court reporters","expect":1}
+    {"id":"op-1","kind":"replace","paragraph":"body:p:18","find":"retained experts","replacement":"retained experts and court reporters"}
   ]
 }
 ```
@@ -107,7 +134,7 @@ The hash above illustrates the field shape, not the supplied Acme file's hash. P
 - Resolve every operation against the untouched source before mutation. Overlapping replacements/deletions fail; identical offsets for two inserts require explicit ordered grouping, not arbitrary sort order.
 - Paragraph deletion conflicts with every edit/comment anchored inside it. Merge conflicts with edits crossing its deleted boundary unless a single structural group explicitly owns them. An edit inside a field/hyperlink/content-control/bookmark range requires supported span rules; never split an opaque structure accidentally.
 - “First”/“each” are explicit selection modes with report cardinality, not hidden fallbacks. Defer broad `*_all` aliases until repeated user need justifies their semantics. No fuzzy/autocorrected legal edits by default.
-- `existing_revisions="reject_input"` is the new-editor default. Explicit accept/reject creates a new base snapshot with a new hash, records the action, and compares against that chosen base. This is not preservation of old revision history.
+- `existing_revisions="refuse"` is the new-editor default. Explicit accept/reject creates a new base snapshot with a new hash, records the action, and compares against that chosen base. This is not preservation of old revision history.
 
 ## Task E1: implement the conservative source-guarded text core
 

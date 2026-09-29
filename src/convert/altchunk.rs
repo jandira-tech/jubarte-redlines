@@ -585,11 +585,8 @@ impl Builder {
         }
         match tag {
             t if BLOCKS.contains(&t) => self.flush(),
-            "td" | "th" => {
-                if self.in_open_cell() {
-                    self.end_cell();
-                }
-            }
+            "td" | "th" if self.in_open_cell() => self.end_cell(),
+            "td" | "th" => {}
             "table" => self.end_table(),
             _ => {}
         }

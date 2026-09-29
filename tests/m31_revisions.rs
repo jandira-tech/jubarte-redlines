@@ -393,11 +393,10 @@ fn d6_revision_count_parity_with_cs_goldens() {
 }
 
 /// D.6 — WC034/35/36 revision-count parity with the C# WC003_Compare rows
-/// (:WC-1600..WC-1760), deferred from B.4. 12/16 rows match C# exactly; the
-/// four After3 rows (new footnote/endnote inserted mid-word) count ONE more
-/// than C# — same text, one extra adjacency split in our markup. Their
-/// expected values below are OUR stable counts with the C# target in a
-/// comment. FOLLOW-UP: converge when grouping/ordering is revisited.
+/// (:WC-1600..WC-1760), deferred from B.4. The targets are Open-Xml-PowerTools
+/// counts, so the comparison runs in PowerTools mode (`--mode powertools`);
+/// all 16 rows match C#. Word mode groups the WC036 table-cell edits into
+/// fewer revisions (3 and 4) with the same accepted and rejected text.
 #[test]
 fn d6_wc_revision_count_parity() {
     let wc = std::path::Path::new("tests/corpus/Docxodus/TestFiles/WC");
@@ -405,7 +404,11 @@ fn d6_wc_revision_count_parity() {
         eprintln!("skipping: Docxodus WC corpus not present");
         return;
     }
-    let s = WmlComparerSettings::default();
+    let s = WmlComparerSettings {
+        author_for_revisions: "Test Author".into(),
+        date_time_for_revisions: DATE.into(),
+        ..WmlComparerSettings::powertools_faithful()
+    };
     let rows: [(&str, &str, usize); 16] = [
         (
             "WC034-Footnotes-Before.docx",
@@ -420,13 +423,13 @@ fn d6_wc_revision_count_parity() {
         (
             "WC034-Footnotes-Before.docx",
             "WC034-Footnotes-After3.docx",
-            4,
-        ), // C#: 3
+            3,
+        ),
         (
             "WC034-Footnotes-After3.docx",
             "WC034-Footnotes-Before.docx",
-            4,
-        ), // C#: 3
+            3,
+        ),
         ("WC035-Footnote-Before.docx", "WC035-Footnote-After.docx", 2),
         ("WC035-Footnote-After.docx", "WC035-Footnote-Before.docx", 2),
         (
@@ -452,13 +455,13 @@ fn d6_wc_revision_count_parity() {
         (
             "WC034-Endnotes-Before.docx",
             "WC034-Endnotes-After3.docx",
-            8,
-        ), // C#: 7
+            7,
+        ),
         (
             "WC034-Endnotes-After3.docx",
             "WC034-Endnotes-Before.docx",
-            8,
-        ), // C#: 7
+            7,
+        ),
         ("WC035-Endnote-Before.docx", "WC035-Endnote-After.docx", 2),
         ("WC035-Endnote-After.docx", "WC035-Endnote-Before.docx", 2),
         (
@@ -476,13 +479,8 @@ fn d6_wc_revision_count_parity() {
     for (a, b, expected) in rows {
         let da = std::fs::read(wc.join(a)).unwrap();
         let db = std::fs::read(wc.join(b)).unwrap();
-        let redline = jubarte::document_comparer::compare_documents_with_options(
-            &da,
-            &db,
-            "Test Author",
-            DATE,
-        )
-        .unwrap();
+        let redline =
+            jubarte::document_comparer::compare_documents_with_settings(&da, &db, &s).unwrap();
         let revs = jubarte::document_comparer::get_revisions(&redline, &s).unwrap();
         if revs.len() != expected {
             failures.push(format!(

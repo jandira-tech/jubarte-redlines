@@ -15,6 +15,181 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-28
+
+### Added
+
+- `jubarte A B --mode word|powertools` names the compare presets: `word`
+  (the default, Word Compare's layout) or `powertools` (the classic
+  PowerTools fallback, still also spelled `--powertools-faithful`).
+  `docs/WORD_DIFFERENCES.md` lists where jubarte's redline still differs
+  from Word's and which mode gives which.
+- `jubarte-wasm` gains the agent surface the CLI and Python already have:
+  `inspectDocument`, `documentMarkdown`, `sourceSha256`, `applyEditPlan`
+  and `previewEditPlan` (refusals returned as data with their code and
+  per-operation outcomes), `editReportJsonl` and `capabilities`, in the
+  full and slim builds.
+- Input admission for the agent surfaces: `inspect`, `text`, `edit` and
+  the Python/WASM facades over them refuse a package before parsing it when
+  it breaks a resource budget (64 MiB file, 10,000 entries, 64 MiB per
+  inflated part, 256 MiB inflated in total, XML nesting 256), repeats a
+  part name, uses an unsafe entry path, encryption or compression other
+  than deflate, or is not a WordprocessingML package. Refusals carry the
+  codes `INPUT_LIMIT`, `DUPLICATE_PART`, `UNSUPPORTED_PACKAGE`,
+  `INVALID_PACKAGE` and `INVALID_XML`; `capabilities` reports the budgets.
+  Compare keeps its historical tolerance.
+- `jubarte inspect` reads a document as numbered paragraphs (JSON with a
+  source hash, or Markdown) with styles, numbering, formatting spans and
+  the structures an edit cannot address (fields, hyperlinks, content
+  controls, revisions); `jubarte capabilities` reports what the build can
+  do.
+- `jubarte edit` applies a JSON plan of uniquely anchored operations
+  (`replace`, `insert`, `delete`, `comment`, `insert_paragraph`,
+  `delete_paragraph`, `format_paragraph`, `merge_paragraphs`)
+  to a copy, previews it, and writes the clean copy, the tracked redline
+  and a per-operation report. A plan that carries the source's SHA-256
+  (`source_sha256`) is refused for any other source; without it the plan
+  runs unguarded and the report flags that. An
+  anchor that is not unique, or text inside a field (simple or complex,
+  even one with an empty result), hyperlink, content control or revision,
+  is refused. Comment text must be nonempty without control characters,
+  and several `insert_paragraph` operations after one anchor keep plan
+  order.
+- `jubarte convert --png` renders pages to PNG (1–1200 dpi, at most 2^28
+  pixels a page) and checks every output path before the first write.
+- Python: `jubarte_redlines.read()` returns a `Document` with inspect, edit,
+  convert, compare and accept/reject methods, and `python -m
+  jubarte_redlines` exposes the same commands (compare is the explicit
+  `compare` subcommand there); `EditPlanError.message`
+  carries the engine's detail.
+- Edit plans restyle and join paragraphs. `format_paragraph` sets a
+  paragraph style (by id or name; an unknown one is refused with
+  `UNKNOWN_STYLE` and the defined ids), alignment, line spacing as a
+  multiple and space before/after in points, as one tracked property change
+  that reject undoes. `merge_paragraphs` joins the next paragraph onto one,
+  with an optional separator; the joined paragraph keeps the second one's
+  properties, as Word's accept of a deleted mark does, and bookmarks and
+  comment ranges between the two move to the join. `replace` and `insert`
+  take a `format` (bold, italic, underline, a Word highlight colour) for the
+  new text only. The Python `EditPlan` gains the matching builders.
+- `replace` takes `"whole": true` (Python `whole=True`): the redline shows
+  all of `find` deleted, then all of the replacement inserted, as typing
+  over a selection with Track Changes on does, instead of Word Compare's
+  word-level diff that keeps shared words. Deletions the comparer placed
+  just outside the change are gathered in, formatting stays on each side,
+  and a comment on the change stays on the inserted text. When the diff
+  cannot be regrouped the operation keeps the word-level redline and its
+  report line carries a `message` saying why.
+- Headers, footers, footnotes and endnotes are editable stories. `inspect`
+  lists them under `stories` and `jubarte text` prints them after the body,
+  each paragraph under an id such as `header1:p:0` or `footnotes:p:2`. An
+  edit plan addresses them by that id or by adding `"story": "footer1"` to
+  an `index`, `starts_with` or `contains` selector (those search the body
+  otherwise). The change is tracked in the story's own part, `"whole": true`
+  included, and the report counts header and footer revisions. Comments
+  stay body-only, since Word cannot anchor one in a header or footer. The
+  Python `Snapshot` gains `stories`.
+- Adoption guides, workflow examples and a document-operations agent skill.
+  The Acme letter example now ships `make_letter.py`, which writes its
+  source letter byte for byte, and its plan runs all twelve edits.
+- `jubarte self-update [--check] [--yes] [--version X]` installs a GitHub
+  release after checking its SHA-256 against the release's
+  `SHA256SUMS.txt`. It contacts GitHub only when run; nothing checks for
+  updates in the background. Build with `--no-default-features --features
+  cli` for a binary without it (docs/SELF_UPDATE.md).
+
+### Changed
+
+- quick-xml 0.41 → 0.42 for input admission and XML checks. Admission now
+  transcodes UTF-16 parts (SharePoint `customXml` items, which Word opens)
+  before scanning them, so the new release's UTF-8 validation refuses none
+  of the 500 fixture documents; bytes that are not UTF-8 still decode
+  lossily, as before.
+- Dependencies: clap 4.6.7, flate2 1.1.10 and serde_json 1.0.151 across the
+  engine, Python, WASM, in-process and app workspaces; quick-xml 0.42 in
+  the app and in the WASM build's patched `rdocx-opc`; the ooxmlsdk test
+  oracle 0.12.
+- `scripts/release.sh` requires a sixth note,
+  `--how-readme-and-other-docs-were-updated`, written under the changelog
+  summary and into the release commit, next to a list of the docs changed
+  since the previous tag. `scripts/bump-version.mjs` warns that
+  `release.sh` is the source of truth for releases.
+
+### Fixed
+
+- `jubarte-wasm`: the patched `rdocx-opc` decodes escaped attribute values
+  when it reads relationships and content types, so a hyperlink target
+  holding `&amp;` is written back once instead of as `&amp;amp;`.
+- A text box whose text changed no longer disappears from a Word-mode
+  redline. Three late passes that rebuild a revised paragraph from the text
+  of its insertion and deletion also read the text inside the box, so the
+  drawing and its VML fallback were dropped and both copies of the box's
+  text landed in the anchoring paragraph ("…of the postOverall…"); accepting
+  the redline did not give the revised document. They now leave any
+  paragraph alone whose runs hold anything besides text. Present since at
+  least 0.7.1 (fixtures_500 00b81efae883).
+- Word mode marks a text box's changed words inside the one box, as Word
+  does, in the DrawingML shape and its VML fallback alike, instead of
+  deleting the old box and inserting the new one. A shape wrapped in
+  `mc:AlternateContent` is now a word of its own in the Word-mode diff, as
+  a bare drawing already was, so a changed box no longer takes the
+  unchanged shape or text beside it into its replacement (a deleted and
+  reinserted VML group repeated its shape id; fixtures_500 003329b501a7).
+  Changing one word in every text box of the fixture documents now keeps
+  all their boxes (22 of 22 documents).
+- A document whose sections have their own headers or footers no longer
+  redlines them against the wrong section's: they were paired by kind and
+  type alone, so every section's default footer met the last section's,
+  and an unchanged "Page 1 of 4" footer came out deleted and reinserted as
+  "Page 4 of 4". Parts pair by section now, and an unchanged part is left
+  alone.
+- Word mode no longer invents paragraph property changes. The last
+  paragraph of a story with a few words revised kept its spacing live only
+  when the paragraph was replaced whole; otherwise its space before moved
+  into a `w:pPrChange`, and an unchanged justified paragraph got an empty
+  one. Word records neither (Word's own redlines of a body, a header and a
+  text box), and the parity ladder's heading-4 pair drops the two
+  `w:pPrChange`s Word does not write.
+
+- Changes in a header or footer that carries a relationship (a logo, a
+  hyperlink) are now in the redline. The comparer skipped every such part
+  and kept the original's, so the redline silently lost the change and
+  accepting it did not give the revised document. It now diffs the part
+  whenever each relationship the revised part uses means the same thing in
+  the original's (same type and target, same bytes for an image), which is
+  the case for an edit plan and for most comparisons of two versions.
+- A paragraph selector given as a bare id string (`"paragraph": "body:p:88"`,
+  as the agent skill's own example writes it) failed to parse with "data did
+  not match any variant"; only `{"id": ...}` worked. Both forms are
+  accepted now.
+- Two paragraphs joined into one now read as Word's Compare shows a join:
+  the first paragraph's mark is deleted and only the separator is inserted.
+  The paragraph LCS paired the joined paragraph with the first original,
+  which stranded the second one's words behind that mark, so Word mode
+  showed them as a move ("Delivery is DDP to the Buyer's site.", six words
+  and more) or deleted and inserted them again. The cross-paragraph stream
+  now also tries the region without that pairing and keeps whichever keeps
+  more text, and it no longer fuses the last word of one paragraph and the
+  first of the next ("TRIAL." + "Each") into one compound.
+- `insert_paragraph` runs start from the anchor's body run, the one with
+  the most text, instead of its first run, so a bold lead-in such as
+  "(f) Notice of Inability to Comply." no longer makes the whole new
+  paragraph bold.
+- Comments carried into a redline land on their own occurrence of repeated
+  text, not the first one: two comments on the same words in different
+  places no longer collapse into one (Word keeps all six in the M35
+  renumbered pair; jubarte kept four). A long commented range whose inside
+  changed now maps by the text at its two ends instead of being dropped.
+- Word mode keeps the built-in ids of styles whose id differs from their
+  name (`CommentText` for "annotation text", `CommentReference`,
+  `CommentSubject`, `MacroText`, `TOAHeading`, `TableofFigures`,
+  `TableofAuthorities`). Renaming them left `comments.xml` pointing at
+  undefined styles, which stripped the comment formatting.
+- An unchanged last paragraph after a replaced block came out inserted
+  and deleted again when the documents' first paragraphs matched: the
+  positional paragraph zip no longer pairs a paragraph whose identical
+  copy sits elsewhere in the other document (Word keeps it unchanged).
+
 ## [0.9.3] - 2026-09-27
 
 > **Summary.** Redlines are now scored against Word's own redline of each pair, rendered by Word, and this release fixes what that exposed: redlines Word refused to open, blank field codes, missing fonts, and misplaced equations.
@@ -1030,6 +1205,7 @@ measured Q0 performance stack) plus release tooling (`VERSIONING.md`,
 - See [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the covering tests are marked
   `#[ignore]` with matching reasons.
 
+[0.10.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.10.0
 [0.9.3]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.9.3
 [0.9.2]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.9.2
 [0.9.1]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.9.1

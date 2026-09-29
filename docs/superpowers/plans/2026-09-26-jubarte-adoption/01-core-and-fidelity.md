@@ -10,6 +10,19 @@
 
 ---
 
+> **Status 2026-09-26 (branch `feat/agent-adoption`):** implemented with
+> corrections; see [00-ASSESSMENT.md](00-ASSESSMENT.md) §3. Landed:
+> parser progress guard and `validate_xml` (`src/xmllinq/parse.rs`), and
+> `src/inspect.rs` with a richer read model than patch 0001 proposed:
+> `Paragraph { index, id, text, style, numbered, in_table, page_break, runs,
+> limitations }`, `summary`, `markdown`, `inspect_json`, `source_sha256`.
+> Correction applied: `mc:AlternateContent`, `w:sym`, column breaks, fields,
+> hyperlinks and content controls are per-paragraph **limitations**, not
+> refusals (patch 0001 refused the document). Task C2 (ZIP admission limits)
+> remains open and is still required before untrusted-upload use.
+> Verified: `tests/inspect_paragraphs.rs` (13), module unit tests, clippy
+> `-D warnings`.
+
 <!-- SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC -->
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 
@@ -77,6 +90,8 @@ Read the central directory before inflation; reject duplicate canonical entry pa
 - [ ] Implement limits at the reader layer before `PartFs::open` and strict translation, which otherwise inflate unbounded input. Keep legacy APIs behavior stable until explicit versioned adoption of admission limits; new safe APIs must use them from day one.
 - [ ] Run coverage for admission and edit together, then the same-input legacy regressions. Require ≥90/85 line/branch on policy logic. Keep resource stress tests in integration lanes under process/memory limits; they are not wall-clock unit tests.
 - [ ] Commit admission separately from inspection and from any rendering change.
+
+**Status 2026-09-28: implemented** in `src/admission.rs` (wired into `inspect::Opened::open`, so inspect, edit and the bindings admit first). One addition to the codes above: `INVALID_PACKAGE` for bytes that are not a readable ZIP or fail a CRC. Exact duplicate names are caught by comparing the end-of-central-directory entry count with the reader's name map, which silently keeps one of them. A scan of 4,953 corpus and test documents refused none.
 
 This task is a fully specified engineering work item, not claimed as implemented by patch 0001. The patch cannot be advertised as a comprehensive untrusted-upload solution until this task passes.
 

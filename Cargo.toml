@@ -71,7 +71,7 @@ manual_let_else = "warn"
 needless_pass_by_value = "warn"
 
 [features]
-default = ["cli", "fast-alloc"]
+default = ["cli", "fast-alloc", "self-update"]
 # The `jubarte` binary's CLI (clap). Library consumers can opt out with
 # `default-features = false` to keep the dependency tree minimal.
 cli = ["dep:clap"]
@@ -84,6 +84,10 @@ fast-alloc = ["cli", "dep:mimalloc"]
 # P0-LAB-01: compiled-out stage counters / coarse timers (src/perf.rs).
 # Diagnostic only — never use a profiled build for final wall-time claims.
 perf-profile = []
+# `jubarte self-update`: installs a GitHub release on request (docs/SELF_UPDATE.md).
+# Default-on for the binary; library consumers use `default-features = false`
+# and get no network code.
+self-update = ["cli", "dep:self_update"]
 
 [dependencies]
 rdocx-opc = "0.1" # OPC/zip package layer
@@ -93,6 +97,11 @@ ttf-parser = "0.25" # DOCX→PDF glyph metrics + TTF embed (Carlito / Liberation
 rustybuzz = "0.20" # HarfBuzz-compatible shaping so advances match soffice
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff", "bmp", "gif"] } # raster images in the PDF writer
 flate2 = "1.1" # optional `/FlateDecode` on PDF streams (already in the tree via zip/png, but a transitive dep is not usable directly)
+quick-xml = "0.42" # checked XML admission (`xmllinq::parse::validate_xml`) before the permissive DOM parser
+sha2 = "0.11" # SHA-256 snapshot guard shared by `inspect` and `edit`
+serde = { version = "1", features = ["derive"] } # inspect snapshot / edit plan / report wire types
+serde_json = "1"
+tiny-skia = "0.11" # DOCX→PNG page raster over the layout display list
 foldhash = "0.2" # the XML name interner's hasher: well mixed low bits for short, similar names, unlike SipHash (slow) or FNV (clustered)
 clap = { version = "4.5", features = ["derive"], optional = true }
 # CLI-only global allocator. The redline pipeline is ~41% allocation self-time
@@ -100,6 +109,15 @@ clap = { version = "4.5", features = ["derive"], optional = true }
 # mimalloc cuts that per-alloc cost with zero behaviour change. Kept out of the
 # pure-library dependency tree so downstream consumers pick their own allocator.
 mimalloc = { version = "0.1", default-features = false, optional = true }
+# `jubarte self-update`: release lookup, SHA256SUMS.txt check, archive
+# extraction and binary replacement. Only the command contacts the network.
+self_update = { version = "1.3", default-features = false, features = ["ureq", "rustls", "github", "archive-tar", "compression-tar-gz", "checksums"], optional = true }
+
+# Windows releases are .zip. Zip support stays off elsewhere: it turns on the
+# zip crate's `time` feature, which stamps wall-clock times into our own
+# archives unless every entry sets its time (986c526).
+[target.'cfg(windows)'.dependencies]
+self_update = { version = "1.3", default-features = false, features = ["archive-zip", "compression-zip-deflate"], optional = true }
 
 [[bin]]
 name = "jubarte"
@@ -107,15 +125,10 @@ required-features = ["cli"]
 
 [dev-dependencies]
 criterion = "0.8"
-# XML assertions in integration tests; production parsing uses xmllinq's
-# purpose-built scanner instead.
-quick-xml = "0.41"
 # Round-trip validation of produced .docx files in integration tests; only the
 # `parts` feature (= dep:zip) is built.
-ooxmlsdk = { version = "0.11", default-features = false, features = ["parts"] }
+ooxmlsdk = { version = "0.12", default-features = false, features = ["parts"] }
 tempfile = "3"
-# Ring 1½ schema-consistency oracle (tests/schema_consistency.rs).
-serde_json = "1"
 
 [[bench]]
 name = "redline"

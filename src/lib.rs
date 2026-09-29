@@ -37,6 +37,10 @@
 //! (MIT). The repository itself is AGPL-3.0-only; `LICENSES/` preserves those
 //! upstream attribution texts without changing the repository license.
 
+/// Resource admission for untrusted DOCX input (ZIP and XML budgets).
+pub mod admission;
+/// Machine-readable manifest of what this build can do.
+pub mod capabilities;
 /// Core WmlComparer engine (atomize → LCS → produce → finalize).
 pub mod comparer;
 /// Structured comparison log (info / warning / error entries).
@@ -47,6 +51,10 @@ pub mod convert;
 pub mod debug;
 /// Byte-level package API: compare, list, accept, and reject revisions.
 pub mod document_comparer;
+/// Guarded, uniquely anchored edits applied to a copy and redlined by compare.
+pub mod edit;
+/// Read-only paragraph/package views and the Markdown projection for agents.
+pub mod inspect;
 /// Markup simplification (PowerTools `MarkupSimplifier` port).
 pub mod markup_simplifier;
 /// WordprocessingML and related namespace / `XName` constants.
@@ -61,6 +69,9 @@ pub mod revision_processor;
 pub mod strict_translation;
 /// Unique id helpers for revision markup.
 pub mod unid;
+/// `jubarte self-update`: install a GitHub release, only when asked.
+#[cfg(feature = "self-update")]
+pub mod update;
 /// Shared small utilities.
 pub mod util;
 /// `WmlDocument` — document bytes + lazily parsed main part.

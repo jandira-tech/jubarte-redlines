@@ -21,7 +21,6 @@ use quick_xml::events::Event;
 use quick_xml::name::{Namespace, ResolveResult};
 
 const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
-const W_NS_BYTES: &[u8] = W_NS.as_bytes();
 
 fn build_docx(doc_xml: &str) -> Vec<u8> {
     let mut buf = Vec::new();
@@ -59,8 +58,7 @@ fn read_part(docx: &[u8], name: &str) -> String {
 fn direct_children_of(xml: &str, parent: &str) -> Vec<Vec<String>> {
     let mut reader = NsReader::from_str(xml);
     reader.config_mut().trim_text(false);
-    let is_w =
-        |ns: &ResolveResult| matches!(ns, ResolveResult::Bound(Namespace(n)) if *n == W_NS_BYTES);
+    let is_w = |ns: &ResolveResult| matches!(ns, ResolveResult::Bound(Namespace(n)) if *n == W_NS);
     let mut results: Vec<Vec<String>> = Vec::new();
     // One frame per open element: `Some(bucket)` if that element is a target
     // `parent`, else `None`. The frame on top of the stack is the current element.
@@ -68,7 +66,7 @@ fn direct_children_of(xml: &str, parent: &str) -> Vec<Vec<String>> {
     loop {
         match reader.read_resolved_event() {
             Ok((ns, Event::Start(e))) => {
-                let local = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
+                let local = e.local_name().into_inner().to_string();
                 if let Some(Some(bi)) = stack.last() {
                     results[*bi].push(local.clone());
                 }
@@ -81,7 +79,7 @@ fn direct_children_of(xml: &str, parent: &str) -> Vec<Vec<String>> {
                 }
             }
             Ok((ns, Event::Empty(e))) => {
-                let local = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
+                let local = e.local_name().into_inner().to_string();
                 if let Some(Some(bi)) = stack.last() {
                     results[*bi].push(local.clone());
                 }

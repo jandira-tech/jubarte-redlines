@@ -18,8 +18,13 @@
 #                              + the metadata table in jubarte-python/Cargo.toml
 #     --github-summary "…"     required → annotated-tag body; release.yml
 #                              prepends it to the GitHub release notes
+#     --how-readme-and-other-docs-were-updated "…"
+#                              required → `> **Docs.** …` under the changelog
+#                              summary + the release commit body; step 3
+#                              lists the README/docs files changed since the
+#                              previous tag beside it
 #
-#   A `--*-comments` alias exists for every `--*-summary` flag. All five are
+#   A `--*-comments` alias exists for every `--*-summary` flag. All six are
 #   mandatory — none can be skipped or overridden, and the verify phase greps
 #   each shipped artifact/registry to prove the note actually landed.
 #
@@ -35,7 +40,7 @@
 #      (bump-version.mjs), jubarte-python/Cargo.toml,
 #      jubarte-wasm/npm/package.json, and all four Cargo.lock files
 #   3. changelog check — dated `## [x.y.z]` section + release-link footer,
-#      then the five summaries are written into their channels
+#      then the five summaries + the docs statement land in their channels
 #   4. gates — fmt, clippy -D warnings, test --all-features, convert-sweep
 #      unit tests, REUSE lint (sequential cargo per AGENTS.md)
 #   5. publish dry-runs — cargo publish --dry-run, npm --dry-run, maturin sdist
@@ -60,14 +65,18 @@
 #   PyPI       UV_PUBLISH_TOKEN=pypi-…            (uv publish --token)
 #   GitHub     `gh auth login`                    (drives the release + wheels)
 set -euo pipefail
+# Under pipefail, `producer | grep -q` fails when grep exits on its first
+# match and the producer dies of SIGPIPE, so a found line reads as missing
+# (a resumed 0.9.3 run redid its release commit that way). Match with
+# `grep … >/dev/null`, which reads the whole stream, never `grep -q`.
 cd "$(dirname "$0")/.."
 
-usage() { sed -n '6,41p' "$0" >&2; }
+usage() { sed -n '/^# One-stop release/,/^set -euo pipefail$/p' "$0" | sed '$d' >&2; }
 
 VER=""
 DRY_RUN=0; YES=0; SKIP_GATES=0; NO_WAIT=0
 CHANGELOG_SUMMARY=""; CRATES_SUMMARY=""; NPM_SUMMARY=""
-PYPI_SUMMARY=""; GITHUB_SUMMARY=""
+PYPI_SUMMARY=""; GITHUB_SUMMARY=""; DOCS_UPDATED=""
 need() { [ -n "${2:-}" ] || { echo "missing value for $1" >&2; exit 2; }; }
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -80,6 +89,7 @@ while [ $# -gt 0 ]; do
     --npm-summary|--npm-comments)             need "$@"; NPM_SUMMARY=$2; shift ;;
     --pypi-summary|--pypi-comments)           need "$@"; PYPI_SUMMARY=$2; shift ;;
     --github-summary|--github-comments)       need "$@"; GITHUB_SUMMARY=$2; shift ;;
+    --how-readme-and-other-docs-were-updated) need "$@"; DOCS_UPDATED=$2; shift ;;
     -h|--help)    usage; exit 0 ;;
     -*)           echo "unknown flag: $1" >&2; usage; exit 2 ;;
     *)            [ -z "$VER" ] && VER="$1" \
@@ -95,6 +105,7 @@ CRATES_SUMMARY=$(fold "$CRATES_SUMMARY")
 NPM_SUMMARY=$(fold "$NPM_SUMMARY")
 PYPI_SUMMARY=$(fold "$PYPI_SUMMARY")
 GITHUB_SUMMARY=$(fold "$GITHUB_SUMMARY")
+DOCS_UPDATED=$(fold "$DOCS_UPDATED")
 
 missing=""
 for pair in \
@@ -102,8 +113,10 @@ for pair in \
   "--crates-summary|$CRATES_SUMMARY" \
   "--npm-summary|$NPM_SUMMARY" \
   "--pypi-summary|$PYPI_SUMMARY" \
-  "--github-summary|$GITHUB_SUMMARY"; do
-  [ -n "${pair#*|}" ] || missing="$missing ${pair%%|*}"
+  "--github-summary|$GITHUB_SUMMARY" \
+  "--how-readme-and-other-docs-were-updated|$DOCS_UPDATED"; do
+  # A value that folds to spaces only is as missing as an absent one.
+  [ -n "$(printf '%s' "${pair#*|}" | tr -d ' ')" ] || missing="$missing ${pair%%|*}"
 done
 if [ -n "$missing" ] || [[ ! "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   [ -n "$missing" ] && printf 'missing required summaries:%s\n' "$missing" >&2
@@ -160,9 +173,9 @@ CUR="$(crate_ver)"
 if [ "$CUR" = "$VER" ]; then
   step "Cargo.toml already at $VER (resume)"
 elif command -v bun >/dev/null; then
-  bun scripts/bump-version.mjs "$VER"
+  JUBARTE_RELEASE_SH=1 bun scripts/bump-version.mjs "$VER"
 else
-  node scripts/bump-version.mjs "$VER"
+  JUBARTE_RELEASE_SH=1 node scripts/bump-version.mjs "$VER"
 fi
 
 # bump-version.mjs also moved the README's Socket badge
@@ -200,7 +213,19 @@ cat <<EOF
     npm          releaseNotes."$VER" in jubarte-wasm/npm/package.json
     PyPI         # release-notes comment in pyproject.toml + metadata table
     GitHub       tag annotation → release notes body
+    docs         > **Docs.** … under the changelog summary + release commit body
 EOF
+
+# What the docs statement is about: README/docs files touched since the last
+# release tag (the version sync above already moved the README badge).
+PREV_TAG=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)
+if [ -n "$PREV_TAG" ]; then
+  step "docs changed since $PREV_TAG:"
+  { git diff --name-only "$PREV_TAG" -- '*.md' 'docs/' 'skills/'; \
+    git ls-files --others --exclude-standard -- '*.md' 'docs/' 'skills/'; } \
+    | sort -u | sed 's/^/        /'
+fi
+step "how they were updated: $DOCS_UPDATED"
 
 # Escape a value for a TOML basic string.
 toml_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
@@ -244,21 +269,24 @@ toml_release_note() {
   mv "$f.tmp" "$f"
 }
 
-# changelog — `> **Summary.** …` directly under the version heading; an
-# earlier summary for this run is replaced, all other content untouched.
-VER="$VER" TXT="$CHANGELOG_SUMMARY" awk '
-  BEGIN { st = 0; s = ENVIRON["TXT"] }
+# changelog — `> **Summary.** …` then `> **Docs.** …` directly under the
+# version heading; an earlier quote block for this run is replaced, all other
+# content untouched.
+VER="$VER" TXT="$CHANGELOG_SUMMARY" DOCS="$DOCS_UPDATED" awk '
+  BEGIN { st = 0; s = ENVIRON["TXT"]; d = ENVIRON["DOCS"] }
   st == 0 && index($0, "## [" ENVIRON["VER"] "] - ") == 1 { print; st = 1; next }
   st == 1 || st == 2 {
     if ($0 ~ /^[[:space:]]*$/) next
     if (st == 1 && $0 ~ /^> \*\*Summary\.\*\*/) { st = 2; next }
     if (st == 2 && $0 ~ /^>/) next
-    printf "\n> **Summary.** %s\n\n", s; print; st = 9; next
+    printf "\n> **Summary.** %s\n>\n> **Docs.** %s\n\n", s, d; print; st = 9; next
   }
   { print }
 ' CHANGELOG.md > .changelog.tmp && mv .changelog.tmp CHANGELOG.md
 grep -qF "> **Summary.** $CHANGELOG_SUMMARY" CHANGELOG.md \
   || die "changelog summary failed to land"
+grep -qF "> **Docs.** $DOCS_UPDATED" CHANGELOG.md \
+  || die "docs statement failed to land in the changelog"
 
 # crates.io — no per-release notes channel and cargo strips comments from the
 # packaged manifest; the release-notes metadata table is what survives.
@@ -299,7 +327,7 @@ toml_release_note jubarte-python/Cargo.toml "$PYPI_SUMMARY"
 
 # GitHub — the summary rides in the annotated tag body (see step 6);
 # release.yml prepends %(contents:body) to the release notes.
-step "all five summaries staged"
+step "all five summaries + docs statement staged"
 
 # =============================================================================
 if [ "$SKIP_GATES" = 0 ]; then
@@ -309,8 +337,15 @@ if [ "$SKIP_GATES" = 0 ]; then
   cargo test --all-features
   python3 scripts/test_convert_sweep.py
   python3 planning/test_sample50_check.py
+  python3 scripts/test_release_sh.py
+  # Python bindings: build the extension from this checkout and run pytest
+  # (uv run leaves a uv.lock the repo does not track).
+  (cd jubarte-python \
+    && uv run --with maturin maturin develop --release >/dev/null \
+    && uv run --with pytest pytest -q)
+  rm -f jubarte-python/uv.lock
   uv tool run --from 'reuse[charset-normalizer]' reuse lint >/dev/null
-  step "fmt / clippy / tests / sweep-units / REUSE all green"
+  step "fmt / clippy / tests / sweep-units / pytest / REUSE all green"
 else
   say "4. Gates — SKIPPED (--skip-gates)"
 fi
@@ -327,7 +362,7 @@ sdist=$(ls target/release-check/*.tar.gz 2>/dev/null | head -1)
 [ -n "$sdist" ] || die "maturin produced no sdist"
 member=$(tar -tzf "$sdist" | grep '/pyproject.toml$' | head -1)
 [ -n "$member" ] || die "sdist has no pyproject.toml"
-tar -xzOf "$sdist" "$member" | grep -qF "# release-notes v$VER" \
+tar -xzOf "$sdist" "$member" | grep -F "# release-notes v$VER" >/dev/null \
   || die "pypi summary comment did not make it into the sdist"
 step "cargo / npm / maturin dry-runs OK — sdist carries the pypi comment"
 
@@ -346,13 +381,13 @@ say "6. Release commit → wasm artifacts → annotated tag"
 # =============================================================================
 
 # A resumed run finds the release commit under the wasm-artifact commit.
-if ! git log -3 --format=%s | grep -qx "chore(release): v$VER"; then
+if ! git log -3 --format=%s | grep -x "chore(release): v$VER" >/dev/null; then
   git add Cargo.toml Cargo.lock CHANGELOG.md README.md VERSIONING.md \
     jubarte-python/Cargo.toml jubarte-python/Cargo.lock \
     jubarte-python/pyproject.toml \
     jubarte-wasm/Cargo.lock jubarte-wasm/npm/package.json \
     jubarte-rust-inproc/Cargo.lock
-  git commit -m "chore(release): v$VER"
+  git commit -m "chore(release): v$VER" -m "Docs: $DOCS_UPDATED"
 fi
 step "release commit $(git rev-parse --short HEAD)"
 
@@ -370,9 +405,9 @@ step "npm artifacts rebuilt + smoke-tested (engine $(cat jubarte-wasm/npm/ENGINE
 # the release notes. An existing local tag that lacks it is re-created; a tag
 # already on origin cannot be changed and only earns a warning.
 if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-  if git tag -l --format='%(contents:body)' "$TAG" | grep -qF "$GITHUB_SUMMARY"; then
+  if git tag -l --format='%(contents:body)' "$TAG" | grep -F "$GITHUB_SUMMARY" >/dev/null; then
     step "tag $TAG exists and already carries the github summary"
-  elif git ls-remote --tags origin "$TAG" | grep -q .; then
+  elif git ls-remote --tags origin "$TAG" | grep . >/dev/null; then
     echo "  ! $TAG is already on origin without the summary — release notes will lack it" >&2
   else
     git tag -d "$TAG" >/dev/null
@@ -399,7 +434,7 @@ if [ "$YES" = 0 ]; then
 fi
 
 git push origin main
-if git ls-remote --tags origin "$TAG" | grep -q .; then
+if git ls-remote --tags origin "$TAG" | grep . >/dev/null; then
   step "tag $TAG already on origin — push skipped"
 else
   git push origin "$TAG"
@@ -417,7 +452,7 @@ else
   cargo package --locked --no-verify >/dev/null
   tar -xzOf "target/package/jubarte-redlines-$VER.crate" \
     "jubarte-redlines-$VER/Cargo.toml" \
-    | grep -qF "\"$VER\" = \"$CRATES_SUMMARY\"" \
+    | grep -F "\"$VER\" = \"$CRATES_SUMMARY\"" >/dev/null \
     || die "crates summary missing from the packaged manifest — not publishing"
   cargo publish --locked
   step "cargo publish done (index lags ~1 min)"
@@ -483,7 +518,7 @@ npm_note() {
 }
 gh_note() {
   gh release view "$TAG" --json body -q .body 2>/dev/null \
-    | grep -qF "$GITHUB_SUMMARY"
+    | grep -F "$GITHUB_SUMMARY" >/dev/null
 }
 
 ok=1

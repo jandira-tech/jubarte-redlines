@@ -18,6 +18,52 @@ use crate::namespaces::{R, W, W14};
 use crate::opc::{OpcError, PartFs};
 use crate::xmllinq::{Dom, NodeId};
 
+/// Every relationship `xml` (part `part_b` of `pkg2`) references resolves in
+/// `part_a`'s rels to the same type, mode and target, and an internal target
+/// to the same bytes. A redlined part written over `part_a` keeps A's rels,
+/// so B's references then still mean what they meant in B.
+fn part_rels_agree(
+    (pkg1, part_a): (&PartFs, &str),
+    (pkg2, part_b): (&PartFs, &str),
+    xml: &str,
+) -> bool {
+    let mut dom = Dom::new();
+    let document = dom.parse_xdocument(xml);
+    let Some(root) = dom.root(document) else {
+        return false;
+    };
+    let ids: std::collections::BTreeSet<String> = dom
+        .descendants_and_self(root, None)
+        .into_iter()
+        .flat_map(|e| dom.attributes(e))
+        .filter(|(name, _)| crate::comparer::tables::S_RELATIONSHIP_ATTRIBUTE_NAMES.contains(name))
+        .map(|(_, value)| value)
+        .collect();
+    if ids.is_empty() {
+        return true;
+    }
+    let (Some(rels_a), Some(rels_b)) = (pkg1.read_rels_for(part_a), pkg2.read_rels_for(part_b))
+    else {
+        return false;
+    };
+    ids.iter().all(|id| {
+        let find =
+            |rels: &crate::opc::Relationships| rels.items.iter().find(|r| &r.id == id).cloned();
+        let (Some(a), Some(b)) = (find(rels_a), find(rels_b)) else {
+            return false;
+        };
+        if a.rel_type != b.rel_type || a.target_mode != b.target_mode {
+            return false;
+        }
+        if a.target_mode.as_deref() == Some("External") {
+            return a.target == b.target;
+        }
+        let bytes_a = pkg1.part_bytes(&pkg1.resolve_rel_target(part_a, &a.target));
+        let bytes_b = pkg2.part_bytes(&pkg2.resolve_rel_target(part_b, &b.target));
+        bytes_a.is_some() && bytes_a == bytes_b
+    })
+}
+
 /// The header/footer parts a document references, as (kind, type, part-name):
 /// kind ∈ {"header","footer"}, type ∈ {"default","even","first"}. Read from the
 /// `headerReference`/`footerReference` elements in the main document, resolved to
@@ -65,6 +111,34 @@ fn header_footer_refs(pkg: &PartFs) -> Vec<(String, String, String)> {
         }
     }
     out
+}
+
+/// The revised part a header/footer part is diffed against: the one the
+/// same section references for the same kind and type (the `at`-th such
+/// reference in each document), or none when A's part is unchanged in B.
+/// Keyed by kind and type alone, every section's default footer met the last
+/// section's ("Page 1 of 4" against "Page 4 of 4"), and an unchanged footer
+/// came out deleted and inserted again.
+fn pair_header_footer(
+    pkg1: &PartFs,
+    pkg2: &PartFs,
+    refs_b: &[(String, String, String)],
+    (kind, ty, part_a): (&str, &str, &str),
+    at: usize,
+) -> Option<String> {
+    let same_slot: Vec<&str> = refs_b
+        .iter()
+        .filter(|(k, t, _)| k == kind && t == ty)
+        .map(|(_, _, p)| p.as_str())
+        .collect();
+    let bytes_a = pkg1.part_bytes(part_a);
+    if same_slot.iter().any(|&p| pkg2.part_bytes(p) == bytes_a) {
+        return None;
+    }
+    same_slot
+        .get(at)
+        .or(same_slot.last())
+        .map(|p| p.to_string())
 }
 
 /// Default pinned revision date when the caller doesn't specify one.
@@ -2858,6 +2932,16 @@ fn word_canonical_style_id(name: &str) -> String {
         "quote" => return "Quote".into(),
         "intense quote" => return "IntenseQuote".into(),
         "caption" => return "Caption".into(),
+        // Built-ins whose id is not their PascalCased name: the comment
+        // styles above all (B's comments.xml keeps `CommentReference`, and
+        // renaming it to `AnnotationReference` stranded every reference).
+        "annotation text" => return "CommentText".into(),
+        "annotation reference" => return "CommentReference".into(),
+        "annotation subject" => return "CommentSubject".into(),
+        "macro" => return "MacroText".into(),
+        "toa heading" => return "TOAHeading".into(),
+        "table of figures" => return "TableofFigures".into(),
+        "table of authorities" => return "TableofAuthorities".into(),
         "text body" => return "Textbody".into(),
         "preformatted text" => return "PreformattedText".into(),
         "document title" => return "DocumentTitle".into(),
@@ -5450,12 +5534,9 @@ fn compare_documents_impl(
     crate::comparer::comments::carry_comments(
         &mut dom,
         result_root,
-        &pkg1,
-        &main1,
-        &pkg2,
-        &main2,
-        &mut out,
-        &main1,
+        (&pkg1, &main1),
+        (&pkg2, &main2),
+        (&mut out, &main1),
         &settings.author_for_revisions,
     );
     if has_comments {
@@ -6303,25 +6384,29 @@ fn compare_documents_impl(
     }
     // M4.H.x: header/footer CONTENT diff (Word redlines header/footer changes; we
     // previously only copied the original's). Match A's parts to B's by reference
-    // (kind,type). v1: for matched TEXT-ONLY parts (no relationship refs — the
-    // redlined part keeps the original's rels, so ref-bearing parts could dangle),
-    // diff the content and write the redline into the output's (original's) part.
+    // (kind,type), diff the content and write the redline into the output's
+    // (original's) part. That part keeps A's rels, so a part whose B references
+    // (a logo, a hyperlink) would resolve to something else there is skipped.
     {
-        let refs_b: std::collections::HashMap<(String, String), String> = header_footer_refs(&pkg2)
-            .into_iter()
-            .map(|(k, t, p)| ((k, t), p))
-            .collect();
+        let refs_b = header_footer_refs(&pkg2);
+        let mut ordinals: std::collections::HashMap<(String, String), usize> =
+            std::collections::HashMap::new();
+        let mut diffed = std::collections::HashSet::new();
         for (kind, ty, part_a) in header_footer_refs(&pkg1) {
-            let Some(part_b) = refs_b.get(&(kind.clone(), ty.clone())) else {
+            let ordinal = ordinals.entry((kind.clone(), ty.clone())).or_default();
+            let at = *ordinal;
+            *ordinal += 1;
+            if !diffed.insert(part_a.clone()) {
+                continue;
+            }
+            let Some(part_b) = pair_header_footer(&pkg1, &pkg2, &refs_b, (&kind, &ty, &part_a), at)
+            else {
                 continue;
             };
+            let part_b = &part_b;
             if let (Some(xa), Some(xb)) = (pkg1.part_string(&part_a), pkg2.part_string(part_b)) {
-                if xa.contains("r:id=")
-                    || xa.contains("r:embed=")
-                    || xb.contains("r:id=")
-                    || xb.contains("r:embed=")
-                {
-                    continue; // v1: skip relationship-bearing header/footer parts
+                if !part_rels_agree((&pkg1, &part_a), (&pkg2, part_b), &xb) {
+                    continue;
                 }
                 let mut hd = Dom::new();
                 let da = hd.parse_xdocument(&xa);
@@ -6825,6 +6910,30 @@ mod tests {
         assert_eq!(word_canonical_style_id("heading 1"), "Heading1");
         assert_eq!(word_canonical_style_id("document title"), "DocumentTitle");
         assert_eq!(word_canonical_style_id("my custom style"), "MyCustomStyle");
+    }
+
+    #[test]
+    fn word_canonical_style_id_keeps_builtin_ids_that_differ_from_their_names() {
+        // Word's own ids; the PascalCased name would rename a live built-in.
+        assert_eq!(
+            word_canonical_style_id("annotation reference"),
+            "CommentReference"
+        );
+        assert_eq!(word_canonical_style_id("annotation text"), "CommentText");
+        assert_eq!(
+            word_canonical_style_id("annotation subject"),
+            "CommentSubject"
+        );
+        assert_eq!(word_canonical_style_id("macro"), "MacroText");
+        assert_eq!(word_canonical_style_id("toa heading"), "TOAHeading");
+        assert_eq!(
+            word_canonical_style_id("table of figures"),
+            "TableofFigures"
+        );
+        assert_eq!(
+            word_canonical_style_id("table of authorities"),
+            "TableofAuthorities"
+        );
     }
 
     /// Word's style ids hold letters and digits only: "Normal (Web)" is

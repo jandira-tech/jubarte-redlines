@@ -289,8 +289,11 @@ fn document100_vs_lots_of_comments_carries_unique_bodies() {
 
 /// Same comment *texts* on A and B under different ids (Word renumbered the
 /// set across two redline-derived sources). Union-by-id produces 12 comments;
-/// Word keeps one per unique body (4 — fixtures ship Complex/Threaded dups).
-/// Prefer B's install path, then body-text dedupe.
+/// Word's own redline of this pair keeps 6 with 6 anchors: B's set, where the
+/// Complex/Threaded bodies appear twice because a copied section carries its
+/// own pair. A range maps to the copy at its own place, so the two pairs are
+/// not collapsed as duplicates (this test once asserted 4, which was that
+/// collapse, not Word).
 #[test]
 fn renumbered_same_text_comments_prefer_b_not_double_union() {
     let Some(a_path) = optional_bench_docx("docx_lots_of_comments_addition_redline.docx") else {
@@ -320,18 +323,12 @@ fn renumbered_same_text_comments_prefer_b_not_double_union() {
     let ids = comment_ids(&pkg);
     let (s, e, r) = anchor_ids(&pkg);
     assert_eq!(
-        ids.len(),
-        4,
-        "must not double-union; one def per unique body; got {ids:?}"
+        ids, b_ids,
+        "must not double-union: exactly B's six comments, as Word's redline"
     );
-    assert_eq!(s.len(), 4, "starts={s:?}");
-    assert_eq!(e.len(), 4, "ends={e:?}");
-    assert_eq!(r.len(), 4, "refs={r:?}");
-    // Surviving ids must be a subset of B's (text-cover path installs B first).
-    assert!(
-        ids.is_subset(&b_ids),
-        "carried ids must come from B: {ids:?} not subset of {b_ids:?}"
-    );
+    assert_eq!(s.len(), 6, "starts={s:?}");
+    assert_eq!(e.len(), 6, "ends={e:?}");
+    assert_eq!(r.len(), 6, "refs={r:?}");
 }
 
 /// A document whose first paragraph carries comment 1 as a point comment: a

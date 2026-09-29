@@ -10,6 +10,18 @@
 
 ---
 
+> **Status 2026-09-26 (branch `feat/agent-adoption`):** A1 and A2 done with
+> corrections; see [00-ASSESSMENT.md](00-ASSESSMENT.md) §3. The skill at
+> `skills/jubarte-documents/SKILL.md` supersedes patch 0006: it covers read
+> (`jubarte text`/`inspect`), edit (plans with comments), verify (`convert
+> --png --report`, accept-equals-clean check) and compare/accept/reject, and
+> keeps the docx-js creation footguns, so it replaces the `docx` skill's
+> pandoc/soffice/pdftoppm paths rather than sitting beside them.
+> `jubarte capabilities --json` and `jubarte_redlines.capabilities()` derive
+> from `src/capabilities.rs`. `examples/agents/acme-letter/` holds the
+> hand-rolled workflow as one plan with its actual report and rendered page.
+> A3 (API reference pages) and A4 (evaluation protocol) remain open.
+
 <!-- SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC -->
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 

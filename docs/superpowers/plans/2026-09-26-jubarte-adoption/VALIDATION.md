@@ -3,11 +3,17 @@
 <!-- SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC -->
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 
-This document reports what was actually checked while preparing the plan. It is not a product release certificate. All product changes remain proposed patch artifacts; no product source/license change or publication was performed by this planning work.
+This document reports what was actually checked while preparing the plan. It is not a product release certificate.
 
-## Patch inventory
+> **Historical record.** The inventory below describes the planning bundle
+> as it stood before implementation. Patches 0001, 0005 and 0006 have since
+> been superseded by implemented source (see `patches/implemented/` and the
+> status notes further down). Do not apply the patches below to the current
+> tree; they are kept to show what was planned and checked at the time.
 
-Apply in numeric order after reviewing current source status. Patches 0001–0004 and 0006–0007 are independent of each other's source semantics; patch 0005 expects 0001's inspection/export/dependency changes. Never `git am` an old attached patch on top of the superseding inspection patch.
+## Patch inventory (historical)
+
+At planning time the patches were meant to be applied in numeric order after reviewing current source status. Patches 0001–0004 and 0006–0007 are independent of each other's source semantics; patch 0005 expects 0001's inspection/export/dependency changes. Never `git am` an old attached patch on top of the superseding inspection patch.
 
 | Patch | Concrete contents | Verification achieved | Remaining release work |
 |---|---|---|---|
@@ -91,3 +97,26 @@ This is a substantially expanded working plan, written incrementally. Before cal
 5. Re-run the author self-review for type/signature consistency, complete patch dependencies, stale source facts and every local artifact link after those additions.
 
 The active goal remains open while these gaps are being addressed. The planning work is not blocked by pending publication, outreach, or licensing authority: those are execution gates, and useful preparation can continue.
+
+
+## Implementation record, 2026-09-26 (branch `feat/agent-adoption`)
+
+Implemented in a git worktree of `892ddbc` (user instruction; overrides the
+canonical-checkout note above), Rust 1.95, in an 8 GB container with Cargo
+serialized (`-j1`) and `ooxmlsdk` built without debuginfo through an
+uncommitted local `.cargo/config.toml`. Everything below was compiled and
+run there; see [00-ASSESSMENT.md](00-ASSESSMENT.md) §7 for the numbers.
+
+| Patch | Disposition |
+|---|---|
+| 0001 | superseded by `src/xmllinq/parse.rs` (guard + `validate_xml`) and `src/inspect.rs` (richer, non-refusing read model) |
+| 0002 | applied, then extended (`document.py`, `models.py`, `__main__.py`, stubs) |
+| 0005 | superseded by `src/edit.rs` (plan schema v1, selectors, comments, paragraph operations, report) |
+| 0006 | superseded by `skills/jubarte-documents/SKILL.md` |
+| 0003, 0004, 0007 | untouched (TypeScript, recipes, playground: out of this scope) |
+
+Gates run: `cargo fmt --check`; `cargo clippy --all-targets --all-features
+-- -D warnings`; `cargo test` for the library, the binary and the suites
+`inspect_paragraphs`, `edit_plan`, `convert_docx_to_png`, `m_cli_agent`,
+`m7_cli`, `m_cli_no_panic`, `convert_docx_to_pdf`, `convert_revision_palette`;
+`jubarte --help`; `pytest --cov=jubarte_redlines --cov-branch`.

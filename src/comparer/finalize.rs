@@ -1808,6 +1808,18 @@ fn para_side_word_count(dom: &Dom, p: NodeId, ins_side: bool) -> usize {
     text.split_whitespace().filter(|w| !w.is_empty()).count()
 }
 
+/// True when a paragraph holds live text outside any `w:ins`/`w:del`.
+fn para_keeps_unchanged_words(dom: &Dom, p: NodeId) -> bool {
+    dom.descendants(p, Some(&W::t())).into_iter().any(|t| {
+        !dom.value_str(t).trim().is_empty()
+            && !dom
+                .ancestors(t, None)
+                .into_iter()
+                .take_while(|&a| a != p)
+                .any(|a| dom.name_is(a, &W::ins()) || dom.name_is(a, &W::del()))
+    })
+}
+
 /// M439 (list_def_mix × list_numbering_reimport ~50.5 / docxodus 90):
 /// pure-I list items with live `numPr` and **no** spacing inherit bloated
 /// package `pPrDefault` (before=240 after=240 line=288) under LO. Word stamps
@@ -2267,7 +2279,11 @@ pub fn free_mesh_shared_title_token_in_mix(dom: &mut Dom, root: NodeId) {
                 break;
             }
         }
-        if other || ins_nodes.is_empty() || del_nodes.is_empty() {
+        if other
+            || ins_nodes.is_empty()
+            || del_nodes.is_empty()
+            || !body_kids.iter().all(|&c| holds_only_text(dom, c))
+        {
             continue;
         }
         // Only wholesale 1+1 or small confetti of same status groups.
@@ -2397,9 +2413,11 @@ pub fn free_mesh_shared_title_token_in_mix(dom: &mut Dom, root: NodeId) {
             &del_prefix,
             &eq_label,
             &ins_after,
-            &author,
-            &date,
-            sample_rpr,
+            RevStamp {
+                author: &author,
+                date: &date,
+                sample_rpr,
+            },
         );
     }
 }
@@ -2449,8 +2467,16 @@ fn split_around_token(text: &str, label: &str) -> Option<(String, String)> {
     None
 }
 
+/// Who and when a rebuilt revision run is attributed to, and the run
+/// properties its text copies.
+#[derive(Clone, Copy)]
+struct RevStamp<'a> {
+    author: &'a str,
+    date: &'a str,
+    sample_rpr: Option<NodeId>,
+}
+
 /// Rebuild short-title MIX free-mesh body on `p`.
-#[allow(clippy::too_many_arguments)]
 fn rebuild_title_free_mesh(
     dom: &mut Dom,
     p: NodeId,
@@ -2458,25 +2484,14 @@ fn rebuild_title_free_mesh(
     del_prefix: &str,
     eq_label: &str,
     ins_after: &str,
-    author: &str,
-    date: &str,
-    sample_rpr: Option<NodeId>,
+    stamp: RevStamp<'_>,
 ) {
+    let sample_rpr = stamp.sample_rpr;
     let mut next_id = 1u32;
     // Word: ins_before (trim end space — space moves into EQ)
     let ib = ins_before.trim_end();
     if !ib.is_empty() {
-        add_revision_text_run(
-            dom,
-            p,
-            W::ins(),
-            ib,
-            false,
-            author,
-            date,
-            &mut next_id,
-            sample_rpr,
-        );
+        add_revision_text_run(dom, p, W::ins(), ib, false, stamp, &mut next_id);
     }
     let dp = del_prefix.trim_end();
     if !dp.is_empty() {
@@ -2486,10 +2501,12 @@ fn rebuild_title_free_mesh(
             W::del(),
             dp,
             true,
-            author,
-            date,
+            // del runs usually bare of fancy rPr
+            RevStamp {
+                sample_rpr: None,
+                ..stamp
+            },
             &mut next_id,
-            None, // del runs usually bare of fancy rPr
         );
     }
     // EQ with leading space + label (Word " document")
@@ -2506,32 +2523,24 @@ fn rebuild_title_free_mesh(
     dom.add(p, eq_r);
     // ins_after keeps leading space if any (" with:")
     if !ins_after.is_empty() {
-        add_revision_text_run(
-            dom,
-            p,
-            W::ins(),
-            ins_after,
-            false,
-            author,
-            date,
-            &mut next_id,
-            sample_rpr,
-        );
+        add_revision_text_run(dom, p, W::ins(), ins_after, false, stamp, &mut next_id);
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn add_revision_text_run(
     dom: &mut Dom,
     p: NodeId,
     wrapper: crate::xmllinq::XName,
     text: &str,
     deleted: bool,
-    author: &str,
-    date: &str,
+    stamp: RevStamp<'_>,
     next_id: &mut u32,
-    sample_rpr: Option<NodeId>,
 ) {
+    let RevStamp {
+        author,
+        date,
+        sample_rpr,
+    } = stamp;
     let w = dom.new_element(wrapper);
     dom.set_attribute_value(w, &W::author(), Some(author));
     dom.set_attribute_value(w, &W::date(), Some(date));
@@ -4301,6 +4310,14 @@ pub fn last_pure_del_spacing_to_pprchange(
     // - M444: short ins title (1..=4) × long del cover (≥5)
     // - M446a: long ins body (≥5) × short del residual (1..=4) — subtitle
     if is_mixed {
+        // A mixed paragraph that keeps unchanged words is one paragraph with
+        // a few words revised, not a replaced one: Word leaves its properties
+        // live, in the body, a header and a text box alike (fixtures_500
+        // 00b81efae883 "Overall purpose of the post" → "Overall aim of the
+        // post"). file_139's last paragraph was replaced whole.
+        if para_keeps_unchanged_words(dom, last) {
+            return;
+        }
         let ins_w = para_side_word_count(dom, last, true);
         let del_w = para_side_word_count(dom, last, false);
         if (1..=4).contains(&ins_w) && del_w >= 5 {
@@ -11131,14 +11148,35 @@ pub fn ensure_empty_pprchange_on_live_heading_spacing(
     }
 }
 
+/// Each paragraph's text and `w:jc` value, for paragraphs with a `w:jc`.
+pub fn paragraph_alignments(dom: &Dom, body: NodeId) -> HashSet<(String, String)> {
+    dom.descendants(body, Some(&W::p()))
+        .into_iter()
+        .filter_map(|p| {
+            let jc = dom.element(dom.element(p, &W::p_pr())?, &W::jc_el())?;
+            let text: String = dom
+                .descendants(p, Some(&W::t()))
+                .into_iter()
+                .map(|t| dom.value(t))
+                .collect();
+            Some((text, dom.attribute(jc, &W::val()).unwrap_or("").to_string()))
+        })
+        .collect()
+}
+
 /// M454 (center_alignment_2 residual ~87 → 100):
 /// Word EQ title keeps live `jc` + empty `pPrChange`. Engine had live jc only.
+/// The title gained its `jc=center` in the revision; a paragraph the
+/// original already aligned the same way is unchanged, and Word records no
+/// property change on it (fixtures_500 00b81efae883's empty justified
+/// paragraphs), so `original` — the original's (text, jc) pairs — gates it.
 ///
 /// Gate: **EQ only** (no ins/del content or marks) — pure-I empty shells
 /// thrash'd comments subset (−6). No MIX (M451). No rPr mark.
 pub fn ensure_empty_pprchange_on_eq_with_live_jc(
     dom: &mut Dom,
     root: NodeId,
+    original: &HashSet<(String, String)>,
     settings: &WmlComparerSettings,
     id_gen: &mut u32,
 ) {
@@ -11171,7 +11209,16 @@ pub fn ensure_empty_pprchange_on_eq_with_live_jc(
         let Some(ppr) = dom.element(p, &W::p_pr()) else {
             continue;
         };
-        if dom.element(ppr, &W::jc_el()).is_none() {
+        let Some(jc) = dom.element(ppr, &W::jc_el()) else {
+            continue;
+        };
+        let text: String = dom
+            .descendants(p, Some(&W::t()))
+            .into_iter()
+            .map(|t| dom.value(t))
+            .collect();
+        let jc = dom.attribute(jc, &W::val()).unwrap_or("").to_string();
+        if original.contains(&(text, jc)) {
             continue;
         }
         if dom.element(ppr, &W::p_pr_change()).is_some() {
@@ -11281,6 +11328,27 @@ pub fn strip_leading_del_echoing_prev_pure_i(dom: &mut Dom, root: NodeId) {
     }
 }
 
+/// Whether a paragraph child holds only text: a run, or a revision wrapper
+/// of runs, whose content is run properties and `w:t`/`w:delText`. The
+/// free-mesh passes rebuild a paragraph from the text of its children, so
+/// anything else there (a text box, a drawing, a field, a tab) would be
+/// lost, and a text box's own text would land in the paragraph
+/// (fixtures_500 00b81efae883).
+fn holds_only_text(dom: &Dom, node: NodeId) -> bool {
+    let text_run = |r: NodeId| {
+        dom.name_is(r, &W::r())
+            && dom.elements(r, None).into_iter().all(|c| {
+                dom.name_is(c, &W::r_pr())
+                    || dom.name_is(c, &W::t())
+                    || dom.name_is(c, &W::del_text())
+            })
+    };
+    if dom.name_is(node, &W::r()) {
+        return text_run(node);
+    }
+    dom.elements(node, None).into_iter().all(text_run)
+}
+
 /// M462 (center_aligned_bold body2 residual after M461): wholesale body MIX
 /// free-mesh with coverage-gated word-LCS. M459 thrash'd file_163 (−29) and
 /// ooxml (−12) on single-sig / low-overlap free-mesh; this revival requires
@@ -11335,7 +11403,11 @@ pub fn free_mesh_wholesale_body_mix(dom: &mut Dom, root: NodeId) {
                 break;
             }
         }
-        if other || ins_nodes.len() != 1 || del_nodes.len() != 1 {
+        if other
+            || ins_nodes.len() != 1
+            || del_nodes.len() != 1
+            || !body_kids.iter().all(|&c| holds_only_text(dom, c))
+        {
             continue;
         }
         let ins = ins_nodes[0];
@@ -11423,9 +11495,11 @@ pub fn free_mesh_wholesale_body_mix(dom: &mut Dom, root: NodeId) {
             &ins_words,
             &del_words,
             &lcs,
-            &author,
-            &date,
-            sample_rpr,
+            RevStamp {
+                author: &author,
+                date: &date,
+                sample_rpr,
+            },
             trailing_period,
         );
     }
@@ -11496,18 +11570,20 @@ fn word_lcs_indices_eligible(a: &[String], b: &[String], boiler: &[&str]) -> Vec
 /// Rebuild free-mesh from word LCS. Emits: ins-runs, del-runs, EQ runs with
 /// single spaces. Order at each step: flush pending del then ins before EQ
 /// when both pending at an anchor (Word often shows del residual then ins).
-#[allow(clippy::too_many_arguments)]
 fn rebuild_body_free_mesh_lcs(
     dom: &mut Dom,
     p: NodeId,
     ins_words: &[String],
     del_words: &[String],
     lcs: &[(usize, usize)],
-    author: &str,
-    date: &str,
-    sample_rpr: Option<NodeId>,
+    stamp: RevStamp<'_>,
     trailing_period: bool,
 ) {
+    let RevStamp {
+        author,
+        date,
+        sample_rpr,
+    } = stamp;
     let mut next_id = 1u32;
     let mut ii = 0usize;
     let mut di = 0usize;
@@ -11753,7 +11829,12 @@ pub fn free_mesh_bookended_ins_del(dom: &mut Dom, root: NodeId) {
             }
         }
         // Bookend required (else M459 wholesale path). One ins + one del.
-        if other || !bare_alnum || ins_nodes.len() != 1 || del_nodes.len() != 1 {
+        if other
+            || !bare_alnum
+            || ins_nodes.len() != 1
+            || del_nodes.len() != 1
+            || !body_kids.iter().all(|&c| holds_only_text(dom, c))
+        {
             continue;
         }
         let ins = ins_nodes[0];
@@ -11872,47 +11953,20 @@ pub fn free_mesh_bookended_ins_del(dom: &mut Dom, root: NodeId) {
         }
         let mut next_id = 1u32;
         // Word order: INS before, DEL before, EQ, INS after, DEL after.
-        m460_push_rev_text(
-            dom,
-            p,
-            "ins",
-            &ins_before,
-            &author,
-            &date,
-            &mut next_id,
-            &None,
-        );
-        m460_push_rev_text(
-            dom,
-            p,
-            "del",
-            &del_before,
-            &author,
-            &date,
-            &mut next_id,
-            &del_rpr,
-        );
+        let ins_stamp = RevStamp {
+            author: &author,
+            date: &date,
+            sample_rpr: None,
+        };
+        let del_stamp = RevStamp {
+            sample_rpr: del_rpr,
+            ..ins_stamp
+        };
+        m460_push_rev_text(dom, p, "ins", &ins_before, ins_stamp, &mut next_id);
+        m460_push_rev_text(dom, p, "del", &del_before, del_stamp, &mut next_id);
         m460_push_eq_text(dom, p, anchor, &eq_rpr);
-        m460_push_rev_text(
-            dom,
-            p,
-            "ins",
-            &ins_after,
-            &author,
-            &date,
-            &mut next_id,
-            &None,
-        );
-        m460_push_rev_text(
-            dom,
-            p,
-            "del",
-            &del_after,
-            &author,
-            &date,
-            &mut next_id,
-            &del_rpr,
-        );
+        m460_push_rev_text(dom, p, "ins", &ins_after, ins_stamp, &mut next_id);
+        m460_push_rev_text(dom, p, "del", &del_after, del_stamp, &mut next_id);
         for c in suffix_clones {
             dom.add(p, c);
         }
@@ -11967,17 +12021,20 @@ fn m460_push_eq_text(dom: &mut Dom, p: NodeId, text: &str, sample_rpr: &Option<N
     dom.add(p, r);
 }
 
-#[allow(clippy::too_many_arguments)]
 fn m460_push_rev_text(
     dom: &mut Dom,
     p: NodeId,
     kind: &str,
     text: &str,
-    author: &str,
-    date: &str,
+    stamp: RevStamp<'_>,
     next_id: &mut u32,
-    sample_rpr: &Option<NodeId>,
 ) {
+    let RevStamp {
+        author,
+        date,
+        sample_rpr,
+    } = stamp;
+    let sample_rpr = &sample_rpr;
     if text.is_empty() {
         return;
     }

@@ -243,10 +243,10 @@ pub async fn is_entitled_for_gate() -> bool {
     {
         {
             let guard = ENTITLEMENT_CACHE.active_until.lock().unwrap();
-            if let Some(until) = *guard {
-                if std::time::Instant::now() < until {
-                    return true;
-                }
+            if let Some(until) = *guard
+                && std::time::Instant::now() < until
+            {
+                return true;
             }
         }
         let active = storekit_current_entitlement(PRODUCT_ID.to_string())

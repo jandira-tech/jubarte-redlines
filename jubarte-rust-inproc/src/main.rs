@@ -61,7 +61,7 @@ fn main() {
                 let _ = writeln!(stdout, "OK {nbytes} {ms:.3}");
             }
             Err(msg) => {
-                let clean = msg.replace('\n', " ").replace('\r', " ");
+                let clean = msg.replace(['\n', '\r'], " ");
                 let _ = writeln!(stdout, "ERR {clean}");
             }
         }

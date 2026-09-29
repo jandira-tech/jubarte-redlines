@@ -40,17 +40,17 @@ impl ContentTypes {
         loop {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Empty(ref e)) => match e.name().as_ref() {
-                    b"Default" => {
+                    "Default" => {
                         let mut ext = None;
                         let mut ct = None;
                         for attr in e.attributes() {
                             let attr = attr?;
                             match attr.key.as_ref() {
-                                b"Extension" => {
-                                    ext = Some(std::str::from_utf8(&attr.value)?.to_string());
+                                "Extension" => {
+                                    ext = Some(attr.normalized_value(quick_xml::XmlVersion::Implicit1_0)?.into_owned());
                                 }
-                                b"ContentType" => {
-                                    ct = Some(std::str::from_utf8(&attr.value)?.to_string());
+                                "ContentType" => {
+                                    ct = Some(attr.normalized_value(quick_xml::XmlVersion::Implicit1_0)?.into_owned());
                                 }
                                 _ => {}
                             }
@@ -62,17 +62,17 @@ impl ContentTypes {
                             _ => return Err(OpcError::InvalidContentTypes),
                         }
                     }
-                    b"Override" => {
+                    "Override" => {
                         let mut pn = None;
                         let mut ct = None;
                         for attr in e.attributes() {
                             let attr = attr?;
                             match attr.key.as_ref() {
-                                b"PartName" => {
-                                    pn = Some(std::str::from_utf8(&attr.value)?.to_string());
+                                "PartName" => {
+                                    pn = Some(attr.normalized_value(quick_xml::XmlVersion::Implicit1_0)?.into_owned());
                                 }
-                                b"ContentType" => {
-                                    ct = Some(std::str::from_utf8(&attr.value)?.to_string());
+                                "ContentType" => {
+                                    ct = Some(attr.normalized_value(quick_xml::XmlVersion::Implicit1_0)?.into_owned());
                                 }
                                 _ => {}
                             }

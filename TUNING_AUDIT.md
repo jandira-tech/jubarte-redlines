@@ -76,7 +76,7 @@ Disposition is the action, not a score. Parked items stay parked; this table doe
 | src/convert/mod.rs | 4502 | mini 401 | b | KEEP: measured gate. /// Body without pBdr stays collapsed (mini 401). Courier New body |
 | src/convert/mod.rs | 4503 | mini 520 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. /// pads (file_69 code) stay collapsed too (mini 520 ITT-neg). |
 | src/convert/mod.rs | 4580 | mini 336–337 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // RedBoldCharacter 12pt) was mini 336–337 ITT-neg: redline |
-| src/convert/mod.rs | 11409 | mini 336 (retired) | c | KEEP: a character style's own size/face applies, as Word paints 004b3b3d's PageNumber at 8pt Arial; the comment records that the mini 336 lock was dropped. |
+| src/convert/mod.rs | 11571 | old mini 336 lock | c | KEEP: a character style's own size/face applies, as Word paints 004b3b3d's PageNumber at 8pt Arial; the comment records that the mini 336 lock was dropped. |
 | src/convert/mod.rs | 19650 | mini 705 | b | KEEP pending 398+76 remeasure: a right-aligned marker's suffix tab is measured as a space for the tuck (b2e10d2). |
 | src/convert/mod.rs | 4617 | mini 732 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // index. Mini 732 put Word #005B70 in slot 1 and ITT-neg'd NR |
 | src/convert/mod.rs | 4620 | mini 737 | b | Document-specific mini site; remeasure 398+76. // file_146 (first-seen index 1 vs 2). Mini 737 name-keyed |

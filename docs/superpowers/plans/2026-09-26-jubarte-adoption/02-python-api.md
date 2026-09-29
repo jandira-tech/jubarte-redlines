@@ -10,6 +10,32 @@
 
 ---
 
+> **Status 2026-09-26 (branch `feat/agent-adoption`):** patch 0002 applied
+> and extended; see [00-ASSESSMENT.md](00-ASSESSMENT.md) §3. `Document` also
+> has `sha256()`, `inspect() -> Snapshot`, `markdown()`, `edit(plan) ->
+> EditResult`, `preview(plan)`, `to_png(dpi)` and `render(pdf, png_dpi) ->
+> Rendered`; `EditPlan` is an immutable builder emitting the engine's wire
+> schema; `EditPlanError` carries `code`, `operation`, `outcomes`;
+> `capabilities()` mirrors `jubarte capabilities --json`. New in this plan:
+> **`python -m jubarte_redlines`** exposes every binary command with the same
+> flags, file names and exit codes (PY3 below). PY2's thin
+> `Paragraph(index, text, page_break)` is superseded by the `Snapshot` types.
+> Verified against the rebuilt binding (`maturin develop`): 48 tests, 98%
+> lines, 160/166 branches (`pytest --cov --cov-branch`).
+
+## Task PY3: CLI parity (added)
+
+**Files:** `jubarte-python/python/jubarte_redlines/__main__.py`,
+`jubarte-python/tests/test_cli.py`.
+
+`python -m jubarte_redlines {inspect,text,edit,convert,compare,revisions,
+accept,reject,capabilities}` accepts the `jubarte` binary's flags and writes
+the same files (`clean.docx`, `redline.docx`, `report.jsonl`, `<stem>.pdf`,
+`<stem>-page-NN.png`). Exit codes: 0, 1 (I/O, engine, existing output),
+2 (usage), 3 (plan refused; report on stdout, nothing written). No third-party
+dependency: the wheel stays dependency-free, so `argparse` rather than
+`typer`.
+
 <!-- SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC -->
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 
