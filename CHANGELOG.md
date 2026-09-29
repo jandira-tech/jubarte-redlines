@@ -111,6 +111,12 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
     style's linked character style takes the restored run properties.
   - A numbered style's restored paragraph properties drop what its numbering
     level already says (the level's indents, tabs and spacing), as Word does.
+  - A linked character style takes its paragraph style's whole effective run
+    properties, less what the docDefaults say, and a linked character style
+    based on it follows. An old record's bold, italic or other run toggle
+    reads against the nearest ancestor the same reject restores, as Word
+    reads it. The built-in off hyphenation suppression, auto text alignment
+    and auto colour are written where the style chain says otherwise.
 - `jubarte debug A B -c text` / `-c runs` pairs header and footer parts by
   the section reference that shows them, so Word's renumbered parts compare
   with their counterparts.

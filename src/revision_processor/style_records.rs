@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! R27/R28 — Reject All of a style's change record, as Word does it.
+//! R27–R30 — Reject All of a style's change record, as Word does it.
 //!
 //! Word records a style's old `pPr`/`rPr` ABSOLUTELY, against its built-in
 //! defaults (Times New Roman, 10pt, single spacing, widow control on, no
@@ -14,9 +14,14 @@
 //! (Normal back to the original's sz=20, Times New Roman and single spacing),
 //! c719b900f0, 1b4dd65cb9, 2288f27be1, 6fb9bbdb49, 485b916ef9.
 //!
-//! A paragraph style's linked character style takes the same old rPr,
-//! resolved against its own chain (R28: d8b0c2ae01's Heading 1 Char,
-//! bf3d5eb650's Header Char, 3866f441cc's Comment Text Char).
+//! A paragraph style's linked character style takes the paragraph style's
+//! effective rPr, less what the docDefaults say, and so does a linked
+//! character style based on a resynced one (R28: d8b0c2ae01's Heading 1
+//! Char, f8c1ce3e92's and 2288f27be1's Comment Subject Char).
+//!
+//! An old record's run toggle (b, i, caps, …) flips what the nearest ancestor
+//! restored by the same reject says (R30: 512b24be1e's Heading 1 over its
+//! restored Leaders Heading 1 writes `b w:val="0"`).
 //!
 //! A numbered style's restored slot also goes where it equals its numbering
 //! level's pPr, which supplies it anyway (R29: 2288f27be1 and 2e3f1e261d's
@@ -71,6 +76,24 @@ const TOGGLES: &[&str] = &[
     "contextualSpacing",
     "autoSpaceDE",
     "autoSpaceDN",
+    "suppressAutoHyphens",
+];
+
+/// The run toggles a style hierarchy flips rather than overrides (ECMA-376
+/// §17.7.3).
+const XOR_TOGGLES: &[&str] = &[
+    "b",
+    "bCs",
+    "caps",
+    "emboss",
+    "i",
+    "iCs",
+    "imprint",
+    "outline",
+    "shadow",
+    "smallCaps",
+    "strike",
+    "vanish",
 ];
 
 /// One property slot: the element's expanded name and, for the
@@ -113,6 +136,7 @@ impl Slot {
             ("spacing", "after") => &[("after", "0")],
             ("spacing", "line") => &[("line", "240"), ("lineRule", "auto")],
             ("jc", "") => &[("val", "left")],
+            ("textAlignment" | "color", "") => &[("val", "auto")],
             ("widowControl" | "autoSpaceDE" | "autoSpaceDN", "") => &[],
             (_, "") if self.is_toggle() => &[("val", "0")],
             _ => return None,
@@ -156,59 +180,63 @@ fn toggle(val: Option<&str>) -> &'static str {
     }
 }
 
+/// The slots one property element of a block holds, each with its
+/// attributes (a group's members, or all of a whole element's); none for a
+/// change record or rsid.
+fn prop_slots(dom: &Dom, prop: NodeId) -> Vec<(Slot, Vec<(String, String)>)> {
+    let Some(name) = dom.name(prop) else {
+        return Vec::new();
+    };
+    let (ns, local) = (name.namespace_name(), name.local_name());
+    if ns == W::URI && matches!(local, "pPrChange" | "rPrChange" | "rsid" | "sectPr") {
+        return Vec::new();
+    }
+    let attrs: Vec<(String, String)> = dom
+        .attributes(prop)
+        .into_iter()
+        .filter(|(a, _)| !dom.is_namespace_declaration(a))
+        .map(|(a, v)| (a.local_name().to_string(), v))
+        .collect();
+    let slot = |group: &str| Slot {
+        ns: ns.to_string(),
+        local: local.to_string(),
+        group: group.to_string(),
+    };
+    let Some(groups) = attribute_groups(local).filter(|_| ns == W::URI) else {
+        return vec![(slot(""), attrs)];
+    };
+    let mut grouped: Vec<(Slot, Vec<(String, String)>)> = Vec::new();
+    for (a, v) in attrs {
+        let head = groups
+            .iter()
+            .find(|g| g.contains(&a.as_str()))
+            .map_or(a.as_str(), |g| g[0]);
+        match grouped.iter_mut().find(|(s, _)| s.group == head) {
+            Some((_, members)) => members.push((a.clone(), v)),
+            None => grouped.push((slot(head), vec![(a.clone(), v)])),
+        }
+    }
+    grouped
+}
+
 /// Every slot of `block` with its value.
 fn slot_values(dom: &Dom, block: NodeId) -> HashMap<Slot, String> {
     let mut out = HashMap::new();
     for prop in dom.elements(block, None) {
-        let Some(name) = dom.name(prop) else {
-            continue;
-        };
-        let (ns, local) = (name.namespace_name(), name.local_name());
-        if ns == W::URI && matches!(local, "pPrChange" | "rPrChange" | "rsid" | "sectPr") {
-            continue;
-        }
-        let attrs: Vec<(String, String)> = dom
-            .attributes(prop)
-            .into_iter()
-            .filter(|(a, _)| !dom.is_namespace_declaration(a))
-            .map(|(a, v)| (a.local_name().to_string(), v))
-            .collect();
-        let slot = |group: &str| Slot {
-            ns: ns.to_string(),
-            local: local.to_string(),
-            group: group.to_string(),
-        };
-        match attribute_groups(local).filter(|_| ns == W::URI) {
-            Some(groups) => {
-                let mut grouped: HashMap<&str, Vec<(String, String)>> = HashMap::new();
-                for (a, v) in &attrs {
-                    let head = groups
-                        .iter()
-                        .find(|g| g.contains(&a.as_str()))
-                        .map_or(a.as_str(), |g| g[0]);
-                    grouped
-                        .entry(head)
-                        .or_default()
-                        .push((a.clone(), v.clone()));
-                }
-                for (head, members) in grouped {
-                    let slot = slot(head);
-                    let value = slot.value(members, "");
-                    out.insert(slot, value);
-                }
-            }
-            None => {
+        for (slot, attrs) in prop_slots(dom, prop) {
+            let children = if slot.group.is_empty() {
                 let mut children: Vec<String> = dom
                     .elements(prop, None)
                     .into_iter()
                     .map(|c| signature(dom, c))
                     .collect();
                 children.sort();
-                let children = children.concat();
-                let slot = slot("");
-                let value = slot.value(attrs, &children);
-                out.insert(slot, value);
-            }
+                children.concat()
+            } else {
+                String::new()
+            };
+            let value = slot.value(attrs, &children);
+            out.insert(slot, value);
         }
     }
     out
@@ -298,17 +326,16 @@ impl Levels {
     }
 }
 
-/// The `(styleId, block)` pairs of paragraph styles whose `pPr`/`rPr` holds
-/// a change record. A character style's own record is restored as recorded:
-/// Word leaves it so (cda19d51ed's Hyperlink).
+/// The `(styleId, block)` pairs of paragraph and character styles whose
+/// `pPr`/`rPr` holds a change record.
 pub(super) fn recorded_blocks(dom: &Dom, styles_root: NodeId) -> Vec<(String, &'static str)> {
     let mut out = Vec::new();
     for style in dom.elements(styles_root, Some(&W::name("style"))) {
-        if dom
-            .attribute(style, &W::name("type"))
-            .unwrap_or("paragraph")
-            != "paragraph"
-        {
+        if !matches!(
+            dom.attribute(style, &W::name("type"))
+                .unwrap_or("paragraph"),
+            "paragraph" | "character"
+        ) {
             continue;
         }
         let id = dom.attribute(style, &W::name("styleId")).unwrap_or("");
@@ -325,9 +352,12 @@ pub(super) fn recorded_blocks(dom: &Dom, styles_root: NodeId) -> Vec<(String, &'
     out
 }
 
-/// Resolve each restored block of `restored` (the records already rejected)
-/// against Word's built-ins, parents before children, then give each linked
-/// character style its paragraph style's old rPr.
+/// Read the restored toggles against their restored ancestors (R30), resolve
+/// each restored paragraph style block of `restored` (the records already
+/// rejected) against Word's built-ins, parents before children, then give
+/// each linked character style its paragraph style's old rPr. A character
+/// style's own record stays as recorded: Word leaves it so (cda19d51ed's
+/// Hyperlink).
 pub(super) fn restore_against_built_ins(
     dom: &mut Dom,
     styles_root: NodeId,
@@ -347,34 +377,155 @@ pub(super) fn restore_against_built_ins(
         })
         .collect();
     order.sort_by_key(|(depth, _, _)| *depth);
-    // R28: the old rPr, as restored, for each linked character style.
-    let linked: Vec<(NodeId, Option<NodeId>)> = order
+    let rpr_styles: Vec<NodeId> = order
         .iter()
         .filter(|(_, _, block)| *block == "rPr")
-        .filter_map(|&(_, style, _)| {
-            let chr = dom
-                .element(style, &W::name("link"))
-                .and_then(|l| dom.attribute(l, &W::val()))
-                .and_then(|id| by_id.get(id).copied())
-                .filter(|&c| dom.attribute(c, &W::name("type")) == Some("character"))?;
-            let old = dom
-                .element(style, &W::name("rPr"))
-                .map(|r| dom.clone_subtree(r));
-            Some((chr, old))
-        })
+        .map(|&(_, style, _)| style)
+        .collect();
+    read_toggles_against_restored_ancestors(dom, &by_id, &rpr_styles);
+    order.retain(|&(_, style, _)| dom.attribute(style, &W::name("type")) != Some("character"));
+    let recorded_rpr: Vec<NodeId> = order
+        .iter()
+        .filter(|(_, _, block)| *block == "rPr")
+        .map(|&(_, style, _)| style)
         .collect();
     for (_, style, block) in order {
         resolve(dom, styles_root, &by_id, levels, style, block);
     }
-    for (chr, old) in linked {
+    resync_linked_character_styles(dom, styles_root, &by_id, &recorded_rpr);
+}
+
+/// `style`'s `w:link` target, when it is of type `kind`.
+fn linked(dom: &Dom, by_id: &HashMap<String, NodeId>, style: NodeId, kind: &str) -> Option<NodeId> {
+    dom.element(style, &W::name("link"))
+        .and_then(|l| dom.attribute(l, &W::val()))
+        .and_then(|id| by_id.get(id).copied())
+        .filter(|&s| dom.attribute(s, &W::name("type")).unwrap_or("paragraph") == kind)
+}
+
+/// R28: the linked character style of each paragraph style whose rPr record
+/// was rejected (`recorded`) takes the paragraph style's effective rPr, and
+/// so, in turn, does each linked character style based on a resynced one.
+/// Word's Reject All of its own redlines: 108 of 108 records (d8b0c2ae01's
+/// Heading 1 Char, f8c1ce3e92's Comment Subject Char), cascading in
+/// 2288f27be1 and 2e3f1e261d.
+fn resync_linked_character_styles(
+    dom: &mut Dom,
+    styles_root: NodeId,
+    by_id: &HashMap<String, NodeId>,
+    recorded: &[NodeId],
+) {
+    let mut pending: Vec<(NodeId, NodeId)> = recorded
+        .iter()
+        .filter_map(|&p| Some((linked(dom, by_id, p, "character")?, p)))
+        .collect();
+    let mut done: Vec<NodeId> = Vec::new();
+    while let Some((chr, para)) = pending.pop() {
+        if done.contains(&chr) {
+            continue;
+        }
+        done.push(chr);
+        let rpr = effective_rpr(dom, styles_root, by_id, para);
         if let Some(own) = dom.element(chr, &W::name("rPr")) {
             dom.remove(own);
         }
-        if let Some(old) = old {
+        if !dom.elements(rpr, None).is_empty() {
             let block = ensure_block(dom, chr, "rPr");
-            dom.replace_with(block, &[old]);
+            dom.replace_with(block, &[rpr]);
         }
-        resolve(dom, styles_root, &by_id, levels, chr, "rPr");
+        for &child in by_id.values() {
+            let based = dom
+                .element(child, &W::name("basedOn"))
+                .and_then(|b| dom.attribute(b, &W::val()))
+                .and_then(|id| by_id.get(id).copied());
+            if based == Some(chr)
+                && dom.attribute(child, &W::name("type")) == Some("character")
+                && let Some(para) = linked(dom, by_id, child, "paragraph")
+            {
+                pending.push((child, para));
+            }
+        }
+    }
+}
+
+/// A new, detached rPr: `style`'s own run properties over its basedOn chain,
+/// slot by slot, less the slots the docDefaults say alike.
+fn effective_rpr(
+    dom: &mut Dom,
+    styles_root: NodeId,
+    by_id: &HashMap<String, NodeId>,
+    style: NodeId,
+) -> NodeId {
+    let out = dom.new_element(W::name("rPr"));
+    let mut chain = ancestors(dom, by_id, style);
+    chain.reverse();
+    chain.push(style);
+    for s in chain {
+        let Some(block) = dom.element(s, &W::name("rPr")) else {
+            continue;
+        };
+        for prop in dom.elements(block, None) {
+            for (slot, attrs) in prop_slots(dom, prop) {
+                drop_slot(dom, out, &slot);
+                if slot.group.is_empty() {
+                    let copy = dom.clone_subtree(prop);
+                    insert_in_order(dom, out, copy, RPR_ORDER);
+                } else {
+                    let attrs: Vec<(&str, &str)> = attrs
+                        .iter()
+                        .map(|(a, v)| (a.as_str(), v.as_str()))
+                        .collect();
+                    write_slot(dom, out, "rPr", &slot, &attrs);
+                }
+            }
+        }
+    }
+    if let Some(dd) = dom
+        .element(styles_root, &W::name("docDefaults"))
+        .and_then(|d| dom.element(d, &W::name("rPrDefault")))
+        .and_then(|d| dom.element(d, &W::name("rPr")))
+    {
+        let defaults = slot_values(dom, dd);
+        for (slot, value) in slot_values(dom, out) {
+            if defaults.get(&slot) == Some(&value) {
+                drop_slot(dom, out, &slot);
+            }
+        }
+    }
+    out
+}
+
+/// R30: an old record's toggle flips what the nearest ancestor restored by
+/// the same reject says (`styles`, parents first): over a restored `b` on,
+/// `b` reads off and is written `val=0`. An ancestor without a record does
+/// not count, and a toggle the old record lacks reads as the built-in off.
+/// Word's Reject All of 512b24be1e's Heading 1 / Heading 3 and of synthetic
+/// records.
+fn read_toggles_against_restored_ancestors(
+    dom: &mut Dom,
+    by_id: &HashMap<String, NodeId>,
+    styles: &[NodeId],
+) {
+    let mut read: HashMap<NodeId, HashMap<&'static str, bool>> = HashMap::new();
+    for &style in styles {
+        let base = ancestors(dom, by_id, style)
+            .into_iter()
+            .find_map(|a| read.get(&a))
+            .cloned()
+            .unwrap_or_default();
+        let rpr = dom.element(style, &W::name("rPr"));
+        let mut own = HashMap::new();
+        for &t in XOR_TOGGLES {
+            let prop = rpr.and_then(|r| dom.element(r, &W::name(t)));
+            let on = prop.is_some_and(|p| toggle(dom.attribute(p, &W::val())) == "on");
+            let flip = base.get(t).copied().unwrap_or(false);
+            let value = on != flip;
+            if let Some(prop) = prop.filter(|_| flip) {
+                dom.set_attribute_value(prop, &W::val(), (!value).then_some("0"));
+            }
+            own.insert(t, prop.is_some() && value);
+        }
+        read.insert(style, own);
     }
 }
 

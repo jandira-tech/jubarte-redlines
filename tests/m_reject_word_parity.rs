@@ -510,3 +510,119 @@ fn reject_of_a_numbered_style_record_drops_what_its_numbering_level_says() {
         assert_eq!(style_props(&xml, id, "pPr"), want, "{id}");
     }
 }
+
+/// R30: Word reads an old record's toggle (b, i, caps, …) against the nearest
+/// ancestor whose record the same reject restores: one that is on turns it
+/// off, so the restored style writes it `val=0` (512b24be1e's Heading 1 and
+/// Heading 3 over their restored Leaders Heading 1 / Heading 2). An ancestor
+/// without a record does not count, a toggle the old record lacks takes the
+/// built-in off, and a character style's record reads the same way. Read off
+/// Word's Reject All of synthetic records (2026-09-29 probes).
+#[test]
+fn reject_of_a_style_record_reads_its_toggles_against_restored_ancestors() {
+    let w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    let styles = format!(
+        r#"<w:styles xmlns:w="{w}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="character" w:default="1" w:styleId="DefaultParagraphFont"><w:name w:val="Default Paragraph Font"/></w:style><w:style w:type="paragraph" w:styleId="GP"><w:name w:val="GP"/><w:basedOn w:val="Normal"/><w:rPr><w:b/><w:i/><w:rPrChange w:id="1" {REV}><w:rPr><w:b/><w:i/></w:rPr></w:rPrChange></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Mid"><w:name w:val="Mid"/><w:basedOn w:val="GP"/></w:style><w:style w:type="paragraph" w:styleId="Kid"><w:name w:val="Kid"/><w:basedOn w:val="Mid"/><w:rPr><w:sz w:val="30"/><w:rPrChange w:id="2" {REV}><w:rPr><w:b/></w:rPr></w:rPrChange></w:rPr></w:style><w:style w:type="paragraph" w:styleId="KOff"><w:name w:val="KOff"/><w:basedOn w:val="GP"/><w:rPr><w:sz w:val="30"/><w:rPrChange w:id="3" {REV}><w:rPr><w:b w:val="0"/><w:i/></w:rPr></w:rPrChange></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Plain"><w:name w:val="Plain"/><w:basedOn w:val="Normal"/><w:rPr><w:b/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="POn"><w:name w:val="POn"/><w:basedOn w:val="Plain"/><w:rPr><w:sz w:val="30"/><w:rPrChange w:id="4" {REV}><w:rPr><w:b/></w:rPr></w:rPrChange></w:rPr></w:style><w:style w:type="character" w:styleId="CRec"><w:name w:val="CRec"/><w:basedOn w:val="DefaultParagraphFont"/><w:rPr><w:b/><w:rPrChange w:id="5" {REV}><w:rPr><w:b/></w:rPr></w:rPrChange></w:rPr></w:style><w:style w:type="character" w:styleId="CKid"><w:name w:val="CKid"/><w:basedOn w:val="CRec"/><w:rPr><w:sz w:val="30"/><w:rPrChange w:id="6" {REV}><w:rPr><w:b/><w:sz w:val="28"/></w:rPr></w:rPrChange></w:rPr></w:style><w:style w:type="character" w:styleId="CPlain"><w:name w:val="CPlain"/><w:basedOn w:val="DefaultParagraphFont"/><w:rPr><w:b/></w:rPr></w:style><w:style w:type="character" w:styleId="COn"><w:name w:val="COn"/><w:basedOn w:val="CPlain"/><w:rPr><w:sz w:val="30"/><w:rPrChange w:id="7" {REV}><w:rPr><w:b/><w:sz w:val="28"/></w:rPr></w:rPrChange></w:rPr></w:style></w:styles>"#
+    );
+    let rejected = reject_revisions(&docx_with(
+        r#"<w:p><w:r><w:t>Text</w:t></w:r></w:p>"#,
+        &[styles_part(&styles)],
+    ))
+    .unwrap();
+    assert_word_valid_package(&rejected);
+    let xml = part_string(&rejected, "word/styles.xml").unwrap();
+    let pairs: [(&str, &[&str]); 6] = [
+        // b on over GP's restored b is off; the lacking i takes the built-in off.
+        ("Kid", &["b(val=0)", "i(val=0)"]),
+        // b off over GP's b is on, as inherited; i on over GP's i is off.
+        ("KOff", &["i(val=0)"]),
+        // Plain has no record: b on is on, as inherited.
+        ("POn", &[]),
+        ("GP", &["b()", "i()"]),
+        // A character style's record, restored as recorded, reads the same way.
+        ("CKid", &["b(val=0)", "sz(val=28)"]),
+        ("COn", &["b()", "sz(val=28)"]),
+    ];
+    for (id, want) in pairs {
+        assert_eq!(style_props(&xml, id, "rPr"), want, "{id}");
+    }
+}
+
+/// R27 built-ins beyond the first set: suppressAutoHyphens off,
+/// textAlignment auto and color auto, written where the chain says otherwise
+/// (440c36d875's heading 2 over a restored Normal with suppressAutoHyphens
+/// and textAlignment baseline; the color probe's Kid over a red parent).
+#[test]
+fn reject_of_a_style_record_writes_the_alignment_hyphenation_and_color_built_ins() {
+    let w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    let styles = format!(
+        r#"<w:styles xmlns:w="{w}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:pPr><w:textAlignment w:val="auto"/><w:pPrChange w:id="1" {REV}><w:pPr><w:suppressAutoHyphens/><w:textAlignment w:val="baseline"/></w:pPr></w:pPrChange></w:pPr><w:rPr><w:color w:val="FF0000"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:pPrChange w:id="2" {REV}><w:pPr><w:keepNext/></w:pPr></w:pPrChange></w:pPr><w:rPr><w:sz w:val="30"/><w:rPrChange w:id="3" {REV}><w:rPr><w:sz w:val="28"/></w:rPr></w:rPrChange></w:rPr></w:style></w:styles>"#
+    );
+    let rejected = reject_revisions(&docx_with(
+        r#"<w:p><w:r><w:t>Text</w:t></w:r></w:p>"#,
+        &[styles_part(&styles)],
+    ))
+    .unwrap();
+    assert_word_valid_package(&rejected);
+    let xml = part_string(&rejected, "word/styles.xml").unwrap();
+    assert_eq!(
+        style_props(&xml, "Normal", "pPr"),
+        ["suppressAutoHyphens()", "textAlignment(val=baseline)"]
+    );
+    assert_eq!(
+        style_props(&xml, "Heading2", "pPr"),
+        [
+            "keepNext()",
+            "suppressAutoHyphens(val=0)",
+            "textAlignment(val=auto)"
+        ]
+    );
+    assert_eq!(
+        style_props(&xml, "Heading2", "rPr"),
+        ["color(val=auto)", "sz(val=28)"]
+    );
+}
+
+/// R28, as Word writes it: a linked character style takes its paragraph
+/// style's effective rPr, the paragraph style's own properties over its
+/// restored basedOn chain, less what the docDefaults already say. Its own
+/// chain is not consulted (f8c1ce3e92's Comment Subject Char keeps Comment
+/// Text Char's fonts). A linked character style based on a resynced one is
+/// resynced the same way (2288f27be1 and 2e3f1e261d's Comment Subject Char
+/// gains Comment Text's szCs). 108 of 108 records of Word's Reject All of its
+/// own redlines; a linked pair outside both is left alone.
+#[test]
+fn reject_resyncs_a_linked_character_style_to_its_paragraph_styles_effective_rpr() {
+    let w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    let styles = format!(
+        r#"<w:styles xmlns:w="{w}"><w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:rPr><w:sz w:val="22"/><w:lang w:val="en-AU"/></w:rPr></w:style><w:style w:type="character" w:default="1" w:styleId="DefaultParagraphFont"><w:name w:val="Default Paragraph Font"/></w:style><w:style w:type="paragraph" w:styleId="CommentText"><w:name w:val="annotation text"/><w:basedOn w:val="Normal"/><w:link w:val="CommentTextChar"/><w:rPr><w:sz w:val="20"/><w:rPrChange w:id="1" {REV}><w:rPr><w:rFonts w:ascii="Arial"/><w:sz w:val="20"/></w:rPr></w:rPrChange></w:rPr></w:style><w:style w:type="character" w:customStyle="1" w:styleId="CommentTextChar"><w:name w:val="Comment Text Char"/><w:basedOn w:val="DefaultParagraphFont"/><w:link w:val="CommentText"/><w:rPr><w:sz w:val="20"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="CommentSubject"><w:name w:val="annotation subject"/><w:basedOn w:val="CommentText"/><w:link w:val="CommentSubjectChar"/><w:rPr><w:b/><w:bCs/></w:rPr></w:style><w:style w:type="character" w:customStyle="1" w:styleId="CommentSubjectChar"><w:name w:val="Comment Subject Char"/><w:basedOn w:val="CommentTextChar"/><w:link w:val="CommentSubject"/><w:rPr><w:b/><w:bCs/><w:sz w:val="20"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:link w:val="TitleChar"/><w:rPr><w:sz w:val="40"/></w:rPr></w:style><w:style w:type="character" w:customStyle="1" w:styleId="TitleChar"><w:name w:val="Title Char"/><w:basedOn w:val="DefaultParagraphFont"/><w:link w:val="Title"/><w:rPr><w:color w:val="FF0000"/><w:sz w:val="40"/></w:rPr></w:style></w:styles>"#
+    );
+    let rejected = reject_revisions(&docx_with(
+        r#"<w:p><w:r><w:t>Text</w:t></w:r></w:p>"#,
+        &[styles_part(&styles)],
+    ))
+    .unwrap();
+    assert_word_valid_package(&rejected);
+    let xml = part_string(&rejected, "word/styles.xml").unwrap();
+    let pairs: [(&str, &[&str]); 4] = [
+        ("CommentText", &["rFonts(ascii=Arial)", "sz(val=20)"]),
+        (
+            "CommentTextChar",
+            &["rFonts(ascii=Arial)", "sz(val=20)", "lang(val=en-AU)"],
+        ),
+        (
+            "CommentSubjectChar",
+            &[
+                "rFonts(ascii=Arial)",
+                "b()",
+                "bCs()",
+                "sz(val=20)",
+                "lang(val=en-AU)",
+            ],
+        ),
+        ("TitleChar", &["color(val=FF0000)", "sz(val=40)"]),
+    ];
+    for (id, want) in pairs {
+        assert_eq!(style_props(&xml, id, "rPr"), want, "{id}");
+    }
+}
