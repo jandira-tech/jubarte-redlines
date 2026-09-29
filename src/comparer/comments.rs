@@ -239,9 +239,14 @@ struct Range {
     end: usize,
 }
 
+/// The paragraph mark in a projection: a marker after it sits in a later
+/// paragraph than the text before it (an end past a table stays past it).
+const MARK: char = '\n';
+
 /// Extract anchor ranges + the projection text from a source document's main
-/// part. Counted text = every `w:t` character in body order (the inputs are
-/// post-PreProcessMarkup, i.e. revisions accepted — no live `w:delText`).
+/// part. Counted text = every `w:t` character in body order, each paragraph
+/// closed by a [`MARK`] (the inputs are post-PreProcessMarkup, i.e.
+/// revisions accepted — no live `w:delText`).
 fn extract_events(pkg: &PartFs, main: &str) -> Option<(String, Vec<Range>)> {
     let xml = pkg.part_string(main)?;
     let mut dom = Dom::new();
@@ -256,7 +261,19 @@ fn extract_events(pkg: &PartFs, main: &str) -> Option<(String, Vec<Range>)> {
     let mut offset = 0usize;
     let mut starts: HashMap<String, usize> = HashMap::new();
     let mut ranges: Vec<Range> = Vec::new();
+    let mut open: Vec<NodeId> = Vec::new();
     for n in dom.descendant_nodes(body) {
+        while open
+            .last()
+            .is_some_and(|&p| !dom.ancestors(n, None).contains(&p))
+        {
+            open.pop();
+            text.push(MARK);
+            offset += 1;
+        }
+        if dom.name_is(n, &W::p()) {
+            open.push(n);
+        }
         if dom.is_element(n) {
             let name = dom.name(n).unwrap();
             if name == start {
@@ -288,6 +305,7 @@ fn extract_events(pkg: &PartFs, main: &str) -> Option<(String, Vec<Range>)> {
             offset += t.chars().count();
         }
     }
+    text.extend(open.iter().map(|_| MARK));
     // A reference with no range markers is a point comment: an empty range
     // where the reference sits, which is how Word's redline writes it.
     for (id, at) in references {
@@ -413,15 +431,42 @@ pub(super) struct Seg {
     len: usize,
 }
 
+impl Seg {
+    /// A paragraph's [`MARK`]: `leaf` and `run` are the paragraph.
+    fn is_mark(&self) -> bool {
+        self.leaf == self.run
+    }
+}
+
+/// Whether a paragraph's mark is on this side: not inserted on A's, not
+/// deleted on B's (a moved mark counts at its own end).
+fn mark_on_side(dom: &Dom, p: NodeId, b_side: bool) -> bool {
+    let changes: &[&str] = if b_side {
+        &["del", "moveFrom"]
+    } else {
+        &["ins", "moveTo"]
+    };
+    !dom.element(p, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+        .is_some_and(|rpr| {
+            changes
+                .iter()
+                .any(|c| dom.element(rpr, &W::name(c)).is_some())
+        })
+}
+
 /// Collect the merged body's counted leaves for one side's projection.
 /// B side: every `w:t` not inside any `w:del` (= B's visible text).
 /// A side: `w:t` not inside any `w:ins` + `w:delText` inside a `w:del`
 /// authored by the comparer (foreign carried revisions are B's, not A's).
+/// With `marks`, each paragraph whose mark is on the side closes with a
+/// [`MARK`] segment, as [`extract_events`] projects its source.
 pub(super) fn collect_segments(
     dom: &Dom,
     result_root: NodeId,
     b_side: bool,
     author: &str,
+    marks: bool,
 ) -> (String, Vec<Seg>) {
     // The document's body, or a header, footer or notes part's root.
     let body = dom.element(result_root, &W::body()).unwrap_or(result_root);
@@ -430,7 +475,31 @@ pub(super) fn collect_segments(
     let mut text = String::new();
     let mut segs = Vec::new();
     let mut offset = 0usize;
+    let mut open: Vec<NodeId> = Vec::new();
+    let close = |p: NodeId, text: &mut String, segs: &mut Vec<Seg>, offset: &mut usize| {
+        if mark_on_side(dom, p, b_side) {
+            text.push(MARK);
+            segs.push(Seg {
+                leaf: p,
+                run: p,
+                start: *offset,
+                len: 1,
+            });
+            *offset += 1;
+        }
+    };
     for n in dom.descendant_nodes(body) {
+        if marks {
+            while let Some(&p) = open.last()
+                && !dom.ancestors(n, None).contains(&p)
+            {
+                open.pop();
+                close(p, &mut text, &mut segs, &mut offset);
+            }
+            if dom.name_is(n, &W::p()) {
+                open.push(n);
+            }
+        }
         if !dom.is_text(n) {
             continue;
         }
@@ -466,6 +535,9 @@ pub(super) fn collect_segments(
             len,
         });
         offset += len;
+    }
+    while let Some(p) = open.pop() {
+        close(p, &mut text, &mut segs, &mut offset);
     }
     (text, segs)
 }
@@ -546,6 +618,9 @@ fn split_seg(dom: &mut Dom, segs: &mut Vec<Seg>, i: usize, k: usize) {
 /// the two leaves ("ação 🐋" and "東京" of one run, each followed by its own
 /// point comment).
 fn split_run_before_leaf(dom: &mut Dom, segs: &mut [Seg], i: usize) {
+    if segs[i].is_mark() {
+        return;
+    }
     let (leaf, run) = (segs[i].leaf, segs[i].run);
     let has_earlier = dom
         .nodes(run)
@@ -578,11 +653,14 @@ pub(super) fn place_before_offset(dom: &mut Dom, segs: &mut Vec<Seg>, o: usize, 
     // segments are contiguous in projection order: both keys are monotonic
     let i = segs.partition_point(|s| s.start + s.len <= o);
     match (i < segs.len()).then_some(i) {
-        None => {
-            if let Some(last) = segs.last() {
-                dom.add_after_self(last.run, node);
-            }
-        }
+        None => match segs.last() {
+            // past the last mark: the end of that paragraph
+            Some(last) if last.is_mark() => dom.add(last.leaf, node),
+            Some(last) => dom.add_after_self(last.run, node),
+            None => {}
+        },
+        // before a mark: the end of its paragraph
+        Some(i) if segs[i].is_mark() => dom.add(segs[i].leaf, node),
         Some(i) if segs[i].start >= o => {
             split_run_before_leaf(dom, segs, i);
             dom.add_before_self(segs[i].run, node);
@@ -604,6 +682,22 @@ pub(super) fn place_after_offset(dom: &mut Dom, segs: &mut Vec<Seg>, o: usize, n
                 dom.add_before_self(first.run, node);
             }
         }
+        // after a mark: the start of the next paragraph's content, or the
+        // end of the last paragraph
+        Some(i) if segs[i].is_mark() => match segs.get(i + 1) {
+            Some(next) if next.is_mark() => {
+                let p = next.leaf;
+                match dom.element(p, &W::p_pr()) {
+                    Some(ppr) => dom.add_after_self(ppr, node),
+                    None => dom.add_first(p, node),
+                }
+            }
+            Some(_) => {
+                split_run_before_leaf(dom, segs, i + 1);
+                dom.add_before_self(segs[i + 1].run, node);
+            }
+            None => dom.add(segs[i].leaf, node),
+        },
         Some(i) if segs[i].start + segs[i].len <= o => {
             // A later leaf of the same run starts after `o`: split there.
             if segs.get(i + 1).is_some_and(|n| n.run == segs[i].run) {
@@ -669,7 +763,7 @@ fn inject_side(
     if ranges.is_empty() {
         return HashMap::new();
     }
-    let (merged_text, mut segs) = collect_segments(dom, result_root, b_side, author);
+    let (merged_text, mut segs) = collect_segments(dom, result_root, b_side, author, true);
     let src_chars: Vec<char> = src_text.chars().collect();
     let merged_chars: Vec<char> = merged_text.chars().collect();
     // map each comment range through context matching, then flatten to
@@ -709,6 +803,9 @@ fn inject_side(
     let mut order: Vec<usize> = (0..events.len()).collect();
     order.sort_by_key(|&i| (events[i].offset, i));
 
+    // The reference run of the last end placed, by offset: a second end at
+    // the same place follows it, so the source order holds.
+    let mut last_end: Option<(usize, NodeId)> = None;
     for idx in order {
         let ev = &events[idx];
         let out_id = id_map.get(&ev.id).cloned().unwrap_or_else(|| ev.id.clone());
@@ -720,7 +817,10 @@ fn inject_side(
             }
             Kind::End | Kind::Point => {
                 let anchor = new_anchor(dom, false, &out_id);
-                place_after_offset(dom, &mut segs, o, anchor);
+                match last_end {
+                    Some((at, prev)) if at == o => dom.add_after_self(prev, anchor),
+                    _ => place_after_offset(dom, &mut segs, o, anchor),
+                }
                 if ev.kind == Kind::Point {
                     let start = new_anchor(dom, true, &out_id);
                     dom.add_before_self(anchor, start);
@@ -730,6 +830,7 @@ fn inject_side(
                 if ev.kind == Kind::Point {
                     step_out_of_deletion_end(dom, anchor);
                 }
+                last_end = Some((o, refrun));
             }
         }
     }
@@ -1583,9 +1684,12 @@ mod tests {
             "</w:body></w:document>"
         ));
         let root = dom.root(d).unwrap();
-        assert_eq!(collect_segments(&dom, root, true, "Redline").0, "KeptMoved");
         assert_eq!(
-            collect_segments(&dom, root, false, "Redline").0,
+            collect_segments(&dom, root, true, "Redline", false).0,
+            "KeptMoved"
+        );
+        assert_eq!(
+            collect_segments(&dom, root, false, "Redline", false).0,
             "MovedKept"
         );
     }
@@ -1599,7 +1703,7 @@ mod tests {
             "</w:body></w:document>"
         ));
         let root = dom.root(d).unwrap();
-        let (text, mut segs) = collect_segments(&dom, root, true, "Redline");
+        let (text, mut segs) = collect_segments(&dom, root, true, "Redline", false);
         assert_eq!(text, "Alpha betaGamma delta");
         let first = new_anchor(&mut dom, true, "1");
         place_before_offset(&mut dom, &mut segs, 6, first);

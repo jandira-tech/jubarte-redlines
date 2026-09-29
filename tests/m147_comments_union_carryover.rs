@@ -741,3 +741,74 @@ fn a_point_comment_after_deleted_text_stays_live() {
         "{kept}"
     );
 }
+
+/// Both documents with the same two comments and one edit after them.
+fn same_comments_both_sides(commented: &str) -> Vec<u8> {
+    let comments = format!(
+        r#"<w:comments xmlns:w="{}"><w:comment w:id="0" w:author="A" w:initials="A"><w:p><w:r><w:t>first</w:t></w:r></w:p></w:comment><w:comment w:id="1" w:author="A" w:initials="A"><w:p><w:r><w:t>second</w:t></w:r></w:p></w:comment></w:comments>"#,
+        common::docx::W_NS
+    );
+    let a = common::docx::docx_with(
+        &format!("{commented}<w:p><w:r><w:t>Old tail</w:t></w:r></w:p>"),
+        &[common::docx::Part {
+            name: "word/comments.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            xml: &comments,
+        }],
+    );
+    let b = common::docx::docx_with(
+        &format!("{commented}<w:p><w:r><w:t>New tail</w:t></w:r></w:p>"),
+        &[common::docx::Part {
+            name: "word/comments.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+            xml: &comments,
+        }],
+    );
+    compare_documents_with_settings(&a, &b, &word_mode()).expect("compare")
+}
+
+/// The comment references of the main story in document order, each with
+/// whether it sits in a table.
+fn references_in_order(out: &[u8]) -> Vec<(String, bool)> {
+    let pkg = open_valid_output(out);
+    let xml = pkg.part_string("word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    dom.descendants(root, Some(&W::name("commentReference")))
+        .into_iter()
+        .map(|r| {
+            (
+                dom.attribute(r, &W::name("id")).unwrap_or("").to_string(),
+                !dom.ancestors(r, Some(&W::name("tbl"))).is_empty(),
+            )
+        })
+        .collect()
+}
+
+/// Two comments ending at one place keep their order: Word's redline and
+/// its accept write `[c0][c1]` where both documents have them (92075b7449,
+/// 2288f27be1, d6b1d609c1), never `[c1][c0]`.
+#[test]
+fn comments_ending_together_keep_their_order() {
+    let body = r#"<w:p><w:commentRangeStart w:id="0"/><w:commentRangeStart w:id="1"/><w:r><w:t>Shared range</w:t></w:r><w:commentRangeEnd w:id="0"/><w:r><w:commentReference w:id="0"/></w:r><w:commentRangeEnd w:id="1"/><w:r><w:commentReference w:id="1"/></w:r></w:p>"#;
+    let refs = references_in_order(&same_comments_both_sides(body));
+    let ids: Vec<&str> = refs.iter().map(|(id, _)| id.as_str()).collect();
+    assert_eq!(ids, ["0", "1"], "{refs:?}");
+}
+
+/// Comments over a table that end in the paragraph after it keep their
+/// ends and references there, where both documents have them; placed after
+/// the table's last text they moved into its last cell (92075b7449).
+#[test]
+fn comments_ending_after_a_table_stay_after_it() {
+    let body = r#"<w:p><w:r><w:t>Intro</w:t></w:r></w:p><w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p><w:commentRangeStart w:id="0"/><w:commentRangeStart w:id="1"/><w:r><w:t>Status</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>Draft for review</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:commentRangeEnd w:id="0"/><w:p><w:r><w:commentReference w:id="0"/></w:r><w:commentRangeEnd w:id="1"/><w:r><w:commentReference w:id="1"/></w:r><w:r><w:br w:type="page"/></w:r></w:p><w:p><w:r><w:t>Table of Contents</w:t></w:r></w:p>"#;
+    let refs = references_in_order(&same_comments_both_sides(body));
+    assert_eq!(
+        refs,
+        [("0".to_string(), false), ("1".to_string(), false)],
+        "references stay after the table, in order"
+    );
+}
