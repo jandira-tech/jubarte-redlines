@@ -4740,7 +4740,9 @@ fn mark_adopted_hf_content_as_inserted(
 
 /// M383 — when the revised document has **no** headers/footers but the original
 /// does, Word marks all original HF content pure-D. Eng left A HF live (−45 on
-/// h_f_normal_odd_even_firstpg×basic_footnotes). Inverse of M378.
+/// h_f_normal_odd_even_firstpg×basic_footnotes). Inverse of M378. The rule
+/// holds per kind: a revision that keeps its headers but has no footer drops
+/// the original's footers too (bc0135eaa1).
 fn mark_a_only_hf_content_as_deleted(
     out: &mut PartFs,
     pkg1: &PartFs,
@@ -4748,21 +4750,83 @@ fn mark_a_only_hf_content_as_deleted(
     settings: &WmlComparerSettings,
 ) {
     let b_refs = header_footer_refs(pkg2);
-    if !b_refs.is_empty() {
-        return; // B has HF — slot-level content diff owns the markup
-    }
-    let a_refs = header_footer_refs(pkg1);
-    if a_refs.is_empty() {
-        return;
-    }
     let mut seen = std::collections::HashSet::new();
-    for (_, _, part) in a_refs {
-        if !seen.insert(part.clone()) {
+    for (kind, _, part) in header_footer_refs(pkg1) {
+        // B references this kind: the slot-level content diff owns the markup.
+        if b_refs.iter().any(|(k, _, _)| *k == kind) || !seen.insert(part.clone()) {
             continue;
         }
         // Part may be stored under the same name in out (A-based package).
         mark_hf_part_content_as_deleted(out, &part, settings);
     }
+}
+
+/// Word's redline of a header/footer whose revised story ends with a table:
+/// the original's closing paragraph, emptied by the diff, loses its mark,
+/// since the revised story needs none, and keeps its own properties
+/// unrecorded (bc0135eaa1). Accepted, the story ends with the table.
+fn delete_story_closing_mark(dom: &mut Dom, story: NodeId, settings: &WmlComparerSettings) {
+    let Some(&last) = dom.elements(story, None).last() else {
+        return;
+    };
+    let live_content = [
+        W::t(),
+        W::name("drawing"),
+        W::name("pict"),
+        W::name("object"),
+    ];
+    if !dom.name_is(last, &W::p())
+        || live_content
+            .iter()
+            .any(|n| !dom.descendants(last, Some(n)).is_empty())
+    {
+        return;
+    }
+    let ppr = match dom.element(last, &W::p_pr()) {
+        Some(p) => p,
+        None => {
+            let p = dom.new_element(W::p_pr());
+            dom.add_first(last, p);
+            p
+        }
+    };
+    let mark = dom.element(ppr, &W::r_pr());
+    if mark
+        .is_some_and(|r| dom.element(r, &W::ins()).is_some() || dom.element(r, &W::del()).is_some())
+    {
+        return;
+    }
+    // The diff recorded B's blank properties over A's; Word keeps A's.
+    if let Some(change) = dom.element(ppr, &W::name("pPrChange")) {
+        let old = dom.element(change, &W::p_pr());
+        dom.remove(change);
+        for c in dom.elements(ppr, None) {
+            if Some(c) != mark {
+                dom.remove(c);
+            }
+        }
+        for c in old.map(|o| dom.elements(o, None)).unwrap_or_default() {
+            let clone = dom.clone_subtree(c);
+            match mark {
+                Some(r) => dom.add_before_self(r, clone),
+                None => dom.add(ppr, clone),
+            }
+        }
+    }
+    let mark = match mark {
+        Some(r) => r,
+        None => {
+            let r = dom.new_element(W::r_pr());
+            dom.add(ppr, r);
+            r
+        }
+    };
+    let del = dom.new_element(W::del());
+    let id = next_free_revision_id(dom, story).to_string();
+    dom.set_attribute_value(del, &W::id(), Some(&id));
+    dom.set_attribute_value(del, &W::author(), Some(&settings.author_for_revisions));
+    dom.set_attribute_value(del, &W::date(), Some(&settings.date_time_for_revisions));
+    dom.add_first(mark, del);
 }
 
 /// Word's redline of a header/footer the revised document drops: the
@@ -6636,6 +6700,10 @@ fn compare_documents_impl(
                     };
                     // capture BEFORE the compare mutates the arena
                     let a_text = text_of(&hd, ra);
+                    let b_ends_with_table = hd
+                        .elements(rb, None)
+                        .last()
+                        .is_some_and(|&e| hd.name_is(e, &W::tbl()));
                     let res = compare_bodies_faithful(&mut hd, ra, rb, ra, rb, settings);
                     // compare_bodies_faithful always rebuilds into
                     // <w:document><w:body>…</w:body></w:document>, even when the
@@ -6670,6 +6738,9 @@ fn compare_documents_impl(
                         }
                         hd.remove(c);
                         hd.add(container, c);
+                    }
+                    if b_ends_with_table {
+                        delete_story_closing_mark(&mut hd, container, settings);
                     }
                     // M-PAG mech 1 guard: the diff must never leave a slot A
                     // populates with B's wholesale content. When B's matched

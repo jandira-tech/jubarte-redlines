@@ -95,6 +95,108 @@ fn a_dropped_header_keeps_its_last_paragraph_mark() {
     assert!(!paras[0].1.contains("pBdr"), "{:?}", paras[0]);
 }
 
+const FOOTER: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml";
+const FOOTER_REL: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer";
+
+/// The revised document keeps a header but has no footer at all: Word drops
+/// the original's footer as it drops a header when the revision has none
+/// (bc0135eaa1: "mccountrydancers.com" struck; accepted, the footer is one
+/// empty paragraph). The whole-package rule fired only when the revision
+/// had neither headers nor footers, so the footer survived unmarked.
+#[test]
+fn a_footer_the_revision_drops_is_deleted_even_when_headers_remain() {
+    let header = format!(
+        r#"<w:hdr xmlns:w="{w}"><w:p><w:r><w:t>Letterhead</w:t></w:r></w:p></w:hdr>"#,
+        w = common::docx::W_NS
+    );
+    let footer = format!(
+        r#"<w:ftr xmlns:w="{w}"><w:p><w:r><w:t>mccountrydancers.com</w:t></w:r></w:p><w:p/></w:ftr>"#,
+        w = common::docx::W_NS
+    );
+    let header_part = || Part {
+        name: "word/header1.xml",
+        content_type: HEADER,
+        rel_type: HEADER_REL,
+        xml: &header,
+    };
+    let body = r#"<w:p><w:r><w:t>Body text</w:t></w:r></w:p>"#;
+    let base = docx_with_sect(
+        body,
+        &[
+            header_part(),
+            Part {
+                name: "word/footer1.xml",
+                content_type: FOOTER,
+                rel_type: FOOTER_REL,
+                xml: &footer,
+            },
+        ],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/><w:footerReference w:type="default" r:id="rIdX1"/>"#,
+    );
+    let next = docx_with_sect(
+        body,
+        &[header_part()],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    let redline = compare_documents(&base, &next, "Redline").unwrap();
+    assert_word_valid_package(&redline);
+    let footer_xml = part_string(&redline, "word/footer1.xml").unwrap();
+    assert!(
+        footer_xml.contains("<w:delText>mccountrydancers.com</w:delText>"),
+        "{footer_xml}"
+    );
+
+    let accepted = accept_revisions(&redline).unwrap();
+    assert_word_valid_package(&accepted);
+    let paras = story(&accepted, "word/footer1.xml");
+    assert_eq!(paras.len(), 1, "{paras:?}");
+    assert_eq!(paras[0].0, "");
+    assert_eq!(story(&accepted, "word/header1.xml")[0].0, "Letterhead");
+}
+
+/// The revised header is a table and nothing after it. Word deletes the
+/// original's closing empty paragraph mark, so the accepted header ends with
+/// the table (bc0135eaa1). Keeping the mark live left an empty line under
+/// the table in every accepted page header.
+#[test]
+fn a_header_the_revision_ends_with_a_table_loses_its_closing_mark() {
+    let w = common::docx::W_NS;
+    let empty =
+        format!(r#"<w:hdr xmlns:w="{w}"><w:p><w:pPr><w:jc w:val="center"/></w:pPr></w:p></w:hdr>"#);
+    let table = format!(
+        r#"<w:hdr xmlns:w="{w}"><w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="4056"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="4500" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>Kilde</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:hdr>"#
+    );
+    let doc = |xml: &str| {
+        docx_with_sect(
+            r#"<w:p><w:r><w:t>Body text</w:t></w:r></w:p>"#,
+            &[Part {
+                name: "word/header1.xml",
+                content_type: HEADER,
+                rel_type: HEADER_REL,
+                xml,
+            }],
+            r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+        )
+    };
+    let redline = compare_documents(&doc(&empty), &doc(&table), "Redline").unwrap();
+    assert_word_valid_package(&redline);
+    let paras = story(&redline, "word/header1.xml");
+    assert_eq!(paras.len(), 1, "{paras:?}");
+    let (_, ppr) = &paras[0];
+    assert!(ppr.contains("<w:del "), "closing mark deleted: {paras:?}");
+    // Word keeps the deleted paragraph's own properties, unrecorded.
+    assert!(
+        ppr.contains("<w:jc ") && !ppr.contains("pPrChange"),
+        "{paras:?}"
+    );
+
+    let accepted = accept_revisions(&redline).unwrap();
+    let xml = part_string(&accepted, "word/header1.xml").unwrap();
+    assert!(xml.contains("<w:t>Kilde</w:t>"), "{xml}");
+    assert!(story(&accepted, "word/header1.xml").is_empty(), "{xml}");
+}
+
 const RELS_CT: &str = "application/vnd.openxmlformats-package.relationships+xml";
 const IMAGE_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 
