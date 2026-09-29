@@ -7,11 +7,14 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import _native
 from .models import (
+    Change,
+    ChangeKind,
     CompareOptions,
     EditOutcome,
     EditPlan,
@@ -20,11 +23,13 @@ from .models import (
     Rendered,
     Revision,
     Snapshot,
+    _decode_changes,
     _decode_outcomes,
     _decode_render_report,
     _decode_report,
     _decode_revisions,
     _decode_snapshot,
+    change_filter,
     plan_json,
 )
 
@@ -34,7 +39,8 @@ class EditPlanError(_native.JubarteError):
 
     ``code`` is the stable engine code (``STALE_SOURCE``, ``ANCHOR_NOT_FOUND``,
     ``AMBIGUOUS_ANCHOR``, ``OVERLAPPING_EDITS``, ``UNSUPPORTED_STRUCTURE``,
-    ``EXISTING_REVISIONS``, ``INVALID_PLAN``, ...), ``message`` the engine's
+    ``EXISTING_REVISIONS``, ``REVISION_CONFLICT``, ``UNKNOWN_CHANGE``,
+    ``INVALID_PLAN``, ...), ``message`` the engine's
     detail without the code, ``operation`` the id of the operation that
     failed, and ``outcomes`` every operation's status at that point, so the
     caller can see which anchors resolved.
@@ -133,13 +139,43 @@ class Document:
             )
         )
 
-    def accept(self) -> Document:
-        """Return a new document accepting all tracked revisions."""
-        return Document.from_bytes(_native.accept_revisions(self._data))
+    def accept(
+        self,
+        *,
+        ids: Sequence[str] | None = None,
+        authors: Sequence[str] | None = None,
+        kinds: Sequence[ChangeKind] | None = None,
+    ) -> Document:
+        """Return a new document accepting tracked changes, as Word does.
 
-    def reject(self) -> Document:
-        """Return a new document rejecting all tracked revisions."""
-        return Document.from_bytes(_native.reject_revisions(self._data))
+        With no selection every change is accepted (Accept All). ``ids``
+        (from ``changes()``), ``authors`` and ``kinds`` select changes that
+        match every list given; the others stay tracked.
+        """
+        if ids is None and authors is None and kinds is None:
+            return Document.from_bytes(_native.accept_revisions(self._data))
+        return Document.from_bytes(
+            _native.accept_changes(self._data, change_filter(ids, authors, kinds))
+        )
+
+    def reject(
+        self,
+        *,
+        ids: Sequence[str] | None = None,
+        authors: Sequence[str] | None = None,
+        kinds: Sequence[ChangeKind] | None = None,
+    ) -> Document:
+        """Return a new document rejecting tracked changes (selection as in
+        ``accept``; none rejects every change)."""
+        if ids is None and authors is None and kinds is None:
+            return Document.from_bytes(_native.reject_revisions(self._data))
+        return Document.from_bytes(
+            _native.reject_changes(self._data, change_filter(ids, authors, kinds))
+        )
+
+    def changes(self) -> tuple[Change, ...]:
+        """Every tracked change, each with the id ``accept`` / ``reject`` select by."""
+        return _decode_changes(_native.list_changes_json(self._data))
 
     def revisions(self) -> tuple[Revision, ...]:
         """Return immutable metadata for the revisions listed by the engine."""

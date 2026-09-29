@@ -14,6 +14,8 @@ mod notes;
 mod sections;
 mod word_save;
 
+pub(crate) use sections::Resolution;
+
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -511,6 +513,9 @@ fn rebuild_named(dom: &mut Dom, new_name: XName, src: NodeId, keep_attrs: bool) 
 /// Port of `RejectRevisionsForPartTransform` — revert the *non-invertible*
 /// revisions (property changes) and drop inserted structural markers. Returns
 /// `None` to drop the node.
+///
+/// A property element reverting to its saved copy keeps the revisions a
+/// selective resolution left tracked in it ([`carry_kept_revisions`]).
 fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<NodeId> {
     if !dom.is_element(node) {
         return Some(dom.clone_subtree(node));
@@ -567,6 +572,7 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
                 dom.add_first(new_prop, c);
             }
         }
+        carry_kept_revisions(dom, node, new_prop, false);
         return reject_revisions_for_part_transform(dom, new_prop);
     }
     // rPrChange: replace rPr by the change's saved rPr.
@@ -578,6 +584,7 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
             Some(sp) => dom.clone_subtree(sp),
             None => dom.new_element(W::r_pr()),
         };
+        carry_kept_revisions(dom, node, new_rpr, true);
         return reject_revisions_for_part_transform(dom, new_rpr);
     }
     // numberingChange / cellDel / cellMerge → drop.
@@ -1484,6 +1491,11 @@ fn accept_deleted_and_moved_from_content_controls_transform(
 fn is_run_content(name: &XName) -> Option<bool> {
     if name.namespace_name() == crate::namespaces::M::URI {
         return Some(true);
+    }
+    // A revision kept tracked holds content the paragraph keeps; its move
+    // range markers hold none.
+    if name.namespace_name() == FROZEN_NS {
+        return Some(!name.local_name().contains("Range"));
     }
     if name.namespace_name() != W::URI {
         return None;
@@ -2464,7 +2476,9 @@ fn tbl_pr_ex_rank(dom: &Dom, e: NodeId) -> Option<usize> {
 }
 
 /// A table's whole-table properties (its `tblPr` minus what `tblPrEx` can
-/// carry), serialized: Word joins adjacent tables whose keys agree.
+/// carry), serialized: Word joins adjacent tables whose keys agree. A grid
+/// change still tracked (a selective resolution kept it) is the table's own,
+/// so it keys the table apart.
 fn whole_table_key(dom: &Dom, tbl: NodeId) -> String {
     let mut key = String::from("tbl");
     if let Some(pr) = dom.element(tbl, &W::tbl_pr()) {
@@ -2472,6 +2486,11 @@ fn whole_table_key(dom: &Dom, tbl: NodeId) -> String {
             if tbl_pr_ex_rank(dom, c).is_none() {
                 key.push_str(&dom.serialize_element(c));
             }
+        }
+    }
+    for grid in dom.elements(tbl, Some(&W::name("tblGrid"))) {
+        for change in dom.elements(grid, Some(&W::name("tblGridChange"))) {
+            key.push_str(&dom.serialize_element(change));
         }
     }
     key
@@ -2900,6 +2919,28 @@ pub fn accept_revisions_for_part_content(dom: &mut Dom, root: NodeId) -> NodeId 
 
 // ─────────────── A.11 — package-scope accept / reject ───────────────────────
 
+/// A property element `live` reverting to its saved copy `reverted` keeps
+/// the revisions left tracked in it (frozen by a selective resolution): a
+/// paragraph mark's insertion or deletion ahead of the run properties
+/// (`first`), a row's or a cell's marks after the rest.
+fn carry_kept_revisions(dom: &mut Dom, live: NodeId, reverted: NodeId, first: bool) {
+    let kept: Vec<NodeId> = dom
+        .elements(live, None)
+        .into_iter()
+        .filter(|&e| dom.name(e).is_some_and(|n| n.namespace_name() == FROZEN_NS))
+        .collect();
+    let kept: Vec<NodeId> = kept.into_iter().map(|e| dom.clone_subtree(e)).collect();
+    if first {
+        for c in kept.into_iter().rev() {
+            dom.add_first(reverted, c);
+        }
+    } else {
+        for c in kept {
+            dom.add(reverted, c);
+        }
+    }
+}
+
 /// A.11 — `AcceptRevisionsForStylesTransform` (:1300): drop `pPrChange`/
 /// `rPrChange` from the styles part, rebuild the rest.
 fn accept_revisions_for_styles_transform(dom: &mut Dom, node: NodeId) -> Option<NodeId> {
@@ -2957,7 +2998,7 @@ fn reject_revisions_for_styles_transform(dom: &mut Dom, node: NodeId) -> Option<
 
 /// The parts `AcceptRevisions`/`RejectRevisions` (:1277/:31) walk, in the C#
 /// order: main, headers, footers, endnotes, footnotes, then styles (flagged).
-fn revision_bearing_parts(pkg: &crate::opc::PartFs) -> Vec<(String, bool)> {
+pub(crate) fn revision_bearing_parts(pkg: &crate::opc::PartFs) -> Vec<(String, bool)> {
     let main = pkg
         .main_document_part()
         .unwrap_or_else(|| "word/document.xml".to_string());
@@ -3020,28 +3061,83 @@ where
 /// pipeline over main + headers + footers + endnotes + footnotes, and the
 /// styles transform over the styles part.
 pub fn accept_revisions_package(pkg: &mut crate::opc::PartFs) {
+    resolve_package(pkg, Resolution::Accept, None);
+}
+
+/// A.11 — `RejectRevisions` (:31) at package scope: per content part, the
+/// revert → reverse → rsid-strip → full-accept composition (the C# phases the
+/// same steps across all parts; parts are independent, so per-part composition
+/// is equivalent); the styles part reverts its property changes then accepts
+/// the leftovers.
+pub fn reject_revisions_package(pkg: &mut crate::opc::PartFs) {
+    resolve_package(pkg, Resolution::Reject, None);
+}
+
+/// Revision elements renamed into this namespace sit a resolution out and
+/// come back unchanged ([`crate::changes`]).
+pub(crate) const FROZEN_NS: &str = "urn:jubarte:frozen-revision";
+
+/// Called with each revision-bearing part's name and parsed root before it
+/// is resolved; renames the revisions to keep into [`FROZEN_NS`].
+pub(crate) type Freeze<'a> = &'a dyn Fn(&str, &mut Dom, NodeId);
+
+/// Accept or reject every revision `freeze` leaves in place. Annotation ids
+/// are renumbered only when no revision is left, so the ids of the ones kept
+/// still name them.
+pub(crate) fn resolve_package(
+    pkg: &mut crate::opc::PartFs,
+    resolution: Resolution,
+    freeze: Option<Freeze<'_>>,
+) {
     let parts = revision_bearing_parts(pkg);
+    let mut kept = false;
     for (part, is_styles) in parts.clone() {
-        if is_styles {
-            process_part(pkg, &part, |dom, root| {
-                accept_revisions_for_styles_transform(dom, root)
-            });
-        } else {
-            process_part(pkg, &part, |dom, root| {
-                sections::carry_vanishing_section_references(
-                    dom,
-                    root,
-                    sections::Resolution::Accept,
-                );
-                Some(accept_revisions_for_part_content(dom, root))
-            });
-        }
+        process_part(pkg, &part, |dom, root| {
+            if let Some(freeze) = freeze {
+                freeze(&part, dom, root);
+            }
+            let resolved = match (is_styles, resolution) {
+                (true, Resolution::Accept) => accept_revisions_for_styles_transform(dom, root),
+                (true, Resolution::Reject) => {
+                    let rejected = reject_revisions_for_styles_transform(dom, root)?;
+                    accept_revisions_for_styles_transform(dom, rejected)
+                }
+                (false, _) => {
+                    sections::carry_vanishing_section_references(dom, root, resolution);
+                    Some(match resolution {
+                        Resolution::Accept => accept_revisions_for_part_content(dom, root),
+                        Resolution::Reject => reject_revisions_document(dom, root),
+                    })
+                }
+            }?;
+            kept |= thaw(dom, resolved);
+            Some(resolved)
+        });
     }
     let stories = story_parts(&parts);
     comments::prune_orphan_comments(pkg, &stories);
     notes::prune_orphan_notes(pkg, &stories);
-    annotation_ids::renumber(pkg, &stories);
+    if !kept {
+        annotation_ids::renumber(pkg, &stories);
+    }
     word_save::tidy(pkg, &stories);
+}
+
+/// Rename every frozen revision element under `root` back into `w:`; true
+/// when there was one.
+fn thaw(dom: &mut Dom, root: NodeId) -> bool {
+    let frozen: Vec<(NodeId, String)> = dom
+        .descendants_and_self(root, None)
+        .into_iter()
+        .filter_map(|e| {
+            let name = dom.name(e)?;
+            (name.namespace_name() == FROZEN_NS).then(|| (e, name.local_name().to_string()))
+        })
+        .collect();
+    for (e, local) in &frozen {
+        dom.set_name(*e, W::name(local));
+    }
+    !frozen.is_empty()
 }
 
 /// The content parts of [`revision_bearing_parts`] (styles left out).
@@ -3051,35 +3147,4 @@ fn story_parts(parts: &[(String, bool)]) -> Vec<String> {
         .filter(|(_, is_styles)| !is_styles)
         .map(|(p, _)| p.clone())
         .collect()
-}
-
-/// A.11 — `RejectRevisions` (:31) at package scope: per content part, the
-/// revert → reverse → rsid-strip → full-accept composition (the C# phases the
-/// same steps across all parts; parts are independent, so per-part composition
-/// is equivalent); the styles part reverts its property changes then accepts
-/// the leftovers.
-pub fn reject_revisions_package(pkg: &mut crate::opc::PartFs) {
-    let parts = revision_bearing_parts(pkg);
-    for (part, is_styles) in parts.clone() {
-        if is_styles {
-            process_part(pkg, &part, |dom, root| {
-                let rejected = reject_revisions_for_styles_transform(dom, root)?;
-                accept_revisions_for_styles_transform(dom, rejected)
-            });
-        } else {
-            process_part(pkg, &part, |dom, root| {
-                sections::carry_vanishing_section_references(
-                    dom,
-                    root,
-                    sections::Resolution::Reject,
-                );
-                Some(reject_revisions_document(dom, root))
-            });
-        }
-    }
-    let stories = story_parts(&parts);
-    comments::prune_orphan_comments(pkg, &stories);
-    notes::prune_orphan_notes(pkg, &stories);
-    annotation_ids::renumber(pkg, &stories);
-    word_save::tidy(pkg, &stories);
 }

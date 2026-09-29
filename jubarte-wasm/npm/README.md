@@ -93,6 +93,9 @@ Document parameters and returns are `Uint8Array` holding complete `.docx`
 | `acceptRevisions` | `(docx) → Uint8Array` | Accept every tracked revision → clean DOCX. |
 | `rejectRevisions` | `(docx) → Uint8Array` | Reject every tracked revision → base DOCX. |
 | `getRevisions` | `(docx) → string` | List tracked revisions as a JSON array string (`type` / `author` / `date` / `part` / `moveGroupId` / `isMoveSource` / `formatChange` / `text`). |
+| `listChanges` | `(docx) → string` | Each tracked change as a JSON array string: `id` (`body:rev:12`), `kind`, `target`, `author`, `date`, `text`, `move_name`, `move_side`, `inside`. |
+| `acceptChanges` | `(docx, filterJson) → Uint8Array` | Accept the changes `filterJson` selects (`{"ids": [...], "authors": [...], "kinds": [...]}`: every list given must match; `{}` selects all, an empty list none) and keep the rest tracked. |
+| `rejectChanges` | `(docx, filterJson) → Uint8Array` | Reject the changes `filterJson` selects and keep the rest tracked. |
 | `docxToPdf` | `(docx) → Uint8Array` | Render a DOCX → PDF (Word-style layout). Fonts come from the embedded Carlito/Liberation set. *Full builds only.* |
 | `pdfPageCount` | `(pdf) → number` | Page count of a PDF (`0` if the bytes are not a readable PDF). *Full builds only.* |
 | `initPanicHook` | `() → void` | Route wasm panics to `console.error`. Safe to call multiple times. |

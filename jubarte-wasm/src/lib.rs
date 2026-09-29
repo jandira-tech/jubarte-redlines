@@ -81,6 +81,42 @@ pub fn reject_revisions(docx: &[u8]) -> Result<Vec<u8>, JsValue> {
     jubarte::document_comparer::reject_revisions(docx).map_err(js_err)
 }
 
+/// List the tracked changes one by one as a JSON array string, each with the
+/// id `acceptChanges` / `rejectChanges` select by (the same objects as
+/// `jubarte changes --json`: `id`, `kind`, `target`, `author`, `date`,
+/// `text`, `move_name`, `move_side`, `inside`).
+///
+/// Mirrors `jubarte::changes::list_changes`.
+#[wasm_bindgen(js_name = listChanges)]
+pub fn list_changes(docx: &[u8]) -> Result<String, JsValue> {
+    let changes = jubarte::changes::list_changes(docx).map_err(js_err)?;
+    serde_json::to_string(&changes).map_err(js_err)
+}
+
+fn change_filter(filter_json: &str) -> Result<jubarte::changes::ChangeFilter, JsValue> {
+    serde_json::from_str(filter_json).map_err(|e| js_err(format!("invalid change filter: {e}")))
+}
+
+/// Accept the changes `filterJson` selects and keep the rest tracked, as
+/// Word's Accept This Change does. The filter is `{"ids": [...],
+/// "authors": [...], "kinds": [...]}`: a change is selected when it matches
+/// every list given (`{}` selects every change; an empty list, none).
+///
+/// Mirrors `jubarte::changes::accept_changes`.
+#[wasm_bindgen(js_name = acceptChanges)]
+pub fn accept_changes(docx: &[u8], filter_json: &str) -> Result<Vec<u8>, JsValue> {
+    jubarte::changes::accept_changes(docx, &change_filter(filter_json)?).map_err(js_err)
+}
+
+/// Reject the changes `filterJson` selects and keep the rest tracked
+/// (filter as in `acceptChanges`).
+///
+/// Mirrors `jubarte::changes::reject_changes`.
+#[wasm_bindgen(js_name = rejectChanges)]
+pub fn reject_changes(docx: &[u8], filter_json: &str) -> Result<Vec<u8>, JsValue> {
+    jubarte::changes::reject_changes(docx, &change_filter(filter_json)?).map_err(js_err)
+}
+
 /// List the tracked revisions in a DOCX as a JSON array string — the same
 /// object shape as the CLI `jubarte revisions --json` lines
 /// (`type`/`author`/`date`/`part`/`moveGroupId`/`isMoveSource`/`formatChange`/`text`).

@@ -114,6 +114,7 @@ pub(super) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) {
                 }
             }
         }
+        changed |= collapse_cut_ranges(&mut s);
         if changed {
             s.store(pkg);
         }
@@ -131,6 +132,59 @@ pub(super) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) {
         prune_by_para(pkg, &dropped_paras);
     }
     prune_people(pkg, &main, &authors);
+}
+
+/// A comment whose reference stayed while resolved content took one end of
+/// its range (resolving some changes and keeping others can cut a range
+/// that way) gets the missing marker back where the range was cut short:
+/// the start just before the surviving end, the end just before the
+/// reference's run. True when a marker was added.
+fn collapse_cut_ranges(s: &mut Parsed) -> bool {
+    let id = W::id();
+    let ids_of = |s: &Parsed, local: &str| -> HashSet<String> {
+        s.w(local)
+            .into_iter()
+            .filter_map(|m| s.dom.attribute(m, &id).map(str::to_string))
+            .collect()
+    };
+    let (starts, ends) = (ids_of(s, "commentRangeStart"), ids_of(s, "commentRangeEnd"));
+    let mut changed = false;
+    for reference in s.w("commentReference") {
+        let Some(cid) = s.dom.attribute(reference, &id).map(str::to_string) else {
+            continue;
+        };
+        let run = s
+            .dom
+            .parent(reference)
+            .filter(|&r| s.dom.name(r) == Some(W::r()))
+            .unwrap_or(reference);
+        let end = if ends.contains(&cid) {
+            s.w("commentRangeEnd")
+                .into_iter()
+                .find(|&e| s.dom.attribute(e, &id) == Some(cid.as_str()))
+        } else if starts.contains(&cid) {
+            let e = marker(&mut s.dom, "commentRangeEnd", &cid);
+            s.dom.add_before_self(run, e);
+            changed = true;
+            Some(e)
+        } else {
+            None
+        };
+        if !starts.contains(&cid)
+            && let Some(end) = end
+        {
+            let start = marker(&mut s.dom, "commentRangeStart", &cid);
+            s.dom.add_before_self(end, start);
+            changed = true;
+        }
+    }
+    changed
+}
+
+fn marker(dom: &mut Dom, local: &str, cid: &str) -> NodeId {
+    let m = dom.new_element(W::name(local));
+    dom.set_attribute_value(m, &W::id(), Some(cid));
+    m
 }
 
 /// Drop the commentsExtended / commentsIds entries of the dropped comments'

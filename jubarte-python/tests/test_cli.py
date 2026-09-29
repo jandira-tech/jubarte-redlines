@@ -194,3 +194,30 @@ def test_invalid_png_dpi_leaves_no_partial_outputs(letter, tmp_path, capsys):
     assert not output.exists()
     assert not report.exists()
     assert not (tmp_path / "result-page-01.png").exists()
+
+
+def test_changes_lists_ids_and_accept_reject_select_by_them(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    stamp = 'w:date="2020-01-01T00:00:00Z"'
+    body = (
+        '<w:p><w:r><w:t xml:space="preserve">keep </w:t></w:r>'
+        f'<w:del w:id="1" w:author="a" {stamp}><w:r><w:delText>gone</w:delText></w:r></w:del>'
+        f'<w:ins w:id="2" w:author="b" {stamp}><w:r><w:t>new</w:t></w:r></w:ins></w:p>'
+    )
+    source = tmp_path / "tracked.docx"
+    source.write_bytes(docx(body))
+    assert main(["changes", str(source)]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        'body:rev:1\tdeletion\ttext\ta\t"gone"',
+        'body:rev:2\tinsertion\ttext\tb\t"new"',
+        "2 change(s)",
+    ]
+    assert main(["changes", str(source), "--json"]) == 0
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert rows[0] == {"id": "body:rev:1", "kind": "deletion", "target": "text", "author": "a", "date": "2020-01-01T00:00:00Z", "text": "gone"}
+    out = tmp_path / "out.docx"
+    assert main(["reject", str(source), "-o", str(out), "--author", "b", "--kind", "insertion"]) == 0
+    capsys.readouterr()
+    assert main(["changes", str(out)]) == 0
+    assert capsys.readouterr().out.splitlines()[-2:] == ['body:rev:1\tdeletion\ttext\ta\t"gone"', "1 change(s)"]
+    assert main(["accept", str(source), "-o", str(tmp_path / "bad.docx"), "--id", "body:rev:9"]) == 1
+    assert "body:rev:9" in capsys.readouterr().err

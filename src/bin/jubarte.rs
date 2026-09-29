@@ -134,7 +134,18 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Accept every tracked revision (package-wide) and write the result.
+    /// List each tracked change with the id `accept --id`, `reject --id` and
+    /// edit plans take.
+    Changes {
+        /// The document (.docx).
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Emit one JSON object per line.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Accept tracked changes (package-wide) and write the result: every
+    /// change, or those --id/--author/--kind select (the rest stay tracked).
     Accept {
         /// The document (.docx) whose revisions to accept.
         #[arg(value_name = "FILE")]
@@ -145,8 +156,11 @@ enum Command {
         /// Overwrite the output file if it already exists.
         #[arg(long)]
         force: bool,
+        #[command(flatten)]
+        selection: Selection,
     },
-    /// Reject every tracked revision (package-wide) and write the result.
+    /// Reject tracked changes (package-wide) and write the result: every
+    /// change, or those --id/--author/--kind select (the rest stay tracked).
     Reject {
         /// The document (.docx) whose revisions to reject.
         #[arg(value_name = "FILE")]
@@ -157,6 +171,8 @@ enum Command {
         /// Overwrite the output file if it already exists.
         #[arg(long)]
         force: bool,
+        #[command(flatten)]
+        selection: Selection,
     },
     /// Convert a .docx to PDF and/or PNG pages (independent of LibreOffice).
     Convert {
@@ -454,17 +470,97 @@ fn ensure_writable(output: &Path, force: bool) -> Result<(), String> {
 /// resolution, and write the result under the compare path's no-clobber
 /// contract. Generic over the resolver's error so neither `OpcError`'s path nor
 /// the two arms' bodies are duplicated.
-fn run_resolution<E: std::fmt::Debug>(
+/// Which tracked changes `accept` / `reject` resolve; all of them when no
+/// flag is given, else those matching every flag kind given.
+#[derive(clap::Args, Debug, Default, PartialEq)]
+struct Selection {
+    /// Only this change (`body:rev:12`, as `jubarte changes` lists it).
+    /// Repeatable.
+    #[arg(long = "id", value_name = "ID")]
+    ids: Vec<String>,
+    /// Only changes by this author. Repeatable.
+    #[arg(long = "author", value_name = "NAME")]
+    authors: Vec<String>,
+    /// Only changes of this kind. Repeatable.
+    #[arg(long = "kind", value_enum, value_name = "KIND")]
+    kinds: Vec<KindArg>,
+}
+
+/// `--kind` values.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq)]
+enum KindArg {
+    Insertion,
+    Deletion,
+    Move,
+    Formatting,
+}
+
+impl Selection {
+    fn filter(&self) -> jubarte::changes::ChangeFilter {
+        use jubarte::changes::ChangeKind;
+        let given = |v: &[String]| (!v.is_empty()).then(|| v.to_vec());
+        jubarte::changes::ChangeFilter {
+            ids: given(&self.ids),
+            authors: given(&self.authors),
+            kinds: (!self.kinds.is_empty()).then(|| {
+                self.kinds
+                    .iter()
+                    .map(|k| match k {
+                        KindArg::Insertion => ChangeKind::Insertion,
+                        KindArg::Deletion => ChangeKind::Deletion,
+                        KindArg::Move => ChangeKind::Move,
+                        KindArg::Formatting => ChangeKind::Formatting,
+                    })
+                    .collect()
+            }),
+        }
+    }
+}
+
+fn run_resolution(
     file: &Path,
     output: &Path,
     force: bool,
-    apply: fn(&[u8]) -> Result<Vec<u8>, E>,
+    filter: &jubarte::changes::ChangeFilter,
+    apply: fn(
+        &[u8],
+        &jubarte::changes::ChangeFilter,
+    ) -> Result<Vec<u8>, jubarte::changes::ChangeError>,
     what: &str,
 ) -> Result<(), String> {
     ensure_writable(output, force)?;
     let bytes = std::fs::read(file).map_err(|e| format!("reading {}: {e}", file.display()))?;
-    let out = apply(&bytes).map_err(|e| format!("{what} failed: {e:?}"))?;
+    let out = apply(&bytes, filter).map_err(|e| format!("{what} failed: {e}"))?;
     std::fs::write(output, &out).map_err(|e| format!("writing {}: {e}", output.display()))
+}
+
+fn run_changes(file: &Path, json: bool) -> Result<(), String> {
+    let bytes = std::fs::read(file).map_err(|e| format!("reading {}: {e}", file.display()))?;
+    let changes = jubarte::changes::list_changes(&bytes).map_err(|e| e.to_string())?;
+    for c in &changes {
+        if json {
+            println!("{}", serde_json::to_string(c).map_err(|e| e.to_string())?);
+            continue;
+        }
+        let kind = serde_json::to_value(c.kind).map_err(|e| e.to_string())?;
+        let preview: String = c.text.chars().take(60).collect();
+        let inside = c
+            .inside
+            .as_deref()
+            .map(|id| format!("\tinside {id}"))
+            .unwrap_or_default();
+        println!(
+            "{}\t{}\t{}\t{}\t{preview:?}{inside}",
+            c.id,
+            kind.as_str().unwrap_or("?"),
+            c.target,
+            c.author.as_deref().unwrap_or("-"),
+        );
+    }
+    if !json {
+        println!("{} change(s)", changes.len());
+    }
+    Ok(())
 }
 
 /// Which artifacts `convert` writes and where.
@@ -989,16 +1085,21 @@ fn main() -> ExitCode {
         Some(Command::Revisions { file, json }) => {
             return exit_code(run_revisions(&file, json));
         }
+        Some(Command::Changes { file, json }) => {
+            return exit_code(run_changes(&file, json));
+        }
         Some(Command::Accept {
             file,
             output,
             force,
+            selection,
         }) => {
             return exit_code(run_resolution(
                 &file,
                 &output,
                 force,
-                jubarte::document_comparer::accept_revisions,
+                &selection.filter(),
+                jubarte::changes::accept_changes,
                 "accept",
             ));
         }
@@ -1006,12 +1107,14 @@ fn main() -> ExitCode {
             file,
             output,
             force,
+            selection,
         }) => {
             return exit_code(run_resolution(
                 &file,
                 &output,
                 force,
-                jubarte::document_comparer::reject_revisions,
+                &selection.filter(),
+                jubarte::changes::reject_changes,
                 "reject",
             ));
         }
@@ -1377,7 +1480,12 @@ mod tests {
                 file,
                 output,
                 force,
+                selection,
             }) => {
+                assert_eq!(
+                    selection.filter(),
+                    jubarte::changes::ChangeFilter::default()
+                );
                 assert_eq!(file, PathBuf::from("rl.docx"));
                 assert_eq!(output, PathBuf::from("out.docx"));
                 assert!(force);
@@ -1396,13 +1504,50 @@ mod tests {
                 file,
                 output,
                 force,
+                selection,
             }) => {
+                assert_eq!(
+                    selection.filter(),
+                    jubarte::changes::ChangeFilter::default()
+                );
                 assert_eq!(file, PathBuf::from("rl.docx"));
                 assert_eq!(output, PathBuf::from("out.docx"));
                 assert!(!force);
             }
             other => panic!("expected reject subcommand, got {other:?}"),
         }
+    }
+
+    /// `--id`, `--author` and `--kind` repeat and select the changes to
+    /// resolve; a flag left out constrains nothing.
+    #[test]
+    fn accept_selection_flags_build_the_change_filter() {
+        use jubarte::changes::{ChangeFilter, ChangeKind};
+        let cli = Cli::try_parse_from([
+            "jubarte",
+            "accept",
+            "rl.docx",
+            "-o",
+            "out.docx",
+            "--id",
+            "body:rev:1",
+            "--id",
+            "header1:rev:2",
+            "--kind",
+            "move",
+        ])
+        .unwrap();
+        let Some(Command::Accept { selection, .. }) = cli.command else {
+            panic!("expected accept subcommand");
+        };
+        assert_eq!(
+            selection.filter(),
+            ChangeFilter {
+                ids: Some(vec!["body:rev:1".into(), "header1:rev:2".into()]),
+                authors: None,
+                kinds: Some(vec![ChangeKind::Move]),
+            }
+        );
     }
 
     /// `reject` requires `-o/--output` (clap usage error when omitted), matching

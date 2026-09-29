@@ -36,6 +36,10 @@ pub struct Operations {
     pub accept_revisions: bool,
     /// Reject every revision.
     pub reject_revisions: bool,
+    /// List tracked changes by id and accept or reject a selection of them
+    /// (also in edit plans, as `resolve_revisions`).
+    #[serde(default)]
+    pub selective_revisions: bool,
     /// List revision records.
     pub revision_records: bool,
     /// DOCX to PDF.
@@ -109,6 +113,7 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             compare: true,
             accept_revisions: true,
             reject_revisions: true,
+            selective_revisions: true,
             revision_records: true,
             pdf: true,
             png: true,
@@ -161,6 +166,7 @@ mod tests {
         let json: serde_json::Value = serde_json::from_str(&capabilities_json("cli")).unwrap();
         assert_eq!(json["runtime"], "cli");
         assert_eq!(json["operations"]["png"], true);
+        assert_eq!(json["operations"]["selective_revisions"], true);
         assert_eq!(json["limits"]["reads_legacy_doc"], false);
         assert_eq!(json["limits"]["input"]["max_entries"], 10_000);
         assert_eq!(json["limits"]["input"]["max_xml_depth"], 256);

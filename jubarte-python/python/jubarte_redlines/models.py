@@ -138,6 +138,69 @@ def _decode_revisions(payload: str) -> tuple[Revision, ...]:
     )
 
 
+ChangeKind = Literal["insertion", "deletion", "move", "formatting"]
+
+
+@dataclass(frozen=True, slots=True)
+class Change:
+    """One tracked change with the id ``Document.accept`` / ``reject`` select by.
+
+    ``id`` is ``{story}:rev:{w:id}`` (``body:rev:12``, ``header1:rev:3``);
+    resolving some changes never renumbers the rest. ``target`` is what the
+    change applies to (``text``, ``paragraph_mark``, ``table_row``,
+    ``table_cell``, ``properties``). Both sides of a move share
+    ``move_name`` and resolve together; ``move_side`` is ``from`` or ``to``.
+    ``inside`` names the change whose content holds this one: resolving that
+    one so its content goes takes this one along.
+    """
+
+    id: str
+    kind: ChangeKind
+    target: str
+    author: str | None
+    date: str | None
+    text: str
+    move_name: str | None
+    move_side: Literal["from", "to"] | None
+    inside: str | None
+
+
+def _decode_changes(payload: str) -> tuple[Change, ...]:
+    rows: list[dict[str, object]] = json.loads(payload)
+    return tuple(
+        Change(
+            id=row["id"],  # type: ignore[arg-type]
+            kind=row["kind"],  # type: ignore[arg-type]
+            target=row["target"],  # type: ignore[arg-type]
+            author=row.get("author"),  # type: ignore[arg-type]
+            date=row.get("date"),  # type: ignore[arg-type]
+            text=row["text"],  # type: ignore[arg-type]
+            move_name=row.get("move_name"),  # type: ignore[arg-type]
+            move_side=row.get("move_side"),  # type: ignore[arg-type]
+            inside=row.get("inside"),  # type: ignore[arg-type]
+        )
+        for row in rows
+    )
+
+
+def change_filter(
+    ids: Sequence[str] | None = None,
+    authors: Sequence[str] | None = None,
+    kinds: Sequence[ChangeKind] | None = None,
+) -> str:
+    """The engine's change filter as JSON: a change is selected when it
+    matches every list given; ``None`` leaves that list out (any), an empty
+    list selects nothing."""
+    wire: dict[str, list[str]] = {}
+    for key, value in (("ids", ids), ("authors", authors), ("kinds", kinds)):
+        if value is None:
+            continue
+        if isinstance(value, str):
+            raise TypeError(f"{key} must be a sequence of strings, not a string")
+        wire[key] = list(value)
+    return json.dumps(wire, ensure_ascii=False)
+
+
 # ---------------------------------------------------------------------------
 # Inspection snapshot (jubarte inspect --json)
 # ---------------------------------------------------------------------------
@@ -351,6 +414,7 @@ class EditPlan:
     existing_revisions: ExistingRevisions = "refuse"
     source_sha256: str | None = None
     operations: tuple[dict[str, object], ...] = ()
+    resolve_revisions: dict[str, dict[str, list[str]]] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.author, str) or not self.author.strip():
@@ -360,6 +424,32 @@ class EditPlan:
 
     def _with(self, op: dict[str, object]) -> EditPlan:
         return replace(self, operations=(*self.operations, op))
+
+    def resolving(
+        self,
+        *,
+        accept: Mapping[str, Sequence[str]] | None = None,
+        reject: Mapping[str, Sequence[str]] | None = None,
+    ) -> EditPlan:
+        """Accept, then reject, a selection of the tracked changes before editing.
+
+        Each side is ``{"ids": [...], "authors": [...], "kinds": [...]}``: a
+        change is selected when it matches every list given (``{}`` selects
+        every change, an empty list none). No change may be selected by both
+        (``REVISION_CONFLICT``); the changes left follow ``existing_revisions``.
+        """
+        wire: dict[str, dict[str, list[str]]] = {}
+        for side, selection in (("accept", accept), ("reject", reject)):
+            if selection is None:
+                continue
+            unknown = set(selection) - {"ids", "authors", "kinds"}
+            if unknown:
+                raise ValueError(f"unknown {side} selection fields: {sorted(unknown)}")
+            for key, value in selection.items():
+                if isinstance(value, str):
+                    raise TypeError(f"{side}.{key} must be a sequence of strings, not a string")
+            wire[side] = {key: list(value) for key, value in selection.items()}
+        return replace(self, resolve_revisions=wire or None)
 
     def for_document(self, document: object) -> EditPlan:
         """Bind to ``document`` (a ``Document`` or a snapshot's hash string)."""
@@ -495,6 +585,8 @@ class EditPlan:
             wire["date"] = self.date
         if self.initials is not None:
             wire["initials"] = self.initials
+        if self.resolve_revisions is not None:
+            wire["resolve_revisions"] = {side: dict(sel) for side, sel in self.resolve_revisions.items()}
         if self.existing_revisions != "refuse":
             wire["existing_revisions"] = self.existing_revisions
         wire["operations"] = [dict(op) for op in self.operations]
@@ -561,6 +653,14 @@ class ParagraphDelta:
 
 
 @dataclass(frozen=True, slots=True)
+class ResolvedRevisions:
+    """The change ids a plan's ``resolve_revisions`` accepted and rejected."""
+
+    accepted: tuple[str, ...] = ()
+    rejected: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class EditReport:
     """What happened, per operation and overall."""
 
@@ -576,6 +676,7 @@ class EditReport:
     operations: tuple[EditOutcome, ...]
     comments_added: int
     revisions: RevisionCounts
+    resolved_revisions: ResolvedRevisions = ResolvedRevisions()
     _json: str = field(repr=False, compare=False, default="")
 
     def to_jsonl(self) -> str:
@@ -604,6 +705,10 @@ def _decode_report(payload: str) -> EditReport:
         operations=_decode_outcomes(data["operations"]),
         comments_added=data["comments_added"],
         revisions=RevisionCounts(**data["revisions"]),
+        resolved_revisions=ResolvedRevisions(
+            accepted=tuple(data.get("resolved_revisions", {}).get("accepted", ())),
+            rejected=tuple(data.get("resolved_revisions", {}).get("rejected", ())),
+        ),
         _json=payload,
     )
 

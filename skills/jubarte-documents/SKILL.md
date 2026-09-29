@@ -53,6 +53,16 @@ Gotchas:
 - If `summary.revisions > 0` the document already has tracked changes. An
   edit plan refuses it unless you set `"existing_revisions": "accept"` (or
   `"reject"`), which flattens first and reports `base_sha256`.
+- To keep some of them, list them with `jubarte changes FILE --json` (one
+  change per line: `id` such as `body:rev:12`, `kind`, `target`, `author`,
+  `text`, `inside`) and resolve a selection, either directly
+  (`jubarte accept FILE -o OUT --id body:rev:12 --author "Ann"`, flags
+  repeat, a change must match every flag) or in the plan:
+  `"resolve_revisions": {"accept": {"ids": ["body:rev:12"]}, "reject":
+  {"authors": ["Bob"]}}`. `{}` selects every change and an empty list none;
+  the changes it leaves still follow `existing_revisions`. Both sides of a
+  move resolve together; a change whose `inside` holder is resolved away
+  goes with it.
 
 ## 2. Edit with a plan
 
@@ -95,7 +105,8 @@ Writes `review/clean.docx` (edits applied, no tracked changes),
 matched exactly once. Exit 3 means the plan was refused: the report on stdout
 says which operation and why (`ANCHOR_NOT_FOUND`, `AMBIGUOUS_ANCHOR` with the
 match count, `OVERLAPPING_EDITS`, `UNSUPPORTED_STRUCTURE`, `STALE_SOURCE`,
-`EXISTING_REVISIONS`, `INVALID_PLAN`); fix the plan and rerun. Use `--dry-run`
+`EXISTING_REVISIONS`, `REVISION_CONFLICT`, `UNKNOWN_CHANGE`, `INVALID_PLAN`);
+fix the plan and rerun. Use `--dry-run`
 to see the report without writing.
 
 Operation kinds: `replace`, `insert` (one of `after`, `before`,

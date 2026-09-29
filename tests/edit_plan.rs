@@ -313,6 +313,53 @@ fn existing_revisions_are_refused_by_default_and_flattened_on_request() {
     assert_eq!(texts(&result.clean)[0], "hold gone");
 }
 
+/// `resolve_revisions` accepts and rejects a selection of the tracked
+/// changes before the plan edits; what it leaves follows
+/// `existing_revisions`.
+#[test]
+fn a_plan_resolves_selected_changes_before_it_edits() {
+    let body = r#"<w:p><w:r><w:t xml:space="preserve">keep </w:t></w:r><w:del w:id="1" w:author="a" w:date="2020-01-01T00:00:00Z"><w:r><w:delText>gone</w:delText></w:r></w:del><w:ins w:id="2" w:author="b" w:date="2020-01-01T00:00:00Z"><w:r><w:t>new</w:t></w:r></w:ins></w:p>"#;
+    let source = docx(body);
+    let ops = r#"[{"kind":"replace","paragraph":{"index":0},"find":"keep","replacement":"hold"}]"#;
+    let with = |extra: &str| {
+        format!(
+            r#"{{"schema_version":1,"source_sha256":"{}","author":"Claude",{extra},"operations":{ops}}}"#,
+            source_sha256(&source)
+        )
+    };
+
+    let json =
+        with(r#""resolve_revisions":{"accept":{"ids":["body:rev:1"]},"reject":{"authors":["b"]}}"#);
+    let result = apply_plan_json(&source, &json).unwrap();
+    assert_eq!(texts(&result.clean)[0].trim_end(), "hold");
+    assert_eq!(result.report.resolved_revisions.accepted, ["body:rev:1"]);
+    assert_eq!(result.report.resolved_revisions.rejected, ["body:rev:2"]);
+    assert_ne!(result.report.base_sha256, result.report.source_sha256);
+    assert_word_valid_package(&result.redline);
+
+    // A change left tracked is refused by default...
+    let json = with(r#""resolve_revisions":{"accept":{"ids":["body:rev:1"]}}"#);
+    let err = apply_plan_json(&source, &json).unwrap_err();
+    assert_eq!(err.code, "EXISTING_REVISIONS");
+    // ...or flattened as `existing_revisions` says.
+    let json = with(
+        r#""resolve_revisions":{"accept":{"ids":["body:rev:1"]}},"existing_revisions":"accept""#,
+    );
+    let result = apply_plan_json(&source, &json).unwrap();
+    assert_eq!(texts(&result.clean)[0], "hold new");
+    assert_eq!(result.report.resolved_revisions.accepted, ["body:rev:1"]);
+
+    // One change accepted and rejected at once is a conflict.
+    let json =
+        with(r#""resolve_revisions":{"accept":{"authors":["a"]},"reject":{"ids":["body:rev:1"]}}"#);
+    let err = apply_plan_json(&source, &json).unwrap_err();
+    assert_eq!(err.code, "REVISION_CONFLICT");
+    // An id the document does not hold is refused.
+    let json = with(r#""resolve_revisions":{"accept":{"ids":["body:rev:9"]}}"#);
+    let err = apply_plan_json(&source, &json).unwrap_err();
+    assert_eq!(err.code, "UNKNOWN_CHANGE");
+}
+
 #[test]
 fn overlapping_edits_and_edits_on_a_deleted_paragraph_are_refused() {
     let source = docx(&(para("retained experts and process servers") + &para("second")));

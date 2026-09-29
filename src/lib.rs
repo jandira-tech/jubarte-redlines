@@ -41,6 +41,8 @@
 pub mod admission;
 /// Machine-readable manifest of what this build can do.
 pub mod capabilities;
+/// Tracked changes one at a time: list, accept or reject a selection.
+pub mod changes;
 /// Core WmlComparer engine (atomize → LCS → produce → finalize).
 pub mod comparer;
 /// Structured comparison log (info / warning / error entries).

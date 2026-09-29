@@ -18,9 +18,9 @@ use super::paragraph_mark_is_deleted_or_moved_from;
 use crate::namespaces::{R, W};
 use crate::xmllinq::{Dom, NodeId};
 
-/// Which revisions the package resolution removes.
-#[derive(Clone, Copy)]
-pub(super) enum Resolution {
+/// Accept All or Reject All.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Resolution {
     Accept,
     Reject,
 }

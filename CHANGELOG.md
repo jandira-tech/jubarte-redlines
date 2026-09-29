@@ -17,6 +17,23 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Added
 
+- Tracked changes one at a time, as Word's Accept / Reject This Change:
+  `jubarte changes FILE` lists every change with an id (`body:rev:12`,
+  `header1:rev:3`), its kind, target, author and text (`--json` for JSON
+  lines); `jubarte accept` / `reject` take `--id`, `--author` and `--kind`
+  (repeatable; a change must match every flag given) and keep every other
+  change tracked. Ids stay valid while changes remain, both sides of a move
+  resolve together, and a change's `inside` names the change whose
+  resolution takes it along. The same in the library
+  (`jubarte::changes::{list_changes, accept_changes, reject_changes}`),
+  Python (`Document.changes()`, `Document.accept(ids=, authors=, kinds=)`)
+  and WASM (`listChanges`, `acceptChanges`, `rejectChanges`).
+- Edit plans take `resolve_revisions: {"accept": FILTER, "reject": FILTER}`
+  to resolve a selection of the tracked changes before editing; what it
+  leaves follows `existing_revisions`. A change selected by both sides is
+  refused with `REVISION_CONFLICT`, an id the document lacks with
+  `UNKNOWN_CHANGE`; the report lists the resolved ids.
+
 - `jubarte debug FILE -c text` prints each story part's paragraphs with
   `{+inserted+}` / `[-deleted-]` runs, the paragraph mark's revision state
   and table rows; `-c xml` prints part XML one element per line without

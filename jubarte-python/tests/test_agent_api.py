@@ -328,3 +328,64 @@ def test_plan_builder_validates_selectors_runs_and_options() -> None:
 
     with pytest.raises(TypeError):
         plan_json(3.0)  # type: ignore[arg-type]
+
+
+def tracked() -> Document:
+    """``keep `` then a deletion by ``a`` and an insertion by ``b``."""
+    stamp = 'w:date="2020-01-01T00:00:00Z"'
+    body = (
+        '<w:p><w:r><w:t xml:space="preserve">keep </w:t></w:r>'
+        f'<w:del w:id="1" w:author="a" {stamp}><w:r><w:delText>gone</w:delText></w:r></w:del>'
+        f'<w:ins w:id="2" w:author="b" {stamp}><w:r><w:t>new</w:t></w:r></w:ins></w:p>'
+    )
+    return Document.from_bytes(docx(body))
+
+
+def test_changes_are_listed_by_id_and_resolved_one_by_one() -> None:
+    doc = tracked()
+    changes = doc.changes()
+    assert all(isinstance(c, jubarte.Change) for c in changes)
+    assert [(c.id, c.kind, c.target, c.author, c.text) for c in changes] == [
+        ("body:rev:1", "deletion", "text", "a", "gone"),
+        ("body:rev:2", "insertion", "text", "b", "new"),
+    ]
+    accepted = doc.accept(ids=["body:rev:1"])
+    assert [c.id for c in accepted.changes()] == ["body:rev:2"]
+    assert [p.text for p in accepted.accept().inspect().paragraphs] == ["keep new"]
+    rejected = doc.reject(authors=["b"])
+    assert [c.id for c in rejected.changes()] == ["body:rev:1"]
+    assert [c.id for c in doc.accept(kinds=["insertion"]).changes()] == ["body:rev:1"]
+    # No selection resolves every change; an empty list selects none.
+    assert doc.accept().changes() == ()
+    assert doc.reject(ids=[]).to_bytes() == doc.to_bytes()
+    with pytest.raises(TypeError):
+        doc.accept(ids="body:rev:1")  # type: ignore[arg-type]
+    with pytest.raises(jubarte.JubarteError, match="body:rev:9"):
+        doc.accept(ids=["body:rev:9"])
+
+
+def test_a_plan_resolves_selected_changes_before_it_edits() -> None:
+    doc = tracked()
+    plan = (
+        EditPlan(author="Claude", date="2026-09-25T12:00:00Z")
+        .for_document(doc)
+        .resolving(accept={"ids": ["body:rev:1"]}, reject={"authors": ["b"]})
+        .replace("body:p:0", find="keep", replacement="hold")
+    )
+    assert plan.to_dict()["resolve_revisions"] == {
+        "accept": {"ids": ["body:rev:1"]},
+        "reject": {"authors": ["b"]},
+    }
+    result = doc.edit(plan)
+    assert [p.text for p in result.clean.inspect().paragraphs] == ["hold "]
+    assert result.report.resolved_revisions == jubarte.ResolvedRevisions(
+        accepted=("body:rev:1",), rejected=("body:rev:2",)
+    )
+    load = json.loads(result.report.to_jsonl().splitlines()[0])
+    assert load["resolved_revisions"] == {"accepted": ["body:rev:1"], "rejected": ["body:rev:2"]}
+    conflict = EditPlan(author="Claude").resolving(accept={"authors": ["a"]}, reject={"ids": ["body:rev:1"]})
+    with pytest.raises(EditPlanError) as refused:
+        doc.edit(conflict.replace("body:p:0", find="keep", replacement="hold"))
+    assert refused.value.code == "REVISION_CONFLICT"
+    with pytest.raises(ValueError):
+        EditPlan(author="A").resolving(accept={"id": ["body:rev:1"]})
