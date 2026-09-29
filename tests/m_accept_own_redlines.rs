@@ -1619,3 +1619,161 @@ fn a_bare_paragraph_break_travels_with_its_insertion() {
     let rejected = reject_revisions(&redline).unwrap();
     assert_eq!(break_holders(&rejected), Vec::<Vec<String>>::new());
 }
+
+/// A one-paragraph document whose stylesheet has the given docDefaults pPr
+/// and rPr and Normal pPr and rPr.
+fn docx_with_stylesheet(dd_ppr: &str, dd_rpr: &str, normal_ppr: &str, normal_rpr: &str) -> Vec<u8> {
+    let styles = format!(
+        r#"<w:styles xmlns:w="{w}"><w:docDefaults><w:rPrDefault><w:rPr>{dd_rpr}</w:rPr></w:rPrDefault><w:pPrDefault><w:pPr>{dd_ppr}</w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/><w:pPr>{normal_ppr}</w:pPr><w:rPr>{normal_rpr}</w:rPr></w:style></w:styles>"#,
+        w = common::docx::W_NS
+    );
+    common::docx::docx_with(
+        r#"<w:p><w:r><w:t>Body text</w:t></w:r></w:p>"#,
+        &[Part {
+            name: "word/styles.xml",
+            content_type: STYLES,
+            rel_type: STYLES_REL,
+            xml: &styles,
+        }],
+    )
+}
+
+/// The record inside Normal's `local` block (`pPrChange` or `rPrChange`).
+fn normal_change_record(pkg: &[u8], block: &str, change: &str) -> String {
+    let xml = part_string(pkg, "word/styles.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    dom.elements(root, Some(&W::name("style")))
+        .into_iter()
+        .find(|&s| dom.attribute(s, &W::name("styleId")) == Some("Normal"))
+        .and_then(|s| dom.element(s, &W::name(block)))
+        .and_then(|b| dom.element(b, &W::name(change)))
+        .map(|c| dom.serialize_element(c))
+        .unwrap_or_default()
+}
+
+/// Normal's old properties are recorded the way Word records them: each
+/// property the revision's Normal sets that the original's Normal leaves to
+/// the docDefaults is written out at the docDefaults value, and a partial
+/// `w:lang` is completed from them (c719b900f0). Word's Reject All of a
+/// record that leaves a property out writes a wrong value of its own
+/// (sz=20 and a Times New Roman complex script over the original's 11pt
+/// Arial), so our redline rejected to a narrower, smaller page than the
+/// original (48.59 against A's own PDF; Word's redline 90.13).
+#[test]
+fn normal_records_the_original_values_its_docdefaults_supplied() {
+    let base = docx_with_stylesheet(
+        r#"<w:widowControl w:val="0"/><w:autoSpaceDE w:val="0"/><w:autoSpaceDN w:val="0"/>"#,
+        r#"<w:rFonts w:asciiTheme="minorHAnsi" w:eastAsiaTheme="minorHAnsi" w:hAnsiTheme="minorHAnsi" w:cstheme="minorBidi"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="en-US" w:eastAsia="en-US" w:bidi="ar-SA"/>"#,
+        "",
+        r#"<w:rFonts w:ascii="Arial" w:eastAsia="Arial" w:hAnsi="Arial" w:cs="Arial"/><w:lang w:val="es-ES"/>"#,
+    );
+    let next = docx_with_stylesheet(
+        "",
+        r#"<w:rFonts w:ascii="Times New Roman" w:eastAsia="Arial Unicode MS" w:hAnsi="Times New Roman" w:cs="Times New Roman"/><w:lang w:val="es-CO" w:eastAsia="es-CO" w:bidi="ar-SA"/>"#,
+        r#"<w:widowControl/><w:autoSpaceDE/><w:autoSpaceDN/>"#,
+        r#"<w:rFonts w:ascii="Times New Roman" w:eastAsia="Arial Unicode MS" w:hAnsi="Times New Roman" w:cs="Times New Roman"/><w:sz w:val="24"/><w:szCs w:val="24"/>"#,
+    );
+    let redline = compare_documents(&base, &next, "Redline").unwrap();
+    assert_word_valid_package(&redline);
+
+    let r = normal_change_record(&redline, "rPr", "rPrChange");
+    for want in [
+        r#"<w:sz w:val="22""#,
+        r#"<w:szCs w:val="22""#,
+        r#"w:ascii="Arial""#,
+        r#"w:cs="Arial""#,
+    ] {
+        assert!(r.contains(want), "{want}: {r}");
+    }
+    assert!(!r.contains("Theme") && !r.contains("theme"), "{r}");
+    let lang = r.split("<w:lang").nth(1).expect("lang recorded");
+    for want in [
+        r#"w:val="es-ES""#,
+        r#"w:eastAsia="en-US""#,
+        r#"w:bidi="ar-SA""#,
+    ] {
+        assert!(
+            lang.split("/>").next().unwrap().contains(want),
+            "{want}: {r}"
+        );
+    }
+
+    let p = normal_change_record(&redline, "pPr", "pPrChange");
+    for on in ["widowControl", "autoSpaceDE", "autoSpaceDN"] {
+        assert!(p.contains(&format!(r#"<w:{on} w:val="0""#)), "{on}: {p}");
+    }
+}
+
+/// The original's Normal sets only `w:after="0"` and reads its line pitch
+/// from the docDefaults (278); the revision's Normal sets `w:line="240"`.
+/// Word records the old spacing with the default line filled in, so Reject
+/// All gives back the 278 pitch. Ours recorded `w:after="0"` alone, and
+/// Word's reject of it kept the live 240: the blank lines closed up
+/// (f1257ca7ea, 62.28 against A's own PDF; Word's redline 99.72).
+#[test]
+fn normal_records_the_line_pitch_its_docdefaults_supplied() {
+    let dd = r#"<w:spacing w:after="160" w:line="278" w:lineRule="auto"/>"#;
+    let base = docx_with_stylesheet(dd, "", r#"<w:spacing w:after="0"/>"#, "");
+    let next = docx_with_stylesheet(
+        dd,
+        "",
+        r#"<w:spacing w:after="0" w:line="240" w:lineRule="auto"/>"#,
+        "",
+    );
+    let redline = compare_documents(&base, &next, "Redline").unwrap();
+    assert_word_valid_package(&redline);
+    let p = normal_change_record(&redline, "pPr", "pPrChange");
+    let spacing = p.split("<w:spacing").nth(1).expect("spacing recorded");
+    let spacing = spacing.split("/>").next().unwrap();
+    for want in [r#"w:after="0""#, r#"w:line="278""#, r#"w:lineRule="auto""#] {
+        assert!(spacing.contains(want), "{want}: {p}");
+    }
+}
+
+/// Only the run properties of Normal change, yet Word records both blocks
+/// in full: the pPr record holds the docDefaults spacing, and the rPr
+/// record the docDefaults `w:lang` neither Normal sets, the theme fonts for
+/// the slots the original leaves open, and the default `w:szCs`
+/// (4eff11f045). Without the pPr record Word's Reject All wrote
+/// `w:spacing w:after="0" w:line="240"` onto Normal and the original's 9
+/// pages came back as 8.
+#[test]
+fn normal_records_both_blocks_against_the_docdefaults() {
+    let dd_ppr = r#"<w:spacing w:after="200" w:line="276" w:lineRule="auto"/>"#;
+    let dd_rpr = r#"<w:rFonts w:asciiTheme="minorHAnsi" w:eastAsiaTheme="minorEastAsia" w:hAnsiTheme="minorHAnsi" w:cstheme="minorBidi"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="en-US" w:eastAsia="en-US" w:bidi="ar-SA"/>"#;
+    let base = docx_with_stylesheet(
+        dd_ppr,
+        dd_rpr,
+        "",
+        r#"<w:rFonts w:ascii="Aptos" w:hAnsi="Aptos"/><w:sz w:val="21"/>"#,
+    );
+    let next = docx_with_stylesheet(
+        dd_ppr,
+        dd_rpr,
+        "",
+        r#"<w:rFonts w:ascii="Calibri" w:eastAsia="Times New Roman" w:hAnsi="Calibri" w:cs="Times New Roman"/><w:szCs w:val="20"/>"#,
+    );
+    let redline = compare_documents(&base, &next, "Redline").unwrap();
+    assert_word_valid_package(&redline);
+
+    let p = normal_change_record(&redline, "pPr", "pPrChange");
+    assert!(p.contains(r#"w:line="276""#), "{p}");
+    let r = normal_change_record(&redline, "rPr", "rPrChange");
+    for want in [
+        r#"w:ascii="Aptos""#,
+        r#"w:hAnsi="Aptos""#,
+        r#"w:cstheme="minorBidi""#,
+        r#"w:eastAsiaTheme="minorEastAsia""#,
+        r#"<w:sz w:val="21""#,
+        r#"<w:szCs w:val="22""#,
+        r#"w:bidi="ar-SA""#,
+    ] {
+        assert!(r.contains(want), "{want}: {r}");
+    }
+    assert!(
+        !r.contains("asciiTheme") && !r.contains("hAnsiTheme"),
+        "{r}"
+    );
+}

@@ -1539,6 +1539,182 @@ fn style_match_key(dom: &Dom, style: NodeId) -> Option<(String, String)> {
     Some((ty, key))
 }
 
+/// Word writes a root style's recorded old properties out in full against the
+/// docDefaults (c719b900f0, f1257ca7ea, 221577c35b, 4eff11f045): the old
+/// block holds every property the docDefaults set, at the docDefaults value
+/// where the original's style leaves it to them, with `w:rFonts`, `w:lang`
+/// and `w:spacing` completed attribute by attribute (`w:lang
+/// w:val="es-ES"` gains the default `eastAsia`/`bidi`, `w:spacing
+/// w:after="0"` the default `line`). A root style with one record gets the
+/// other too. Word's Reject All of a record that leaves a property out
+/// writes a value of its own (sz=20 and a Times New Roman complex script
+/// over the original's 11pt Arial, the live line pitch over the default),
+/// so the complete record is what rejects to the original. Only paragraph
+/// styles without `w:basedOn` qualify: below them the fallback is the parent
+/// style.
+fn complete_root_style_change_records(
+    dom: &mut Dom,
+    styles_root: NodeId,
+    settings: &WmlComparerSettings,
+) -> bool {
+    let docdefaults = dom.element(styles_root, &W::name("docDefaults"));
+    let defaults = |dom: &Dom, default_local: &str, block_local: &str| {
+        docdefaults
+            .and_then(|d| dom.element(d, &W::name(default_local)))
+            .and_then(|d| dom.element(d, &W::name(block_local)))
+            .filter(|&b| !dom.elements(b, None).is_empty())
+    };
+    let blocks = [
+        ("pPr", "pPrDefault", "pPrChange"),
+        ("rPr", "rPrDefault", "rPrChange"),
+    ];
+    let record = |dom: &Dom, style: NodeId, block_local: &str, change_local: &str| {
+        dom.element(style, &W::name(block_local))
+            .and_then(|b| dom.element(b, &W::name(change_local)))
+    };
+    let mut changed = false;
+    for style in dom.elements(styles_root, Some(&W::name("style"))) {
+        if dom
+            .attribute(style, &W::name("type"))
+            .unwrap_or("paragraph")
+            != "paragraph"
+            || dom.element(style, &W::name("basedOn")).is_some()
+            || blocks
+                .iter()
+                .all(|(b, _, c)| record(dom, style, b, c).is_none())
+        {
+            continue;
+        }
+        for (block_local, default_local, change_local) in blocks {
+            let Some(defaults) = defaults(dom, default_local, block_local) else {
+                continue;
+            };
+            let old = match record(dom, style, block_local, change_local)
+                .and_then(|c| dom.element(c, &W::name(block_local)))
+            {
+                Some(old) => old,
+                None => {
+                    let block = match dom.element(style, &W::name(block_local)) {
+                        Some(block) => block,
+                        None => {
+                            let block = dom.new_element(W::name(block_local));
+                            add_child_in_rank_order(dom, style, block, style_child_rank);
+                            block
+                        }
+                    };
+                    let old = dom.new_element(W::name(block_local));
+                    for c in dom.elements(block, None) {
+                        let copy = dom.clone_subtree(c);
+                        dom.add(old, copy);
+                    }
+                    append_style_change_record(
+                        dom,
+                        styles_root,
+                        block,
+                        old,
+                        change_local,
+                        settings,
+                    );
+                    old
+                }
+            };
+            changed |= complete_from_defaults(dom, old, defaults, block_local);
+        }
+    }
+    changed
+}
+
+/// The properties whose recorded old value Word completes attribute by
+/// attribute from the docDefaults.
+const RECORD_COMPLETED_PROPS: &[&str] = &["rFonts", "lang", "spacing"];
+
+/// `w:spacing` attributes that are alternatives for one value: a recorded
+/// `w:before` must not gain the default `w:beforeAutospacing`, which wins.
+const SPACING_ALTERNATIVE_SLOTS: [[&str; 3]; 2] = [
+    ["before", "beforeAutospacing", "beforeLines"],
+    ["after", "afterAutospacing", "afterLines"],
+];
+
+/// Give the recorded `old` block every property of the docDefaults `defaults`
+/// block it lacks, and complete its [`RECORD_COMPLETED_PROPS`].
+fn complete_from_defaults(dom: &mut Dom, old: NodeId, defaults: NodeId, block_local: &str) -> bool {
+    let mut changed = false;
+    for default in dom.elements(defaults, None) {
+        let Some(name) = dom.name(default) else {
+            continue;
+        };
+        if is_style_prop_noise(&name) {
+            continue;
+        }
+        let local = name.local_name().to_string();
+        match dom.element(old, &name) {
+            Some(recorded) if RECORD_COMPLETED_PROPS.contains(&local.as_str()) => {
+                changed |= complete_attributes(dom, recorded, default, &local);
+            }
+            Some(_) => {}
+            None => {
+                let copy = dom.clone_subtree(default);
+                if block_local == "rPr" {
+                    add_rpr_child_in_order(dom, old, copy, &local);
+                } else {
+                    add_child_in_rank_order(dom, old, copy, ppr_child_rank);
+                }
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
+/// Give `recorded` each attribute of `default` it lacks, unless it names an
+/// alternative for that slot (an explicit `w:ascii` over `w:asciiTheme`).
+fn complete_attributes(dom: &mut Dom, recorded: NodeId, default: NodeId, local: &str) -> bool {
+    let slots: Vec<&[&str]> = match local {
+        "rFonts" => RFONTS_ALTERNATIVE_SLOTS
+            .iter()
+            .map(|p| p.as_slice())
+            .collect(),
+        "spacing" => SPACING_ALTERNATIVE_SLOTS
+            .iter()
+            .map(|p| p.as_slice())
+            .collect(),
+        _ => Vec::new(),
+    };
+    let mut changed = false;
+    for (attr, value) in dom.attributes(default) {
+        if dom.is_namespace_declaration(&attr) || dom.attribute(recorded, &attr).is_some() {
+            continue;
+        }
+        let taken = slots
+            .iter()
+            .filter(|slot| slot.contains(&attr.local_name()))
+            .flat_map(|slot| slot.iter())
+            .any(|other| {
+                dom.attribute(recorded, &attr.namespace().name(other))
+                    .is_some()
+            });
+        if !taken {
+            dom.set_attribute_value(recorded, &attr, Some(&value));
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// Insert `child` under `parent` after the last existing child that `rank`
+/// puts before it, or first.
+fn add_child_in_rank_order(dom: &mut Dom, parent: NodeId, child: NodeId, rank: fn(&str) -> usize) {
+    let own = dom.name(child).map_or(usize::MAX, |n| rank(n.local_name()));
+    let anchor = dom
+        .elements(parent, None)
+        .into_iter()
+        .rfind(|&e| dom.name(e).is_some_and(|n| rank(n.local_name()) < own));
+    match anchor {
+        Some(a) => dom.add_after_self(a, child),
+        None => dom.add_first(parent, child),
+    }
+}
+
 /// Wrap `old` (a `w:pPr`/`w:rPr` clone) in a `w:pPrChange`/`w:rPrChange` record
 /// and append it to `block`, which is where CT_PPr / CT_RPr put it.
 fn append_style_change_record(
@@ -6663,6 +6839,9 @@ fn compare_documents_impl(
             // the output context (Word's rule, mined over 4,924 styles). Runs
             // last so it settles what the heuristic passes above wrote.
             changed |= resolve_redefined_style_metrics(&mut sd, or, br);
+            // Root styles record their old properties in full against the
+            // docDefaults, the way Word's Reject All needs them.
+            changed |= complete_root_style_change_records(&mut sd, or, settings);
             // M483: re-cache themed color hexes against the shipped theme —
             // must run AFTER the merge writes B's blocks (their w:val hexes
             // were cached under B's theme).
