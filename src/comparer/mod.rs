@@ -341,6 +341,24 @@ pub fn compare_bodies_faithful_with_notes(
                     }
                     dom.add(change, old_clean);
                     dom.add(clean, change);
+                    // Word's Accept All fills the attributes the live cols
+                    // leaves out from the recorded section: `<w:cols
+                    // w:space="720"/>` over two old columns accepted into two
+                    // columns (440c36d875). Word's redline spells the column
+                    // count and equal widths out.
+                    let cols = W::name("cols");
+                    if let (Some(live), Some(old)) =
+                        (dom.element(clean, &cols), dom.element(old_sp, &cols))
+                    {
+                        for attr in ["num", "equalWidth"] {
+                            let name = W::name(attr);
+                            if dom.attribute(live, &name).is_none()
+                                && dom.attribute(old, &name).is_some()
+                            {
+                                dom.set_attribute_value(live, &name, Some("1"));
+                            }
+                        }
+                    }
                 }
             }
             clean

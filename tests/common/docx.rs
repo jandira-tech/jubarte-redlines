@@ -75,9 +75,20 @@ pub fn docx_with(body_xml: &str, extras: &[Part<'_>]) -> Vec<u8> {
 /// `<w:headerReference w:type="default" r:id="rIdX0"/>`: extra part `i`
 /// gets relationship id `rIdX{i}`.
 pub fn docx_with_sect(body_xml: &str, extras: &[Part<'_>], sect_refs: &str) -> Vec<u8> {
+    docx_with_sect_pr(
+        body_xml,
+        extras,
+        &format!(
+            r#"<w:sectPr>{sect_refs}<w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#
+        ),
+    )
+}
+
+/// [`docx_with`] whose body ends on `sect_pr`, the whole final `w:sectPr`.
+pub fn docx_with_sect_pr(body_xml: &str, extras: &[Part<'_>], sect_pr: &str) -> Vec<u8> {
     let document = format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="{W_NS}" xmlns:r="{R_NS}" xmlns:mc="{MC_NS}"><w:body>{body_xml}<w:sectPr>{sect_refs}<w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr></w:body></w:document>"#
+<w:document xmlns:w="{W_NS}" xmlns:r="{R_NS}" xmlns:mc="{MC_NS}"><w:body>{body_xml}{sect_pr}</w:body></w:document>"#
     );
     let mut overrides = String::from(
         r#"<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>"#,

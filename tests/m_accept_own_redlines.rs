@@ -563,3 +563,47 @@ fn a_one_paragraph_revision_pairs_the_closing_marks() {
         part_string(&out, "word/document.xml").unwrap()
     );
 }
+
+/// The body's live `w:cols`, serialized.
+fn live_cols(pkg: &[u8]) -> String {
+    let xml = part_string(pkg, "word/document.xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let root = dom.root(doc).unwrap();
+    let body = dom.element(root, &W::body()).unwrap();
+    let sect = dom.element(body, &W::sect_pr()).unwrap();
+    dom.element(sect, &W::name("cols"))
+        .map(|c| dom.serialize_element(c))
+        .unwrap_or_default()
+}
+
+/// A revision that goes from two columns to one (`<w:cols w:space="720"/>`):
+/// Word's Accept All fills the attributes the live `w:cols` leaves out from
+/// the recorded old section, so our redline, accepted in Word, came back in
+/// two columns (440c36d875, 36.21). Word's redline spells the live column
+/// count and equal widths out, and so does ours; the clone that did so
+/// accepted into one column in Word.
+#[test]
+fn a_section_leaving_columns_spells_out_one_column() {
+    let sect = |cols: &str| {
+        format!(
+            r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>{cols}</w:sectPr>"#
+        )
+    };
+    let body = "<w:p><w:r><w:t>Chairman's statement.</w:t></w:r></w:p>";
+    let a = common::docx::docx_with_sect_pr(
+        body,
+        &[],
+        &sect(
+            r#"<w:cols w:num="2" w:space="720" w:equalWidth="0"><w:col w:w="4791" w:space="56"/><w:col w:w="4791" w:space="0"/></w:cols>"#,
+        ),
+    );
+    let b = common::docx::docx_with_sect_pr(body, &[], &sect(r#"<w:cols w:space="720"/>"#));
+    let out = compare_documents(&a, &b, "Redline").expect("compare");
+    assert_word_valid_package(&out);
+    let cols = live_cols(&out);
+    assert!(
+        cols.contains(r#"w:num="1""#) && cols.contains(r#"w:equalWidth="1""#),
+        "{cols}"
+    );
+}
