@@ -1043,16 +1043,22 @@ pub fn accept_move_from_ranges(dom: &mut Dom, document: NodeId) -> NodeId {
     }
 
     let end_set: HashSet<NodeId> = end_tags_in_range.into_iter().collect();
+    // A range is a pair of markers, not a container: Word ends one inside the
+    // first cell of the table after a moved heading (30f20e787b). The
+    // properties of a container the range only enters stay with it (a table
+    // keeps its tblPr and tblGrid); one wholly inside goes with its container.
     // A paragraph's pPr inside the range is its mark, not moved text: its
     // deleted or moved-from state is what A.5a joins paragraphs by (Word),
     // and a paragraph that survives keeps its formatting.
-    let ppr = W::p_pr();
     let to_delete: HashSet<NodeId> = start_tags_in_range
         .into_iter()
         .filter(|&e| {
             end_set.contains(&e)
-                && dom.name(e).as_ref() != Some(&ppr)
-                && dom.ancestors(e, Some(&ppr)).is_empty()
+                && !is_container_property(dom, e)
+                && !dom
+                    .ancestors(e, None)
+                    .into_iter()
+                    .any(|a| is_container_property(dom, a))
         })
         .collect();
     if to_delete.is_empty() {
@@ -1060,6 +1066,19 @@ pub fn accept_move_from_ranges(dom: &mut Dom, document: NodeId) -> NodeId {
     }
     accept_move_from_ranges_transform(dom, document, &to_delete)
         .expect("the document root is never in a moveFrom range")
+}
+
+/// Is `e` the property element of its container (a paragraph's pPr, a
+/// table's tblPr or tblGrid, a row's trPr or tblPrEx, a cell's tcPr, a
+/// content control's sdtPr or sdtEndPr)?
+fn is_container_property(dom: &Dom, e: NodeId) -> bool {
+    dom.name(e).is_some_and(|n| {
+        n.namespace_name() == W::URI
+            && matches!(
+                n.local_name(),
+                "pPr" | "tblPr" | "tblGrid" | "tblPrEx" | "trPr" | "tcPr" | "sdtPr" | "sdtEndPr"
+            )
+    })
 }
 
 /// A.2 — `AcceptMoveFromRangesTransform` (:2629): rebuild, dropping the
@@ -1587,8 +1606,9 @@ fn has_deleted_or_moved_from_paragraph_mark(dom: &Dom, root: NodeId) -> bool {
 /// form one DeletedRange group, which merges into a single paragraph carrying
 /// `g.Last()`'s pPr (:2271, the RP052 fix) and every member's collapsed
 /// content; the merged paragraph is nuked when its content is entirely
-/// deleted, its last member's mark is `w:del`, and it is the container's last
-/// block content (or a table follows) (:2276). Tables (and m:* block content)
+/// deleted, its last member's mark is deleted or moved away (C#: deleted
+/// only), and it is the container's last block content (or a table follows)
+/// (:2276). Tables (and m:* block content)
 /// bound groups and reset the state. FAITHFUL: the container rebuild keeps
 /// only `w:tcPr` children + the chain elements + the body-level `sectPr`
 /// (re-appended last); other non-chain children are dropped, and merged
@@ -1705,14 +1725,13 @@ pub fn accept_deleted_and_move_from_paragraph_marks_transform(
                     dom.add(np, collapsed);
                 }
             }
-            let last_mark_is_del = dom
-                .element(last_this, &W::p_pr())
-                .and_then(|ppr| dom.element(ppr, &W::r_pr()))
-                .is_some_and(|rpr| dom.element(rpr, &W::del()).is_some());
+            // Word also drops an emptied moved-away paragraph before a table
+            // (its Reject All of 30f20e787b's moved heading).
+            let last_mark_goes = paragraph_mark_is_deleted_or_moved_from(dom, last_this);
             let next = group.last().unwrap().0.next_block_content_element;
             let next_is_none_or_tbl =
                 next.is_none() || next.is_some_and(|n| dom.name(n) == Some(W::tbl()));
-            if all_para_content_is_deleted(dom, np) && last_mark_is_del && next_is_none_or_tbl {
+            if all_para_content_is_deleted(dom, np) && last_mark_goes && next_is_none_or_tbl {
                 // Nuke empty deleted para, but keep comment anchors that lived
                 // and bookmarks that lived inside its w:del runs (starts 9/10
                 // between delText).
