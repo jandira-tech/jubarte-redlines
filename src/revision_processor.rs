@@ -1905,6 +1905,18 @@ pub fn annotate_run_elements_with_id(dom: &mut Dom, element: NodeId) {
     }
 }
 
+/// Number every descendant `w:p` (`pt:UniqueId` `p0`, `p1`, …) so A.5b can
+/// find a control's paragraphs when it has no run to anchor on (an empty
+/// control keeps its paragraph mark, and so its place). Not in the C#, which
+/// anchors on runs only and drops such a control whenever another paragraph
+/// mark of the part is deleted.
+fn annotate_paragraph_elements_with_id(dom: &mut Dom, element: NodeId) {
+    let unique_id = PT::unique_id();
+    for (paragraph_id, p) in (0..).zip(dom.descendants(element, Some(&W::p()))) {
+        dom.set_attribute_value(p, &unique_id, Some(&format!("p{paragraph_id}")));
+    }
+}
+
 /// Descendants of `element` in document order, not descending INTO elements
 /// named `trim` (the `DescendantsTrimmed` helper the annotators use).
 fn descendants_trimmed(dom: &Dom, element: NodeId, trim: &XName) -> Vec<NodeId> {
@@ -1999,6 +2011,13 @@ pub fn add_block_level_content_controls(
         }
     }
 
+    let mut paragraph_by_id: HashMap<String, NodeId> = HashMap::new();
+    for p in dom.descendants(new_document, Some(&W::p())) {
+        if let Some(id) = dom.attribute(p, &unique_id) {
+            paragraph_by_id.entry(id.to_string()).or_insert(p);
+        }
+    }
+
     for cc in original_ccs {
         let cc_id = dom.attribute(cc, &unique_id).unwrap_or("").to_string();
         if existing_ids.contains(&cc_id) {
@@ -2020,23 +2039,46 @@ pub fn add_block_level_content_controls(
         // revision no longer exist after acceptance — filter_map skips them
         // and empty controls fall through to `continue` below (upstream C#
         // used .First() and crashed on fully-deleted sdt).
-        // Only runs that stay anchor the control: deleted or moved-away text
-        // goes later, and a run an earlier whole-paragraph wrap took out of
-        // the document (a control nested in one already restored from its
-        // clone) is gone. A control holding nothing else is skipped, else its
-        // clone would replace the paragraph its deleted marks merged into.
-        let runs_in_new_document: Vec<NodeId> = runs
+        // A run an earlier whole-paragraph wrap took out of the document (a
+        // control nested in one already restored from its clone) is gone.
+        // When every paragraph of the control goes, its deleted or moved-away
+        // text does not anchor it either: a control holding nothing else goes
+        // with its paragraphs, else its clone would replace the paragraph
+        // their marks merged into. A control whose text alone is deleted
+        // keeps its mark and so stays, emptied.
+        let paragraphs = dom.descendants(cc, Some(&W::p()));
+        let block_removed = !paragraphs.is_empty()
+            && paragraphs.iter().all(|&p| {
+                dom.element(p, &W::p_pr())
+                    .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+                    .is_some_and(|rpr| {
+                        dom.element(rpr, &W::del()).is_some()
+                            || dom.element(rpr, &W::move_from()).is_some()
+                    })
+            });
+        let mut runs_in_new_document: Vec<NodeId> = runs
             .iter()
             .filter_map(|id| run_by_id.get(id).copied())
             .filter(|&r| {
                 let ancestors = dom.ancestors(r, None);
                 ancestors.contains(&new_document)
-                    && !ancestors.iter().any(|&a| {
-                        dom.name(a)
-                            .is_some_and(|n| n == W::del() || n == W::move_from())
-                    })
+                    && !(block_removed
+                        && ancestors.iter().any(|&a| {
+                            dom.name(a)
+                                .is_some_and(|n| n == W::del() || n == W::move_from())
+                        }))
             })
             .collect();
+        // No run left to anchor it: the control stands on the paragraphs
+        // that kept their marks, emptied.
+        if runs_in_new_document.is_empty() && !block_removed {
+            runs_in_new_document = paragraphs
+                .iter()
+                .filter_map(|&p| dom.attribute(p, &unique_id))
+                .filter_map(|id| paragraph_by_id.get(id).copied())
+                .filter(|&p| dom.ancestors(p, None).contains(&new_document))
+                .collect();
+        }
 
         // deepest common ancestor of all the runs (nearest-first intersection)
         let Some(first_run) = runs_in_new_document.first().copied() else {
@@ -2047,18 +2089,20 @@ pub fn add_block_level_content_controls(
             let anc: HashSet<NodeId> = dom.ancestors(run, None).into_iter().collect();
             intersection.retain(|a| anc.contains(a));
         }
-        let Some(&common_ancestor) = intersection.first() else {
+        // A revision wrapper is no place for a block control: rebuilt inside
+        // the `w:del` holding all its text, the control would go with it.
+        let Some(&common_ancestor) = intersection.iter().find(|&&a| {
+            dom.name(a).is_none_or(|n| {
+                n != W::del() && n != W::ins() && n != W::move_from() && n != W::move_to()
+            })
+        }) else {
             continue;
         };
 
         let child_containing = |dom: &Dom, run: NodeId| -> NodeId {
-            dom.elements(common_ancestor, None)
+            dom.ancestors_and_self(run, None)
                 .into_iter()
-                .find(|&c| {
-                    dom.descendants_and_self(c, Some(&W::r()))
-                        .into_iter()
-                        .any(|z| z == run)
-                })
+                .find(|&c| dom.parent(c) == Some(common_ancestor))
                 .expect("common ancestor child containing the run")
         };
         let first_run_child = child_containing(dom, *runs_in_new_document.first().unwrap());
@@ -2152,6 +2196,7 @@ pub fn accept_deleted_and_move_from_paragraph_marks(dom: &mut Dom, element: Node
         return element;
     }
     annotate_run_elements_with_id(dom, element);
+    annotate_paragraph_elements_with_id(dom, element);
     annotate_content_controls_with_run_ids(dom, element);
     let new_element = accept_deleted_and_move_from_paragraph_marks_transform(dom, element);
     add_block_level_content_controls(dom, new_element, element)
