@@ -2657,6 +2657,25 @@ fn a_headers_tracked_deletion_paints_struck_through() {
 }
 
 #[test]
+fn a_header_paragraphs_shading_paints_behind_its_text() {
+    // clean/2261da4dae: the header's Heading1 carries shd fill 408287 inside
+    // a four-edge 408287 border, with white text. Word paints a teal band
+    // the width of the text area (plus the border's outset) and about 21pt
+    // tall; we painted only the top and bottom rules, so the white title
+    // vanished.
+    let hdr = r#"<w:p><w:pPr><w:pBdr><w:top w:val="single" w:sz="4" w:space="1" w:color="408287"/><w:left w:val="single" w:sz="4" w:space="4" w:color="408287"/><w:bottom w:val="single" w:sz="4" w:space="1" w:color="408287"/><w:right w:val="single" w:sz="4" w:space="4" w:color="408287"/></w:pBdr><w:shd w:val="clear" w:color="auto" w:fill="408287"/></w:pPr><w:r><w:rPr><w:b/><w:color w:val="FFFFFF"/><w:sz w:val="32"/></w:rPr><w:t>Checklist</w:t></w:r></w:p>"#;
+    let pdf = docx_to_pdf(&header_part_docx(hdr)).expect("shaded header");
+    let (_, y) = pdf_glyph_text_xy(&pdf, "Checklist").expect("the title paints");
+    let bands = pdf_fill_rects(&pdf, 0.251, 0.510, 0.529);
+    assert!(
+        bands
+            .iter()
+            .any(|(w, h)| (460.0..480.0).contains(w) && (17.0..26.0).contains(h)),
+        "a text-area-wide band behind the title (baseline {y}); fills {bands:?}"
+    );
+}
+
+#[test]
 fn header_ptabs_align_to_the_margins() {
     // Redlines vs 000e3e7b: "FORM<ptab center>" and "<ptab right>PAGE 1 OF 2"
     // sit centred on the text area and flush with the right margin,

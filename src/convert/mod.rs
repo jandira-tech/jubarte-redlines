@@ -20150,6 +20150,52 @@ impl<'a> Layout<'a> {
         self.hairline_h(x1, text_top + space + width * 0.5, x2, width, color);
     }
 
+    /// A chrome paragraph's `w:shd` behind one of its lines: the text
+    /// area's width (out to the rules when bordered), from the line box's
+    /// top to its bottom, reaching the rule above on the paragraph's first
+    /// line and the rule below on its last (clean/2261da4dae's teal
+    /// Heading1 band with white text).
+    fn hf_line_fill(
+        &mut self,
+        para: &ParaStyle,
+        above: Option<&ParaStyle>,
+        next: Option<&ParaStyle>,
+        top: f32,
+        line_h: f32,
+    ) {
+        let Some(color) = para.fill else {
+            return;
+        };
+        let same = |other: Option<&ParaStyle>| other.is_some_and(|o| std::ptr::eq(o, para));
+        let outset = if para.border_left.is_some() || para.border_right.is_some() {
+            1.44
+        } else {
+            0.0
+        };
+        let reach =
+            |edge: Option<([f32; 3], f32, f32)>| edge.map_or(0.0, |(_, w, space)| space + w);
+        let up = if same(above) {
+            0.0
+        } else {
+            reach(para.border_top)
+        };
+        let down = if same(next) {
+            0.0
+        } else {
+            reach(para.border_bottom)
+        };
+        let x1 = self.page.margin_l + para.indent_left - outset;
+        let x2 = self.page.width - self.page.margin_r - para.indent_right + outset;
+        let y = top - line_h - down;
+        self.current().ops.push(Op::FillRect {
+            x: x1,
+            y,
+            w: (x2 - x1).max(1.0),
+            h: top + up - y,
+            color,
+        });
+    }
+
     /// A chrome paragraph's bottom rule, its space under the line box
     /// bottom, when the paragraph closes its border group.
     fn hf_bottom_rule(&mut self, para: &ParaStyle, next: Option<&ParaStyle>, line_bottom: f32) {
@@ -24914,7 +24960,12 @@ impl<'a> Layout<'a> {
                 let (ascent, line_h) = chrome_line_metrics(self.fonts, line);
                 y = top - ascent;
                 let para = line.iter().find_map(|r| r.hf_para.clone());
+                let next = lines
+                    .get(i + 1)
+                    .and_then(|(l, _)| l.iter().find_map(|r| r.hf_para.clone()))
+                    .or_else(|| trail_para.clone());
                 if let Some(p) = para.as_ref() {
+                    self.hf_line_fill(p, above.as_deref(), next.as_deref(), top, line_h);
                     self.hf_top_rule(above.as_deref(), p, top);
                 }
                 let align = para.as_ref().map_or(self.header_align, |p| p.align);
@@ -24923,10 +24974,6 @@ impl<'a> Layout<'a> {
                     .and_then(|(l, _)| l.first())
                     .is_some_and(|r| r.hf_cont);
                 self.draw_hf_line(line, y, align, wraps_on);
-                let next = lines
-                    .get(i + 1)
-                    .and_then(|(l, _)| l.iter().find_map(|r| r.hf_para.clone()))
-                    .or_else(|| trail_para.clone());
                 if let Some(p) = para.as_ref()
                     && next.as_ref().is_none_or(|n| !std::rc::Rc::ptr_eq(n, p))
                 {

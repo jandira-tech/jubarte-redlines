@@ -89,6 +89,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   to the column's width. A frame too tall for the page moves up to the
   page's top. The worst document in the docx-to-pdf set (61e3967518 ×
   1424386e9b) went from 25.6 to 42.1 pixel, 8.4 to 20.2 Jaccard.
+- A header paragraph's shading (`w:shd`) paints behind its lines, out to
+  its border. Only the top and bottom rules were painted, so white text on
+  a shaded heading vanished (clean/2261da4dae: 32.9 to 43.3 pixel, 7.2 to
+  23.3 Jaccard).
 - Rejecting a redline gives back what a changed style inherited in the
   original. Word's Reject All reads a style's old record against its
   built-in defaults, so a record holding only the style's own properties
