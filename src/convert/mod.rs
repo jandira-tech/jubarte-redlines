@@ -6993,9 +6993,19 @@ fn walk_container(
             // The break before a section has *that* section's type
             // (ECMA-376 17.6.22): 00ac06fe's continuous section 2 follows
             // an untyped section 1 on the same page.
+            // A continuous section that turns or resizes the page still
+            // opens a new one (priority b535008087: Word's landscape
+            // section after a continuous break starts page 4).
             let sect_br = sect_here.is_some_and(|s| {
                 !is_final_sect(ctx.sects, s)
-                    && next_sect_pr(ctx.sects, s).is_none_or(|n| sect_starts_new_page(dom, n))
+                    && next_sect_pr(ctx.sects, s).is_none_or(|n| {
+                        let base = &ctx.sheet.defaults.page;
+                        let (was, page) =
+                            (apply_sect_pr(dom, s, base), apply_sect_pr(dom, n, base));
+                        sect_starts_new_page(dom, n)
+                            || (was.width - page.width).abs() > 0.5
+                            || (was.height - page.height).abs() > 0.5
+                    })
             });
             endnotes.observe_para(dom, child);
             let mut block = paragraph_block(ctx, dom, child, false, numbering);

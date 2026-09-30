@@ -142,6 +142,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   it, as in Word 16; a narrower table still sits beside it. Before, the
   table ran over the picture: 109f20a2b3's continued table painted
   across its header logo, 74pt higher than Word's.
+- A continuous section break that changes the page size or orientation
+  starts a new page with the new size, as Word does. Before, the page
+  kept its old size: b535008087's landscape section ran on portrait pages
+  and came to 18 pages, not Word's 21.
 - A nested table row taller than what is left of the page breaks inside
   itself, as Word breaks it, when keeping it whole would leave a quarter
   of the page empty. Rows marked `cantSplit` or with an exact height stay

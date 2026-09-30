@@ -702,6 +702,29 @@ fn continuous_section_does_not_add_a_page() {
 }
 
 #[test]
+fn a_continuous_section_that_turns_the_page_starts_a_new_page() {
+    // Priority b535008087: a portrait section, then a landscape one whose
+    // break is continuous. Word opens the landscape section on a new page
+    // (its page 4 turns); we kept the portrait page and ran the whole
+    // landscape section on portrait pages, three pages short.
+    let docx = minimal_docx_body(
+        "<w:p><w:pPr><w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/></w:sectPr></w:pPr>\
+         <w:r><w:t>Portrait</w:t></w:r></w:p>\
+         <w:p><w:r><w:t>Landscape</w:t></w:r></w:p>\
+         <w:sectPr><w:type w:val=\"continuous\"/>\
+           <w:pgSz w:w=\"16838\" w:h=\"11906\" w:orient=\"landscape\"/></w:sectPr>",
+    );
+    let pdf = docx_to_pdf(&docx).expect("turned section");
+    assert_eq!(pdf_page_count(&pdf), 2, "the turn opens a page");
+    assert_eq!(page_with_text(&pdf, "Landscape"), Some(1));
+    let boxes = pdf_mediaboxes(&pdf);
+    assert!(
+        boxes.len() == 2 && boxes[0].0 < boxes[0].1 && boxes[1].0 > boxes[1].1,
+        "portrait, then landscape: {boxes:?}"
+    );
+}
+
+#[test]
 fn pprchange_ghost_list_does_not_hang_live_text() {
     // file_146 / sample_iter2: live pPr is pBdr+spacing; ListParagraph
     // hanging 320 / numPr lives only in w:pPrChange. first_named
