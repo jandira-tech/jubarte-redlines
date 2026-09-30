@@ -280,3 +280,23 @@ edit plans and the Rust, Python and WASM APIs:
 - [ ] **Remember which party cares a lot** — keep a per-party (author) record
   of which points that party presses hard on, so later edits and replies can
   take it into account.
+
+## 7. Changed pages only (NEXT VERSION — not 0.10.x)
+
+Requested 2026-09-29. A long redline is mostly unchanged pages. Add an option
+to `jubarte convert` and to the redline PDF from `jubarte edit` (`--pdf`),
+with the same flag in the Rust, Python and WASM APIs, that renders the
+redline PDF as usual and then keeps only the pages that carry a change:
+
+- [ ] Render the whole document first, so pagination is exactly the full
+  PDF's; never re-lay out a subset (the page numbers would move).
+- [ ] A page counts as changed when it draws any revision mark: an insertion,
+  deletion, move, formatting change, table-row or cell change, or a change in
+  that page's header, footer, footnote or text box. Record this in the layout
+  pass, not by scanning the PDF for red ink.
+- [ ] Keep the page numbers the full document prints, and label each kept
+  page with its original number in the PDF page labels.
+- [ ] Optionally keep N pages of context on either side of a changed page.
+- [ ] Report the kept pages in the JSON page report (`--report`).
+- [ ] A document with no changes writes no pages and says so; it is not an
+  error.
