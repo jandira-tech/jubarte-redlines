@@ -22603,6 +22603,25 @@ impl<'a> Layout<'a> {
         });
     }
 
+    /// An in-flow table row too wide to sit beside a square float starts
+    /// under it; a narrower one stays beside it (Word 16 probe
+    /// tfl_*_0930: a 468pt table under a 200pt picture at the column's
+    /// right edge starts at its foot, a 150pt table beside it; work set
+    /// 109f20a2b3's continued table clears its header logo the same way).
+    fn drop_below_side_float(&mut self, table_w: f32) {
+        if self.nested_depth != 0 {
+            return;
+        }
+        let Some(sf) = self.side_float else {
+            return;
+        };
+        let beside = self.content_width() - sf.inset;
+        if self.y > sf.bottom + 0.5 && self.y <= sf.top + 0.5 && table_w > beside + 0.5 {
+            self.y = sf.bottom;
+            self.side_float = None;
+        }
+    }
+
     /// A header float wraps the body like a body float (live Word: a
     /// 160pt picture at page y 40 starts the body under it when square
     /// has no room or wrap is top and bottom, beside it when square has;
@@ -24764,6 +24783,7 @@ impl<'a> Layout<'a> {
             .collect();
         let mut ri = 0;
         while ri < work.len() {
+            self.drop_below_side_float(used);
             // A keepNext row stays with the row after it when the two fit on
             // a page (000aba38's Heading 2 label rows start page 2 together).
             let keeps_next = self.nested_depth == 0
@@ -24822,6 +24842,10 @@ impl<'a> Layout<'a> {
                 // room (015e4665's split row stayed whole and left 230pt).
                 && (broke_here || (!self.at_page_top && self.y - rh < self.body_floor));
             self.ensure(rh + if will_break { header_h } else { 0.0 });
+            // A page opened here may bring a header float the rows must clear.
+            if self.pages.len() > pages_before {
+                self.drop_below_side_float(used);
+            }
             let paint: Vec<usize> = if will_break {
                 (0..header_n).chain(std::iter::once(ri)).collect()
             } else {
@@ -25272,6 +25296,15 @@ impl<'a> Layout<'a> {
                 k += 1;
             }
             let (mut h, mut t) = cell.split_at(k);
+            // With nothing above the cut, the head holds only the cell's
+            // margins: measured as a cell it would hold a default empty
+            // paragraph (priority 3138fff3a6: 25pt, not 10, so its 8pt
+            // titles placed no line and the row moved, where Word splits).
+            let head_h = if k == 0 {
+                cell.pad_t + cell.pad_b
+            } else {
+                height(&h)
+            };
             let mut broke = false;
             // Word breaks the next paragraph between its lines, with no
             // widow control across the row split (00297360's item 6 leaves
@@ -25280,7 +25313,7 @@ impl<'a> Layout<'a> {
                 let cw: f32 = (0..cell.colspan)
                     .map(|i| col_w.get(cell.col + i).copied().unwrap_or(80.0))
                     .sum();
-                let left = room - height(&h);
+                let left = room - head_h;
                 if let Some((hp, tp)) =
                     self.split_cell_para(&cell.paras[k], left, cell_wrap_width(cell, cw))
                 {
@@ -25300,7 +25333,7 @@ impl<'a> Layout<'a> {
                     .map(|i| col_w.get(cell.col + i).copied().unwrap_or(80.0))
                     .sum();
                 let wrap_w = cell_wrap_width(cell, cw);
-                let left = room - height(&h);
+                let left = room - head_h;
                 if let Block::Table {
                     cols,
                     rows: inner,

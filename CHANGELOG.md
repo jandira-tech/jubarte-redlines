@@ -133,6 +133,15 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   Normal style's in unstyled cells only when Normal is 11 or 12pt, as in
   Word 16. Before, it overrode any size, so the cf02 redline's 10.5pt
   Normal cells painted at 11pt and ran to 12 pages, not Word's 11.
+- A table row splitting at the page end measures a cell's first cut
+  against the room its margins leave. Before, the empty head was sized as
+  a default 11pt paragraph, so 3138fff3a6's two-line 8pt titles placed no
+  line and their rows moved to the next page whole, where Word splits
+  them.
+- A table too wide to sit beside a square-wrapped picture starts below
+  it, as in Word 16; a narrower table still sits beside it. Before, the
+  table ran over the picture: 109f20a2b3's continued table painted
+  across its header logo, 74pt higher than Word's.
 - A nested table row taller than what is left of the page breaks inside
   itself, as Word breaks it, when keeping it whole would leave a quarter
   of the page empty. Rows marked `cantSplit` or with an exact height stay

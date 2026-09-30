@@ -2970,6 +2970,61 @@ fn float_after(gap: Option<u32>, w: i64, h: i64, wrap: &str) -> Vec<u8> {
 }
 
 #[test]
+fn a_table_too_wide_to_sit_beside_a_square_float_starts_below_it() {
+    // Word 16 probe tfl_*_0930 (Letter, 1in margins): a 200x150pt square
+    // picture at the column's right edge, anchored in the first line. A
+    // 468pt table under that line starts below the picture (text at 225
+    // under its 222 foot); a 150pt one sits beside it (100). Work set
+    // 109f20a2b3's header logo sends its continued table below it the
+    // same way. We painted the wide table over the picture.
+    let img = blip(
+        &(200 * 12700).to_string(),
+        &(150 * 12700).to_string(),
+        &format!(
+            "<wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" \
+             relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+             <wp:simplePos x=\"0\" y=\"0\"/>\
+             <wp:positionH relativeFrom=\"column\"><wp:posOffset>{}</wp:posOffset></wp:positionH>\
+             <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+             {SQUARE_BOTH}",
+            268 * 12700
+        ),
+        "</wp:anchor>",
+    );
+    let table = |w: u32, text: &str| {
+        format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"{w}\" w:type=\"dxa\"/></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"{w}\"/></w:tblGrid><w:tr><w:tc>\
+             <w:tcPr><w:tcW w:w=\"{w}\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
+        )
+    };
+    let pdf_for = |tbl: String| {
+        docx_to_pdf(&drawing_docx(&format!(
+            "<w:p><w:r><w:t>Anchor</w:t></w:r><w:r>{img}</w:r></w:p>{tbl}\
+             <w:p><w:r><w:t>After</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        )))
+        .expect("table by a float")
+    };
+    // The picture's foot, in PDF space: 792 - (72 + 150).
+    let foot = 570.0;
+    let wide = pdf_for(table(9360, "WideTable"));
+    let (_, y) = pdf_glyph_text_xy(&wide, "WideTable").expect("wide table paints");
+    assert!(
+        y < foot - 2.0,
+        "the wide table starts under the picture: {y}"
+    );
+    let narrow = pdf_for(table(3000, "NarrowTable"));
+    let (_, y) = pdf_glyph_text_xy(&narrow, "NarrowTable").expect("narrow table paints");
+    assert!(
+        y > foot + 90.0,
+        "the narrow table stays beside the picture: {y}"
+    );
+}
+
+#[test]
 fn a_square_float_above_the_page_top_is_held_at_the_page_top() {
     // Word probe h4 (2026-09-30): a 400x300 picture 82.7pt above the first
     // paragraph of the page would start 11.8pt above the page; Word draws
@@ -41364,6 +41419,70 @@ fn a_row_moves_whole_when_one_of_its_cells_fits_nothing_on_the_page() {
             );
         }
     }
+}
+
+#[test]
+fn a_cell_paragraph_splits_on_the_room_its_margins_leave() {
+    // Priority 3138fff3a6: row 21 at the foot of page 2, cells with 99-twip
+    // top and bottom margins and 8pt text. Word keeps every cell's first
+    // line on page 2 and carries the two-line titles over. We measured the
+    // empty head as a cell holding a default 11pt paragraph (25pt, not the
+    // margins' 10), so the titles could place no line and the row moved.
+    let p = |t: &str| {
+        format!(
+            "<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"400\" \
+             w:lineRule=\"exact\"/></w:pPr><w:r><w:t>{t}</w:t></w:r></w:p>"
+        )
+    };
+    let fill: String = (0..31).map(|i| p(&format!("Filler{i}"))).collect();
+    let cell_p = |runs: &str| {
+        format!(
+            "<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"200\" \
+             w:lineRule=\"exact\"/></w:pPr><w:r>{runs}</w:r></w:p>"
+        )
+    };
+    let tc = |body: String| {
+        format!(
+            "<w:tc><w:tcPr><w:tcW w:w=\"3000\" w:type=\"dxa\"/><w:tcMar>\
+             <w:top w:w=\"99\" w:type=\"dxa\"/><w:bottom w:w=\"99\" w:type=\"dxa\"/></w:tcMar>\
+             </w:tcPr>{body}</w:tc>"
+        )
+    };
+    let row = format!(
+        "{}{}",
+        tc(cell_p("<w:t>Aone</w:t><w:br/><w:t>Atwo</w:t>")),
+        tc(cell_p("<w:t>Bcell</w:t>"))
+    );
+    let body = format!(
+        "{fill}<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"3000\"/><w:gridCol w:w=\"3000\"/></w:tblGrid>\
+         <w:tr>{row}</w:tr></w:tbl>{}\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+        p("After")
+    );
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("split row");
+    assert_eq!(
+        page_with_text(&pdf, "Filler30"),
+        Some(0),
+        "the fillers fill page 1"
+    );
+    // 28pt left: a line and both margins (20pt) fit, two lines (30pt) do not.
+    assert_eq!(
+        page_with_text(&pdf, "Aone"),
+        Some(0),
+        "the first line stays"
+    );
+    assert_eq!(
+        page_with_text(&pdf, "Bcell"),
+        Some(0),
+        "the one-line cell stays"
+    );
+    assert_eq!(
+        page_with_text(&pdf, "Atwo"),
+        Some(1),
+        "the second line carries over"
+    );
 }
 
 #[test]
