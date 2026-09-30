@@ -404,8 +404,11 @@ pub(super) fn restore_against_built_ins(
 /// Give the old `block_local` record `old` every slot the original's style
 /// `a_style` (in the original's stylesheet `a_root`) resolved to through its
 /// docDefaults and `basedOn` chain and `old` leaves unsaid, except built-in
-/// values, which Reject All supplies itself, and the flipping toggles, which
-/// read against the restored ancestors (R30) and so stay as declared. Word's
+/// values, which Reject All supplies itself, and the flipping toggles a
+/// restored ancestor gives back (R30: `recorded` says which of the
+/// original's styles are restored). A toggle an unrecorded ancestor or the
+/// docDefaults turn on is kept, as Word records it (bbfeb633fc's
+/// LDClauseHeading2): the record lacking it reads as the built-in off. Word's
 /// Reject All reads the record against its built-ins (R27): without this a
 /// based style lost everything it inherited (b6f757462e's List Paragraph,
 /// `jc both` and 1.08 lines from Normal, rejected to `jc left`, single).
@@ -416,19 +419,21 @@ pub(crate) fn complete_from_original_chain(
     a_root: NodeId,
     a_style: NodeId,
     block_local: &str,
+    recorded: &dyn Fn(NodeId) -> bool,
 ) -> bool {
     let by_id: HashMap<String, NodeId> = dom
         .elements(a_root, Some(&W::name("style")))
         .into_iter()
         .filter_map(|s| Some((dom.attribute(s, &W::name("styleId"))?.to_string(), s)))
         .collect();
-    let mut layers: Vec<NodeId> = Vec::new();
+    // (style owning the layer, None for the docDefaults; the layer)
+    let mut layers: Vec<(Option<NodeId>, NodeId)> = Vec::new();
     if let Some(dd) = dom
         .element(a_root, &W::name("docDefaults"))
         .and_then(|d| dom.element(d, &W::name(&format!("{block_local}Default"))))
         .and_then(|d| dom.element(d, &W::name(block_local)))
     {
-        layers.push(dd);
+        layers.push((None, dd));
     }
     let mut chain = ancestors(dom, &by_id, a_style);
     chain.reverse();
@@ -436,30 +441,34 @@ pub(crate) fn complete_from_original_chain(
     layers.extend(
         chain
             .into_iter()
-            .filter_map(|s| dom.element(s, &W::name(block_local))),
+            .filter_map(|s| Some((Some(s), dom.element(s, &W::name(block_local))?))),
     );
-    // Each slot's nearest declaration: the property and its attributes.
-    let mut effective: HashMap<Slot, (NodeId, Vec<(String, String)>)> = HashMap::new();
-    for layer in layers {
+    // Each slot's nearest declaration: its style, the property and its
+    // attributes.
+    type Declaration = (Option<NodeId>, NodeId, Vec<(String, String)>);
+    let mut effective: HashMap<Slot, Declaration> = HashMap::new();
+    for (owner, layer) in layers {
         for prop in dom.elements(layer, None) {
             for (slot, attrs) in prop_slots(dom, prop) {
-                effective.insert(slot, (prop, attrs));
+                effective.insert(slot, (owner, prop, attrs));
             }
         }
     }
-    let recorded = slot_values(dom, old);
+    let said = slot_values(dom, old);
     let mut slots: Vec<Slot> = effective
-        .keys()
-        .filter(|s| {
-            !recorded.contains_key(*s)
-                && !(s.ns == W::URI && XOR_TOGGLES.contains(&s.local.as_str()))
+        .iter()
+        .filter(|(s, (owner, _, _))| {
+            !said.contains_key(*s)
+                && !(s.ns == W::URI
+                    && XOR_TOGGLES.contains(&s.local.as_str())
+                    && owner.is_some_and(|o| o != a_style && recorded(o)))
         })
-        .cloned()
+        .map(|(s, _)| s.clone())
         .collect();
     slots.sort();
     let mut changed = false;
     for slot in slots {
-        let (prop, attrs) = &effective[&slot];
+        let (_, prop, attrs) = &effective[&slot];
         if slot.built_in_value() == Some(slot_value(dom, *prop, &slot, attrs.clone())) {
             continue;
         }

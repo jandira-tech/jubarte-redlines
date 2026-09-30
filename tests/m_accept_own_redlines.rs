@@ -2016,6 +2016,41 @@ fn the_normal_cascade_keeps_a_style_s_own_run_properties_in_its_record() {
     }
 }
 
+/// A toggle the record lacks reads as the built-in off (R30), so a based
+/// style's record carries the toggles an unrecorded ancestor turns on: only a
+/// restored ancestor gives them back. Word records them (bbfeb633fc's
+/// LDClauseHeading2 keeps LDClauseHeading's `w:b`; PR #246 review).
+#[test]
+fn a_based_style_s_record_keeps_toggles_of_its_unrecorded_parent() {
+    let styles = |sz: &str| {
+        format!(
+            r#"<w:style w:type="paragraph" w:styleId="Clause"><w:name w:val="Clause"/><w:basedOn w:val="Normal"/><w:rPr><w:b/><w:i/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="SubClause"><w:name w:val="Sub Clause"/><w:basedOn w:val="Clause"/><w:rPr><w:sz w:val="{sz}"/></w:rPr></w:style>"#
+        )
+    };
+    let body =
+        r#"<w:p><w:pPr><w:pStyle w:val="SubClause"/></w:pPr><w:r><w:t>Item</w:t></w:r></w:p>"#;
+    let base = docx_with_stylesheet_styles(body, ["", "", "", ""], &styles("24"));
+    let next = docx_with_stylesheet_styles(body, ["", "", "", ""], &styles("28"));
+    let redline = compare_documents(&base, &next, "Redline").unwrap();
+    assert_word_valid_package(&redline);
+    let recorded = style_xml(&redline, "SubClause");
+    assert!(recorded.contains("rPrChange"), "{recorded}");
+    let rejected = reject_revisions(&redline).unwrap();
+    let style = style_xml(&rejected, "SubClause");
+    assert!(style.contains(r#"w:val="24""#), "{style}");
+    for toggle in ["<w:b ", "<w:i "] {
+        assert!(
+            !style.contains(toggle),
+            "{toggle} comes from Clause: {style}\nredline: {recorded}"
+        );
+    }
+    let clause = style_xml(&rejected, "Clause");
+    assert!(
+        clause.contains("<w:b />") && clause.contains("<w:i />"),
+        "{clause}"
+    );
+}
+
 /// Reject All reads a style's old record against Word's built-ins, so the
 /// record of a style based on another must carry what the original's chain
 /// gave it. b6f757462e's List Paragraph inherits Normal's `jc both` and

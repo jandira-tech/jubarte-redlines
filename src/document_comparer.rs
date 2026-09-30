@@ -1702,6 +1702,23 @@ fn complete_based_style_change_records(dom: &mut Dom, styles_root: NodeId, a_roo
         .into_iter()
         .filter_map(|s| Some((style_match_key(dom, s)?, s)))
         .collect();
+    // The original's styles each block of which the redline records.
+    let mut recorded: std::collections::HashMap<&str, std::collections::HashSet<NodeId>> =
+        std::collections::HashMap::new();
+    for style in dom.elements(styles_root, Some(&W::name("style"))) {
+        let Some(&a_style) = style_match_key(dom, style).and_then(|k| a_by_key.get(&k)) else {
+            continue;
+        };
+        for (block_local, change_local) in [("pPr", "pPrChange"), ("rPr", "rPrChange")] {
+            if dom
+                .element(style, &W::name(block_local))
+                .and_then(|b| dom.element(b, &W::name(change_local)))
+                .is_some()
+            {
+                recorded.entry(block_local).or_default().insert(a_style);
+            }
+        }
+    }
     let mut changed = false;
     for style in dom.elements(styles_root, Some(&W::name("style"))) {
         if dom
@@ -1716,6 +1733,8 @@ fn complete_based_style_change_records(dom: &mut Dom, styles_root: NodeId, a_roo
             continue;
         };
         for (block_local, change_local) in [("pPr", "pPrChange"), ("rPr", "rPrChange")] {
+            let restored = recorded.get(block_local);
+            let is_recorded = |s: NodeId| restored.is_some_and(|r| r.contains(&s));
             let Some(old) = dom
                 .element(style, &W::name(block_local))
                 .and_then(|b| dom.element(b, &W::name(change_local)))
@@ -1729,6 +1748,7 @@ fn complete_based_style_change_records(dom: &mut Dom, styles_root: NodeId, a_roo
                 a_root,
                 a_style,
                 block_local,
+                &is_recorded,
             );
         }
     }

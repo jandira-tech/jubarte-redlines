@@ -77,7 +77,9 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   The records of styles based on another now carry what the original's
   docDefaults and chain gave them, less the built-in values. Paragraph-style
   mismatches against the original after our own reject, 150 pairs: 267 to
-  30, and every pPr now matches.
+  30, and every pPr now matches. A bold or italic that an unrecorded parent
+  (or the docDefaults) turns on stays in the record, so it is not rejected
+  to off.
 - Rejecting a redline in which Normal changed no longer strips the run
   properties of the styles based on Normal: the change record each of them
   gets keeps the style's own fonts and sizes, font slot by font slot, over
