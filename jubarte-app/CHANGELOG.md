@@ -8,6 +8,15 @@ features bump the **minor**, fixes bump the **patch**).
 See [README → Versioning & release](README.md#versioning--release) for how to cut
 a new version.
 
+## [0.10.1] — 2026-09-30
+
+### Changed
+- **Engine upgraded to jubarte-redlines 0.10.1**: tracked changes can be
+  accepted or rejected one at a time, as Word's Accept / Reject This Change;
+  Reject All matches Word on text and mark state; and PDF export follows Word
+  much more closely on page breaks, keep-with-next, table rows, floating
+  tables, headers, footers and comment balloons.
+
 ## [0.10.0] — 2026-09-28
 
 ### Changed
