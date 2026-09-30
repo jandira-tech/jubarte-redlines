@@ -25316,9 +25316,9 @@ impl<'a> Layout<'a> {
                 height(&h)
             };
             let mut broke = false;
-            // Word breaks the next paragraph between its lines, with no
-            // widow control across the row split (00297360's item 6 leaves
-            // one line on page 1).
+            // Word breaks the next paragraph between its lines (00297360's
+            // item 6 leaves one line on page 1); from compat 15 widow
+            // control holds across the cut (split_cell_para).
             if k < cell.paras.len() && t.nested_at.iter().all(|&at| at > 0) {
                 let cw: f32 = (0..cell.colspan)
                     .map(|i| col_w.get(cell.col + i).copied().unwrap_or(80.0))
@@ -25460,6 +25460,18 @@ impl<'a> Layout<'a> {
         }
         if n == 0 || n >= lines.len() {
             return None;
+        }
+        // From compat 15 the cut keeps two lines on each side, as in the
+        // body; compat 14 cuts anywhere (Word 16 probes k15_*/k14_* 0930:
+        // priority 30f195a272's two-line cell moves whole, fixtures_500
+        // 00297360's item 6 leaves one line).
+        if self.compat_mode >= 15 && para.style.widow_control {
+            if lines.len() - n < 2 {
+                n = lines.len().saturating_sub(2);
+            }
+            if n < 2 {
+                return None;
+            }
         }
         let mut head = para.clone();
         head.runs = rejoin(0..n);

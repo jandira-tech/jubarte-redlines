@@ -5400,6 +5400,75 @@ fn a_split_row_breaks_its_paragraph_between_lines() {
 }
 
 #[test]
+fn a_row_split_keeps_widow_control_from_compat_15() {
+    // Word 16 probes k15_*/k14_* 0930 (32 exact 20pt lines a page): from
+    // compat 15 a cell paragraph cut by a row split keeps two lines on
+    // each side, as in the body (priority 30f195a272 and 3ec493ae9c move
+    // their two-line cells whole); compat 14 cuts it anywhere (fixtures_500
+    // 00297360), and so does widowControl off (priority 3138fff3a6).
+    let para = |t: &str, ppr: &str| {
+        let runs: Vec<String> = t
+            .split('|')
+            .map(|x| format!("<w:r><w:t>{x}</w:t></w:r>"))
+            .collect();
+        format!(
+            "<w:p><w:pPr>{ppr}</w:pPr>{}</w:p>",
+            runs.join("<w:r><w:br/></w:r>")
+        )
+    };
+    let exact = "<w:spacing w:after=\"0\" w:line=\"400\" w:lineRule=\"exact\"/>";
+    let pages = |mode: u32, fillers: usize, cell: &str| {
+        let fill: String = (0..fillers)
+            .map(|i| para(&format!("Fill{i:02}"), exact))
+            .collect();
+        let body = format!(
+            "{fill}<w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"dxa\"/>\
+               <w:tblLayout w:type=\"fixed\"/></w:tblPr>\
+               <w:tblGrid><w:gridCol w:w=\"5000\"/></w:tblGrid><w:tr><w:tc>\
+               <w:tcPr><w:tcW w:w=\"5000\" w:type=\"dxa\"/></w:tcPr>{cell}</w:tc></w:tr></w:tbl>\
+             {}<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+                 w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>",
+            para("After", exact)
+        );
+        let settings = format!(
+            r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="{mode}"/></w:compat>"#
+        );
+        docx_to_pdf(&minimal_docx_with_settings(&body, &settings)).expect("row split")
+    };
+    let on = |pdf: &[u8], t: &str| page_with_text(pdf, t).expect(t);
+    let off = format!("{exact}<w:widowControl w:val=\"0\"/>");
+    let two = pages(15, 31, &para("Xe1|Xe2", exact));
+    assert_eq!(
+        on(&two, "Xe1"),
+        1,
+        "compat 15 moves a two-line paragraph whole"
+    );
+    let legacy = pages(14, 31, &para("Xe1|Xe2", exact));
+    assert_eq!(on(&legacy, "Xe1"), 0, "compat 14 leaves one line on page 1");
+    let unguarded = pages(15, 31, &para("Xe1|Xe2", &off));
+    assert_eq!(
+        on(&unguarded, "Xe1"),
+        0,
+        "widowControl off splits at compat 15"
+    );
+    let three = pages(15, 30, &para("Xb1|Xb2|Xb3", exact));
+    assert_eq!(on(&three, "Xb1"), 1, "a 2|1 cut would strand a widow");
+    let four = pages(15, 29, &para("Qa1|Qa2|Qa3|Qa4", exact));
+    assert_eq!(
+        (on(&four, "Qa2"), on(&four, "Qa3")),
+        (0, 1),
+        "four lines in room for three cut 2|2"
+    );
+    let later = pages(15, 30, &(para("Yc0", exact) + &para("Yc1|Yc2", exact)));
+    assert_eq!(
+        (on(&later, "Yc0"), on(&later, "Yc1")),
+        (0, 1),
+        "a later paragraph that cannot cut moves whole behind the one before"
+    );
+}
+
+#[test]
 fn trailing_body_sectpr_does_not_add_a_page() {
     let docx = minimal_docx_body("<w:p><w:r><w:t>Only page</w:t></w:r></w:p><w:sectPr/>");
     let pdf = docx_to_pdf(&docx).expect("convert trailing sectPr");

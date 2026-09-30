@@ -138,6 +138,12 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   a default 11pt paragraph, so 3138fff3a6's two-line 8pt titles placed no
   line and their rows moved to the next page whole, where Word splits
   them.
+- From compatibility mode 15, a cell paragraph cut by a table row split
+  keeps widow/orphan control: two lines on each side, or it moves to the
+  next page whole, as Word 16 does. Below mode 15, Word still cuts it
+  anywhere. Before, compat-15 two-line cells split one line each side:
+  30f195a272's first table row started on page 1, where Word's starts on
+  page 2.
 - A table too wide to sit beside a square-wrapped picture starts below
   it, as in Word 16; a narrower table still sits beside it. Before, the
   table ran over the picture: 109f20a2b3's continued table painted
