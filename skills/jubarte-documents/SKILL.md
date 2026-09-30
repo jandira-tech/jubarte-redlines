@@ -113,7 +113,7 @@ Operation kinds: `replace`, `insert` (one of `after`, `before`,
 `position: start|end`), `delete`, `comment` (`find` optional: whole
 paragraph), `insert_paragraph` (`runs` with `bold`/`italic`/`underline`/
 `highlight`; copies the anchor's paragraph properties, or those of the
-paragraph `like` selects), `delete_paragraph`,
+paragraph `like` selects), `delete_paragraph` (optional `comment`),
 `format_paragraph` (any of `style` (id or name), `alignment`
 `left|center|right|justify`, `line_spacing` as a multiple such as `1.15`,
 `space_before`/`space_after` in points), `merge_paragraphs` (joins the next
@@ -147,6 +147,11 @@ Gotchas:
   `replace` would be: a changed word inside a link or a field.
 - `delete_paragraph` refuses a paragraph that carries a section break or is
   the only paragraph of a table cell.
+- A `delete_paragraph` `comment` sits on the deleted text in the redline
+  only; the clean copy has no paragraph to hold it. When an identical
+  paragraph is next to it, the comparer may delete the twin instead, and the
+  plan is refused (`UNSUPPORTED_STRUCTURE`) rather than leave the comment on
+  text that stays.
 - The redline is produced by comparing the source with the clean copy, the
   way Word Compare does. A long replacement therefore appears as a
   word-level diff against the old text. Give the `replace` `"whole": true`

@@ -95,8 +95,8 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
     Word or Markdown, as a patch in the style of git diff
     (`markdown::patch_documents`). Only changed paragraphs are shown, each
     whole, under `@@ [line:N] @@` for Markdown or `@@ [body:p:N] @@` (the id
-    `jubarte text` and edit plans use) for Word; `[-body:p:N]` marks a
-    removed paragraph. Changes are `[-old-]{+new+}`, widened to whole words
+    `jubarte text` and edit plans use) for Word; `@@ -[body:p:N] @@` marks
+    a removed paragraph, located in the old version. Changes are `[-old-]{+new+}`, widened to whole words
     and numbers; highlights and comments stay CriticMarkup. The owner is
     named once, on the `+++` line (`--author`, else git's `user.name`, else
     Redline; `--date`, else now); a change by someone else is followed by
@@ -125,6 +125,13 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   `insert_paragraph` takes `like`, the paragraph whose properties the new
   one copies instead of the anchor's. Both are in `jubarte capabilities`,
   the Python plan builder and the agent skill.
+- Edit plans: `delete_paragraph` takes an optional `comment`, anchored on
+  the deleted text in the redline (the clean copy has no paragraph to hold
+  it) and shown on the removed paragraph's hunk in the patch. Python:
+  `EditPlan.delete_paragraph(..., comment=)`. When the comparer deletes an
+  identical neighbouring paragraph instead, the plan is refused
+  (`UNSUPPORTED_STRUCTURE`) rather than leave the comment on text that
+  stays.
 
 - `jubarte debug FILE -c text` prints each story part's paragraphs with
   `{+inserted+}` / `[-deleted-]` runs, the paragraph mark's revision state

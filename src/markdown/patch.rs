@@ -567,7 +567,10 @@ fn operations(
                 });
                 operations.push(Operation {
                     id,
-                    kind: OperationKind::DeleteParagraph { paragraph: at(p) },
+                    kind: OperationKind::DeleteParagraph {
+                        paragraph: at(p),
+                        comment: None,
+                    },
                 });
             }
             Edit::Delete(p) => {
@@ -578,7 +581,10 @@ fn operations(
                         text: String::new(),
                     }
                 } else {
-                    OperationKind::DeleteParagraph { paragraph: at(p) }
+                    OperationKind::DeleteParagraph {
+                        paragraph: at(p),
+                        comment: None,
+                    }
                 };
                 operations.push(Operation { id, kind });
             }

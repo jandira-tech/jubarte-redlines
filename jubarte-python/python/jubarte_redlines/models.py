@@ -538,10 +538,16 @@ class EditPlan:
             op["style"] = style
         return self._with(_with_optional(op, id=id, comment=comment))
 
-    def delete_paragraph(self, paragraph: Selector, *, id: str | None = None) -> EditPlan:
-        """Delete a whole paragraph, mark included."""
+    def delete_paragraph(
+        self, paragraph: Selector, *, comment: str | None = None, id: str | None = None
+    ) -> EditPlan:
+        """Delete a whole paragraph, mark included.
+
+        ``comment`` is anchored on the deleted text in the redline; the clean
+        copy has no paragraph to hold it.
+        """
         op: dict[str, object] = {"kind": "delete_paragraph", "paragraph": _selector(paragraph)}
-        return self._with(_with_optional(op, id=id))
+        return self._with(_with_optional(op, comment=comment, id=id))
 
     def format_paragraph(
         self,

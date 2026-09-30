@@ -99,6 +99,34 @@ fn paragraphs_added_and_removed_are_located_in_their_own_version() {
     );
 }
 
+/// Word deletes or inserts a paragraph together with its mark, so the
+/// change ends (or, for the last paragraph, starts) with the paragraph
+/// break. The paragraph is still a hunk of its own.
+#[test]
+fn a_paragraph_changed_with_its_mark_is_a_hunk_of_its_own() {
+    let patch = patch_critic(
+        "Keep.\n\n{--{==Drop this one.==}\n\n--}{>>Ana Lima (2026-09-30T12:00:00Z): Dup.<<}Next.\n\n{++New.\n\n++}Last.{--\n\nGone.--}\n",
+        &options("a.docx", "b.docx"),
+    );
+    assert_eq!(
+        patch.render(0),
+        "--- a/a.docx\n\
+         +++ b/b.docx\tArthur Rodrigues\t2026-09-30T14:05:00Z\n\
+         @@ -[line:3] @@\n\
+         [-{==Drop this one.==}-]{>>Ana Lima (2026-09-30T12:00:00Z): Dup.<<}\n\
+         \n\
+         @@ [line:5] @@\n\
+         {+New.+}\n\
+         \n\
+         @@ -[line:9] @@\n\
+         [-Gone.-]\n"
+    );
+    // A deleted mark alone joins two paragraphs: one block, as before.
+    let merged = patch_critic("A.{--\n\n--}B.\n", &options("a.md", "b.md"));
+    assert_eq!(merged.hunks.len(), 1);
+    assert_eq!(merged.hunks[0].at, Locator::Line(1));
+}
+
 const AGREEMENT: &str = "# Agreement
 
 2.1 Closing. The Closing shall take place on {~~04/20/26~>10/30/26~~}{>>Arthur Rodrigues (2026-09-30T14:05:00Z): Buyer needs time.<<}, or at such other time.

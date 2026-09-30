@@ -143,6 +143,24 @@ def test_an_edit_returns_the_patch_of_its_redline() -> None:
     assert [h.at for h in result.diff.hunks] == ["body:p:1"]
 
 
+def test_a_deleted_paragraph_carries_its_comment_into_the_redline_and_the_patch() -> None:
+    plan = EditPlan(author="Claude", date="2026-09-25T12:00:00Z").delete_paragraph(
+        2, comment="Duplicated in section 4.", id="drop"
+    )
+    assert plan.to_dict()["operations"] == [
+        {"id": "drop", "kind": "delete_paragraph", "paragraph": {"index": 2}, "comment": "Duplicated in section 4."}
+    ]
+    result = letter().edit(plan)
+    assert result.report.comments_added == 1
+    header, hunk = result.diff.text.split("@@ -[body:p:2] @@\n")
+    assert header == "--- a/document.docx\n+++ b/document.docx\tClaude\t2026-09-25T12:00:00Z\n"
+    # Wrapped at 72 columns.
+    assert hunk.replace("\n", " ").strip() == (
+        "[-{==Sections 1(g), 2(e), 3 survive.==}-]{>>Claude (2026-09-25T12:00:00Z): Duplicated in section 4.<<}"
+    )
+    assert [(h.at, h.removed) for h in result.diff.hunks] == [("body:p:2", True)]
+
+
 def test_arguments_are_checked() -> None:
     with pytest.raises(TypeError):
         jubarte.diff(1, OLD_MD)  # type: ignore[arg-type]

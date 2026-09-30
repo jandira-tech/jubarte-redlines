@@ -459,7 +459,7 @@ fn build_with(
     known: Option<&HashSet<String>>,
 ) -> (Patch, Vec<Paragraphs>) {
     let critic = critic.replace("\r\n", "\n");
-    let blocks = blocks(attribute(segments(&critic)));
+    let blocks = blocks(detach_breaks(attribute(segments(&critic))));
     let owner = &options.owner;
     let mut hunks = Vec::new();
     let mut texts = Vec::new();
@@ -622,6 +622,69 @@ fn attribute(segments: Vec<Segment>) -> Vec<Segment> {
             continue;
         }
         out.push(segment);
+    }
+    out
+}
+
+/// Word deletes or inserts a paragraph with its mark, so the change ends
+/// with the paragraph break (or, for the last paragraph, starts with the
+/// one before it). That break moves out of the change, after its comments,
+/// so the paragraph is a block of its own. A change that is only a break
+/// joins or splits paragraphs and stays as it is.
+fn detach_breaks(segments: Vec<Segment>) -> Vec<Segment> {
+    fn same(out: &mut Vec<Segment>, text: &str) {
+        match out.last_mut() {
+            Some(Segment::Same(same)) => same.push_str(text),
+            _ => out.push(Segment::Same(text.to_string())),
+        }
+    }
+    let mut out: Vec<Segment> = Vec::with_capacity(segments.len());
+    let mut after: Option<String> = None;
+    for segment in segments {
+        if !matches!(segment, Segment::Note(_))
+            && let Some(text) = after.take()
+        {
+            same(&mut out, &text);
+        }
+        let Segment::Edit(mut edit) = segment else {
+            match segment {
+                Segment::Same(text) => same(&mut out, &text),
+                other => out.push(other),
+            }
+            continue;
+        };
+        let side = match (edit.old.is_empty(), edit.new.is_empty()) {
+            (false, true) => Side::Old,
+            (true, false) => Side::New,
+            _ => {
+                out.push(Segment::Edit(edit));
+                continue;
+            }
+        };
+        let (plain, marked) = match side {
+            Side::Old => (&mut edit.old, &mut edit.old_marked),
+            Side::New => (&mut edit.new, &mut edit.new_marked),
+        };
+        let trailing = plain.len() - plain.trim_end_matches('\n').len();
+        let leading = plain.len() - plain.trim_start_matches('\n').len();
+        if plain.trim().is_empty() {
+            out.push(Segment::Edit(edit));
+        } else if trailing >= 2 && marked.ends_with(&plain[plain.len() - trailing..]) {
+            let text = plain.split_off(plain.len() - trailing);
+            marked.truncate(marked.len() - trailing);
+            out.push(Segment::Edit(edit));
+            after = Some(text);
+        } else if leading >= 2 && marked.starts_with(&plain[..leading]) {
+            let text: String = plain.drain(..leading).collect();
+            marked.drain(..leading);
+            same(&mut out, &text);
+            out.push(Segment::Edit(edit));
+        } else {
+            out.push(Segment::Edit(edit));
+        }
+    }
+    if let Some(text) = after {
+        same(&mut out, &text);
     }
     out
 }

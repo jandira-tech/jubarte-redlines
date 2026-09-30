@@ -429,6 +429,110 @@ fn delete_paragraph_vanishes_from_clean_and_is_tracked_in_redline() {
 }
 
 #[test]
+fn a_deleted_paragraph_carries_its_comment_in_the_redline_only() {
+    let source = docx(
+        &(para("(c) Third.")
+            + &para("(d) Onward Disclosure. You will not disclose.")
+            + &para("5. Confidentiality")),
+    );
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"id":"keep","kind":"comment","paragraph":{"index":0},"text":"Fine as is."},
+                {"id":"drop","kind":"delete_paragraph","paragraph":{"index":1},"comment":"Covered by section 5."}]"#,
+        ),
+    )
+    .unwrap();
+    assert_eq!(texts(&result.clean), ["(c) Third.", "5. Confidentiality"]);
+    let report = &result.report;
+    assert_eq!(report.comments_added, 2);
+    let ids: Vec<Option<u32>> = report.operations.iter().map(|o| o.comment_id).collect();
+    assert_eq!(ids, [Some(0), Some(1)]);
+    // The clean copy has no paragraph to hold the deletion's comment.
+    assert_eq!(summary(&result.clean).unwrap().comments, 1);
+    let comments = part_string(&result.clean, "word/comments.xml").unwrap();
+    assert!(!comments.contains("Covered by section 5."), "{comments}");
+    // The redline anchors it on the deleted text, under the plan's author.
+    assert_eq!(summary(&result.redline).unwrap().comments, 2);
+    let xml = part_string(&result.redline, "word/document.xml").unwrap();
+    let deleted = &xml[xml
+        .find(r#"<w:commentRangeStart w:id="1""#)
+        .expect("range start")
+        ..xml
+            .find(r#"<w:commentRangeEnd w:id="1""#)
+            .expect("range end")];
+    assert!(
+        deleted.contains("<w:delText>(d) Onward Disclosure. You will not disclose.</w:delText>"),
+        "{deleted}"
+    );
+    let comments = part_string(&result.redline, "word/comments.xml").unwrap();
+    let comment = &comments[comments.find(r#"w:id="1""#).expect("comment 1")..];
+    assert!(comment.contains("Covered by section 5."), "{comments}");
+    assert!(comment.contains(r#"w:author="Claude""#), "{comments}");
+    // Accepting gives the clean text; rejecting brings the paragraph back.
+    let accepted = accept_revisions(&result.redline).unwrap();
+    assert_eq!(texts(&accepted), texts(&result.clean));
+    let rejected = reject_revisions(&result.redline).unwrap();
+    assert_eq!(texts(&rejected), texts(&source));
+    assert_word_valid_package(&result.redline);
+    assert_word_valid_package(&result.clean);
+}
+
+#[test]
+fn a_deleted_paragraphs_comment_is_refused_when_its_twin_is_deleted_instead() {
+    // Paragraphs 2 and 3 read the same: the comparer keeps the commented
+    // one and deletes the other, so the comment would sit on text that stays.
+    let source = std::fs::read("tests/fixtures/redline/original.docx").unwrap();
+    assert_eq!(texts(&source)[2], texts(&source)[3]);
+    let error = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"id":"drop","kind":"delete_paragraph","paragraph":{"index":2},"comment":"Duplicate."}]"#,
+        ),
+    )
+    .unwrap_err();
+    assert_eq!(
+        (error.code.as_str(), error.operation.as_deref()),
+        ("UNSUPPORTED_STRUCTURE", Some("drop"))
+    );
+    assert!(error.message.contains("identical"), "{}", error.message);
+    let outcome = &error.outcomes[0];
+    assert_eq!(
+        (outcome.status.as_str(), outcome.code.as_deref()),
+        ("failed", Some("UNSUPPORTED_STRUCTURE"))
+    );
+    // Without the comment the same deletion goes through.
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"kind":"delete_paragraph","paragraph":{"index":2}}]"#,
+        ),
+    )
+    .unwrap();
+    assert_eq!(texts(&result.clean).len(), texts(&source).len() - 1);
+}
+
+#[test]
+fn a_deleted_paragraphs_comment_is_checked_like_any_comment() {
+    let source = docx(&(para("Keep.") + &para("Drop.")));
+    let error = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"id":"drop","kind":"delete_paragraph","paragraph":{"index":1},"comment":" "}]"#,
+        ),
+    )
+    .unwrap_err();
+    assert_eq!(
+        (error.code.as_str(), error.operation.as_deref()),
+        ("INVALID_EDIT", Some("drop"))
+    );
+}
+
+#[test]
 fn delete_paragraph_refuses_section_and_table_cell_last_paragraphs() {
     let with_section = format!(
         "{}<w:p><w:pPr><w:sectPr><w:type w:val=\"nextPage\"/></w:sectPr></w:pPr><w:r><w:t>sect</w:t></w:r></w:p>{}",
