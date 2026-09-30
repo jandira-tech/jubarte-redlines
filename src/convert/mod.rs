@@ -8374,8 +8374,14 @@ fn nested_table_height(fonts: &Fonts, block: &Block, avail: f32, space_for_ul: b
 }
 
 /// A nested table cut before row `m`: the rows that fit on this page and
-/// the rest, each with its own slice of the per-row geometry.
-fn split_nested_rows(block: &Block, m: usize) -> Option<(Block, Block)> {
+/// the rest, each with its own slice of the per-row geometry. With `mid`,
+/// row `m` itself breaks: its head closes the first part and its tail
+/// opens the second, neither held to the row's height.
+fn split_nested_rows(
+    block: &Block,
+    m: usize,
+    mid: Option<(Vec<TableCell>, Vec<TableCell>)>,
+) -> Option<(Block, Block)> {
     let Block::Table {
         cols,
         rows,
@@ -8386,42 +8392,62 @@ fn split_nested_rows(block: &Block, m: usize) -> Option<(Block, Block)> {
     else {
         return None;
     };
-    if m == 0 || m >= rows.len() {
+    if m >= rows.len() || (m == 0 && mid.is_none()) {
         return None;
     }
-    let part = |range: std::ops::Range<usize>, after: f32| {
-        let mut g = (**geom).clone();
-        let cut = |v: &Vec<f32>| {
-            v.get(range.clone())
-                .map(<[f32]>::to_vec)
-                .unwrap_or_default()
+    let part =
+        |range: std::ops::Range<usize>, after: f32, split: Option<(usize, Vec<TableCell>)>| {
+            let mut g = (**geom).clone();
+            let cut = |v: &Vec<f32>| {
+                v.get(range.clone())
+                    .map(<[f32]>::to_vec)
+                    .unwrap_or_default()
+            };
+            g.row_min = cut(&geom.row_min);
+            g.bottom_above = cut(&geom.bottom_above);
+            g.row_exact = geom
+                .row_exact
+                .get(range.clone())
+                .map(<[bool]>::to_vec)
+                .unwrap_or_default();
+            g.row_cant_split = geom
+                .row_cant_split
+                .get(range.clone())
+                .map(<[bool]>::to_vec)
+                .unwrap_or_default();
+            if range.start > 0 || (split.is_some() && range.start == m) {
+                g.header_rows = 0;
+            }
+            let mut part_rows = rows[range].to_vec();
+            if let Some((at, cells)) = split {
+                part_rows[at] = cells;
+                if let Some(v) = g.row_min.get_mut(at) {
+                    *v = 0.0;
+                }
+                if let Some(v) = g.row_exact.get_mut(at) {
+                    *v = false;
+                }
+            }
+            let mut st = style.clone();
+            st.after = after;
+            Block::Table {
+                cols: cols.clone(),
+                rows: part_rows,
+                style: st,
+                borders: *borders,
+                geom: Box::new(g),
+            }
         };
-        g.row_min = cut(&geom.row_min);
-        g.bottom_above = cut(&geom.bottom_above);
-        g.row_exact = geom
-            .row_exact
-            .get(range.clone())
-            .map(<[bool]>::to_vec)
-            .unwrap_or_default();
-        g.row_cant_split = geom
-            .row_cant_split
-            .get(range.clone())
-            .map(<[bool]>::to_vec)
-            .unwrap_or_default();
-        if range.start > 0 {
-            g.header_rows = 0;
-        }
-        let mut st = style.clone();
-        st.after = after;
-        Block::Table {
-            cols: cols.clone(),
-            rows: rows[range].to_vec(),
-            style: st,
-            borders: *borders,
-            geom: Box::new(g),
-        }
-    };
-    Some((part(0..m, 0.0), part(m..rows.len(), style.after)))
+    Some(match mid {
+        None => (
+            part(0..m, 0.0, None),
+            part(m..rows.len(), style.after, None),
+        ),
+        Some((head, tail)) => (
+            part(0..m + 1, 0.0, Some((m, head))),
+            part(m..rows.len(), style.after, Some((0, tail))),
+        ),
+    })
 }
 
 /// Every row's height: each row on its own cells, then a vertically
@@ -24972,6 +24998,37 @@ impl<'a> Layout<'a> {
         }
         let height =
             |cell: &TableCell| cell_content_height(self.fonts, cell, col_w, self.space_for_ul);
+        let Some((head, tail, nested_broke)) = self.split_row_cells(row, room, col_w) else {
+            return;
+        };
+        // A nested table breaks between its rows (English part b c8d1d38a's
+        // one-row form starts its 26-row table on page 1, as in Word). One
+        // that cannot, such as a single tall nested row, keeps a row that a
+        // page can hold whole: splitting around it left only b fcb45876's
+        // logo on page 1.
+        if has_nested && !nested_broke && rh <= page_room * 1.05 {
+            return;
+        }
+        let tail_h = tail.iter().map(height).fold(0.0_f32, f32::max);
+        // The head fills the page: its borders run to the bottom margin.
+        work[ri] = (RowSrc::Owned(head), room - 0.01, false, 0.0);
+        work.insert(ri + 1, (RowSrc::Owned(tail), tail_h, false, 0.0));
+    }
+
+    /// A row's cells cut where `room` points run out: the heads, the
+    /// tails, and whether a nested table broke. `None` when no cell
+    /// splits or nothing is left for one side.
+    fn split_row_cells(
+        &self,
+        row: &[TableCell],
+        room: f32,
+        col_w: &[f32],
+    ) -> Option<(Vec<TableCell>, Vec<TableCell>, bool)> {
+        if room < 1.0 || row.iter().any(|c| c.rowspan > 1) {
+            return None;
+        }
+        let height =
+            |cell: &TableCell| cell_content_height(self.fonts, cell, col_w, self.space_for_ul);
         let (mut head, mut tail) = (Vec::new(), Vec::new());
         let (mut any_head, mut any_tail) = (false, false);
         let mut nested_broke = false;
@@ -25030,8 +25087,24 @@ impl<'a> Layout<'a> {
                     // tall nested row Word breaks inside, which we cannot.
                     let page_room = self.page.height - self.body_top - self.body_floor;
                     let fills = left - used <= page_room * 0.25;
-                    if fills && let Some((head_tbl, tail_tbl)) = split_nested_rows(&t.nested[ti], m)
+                    let mut cut = if fills {
+                        split_nested_rows(&t.nested[ti], m, None)
+                    } else {
+                        None
+                    };
+                    // Or it breaks inside that row, as Word does (work set
+                    // a7e5b7872c's newsletter: a story row taller than the
+                    // room left carries on on the next page).
+                    if cut.is_none()
+                        && m < inner.len()
+                        && !geom.row_cant_split.get(m).copied().unwrap_or(false)
+                        && !geom.row_exact.get(m).copied().unwrap_or(false)
+                        && let Some((row_head, row_tail, _)) =
+                            self.split_row_cells(&inner[m], left - used, &inner_w)
                     {
+                        cut = split_nested_rows(&t.nested[ti], m, Some((row_head, row_tail)));
+                    }
+                    if let Some((head_tbl, tail_tbl)) = cut {
                         h.nested.push(std::rc::Rc::new(head_tbl));
                         h.nested_at.push(h.paras.len());
                         t.nested[ti] = std::rc::Rc::new(tail_tbl);
@@ -25056,21 +25129,7 @@ impl<'a> Layout<'a> {
             head.push(h);
             tail.push(t);
         }
-        if !any_head || !any_tail {
-            return;
-        }
-        // A nested table breaks between its rows (English part b c8d1d38a's
-        // one-row form starts its 26-row table on page 1, as in Word). One
-        // that cannot, such as a single tall nested row, keeps a row that a
-        // page can hold whole: splitting around it left only b fcb45876's
-        // logo on page 1.
-        if has_nested && !nested_broke && rh <= page_room * 1.05 {
-            return;
-        }
-        let tail_h = tail.iter().map(height).fold(0.0_f32, f32::max);
-        // The head fills the page: its borders run to the bottom margin.
-        work[ri] = (RowSrc::Owned(head), room - 0.01, false, 0.0);
-        work.insert(ri + 1, (RowSrc::Owned(tail), tail_h, false, 0.0));
+        (any_head && any_tail).then_some((head, tail, nested_broke))
     }
 
     /// A cell paragraph cut after the lines that fit in `left` points:
@@ -25083,7 +25142,30 @@ impl<'a> Layout<'a> {
         wrap_w: f32,
     ) -> Option<(CellPara, CellPara)> {
         let (first_w, rest_w) = cell_para_widths(self.fonts, para, wrap_w);
-        let lines = wrap_cell_runs(self.fonts, para, first_w, rest_w).0;
+        let (lines, ends_br) = wrap_cell_runs(self.fonts, para, first_w, rest_w);
+        // The halves are wrapped again, so a line a w:br ended gives its
+        // break back as text (a7e5b7872c's story parts ran together); the
+        // page end stands for the break closing the head.
+        let rejoin = |range: std::ops::Range<usize>| -> Vec<TextRun> {
+            let mut runs = Vec::new();
+            let end = range.end;
+            for j in range {
+                let line = &lines[j];
+                let n = line.len();
+                for (r, run) in line.iter().enumerate() {
+                    if ends_br[j] && r + 1 == n && run.ends_line && run.text.is_empty() {
+                        if j + 1 < end {
+                            let mut br = run.with_text("\n");
+                            br.ends_line = false;
+                            runs.push(br);
+                        }
+                    } else {
+                        runs.push(run.clone());
+                    }
+                }
+            }
+            runs
+        };
         let mut used = para.style.before;
         let mut n = 0;
         while n < lines.len() {
@@ -25099,11 +25181,11 @@ impl<'a> Layout<'a> {
             return None;
         }
         let mut head = para.clone();
-        head.runs = lines[..n].concat();
+        head.runs = rejoin(0..n);
         head.style.after = 0.0;
         head.continued = true;
         let mut tail = para.clone();
-        tail.runs = lines[n..].concat();
+        tail.runs = rejoin(n..lines.len());
         tail.images = Vec::new();
         tail.boxes = Vec::new();
         tail.bookmarks = Vec::new();

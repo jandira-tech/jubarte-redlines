@@ -4523,6 +4523,71 @@ fn a_row_holding_a_nested_table_still_splits_at_the_page_end() {
 }
 
 #[test]
+fn a_nested_row_taller_than_the_page_breaks_inside_itself() {
+    // Work set a7e5b7872c / 931e978ee2 (newsletters): one outer row holds
+    // a nested table whose rows hold the stories. Word flows them over
+    // three pages; a nested row taller than the room left could not
+    // split, so the outer row stayed whole and ran off page 1's bottom,
+    // losing 60% of the text.
+    let deep: String = (0..70)
+        .map(|i| format!("<w:p><w:r><w:t>Deep{i:02}</w:t></w:r></w:p>"))
+        .collect();
+    let body = format!(
+        "<w:p><w:r><w:t>Title</w:t></w:r></w:p>\
+         <w:tbl><w:tblGrid><w:gridCol w:w=\"9000\"/></w:tblGrid><w:tr><w:tc>\
+         <w:tbl><w:tblGrid><w:gridCol w:w=\"8800\"/></w:tblGrid>\
+           <w:tr><w:tc>{deep}</w:tc></w:tr>\
+           <w:tr><w:tc><w:p><w:r><w:t>After</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+         <w:p/></w:tc></w:tr></w:tbl><w:p/>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("nested row split");
+    let pages: Vec<String> = pdf_content_streams(&pdf)
+        .iter()
+        .map(|p| stream_glyph_text(p))
+        .collect();
+    assert!(
+        pages[0].contains("Deep00") && pages[0].contains("Deep30"),
+        "the nested row starts on page 1; page1={:?}",
+        pages[0]
+    );
+    assert!(
+        !pages[0].contains("Deep69"),
+        "nothing runs past page 1's bottom"
+    );
+    assert!(
+        pages.len() >= 2 && pages[1].contains("Deep69") && pages[1].contains("After"),
+        "the rest carries on on page 2; pages={pages:?}"
+    );
+}
+
+#[test]
+fn a_cell_paragraph_split_across_pages_keeps_its_line_breaks() {
+    // Work set a7e5b7872c: a story cell is one paragraph whose parts are
+    // w:br pairs. Once it split at the page end, both halves lost their
+    // breaks and the parts ran together ("the norm.”DHSC’s").
+    let lines: String = (0..80)
+        .map(|i| format!("<w:r><w:t>Brk{i:02}</w:t></w:r><w:r><w:br/></w:r>"))
+        .collect();
+    let body = format!(
+        "<w:tbl><w:tblGrid><w:gridCol w:w=\"9000\"/></w:tblGrid><w:tr><w:tc>\
+         <w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr>{lines}</w:p></w:tc></w:tr></w:tbl><w:p/>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("split br paragraph");
+    let pages = pdf_content_streams(&pdf);
+    assert!(pages.len() >= 2, "the row runs onto page 2");
+    let (_, y0) = pdf_glyph_text_xy(&pdf, "Brk00").expect("Brk00");
+    let (_, y1) = pdf_glyph_text_xy(&pdf, "Brk01").expect("Brk01");
+    assert!(y0 - y1 > 5.0, "page 1 keeps a line per part: {y0} {y1}");
+    let (_, y78) = pdf_glyph_text_xy(&pdf, "Brk78").expect("Brk78");
+    let (_, y79) = pdf_glyph_text_xy(&pdf, "Brk79").expect("Brk79");
+    assert!(y78 - y79 > 5.0, "page 2 keeps a line per part: {y78} {y79}");
+}
+
+#[test]
 fn a_keep_next_row_stays_with_the_next_row() {
     // fixtures_500 000aba38: Heading 2 (keepNext) label rows. The first
     // fits under page 1's rows by itself, but not with the row after it;
