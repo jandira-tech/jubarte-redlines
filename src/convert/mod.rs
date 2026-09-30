@@ -723,7 +723,8 @@ impl RunStyle {
 #[derive(Clone)]
 struct ParaStyle {
     /// The paragraph carries a tracked formatting change (`w:pPrChange` or a
-    /// `w:rPrChange`): Word bars it like an insertion or deletion.
+    /// `w:rPrChange`) or its mark is revised: Word bars it like an
+    /// insertion or deletion.
     fmt_rev: bool,
     /// The paragraph mark's own run style (pPr/rPr with a size or face):
     /// a picture-only line takes its multiple's leading from it (0023298b).
@@ -8761,6 +8762,7 @@ fn para_base(
     if pstyle.bidi {
         mirror_bidi(&mut pstyle);
     }
+    pstyle.fmt_rev = para_formatting_changed(dom, para) || para_mark_revised(dom, para);
     (pstyle, rstyle)
 }
 
@@ -8906,6 +8908,19 @@ fn para_formatting_changed(dom: &Dom, para: NodeId) -> bool {
     })
 }
 
+/// The paragraph mark itself is inserted, deleted or moved (`pPr/rPr` holds
+/// the revision): Word bars the paragraph even when it has no text
+/// (9b22b88370's empty paragraphs between deleted tables).
+fn para_mark_revised(dom: &Dom, para: NodeId) -> bool {
+    dom.element(para, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+        .is_some_and(|rpr| {
+            dom.elements(rpr, None)
+                .into_iter()
+                .any(|c| rev_mark_of(dom, c).is_some())
+        })
+}
+
 /// The paragraph's `v:rect o:hr="t"` (not a Fallback copy), if any.
 fn para_hrule(dom: &Dom, para: NodeId) -> Option<HRule> {
     let rect = descendants_local(dom, para, "rect").into_iter().find(|r| {
@@ -8959,7 +8974,6 @@ fn paragraph_block(
     let sheet = ctx.sheet;
     let (mut pstyle, rstyle) = para_base(dom, para, sheet, None);
     pstyle.hrule = para_hrule(dom, para);
-    pstyle.fmt_rev = para_formatting_changed(dom, para);
     let (marker, num_id, ilvl) = list_marker(dom, para, sheet, numbering);
     // numId=0 over a numbered style removes the list and the style's list
     // indent with it (000ebd12 Förslagstext: ind 397/397 renders flush
@@ -10306,7 +10320,6 @@ fn table_block(
                         .map_or([false; 2], |t| [t.sets_space, t.sets_line]),
                 };
                 let (mut pstyle, mut r) = para_base(dom, child, sheet, Some(&table_spacing));
-                pstyle.fmt_rev = para_formatting_changed(dom, child);
                 // An explicit table style's size beats the default paragraph
                 // style's in a paragraph with no pStyle (checked in Word on
                 // 00004116: Normal 12pt, docDefaults 11pt, cells paint 11pt;
@@ -17932,8 +17945,28 @@ fn collect_hf_rec(
 /// `collect_hf_rec` under a tracked change: Word's markup view paints a
 /// header/footer's deletions struck through and its insertions underlined,
 /// both in the first author's red (redlines vs 000e3e7b: the deleted
-/// "FRESHCARE AWISSP ... PAGE 1 OF 2" footer line).
+/// "FRESHCARE AWISSP ... PAGE 1 OF 2" footer line). Its runs are revised:
+/// their lines carry the change bar.
 fn collect_hf_rev(
+    dom: &Dom,
+    node: NodeId,
+    base: &RunStyle,
+    sheet: &StyleSheet,
+    scan: &mut FieldScan,
+    runs: &mut Vec<TextRun>,
+    mark: RevMark,
+) {
+    let start = runs.len();
+    collect_hf_rev_runs(dom, node, base, sheet, scan, runs, mark);
+    if mark != RevMark::None {
+        for run in &mut runs[start..] {
+            run.rev = true;
+        }
+    }
+}
+
+/// `collect_hf_rev`'s runs, before they are flagged revised.
+fn collect_hf_rev_runs(
     dom: &Dom,
     node: NodeId,
     base: &RunStyle,
@@ -18138,6 +18171,10 @@ struct Layout<'a> {
     /// fills its page (`Layout::tail_float_bars_page`): no other line may
     /// share the page its last line lands on.
     tail_bar: bool,
+    /// The revised paragraph being laid: the page and column its change
+    /// bar was opened on, and the bar's top there. A page or column break
+    /// closes the bar at the last line (`Layout::close_rev_bar`).
+    rev_bar: Option<(usize, u8, f32)>,
     /// True when this page top was reached by overflow or a manual
     /// `w:br type=page`: the space before is dropped. Document start keeps
     /// it; pageBreakBefore and section breaks keep its excess (`top_credit`).
@@ -18609,6 +18646,7 @@ impl<'a> Layout<'a> {
             behind_end: 0,
             at_page_top: true,
             tail_bar: false,
+            rev_bar: None,
             suppress_space_before: false,
             top_credit: 0.0,
             top_pending: false,
@@ -18968,6 +19006,7 @@ impl<'a> Layout<'a> {
     }
 
     fn new_page(&mut self) {
+        self.close_rev_bar();
         if self.pages.len() == 1 {
             self.center_first_page_body();
         }
@@ -19394,6 +19433,7 @@ impl<'a> Layout<'a> {
             // (live Word: 019d92d9's "Controls - cont." sits 4pt under column
             // one's top); a page-top column drops it.
             let first_line = (self.y - self.para_top).abs() < 0.01;
+            self.close_rev_bar();
             self.col_floor = Some(self.col_floor.map_or(self.y, |f| f.min(self.y)));
             // A floating table beside column one's text is no float for
             // the next column's (003329b5's table sent column two's lines
@@ -20217,6 +20257,13 @@ impl<'a> Layout<'a> {
         }
         self.para_top = self.y;
         let y_top = self.y;
+        // A header's text box laid while this paragraph breaks a page has
+        // its own bar; this one resumes after it.
+        let revised = style.fmt_rev || runs.iter().any(|r| r.rev);
+        let outer_bar = std::mem::replace(
+            &mut self.rev_bar,
+            revised.then_some((self.pages.len(), self.col_i, y_top)),
+        );
         let hanging = if style.indent_first < 0.0 {
             -style.indent_first
         } else {
@@ -20560,9 +20607,8 @@ impl<'a> Layout<'a> {
             bdr_top.is_some(),
             bdr_bottom.is_some(),
         );
-        if style.fmt_rev || runs.iter().any(|r| r.rev) {
-            self.paint_rev_bar(self.rev_bar_x(), text_bottom, y_top);
-        }
+        self.close_rev_bar_at(text_bottom);
+        self.rev_bar = outer_bar;
         self.y -= style.after;
     }
 
@@ -20746,6 +20792,27 @@ impl<'a> Layout<'a> {
         } else {
             left
         }
+    }
+
+    /// The open change bar's part on this page and column: from its top,
+    /// or the column's top once the paragraph has broken onto it, down to
+    /// the last line laid (Word bars 9b22b88370's page-filling insertion
+    /// on each of its pages).
+    fn close_rev_bar(&mut self) {
+        self.close_rev_bar_at(self.y);
+    }
+
+    /// `close_rev_bar` down to `bottom`.
+    fn close_rev_bar_at(&mut self, bottom: f32) {
+        let Some((page, col, top)) = self.rev_bar else {
+            return;
+        };
+        let top = if (page, col) == (self.pages.len(), self.col_i) {
+            top
+        } else {
+            self.col_top.unwrap_or(self.page.height - self.body_top)
+        };
+        self.paint_rev_bar(self.rev_bar_x(), bottom, top);
     }
 
     fn paint_rev_bar(&mut self, x: f32, y_bot: f32, y_top: f32) {
@@ -25543,6 +25610,7 @@ impl<'a> Layout<'a> {
                     .and_then(|(l, _)| l.first())
                     .is_some_and(|r| r.hf_cont);
                 self.draw_hf_line(line, y, align, wraps_on);
+                self.hf_rev_bar(line, para.as_deref(), top, line_h);
                 if let Some(p) = para.as_ref()
                     && next.as_ref().is_none_or(|n| !std::rc::Rc::ptr_eq(n, p))
                 {
@@ -25570,7 +25638,9 @@ impl<'a> Layout<'a> {
                     }
                     above = Some(p.clone());
                 }
-                top -= hf_break_box(self.fonts, r);
+                let h = hf_break_box(self.fonts, r);
+                self.hf_rev_bar(std::slice::from_ref(r), r.hf_para.as_deref(), top, h);
+                top -= h;
             }
             if let Some((color, width)) = self.header_bottom.filter(|_| !line_rules) {
                 // Only a border no text line painted (an empty paragraph's).
@@ -25722,6 +25792,8 @@ impl<'a> Layout<'a> {
                     self.hf_line_fill(p, above.as_deref(), next.as_deref(), top, line_h);
                 }
                 self.draw_hf_line(line, y + baselines[i], align, wraps_on);
+                let (ascent, line_h) = metrics[i];
+                self.hf_rev_bar(line, para.as_deref(), y + baselines[i] + ascent, line_h);
                 if let Some(p) = para.as_ref()
                     && next.as_ref().is_none_or(|n| !std::rc::Rc::ptr_eq(n, p))
                 {
@@ -25732,8 +25804,35 @@ impl<'a> Layout<'a> {
                     above = para;
                 }
             }
+            // The empty paragraphs under the text: a revised mark bars
+            // its line.
+            if let Some(last) = footer.iter().rposition(|r| r.text != HF_LINE_BREAK) {
+                let mut top = base - self.fonts.get(fid).descent_pt(size) - hang;
+                for r in &footer[last + 1..] {
+                    let h = hf_break_box(self.fonts, r);
+                    self.hf_rev_bar(std::slice::from_ref(r), r.hf_para.as_deref(), top, h);
+                    top -= h + r.para_gap;
+                }
+            } else {
+                // A part of empty paragraphs stands on w:footer, its last
+                // lowest (9b22b88370's pPrChange footer).
+                let mut bottom = self.page.footer.max(0.0) + foot_after;
+                for r in footer.iter().rev() {
+                    let h = hf_break_box(self.fonts, r);
+                    self.hf_rev_bar(std::slice::from_ref(r), r.hf_para.as_deref(), bottom + h, h);
+                    bottom += h + r.para_gap;
+                }
+            }
         }
         self.paint_pg_borders();
+    }
+
+    /// A revised header or footer line's change bar, `h` down from `top`
+    /// (9b22b88370's deleted header line and its footer).
+    fn hf_rev_bar(&mut self, line: &[TextRun], para: Option<&ParaStyle>, top: f32, h: f32) {
+        if line.iter().any(|r| r.rev) || para.is_some_and(|p| p.fmt_rev) {
+            self.paint_rev_bar(self.rev_bar_x(), top - h, top);
+        }
     }
 
     fn paint_pg_borders(&mut self) {

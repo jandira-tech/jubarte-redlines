@@ -28766,6 +28766,120 @@ fn rev_bar_marks_a_run_formatting_change() {
 }
 
 #[test]
+fn a_revised_paragraph_crossing_a_page_bars_each_page_it_fills() {
+    // 9b22b88370's inserted opening paragraph fills pages 1-3; Word bars
+    // each page beside its lines (36 -> 768.5 on page 1). We painted one
+    // bar, on its last page, from the first page's paragraph top.
+    let words: String = (0..900).map(|i| format!("word{i} ")).collect();
+    let body = format!(
+        "<w:p><w:r><w:t>Plain first</w:t></w:r></w:p>\
+         <w:p><w:ins w:id=\"1\" w:author=\"A\"><w:r><w:t>{words}</w:t></w:r></w:ins></w:p>\
+         <w:p><w:r><w:t>Plain last</w:t></w:r></w:p><w:sectPr/>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("page-crossing insertion");
+    let bars = pdf_page_bar_spans(&pdf);
+    assert_eq!(bars.len(), 3, "the paragraph fills two pages: {bars:?}");
+    let [one] = bars[0][..] else {
+        panic!("page 1 bars its part of the paragraph: {bars:?}");
+    };
+    assert!(
+        one.1 > 690.0 && one.1 < 712.0 && one.0 < 100.0,
+        "from under the plain line to the page floor: {one:?}"
+    );
+    let [two] = bars[1][..] else {
+        panic!("page 2 bars the rest: {bars:?}");
+    };
+    assert!(
+        two.1 > 715.0 && two.0 > 60.0 && two.0 < 110.0,
+        "from the page top to the paragraph's end: {two:?}"
+    );
+    assert!(bars[2].is_empty(), "page 3's plain line has none: {bars:?}");
+}
+
+#[test]
+fn rev_bar_marks_a_paragraph_whose_mark_is_revised() {
+    // 9b22b88370 p6: Word's bar runs unbroken past the empty paragraphs
+    // between its deleted tables, whose marks alone are deleted; ours
+    // broke at each (209.7-234, 343.3-367.6).
+    for mark in ["del", "ins"] {
+        let body = format!(
+            "<w:p><w:r><w:t>Plain first</w:t></w:r></w:p>\
+             <w:p><w:pPr><w:rPr><w:{mark} w:id=\"1\" w:author=\"A\"/></w:rPr></w:pPr></w:p>\
+             <w:p><w:r><w:t>Plain last</w:t></w:r></w:p><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("revised mark");
+        let bars = pdf_page_bar_spans(&pdf);
+        assert_eq!(bars[0].len(), 1, "a {mark} mark bars its line: {bars:?}");
+    }
+}
+
+#[test]
+fn rev_bar_marks_revised_header_and_footer_lines() {
+    // 9b22b88370: Word bars the header's deleted line and its
+    // mark-deleted empty paragraph (36 -> into the body) and the footer's
+    // revised line (784.6-805.9 from the top); we barred neither.
+    let part = "<w:p><w:r><w:t>Kept chrome</w:t></w:r></w:p>\
+         <w:p><w:del w:id=\"1\" w:author=\"A\"><w:r><w:delText>Gone chrome</w:delText></w:r></w:del></w:p>\
+         <w:p><w:pPr><w:rPr><w:del w:id=\"2\" w:author=\"A\"/></w:rPr></w:pPr></w:p>";
+    let header = pdf_page_bar_spans(&docx_to_pdf(&header_part_docx(part)).expect("header"));
+    let [(bot, top)] = header[0][..] else {
+        panic!("one bar beside the header's deleted line: {header:?}");
+    };
+    // From under the kept line (its top 756) down the deleted one and the
+    // empty paragraph, above the body's 720.
+    assert!(
+        top > 725.0 && top < 740.0 && bot > 680.0,
+        "beside the deleted lines only: {header:?}"
+    );
+    let footer = pdf_page_bar_spans(&docx_to_pdf(&footer_part_docx(part)).expect("footer"));
+    let [(bot, top)] = footer[0][..] else {
+        panic!("one bar beside the footer's deleted line: {footer:?}");
+    };
+    assert!(bot < 60.0 && top < 90.0, "in the footer band: {footer:?}");
+    // 9b22b88370's default footer is one empty paragraph with a
+    // pPrChange: Word bars it on w:footer (805.9 -> 784.6 from the top).
+    let empty = "<w:p><w:pPr><w:pPrChange w:id=\"3\" w:author=\"A\"><w:pPr><w:ind w:right=\"360\"/></w:pPr></w:pPrChange></w:pPr></w:p>";
+    let footer = pdf_page_bar_spans(&docx_to_pdf(&footer_part_docx(empty)).expect("empty footer"));
+    let [(bot, top)] = footer[0][..] else {
+        panic!("one bar beside the empty footer paragraph: {footer:?}");
+    };
+    assert!(
+        (bot - 36.0).abs() < 1.0 && top > 45.0 && top < 60.0,
+        "on w:footer: {footer:?}"
+    );
+}
+
+/// Each page's change bars (0.72pt-wide filled rects) as (bottom, top).
+fn pdf_page_bar_spans(pdf: &[u8]) -> Vec<Vec<(f32, f32)>> {
+    let hay = String::from_utf8_lossy(pdf);
+    let mut out = Vec::new();
+    let mut rest = hay.as_ref();
+    while let Some(i) = rest.find(">>\nstream\n") {
+        let after = &rest[i + 10..];
+        let Some(end) = after.find("\nendstream") else {
+            break;
+        };
+        let body = &after[..end];
+        if body.contains(" Tf") {
+            out.push(
+                body.lines()
+                    .filter_map(|l| {
+                        let p: Vec<&str> = l.strip_suffix(" re f")?.split_whitespace().collect();
+                        let n: Vec<f32> = p[p.len().checked_sub(4)?..]
+                            .iter()
+                            .map(|t| t.parse().ok())
+                            .collect::<Option<_>>()?;
+                        ((n[2] - 0.72).abs() < 0.02 && n[3] > 6.0).then_some((n[1], n[1] + n[3]))
+                    })
+                    .collect(),
+            );
+        }
+        rest = &after[end + 1..];
+    }
+    out
+}
+
+#[test]
 fn rev_bar_ignores_formatting_markers_in_prior_section_properties() {
     for marker in ["pPrChange", "rPrChange"] {
         let body = format!(
