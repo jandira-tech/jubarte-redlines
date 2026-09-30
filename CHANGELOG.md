@@ -119,6 +119,12 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   line and ran off the page. Five documents in the docx-to-pdf set gained
   4 to 17 points (pixel plus Jaccard), e.g. clean/ef7870f9f4 from 45.9/10.7
   to 50.1/24.1.
+- In compatibility mode 15, a paragraph holding only a page break is one
+  line on the page it ends. When that line doesn't fit, Word moves it down
+  a page and the break leaves that page blank (a9de4ed3f9's cover, then an
+  empty page 2, then the register on page 3). Together with the ptab fix,
+  a9de4ed3f9 went from 34.2/9.4 to 42.9/18.0, and clean/3936a8fe56 from
+  39.7/10.9 to 45.8/19.6.
 - Rejecting a redline gives back what a changed style inherited in the
   original. Word's Reject All reads a style's old record against its
   built-in defaults, so a record holding only the style's own properties

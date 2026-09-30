@@ -644,6 +644,47 @@ fn adjacent_page_and_section_breaks_coalesce() {
 }
 
 #[test]
+fn a_break_only_paragraph_that_misses_the_page_breaks_on_the_next() {
+    // Compatibility mode 15: a paragraph holding only a page break is one
+    // line (the break and its mark). When that line no longer fits, Word
+    // moves it down a page and the break then leaves that page blank
+    // (a9de4ed3f9: the cover's page-break paragraph carries
+    // lastRenderedPageBreak, page 2 holds only the header and footer, and
+    // the heading opens page 3). The body here is 642pt of exact 12pt lines.
+    let mode15 = "<w:compat><w:compatSetting w:name=\"compatibilityMode\" \
+         w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat>";
+    let pages = |lines: usize| {
+        let exact = "<w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"240\" w:lineRule=\"exact\"/></w:pPr>";
+        let text: String = (0..lines)
+            .map(|i| format!("<w:p>{exact}<w:r><w:t>Line{i}</w:t></w:r></w:p>"))
+            .collect();
+        let body = format!(
+            "{text}<w:p>{exact}<w:r><w:br w:type=\"page\"/></w:r></w:p>\
+             <w:p>{exact}<w:r><w:t>Next</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/><w:pgMar w:top=\"1440\" w:right=\"1440\" \
+               w:bottom=\"1560\" w:left=\"1440\" w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, mode15)).expect("page break");
+        // The break's line paints only a space.
+        let inked: Vec<bool> = pdf_content_streams(&pdf)
+            .iter()
+            .map(|page| page.replace("( ) Tj", "").contains("Tj"))
+            .collect();
+        (pdf_page_count(&pdf), inked)
+    };
+    assert_eq!(
+        pages(52),
+        (2, vec![true, true]),
+        "the break's line fits page one"
+    );
+    assert_eq!(
+        pages(53),
+        (3, vec![true, false, true]),
+        "the break's line moves to page two, which the break leaves blank"
+    );
+}
+
+#[test]
 fn continuous_section_does_not_add_a_page() {
     // The break takes the type of the section it starts (ECMA-376 17.6.22).
     let docx = minimal_docx_body(

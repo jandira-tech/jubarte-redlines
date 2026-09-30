@@ -6963,13 +6963,18 @@ fn walk_container(
             // Text after a page break inside the paragraph continues it on
             // the next page (checked in Word: "Aa<br page/>Cc" opens page
             // two with Cc); a break with nothing after it breaks as before.
-            // The run holding the paragraph's last column break: a
-            // break-only paragraph leaves a line of its height behind.
+            // The run holding the paragraph's last column (or page) break:
+            // a break-only paragraph leaves a line of its height behind.
+            let break_mark = if column_br {
+                COLUMN_BREAK_MARK
+            } else {
+                PAGE_BREAK_MARK
+            };
             let break_run = match &block {
                 Block::Paragraph { runs, .. } => runs
                     .iter()
                     .rev()
-                    .find(|r| r.text.contains(COLUMN_BREAK_MARK))
+                    .find(|r| r.text.contains(break_mark))
                     .map(|r| r.style.clone()),
                 _ => None,
             };
@@ -7032,7 +7037,7 @@ fn walk_container(
                 && !(blocks.is_empty() && !page_br && !column_br);
             if !blank || (!page_br && !sect_br && !column_br && !sect_mark) {
                 blocks.push(block);
-            } else if column_br
+            } else if (column_br || (page_br && sect_here.is_none()))
                 && let (Some(run_style), Block::Paragraph { style, .. }) = (break_run, &block)
                 && settings_compat_mode(ctx.pkg) >= 15
             {
@@ -7041,7 +7046,10 @@ fn walk_container(
                 // run, without its space before (live Word: 003329b5's
                 // before=338 break-only paragraph ends column one 12.7pt
                 // under the text above, before=0 or not; mode 12 leaves no
-                // line). Its mark then opens the next column.
+                // line). Its mark then opens the next column. A page break
+                // takes the same line: when it no longer fits, the break
+                // moves down a page and leaves that page blank
+                // (a9de4ed3f9's cover, lastRenderedPageBreak on the break).
                 let mut style = style.clone();
                 style.before = 0.0;
                 style.before_auto = false;
