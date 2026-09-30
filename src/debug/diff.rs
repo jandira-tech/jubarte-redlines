@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
-use super::{Package, WIDTH, clip, clip_from, clip_line, decode_xml, local, story_roles};
+use super::{Package, WIDTH, clip, clip_from, clip_line, decode_xml, local, story_roles_all};
 use crate::xmllinq::{Dom, NodeId, XName, XNamespace};
 
 /// `jubarte debug diff` options.
@@ -95,13 +95,14 @@ pub fn diff(files: &[(&str, &[u8])], opts: &DiffOptions) -> Result<String, Strin
             false,
             &mut hunks,
         );
-        total += hunks.len();
+        // --full prints agreeing elements too; only disagreements count.
+        total += hunks.iter().filter(|(_, differs)| *differs).count();
         let shown = if opts.limit == 0 {
             hunks.len()
         } else {
             opts.limit.min(hunks.len())
         };
-        for h in &hunks[..shown] {
+        for (h, _) in &hunks[..shown] {
             out.push_str(h);
         }
         if shown < hunks.len() {
@@ -295,7 +296,7 @@ const STYLE_REFS: [&str; 6] = ["pStyle", "rStyle", "tblStyle", "basedOn", "next"
 /// Each part of `pkg` the options select, keyed by role (headers and
 /// footers) or name, as a tree.
 fn package_tree(pkg: &Package, opts: &DiffOptions, filter: &Filter) -> Vec<(String, N)> {
-    let roles = story_roles(pkg);
+    let roles = story_roles_all(pkg);
     let parse = |data: &[u8]| -> Option<(Dom, NodeId)> {
         let xml = decode_xml(data)?;
         std::panic::catch_unwind(|| {
@@ -328,45 +329,127 @@ fn package_tree(pkg: &Package, opts: &DiffOptions, filter: &Filter) -> Vec<(Stri
         .unwrap_or_default();
     let mut out = Vec::new();
     for e in &pkg.entries {
-        let key = roles
-            .get(&e.name)
-            .cloned()
-            .unwrap_or_else(|| e.name.clone());
-        let wanted = match &opts.part {
-            Some(p) => e.name.contains(p.as_str()) || key.contains(p.as_str()),
-            None => {
-                opts.raw || !matches!(e.name.as_str(), "docProps/app.xml" | "docProps/core.xml")
-            }
-        };
-        if !wanted || e.name.ends_with('/') {
+        if e.name.ends_with('/') {
             continue;
         }
+        // A part several sections show pairs under each of their roles.
+        let keys = roles
+            .get(&e.name)
+            .cloned()
+            .unwrap_or_else(|| vec![e.name.clone()]);
         let xml = e.name.ends_with(".xml") || e.name.ends_with(".rels");
-        let tree = match xml.then(|| parse(&e.data)).flatten() {
-            Some((dom, root)) => {
-                let mut b = Build {
-                    dom: &dom,
-                    raw: opts.raw,
-                    filter,
-                    style_names: &style_names,
-                    paras: 0,
-                    tables: 0,
-                };
-                let mut n = b.generic(root);
-                n.key = key.clone();
-                n.label = key.clone();
-                n
-            }
-            None => {
-                let mut n = N::new("bytes", key.clone(), key.clone());
-                n.lines
-                    .push(format!("{} bytes, fnv {:016x}", e.data.len(), fnv(&e.data)));
-                n
-            }
+        let targets = if xml {
+            rel_targets(pkg, &e.name)
+        } else {
+            HashMap::new()
         };
-        out.push((key, tree));
+        for key in keys {
+            if opts
+                .part
+                .as_ref()
+                .is_some_and(|p| !e.name.contains(p.as_str()) && !key.contains(p.as_str()))
+            {
+                continue;
+            }
+            // The permissive parser forgives what Word rejects (a
+            // mismatched end tag): such a part is reported, not compared.
+            let mut malformed = None;
+            let parsed = if xml {
+                match decode_xml(&e.data).map(|x| crate::xmllinq::parse::validate_xml(&x)) {
+                    Some(Err(err)) => {
+                        malformed = Some(err);
+                        None
+                    }
+                    _ => parse(&e.data),
+                }
+            } else {
+                None
+            };
+            let tree = match parsed {
+                Some((dom, root)) => {
+                    let mut b = Build {
+                        dom: &dom,
+                        raw: opts.raw,
+                        filter,
+                        style_names: &style_names,
+                        targets: &targets,
+                        paras: 0,
+                        tables: 0,
+                    };
+                    let mut n = b.generic(root);
+                    n.key = key.clone();
+                    n.label = key.clone();
+                    n
+                }
+                None => {
+                    let mut n = N::new("bytes", key.clone(), key.clone());
+                    n.lines
+                        .extend(malformed.map(|err| format!("malformed XML: {err}")));
+                    n.lines
+                        .push(format!("{} bytes, fnv {:016x}", e.data.len(), fnv(&e.data)));
+                    n
+                }
+            };
+            out.push((key, tree));
+        }
     }
     out
+}
+
+/// What each relationship of `part` points to: an external target as
+/// written, an XML part by name, any other part by a hash of its bytes (so
+/// a renamed copy of the same image is the same target).
+fn rel_targets(pkg: &Package, part: &str) -> HashMap<String, String> {
+    let (dir, file) = part.rsplit_once('/').unwrap_or(("", part));
+    let rels = if dir.is_empty() {
+        format!("_rels/{file}.rels")
+    } else {
+        format!("{dir}/_rels/{file}.rels")
+    };
+    let Some(xml) = pkg
+        .entries
+        .iter()
+        .find(|e| e.name == rels)
+        .and_then(|e| decode_xml(&e.data))
+    else {
+        return HashMap::new();
+    };
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let Some(root) = dom.root(doc) else {
+        return HashMap::new();
+    };
+    dom.elements(root, None)
+        .into_iter()
+        .map(|r| {
+            let target = attr(&dom, r, "Target");
+            let shown = if attr(&dom, r, "TargetMode") == "External" {
+                target
+            } else {
+                let joined = match target.strip_prefix('/') {
+                    Some(absolute) => absolute.to_string(),
+                    None if dir.is_empty() => target.clone(),
+                    None => format!("{dir}/{target}"),
+                };
+                let mut segments: Vec<&str> = Vec::new();
+                for s in joined.split('/') {
+                    match s {
+                        ".." => {
+                            segments.pop();
+                        }
+                        "." | "" => {}
+                        _ => segments.push(s),
+                    }
+                }
+                let name = segments.join("/");
+                match pkg.entries.iter().find(|e| e.name == name) {
+                    Some(t) if !name.ends_with(".xml") => format!("#{:016x}", fnv(&t.data)),
+                    _ => name,
+                }
+            };
+            (attr(&dom, r, "Id"), shown)
+        })
+        .collect()
 }
 
 /// FNV-1a: tells binary parts apart.
@@ -392,6 +475,8 @@ struct Build<'a> {
     filter: &'a Filter,
     /// Style id → name, from the package's stylesheet.
     style_names: &'a HashMap<String, String>,
+    /// Relationship id → what it points to, from the part's rels.
+    targets: &'a HashMap<String, String>,
     /// Paragraphs and tables seen so far: their ordinal in labels.
     paras: usize,
     tables: usize,
@@ -427,7 +512,6 @@ impl Build<'_> {
                     ln,
                     "paraId" | "textId" | "durableId" | "dateUtc" | "anchorId" | "editId"
                 ))
-            || ns == R_NS
             || (ln == "id"
                 && (REVISION_MARKS.contains(&elem)
                     || CHANGES.contains(&elem)
@@ -445,7 +529,59 @@ impl Build<'_> {
             && (matches!(
                 name,
                 "nsid" | "tmpl" | "rsid" | "proofErr" | "lastRenderedPageBreak"
-            ) || (parent == "sdtPr" && name == "id"))
+            ) || (parent == "sdtPr" && name == "id")
+                // What every save restamps or recounts in docProps.
+                || (parent == "coreProperties"
+                    && matches!(
+                        name,
+                        "created" | "modified" | "lastModifiedBy" | "revision" | "lastPrinted"
+                    ))
+                || (parent == "Properties"
+                    && matches!(
+                        name,
+                        "Application"
+                            | "AppVersion"
+                            | "TotalTime"
+                            | "Pages"
+                            | "Words"
+                            | "Characters"
+                            | "CharactersWithSpaces"
+                            | "Lines"
+                            | "Paragraphs"
+                            | "HeadingPairs"
+                            | "TitlesOfParts"
+                    )))
+    }
+
+    /// `n`'s namespace when it differs from its parent's and says
+    /// something: any namespace under --raw, else one outside the Office
+    /// vocabularies (Strict and Transitional names compare alike).
+    fn namespace_note(&self, n: NodeId) -> Option<String> {
+        let ns = |id: NodeId| {
+            self.dom
+                .name(id)
+                .map(|x| x.namespace().namespace_name().to_string())
+                .unwrap_or_default()
+        };
+        let own = ns(n);
+        let parent = self
+            .dom
+            .parent(n)
+            .filter(|&p| self.dom.is_element(p))
+            .map(ns)
+            .unwrap_or_default();
+        let office = [
+            "http://schemas.openxmlformats.org/",
+            "http://purl.oclc.org/ooxml/",
+            "http://schemas.microsoft.com/office/",
+            "urn:schemas-microsoft-com:",
+            "http://www.w3.org/",
+            "http://purl.org/dc/",
+        ];
+        (!own.is_empty()
+            && own != parent
+            && (self.raw || !office.iter().any(|o| own.starts_with(o))))
+        .then_some(own)
     }
 
     /// The element's attributes, noise dropped, sorted: `k=v`.
@@ -456,7 +592,24 @@ impl Build<'_> {
             .attributes(n)
             .into_iter()
             .filter(|(k, _)| !self.noise(&elem, k))
-            .map(|(k, v)| {
+            .filter_map(|(k, v)| {
+                if k.namespace().namespace_name() == R_NS {
+                    // A relationship id says where it points; the id
+                    // itself is renumbered by every save. Header and
+                    // footer references pair by section role instead.
+                    let target = self.targets.get(&v);
+                    let v = match (self.raw, target) {
+                        (true, Some(t)) => format!("{v}→{t}"),
+                        (true, None) => v,
+                        (false, Some(t))
+                            if !matches!(elem.as_str(), "headerReference" | "footerReference") =>
+                        {
+                            format!("→{t}")
+                        }
+                        (false, _) => return None,
+                    };
+                    return Some((k.local_name().to_string(), v));
+                }
                 let v = if !self.raw && elem == "Relationship" && k.local_name() == "Type" {
                     v.rsplit('/').next().unwrap_or(&v).to_string()
                 } else if !self.raw
@@ -467,7 +620,7 @@ impl Build<'_> {
                 } else {
                     v
                 };
-                (k.local_name().to_string(), v)
+                Some((k.local_name().to_string(), v))
             })
             .collect();
         v.sort();
@@ -484,13 +637,17 @@ impl Build<'_> {
     /// One element as an item: `name`, `name=val`, `name(k=v,…)`, its own
     /// children in braces, its text quoted.
     fn item(&self, c: NodeId) -> String {
-        let name = self.local(c);
+        let local = self.local(c);
+        let name = match self.namespace_note(c) {
+            Some(ns) => format!("{local}<{ns}>"),
+            None => local.clone(),
+        };
         let attrs = self.attrs(c);
         let mut s = match attrs.as_slice() {
             [] => name.clone(),
             [(k, v)] if k == "val" => match v.as_str() {
                 "true" | "on" if !self.raw => name.clone(),
-                "1" if !self.raw && TOGGLES.contains(&name.as_str()) => name.clone(),
+                "1" if !self.raw && TOGGLES.contains(&local.as_str()) => name.clone(),
                 "false" | "off" if !self.raw => format!("{name}=0"),
                 _ => format!("{name}={v}"),
             },
@@ -502,8 +659,15 @@ impl Build<'_> {
         let kids: Vec<String> = self
             .elements(c)
             .into_iter()
-            .filter(|&k| !self.noise_element(&name, &self.local(k)))
-            .map(|k| self.item(k))
+            .filter(|&k| !self.noise_element(&local, &self.local(k)))
+            // A text box story is compared as its own node.
+            .map(|k| {
+                if self.local(k) == "txbxContent" {
+                    "txbxContent".to_string()
+                } else {
+                    self.item(k)
+                }
+            })
             .collect();
         if !kids.is_empty() {
             s.push('{');
@@ -514,8 +678,7 @@ impl Build<'_> {
                 .dom
                 .nodes(c)
                 .into_iter()
-                .filter(|&t| self.dom.is_text(t))
-                .map(|t| self.dom.value(t))
+                .filter_map(|t| self.dom.text_value(t))
                 .collect();
             if !text.trim().is_empty() {
                 let _ = write!(s, " \"{}\"", text.trim());
@@ -591,13 +754,14 @@ impl Build<'_> {
             None => name.clone(),
         };
         let mut n = N::new(&name, label.clone(), label);
+        n.lines
+            .extend(self.namespace_note(e).map(|ns| format!("xmlns={ns}")));
         n.lines.extend(self.attr_line(e));
         let text: String = self
             .dom
             .nodes(e)
             .into_iter()
-            .filter(|&t| self.dom.is_text(t))
-            .map(|t| self.dom.value(t))
+            .filter_map(|t| self.dom.text_value(t))
             .collect();
         if !text.trim().is_empty() {
             n.lines.push(format!("\"{}\"", text.trim()));
@@ -663,7 +827,11 @@ impl Build<'_> {
     }
 
     fn style(&mut self, s: NodeId) -> N {
-        let ty = attr(self.dom, s, "type");
+        // An omitted w:type is a paragraph style.
+        let ty = match attr(self.dom, s, "type") {
+            t if t.is_empty() => "paragraph".to_string(),
+            t => t,
+        };
         let id = attr(self.dom, s, "styleId");
         let name = self
             .elements(s)
@@ -761,8 +929,26 @@ impl Build<'_> {
             match l.as_str() {
                 "pPr" => {}
                 "r" => self.run(c, rev, segs, boxes),
-                "ins" | "del" | "moveFrom" | "moveTo" => self.segments(c, &l, segs, boxes),
-                "hyperlink" | "smartTag" | "customXml" | "sdtContent" | "dir" | "bdo" => {
+                "ins" | "del" | "moveFrom" | "moveTo" => {
+                    // --raw keeps the mark's id, author and date.
+                    let mark = match self.attr_line(c) {
+                        Some(a) if self.raw => format!("{l}{a}"),
+                        _ => l.clone(),
+                    };
+                    self.segments(c, &mark, segs, boxes);
+                }
+                "hyperlink" => {
+                    // Where the link leads: its anchor or relationship
+                    // target, around the text it covers.
+                    let link = match self.attr_line(c) {
+                        Some(a) => format!("⟨hyperlink{a}⟩"),
+                        None => "⟨hyperlink⟩".to_string(),
+                    };
+                    segs.push(Seg::marker(rev, link));
+                    self.segments(c, rev, segs, boxes);
+                    segs.push(Seg::marker(rev, "⟨/hyperlink⟩".to_string()));
+                }
+                "smartTag" | "customXml" | "sdtContent" | "dir" | "bdo" => {
                     self.segments(c, rev, segs, boxes);
                 }
                 "sdt" => {
@@ -850,7 +1036,15 @@ impl Build<'_> {
                 "softHyphen" => text.push('¬'),
                 "lastRenderedPageBreak" if !self.raw => {}
                 "drawing" | "pict" | "object" | "AlternateContent" => {
-                    let _ = write!(text, "[{l}]");
+                    // Placement, extent, crop and target are the drawing's
+                    // items; its text box stories are nodes of their own.
+                    Seg::push(segs, rev, &fmt, &std::mem::take(&mut text), true);
+                    segs.push(Seg {
+                        rev: rev.to_string(),
+                        fmt: fmt.clone(),
+                        text: format!("[{}]", self.item(c)),
+                        text_run: false,
+                    });
                     for d in self.dom.descendants(c, None) {
                         if self.local(d) == "txbxContent"
                             && !self
@@ -1057,7 +1251,7 @@ impl Walker<'_> {
         parents: &[bool],
         path: &mut Vec<String>,
         in_scope: bool,
-        hunks: &mut Vec<String>,
+        hunks: &mut Vec<(String, bool)>,
     ) {
         let hit = nodes.iter().flatten().any(|n| n.hit);
         let sub = nodes.iter().flatten().any(|n| n.sub_hit);
@@ -1088,9 +1282,15 @@ impl Walker<'_> {
         }
     }
 
-    /// The hunk for one aligned element, or None when every file holding its
-    /// parent agrees on it.
-    fn hunk(&self, nodes: &[Option<&N>], parents: &[bool], path: &[String]) -> Option<String> {
+    /// The hunk for one aligned element and whether the files disagree on
+    /// it, or None when every file holding its parent agrees on it and
+    /// --full is off.
+    fn hunk(
+        &self,
+        nodes: &[Option<&N>],
+        parents: &[bool],
+        path: &[String],
+    ) -> Option<(String, bool)> {
         let block = nodes.iter().flatten().any(|n| n.block);
         let absent: Vec<usize> = (0..nodes.len())
             .filter(|&i| parents[i] && nodes[i].is_none())
@@ -1185,7 +1385,7 @@ impl Walker<'_> {
                 let _ = writeln!(out, "  {mark} {s}");
             }
         }
-        Some(out)
+        Some((out, !diff_lines.is_empty() || show_absent))
     }
 }
 
@@ -1752,5 +1952,281 @@ mod tests {
             "{out}"
         );
         assert!(!out.contains("(absent)"), "{out}");
+    }
+
+    const REL_NS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+
+    /// A package of exactly these parts, the content types and root rels
+    /// added.
+    fn package(parts: &[(&str, &str)]) -> Vec<u8> {
+        let mut entries: Vec<(&str, &str)> =
+            vec![("[Content_Types].xml", TYPES), ("_rels/.rels", ROOT_RELS)];
+        entries.extend_from_slice(parts);
+        let mut buf = Cursor::new(Vec::new());
+        {
+            let mut z = zip::ZipWriter::new(&mut buf);
+            let opt = zip::write::SimpleFileOptions::default();
+            for (name, data) in &entries {
+                z.start_file(*name, opt).unwrap();
+                z.write_all(data.as_bytes()).unwrap();
+            }
+            z.finish().unwrap();
+        }
+        buf.into_inner()
+    }
+
+    fn document(body: &str) -> String {
+        format!(
+            r#"<w:document xmlns:w="{W}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><w:body>{body}</w:body></w:document>"#
+        )
+    }
+
+    fn rels(items: &str) -> String {
+        format!(r#"<Relationships xmlns="{REL_NS}">{items}</Relationships>"#)
+    }
+
+    /// A link that leads elsewhere is a difference, by its anchor or by
+    /// the target its relationship names.
+    #[test]
+    fn hyperlink_destinations_are_compared() {
+        let link =
+            r#"<w:p><w:hyperlink r:id="rId5"><w:r><w:t>Site</w:t></w:r></w:hyperlink></w:p>"#;
+        let to = |url: &str| {
+            rels(&format!(
+                r#"<Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="{url}" TargetMode="External"/>"#
+            ))
+        };
+        let (doc, ra, rb) = (
+            document(link),
+            to("https://a.example/"),
+            to("https://b.example/"),
+        );
+        let a = package(&[
+            ("word/document.xml", &doc),
+            ("word/_rels/document.xml.rels", &ra),
+        ]);
+        let b = package(&[
+            ("word/document.xml", &doc),
+            ("word/_rels/document.xml.rels", &rb),
+        ]);
+        let out = run(&[("A", &a), ("B", &b)], &DiffOptions::default());
+        assert!(
+            out.contains("b.example") && out.contains("p#1 \"Site\""),
+            "{out}"
+        );
+
+        let anchored = |name: &str| {
+            document(&format!(
+                r#"<w:p><w:hyperlink w:anchor="{name}"><w:r><w:t>Site</w:t></w:r></w:hyperlink></w:p>"#
+            ))
+        };
+        let (da, db) = (anchored("One"), anchored("Two"));
+        let a = package(&[("word/document.xml", &da)]);
+        let b = package(&[("word/document.xml", &db)]);
+        let out = run(&[("A", &a), ("B", &b)], &DiffOptions::default());
+        assert!(out.contains("anchor=Two"), "{out}");
+    }
+
+    /// A drawing is its items: a new extent or an embed that now points
+    /// at other bytes is a difference.
+    #[test]
+    fn drawings_compare_their_placement_and_target() {
+        let drawing = |cx: &str| {
+            document(&format!(
+                r#"<w:p><w:r><w:drawing><wp:inline><wp:extent cx="{cx}" cy="100"/><wp:docPr id="1" name="P"/><a:graphic><a:graphicData><a:blip r:embed="rId7"/></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#
+            ))
+        };
+        let image = |target: &str| {
+            rels(&format!(
+                r#"<Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="{target}"/>"#
+            ))
+        };
+        let (d100, d200) = (drawing("100"), drawing("200"));
+        let (one, two) = (image("media/one.png"), image("media/two.png"));
+        let parts = |doc: &str, rels: &str| {
+            package(&[
+                ("word/document.xml", doc),
+                ("word/_rels/document.xml.rels", rels),
+                ("word/media/one.png", "AAA"),
+                ("word/media/two.png", "BBB"),
+            ])
+        };
+        let a = parts(&d100, &one);
+        let out = run(
+            &[("A", &a), ("B", &parts(&d200, &one))],
+            &DiffOptions::default(),
+        );
+        assert!(out.contains("cx=200"), "{out}");
+        let out = run(
+            &[("A", &a), ("B", &parts(&d100, &two))],
+            &DiffOptions::default(),
+        );
+        assert!(out.contains("p#1 \"\"\n  - [drawing{"), "{out}");
+        assert!(out.contains("embed=→#"), "{out}");
+        let out = run(
+            &[("A", &a), ("B", &parts(&d100, &one))],
+            &DiffOptions::default(),
+        );
+        assert!(out.ends_with("no differences\n"), "{out}");
+        // The drawing's run keeps its formatting.
+        let lang = d100.replace(
+            "<w:r><w:drawing>",
+            r#"<w:r><w:rPr><w:lang w:val="en-US"/></w:rPr><w:drawing>"#,
+        );
+        let out = run(
+            &[("A", &a), ("B", &parts(&lang, &one))],
+            &DiffOptions::default(),
+        );
+        assert!(out.contains(" [lang=en-US]\n"), "{out}");
+    }
+
+    /// A style without w:type is a paragraph style.
+    #[test]
+    fn an_omitted_style_type_is_paragraph() {
+        let a = docx(
+            "",
+            r#"<w:style w:styleId="X"><w:name w:val="X"/></w:style>"#,
+            None,
+        );
+        let b = docx(
+            "",
+            r#"<w:style w:type="paragraph" w:styleId="X"><w:name w:val="X"/></w:style>"#,
+            None,
+        );
+        let out = run(&[("A", &a), ("B", &b)], &DiffOptions::default());
+        assert!(out.ends_with("no differences\n"), "{out}");
+    }
+
+    /// --full prints agreeing elements without counting them.
+    #[test]
+    fn full_context_is_not_a_difference() {
+        let a = docx(
+            r#"<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>Same</w:t></w:r></w:p>"#,
+            &body_text("BodyText", "Body Text", "<w:b/>"),
+            None,
+        );
+        let full = DiffOptions {
+            full: true,
+            ..DiffOptions::default()
+        };
+        let out = run(&[("A", &a), ("B", &a)], &full);
+        assert!(
+            out.contains("\"Same\""),
+            "--full prints the common lines: {out}"
+        );
+        assert!(out.ends_with("no differences\n"), "{out}");
+    }
+
+    /// docProps compare their meaningful fields; the save stamps do not.
+    #[test]
+    fn document_properties_compare_all_but_save_stamps() {
+        let core = |title: &str, modified: &str| {
+            format!(
+                r#"<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/"><dc:title>{title}</dc:title><dcterms:modified>{modified}</dcterms:modified></cp:coreProperties>"#
+            )
+        };
+        let doc = document("<w:p/>");
+        let with =
+            |core: &str| package(&[("word/document.xml", &doc), ("docProps/core.xml", core)]);
+        let a = with(&core("Lease", "2026-01-01T00:00:00Z"));
+        let restamped = with(&core("Lease", "2026-02-02T00:00:00Z"));
+        let out = run(&[("A", &a), ("B", &restamped)], &DiffOptions::default());
+        assert!(out.ends_with("no differences\n"), "{out}");
+        let retitled = with(&core("Sublease", "2026-01-01T00:00:00Z"));
+        let out = run(&[("A", &a), ("B", &retitled)], &DiffOptions::default());
+        assert!(out.contains("+ title \"Sublease\""), "{out}");
+    }
+
+    /// An element that moves to another namespace is a difference.
+    #[test]
+    fn a_custom_namespace_is_compared() {
+        let item = |ns: &str| format!(r#"<root xmlns="{ns}"><v>1</v></root>"#);
+        let doc = document("<w:p/>");
+        let (ia, ib) = (item("urn:a"), item("urn:b"));
+        let a = package(&[("word/document.xml", &doc), ("customXml/item1.xml", &ia)]);
+        let b = package(&[("word/document.xml", &doc), ("customXml/item1.xml", &ib)]);
+        let out = run(&[("A", &a), ("B", &b)], &DiffOptions::default());
+        assert!(out.contains("+ xmlns=urn:b"), "{out}");
+        // Office vocabularies say nothing by default.
+        let out = run(&[("A", &a), ("B", &a)], &DiffOptions::default());
+        assert!(out.ends_with("no differences\n"), "{out}");
+    }
+
+    /// A part Word rejects (a mismatched end tag) is reported, not read
+    /// as the well-formed part it resembles.
+    #[test]
+    fn malformed_xml_is_not_compared_as_a_tree() {
+        let doc = document("<w:p/>");
+        let a = package(&[
+            ("word/document.xml", &doc),
+            ("customXml/item1.xml", "<root><a>1</a></root>"),
+        ]);
+        let b = package(&[
+            ("word/document.xml", &doc),
+            ("customXml/item1.xml", "<root><a>1</b></root>"),
+        ]);
+        let out = run(&[("A", &a), ("B", &b)], &DiffOptions::default());
+        assert!(out.contains("+ malformed XML"), "{out}");
+    }
+
+    /// --raw keeps a revision mark's author, date and id.
+    #[test]
+    fn raw_keeps_revision_metadata() {
+        let ins = |author: &str| {
+            docx(
+                &format!(
+                    r#"<w:p><w:ins w:id="1" w:author="{author}" w:date="2026-01-01T00:00:00Z"><w:r><w:t>x</w:t></w:r></w:ins></w:p>"#
+                ),
+                "",
+                None,
+            )
+        };
+        let (a, b) = (ins("Ann"), ins("Bob"));
+        let out = run(&[("A", &a), ("B", &b)], &DiffOptions::default());
+        assert!(out.ends_with("no differences\n"), "{out}");
+        let raw = DiffOptions {
+            raw: true,
+            ..DiffOptions::default()
+        };
+        let out = run(&[("A", &a), ("B", &b)], &raw);
+        assert!(out.contains("author=Bob"), "{out}");
+    }
+
+    /// A header part two sections share pairs under both roles.
+    #[test]
+    fn a_shared_header_pairs_under_every_role() {
+        let head = format!(r#"<w:hdr xmlns:w="{W}"><w:p><w:r><w:t>Head</w:t></w:r></w:p></w:hdr>"#);
+        let rel = |id: &str, target: &str| {
+            format!(
+                r#"<Relationship Id="{id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="{target}"/>"#
+            )
+        };
+        let body = |last: &str| {
+            document(&format!(
+                r#"<w:p><w:pPr><w:sectPr><w:headerReference w:type="default" r:id="rId9"/></w:sectPr></w:pPr></w:p><w:sectPr><w:headerReference w:type="default" r:id="{last}"/></w:sectPr>"#
+            ))
+        };
+        let (da, ra) = (body("rId9"), rels(&rel("rId9", "header1.xml")));
+        let a = package(&[
+            ("word/document.xml", &da),
+            ("word/_rels/document.xml.rels", &ra),
+            ("word/header1.xml", &head),
+        ]);
+        let (db, rb) = (
+            body("rId10"),
+            rels(&format!(
+                "{}{}",
+                rel("rId9", "header1.xml"),
+                rel("rId10", "header2.xml")
+            )),
+        );
+        let b = package(&[
+            ("word/document.xml", &db),
+            ("word/_rels/document.xml.rels", &rb),
+            ("word/header1.xml", &head),
+            ("word/header2.xml", &head),
+        ]);
+        let out = run(&[("A", &a), ("B", &b)], &DiffOptions::default());
+        assert!(!out.contains("section 2 default header"), "{out}");
     }
 }

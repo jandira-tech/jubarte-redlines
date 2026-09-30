@@ -8684,6 +8684,12 @@ fn list_bullet_symbol_rfonts_embeds_symbol_not_body_aptos() {
 
 #[test]
 fn official_comments_lots_embeds_symbol_for_list_bullets() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; official_comments_lots_embeds_symbol_for_list_bullets measures Word's faces"
+        );
+        return;
+    }
     let path = "tests/corpus/neurotic_docx_bench/corpus/word/clean/docx/68fdec049c_docx_lots_of_comments.docx";
     let bytes = sibling_bytes!(path);
     let pdf = docx_to_pdf(&bytes).expect("convert comments-lots");
@@ -9751,6 +9757,12 @@ fn pdf_page_rule_counts(pdf: &[u8]) -> Vec<usize> {
 
 #[test]
 fn official_comments_lots_page_five_has_the_capability_table() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; official_comments_lots_page_five_has_the_capability_table measures Word's faces"
+        );
+        return;
+    }
     // Word p5 starts at the last "Compatibility" row of the 13-row matrix
     // plus the chart. Heading1 keepNext + a drawing-only chart para (no
     // extra Normal line) keep that pairing on 9 pages.
@@ -13758,6 +13770,12 @@ fn centered_table_mode14_is_not_pulled_by_the_cell_margin() {
 
 #[test]
 fn official_table_bookmark_test_two_fourth_col_sits_at_word_540() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; official_table_bookmark_test_two_fourth_col_sits_at_word_540 measures Word's faces"
+        );
+        return;
+    }
     // Word Test 2 (8.33in): four 150pt columns, R1C4 at x=540. Capping
     // 12000 twips to the 432pt measure packed C4 at ~419 (span 324).
     let path = "tests/corpus/neurotic_docx_bench/corpus/word/clean/docx/6683d1be44_table_bookmark_end.docx";
@@ -13949,6 +13967,12 @@ fn official_table_bookmark_test_one_is_thirteen_after_gated_569() {
 
 #[test]
 fn official_table_bookmark_test_one_keeps_default_108_after_mini_430() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; official_table_bookmark_test_one_keeps_default_108_after_mini_430 measures Word's faces"
+        );
+        return;
+    }
     // Test 1 is tblLayout=fixed with no tblCellMar. Word Quartz paints
     // R1C1 at x=90 (margin) because mode<15 pulls the table left by the
     // default 108-twip cell mar. Mini 430 pad=0 matched x=90 without the
@@ -14888,6 +14912,12 @@ fn official_file_146_stays_seven_pages_after_mini_114() {
 
 #[test]
 fn official_file_146_serialises_heading_starts_page_two_like_word() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; official_file_146_serialises_heading_starts_page_two_like_word measures Word's faces"
+        );
+        return;
+    }
     // Word's file_146 PDF: the first `Serialises to w:ins` heading is on
     // page 2, not page 1.
     let path = "tests/corpus/neurotic_docx_bench/corpus/word/tracking_without_comments/docx/ee628c2f6a_file_146.docx";
@@ -26925,6 +26955,12 @@ fn multiline_cell_tcmar_top_stays_flush_after_mini_464() {
 
 #[test]
 fn official_file_146_second_signoff_table_is_on_page_seven() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; official_file_146_second_signoff_table_is_on_page_seven measures Word's faces"
+        );
+        return;
+    }
     // Word p6 ends with the first Sign-off table + the next heading;
     // p7 is the duplicate EigenPal/Contributor table. Empty pBdr
     // signature lines (not after=320 — mini 300 RL −0.010) overflow
@@ -32654,6 +32690,12 @@ fn w14_reflection_and_shadow_outline_skip_body_glyphs() {
 
 #[test]
 fn official_strict01_w14_effect_paras_stay_unpainted_as_body() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; official_strict01_w14_effect_paras_stay_unpainted_as_body measures Word's faces"
+        );
+        return;
+    }
     // Word p11: Times 19.92 Online Video stays; 18pt Calibri-Bold Video
     // (shadow+outline) and 20pt Calibri Online Video (reflection+gradFill)
     // are omitted as body glyphs. CONFIDENTIAL watermark stays. 13pp.
