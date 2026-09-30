@@ -70,6 +70,11 @@ jobs:
             artifact: windows-x86_64
     runs-on: ${{ matrix.os }}
     steps:
+      # Git for Windows stops at MAX_PATH (260) without core.longpaths; the
+      # v0.10.1 checkout failed on bench fixture paths and skipped the release.
+      # tests/repo_paths_fit_windows.rs keeps tracked paths short as well.
+      - if: runner.os == 'Windows'
+        run: git config --global core.longpaths true
       - uses: actions/checkout@v7
         with:
           persist-credentials: false

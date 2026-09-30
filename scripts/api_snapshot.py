@@ -278,7 +278,11 @@ def main() -> None:
 
     out_dir = ROOT / "docs" / "api"
     out_dir.mkdir(parents=True, exist_ok=True)
-    with gzip.open(out_dir / f"jubarte-v{label}.json.gz", "wb") as gz:
+    # mtime=0 and no file name in the header: the same API gives the same
+    # bytes, so a resumed release does not dirty docs/api/.
+    with open(out_dir / f"jubarte-v{label}.json.gz", "wb") as raw, gzip.GzipFile(
+        filename="", mode="wb", fileobj=raw, mtime=0
+    ) as gz:
         gz.write(DOC_JSON.read_bytes())
     (out_dir / f"jubarte-v{label}.api.txt").write_text(
         "\n".join(sorted(set(flatten(doc)))) + "\n"
