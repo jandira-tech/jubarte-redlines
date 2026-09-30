@@ -2015,3 +2015,45 @@ fn the_normal_cascade_keeps_a_style_s_own_run_properties_in_its_record() {
         );
     }
 }
+
+/// A language the style sets only in part keeps Normal's old values for the
+/// rest in its record: `w:lang` attributes inherit one by one, like the
+/// `w:rFonts` slots. Recording the style's bare `w:val` dropped Normal's old
+/// `eastAsia` and `bidi`, so rejecting the style's change alone gave it
+/// Normal's new ones.
+#[test]
+fn the_normal_cascade_keeps_normal_s_old_language_slots_the_style_leaves_open() {
+    let caption = r#"<w:style w:type="paragraph" w:styleId="Caption"><w:name w:val="caption"/><w:basedOn w:val="Normal"/><w:rPr><w:sz w:val="18"/><w:lang w:val="fr-FR"/></w:rPr></w:style>"#;
+    let body = r#"<w:p><w:r><w:t>Body text</w:t></w:r></w:p>"#;
+    let base = docx_with_stylesheet_styles(
+        body,
+        [
+            "",
+            "",
+            "",
+            r#"<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:lang w:val="en-US" w:eastAsia="zh-CN" w:bidi="ar-SA"/>"#,
+        ],
+        caption,
+    );
+    let next = docx_with_stylesheet_styles(
+        body,
+        [
+            "",
+            "",
+            "",
+            r#"<w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:lang w:val="ru-RU" w:eastAsia="ja-JP" w:bidi="he-IL"/>"#,
+        ],
+        caption,
+    );
+    let redline = compare_documents(&base, &next, "Redline").unwrap();
+    assert_word_valid_package(&redline);
+    let style = style_xml(&redline, "Caption");
+    let record = &style[style.find("<w:rPrChange").expect("Caption record")..];
+    for want in [
+        r#"w:val="fr-FR""#,
+        r#"w:eastAsia="zh-CN""#,
+        r#"w:bidi="ar-SA""#,
+    ] {
+        assert!(record.contains(want), "{want}: {record}");
+    }
+}
