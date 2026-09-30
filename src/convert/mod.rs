@@ -3091,8 +3091,16 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
     // no docDefaults sz -> 12pt; table style 14/9pt -> 14/9pt; table style
     // 10pt (00587c73) -> 12pt. Mode 15, or
     // overrideTableStyleFontSizeAndJustification (the I_am_sharing lock,
-    // mode 14), keeps Normal's throughout.
-    let legacy = settings_compat_mode(pkg) < 15 && !settings_override_table_style_size(pkg);
+    // mode 14), keeps Normal's throughout. So does a Normal sized other
+    // than 11 or 12pt (probe tsz_*_0930: 9, 10.5, 11.5 and 14pt stay under
+    // a 14pt table style; LibreOffice's writerfilter has the same rule).
+    let normal_gives_way = !defaults.normal_run.0
+        || [11.0, 12.0]
+            .iter()
+            .any(|pt| (defaults.run.size - pt).abs() < 0.01);
+    let legacy = settings_compat_mode(pkg) < 15
+        && !settings_override_table_style_size(pkg)
+        && normal_gives_way;
     for table in tables.values_mut() {
         let size = table.run_size.or(doc_default_size).unwrap_or(10.0);
         table.run_size = (legacy && (size - 10.0).abs() > 0.01).then_some(size);

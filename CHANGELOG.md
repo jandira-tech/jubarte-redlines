@@ -129,6 +129,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 - `w:contextualSpacing` drops the space between same-style paragraphs
   inside a table cell, as it already did in the body. Before, cb4f8b4a43's
   Title lines stepped 28pt apart, not Word's 20pt.
+- Below compatibility mode 15, a table style's font size overrides the
+  Normal style's in unstyled cells only when Normal is 11 or 12pt, as in
+  Word 16. Before, it overrode any size, so the cf02 redline's 10.5pt
+  Normal cells painted at 11pt and ran to 12 pages, not Word's 11.
 - A nested table row taller than what is left of the page breaks inside
   itself, as Word breaks it, when keeping it whole would leave a quarter
   of the page empty. Rows marked `cantSplit` or with an exact height stay

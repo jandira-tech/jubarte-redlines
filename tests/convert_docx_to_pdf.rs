@@ -13441,6 +13441,59 @@ fn a_ten_point_table_style_leaves_normals_size_in_its_cells() {
 }
 
 #[test]
+fn a_table_style_overrides_normals_size_in_cells_only_at_11_or_12pt() {
+    // Word 16 probe tsz_*_0930 (legacy mode, docDefaults 11pt, Table Grid):
+    // a Normal of 9, 10.5, 11.5 or 14pt keeps its size in unstyled cells,
+    // even under a table style of 14pt; only a 12pt Normal gives way (to
+    // docDefaults' 11pt, or the style's 14pt). LibreOffice's writerfilter
+    // applies the same rule. The cf02 redline's 10.5pt Normal cells
+    // painted at 11pt and ran a page long.
+    let styles = |normal: u32, table: &str| {
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+               <w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault></w:docDefaults>\
+               <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>\
+                 <w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/><w:sz w:val=\"{normal}\"/></w:rPr></w:style>\
+               <w:style w:type=\"table\" w:styleId=\"TG\"><w:name w:val=\"Table Grid\"/>\
+                 <w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>{table}</w:style>\
+             </w:styles>"
+        )
+    };
+    let body = |rpr: &str| {
+        format!(
+            "<w:tbl><w:tblPr><w:tblStyle w:val=\"TG\"/><w:tblW w:w=\"4000\" w:type=\"dxa\"/></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid><w:tr><w:tc>\
+             <w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r>{rpr}<w:t>Cell text</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/><w:sectPr/>"
+        )
+    };
+    let sized_14 = "<w:rPr><w:sz w:val=\"28\"/></w:rPr>";
+    for (normal, table, painted) in [
+        (18, "", 18),
+        (21, "", 21),
+        (21, sized_14, 21),
+        (23, "", 23),
+        (28, "", 28),
+        (24, "", 22),
+        (24, sized_14, 28),
+    ] {
+        let styles = styles(normal, table);
+        let implicit = docx_to_pdf(&docx_with_styles(&body(""), &styles)).expect("unsized cell");
+        let explicit = docx_to_pdf(&docx_with_styles(
+            &body(&format!("<w:rPr><w:sz w:val=\"{painted}\"/></w:rPr>")),
+            &styles,
+        ))
+        .expect("sized cell");
+        assert_eq!(
+            pdf_content_streams(&implicit),
+            pdf_content_streams(&explicit),
+            "Normal sz {normal}, table rPr {table:?}: the cell must paint at sz {painted}"
+        );
+    }
+}
+
+#[test]
 fn a_merged_cell_taller_than_its_rows_keeps_the_rules_it_spans() {
     // fixtures_500 000bf661: a logo merged over two short header rows. The
     // rows' heights include their 0.5pt rules, the merged content did not,
