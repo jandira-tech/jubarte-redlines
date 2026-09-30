@@ -1769,6 +1769,15 @@ fn pair_by_role(a: PartLines, pa: &Package, b: PartLines, pb: &Package) -> (Part
 /// Header and footer part name → "section N TYPE header|footer", from the
 /// first section reference that shows it.
 fn story_roles(pkg: &Package) -> HashMap<String, String> {
+    story_roles_all(pkg)
+        .into_iter()
+        .filter_map(|(part, roles)| roles.into_iter().next().map(|r| (part, r)))
+        .collect()
+}
+
+/// Header and footer part name → every "section N TYPE header|footer" that
+/// shows it, in section order.
+fn story_roles_all(pkg: &Package) -> HashMap<String, Vec<String>> {
     let parse = |name: &str| -> Option<(Dom, NodeId)> {
         let e = pkg.entries.iter().find(|e| e.name == name)?;
         let xml = decode_xml(&e.data)?;
@@ -1836,7 +1845,8 @@ fn story_roles(pkg: &Package) -> HashMap<String, String> {
             if let Some(part) = targets.get(&attr(&dom, r, "id")) {
                 roles
                     .entry(part.clone())
-                    .or_insert_with(|| format!("section {} {ty} {kind}", i + 1));
+                    .or_insert_with(Vec::new)
+                    .push(format!("section {} {ty} {kind}", i + 1));
             }
         }
     }

@@ -626,3 +626,92 @@ fn reject_resyncs_a_linked_character_style_to_its_paragraph_styles_effective_rpr
         assert_eq!(style_props(&xml, id, "rPr"), want, "{id}");
     }
 }
+
+/// R29's level is the one Word numbers the style with: a numbering style
+/// link (`w:numStyleLink` on the abstract or the num) borrows the linked
+/// abstract's levels, as rendering does; an explicit `numId=0` stops the
+/// search, so an inherited list says nothing; an ilvl its definition never
+/// defines falls back to the nearest lower one (`resolve_ilvl`); a full
+/// `lvlOverride/w:lvl` without pPr replaces the abstract level with no
+/// properties at all.
+#[test]
+fn reject_of_a_numbered_style_record_reads_the_level_word_numbers_with() {
+    let w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    let old = |num: &str, body: &str| {
+        format!(
+            r#"<w:pPr><w:numPr>{num}</w:numPr><w:contextualSpacing/><w:pPrChange w:id="1" {REV}><w:pPr><w:numPr>{num}</w:numPr>{body}<w:contextualSpacing/></w:pPr></w:pPrChange></w:pPr>"#
+        )
+    };
+    let ind = |left: u16| format!(r#"<w:ind w:left="{left}" w:hanging="360"/>"#);
+    let style = |id: &str, based: &str, ppr: &str| {
+        format!(
+            r#"<w:style w:type="paragraph" w:styleId="{id}"><w:name w:val="{id}"/><w:basedOn w:val="{based}"/>{ppr}</w:style>"#
+        )
+    };
+    let styles = format!(
+        r#"<w:styles xmlns:w="{w}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Listed"><w:name w:val="Listed"/><w:basedOn w:val="Normal"/><w:pPr><w:numPr><w:numId w:val="1"/></w:numPr></w:pPr></w:style>{}{}{}{}{}</w:styles>"#,
+        style(
+            "AbstractLink",
+            "Normal",
+            &old(r#"<w:numId w:val="3"/>"#, &ind(360))
+        ),
+        style(
+            "NumLink",
+            "Normal",
+            &old(r#"<w:numId w:val="4"/>"#, &ind(360))
+        ),
+        style(
+            "Unnumbered",
+            "Listed",
+            &old(r#"<w:numId w:val="0"/>"#, &ind(360))
+        ),
+        style(
+            "ThirdLevel",
+            "Normal",
+            &old(r#"<w:ilvl w:val="2"/><w:numId w:val="1"/>"#, &ind(720)),
+        ),
+        style(
+            "EmptyOverride",
+            "Normal",
+            &old(r#"<w:numId w:val="5"/>"#, &ind(360))
+        ),
+    );
+    let level = |ilvl: u8, left: u16| {
+        format!(
+            r#"<w:lvl w:ilvl="{ilvl}"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="-"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="{left}" w:hanging="360"/></w:pPr></w:lvl>"#
+        )
+    };
+    let numbering = format!(
+        r#"<w:numbering xmlns:w="{w}"><w:abstractNum w:abstractNumId="0">{}{}</w:abstractNum><w:abstractNum w:abstractNumId="1"><w:numStyleLink w:val="OutlineList"/></w:abstractNum><w:abstractNum w:abstractNumId="2"><w:styleLink w:val="OutlineList"/>{}</w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num><w:num w:numId="3"><w:abstractNumId w:val="1"/></w:num><w:num w:numId="4"><w:numStyleLink w:val="OutlineList"/></w:num><w:num w:numId="5"><w:abstractNumId w:val="0"/><w:lvlOverride w:ilvl="0"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/></w:lvl></w:lvlOverride></w:num></w:numbering>"#,
+        level(0, 360),
+        level(1, 720),
+        level(0, 360),
+    );
+    let rejected = reject_revisions(&docx_with(
+        r#"<w:p><w:r><w:t>Text</w:t></w:r></w:p>"#,
+        &[styles_part(&styles), numbering_part(&numbering)],
+    ))
+    .unwrap();
+    assert_word_valid_package(&rejected);
+    let xml = part_string(&rejected, "word/styles.xml").unwrap();
+    let kept = "ind(hanging=360,left=360)";
+    let wrong: Vec<String> = [
+        ("AbstractLink", false),
+        ("NumLink", false),
+        ("Unnumbered", true),
+        ("ThirdLevel", false),
+        ("EmptyOverride", true),
+    ]
+    .into_iter()
+    .filter_map(|(id, keeps)| {
+        let props = style_props(&xml, id, "pPr");
+        let right = if keeps {
+            props.iter().any(|p| p == kept)
+        } else {
+            !props.iter().any(|p| p.starts_with("ind("))
+        };
+        (!right).then(|| format!("{id} (keeps ind: {keeps}): {props:?}"))
+    })
+    .collect();
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
