@@ -481,7 +481,7 @@ fn with_pages<T>(
             run_faces.extend(latin_font_names(&text));
         }
     }
-    let has_cjk = xml.chars().any(is_cjk);
+    let has_cjk = xml.chars().any(takes_east_asian_face);
     font::add_installed_faces(&mut embedded, &table, &family_names, &run_faces, has_cjk);
     if has_cjk {
         font::add_cjk_fallbacks(&mut embedded);
@@ -3688,6 +3688,9 @@ fn script_glyph_fallback(fonts: &Fonts, bold: bool, text: &str) -> Option<FaceRe
     if text.chars().any(is_thaana) {
         return fonts.thaana_glyph_fallback(bold);
     }
+    if text.chars().any(is_hangul) {
+        return fonts.hangul_glyph_fallback(bold);
+    }
     fonts
         .cjk_glyph_fallback(bold)
         .filter(|_| text.chars().any(is_cjk))
@@ -3717,6 +3720,23 @@ fn is_cjk(c: char) -> bool {
     )
 }
 
+/// Hangul syllables and jamo outside `is_cjk`'s blocks (the compatibility
+/// jamo U+3130..318F are inside it).
+fn is_hangul(c: char) -> bool {
+    matches!(
+        c,
+        '\u{1100}'..='\u{11FF}' | '\u{A960}'..='\u{A97F}' | '\u{AC00}'..='\u{D7FF}'
+    )
+}
+
+/// A character Word paints in the run's East Asian face: ideographs, kana
+/// and Hangul (the korean_japanese_conference_form title's "발표" is 맑은
+/// 고딕, its eastAsia face, not the Yu Mincho its ascii face names). Line
+/// breaking and Latin/CJK spacing keep `is_cjk`.
+fn takes_east_asian_face(c: char) -> bool {
+    is_cjk(c) || is_hangul(c)
+}
+
 fn paint_family<'a>(style: &'a RunStyle, text: &str) -> &'a str {
     // w:hint="eastAsia" decides only characters either script may own
     // (curly quotes, dashes, symbols); Latin letters and digits keep the
@@ -3724,9 +3744,11 @@ fn paint_family<'a>(style: &'a RunStyle, text: &str) -> &'a str {
     // Letters of any other script keep it too (006ad742's hinted Cyrillic
     // "гарантиране" is Arial in Word, not the East Asian face).
     if let Some(ea) = style.family_ea.as_deref()
-        && (text.chars().any(is_cjk)
+        && (text.chars().any(takes_east_asian_face)
             || (style.hint == FontHint::EastAsia
-                && !text.chars().any(|c| c.is_alphanumeric() && !is_cjk(c))
+                && !text
+                    .chars()
+                    .any(|c| c.is_alphanumeric() && !takes_east_asian_face(c))
                 && !text.is_ascii()))
     {
         return ea;
@@ -7693,7 +7715,9 @@ fn face_lacks_ink(face: &Face, text: &str) -> bool {
 /// .notdef-wide box it measures, whatever face paints it.
 fn ink_face(fonts: &Fonts, style: &RunStyle, text: &str) -> FaceRef {
     let fid = fonts.resolve(paint_family(style, text), style.bold, style.italic);
-    let script = text.chars().any(|c| is_rtl_char(c) || is_cjk(c));
+    let script = text
+        .chars()
+        .any(|c| is_rtl_char(c) || takes_east_asian_face(c));
     if !script || !face_lacks_ink(fonts.get(fid), text) {
         return fid;
     }
@@ -11706,8 +11730,10 @@ fn collect_runs_in(
 /// punctuation stay with the piece before them.
 fn script_pieces<'t>(style: &RunStyle, text: &'t str) -> Option<Vec<&'t str>> {
     if style.family_ea.is_none()
-        || !text.chars().any(is_cjk)
-        || !text.chars().any(|c| c.is_alphanumeric() && !is_cjk(c))
+        || !text.chars().any(takes_east_asian_face)
+        || !text
+            .chars()
+            .any(|c| c.is_alphanumeric() && !takes_east_asian_face(c))
     {
         return None;
     }
@@ -11715,7 +11741,7 @@ fn script_pieces<'t>(style: &RunStyle, text: &'t str) -> Option<Vec<&'t str>> {
     let mut start = 0;
     let mut class: Option<bool> = None;
     for (i, c) in text.char_indices() {
-        let this = if is_cjk(c) {
+        let this = if takes_east_asian_face(c) {
             Some(true)
         } else if c.is_alphanumeric() {
             Some(false)
@@ -25214,6 +25240,7 @@ impl<'a> Layout<'a> {
             |cell: &TableCell| cell_content_height(self.fonts, cell, col_w, self.space_for_ul);
         let (mut head, mut tail) = (Vec::new(), Vec::new());
         let (mut any_head, mut any_tail) = (false, false);
+        let mut starved = false;
         let mut nested_broke = false;
         for cell in row {
             let mut k = 0;
@@ -25308,11 +25335,15 @@ impl<'a> Layout<'a> {
             if !blank {
                 any_head |= k > 0 || broke;
                 any_tail |= k < cell.paras.len();
+                // A cell with nothing on this page moves the row whole
+                // (starve_top/center_0930 probes; English b 5f8a5a4c8e44's
+                // three-line first cell took its one-line neighbours along).
+                starved |= k == 0 && !broke && !cell.paras.is_empty();
             }
             head.push(h);
             tail.push(t);
         }
-        (any_head && any_tail).then_some((head, tail, nested_broke))
+        (any_head && any_tail && !starved).then_some((head, tail, nested_broke))
     }
 
     /// A cell paragraph cut after the lines that fit in `left` points:
@@ -26950,13 +26981,18 @@ fn mirror_bracket(c: char, neutral: bool) -> char {
     }
 }
 
+/// A tab is not trailing space: it ends on its stop and fills the line up
+/// to it (cb4f8b4a43's centred "Date:" and 14 tabs sit 3.6pt in, as Word
+/// centres the 10080 twips they reach), so the scan stops at one.
 fn trailing_ws_pt(fonts: &Fonts, line: &[TextRun]) -> f32 {
     let mut extra = 0.0;
     for run in line.iter().rev() {
         let fid = fonts.resolve(&run.style.family, run.style.bold, run.style.italic);
         let face = fonts.get(fid);
         let paint = run.style.layout_size();
-        let trimmed = run.text.trim_end_matches(char::is_whitespace);
+        let trimmed = run
+            .text
+            .trim_end_matches(|c: char| c.is_whitespace() && c != '\t');
         if trimmed.len() < run.text.len() {
             extra += face.width_pt(&run.text[trimmed.len()..], paint);
         }

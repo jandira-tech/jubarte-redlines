@@ -106,6 +106,19 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   painted in Batang when the font table calls it roman, and in Malgun
   Gothic otherwise, as Word 16 paints it. Before, it fell back to Microsoft
   YaHei, which has no Hangul, so the text was lost.
+- Hangul in a run whose fonts are named only for Latin text is painted in
+  the run's East Asian face, as ideographs and kana already were. With
+  an empty theme `a:ea` and a ko-KR East Asian language, that face is
+  the theme's Hang script font. Before, the Latin face drew nothing for
+  the syllables: the docxide suite's Korean conference form lost "발표"
+  from its title.
+- Trailing tabs count toward a centred or right-aligned line; only
+  trailing spaces hang past it. Before, the tabs were measured as glyphs
+  and taken off, so cb4f8b4a43's centred "Date:" and its 14 tabs sat
+  61pt in from the margin, not 3.6pt.
+- A table row moves to the next page whole when one of its cells can put
+  nothing on the page, as Word 16 does whatever the row's vertical
+  alignment. Before, the other cells' first lines stayed behind.
 - A nested table row taller than what is left of the page breaks inside
   itself, as Word breaks it, when keeping it whole would leave a quarter
   of the page empty. Rows marked `cantSplit` or with an exact height stay

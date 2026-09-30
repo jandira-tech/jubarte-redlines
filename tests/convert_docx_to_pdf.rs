@@ -41185,3 +41185,130 @@ fn a_centred_or_bottom_row_splits_at_the_page_end_like_any_row() {
         );
     }
 }
+
+#[test]
+fn hangul_in_a_run_that_names_only_latin_faces_paints_in_the_hang_script_font() {
+    // docxide suite korean_japanese_conference_form: the title's "발표" run
+    // names Yu Mincho for ascii/hAnsi and no eastAsia face, so it inherits
+    // the docDefaults' minorEastAsia. The theme's a:ea is empty and the
+    // eastAsia language is ko-KR, so the face is the Hang script font, 맑은
+    // 고딕. Our title lost the two syllables: Yu Mincho has no Hangul.
+    if !word_dfonts_available() {
+        return;
+    }
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:docDefaults><w:rPrDefault><w:rPr>\
+             <w:rFonts w:asciiTheme=\"minorHAnsi\" w:eastAsiaTheme=\"minorEastAsia\" w:hAnsiTheme=\"minorHAnsi\"/>\
+             <w:lang w:val=\"en-US\" w:eastAsia=\"ko-KR\"/>\
+           </w:rPr></w:rPrDefault></w:docDefaults>\
+           <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+         </w:styles>";
+    let theme = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <a:theme xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\">\
+           <a:themeElements><a:fontScheme name=\"Office\">\
+             <a:majorFont><a:latin typeface=\"맑은 고딕\"/><a:ea typeface=\"\"/><a:cs typeface=\"\"/>\
+               <a:font script=\"Hang\" typeface=\"맑은 고딕\"/></a:majorFont>\
+             <a:minorFont><a:latin typeface=\"맑은 고딕\"/><a:ea typeface=\"\"/><a:cs typeface=\"\"/>\
+               <a:font script=\"Jpan\" typeface=\"Yu Mincho\"/>\
+               <a:font script=\"Hang\" typeface=\"맑은 고딕\"/></a:minorFont>\
+           </a:fontScheme></a:themeElements>\
+         </a:theme>";
+    let body = "<w:p><w:r><w:rPr>\
+         <w:rFonts w:ascii=\"Yu Mincho\" w:hAnsi=\"Yu Mincho\" w:hint=\"eastAsia\"/><w:b/>\
+         <w:sz w:val=\"40\"/></w:rPr><w:t>발표</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&docx_with_styles_and_theme(body, styles, theme)).expect("hangul");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("/MalgunGothicBold"),
+        "the Hang script face paints the run"
+    );
+    for code in ["<BC1C>", "<D45C>"] {
+        assert!(text.contains(code), "the glyph for U+{code} is drawn");
+    }
+}
+
+#[test]
+fn trailing_tabs_fill_a_centred_line_and_do_not_hang_like_spaces() {
+    // cb4f8b4a43's Heading 1 (jc=center): "Date:" and 25 tabs, then text.
+    // Word lays 14 tabs on the first line, to the 10080 stop of a 10224
+    // twip line, and centres that: "Date:" sits 3.6pt in. Trailing spaces
+    // hang past a centred line, trailing tabs do not; we measured the tabs
+    // as glyphs and took them off, and "Date:" moved 61pt in.
+    let run = "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/></w:rPr>";
+    let tabs: String = (0..25)
+        .map(|_| format!("<w:r>{run}<w:tab/></w:r>"))
+        .collect();
+    let body = format!(
+        "<w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr><w:r>{run}<w:t>Date:</w:t></w:r>{tabs}\
+         <w:r>{run}<w:t>Minutes Thursday morning Jan 13, 2014.</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1008\" w:right=\"1008\" w:bottom=\"1008\" w:left=\"1008\"/></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("centred tabs");
+    let hay = String::from_utf8_lossy(&pdf);
+    // Letters paint one by one; "D" is only in "Date:".
+    let date = pdf_cm_tj_xy(&hay, "D");
+    assert!(
+        date.first().is_some_and(|p| (p.0 - 54.0).abs() < 1.0),
+        "Date: centres on the tabs' 504pt: {date:?}"
+    );
+}
+
+#[test]
+fn a_row_moves_whole_when_one_of_its_cells_fits_nothing_on_the_page() {
+    // English holdout b 5f8a5a4c8e44: the "Together in the reduction of
+    // fires" row, its first cell three lines, the others one. We left the
+    // one-line cells on page 1 and the first cell's lines on page 2; Word
+    // moves the row. Word 16 probes (starve_top/center_0930): 28pt left,
+    // the first cell's first line needs 40 (20pt before + a 20pt exact
+    // line), the others 20; the whole row starts page 2, whatever vAlign.
+    let p = |t: &str, before: u32| {
+        format!(
+            "<w:p><w:pPr><w:spacing w:before=\"{before}\" w:after=\"0\" w:line=\"400\" \
+             w:lineRule=\"exact\"/></w:pPr><w:r><w:t>{t}</w:t></w:r></w:p>"
+        )
+    };
+    let fill: String = (0..31).map(|i| p(&format!("Filler{i}"), 0)).collect();
+    for va in ["top", "center"] {
+        let tc = |body: String| {
+            format!(
+                "<w:tc><w:tcPr><w:tcW w:w=\"3000\" w:type=\"dxa\"/><w:vAlign w:val=\"{va}\"/>\
+                 </w:tcPr>{body}</w:tc>"
+            )
+        };
+        let row = format!(
+            "{}{}{}",
+            tc(format!(
+                "{}{}{}",
+                p("Aone", 400),
+                p("Atwo", 0),
+                p("Athree", 0)
+            )),
+            tc(p("Bcell", 0)),
+            tc(p("Ccell", 0))
+        );
+        let body = format!(
+            "{fill}<w:tbl><w:tblPr><w:tblW w:w=\"9000\" w:type=\"dxa\"/><w:tblCellMar>\
+             <w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar>\
+             </w:tblPr><w:tblGrid><w:gridCol w:w=\"3000\"/><w:gridCol w:w=\"3000\"/>\
+             <w:gridCol w:w=\"3000\"/></w:tblGrid><w:tr>{row}</w:tr></w:tbl>{}\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+             <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+            p("After", 0)
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("starved row");
+        assert_eq!(
+            page_with_text(&pdf, "Filler30"),
+            Some(0),
+            "{va}: the fillers fill page 1"
+        );
+        for cell in ["Aone", "Bcell", "Ccell"] {
+            assert_eq!(
+                page_with_text(&pdf, cell),
+                Some(1),
+                "{va}: {cell} moves with the row"
+            );
+        }
+    }
+}

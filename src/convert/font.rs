@@ -1186,6 +1186,13 @@ impl<'a> Fonts<'a> {
             .map(FaceRef::Embedded)
     }
 
+    /// Word's Hangul face (Malgun Gothic) for a glyph the resolved face
+    /// lacks: YaHei, the CJK fallback, has no Hangul.
+    pub(crate) fn hangul_glyph_fallback(&self, bold: bool) -> Option<FaceRef> {
+        self.embedded_index(CJK_FALLBACK_KO, bold, false)
+            .map(FaceRef::Embedded)
+    }
+
     fn embedded_index(&self, family: &str, bold: bool, italic: bool) -> Option<u16> {
         let exact = FaceKey {
             family: family.to_ascii_lowercase(),
