@@ -139,6 +139,9 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   `w:ptab` relative to the margin spans the margins, as Word prints it.
   54f4bb7's centred footer frame printed "Metadata … Page 2 of 28" as a
   narrow block in the page centre (42.7/11.1 to 54.6/21.3).
+- The `w:br` ending a table-cell line no longer sizes a line that holds
+  text. 246c7fcf50's white 24pt break after a 16pt title made the title
+  line 24pt tall and pushed the header down (43.9/24.1 to 49.7/28.7).
 - Rejecting a redline gives back what a changed style inherited in the
   original. Word's Reject All reads a style's old record against its
   built-in defaults, so a record holding only the style's own properties

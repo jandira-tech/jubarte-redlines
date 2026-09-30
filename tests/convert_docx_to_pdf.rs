@@ -4706,6 +4706,34 @@ fn a_character_styles_vanish_hides_its_runs() {
 }
 
 #[test]
+fn a_line_breaks_own_size_does_not_raise_a_cell_line() {
+    // Word sizes a line by its text, not by the run holding its w:br
+    // (246c7fcf50's header cell: a white 24pt break after the 16pt title
+    // leaves the title's line at the header distance, the next line 18.4pt
+    // under it). The body already skips whitespace runs.
+    let ys = |break_size: u32| {
+        let body = format!(
+            "<w:tbl><w:tblGrid><w:gridCol w:w=\"6000\"/></w:tblGrid>\
+               <w:tr><w:tc><w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/></w:tcPr>\
+                 <w:p><w:r><w:rPr><w:sz w:val=\"32\"/></w:rPr><w:t>Big</w:t></w:r>\
+                 <w:r><w:rPr><w:sz w:val=\"{break_size}\"/></w:rPr><w:br/></w:r>\
+                 <w:r><w:rPr><w:sz w:val=\"22\"/></w:rPr><w:t>Small</w:t></w:r></w:p>\
+               </w:tc></w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p>{}",
+            letter_body_sect()
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("cell break");
+        ["Big", "Small", "After"].map(|t| pdf_glyph_text_xy(&pdf, t).expect(t).1)
+    };
+    let (plain, big_break) = (ys(32), ys(48));
+    for (i, (a, b)) in plain.iter().zip(&big_break).enumerate() {
+        assert!(
+            (a - b).abs() < 0.05,
+            "line {i}: the 24pt break moved it; plain={plain:?} big_break={big_break:?}"
+        );
+    }
+}
+
+#[test]
 fn a_merged_cells_content_grows_the_last_row_it_spans() {
     // fixtures_500 000bf661: a header table whose first row (trHeight 703)
     // starts vertical merges holding four text lines; the second row

@@ -8045,10 +8045,18 @@ fn cell_para_line_box(fonts: &Fonts, para: &CellPara) -> (f32, f32) {
 
 /// A wrapped cell line's (size, face, line box): Word sizes each line by
 /// its own runs, so 11pt text wrapped under 03db4d3e's 72pt "call" steps
-/// at 11pt. A line with no ink keeps its paragraph's box.
+/// at 11pt. A line with no ink keeps its paragraph's box. Neither
+/// whitespace nor the `w:br` ending the line sizes an inked line:
+/// 246c7fcf50's white 24pt break after a 16pt title leaves Word's title
+/// line 16pt tall (a break alone on its line does size it, 00accd5b).
 fn cell_line_metrics(fonts: &Fonts, para: &CellPara, line: &[TextRun]) -> (f32, FaceRef, f32) {
+    let inked: Vec<TextRun> = line
+        .iter()
+        .filter(|r| !r.text.trim().is_empty())
+        .cloned()
+        .collect();
     let runs = if line.iter().any(|r| !r.text.trim().is_empty()) {
-        line
+        &inked[..]
     } else {
         &para.runs
     };
