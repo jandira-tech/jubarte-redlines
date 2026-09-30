@@ -101,6 +101,14 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   Word's three pages.
 - A float that leaves no room on its line in a multi-column section moves
   the text to the next column, not to the next page.
+- A fixed-layout table whose cell widths run past 22 inches ends 22
+  inches right of the margin, as Word ends it. The column that crosses
+  that line keeps what is left, and each later one about 1.4pt, so its
+  text stacks a character, or a space, per line. 2b479f55f8's landscape
+  process table now makes that document 32 pages (Word 33, was 24).
+- A square-wrapped float whose top sits below its anchor's first line no
+  longer pushes that line to the next page.
+- A header picture with no height adds no line under the header text.
 - The review fixes for PR #247:
   - A run's `w:rPr` blocks apply `w:vanish` in order, so a later
     character style that turns it off shows the run again.

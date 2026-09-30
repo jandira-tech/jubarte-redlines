@@ -3045,6 +3045,40 @@ fn a_top_and_bottom_float_is_held_on_the_page_and_sends_its_text_on() {
 }
 
 #[test]
+fn a_square_float_below_its_anchors_first_line_leaves_that_line_on_the_page() {
+    // 2b479f55f8 vs 63db0bebfc: the cover's last paragraph anchors a
+    // full-width square box 360pt under its top; the box ends at the
+    // footer, the paragraph's line sits far above it. Word keeps both on
+    // page one; we sent them to a page of their own, as if the line had to
+    // go under the box.
+    let img = blip(
+        &(425 * 12700).to_string(),
+        &(300 * 12700).to_string(),
+        "<wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:simplePos x=\"0\" y=\"0\"/>\
+           <wp:positionH relativeFrom=\"column\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>2540000</wp:posOffset></wp:positionV>\
+           <wp:wrapSquare wrapText=\"bothSides\"/>",
+        "</wp:anchor>",
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&format!(
+        "<w:p><w:pPr><w:spacing w:after=\"5000\"/></w:pPr><w:r><w:t>Fill</w:t></w:r></w:p>\
+         <w:p><w:r>{img}</w:r><w:r><w:t>Anchor</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/>\
+           <w:pgMar w:top=\"1417\" w:right=\"1701\" w:bottom=\"1417\" w:left=\"1701\"/></w:sectPr>"
+    )))
+    .expect("low float");
+    assert_eq!(page_with_text(&pdf, "Anchor"), Some(0), "the anchor stays");
+    let (_, anchor_y) = pdf_glyph_text_xy(&pdf, "Anchor").expect("anchor paints");
+    let (_, y, _, h) = *pdf_image_boxes(&pdf).first().expect("the picture paints");
+    assert!(
+        y + h < anchor_y - 150.0 && y > 0.0,
+        "the box hangs 200pt under its paragraph, on the page: {y}+{h}, anchor {anchor_y}"
+    );
+}
+
+#[test]
 fn a_square_float_wider_than_the_page_starts_at_its_left_edge() {
     // Word probe h5: a 615pt picture on a 595pt page at column x -71.5pt
     // runs from x 0 (pulled left to fit, never past the left edge).
@@ -40848,4 +40882,77 @@ fn a_reply_takes_its_parent_s_balloon_fate() {
     ))
     .expect("live parent");
     assert_eq!(pdf_notes(&live).len(), 2, "a live parent keeps its reply");
+}
+
+#[test]
+fn a_fixed_table_past_22_inches_squeezes_its_last_columns_to_the_limit() {
+    // 2b479f55f8's landscape process table: first-row tcW add up to 1989pt
+    // and Word ends the table 1584pt (22in, its widest page) right of the
+    // margin. The column that crosses the limit keeps what is left and
+    // each later one about 1.4pt, so its words break a character a line.
+    // Word, same body: Top 78.2, After 400.1 (fits: After 101.1); the
+    // four 600pt columns end at 72, 672, 1272, 1654.6 and 1656.
+    let rpr = "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/><w:sz w:val=\"20\"/></w:rPr>";
+    let row = |w: u32| {
+        let cells: String = ["Top", "Mid", "Far", "Customer contact spreadsheet"]
+            .iter()
+            .map(|text| {
+                format!(
+                    "<w:tc><w:tcPr><w:tcW w:w=\"{w}\" w:type=\"dxa\"/></w:tcPr>\
+                     <w:p><w:pPr><w:spacing w:before=\"120\" w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/>{rpr}</w:pPr>\
+                       <w:r>{rpr}<w:t>{text}</w:t></w:r></w:p></w:tc>"
+                )
+            })
+            .collect();
+        format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblLayout w:type=\"fixed\"/>\
+               <w:tblCellMar><w:left w:w=\"108\" w:type=\"dxa\"/><w:right w:w=\"108\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr>\
+               <w:tblGrid>{}</w:tblGrid><w:tr>{cells}</w:tr></w:tbl>\
+             <w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\"/></w:pPr><w:r><w:t>After</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>",
+            format!("<w:gridCol w:w=\"{w}\"/>").repeat(4)
+        )
+    };
+    let top_to_after = |w: u32| {
+        let pdf = docx_to_pdf(&minimal_docx_body(&row(w))).expect("fixed table");
+        let (_, top) = pdf_glyph_text_xy(&pdf, "Top").expect("Top paints");
+        let (_, after) = pdf_glyph_text_xy(&pdf, "After").expect("After paints");
+        top - after
+    };
+    let (wide, fits) = (top_to_after(12000), top_to_after(2000));
+    assert!(
+        (wide - 321.9).abs() < 6.0,
+        "the squeezed last column stacks its characters: Top-to-After {wide}, Word 321.9"
+    );
+    assert!(
+        (fits - 22.8).abs() < 3.0,
+        "a table within 22in keeps its tcW: Top-to-After {fits}, Word 22.8"
+    );
+}
+
+#[test]
+fn a_flat_picture_after_header_text_adds_no_line() {
+    // e0fe3a82eb's first-page header: "School of Pure & Applied Sciences"
+    // then a 508pt connector 0pt tall. Word's body starts where the
+    // text's lines end; the trailing-picture line (PR #247 review) set it
+    // a line lower for a picture with no height.
+    let flat = full_width_dot().replace("cy=\"914400\"", "cy=\"0\"");
+    let body_y = |tail: &str| {
+        let lines: String = (1..=4)
+            .map(|i| format!("<w:p><w:r><w:t>Line{i}</w:t></w:r></w:p>"))
+            .collect();
+        let pdf = docx_to_pdf(&header_part_docx(&format!(
+            "{lines}<w:p><w:r><w:t>Lead</w:t></w:r>{tail}</w:p>"
+        )))
+        .expect("tall header");
+        pdf_glyph_text_xy(&pdf, "HdrImgBodyX")
+            .expect("body paints")
+            .1
+    };
+    let (bare, flat_y) = (body_y(""), body_y(&flat));
+    assert!(
+        (bare - flat_y).abs() < 0.5,
+        "the flat picture keeps the body in place: {flat_y} vs {bare}"
+    );
 }

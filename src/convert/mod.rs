@@ -7742,8 +7742,48 @@ fn para_is_empty_toc_field(dom: &Dom, para: NodeId) -> bool {
 }
 
 /// Column widths as laid out: Word's autofit on the cells' content for a
-/// grid another tool wrote, else `table_col_widths`.
+/// grid another tool wrote, else `table_col_widths`; never past Word's
+/// 22in limit (`clamp_to_word_max_width`).
 fn resolved_col_widths(
+    fonts: &Fonts,
+    cols: &[f32],
+    rows: &[Vec<TableCell>],
+    geom: &TableGeom,
+    avail: f32,
+) -> Vec<f32> {
+    clamp_to_word_max_width(
+        unclamped_col_widths(fonts, cols, rows, geom, avail),
+        geom.tbl_ind,
+    )
+}
+
+/// Word's widest page, 22in: no table ends further right of the margin.
+const WORD_MAX_TABLE_RIGHT: f32 = 1584.0;
+/// What Word leaves each column past the 22in limit.
+const WORD_SQUEEZED_COL: f32 = 1.4;
+
+/// Word ends a table 22in right of the margin, wherever its indent starts
+/// it. The column that crosses the limit keeps what is left before it, and
+/// each later one keeps 1.4pt (2b479f55f8's 1989pt process table ends at
+/// 1620 = margin 36 + 1584 with tblInd 7pt or none; probes over a 72pt
+/// margin end at 1656, their last 600pt column 1.4pt wide).
+fn clamp_to_word_max_width(mut widths: Vec<f32>, tbl_ind: f32) -> Vec<f32> {
+    let limit = WORD_MAX_TABLE_RIGHT - tbl_ind;
+    if widths.iter().sum::<f32>() <= limit {
+        return widths;
+    }
+    let n = widths.len();
+    let (mut edge, mut prev) = (0.0_f32, 0.0_f32);
+    for (i, w) in widths.iter_mut().enumerate() {
+        edge += *w;
+        let right = edge.min(limit - (n - 1 - i) as f32 * WORD_SQUEEZED_COL);
+        *w = (right - prev).max(0.0);
+        prev = right;
+    }
+    widths
+}
+
+fn unclamped_col_widths(
     fonts: &Fonts,
     cols: &[f32],
     rows: &[Vec<TableCell>],
@@ -11394,10 +11434,11 @@ fn fixed_width_cell(dom: &Dom, table: NodeId, cell: NodeId) -> bool {
 
 /// A cell paragraph's (first line, other lines) wrap widths inside the
 /// cell's text width: its w:ind left/right narrow or (negative, 00bbcc14)
-/// widen it; the signed first-line indent moves the first line only.
+/// widen it; the signed first-line indent moves the first line only. No
+/// room at all still sets a character a line (see `cell_wrap_width`).
 fn cell_para_measure(style: &ParaStyle, wrap_w: f32) -> (f32, f32) {
-    let rest = (wrap_w - style.indent_left - style.indent_right).max(8.0);
-    ((rest - style.indent_first).max(8.0), rest)
+    let rest = (wrap_w - style.indent_left - style.indent_right).max(0.01);
+    ((rest - style.indent_first).max(0.01), rest)
 }
 
 /// A cell paragraph's (first, rest) wrap widths. A hanging list marker
@@ -11422,11 +11463,15 @@ fn cell_para_widths(fonts: &Fonts, para: &CellPara, wrap_w: f32) -> (f32, f32) {
     }
 }
 
+/// A column narrower than its margins leaves no room at all: Word still
+/// sets a character a line (2b479f55f8's 1.3pt grid column under 10.8pt of
+/// margins stacks "Customer contact spreadsheet" 26 lines tall), so the
+/// width only stays above zero for the character break to run.
 fn cell_wrap_width(cell: &TableCell, avail: f32) -> f32 {
     if cell.nowrap {
         10_000.0
     } else {
-        (avail - cell.pad_l - cell.pad_r).max(8.0)
+        (avail - cell.pad_l - cell.pad_r).max(0.01)
     }
 }
 
@@ -17646,10 +17691,13 @@ fn hf_pic_owns_line(dom: &Dom, para: NodeId, sheet: &StyleSheet, text_w: f32) ->
 }
 
 /// A chrome paragraph's text comes first and its later inline pictures
-/// fill a line: Word wraps them to the line under the text.
+/// fill a line: Word wraps them to the line under the text. Pictures with
+/// no height open no line (e0fe3a82eb's 0pt connector under its header
+/// text).
 fn hf_pic_trails_line(dom: &Dom, para: NodeId, sheet: &StyleSheet, text_w: f32) -> bool {
     let mut seen_text = false;
     let mut pics_w = 0.0_f32;
+    let mut pics_h = 0.0_f32;
     for n in dom.descendants(para, None) {
         if !dom.ancestors(n, Some(&W::name("txbxContent"))).is_empty() {
             continue;
@@ -17664,14 +17712,15 @@ fn hf_pic_trails_line(dom: &Dom, para: NodeId, sheet: &StyleSheet, text_w: f32) 
             seen_text = true;
         } else if seen_text
             && dom.name_is(n, &WP::name("inline"))
-            && let Some(cx) = first_named_any(dom, n, "extent")
-                .and_then(|ext| attr_any(dom, ext, "cx"))
-                .and_then(|v| v.parse::<f32>().ok())
+            && let Some(ext) = first_named_any(dom, n, "extent")
+            && let Some(cx) = attr_any(dom, ext, "cx").and_then(|v| v.parse::<f32>().ok())
         {
             pics_w += cx / 12700.0;
+            let cy = attr_any(dom, ext, "cy").and_then(|v| v.parse::<f32>().ok());
+            pics_h = pics_h.max(cy.unwrap_or(0.0) / 12700.0);
         }
     }
-    if pics_w <= 0.0 {
+    if pics_w <= 0.0 || pics_h <= 0.0 {
         return false;
     }
     let (pstyle, prun) = para_base(dom, para, sheet, None);
@@ -20096,15 +20145,19 @@ impl<'a> Layout<'a> {
 
     /// A paragraph-relative square float with no room beside it, or a
     /// top-and-bottom one, whose foot, held on the page, leaves the
-    /// paragraph's first line (`first` pt) no room under it: Word starts the
-    /// paragraph and its float on the next page (probes h1, t3; 3bfcb371e2's
-    /// 615x797 cover after the minutes).
+    /// paragraph's first line (`first` pt, under `before` pt of space) no
+    /// room under it: Word starts the paragraph and its float on the next
+    /// page (probes h1, t3; 3bfcb371e2's 615x797 cover after the minutes).
+    /// A float whose top is below that line leaves it where it is
+    /// (2b479f55f8's cover box 360pt under its anchor).
     fn square_float_bars_line(
         &self,
         images: &[LaidImage],
         boxes: &[LaidTextBox],
+        before: f32,
         first: f32,
     ) -> bool {
+        let line_foot = self.para_top + self.para_space_above - before - first;
         let left_edge = self.flow_left();
         let right_edge = left_edge + self.content_width();
         let bars = |slot: ImageSlot, w: f32, h: f32| {
@@ -20114,6 +20167,7 @@ impl<'a> Layout<'a> {
                 para_y: Some(_),
                 dist_l,
                 dist_r,
+                dist_t,
                 dist_b,
                 ..
             } = slot
@@ -20125,6 +20179,9 @@ impl<'a> Layout<'a> {
             }
             let (dw, dh) = self.sized_wh(slot, w, h, 1.0, 1.0);
             let (fx, fy) = self.float_xy(dw, dh.max(1.0), slot);
+            if fy + dh.max(1.0) + dist_t <= line_foot {
+                return false;
+            }
             let no_side_room = wrap_top_bottom
                 || (fx - dist_l - left_edge < MIN_SIDE_FLOAT_ROOM_PT
                     && right_edge - (fx + dw + dist_r) < MIN_SIDE_FLOAT_ROOM_PT);
@@ -20153,7 +20210,7 @@ impl<'a> Layout<'a> {
         let saved = (self.para_top, self.para_space_above);
         self.para_top = self.page.height - self.body_top;
         self.para_space_above = 0.0;
-        let bars = self.square_float_bars_line(&tails, &[], first);
+        let bars = self.square_float_bars_line(&tails, &[], 0.0, first);
         (self.para_top, self.para_space_above) = saved;
         bars
     }
@@ -27199,7 +27256,13 @@ fn wrap_runs_segment(
         let limit = if line_i == 0 { first_width } else { width };
         let squeezed = tabs.is_some_and(|t| x + w - limit <= t.squeeze * line_spaces);
         let hang = hanging_punct_width(fonts, &unit);
-        if !is_space && x + w - hang > limit && x > 0.0 && !squeezed {
+        // A space hangs past the edge unless one space is wider than the
+        // line: then each is a line of its own, as each character is
+        // (2b479f55f8's 1.4pt column; Word stacks "r", " ", "c"). A run of
+        // fill-in spaces wider than its cell still hangs (file_146).
+        let chars: usize = unit.iter().map(|(_, tok, _)| tok.chars().count()).sum();
+        let breaks = !is_space || w / chars.max(1) as f32 > limit;
+        if breaks && x + w - hang > limit && x > 0.0 && !squeezed {
             lines.push(Vec::new());
             line_i += 1;
             x = 0.0;
@@ -27251,7 +27314,11 @@ fn wrap_runs_segment(
                     let piece = ch.to_string();
                     let cw = face.width_pt(&piece, size) * run.style.hscale();
                     let limit = if line_i == 0 { first_width } else { width };
-                    if x + cw > limit && x > 0.0 {
+                    // Closing punctuation stays with the character before
+                    // it (2b479f55f8: "PEEP’s register," in a column with
+                    // no room keeps "P’" and "r," on a line each).
+                    let starts_line = !cjk_no_line_start(ch) && !matches!(ch, '’' | '”');
+                    if x + cw > limit && x > 0.0 && starts_line {
                         lines.push(Vec::new());
                         line_i += 1;
                         x = 0.0;
@@ -27533,7 +27600,7 @@ fn layout(
                         if lay.y - style.before - first < lay.body_floor {
                             lay.ensure(style.before + first);
                             lay.para_top = lay.y;
-                        } else if lay.square_float_bars_line(images, boxes, first) {
+                        } else if lay.square_float_bars_line(images, boxes, style.before, first) {
                             // The next column when there is one (PR #247
                             // review; Word probe c1 keeps the page).
                             lay.column_break();
