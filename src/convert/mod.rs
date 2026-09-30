@@ -16378,6 +16378,9 @@ struct ChromeTable {
     /// The empty paragraphs above it: each a line of its mark (0107980d's
     /// header opens with one before its logo table).
     lead: Vec<TextRun>,
+    /// How many of those paragraphs are also the part's own leading lines
+    /// (`collect_hf_runs` keeps only bare lines).
+    lead_lines: usize,
     w: f32,
     h: f32,
     color: [f32; 3],
@@ -16456,10 +16459,17 @@ fn collect_hf_tables(
                 run
             })
             .collect();
+        let lead_lines = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .filter(|p| p.0 > prev && p.0 < tbl.0 && hf_node_is_top_level(dom, root, *p))
+            .filter(|p| hf_para_is_bare_line(dom, root, *p))
+            .count();
         prev = tbl.0;
         out.push(ChromeTable {
             block: Some(std::rc::Rc::new(block)),
             lead,
+            lead_lines,
             before_text: first_text.is_none_or(|t| tbl.0 < t),
             w: hf_table_width_pt(dom, tbl),
             h: 0.0,
@@ -25134,8 +25144,24 @@ impl<'a> Layout<'a> {
             } else {
                 chrome_line_pt(self.fonts, &self.footer, self.content_width())
             };
+            // The part grows up from the page bottom: the empty lines above
+            // its first tables sit above them and lift nothing (246c7fcf50's
+            // two empty paragraphs over the "Year 6" table).
+            let above_n: usize = tables
+                .iter()
+                .filter(|t| t.before_text)
+                .map(|t| t.lead_lines)
+                .sum();
+            let above: f32 = self
+                .footer
+                .iter()
+                .take(above_n)
+                .take_while(|r| r.text == HF_LINE_BREAK)
+                .map(|r| hf_break_box(self.fonts, r) + r.para_gap)
+                .sum();
             let before = chrome_tables_h(self.fonts, &tables, avail, self.space_for_ul, Some(true));
-            let mut top = self.page.footer.max(0.0) + foot_after + text_h + before;
+            let mut top =
+                self.page.footer.max(0.0) + foot_after + (text_h - above).max(0.0) + before;
             for table in tables.iter().filter(|t| t.before_text) {
                 if let Some(block) = table.block.as_deref() {
                     top -= self.emit_nested_table(block, self.page.margin_l, top, avail);

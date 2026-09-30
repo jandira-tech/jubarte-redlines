@@ -142,6 +142,11 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 - The `w:br` ending a table-cell line no longer sizes a line that holds
   text. 246c7fcf50's white 24pt break after a 16pt title made the title
   line 24pt tall and pushed the header down (43.9/24.1 to 49.7/28.7).
+- Empty paragraphs above a footer's first table no longer lift it. The
+  footer grows up from the page bottom, so those lines sit above the table;
+  246c7fcf50's "Year 6 …" footer table printed 27.6pt high (its redline
+  went from 38.9/12.1 to 45.7/20.7, the clean document from 49.7/28.7 to
+  53.8/35.5).
 - Rejecting a redline gives back what a changed style inherited in the
   original. Word's Reject All reads a style's old record against its
   built-in defaults, so a record holding only the style's own properties

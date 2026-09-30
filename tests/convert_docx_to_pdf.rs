@@ -34278,6 +34278,32 @@ fn a_space_only_run_after_a_field_keeps_its_space() {
 }
 
 #[test]
+fn empty_paragraphs_above_a_footer_table_do_not_lift_it() {
+    // 246c7fcf50's footer: two empty paragraphs, a table holding "Year 6
+    // …", then empty paragraphs. The footer grows up from the page bottom,
+    // so the lines above the table sit above it; Word's "Year 6" is where
+    // it is without them (513.0; ours was 27.6pt higher at 485.0).
+    let empty = "<w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr></w:p>";
+    let table = "<w:tbl><w:tblPr><w:tblW w:w=\"9360\" w:type=\"dxa\"/>\
+           <w:tblBorders><w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"000000\"/></w:tblBorders>\
+         </w:tblPr><w:tblGrid><w:gridCol w:w=\"9360\"/></w:tblGrid>\
+         <w:tr><w:tc><w:tcPr><w:tcW w:w=\"9360\" w:type=\"dxa\"/></w:tcPr>\
+           <w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>Year</w:t></w:r></w:p>\
+         </w:tc></w:tr></w:tbl>";
+    let year_y = |above: usize| {
+        let para = format!("{}{table}{empty}", empty.repeat(above));
+        pdf_glyph_text_xy(&footer_with_para(&para), "Year")
+            .expect("Year painted")
+            .1
+    };
+    let (bare, led) = (year_y(0), year_y(2));
+    assert!(
+        (bare - led).abs() < 0.05,
+        "the empty lines above the table leave it in place; {led} vs {bare}"
+    );
+}
+
+#[test]
 fn a_space_only_run_keeps_its_space() {
     // fixtures_500 014babb2: `birds.` + `<w:t xml:space="preserve"> </w:t>` +
     // `We` painted "birds.We". A lone-space w:t is text, not the
