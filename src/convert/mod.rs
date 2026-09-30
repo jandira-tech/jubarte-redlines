@@ -25382,6 +25382,13 @@ impl<'a> Layout<'a> {
                 run.style.color,
                 run.text.clone(),
             ));
+            // Its strike and underline too, over the ink (9b22b88370's
+            // header strikes its deleted jc=right line).
+            let ink = face.width_pt(
+                chrome_measure_text(run.text.trim_end()),
+                run.style.layout_size(),
+            );
+            self.decorate_run(x, run.style.paint_y(y), ink, &run.style);
             x += w;
         }
     }

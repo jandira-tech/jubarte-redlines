@@ -2771,6 +2771,44 @@ fn a_left_ptab_after_text_starts_a_new_line() {
 }
 
 #[test]
+fn a_header_lines_revisions_and_underline_paint_their_lines() {
+    // tracking_without_comments 9b22b88370's header: Word strikes the
+    // deleted jc=right "LOS MILAGROS DE LOS EVANGELIOS SINÓPTICOS" (a
+    // hairline at y 66.7 across 266.2-523.2). An untabbed header line
+    // painted its glyphs only: no strike, no insertion or w:u underline.
+    let hdr = "<w:p><w:pPr><w:jc w:val=\"right\"/></w:pPr>\
+         <w:del w:id=\"1\" w:author=\"A\"><w:r><w:delText>GoneHeaderLine</w:delText></w:r></w:del></w:p>\
+         <w:p><w:ins w:id=\"2\" w:author=\"A\"><w:r><w:t>FreshHeaderLine</w:t></w:r></w:ins></w:p>\
+         <w:p><w:r><w:rPr><w:u w:val=\"single\"/><w:color w:val=\"0000FF\"/></w:rPr>\
+           <w:t>LinkedHeaderLine</w:t></w:r></w:p>";
+    let hair = |pdf: &[u8], r: f32, g: f32, b: f32| {
+        pdf_fill_rects(pdf, r, g, b)
+            .into_iter()
+            .filter(|(w, h)| *h > 0.0 && *h < 1.6 && *w > 40.0)
+            .count()
+    };
+    let word = docx_to_pdf(&header_part_docx(hdr)).expect("revised header");
+    assert_eq!(
+        hair(&word, 0.820, 0.204, 0.220),
+        2,
+        "the deletion's strike and the insertion's underline, in the author's ink; {:?}",
+        pdf_fill_rects(&word, 0.820, 0.204, 0.220)
+    );
+    assert_eq!(
+        hair(&word, 0.0, 0.0, 1.0),
+        1,
+        "the w:u run is underlined in its colour"
+    );
+    let ours = docx_to_pdf_with(&header_part_docx(hdr), PdfOptions::default()).expect("default");
+    assert_eq!(hair(&ours, 1.0, 0.0, 0.0), 1, "the default deletion strike");
+    assert_eq!(
+        hair(&ours, 0.0, 0.0, 1.0),
+        3,
+        "the default double insertion underline and the w:u one"
+    );
+}
+
+#[test]
 fn a_left_ptab_sharing_a_run_with_its_text_starts_a_new_line() {
     // PR #247 review: a run may hold the ptab and the text after it. The
     // left ptab then fell through as a plain tab and "Down" stayed on the
