@@ -130,6 +130,15 @@ shell needs a store build that embeds the new engine.
    rehearses everything locally; every publish step skips a version that is
    already live, so a failed run can simply be re-run.
 
+   Before the dry-runs, step 5 is a required API-docs drift assessment:
+   `cargo doc --no-deps --document-private-items --open` opens the rendered
+   docs for review, `scripts/api_snapshot.py` writes a machine-readable copy
+   under `docs/api/` (`jubarte-vx.y.z.json.gz` rustdoc JSON +
+   `jubarte-vx.y.z.api.txt` flat sorted listing + the four
+   `jubarte-wasm-<target>-vx.y.z.d.ts` files), and the script diffs the new
+   listing against the previous release's snapshot. The snapshot ships in the
+   release commit, so `git diff` between release tags shows API drift.
+
 ## Step-by-step: cut an app release (jubarte-app)
 
 1. Point path dep at the engine commit/tag you intend to ship.  

@@ -3091,8 +3091,16 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
     // no docDefaults sz -> 12pt; table style 14/9pt -> 14/9pt; table style
     // 10pt (00587c73) -> 12pt. Mode 15, or
     // overrideTableStyleFontSizeAndJustification (the I_am_sharing lock,
-    // mode 14), keeps Normal's throughout.
-    let legacy = settings_compat_mode(pkg) < 15 && !settings_override_table_style_size(pkg);
+    // mode 14), keeps Normal's throughout. So does a Normal sized other
+    // than 11 or 12pt (probe tsz_*_0930: 9, 10.5, 11.5 and 14pt stay under
+    // a 14pt table style; LibreOffice's writerfilter has the same rule).
+    let normal_gives_way = !defaults.normal_run.0
+        || [11.0, 12.0]
+            .iter()
+            .any(|pt| (defaults.run.size - pt).abs() < 0.01);
+    let legacy = settings_compat_mode(pkg) < 15
+        && !settings_override_table_style_size(pkg)
+        && normal_gives_way;
     for table in tables.values_mut() {
         let size = table.run_size.or(doc_default_size).unwrap_or(10.0);
         table.run_size = (legacy && (size - 10.0).abs() > 0.01).then_some(size);
@@ -6985,9 +6993,19 @@ fn walk_container(
             // The break before a section has *that* section's type
             // (ECMA-376 17.6.22): 00ac06fe's continuous section 2 follows
             // an untyped section 1 on the same page.
+            // A continuous section that turns or resizes the page still
+            // opens a new one (priority b535008087: Word's landscape
+            // section after a continuous break starts page 4).
             let sect_br = sect_here.is_some_and(|s| {
                 !is_final_sect(ctx.sects, s)
-                    && next_sect_pr(ctx.sects, s).is_none_or(|n| sect_starts_new_page(dom, n))
+                    && next_sect_pr(ctx.sects, s).is_none_or(|n| {
+                        let base = &ctx.sheet.defaults.page;
+                        let (was, page) =
+                            (apply_sect_pr(dom, s, base), apply_sect_pr(dom, n, base));
+                        sect_starts_new_page(dom, n)
+                            || (was.width - page.width).abs() > 0.5
+                            || (was.height - page.height).abs() > 0.5
+                    })
             });
             endnotes.observe_para(dom, child);
             let mut block = paragraph_block(ctx, dom, child, false, numbering);
@@ -8684,8 +8702,11 @@ fn keep_next_follow_pt(
         } => {
             // Widow/orphan control keeps a 2–3 line paragraph whole and
             // leaves at least 2 lines of a longer one (011c597c's AFG.316
-            // moves with its 3-line body).
-            let lines = if style.widow_control {
+            // moves with its 3-line body); keepLines keeps it all (probe
+            // kn8 0930).
+            let lines = if style.keep_lines {
+                para_lines.max(1)
+            } else if style.widow_control {
                 match para_lines {
                     n @ 2..=3 => n,
                     n if n > 3 => 2,
@@ -16556,11 +16577,28 @@ struct PickedHf {
 
 /// A `w:headerReference` / `w:footerReference` (`local`) of `kind`
 /// directly on `sect`.
-fn sect_has_typed_ref(dom: &Dom, sect: NodeId, local: &str, kind: &str) -> bool {
-    (0..dom.child_count(sect)).any(|i| {
-        let c = dom.child_at(sect, i);
-        local_name_is(dom, c, local) && attr_any(dom, c, "type") == Some(kind)
-    })
+/// The relationship id of `sect`'s `local` reference of type `want`; a
+/// type the section omits comes from the nearest earlier section that
+/// names it (ECMA-376 17.10.5: priority 2b479f55f8's third section names
+/// only a footer and still shows section 1's default header in Word).
+fn inherited_ref_id(dom: &Dom, sect: NodeId, local: &str, want: &str) -> Option<String> {
+    let own = |s: NodeId| {
+        dom.descendants(s, Some(&W::name(local)))
+            .into_iter()
+            .find(|&node| dom.attribute(node, &W::name("type")).unwrap_or("default") == want)
+            .and_then(|node| attr_any(dom, node, "id"))
+            .map(str::to_string)
+    };
+    if let Some(id) = own(sect) {
+        return Some(id);
+    }
+    let mut body = sect;
+    while !dom.name_is(body, &W::body()) {
+        body = dom.parent(body)?;
+    }
+    let sects = live_sect_prs(dom, body);
+    let at = sects.iter().position(|&s| s == sect)?;
+    sects[..at].iter().rev().find_map(|&s| own(s))
 }
 
 fn chrome_present(part: &ChromePart) -> bool {
@@ -16723,7 +16761,7 @@ fn pick_section_hf(
     let even_raw = sect_ref_chrome_of(pkg, main, dom, sect, local, sheet, "even");
     // An explicit type="even" reference counts even when its part is
     // blank: even pages then show no header, not the default one.
-    let even_explicit = sect_has_typed_ref(dom, sect, local, "even");
+    let even_explicit = inherited_ref_id(dom, sect, local, "even").is_some();
     let even = (settings_even_and_odd_headers(pkg) && (even_explicit || chrome_present(&even_raw)))
         .then_some(even_raw);
     // The first-page part shows only under titlePg: without it Word never
@@ -16763,17 +16801,7 @@ fn sect_ref_chrome_of(
     sheet: &StyleSheet,
     want: &str,
 ) -> ChromePart {
-    let name = W::name(local);
-    let mut rid = None;
-    for node in dom.descendants(sect, Some(&name)) {
-        let ty = dom.attribute(node, &W::name("type")).unwrap_or("default");
-        if ty == want
-            && let Some(id) = attr_any(dom, node, "id")
-        {
-            rid = Some(id.to_string());
-            break;
-        }
-    }
+    let rid = inherited_ref_id(dom, sect, local, want);
     let page = apply_sect_pr(dom, sect, &sheet.defaults.page);
     let text_w = page.width - page.margin_l - page.margin_r;
     let background = local == "headerReference" && page_background(dom, sect);
@@ -18399,6 +18427,12 @@ struct Layout<'a> {
     /// fills its page (`Layout::tail_float_bars_page`): no other line may
     /// share the page its last line lands on.
     tail_bar: bool,
+    /// Blocks before this index belong to a keepNext chain taller than a
+    /// page, which keeps no more once it has moved (probe kn8 0930).
+    keep_chain_until: usize,
+    /// The paragraph being laid keeps with the next block, which needs this
+    /// much below its last line (`Layout::keep_next_break`); 0 otherwise.
+    keep_next_follow: f32,
     /// The revised paragraph being laid: the page and column its change
     /// bar was opened on, and the bar's top there. A page or column break
     /// closes the bar at the last line (`Layout::close_rev_bar`).
@@ -18892,6 +18926,8 @@ impl<'a> Layout<'a> {
             behind_end: 0,
             at_page_top: true,
             tail_bar: false,
+            keep_next_follow: 0.0,
+            keep_chain_until: 0,
             rev_bar: None,
             suppress_space_before: false,
             top_credit: 0.0,
@@ -19446,6 +19482,58 @@ impl<'a> Layout<'a> {
         if untouched {
             return None;
         }
+        let (fit, _) = self.lines_fit(lines, marker, style);
+        let n = lines.len();
+        if fit >= n || fit == 0 {
+            return None;
+        }
+        if fit < 2 {
+            return Some(0);
+        }
+        if n - fit < 2 {
+            return Some(if n >= 4 { n - 2 } else { 0 });
+        }
+        None
+    }
+
+    /// Word keeps a keepNext paragraph's last line with the next block.
+    /// When the whole paragraph fits here but the `follow` the next block
+    /// needs does not, compat 15 splits it and carries its widow lines over
+    /// (two, or one with widowControl off) and compat 14, or keepLines,
+    /// moves it whole (Word 16 probes kn1–kn7 0930). One that runs past the page splits as
+    /// usual (`Layout::widow_break`). Returns the line index to break
+    /// before.
+    fn keep_next_break(
+        &self,
+        lines: &[Vec<TextRun>],
+        marker: Option<&TextRun>,
+        style: &ParaStyle,
+        follow: f32,
+    ) -> Option<usize> {
+        let n = lines.len();
+        if follow <= 0.0 || n < 2 || self.nested_depth > 0 {
+            return None;
+        }
+        let (fit, y) = self.lines_fit(lines, marker, style);
+        if fit < n || y - style.after - follow >= self.body_floor {
+            return None;
+        }
+        let tail = if style.widow_control { 2 } else { 1 };
+        if self.compat_mode >= 15 && !style.keep_lines && n >= 2 * tail {
+            return Some(n - tail);
+        }
+        let untouched = (self.page.height - self.body_top - self.y).abs() < 0.5;
+        (!untouched).then_some(0)
+    }
+
+    /// How many of `lines` fit above the body floor from the cursor, and
+    /// the cursor below the last one that does.
+    fn lines_fit(
+        &self,
+        lines: &[Vec<TextRun>],
+        marker: Option<&TextRun>,
+        style: &ParaStyle,
+    ) -> (usize, f32) {
         let mut y = self.y;
         let mut fit = 0usize;
         for (line_i, line) in lines.iter().enumerate() {
@@ -19462,17 +19550,7 @@ impl<'a> Layout<'a> {
             y -= line_box;
             fit += 1;
         }
-        let n = lines.len();
-        if fit >= n || fit == 0 {
-            return None;
-        }
-        if fit < 2 {
-            return Some(0);
-        }
-        if n - fit < 2 {
-            return Some(if n >= 4 { n - 2 } else { 0 });
-        }
-        None
+        (fit, y)
     }
 
     /// Word sizes a line by its tallest face: the single-line height and
@@ -20593,7 +20671,10 @@ impl<'a> Layout<'a> {
                 run.style = mark.clone();
             }
         }
-        let widow_break = self.widow_break(&lines, marker, style);
+        let keep_follow = std::mem::take(&mut self.keep_next_follow);
+        let widow_break = self
+            .widow_break(&lines, marker, style)
+            .or_else(|| self.keep_next_break(&lines, marker, style, keep_follow));
         // Taken, not read: the text boxes and header boxes these lines
         // paint lay their own lines, which the rule must not move
         // (842ef93738's header box repainted by every page it broke).
@@ -21235,6 +21316,122 @@ impl<'a> Layout<'a> {
     /// Lines `emit_runs` would lay `runs` out in (tabs, markers and
     /// hanging indents included), for keepNext's widow arithmetic: a TOC
     /// entry with a dot-leader tab is one line, not a plain-wrap three.
+    /// What a keepNext paragraph needs below its last line: the next
+    /// block's first lines (`keep_next_follow_pt`) and, while that block is
+    /// a keepNext paragraph too short to split, the block after it too (a
+    /// one-line keepNext heading over its body): the chain's height (grown
+    /// past a page at most), the next block's alone, and the index of the
+    /// block the chain ends on. The paragraph's own space
+    /// after already holds the next block's before (max of the two), and
+    /// the chain's gaps are the same max, so no space counts twice
+    /// (sd_2517's TOC chapter lines 18pt apart).
+    fn keep_next_chain_follow(&mut self, blocks: &[Block], from: usize) -> (f32, f32, usize) {
+        let page_h = (self.page.height - self.body_top - self.body_floor).max(1.0);
+        let mut total = 0.0;
+        let mut first = 0.0;
+        let mut prev_after = None;
+        let mut j = from;
+        while let Some(b) = blocks.get(j) {
+            let lines = match b {
+                Block::Paragraph {
+                    runs, style, list, ..
+                } => self.para_line_count(runs, style, *list),
+                _ => 1,
+            };
+            let need = keep_next_follow_pt(
+                self.fonts,
+                self.content_width(),
+                b,
+                self.page.grid_pitch,
+                self.space_for_ul,
+                lines,
+            );
+            let (before, after) = block_para_style(b).map_or((0.0, 0.0), |s| (s.before, s.after));
+            let gap = prev_after.map_or(0.0, |a: f32| a.max(before));
+            let need = need - before + gap;
+            if total <= page_h {
+                total += need;
+            }
+            if j == from {
+                first = need;
+            }
+            prev_after = Some(after);
+            let whole = matches!(b, Block::Paragraph { style, .. }
+                if style.keep_next
+                    && (lines <= 1 || style.keep_lines || style.widow_control && lines <= 3));
+            if !whole {
+                break;
+            }
+            j += 1;
+        }
+        (total, first, j)
+    }
+
+    /// Compat 14 moves a keepNext paragraph that ends on this page whole
+    /// when the block after it cannot start here, and with it every
+    /// keepNext paragraph chained before it (Word 16 probes kn1/kn3 0930;
+    /// priority 4e7bb2a1be's "Location/Date" chain under its one-line
+    /// keepNext "Event No 3"). Walks the chain from block `i`, whose whole
+    /// height is `head`: the height to ensure when the chain must move (a
+    /// chain taller than the page moves too, probe kn8 0930).
+    fn legacy_keep_chain_need(
+        &mut self,
+        blocks: &[Block],
+        i: usize,
+        head: f32,
+        head_after: f32,
+    ) -> Option<f32> {
+        if self.nested_depth > 0 {
+            return None;
+        }
+        let room = self.y - self.body_floor;
+        if head > room {
+            return None;
+        }
+        let mut cum = head;
+        let mut prev_after = head_after;
+        let mut j = i + 1;
+        let chunk = loop {
+            let b = blocks.get(j)?;
+            let lines = match b {
+                Block::Paragraph {
+                    runs, style, list, ..
+                } => self.para_line_count(runs, style, *list),
+                _ => 1,
+            };
+            let chunk = keep_next_follow_pt(
+                self.fonts,
+                self.content_width(),
+                b,
+                self.page.grid_pitch,
+                self.space_for_ul,
+                lines,
+            );
+            let Block::Paragraph { runs, style, .. } = b else {
+                break chunk;
+            };
+            if !style.keep_next {
+                break chunk;
+            }
+            let line = para_first_line_pt(self.fonts, runs, style, self.page.grid_pitch);
+            let whole =
+                style.before.max(prev_after) - prev_after + line * lines as f32 + style.after;
+            if cum + whole > room {
+                break chunk;
+            }
+            cum += whole;
+            prev_after = style.after;
+            j += 1;
+        };
+        // The chunk's own before collapses with the space after above it.
+        let before = blocks
+            .get(j)
+            .and_then(block_para_style)
+            .map_or(0.0, |s| s.before);
+        let need = cum + chunk - before + (before.max(prev_after) - prev_after);
+        (need > room).then_some(need)
+    }
+
     fn para_line_count(&mut self, runs: &[TextRun], style: &ParaStyle, list: bool) -> usize {
         let hanging = if style.indent_first < 0.0 {
             -style.indent_first
@@ -22618,6 +22815,25 @@ impl<'a> Layout<'a> {
             top: y + dh + dist_t,
             bottom,
         });
+    }
+
+    /// An in-flow table row too wide to sit beside a square float starts
+    /// under it; a narrower one stays beside it (Word 16 probe
+    /// tfl_*_0930: a 468pt table under a 200pt picture at the column's
+    /// right edge starts at its foot, a 150pt table beside it; work set
+    /// 109f20a2b3's continued table clears its header logo the same way).
+    fn drop_below_side_float(&mut self, table_w: f32) {
+        if self.nested_depth != 0 {
+            return;
+        }
+        let Some(sf) = self.side_float else {
+            return;
+        };
+        let beside = self.content_width() - sf.inset;
+        if self.y > sf.bottom + 0.5 && self.y <= sf.top + 0.5 && table_w > beside + 0.5 {
+            self.y = sf.bottom;
+            self.side_float = None;
+        }
     }
 
     /// A header float wraps the body like a body float (live Word: a
@@ -24781,6 +24997,7 @@ impl<'a> Layout<'a> {
             .collect();
         let mut ri = 0;
         while ri < work.len() {
+            self.drop_below_side_float(used);
             // A keepNext row stays with the row after it when the two fit on
             // a page (000aba38's Heading 2 label rows start page 2 together).
             let keeps_next = self.nested_depth == 0
@@ -24818,8 +25035,14 @@ impl<'a> Layout<'a> {
                     self.ensure(pair);
                 }
             }
-            let splittable = self.nested_depth == 0 && ri >= header_n && !work[ri].2;
-            if splittable {
+            // A cantSplit row taller than a whole page still breaks, from a
+            // fresh page: Word 16 probes cs_*_0930 move a 40-line row off
+            // the page it started on and cut it at the next page's foot
+            // (priority 2b479f55f8's 5e row ran 116pt below its page).
+            let page_room = self.page.height - self.body_top - self.body_floor;
+            let too_tall = work[ri].2 && work[ri].1 > page_room + 0.5;
+            let splittable = self.nested_depth == 0 && ri >= header_n && (!work[ri].2 || too_tall);
+            if splittable && (self.at_page_top || !too_tall) {
                 self.split_work_row(&mut work, ri, &col_w);
             }
             let pages_before = self.pages.len();
@@ -24839,6 +25062,10 @@ impl<'a> Layout<'a> {
                 // room (015e4665's split row stayed whole and left 230pt).
                 && (broke_here || (!self.at_page_top && self.y - rh < self.body_floor));
             self.ensure(rh + if will_break { header_h } else { 0.0 });
+            // A page opened here may bring a header float the rows must clear.
+            if self.pages.len() > pages_before {
+                self.drop_below_side_float(used);
+            }
             let paint: Vec<usize> = if will_break {
                 (0..header_n).chain(std::iter::once(ri)).collect()
             } else {
@@ -25289,15 +25516,24 @@ impl<'a> Layout<'a> {
                 k += 1;
             }
             let (mut h, mut t) = cell.split_at(k);
+            // With nothing above the cut, the head holds only the cell's
+            // margins: measured as a cell it would hold a default empty
+            // paragraph (priority 3138fff3a6: 25pt, not 10, so its 8pt
+            // titles placed no line and the row moved, where Word splits).
+            let head_h = if k == 0 {
+                cell.pad_t + cell.pad_b
+            } else {
+                height(&h)
+            };
             let mut broke = false;
-            // Word breaks the next paragraph between its lines, with no
-            // widow control across the row split (00297360's item 6 leaves
-            // one line on page 1).
+            // Word breaks the next paragraph between its lines (00297360's
+            // item 6 leaves one line on page 1); from compat 15 widow
+            // control holds across the cut (split_cell_para).
             if k < cell.paras.len() && t.nested_at.iter().all(|&at| at > 0) {
                 let cw: f32 = (0..cell.colspan)
                     .map(|i| col_w.get(cell.col + i).copied().unwrap_or(80.0))
                     .sum();
-                let left = room - height(&h);
+                let left = room - head_h;
                 if let Some((hp, tp)) =
                     self.split_cell_para(&cell.paras[k], left, cell_wrap_width(cell, cw))
                 {
@@ -25317,7 +25553,7 @@ impl<'a> Layout<'a> {
                     .map(|i| col_w.get(cell.col + i).copied().unwrap_or(80.0))
                     .sum();
                 let wrap_w = cell_wrap_width(cell, cw);
-                let left = room - height(&h);
+                let left = room - head_h;
                 if let Block::Table {
                     cols,
                     rows: inner,
@@ -25434,6 +25670,18 @@ impl<'a> Layout<'a> {
         }
         if n == 0 || n >= lines.len() {
             return None;
+        }
+        // From compat 15 the cut keeps two lines on each side, as in the
+        // body; compat 14 cuts anywhere (Word 16 probes k15_*/k14_* 0930:
+        // priority 30f195a272's two-line cell moves whole, fixtures_500
+        // 00297360's item 6 leaves one line).
+        if self.compat_mode >= 15 && para.style.widow_control {
+            if lines.len() - n < 2 {
+                n = lines.len().saturating_sub(2);
+            }
+            if n < 2 {
+                return None;
+            }
         }
         let mut head = para.clone();
         head.runs = rejoin(0..n);
@@ -25914,14 +26162,24 @@ impl<'a> Layout<'a> {
                 - head_before
                 - pics_h
                 - hf_opening_pad(&header);
-            // The empty paragraphs over the text paint their shading.
+            // The empty paragraphs over the text paint their shading and
+            // rules (c73c128db4's running head: a title table, then an
+            // empty Header paragraph whose top border Word draws under it).
             let mut band = top + lead;
+            let mut lead_rules = false;
             for (i, r) in header.iter().enumerate() {
                 if r.text != HF_LINE_BREAK {
                     break;
                 }
                 let h = hf_break_box(self.fonts, r);
                 self.hf_break_fill(&header, i, band, h);
+                if let Some(p) = r.hf_para.as_deref() {
+                    let prev = header[..i].iter().rev().find_map(|n| n.hf_para.as_deref());
+                    let next = header[i + 1..].iter().find_map(|n| n.hf_para.as_deref());
+                    self.hf_top_rule(prev, p, band);
+                    self.hf_bottom_rule(p, next, band - h);
+                    lead_rules = true;
+                }
                 band -= h + r.para_gap;
             }
             let mut y = top;
@@ -25990,7 +26248,8 @@ impl<'a> Layout<'a> {
                 self.hf_rev_bar(std::slice::from_ref(r), r.hf_para.as_deref(), top, h);
                 top -= h;
             }
-            if let Some((color, width)) = self.header_bottom.filter(|_| !line_rules) {
+            if let Some((color, width)) = self.header_bottom.filter(|_| !line_rules && !lead_rules)
+            {
                 // Only a border no text line painted (an empty paragraph's).
                 let x1 = self.page.margin_l;
                 let x2 = self.page.width - self.page.margin_r;
@@ -26106,11 +26365,17 @@ impl<'a> Layout<'a> {
                 .filter(|r| r.text != HF_LINE_BREAK)
                 .and_then(|r| r.hf_para.clone())
                 .filter(|p| p.border_top.is_some());
+            // Empty paragraphs over the text paint their own rules below.
+            let lead_rules = footer
+                .iter()
+                .take_while(|r| r.text == HF_LINE_BREAK)
+                .any(|r| r.hf_para.is_some());
+            let opened = opening.is_some();
             if let Some(p) = opening {
                 // The rule stands its space over the first line's top.
                 let line_top = base + above + metrics.first().map_or(0.0, |m| m.0);
                 self.hf_top_rule(None, &p, line_top);
-            } else if let Some((color, width)) = self.footer_top {
+            } else if let Some((color, width)) = self.footer_top.filter(|_| !lead_rules) {
                 let top = base + above + 10.0;
                 // mini 244 chrome outset ITT-neg; keep content box.
                 let x1 = self.page.margin_l;
@@ -26126,10 +26391,24 @@ impl<'a> Layout<'a> {
                     let h = hf_break_box(self.fonts, r);
                     bottom += r.para_gap;
                     self.hf_break_fill(&footer, i, bottom + h, h);
+                    // Its borders paint too (probe fb_f4_0930: the empty
+                    // opening paragraph's bottom rule, c73c128db4's footer4).
+                    if let Some(p) = r.hf_para.as_deref() {
+                        let next = footer[i + 1..].iter().find_map(|n| n.hf_para.as_deref());
+                        let prev = footer[..i].iter().rev().find_map(|n| n.hf_para.as_deref());
+                        self.hf_bottom_rule(p, next, bottom);
+                        self.hf_top_rule(prev, p, bottom + h);
+                    }
                     bottom += h;
                 }
             }
-            let mut above: Option<std::rc::Rc<ParaStyle>> = None;
+            // The text's first paragraph borders the empty one over it
+            // (probe fb_f7_0930: c73c128db4's footer7 rule over "page").
+            let mut above: Option<std::rc::Rc<ParaStyle>> = footer
+                .iter()
+                .take_while(|r| r.text == HF_LINE_BREAK)
+                .filter_map(|r| r.hf_para.clone())
+                .last();
             for (i, (line, _)) in lines.iter().enumerate() {
                 let align = line
                     .first()
@@ -26149,6 +26428,9 @@ impl<'a> Layout<'a> {
                     let (ascent, line_h) = metrics[i];
                     let top = y + baselines[i] + ascent;
                     self.hf_line_fill(p, above.as_deref(), next.as_deref(), top, line_h);
+                    if !(i == 0 && opened) {
+                        self.hf_top_rule(above.as_deref(), p, top);
+                    }
                 }
                 self.draw_hf_line(line, y + baselines[i], align, wraps_on);
                 let (ascent, line_h) = metrics[i];
@@ -27628,40 +27910,44 @@ fn layout(
                     // down).
                     style.before = (style.before - prev.after).max(0.0);
                 }
-                if style.keep_next {
+                if style.keep_next && i >= lay.keep_chain_until {
                     let pitch = lay.page.grid_pitch;
                     let own = para_first_line_pt(lay.fonts, runs, &style, pitch);
-                    let follow = blocks
-                        .get(i + 1)
-                        .map(|b| {
-                            let para_lines = match b {
-                                Block::Paragraph {
-                                    runs, style, list, ..
-                                } => lay.para_line_count(runs, style, *list),
-                                _ => 1,
+                    let lines = lay.para_line_count(runs, &style, *list);
+                    let own_all = style.before + own * lines as f32 + style.after;
+                    let (total, first, end) = lay.keep_next_chain_follow(blocks, i + 1);
+                    let page_h = lay.page.height - lay.body_top - lay.body_floor;
+                    let whole = lines <= 1 || style.keep_lines || style.widow_control && lines <= 3;
+                    let overlong = own_all + total > page_h;
+                    // A chain of unsplittable paragraphs taller than a page
+                    // still leaves for a fresh page, then fills the pages
+                    // it runs over: its members keep no more (probe kn8
+                    // 0930; the redline of 4e7bb2a1be's references).
+                    if overlong && whole {
+                        lay.ensure(own_all + total);
+                        lay.keep_chain_until = end;
+                    } else {
+                        let follow = if overlong { first } else { total };
+                        if lay.compat_mode >= 15 {
+                            lay.keep_next_follow = follow;
+                        } else if let Some(need) =
+                            lay.legacy_keep_chain_need(blocks, i, own_all, style.after)
+                        {
+                            lay.ensure(need);
+                        }
+                        if follow > 0.0 {
+                            // +2pt breaks leftover==need ties so a heading is
+                            // not orphaned above a table row that then wraps
+                            // (comments-lots Heading1 + capability header). A
+                            // following paragraph's line is exact: two 8pt
+                            // lines fit in 21pt.
+                            let tie = if matches!(blocks.get(i + 1), Some(Block::Table { .. })) {
+                                2.0
+                            } else {
+                                0.0
                             };
-                            keep_next_follow_pt(
-                                lay.fonts,
-                                lay.content_width(),
-                                b,
-                                pitch,
-                                lay.space_for_ul,
-                                para_lines,
-                            )
-                        })
-                        .unwrap_or(0.0);
-                    if follow > 0.0 {
-                        // +2pt breaks leftover==need ties so a heading is
-                        // not orphaned above a table row that then wraps
-                        // (comments-lots Heading1 + capability header). A
-                        // following paragraph's line is exact: two 8pt
-                        // lines fit in 21pt.
-                        let tie = if matches!(blocks.get(i + 1), Some(Block::Table { .. })) {
-                            2.0
-                        } else {
-                            0.0
-                        };
-                        lay.ensure(style.before + own + style.after + follow + tie);
+                            lay.ensure(style.before + own + style.after + follow + tie);
+                        }
                     }
                 }
                 if style.keep_lines {
