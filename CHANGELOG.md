@@ -130,6 +130,9 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   ships Word's own default Office theme, byte for byte, instead of the
   revision's theme; Word never takes the revision's (664 of 664 bench
   redlines, and Word probes with a custom revision theme).
+- A redline whose original has a theme but no styles part keeps the
+  original's theme. It was replaced with Word's default theme along with the
+  missing stylesheet.
 - `jubarte debug A B -c text` / `-c runs` pairs header and footer parts by
   the section reference that shows them, so Word's renumbered parts compare
   with their counterparts.

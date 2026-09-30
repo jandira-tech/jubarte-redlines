@@ -319,3 +319,50 @@ fn themed_hexes_are_recached_against_a_referenced_theme_at_any_path() {
         assert!(style.contains(want), "missing {want} in {style}");
     }
 }
+
+/// An original with no styles part but a referenced theme keeps that theme:
+/// Word's blank-document scaffold stands in for the missing stylesheet only
+/// (M462), and `ensure_factory_package_chrome` falls back to Word's default
+/// theme only when no theme is referenced.
+#[test]
+fn referenced_original_theme_survives_when_the_original_has_no_styles() {
+    let theme_a = theme_named("ABCDEF", "Georgia");
+    let theme_b = theme("4F81BD");
+    let a = docx_with(
+        r#"<w:p><w:r><w:t>The quick brown fox.</w:t></w:r></w:p>"#,
+        &[Part {
+            name: "word/theme/theme1.xml",
+            content_type: THEME_CT,
+            rel_type: THEME_REL,
+            xml: &theme_a,
+        }],
+    );
+    let b = docx_with(
+        r#"<w:p><w:r><w:t>The quick red fox.</w:t></w:r></w:p>"#,
+        &[
+            Part {
+                name: "word/styles.xml",
+                content_type: STYLES_CT,
+                rel_type: STYLES_REL,
+                xml: STYLES_HEADING,
+            },
+            Part {
+                name: "word/theme/theme1.xml",
+                content_type: THEME_CT,
+                rel_type: THEME_REL,
+                xml: &theme_b,
+            },
+        ],
+    );
+    let out = compare_documents(&a, &b, "Redline").expect("compare");
+    assert!(
+        part_string(&out, "word/styles.xml").is_some(),
+        "B's stylesheet is copied"
+    );
+    let theme_out = part_string(&out, "word/theme/theme1.xml").expect("theme");
+    assert!(
+        theme_out.contains(r#"val="ABCDEF""#) && theme_out.contains(r#"typeface="Georgia""#),
+        "the original's referenced theme must survive, got {}",
+        &theme_out[..theme_out.len().min(600)]
+    );
+}
