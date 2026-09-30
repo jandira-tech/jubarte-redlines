@@ -3064,6 +3064,43 @@ fn tail_cover_docx(fill: usize, lines: usize, h: i64) -> Vec<u8> {
     ))
 }
 
+#[test]
+fn a_float_barring_its_line_in_a_column_moves_it_to_the_next_column() {
+    // PR #247 review, Word probe c1 (2026-09-30): two columns, a 200x700pt
+    // square float anchored under ten lines. Word keeps the anchor line on
+    // the page, in column two; a float that bars its line sent it to the
+    // next page even with column two free.
+    let pp = "<w:pPr><w:spacing w:after=\"0\"/></w:pPr>";
+    let img = blip(
+        &(200 * 12700).to_string(),
+        &(700 * 12700).to_string(),
+        "<wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:simplePos x=\"0\" y=\"0\"/>\
+           <wp:positionH relativeFrom=\"column\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>-1050290</wp:posOffset></wp:positionV>\
+           <wp:wrapSquare wrapText=\"bothSides\"/>",
+        "</wp:anchor>",
+    );
+    let filler: String = (0..10)
+        .map(|i| format!("<w:p>{pp}<w:r><w:t>Line{i:02}</w:t></w:r></w:p>"))
+        .collect();
+    let pdf = docx_to_pdf(&drawing_docx(&format!(
+        "{filler}<w:p>{pp}<w:r><w:t>Anchor</w:t></w:r><w:r>{img}</w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
+           <w:cols w:num=\"2\" w:space=\"720\"/></w:sectPr>"
+    )))
+    .expect("column float");
+    assert_eq!(
+        page_with_text(&pdf, "Anchor"),
+        Some(0),
+        "the anchor keeps page 1"
+    );
+    let (x, _) = pdf_glyph_text_xy(&pdf, "Anchor").expect("Anchor paints");
+    assert!((x - 324.0).abs() < 1.0, "in column two: x={x}");
+}
+
 /// The paragraphs of `tail_cover_docx`.
 fn tail_cover_body(fill: usize, lines: usize, h: i64) -> String {
     let img = blip(

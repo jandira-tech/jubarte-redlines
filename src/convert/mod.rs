@@ -27347,7 +27347,9 @@ fn layout(
                             lay.ensure(style.before + first);
                             lay.para_top = lay.y;
                         } else if lay.square_float_bars_line(images, boxes, first) {
-                            lay.new_page();
+                            // The next column when there is one (PR #247
+                            // review; Word probe c1 keeps the page).
+                            lay.column_break();
                             lay.para_top = lay.y;
                         }
                     }
