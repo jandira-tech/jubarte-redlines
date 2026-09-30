@@ -16549,11 +16549,28 @@ struct PickedHf {
 
 /// A `w:headerReference` / `w:footerReference` (`local`) of `kind`
 /// directly on `sect`.
-fn sect_has_typed_ref(dom: &Dom, sect: NodeId, local: &str, kind: &str) -> bool {
-    (0..dom.child_count(sect)).any(|i| {
-        let c = dom.child_at(sect, i);
-        local_name_is(dom, c, local) && attr_any(dom, c, "type") == Some(kind)
-    })
+/// The relationship id of `sect`'s `local` reference of type `want`; a
+/// type the section omits comes from the nearest earlier section that
+/// names it (ECMA-376 17.10.5: priority 2b479f55f8's third section names
+/// only a footer and still shows section 1's default header in Word).
+fn inherited_ref_id(dom: &Dom, sect: NodeId, local: &str, want: &str) -> Option<String> {
+    let own = |s: NodeId| {
+        dom.descendants(s, Some(&W::name(local)))
+            .into_iter()
+            .find(|&node| dom.attribute(node, &W::name("type")).unwrap_or("default") == want)
+            .and_then(|node| attr_any(dom, node, "id"))
+            .map(str::to_string)
+    };
+    if let Some(id) = own(sect) {
+        return Some(id);
+    }
+    let mut body = sect;
+    while !dom.name_is(body, &W::body()) {
+        body = dom.parent(body)?;
+    }
+    let sects = live_sect_prs(dom, body);
+    let at = sects.iter().position(|&s| s == sect)?;
+    sects[..at].iter().rev().find_map(|&s| own(s))
 }
 
 fn chrome_present(part: &ChromePart) -> bool {
@@ -16716,7 +16733,7 @@ fn pick_section_hf(
     let even_raw = sect_ref_chrome_of(pkg, main, dom, sect, local, sheet, "even");
     // An explicit type="even" reference counts even when its part is
     // blank: even pages then show no header, not the default one.
-    let even_explicit = sect_has_typed_ref(dom, sect, local, "even");
+    let even_explicit = inherited_ref_id(dom, sect, local, "even").is_some();
     let even = (settings_even_and_odd_headers(pkg) && (even_explicit || chrome_present(&even_raw)))
         .then_some(even_raw);
     // The first-page part shows only under titlePg: without it Word never
@@ -16756,17 +16773,7 @@ fn sect_ref_chrome_of(
     sheet: &StyleSheet,
     want: &str,
 ) -> ChromePart {
-    let name = W::name(local);
-    let mut rid = None;
-    for node in dom.descendants(sect, Some(&name)) {
-        let ty = dom.attribute(node, &W::name("type")).unwrap_or("default");
-        if ty == want
-            && let Some(id) = attr_any(dom, node, "id")
-        {
-            rid = Some(id.to_string());
-            break;
-        }
-    }
+    let rid = inherited_ref_id(dom, sect, local, want);
     let page = apply_sect_pr(dom, sect, &sheet.defaults.page);
     let text_w = page.width - page.margin_l - page.margin_r;
     let background = local == "headerReference" && page_background(dom, sect);

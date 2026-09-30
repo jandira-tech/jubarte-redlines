@@ -148,6 +148,11 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   it, as in Word 16; a narrower table still sits beside it. Before, the
   table ran over the picture: 109f20a2b3's continued table painted
   across its header logo, 74pt higher than Word's.
+- A section that omits a header or footer type takes that type from the
+  nearest earlier section that names it (ECMA-376 17.10.5), as Word does.
+  Before, a section naming only some types lost the rest: 2b479f55f8's
+  sections 2 and 3 dropped the "ICA Internship Award 2022/23" header from
+  page 4 on, and its pages ran two short of Word's.
 - A continuous section break that changes the page size or orientation
   starts a new page with the new size, as Word does. Before, the page
   kept its old size: b535008087's landscape section ran on portrait pages

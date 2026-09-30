@@ -22939,6 +22939,73 @@ fn hf_part(tag: &str, half_points: u32, text: &str) -> String {
     )
 }
 
+#[test]
+fn a_section_inherits_each_header_type_it_omits_from_the_one_before() {
+    // ECMA-376 17.10.5, and Word on priority 2b479f55f8: section 2 names
+    // only a first-page header and section 3 only a footer, yet Word
+    // repeats section 1's default header ("ICA Internship Award 2022/23")
+    // on every later page; jubarte dropped it from section 2's second page.
+    let geom = "<w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+        <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+          w:header=\"720\" w:footer=\"720\"/>";
+    let page = |t: &str| format!("<w:p><w:r><w:t>{t}</w:t></w:r></w:p>");
+    let brk = "<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>";
+    let body = format!(
+        "{}{brk}{}<w:p><w:pPr><w:sectPr>\
+           <w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+           <w:headerReference w:type=\"first\" r:id=\"rIdH2\"/>{geom}<w:titlePg/></w:sectPr></w:pPr></w:p>\
+         {}{brk}{}<w:p><w:pPr><w:sectPr>\
+           <w:headerReference w:type=\"first\" r:id=\"rIdH3\"/>{geom}<w:titlePg/></w:sectPr></w:pPr></w:p>\
+         {}<w:sectPr><w:footerReference w:type=\"default\" r:id=\"rIdF1\"/>{geom}</w:sectPr>",
+        page("PageA1"),
+        page("PageA2"),
+        page("PageB1"),
+        page("PageB2"),
+        page("PageC1"),
+    );
+    let pdf = docx_to_pdf(&hf_docx(
+        &body,
+        &[
+            ("rIdH1", "header", "header1.xml"),
+            ("rIdH2", "header", "header2.xml"),
+            ("rIdH3", "header", "header3.xml"),
+            ("rIdF1", "footer", "footer1.xml"),
+        ],
+        &[
+            ("word/header1.xml", hf_part("hdr", 20, "DefHdr")),
+            ("word/header2.xml", hf_part("hdr", 20, "FirstOne")),
+            ("word/header3.xml", hf_part("hdr", 20, "FirstTwo")),
+            ("word/footer1.xml", hf_part("ftr", 20, "FootThree")),
+        ],
+    ))
+    .expect("convert inherited headers");
+    let streams = pdf_content_streams(&pdf);
+    let text: Vec<String> = streams
+        .iter()
+        .map(|s| pdf_winansi_text(s.as_bytes()))
+        .collect();
+    let on = |body: &str| {
+        text.iter()
+            .find(|t| t.contains(body))
+            .unwrap_or_else(|| panic!("no page holds {body}; pages={text:?}"))
+    };
+    assert!(on("PageA1").contains("FirstOne"), "section 1's first page");
+    assert!(on("PageA2").contains("DefHdr"), "section 1's default");
+    assert!(
+        on("PageB1").contains("FirstTwo"),
+        "section 2's own first page"
+    );
+    assert!(
+        on("PageB2").contains("DefHdr"),
+        "section 2 inherits section 1's default header"
+    );
+    let c1 = on("PageC1");
+    assert!(
+        c1.contains("DefHdr") && c1.contains("FootThree"),
+        "section 3 keeps the inherited default header beside its own footer; {c1:?}"
+    );
+}
+
 fn hf_docx(body: &str, rels: &[(&str, &str, &str)], parts: &[(&str, String)]) -> Vec<u8> {
     // A leading `<w:background .../>` is the document's, before the body.
     let (background, body) = match body.find("/>") {
