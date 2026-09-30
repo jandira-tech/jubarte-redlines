@@ -127,6 +127,10 @@ struct StyleInfo {
     /// The style's own `w:vanish`: `Some(true)` hides, `Some(false)` turns
     /// a base's off.
     vanish: Option<bool>,
+    /// The style's own `w:framePr` attributes, `name=value`.
+    frame: Vec<(String, String)>,
+    /// The faces the style's own `w:rFonts` asks for.
+    fonts: Option<Vec<String>>,
     /// Table-wide and conditional shading: `whole` (`tblPr`), `cell`
     /// (`tcPr`), or the `tblStylePr` type.
     table_shd: Vec<(String, String)>,
@@ -137,6 +141,8 @@ struct StyleBook {
     by_id: HashMap<String, StyleInfo>,
     /// `docDefaults` run fonts, `name=value` sorted.
     default_fonts: Option<String>,
+    /// The `w:default="1"` paragraph style: an unstyled paragraph's.
+    default_para: String,
 }
 
 impl StyleBook {
@@ -169,6 +175,13 @@ impl StyleBook {
                         run_shd: rpr.and_then(|r| run_shd(dom, r)),
                         vanish: rpr
                             .and_then(|r| child(dom, r, "vanish").map(|_| on(dom, r, "vanish"))),
+                        frame: child(dom, s, "pPr")
+                            .and_then(|p| child(dom, p, "framePr"))
+                            .map(|f| attr_pairs(dom, f))
+                            .unwrap_or_default(),
+                        fonts: rpr
+                            .and_then(|r| child(dom, r, "rFonts"))
+                            .map(|f| font_faces(dom, f)),
                         table_shd: Vec::new(),
                     };
                     let mut table = |label: String, holder: NodeId| {
@@ -190,7 +203,13 @@ impl StyleBook {
                     for cond in kids(dom, s, "tblStylePr") {
                         table(attr(dom, cond, "type"), cond);
                     }
-                    book.by_id.insert(attr(dom, s, "styleId"), info);
+                    let id = attr(dom, s, "styleId");
+                    if attr(dom, s, "type") == "paragraph"
+                        && matches!(attr(dom, s, "default").as_str(), "1" | "true" | "on")
+                    {
+                        book.default_para.clone_from(&id);
+                    }
+                    book.by_id.insert(id, info);
                 }
                 _ => {}
             }
@@ -231,6 +250,37 @@ impl StyleBook {
             }
         }
         out
+    }
+
+    /// `id`'s frame attributes down its `basedOn` chain, a derived
+    /// style's value over its base's.
+    fn frame(&self, id: &str) -> Vec<(String, String)> {
+        let mut chain = Vec::new();
+        let mut id = id.to_string();
+        for _ in 0..CHAIN {
+            let Some(s) = self.by_id.get(&id) else {
+                break;
+            };
+            chain.push(s);
+            if s.based.is_empty() {
+                break;
+            }
+            id = s.based.clone();
+        }
+        let mut out: Vec<(String, String)> = Vec::new();
+        for s in chain.into_iter().rev() {
+            merge_pairs(&mut out, &s.frame);
+        }
+        out
+    }
+
+    /// The paragraph style `id` names, or the default one.
+    fn para_style(&self, id: String) -> String {
+        if id.is_empty() {
+            self.default_para.clone()
+        } else {
+            id
+        }
     }
 
     /// The first value `f` finds walking `id`'s `basedOn` chain, with the
@@ -316,7 +366,15 @@ fn color(dom: &Dom, rpr: NodeId) -> Option<Option<String>> {
     let c = child(dom, rpr, "color")?;
     let theme = attr(dom, c, "themeColor");
     if !theme.is_empty() {
-        return Some(Some(format!("theme:{theme}")));
+        // Tint and shade change the ink the converter paints.
+        let mut out = format!("theme:{theme}");
+        for (name, label) in [("themeTint", "tint"), ("themeShade", "shade")] {
+            let v = attr(dom, c, name);
+            if !v.is_empty() {
+                out.push_str(&format!("/{label}:{v}"));
+            }
+        }
+        return Some(Some(out));
     }
     let val = attr(dom, c, "val");
     Some((!val.is_empty() && val != "auto").then_some(val))
@@ -393,6 +451,11 @@ fn part_lines(
     // Field codes being collected, innermost last: (code, recorded).
     let mut fields: Vec<(String, bool)> = Vec::new();
     for n in dom.descendants(root, None) {
+        // Word renders an mc:AlternateContent's Choice; its Fallback is a
+        // copy of the same content.
+        if nearest(dom, n, "Fallback").is_some() {
+            continue;
+        }
         match local(dom, n).as_str() {
             "p" => {
                 paras += 1;
@@ -452,13 +515,14 @@ fn part_lines(
 fn paragraph(dom: &Dom, p: NodeId, styles: &StyleBook, tally: &mut Tally, out: &mut Vec<String>) {
     let text = own_text(dom, p, p);
     let ppr = child(dom, p, "pPr");
-    let pstyle = ppr
+    let named = ppr
         .and_then(|x| child(dom, x, "pStyle"))
         .map(|s| attr(dom, s, "val"))
         .unwrap_or_default();
-    if !pstyle.is_empty() {
-        tally.add(format!("pstyle \"{}\"", styles.name(&pstyle)), "");
+    if !named.is_empty() {
+        tally.add(format!("pstyle \"{}\"", styles.name(&named)), "");
     }
+    let pstyle = styles.para_style(named);
     match ppr.and_then(|x| child(dom, x, "shd")).map(|x| shd(dom, x)) {
         Some(Some(fill)) => tally.add(format!("para-shd {fill}"), &text),
         Some(None) => {}
@@ -468,12 +532,14 @@ fn paragraph(dom: &Dom, p: NodeId, styles: &StyleBook, tally: &mut Tally, out: &
             }
         }
     }
-    if let Some(frame) = ppr.and_then(|x| child(dom, x, "framePr")) {
-        let mut items: Vec<String> = dom
-            .attributes(frame)
-            .into_iter()
-            .map(|(k, v)| format!("{}={v}", k.local_name()))
-            .collect();
+    // The style chain's frame under the paragraph's own attributes, as
+    // the converter merges them.
+    let mut frame = styles.frame(&pstyle);
+    if let Some(own) = ppr.and_then(|x| child(dom, x, "framePr")) {
+        merge_pairs(&mut frame, &attr_pairs(dom, own));
+    }
+    if !frame.is_empty() {
+        let mut items: Vec<String> = frame.iter().map(|(k, v)| format!("{k}={v}")).collect();
         items.sort();
         out.push(format!(
             "  frame({}) \"{}\"",
@@ -529,7 +595,7 @@ fn run(dom: &Dom, r: NodeId, styles: &StyleBook, tally: &mut Tally) {
             .unwrap_or_default()
     };
     let rstyle = style_of(rpr, "rStyle");
-    let pstyle = style_of(child(dom, para, "pPr"), "pStyle");
+    let pstyle = styles.para_style(style_of(child(dom, para, "pPr"), "pStyle"));
     let inherited = |f: &dyn Fn(&StyleInfo) -> Option<Option<String>>| {
         styles.find(&rstyle, f).or_else(|| styles.find(&pstyle, f))
     };
@@ -570,34 +636,62 @@ fn run(dom: &Dom, r: NodeId, styles: &StyleBook, tally: &mut Tally) {
             }
         }
     }
-    let Some(rpr) = rpr else {
-        return;
-    };
-    if let Some(f) = child(dom, rpr, "rFonts") {
-        // Each slot's face (a theme font where the slot names none):
-        // a run can paint Latin, East Asian and complex-script text in
-        // different faces.
-        let mut faces: Vec<String> = Vec::new();
-        for (slot, theme) in [
-            ("ascii", "asciiTheme"),
-            ("hAnsi", "hAnsiTheme"),
-            ("eastAsia", "eastAsiaTheme"),
-            ("cs", "cstheme"),
-        ] {
-            let (face, theme) = (attr(dom, f, slot), attr(dom, f, theme));
-            let face = if !face.is_empty() {
-                face
-            } else if !theme.is_empty() {
-                format!("theme:{theme}")
-            } else {
-                continue;
-            };
-            if !faces.contains(&face) {
-                faces.push(face);
-            }
-        }
-        for face in faces {
+    // The run's own fonts, else its character style's, else its
+    // paragraph style's.
+    if let Some(f) = rpr.and_then(|x| child(dom, x, "rFonts")) {
+        for face in font_faces(dom, f) {
             tally.add(format!("rfonts \"{face}\""), "");
+        }
+    } else if let Some((faces, name)) = styles
+        .find(&rstyle, |s| s.fonts.clone())
+        .or_else(|| styles.find(&pstyle, |s| s.fonts.clone()))
+    {
+        for face in faces {
+            tally.add(format!("rfonts \"{face}\" via \"{name}\""), "");
+        }
+    }
+}
+
+/// Each slot's face in `w:rFonts` (a theme font where the slot names
+/// none): a run can paint Latin, East Asian and complex-script text in
+/// different faces.
+fn font_faces(dom: &Dom, f: NodeId) -> Vec<String> {
+    let mut faces: Vec<String> = Vec::new();
+    for (slot, theme) in [
+        ("ascii", "asciiTheme"),
+        ("hAnsi", "hAnsiTheme"),
+        ("eastAsia", "eastAsiaTheme"),
+        ("cs", "cstheme"),
+    ] {
+        let (face, theme) = (attr(dom, f, slot), attr(dom, f, theme));
+        let face = if !face.is_empty() {
+            face
+        } else if !theme.is_empty() {
+            format!("theme:{theme}")
+        } else {
+            continue;
+        };
+        if !faces.contains(&face) {
+            faces.push(face);
+        }
+    }
+    faces
+}
+
+/// An element's attributes as `(local name, value)`.
+fn attr_pairs(dom: &Dom, n: NodeId) -> Vec<(String, String)> {
+    dom.attributes(n)
+        .into_iter()
+        .map(|(k, v)| (k.local_name().to_string(), v.to_string()))
+        .collect()
+}
+
+/// `over`'s values replace or join `base`'s.
+fn merge_pairs(base: &mut Vec<(String, String)>, over: &[(String, String)]) {
+    for (k, v) in over {
+        match base.iter_mut().find(|(bk, _)| bk == k) {
+            Some(slot) => slot.1.clone_from(v),
+            None => base.push((k.clone(), v.clone())),
         }
     }
 }

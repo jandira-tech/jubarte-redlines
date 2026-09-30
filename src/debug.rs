@@ -3135,6 +3135,60 @@ mod tests {
         assert!(!render_of(&sect("4000", "4000"), "").contains("3000"));
     }
 
+    /// PR #247 review: only the branch Word renders counts; a DrawingML
+    /// `mc:Choice` and its VML `mc:Fallback` are one picture.
+    #[test]
+    fn render_skips_the_fallback_of_an_alternate_content() {
+        let body = r#"<w:p><w:r><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:Choice Requires="wps"><w:drawing><wp:inline><wp:extent cx="100" cy="100"/><wp:docPr id="1" name="Box"/></wp:inline></w:drawing></mc:Choice><mc:Fallback><w:pict><v:rect/></w:pict></mc:Fallback></mc:AlternateContent></w:r></w:p>"#;
+        let out = render_of(body, "");
+        assert!(out.contains("  inline ×1\n"), "{out}");
+        assert!(!out.contains("vml pict"), "{out}");
+    }
+
+    /// PR #247 review: an unstyled paragraph takes the default paragraph
+    /// style's shading and run colour, as the converter paints them.
+    #[test]
+    fn render_applies_the_default_paragraph_style() {
+        let styles = r#"<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:pPr><w:shd w:val="clear" w:color="auto" w:fill="EEEEEE"/></w:pPr><w:rPr><w:color w:val="C00000"/></w:rPr></w:style>"#;
+        let out = render_of(r#"<w:p><w:r><w:t>plain</w:t></w:r></w:p>"#, styles);
+        assert!(out.contains("para-shd EEEEEE via \"Normal\""), "{out}");
+        assert!(out.contains("color C00000 via \"Normal\""), "{out}");
+    }
+
+    /// PR #247 review: a frame from the paragraph style's chain is the
+    /// paragraph's frame; direct attributes override the style's.
+    #[test]
+    fn render_reports_a_frame_from_the_style_chain() {
+        let styles = r#"<w:style w:type="paragraph" w:styleId="Boxed"><w:name w:val="Boxed"/><w:pPr><w:framePr w:w="3000" w:hAnchor="page" w:x="1000"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="Side"><w:name w:val="Side"/><w:basedOn w:val="Boxed"/></w:style>"#;
+        let body = r#"<w:p><w:pPr><w:pStyle w:val="Side"/><w:framePr w:x="2000"/></w:pPr><w:r><w:t>framed</w:t></w:r></w:p>"#;
+        let out = render_of(body, styles);
+        assert!(
+            out.contains("  frame(hAnchor=page,w=3000,x=2000) \"framed\""),
+            "{out}"
+        );
+    }
+
+    /// PR #247 review: a theme colour's tint and shade change the ink, so
+    /// they are part of the colour.
+    #[test]
+    fn render_keeps_a_theme_colours_tint_and_shade() {
+        let body = r#"<w:p><w:r><w:rPr><w:color w:val="4472C4" w:themeColor="accent1" w:themeShade="BF"/></w:rPr><w:t>dark</w:t></w:r><w:r><w:rPr><w:color w:val="4472C4" w:themeColor="accent1" w:themeTint="99"/></w:rPr><w:t>light</w:t></w:r></w:p>"#;
+        let out = render_of(body, "");
+        assert!(out.contains("color theme:accent1/shade:BF ×1"), "{out}");
+        assert!(out.contains("color theme:accent1/tint:99 ×1"), "{out}");
+    }
+
+    /// PR #247 review: fonts a run takes from its character or paragraph
+    /// style are the fonts it paints in.
+    #[test]
+    fn render_reports_fonts_from_run_and_paragraph_styles() {
+        let styles = r#"<w:style w:type="paragraph" w:styleId="Code"><w:name w:val="Code"/><w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas"/></w:rPr></w:style><w:style w:type="character" w:styleId="Quote"><w:name w:val="Quote"/><w:rPr><w:rFonts w:ascii="Georgia" w:hAnsi="Georgia"/></w:rPr></w:style>"#;
+        let body = r#"<w:p><w:pPr><w:pStyle w:val="Code"/></w:pPr><w:r><w:t>code</w:t></w:r><w:r><w:rPr><w:rStyle w:val="Quote"/></w:rPr><w:t>quote</w:t></w:r></w:p>"#;
+        let out = render_of(body, styles);
+        assert!(out.contains("rfonts \"Consolas\" via \"Code\""), "{out}");
+        assert!(out.contains("rfonts \"Georgia\" via \"Quote\""), "{out}");
+    }
+
     /// PR #247 review: pretty-print inside an element with no text is not
     /// its text; `<w:p>\n  </w:p>` prints as `<w:p></w:p>` does.
     #[test]
