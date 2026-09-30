@@ -331,6 +331,7 @@ fn capabilities_describe_the_built_binary() {
         "inspect_body",
         "markdown",
         "edit",
+        "patch",
     ] {
         assert_eq!(v["operations"][op], true, "{op}");
     }

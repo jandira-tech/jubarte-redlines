@@ -61,6 +61,11 @@ pub struct Operations {
     /// documents as a Word redline.
     #[serde(default)]
     pub markdown_diff: bool,
+    /// The changes between two documents, Word or Markdown, as a patch of
+    /// the changed paragraphs at their ids (`jubarte diff`); an applied edit
+    /// plan carries its redline's.
+    #[serde(default)]
+    pub patch: bool,
 }
 
 /// Documented scope limits.
@@ -130,6 +135,7 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             comments: true,
             markdown_to_docx: true,
             markdown_diff: true,
+            patch: true,
         },
         edit_plan_versions: vec![crate::inspect::SCHEMA_VERSION],
         edit_operations: [

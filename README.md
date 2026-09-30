@@ -180,7 +180,8 @@ jubarte reject redline.docx -o clean.docx # reject every revision
 
 jubarte convert draft.md                  # Markdown → draft.docx, CriticMarkup as tracked changes
 jubarte convert draft.md --reference-doc house.docx -o draft.docx
-jubarte diff old.md new.md                # the changes as CriticMarkup (pandiff style)
+jubarte diff old.md new.md                # the changes as a patch, like git diff
+jubarte diff old.md new.md --format critic   # the whole document as CriticMarkup (pandiff)
 jubarte diff old.md new.md -o changes.docx
 jubarte diff contract.docx edited.md -o redline.docx   # a Markdown edit as a Word redline
 ```
@@ -189,8 +190,10 @@ Either side of a comparison may be Markdown. `jubarte convert` reads
 CriticMarkup (`{++ ++}`, `{-- --}`, `{~~ ~> ~~}`, `{== ==}{>> <<}`) as Word
 tracked changes and comments, with pandoc's `--track-changes
 all|accept|reject` and `--reference-doc`; `--no-critic` reads it as text.
-`jubarte diff` prints two Markdown documents' changes as CriticMarkup, or
-writes a Word redline or PDF. Against a Word document, a Markdown edit is
+`jubarte diff` prints the changes between any two documents as a patch
+(only the changed paragraphs, `[-old-]{+new+}`, each at its line or
+paragraph id; `--format critic` prints two Markdown documents as
+CriticMarkup), or writes a Word redline or PDF with `-o`. Against a Word document, a Markdown edit is
 applied to that document, so everything Markdown cannot hold (empty
 paragraphs, fields, formatting, section breaks) stays and only the edits
 show. [docs/MARKDOWN.md](docs/MARKDOWN.md) has the details.

@@ -12,12 +12,14 @@ jubarte reads Markdown alongside Word documents:
 | --- | --- | --- |
 | Markdown to Word, CriticMarkup as tracked changes | `jubarte convert draft.md` | `markdown_to_docx` |
 | Accept or reject CriticMarkup in Markdown | `jubarte convert draft.md -t md --track-changes accept` | `resolve_critic` |
-| Two Markdown documents as CriticMarkup (pandiff) | `jubarte diff old.md new.md` | `diff_markdown` |
+| The changes between any two documents as a patch | `jubarte diff old new` | `patch_documents` |
+| Two Markdown documents as CriticMarkup (pandiff) | `jubarte diff old.md new.md --format critic` | `diff_markdown` |
 | Any two documents as a Word redline | `jubarte diff a b -o redline.docx`, `jubarte a b` | `redline` |
 | A Markdown edit applied to a Word document | `jubarte diff contract.docx edited.md -o redline.docx` | `apply_markdown` |
 
-Word to Markdown is not in this build yet: `jubarte text FILE` prints the
-body as Markdown with paragraph ids, for edit plans.
+`jubarte convert FILE.docx -t md` (Word to Markdown) is not in the CLI yet:
+`jubarte text FILE` prints the body as Markdown with paragraph ids, for edit
+plans, and `jubarte diff` prints a Word redline's changes as a patch.
 
 ## Markdown to Word
 
@@ -93,13 +95,63 @@ accept` renders the accepted document to PDF.
 `--no-critic` reads the delimiters as text. A delimiter behind a backslash
 (`\{++`) or without its partner is text too.
 
-## Diffs of Markdown (pandiff)
+## Diffs
 
-`jubarte diff old.md new.md` prints the changes as CriticMarkup: accepting
-them all gives `new.md`, rejecting them all gives `old.md`.
+`jubarte diff OLD NEW` prints the changes as a patch, as `git diff
+--word-diff` does, for any two documents, Word or Markdown:
 
 ```text
-$ jubarte diff old.md new.md
+$ jubarte diff old.md new.md -a "Arthur Rodrigues"
+--- a/old.md
++++ b/new.md	Arthur Rodrigues	2026-09-30T14:05:00Z
+@@ [line:3] @@
+Payment is due in [-30-]{+45+} days.
+
+@@ [line:6] @@
+- {+Returns+}
+```
+
+- Only the changed paragraphs are shown, each whole. `@@ [line:N] @@` is
+  the line a Markdown paragraph starts on; in a Word document it is the
+  paragraph's id, `@@ [body:p:N] @@` (or `header1:p:N`, `footnotes:p:N`,
+  ...), the id `jubarte text` prints and edit plans take. It is the
+  paragraph in the new version; `@@ -[body:p:N] @@` is a paragraph
+  removed, in the old one. A change in a text box is shown at the
+  paragraph that holds the box.
+- A change is `[-old-]{+new+}`. Highlights and comments stay CriticMarkup:
+  `{==text==}{>>Name (date): comment<<}`.
+- The `+++` line names who made the changes and when, once. A change by
+  anyone else (a tracked change already in a Word document) is followed
+  by `{>>Name (date)<<}`, and every comment carries its author and date.
+  `-a/--author` defaults to `git config user.name`, else Redline;
+  `-d/--date` to now.
+- Changes grow to whole words, numbers, formatting spans and links, so
+  `[-**twelve**-]{+**eighteen**+}` rather than a change inside the bold.
+  Positions and counts are in characters: nothing is tokenized.
+- Lines wrap at 72 columns, never inside a change's delimiters, code, a
+  link or an autolink; `--columns N` changes it and `--columns 0` does not
+  wrap. Nothing is printed when nothing changed.
+
+The patch is printed whatever is written: `-o changes.docx` writes a Word
+redline, `-o changes.md` the CriticMarkup below and `-o changes.pdf` the
+redline painted (see `jubarte convert --help` for `--revisions`). What
+`diff` wrote is said on stderr. With a Word side and no `-o`, the redline
+goes to `<old>_v_<new>.docx` next to OLD, as before.
+
+`jubarte edit` writes the same patch of its redline to `patch.diff` and
+prints it after the report's summary; `-q` prints nothing. In Python,
+`jubarte_redlines.diff(old, new)` and `Document.diff(other)` return it
+(`str(diff)`, `diff.hunks`; a `diff` block in Jupyter) and an edit's result
+has `.diff`; in WASM, `diffDocuments` and `applyEditPlan(...).patch`.
+
+### CriticMarkup (pandiff)
+
+`--format critic` prints two Markdown documents whole, with the changes
+as CriticMarkup, as pandiff does: accepting them all gives `new.md`,
+rejecting them all gives `old.md`.
+
+```text
+$ jubarte diff old.md new.md --format critic
 # Terms
 
 Payment is due in {~~30~>45~~} days.
@@ -117,13 +169,12 @@ removed whole is one change over its text, which Word writes as a
 paragraph added or removed. A table row added or removed is marked cell by
 cell, since a table drops text outside its cells. An ordered list's numbers
 are not compared: Word numbers items itself. CriticMarkup delimiters
-already in either document are escaped, so they stay text.
+already in either document are escaped, so they stay text. The patch is
+built from this alignment.
 
-`-o changes.docx` writes a Word redline instead, and `-o changes.pdf` the
-redline painted (see `jubarte convert --help` for `--revisions`). For Word
-output the two Markdown documents are written to Word and compared by the
-same engine as two `.docx` files, so moves and Word's grouping of changes
-apply. `--reference-doc` styles both.
+For Word output the two Markdown documents are written to Word and
+compared by the same engine as two `.docx` files, so moves and Word's
+grouping of changes apply. `--reference-doc` styles both.
 
 ### Git
 
@@ -167,7 +218,7 @@ them accepted.
 
 ## Limits
 
-- Word to Markdown is not in this build yet, so a redline with a Word side
-  cannot be printed as CriticMarkup.
+- `jubarte diff --format critic` with a Word side writes a Word redline
+  rather than printing CriticMarkup; the patch (the default) prints it.
 - Markdown math, definition lists and raw HTML blocks are not written.
 - Changes have one author and date; CriticMarkup has no syntax for more.

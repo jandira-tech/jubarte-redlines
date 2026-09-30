@@ -204,9 +204,13 @@ Word does; a paragraph whose runs are all deleted disappears.
 Either side may be Markdown (the `jubarte` binary): `jubarte contract.docx
 edited.md -o redline.docx` applies the Markdown's edits to the Word document
 and redlines only those, keeping empty paragraphs, fields and formatting.
-`jubarte diff old.md new.md` prints two Markdown documents' changes as
-CriticMarkup (`{~~old~>new~~}`); `-o changes.docx` writes them as tracked
-changes. See docs/MARKDOWN.md.
+`jubarte diff old new` prints the changes as a patch in the style of git
+diff: only the changed paragraphs, each at its `[line:N]` (Markdown) or
+`[body:p:N]` (Word) locator, with `[-old-]{+new+}` and CriticMarkup comments;
+`--columns 0` stops the wrapping and `--format critic` prints two Markdown
+documents as CriticMarkup (`{~~old~>new~~}`). `-o changes.docx` writes the
+changes as tracked changes. `jubarte edit` writes the edit's patch as
+`patch.diff` and prints it (`-q` prints nothing). See docs/MARKDOWN.md.
 
 ## 5. Create a new document (docx-js)
 

@@ -91,16 +91,35 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
     added or removed with its paragraph mark. On a `.docx`,
     `--track-changes accept|reject` renders the accepted or rejected
     document.
-  - `jubarte diff OLD NEW`, pandiff style: two Markdown documents' changes
-    as CriticMarkup on stdout (`markdown::diff_markdown`), or with `-o` a
-    Word redline or PDF of any two documents, Word or Markdown
-    (`markdown::redline`). The positional compare takes Markdown too.
+  - `jubarte diff OLD NEW` prints the changes between any two documents,
+    Word or Markdown, as a patch in the style of git diff
+    (`markdown::patch_documents`). Only changed paragraphs are shown, each
+    whole, under `@@ [line:N] @@` for Markdown or `@@ [body:p:N] @@` (the id
+    `jubarte text` and edit plans use) for Word; `[-body:p:N]` marks a
+    removed paragraph. Changes are `[-old-]{+new+}`, widened to whole words
+    and numbers; highlights and comments stay CriticMarkup. The owner is
+    named once, on the `+++` line (`--author`, else git's `user.name`, else
+    Redline; `--date`, else now); a change by someone else is followed by
+    `{>>Name (date)<<}`. Lines wrap at 72 columns (`--columns`, 0 for none).
+    `--format critic` prints two Markdown documents as CriticMarkup, pandiff
+    style (`markdown::diff_markdown`). With `-o` it writes a Word redline or
+    PDF of any two documents (`markdown::redline`) and still prints the
+    patch. The positional compare takes Markdown too. Without `-d`, a Word
+    redline carries the current date, so two runs differ.
   - Word against Markdown: the Markdown's edits are applied to the Word
     document (`markdown::apply_markdown`) and only they show in the
     redline; empty paragraphs, fields, links, formatting and section breaks
     stay. On a fixture with three edits, the redline has 4 revisions where
     writing the Markdown to Word and comparing gave 434.
   - `markdown::resolve_critic` accepts or rejects CriticMarkup in Markdown.
+  - `jubarte edit` writes the redline's patch as `patch.diff` beside the
+    other outputs and prints it; `-q` prints nothing. `jubarte capabilities`
+    lists `patch`.
+  - Python: `jubarte_redlines.diff(old, new)` and `Document.diff(other)`
+    take documents, bytes, Markdown text or paths and return a `Diff`
+    (`str()`, `.hunks`, Markdown display in notebooks); `EditResult.diff` is
+    an edit's patch. WASM: `diffDocuments(old, new, author, date)` and
+    `EditOutput.patch`.
 - Edit plans: `rewrite` gives a paragraph its new text and applies only the
   words that differ, keeping runs, formatting, tabs and fields; and
   `insert_paragraph` takes `like`, the paragraph whose properties the new
