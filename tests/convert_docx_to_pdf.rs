@@ -5469,6 +5469,63 @@ fn a_row_split_keeps_widow_control_from_compat_15() {
 }
 
 #[test]
+fn a_cant_split_row_taller_than_a_page_breaks_from_a_fresh_page() {
+    // Word 16 probes cs_mid/cs_top_0930 (32 exact 20pt lines a page): a
+    // cantSplit row of 40 lines moves off a page it started part-way
+    // down, then breaks at the foot of the fresh page (L31 | L32); at a
+    // page top it breaks there. jubarte kept it whole and painted L36..L39
+    // below the page (priority 2b479f55f8's 5e row ran to y 711 of 595).
+    let line = |t: &str| {
+        format!(
+            "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"400\" w:lineRule=\"exact\"/></w:pPr>\
+               <w:r><w:t>{t}</w:t></w:r></w:p>"
+        )
+    };
+    let tall: Vec<String> = (0..40).map(|i| format!("L{i:02}")).collect();
+    let cell = format!(
+        "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"400\" w:lineRule=\"exact\"/></w:pPr>{}</w:p>",
+        tall.iter()
+            .map(|t| format!("<w:r><w:t>{t}</w:t></w:r>"))
+            .collect::<Vec<_>>()
+            .join("<w:r><w:br/></w:r>")
+    );
+    let pages = |fillers: usize| {
+        let fill: String = (0..fillers).map(|i| line(&format!("Fill{i:02}"))).collect();
+        let body = format!(
+            "{fill}<w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"dxa\"/>\
+               <w:tblLayout w:type=\"fixed\"/></w:tblPr>\
+               <w:tblGrid><w:gridCol w:w=\"5000\"/></w:tblGrid>\
+               <w:tr><w:trPr><w:cantSplit/></w:trPr><w:tc>\
+               <w:tcPr><w:tcW w:w=\"5000\" w:type=\"dxa\"/></w:tcPr>{cell}</w:tc></w:tr></w:tbl>\
+             {}<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+                 w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>",
+            line("After")
+        );
+        let settings = r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>"#;
+        docx_to_pdf(&minimal_docx_with_settings(&body, settings)).expect("tall cantSplit row")
+    };
+    let on = |pdf: &[u8], t: &str| page_with_text(pdf, t).expect(t);
+    let mid = pages(5);
+    assert_eq!(
+        (
+            on(&mid, "L00"),
+            on(&mid, "L31"),
+            on(&mid, "L32"),
+            on(&mid, "After")
+        ),
+        (1, 1, 2, 2),
+        "the row moves to page 2 and breaks at its foot"
+    );
+    let top = pages(0);
+    assert_eq!(
+        (on(&top, "L31"), on(&top, "L32"), on(&top, "L39")),
+        (0, 1, 1),
+        "at a page top it breaks at that page's foot"
+    );
+}
+
+#[test]
 fn trailing_body_sectpr_does_not_add_a_page() {
     let docx = minimal_docx_body("<w:p><w:r><w:t>Only page</w:t></w:r></w:p><w:sectPr/>");
     let pdf = docx_to_pdf(&docx).expect("convert trailing sectPr");

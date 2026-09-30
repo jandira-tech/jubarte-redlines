@@ -24838,8 +24838,14 @@ impl<'a> Layout<'a> {
                     self.ensure(pair);
                 }
             }
-            let splittable = self.nested_depth == 0 && ri >= header_n && !work[ri].2;
-            if splittable {
+            // A cantSplit row taller than a whole page still breaks, from a
+            // fresh page: Word 16 probes cs_*_0930 move a 40-line row off
+            // the page it started on and cut it at the next page's foot
+            // (priority 2b479f55f8's 5e row ran 116pt below its page).
+            let page_room = self.page.height - self.body_top - self.body_floor;
+            let too_tall = work[ri].2 && work[ri].1 > page_room + 0.5;
+            let splittable = self.nested_depth == 0 && ri >= header_n && (!work[ri].2 || too_tall);
+            if splittable && (self.at_page_top || !too_tall) {
                 self.split_work_row(&mut work, ri, &col_w);
             }
             let pages_before = self.pages.len();

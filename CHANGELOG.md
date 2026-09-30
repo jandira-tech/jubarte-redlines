@@ -148,6 +148,11 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   it, as in Word 16; a narrower table still sits beside it. Before, the
   table ran over the picture: 109f20a2b3's continued table painted
   across its header logo, 74pt higher than Word's.
+- A `cantSplit` table row taller than a whole page breaks anyway, as in
+  Word 16: it moves off the page it started on and breaks at the foot of
+  the next one. Before, it stayed whole and ran off the page: 2b479f55f8's
+  5e row painted 116pt below its page, and the file came to 31 pages, not
+  Word's 33.
 - A section that omits a header or footer type takes that type from the
   nearest earlier section that names it (ECMA-376 17.10.5), as Word does.
   Before, a section naming only some types lost the rest: 2b479f55f8's
