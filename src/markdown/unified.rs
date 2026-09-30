@@ -25,11 +25,16 @@
 //! target, after a backslash, before a list, heading, quote or table marker,
 //! or in a heading, table row or code block.
 
+use std::collections::HashSet;
 use std::fmt;
 
 use super::critic::{self, Piece, Token};
 use super::diff::{continues, diff_markdown, marker_len, open_paragraph, table_row};
+use super::redline::{RedlineOptions, Source, redline};
 use super::write::named;
+use super::{MarkdownError, MarkdownOptions, docx_to_markdown};
+use crate::document_comparer::{accept_revisions, reject_revisions};
+use crate::inspect;
 
 /// The width [`Patch`] wraps to when displayed.
 pub const DEFAULT_COLUMNS: usize = 72;
@@ -55,19 +60,26 @@ pub struct PatchOptions {
 }
 
 /// Where a hunk's paragraph is.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Locator {
     /// The 1-based line of a Markdown document.
     Line(usize),
-    /// A body paragraph of a Word document: its `body:p:N` id.
-    BodyParagraph(usize),
+    /// A paragraph of a Word document by the id an edit plan names it by:
+    /// `body:p:3`, `footnotes:p:0`.
+    Paragraph {
+        /// `body`, or the part a header, footer or note is in
+        /// (`header1`, `footnotes`).
+        story: String,
+        /// Its 0-based order in the story.
+        index: usize,
+    },
 }
 
 impl fmt::Display for Locator {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Line(line) => write!(f, "line:{line}"),
-            Self::BodyParagraph(index) => write!(f, "body:p:{index}"),
+            Self::Paragraph { story, index } => write!(f, "{story}:p:{index}"),
         }
     }
 }
@@ -198,7 +210,16 @@ pub fn patch_markdown(old: &str, new: &str, options: &PatchOptions) -> Patch {
     };
     let (old_lines, new_lines) = (lines(old), lines(new));
     let (mut old_from, mut new_from) = (0, 0);
-    for (hunk, (old_text, new_text)) in patch.hunks.iter_mut().zip(texts) {
+    let texts = texts.into_iter().filter(|t| t.hunk.is_some());
+    for (
+        hunk,
+        Paragraphs {
+            old: old_text,
+            new: new_text,
+            ..
+        },
+    ) in patch.hunks.iter_mut().zip(texts)
+    {
         let (text, lines, from) = if hunk.removed {
             (old_text, &old_lines, &mut old_from)
         } else {
@@ -229,8 +250,214 @@ pub fn patch_critic(critic: &str, options: &PatchOptions) -> Patch {
     build(critic, options).0
 }
 
-/// The patch, with each hunk's paragraph in the old and new versions.
-fn build(critic: &str, options: &PatchOptions) -> (Patch, Vec<(String, String)>) {
+/// A Word redline's tracked changes and comments as a patch, each hunk at
+/// the id ([`body:p:N`](Locator::Paragraph)) [`jubarte::inspect`](crate::inspect) gives its
+/// paragraph once every change is accepted (or rejected, for a removed
+/// paragraph): the id an edit plan names it by. A change in a text box is
+/// at the paragraph that holds the box. Every comment is shown.
+pub fn patch_redline(docx: &[u8], options: &PatchOptions) -> Result<Patch, MarkdownError> {
+    let package = |error: crate::opc::OpcError| MarkdownError::Package(error.to_string());
+    let old = reject_revisions(docx).map_err(package)?;
+    let new = accept_revisions(docx).map_err(package)?;
+    patch_word(docx, &old, &new, None, options)
+}
+
+/// The changes from `old` to `new` as a patch. Two Markdown documents give
+/// [`patch_markdown`]'s patch, at lines; otherwise the documents are
+/// compared as [`redline`] compares them and each hunk is at a `body:p:N`
+/// of the Word document on its side (of the redline, accepted or rejected,
+/// where that side is Markdown). The comparer's changes are the owner's;
+/// a comment the old document has too is not a change.
+pub fn patch_documents(
+    old: Source<'_>,
+    new: Source<'_>,
+    redline_options: &RedlineOptions<'_>,
+    options: &PatchOptions,
+) -> Result<Patch, MarkdownError> {
+    if let (Source::Markdown(old), Source::Markdown(new)) = (old, new) {
+        return Ok(patch_markdown(old, new, options));
+    }
+    let mut compared = redline_options.clone();
+    compared.settings.author_for_revisions = options.owner.author.clone();
+    compared.settings.date_time_for_revisions = options.owner.date.clone();
+    let docx = redline(old, new, &compared)?;
+    let package = |error: crate::opc::OpcError| MarkdownError::Package(error.to_string());
+    let old = match old {
+        Source::Docx(docx) => docx.to_vec(),
+        Source::Markdown(_) => reject_revisions(&docx).map_err(package)?,
+    };
+    let new = match new {
+        Source::Docx(docx) => docx.to_vec(),
+        Source::Markdown(_) => accept_revisions(&docx).map_err(package)?,
+    };
+    let known = segments(&docx_to_markdown(&old, &MarkdownOptions::default())?.markdown)
+        .into_iter()
+        .filter_map(|segment| match segment {
+            Segment::Note(note) => Some(note),
+            _ => None,
+        })
+        .collect();
+    patch_word(&docx, &old, &new, Some(&known), options)
+}
+
+/// The redline's patch with each hunk at the paragraph of `old` or `new`
+/// its text is, found in order.
+fn patch_word(
+    docx: &[u8],
+    old: &[u8],
+    new: &[u8],
+    known: Option<&HashSet<String>>,
+    options: &PatchOptions,
+) -> Result<Patch, MarkdownError> {
+    let critic = docx_to_markdown(docx, &MarkdownOptions::default())?.markdown;
+    let (mut patch, texts) = build_with(&critic, options, known);
+    let (old, new) = (word_paragraphs(old)?, word_paragraphs(new)?);
+    // Every paragraph is looked for, changed or not, so the search follows
+    // the document; text found in no paragraph is in a text box, and goes
+    // to the paragraph found last, the one that holds the box.
+    let mut sides = [Search::new(&old), Search::new(&new)];
+    for block in texts {
+        let old_at = sides[0].next(&block.old);
+        let new_at = sides[1].next(&block.new);
+        if let Some(hunk) = block.hunk.and_then(|i| patch.hunks.get_mut(i)) {
+            let at = if hunk.removed { old_at } else { new_at };
+            if let Some(at) = at {
+                hunk.at = at;
+            }
+        }
+    }
+    Ok(patch)
+}
+
+/// A Word paragraph as [`patch_word`] looks for it.
+struct WordParagraph {
+    at: Locator,
+    letters: String,
+}
+
+/// The paragraphs of one version, looked for in order.
+struct Search<'a> {
+    letters: Vec<&'a str>,
+    paragraphs: &'a [WordParagraph],
+    /// Where the search goes on from.
+    next: usize,
+    /// The paragraph found last.
+    last: usize,
+}
+
+impl<'a> Search<'a> {
+    fn new(paragraphs: &'a [WordParagraph]) -> Self {
+        Self {
+            letters: paragraphs.iter().map(|p| p.letters.as_str()).collect(),
+            paragraphs,
+            next: 0,
+            last: 0,
+        }
+    }
+
+    /// Where a block with this Markdown is: the next paragraph with its
+    /// text, else the one found last. `None` when the block has no text in
+    /// this version, or the document no paragraphs.
+    fn next(&mut self, markdown: &str) -> Option<Locator> {
+        if !visible(markdown) {
+            return None;
+        }
+        if let Some(found) = find(&letters(&plain(markdown)), &self.letters, self.next) {
+            self.next = found + 1;
+            self.last = found;
+        }
+        self.paragraphs.get(self.last).map(|p| p.at.clone())
+    }
+}
+
+/// The body's paragraphs, then the headers', footers' and notes', as
+/// `jubarte text` lists them.
+fn word_paragraphs(docx: &[u8]) -> Result<Vec<WordParagraph>, MarkdownError> {
+    let error = |error: inspect::InspectError| MarkdownError::Docx(error.to_string());
+    let body = inspect::paragraphs(docx).map_err(error)?;
+    let stories = inspect::stories(docx).map_err(error)?;
+    let all = body.into_iter().map(|p| ("body".to_string(), p)).chain(
+        stories
+            .into_iter()
+            .flat_map(|s| s.paragraphs.into_iter().map(move |p| (s.id.clone(), p))),
+    );
+    Ok(all
+        .map(|(story, p)| WordParagraph {
+            at: Locator::Paragraph {
+                story,
+                index: p.index,
+            },
+            letters: letters(&p.text),
+        })
+        .collect())
+}
+
+/// The first paragraph from `from` on whose text is the block's, else one
+/// the block holds (a table row's cell, a paragraph and the one joined to
+/// it, a list item's text after its number).
+fn find(block: &str, paragraphs: &[&str], from: usize) -> Option<usize> {
+    let rest = paragraphs.get(from..)?;
+    let at = |test: &dyn Fn(&str) -> bool| {
+        rest.iter()
+            .position(|p| !p.is_empty() && test(p))
+            .map(|i| from + i)
+    };
+    at(&|p| p == block).or_else(|| at(&|p| block.contains(p)))
+}
+
+/// Letters and digits only.
+fn letters(text: &str) -> String {
+    text.chars().filter(|c| c.is_alphanumeric()).collect()
+}
+
+/// Markdown without what a paragraph's text does not have: the list or
+/// heading marker, link and image targets, footnote references and HTML
+/// tags.
+fn plain(markdown: &str) -> String {
+    let markdown = markdown.trim_start_matches('\n');
+    let mut out = String::new();
+    let mut rest = &markdown[marker_len(markdown)..];
+    while let Some(c) = rest.chars().next() {
+        let skip = if rest.starts_with("](") {
+            out.push(']');
+            rest.find(')').map(|end| end + 1)
+        } else if rest.starts_with("[^") {
+            rest.find(']').map(|end| end + 1)
+        } else if c == '<' && rest[1..].starts_with(|c: char| c.is_ascii_alphabetic() || c == '/') {
+            rest.find('>').map(|end| end + 1)
+        } else {
+            None
+        };
+        match skip {
+            Some(length) => rest = &rest[length..],
+            None => {
+                out.push(c);
+                rest = &rest[c.len_utf8()..];
+            }
+        }
+    }
+    out
+}
+
+/// A block's text in the old and new versions, and its hunk if it has one.
+struct Paragraphs {
+    hunk: Option<usize>,
+    old: String,
+    new: String,
+}
+
+/// The patch, with every block's text in the old and new versions.
+fn build(critic: &str, options: &PatchOptions) -> (Patch, Vec<Paragraphs>) {
+    build_with(critic, options, None)
+}
+
+/// [`build`], where a paragraph whose only marks are highlights and
+/// comments in `known` (the old document's) is not a hunk.
+fn build_with(
+    critic: &str,
+    options: &PatchOptions,
+    known: Option<&HashSet<String>>,
+) -> (Patch, Vec<Paragraphs>) {
     let critic = critic.replace("\r\n", "\n");
     let blocks = blocks(attribute(segments(&critic)));
     let owner = &options.owner;
@@ -241,14 +468,24 @@ fn build(critic: &str, options: &PatchOptions) -> (Patch, Vec<(String, String)>)
         old_line += newlines(&block.separator, block.old_before_visible);
         new_line += newlines(&block.separator, block.new_before_visible);
         let (old_text, new_text) = (block.text(Side::Old), block.text(Side::New));
-        if block.marked() {
+        if block.marked(known) {
             let (at, removed) = if visible(&new_text) || !visible(&old_text) {
                 (Locator::Line(new_line), false)
             } else {
                 (Locator::Line(old_line), true)
             };
+            texts.push(Paragraphs {
+                hunk: Some(hunks.len()),
+                old: old_text.clone(),
+                new: new_text.clone(),
+            });
             hunks.push(hunk(block, at, removed, owner));
-            texts.push((old_text.clone(), new_text.clone()));
+        } else {
+            texts.push(Paragraphs {
+                hunk: None,
+                old: old_text.clone(),
+                new: new_text.clone(),
+            });
         }
         old_line += old_text.matches('\n').count();
         new_line += new_text.matches('\n').count();
@@ -408,8 +645,13 @@ impl Block {
         out
     }
 
-    fn marked(&self) -> bool {
-        self.segments.iter().any(|s| !matches!(s, Segment::Same(_)))
+    fn marked(&self, known: Option<&HashSet<String>>) -> bool {
+        self.segments.iter().any(|s| match (s, known) {
+            (Segment::Same(_), _) => false,
+            (Segment::Edit(_), _) | (_, None) => true,
+            (Segment::Note(note), Some(known)) => !known.contains(note),
+            (_, Some(_)) => false,
+        })
     }
 }
 
@@ -797,6 +1039,11 @@ mod tests {
         assert!(!can_break(line, line.find(" c`").unwrap(), &ranges));
         assert!(!can_break(line, line.find(" f)").unwrap(), &ranges));
         assert!(can_break(line, 1, &ranges));
+    }
+
+    #[test]
+    fn plain_text_drops_markers_targets_note_references_and_tags() {
+        assert_eq!(plain("- a<u>b</u>c [d](e)[^1] x < y"), "abc [d] x < y");
     }
 
     #[test]

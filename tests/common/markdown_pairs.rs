@@ -163,3 +163,47 @@ pub const PAIRS: &[(&str, &str, &str)] = &[
         "# Terms of sale\n\nPayment is due in 45 days.\n\n- Delivery\n- Returns\n- Warranty\n\nLate fees apply.\n\nSigned.\n",
     ),
 ];
+
+/// A hunk's text with its changes accepted (or rejected) and its
+/// highlights, comments and escapes gone.
+pub fn resolve(text: &str, accept: bool) -> String {
+    let mut out = String::new();
+    let mut at = 0;
+    // Inside `[-` (Some(false)) or `{+` (Some(true)).
+    let mut inside: Option<bool> = None;
+    while at < text.len() {
+        let rest = &text[at..];
+        let literal = ["\\[-", "-\\]", "\\{+", "+\\}"]
+            .iter()
+            .find(|e| rest.starts_with(**e));
+        let shown = inside.is_none_or(|inserted| inserted == accept);
+        if let Some(escaped) = literal {
+            if shown {
+                out.push_str(&escaped.replace('\\', ""));
+            }
+            at += escaped.len();
+        } else if inside.is_none() && rest.starts_with("[-") {
+            inside = Some(false);
+            at += 2;
+        } else if inside.is_none() && rest.starts_with("{+") {
+            inside = Some(true);
+            at += 2;
+        } else if inside == Some(false) && rest.starts_with("-]")
+            || inside == Some(true) && rest.starts_with("+}")
+        {
+            inside = None;
+            at += 2;
+        } else if rest.starts_with("{>>") {
+            at += rest.find("<<}").expect("a closed comment") + 3;
+        } else if rest.starts_with("{==") || rest.starts_with("==}") {
+            at += 3;
+        } else {
+            let c = rest.chars().next().unwrap();
+            if shown {
+                out.push(c);
+            }
+            at += c.len_utf8();
+        }
+    }
+    out
+}

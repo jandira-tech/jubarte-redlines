@@ -276,52 +276,8 @@ fn a_line_break_at_a_backslash_is_not_made_hard() {
 
 mod common;
 
-use common::markdown_pairs::PAIRS;
+use common::markdown_pairs::{PAIRS, resolve};
 use jubarte::markdown::diff_markdown;
-
-/// A hunk's text with its changes accepted (or rejected) and its
-/// highlights, comments and escapes gone.
-fn resolve(text: &str, accept: bool) -> String {
-    let mut out = String::new();
-    let mut at = 0;
-    // Inside `[-` (Some(false)) or `{+` (Some(true)).
-    let mut inside: Option<bool> = None;
-    while at < text.len() {
-        let rest = &text[at..];
-        let literal = ["\\[-", "-\\]", "\\{+", "+\\}"]
-            .iter()
-            .find(|e| rest.starts_with(**e));
-        let shown = inside.is_none_or(|inserted| inserted == accept);
-        if let Some(escaped) = literal {
-            if shown {
-                out.push_str(&escaped.replace('\\', ""));
-            }
-            at += escaped.len();
-        } else if inside.is_none() && rest.starts_with("[-") {
-            inside = Some(false);
-            at += 2;
-        } else if inside.is_none() && rest.starts_with("{+") {
-            inside = Some(true);
-            at += 2;
-        } else if inside == Some(false) && rest.starts_with("-]")
-            || inside == Some(true) && rest.starts_with("+}")
-        {
-            inside = None;
-            at += 2;
-        } else if rest.starts_with("{>>") {
-            at += rest.find("<<}").expect("a closed comment") + 3;
-        } else if rest.starts_with("{==") || rest.starts_with("==}") {
-            at += 3;
-        } else {
-            let c = rest.chars().next().unwrap();
-            if shown {
-                out.push(c);
-            }
-            at += c.len_utf8();
-        }
-    }
-    out
-}
 
 #[test]
 fn every_hunk_is_its_paragraph_in_both_versions_at_its_line() {
