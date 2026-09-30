@@ -119,6 +119,9 @@ struct StyleInfo {
     color: Option<String>,
     highlight: Option<String>,
     run_shd: Option<String>,
+    /// The style's own `w:vanish`: `Some(true)` hides, `Some(false)` turns
+    /// a base's off.
+    vanish: Option<bool>,
     /// Table-wide and conditional shading: `whole` (`tblPr`), `cell`
     /// (`tcPr`), or the `tblStylePr` type.
     table_shd: Vec<(String, String)>,
@@ -161,6 +164,8 @@ impl StyleBook {
                         run_shd: rpr
                             .and_then(|r| child(dom, r, "shd"))
                             .and_then(|x| shd(dom, x)),
+                        vanish: rpr
+                            .and_then(|r| child(dom, r, "vanish").map(|_| on(dom, r, "vanish"))),
                         table_shd: Vec::new(),
                     };
                     let mut table = |label: String, holder: NodeId| {
@@ -502,12 +507,22 @@ fn run(dom: &Dom, r: NodeId, styles: &StyleBook, tally: &mut Tally) {
             .and_then(|x| shd(dom, x)),
         &|s| s.run_shd.clone(),
     );
+    // Hidden directly, else by the character style's chain (what the
+    // converter follows).
+    match rpr.and_then(|x| child(dom, x, "vanish")) {
+        Some(_) if rpr.is_some_and(|x| on(dom, x, "vanish")) => {
+            tally.add("vanish".to_string(), &text);
+        }
+        Some(_) => {}
+        None => {
+            if let Some((true, name)) = styles.find(&rstyle, |s| s.vanish) {
+                tally.add(format!("vanish via \"{name}\""), &text);
+            }
+        }
+    }
     let Some(rpr) = rpr else {
         return;
     };
-    if on(dom, rpr, "vanish") {
-        tally.add("vanish".to_string(), &text);
-    }
     if let Some(f) = child(dom, rpr, "rFonts") {
         let face = ["ascii", "hAnsi", "eastAsia", "cs"]
             .iter()

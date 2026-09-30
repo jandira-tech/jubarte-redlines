@@ -4642,6 +4642,40 @@ fn a_run_color_auto_overrides_the_styles_color() {
 }
 
 #[test]
+fn a_character_styles_vanish_hides_its_runs() {
+    // clean/4910ce2060 (NC lead and copper summary): each blank sample
+    // cell holds placeholder text ("No", "Location", "Tier Level") in runs
+    // whose only formatting is rStyle ContentControlHidden, a character
+    // style based on PlaceholderText that sets w:vanish. Word leaves the
+    // cells empty; we painted the placeholders in every row.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+          <w:style w:type=\"character\" w:styleId=\"PlaceholderText\"><w:name w:val=\"Placeholder Text\"/>\
+            <w:rPr><w:color w:val=\"808080\"/></w:rPr></w:style>\
+          <w:style w:type=\"character\" w:styleId=\"ContentControlHidden\"><w:name w:val=\"Content Control (Hidden)\"/>\
+            <w:basedOn w:val=\"PlaceholderText\"/><w:rPr><w:vanish/></w:rPr></w:style>\
+          <w:style w:type=\"character\" w:styleId=\"Shown\"><w:name w:val=\"Shown\"/>\
+            <w:basedOn w:val=\"ContentControlHidden\"/><w:rPr><w:vanish w:val=\"0\"/></w:rPr></w:style>\
+        </w:styles>";
+    let body = "<w:p><w:r><w:t>Kept</w:t></w:r>\
+           <w:r><w:rPr><w:rStyle w:val=\"ContentControlHidden\"/></w:rPr><w:t>Placeholder</w:t></w:r>\
+           <w:r><w:rPr><w:rStyle w:val=\"Shown\"/></w:rPr><w:t>Unhidden</w:t></w:r>\
+           <w:r><w:rPr><w:rStyle w:val=\"ContentControlHidden\"/><w:vanish w:val=\"0\"/></w:rPr><w:t>Direct</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&docx_with_styles(body, styles)).expect("hidden style");
+    let text = stream_glyph_text(&pdf_content_streams(&pdf)[0]);
+    assert!(text.contains("Kept"), "{text}");
+    assert!(!text.contains("Placeholder"), "the style hides it: {text}");
+    assert!(
+        text.contains("Unhidden"),
+        "a derived style turns it off: {text}"
+    );
+    assert!(text.contains("Direct"), "direct vanish=0 wins: {text}");
+}
+
+#[test]
 fn a_merged_cells_content_grows_the_last_row_it_spans() {
     // fixtures_500 000bf661: a header table whose first row (trHeight 703)
     // starts vertical merges holding four text lines; the second row

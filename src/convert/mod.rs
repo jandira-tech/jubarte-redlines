@@ -998,6 +998,9 @@ struct NamedStyle {
     /// base's; a paragraph's own framePr overlays them attribute by
     /// attribute (e73ba1e0's footer frame takes Marginalie's x=9016).
     frame: Vec<(String, String)>,
+    /// The chain's nearest `w:vanish` is on: a character style that sets
+    /// it hides its runs (4910ce2060's ContentControlHidden placeholders).
+    hidden: bool,
 }
 
 #[derive(Clone, Default)]
@@ -2955,6 +2958,21 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
             hit
         };
         let sets_size = chain_sets("sz", false);
+        let hidden = {
+            let mut cur = Some(id.as_str());
+            let mut on = false;
+            for _ in 0..12 {
+                let Some(r) = cur.and_then(|c| raw.get(c)) else {
+                    break;
+                };
+                if let Some(v) = r.rpr.and_then(|pr| first_named(&dom, pr, "vanish")) {
+                    on = !val_is_false(&dom, Some(v));
+                    break;
+                }
+                cur = r.based.as_deref();
+            }
+            on
+        };
         let chain_ind = |names: &[&str]| {
             let mut cur = Some(id.as_str());
             for _ in 0..12 {
@@ -3026,6 +3044,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
                 sets_spacing,
                 not_para: style_not_para,
                 frame,
+                hidden,
             },
         );
     }
@@ -12060,9 +12079,22 @@ fn collect_runs_rec(
             }
         }
         let rprs = leading_rprs(ctx.dom, node);
-        if rprs.iter().any(|rpr| {
-            first_named(ctx.dom, *rpr, "vanish").is_some_and(|n| !val_is_false(ctx.dom, Some(n)))
-        }) {
+        // A direct w:vanish decides (the last rPr applied wins); without
+        // one, the character style's.
+        let direct = rprs
+            .iter()
+            .rev()
+            .find_map(|rpr| first_named(ctx.dom, *rpr, "vanish"))
+            .map(|n| !val_is_false(ctx.dom, Some(n)));
+        let styled = || {
+            rprs.iter().any(|rpr| {
+                first_named(ctx.dom, *rpr, "rStyle")
+                    .and_then(|n| ctx.dom.attribute(n, &W::val()))
+                    .and_then(|sid| ctx.styles.and_then(|s| s.get(sid)))
+                    .is_some_and(|named| named.hidden)
+            })
+        };
+        if direct.unwrap_or_else(styled) {
             // webHidden is web-view only (ECMA-376 17.3.2.42). Word print
             // and Save-as-PDF still paint those runs (TOC leaders / PAGEREF).
             return;

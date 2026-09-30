@@ -125,6 +125,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   empty page 2, then the register on page 3). Together with the ptab fix,
   a9de4ed3f9 went from 34.2/9.4 to 42.9/18.0, and clean/3936a8fe56 from
   39.7/10.9 to 45.8/19.6.
+- A character style's `w:vanish` hides its runs; a direct `w:vanish
+  w:val="0"` shows them again. 4910ce2060's content-control placeholders
+  printed in cells Word leaves empty. `jubarte debug --check render` lists
+  them as `vanish via "Style"`.
 - Rejecting a redline gives back what a changed style inherited in the
   original. Word's Reject All reads a style's old record against its
   built-in defaults, so a record holding only the style's own properties
