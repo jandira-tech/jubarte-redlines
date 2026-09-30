@@ -2765,6 +2765,36 @@ fn a_left_ptab_after_text_starts_a_new_line() {
 }
 
 #[test]
+fn a_centred_frame_holding_margin_ptabs_spans_the_margins() {
+    // tracking_without_comments/54f4bb7's footer: the same ptab line in a
+    // `framePr xAlign="center"` auto-width frame. Word prints it as the
+    // unframed line (Metadata at the left margin, "Page 2 of 28" flush
+    // right, Downloaded under Metadata): a ptab relative to the margin
+    // stretches the frame to the margins. We centred the text's width.
+    let ptab = |a: &str| {
+        format!(r#"<w:r><w:ptab w:relativeTo="margin" w:alignment="{a}" w:leader="none"/></w:r>"#)
+    };
+    let hdr = format!(
+        r#"<w:p><w:pPr><w:framePr w:wrap="auto" w:vAnchor="text" w:hAnchor="margin" w:xAlign="center" w:y="1"/></w:pPr>{}<w:r><w:t>Meta</w:t></w:r>{}<w:r><w:t>Pg</w:t></w:r>{}<w:r><w:t>Down</w:t></w:r></w:p><w:p/>"#,
+        ptab("left"),
+        ptab("right"),
+        ptab("left")
+    );
+    let pdf = docx_to_pdf(&header_part_docx(&hdr)).expect("framed ptab header");
+    let (xm, ym) = pdf_glyph_text_xy(&pdf, "Meta").expect("Meta paints");
+    let (xp, yp) = pdf_glyph_text_xy(&pdf, "Pg").expect("Pg paints");
+    let (xd, yd) = pdf_glyph_text_xy(&pdf, "Down").expect("Down paints");
+    assert!((xm - 72.0).abs() < 1.0, "Meta at the left margin; x={xm}");
+    assert!(
+        xp > 500.0 && xp < 540.0,
+        "Pg flush with the 540pt margin; x={xp}"
+    );
+    assert!((ym - yp).abs() < 0.5, "Meta and Pg share a line: {ym} {yp}");
+    assert!((xd - 72.0).abs() < 1.0, "Down at the left margin; x={xd}");
+    assert!(yd < ym - 5.0, "Down on the next line: {yd} vs {ym}");
+}
+
+#[test]
 fn a_tab_after_a_full_width_header_picture_wraps_to_its_own_line() {
     // Redlines vs 000e3e7b: a 441.75pt banner fills the header measure and
     // a tab follows it; Word wraps the tab to a second line (descent + one

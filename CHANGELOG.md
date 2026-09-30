@@ -135,6 +135,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   a189917's redline went from 45.5/20.9 to 59.3/51.3 and back to Word's
   page count, and fc5d9fe's from 48.1/17.1 to 62.9/37.7.
   `jubarte debug --check xml` now shows such a space as the element's text.
+- A header or footer paragraph whose frame holds a right or centre
+  `w:ptab` relative to the margin spans the margins, as Word prints it.
+  54f4bb7's centred footer frame printed "Metadata … Page 2 of 28" as a
+  narrow block in the page centre (42.7/11.1 to 54.6/21.3).
 - Rejecting a redline gives back what a changed style inherited in the
   original. Word's Reject All reads a style's old record against its
   built-in defaults, so a record holding only the style's own properties

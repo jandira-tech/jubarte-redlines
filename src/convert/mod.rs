@@ -17226,10 +17226,22 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet) -> Vec<TextRun> 
         let mut scan = FieldScan::default();
         let mut line = Vec::new();
         collect_hf_rec(dom, para, &prun, sheet, &mut scan, &mut line);
+        // A right or centre ptab relative to the margin stretches an
+        // auto-width frame to the margins, so it prints as the unframed
+        // line (54f4bb7's centred footer frame: "Metadata" at the left
+        // margin, "Page 2 of 28" flush right).
+        let spans_margins = dom
+            .descendants(para, Some(&W::name("ptab")))
+            .into_iter()
+            .any(|n| {
+                attr_any(dom, n, "relativeTo") == Some("margin")
+                    && matches!(attr_any(dom, n, "alignment"), Some("right" | "center"))
+            });
         let frame_align = dom
             .element(para, &W::p_pr())
             .and_then(|ppr| first_named(dom, ppr, "framePr"))
-            .and_then(|fp| attr_any(dom, fp, "xAlign"));
+            .and_then(|fp| attr_any(dom, fp, "xAlign"))
+            .filter(|_| !spans_margins);
         if matches!(frame_align, Some("right" | "center")) && !line.is_empty() {
             for mut run in line {
                 run.frame_right = frame_align == Some("right");
