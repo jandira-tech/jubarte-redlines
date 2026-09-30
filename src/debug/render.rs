@@ -115,7 +115,9 @@ fn parse(pkg: &Package, name: &str) -> Option<(Dom, NodeId)> {
 struct StyleInfo {
     name: String,
     based: String,
-    para_shd: Option<String>,
+    /// The style's own paragraph fill: `Some(None)` for a nil `shd`, which
+    /// stops its base's.
+    para_shd: Option<Option<String>>,
     /// The style's own run colour, highlight and shading: `None` when it
     /// sets none (its base's shows), `Some(None)` when it resets them
     /// (`auto`, `none`, a nil `shd`).
@@ -161,7 +163,7 @@ impl StyleBook {
                         based: val("basedOn").unwrap_or_default(),
                         para_shd: child(dom, s, "pPr")
                             .and_then(|p| child(dom, p, "shd"))
-                            .and_then(|x| shd(dom, x)),
+                            .map(|x| shd(dom, x)),
                         color: rpr.and_then(|r| color(dom, r)),
                         highlight: rpr.and_then(|r| highlight(dom, r)),
                         run_shd: rpr.and_then(|r| run_shd(dom, r)),
@@ -202,6 +204,33 @@ impl StyleBook {
             .map(|s| s.name.clone())
             .filter(|n| !n.is_empty())
             .unwrap_or_else(|| id.to_string())
+    }
+
+    /// `id`'s table shading down its `basedOn` chain: a base's conditions
+    /// stay unless the derived style sets the same one.
+    fn table_shd(&self, id: &str) -> Vec<(String, String)> {
+        let mut chain = Vec::new();
+        let mut id = id.to_string();
+        for _ in 0..CHAIN {
+            let Some(s) = self.by_id.get(&id) else {
+                break;
+            };
+            chain.push(s);
+            if s.based.is_empty() {
+                break;
+            }
+            id = s.based.clone();
+        }
+        let mut out: Vec<(String, String)> = Vec::new();
+        for s in chain.into_iter().rev() {
+            for (key, fill) in &s.table_shd {
+                match out.iter_mut().find(|(k, _)| k == key) {
+                    Some(slot) => slot.1 = fill.clone(),
+                    None => out.push((key.clone(), fill.clone())),
+                }
+            }
+        }
+        out
     }
 
     /// The first value `f` finds walking `id`'s `basedOn` chain, with the
@@ -374,7 +403,8 @@ fn part_lines(
                 tables += 1;
                 out.push(table(dom, n, tables, styles));
             }
-            "sectPr" => {
+            // A `w:sectPrChange`'s old `w:sectPr` is history.
+            "sectPr" if nearest(dom, n, "sectPrChange").is_none() => {
                 sections += 1;
                 out.push(section(dom, n, sections, rels));
             }
@@ -433,7 +463,7 @@ fn paragraph(dom: &Dom, p: NodeId, styles: &StyleBook, tally: &mut Tally, out: &
         Some(Some(fill)) => tally.add(format!("para-shd {fill}"), &text),
         Some(None) => {}
         None => {
-            if let Some((fill, name)) = styles.find(&pstyle, |s| s.para_shd.clone()) {
+            if let Some((Some(fill), name)) = styles.find(&pstyle, |s| s.para_shd.clone()) {
                 tally.add(format!("para-shd {fill} via \"{name}\""), &text);
             }
         }
@@ -454,22 +484,33 @@ fn paragraph(dom: &Dom, p: NodeId, styles: &StyleBook, tally: &mut Tally, out: &
     // Revision containers side by side, a plain run between them breaking
     // the pair.
     let mut order: Vec<char> = Vec::new();
-    for c in dom.elements(p, None) {
-        let k = match local(dom, c).as_str() {
-            "del" | "moveFrom" => 'D',
-            "ins" | "moveTo" => 'I',
-            "r" | "hyperlink" | "fldSimple" | "smartTag" | "sdt" => '-',
-            _ => continue,
-        };
-        if order.last() != Some(&k) {
-            order.push(k);
-        }
-    }
+    revision_order(dom, p, &mut order);
     for w in order.windows(2) {
         match (w[0], w[1]) {
             ('D', 'I') => tally.add("revisions del→ins".to_string(), &text),
             ('I', 'D') => tally.add("revisions ins→del".to_string(), &text),
             _ => {}
+        }
+    }
+}
+
+/// The revision containers under `n` in document order, looking through
+/// hyperlinks, smart tags, content controls and customXml (their runs are
+/// the paragraph's own).
+fn revision_order(dom: &Dom, n: NodeId, order: &mut Vec<char>) {
+    for c in dom.elements(n, None) {
+        let k = match local(dom, c).as_str() {
+            "del" | "moveFrom" => 'D',
+            "ins" | "moveTo" => 'I',
+            "r" | "fldSimple" => '-',
+            "hyperlink" | "smartTag" | "sdt" | "sdtContent" | "customXml" => {
+                revision_order(dom, c, order);
+                continue;
+            }
+            _ => continue,
+        };
+        if order.last() != Some(&k) {
+            order.push(k);
         }
     }
 }
@@ -533,18 +574,29 @@ fn run(dom: &Dom, r: NodeId, styles: &StyleBook, tally: &mut Tally) {
         return;
     };
     if let Some(f) = child(dom, rpr, "rFonts") {
-        let face = ["ascii", "hAnsi", "eastAsia", "cs"]
-            .iter()
-            .map(|k| attr(dom, f, k))
-            .find(|v| !v.is_empty())
-            .or_else(|| {
-                ["asciiTheme", "hAnsiTheme", "eastAsiaTheme", "cstheme"]
-                    .iter()
-                    .map(|k| attr(dom, f, k))
-                    .find(|v| !v.is_empty())
-                    .map(|t| format!("theme:{t}"))
-            });
-        if let Some(face) = face {
+        // Each slot's face (a theme font where the slot names none):
+        // a run can paint Latin, East Asian and complex-script text in
+        // different faces.
+        let mut faces: Vec<String> = Vec::new();
+        for (slot, theme) in [
+            ("ascii", "asciiTheme"),
+            ("hAnsi", "hAnsiTheme"),
+            ("eastAsia", "eastAsiaTheme"),
+            ("cs", "cstheme"),
+        ] {
+            let (face, theme) = (attr(dom, f, slot), attr(dom, f, theme));
+            let face = if !face.is_empty() {
+                face
+            } else if !theme.is_empty() {
+                format!("theme:{theme}")
+            } else {
+                continue;
+            };
+            if !faces.contains(&face) {
+                faces.push(face);
+            }
+        }
+        for face in faces {
             tally.add(format!("rfonts \"{face}\""), "");
         }
     }
@@ -553,7 +605,17 @@ fn run(dom: &Dom, r: NodeId, styles: &StyleBook, tally: &mut Tally) {
 /// `table N RxC style=… float(…) shd=… cells-shd[…] style-shd[…] "first row"`.
 fn table(dom: &Dom, t: NodeId, n: usize, styles: &StyleBook) -> String {
     let tblpr = child(dom, t, "tblPr");
-    let rows = kids(dom, t, "tr");
+    // customXml-wrapped rows are the table's own, as the converter lays
+    // them out.
+    let rows: Vec<NodeId> = dom
+        .elements(t, None)
+        .into_iter()
+        .flat_map(|c| match local(dom, c).as_str() {
+            "tr" => vec![c],
+            "customXml" => kids(dom, c, "tr"),
+            _ => Vec::new(),
+        })
+        .collect();
     let cols = child(dom, t, "tblGrid").map_or(0, |g| kids(dom, g, "gridCol").len());
     let mut s = format!("  table {n} {}x{cols}", rows.len());
     if nearest(dom, t, "tbl").is_some() {
@@ -600,9 +662,8 @@ fn table(dom: &Dom, t: NodeId, n: usize, styles: &StyleBook) -> String {
         let items: Vec<String> = cells.iter().map(|(f, k)| format!("{f}×{k}")).collect();
         s.push_str(&format!(" cells-shd[{}]", items.join(",")));
     }
-    if let Some((conds, _)) = styles.find(&style, |x| {
-        (!x.table_shd.is_empty()).then(|| x.table_shd.clone())
-    }) {
+    let conds = styles.table_shd(&style);
+    if !conds.is_empty() {
         let items: Vec<String> = conds.iter().map(|(k, f)| format!("{k}={f}")).collect();
         s.push_str(&format!(" style-shd[{}]", items.join(",")));
     }
@@ -649,8 +710,23 @@ fn section(dom: &Dom, sect: NodeId, n: usize, rels: &[Rel]) -> String {
         ));
     }
     if let Some(c) = child(dom, sect, "cols") {
+        // Unequal columns: each width and the gap after it.
+        let custom: Vec<String> = kids(dom, c, "col")
+            .into_iter()
+            .map(|col| {
+                let gap = attr(dom, col, "space");
+                if gap.is_empty() {
+                    attr(dom, col, "w")
+                } else {
+                    format!("{}+{gap}", attr(dom, col, "w"))
+                }
+            })
+            .collect();
+        let unequal = matches!(attr(dom, c, "equalWidth").as_str(), "0" | "false");
         let num = attr(dom, c, "num");
-        if !num.is_empty() && num != "1" {
+        if unequal && !custom.is_empty() {
+            s.push_str(&format!(" cols={}[{}]", custom.len(), custom.join(",")));
+        } else if !num.is_empty() && num != "1" {
             s.push_str(&format!(" cols={num}"));
         }
     }
@@ -715,7 +791,7 @@ fn anchor(dom: &Dom, a: NodeId) -> String {
     let size = child(dom, a, "extent")
         .map(|e| format!("{}x{}", attr(dom, e, "cx"), attr(dom, e, "cy")))
         .unwrap_or_default();
-    let behind = if attr(dom, a, "behindDoc") == "1" {
+    let behind = if matches!(attr(dom, a, "behindDoc").as_str(), "1" | "true") {
         " behind"
     } else {
         ""

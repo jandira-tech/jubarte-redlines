@@ -1596,6 +1596,12 @@ fn xml_lines(xml: &str) -> Vec<String> {
             || name == "w14:paraId"
             || name == "w14:textId"
     }
+    /// A rebuilt open tag of an element whose content is text.
+    fn holds_text(tag: &str) -> bool {
+        let name = tag.trim_start_matches('<').split(' ').next().unwrap_or("");
+        let local = name.rsplit(':').next().unwrap_or(name);
+        matches!(local, "t" | "delText" | "instrText" | "delInstrText")
+    }
     /// `<name a="1" b='2'/>` → the rebuilt tag text and whether it closes itself.
     fn open_tag(inner: &str) -> (String, bool) {
         let (inner, closed) = match inner.strip_suffix('/') {
@@ -1630,11 +1636,12 @@ fn xml_lines(xml: &str) -> Vec<String> {
     let mut rest = xml;
     while let Some(lt) = rest.find('<') {
         let text = &rest[..lt];
-        // Whitespace between an element's open and close tags is its text
-        // (`<w:t> </w:t>`); elsewhere it is pretty-print.
+        // Whitespace between a text element's open and close tags is its
+        // text (`<w:t> </w:t>`); elsewhere, even inside `<w:p>\n</w:p>`,
+        // it is pretty-print.
         let content = !text.is_empty()
             && rest[lt..].starts_with("</")
-            && matches!(toks.last(), Some(Tok::Open(_, false)));
+            && matches!(toks.last(), Some(Tok::Open(tag, false)) if holds_text(tag));
         if !text.trim().is_empty() || content {
             toks.push(Tok::Text(text.to_string()));
         }
@@ -2992,6 +2999,159 @@ mod tests {
         assert!(
             !out.contains("\"hush\"") && !out.contains("\"calm\""),
             "reset runs report no inherited formatting:\n{out}"
+        );
+    }
+
+    /// `render` over a body and a styles part (PR #247 review probes).
+    fn render_of(body: &str, styles: &str) -> String {
+        let w = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#;
+        let styles = format!(r#"<w:styles {w}>{styles}</w:styles>"#);
+        let rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId8" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>"#;
+        let pkg = zip_of(&[
+            ("[Content_Types].xml", TYPES),
+            ("_rels/.rels", ROOT_RELS),
+            ("word/document.xml", &document(body)),
+            ("word/_rels/document.xml.rels", rels),
+            ("word/styles.xml", &styles),
+        ]);
+        report(&pkg, None, &opts_for(Check::Render)).unwrap()
+    }
+
+    const ONE_CELL: &str = r#"<w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>A1</w:t></w:r></w:p></w:tc></w:tr>"#;
+
+    /// PR #247 review: a derived table style keeps its base's conditions
+    /// (the base's whole-table fill under the derived first row).
+    #[test]
+    fn render_merges_table_style_shading_down_the_chain() {
+        let styles = r#"<w:style w:type="table" w:styleId="Base"><w:name w:val="Base"/><w:tblPr><w:shd w:val="clear" w:color="auto" w:fill="FFFF00"/></w:tblPr></w:style><w:style w:type="table" w:styleId="Derived"><w:name w:val="Derived"/><w:basedOn w:val="Base"/><w:tblStylePr w:type="firstRow"><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="4472C4"/></w:tcPr></w:tblStylePr></w:style>"#;
+        let body = format!(
+            r#"<w:tbl><w:tblPr><w:tblStyle w:val="Derived"/></w:tblPr>{ONE_CELL}</w:tbl><w:p/>"#
+        );
+        let out = render_of(&body, styles);
+        assert!(
+            out.contains(" style-shd[whole=FFFF00,firstRow=4472C4] "),
+            "{out}"
+        );
+    }
+
+    /// PR #247 review: a replacement inside a hyperlink, smart tag or
+    /// content control still reports its order.
+    #[test]
+    fn render_reports_revision_order_inside_run_containers() {
+        let pair = r#"<w:del w:id="1" w:author="A"><w:r><w:delText>old</w:delText></w:r></w:del><w:ins w:id="2" w:author="A"><w:r><w:t>new</w:t></w:r></w:ins>"#;
+        for wrap in [
+            format!("<w:hyperlink>{pair}</w:hyperlink>"),
+            format!("<w:smartTag>{pair}</w:smartTag>"),
+            format!("<w:sdt><w:sdtContent>{pair}</w:sdtContent></w:sdt>"),
+        ] {
+            let out = render_of(&format!("<w:p>{wrap}</w:p>"), "");
+            assert!(
+                out.contains("  revisions del→ins ×1 \"oldnew\"\n"),
+                "{wrap}:\n{out}"
+            );
+        }
+        // A plain run between them still breaks the pair.
+        let split = r#"<w:p><w:hyperlink><w:del w:id="1" w:author="A"><w:r><w:delText>old</w:delText></w:r></w:del><w:r><w:t>mid</w:t></w:r><w:ins w:id="2" w:author="A"><w:r><w:t>new</w:t></w:r></w:ins></w:hyperlink></w:p>"#;
+        assert!(!render_of(split, "").contains("revisions"));
+    }
+
+    /// PR #247 review: the old `w:sectPr` a `w:sectPrChange` records is
+    /// history, not a live section.
+    #[test]
+    fn render_lists_only_live_sections() {
+        let body = r#"<w:p/><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:sectPrChange w:id="1" w:author="A"><w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr></w:sectPrChange></w:sectPr>"#;
+        let out = render_of(body, "");
+        assert!(out.contains("  section 1 page=12240x15840"), "{out}");
+        assert!(
+            !out.contains("section 2") && !out.contains("11906"),
+            "{out}"
+        );
+    }
+
+    /// PR #247 review: a derived paragraph style's nil `shd` stops its
+    /// base's fill.
+    #[test]
+    fn render_honours_a_paragraph_style_shading_reset() {
+        let styles = r#"<w:style w:type="paragraph" w:styleId="Loud"><w:name w:val="Loud"/><w:pPr><w:shd w:val="clear" w:color="auto" w:fill="00FF00"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="Quiet"><w:name w:val="Quiet"/><w:basedOn w:val="Loud"/><w:pPr><w:shd w:val="nil"/></w:pPr></w:style>"#;
+        let body = r#"<w:p><w:pPr><w:pStyle w:val="Loud"/></w:pPr><w:r><w:t>shout</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Quiet"/></w:pPr><w:r><w:t>calm</w:t></w:r></w:p>"#;
+        let out = render_of(body, styles);
+        assert!(
+            out.contains("  para-shd 00FF00 via \"Loud\" ×1 \"shout\"\n"),
+            "{out}"
+        );
+        assert!(!out.contains("\"calm\""), "{out}");
+    }
+
+    /// PR #247 review: a `w:customXml` row is a row of its table, as the
+    /// converter lays it out.
+    #[test]
+    fn render_counts_rows_wrapped_in_custom_xml() {
+        let body = r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:customXml w:element="row"><w:tr><w:tc><w:p><w:r><w:t>A1</w:t></w:r></w:p></w:tc></w:tr></w:customXml><w:tr><w:tc><w:p><w:r><w:t>A2</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#;
+        let out = render_of(body, "");
+        assert!(out.contains("  table 1 2x1 \"A1\"\n"), "{out}");
+    }
+
+    /// PR #247 review: `behindDoc="true"` is behind the text, like `"1"`.
+    #[test]
+    fn render_marks_a_true_behind_doc_anchor() {
+        let anchor = |v: &str| {
+            format!(
+                r#"<w:p><w:r><w:drawing><wp:anchor behindDoc="{v}" distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="1" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="100" cy="100"/><wp:wrapNone/><wp:docPr id="1" name="Pic"/></wp:anchor></w:drawing></w:r></w:p>"#
+            )
+        };
+        for v in ["1", "true"] {
+            let out = render_of(&anchor(v), "");
+            assert!(out.contains(" behind \"Pic\""), "{v}:\n{out}");
+        }
+        assert!(!render_of(&anchor("false"), "").contains(" behind "));
+    }
+
+    /// PR #247 review: each font slot a run asks for is reported, explicit
+    /// or theme, not only the first.
+    #[test]
+    fn render_reports_every_requested_font_slot() {
+        let body = r#"<w:p><w:r><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="MS Mincho" w:cstheme="minorBidi"/></w:rPr><w:t>mixed</w:t></w:r></w:p>"#;
+        let out = render_of(body, "");
+        for expected in [
+            "  rfonts \"Arial\" ×1\n",
+            "  rfonts \"MS Mincho\" ×1\n",
+            "  rfonts \"theme:minorBidi\" ×1\n",
+        ] {
+            assert!(out.contains(expected), "{expected:?} in\n{out}");
+        }
+    }
+
+    /// PR #247 review: unequal columns report their widths and gaps, so
+    /// two builds that move them differ.
+    #[test]
+    fn render_reports_custom_column_geometry() {
+        let sect = |a: &str, b: &str| {
+            format!(
+                r#"<w:p/><w:sectPr><w:cols w:equalWidth="0"><w:col w:w="{a}" w:space="720"/><w:col w:w="{b}"/></w:cols></w:sectPr>"#
+            )
+        };
+        let out = render_of(&sect("3000", "5000"), "");
+        assert!(out.contains(" cols=2[3000+720,5000]"), "{out}");
+        assert!(!render_of(&sect("4000", "4000"), "").contains("3000"));
+    }
+
+    /// PR #247 review: pretty-print inside an element with no text is not
+    /// its text; `<w:p>\n  </w:p>` prints as `<w:p></w:p>` does.
+    #[test]
+    fn xml_drops_pretty_print_inside_a_textless_element() {
+        let pretty = report(&docx("<w:p>\n  </w:p>"), None, &opts_for(Check::Xml)).unwrap();
+        let tight = report(&docx("<w:p></w:p>"), None, &opts_for(Check::Xml)).unwrap();
+        assert_eq!(pretty, tight);
+        // A text element keeps its whitespace.
+        let space = report(
+            &docx(r#"<w:p><w:r><w:t xml:space="preserve"> </w:t></w:r></w:p>"#),
+            None,
+            &opts_for(Check::Xml),
+        )
+        .unwrap();
+        assert!(
+            space.contains("<w:t xml:space=\"preserve\"> </w:t>"),
+            "{space}"
         );
     }
 
