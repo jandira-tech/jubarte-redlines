@@ -553,6 +553,8 @@ fn segments(critic: &str) -> Vec<Segment> {
     let mut edit: Option<Edit> = None;
     let mut side = Side::New;
     let mut note: Option<String> = None;
+    // Comments that end inside a change, written after it.
+    let mut held: Vec<String> = Vec::new();
     critic::Pieces::default().feed(&critic::encode_spans_only(critic), |piece| match piece {
         Piece::Text(text) => {
             if let Some(note) = &mut note {
@@ -579,6 +581,7 @@ fn segments(critic: &str) -> Vec<Segment> {
                 if let Some(edit) = edit.take() {
                     out.push(Segment::Edit(edit));
                 }
+                out.extend(held.drain(..).map(Segment::Note));
             }
             Token::HighlightStart | Token::HighlightEnd => {
                 let start = token == Token::HighlightStart;
@@ -591,9 +594,10 @@ fn segments(critic: &str) -> Vec<Segment> {
             Token::CommentStart => note = Some(String::new()),
             Token::CommentEnd => {
                 let text = note.take().unwrap_or_default();
-                match &mut edit {
-                    Some(edit) => edit.push(side, &format!("{{>>{text}<<}}"), false),
-                    None => out.push(Segment::Note(text)),
+                if edit.is_some() {
+                    held.push(text);
+                } else {
+                    out.push(Segment::Note(text));
                 }
             }
         },
@@ -601,13 +605,16 @@ fn segments(critic: &str) -> Vec<Segment> {
     out
 }
 
-/// `Name (date)` in the comment right after a change becomes the change's
-/// author and date.
+/// `Name (date)` in the comment right after a change, or after the
+/// comments that follow it, becomes the change's author and date.
 fn attribute(segments: Vec<Segment>) -> Vec<Segment> {
     let mut out: Vec<Segment> = Vec::with_capacity(segments.len());
     for segment in segments {
         if let Segment::Note(text) = &segment
-            && let Some(Segment::Edit(edit)) = out.last_mut()
+            && let Some(Segment::Edit(edit)) = out
+                .iter_mut()
+                .rev()
+                .find(|s| !matches!(s, Segment::Note(_)))
             && edit.by.is_none()
             && let Some((Some(author), date, "")) = named(text.trim())
         {

@@ -352,3 +352,45 @@ fn a_long_clause_with_amounts_formatting_and_links() {
         );
     }
 }
+
+#[test]
+fn a_comment_that_ends_inside_a_change_follows_it() {
+    // A comment on inserted text whose range ends inside the insertion, as
+    // Word writes it when the comparer aligns the insertion differently.
+    let patch = patch_critic(
+        "Sections {++c), {>>Ana Lima (2026-09-01T00:35:00Z): Why?<<}2(++}e) survive.\n",
+        &options("a.md", "a.md"),
+    );
+    assert_eq!(
+        patch.render(0),
+        "--- a/a.md\n+++ b/a.md\tArthur Rodrigues\t2026-09-30T14:05:00Z\n@@ [line:1] @@\n\
+         Sections {+c), 2(+}{>>Ana Lima (2026-09-01T00:35:00Z): Why?<<}e) survive.\n"
+    );
+}
+
+#[test]
+fn a_changes_author_after_a_comment_moved_out_of_it_still_names_it() {
+    let patch = patch_critic(
+        "A {++b{>>Ana Lima (2026-09-01T00:35:00Z): Why?<<}c++}{>>Bo Chen (2026-09-02T00:00:00Z)<<} d.\n",
+        &options("a.md", "a.md"),
+    );
+    assert!(
+        patch.render(0).ends_with(
+            "A {+bc+}{>>Bo Chen (2026-09-02T00:00:00Z)<<}\
+             {>>Ana Lima (2026-09-01T00:35:00Z): Why?<<} d.\n"
+        ),
+        "{patch}"
+    );
+    // The owner's own change carries no name.
+    let patch = patch_critic(
+        "A {++b{>>Ana Lima (2026-09-01T00:35:00Z): Why?<<}c++}\
+         {>>Arthur Rodrigues (2026-09-30T14:05:00Z)<<} d.\n",
+        &options("a.md", "a.md"),
+    );
+    assert!(
+        patch
+            .render(0)
+            .ends_with("A {+bc+}{>>Ana Lima (2026-09-01T00:35:00Z): Why?<<} d.\n"),
+        "{patch}"
+    );
+}

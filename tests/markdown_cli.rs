@@ -29,6 +29,25 @@ fn jubarte(args: &[&str], dir: &Path) -> Output {
         .unwrap()
 }
 
+/// `jubarte` with `user.name` set to `name` in the git configuration it
+/// sees (none at all when `None`): the patch's default owner.
+fn jubarte_as(args: &[&str], dir: &Path, name: Option<&str>) -> Output {
+    let mut command = Command::new(BIN);
+    command
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CEILING_DIRECTORIES", dir);
+    if let Some(name) = name {
+        command
+            .env("GIT_CONFIG_COUNT", "1")
+            .env("GIT_CONFIG_KEY_0", "user.name")
+            .env("GIT_CONFIG_VALUE_0", name);
+    }
+    command.output().unwrap()
+}
+
 fn ok(out: &Output) -> String {
     assert!(
         out.status.success(),
@@ -205,12 +224,16 @@ fn convert_refuses_what_it_cannot_do_yet() {
 fn diff_prints_critic_markup_like_pandiff() {
     let dir = tempfile::tempdir().unwrap();
     seed(dir.path(), &[("old.md", OLD), ("new.md", NEW)]);
-    let stdout = ok(&jubarte(&["diff", "old.md", "new.md"], dir.path()));
+    let stdout = ok(&jubarte(
+        &["diff", "old.md", "new.md", "--format", "critic"],
+        dir.path(),
+    ));
     assert_eq!(
         stdout,
         "# Terms\n\nPayment is due in {~~30~>45~~} days.\n\n- Delivery\n- {++Returns++}\n- Warranty\n"
     );
-    ok(&jubarte(
+    // Written to a file, the patch is still printed.
+    let printed = ok(&jubarte(
         &["diff", "old.md", "new.md", "-o", "changes.md"],
         dir.path(),
     ));
@@ -218,6 +241,119 @@ fn diff_prints_critic_markup_like_pandiff() {
         std::fs::read_to_string(dir.path().join("changes.md")).unwrap(),
         stdout
     );
+    assert!(
+        printed.starts_with("--- a/old.md\n+++ b/new.md\t"),
+        "{printed}"
+    );
+}
+
+const OWNER: [&str; 4] = ["-a", "Arthur Rodrigues", "-d", "2026-09-30T14:05:00Z"];
+
+#[test]
+fn diff_prints_a_patch_of_the_changed_paragraphs_by_default() {
+    let dir = tempfile::tempdir().unwrap();
+    seed(dir.path(), &[("old.md", OLD), ("new.md", NEW)]);
+    let args = [&["diff", "old.md", "new.md"][..], &OWNER].concat();
+    let stdout = ok(&jubarte(&args, dir.path()));
+    assert!(
+        stdout.starts_with(
+            "--- a/old.md\n+++ b/new.md\tArthur Rodrigues\t2026-09-30T14:05:00Z\n\
+             @@ [line:3] @@\nPayment is due in [-30-]{+45+} days.\n"
+        ),
+        "{stdout}"
+    );
+    assert!(stdout.contains("{+Returns+}"), "{stdout}");
+    assert!(!stdout.contains("# Terms"), "{stdout}");
+    // Nothing changed, nothing printed.
+    let same = [&["diff", "old.md", "old.md"][..], &OWNER].concat();
+    assert_eq!(ok(&jubarte(&same, dir.path())), "");
+}
+
+#[test]
+fn diff_wraps_at_72_columns_unless_told_otherwise() {
+    let dir = tempfile::tempdir().unwrap();
+    let long = "word ".repeat(40);
+    seed(
+        dir.path(),
+        &[
+            ("old.md", &format!("{long}old.\n")),
+            ("new.md", &format!("{long}new.\n")),
+        ],
+    );
+    let lines = |columns: Option<&str>| {
+        let mut args = [&["diff", "old.md", "new.md"][..], &OWNER].concat();
+        if let Some(columns) = columns {
+            args.extend(["--columns", columns]);
+        }
+        let stdout = ok(&jubarte(&args, dir.path()));
+        stdout
+            .lines()
+            .skip(3)
+            .map(|l| l.chars().count())
+            .collect::<Vec<_>>()
+    };
+    let wrapped = lines(None);
+    assert!(
+        wrapped.len() > 1 && wrapped.iter().all(|&n| n <= 72),
+        "{wrapped:?}"
+    );
+    let narrow = lines(Some("40"));
+    assert!(
+        narrow.len() > wrapped.len() && narrow.iter().all(|&n| n <= 40),
+        "{narrow:?}"
+    );
+    assert_eq!(lines(Some("0")).len(), 1);
+}
+
+#[test]
+fn the_owner_is_git_user_name_or_redline_and_the_date_now() {
+    let dir = tempfile::tempdir().unwrap();
+    seed(dir.path(), &[("old.md", OLD), ("new.md", NEW)]);
+    let header = |name: Option<&str>| {
+        let stdout = ok(&jubarte_as(&["diff", "old.md", "new.md"], dir.path(), name));
+        stdout.lines().nth(1).unwrap().to_string()
+    };
+    let named = header(Some("Ana Lima"));
+    let fields: Vec<&str> = named.split('\t').collect();
+    assert_eq!(fields[..2], ["+++ b/new.md", "Ana Lima"], "{named}");
+    // YYYY-MM-DDTHH:MM:SSZ, this year or later.
+    let date = fields[2];
+    assert_eq!(date.len(), 20, "{date}");
+    assert!(date.ends_with('Z') && &date[10..11] == "T", "{date}");
+    assert!(date[..4].parse::<u32>().unwrap() >= 2026, "{date}");
+    assert!(header(None).contains("\tRedline\t"));
+}
+
+#[test]
+fn diff_takes_no_quiet_flag() {
+    let dir = tempfile::tempdir().unwrap();
+    seed(dir.path(), &[("old.md", OLD), ("new.md", NEW)]);
+    let stderr = failed(&jubarte(&["diff", "-q", "old.md", "new.md"], dir.path()));
+    assert!(stderr.contains("'-q'"), "{stderr}");
+}
+
+#[test]
+fn diff_with_a_word_side_prints_paragraph_ids_and_says_what_it_wrote_on_stderr() {
+    let dir = tempfile::tempdir().unwrap();
+    seed(dir.path(), &[("old.md", OLD), ("new.md", NEW)]);
+    ok(&jubarte(
+        &["convert", "old.md", "-o", "contract.docx"],
+        dir.path(),
+    ));
+    let args = [&["diff", "contract.docx", "new.md"][..], &OWNER].concat();
+    let out = jubarte(&args, dir.path());
+    let stdout = ok(&out);
+    assert!(
+        stdout.starts_with("--- a/contract.docx\n+++ b/new.md\tArthur Rodrigues\t"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("@@ [body:p:1] @@\nPayment is due in [-30-]{+45+} days.\n"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("{>>Arthur Rodrigues ("), "{stdout}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("contract_v_new.docx"), "{stderr}");
 }
 
 #[test]
@@ -277,8 +413,10 @@ fn diff_and_compare_take_word_against_markdown() {
         &["convert", "old.md", "-o", "contract.docx"],
         dir.path(),
     ));
-    let stdout = ok(&jubarte(&["diff", "contract.docx", "new.md"], dir.path()));
-    assert!(stdout.contains("contract_v_new.docx"), "{stdout}");
+    let out = jubarte(&["diff", "contract.docx", "new.md"], dir.path());
+    ok(&out);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("contract_v_new.docx"), "{stderr}");
     let redline = std::fs::read(dir.path().join("contract_v_new.docx")).unwrap();
     assert_word_valid_package(&redline);
     assert_eq!(
@@ -477,7 +615,10 @@ fn diff_takes_a_reference_and_can_read_critic_markup() {
         ],
     );
     // By default the documents are text: the delimiters are compared too.
-    let stdout = ok(&jubarte(&["diff", "old.md", "new.md"], dir.path()));
+    let stdout = ok(&jubarte(
+        &["diff", "old.md", "new.md", "--format", "critic"],
+        dir.path(),
+    ));
     assert_eq!(stdout, "Text \\{++kept++\\}{++ and more++}.\n");
     let reference = std::fs::canonicalize("tests/fixtures/redline-inpi/original-new.docx").unwrap();
     ok(&jubarte(

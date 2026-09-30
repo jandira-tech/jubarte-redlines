@@ -241,11 +241,13 @@ enum Command {
         #[command(flatten)]
         markdown: MarkdownArgs,
     },
-    /// Compare two documents, Word or Markdown, as pandiff does: the changes
-    /// as CriticMarkup on stdout, or with --output a Word redline (.docx) or
-    /// a PDF with the changes painted.
+    /// Compare two documents, Word or Markdown: the changed paragraphs as a
+    /// patch on stdout, each change `[-old-]{+new+}` in its paragraph, and
+    /// with --output a Word redline (.docx), CriticMarkup (.md) or a PDF
+    /// with the changes painted.
     #[command(after_help = "EXAMPLES:\n  \
-        jubarte diff old.md new.md                       CriticMarkup on stdout\n  \
+        jubarte diff old.md new.md                       the patch on stdout\n  \
+        jubarte diff old.md new.md --format critic       CriticMarkup on stdout, as pandiff\n  \
         jubarte diff old.md new.md -o changes.docx       Word tracked changes\n  \
         jubarte diff old.md new.md -o changes.pdf        the changes painted in a PDF\n  \
         jubarte diff contract.docx edited.md -o redline.docx\n      \
@@ -261,10 +263,17 @@ enum Command {
         #[arg(value_name = "NEW")]
         new: PathBuf,
         /// Output path; its extension picks the format (.md, .docx, .pdf,
-        /// .png) [default: CriticMarkup on stdout, or <old>_v_<new>.docx next
-        /// to OLD when a document is Word].
+        /// .png) [default: none for two Markdown documents, else
+        /// <old>_v_<new>.docx next to OLD]. The patch is printed either way.
         #[arg(short = 'o', long, value_name = "FILE")]
         output: Option<PathBuf>,
+        /// What goes to stdout: `patch` (the changed paragraphs, with their
+        /// ids) or `critic` (the whole document as CriticMarkup, as pandiff).
+        #[arg(long, value_enum, value_name = "FORMAT", default_value_t = PatchFormat::Patch)]
+        format: PatchFormat,
+        /// Wrap the patch's lines at this many columns; 0 does not wrap.
+        #[arg(long, value_name = "N", default_value_t = jubarte::markdown::DEFAULT_COLUMNS)]
+        columns: usize,
         /// Output format, when --output does not say.
         #[arg(short = 't', long = "to", value_enum, value_name = "FORMAT")]
         to: Option<Format>,
@@ -274,17 +283,13 @@ enum Command {
         /// Overwrite the output file if it already exists.
         #[arg(long)]
         force: bool,
-        /// Author name recorded on the revisions.
-        #[arg(short = 'a', long, value_name = "NAME", default_value = "Redline")]
-        author: String,
-        /// Revision timestamp (ISO 8601); pinned for reproducible output.
-        #[arg(
-            short = 'd',
-            long,
-            value_name = "ISO8601",
-            default_value = "1970-01-01T00:00:00Z"
-        )]
-        date: String,
+        /// Who made the changes: the patch's owner and the revisions'
+        /// author [default: `git config user.name`, else Redline].
+        #[arg(short = 'a', long, value_name = "NAME")]
+        author: Option<String>,
+        /// When (ISO 8601) [default: now]; pin it for reproducible output.
+        #[arg(short = 'd', long, value_name = "ISO8601")]
+        date: Option<String>,
         /// Whose redline to reproduce (see `jubarte --help`).
         #[arg(long, value_enum, value_name = "MODE", default_value_t = CompareMode::Word)]
         mode: CompareMode,
@@ -363,6 +368,10 @@ enum Command {
         /// Marks for --revisions custom (see `convert --help`).
         #[arg(long, value_name = "SPEC")]
         revision_palette: Option<String>,
+        /// Print nothing on success (patch.diff and report.jsonl are still
+        /// written).
+        #[arg(short = 'q', long)]
+        quiet: bool,
     },
     /// What this binary can do, for agents choosing an operation.
     Capabilities {
@@ -561,6 +570,31 @@ impl From<DebugCheck> for jubarte::debug::Check {
             DebugCheck::Render => Check::Render,
         }
     }
+}
+
+/// `jubarte diff --format`: what goes to stdout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+enum PatchFormat {
+    /// The changed paragraphs, as `git diff --word-diff` with CriticMarkup
+    /// comments and highlights.
+    Patch,
+    /// The whole document as CriticMarkup, as pandiff prints it.
+    Critic,
+}
+
+/// Who a patch's changes are by when `--author` does not say: git's
+/// `user.name`, else Redline.
+fn default_author() -> String {
+    std::process::Command::new("git")
+        .args(["config", "user.name"])
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .and_then(|out| String::from_utf8(out.stdout).ok())
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "Redline".to_string())
 }
 
 /// `jubarte --mode` (compare).
@@ -1022,6 +1056,7 @@ struct EditJob<'a> {
     png: bool,
     dpi: f32,
     revisions: jubarte::convert::RevisionStyle,
+    quiet: bool,
 }
 
 /// Exit 3: the plan was refused (stale source, ambiguous anchor, ...); the
@@ -1109,9 +1144,27 @@ fn run_edit(job: &EditJob<'_>) -> Result<(), (u8, String)> {
     }
     std::fs::create_dir_all(job.out_dir)
         .map_err(|e| fail(format!("creating {}: {e}", job.out_dir.display())))?;
+    let name = job.file.file_name().map_or_else(
+        || job.file.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    );
+    let patch = jubarte::markdown::patch_redline(
+        &result.redline,
+        &jubarte::markdown::PatchOptions {
+            old_name: name.clone(),
+            new_name: name,
+            owner: jubarte::markdown::Attribution {
+                author: result.report.author.clone(),
+                date: result.report.date.clone(),
+            },
+        },
+    )
+    .map_err(|e| fail(format!("writing the patch: {e}")))?
+    .render(jubarte::markdown::DEFAULT_COLUMNS);
     let mut outputs: Vec<(String, Vec<u8>)> = vec![
         ("clean.docx".into(), result.clean.clone()),
         ("redline.docx".into(), result.redline.clone()),
+        ("patch.diff".into(), patch.clone().into_bytes()),
     ];
     for (name, rendered) in renders {
         if let Some(pdf) = rendered.pdf {
@@ -1133,15 +1186,18 @@ fn run_edit(job: &EditJob<'_>) -> Result<(), (u8, String)> {
     insert_before_summary(&mut jsonl, &save_line.to_string());
     std::fs::write(job.out_dir.join("report.jsonl"), &jsonl)
         .map_err(|e| fail(format!("writing report.jsonl: {e}")))?;
+    if job.quiet {
+        return Ok(());
+    }
     let summary = jsonl.lines().last().unwrap_or("").to_string();
     println!("{summary}");
     println!(
-        "wrote {} ({} file{}: clean.docx, redline.docx, report.jsonl{})",
+        "wrote {} ({} files: clean.docx, redline.docx, patch.diff, report.jsonl{})",
         job.out_dir.display(),
         outputs.len() + 1,
-        if outputs.is_empty() { "" } else { "s" },
-        if outputs.len() > 2 { ", …" } else { "" }
+        if outputs.len() > 3 { ", …" } else { "" }
     );
+    print!("{patch}");
     Ok(())
 }
 
@@ -1488,6 +1544,9 @@ struct DiffJob<'a> {
     critic: bool,
     resource_path: Option<&'a Path>,
     revisions: jubarte::convert::RevisionStyle,
+    /// Print the patch, wrapped at these columns; `None` for `--format
+    /// critic`.
+    patch: Option<usize>,
 }
 
 fn run_diff(job: &DiffJob<'_>) -> Result<(), String> {
@@ -1536,12 +1595,42 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), String> {
         critic: job.critic,
         images: Some(&loader),
     };
-    let out = compared(
-        &old,
-        &new,
-        if to == Format::Md { to } else { Format::Docx },
-        &options,
-    )?;
+    // Two Markdown documents with no --output: the patch is all there is.
+    let out = if job.patch.is_some() && output.is_none() && both_markdown {
+        Vec::new()
+    } else {
+        compared(
+            &old,
+            &new,
+            if to == Format::Md { to } else { Format::Docx },
+            &options,
+        )?
+    };
+    if let Some(columns) = job.patch {
+        // A refused output prints no patch.
+        if let (Format::Md | Format::Docx, Some(path)) = (to, &output) {
+            ensure_writable(path, job.force)?;
+        }
+        let name = |path: &Path| path.display().to_string();
+        let patch = jubarte::markdown::patch_documents(
+            old.source(),
+            new.source(),
+            &options,
+            &jubarte::markdown::PatchOptions {
+                old_name: name(job.old),
+                new_name: name(job.new),
+                owner: jubarte::markdown::Attribution {
+                    author: job.settings.author_for_revisions.clone(),
+                    date: job.settings.date_time_for_revisions.clone(),
+                },
+            },
+        )
+        .map_err(|e| format!("compare failed: {e}"))?;
+        print!("{}", patch.render(columns));
+        if output.is_none() {
+            return Ok(());
+        }
+    }
     match (to, output) {
         (Format::Md, None) => {
             use std::io::Write as _;
@@ -1552,7 +1641,13 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), String> {
         (Format::Md | Format::Docx, Some(path)) => {
             ensure_writable(&path, job.force)?;
             std::fs::write(&path, &out).map_err(|e| format!("writing {}: {e}", path.display()))?;
-            println!("wrote {} ({} bytes)", path.display(), out.len());
+            let wrote = format!("wrote {} ({} bytes)", path.display(), out.len());
+            // With the patch on stdout, the rest goes to stderr.
+            if job.patch.is_some() {
+                eprintln!("{wrote}");
+            } else {
+                println!("{wrote}");
+            }
             Ok(())
         }
         (Format::Pdf | Format::Png, output) => run_convert(&ConvertJob {
@@ -1851,6 +1946,8 @@ fn main() -> ExitCode {
             output,
             to,
             from,
+            format,
+            columns,
             force,
             author,
             date,
@@ -1874,8 +1971,8 @@ fn main() -> ExitCode {
                 from,
                 force,
                 settings: comparer_settings(
-                    &author,
-                    &date,
+                    &author.unwrap_or_else(default_author),
+                    &date.unwrap_or_else(jubarte::convert::utc_now_iso8601),
                     detail_threshold,
                     mode == CompareMode::Powertools,
                     false,
@@ -1884,6 +1981,7 @@ fn main() -> ExitCode {
                 critic,
                 resource_path: resource_path.as_deref(),
                 revisions: style,
+                patch: (format == PatchFormat::Patch).then_some(columns),
             }));
         }
         Some(Command::Inspect { file, json }) => return exit_code(run_inspect(&file, json)),
@@ -1899,6 +1997,7 @@ fn main() -> ExitCode {
             dpi,
             revisions,
             revision_palette,
+            quiet,
         }) => {
             let style = match revision_style(revisions, revision_palette.as_deref()) {
                 Ok(style) => style,
@@ -1914,6 +2013,7 @@ fn main() -> ExitCode {
                 png,
                 dpi,
                 revisions: style,
+                quiet,
             }) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err((code, message)) => {
