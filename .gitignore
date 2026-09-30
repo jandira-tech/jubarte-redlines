@@ -78,3 +78,9 @@ tools/mini_bench/work/
 tools/mini_bench/__pycache__/
 **/__pycache__/
 Claude outputs/
+
+# Local work sets: bench exports, Word PDFs, notes.md and HANDOFF.md per
+# folder (see each folder's HANDOFF.md). Never track.
+/_to_improve_*/
+# Scratch from the release API-docs review (the kept snapshot is docs/api/).
+/out/
