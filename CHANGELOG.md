@@ -113,6 +113,9 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
     style's linked character style takes the restored run properties.
   - A numbered style's restored paragraph properties drop what its numbering
     level already says (the level's indents, tabs and spacing), as Word does.
+    The level is the one Word numbers with: through a numbering style link,
+    at the nearest defined ilvl, a full level override without paragraph
+    properties saying none, and none at all under an explicit `numId=0`.
 - `jubarte debug A B -c text` / `-c runs` pairs header and footer parts by
   the section reference that shows them, so Word's renumbered parts compare
   with their counterparts.
