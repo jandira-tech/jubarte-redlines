@@ -1137,7 +1137,9 @@ impl<'a> Fonts<'a> {
 
     /// Word's face for an East Asian family it does not have: Microsoft
     /// YaHei for Chinese (0025b0d3's absent 標楷體, the 方正 families),
-    /// Yu Gothic for Japanese (font-table charset 80 or kana in the name).
+    /// Yu Gothic for Japanese (font-table charset 80 or kana in the name),
+    /// and for Korean (charset 81 or Hangul in the name) Batang when the
+    /// table calls the family roman, else Malgun Gothic (ko_fonts_0930).
     fn cjk_fallback_index(
         &self,
         family: &str,
@@ -1153,8 +1155,19 @@ impl<'a> Fonts<'a> {
             || family.chars().any(|c| {
                 ('\u{3040}'..='\u{30FF}').contains(&c) || ('\u{FF66}'..='\u{FF9F}').contains(&c)
             });
+        let korean = charset == Some("81")
+            || family.chars().any(|c| {
+                ('\u{AC00}'..='\u{D7A3}').contains(&c) || ('\u{1100}'..='\u{11FF}').contains(&c)
+            });
+        let roman = table
+            .get(family)
+            .is_some_and(|e| e.family == super::font_table::FontFamilyClass::Roman);
         let key = if japanese {
             CJK_FALLBACK_JA
+        } else if korean && roman {
+            CJK_FALLBACK_KO_SERIF
+        } else if korean {
+            CJK_FALLBACK_KO
         } else {
             CJK_FALLBACK
         };
@@ -2443,6 +2456,8 @@ fn ttc_face_bytes(ttc: &[u8], index: u32) -> Option<Vec<u8>> {
 /// `Fonts::cjk_fallback_index`); no document family can be named this.
 pub(crate) const CJK_FALLBACK: &str = "@cjk";
 pub(crate) const CJK_FALLBACK_JA: &str = "@cjk-ja";
+pub(crate) const CJK_FALLBACK_KO: &str = "@cjk-ko";
+pub(crate) const CJK_FALLBACK_KO_SERIF: &str = "@cjk-ko-serif";
 /// Embedded-map key of the Thaana fallback face.
 pub(crate) const THAANA_FALLBACK: &str = "@thaana";
 
@@ -2794,12 +2809,18 @@ fn parse_font_index(text: &str) -> HashMap<String, IndexEntry> {
     out
 }
 
-/// Loads Word's East Asian fallback faces (YaHei, Yu Gothic) for a
-/// document that has East Asian text.
+/// Loads Word's East Asian fallback faces (YaHei, Yu Gothic, Malgun
+/// Gothic, Batang) for a document that has East Asian text.
 pub(crate) fn add_cjk_fallbacks(embedded: &mut EmbeddedFonts) {
     for (key, family, stems) in [
         (CJK_FALLBACK, "Microsoft YaHei", &["msyh", "msyhbd"][..]),
         (CJK_FALLBACK_JA, "Yu Gothic", &["yugothr", "yugothb"][..]),
+        (
+            CJK_FALLBACK_KO,
+            "Malgun Gothic",
+            &["malgun", "malgunbd"][..],
+        ),
+        (CJK_FALLBACK_KO_SERIF, "Batang", &["batang"][..]),
     ] {
         for ((bold, italic), bytes) in cached_faces(key, || cjk_family_faces(family, stems)) {
             embedded.insert((key.to_string(), bold, italic), bytes);
@@ -3812,6 +3833,53 @@ mod tests {
             physical("SomeLatin"),
             "ArialMT",
             "Latin families are untouched"
+        );
+    }
+
+    #[test]
+    fn missing_korean_family_falls_to_batang_or_malgun_gothic_by_class() {
+        // docxide suite korean_japanese_conference_form: HY헤드라인M,
+        // 함초롬바탕 and 새굴림 (charset 81, roman) are not installed. Word 16
+        // probes (ko_fonts_0930, ko_fonts2_0930) paint an absent roman
+        // Korean family in Batang and a swiss/modern/auto one in Malgun
+        // Gothic; YaHei, our Chinese face, has no Hangul.
+        let dfonts = "/Applications/Microsoft Word.app/Contents/Resources/DFonts";
+        if !Path::new(dfonts).join("batang.ttc").is_file()
+            || !Path::new(dfonts).join("malgun.ttf").is_file()
+        {
+            return;
+        }
+        let table = super::super::font_table::parse_font_table_xml(
+            r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                 <w:font w:name="HY헤드라인M"><w:charset w:val="81"/><w:family w:val="roman"/></w:font>
+                 <w:font w:name="SomeKoSans"><w:charset w:val="81"/><w:family w:val="swiss"/></w:font>
+                 <w:font w:name="SomeKoMono"><w:charset w:val="81"/><w:family w:val="modern"/></w:font>
+               </w:fonts>"#,
+        );
+        let mut embedded = EmbeddedFonts::new();
+        add_cjk_fallbacks(&mut embedded);
+        let fonts = Fonts::for_document(&embedded);
+        let face = |family: &str, bold: bool| {
+            let (face, _) = fonts.classify_in(family, bold, false, &table);
+            fonts.get(face)
+        };
+        assert_eq!(face("HY헤드라인M", false).pdf_name(), "Batang");
+        assert!(face("HY헤드라인M", false).glyph('한') != 0);
+        assert!(
+            face("SomeKoSans", false)
+                .pdf_name()
+                .starts_with("MalgunGothic")
+        );
+        assert!(face("SomeKoMono", false).glyph('한') != 0);
+        assert!(
+            face("SomeKoMono", true)
+                .pdf_name()
+                .starts_with("MalgunGothic")
+        );
+        assert_ne!(
+            face("SomeKoMono", true).pdf_name(),
+            face("SomeKoMono", false).pdf_name(),
+            "Malgun Gothic's own bold face"
         );
     }
 

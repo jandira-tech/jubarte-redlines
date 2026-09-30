@@ -8265,6 +8265,92 @@ fn text_box_paragraphs_lay_out_as_paragraphs_inside_the_insets() {
     );
 }
 
+/// A text box on the page at (72, 72), 216×288pt, holding Alpha, Beta
+/// and Gamma, each with `spacing` and an exact 12pt line.
+fn spaced_text_box(x_emu: u32, spacing: &str) -> String {
+    let paras: String = ["Alpha", "Beta", "Gamma"]
+        .iter()
+        .map(|t| {
+            format!(
+                "<w:p><w:pPr><w:spacing {spacing} w:line=\"240\" w:lineRule=\"exact\"/></w:pPr>\
+                 <w:r><w:t>{t}</w:t></w:r></w:p>"
+            )
+        })
+        .collect();
+    format!(
+        "<w:p><w:r><w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" \
+          relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+          <wp:simplePos x=\"0\" y=\"0\"/>\
+          <wp:positionH relativeFrom=\"page\"><wp:posOffset>{x_emu}</wp:posOffset></wp:positionH>\
+          <wp:positionV relativeFrom=\"page\"><wp:posOffset>914400</wp:posOffset></wp:positionV>\
+          <wp:extent cx=\"2743200\" cy=\"3657600\"/><wp:wrapNone/><wp:docPr id=\"{x_emu}\" name=\"Box\"/>\
+          <a:graphic><a:graphicData \
+            uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+            <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+              <wps:cNvSpPr txBox=\"1\"/>\
+              <wps:spPr><a:xfrm><a:ext cx=\"2743200\" cy=\"3657600\"/></a:xfrm>\
+                <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></wps:spPr>\
+              <wps:txbx><w:txbxContent>{paras}</w:txbxContent></wps:txbx>\
+              <wps:bodyPr lIns=\"91440\" tIns=\"45720\" rIns=\"91440\" bIns=\"45720\"/>\
+            </wps:wsp></a:graphicData></a:graphic>\
+        </wp:anchor></w:drawing></w:r></w:p>"
+    )
+}
+
+/// The baselines, from the top of a 792pt Letter page, of the text drawn
+/// between `x0` and `x1`, one per line, top first.
+fn line_baselines_between(pdf: &[u8], x0: f32, x1: f32) -> Vec<f32> {
+    let mut ys: Vec<f32> = pdf_content_streams(pdf)
+        .iter()
+        .flat_map(|st| st.lines().map(str::to_owned).collect::<Vec<_>>())
+        .filter(|l| l.contains(" Tj") || l.contains(" TJ"))
+        .filter_map(|l| {
+            let head = &l[..l.find(" cm ")?];
+            let mut nums = head.split_whitespace().rev();
+            let y = nums.next()?.parse::<f32>().ok()?;
+            let x = nums.next()?.parse::<f32>().ok()?;
+            (x0..x1).contains(&x).then_some(792.0 - y)
+        })
+        .collect();
+    ys.sort_by(f32::total_cmp);
+    ys.dedup_by(|a, b| (*a - *b).abs() < 0.5);
+    ys
+}
+
+#[test]
+fn text_box_paragraphs_keep_the_larger_of_after_and_before_and_no_outer_auto_space() {
+    // docxide suite air_pollution_permit_form: its form sits in text boxes
+    // of auto-spaced "Normal (Web)" paragraphs. Word 16 on a probe
+    // (tb_auto_0930): the lines of both boxes stand 25.9pt apart (12pt
+    // exact + max(14, 14)), not 12 + 14 + 14, and the auto-spaced box drops
+    // its first paragraph's auto before (Alpha 14.1pt above the plain
+    // box's, whose 14pt before stays). We summed after and before (40.6
+    // apart) and kept the auto before, so the form's last lines fell past
+    // the box and were clipped.
+    let body = spaced_text_box(
+        914400,
+        "w:before=\"100\" w:beforeAutospacing=\"1\" w:after=\"100\" w:afterAutospacing=\"1\"",
+    ) + &spaced_text_box(4114800, "w:before=\"280\" w:after=\"280\"")
+        + "<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("spaced text boxes");
+    // Past the host paragraphs' mark lines at x 72; the text starts at 79.2.
+    let auto = line_baselines_between(&pdf, 75.0, 288.0);
+    let plain = line_baselines_between(&pdf, 324.0, 540.0);
+    for (name, ys) in [("auto", &auto), ("plain", &plain)] {
+        assert_eq!(ys.len(), 3, "{name}: three lines; ys={ys:?}");
+        for pair in ys.windows(2) {
+            assert!(
+                (pair[1] - pair[0] - 26.0).abs() <= 0.6,
+                "{name}: a 12pt line + max(after, before) 14pt apart; ys={ys:?}"
+            );
+        }
+    }
+    assert!(
+        (plain[0] - auto[0] - 14.0).abs() <= 0.6,
+        "only the plain 14pt before opens the box; auto={auto:?} plain={plain:?}"
+    );
+}
+
 #[test]
 fn a_custom_geometry_shape_paints_its_own_path() {
     // fixtures_500 010300e3: the contact icons and the signature are
@@ -24760,6 +24846,36 @@ fn hyphen_and_underscore_tab_leaders_fill_the_gap() {
 }
 
 #[test]
+fn a_tab_whose_default_stop_is_past_the_margin_starts_the_next_line() {
+    // docxide suite air_pollution_permit_form: a paragraph of six tabs on
+    // stops 7088 and 9639 (dot leader) paints four dotted lines in Word; we
+    // painted one. Word 16 probes (tb_tab_m14/m15_0930, the same in both
+    // modes), 9920 twips of line: a tab with no stop of its own left whose
+    // default stop lies past the margin moves to the next line and resolves
+    // from its start. On the 720 grid the third tab's stop (10080) is past
+    // 9920, so the six tabs are three dotted lines; on the 708 grid 9912
+    // still fits, the fourth tab wraps, and they are two.
+    let body = "<w:p><w:pPr><w:tabs><w:tab w:val=\"left\" w:pos=\"7088\"/>\
+          <w:tab w:val=\"left\" w:leader=\"dot\" w:pos=\"9639\"/></w:tabs></w:pPr>\
+          <w:r><w:tab/></w:r><w:r><w:tab/></w:r><w:r><w:tab/></w:r>\
+          <w:r><w:tab/></w:r><w:r><w:tab/></w:r><w:r><w:tab/></w:r></w:p>\
+        <w:p><w:r><w:t>After</w:t></w:r></w:p>\
+        <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+          <w:pgMar w:top=\"1440\" w:right=\"1160\" w:bottom=\"1440\" w:left=\"1160\"/></w:sectPr>";
+    for (grid, lines) in [(720, 3), (708, 2)] {
+        let settings = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+             <w:defaultTabStop w:val=\"{grid}\"/></w:settings>"
+        );
+        let pdf = docx_to_pdf(&docx_with_settings(body, &settings)).expect("tabs");
+        // The leader dots run from the 7088 stop (58 + 354.4) to 9639.
+        let dots = line_baselines_between(&pdf, 400.0, 560.0);
+        assert_eq!(dots.len(), lines, "grid {grid}: dotted lines at {dots:?}");
+    }
+}
+
+#[test]
 fn heavy_tab_leader_fills_a_rule() {
     // xml leftover: w:tab/@w:leader heavy (ST_TabTlc). Dot/hyphen/underscore
     // already ship; heavy still maps to none. Word paints a thick filled
@@ -41025,4 +41141,47 @@ fn a_flat_picture_after_header_text_adds_no_line() {
         (bare - flat_y).abs() < 0.5,
         "the flat picture keeps the body in place: {flat_y} vs {bare}"
     );
+}
+#[test]
+fn a_centred_or_bottom_row_splits_at_the_page_end_like_any_row() {
+    // docxide suite education_consultant_posting: its 76-paragraph
+    // "Background" row is vAlign center; Word starts it on page 1 under
+    // "Work Assignment:" and breaks it across pages. We kept any centred
+    // or bottom row whole and moved it to page 2 (6 pages vs Word's 7).
+    // Word 16 probes (va6_Ctr/Bot/Top_0930): a 20-line row after 12
+    // filler lines breaks after the same line whatever its vAlign.
+    let line = "<w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"400\" w:lineRule=\"exact\"/></w:pPr>";
+    let fill: String = (0..12)
+        .map(|i| format!("<w:p>{line}<w:r><w:t>Filler{i}</w:t></w:r></w:p>"))
+        .collect();
+    for va in ["center", "bottom", "top"] {
+        let rows: String = (0..30)
+            .map(|i| format!("<w:p>{line}<w:r><w:t>Row{i}x</w:t></w:r></w:p>"))
+            .collect();
+        let body = format!(
+            "{fill}<w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"dxa\"/></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"5000\"/></w:tblGrid><w:tr><w:tc><w:tcPr>\
+             <w:tcW w:w=\"5000\" w:type=\"dxa\"/><w:vAlign w:val=\"{va}\"/></w:tcPr>{rows}\
+             </w:tc></w:tr></w:tbl><w:p/>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+             <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("row");
+        // 408pt left under the fillers hold the row's first 20 lines.
+        assert_eq!(
+            page_with_text(&pdf, "Row0x"),
+            Some(0),
+            "{va}: the row starts on page 1"
+        );
+        assert_eq!(
+            page_with_text(&pdf, "Row19x"),
+            Some(0),
+            "{va}: 20 lines fit page 1"
+        );
+        assert_eq!(
+            page_with_text(&pdf, "Row20x"),
+            Some(1),
+            "{va}: the rest is on page 2"
+        );
+    }
 }

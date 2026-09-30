@@ -91,6 +91,21 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- Consecutive paragraphs in a text box are spaced by the larger of one's
+  space after and the next one's space before, as in a table cell. The
+  first paragraph's auto space before and the last one's auto space after
+  are dropped. Before, the two were added together.
+- A tab whose next default stop lies past the right edge, with no custom
+  stop left on the line, moves to the next line and is measured from that
+  line's start, as Word does in compatibility modes 14 and 15.
+- A table row whose cells are centred or bottom-aligned breaks at the page
+  end like any other row. Before, it stayed whole and moved to the next
+  page. The docxide suite's education_consultant_posting now starts its
+  Background row on page 1, as Word does.
+- A Korean font the machine lacks (charset 81, or Hangul in its name) is
+  painted in Batang when the font table calls it roman, and in Malgun
+  Gothic otherwise, as Word 16 paints it. Before, it fell back to Microsoft
+  YaHei, which has no Hangul, so the text was lost.
 - A nested table row taller than what is left of the page breaks inside
   itself, as Word breaks it, when keeping it whole would leave a quarter
   of the page empty. Rows marked `cantSplit` or with an exact height stay

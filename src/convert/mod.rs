@@ -10545,26 +10545,8 @@ fn table_block(
             if cell_vertical(dom, cell) {
                 cell_paras.iter_mut().for_each(|p| p.vertical = true);
             }
-            // HTML auto spacing does not reach a cell's edges: Word drops
-            // the first paragraph's auto before and the last one's after.
-            if let Some(first) = cell_paras.first_mut()
-                && first.style.before_auto
-            {
-                first.style.before = 0.0;
-            }
-            if let Some(last) = cell_paras.last_mut()
-                && last.style.after_auto
-            {
-                last.style.after = 0.0;
-            }
-            // Between two paragraphs Word keeps max(after, next before),
-            // as in the body (0129b302's auto-spaced "1.300.000" cell is
-            // 14pt apart, not 28): the next before keeps only its excess.
-            for i in 1..cell_paras.len() {
-                let after = cell_paras[i - 1].style.after;
-                let next = &mut cell_paras[i].style;
-                next.before = (next.before - after).max(0.0);
-            }
+            // 0129b302's auto-spaced "1.300.000" cell is 14pt apart, not 28.
+            fold_stacked_spacing(cell_paras.iter_mut().map(|p| &mut p.style).collect());
             let (colspan, vmerge) = cell_span(dom, cell);
             let last_col = grid_at + colspan.max(1) >= cols.len();
             let at = |b: TblBorders| {
@@ -13527,7 +13509,32 @@ fn txbx_lays_out_paragraphs(dom: &Dom, shape: NodeId, txbx: NodeId) -> bool {
             .any(|p| !w_text(dom, *p).trim().is_empty())
 }
 
-/// The text box's own paragraphs, each from its own style.
+/// Word's spacing between the paragraphs stacked in a cell or a text box.
+/// HTML auto spacing does not reach the container's edges: the first
+/// paragraph's auto before and the last one's auto after drop. Between two
+/// paragraphs only max(after, next before) stands, as in the body, so the
+/// next before keeps only its excess.
+fn fold_stacked_spacing(mut styles: Vec<&mut ParaStyle>) {
+    if let Some(first) = styles.first_mut()
+        && first.before_auto
+    {
+        first.before = 0.0;
+    }
+    if let Some(last) = styles.last_mut()
+        && last.after_auto
+    {
+        last.after = 0.0;
+    }
+    for i in 1..styles.len() {
+        let after = styles[i - 1].after;
+        let next = &mut *styles[i];
+        next.before = (next.before - after).max(0.0);
+    }
+}
+
+/// The text box's own paragraphs, each from its own style, spaced as Word
+/// stacks them (`fold_stacked_spacing`: air_pollution_permit_form's
+/// auto-spaced form lines stand 14pt apart, not 28).
 fn txbx_paragraphs(
     dom: &Dom,
     txbx: NodeId,
@@ -13537,7 +13544,8 @@ fn txbx_paragraphs(
 ) -> Vec<(Vec<TextRun>, ParaStyle)> {
     // A box's lists number on their own copy of the document's lists.
     let mut numbering = numbering.cloned();
-    dom.descendants(txbx, Some(&W::p()))
+    let mut paras = dom
+        .descendants(txbx, Some(&W::p()))
         .into_iter()
         .filter(|p| {
             dom.ancestors(*p, Some(&W::txbx_content()))
@@ -13575,7 +13583,9 @@ fn txbx_paragraphs(
             }
             (runs, style)
         })
-        .collect()
+        .collect::<Vec<_>>();
+    fold_stacked_spacing(paras.iter_mut().map(|(_, style)| style).collect());
+    paras
 }
 
 /// `bodyPr` insets (EMU) or VML `v:textbox/@inset`, defaulting to Word's.
@@ -25147,9 +25157,9 @@ impl<'a> Layout<'a> {
         if rh <= room + 0.5
             || room < 1.0
             || room < min
-            || row
-                .iter()
-                .any(|c| c.rowspan > 1 || c.valign_center || c.valign_bottom)
+            // Word breaks a centred or bottom-aligned row like any other
+            // (va6_Ctr/Bot/Top_0930 probes): only row spans stay whole.
+            || row.iter().any(|c| c.rowspan > 1)
         {
             return;
         }
@@ -27238,12 +27248,15 @@ fn wrap_runs_segment(
     for (ui, (unit, is_space)) in units.into_iter().enumerate() {
         let mut w: f32 = unit.iter().map(|(_, _, w)| w).sum();
         // A tab jumps to the next stop from where it stands (00996ee5's
-        // leading tab took 35pt of the first line in Word).
-        if let Some(t) = tabs
-            && is_space
-            && unit.iter().any(|(_, tok, _)| tok.contains('\t'))
-        {
+        // leading tab took 35pt of the first line in Word). Also whether
+        // its first tab has no stop of its own left and its default stop
+        // lies past the line's right edge.
+        let tab_unit = is_space && unit.iter().any(|(_, tok, _)| tok.contains('\t'));
+        let tab_w = |t: &WrapTabs<'_>, line_i: usize, x: f32| -> (f32, bool) {
             let start = if line_i == 0 { t.first_start } else { t.start };
+            let right = start + if line_i == 0 { first_width } else { width };
+            let mut past = false;
+            let mut first_tab = true;
             let mut pos = start + x;
             let char_w = |run: &TextRun, ch: char| {
                 let fid = fonts.resolve(&run.style.family, run.style.bold, run.style.italic);
@@ -27260,6 +27273,14 @@ fn wrap_runs_segment(
                 {
                     if ch == '\t' {
                         let stop = next_tab_stop(pos, 0.0, t.stops, t.default_tab);
+                        if first_tab {
+                            first_tab = false;
+                            past = stop.pos > right + 0.01
+                                && !t
+                                    .stops
+                                    .iter()
+                                    .any(|s| s.align != TabAlign::Bar && s.pos > pos + 0.01);
+                        }
                         let rest = &chars[k + 1..];
                         let own: f32 = rest
                             .iter()
@@ -27286,7 +27307,13 @@ fn wrap_runs_segment(
                     }
                 }
             }
-            w = pos - start - x;
+            (pos - start - x, past)
+        };
+        let mut tab_past = false;
+        if let Some(t) = tabs
+            && tab_unit
+        {
+            (w, tab_past) = tab_w(t, line_i, x);
         }
         let limit = if line_i == 0 { first_width } else { width };
         let squeezed = tabs.is_some_and(|t| x + w - limit <= t.squeeze * line_spaces);
@@ -27296,12 +27323,20 @@ fn wrap_runs_segment(
         // (2b479f55f8's 1.4pt column; Word stacks "r", " ", "c"). A run of
         // fill-in spaces wider than its cell still hangs (file_146).
         let chars: usize = unit.iter().map(|(_, tok, _)| tok.chars().count()).sum();
-        let breaks = !is_space || w / chars.max(1) as f32 > limit;
+        // A tab whose default stop is past the edge starts the next line
+        // and resolves from its start (air_pollution_permit_form's six
+        // dotted tabs are three lines in Word).
+        let breaks = !is_space || w / chars.max(1) as f32 > limit || tab_past;
         if breaks && x + w - hang > limit && x > 0.0 && !squeezed {
             lines.push(Vec::new());
             line_i += 1;
             x = 0.0;
             line_spaces = 0.0;
+            if let Some(t) = tabs
+                && tab_unit
+            {
+                w = tab_w(t, line_i, x).0;
+            }
         }
         // A word wider than the whole line breaks at the character that
         // reaches the edge (001472bb). A
