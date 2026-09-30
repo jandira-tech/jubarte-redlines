@@ -17591,6 +17591,31 @@ struct FieldScan {
     instr: String,
 }
 
+/// A run whose only content is a left-aligned `w:ptab`.
+fn left_ptab_run(dom: &Dom, run: NodeId) -> bool {
+    let mut kids = (0..dom.child_count(run))
+        .map(|i| dom.child_at(run, i))
+        .filter(|&c| dom.is_element(c) && !dom.name_is(c, &W::r_pr()));
+    matches!(
+        (kids.next(), kids.next()),
+        (Some(c), None) if dom.name_is(c, &W::name("ptab"))
+            && matches!(attr_any(dom, c, "alignment"), None | Some("left"))
+    )
+}
+
+/// The header/footer line being collected already holds text or a field.
+fn line_has_content(runs: &[TextRun]) -> bool {
+    for r in runs.iter().rev() {
+        if let Some((_, tail)) = r.text.rsplit_once('\n') {
+            return !tail.trim().is_empty();
+        }
+        if !r.text.trim().is_empty() || r.field != FieldKind::None {
+            return true;
+        }
+    }
+    false
+}
+
 fn collect_hf_rec(
     dom: &Dom,
     node: NodeId,
@@ -17706,6 +17731,15 @@ fn collect_hf_rev(
                 run.field = kind;
                 runs.push(run);
                 scan.emitted = true;
+            }
+            return;
+        }
+        // A left ptab stops where the margin (or indent) starts: before any
+        // text it moves nothing; after text it cannot go back, and Word
+        // starts a new line (a9de4ed3f9's "Downloaded" under "Page 2 of 17").
+        if left_ptab_run(dom, node) {
+            if line_has_content(runs) {
+                runs.push(TextRun::new("\n", style));
             }
             return;
         }

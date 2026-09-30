@@ -113,6 +113,12 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   its border. Only the top and bottom rules were painted, so white text on
   a shaded heading vanished (clean/2261da4dae: 32.9 to 43.3 pixel, 7.2 to
   23.3 Jaccard).
+- A left `w:ptab` in a header or footer moves nothing before any text and
+  starts a new line after it, as Word prints it. "Metadata", then a right
+  ptab and "Page N of M", then a left ptab and "Downloaded" printed on one
+  line and ran off the page. Five documents in the docx-to-pdf set gained
+  4 to 17 points (pixel plus Jaccard), e.g. clean/ef7870f9f4 from 45.9/10.7
+  to 50.1/24.1.
 - Rejecting a redline gives back what a changed style inherited in the
   original. Word's Reject All reads a style's old record against its
   built-in defaults, so a record holding only the style's own properties
