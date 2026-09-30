@@ -148,6 +148,11 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   it, as in Word 16; a narrower table still sits beside it. Before, the
   table ran over the picture: 109f20a2b3's continued table painted
   across its header logo, 74pt higher than Word's.
+- Paragraph borders in headers and footers paint wherever Word draws
+  them: on an empty paragraph above the part's text (a footer's opening
+  rule, a running head's rule under its title table) and on a text
+  paragraph below one. Before, jubarte reserved their space but drew no
+  rule: c73c128db4's legislation pages lost both the head and foot rules.
 - A `cantSplit` table row taller than a whole page breaks anyway, as in
   Word 16: it moves off the page it started on and breaks at the foot of
   the next one. Before, it stayed whole and ran off the page: 2b479f55f8's

@@ -24029,6 +24029,111 @@ fn a_header_paragraph_top_border_paints_and_pushes_the_band() {
 }
 
 #[test]
+fn an_empty_header_paragraph_after_a_table_paints_its_top_border() {
+    // en holdout c73c128db4's running heads: a one-cell table holding the
+    // title lines, then an empty Header paragraph with pBdr top. Word draws
+    // the 0.5pt rule under the table (y 88.1 on page 4); jubarte drew none.
+    let inner = r#"<w:tbl><w:tblPr><w:tblW w:w="9000" w:type="dxa"/><w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid><w:gridCol w:w="9000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="9000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>HeadTitle</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:pPr><w:pBdr><w:top w:val="single" w:sz="4" w:space="1" w:color="auto"/></w:pBdr><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:p>"#;
+    let pdf = docx_to_pdf(&header_part_docx_at(inner, 720)).expect("header table rule");
+    let rules: Vec<(f32, f32)> = pdf_fill_bands(&pdf, 0.0, 0.0, 0.0)
+        .into_iter()
+        .filter(|(t, b)| (b - t - 0.5).abs() < 0.05 && *t < 200.0)
+        .collect();
+    assert_eq!(rules.len(), 1, "one 0.5pt header rule; rules={rules:?}");
+    let title = 792.0 - pdf_glyph_text_xy(&pdf, "HeadTitle").expect("title").1;
+    let body = 792.0 - pdf_glyph_text_xy(&pdf, "HdrImgBodyX").expect("body").1;
+    assert!(
+        rules[0].0 > title && rules[0].1 < body,
+        "the rule sits under the table's title ({title}) and over the body ({body}); rules={rules:?}"
+    );
+}
+
+#[test]
+fn footer_paragraph_borders_paint_below_an_empty_opening_paragraph() {
+    // Word 16 probes fb_f7/fb_f4_0930 (en holdout c73c128db4's legislation
+    // footers): under an empty opening Footer paragraph, the text line's
+    // top border (footer7) and the empty paragraph's own bottom border
+    // (footer4) paint 0.5pt rules at 733.92 and 734.88; jubarte painted
+    // neither, though it reserved their space.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+        <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Times New Roman\" \
+          w:hAnsi=\"Times New Roman\" w:cs=\"Times New Roman\"/></w:rPr></w:rPrDefault>\
+          <w:pPrDefault/></w:docDefaults>\
+        <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>\
+          <w:rPr><w:sz w:val=\"24\"/></w:rPr></w:style>\
+        <w:style w:type=\"paragraph\" w:styleId=\"Footer\"><w:name w:val=\"footer\"/>\
+          <w:basedOn w:val=\"Normal\"/><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/></w:rPr></w:style>\
+        </w:styles>";
+    let settings = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+        <w:compat><w:compatSetting w:name=\"compatibilityMode\" \
+          w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat></w:settings>";
+    let rule = |edge: &str| {
+        format!(
+            "<w:pBdr><w:{edge} w:val=\"single\" w:sz=\"4\" w:space=\"1\" w:color=\"auto\"/></w:pBdr>"
+        )
+    };
+    let footer = |lead: &str, text: &str| {
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:ftr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+             <w:p><w:pPr><w:pStyle w:val=\"Footer\"/>{lead}<w:rPr><w:sz w:val=\"{}\"/></w:rPr></w:pPr></w:p>\
+             <w:p><w:pPr><w:pStyle w:val=\"Footer\"/>{text}<w:rPr><w:sz w:val=\"20\"/></w:rPr></w:pPr>\
+               <w:r><w:rPr><w:sz w:val=\"20\"/></w:rPr><w:t>FootText</w:t></w:r></w:p>\
+             <w:p><w:pPr><w:pStyle w:val=\"Footer\"/><w:rPr><w:sz w:val=\"16\"/></w:rPr></w:pPr>\
+               <w:r><w:rPr><w:sz w:val=\"16\"/></w:rPr><w:t>FootSmall</w:t></w:r></w:p></w:ftr>",
+            if lead.is_empty() { 24 } else { 20 }
+        )
+    };
+    let body = "<w:p><w:r><w:t>Body</w:t></w:r></w:p>\
+        <w:sectPr><w:footerReference w:type=\"default\" r:id=\"rIdF\"/>\
+          <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+          <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"360\" w:left=\"1440\" \
+            w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>";
+    let render = |ftr: String| {
+        docx_to_pdf(&hf_docx(
+            body,
+            &[
+                ("rIdS", "styles", "styles.xml"),
+                ("rIdT", "settings", "settings.xml"),
+                ("rIdF", "footer", "footer1.xml"),
+            ],
+            &[
+                ("word/styles.xml", styles.to_string()),
+                ("word/settings.xml", settings.to_string()),
+                ("word/footer1.xml", ftr),
+            ],
+        ))
+        .expect("footer rules")
+    };
+    for (name, ftr, word) in [
+        ("text top border", footer("", &rule("top")), 733.92),
+        (
+            "empty paragraph bottom border",
+            footer(&rule("bottom"), ""),
+            734.88,
+        ),
+    ] {
+        let pdf = render(ftr);
+        let rules: Vec<(f32, f32)> = pdf_fill_bands(&pdf, 0.0, 0.0, 0.0)
+            .into_iter()
+            .filter(|(t, b)| (b - t - 0.5).abs() < 0.05 && *t > 600.0)
+            .collect();
+        assert_eq!(
+            rules.len(),
+            1,
+            "{name}: one 0.5pt footer rule; rules={rules:?}"
+        );
+        let mid = (rules[0].0 + rules[0].1) / 2.0;
+        assert!(
+            (mid - word).abs() < 0.75,
+            "{name}: Word's rule at {word}, ours at {mid}"
+        );
+    }
+}
+
+#[test]
 fn a_trailing_empty_header_paragraph_sits_max_after_before_below() {
     // fixtures_500 000ebd12: title after=5pt, closing empty paragraph
     // before=4pt. Word's gap is max(5, 4) = 5; we used the empty

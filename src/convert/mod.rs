@@ -25965,14 +25965,24 @@ impl<'a> Layout<'a> {
                 - head_before
                 - pics_h
                 - hf_opening_pad(&header);
-            // The empty paragraphs over the text paint their shading.
+            // The empty paragraphs over the text paint their shading and
+            // rules (c73c128db4's running head: a title table, then an
+            // empty Header paragraph whose top border Word draws under it).
             let mut band = top + lead;
+            let mut lead_rules = false;
             for (i, r) in header.iter().enumerate() {
                 if r.text != HF_LINE_BREAK {
                     break;
                 }
                 let h = hf_break_box(self.fonts, r);
                 self.hf_break_fill(&header, i, band, h);
+                if let Some(p) = r.hf_para.as_deref() {
+                    let prev = header[..i].iter().rev().find_map(|n| n.hf_para.as_deref());
+                    let next = header[i + 1..].iter().find_map(|n| n.hf_para.as_deref());
+                    self.hf_top_rule(prev, p, band);
+                    self.hf_bottom_rule(p, next, band - h);
+                    lead_rules = true;
+                }
                 band -= h + r.para_gap;
             }
             let mut y = top;
@@ -26041,7 +26051,8 @@ impl<'a> Layout<'a> {
                 self.hf_rev_bar(std::slice::from_ref(r), r.hf_para.as_deref(), top, h);
                 top -= h;
             }
-            if let Some((color, width)) = self.header_bottom.filter(|_| !line_rules) {
+            if let Some((color, width)) = self.header_bottom.filter(|_| !line_rules && !lead_rules)
+            {
                 // Only a border no text line painted (an empty paragraph's).
                 let x1 = self.page.margin_l;
                 let x2 = self.page.width - self.page.margin_r;
@@ -26157,11 +26168,17 @@ impl<'a> Layout<'a> {
                 .filter(|r| r.text != HF_LINE_BREAK)
                 .and_then(|r| r.hf_para.clone())
                 .filter(|p| p.border_top.is_some());
+            // Empty paragraphs over the text paint their own rules below.
+            let lead_rules = footer
+                .iter()
+                .take_while(|r| r.text == HF_LINE_BREAK)
+                .any(|r| r.hf_para.is_some());
+            let opened = opening.is_some();
             if let Some(p) = opening {
                 // The rule stands its space over the first line's top.
                 let line_top = base + above + metrics.first().map_or(0.0, |m| m.0);
                 self.hf_top_rule(None, &p, line_top);
-            } else if let Some((color, width)) = self.footer_top {
+            } else if let Some((color, width)) = self.footer_top.filter(|_| !lead_rules) {
                 let top = base + above + 10.0;
                 // mini 244 chrome outset ITT-neg; keep content box.
                 let x1 = self.page.margin_l;
@@ -26177,10 +26194,24 @@ impl<'a> Layout<'a> {
                     let h = hf_break_box(self.fonts, r);
                     bottom += r.para_gap;
                     self.hf_break_fill(&footer, i, bottom + h, h);
+                    // Its borders paint too (probe fb_f4_0930: the empty
+                    // opening paragraph's bottom rule, c73c128db4's footer4).
+                    if let Some(p) = r.hf_para.as_deref() {
+                        let next = footer[i + 1..].iter().find_map(|n| n.hf_para.as_deref());
+                        let prev = footer[..i].iter().rev().find_map(|n| n.hf_para.as_deref());
+                        self.hf_bottom_rule(p, next, bottom);
+                        self.hf_top_rule(prev, p, bottom + h);
+                    }
                     bottom += h;
                 }
             }
-            let mut above: Option<std::rc::Rc<ParaStyle>> = None;
+            // The text's first paragraph borders the empty one over it
+            // (probe fb_f7_0930: c73c128db4's footer7 rule over "page").
+            let mut above: Option<std::rc::Rc<ParaStyle>> = footer
+                .iter()
+                .take_while(|r| r.text == HF_LINE_BREAK)
+                .filter_map(|r| r.hf_para.clone())
+                .last();
             for (i, (line, _)) in lines.iter().enumerate() {
                 let align = line
                     .first()
@@ -26200,6 +26231,9 @@ impl<'a> Layout<'a> {
                     let (ascent, line_h) = metrics[i];
                     let top = y + baselines[i] + ascent;
                     self.hf_line_fill(p, above.as_deref(), next.as_deref(), top, line_h);
+                    if !(i == 0 && opened) {
+                        self.hf_top_rule(above.as_deref(), p, top);
+                    }
                 }
                 self.draw_hf_line(line, y + baselines[i], align, wraps_on);
                 let (ascent, line_h) = metrics[i];
