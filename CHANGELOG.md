@@ -84,8 +84,8 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   to off.
 - Rejecting a redline in which Normal changed no longer strips the run
   properties of the styles based on Normal: the change record each of them
-  gets keeps the style's own fonts and sizes, font slot by font slot, over
-  Normal's old ones, as Word records them (a67dcf9e05's Balloon Text went
+  gets keeps the style's own fonts, sizes and languages, font slot by font
+  slot and language by language, over Normal's old ones, as Word records them (a67dcf9e05's Balloon Text went
   from Tahoma 8 pt to Times New Roman 12 pt). Paragraph-style property
   mismatches against the original after our own reject, over the same 150
   pairs: 298 to 236.
@@ -155,6 +155,9 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   ships Word's own default Office theme, byte for byte, instead of the
   revision's theme; Word never takes the revision's (664 of 664 bench
   redlines, and Word probes with a custom revision theme).
+- A redline whose original has a theme but no styles part keeps the
+  original's theme. It was replaced with Word's default theme along with the
+  missing stylesheet.
 - `jubarte debug A B -c text` / `-c runs` pairs header and footer parts by
   the section reference that shows them, so Word's renumbered parts compare
   with their counterparts.

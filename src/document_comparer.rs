@@ -1155,10 +1155,11 @@ fn cascade_normal_change_to_based_styles(
                     }
                     let copy = dom.clone_subtree(own);
                     if let Some(stale) = dom.element(clone, &name) {
-                        // Per font slot: a slot the style leaves open keeps
-                        // Normal's old face (eastAsiaTheme, 0800162a66).
-                        if name == W::name("rFonts") {
-                            complete_attributes(dom, copy, stale, "rFonts");
+                        // Per attribute: a font slot or language the style
+                        // leaves open keeps Normal's old value
+                        // (eastAsiaTheme, 0800162a66).
+                        if ATTR_MERGED_PROPS.contains(&name.local_name()) {
+                            complete_attributes(dom, copy, stale, name.local_name());
                         }
                         dom.remove(stale);
                     }
@@ -6591,28 +6592,17 @@ fn compare_documents_impl(
                 }
             }
             // A has no styles part, B does: copy B, canonicalize, then M462 —
-            // swap in Word's FACTORY docDefaults/theme and bake B-effective
-            // metrics into each style (Word scaffolds from its blank document,
-            // not from B: tiff_image × two_column oracle).
+            // swap in Word's FACTORY docDefaults and bake B-effective metrics
+            // into each style (Word scaffolds from its blank document, not
+            // from B: tiff_image × two_column oracle). A's referenced theme
+            // stays; only a missing one becomes Word's default, in
+            // ensure_factory_package_chrome.
             (None, Some(from_xml)) if is_styles && settings.merge_replaced_paragraphs => {
                 let mut sd = Dom::new();
                 let fd = sd.parse_xdocument(&from_xml);
                 if let Some(fr) = sd.root(fd) {
                     style_renames = canonicalize_style_ids(&mut sd, fr);
                     factory_scaffold_bake_b_styles(&mut sd, fr, settings);
-                    let theme_parts: Vec<String> = out
-                        .parts()
-                        .into_iter()
-                        .filter(|p| p.starts_with("word/theme/") && p.ends_with(".xml"))
-                        .collect();
-                    for tp in theme_parts {
-                        out.set_part(
-                            &tp,
-                            crate::word_default_theme::WORD_DEFAULT_THEME
-                                .as_bytes()
-                                .to_vec(),
-                        );
-                    }
                     out.set_part(part, sd.serialize_element(fr).into_bytes());
                     out.add_content_type_override(
                         "/word/styles.xml",
