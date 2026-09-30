@@ -10,7 +10,9 @@ use std::io::{Cursor, Write as _};
 
 use super::xml::{self, Context, Document, Relate, escape};
 use super::{DocxOptions, MarkdownError};
+use crate::namespaces::W;
 use crate::opc::{PartFs, relative_rel_target};
+use crate::xmllinq::{Dom, serialize_element};
 
 const RELS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const MAIN_CT: &str =
@@ -203,18 +205,22 @@ fn frame(source: &str) -> (String, String) {
     )
 }
 
-/// The `w:sectPr` that is the body's last child.
+/// The `w:sectPr` that is the body's last child, without a tracked change
+/// of its own (`w:sectPrChange`): the reference's revisions are not the
+/// written document's.
 fn final_section(source: &str) -> Option<String> {
-    let end = source.rfind("</w:body>")?;
-    let start = source[..end].rfind("<w:sectPr")?;
-    let section = source[start..end].trim_end();
-    let closed = section.ends_with("</w:sectPr>")
-        || (section.ends_with("/>") && !section[..section.len() - 2].contains('>'));
-    (closed
-        && !section.contains("<w:p>")
-        && !section.contains("<w:p ")
-        && !section.contains("<w:tbl>"))
-    .then(|| section.to_string())
+    let mut dom = Dom::new();
+    let document = dom.parse_xdocument(source);
+    let root = dom.root(document)?;
+    let body = dom.element(root, &W::body())?;
+    let last = *dom.elements(body, None).last()?;
+    if !dom.name_is(last, &W::sect_pr()) {
+        return None;
+    }
+    for change in dom.elements(last, Some(&W::name("sectPrChange"))) {
+        dom.remove(change);
+    }
+    Some(serialize_element(&dom, last))
 }
 
 /// The page width less the side margins, in twentieths of a point.
@@ -671,19 +677,32 @@ mod tests {
 
     #[test]
     fn the_final_section_is_found_only_as_the_bodys_last_child() {
-        let body = |inner: &str| format!("<w:document><w:body>{inner}</w:body></w:document>");
-        let section = "<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/></w:sectPr>";
-        assert_eq!(
-            final_section(&body(&format!("<w:p/>{section}"))).as_deref(),
-            Some(section)
+        let body = |inner: &str| {
+            format!("<w:document xmlns:w=\"{W_NS}\"><w:body>{inner}</w:body></w:document>")
+        };
+        let section = final_section(&body(
+            "<w:p/><w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/></w:sectPr>",
+        ))
+        .unwrap();
+        assert!(
+            section.starts_with("<w:sectPr") && section.contains("w:w=\"11906\""),
+            "{section}"
         );
         assert_eq!(
             final_section(&body("<w:p><w:pPr><w:sectPr/></w:pPr></w:p><w:p/>")),
             None
         );
-        assert_eq!(
-            final_section(&body("<w:sectPr/>")).as_deref(),
-            Some("<w:sectPr/>")
+        // A tracked section change nests a w:sectPr: the outer one is the
+        // section, and its change stays in the reference.
+        let section = final_section(&body(
+            "<w:p/><w:sectPr><w:pgSz w:w=\"12240\"/><w:sectPrChange w:id=\"1\" w:author=\"a\">\
+             <w:sectPr><w:pgSz w:w=\"11906\"/></w:sectPr></w:sectPrChange></w:sectPr>",
+        ))
+        .unwrap();
+        assert!(section.contains("w:w=\"12240\""), "{section}");
+        assert!(
+            !section.contains("sectPrChange") && !section.contains("11906"),
+            "{section}"
         );
     }
 

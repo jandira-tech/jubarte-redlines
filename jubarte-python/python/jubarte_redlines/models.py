@@ -524,12 +524,16 @@ class EditPlan:
         *,
         runs: Sequence[Mapping[str, object] | str],
         position: Literal["before", "after"] = "after",
+        like: Selector | None = None,
         style: str | None = None,
         comment: str | None = None,
         id: str | None = None,
     ) -> EditPlan:
-        """Insert a new paragraph next to the anchor, copying its properties."""
+        """Insert a new paragraph next to the anchor, copying its properties,
+        or those of the ``like`` paragraph."""
         op: dict[str, object] = {"kind": "insert_paragraph", "paragraph": _selector(paragraph), "position": position, "runs": list(_run_specs(runs))}
+        if like is not None:
+            op["like"] = _selector(like)
         if style is not None:
             op["style"] = style
         return self._with(_with_optional(op, id=id, comment=comment))
@@ -575,6 +579,12 @@ class EditPlan:
         """Join the next paragraph onto this one; the redline deletes this paragraph's mark."""
         op: dict[str, object] = {"kind": "merge_paragraphs", "paragraph": _selector(paragraph)}
         return self._with(_with_optional(op, separator=separator, id=id))
+
+    def rewrite(self, paragraph: Selector, *, text: str, id: str | None = None) -> EditPlan:
+        """Make the paragraph read as ``text``: only the words that differ are
+        edited, so the rest keeps its runs and formatting."""
+        op: dict[str, object] = {"kind": "rewrite", "paragraph": _selector(paragraph), "text": text}
+        return self._with(_with_optional(op, id=id))
 
     def to_dict(self) -> dict[str, object]:
         """The wire form."""

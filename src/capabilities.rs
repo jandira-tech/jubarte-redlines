@@ -54,6 +54,13 @@ pub struct Operations {
     pub edit: bool,
     /// Comments authored by an edit plan.
     pub comments: bool,
+    /// Markdown to DOCX, CriticMarkup as tracked changes and comments.
+    #[serde(default)]
+    pub markdown_to_docx: bool,
+    /// Two Markdown documents as CriticMarkup, and Word or Markdown
+    /// documents as a Word redline.
+    #[serde(default)]
+    pub markdown_diff: bool,
 }
 
 /// Documented scope limits.
@@ -121,6 +128,8 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             markdown: true,
             edit: true,
             comments: true,
+            markdown_to_docx: true,
+            markdown_diff: true,
         },
         edit_plan_versions: vec![crate::inspect::SCHEMA_VERSION],
         edit_operations: [
@@ -132,6 +141,7 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             "delete_paragraph",
             "format_paragraph",
             "merge_paragraphs",
+            "rewrite",
         ]
         .iter()
         .map(|s| (*s).to_string())
@@ -162,7 +172,9 @@ mod tests {
         assert_eq!(c.engine_version, env!("CARGO_PKG_VERSION"));
         assert_eq!(c.runtime, "rust");
         assert_eq!(c.edit_plan_versions, [1]);
-        assert_eq!(c.edit_operations.len(), 8);
+        assert_eq!(c.edit_operations.len(), 9);
+        assert!(c.edit_operations.iter().any(|kind| kind == "rewrite"));
+        assert!(c.operations.markdown_to_docx && c.operations.markdown_diff);
         let json: serde_json::Value = serde_json::from_str(&capabilities_json("cli")).unwrap();
         assert_eq!(json["runtime"], "cli");
         assert_eq!(json["operations"]["png"], true);

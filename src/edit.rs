@@ -29,6 +29,7 @@ use crate::inspect::{Opened, Piece, Projection, SCHEMA_VERSION, project_paragrap
 use crate::namespaces::{R, W};
 use crate::xmllinq::{Dom, NodeId, XNamespace};
 
+mod rewrite;
 mod whole;
 
 const COMMENTS_REL: &str =
@@ -189,7 +190,8 @@ pub enum OperationKind {
         text: String,
     },
     /// Insert a new paragraph next to the anchor paragraph, copying its
-    /// paragraph properties (never its section break or revision marks).
+    /// paragraph properties (never its section break or revision marks), or
+    /// those of `like`.
     InsertParagraph {
         /// Paragraph to edit; must match exactly one.
         paragraph: Selector,
@@ -198,6 +200,11 @@ pub enum OperationKind {
         position: Side,
         /// Runs of the new paragraph, in order.
         runs: Vec<RunSpec>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Paragraph whose properties and run formatting the new paragraph
+        /// copies instead of the anchor's: a plain paragraph inserted after a
+        /// list item, for one.
+        like: Option<Selector>,
         /// Paragraph style id to set instead of the anchor's.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         /// Paragraph style id to set instead of the anchor's.
@@ -232,6 +239,17 @@ pub enum OperationKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         /// Space after the paragraph, in points.
         space_after: Option<Points>,
+    },
+    /// Make the paragraph read as `text`: the engine applies the smallest
+    /// word-level edits, so unchanged words keep their runs and formatting,
+    /// and new words take the formatting of the run before them. Tabs, line
+    /// breaks and symbols stay where they are; `text` may write a tab or a
+    /// break as a space and leave a symbol out.
+    Rewrite {
+        /// Paragraph to rewrite; must match exactly one.
+        paragraph: Selector,
+        /// The paragraph's new text, plain.
+        text: String,
     },
     /// Join the paragraph with the one right after it. The first's text moves
     /// to the start of the second, whose paragraph properties (and section
@@ -777,7 +795,7 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
             "insert" => &["after", "before", "position", "text", "format", "comment"],
             "delete" => &["find"],
             "comment" => &["find", "text"],
-            "insert_paragraph" => &["position", "runs", "style", "comment"],
+            "insert_paragraph" => &["position", "runs", "like", "style", "comment"],
             "delete_paragraph" => &[],
             "format_paragraph" => &[
                 "style",
@@ -787,6 +805,7 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
                 "space_after",
             ],
             "merge_paragraphs" => &["separator"],
+            "rewrite" => &["text"],
             other => {
                 return Err(err(
                     "INVALID_PLAN",
@@ -968,12 +987,18 @@ enum Resolved {
         side: Side,
         /// Runs of the new paragraph, in order.
         runs: Vec<RunSpec>,
+        /// The paragraph whose properties it copies.
+        like: usize,
         /// Paragraph style id to set instead of the anchor's.
         style: Option<String>,
         /// Comment text anchored to the changed text.
         comment: Option<String>,
     },
 }
+
+/// What resolving an operation gives: its resolved form and outcome, or the
+/// error with the outcome so far.
+type Resolution<T> = Result<(T, EditOutcome), Box<(EditError, EditOutcome)>>;
 
 struct Transaction<'p> {
     plan: &'p EditPlan,
@@ -1184,13 +1209,22 @@ impl<'p> Transaction<'p> {
         for (i, op) in self.plan.operations.iter().enumerate() {
             let id = op.id.clone().unwrap_or_else(|| format!("op-{}", i + 1));
             let kind = kind_name(&op.kind).to_string();
-            match self.resolve_one(&id, &op.kind) {
+            let result = match &op.kind {
+                OperationKind::Rewrite { paragraph, text } => {
+                    self.resolve_rewrite(&id, paragraph, text)
+                }
+                other => self
+                    .resolve_one(&id, other)
+                    .map(|(resolved, outcome)| (vec![resolved], outcome)),
+            };
+            match result {
                 Ok((resolved, mut outcome)) => {
                     outcome.id = id;
                     outcome.kind = kind;
                     outcome.status = "ok".into();
                     self.outcomes.push(outcome);
-                    self.resolved.push((i, resolved));
+                    self.resolved
+                        .extend(resolved.into_iter().map(|resolved| (i, resolved)));
                 }
                 Err(boxed) => {
                     let (mut e, outcome) = *boxed;
@@ -1242,7 +1276,8 @@ impl<'p> Transaction<'p> {
             | OperationKind::InsertParagraph { paragraph, .. }
             | OperationKind::DeleteParagraph { paragraph }
             | OperationKind::FormatParagraph { paragraph, .. }
-            | OperationKind::MergeParagraphs { paragraph, .. } => paragraph,
+            | OperationKind::MergeParagraphs { paragraph, .. }
+            | OperationKind::Rewrite { paragraph, .. } => paragraph,
         };
         let para = match self.select(selector) {
             Ok(p) => p,
@@ -1463,14 +1498,26 @@ impl<'p> Transaction<'p> {
                 outcome.context = Some(format!("{{-¶ {}}}", excerpt(text, 60)));
                 Ok((Resolved::DeleteParagraph { para }, outcome))
             }
+            OperationKind::Rewrite { .. } => Err(fail(
+                "INVALID_PLAN",
+                "rewrite resolves through resolve_rewrite".into(),
+                outcome,
+            )),
             OperationKind::InsertParagraph {
                 position,
                 runs,
+                like,
                 style,
                 comment,
                 ..
             } => {
                 outcome.matches = 1;
+                let like = match like {
+                    Some(selector) => self.select(selector).map_err(|(code, msg, _)| {
+                        fail(&code, format!("like: {msg}"), outcome.clone())
+                    })?,
+                    None => para,
+                };
                 if runs.is_empty() || runs.iter().all(|r| r.text.is_empty()) {
                     return Err(fail("INVALID_EDIT", "runs must carry text".into(), outcome));
                 }
@@ -1496,6 +1543,7 @@ impl<'p> Transaction<'p> {
                         anchor: para,
                         side: *position,
                         runs: runs.clone(),
+                        like,
                         style,
                         comment: comment.clone(),
                     },
@@ -1592,6 +1640,79 @@ impl<'p> Transaction<'p> {
     /// The paragraph `para` merges with: the next sibling paragraph, with only
     /// range markup (bookmarks, comment ranges, ...) between them. `para`'s
     /// properties are discarded, so it may not carry a section break.
+    /// `rewrite`: the smallest word-level edits that make the paragraph read
+    /// as `new_text`, each checked as a `replace` or an `insert` is.
+    fn resolve_rewrite(
+        &self,
+        id: &str,
+        paragraph: &Selector,
+        new_text: &str,
+    ) -> Resolution<Vec<Resolved>> {
+        let mut outcome = EditOutcome {
+            id: id.to_string(),
+            kind: String::new(),
+            status: String::new(),
+            paragraph: None,
+            matches: 0,
+            context: None,
+            comment_id: None,
+            code: None,
+            message: None,
+        };
+        let fail = |code: &str, msg: String, outcome: EditOutcome| {
+            Box::new((err(code, Some(id), msg), outcome))
+        };
+        let para = match self.select(paragraph) {
+            Ok(p) => p,
+            Err((code, msg, matches)) => {
+                outcome.matches = matches;
+                return Err(fail(&code, msg, outcome));
+            }
+        };
+        outcome.paragraph = Some(self.paragraph_id(para));
+        let new_text: String = new_text
+            .chars()
+            .map(|c| {
+                if matches!(c, '\t' | '\n' | '\r') {
+                    ' '
+                } else {
+                    c
+                }
+            })
+            .collect();
+        check_text(&new_text).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+        let projection = &self.projections[para];
+        let text = &projection.text;
+        let edits = rewrite::rewrite_ranges(text, &new_text);
+        let mut resolved = Vec::with_capacity(edits.len());
+        for (start, end, replacement) in edits {
+            // New text joins the run before it, unless a tab, break or
+            // symbol is there.
+            let attach_before = text[..start]
+                .chars()
+                .next_back()
+                .is_some_and(|c| !matches!(c, '\t' | '\n' | '\r' | '\u{FFFC}'));
+            let checked = if start == end {
+                self.check_insert_position(projection, start, attach_before)
+            } else {
+                self.check_range(projection, start, end)
+            };
+            checked.map_err(|m| fail("UNSUPPORTED_STRUCTURE", m, outcome.clone()))?;
+            resolved.push(Resolved::Text {
+                para,
+                start,
+                end,
+                replacement,
+                comment: None,
+                attach_before,
+                format: None,
+            });
+        }
+        outcome.matches = 1;
+        outcome.context = Some(format!("{{≡ {}}}", excerpt(&new_text, 60)));
+        Ok((resolved, outcome))
+    }
+
     fn merge_partner(&self, para: usize) -> Result<usize, String> {
         let dom = &self.opened.dom;
         let node = self.paragraph_nodes[para];
@@ -2233,13 +2354,14 @@ impl<'p> Transaction<'p> {
                 anchor,
                 side,
                 runs,
+                like,
                 style,
                 comment,
             } = r
             {
                 let anchor_node = self.paragraph_nodes[anchor];
-                let new =
-                    build_paragraph(&mut self.opened.dom, anchor_node, &runs, style.as_deref());
+                let like_node = self.paragraph_nodes[like];
+                let new = build_paragraph(&mut self.opened.dom, like_node, &runs, style.as_deref());
                 match side {
                     Side::After => {
                         let prev = last_after.get(&anchor).copied().unwrap_or(anchor_node);
@@ -2465,6 +2587,7 @@ fn kind_name(kind: &OperationKind) -> &'static str {
         OperationKind::DeleteParagraph { .. } => "delete_paragraph",
         OperationKind::FormatParagraph { .. } => "format_paragraph",
         OperationKind::MergeParagraphs { .. } => "merge_paragraphs",
+        OperationKind::Rewrite { .. } => "rewrite",
     }
 }
 

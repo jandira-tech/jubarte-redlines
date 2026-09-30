@@ -18,6 +18,8 @@ use std::borrow::Cow;
 
 use similar::{Algorithm, DiffTag, capture_diff_slices};
 
+use crate::util::word_tokens as tokens;
+
 /// Lines that share less than this share of their words are replaced whole
 /// rather than word by word.
 const WORD_DIFF_SIMILARITY: f64 = 0.3;
@@ -396,7 +398,7 @@ fn same_marker(old: &str, new: &str) -> bool {
 }
 
 /// The share of words two lines have in common (0 to 1).
-fn similarity(old: &str, new: &str) -> f64 {
+pub(super) fn similarity(old: &str, new: &str) -> f64 {
     let a: Vec<&str> = words(old);
     let b: Vec<&str> = words(new);
     if a.is_empty() && b.is_empty() {
@@ -438,30 +440,6 @@ fn change(old: &str, new: &str) -> String {
         (false, true) => format!("{{--{}--}}", escape(old)),
         (false, false) => format!("{{~~{}~>{}~~}}", escape(old), escape(new)),
     }
-}
-
-/// Words, runs of whitespace, and punctuation (a run of one mark, such as
-/// `**`, is one token).
-fn tokens(text: &str) -> Vec<&str> {
-    let mut out = Vec::new();
-    let mut start = 0;
-    let mut previous: Option<char> = None;
-    for (at, c) in text.char_indices() {
-        if let Some(p) = previous {
-            let same_class = (p.is_alphanumeric() && c.is_alphanumeric())
-                || (p.is_whitespace() && c.is_whitespace())
-                || (!p.is_alphanumeric() && !p.is_whitespace() && c == p);
-            if !same_class {
-                out.push(&text[start..at]);
-                start = at;
-            }
-        }
-        previous = Some(c);
-    }
-    if start < text.len() {
-        out.push(&text[start..]);
-    }
-    out
 }
 
 /// `old` against `new` word by word. Changes separated only by whitespace
@@ -605,16 +583,6 @@ mod tests {
         ] {
             assert_eq!(&line[..marker_len(line)], marker, "{line}");
         }
-    }
-
-    #[test]
-    fn tokens_split_words_spaces_and_marks() {
-        assert_eq!(
-            tokens("**Bold** words, and 3.5%!"),
-            [
-                "**", "Bold", "**", " ", "words", ",", " ", "and", " ", "3", ".", "5", "%", "!"
-            ]
-        );
     }
 
     #[test]

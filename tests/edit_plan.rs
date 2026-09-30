@@ -1677,3 +1677,136 @@ fn whole_is_a_replace_field() {
     assert!(good.to_json().contains(r#""whole": true"#));
     assert!(apply_plan(&source, &good).unwrap().report.ok);
 }
+
+#[test]
+fn rewrite_changes_only_the_words_that_differ() {
+    let source = docx(&format!(
+        "<w:p>{}{}{}</w:p>{}",
+        run("The ", false, false, None),
+        run("Buyer", true, false, None),
+        run(" shall pay within thirty days.", false, false, None),
+        para("Name:\tArthur"),
+    ));
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"id":"r","kind":"rewrite","paragraph":{"index":0},"text":"The Buyer shall pay the price within forty-five days."}]"#,
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        texts(&result.clean)[0],
+        "The Buyer shall pay the price within forty-five days."
+    );
+    // The bold word keeps its run and formatting; the report names the op.
+    let clean = paragraphs(&result.clean).unwrap();
+    let bold: Vec<(usize, usize)> = clean[0]
+        .runs
+        .iter()
+        .filter(|r| r.bold)
+        .map(|r| (r.start, r.end))
+        .collect();
+    assert_eq!(bold, [(4, 9)]);
+    let op = &result.report.operations[0];
+    assert_eq!((op.kind.as_str(), op.status.as_str()), ("rewrite", "ok"));
+    assert_eq!(
+        texts(&accept_revisions(&result.redline).unwrap()),
+        texts(&result.clean)
+    );
+    assert_eq!(
+        texts(&reject_revisions(&result.redline).unwrap()),
+        texts(&source)
+    );
+    assert_word_valid_package(&result.redline);
+
+    // A tab stays; the text may write it as a space.
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"kind":"rewrite","paragraph":{"index":1},"text":"Name: Arthur Souza"}]"#,
+        ),
+    )
+    .unwrap();
+    assert_eq!(texts(&result.clean)[1], "Name:\tArthur Souza");
+
+    // Unchanged text is no edit at all.
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"kind":"rewrite","paragraph":{"index":1},"text":"Name: Arthur"}]"#,
+        ),
+    )
+    .unwrap();
+    assert_eq!(texts(&result.clean), texts(&source));
+    assert_eq!(
+        result.report.revisions.inserted + result.report.revisions.deleted,
+        0
+    );
+}
+
+#[test]
+fn rewrite_refuses_what_replace_refuses() {
+    let body = r#"<w:p><w:hyperlink r:id="rId9"><w:r><w:t>arthur.law</w:t></w:r></w:hyperlink><w:r><w:t xml:space="preserve"> site</w:t></w:r></w:p><w:p/>"#;
+    let source = docx(body);
+    for ops in [
+        r#"[{"kind":"rewrite","paragraph":{"index":0},"text":"jubarte.law site"}]"#,
+        r#"[{"kind":"rewrite","paragraph":{"index":1},"text":"into an empty paragraph"}]"#,
+        r#"[{"kind":"rewrite","paragraph":{"index":0},"text":"bell\u0007"}]"#,
+    ] {
+        let err = apply_plan(&source, &plan(&source, ops)).unwrap_err();
+        assert!(
+            matches!(err.code.as_str(), "UNSUPPORTED_STRUCTURE" | "INVALID_EDIT"),
+            "{ops}: {err:?}"
+        );
+    }
+    // Text beside the link can change.
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"kind":"rewrite","paragraph":{"index":0},"text":"arthur.law website"}]"#,
+        ),
+    )
+    .unwrap();
+    assert_eq!(texts(&result.clean)[0], "arthur.law website");
+    let unknown = EditPlan::from_json(
+        r#"{"schema_version":1,"author":"a","operations":[{"kind":"rewrite","paragraph":{"index":0},"text":"x","find":"y"}]}"#,
+    );
+    assert!(unknown.is_err());
+}
+
+#[test]
+fn insert_paragraph_like_copies_another_paragraphs_properties() {
+    let numbered = r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>an item</w:t></w:r></w:p>"#;
+    let plain = r#"<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>centered</w:t></w:r></w:p>"#;
+    let source = docx(&format!("{plain}{numbered}"));
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"kind":"insert_paragraph","paragraph":{"index":1},"position":"after","like":{"index":0},"runs":[{"text":"after the list"}]}]"#,
+        ),
+    )
+    .unwrap();
+    let paragraphs = paragraphs(&result.clean).unwrap();
+    assert_eq!(paragraphs[2].text, "after the list");
+    assert!(
+        !paragraphs[2].numbered,
+        "properties come from `like`, not the anchor"
+    );
+    let xml = part_string(&result.clean, "word/document.xml").unwrap();
+    assert_eq!(xml.matches(r#"<w:jc w:val="center""#).count(), 2, "{xml}");
+    // A `like` that selects nothing fails the plan.
+    let err = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"kind":"insert_paragraph","paragraph":{"index":1},"like":{"index":9},"runs":[{"text":"x"}]}]"#,
+        ),
+    )
+    .unwrap_err();
+    assert!(err.message.starts_with("like:"), "{err:?}");
+}

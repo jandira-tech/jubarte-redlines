@@ -32,10 +32,14 @@
 mod critic;
 mod diff;
 mod package;
+mod patch;
+mod redline;
 mod write;
 mod xml;
 
 pub use diff::diff_markdown;
+pub use patch::{Patched, apply_markdown};
+pub use redline::{RedlineOptions, Source, redline};
 pub use write::markdown_to_docx;
 
 /// What happens to the tracked changes a document describes.
