@@ -155,3 +155,5 @@ jobs:
       - run: python3 scripts/test_convert_sweep.py
       - run: python3 planning/test_sample50_check.py
       - run: python3 scripts/test_release_sh.py
+      - uses: oven-sh/setup-bun@v2
+      - run: python3 scripts/test_bump_version.py

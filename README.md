@@ -30,7 +30,12 @@ every tool scored on the same documents: mean Jaccard **0.603 vs 0.334**
 And `jubarte redlines`: compare two `.docx` into a tracked-changes
 document — native `w:ins` / `w:del` / move / format-change markup on the
 original package that Word opens without repair — or list, accept, and reject
-revisions in an existing one.
+revisions in an existing one, all of them or one change at a time.
+
+And `jubarte edit`: apply a plan of exact, anchored edits (for a person or
+an agent) and get the clean copy, the Word redline with comments, a
+per-operation report and, optionally, the rendered pages. A plan that does
+not apply cleanly writes nothing.
 
 Both are APIs first, not just the `jubarte` CLI: `jubarte::convert` /
 `jubarte::document_comparer` in **Rust**, `jubarte_redlines` on **PyPI**, and
@@ -57,6 +62,8 @@ everywhere.
 | Word-faithful PDF | Layout engine whose rules were probed against live Microsoft Word — **#1 vs Word's own exports** (0.647 mean Jaccard, 2,102 docs; LibreOffice 0.335, docxide-pdf 0.216) — no Office runtime needed |
 | Revisions in the PDF | Paints tracked changes in conventional marks, Word's own markup (per-author palette, balloon pane, change bars), or a custom palette |
 | Word-valid redlines | Emits native `w:ins` / `w:del` / move / format-change markup that Word opens without repair — **#1 markup fidelity** on the 763-doc benchmark (84.5 vs docxodus 80.2) |
+| Selective accept / reject | Lists every tracked change with a stable id (`body:rev:12`) and resolves any selection by id, author or kind, the way Word's Accept/Reject does; the rest stay tracked |
+| Edit plans | Guarded edits anchored to `[body:p:N]` paragraph ids, applied as tracked changes plus comments, across the body, headers, footers and notes |
 | Lossless package | Keeps parts, relationships, headers/footers, footnotes, styles, and media from the original |
 | Library + CLI + bindings | `docx_to_pdf` / `compare_documents` in-process (Rust); `jubarte` binary for shell/CI; PyO3 wheels on PyPI; wasm-bindgen package on npm |
 | Safety | **`unsafe_code = "deny"`** at the crate root — 100% safe Rust |
@@ -66,7 +73,8 @@ everywhere.
 
 **CLI** — prebuilt binaries (Linux/macOS/Windows, x86_64 + aarch64) on the
 [Releases](https://github.com/jandira-tech/jubarte-redlines/releases) page,
-or build from source:
+or build from source. 0.10.1 has no Windows binary: its Windows build failed
+on long fixture paths. On Windows, use `cargo install` or the 0.10.0 binary.
 
 ```sh
 cargo install jubarte-redlines
@@ -76,7 +84,8 @@ jubarte --version
 
 From 0.10.0 on, `jubarte self-update` installs a newer release in place
 (`--check` only looks). It is the only command that goes online, and only
-when you run it ([docs/SELF_UPDATE.md](docs/SELF_UPDATE.md)).
+when you run it ([docs/SELF_UPDATE.md](docs/SELF_UPDATE.md)). Library
+builds with `default-features = false` contain no network code.
 
 **Fonts for `jubarte convert`** — open fonts Word draws that macOS/Linux
 lack (Roboto Condensed; Selawik standing in for Segoe UI) are installed
@@ -105,7 +114,7 @@ cargo add jubarte-redlines --no-default-features
 
 ```toml
 # Cargo.toml
-jubarte-redlines = { version = "0.9", default-features = false }
+jubarte-redlines = { version = "0.10", default-features = false }
 ```
 
 Rust import path is `jubarte::…` (library crate name); the package/repo name is
@@ -143,6 +152,23 @@ redline = compare_documents(original_bytes, modified_bytes, author="Reviewer")
 revs = get_revisions(redline)        # list[dict], same shape as `jubarte revisions --json`
 ```
 
+The `Document` API wraps the same engine with typed results:
+
+```python
+import jubarte_redlines as jubarte
+
+doc = jubarte.read("contract.docx")
+print(doc.markdown())                            # paragraphs with [body:p:N] ids
+redline = doc.compare(jubarte.read("rev2.docx"), author="Legal")
+for change in redline.changes():                 # id, kind, author, text
+    print(change)
+kept = redline.accept(authors=["Ann"])           # others stay tracked
+result = doc.edit(plan)                          # clean copy + redline + report
+pages = redline.to_png(dpi=100)
+```
+
+`python -m jubarte_redlines` runs the CLI commands from the wheel.
+
 **JavaScript / WebAssembly** ([npm](https://www.npmjs.com/package/jubarte-wasm)
 — Node ≥ 18 CJS + browser ESM)
 
@@ -151,8 +177,8 @@ npm install jubarte-wasm
 ```
 
 ```js
-const { docxToPdf, compareDocuments } = require("jubarte-wasm"); // full build
-const { compareDocuments: compareSlim } = require("jubarte-wasm/slim"); // no PDF, ~2.4 MB wasm
+const { docxToPdf, compareDocuments } = require("jubarte-wasm"); // full build, ~13 MB wasm
+const { compareDocuments: compareSlim } = require("jubarte-wasm/slim"); // no PDF, ~3.9 MB wasm
 // browser: import init, { docxToPdf, compareDocuments } from "jubarte-wasm/web"
 // ("jubarte-wasm/web-slim" drops the PDF engine)
 
@@ -161,7 +187,14 @@ docxToPdf(bytes, false, "word");             // Microsoft Word's own markup
 docxToPdf(bytes, true);                      // + deflate content streams
 docxToPdf(bytes, false, "custom", "deleted=#AA0000:strike");
 compareDocuments(aBytes, bBytes, "Reviewer"); // → redline .docx bytes
+listChanges(redline);                        // JSON: one entry per change, with its id
+acceptChanges(redline, '{"authors":["Ann"]}'); // selective; acceptRevisions = all
+applyEditPlan(bytes, planJson);              // clean copy + redline + report
 ```
+
+Also exported: `rejectChanges`, `rejectRevisions`, `getRevisions`,
+`inspectDocument`, `documentMarkdown`, `previewEditPlan`, `capabilities`,
+`pdfPageCount`, `sourceSha256`.
 
 ## CLI
 
@@ -175,9 +208,30 @@ jubarte contract.docx contract-rev2.docx
 
 jubarte -b old.docx -m new.docx -o redline.docx --author "Legal"
 jubarte revisions redline.docx --json     # list tracked revisions
+jubarte changes redline.docx --json       # one change per line, with its id
 jubarte accept redline.docx -o final.docx # accept every revision
 jubarte reject redline.docx -o clean.docx # reject every revision
+jubarte accept redline.docx -o out.docx --author Ann --kind formatting
+jubarte reject redline.docx -o out.docx --id body:rev:12
+
+jubarte text contract.docx                # Markdown, a [body:p:N] id per paragraph
+jubarte inspect contract.docx --json      # paragraphs, runs, stories, limitations
+jubarte edit contract.docx --plan plan.json --out-dir review --pdf --png
+jubarte convert contract.docx --png --dpi 100 --report pages.json
+jubarte capabilities --json               # what this build can do
+jubarte debug out.docx                    # why Word might refuse a package
+jubarte debug diff a.docx b.docx          # what differs, element by element
+jubarte self-update --check
 ```
+
+A selective `accept`/`reject` resolves the changes that match every flag
+given (flags repeat), as Word's Accept/Reject This Change does: either side
+of a move selects both, and resolving some changes never renumbers the
+rest, so ids listed before stay valid. `jubarte edit` never
+modifies its source: it writes the clean copy, the redline and a report
+into a new directory, and a refused plan writes nothing and exits 3.
+[skills/jubarte-documents/SKILL.md](skills/jubarte-documents/SKILL.md) is
+the edit-plan guide written for agents.
 
 `jubarte convert` paints tracked changes in the conventional redline marks by
 default: deletions red and struck through, insertions blue with a double
@@ -258,6 +312,7 @@ such row in the commit. Baselines: `tools/convert_baseline_{76,398}.tsv` and
 | API | Purpose |
 | --- | --- |
 | `convert::docx_to_pdf` / `docx_to_pdf_with` / `docx_to_pdf_report` | Independent DOCX → PDF (not LibreOffice); `report` also returns the font-resolution table |
+| `convert::docx_to_png` / `render` / `docx_render_report` | Page images, PDF + PNG in one layout pass, per-page text and page count |
 | `convert::PdfOptions { compress, revisions }` | Stream compression and how tracked changes are painted |
 | `convert::RevisionStyle` / `RevisionPalette` | `Conventional`, `Word`, or a `Custom` palette (`RevisionPalette::parse` takes the CLI's `kind=#RRGGBB:lines` spec) |
 | `convert::pdf_page_count` | Page count of a PDF's bytes (0 if unreadable) |
@@ -265,6 +320,12 @@ such row in the commit. Baselines: `tools/convert_baseline_{76,398}.tsv` and
 | `document_comparer::compare_documents_with_settings` | Same with `WmlComparerSettings` |
 | `document_comparer::get_revisions` | Inspect tracked changes |
 | `document_comparer::accept_revisions` / `reject_revisions` | Flatten a redline |
+| `changes::list_changes` / `accept_changes` / `reject_changes` | One change at a time: ids, and a `ChangeFilter` by id, author or kind |
+| `edit::apply_plan` / `apply_plan_json` / `preview_plan` | Apply an `EditPlan`: clean copy, redline and `EditReport`; `preview` applies nothing |
+| `inspect::markdown` / `paragraphs` / `stories` / `summary` / `inspect_json` | Read-only views with the paragraph ids edit plans use |
+| `capabilities::capabilities` | What this build can do, as data |
+| `debug::report` / `debug::list` | Word-validity triage of one package, or what changed between two |
+| `admission` | ZIP and XML budgets for untrusted input |
 
 ### Feature flags
 
@@ -272,6 +333,7 @@ such row in the commit. Baselines: `tools/convert_baseline_{76,398}.tsv` and
 | --- | --- | --- |
 | `cli` | yes | builds the `jubarte` binary (`clap`) |
 | `fast-alloc` | yes | CLI uses **mimalloc** (performance only; no semantic change) |
+| `self-update` | yes | `jubarte self-update` (the CLI's only network code) |
 | `perf-profile` | no | diagnostic stage timers — never for publishable wall-time claims |
 
 **MSRV:** Rust **1.88** (edition 2024).
@@ -287,9 +349,9 @@ reproduces classic PowerTools behavior.
 ## Benchmarks — scored against Microsoft Word
 
 Independent harnesses render each tool's output and score it against PDFs
-exported by **Microsoft Word** itself. Numbers below are the current **0.9.x**
-convert rows plus the latest **jubarte-rust** stamps (this engine's native
-benchmark lane); full tables, corpus provenance, and per-version history:
+exported by **Microsoft Word** itself. Numbers below are from the last full
+runs, on **0.9.2**, plus the latest **jubarte-rust** stamps (this engine's
+native benchmark lane). 0.10 has not been re-scored on the full pools yet; full tables, corpus provenance, and per-version history:
 [RESULTS.md](RESULTS.md). Every scored page, side by side with Word's and the
 other engines': [jandira-tech.github.io/jubarte-redlines](https://jandira-tech.github.io/jubarte-redlines/).
 
@@ -409,8 +471,12 @@ A bench pin without `validator: baseline-clean` and `word-probe: N/N OPENED` is
 src/
   lib.rs                 — public crate root (`jubarte`)
   document_comparer.rs   — compare / accept / reject / get_revisions
+  changes.rs             — per-change ids and selective accept / reject
+  edit.rs                — edit plans → clean copy + redline + report
+  inspect.rs             — paragraph / story views and the Markdown projection
+  debug.rs               — `jubarte debug` package triage and diff
   comparer/              — atomize, LCS, produce, tables, notes, …
-  convert/               — DOCX → PDF engine (layout, fonts, shapes, metafiles)
+  convert/               — DOCX → PDF/PNG engine (layout, fonts, shapes, metafiles)
   opc/                   — DOCX/ZIP package layer
   xmllinq/               — the untyped DOM the comparer and converter share
   bin/jubarte.rs         — CLI
@@ -423,9 +489,10 @@ jubarte-rust-inproc/     — long-lived stdin worker (fair speed lane)
 jubarte-app/             — Tauri desktop shell (separate changelog/version)
 tests/                   — integration + goldens + schema/validity oracles
 tools/                   — validate-docx, parity, perf harnesses, convert baselines
-scripts/                 — install.sh/ps1, sweeps, word-probe, bump-version.mjs
+scripts/                 — install.sh/ps1, release.sh, sweeps, word-probe, bump-version.mjs
+skills/                  — agent skill for reading and editing .docx with jubarte
 planning/                — sample50 check/baseline for the convert gate
-docs/                    — WORD_LAYOUT_RULES, SPEED_REVIEW, BENCHMARK_M233, bench_classes
+docs/                    — WORD_LAYOUT_RULES, WORD_DIFFERENCES, SELF_UPDATE, SPEED_REVIEW, api/ snapshots
 ```
 
 ## Known issues
