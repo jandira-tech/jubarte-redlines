@@ -999,9 +999,10 @@ struct NamedStyle {
     /// base's; a paragraph's own framePr overlays them attribute by
     /// attribute (e73ba1e0's footer frame takes Marginalie's x=9016).
     frame: Vec<(String, String)>,
-    /// The chain's nearest `w:vanish` is on: a character style that sets
-    /// it hides its runs (4910ce2060's ContentControlHidden placeholders).
-    hidden: bool,
+    /// The chain's nearest `w:vanish`, when one sets it: a character style
+    /// that turns it on hides its runs (4910ce2060's ContentControlHidden
+    /// placeholders), one that turns it off shows them again.
+    hidden: Option<bool>,
 }
 
 #[derive(Clone, Default)]
@@ -1801,6 +1802,9 @@ struct LaidImage {
     /// the picture's line keeps this mark's descent (0800162a66 vs
     /// 000e3e7b: the 18pt text's baseline 20.64pt under the banner).
     chrome_text_under: Option<RunStyle>,
+    /// A header picture wrapped under its paragraph's text: how far below
+    /// the part's top its line starts (PR #247 review).
+    chrome_above: f32,
     /// A chrome flow picture that wrapped below earlier pictures of its
     /// paragraph: the picture rows above it (pt) and the wrapped tab line
     /// between them, if any (redlines vs 000e3e7b: A's deleted 455pt VML
@@ -2969,13 +2973,13 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
         let sets_size = chain_sets("sz", false);
         let hidden = {
             let mut cur = Some(id.as_str());
-            let mut on = false;
+            let mut on = None;
             for _ in 0..12 {
                 let Some(r) = cur.and_then(|c| raw.get(c)) else {
                     break;
                 };
                 if let Some(v) = r.rpr.and_then(|pr| first_named(&dom, pr, "vanish")) {
-                    on = !val_is_false(&dom, Some(v));
+                    on = Some(!val_is_false(&dom, Some(v)));
                     break;
                 }
                 cur = r.based.as_deref();
@@ -9120,6 +9124,7 @@ fn paragraph_block(
                 chrome_leading: None,
                 chrome_tab_line: None,
                 chrome_text_under: None,
+                chrome_above: 0.0,
                 chrome_drop: 0.0,
                 chrome_drop_tab: None,
                 chrome_para: 0,
@@ -10991,7 +10996,7 @@ fn para_mark_hidden(dom: &Dom, para: NodeId, styles: &HashMap<String, NamedStyle
             first_named(dom, rpr, "rStyle")
                 .and_then(|n| dom.attribute(n, &W::val()))
                 .and_then(|sid| styles.get(sid))
-                .is_some_and(|named| named.hidden)
+                .is_some_and(|named| named.hidden == Some(true))
         },
         |n| !val_is_false(dom, Some(n)),
     )
@@ -11011,7 +11016,7 @@ fn row_is_hidden(dom: &Dom, row: NodeId, styles: &HashMap<String, NamedStyle>) -
                     first_named(dom, rpr, "rStyle")
                         .and_then(|n| dom.attribute(n, &W::val()))
                         .and_then(|sid| styles.get(sid))
-                        .is_some_and(|named| named.hidden)
+                        .is_some_and(|named| named.hidden == Some(true))
                 },
                 |n| !val_is_false(dom, Some(n)),
             )
@@ -12157,22 +12162,20 @@ fn collect_runs_rec(
             }
         }
         let rprs = leading_rprs(ctx.dom, node);
-        // A direct w:vanish decides (the last rPr applied wins); without
-        // one, the character style's.
-        let direct = rprs
-            .iter()
-            .rev()
-            .find_map(|rpr| first_named(ctx.dom, *rpr, "vanish"))
-            .map(|n| !val_is_false(ctx.dom, Some(n)));
-        let styled = || {
-            rprs.iter().any(|rpr| {
-                first_named(ctx.dom, *rpr, "rStyle")
-                    .and_then(|n| ctx.dom.attribute(n, &W::val()))
-                    .and_then(|sid| ctx.styles.and_then(|s| s.get(sid)))
-                    .is_some_and(|named| named.hidden)
-            })
-        };
-        if direct.unwrap_or_else(styled) {
+        // The rPr blocks apply in order, each its character style's
+        // w:vanish and then its own (PR #247 review: a later style that
+        // turns vanish off shows the run again).
+        let hidden = rprs.iter().fold(false, |on, rpr| {
+            let styled = first_named(ctx.dom, *rpr, "rStyle")
+                .and_then(|n| ctx.dom.attribute(n, &W::val()))
+                .and_then(|sid| ctx.styles.and_then(|s| s.get(sid)))
+                .and_then(|named| named.hidden);
+            first_named(ctx.dom, *rpr, "vanish")
+                .map(|n| !val_is_false(ctx.dom, Some(n)))
+                .or(styled)
+                .unwrap_or(on)
+        });
+        if hidden {
             // webHidden is web-view only (ECMA-376 17.3.2.42). Word print
             // and Save-as-PDF still paint those runs (TOC leaders / PAGEREF).
             return;
@@ -14463,6 +14466,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     chrome_leading: None,
                     chrome_tab_line: None,
                     chrome_text_under: None,
+                    chrome_above: 0.0,
                     chrome_drop: 0.0,
                     chrome_drop_tab: None,
                     chrome_para: 0,
@@ -14518,6 +14522,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     chrome_leading: None,
                     chrome_tab_line: None,
                     chrome_text_under: None,
+                    chrome_above: 0.0,
                     chrome_drop: 0.0,
                     chrome_drop_tab: None,
                     chrome_para: 0,
@@ -14580,6 +14585,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         chrome_leading: None,
                         chrome_tab_line: None,
                         chrome_text_under: None,
+                        chrome_above: 0.0,
                         chrome_drop: 0.0,
                         chrome_drop_tab: None,
                         chrome_para: 0,
@@ -14609,6 +14615,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         chrome_leading: None,
                         chrome_tab_line: None,
                         chrome_text_under: None,
+                        chrome_above: 0.0,
                         chrome_drop: 0.0,
                         chrome_drop_tab: None,
                         chrome_para: 0,
@@ -14683,6 +14690,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         chrome_leading: None,
                         chrome_tab_line: None,
                         chrome_text_under: None,
+                        chrome_above: 0.0,
                         chrome_drop: 0.0,
                         chrome_drop_tab: None,
                         chrome_para: 0,
@@ -14718,6 +14726,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     chrome_leading: None,
                     chrome_tab_line: None,
                     chrome_text_under: None,
+                    chrome_above: 0.0,
                     chrome_drop: 0.0,
                     chrome_drop_tab: None,
                     chrome_para: 0,
@@ -14881,6 +14890,7 @@ fn vml_line_image(dom: &Dom, line: NodeId, root: NodeId) -> Option<LaidImage> {
         chrome_leading: None,
         chrome_tab_line: None,
         chrome_text_under: None,
+        chrome_above: 0.0,
         chrome_drop: 0.0,
         chrome_drop_tab: None,
         chrome_para: 0,
@@ -16541,7 +16551,16 @@ fn collect_hf_tables(
             .into_iter()
             .filter(|p| p.0 > prev && p.0 < tbl.0 && hf_node_is_top_level(dom, root, *p))
             .filter(|p| hf_para_is_bare_line(dom, root, *p))
-            .count();
+            // Each w:br is one more line, as `collect_hf_runs` stacks them
+            // (PR #247 review).
+            .map(|p| {
+                1 + dom
+                    .descendants(p, Some(&W::name("br")))
+                    .into_iter()
+                    .filter(|br| attr_any(dom, *br, "type").is_none_or(|t| t == "textWrapping"))
+                    .count()
+            })
+            .sum();
         prev = tbl.0;
         out.push(ChromeTable {
             block: Some(std::rc::Rc::new(block)),
@@ -16810,6 +16829,8 @@ fn chrome_part_xml(
             para_top += (pstyle.before - last_after).max(0.0) + line + pstyle.after;
             last_after = pstyle.after;
         }
+        // Under the paragraph's text line, above its space after.
+        let trail_top = para_top - pstyle.after;
         let jc = pstyle.align;
         let leading = (pstyle.line_exact.is_none()
             && pstyle.line_at_least.is_none()
@@ -16866,6 +16887,7 @@ fn chrome_part_xml(
         // Deleted text is text here: the redline paints it (0800162a66 vs
         // 000e3e7b's deleted "Akreditācijas ekspertu" under the banner).
         let no_text = para_shown_text(&part_dom, para).trim().is_empty();
+        let trails = hf_pic_trails_line(&part_dom, para, sheet, text_w);
         let flow = (no_text || hf_pic_owns_line(&part_dom, para, sheet, text_w))
             && (vml_inline
                 || part_dom
@@ -16922,7 +16944,12 @@ fn chrome_part_xml(
                 .filter(|img| !(table_owned && cell_holds_image(img)))
                 .map(|mut img| {
                     img.chrome_align = jc;
-                    img.chrome_lead = lead;
+                    // A picture wrapped under its paragraph's text stands on
+                    // the part's lines below it, not above its text.
+                    img.chrome_lead = lead && !trails;
+                    if trails {
+                        img.chrome_above = trail_top;
+                    }
                     img.chrome_under_table = under_table;
                     img.chrome_para = para_no;
                     // A footer picture placed from its paragraph sits under
@@ -17477,15 +17504,29 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet, text_w: f32) -> 
             }
             continue;
         }
-        // Text under a line-filling picture is a line of its own.
-        let pic_h = if hf_pic_owns_line(dom, para, sheet, text_w) {
+        // Text under a line-filling picture is a line of its own; one after
+        // the text wraps to a line of its own under it (PR #247 review).
+        let trails = hf_pic_trails_line(dom, para, sheet, text_w);
+        let pic_h = if trails || hf_pic_owns_line(dom, para, sheet, text_w) {
             0.0
         } else {
             hf_inline_pic_h(dom, para)
         };
+        if trails {
+            let mark = line
+                .last()
+                .map_or_else(|| prun.clone(), |r| r.style.clone());
+            let mut pic_line = TextRun::new("", mark.clone());
+            pic_line.hf_pic_h = hf_inline_pic_h(dom, para);
+            pic_line.ends_line = true;
+            line.push(TextRun::new(HF_LINE_BREAK, mark));
+            line.push(pic_line);
+        }
         for run in &mut line {
             run.hf_para = Some(pstyle.clone());
-            run.hf_pic_h = pic_h;
+            if !trails {
+                run.hf_pic_h = pic_h;
+            }
             run.hf_tab_wrap = !sheet.defaults.legacy_compat;
             run.hf_default_tab = sheet.defaults.page.default_tab;
         }
@@ -17575,19 +17616,61 @@ fn hf_inline_pic_h(dom: &Dom, para: NodeId) -> f32 {
 /// room for its text: Word sets the text on the lines under them
 /// (0800162a66's 441.9pt footer banner over "ŠIS DOKUMENTS …" in 441.9pt
 /// of room). Half an em of the paragraph's text is the least a first
-/// word takes.
+/// word takes. Only the pictures ahead of the text count: text first
+/// sets the first line itself (PR #247 review).
 fn hf_pic_owns_line(dom: &Dom, para: NodeId, sheet: &StyleSheet, text_w: f32) -> bool {
-    let pics_w: f32 = dom
-        .descendants(para, Some(&WP::name("inline")))
-        .into_iter()
-        .filter(|inl| {
-            dom.ancestors(*inl, Some(&W::name("txbxContent")))
-                .is_empty()
-        })
-        .filter_map(|inl| first_named_any(dom, inl, "extent"))
-        .filter_map(|ext| attr_any(dom, ext, "cx").and_then(|v| v.parse::<f32>().ok()))
-        .map(|cx| cx / 12700.0)
-        .sum();
+    let mut pics_w = 0.0_f32;
+    for n in dom.descendants(para, None) {
+        if !dom.ancestors(n, Some(&W::name("txbxContent"))).is_empty() {
+            continue;
+        }
+        if (dom.name_is(n, &W::t()) || dom.name_is(n, &W::name("delText")))
+            && !element_text(dom, n).trim().is_empty()
+        {
+            break;
+        }
+        if dom.name_is(n, &WP::name("inline"))
+            && let Some(cx) = first_named_any(dom, n, "extent")
+                .and_then(|ext| attr_any(dom, ext, "cx"))
+                .and_then(|v| v.parse::<f32>().ok())
+        {
+            pics_w += cx / 12700.0;
+        }
+    }
+    if pics_w <= 0.0 {
+        return false;
+    }
+    let (pstyle, prun) = para_base(dom, para, sheet, None);
+    let room = text_w - pstyle.indent_left - pstyle.indent_right - pstyle.indent_first;
+    room - pics_w < prun.size * 0.5
+}
+
+/// A chrome paragraph's text comes first and its later inline pictures
+/// fill a line: Word wraps them to the line under the text.
+fn hf_pic_trails_line(dom: &Dom, para: NodeId, sheet: &StyleSheet, text_w: f32) -> bool {
+    let mut seen_text = false;
+    let mut pics_w = 0.0_f32;
+    for n in dom.descendants(para, None) {
+        if !dom.ancestors(n, Some(&W::name("txbxContent"))).is_empty() {
+            continue;
+        }
+        if (dom.name_is(n, &W::t()) || dom.name_is(n, &W::name("delText")))
+            && !element_text(dom, n).trim().is_empty()
+        {
+            if pics_w > 0.0 {
+                // Text after the pictures too: not one trailing row.
+                return false;
+            }
+            seen_text = true;
+        } else if seen_text
+            && dom.name_is(n, &WP::name("inline"))
+            && let Some(cx) = first_named_any(dom, n, "extent")
+                .and_then(|ext| attr_any(dom, ext, "cx"))
+                .and_then(|v| v.parse::<f32>().ok())
+        {
+            pics_w += cx / 12700.0;
+        }
+    }
     if pics_w <= 0.0 {
         return false;
     }
@@ -18506,6 +18589,24 @@ fn chrome_line_metrics(fonts: &Fonts, line: &[TextRun]) -> (f32, f32) {
         return (pic, line_box + pic - drop);
     }
     (drop, line_box)
+}
+
+/// A paragraph's runs cut at its explicit line breaks (`'\n'`), the
+/// breaks dropped.
+fn split_at_breaks(runs: &[TextRun]) -> Vec<Vec<TextRun>> {
+    let mut lines = vec![Vec::new()];
+    for run in runs {
+        let mut pieces = run.text.split('\n');
+        if let Some(first) = pieces.next()
+            && let Some(line) = lines.last_mut()
+        {
+            line.push(run.with_text(first));
+        }
+        for piece in pieces {
+            lines.push(vec![run.with_text(piece)]);
+        }
+    }
+    lines
 }
 
 /// Baseline depth of an exact line: Word puts it 4/5 down the box.
@@ -22012,10 +22113,13 @@ impl<'a> Layout<'a> {
         if !box_.fit_width || box_.paras.is_empty() {
             return box_.w;
         }
+        // A w:br ends a line: the widest of them sets the width (PR #247
+        // review), not the text on both sides of a break added up.
         let text_w = box_
             .paras
             .iter()
-            .map(|(runs, _)| self.line_width_pt(runs))
+            .flat_map(|(runs, _)| split_at_breaks(runs))
+            .map(|line| self.line_width_pt(&line))
             .fold(0.0_f32, f32::max);
         let w = text_w + box_.insets[0] + box_.insets[2];
         if box_.frame {
@@ -22520,6 +22624,7 @@ impl<'a> Layout<'a> {
             };
             let lift = if in_header {
                 row_top
+                    + img.chrome_above
                     + if img.chrome_under_table && matches!(img.slot, ImageSlot::Flow) {
                         tables_h
                     } else {

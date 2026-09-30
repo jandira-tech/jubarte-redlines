@@ -91,6 +91,25 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- A nested table row taller than what is left of the page breaks inside
+  itself, as Word breaks it, when keeping it whole would leave a quarter
+  of the page empty. Rows marked `cantSplit` or with an exact height stay
+  whole. The `w:br` line breaks of a cell paragraph split across pages
+  stay where they were. Before, the story parts ran together. In the
+  docx-to-pdf work set, three newsletters of one family gained 4 to 16
+  pixel points each (net +30.2), with nothing worse. 931e978ee2 is back at
+  Word's three pages.
+- A float that leaves no room on its line in a multi-column section moves
+  the text to the next column, not to the next page.
+- The review fixes for PR #247:
+  - A run's `w:rPr` blocks apply `w:vanish` in order, so a later
+    character style that turns it off shows the run again.
+  - In a header or footer, a full-width picture that follows the
+    paragraph's text wraps to the line under that text, and the text
+    keeps its first line.
+  - The empty paragraphs above a footer table count each `w:br` as a line.
+  - An auto-width frame is as wide as its widest line, measured between
+    `w:br` breaks, not the text on both sides of a break added up.
 - `jubarte convert --revisions word` draws a comment balloon only where
   Word's Save as PDF does. Word draws none for a comment whose range ends at
   body or cell level, or before any content in its paragraph, and none for a

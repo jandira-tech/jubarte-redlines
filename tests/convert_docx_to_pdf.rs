@@ -35305,6 +35305,117 @@ fn empty_paragraphs_above_a_footer_table_do_not_lift_it() {
 }
 
 #[test]
+fn a_later_run_properties_block_can_unhide_an_earlier_hidden_style() {
+    // PR #247 review: a run's leading w:rPr blocks apply in order (see
+    // leading_rprs), so a later character style that turns w:vanish off
+    // shows the run an earlier hidden style would have hidden.
+    let styles = "<w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         <w:style w:type=\"character\" w:styleId=\"Hide\"><w:name w:val=\"Hide\"/><w:rPr><w:vanish/></w:rPr></w:style>\
+         <w:style w:type=\"character\" w:styleId=\"Show\"><w:name w:val=\"Show\"/><w:rPr><w:vanish w:val=\"0\"/></w:rPr></w:style>\
+         </w:styles>";
+    let run = |second: &str| {
+        let body = format!(
+            "<w:p><w:r><w:rPr><w:rStyle w:val=\"Hide\"/></w:rPr>{second}<w:t>Probe</w:t></w:r></w:p><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&docx_with_styles(&body, styles)).expect("two rPr");
+        pdf_glyph_text_xy(&pdf, "Probe").is_some()
+    };
+    assert!(!run(""), "the hidden style hides the run");
+    assert!(
+        run("<w:rPr><w:rStyle w:val=\"Show\"/></w:rPr>"),
+        "the later style shows it again"
+    );
+    assert!(
+        !run("<w:rPr><w:rStyle w:val=\"Hide\"/></w:rPr>"),
+        "a later hidden style keeps it hidden"
+    );
+}
+
+#[test]
+fn text_before_a_full_width_chrome_picture_keeps_the_first_line() {
+    // PR #247 review: only a picture that opens its paragraph owns the
+    // first line. "Lead" comes first, so it sets line one and the
+    // full-width picture wraps under it.
+    let pdf = docx_to_pdf(&footer_part_docx(&format!(
+        "<w:p><w:r><w:t>Lead</w:t></w:r>{}</w:p>",
+        full_width_dot()
+    )))
+    .expect("footer picture after text");
+    let (_, pic_y, _, pic_h) = pdf_image_boxes(&pdf)[0];
+    let (_, lead_y) = pdf_glyph_text_xy(&pdf, "Lead").expect("Lead painted");
+    assert!(
+        pic_y + pic_h <= lead_y + 1.0,
+        "the picture sits under the text's line: top {} vs baseline {lead_y}",
+        pic_y + pic_h
+    );
+    // A header's too: the text's line first, the picture's under it.
+    let pdf = docx_to_pdf(&header_part_docx(&format!(
+        "<w:p><w:r><w:t>Lead</w:t></w:r>{}</w:p>",
+        full_width_dot()
+    )))
+    .expect("header picture after text");
+    let (_, pic_y, _, pic_h) = pdf_image_boxes(&pdf)[0];
+    let (_, lead_y) = pdf_glyph_text_xy(&pdf, "Lead").expect("Lead painted");
+    assert!(
+        pic_y + pic_h <= lead_y + 1.0,
+        "the header picture sits under the text's line: top {} vs baseline {lead_y}",
+        pic_y + pic_h
+    );
+}
+
+#[test]
+fn a_break_in_an_empty_paragraph_above_a_footer_table_does_not_lift_it() {
+    // PR #247 review: an empty paragraph's w:br adds a line of its own;
+    // the lines above a footer table lift nothing, breaks included.
+    let empty = "<w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr></w:p>";
+    let broken = "<w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:br/><w:br/></w:r></w:p>";
+    let table = "<w:tbl><w:tblPr><w:tblW w:w=\"9360\" w:type=\"dxa\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"9360\"/></w:tblGrid>\
+         <w:tr><w:tc><w:tcPr><w:tcW w:w=\"9360\" w:type=\"dxa\"/></w:tcPr>\
+           <w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>Year</w:t></w:r></w:p>\
+         </w:tc></w:tr></w:tbl>";
+    let year_y = |lead: &str| {
+        pdf_glyph_text_xy(&footer_with_para(&format!("{lead}{table}{empty}")), "Year")
+            .expect("Year painted")
+            .1
+    };
+    let (bare, led) = (year_y(""), year_y(broken));
+    assert!(
+        (bare - led).abs() < 0.05,
+        "the broken empty paragraph leaves the table in place; {led} vs {bare}"
+    );
+}
+
+#[test]
+fn an_auto_width_frame_is_as_wide_as_its_widest_broken_line() {
+    // PR #247 review: a w:br ends a line; the frame's width is its widest
+    // line, not the text on both sides of the break added up. The shaded
+    // frame paints its width.
+    let width = |tail: &str| {
+        let body = format!(
+            "<w:p><w:pPr><w:framePr w:wrap=\"around\" w:vAnchor=\"page\" w:hAnchor=\"margin\" \
+               w:x=\"3000\" w:y=\"2000\"/><w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"FF0000\"/></w:pPr>\
+               <w:r><w:t>Wide words here</w:t></w:r>{tail}</w:p>\
+             <w:p><w:r><w:t>Body</w:t></w:r></w:p><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("framed paragraph");
+        pdf_fill_ws(&pdf, 1.0, 0.0, 0.0)
+            .into_iter()
+            .fold(0.0_f32, f32::max)
+    };
+    let alone = width("");
+    let broken = width("<w:r><w:br/><w:t>Xyz</w:t></w:r>");
+    assert!(alone > 20.0, "the frame paints its shading: {alone}");
+    assert!(
+        (alone - broken).abs() < 0.5,
+        "the short line after the break does not widen the frame: {broken} vs {alone}"
+    );
+    // A longer line after the break sets the width.
+    let longer = width("<w:r><w:br/><w:t>A much longer second line</w:t></w:r>");
+    assert!(longer > alone + 20.0, "{longer} vs {alone}");
+}
+
+#[test]
 fn a_space_only_run_keeps_its_space() {
     // fixtures_500 014babb2: `birds.` + `<w:t xml:space="preserve"> </w:t>` +
     // `We` painted "birds.We". A lone-space w:t is text, not the
