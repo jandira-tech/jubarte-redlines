@@ -119,6 +119,9 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 - A table row moves to the next page whole when one of its cells can put
   nothing on the page, as Word 16 does whatever the row's vertical
   alignment. Before, the other cells' first lines stayed behind.
+- A justified line holding only tabs keeps their stops and dot leaders.
+  Before, the justified painter drew the tabs as text, so the docxide
+  suite's air_pollution_permit_form lost two of its four dotted lines.
 - A nested table row taller than what is left of the page breaks inside
   itself, as Word breaks it, when keeping it whole would leave a quarter
   of the page empty. Rows marked `cantSplit` or with an exact height stay

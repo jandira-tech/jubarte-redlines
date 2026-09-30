@@ -41312,3 +41312,24 @@ fn a_row_moves_whole_when_one_of_its_cells_fits_nothing_on_the_page() {
         }
     }
 }
+
+#[test]
+fn a_justified_line_of_tabs_keeps_its_stops_and_leaders() {
+    // docxide suite air_pollution_permit_form: the text box's justified
+    // paragraph of six tabs wraps to three dotted lines in Word. Its first
+    // two lines are not the paragraph's last, so we justified them, and
+    // the justified painter drew the tabs as text: no stops, no leaders.
+    let body = "<w:p><w:pPr><w:tabs><w:tab w:val=\"left\" w:pos=\"7088\"/>\
+          <w:tab w:val=\"left\" w:leader=\"dot\" w:pos=\"9639\"/></w:tabs><w:jc w:val=\"both\"/></w:pPr>\
+          <w:r><w:tab/></w:r><w:r><w:tab/></w:r><w:r><w:tab/></w:r>\
+          <w:r><w:tab/></w:r><w:r><w:tab/></w:r><w:r><w:tab/></w:r></w:p>\
+        <w:p><w:r><w:t>After</w:t></w:r></w:p>\
+        <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+          <w:pgMar w:top=\"1440\" w:right=\"1160\" w:bottom=\"1440\" w:left=\"1160\"/></w:sectPr>";
+    let settings = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         <w:defaultTabStop w:val=\"720\"/></w:settings>";
+    let pdf = docx_to_pdf(&docx_with_settings(body, settings)).expect("justified tabs");
+    let dots = line_baselines_between(&pdf, 400.0, 560.0);
+    assert_eq!(dots.len(), 3, "three dotted lines at {dots:?}");
+}

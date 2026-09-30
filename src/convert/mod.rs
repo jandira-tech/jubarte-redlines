@@ -21932,6 +21932,13 @@ impl<'a> Layout<'a> {
 
     fn paint_justified_line(&mut self, line: &[TextRun], mut x: f32, y: f32, leftover: f32) {
         let gaps = inter_word_gaps(line);
+        // Justifying stretches only the spaces after the last tab. With
+        // none, the line is its tabs: they go to their stops with their
+        // leaders (air_pollution_permit_form's text box of dotted lines).
+        if gaps == 0 && line.iter().any(|r| r.text.contains('\t')) {
+            self.paint_line_with_tabs(line, x, y);
+            return;
+        }
         let pad = if gaps > 0 {
             leftover / gaps as f32
         } else {
