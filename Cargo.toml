@@ -103,6 +103,8 @@ sha2 = "0.11" # SHA-256 snapshot guard shared by `inspect` and `edit`
 serde = { version = "1", features = ["derive"] } # inspect snapshot / edit plan / report wire types
 serde_json = "1"
 tiny-skia = "0.11" # DOCX→PNG page raster over the layout display list
+pulldown-cmark = { version = "0.13", default-features = false } # Markdown → DOCX (`jubarte::markdown`); CommonMark + GFM tables/footnotes
+similar = { version = "3", default-features = false } # line and word diffs of Markdown (`jubarte::markdown::diff_markdown`)
 foldhash = "0.2" # the XML name interner's hasher: well mixed low bits for short, similar names, unlike SipHash (slow) or FNV (clustered)
 clap = { version = "4.5", features = ["derive"], optional = true }
 # CLI-only global allocator. The redline pipeline is ~41% allocation self-time
