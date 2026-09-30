@@ -10838,7 +10838,9 @@ fn table_float(dom: &Dom, table: NodeId) -> Option<ImageSlot> {
     let pr = table_pr(dom, table)?;
     let p = first_named(dom, pr, "tblpPr")?;
     let horz = attr_any(dom, p, "horzAnchor").unwrap_or("text");
-    let vert = attr_any(dom, p, "vertAnchor").unwrap_or("text");
+    // A missing vertAnchor is "margin" (Word probes g1-g6, 2026-09-30:
+    // the table sits at the top margin + tblpY on its paragraph's page).
+    let vert = attr_any(dom, p, "vertAnchor").unwrap_or("margin");
     let x_spec = attr_any(dom, p, "tblpXSpec").unwrap_or("");
     let x_raw = attr_any(dom, p, "tblpX").unwrap_or("");
     let y_raw = attr_any(dom, p, "tblpY").unwrap_or("");
@@ -24106,10 +24108,28 @@ impl<'a> Layout<'a> {
             self.float_table_top(slot) - th < self.body_floor
         });
         let mut table_left = origin + shift + ind - pull;
+        // A top-margin float's first page keeps the floor raised to one
+        // body height under its top; restored if the table never breaks.
+        let mut first_floor: Option<(usize, f32)> = None;
         if overflows
             && self.nested_depth == 0
             && let Some(slot) = geom.float
         {
+            // A tall top-margin float after text on its page leaves that
+            // text alone and starts the next page at its offset (Word,
+            // 6c2c8f1b79 and probe fe: two paragraphs stay on page 1).
+            let margin_float = matches!(
+                slot,
+                ImageSlot::Float {
+                    page_y: None,
+                    v_off: Some(_),
+                    ..
+                }
+            );
+            let untouched = (self.page.height - self.body_top - self.y).abs() < 0.5;
+            if margin_float && !untouched {
+                self.new_page();
+            }
             // It starts where it floats (0011e415's first row at 219pt),
             // lifted so the leading rows one body page holds end above
             // the page's edge. Live Word 2026-09-26, 17.46pt rows under a
@@ -24136,6 +24156,13 @@ impl<'a> Layout<'a> {
             } else {
                 top
             };
+            // Its first page holds one body height of rows from its top
+            // (probe fe: R00..R31 at 12.75..652.75, not down to the 720
+            // floor); later pages break at the floor as usual.
+            if margin_float {
+                first_floor = Some((self.pages.len(), self.body_floor));
+                self.body_floor = self.body_floor.max(top - room);
+            }
             // Every page of it keeps the float's column (a 360pt centred
             // table's border at 216 on pages 1-3), not the margin.
             let th: f32 = row_h.iter().sum();
@@ -24180,10 +24207,46 @@ impl<'a> Layout<'a> {
                 ImageSlot::Flow => Align::Left,
             };
             let top = self.float_table_top(slot);
-            let saved_y = self.y;
+            let mut saved_y = self.y;
             let saved_ml = self.page.margin_l;
             let saved_mr = self.page.margin_r;
             let saved_top = self.at_page_top;
+            // A left float's text starts its distance past the drawn right
+            // edge: the mode<15 pull moves the table left of fx (case46:
+            // 246.6 + 7.2 = 253.8, as Word's 254.1).
+            let inset = if matches!(align, Align::Left) && (fx - pull - saved_ml).abs() < 12.0 {
+                (fx - pull + used + dist - saved_ml).max(0.0)
+            } else {
+                used + dist
+            };
+            // With no room beside the table, lines above its tblpY top keep
+            // their place (09d6d940's anchor paragraph and heading sit in
+            // the 51pt over the table in Word).
+            let no_room = matches!(align, Align::Center)
+                || self.content_width() - inset < MIN_SIDE_FLOAT_ROOM_PT;
+            // A margin- or page-placed float at the body's top with no room
+            // beside it pushes the text already on its page below it: Word
+            // lays the page out around the float (probes g2/fb: Head0 at
+            // 113.3 under a table filling 12.75..112.75).
+            let body_top_y = self.page.height - self.body_top;
+            let push = body_top_y - (top - th - dist_b);
+            if no_room
+                && !float_is_text_anchored(slot)
+                && top >= body_top_y - 0.5
+                && saved_y < body_top_y - 0.5
+                && push > 0.0
+                && saved_y - push >= self.body_floor
+            {
+                let start = self.chrome_end;
+                let page = self.current();
+                for op in &mut page.ops[start..] {
+                    shift_op_y(op, -push);
+                }
+                for note in &mut page.comments {
+                    note.y -= push;
+                }
+                saved_y -= push;
+            }
             self.nested_depth = 1;
             // A centred/right float's border box sits at fx itself: undo
             // the nested pass's mode<15 pull and tblInd (00aaa7af).
@@ -24206,19 +24269,6 @@ impl<'a> Layout<'a> {
             // table's band starts at the cursor so the following paragraph
             // wraps from its first line (Word keeps that one line full when
             // tblpY pushes the table below it; case45).
-            // A left float's text starts its distance past the drawn right
-            // edge: the mode<15 pull moves the table left of fx (case46:
-            // 246.6 + 7.2 = 253.8, as Word's 254.1).
-            let inset = if matches!(align, Align::Left) && (fx - pull - saved_ml).abs() < 12.0 {
-                (fx - pull + used + dist - saved_ml).max(0.0)
-            } else {
-                used + dist
-            };
-            // With no room beside the table, lines above its tblpY top keep
-            // their place (09d6d940's anchor paragraph and heading sit in
-            // the 51pt over the table in Word).
-            let no_room = matches!(align, Align::Center)
-                || self.content_width() - inset < MIN_SIDE_FLOAT_ROOM_PT;
             let band_top = if float_is_text_anchored(slot) && !no_room {
                 saved_y
             } else {
@@ -24664,6 +24714,11 @@ impl<'a> Layout<'a> {
                 }
             }
             ri += 1;
+        }
+        if let Some((pages, floor)) = first_floor
+            && self.pages.len() == pages
+        {
+            self.body_floor = floor;
         }
         // Word starts the next block at the table's bottom edge (001f4e98);
         // the flat 4pt floor here was an old-corpus page-count tune. Layout

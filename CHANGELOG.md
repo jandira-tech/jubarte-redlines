@@ -168,6 +168,13 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   the line's start before the line is aligned, as in the body. 3ee2d0c's
   centred banner, tab and deleted "Zgłoszenie … 2024 rok”" printed as one
   line running 56pt past the margin (53.3/39.0 to 73.1/62.2).
+- A floating table with no `vertAnchor` is placed from the top margin, as
+  Word reads it, not from the text cursor. The text before it on its page
+  moves under it when there is no room beside it. A table too tall for
+  the page holds one body height of rows on its first page. It starts the
+  next page when text is already on this one. e11fc429b2's two
+  page-anchored tables went from 49.7/42.3 to 87.3/83.3 (Word probes g1-g6,
+  fb, fe).
 - Rejecting a redline gives back what a changed style inherited in the
   original. Word's Reject All reads a style's old record against its
   built-in defaults, so a record holding only the style's own properties

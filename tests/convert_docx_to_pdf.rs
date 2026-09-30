@@ -13500,6 +13500,116 @@ fn centred_float_table_wider_than_the_column_overhangs_both_sides() {
     );
 }
 
+fn unanchored_float_table_after_heads(tblp_y: i32) -> Vec<u8> {
+    // Word probes g2/g4 (2026-09-30): four paragraphs, then a centred
+    // 586.8pt tblpPr table of five exact 20pt rows with no vertAnchor.
+    let heads: String = (0..4)
+        .map(|i| format!("<w:p><w:r><w:t>Head{i}</w:t></w:r></w:p>"))
+        .collect();
+    let row = |i: u32| {
+        format!(
+            r#"<w:tr><w:trPr><w:trHeight w:val="400" w:hRule="exact"/></w:trPr><w:tc><w:tcPr><w:tcW w:w="11736" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r><w:t>R0{i}</w:t></w:r></w:p></w:tc></w:tr>"#
+        )
+    };
+    let rows: String = (0..5).map(row).collect();
+    let body = format!(
+        r#"{heads}<w:tbl><w:tblPr><w:tblpPr w:leftFromText="180" w:rightFromText="180" w:horzAnchor="margin" w:tblpXSpec="center" w:tblpY="{tblp_y}"/><w:tblW w:w="11736" w:type="dxa"/><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w="11736"/></w:tblGrid>{rows}</w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#
+    );
+    docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("unanchored float table")
+}
+
+#[test]
+fn a_float_table_without_a_vertical_anchor_is_placed_from_the_top_margin() {
+    // Word reads a missing vertAnchor as "margin": the table's top sits at
+    // 72 + tblpY (12.75pt for -1185, 92pt for +400) however many
+    // paragraphs come before it.
+    for (tblp_y, top) in [(-1185, 12.75_f32), (400, 92.0)] {
+        let pdf = unanchored_float_table_after_heads(tblp_y);
+        let ys = pdf_horiz_rule_ys(&pdf);
+        let want = 792.0 - top;
+        assert!(
+            ys.first().is_some_and(|y| (y - want).abs() < 0.5),
+            "tblpY={tblp_y}: the top rule sits at {top}pt from the page top (pdf y {want}); rules={ys:?}"
+        );
+    }
+}
+
+#[test]
+fn text_before_a_top_margin_float_table_on_its_page_flows_below_it() {
+    // Probe g2: the full-width table fills the page top, so the four
+    // paragraphs before it in the file are laid out under it (Head0 at
+    // 113.3 under a table ending at 112.75), not over it.
+    let pdf = unanchored_float_table_after_heads(-1185);
+    let bottom = 792.0 - (12.75 + 100.0);
+    let head0 = pdf_literal_td_y(&pdf, "Head0").expect("Head0 drawn");
+    assert!(
+        head0 < bottom - 8.0,
+        "Head0's line starts under the table's bottom (pdf y {bottom}); head0={head0}"
+    );
+}
+
+fn tall_unanchored_float_table(heads: &str) -> Vec<u8> {
+    // Word probe fe (2026-09-30): 40 exact 20pt rows at tblpY -1185 (top
+    // 12.75), no vertAnchor, on a Letter page with 72pt margins.
+    let rows: String = (0..40)
+        .map(|i| {
+            format!(
+                r#"<w:tr><w:trPr><w:trHeight w:val="400" w:hRule="exact"/></w:trPr><w:tc><w:tcPr><w:tcW w:w="11736" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r><w:t>R{i:02}</w:t></w:r></w:p></w:tc></w:tr>"#
+            )
+        })
+        .collect();
+    let body = format!(
+        r#"{heads}<w:tbl><w:tblPr><w:tblpPr w:leftFromText="180" w:rightFromText="180" w:horzAnchor="margin" w:tblpXSpec="center" w:tblpY="-1185"/><w:tblW w:w="11736" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="11736"/></w:tblGrid>{rows}</w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#
+    );
+    docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("tall float table")
+}
+
+/// Page index whose painted literals spell `text` (whole-run or per glyph).
+fn page_with_text(pdf: &[u8], text: &str) -> Option<usize> {
+    pdf_content_streams(pdf)
+        .iter()
+        .position(|s| pdf_winansi_text(s.as_bytes()).contains(text))
+}
+
+#[test]
+fn a_tall_top_margin_float_table_holds_one_body_height_of_rows_on_its_first_page() {
+    // Probe fe: Word's first page holds R00..R31 (12.75..652.75, one 648pt
+    // body height of rows from the float's top), not every row down to
+    // the 720pt floor; R32 starts page 2 at the top margin.
+    let pdf = tall_unanchored_float_table("");
+    assert_eq!(page_with_text(&pdf, "R31"), Some(0), "R31 ends page one");
+    assert_eq!(page_with_text(&pdf, "R32"), Some(1), "R32 starts page two");
+}
+
+#[test]
+fn a_tall_top_margin_float_table_after_text_starts_on_the_next_page() {
+    // 6c2c8f1b79 and probe fe: with paragraphs already on the page, the
+    // tall table leaves them alone there and starts page 2 at its tblpY.
+    let pdf = tall_unanchored_float_table(
+        "<w:p><w:r><w:t>Head0</w:t></w:r></w:p><w:p><w:r><w:t>Head1</w:t></w:r></w:p>",
+    );
+    assert_eq!(
+        page_with_text(&pdf, "Head1"),
+        Some(0),
+        "the paragraphs stay on page one"
+    );
+    assert_eq!(
+        page_with_text(&pdf, "R00"),
+        Some(1),
+        "the table starts page two"
+    );
+    assert_eq!(
+        page_with_text(&pdf, "R31"),
+        Some(1),
+        "page two holds R00..R31"
+    );
+    assert_eq!(
+        page_with_text(&pdf, "R32"),
+        Some(2),
+        "R32 starts page three"
+    );
+}
+
 fn indent_cell_table(width: u32, ppr: &str, text: &str) -> String {
     format!(
         r#"<w:tbl><w:tblPr><w:tblW w:w="{width}" w:type="dxa"/><w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid><w:gridCol w:w="{width}"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="{width}" w:type="dxa"/></w:tcPr><w:p><w:pPr>{ppr}</w:pPr><w:r><w:t>{text}</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#
