@@ -10,6 +10,9 @@ use std::io::Read;
 use std::path::PathBuf;
 
 use jubarte::document_comparer::compare_documents;
+use jubarte::namespaces::W;
+use jubarte::opc::PartFs;
+use jubarte::xmllinq::{Dom, NodeId, XName, XNamespace};
 
 #[test]
 fn stale_theme_color_hex_is_recached() {
@@ -365,4 +368,296 @@ fn referenced_original_theme_survives_when_the_original_has_no_styles() {
         "the original's referenced theme must survive, got {}",
         &theme_out[..theme_out.len().min(600)]
     );
+}
+
+/// Exercise a newly imported table style so style merging cannot hide the
+/// cache behavior. All fixtures stay in memory and need no corpus files.
+fn recached_table_properties(properties: &str, original_theme: &str) -> (Dom, NodeId) {
+    let revised_styles = STYLES_A.replace(
+        "</w:styles>",
+        &format!(r#"<w:style w:type="table" w:styleId="CacheProbe"><w:name w:val="Cache Probe"/><w:basedOn w:val="TableNormal"/>{properties}</w:style></w:styles>"#),
+    );
+    let revised_theme = theme("FF00FF");
+    let make = |body, styles, theme_xml| {
+        docx_with(
+            body,
+            &[
+                Part {
+                    name: "word/styles.xml",
+                    content_type: STYLES_CT,
+                    rel_type: STYLES_REL,
+                    xml: styles,
+                },
+                Part {
+                    name: "word/theme/theme1.xml",
+                    content_type: THEME_CT,
+                    rel_type: THEME_REL,
+                    xml: theme_xml,
+                },
+            ],
+        )
+    };
+    let a = make(
+        r#"<w:p><w:r><w:t>Intro</w:t></w:r></w:p>"#,
+        STYLES_A,
+        original_theme,
+    );
+    let b = make(
+        r#"<w:p><w:r><w:t>Intro</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblStyle w:val="CacheProbe"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#,
+        &revised_styles,
+        &revised_theme,
+    );
+    let out = compare_documents(&a, &b, "Redline").expect("compare cache probe");
+    common::validity::assert_word_valid_package(&out);
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&part_string(&out, "word/styles.xml").expect("styles"));
+    let root = dom.root(doc).expect("styles root");
+    let style = dom
+        .descendants(root, Some(&W::name("style")))
+        .into_iter()
+        .find(|&s| dom.attribute(s, &W::name("styleId")) == Some("CacheProbe"))
+        .expect("imported probe style");
+    (dom, style)
+}
+
+fn assert_property(dom: &Dom, style: NodeId, element: &str, attr: &str, expected: Option<&str>) {
+    let elements = dom.descendants(style, Some(&W::name(element)));
+    assert_eq!(elements.len(), 1, "expected one {element} in probe style");
+    assert_eq!(
+        dom.attribute(elements[0], &W::name(attr)),
+        expected,
+        "{element}/@{attr}"
+    );
+}
+
+#[test]
+fn shading_color_and_fill_resolve_independently_without_changing_the_pattern() {
+    let (dom, style) = recached_table_properties(
+        r#"<w:tcPr><w:shd w:val="pct20" w:color="FF00FF" w:themeColor="accent1" w:themeTint="3F" w:fill="FF00FF" w:themeFill="accent2" w:themeFillShade="00"/></w:tcPr>"#,
+        &theme("156082"),
+    );
+    for (attr, expected) in [
+        ("val", "pct20"),
+        ("color", "B2DEF2"),
+        ("fill", "000000"),
+        ("themeColor", "accent1"),
+        ("themeTint", "3F"),
+        ("themeFill", "accent2"),
+        ("themeFillShade", "00"),
+    ] {
+        assert_property(&dom, style, "shd", attr, Some(expected));
+    }
+}
+
+#[test]
+fn tint_and_shade_boundaries_recache_text_fill_and_border_colors() {
+    // The middle values are from the PR's Word probes. Endpoints are the
+    // OOXML black/white limits; FF is identity on an achromatic color.
+    for (base, modifier, factor, expected) in [
+        ("156082", "Shade", "00", "000000"),
+        ("156082", "Tint", "00", "FFFFFF"),
+        ("808080", "Shade", "FF", "808080"),
+        ("808080", "Tint", "FF", "808080"),
+        ("156082", "Shade", "BF", "0F4761"),
+        ("156082", "Tint", "3f", "B2DEF2"),
+    ] {
+        let properties = format!(
+            r#"<w:rPr><w:color w:val="FF00FF" w:themeColor="accent1" w:theme{modifier}="{factor}"/></w:rPr><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="8" w:color="FF00FF" w:themeColor="accent1" w:theme{modifier}="{factor}"/></w:tblBorders></w:tblPr><w:tcPr><w:shd w:val="clear" w:fill="FF00FF" w:themeFill="accent1" w:themeFill{modifier}="{factor}"/></w:tcPr>"#
+        );
+        let (dom, style) = recached_table_properties(&properties, &theme(base));
+        for (element, attr) in [("color", "val"), ("top", "color"), ("shd", "fill")] {
+            assert_property(&dom, style, element, attr, Some(expected));
+        }
+        assert_property(&dom, style, "top", "val", Some("single"));
+        assert_property(&dom, style, "top", "sz", Some("8"));
+    }
+}
+
+#[test]
+fn recaching_preserves_automatic_missing_unresolvable_and_literal_colors() {
+    for (attrs, expected) in [
+        (r#"w:fill="auto" w:themeFill="accent1""#, Some("auto")),
+        (r#"w:themeFill="accent1""#, None),
+        (r#"w:fill="123456""#, Some("123456")),
+        (r#"w:fill="123456" w:themeFill="none""#, Some("123456")),
+        (r#"w:fill="123456" w:themeFill="accent6""#, Some("123456")),
+        (
+            r#"w:fill="123456" w:themeFill="accent1" w:themeFillTint="GG""#,
+            Some("123456"),
+        ),
+        (
+            r#"w:fill="123456" w:themeFill="accent1" w:themeFillShade="GG""#,
+            Some("123456"),
+        ),
+    ] {
+        // Missing theme slots must not invalidate other available colors.
+        let original_theme =
+            theme("156082").replace(r#"<a:accent6><a:srgbClr val="F79646"/></a:accent6>"#, "");
+        let (dom, style) = recached_table_properties(
+            &format!(
+                r#"<w:tcPr><w:shd w:val="clear" {attrs} w:color="FF00FF" w:themeColor="accent1"/></w:tcPr>"#
+            ),
+            &original_theme,
+        );
+        assert_property(&dom, style, "shd", "fill", expected);
+        assert_property(&dom, style, "shd", "color", Some("156082"));
+    }
+}
+
+#[test]
+fn cache_tolerance_is_inclusive_per_channel_and_preserves_hex_case() {
+    for (cached, expected) in [
+        ("156082", "156082"),
+        ("135e80", "135e80"), // Each channel differs by exactly -2.
+        ("176284", "176284"), // Each channel differs by exactly +2.
+        ("186082", "156082"), // A single channel outside the tolerance suffices.
+        ("156382", "156082"),
+        ("156085", "156082"),
+        ("12345", "156082"), // Malformed caches can still be repaired.
+        ("GGGGGG", "156082"),
+    ] {
+        let (dom, style) = recached_table_properties(
+            &format!(
+                r#"<w:tblPr><w:tblBorders><w:bottom w:val="single" w:sz="8" w:color="{cached}" w:themeColor="accent1"/></w:tblBorders></w:tblPr><w:tcPr><w:shd w:val="clear" w:fill="{cached}" w:themeFill="accent1"/></w:tcPr>"#
+            ),
+            &theme("156082"),
+        );
+        assert_property(&dom, style, "bottom", "color", Some(expected));
+        assert_property(&dom, style, "shd", "fill", Some(expected));
+    }
+}
+
+#[test]
+fn shading_resolves_all_theme_slots_including_system_color_fallbacks() {
+    for (slot, expected) in [
+        ("accent1", "156082"),
+        ("accent2", "C0504D"),
+        ("accent3", "9BBB59"),
+        ("accent4", "8064A2"),
+        ("accent5", "4BACC6"),
+        ("accent6", "F79646"),
+        ("text1", "000000"),
+        ("text2", "1F497D"),
+        ("background1", "FFFFFF"),
+        ("background2", "EEECE1"),
+        ("hyperlink", "0000FF"),
+        ("followedHyperlink", "800080"),
+    ] {
+        let (dom, style) = recached_table_properties(
+            &format!(
+                r#"<w:tcPr><w:shd w:val="clear" w:color="123456" w:themeColor="{slot}" w:fill="654321" w:themeFill="{slot}"/></w:tcPr>"#
+            ),
+            &theme("156082"),
+        );
+        assert_property(&dom, style, "shd", "color", Some(expected));
+        assert_property(&dom, style, "shd", "fill", Some(expected));
+    }
+}
+
+/// Read relationships structurally so attribute order and relative or absolute
+/// package targets do not influence assertions about theme selection.
+fn only_theme_part(pkg: &PartFs) -> String {
+    let rels = pkg
+        .read_rels_for("word/document.xml")
+        .expect("document relationships");
+    let themes: Vec<_> = rels
+        .items
+        .iter()
+        .filter(|r| r.rel_type.ends_with("/relationships/theme"))
+        .collect();
+    assert_eq!(themes.len(), 1, "exactly one theme relationship");
+    let part = pkg.resolve_rel_target("word/document.xml", &themes[0].target);
+    assert!(
+        pkg.part_bytes(&part).is_some(),
+        "theme target exists: {part}"
+    );
+    part
+}
+
+#[test]
+fn dangling_theme_relationships_are_replaced_by_one_valid_default_theme() {
+    let a = docx_with(r#"<w:p><w:r><w:t>Before</w:t></w:r></w:p>"#, &[]);
+    let mut a = PartFs::open(&a).unwrap();
+    a.add_document_relationship("word/document.xml", THEME_REL, "theme/missing.xml");
+    a.add_document_relationship("word/document.xml", THEME_REL, "theme/also-missing.xml");
+    let b = docx_with(r#"<w:p><w:r><w:t>After</w:t></w:r></w:p>"#, &[]);
+    let out =
+        compare_documents(&a.to_zip().unwrap(), &b, "Redline").expect("compare dangling themes");
+    common::validity::assert_word_valid_package(&out);
+    let pkg = PartFs::open(&out).unwrap();
+    let part = only_theme_part(&pkg);
+    assert_eq!(part, "word/theme/theme1.xml");
+    // The same complete default is used whether B has a custom theme or none.
+    let expected = referenced_theme(&heading_pair(None)).unwrap();
+    assert_eq!(pkg.part_string(&part).unwrap(), expected);
+    let types = part_string(&out, "[Content_Types].xml").unwrap();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&types);
+    let root = dom.root(doc).unwrap();
+    let ct = XNamespace::get("http://schemas.openxmlformats.org/package/2006/content-types");
+    let overrides: Vec<_> = dom
+        .descendants(root, Some(&ct.name("Override")))
+        .into_iter()
+        .filter(|&n| {
+            dom.attribute(n, &XName::get("PartName", "")) == Some("/word/theme/theme1.xml")
+        })
+        .collect();
+    assert_eq!(overrides.len(), 1);
+    assert_eq!(
+        dom.attribute(overrides[0], &XName::get("ContentType", "")),
+        Some(THEME_CT)
+    );
+}
+
+#[test]
+fn referenced_theme_wins_over_an_unreferenced_theme_at_the_default_path() {
+    let own = theme_named("00FFFF", "Georgia");
+    let decoy = theme_named("FF0000", "Courier New");
+    for target in [
+        "theme/custom.xml",
+        "/word/theme/custom.xml",
+        "theme/../theme/custom.xml",
+    ] {
+        let a = docx_with(
+            r#"<w:p><w:r><w:t>Before</w:t></w:r></w:p>"#,
+            &[
+                Part {
+                    name: "word/theme/theme1.xml",
+                    content_type: THEME_CT,
+                    rel_type: "",
+                    xml: &decoy,
+                },
+                Part {
+                    name: "word/theme/custom.xml",
+                    content_type: THEME_CT,
+                    rel_type: "",
+                    xml: &own,
+                },
+            ],
+        );
+        let mut a = PartFs::open(&a).unwrap();
+        a.add_document_relationship("word/document.xml", THEME_REL, target);
+        let b = docx_with(
+            r#"<w:p><w:r><w:t>After</w:t></w:r></w:p>"#,
+            &[Part {
+                name: "word/styles.xml",
+                content_type: STYLES_CT,
+                rel_type: STYLES_REL,
+                xml: STYLES_HEADING,
+            }],
+        );
+        let out =
+            compare_documents(&a.to_zip().unwrap(), &b, "Redline").expect("compare custom theme");
+        common::validity::assert_word_valid_package(&out);
+        let pkg = PartFs::open(&out).unwrap();
+        let part = only_theme_part(&pkg);
+        assert_eq!(part, "word/theme/custom.xml", "target {target}");
+        // The existing validity sweep reserializes theme XML; every theme
+        // element and attribute must survive that normalization.
+        common::assert_xml_structurally_eq(
+            &pkg.part_string(&part).unwrap(),
+            &own,
+            "preserve the complete original theme",
+        );
+    }
 }
