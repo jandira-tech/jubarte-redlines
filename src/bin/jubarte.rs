@@ -354,8 +354,9 @@ enum DebugCommand {
     /// and footers by section role. Each hunk prints the lines not every
     /// file holds; with three or more files each line names the files that
     /// hold it. rsids, paragraph ids, revision ids/authors/dates,
-    /// relationship ids, attribute order, on/off values and empty property
-    /// blocks are dropped unless --raw.
+    /// relationship ids (shown as what they point to), docProps save
+    /// stamps, attribute order, on/off values and empty property blocks
+    /// are dropped unless --raw.
     #[command(after_help = "EXAMPLES:\n  \
         jubarte debug diff a.docx b.docx\n  \
         jubarte debug diff a.docx ours_rej.docx word_rej.docx -p styles\n  \
