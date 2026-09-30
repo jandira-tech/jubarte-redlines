@@ -5585,6 +5585,91 @@ fn a_keep_next_paragraph_ending_a_page_splits_or_moves_by_compat_mode() {
 }
 
 #[test]
+fn a_page_break_opening_a_paragraph_after_a_full_page_breaks_once() {
+    // Word 16 probes lb0930 (compat 14 and 15): after 32 exact 20pt lines
+    // "<br page/>Heading" opens page 2. jubarte gave the empty text before
+    // the break a line of its own, which moved down a page, and the break
+    // then left that page blank (priority d9b54326f3: 31 pages, Word 30).
+    let line = |k: usize| {
+        format!(
+            "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"400\" w:lineRule=\"exact\"/></w:pPr>\
+             <w:r><w:t>L{k:02}</w:t></w:r></w:p>"
+        )
+    };
+    let lines: String = (0..32).map(line).collect();
+    let body = format!(
+        "{lines}<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"400\" w:lineRule=\"exact\"/></w:pPr>\
+           <w:r><w:br w:type=\"page\"/></w:r><w:r><w:t>Heading</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>"
+    );
+    for mode in [14, 15] {
+        let settings = format!(
+            r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="{mode}"/></w:compat>"#
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, &settings)).expect("break");
+        assert_eq!(
+            page_with_text(&pdf, "L31"),
+            Some(0),
+            "mode {mode}: 32 lines fill page 1"
+        );
+        assert_eq!(
+            (page_with_text(&pdf, "Heading"), pdf_page_count(&pdf)),
+            (Some(1), 2),
+            "mode {mode}: the break opens page 2 once"
+        );
+    }
+}
+
+#[test]
+fn a_legacy_page_float_gets_one_body_height_below_its_top() {
+    // Word 16 probes y2440_* 0930 (31 exact 20pt rows, tblpY 122pt under a
+    // 72pt margin, page-anchored): compat 14 gives the table one body
+    // height from its own top, so all 31 rows stay on page 1 past the
+    // 720pt floor and the next paragraph flows above the table (priority
+    // d9b54326f3's page 7 row reaches 524.5pt under a 523pt floor);
+    // compat 15 stops at the floor (R28).
+    let rows: String = (0..31)
+        .map(|k| {
+            format!(
+                "<w:tr><w:trPr><w:trHeight w:val=\"400\" w:hRule=\"exact\"/></w:trPr><w:tc>\
+                 <w:tcPr><w:tcW w:w=\"9000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr>\
+                 <w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>R{k:02}</w:t></w:r></w:p></w:tc></w:tr>"
+            )
+        })
+        .collect();
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblpPr w:leftFromText=\"180\" w:rightFromText=\"180\" \
+           w:vertAnchor=\"page\" w:horzAnchor=\"margin\" w:tblpY=\"2440\"/>\
+           <w:tblW w:w=\"9000\" w:type=\"dxa\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"9000\"/></w:tblGrid>{rows}</w:tbl>\
+         <w:p><w:r><w:t>After</w:t></w:r></w:p><w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>"
+    );
+    let pages = |mode: u32| {
+        let settings = format!(
+            r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="{mode}"/></w:compat>"#
+        );
+        docx_to_pdf(&minimal_docx_with_settings(&body, &settings)).expect("page float")
+    };
+    let on = |pdf: &[u8], t: &str| page_with_text(pdf, t).expect(t);
+    let legacy = pages(14);
+    assert_eq!(
+        (on(&legacy, "R30"), on(&legacy, "After")),
+        (0, 0),
+        "compat 14 holds the whole table and the paragraph after it on page 1"
+    );
+    let modern = pages(15);
+    assert_eq!(
+        (on(&modern, "R28"), on(&modern, "R29")),
+        (0, 1),
+        "compat 15 breaks at the floor"
+    );
+}
+
+#[test]
 fn a_cant_split_row_taller_than_a_page_breaks_from_a_fresh_page() {
     // Word 16 probes cs_mid/cs_top_0930 (32 exact 20pt lines a page): a
     // cantSplit row of 40 lines moves off a page it started part-way

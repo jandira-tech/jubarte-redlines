@@ -15,6 +15,17 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+### Fixed
+
+- Below compatibility mode 15, a page-anchored floating table that
+  starts below the body top gets one body height of rows from its own
+  top on its first page, past the bottom margin, as Word does; the
+  paragraph after it flows in the room above it. Mode 15 still breaks at
+  the page's floor.
+- A paragraph that opens with a page break takes no line before the
+  break, so a page filled to its last line breaks once instead of
+  leaving a blank page. Priority d9b54326f3: 32 pages → Word's 30.
+
 ## [0.10.1] - 2026-09-30
 
 > **Summary.** Tracked changes can be accepted or rejected one at a time, as Word's Accept / Reject This Change, from the CLI, edit plans (resolve_revisions), Python and WASM; Reject All matches Word on text and mark state; docx-to-PDF follows Word far more closely on page breaks, keep-with-next, table rows, floating tables, headers, footers and comment balloons; jubarte debug gains --check render, diff A B [C …] and -c text.

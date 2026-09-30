@@ -7056,11 +7056,18 @@ fn walk_container(
             let (page_br, column_br) = (trailing == Some(false), trailing == Some(true));
             let block = parts.pop().expect("split keeps the paragraph");
             for (i, (part, column)) in parts.into_iter().zip(seps).enumerate() {
-                // Nothing before a paragraph's opening column break is no
-                // line: live Word ends the column at the paragraph above
-                // ("Alpha" then "<br column/>Col2": the next section opens
-                // one line under Alpha).
-                if !(column && i == 0 && block_is_blank(&part)) {
+                // Nothing before a paragraph's opening column or page break
+                // is no line: live Word ends the column at the paragraph
+                // above ("Alpha" then "<br column/>Col2": the next section
+                // opens one line under Alpha), and a page filled to its last
+                // line breaks once (probes lb0930 at compat 14 and 15:
+                // "<br page/>Heading" after 32 exact 20pt lines opens page 2;
+                // priority d9b54326f3's page 27 was left blank). One holding
+                // a bookmark stays, so PAGEREF keeps the page before the
+                // break (Word's page for that case is unprobed).
+                let bookmarked =
+                    matches!(&part, Block::Paragraph { bookmarks, .. } if !bookmarks.is_empty());
+                if !(i == 0 && block_is_blank(&part) && (column || !bookmarked)) {
                     blocks.push(part);
                 }
                 blocks.push(if column {
@@ -22349,6 +22356,27 @@ impl<'a> Layout<'a> {
         (x, y)
     }
 
+    /// The floor a floating table's first page breaks at, its top at PDF
+    /// `top`. Before compat 15 a page-anchored one below the body top gets
+    /// one body height from its own top, past the bottom margin (Word 16
+    /// probes y2440_* 0930: 20pt rows from 122pt run to 770 on page 1, not
+    /// the 720 floor, and to 749 above a 21pt-taller footer band; priority
+    /// d9b54326f3's page 7). Compat 15 keeps the page's floor.
+    fn float_first_floor(&self, slot: ImageSlot, top: f32) -> f32 {
+        let page_float = matches!(
+            slot,
+            ImageSlot::Float {
+                page_y: Some(_),
+                ..
+            }
+        );
+        if self.compat_mode >= 15 || !page_float || self.nested_depth > 0 {
+            return self.body_floor;
+        }
+        let room = self.page.height - self.body_top - self.body_floor;
+        self.body_floor.min(top - room).max(0.0)
+    }
+
     /// PDF top of a floating (tblpPr) table: `tblpY` from its vertAnchor
     /// (page, margin, or the text flow), not always the current cursor.
     fn float_table_top(&self, slot: ImageSlot) -> f32 {
@@ -24777,7 +24805,8 @@ impl<'a> Layout<'a> {
         // table continues on page 2).
         let overflows = geom.float.is_some_and(|slot| {
             let th: f32 = row_h.iter().sum();
-            self.float_table_top(slot) - th < self.body_floor
+            let top = self.float_table_top(slot);
+            top - th < self.float_first_floor(slot, top)
         });
         let mut table_left = origin + shift + ind - pull;
         // A top-margin float's first page keeps the floor raised to one
@@ -24834,6 +24863,9 @@ impl<'a> Layout<'a> {
             if margin_float {
                 first_floor = Some((self.pages.len(), self.body_floor));
                 self.body_floor = self.body_floor.max(top - room);
+            } else if self.float_first_floor(slot, self.y) < self.body_floor {
+                first_floor = Some((self.pages.len(), self.body_floor));
+                self.body_floor = self.float_first_floor(slot, self.y);
             }
             // Every page of it keeps the float's column (a 360pt centred
             // table's border at 216 on pages 1-3), not the margin.
