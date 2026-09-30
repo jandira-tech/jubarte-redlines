@@ -18113,6 +18113,10 @@ struct Layout<'a> {
     /// behind boxes already under the body text.
     behind_end: usize,
     at_page_top: bool,
+    /// The paragraph being laid carries a float after all its text that
+    /// fills its page (`Layout::tail_float_bars_page`): no other line may
+    /// share the page its last line lands on.
+    tail_bar: bool,
     /// True when this page top was reached by overflow or a manual
     /// `w:br type=page`: the space before is dropped. Document start keeps
     /// it; pageBreakBefore and section breaks keep its excess (`top_credit`).
@@ -18583,6 +18587,7 @@ impl<'a> Layout<'a> {
             chrome_end: 0,
             behind_end: 0,
             at_page_top: true,
+            tail_bar: false,
             suppress_space_before: false,
             top_credit: 0.0,
             top_pending: false,
@@ -19944,6 +19949,27 @@ impl<'a> Layout<'a> {
                 .any(|b| bars(b.slot, self.box_w(b), self.box_h(b)))
     }
 
+    /// A float after all of a paragraph's text (`LaidImage::tail_anchor`)
+    /// that bars `first` pt of line even from a part at the page top: it
+    /// fills the page its anchor line lands on (Word probes k1-k11,
+    /// 2026-09-30; 9b22b88370's 615x797 cover).
+    fn tail_float_bars_page(&mut self, images: &[LaidImage], first: f32) -> bool {
+        let tails: Vec<LaidImage> = images
+            .iter()
+            .filter(|img| img.tail_anchor && !matches!(img.slot, ImageSlot::Flow))
+            .cloned()
+            .collect();
+        if tails.is_empty() {
+            return false;
+        }
+        let saved = (self.para_top, self.para_space_above);
+        self.para_top = self.page.height - self.body_top;
+        self.para_space_above = 0.0;
+        let bars = self.square_float_bars_line(&tails, &[], first);
+        (self.para_top, self.para_space_above) = saved;
+        bars
+    }
+
     /// A page-placed float with no room beside it that the next paragraph
     /// anchors meets this paragraph's lines too (live Word: an empty
     /// paragraph above a 612pt banner's anchor starts at the banner's
@@ -20246,6 +20272,10 @@ impl<'a> Layout<'a> {
             }
         }
         let widow_break = self.widow_break(&lines, marker, style);
+        // Taken, not read: the text boxes and header boxes these lines
+        // paint lay their own lines, which the rule must not move
+        // (842ef93738's header box repainted by every page it broke).
+        let tail_bar = std::mem::take(&mut self.tail_bar);
         for (line_i, line) in lines.iter().enumerate() {
             if widow_break == Some(line_i) {
                 self.flow_break();
@@ -20302,7 +20332,33 @@ impl<'a> Layout<'a> {
                 }
                 self.claim_line_footnotes(line);
             }
-            self.ensure(line_fit_need(natural, ascent, style, line_box));
+            // Under a page-filling tail float no line shares the page the
+            // last one lands on. A page that could hold the rest keeps only
+            // its first line; the last line opens its page with its top at
+            // the body floor, under the float, and what follows starts the
+            // next page (Word probes k1, k2, k5, k7, k11).
+            let mut at_floor = false;
+            if tail_bar {
+                let fresh = self.y >= self.page.height - self.body_top - 0.5;
+                if line_i + 1 == lines.len() {
+                    if !fresh {
+                        self.new_page();
+                    }
+                    self.y = self.body_floor;
+                    at_floor = true;
+                } else if !fresh {
+                    let rest: f32 = lines[line_i..]
+                        .iter()
+                        .map(|l| self.band_line_h(l, style))
+                        .sum();
+                    if self.y - rest >= self.body_floor - 0.5 {
+                        self.new_page();
+                    }
+                }
+            }
+            if !at_floor {
+                self.ensure(line_fit_need(natural, ascent, style, line_box));
+            }
             if let Some(fill) = style.fill {
                 let fx = self.flow_left() + style.indent_left;
                 let fw = (self.content_width() - style.indent_left - style.indent_right).max(1.0);
@@ -27093,12 +27149,20 @@ fn layout(
                 // Only when its first line fits here: one that cannot moves the
                 // whole paragraph, floats included, to the next page
                 // (00c975b8).
-                let defer_tail = has_ink && images.iter().any(tail_float) && {
-                    let lines = lay.para_line_count(runs, &style, *list) as f32;
-                    let line = para_first_line_pt(lay.fonts, runs, &style, lay.page.grid_pitch);
-                    let room = lay.y - style.before - lay.body_floor;
-                    line <= room && lines * line > room
+                // One that fills its page takes it alone: the paragraph's
+                // lines move on until the last one opens that page
+                // (`Layout::tail_bar`).
+                let tail_bar = has_ink && {
+                    let first = para_first_line_pt(lay.fonts, runs, &style, lay.page.grid_pitch);
+                    lay.tail_float_bars_page(images, first)
                 };
+                let defer_tail = tail_bar
+                    || has_ink && images.iter().any(tail_float) && {
+                        let lines = lay.para_line_count(runs, &style, *list) as f32;
+                        let line = para_first_line_pt(lay.fonts, runs, &style, lay.page.grid_pitch);
+                        let room = lay.y - style.before - lay.body_floor;
+                        line <= room && lines * line > room
+                    };
                 let (tail_images, images): (Vec<LaidImage>, Vec<LaidImage>) = if defer_tail {
                     images.iter().cloned().partition(|img| tail_float(img))
                 } else {
@@ -27151,6 +27215,7 @@ fn layout(
                     }
                     lay.set_line_probe(runs, &style);
                     lay.clear_full_width_side_float(runs, &style);
+                    lay.tail_bar = tail_bar;
                     // Floats keep the paragraph's own top even when their
                     // wrap pushes its text below them (00c975b8's picture
                     // stays at 89pt while its text starts at 266).

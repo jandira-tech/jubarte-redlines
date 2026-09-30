@@ -2973,6 +2973,129 @@ fn a_square_float_wider_than_the_page_starts_at_its_left_edge() {
     assert!(x.abs() < 0.5, "x {x}");
 }
 
+/// `fill` one-line paragraphs, then a paragraph of `lines` break-separated
+/// lines and "LAST" carrying a 615pt-wide cover `h` pt tall anchored after
+/// its text (Word probes k1-k14, 2026-09-30), then "NEXT".
+fn tail_cover_docx(fill: usize, lines: usize, h: i64) -> Vec<u8> {
+    drawing_docx(&format!(
+        "{}<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/>\
+           <w:pgMar w:top=\"1417\" w:right=\"1701\" w:bottom=\"1417\" w:left=\"1701\"/></w:sectPr>",
+        tail_cover_body(fill, lines, h)
+    ))
+}
+
+/// The paragraphs of `tail_cover_docx`.
+fn tail_cover_body(fill: usize, lines: usize, h: i64) -> String {
+    let img = blip(
+        &(615 * 12700).to_string(),
+        &(h * 12700).to_string(),
+        "<wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:simplePos x=\"0\" y=\"0\"/>\
+           <wp:positionH relativeFrom=\"column\"><wp:posOffset>-908050</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>-1050290</wp:posOffset></wp:positionV>\
+           <wp:wrapSquare wrapText=\"bothSides\"/>",
+        "</wp:anchor>",
+    );
+    let pp = "<w:pPr><w:spacing w:after=\"0\"/></w:pPr>";
+    let filler: String = (0..fill)
+        .map(|i| format!("<w:p>{pp}<w:r><w:t>Line{i:02}</w:t></w:r></w:p>"))
+        .collect();
+    let runs: String = (0..lines)
+        .map(|k| format!("<w:r><w:t>L{k:02}</w:t></w:r><w:r><w:br/></w:r>"))
+        .collect();
+    format!(
+        "{filler}<w:p>{pp}{runs}<w:r><w:t>LAST</w:t></w:r><w:r>{img}</w:r></w:p>\
+         <w:p>{pp}<w:r><w:t>NEXT</w:t></w:r></w:p>"
+    )
+}
+
+#[test]
+fn a_page_cover_anchored_at_a_paragraphs_end_leaves_one_line_per_page() {
+    // Word probe k2 (2026-09-30): the cover takes the page its anchor line
+    // lands on, and no other line may share it. Each page that could still
+    // hold the rest of the paragraph keeps only its first line; the anchor
+    // line opens the cover's page with its top at the body floor, and what
+    // follows starts the next page (9b22b88370's cover, one line on p4).
+    let pdf = docx_to_pdf(&tail_cover_docx(0, 3, 797)).expect("tail cover");
+    for (k, line) in ["L00", "L01", "L02", "LAST", "NEXT"].iter().enumerate() {
+        assert_eq!(page_with_text(&pdf, line), Some(k), "{line} opens page {k}");
+    }
+    let (_, y) = pdf_glyph_text_xy(&pdf, "LAST").expect("LAST paints");
+    assert!(y < 70.85, "LAST sits under the body floor: baseline {y}");
+    let streams = pdf_content_streams(&pdf);
+    let with_image: Vec<usize> = (0..streams.len())
+        .filter(|&k| streams[k].contains(" cm /Im"))
+        .collect();
+    assert_eq!(with_image, vec![3], "the cover paints with LAST");
+    let (x, y, _, h) = *pdf_image_boxes(&pdf).first().expect("the cover paints");
+    assert!(
+        x.abs() < 0.5 && (y + h - 841.9).abs() < 0.5,
+        "cover at {x},{y}"
+    );
+}
+
+#[test]
+fn a_page_cover_anchored_mid_page_moves_its_lines_on_one_by_one() {
+    // Word probe k7: the paragraph starts mid-page, so none of it stays
+    // there; then one line per page until LAST opens the cover's page.
+    let pdf = docx_to_pdf(&tail_cover_docx(10, 2, 797)).expect("mid-page cover");
+    for (k, line) in ["Line09", "L00", "L01", "LAST", "NEXT"].iter().enumerate() {
+        assert_eq!(page_with_text(&pdf, line), Some(k), "{line} on page {k}");
+    }
+}
+
+#[test]
+fn a_page_cover_anchored_in_a_one_line_paragraph_sits_its_line_at_the_floor() {
+    // Word probes k5/k11: 45 lines, then "LAST" with the cover: LAST opens
+    // page two with its top at the body floor, NEXT starts page three.
+    let pdf = docx_to_pdf(&tail_cover_docx(45, 0, 797)).expect("one-line cover");
+    assert_eq!(page_with_text(&pdf, "Line44"), Some(0));
+    assert_eq!(page_with_text(&pdf, "LAST"), Some(1));
+    assert_eq!(page_with_text(&pdf, "NEXT"), Some(2));
+    let (_, y) = pdf_glyph_text_xy(&pdf, "LAST").expect("LAST paints");
+    assert!(y < 70.85, "LAST sits under the body floor: baseline {y}");
+}
+
+#[test]
+fn a_page_cover_paragraph_leaves_the_headers_text_box_alone() {
+    // 842ef93738: a header text box is painted by each page break. Painted
+    // while the cover's paragraph held its page rule, its own line broke
+    // the page again, and that page painted it again: the stack overflowed.
+    // Here the rule dropped the box's line to the body floor instead.
+    let tbox = "<w:p><w:r><w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" \
+           simplePos=\"0\" relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" \
+           allowOverlap=\"1\"><wp:simplePos x=\"0\" y=\"0\"/>\
+           <wp:positionH relativeFrom=\"column\"><wp:posOffset>127000</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+           <wp:extent cx=\"1270000\" cy=\"326390\"/><wp:wrapNone/><wp:docPr id=\"9\" name=\"Box\"/>\
+           <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+             <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+               <wps:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></wps:spPr>\
+               <wps:txbx><w:txbxContent><w:p><w:r><w:t>BoxText</w:t></w:r></w:p></w:txbxContent></wps:txbx>\
+               <wps:bodyPr lIns=\"0\" tIns=\"0\" rIns=\"0\" bIns=\"0\"/></wps:wsp></a:graphicData></a:graphic>\
+           </wp:anchor></w:drawing></w:r></w:p>";
+    let docx = chrome_docx("header", tbox, 720, &tail_cover_body(0, 2, 797));
+    let pdf = docx_to_pdf(&docx).expect("cover under a boxed header");
+    let boxes = pdf_glyph_text_xys(&pdf, "BoxText");
+    assert_eq!(boxes.len(), 4, "one header box a page: {boxes:?}");
+    for (_, y) in boxes {
+        assert!(y > 700.0, "the header box keeps its place: baseline {y}");
+    }
+    for (k, line) in ["L00", "L01", "LAST", "NEXT"].iter().enumerate() {
+        assert_eq!(page_with_text(&pdf, line), Some(k), "{line} on page {k}");
+    }
+}
+
+#[test]
+fn a_short_cover_anchored_at_a_paragraphs_end_keeps_its_lines_on_the_page() {
+    // Word probe k14: a 300pt cover leaves room under it, so the paragraph
+    // stays on page one and nothing moves on.
+    let pdf = docx_to_pdf(&tail_cover_docx(10, 5, 300)).expect("short cover");
+    assert_eq!(page_with_text(&pdf, "LAST"), Some(0));
+    assert_eq!(page_with_text(&pdf, "NEXT"), Some(0));
+}
+
 #[test]
 fn conventional_revisions_are_red_blue_and_green() {
     // Arthur's convention (the default): deletions red struck through,
@@ -12550,6 +12673,11 @@ fn stream_glyph_text(stream: &str) -> String {
 /// (`x y Td (c) Tj`, or `q .. x y cm BT .. (c) Tj ET Q` when snapped): the
 /// glyphs join in stream order.
 fn pdf_glyph_text_xy(pdf: &[u8], needle: &str) -> Option<(f32, f32)> {
+    pdf_glyph_text_xys(pdf, needle).first().copied()
+}
+
+/// Where each occurrence of `needle` starts, in page order.
+fn pdf_glyph_text_xys(pdf: &[u8], needle: &str) -> Vec<(f32, f32)> {
     let mut text = String::new();
     let mut at: Vec<(f32, f32)> = Vec::new();
     for stream in pdf_content_streams(pdf) {
@@ -12581,8 +12709,9 @@ fn pdf_glyph_text_xy(pdf: &[u8], needle: &str) -> Option<(f32, f32)> {
             }
         }
     }
-    let byte = text.find(needle)?;
-    at.get(text[..byte].chars().count()).copied()
+    text.match_indices(needle)
+        .filter_map(|(byte, _)| at.get(text[..byte].chars().count()).copied())
+        .collect()
 }
 
 fn pdf_literal_td_y(pdf: &[u8], needle: &str) -> Option<f32> {
@@ -22925,6 +23054,17 @@ fn footer_part_docx(inner: &str) -> Vec<u8> {
 /// The body of `header_part_docx_at` / `footer_part_docx`: `kind`'s part
 /// holds `inner`, `dist` twips from its page edge.
 fn chrome_part_docx(kind: &str, inner: &str, dist: u32) -> Vec<u8> {
+    chrome_docx(
+        kind,
+        inner,
+        dist,
+        "<w:p><w:r><w:t>HdrImgBodyX</w:t></w:r></w:p>",
+    )
+}
+
+/// `chrome_part_docx` with `body` as the document's paragraphs (its
+/// pictures may embed `rIdImg`, the 1x1 PNG).
+fn chrome_docx(kind: &str, inner: &str, dist: u32, body: &str) -> Vec<u8> {
     let (header, footer) = if kind == "header" {
         (dist, 720)
     } else {
@@ -22936,8 +23076,11 @@ fn chrome_part_docx(kind: &str, inner: &str, dist: u32) -> Vec<u8> {
     let document = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
-           xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
-         <w:body><w:p><w:r><w:t>HdrImgBodyX</w:t></w:r></w:p>\
+           xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" \
+           xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
+           xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" \
+           xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+         <w:body>{body}\
            <w:sectPr>\
              <w:{kind}Reference w:type=\"default\" r:id=\"rIdH1\"/>\
              <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
@@ -22977,6 +23120,9 @@ fn chrome_part_docx(kind: &str, inner: &str, dist: u32) -> Vec<u8> {
         <Relationship Id=\"rIdH1\" \
           Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/{kind}\" \
           Target=\"{kind}1.xml\"/>\
+        <Relationship Id=\"rIdImg\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" \
+          Target=\"media/dot.png\"/>\
         </Relationships>"
     );
     let hdr_rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\

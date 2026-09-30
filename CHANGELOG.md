@@ -184,6 +184,13 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   before it; now it opens its own page at 0,0. 30b6e87178 went from
   33.4/20.9 to 62.1/54.7, 49fe5bd42a from 47.1/9.1 to 58.6/19.3 (Word
   probes h1-h6, g3, g5, n3-n5, t3, t4).
+- A picture anchored after all of a paragraph's text that fills its page
+  (no room beside or under it) takes that page alone, as in Word. Each
+  page that could still hold the rest of the paragraph keeps only its
+  first line. The last line opens the picture's page with its top at the
+  body floor, and what follows starts the next page. 9b22b88370 went from
+  26.4/23.1 to 64.5/49.4, 842ef93738 from 25.2/37.1 to 70.8/79.5 (Word
+  probes k1-k14).
 - Rejecting a redline gives back what a changed style inherited in the
   original. Word's Reject All reads a style's old record against its
   built-in defaults, so a record holding only the style's own properties
