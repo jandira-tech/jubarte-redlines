@@ -31,6 +31,7 @@
 
 mod critic;
 mod diff;
+mod from_docx;
 mod package;
 mod patch;
 mod redline;
@@ -136,6 +137,62 @@ impl std::fmt::Debug for DocxOptions<'_> {
     }
 }
 
+/// How [`docx_to_markdown`] reads a document.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MarkdownOptions {
+    /// `All` writes tracked changes and comments as CriticMarkup; `Accept`
+    /// and `Reject` write the text after Word's Accept All or Reject All,
+    /// without comments.
+    pub track_changes: TrackChanges,
+    /// Collect the document's raster pictures and name them in the Markdown
+    /// under this directory, as pandoc's `--extract-media`. `None` writes a
+    /// picture as its alt text.
+    pub extract_media: Option<String>,
+}
+
+/// A document read as Markdown.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReadDocx {
+    /// The Markdown, with CriticMarkup when changes are kept.
+    pub markdown: String,
+    /// Pictures to write under [`MarkdownOptions::extract_media`]: file
+    /// name and bytes, sorted by name.
+    pub media: Vec<(String, Vec<u8>)>,
+}
+
+/// A `.docx` as Markdown: headings, emphasis, links, lists, tables,
+/// footnotes and equations (as LaTeX), with tracked changes and comments as
+/// CriticMarkup (`{++new++}`, `{--old--}`, `{==text==}{>>note<<}`), each
+/// change followed by its author and date.
+///
+/// ```
+/// use jubarte::markdown::{DocxOptions, MarkdownOptions, docx_to_markdown, markdown_to_docx};
+///
+/// let docx = markdown_to_docx("Due in {~~30~>45~~} days.", &DocxOptions::default())?.docx;
+/// let read = docx_to_markdown(&docx, &MarkdownOptions::default())?;
+/// assert!(read.markdown.starts_with("Due in {~~30~>45~~}"), "{}", read.markdown);
+/// # Ok::<(), jubarte::markdown::MarkdownError>(())
+/// ```
+pub fn docx_to_markdown(docx: &[u8], options: &MarkdownOptions) -> Result<ReadDocx, MarkdownError> {
+    let revisions = match options.track_changes {
+        TrackChanges::All => from_docx::Revisions::Markup,
+        TrackChanges::Accept => from_docx::Revisions::Accept,
+        TrackChanges::Reject => from_docx::Revisions::Reject,
+    };
+    let converted = from_docx::convert(
+        docx,
+        &from_docx::Options {
+            revisions,
+            media_dir: options.extract_media.clone(),
+        },
+    )
+    .map_err(|error| MarkdownError::Docx(error.to_string()))?;
+    Ok(ReadDocx {
+        markdown: converted.markdown,
+        media: converted.media.into_iter().collect(),
+    })
+}
+
 /// A written document and what could not be written as asked.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WrittenDocx {
@@ -152,6 +209,8 @@ pub enum MarkdownError {
     Reference(String),
     /// The package could not be assembled or accepted/rejected.
     Package(String),
+    /// The document to read is not a readable `.docx`.
+    Docx(String),
 }
 
 impl std::fmt::Display for MarkdownError {
@@ -159,6 +218,7 @@ impl std::fmt::Display for MarkdownError {
         match self {
             Self::Reference(message) => write!(f, "reference document: {message}"),
             Self::Package(message) => write!(f, "cannot write the document: {message}"),
+            Self::Docx(message) => write!(f, "cannot read the document: {message}"),
         }
     }
 }

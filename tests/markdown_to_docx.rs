@@ -534,3 +534,134 @@ fn a_reference_that_is_not_a_docx_is_refused() {
     .unwrap_err();
     assert!(err.to_string().starts_with("reference document:"), "{err}");
 }
+
+#[test]
+fn a_whole_block_after_a_changed_break_keeps_its_own_mark() {
+    // The inserted break is the only paragraph mark the markup adds: B's
+    // own mark was A's, so rejecting leaves A and C apart.
+    for markdown in [
+        "A{++\n\n++}{++B++}\n\nC",
+        "A{++\n\n++}{>>Ana<<}{++B++}\n\nC",
+    ] {
+        let docx = write(markdown);
+        assert_eq!(accepted(&docx), ["A", "B", "C"], "{markdown}");
+        assert_eq!(rejected(&docx), ["A", "C"], "{markdown}");
+    }
+    let docx = write("A{--\n\n--}{--B--}\n\nC");
+    assert_eq!(accepted(&docx), ["A", "C"]);
+    assert_eq!(rejected(&docx), ["A", "B", "C"]);
+}
+
+#[test]
+fn a_change_before_a_footnote_label_changes_the_note() {
+    // How a note inserted with its reference is read from Word.
+    let docx = write("A claim{++[^1]++} here.\n\n{++[^1]: Added later.++}\n");
+    let xml = part_string(&docx, "word/footnotes.xml").unwrap_or_default();
+    assert!(xml.contains("Added later."), "{xml}");
+    assert!(!xml.contains("[^1]"), "{xml}");
+    assert_eq!(accepted(&docx), ["A claim here."]);
+    assert!(!document_xml(&docx).contains("[^1]"));
+}
+
+#[test]
+fn a_block_added_after_a_paragraph_leaves_that_paragraph_as_it_was() {
+    use jubarte::markdown::{MarkdownOptions, docx_to_markdown};
+    let read = |docx: &[u8]| {
+        docx_to_markdown(docx, &MarkdownOptions::default())
+            .unwrap()
+            .markdown
+    };
+    // Word records a paragraph added after A as its own mark inserted, so
+    // rejecting it leaves A with A's properties, not the new heading's.
+    let docx = write("A.{++\n\n## New heading++}\n\nC");
+    assert_eq!(read(&reject_revisions(&docx).unwrap()), "A.\n\nC\n");
+    assert_eq!(
+        read(&accept_revisions(&docx).unwrap()),
+        "A.\n\n## New heading\n\nC\n"
+    );
+    let docx = write("## Title{--\n\nGone.\n\nGone too.--}\n\nC");
+    assert_eq!(read(&accept_revisions(&docx).unwrap()), "## Title\n\nC\n");
+    assert_eq!(
+        read(&reject_revisions(&docx).unwrap()),
+        "## Title\n\nGone.\n\nGone too.\n\nC\n"
+    );
+}
+
+#[test]
+fn attributions_name_the_author_and_date_of_the_change_before_them() {
+    let docx = write(
+        "A{++b++}{>>Ana Lima (2026-01-02T03:04:00Z)<<} c{~~d~>e~~}{>>Bo (2026-02-03T04:05:06Z)<<}\
+         {>>Cy (2026-03-04T05:06:07Z)<<} f{--g--}{>>(2026-04-05T06:07:08+01:00)<<}.\n\n\
+         {==h==}{>>Dee (2026-05-06T07:08:09Z): Why?<<} i{++j++}{>>Ana Lima<<}\n",
+    );
+    let xml = document_xml(&docx);
+    let changes: Vec<&str> = xml
+        .split("<w:")
+        .filter(|tag| tag.starts_with("ins ") || tag.starts_with("del "))
+        .map(|tag| &tag[tag.find("w:author").unwrap()..tag.find('>').unwrap()])
+        .collect();
+    assert_eq!(
+        changes,
+        [
+            r#"w:author="Ana Lima" w:date="2026-01-02T03:04:00Z""#,
+            r#"w:author="Bo" w:date="2026-02-03T04:05:06Z""#,
+            r#"w:author="Cy" w:date="2026-03-04T05:06:07Z""#,
+            r#"w:author="Redline" w:date="2026-04-05T06:07:08+01:00""#,
+            r#"w:author="Redline" w:date="1970-01-01T00:00:00Z""#,
+        ]
+    );
+    // Two real comments: one named, and one whose text has no date.
+    let comments = part_string(&docx, "word/comments.xml").unwrap();
+    assert_eq!(comments.matches("<w:comment ").count(), 2, "{comments}");
+    assert!(comments.contains(r#"w:author="Dee" w:date="2026-05-06T07:08:09Z" w:initials="D""#));
+    assert!(comments.contains(">Why?<"), "{comments}");
+    assert!(comments.contains(">Ana Lima<"), "{comments}");
+    assert_eq!(accepted(&docx), ["Ab ce f.", "h ij"]);
+    assert_eq!(rejected(&docx), ["A cd fg.", "h i"]);
+}
+
+#[test]
+fn a_range_split_into_highlights_is_one_comment() {
+    // How a comment range that crosses paragraphs and changes is read from
+    // Word: pieces, with the comment after the last.
+    let docx = write(
+        "Start {==of a range.==}\n\n{==The middle.==}\n\n{==The{++ new++}{>>Ana (2026-01-02T03:04:00Z)<<} end==}{>>Bo (2026-01-02T03:05:00Z): Note<<} after.\n\n\
+         {==apart==} text {==b==}{>>n<<}\n",
+    );
+    let xml = document_xml(&docx);
+    assert_eq!(xml.matches("<w:commentRangeStart ").count(), 2, "{xml}");
+    let first = xml.find("<w:commentRangeStart w:id=\"0\"/>").unwrap();
+    assert!(first < xml.find(">of a range.<").unwrap());
+    assert!(xml.find(">Start <").unwrap() < first);
+    // Only the highlight with text between it and the comment stays one.
+    assert_eq!(xml.matches("<w:highlight ").count(), 1, "{xml}");
+    // A comment after an attribution is on its own point, not the change.
+    let docx =
+        write("a{--b--}{>>Bo (2026-01-02T03:04:00Z)<<}{>>Cy (2026-01-02T03:05:00Z): why<<} c\n");
+    let xml = document_xml(&docx);
+    let start = xml.find("<w:commentRangeStart").unwrap();
+    assert!(xml.find("</w:del>").unwrap() < start, "{xml}");
+}
+
+#[test]
+fn comments_as_read_from_word_keep_their_ranges_and_authors() {
+    let docx = write(
+        "An {==empty comment==}{>>Émile Zola-Ng (2026-10-01T00:20:00Z)<<} and \
+         {++{==inserted text==}++}{>>Ana (2026-10-01T00:45:00Z)<<}{>>Carla (2026-10-01T00:50:00Z): Good.<<}.\n",
+    );
+    let comments = part_string(&docx, "word/comments.xml").unwrap();
+    assert!(
+        comments.contains(r#"w:author="Émile Zola-Ng" w:date="2026-10-01T00:20:00Z""#),
+        "{comments}"
+    );
+    assert!(!comments.contains("Émile Zola-Ng ("), "{comments}");
+    let xml = document_xml(&docx);
+    // Carla's comment covers the inserted text, not a point after it.
+    let start = xml.find("<w:commentRangeStart w:id=\"1\"/>").unwrap();
+    let end = xml.find("<w:commentRangeEnd w:id=\"1\"/>").unwrap();
+    assert!(
+        start < xml.find(">inserted text<").unwrap() && xml.find(">inserted text<").unwrap() < end,
+        "{xml}"
+    );
+    assert!(!xml.contains("<w:highlight "), "{xml}");
+}

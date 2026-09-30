@@ -118,9 +118,55 @@ fn escaped(source: &str, at: usize) -> bool {
 
 /// The source with the delimiters of every complete CriticMarkup span
 /// replaced by stand-ins. A delimiter without its partner, or behind a
-/// backslash, stays text. Spans do not nest: delimiters inside a span are
-/// its text.
+/// backslash, stays text.
+///
+/// The specification has spans never nest. Word, though, can track a change
+/// inside a commented range and comment inside a change, and a document
+/// read from Word says so, so here spans nest one level: a highlight can
+/// hold changes and comments (`{==a {++b++}==}{>>note<<}`), a change can
+/// hold highlights and comments (`{~~a~>{==b==}{>>note<<}~~}`), and anything
+/// deeper, or inside a comment, is text.
+///
+/// A change or highlight that opens a line with a footnote label
+/// (`{++[^2]: Added later.++}`, a note inserted with its reference) is read
+/// as changing the note: the label goes before the delimiter, so the
+/// definition stays a definition.
 pub(crate) fn encode(source: &str) -> String {
+    encode_spans(source, ALL, true)
+}
+
+/// Which spans a text may open: bits of [`INSERT`], [`DELETE`]...
+type Allowed = u8;
+const INSERT: Allowed = 1;
+const DELETE: Allowed = 2;
+const SUBSTITUTE: Allowed = 4;
+const HIGHLIGHT: Allowed = 8;
+const COMMENT: Allowed = 16;
+const CHANGES: Allowed = INSERT | DELETE | SUBSTITUTE;
+const ALL: Allowed = CHANGES | HIGHLIGHT | COMMENT;
+
+fn kind_of(start: Token) -> Allowed {
+    match start {
+        Token::InsertStart => INSERT,
+        Token::DeleteStart => DELETE,
+        Token::SubstituteStart => SUBSTITUTE,
+        Token::HighlightStart => HIGHLIGHT,
+        _ => COMMENT,
+    }
+}
+
+/// What the body of a span of `kind`, itself opened where `allowed`, may open.
+fn inside(kind: Allowed, allowed: Allowed) -> Allowed {
+    match kind {
+        COMMENT => 0,
+        HIGHLIGHT => allowed & !HIGHLIGHT,
+        _ => allowed & !CHANGES,
+    }
+}
+
+/// [`encode`], opening only the spans `allowed` names, and moving footnote
+/// labels out of spans only when `labels`.
+fn encode_spans(source: &str, allowed: Allowed, labels: bool) -> String {
     let mut out = String::with_capacity(source.len());
     let mut at = 0;
     while at < source.len() {
@@ -128,6 +174,7 @@ pub(crate) fn encode(source: &str) -> String {
         let span = SPANS
             .iter()
             .find(|(open, ..)| rest.starts_with(open))
+            .filter(|span| allowed & kind_of(span.3) != 0)
             .filter(|_| !escaped(source, at))
             .and_then(|&(open, close, separator, start, end)| {
                 let inner = &rest[open.len()..];
@@ -140,15 +187,27 @@ pub(crate) fn encode(source: &str) -> String {
                 Some((open.len() + length + close.len(), body, split, start, end))
             });
         match span {
-            Some((consumed, body, split, start, end)) => {
+            Some((consumed, mut body, split, start, end)) => {
+                let nested = inside(kind_of(start), allowed);
+                let mut split = split;
+                if labels
+                    && start != Token::CommentStart
+                    && (at == 0 || source[..at].ends_with('\n'))
+                    && let Some(label) = footnote_label(body)
+                    && split.is_none_or(|(mid, _)| mid >= label.len())
+                {
+                    push_escaped(&mut out, label);
+                    body = &body[label.len()..];
+                    split = split.map(|(mid, width)| (mid - label.len(), width));
+                }
                 out.push(stand_in(start));
                 match split {
                     Some((mid, width)) => {
-                        push_escaped(&mut out, &body[..mid]);
+                        out.push_str(&encode_spans(&body[..mid], nested, false));
                         out.push(stand_in(Token::SubstituteSeparator));
-                        push_escaped(&mut out, &body[mid + width..]);
+                        out.push_str(&encode_spans(&body[mid + width..], nested, false));
                     }
-                    None => push_escaped(&mut out, body),
+                    None => out.push_str(&encode_spans(body, nested, false)),
                 }
                 out.push(stand_in(end));
                 at += consumed;
@@ -161,6 +220,19 @@ pub(crate) fn encode(source: &str) -> String {
         }
     }
     out
+}
+
+/// The footnote label that starts `text` with the spaces after it
+/// (`[^note]: `), as CommonMark footnote definitions are written.
+fn footnote_label(text: &str) -> Option<&str> {
+    let name = text.strip_prefix("[^")?;
+    let close = name.find(']')?;
+    if close == 0 || name[..close].contains(char::is_whitespace) {
+        return None;
+    }
+    let after = name[close..].strip_prefix("]:")?;
+    let spaces = after.len() - after.trim_start_matches([' ', '\t']).len();
+    Some(&text[..2 + close + 2 + spaces])
 }
 
 /// The source of text that holds no stand-ins, as it was.
@@ -236,8 +308,10 @@ pub(crate) fn resolve(markdown: &str, accept: bool) -> String {
         Comment,
     }
     let mut out = String::with_capacity(markdown.len());
+    // The state each open span interrupted, innermost last.
+    let mut outer: Vec<In> = Vec::new();
     let mut state = In::Text;
-    Pieces::default().feed(&encode(markdown), |piece| match piece {
+    Pieces::default().feed(&encode_spans(markdown, ALL, false), |piece| match piece {
         Piece::Text(text) => {
             let shown = match state {
                 In::Text => true,
@@ -250,19 +324,30 @@ pub(crate) fn resolve(markdown: &str, accept: bool) -> String {
             }
         }
         Piece::Token(token) => {
-            state = match token {
-                Token::InsertStart => In::Inserted,
-                Token::DeleteStart => In::Deleted,
-                Token::SubstituteStart => In::Old,
-                Token::SubstituteSeparator => In::New,
-                Token::CommentStart => In::Comment,
-                Token::HighlightStart
-                | Token::HighlightEnd
+            let opened = match token {
+                Token::InsertStart => Some(In::Inserted),
+                Token::DeleteStart => Some(In::Deleted),
+                Token::SubstituteStart => Some(In::Old),
+                Token::CommentStart => Some(In::Comment),
+                // A highlight shows its text as the text around it does.
+                Token::HighlightStart => Some(state),
+                Token::SubstituteSeparator => {
+                    state = In::New;
+                    None
+                }
+                Token::HighlightEnd
                 | Token::InsertEnd
                 | Token::DeleteEnd
                 | Token::SubstituteEnd
-                | Token::CommentEnd => In::Text,
+                | Token::CommentEnd => {
+                    state = outer.pop().unwrap_or(In::Text);
+                    None
+                }
             };
+            if let Some(opened) = opened {
+                outer.push(state);
+                state = opened;
+            }
         }
     });
     out
@@ -329,11 +414,122 @@ mod tests {
     }
 
     #[test]
-    fn spans_cross_paragraphs_and_do_not_nest() {
+    fn spans_cross_paragraphs_and_changes_do_not_nest() {
         assert_eq!(
             pieces(&encode("A{++\n\nB {--c--}++}")),
             ["A", "<InsertStart>", "\n\nB {--c--}", "<InsertEnd>"]
         );
+    }
+
+    #[test]
+    fn a_highlight_holds_changes_and_comments() {
+        assert_eq!(
+            pieces(&encode("{==a {++b++}{>>Ana<<} {~~c~>d~~}==}{>>note<<}")),
+            [
+                "<HighlightStart>",
+                "a ",
+                "<InsertStart>",
+                "b",
+                "<InsertEnd>",
+                "<CommentStart>",
+                "Ana",
+                "<CommentEnd>",
+                " ",
+                "<SubstituteStart>",
+                "c",
+                "<SubstituteSeparator>",
+                "d",
+                "<SubstituteEnd>",
+                "<HighlightEnd>",
+                "<CommentStart>",
+                "note",
+                "<CommentEnd>",
+            ]
+        );
+        // Highlights themselves do not nest, and an incomplete span inside
+        // one stays text.
+        assert_eq!(
+            pieces(&encode("{==a {==b==} {++c==}")),
+            ["<HighlightStart>", "a {==b", "<HighlightEnd>", " {++c==}"]
+        );
+        assert_eq!(resolve("{==a{++b++}{--c--}==}{>>n<<}", true), "ab");
+        assert_eq!(resolve("{==a{++b++}{--c--}==}{>>n<<}", false), "ac");
+    }
+
+    #[test]
+    fn a_change_holds_highlights_and_comments_one_level_deep() {
+        assert_eq!(
+            pieces(&encode("{~~a~>{==b==}{>>n<<}~~}")),
+            [
+                "<SubstituteStart>",
+                "a",
+                "<SubstituteSeparator>",
+                "<HighlightStart>",
+                "b",
+                "<HighlightEnd>",
+                "<CommentStart>",
+                "n",
+                "<CommentEnd>",
+                "<SubstituteEnd>",
+            ]
+        );
+        // No change in a change, nor in a highlight in a change, nor any
+        // span in a comment.
+        assert_eq!(
+            pieces(&encode("{++a {--b--}++}")),
+            ["<InsertStart>", "a {--b--}", "<InsertEnd>"]
+        );
+        assert_eq!(
+            pieces(&encode("{++{==a {--b--}==}++}")),
+            [
+                "<InsertStart>",
+                "<HighlightStart>",
+                "a {--b--}",
+                "<HighlightEnd>",
+                "<InsertEnd>"
+            ]
+        );
+        assert_eq!(
+            pieces(&encode("{>>a {++b++}<<}")),
+            ["<CommentStart>", "a {++b++}", "<CommentEnd>"]
+        );
+        // A comment inside a change does not end it.
+        let text = "x{++a{>>n<<}b++}{~~c~>{==d==}{>>m<<}e~~}";
+        assert_eq!(resolve(text, true), "xabde");
+        assert_eq!(resolve(text, false), "xc");
+    }
+
+    #[test]
+    fn a_footnote_label_goes_before_a_change_that_opens_its_line() {
+        assert_eq!(
+            pieces(&encode(
+                "x\n{++[^2]: Added.++}\n{--[^a]:\tGone--} {++[^b]: y++}"
+            )),
+            [
+                "x\n[^2]: ",
+                "<InsertStart>",
+                "Added.",
+                "<InsertEnd>",
+                "\n[^a]:\t",
+                "<DeleteStart>",
+                "Gone",
+                "<DeleteEnd>",
+                " ",
+                "<InsertStart>",
+                "[^b]: y",
+                "<InsertEnd>",
+            ]
+        );
+        for text in [
+            "{++[^]: a++}",
+            "{++[^a b]: c++}",
+            "{++[^a] b++}",
+            "{>>[^a]: b<<}",
+        ] {
+            assert!(!pieces(&encode(text))[0].starts_with("[^"), "{text}");
+        }
+        // Resolving drops the whole definition with its change.
+        assert_eq!(resolve("a\n{++[^2]: b++}\n", false), "a\n\n");
     }
 
     #[test]

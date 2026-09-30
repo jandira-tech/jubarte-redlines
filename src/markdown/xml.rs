@@ -5,7 +5,7 @@
 //! The items a Markdown document becomes, and their WordprocessingML.
 
 use std::borrow::Cow;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
 /// An inserted or a deleted tracked change.
@@ -66,6 +66,8 @@ pub(super) struct Paragraph {
     pub rule: bool,
     /// The paragraph mark's tracked change.
     pub mark: Option<Kind>,
+    /// The serial of the change `mark` belongs to, for its attribution.
+    pub mark_by: Option<u32>,
     /// `mark` was set because the paragraph's whole text is one change.
     pub whole: bool,
 }
@@ -95,7 +97,7 @@ pub(super) enum Item {
     },
     Row {
         header: bool,
-        change: Option<Kind>,
+        change: Option<Change>,
     },
     Cell(Option<&'static str>),
     CellEnd,
@@ -128,7 +130,7 @@ pub(super) struct Picture {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct Note {
     pub items: Vec<Item>,
-    pub change: Option<Kind>,
+    pub change: Option<Change>,
 }
 
 /// A comment's paragraphs.
@@ -136,6 +138,8 @@ pub(super) struct Note {
 pub(super) struct Comment {
     pub id: u32,
     pub paragraphs: Vec<String>,
+    /// Author and date the comment names (`Ana (2026-01-02T03:04:00Z): ...`).
+    pub by: Option<(String, String)>,
 }
 
 /// A Markdown document read into Word items.
@@ -155,6 +159,8 @@ pub(super) struct Document {
     pub title: Option<String>,
     pub author: Option<String>,
     pub warnings: Vec<String>,
+    /// Author and date of changes that name theirs, by serial.
+    pub attributions: HashMap<u32, (String, String)>,
 }
 
 /// Text for XML content: markup escaped, characters XML 1.0 forbids dropped.
@@ -206,17 +212,26 @@ pub(super) struct Context<'d> {
 }
 
 impl Context<'_> {
-    fn revision(&mut self, kind: Kind) -> String {
+    /// A `w:ins` or `w:del` start tag's name and attributes, with the
+    /// author and date change `by` names, or the document's.
+    fn revision(&mut self, kind: Kind, by: Option<u32>) -> String {
         let id = self.next_revision;
         self.next_revision += 1;
         let name = match kind {
             Kind::Insert => "w:ins",
             Kind::Delete => "w:del",
         };
-        format!(
-            "{name} w:id=\"{id}\" w:author=\"{}\" w:date=\"{}\"",
-            self.author, self.date
-        )
+        match by.and_then(|serial| self.document.attributions.get(&serial)) {
+            Some((author, date)) => format!(
+                "{name} w:id=\"{id}\" w:author=\"{}\" w:date=\"{}\"",
+                escape(author),
+                escape(date)
+            ),
+            None => format!(
+                "{name} w:id=\"{id}\" w:author=\"{}\" w:date=\"{}\"",
+                self.author, self.date
+            ),
+        }
     }
 
     fn highlighted(&self, run: &Run) -> bool {
@@ -231,7 +246,7 @@ pub(super) fn story(
     context: &mut Context<'_>,
     items: &[Item],
     relate: &mut dyn Relate,
-    note: Option<Option<Kind>>,
+    note: Option<Option<Change>>,
 ) -> String {
     let mut out = String::new();
     // The open w:ins / w:del and the change it holds.
@@ -257,7 +272,7 @@ pub(super) fn story(
                 if first_paragraph {
                     first_paragraph = false;
                     let change = note.flatten();
-                    let wrap = change.map(|kind| context.revision(kind));
+                    let wrap = change.map(|(kind, by)| context.revision(kind, Some(by)));
                     if let Some(wrap) = &wrap {
                         let _ = write!(out, "<{wrap}>");
                     }
@@ -265,7 +280,7 @@ pub(super) fn story(
                         "<w:r><w:rPr><w:rStyle w:val=\"FootnoteReference\"/></w:rPr>\
                          <w:footnoteRef/></w:r>",
                     );
-                    let text = if change == Some(Kind::Delete) {
+                    let text = if matches!(change, Some((Kind::Delete, _))) {
                         "delText"
                     } else {
                         "t"
@@ -274,7 +289,7 @@ pub(super) fn story(
                         out,
                         "<w:r><w:{text} xml:space=\"preserve\"> </w:{text}></w:r>"
                     );
-                    if let Some(kind) = change {
+                    if let Some((kind, _)) = change {
                         out.push_str(match kind {
                             Kind::Insert => "</w:ins>",
                             Kind::Delete => "</w:del>",
@@ -286,8 +301,8 @@ pub(super) fn story(
             Item::Run(run) => {
                 if open != run.change {
                     close(&mut out, &mut open);
-                    if let Some((kind, _)) = run.change {
-                        let wrap = context.revision(kind);
+                    if let Some((kind, by)) = run.change {
+                        let wrap = context.revision(kind, Some(by));
                         let _ = write!(out, "<{wrap}>");
                     }
                     open = run.change;
@@ -343,8 +358,8 @@ pub(super) fn story(
                     if *header {
                         out.push_str("<w:tblHeader/>");
                     }
-                    if let Some(kind) = change {
-                        let mark = context.revision(*kind);
+                    if let Some((kind, by)) = change {
+                        let mark = context.revision(*kind, Some(*by));
                         let _ = write!(out, "<{mark}/>");
                     }
                     out.push_str("</w:trPr>");
@@ -391,7 +406,7 @@ fn paragraph_properties(context: &mut Context<'_>, paragraph: &Paragraph, out: &
         let _ = write!(properties, "<w:jc w:val=\"{align}\"/>");
     }
     if let Some(kind) = paragraph.mark {
-        let mark = context.revision(kind);
+        let mark = context.revision(kind, paragraph.mark_by);
         let _ = write!(properties, "<w:rPr><{mark}/></w:rPr>");
     }
     if !properties.is_empty() {
@@ -506,11 +521,29 @@ pub(super) fn comments_part(context: &Context<'_>, comments: &[Comment]) -> Stri
         .filter_map(|word| word.chars().next())
         .collect();
     for comment in comments {
-        let _ = write!(
-            out,
-            "<w:comment w:id=\"{}\" w:author=\"{}\" w:date=\"{}\" w:initials=\"{}\">",
-            comment.id, context.author, context.date, initials
-        );
+        match &comment.by {
+            Some((author, date)) => {
+                let initials: String = author
+                    .split_whitespace()
+                    .filter_map(|word| word.chars().next())
+                    .collect();
+                let _ = write!(
+                    out,
+                    "<w:comment w:id=\"{}\" w:author=\"{}\" w:date=\"{}\" w:initials=\"{}\">",
+                    comment.id,
+                    escape(author),
+                    escape(date),
+                    escape(&initials)
+                );
+            }
+            None => {
+                let _ = write!(
+                    out,
+                    "<w:comment w:id=\"{}\" w:author=\"{}\" w:date=\"{}\" w:initials=\"{}\">",
+                    comment.id, context.author, context.date, initials
+                );
+            }
+        }
         let mut paragraphs = comment.paragraphs.iter().map(|p| p.trim());
         let first = paragraphs.next().unwrap_or_default();
         let _ = write!(

@@ -92,6 +92,11 @@ struct SpanStart {
     kind: Kind,
     paragraph: u64,
     at_start: bool,
+    /// Runs of the start paragraph before the span opened.
+    runs_before: usize,
+    /// The story index of the paragraph the span opened at the end of, when
+    /// its first content is that paragraph's break (`A{++\n\nB++}`).
+    at_break: Option<usize>,
 }
 
 /// The cells of a table row so far: all empty, all one change whole of one
@@ -99,7 +104,8 @@ struct SpanStart {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RowCells {
     Empty,
-    Whole(Kind),
+    /// The kind, and the serial of the first cell's change.
+    Whole(Kind, u32),
     Mixed,
 }
 
@@ -108,6 +114,21 @@ enum RowCells {
 struct Anchor {
     slot: usize,
     group: Option<usize>,
+    /// For a change: the serials of its deleted side (a substitution's) and
+    /// of the rest, which attributions after it name the author of.
+    serials: [Option<u32>; 2],
+    /// How many attributions followed the change so far.
+    attributed: u8,
+}
+
+impl Anchor {
+    /// Whether a comment here may be an attribution: the first after a
+    /// change, or the second after a substitution, for its inserted side.
+    fn takes_attribution(&self) -> bool {
+        self.group.is_none()
+            && self.serials[1].is_some()
+            && (self.attributed == 0 || (self.attributed == 1 && self.serials[0].is_some()))
+    }
 }
 
 struct Writer<'o, 'a> {
@@ -116,7 +137,7 @@ struct Writer<'o, 'a> {
     /// Footnote definitions by label.
     definitions: HashMap<String, Vec<Item>>,
     /// The label of each footnote reference, in order, with its change.
-    references: Vec<(String, Option<Kind>)>,
+    references: Vec<(String, Option<(Kind, u32)>)>,
     /// The footnote definition being read.
     target: Option<String>,
 
@@ -158,6 +179,14 @@ struct Writer<'o, 'a> {
     slot: usize,
     span_start: Option<SpanStart>,
     closed: Option<u32>,
+    /// The deleted side's serial while a substitution's inserted side is open.
+    substituted: Option<u32>,
+    /// The change the open comment follows, while the comment may still
+    /// turn out to be the change's attribution.
+    comment_anchor: Option<Anchor>,
+    /// Highlights with no comment yet and no text since them outside a
+    /// highlight: pieces of one range whose comment follows the last piece.
+    pending_highlights: Vec<(usize, usize)>,
     run_after_close: bool,
     highlight: Option<(usize, usize)>,
     groups: usize,
@@ -205,6 +234,9 @@ impl<'o, 'a> Writer<'o, 'a> {
             slot: 0,
             span_start: None,
             closed: None,
+            substituted: None,
+            comment_anchor: None,
+            pending_highlights: Vec::new(),
             run_after_close: false,
             highlight: None,
             groups: 0,
@@ -417,6 +449,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             TagEnd::Table => {
                 self.story().push(Item::TableEnd);
+                self.pending_highlights.clear();
                 self.table = None;
             }
             TagEnd::TableHead | TagEnd::TableRow => self.end_row(),
@@ -427,6 +460,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                 self.end_paragraph();
                 self.cell = None;
                 self.story().push(Item::CellEnd);
+                self.pending_highlights.clear();
             }
             TagEnd::Emphasis => self.italic = self.italic.saturating_sub(1),
             TagEnd::Strong => self.bold = self.bold.saturating_sub(1),
@@ -452,6 +486,22 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
     }
 
+    /// Whether the paragraph before the one at `index` ends in a break a
+    /// change of `kind` crossed (`A{++\n\n++}{++B++}`). That break is the
+    /// mark the change adds, so a block after it that is one change whole
+    /// keeps its own mark, which was the earlier paragraph's.
+    fn after_changed_break(&mut self, index: usize, kind: Kind) -> bool {
+        self.story()[..index]
+            .iter()
+            .rev()
+            .find_map(|item| match item {
+                Item::Paragraph(p) => Some(p.mark == Some(kind) && !p.whole),
+                Item::Table { .. } | Item::TableEnd | Item::Cell(_) | Item::CellEnd => Some(false),
+                _ => None,
+            })
+            .unwrap_or(false)
+    }
+
     fn begin_row(&mut self, header: bool) {
         self.column = 0;
         let index = self.story().len();
@@ -470,15 +520,17 @@ impl<'o, 'a> Writer<'o, 'a> {
         let Some((index, open)) = self.row.take() else {
             return;
         };
-        let kind = match (open, self.row_cells) {
-            (Some((kind, serial)), _) if self.change == Some((kind, serial)) => Some(kind),
-            (_, RowCells::Whole(kind)) => Some(kind),
+        let row_change = match (open, self.row_cells) {
+            (Some((kind, serial)), _) if self.change == Some((kind, serial)) => {
+                Some((kind, serial))
+            }
+            (_, RowCells::Whole(kind, serial)) => Some((kind, serial)),
             _ => None,
         };
-        if let Some(kind) = kind
+        if let Some(row_change) = row_change
             && let Some(Item::Row { change, .. }) = self.story().get_mut(index)
         {
-            *change = Some(kind);
+            *change = Some(row_change);
         }
     }
 
@@ -539,31 +591,75 @@ impl<'o, 'a> Writer<'o, 'a> {
         if let Some(comment) = &mut self.comment {
             comment.paragraphs.push(String::new());
         }
+        let after_break = self
+            .span_start
+            .map(|span| span.kind)
+            .map(|kind| self.after_changed_break(index, kind));
+        // A span opened at this paragraph's end: its first content is the break.
+        if let (Some((_, serial)), Some(span)) = (self.change, self.span_start.as_mut())
+            && span.serial == serial
+            && span.paragraph == self.paragraph_serial
+            && span.runs_before == self.paragraph_runs
+            && self.cell.is_none()
+        {
+            span.at_break = Some(index);
+        }
         let (mark, whole) = match self.change {
-            Some((kind, _)) => (Some(kind), false),
+            Some((kind, serial)) => (Some((kind, serial)), false),
             None => match self.span_start {
                 Some(span)
                     if span.at_start
                         && span.paragraph == self.paragraph_serial
                         && self.closed == Some(span.serial)
                         && !self.run_after_close
-                        && self.paragraph_runs > 0 =>
+                        && self.paragraph_runs > 0
+                        && !after_break.is_some_and(|after| after) =>
                 {
-                    (Some(span.kind), true)
+                    (Some((span.kind, span.serial)), true)
                 }
                 _ => (None, false),
             },
         };
         if self.cell.is_some() && self.paragraph_runs > 0 {
             self.row_cells = match (self.row_cells, whole.then_some(mark).flatten()) {
-                (RowCells::Empty, Some(kind)) => RowCells::Whole(kind),
-                (RowCells::Whole(before), Some(kind)) if before == kind => RowCells::Whole(kind),
+                (RowCells::Empty, Some((kind, serial))) => RowCells::Whole(kind, serial),
+                (RowCells::Whole(before, serial), Some((kind, _))) if before == kind => {
+                    RowCells::Whole(kind, serial)
+                }
                 _ => RowCells::Mixed,
             };
         }
+        // Blocks added (or removed) after a paragraph, from its break to the
+        // end of this one: Word records them as their own marks changed, so
+        // the paragraph before keeps its mark and properties.
+        let shift = match (mark, self.span_start) {
+            (None, Some(span))
+                if span.paragraph != self.paragraph_serial
+                    && self.closed == Some(span.serial)
+                    && !self.run_after_close
+                    && self.paragraph_runs > 0
+                    && self.cell.is_none() =>
+            {
+                span.at_break
+                    .filter(|&first| no_table_between(self.story(), first, index))
+                    .map(|first| (first, span.kind, span.serial))
+            }
+            _ => None,
+        };
         let story = self.story();
-        if let Some(Item::Paragraph(paragraph)) = story.get_mut(index) {
-            paragraph.mark = mark;
+        if let Some((first, kind, serial)) = shift
+            && let Some(Item::Paragraph(paragraph)) = story.get_mut(first)
+        {
+            paragraph.mark = None;
+            paragraph.mark_by = None;
+            if let Some(Item::Paragraph(paragraph)) = story.get_mut(index) {
+                paragraph.mark = Some(kind);
+                paragraph.mark_by = Some(serial);
+                paragraph.whole = false;
+            }
+        } else if let Some(Item::Paragraph(paragraph)) = story.get_mut(index) {
+            paragraph.mark = mark.map(|(kind, _)| kind);
+            paragraph.mark_by = mark.map(|(_, serial)| serial);
             paragraph.whole = whole;
         }
         story.push(Item::ParagraphEnd);
@@ -584,6 +680,11 @@ impl<'o, 'a> Writer<'o, 'a> {
 
     fn push(&mut self, content: Content) {
         self.ensure_paragraph();
+        let blank = matches!(&content, Content::Text(text) if text.trim().is_empty())
+            || matches!(content, Content::Tab | Content::Break);
+        if self.highlight.is_none() && !blank {
+            self.pending_highlights.clear();
+        }
         if self.code > 0 {
             self.document.styles.insert("VerbatimChar");
         }
@@ -684,15 +785,19 @@ impl<'o, 'a> Writer<'o, 'a> {
             kind,
             paragraph: self.paragraph_serial,
             at_start: self.paragraph_runs == 0,
+            runs_before: self.paragraph_runs,
+            at_break: None,
         });
         self.anchor = None;
     }
 
     fn close(&mut self) {
-        self.change = None;
+        let serial = self.change.take().map(|(_, serial)| serial);
         self.anchor = Some(Anchor {
             slot: self.slot,
             group: None,
+            serials: [self.substituted.take(), serial],
+            attributed: 0,
         });
         self.closed = self.span_start.map(|span| span.serial);
         self.run_after_close = false;
@@ -709,6 +814,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             Token::InsertStart => self.open(Kind::Insert),
             Token::DeleteStart | Token::SubstituteStart => self.open(Kind::Delete),
             Token::SubstituteSeparator => {
+                self.substituted = self.change.map(|(_, serial)| serial);
                 self.serial += 1;
                 self.change = Some((Kind::Insert, self.serial));
                 self.span_start = None;
@@ -724,9 +830,12 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             Token::HighlightEnd => {
                 if let Some((slot, group)) = self.highlight.take() {
+                    self.pending_highlights.push((slot, group));
                     self.anchor = Some(Anchor {
                         slot,
                         group: Some(group),
+                        serials: [None, None],
+                        attributed: 0,
                     });
                 }
             }
@@ -739,29 +848,86 @@ impl<'o, 'a> Writer<'o, 'a> {
     fn begin_comment(&mut self) {
         let id = u32::try_from(self.document.comments.len()).unwrap_or(u32::MAX);
         match self.anchor.take() {
-            Some(anchor) => {
-                self.document.slots[anchor.slot] = Some(id);
-                if let Some(group) = anchor.group {
-                    self.document.commented.insert(group);
-                }
-            }
-            None => {
-                self.ensure_paragraph();
-                let slot = self.new_slot();
-                self.document.slots[slot] = Some(id);
-                self.story().push(Item::RangeStart(slot));
-            }
+            // Anchored when it ends, unless it names the change's author.
+            Some(anchor) if anchor.takes_attribution() => self.comment_anchor = Some(anchor),
+            Some(anchor) => self.anchor_comment(anchor, id),
+            None => self.anchor_here(id),
         }
         self.comment = Some(Comment {
             id,
             paragraphs: vec![String::new()],
+            by: None,
         });
+    }
+
+    /// Anchors comment `id` on the span that just closed. A highlight's
+    /// range starts at the first piece of the range it ends.
+    fn anchor_comment(&mut self, anchor: Anchor, id: u32) {
+        let pieces = std::mem::take(&mut self.pending_highlights);
+        match anchor.group {
+            Some(group) => {
+                let slot = pieces.first().map_or(anchor.slot, |(slot, _)| *slot);
+                self.document.slots[slot] = Some(id);
+                self.document.commented.insert(group);
+                for (_, group) in pieces {
+                    self.document.commented.insert(group);
+                }
+            }
+            None => self.document.slots[anchor.slot] = Some(id),
+        }
+    }
+
+    /// Anchors comment `id` on the highlights just before it, when there
+    /// are some (`{++{==text==}++}{>>who<<}{>>note<<}`), else on this point.
+    fn anchor_here(&mut self, id: u32) {
+        if let Some(&(slot, group)) = self.pending_highlights.last() {
+            let anchor = Anchor {
+                slot,
+                group: Some(group),
+                serials: [None, None],
+                attributed: 0,
+            };
+            self.anchor_comment(anchor, id);
+            return;
+        }
+        self.ensure_paragraph();
+        let slot = self.new_slot();
+        self.document.slots[slot] = Some(id);
+        self.story().push(Item::RangeStart(slot));
     }
 
     fn end_comment(&mut self) {
         let Some(mut comment) = self.comment.take() else {
             return;
         };
+        if let Some(mut anchor) = self.comment_anchor.take() {
+            let whole = comment.paragraphs.join("\n");
+            if let Some((author, date)) = attribution(whole.trim()) {
+                let author = author.unwrap_or_else(|| self.options.author.clone());
+                let serials = if anchor.attributed == 0 {
+                    &anchor.serials[..]
+                } else {
+                    &anchor.serials[1..]
+                };
+                for serial in serials.iter().flatten() {
+                    self.document
+                        .attributions
+                        .insert(*serial, (author.clone(), date.to_string()));
+                }
+                anchor.attributed += 1;
+                // A substitution's inserted side may name its own author next;
+                // any other comment after an attribution is on its own point.
+                self.anchor = anchor.takes_attribution().then_some(anchor);
+                return;
+            }
+            if anchor.attributed == 0 {
+                self.anchor_comment(anchor, comment.id);
+            } else {
+                // After an attribution, a comment is on its own point: a
+                // comment on the change would have been `{==...==}{>>...<<}`.
+                self.anchor_here(comment.id);
+            }
+        }
         while comment.paragraphs.len() > 1
             && comment
                 .paragraphs
@@ -769,6 +935,14 @@ impl<'o, 'a> Writer<'o, 'a> {
                 .is_some_and(|p| p.trim().is_empty())
         {
             comment.paragraphs.pop();
+        }
+        // `Name (date): text`, or `Name (date)` for a comment with no text.
+        if let Some(first) = comment.paragraphs.first_mut()
+            && let Some((Some(author), date, rest)) = named(first.trim())
+            && let Some(text) = rest.strip_prefix(':').or((rest.is_empty()).then_some(""))
+        {
+            comment.by = Some((author, date.to_string()));
+            *first = text.trim_start().to_string();
         }
         self.ensure_paragraph();
         let id = comment.id;
@@ -788,8 +962,7 @@ impl<'o, 'a> Writer<'o, 'a> {
             }
             return;
         }
-        self.references
-            .push((label, self.change.map(|(kind, _)| kind)));
+        self.references.push((label, self.change));
         let position = u32::try_from(self.references.len()).unwrap_or(u32::MAX);
         self.document.styles.insert("FootnoteReference");
         self.document.styles.insert("FootnoteText");
@@ -882,15 +1055,16 @@ impl<'o, 'a> Writer<'o, 'a> {
                 })];
                 items.push(Item::ParagraphEnd);
             }
-            if let Some(kind) = change
+            // A note without changes of its own is in its reference's
+            // change, attribution and all.
+            if let Some((kind, serial)) = change
                 && !has_changes(&items)
             {
-                self.serial += 1;
-                mark_whole(&mut items, kind, self.serial);
+                mark_whole(&mut items, kind, serial);
             }
             // The note's reference mark goes with its text when all of it
             // is the reference's change.
-            let change = change.filter(|kind| only_changed_by(&items, *kind));
+            let change = change.filter(|(kind, _)| only_changed_by(&items, *kind));
             finish_story(&mut items);
             self.document.notes.push(Note { items, change });
         }
@@ -915,10 +1089,12 @@ fn finish_story(items: &mut Vec<Item>) {
             _ => None,
         });
         let first = rows.next().flatten();
-        let kind = first.filter(|kind| rows.all(|change| change == Some(*kind)));
+        let change = first
+            .filter(|(kind, _)| rows.all(|change| change.is_some_and(|(other, _)| other == *kind)));
         items.push(Item::Paragraph(Paragraph {
-            mark: kind,
-            whole: kind.is_some(),
+            mark: change.map(|(kind, _)| kind),
+            mark_by: change.map(|(_, serial)| serial),
+            whole: change.is_some(),
             ..Paragraph::default()
         }));
         items.push(Item::ParagraphEnd);
@@ -937,18 +1113,19 @@ fn finish_story(items: &mut Vec<Item>) {
                     last = Some(index);
                 }
                 Some(at) => {
-                    let kind = match &mut items[at] {
+                    let (kind, by) = match &mut items[at] {
                         Item::Paragraph(ending) => {
                             ending.whole = false;
-                            ending.mark.take()
+                            (ending.mark.take(), ending.mark_by.take())
                         }
-                        _ => None,
+                        _ => (None, None),
                     };
                     let Item::Paragraph(before) = &mut items[index] else {
                         return;
                     };
                     if before.mark.is_none() {
                         before.mark = kind;
+                        before.mark_by = by;
                     } else if before.whole && before.mark == kind {
                         // Paragraphs added (or removed) whole up to the end:
                         // the mark before the first of them takes the change.
@@ -961,6 +1138,7 @@ fn finish_story(items: &mut Vec<Item>) {
                             && p.mark.is_none()
                         {
                             p.mark = kind;
+                            p.mark_by = by;
                         }
                     } else if before.whole && before.mark != kind && at == end_of(items, index) + 1
                     {
@@ -982,8 +1160,86 @@ fn finish_story(items: &mut Vec<Item>) {
         && let Item::Paragraph(only) = &mut items[at]
     {
         only.mark = None;
+        only.mark_by = None;
         only.whole = false;
     }
+}
+
+/// The author and date of an attribution, a comment that is only
+/// `Name (date)` or `(date)` (the date ISO 8601, as Word writes it): how
+/// CriticMarkup records who made the change before it, and how a document
+/// read from Word writes it.
+fn attribution(text: &str) -> Option<(Option<String>, &str)> {
+    match named(text)? {
+        (author, date, "") => Some((author, date)),
+        _ => None,
+    }
+}
+
+/// `Name (date)` or `(date)` at the start of `text`: the name, the date and
+/// the text after them.
+fn named(text: &str) -> Option<(Option<String>, &str, &str)> {
+    let open = text.find('(')?;
+    let close = open + text[open..].find(')')?;
+    let date = &text[open + 1..close];
+    if !is_date(date) {
+        return None;
+    }
+    let name = &text[..open];
+    let author = match name.trim() {
+        "" if name.is_empty() => None,
+        "" => return None,
+        author if name.ends_with(' ') && !author.contains(['(', ')']) => Some(author.to_string()),
+        _ => return None,
+    };
+    Some((author, date, &text[close + 1..]))
+}
+
+/// `YYYY-MM-DDTHH:MM`, then optional seconds and fraction, then an
+/// optional `Z` or `+HH:MM` offset.
+fn is_date(text: &str) -> bool {
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    let Some((day, time)) = text.split_once('T') else {
+        return false;
+    };
+    let day: Vec<&str> = day.split('-').collect();
+    if day.len() != 3
+        || day[0].len() != 4
+        || day[1..].iter().any(|p| p.len() != 2)
+        || !day.iter().all(|p| digits(p))
+    {
+        return false;
+    }
+    let (clock, zone) = match time.find(['Z', '+', '-']) {
+        Some(at) => time.split_at(at),
+        None => (time, ""),
+    };
+    let zone_ok = match zone {
+        "" | "Z" => true,
+        zone => {
+            let offset = &zone[1..];
+            offset.len() == 5
+                && offset.as_bytes()[2] == b':'
+                && digits(&offset[..2])
+                && digits(&offset[3..])
+        }
+    };
+    let clock: Vec<&str> = clock.split(':').collect();
+    let seconds_ok = clock.get(2).is_none_or(|seconds| {
+        let (whole, fraction) = seconds.split_once('.').unwrap_or((seconds, "0"));
+        whole.len() == 2 && digits(whole) && digits(fraction)
+    });
+    zone_ok
+        && (2..=3).contains(&clock.len())
+        && clock[..2].iter().all(|p| p.len() == 2 && digits(p))
+        && seconds_ok
+}
+
+/// Whether no table starts or ends between two story indexes.
+fn no_table_between(items: &[Item], from: usize, to: usize) -> bool {
+    !items[from..to]
+        .iter()
+        .any(|item| matches!(item, Item::Table { .. } | Item::TableEnd))
 }
 
 /// The index of the `ParagraphEnd` of the paragraph that starts at `start`.
@@ -1019,7 +1275,10 @@ fn mark_whole(items: &mut [Item], kind: Kind, serial: u32) {
     for (index, item) in items.iter_mut().enumerate() {
         match item {
             Item::Run(run) => run.change = Some((kind, serial)),
-            Item::Paragraph(paragraph) if Some(index) != last => paragraph.mark = Some(kind),
+            Item::Paragraph(paragraph) if Some(index) != last => {
+                paragraph.mark = Some(kind);
+                paragraph.mark_by = Some(serial);
+            }
             _ => {}
         }
     }
@@ -1078,4 +1337,65 @@ fn read_picture(bytes: Vec<u8>, alt: &str) -> Option<Picture> {
         height: cy.max(1),
         alt: alt.to_string(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dates_are_iso_8601_to_the_minute_or_finer() {
+        for date in [
+            "2026-01-02T03:04",
+            "2026-01-02T03:04:05",
+            "2026-01-02T03:04:05Z",
+            "2026-01-02T03:04:05.123Z",
+            "2026-01-02T03:04:05+01:00",
+            "2026-01-02T03:04-05:30",
+        ] {
+            assert!(is_date(date), "{date}");
+        }
+        for text in [
+            "",
+            "2026-01-02",
+            "2026-1-02T03:04",
+            "26-01-02T03:04",
+            "2026-01-02T3:04",
+            "2026-01-02T03:04:5",
+            "2026-01-02T03:04:05.Z",
+            "2026-01-02T03:04:05+0100",
+            "2026-01-02T03:04:05+01:0x",
+            "2026-01-02T03:04:05:06",
+            "yesterday",
+        ] {
+            assert!(!is_date(text), "{text}");
+        }
+    }
+
+    #[test]
+    fn names_and_attributions() {
+        assert_eq!(
+            named("Ana Lima (2026-01-02T03:04Z): hi"),
+            Some((Some("Ana Lima".to_string()), "2026-01-02T03:04Z", ": hi"))
+        );
+        assert_eq!(
+            named("(2026-01-02T03:04Z)"),
+            Some((None, "2026-01-02T03:04Z", ""))
+        );
+        for text in [
+            "Ana(2026-01-02T03:04Z)",
+            " (2026-01-02T03:04Z)",
+            "A (b) (2026-01-02T03:04Z)",
+            "Ana (soon)",
+            "Ana 2026-01-02T03:04Z",
+        ] {
+            assert_eq!(named(text), None, "{text}");
+        }
+        assert_eq!(
+            attribution("Bo (2026-01-02T03:04:05Z)"),
+            Some((Some("Bo".to_string()), "2026-01-02T03:04:05Z"))
+        );
+        assert_eq!(attribution("Bo (2026-01-02T03:04:05Z): why"), None);
+        assert_eq!(attribution("Bo"), None);
+    }
 }
