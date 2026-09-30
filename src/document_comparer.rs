@@ -6527,28 +6527,17 @@ fn compare_documents_impl(
                 }
             }
             // A has no styles part, B does: copy B, canonicalize, then M462 —
-            // swap in Word's FACTORY docDefaults/theme and bake B-effective
-            // metrics into each style (Word scaffolds from its blank document,
-            // not from B: tiff_image × two_column oracle).
+            // swap in Word's FACTORY docDefaults and bake B-effective metrics
+            // into each style (Word scaffolds from its blank document, not
+            // from B: tiff_image × two_column oracle). A's referenced theme
+            // stays; only a missing one becomes Word's default, in
+            // ensure_factory_package_chrome.
             (None, Some(from_xml)) if is_styles && settings.merge_replaced_paragraphs => {
                 let mut sd = Dom::new();
                 let fd = sd.parse_xdocument(&from_xml);
                 if let Some(fr) = sd.root(fd) {
                     style_renames = canonicalize_style_ids(&mut sd, fr);
                     factory_scaffold_bake_b_styles(&mut sd, fr, settings);
-                    let theme_parts: Vec<String> = out
-                        .parts()
-                        .into_iter()
-                        .filter(|p| p.starts_with("word/theme/") && p.ends_with(".xml"))
-                        .collect();
-                    for tp in theme_parts {
-                        out.set_part(
-                            &tp,
-                            crate::word_default_theme::WORD_DEFAULT_THEME
-                                .as_bytes()
-                                .to_vec(),
-                        );
-                    }
                     out.set_part(part, sd.serialize_element(fr).into_bytes());
                     out.add_content_type_override(
                         "/word/styles.xml",
