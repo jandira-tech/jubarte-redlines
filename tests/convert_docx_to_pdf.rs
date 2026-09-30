@@ -2856,6 +2856,123 @@ fn a_paragraph_float_near_the_page_foot_runs_off_the_page() {
     );
 }
 
+/// A4 (margins 1417/1701), a "Fill" line with `gap` twips after it (none when
+/// `gap` is `None`), then a square-wrapped (or `wrap`-wrapped)
+/// `w`x`h`pt picture at column x -71.5pt and paragraph y -82.7pt (3bfcb371e2's
+/// cover offsets), anchored in "Anchor".
+fn square_float_after(gap: Option<u32>, w: i64, h: i64) -> Vec<u8> {
+    float_after(gap, w, h, "<wp:wrapSquare wrapText=\"bothSides\"/>")
+}
+
+fn float_after(gap: Option<u32>, w: i64, h: i64, wrap: &str) -> Vec<u8> {
+    let img = blip(
+        &(w * 12700).to_string(),
+        &(h * 12700).to_string(),
+        &("<wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:simplePos x=\"0\" y=\"0\"/>\
+           <wp:positionH relativeFrom=\"column\"><wp:posOffset>-908050</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>-1050290</wp:posOffset></wp:positionV>"
+            .to_owned()
+            + wrap),
+        "</wp:anchor>",
+    );
+    let fill = gap.map_or(String::new(), |after| {
+        format!(
+            "<w:p><w:pPr><w:spacing w:after=\"{after}\"/></w:pPr><w:r><w:t>Fill</w:t></w:r></w:p>"
+        )
+    });
+    drawing_docx(&format!(
+        "{fill}<w:p><w:r>{img}</w:r><w:r><w:t>Anchor</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/>\
+           <w:pgMar w:top=\"1417\" w:right=\"1701\" w:bottom=\"1417\" w:left=\"1701\"/></w:sectPr>"
+    ))
+}
+
+#[test]
+fn a_square_float_above_the_page_top_is_held_at_the_page_top() {
+    // Word probe h4 (2026-09-30): a 400x300 picture 82.7pt above the first
+    // paragraph of the page would start 11.8pt above the page; Word draws
+    // it from the page's top edge. We drew it off the page.
+    let pdf = docx_to_pdf(&square_float_after(None, 400, 300)).expect("top float");
+    let (x, y, _, h) = *pdf_image_boxes(&pdf).first().expect("the picture paints");
+    assert!((y + h - 841.9).abs() < 0.5, "top {}", y + h);
+    assert!((x - 13.5).abs() < 0.5, "x stays at the column offset: {x}");
+}
+
+#[test]
+fn a_square_float_past_the_page_foot_is_lifted_onto_the_page() {
+    // Word probes h3/h6: a picture that would run past the page foot sits
+    // on it instead (400x300 after 45 lines: bottom at the foot; 400x797
+    // after 10 lines: top at 44pt).
+    for (gap, h) in [(11500, 300), (1200, 797)] {
+        let pdf = docx_to_pdf(&square_float_after(Some(gap), 400, h)).expect("foot float");
+        let (_, y, _, _) = *pdf_image_boxes(&pdf).first().expect("the picture paints");
+        let anchor = pdf_glyph_text_xy(&pdf, "Anchor").expect("anchor paints");
+        assert!(y.abs() < 0.5, "gap {gap}: bottom {y}, anchor {anchor:?}");
+    }
+}
+
+#[test]
+fn a_page_sized_square_float_under_text_moves_its_paragraph_to_the_next_page() {
+    // Word probe h1 and 3bfcb371e2 (30b6e87178): a 615x797 cover whose
+    // anchor follows text on the page cannot leave its line room beside or
+    // under it, so the paragraph and its picture start the next page, the
+    // picture at the page's top-left. We lifted it over the text above.
+    let pdf = docx_to_pdf(&square_float_after(Some(6000), 615, 797)).expect("cover");
+    assert_eq!(page_with_text(&pdf, "Fill"), Some(0));
+    assert_eq!(
+        page_with_text(&pdf, "Anchor"),
+        Some(1),
+        "the anchor moves on"
+    );
+    let streams = pdf_content_streams(&pdf);
+    let pictured: Vec<usize> = (0..streams.len())
+        .filter(|&i| streams[i].contains(" cm /Im"))
+        .collect();
+    assert_eq!(pictured, [1], "the cover paints on page two only");
+    let (x, y, _, h) = *pdf_image_boxes(&pdf).first().expect("the picture paints");
+    assert!(
+        x.abs() < 0.5 && (y + h - 841.9).abs() < 0.5,
+        "at 0,0: {x} {}",
+        y + h
+    );
+}
+
+#[test]
+fn a_top_and_bottom_float_is_held_on_the_page_and_sends_its_text_on() {
+    // Word probes t4/t3: top-and-bottom wrap keeps the picture on the page
+    // as square does (top at the page edge, the text under its 300pt), and a
+    // picture that leaves its line no room under it starts the next page,
+    // from that page's top. We drew both off the page.
+    let tb = "<wp:wrapTopAndBottom/>";
+    let pdf = docx_to_pdf(&float_after(None, 400, 300, tb)).expect("top float");
+    let (_, y, _, h) = *pdf_image_boxes(&pdf).first().expect("the picture paints");
+    assert!((y + h - 841.9).abs() < 0.5, "top {}", y + h);
+    let (_, anchor) = pdf_glyph_text_xy(&pdf, "Anchor").expect("anchor paints");
+    assert!(
+        anchor < 841.9 - 300.0,
+        "the text sits under the picture: {anchor}"
+    );
+    let pdf = docx_to_pdf(&float_after(Some(11500), 400, 300, tb)).expect("foot float");
+    assert_eq!(
+        page_with_text(&pdf, "Anchor"),
+        Some(1),
+        "the anchor moves on"
+    );
+    let (_, y, _, h) = *pdf_image_boxes(&pdf).first().expect("the picture paints");
+    assert!((y + h - 841.9).abs() < 0.5, "top {} on page two", y + h);
+}
+
+#[test]
+fn a_square_float_wider_than_the_page_starts_at_its_left_edge() {
+    // Word probe h5: a 615pt picture on a 595pt page at column x -71.5pt
+    // runs from x 0 (pulled left to fit, never past the left edge).
+    let pdf = docx_to_pdf(&square_float_after(None, 615, 300)).expect("wide float");
+    let (x, _, _, _) = *pdf_image_boxes(&pdf).first().expect("the picture paints");
+    assert!(x.abs() < 0.5, "x {x}");
+}
+
 #[test]
 fn conventional_revisions_are_red_blue_and_green() {
     // Arthur's convention (the default): deletions red struck through,

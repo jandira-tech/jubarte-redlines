@@ -175,6 +175,15 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   next page when text is already on this one. e11fc429b2's two
   page-anchored tables went from 49.7/42.3 to 87.3/83.3 (Word probes g1-g6,
   fb, fe).
+- A wrapping picture (square, tight or top-and-bottom) placed off its column
+  or paragraph stays on the page, as in Word: it is pulled in from the left,
+  top and foot edges instead of running off them. A wrapNone picture may
+  still leave the page. When such a picture leaves its paragraph's first
+  line no room beside or under it, the paragraph and the picture start the
+  next page. 3bfcb371e2's 615x797 cover used to paint over the minutes
+  before it; now it opens its own page at 0,0. 30b6e87178 went from
+  33.4/20.9 to 62.1/54.7, 49fe5bd42a from 47.1/9.1 to 58.6/19.3 (Word
+  probes h1-h6, g3, g5, n3-n5, t3, t4).
 - Rejecting a redline gives back what a changed style inherited in the
   original. Word's Reject All reads a style's old record against its
   built-in defaults, so a record holding only the style's own properties

@@ -19901,6 +19901,49 @@ impl<'a> Layout<'a> {
         }
     }
 
+    /// A paragraph-relative square float with no room beside it, or a
+    /// top-and-bottom one, whose foot, held on the page, leaves the
+    /// paragraph's first line (`first` pt) no room under it: Word starts the
+    /// paragraph and its float on the next page (probes h1, t3; 3bfcb371e2's
+    /// 615x797 cover after the minutes).
+    fn square_float_bars_line(
+        &self,
+        images: &[LaidImage],
+        boxes: &[LaidTextBox],
+        first: f32,
+    ) -> bool {
+        let left_edge = self.flow_left();
+        let right_edge = left_edge + self.content_width();
+        let bars = |slot: ImageSlot, w: f32, h: f32| {
+            let ImageSlot::Float {
+                wrap_square,
+                wrap_top_bottom,
+                para_y: Some(_),
+                dist_l,
+                dist_r,
+                dist_b,
+                ..
+            } = slot
+            else {
+                return false;
+            };
+            if !wrap_square && !wrap_top_bottom {
+                return false;
+            }
+            let (dw, dh) = self.sized_wh(slot, w, h, 1.0, 1.0);
+            let (fx, fy) = self.float_xy(dw, dh.max(1.0), slot);
+            let no_side_room = wrap_top_bottom
+                || (fx - dist_l - left_edge < MIN_SIDE_FLOAT_ROOM_PT
+                    && right_edge - (fx + dw + dist_r) < MIN_SIDE_FLOAT_ROOM_PT);
+            no_side_room && fy - dist_b - first < self.body_floor
+        };
+        images.iter().any(|img| bars(img.slot, img.w, img.h))
+            || boxes
+                .iter()
+                .filter(|b| !b.frame)
+                .any(|b| bars(b.slot, self.box_w(b), self.box_h(b)))
+    }
+
     /// A page-placed float with no room beside it that the next paragraph
     /// anchors meets this paragraph's lines too (live Word: an empty
     /// paragraph above a 612pt banner's anchor starts at the banner's
@@ -21624,6 +21667,8 @@ impl<'a> Layout<'a> {
             h_rel,
             v_rel,
             v_off,
+            wrap_square,
+            wrap_top_bottom,
             ..
         } = slot
         else {
@@ -21696,6 +21741,22 @@ impl<'a> Layout<'a> {
                     Align::Left | Align::Justify => top - dh,
                 }
             }
+        };
+        // A wrapping float (square, tight, top-and-bottom) off its column or
+        // paragraph stays on the page: Word pulls it in from the left, top
+        // and foot edges (probes h3-h6, g3, g5, t3, t4, 2026-09-30;
+        // 3bfcb371e2's cover at 0,0). A wrapNone float may still leave the
+        // page (0004c94c above; probes n3-n5).
+        let wraps = wrap_square || wrap_top_bottom;
+        let x = if wraps && col_x.is_some() && pct_x.is_none() && page_x.is_none() {
+            x.min(self.page.width - dw).max(0.0)
+        } else {
+            x
+        };
+        let y = if wraps && para_y.is_some() && pct_y.is_none() && page_y.is_none() {
+            y.max(0.0).min(self.page.height - dh)
+        } else {
+            y
         };
         (x, y)
     }
@@ -27082,6 +27143,9 @@ fn layout(
                             para_first_line_pt(lay.fonts, runs, &style, lay.page.grid_pitch);
                         if lay.y - style.before - first < lay.body_floor {
                             lay.ensure(style.before + first);
+                            lay.para_top = lay.y;
+                        } else if lay.square_float_bars_line(images, boxes, first) {
+                            lay.new_page();
                             lay.para_top = lay.y;
                         }
                     }
