@@ -35,6 +35,14 @@
 //! - `elements`: element counts (with two files, only the ones that differ).
 //! - `textbox`: the XML of each text box story (namespace declarations
 //!   dropped), filtered by `grep`.
+//! - `render` (a listing, like `text`): what each story part should put on
+//!   the page, for diagnosing a low score against Word's PDF. Every story
+//!   part is read, not only the body: sections, tables (size, style, float,
+//!   direct, cell and style shading, first row), frames, anchored drawings,
+//!   fields, paragraph styles and shading, text colour, highlight, run
+//!   shading, hidden text, requested fonts, and the order of deleted and
+//!   inserted runs. `(layout)` adds jubarte's page count (Word revision
+//!   style) and the face each requested font resolved to.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
@@ -43,6 +51,7 @@ use std::io::{Cursor, Read};
 use crate::xmllinq::{Dom, NodeId};
 
 pub mod diff;
+mod render;
 
 /// Which reports to print.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -89,6 +98,13 @@ pub enum Check {
     /// List levels by `numId` and level, as paragraphs see them: the
     /// abstract definition with the list's overrides applied.
     Numbering,
+    /// What each story part should put on the page: sections, tables (size,
+    /// style, float, direct, cell and style shading, first row), frames,
+    /// anchored drawings, fields, paragraph styles and shading, text colour,
+    /// highlight, run shading, hidden text, requested fonts and the order of
+    /// deleted and inserted runs; `(layout)` adds jubarte's page count and
+    /// the face each font resolved to.
+    Render,
 }
 
 /// The checks a bare `jubarte debug FILE` runs.
@@ -146,6 +162,8 @@ struct Entry {
 /// A package's zip entries, in archive order.
 struct Package {
     entries: Vec<Entry>,
+    /// The package's bytes, for a layout pass.
+    raw: Vec<u8>,
 }
 
 impl Package {
@@ -165,7 +183,10 @@ impl Package {
                 data,
             });
         }
-        Ok(Package { entries })
+        Ok(Package {
+            entries,
+            raw: bytes.to_vec(),
+        })
     }
 
     /// XML parts selected by `part`, parsed. A part that does not parse is
@@ -1856,8 +1877,13 @@ fn story_roles_all(pkg: &Package) -> HashMap<String, Vec<String>> {
 /// `text` / `xml` for one package, or their per-part differences between two.
 fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options) -> String {
     let lines_of = |pkg: &Package| -> BTreeMap<String, (Vec<String>, usize)> {
-        let mut map = BTreeMap::new();
-        for e in &pkg.entries {
+        // `render` reads the package as a whole; the others part by part.
+        let (mut map, entries) = if check == Check::Render {
+            (render::render_parts(pkg, opts.part.as_deref()), &[][..])
+        } else {
+            (BTreeMap::new(), &pkg.entries[..])
+        };
+        for e in entries {
             if opts.part.as_deref().is_some_and(|p| !e.name.contains(p)) {
                 continue;
             }
@@ -1911,6 +1937,7 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
         Check::Changes => "changes",
         Check::StyleDefs => "styledefs",
         Check::Numbering => "numbering",
+        Check::Render => "render",
         _ => "text",
     };
     let mut out = String::new();
@@ -1925,6 +1952,8 @@ fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options)
                 line(&mut out, &format!("{part}: {paras} styles"));
             } else if check == Check::Numbering {
                 line(&mut out, &format!("{part}: {paras} lists"));
+            } else if check == Check::Render && part == "(layout)" {
+                line(&mut out, &format!("{part}: {paras} pages"));
             } else {
                 line(&mut out, &format!("{part}: {paras} paragraphs"));
             }
@@ -2134,6 +2163,7 @@ pub fn report(a: &[u8], b: Option<&[u8]>, opts: &Options) -> Result<String, Stri
                 | Check::Changes
                 | Check::StyleDefs
                 | Check::Numbering
+                | Check::Render
         )
     };
     if opts.checks.iter().any(is_listing) {
@@ -2826,6 +2856,98 @@ mod tests {
             out.starts_with(
                 "section 1 first header (A word/header1.xml, B word/header3.xml): 1 line differs\n"
             ),
+            "{out}"
+        );
+    }
+
+    /// A header with a PAGE field in a shaded table cell, and a body with a
+    /// styled floating table, shaded and highlighted text, a hidden run and
+    /// a replacement laid out as the deletion first.
+    fn docx_for_render() -> Vec<u8> {
+        let w = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#;
+        let body = r#"<w:p><w:pPr><w:pStyle w:val="Title"/></w:pPr><w:r><w:t>Heading</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblStyle w:val="GridTable4"/><w:tblpPr w:vertAnchor="text" w:tblpX="100" w:tblpY="200"/><w:shd w:val="clear" w:color="auto" w:fill="FFFF00"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="D9E2F3"/></w:tcPr><w:p><w:r><w:t>A1</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>B1</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p/></w:tc><w:tc><w:p/></w:tc></w:tr></w:tbl><w:p><w:pPr><w:shd w:val="clear" w:color="auto" w:fill="FFC000"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:highlight w:val="yellow"/></w:rPr><w:t>marked</w:t></w:r><w:r><w:rPr><w:color w:val="FF0000"/></w:rPr><w:t>red</w:t></w:r><w:r><w:rPr><w:vanish/></w:rPr><w:t>hidden</w:t></w:r></w:p><w:p><w:del w:id="1" w:author="A"><w:r><w:delText>old</w:delText></w:r></w:del><w:ins w:id="2" w:author="A"><w:r><w:t>new</w:t></w:r></w:ins></w:p><w:sectPr><w:headerReference w:type="default" r:id="rId7"/><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1800" w:bottom="1440" w:left="1800" w:header="720" w:footer="720" w:gutter="0"/><w:titlePg/></w:sectPr>"#;
+        let styles = format!(
+            r#"<w:styles {w}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:pPr><w:shd w:val="clear" w:color="auto" w:fill="E7E6E6"/></w:pPr><w:rPr><w:color w:val="2F5496"/></w:rPr></w:style><w:style w:type="table" w:styleId="GridTable4"><w:name w:val="Grid Table 4"/><w:tblStylePr w:type="firstRow"><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="4472C4"/></w:tcPr></w:tblStylePr></w:style></w:styles>"#
+        );
+        let header = format!(
+            r#"<w:hdr {w}><w:tbl><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="1F3864"/></w:tcPr><w:p><w:r><w:t xml:space="preserve">Page </w:t></w:r><w:fldSimple w:instr=" PAGE \* MERGEFORMAT "><w:r><w:t>1</w:t></w:r></w:fldSimple></w:p></w:tc></w:tr></w:tbl></w:hdr>"#
+        );
+        let rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/><Relationship Id="rId8" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>"#;
+        zip_of(&[
+            ("[Content_Types].xml", TYPES),
+            ("_rels/.rels", ROOT_RELS),
+            ("word/document.xml", &document(body)),
+            ("word/_rels/document.xml.rels", rels),
+            ("word/styles.xml", &styles),
+            ("word/header1.xml", &header),
+        ])
+    }
+
+    /// `render` lists, for every story part and not only the body, what
+    /// should reach the page: tables with their style, float and shading
+    /// (direct, per cell, and from the table style), shaded, highlighted,
+    /// coloured and hidden text, fields, the order of deleted and inserted
+    /// runs, and the sections; `(layout)` adds the page count and the face
+    /// each requested font resolved to.
+    #[test]
+    fn render_lists_what_each_part_puts_on_the_page() {
+        let out = report(&docx_for_render(), None, &opts_for(Check::Render)).unwrap();
+        for expected in [
+            "word/document.xml: 7 paragraphs\n",
+            "  section 1 page=12240x15840 margins=1440,1800,1440,1800 header=720 footer=720 titlePg default-header=word/header1.xml\n",
+            "  table 1 2x2 style=\"Grid Table 4\" float(tblpX=100,tblpY=200,vertAnchor=text) shd=FFFF00 cells-shd[D9E2F3×1] style-shd[firstRow=4472C4] \"A1 | B1\"\n",
+            "  pstyle \"Title\" ×1\n",
+            "  para-shd E7E6E6 via \"Title\" ×1 \"Heading\"\n",
+            "  para-shd FFC000 ×1 \"markedredhidden\"\n",
+            "  color 2F5496 via \"Title\" ×1 \"Heading\"\n",
+            "  color FF0000 ×1 \"red\"\n",
+            "  highlight yellow ×1 \"marked\"\n",
+            "  vanish ×1 \"hidden\"\n",
+            "  rfonts \"Arial\" ×1\n",
+            "  revisions del→ins ×1 \"oldnew\"\n",
+            "word/header1.xml: 1 paragraphs\n",
+            "  shown as section 1 default header\n",
+            "  table 1 1x1 cells-shd[1F3864×1] \"Page 1\"\n",
+            "  field PAGE ×1\n",
+            "(layout): 1 pages\n",
+            "  docDefaults rfonts ascii=Calibri hAnsi=Calibri\n",
+        ] {
+            assert!(out.contains(expected), "{expected:?} in\n{out}");
+        }
+        assert!(out.contains("  font \"Arial\" regular → "), "{out}");
+        // Two files: only what differs.
+        let same = report(
+            &docx_for_render(),
+            Some(&docx_for_render()),
+            &opts_for(Check::Render),
+        )
+        .unwrap();
+        assert_eq!(same, "render identical\n");
+        let pick = |fill: &str| {
+            let pkg = docx_for_render();
+            let mut z = zip::ZipArchive::new(Cursor::new(pkg)).unwrap();
+            let mut parts: Vec<(String, String)> = Vec::new();
+            for i in 0..z.len() {
+                let mut f = z.by_index(i).unwrap();
+                let mut s = String::new();
+                f.read_to_string(&mut s).unwrap();
+                parts.push((f.name().to_string(), s.replace("1F3864", fill)));
+            }
+            let refs: Vec<(&str, &str)> = parts
+                .iter()
+                .map(|(n, s)| (n.as_str(), s.as_str()))
+                .collect();
+            zip_of(&refs)
+        };
+        let out = report(
+            &docx_for_render(),
+            Some(&pick("FFFFFF")),
+            &opts_for(Check::Render),
+        )
+        .unwrap();
+        assert!(
+            out.contains("-A   table 1 1x1 cells-shd[1F3864×1] \"Page 1\"\n")
+                && out.contains("+B   table 1 1x1 cells-shd[FFFFFF×1] \"Page 1\"\n"),
             "{out}"
         );
     }

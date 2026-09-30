@@ -439,6 +439,12 @@ enum DebugCheck {
     /// definition plus the list's overrides; abstract ids renumber, so
     /// they are left out); with two files, the lines that differ.
     Numbering,
+    /// What each story part should put on the page (tables with style,
+    /// float and shading; shaded, highlighted, coloured and hidden text;
+    /// fonts; fields; ins/del order; frames; sections), and "(layout)":
+    /// jubarte's page count and the face each font resolved to; with two
+    /// files, the lines that differ.
+    Render,
 }
 
 impl From<DebugCheck> for jubarte::debug::Check {
@@ -461,6 +467,7 @@ impl From<DebugCheck> for jubarte::debug::Check {
             DebugCheck::Changes => Check::Changes,
             DebugCheck::Styledefs => Check::StyleDefs,
             DebugCheck::Numbering => Check::Numbering,
+            DebugCheck::Render => Check::Render,
         }
     }
 }

@@ -29,6 +29,26 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Added
 
+- `jubarte debug FILE --check render` lists what each story part should put
+  on the page, for diagnosing a PDF that scores low against Word's. It reads
+  every part: body, headers, footers, footnotes, endnotes and comments, with
+  their text boxes. For each part it lists:
+  - the sections;
+  - tables, with their size, style, float position, direct and cell shading,
+    the table style's shading, and the first row's text;
+  - frames and anchored drawings;
+  - fields such as PAGE;
+  - paragraph styles and shading;
+  - text colour, highlight, run shading and hidden text, direct or from a
+    style;
+  - requested fonts;
+  - whether a replaced run's deletion comes before its insertion or after
+    it.
+
+  A `(layout)` entry adds jubarte's page count and the face each requested
+  font resolved to (installed, embedded, altName or a substitute), plus the
+  `docDefaults`, theme and `fontTable.xml` fonts. With two files it prints
+  only the lines that differ.
 - `jubarte debug diff A B [C …]` compares two or more packages element by
   element instead of line by line: styles pair by type and name, paragraphs
   by their text (a rewritten one meets the one it replaced), tables by

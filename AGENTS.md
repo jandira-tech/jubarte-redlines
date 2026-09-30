@@ -93,6 +93,39 @@ comments are drawn: `conventional` (the default: red, blue and green marks),
 - A test that asserts Word-mode behaviour sets `RevisionStyle::Word`
   explicitly. Test the default mode alongside it, so a Word quirk cannot leak
   into it.
+- Word mode can be worse than our convention. Say so whenever it is, record
+  the case in `docs/WORD_DIFFERENCES.md`, and offer the user both behaviours.
+
+## Diagnosing a low score against Word
+
+Find the cause in the files before changing layout code.
+
+- Unpack the docx and read the XML behind each difference, especially what
+  Word chose to render or to leave out (a dead comment range, a hidden or
+  vanished run, an `mc:Fallback`, a zero-size frame). Start from the
+  `jubarte debug FILE --check …` views.
+- Run the code-driven checks on every low scorer. Tables and fills are the
+  usual losers.
+  - `jubarte debug FILE --check render` lists what should reach the page,
+    part by part:
+    - tables with their size, style, float position, shading and first
+      cells;
+    - highlighted and shaded text, text colours and paragraph shading;
+    - the fonts asked for and what jubarte loads for each (installed,
+      embedded, or an open-source substitute);
+    - fields, including page numbers;
+    - the order of inserted and deleted runs;
+    - frames and sections.
+  - `jubarte debug A.docx B.docx --check render` prints only the lines that
+    differ.
+  - Compare the result with the two PDFs (Word's and ours): the page count,
+    the embedded fonts, and the fill and text colours on each page.
+- Do not assume where the content lives. `word/document.xml` is one part.
+  Headers, footers, footnotes, endnotes, comments, text boxes, and the style,
+  numbering and theme parts all count.
+- Headers, footers, footnotes, endnotes and page numbers matter as much as
+  the body: their style, their position, and the order of revised content
+  (whether the deletion comes before the insertion or after it).
 
 ## When Word cannot open a jubarte file
 
