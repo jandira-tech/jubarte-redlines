@@ -40,12 +40,16 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
+      # tests/corpus keeps the bench's file names, some past Windows'
+      # 260-character path limit.
+      - run: git config --global core.longpaths true
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --all-features
+      # Every failing test binary, not just the first.
+      - run: cargo test --all-features --no-fail-fast
 
   coverage:
     name: coverage
