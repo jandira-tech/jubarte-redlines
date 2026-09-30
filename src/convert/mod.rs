@@ -12398,9 +12398,14 @@ fn para_keeps_xml_space(dom: &Dom, para: NodeId) -> bool {
 
 /// Pretty-printed XML between elements is whitespace-only and is not text.
 /// A whitespace-only `w:t` is: `birds.` + `<w:t> </w:t>` + `We` is
-/// "birds. We" in Word (fixtures_500 014babb2 painted "birds.We").
+/// "birds. We" in Word (fixtures_500 014babb2 painted "birds.We"). So is
+/// a deleted one (246c7fcf50's footer "2026" + `<w:delText> </w:delText>`
+/// + "Government").
 fn is_run_text(dom: &Dom, node: NodeId, text: &str) -> bool {
-    !text.trim().is_empty() || dom.parent(node).is_some_and(|p| dom.name_is(p, &W::t()))
+    !text.trim().is_empty()
+        || dom
+            .parent(node)
+            .is_some_and(|p| dom.name_is(p, &W::t()) || dom.name_is(p, &W::del_text()))
 }
 
 /// A run whose `w:t` carries `xml:space="preserve"`.

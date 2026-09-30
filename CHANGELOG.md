@@ -129,6 +129,12 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   w:val="0"` shows them again. 4910ce2060's content-control placeholders
   printed in cells Word leaves empty. `jubarte debug --check render` lists
   them as `vanish via "Style"`.
+- A run whose `w:t` or `w:delText` is a single space prints that space.
+  Redlines that delete a lone space between words ("under Section",
+  "for the period") printed the words fused. In the docx-to-pdf work set,
+  a189917's redline went from 45.5/20.9 to 59.3/51.3 and back to Word's
+  page count, and fc5d9fe's from 48.1/17.1 to 62.9/37.7.
+  `jubarte debug --check xml` now shows such a space as the element's text.
 - Rejecting a redline gives back what a changed style inherited in the
   original. Word's Reject All reads a style's old record against its
   built-in defaults, so a record holding only the style's own properties

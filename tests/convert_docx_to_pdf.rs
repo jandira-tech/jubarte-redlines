@@ -34170,6 +34170,56 @@ fn footer_with_para(para: &str) -> Vec<u8> {
 }
 
 #[test]
+fn a_space_only_run_after_a_field_keeps_its_space() {
+    // 246c7fcf50's footer: "© " DATE-field "2026", then a run holding only
+    // a space, then "Government …", all deleted. Word paints "2026
+    // Government"; we painted "2026Government".
+    let para = |wrap: bool, field: bool, space: bool| {
+        let (open, close, t, i) = if wrap {
+            (
+                "<w:del w:id=\"1\" w:author=\"A\" w:date=\"2026-09-25T00:00:00Z\">",
+                "</w:del>",
+                "delText",
+                "delInstrText",
+            )
+        } else {
+            ("", "", "t", "instrText")
+        };
+        let year = if field {
+            format!(
+                "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+                 <w:r><w:{i}>DATE \\@\"yyyy\"</w:{i}></w:r>\
+                 <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r>\
+                 <w:r><w:{t}>2026</w:{t}></w:r>\
+                 <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>"
+            )
+        } else {
+            format!("<w:r><w:{t}>2026</w:{t}></w:r>")
+        };
+        let gap = if space {
+            format!("<w:r><w:{t} xml:space=\"preserve\"> </w:{t}></w:r>")
+        } else {
+            String::new()
+        };
+        format!("<w:p>{open}{year}{gap}<w:r><w:{t}>Gov</w:{t}></w:r>{close}</w:p>")
+    };
+    for wrap in [false, true] {
+        for field in [false, true] {
+            let gov_x = |space| {
+                pdf_glyph_text_xy(&footer_with_para(&para(wrap, field, space)), "Gov")
+                    .expect("Gov painted")
+                    .0
+            };
+            let (with, without) = (gov_x(true), gov_x(false));
+            assert!(
+                with - without > 2.0,
+                "deleted={wrap} field={field}: the lone space moves Gov right; {with} vs {without}"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_space_only_run_keeps_its_space() {
     // fixtures_500 014babb2: `birds.` + `<w:t xml:space="preserve"> </w:t>` +
     // `We` painted "birds.We". A lone-space w:t is text, not the

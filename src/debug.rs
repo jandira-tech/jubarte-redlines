@@ -1630,7 +1630,12 @@ fn xml_lines(xml: &str) -> Vec<String> {
     let mut rest = xml;
     while let Some(lt) = rest.find('<') {
         let text = &rest[..lt];
-        if !text.trim().is_empty() {
+        // Whitespace between an element's open and close tags is its text
+        // (`<w:t> </w:t>`); elsewhere it is pretty-print.
+        let content = !text.is_empty()
+            && rest[lt..].starts_with("</")
+            && matches!(toks.last(), Some(Tok::Open(_, false)));
+        if !text.trim().is_empty() || content {
             toks.push(Tok::Text(text.to_string()));
         }
         // The tag ends at the first `>` outside quotes.
@@ -3002,7 +3007,7 @@ mod tests {
 
     #[test]
     fn xml_prints_one_element_per_line_without_noise() {
-        let body = r#"<w:p w:rsidR="00AB12CD" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" w14:paraId="1A2B3C4D" w14:textId="77777777"><w:pPr><w:jc w:val="center"/></w:pPr><w:r w:rsidRPr="00FF00FF"><w:t xml:space="preserve">Hi </w:t></w:r></w:p>"#;
+        let body = r#"<w:p w:rsidR="00AB12CD" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" w14:paraId="1A2B3C4D" w14:textId="77777777"><w:pPr><w:jc w:val="center"/></w:pPr><w:r w:rsidRPr="00FF00FF"><w:t xml:space="preserve">Hi </w:t></w:r><w:r><w:delText xml:space="preserve"> </w:delText></w:r></w:p>"#;
         let out = report(&docx(body), None, &opts_for(Check::Xml)).unwrap();
         for expected in [
             "word/document.xml\n",
@@ -3012,6 +3017,9 @@ mod tests {
             "      <w:pPr>\n",
             "        <w:jc w:val=\"center\"/>\n",
             "        <w:t xml:space=\"preserve\">Hi </w:t>\n",
+            // A space-only text is content (246c7fcf50's footer), not
+            // the pretty-print between elements.
+            "        <w:delText xml:space=\"preserve\"> </w:delText>\n",
             "    </w:p>\n",
         ] {
             assert!(out.contains(expected), "{expected:?} in\n{out}");
