@@ -2958,6 +2958,43 @@ mod tests {
         );
     }
 
+    /// PR #247 review: `color auto`, `highlight none` and a nil `shd` are
+    /// resets, not absences. Direct on a run, or in a style over its base,
+    /// they stop the style's value from reaching the page, so `render`
+    /// must not report it.
+    #[test]
+    fn render_honours_formatting_resets() {
+        let w = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#;
+        let loud = r#"<w:color w:val="FF0000"/><w:highlight w:val="yellow"/><w:shd w:val="clear" w:color="auto" w:fill="00FF00"/>"#;
+        let reset = r#"<w:color w:val="auto"/><w:highlight w:val="none"/><w:shd w:val="nil"/>"#;
+        let body = format!(
+            r#"<w:p><w:r><w:rPr><w:rStyle w:val="Loud"/></w:rPr><w:t>shout</w:t></w:r><w:r><w:rPr><w:rStyle w:val="Loud"/>{reset}</w:rPr><w:t>hush</w:t></w:r><w:r><w:rPr><w:rStyle w:val="Quiet"/></w:rPr><w:t>calm</w:t></w:r></w:p>"#
+        );
+        let styles = format!(
+            r#"<w:styles {w}><w:style w:type="character" w:styleId="Loud"><w:name w:val="Loud"/><w:rPr>{loud}</w:rPr></w:style><w:style w:type="character" w:styleId="Quiet"><w:name w:val="Quiet"/><w:basedOn w:val="Loud"/><w:rPr>{reset}</w:rPr></w:style></w:styles>"#
+        );
+        let rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId8" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>"#;
+        let pkg = zip_of(&[
+            ("[Content_Types].xml", TYPES),
+            ("_rels/.rels", ROOT_RELS),
+            ("word/document.xml", &document(&body)),
+            ("word/_rels/document.xml.rels", rels),
+            ("word/styles.xml", &styles),
+        ]);
+        let out = report(&pkg, None, &opts_for(Check::Render)).unwrap();
+        for expected in [
+            "  color FF0000 via \"Loud\" ×1 \"shout\"\n",
+            "  highlight yellow via \"Loud\" ×1 \"shout\"\n",
+            "  run-shd 00FF00 via \"Loud\" ×1 \"shout\"\n",
+        ] {
+            assert!(out.contains(expected), "{expected:?} in\n{out}");
+        }
+        assert!(
+            !out.contains("\"hush\"") && !out.contains("\"calm\""),
+            "reset runs report no inherited formatting:\n{out}"
+        );
+    }
+
     #[test]
     fn text_of_two_packages_shows_only_the_changed_lines() {
         let a = docx(TRACKED);

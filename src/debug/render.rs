@@ -116,9 +116,12 @@ struct StyleInfo {
     name: String,
     based: String,
     para_shd: Option<String>,
-    color: Option<String>,
-    highlight: Option<String>,
-    run_shd: Option<String>,
+    /// The style's own run colour, highlight and shading: `None` when it
+    /// sets none (its base's shows), `Some(None)` when it resets them
+    /// (`auto`, `none`, a nil `shd`).
+    color: Option<Option<String>>,
+    highlight: Option<Option<String>>,
+    run_shd: Option<Option<String>>,
     /// The style's own `w:vanish`: `Some(true)` hides, `Some(false)` turns
     /// a base's off.
     vanish: Option<bool>,
@@ -161,9 +164,7 @@ impl StyleBook {
                             .and_then(|x| shd(dom, x)),
                         color: rpr.and_then(|r| color(dom, r)),
                         highlight: rpr.and_then(|r| highlight(dom, r)),
-                        run_shd: rpr
-                            .and_then(|r| child(dom, r, "shd"))
-                            .and_then(|x| shd(dom, x)),
+                        run_shd: rpr.and_then(|r| run_shd(dom, r)),
                         vanish: rpr
                             .and_then(|r| child(dom, r, "vanish").map(|_| on(dom, r, "vanish"))),
                         table_shd: Vec::new(),
@@ -280,20 +281,27 @@ fn shd(dom: &Dom, x: NodeId) -> Option<String> {
     }
 }
 
-/// `rPr`'s text colour: the value, or `theme:…` for a theme colour.
-fn color(dom: &Dom, rpr: NodeId) -> Option<String> {
+/// `rPr`'s text colour: the value, or `theme:…` for a theme colour;
+/// `Some(None)` for `auto`, which resets an inherited one.
+fn color(dom: &Dom, rpr: NodeId) -> Option<Option<String>> {
     let c = child(dom, rpr, "color")?;
     let theme = attr(dom, c, "themeColor");
     if !theme.is_empty() {
-        return Some(format!("theme:{theme}"));
+        return Some(Some(format!("theme:{theme}")));
     }
     let val = attr(dom, c, "val");
-    (!val.is_empty() && val != "auto").then_some(val)
+    Some((!val.is_empty() && val != "auto").then_some(val))
 }
 
-fn highlight(dom: &Dom, rpr: NodeId) -> Option<String> {
+/// `rPr`'s highlight; `Some(None)` for `none`, a reset.
+fn highlight(dom: &Dom, rpr: NodeId) -> Option<Option<String>> {
     let val = attr(dom, child(dom, rpr, "highlight")?, "val");
-    (!val.is_empty() && val != "none").then_some(val)
+    Some((!val.is_empty() && val != "none").then_some(val))
+}
+
+/// `rPr`'s shading; `Some(None)` for one that paints nothing (nil), a reset.
+fn run_shd(dom: &Dom, rpr: NodeId) -> Option<Option<String>> {
+    child(dom, rpr, "shd").map(|x| shd(dom, x))
 }
 
 /// A toggle property that is on (`w:val` absent, `1`, `true` or `on`).
@@ -481,32 +489,33 @@ fn run(dom: &Dom, r: NodeId, styles: &StyleBook, tally: &mut Tally) {
     };
     let rstyle = style_of(rpr, "rStyle");
     let pstyle = style_of(child(dom, para, "pPr"), "pStyle");
-    let inherited = |f: &dyn Fn(&StyleInfo) -> Option<String>| {
+    let inherited = |f: &dyn Fn(&StyleInfo) -> Option<Option<String>>| {
         styles.find(&rstyle, f).or_else(|| styles.find(&pstyle, f))
     };
-    let mut add =
-        |label: &str, direct: Option<String>, from_style: &dyn Fn(&StyleInfo) -> Option<String>| {
-            match direct {
-                Some(v) => tally.add(format!("{label} {v}"), &text),
-                None => {
-                    if let Some((v, name)) = inherited(from_style) {
-                        tally.add(format!("{label} {v} via \"{name}\""), &text);
-                    }
+    // A direct reset (`Some(None)`) hides the style's value; so does the
+    // nearest style in the chain that resets it.
+    let mut add = |label: &str,
+                   direct: Option<Option<String>>,
+                   from_style: &dyn Fn(&StyleInfo) -> Option<Option<String>>| {
+        match direct {
+            Some(Some(v)) => tally.add(format!("{label} {v}"), &text),
+            Some(None) => {}
+            None => {
+                if let Some((Some(v), name)) = inherited(from_style) {
+                    tally.add(format!("{label} {v} via \"{name}\""), &text);
                 }
             }
-        };
+        }
+    };
     add("color", rpr.and_then(|x| color(dom, x)), &|s| {
         s.color.clone()
     });
     add("highlight", rpr.and_then(|x| highlight(dom, x)), &|s| {
         s.highlight.clone()
     });
-    add(
-        "run-shd",
-        rpr.and_then(|x| child(dom, x, "shd"))
-            .and_then(|x| shd(dom, x)),
-        &|s| s.run_shd.clone(),
-    );
+    add("run-shd", rpr.and_then(|x| run_shd(dom, x)), &|s| {
+        s.run_shd.clone()
+    });
     // Hidden directly, else by the character style's chain (what the
     // converter follows).
     match rpr.and_then(|x| child(dom, x, "vanish")) {

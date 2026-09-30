@@ -10252,7 +10252,7 @@ fn table_block(
                 Vec::new()
             }
         })
-        .filter(|&row| !row_is_hidden(dom, row))
+        .filter(|&row| !row_is_hidden(dom, row, &sheet.by_id))
         .collect();
     let row_count = all_rows.len();
     // The rules an edge a cell's tcBorders leaves unnamed falls back to.
@@ -10962,10 +10962,21 @@ fn para_mark_hidden(dom: &Dom, para: NodeId, styles: &HashMap<String, NamedStyle
 /// hidden content (live Word: its borders and height go with it; without
 /// the marker a vanished row keeps a line). The empty cell-end paragraph
 /// after a nested table goes with the table (9617d33f's separators).
-fn row_is_hidden(dom: &Dom, row: NodeId) -> bool {
+fn row_is_hidden(dom: &Dom, row: NodeId, styles: &HashMap<String, NamedStyle>) -> bool {
+    // A direct w:vanish decides; without one, the character style's (as
+    // the runs themselves are collected).
     let vanish = |rpr: Option<NodeId>| {
-        rpr.and_then(|rpr| first_named(dom, rpr, "vanish"))
-            .is_some_and(|n| !val_is_false(dom, Some(n)))
+        rpr.is_some_and(|rpr| {
+            first_named(dom, rpr, "vanish").map_or_else(
+                || {
+                    first_named(dom, rpr, "rStyle")
+                        .and_then(|n| dom.attribute(n, &W::val()))
+                        .and_then(|sid| styles.get(sid))
+                        .is_some_and(|named| named.hidden)
+                },
+                |n| !val_is_false(dom, Some(n)),
+            )
+        })
     };
     let marked = direct_named(dom, row, "trPr")
         .and_then(|pr| direct_named(dom, pr, "hidden"))
@@ -10978,10 +10989,7 @@ fn row_is_hidden(dom: &Dom, row: NodeId) -> bool {
                         .map(|i| dom.child_at(r, i))
                         .all(|c| dom.name_is(c, &W::r_pr()) || !dom.is_element(c))
             });
-            let mark_hidden = vanish(
-                dom.element(p, &W::p_pr())
-                    .and_then(|ppr| dom.element(ppr, &W::r_pr())),
-            );
+            let mark_hidden = para_mark_hidden(dom, p, styles);
             let after_table = dom.parent(p).is_some_and(|parent| {
                 let kids: Vec<NodeId> = (0..dom.child_count(parent))
                     .map(|i| dom.child_at(parent, i))
@@ -17891,16 +17899,10 @@ struct FieldScan {
     instr: String,
 }
 
-/// A run whose only content is a left-aligned `w:ptab`.
-fn left_ptab_run(dom: &Dom, run: NodeId) -> bool {
-    let mut kids = (0..dom.child_count(run))
-        .map(|i| dom.child_at(run, i))
-        .filter(|&c| dom.is_element(c) && !dom.name_is(c, &W::r_pr()));
-    matches!(
-        (kids.next(), kids.next()),
-        (Some(c), None) if dom.name_is(c, &W::name("ptab"))
-            && matches!(attr_any(dom, c, "alignment"), None | Some("left"))
-    )
+/// A left-aligned `w:ptab`.
+fn left_ptab(dom: &Dom, node: NodeId) -> bool {
+    dom.name_is(node, &W::name("ptab"))
+        && matches!(attr_any(dom, node, "alignment"), None | Some("left"))
 }
 
 /// The header/footer line being collected already holds text or a field.
@@ -18037,9 +18039,28 @@ fn collect_hf_rev(
         // A left ptab stops where the margin (or indent) starts: before any
         // text it moves nothing; after text it cannot go back, and Word
         // starts a new line (a9de4ed3f9's "Downloaded" under "Page 2 of 17").
-        if left_ptab_run(dom, node) {
-            if line_has_content(runs) {
-                runs.push(TextRun::new("\n", style));
+        // The ptab may share its run with the text after it (PR #247
+        // review): that text still follows the break.
+        if (0..dom.child_count(node)).any(|i| left_ptab(dom, dom.child_at(node, i))) {
+            let preserve = run_preserves_space(dom, node);
+            for i in 0..dom.child_count(node) {
+                let kid = dom.child_at(node, i);
+                if !dom.is_element(kid) || dom.name_is(kid, &W::r_pr()) {
+                    continue;
+                }
+                if left_ptab(dom, kid) {
+                    if line_has_content(runs) {
+                        runs.push(TextRun::new("\n", style.clone()));
+                    }
+                    continue;
+                }
+                let text = visible_text(dom, kid, mark, preserve);
+                if !text.is_empty() {
+                    runs.push(TextRun::new(text, style.clone()));
+                    if scan.result {
+                        scan.emitted = true;
+                    }
+                }
             }
             return;
         }
@@ -25672,6 +25693,7 @@ impl<'a> Layout<'a> {
                 self.hairline_h(x1, top, x2, width, color);
             }
             let y = base;
+            let mut above: Option<std::rc::Rc<ParaStyle>> = None;
             for (i, (line, _)) in lines.iter().enumerate() {
                 let align = line
                     .first()
@@ -25681,16 +25703,26 @@ impl<'a> Layout<'a> {
                     .get(i + 1)
                     .and_then(|(l, _)| l.first())
                     .is_some_and(|r| r.hf_cont);
-                self.draw_hf_line(line, y + baselines[i], align, wraps_on);
                 let para = line.iter().find_map(|r| r.hf_para.clone());
                 let next = lines
                     .get(i + 1)
                     .and_then(|(l, _)| l.iter().find_map(|r| r.hf_para.clone()));
+                // A shaded footer paragraph paints its band under the text,
+                // as the header's does.
+                if let Some(p) = para.as_ref() {
+                    let (ascent, line_h) = metrics[i];
+                    let top = y + baselines[i] + ascent;
+                    self.hf_line_fill(p, above.as_deref(), next.as_deref(), top, line_h);
+                }
+                self.draw_hf_line(line, y + baselines[i], align, wraps_on);
                 if let Some(p) = para.as_ref()
                     && next.as_ref().is_none_or(|n| !std::rc::Rc::ptr_eq(n, p))
                 {
                     let below = metrics[i].1 - metrics[i].0;
                     self.hf_bottom_rule(p, next.as_deref(), y + baselines[i] - below);
+                }
+                if para.is_some() {
+                    above = para;
                 }
             }
         }

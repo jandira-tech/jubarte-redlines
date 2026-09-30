@@ -2717,6 +2717,23 @@ fn a_header_paragraphs_shading_paints_behind_its_text() {
 }
 
 #[test]
+fn a_footer_paragraphs_shading_paints_behind_its_text() {
+    // PR #247 review: the footer loop drew its lines and rules but never
+    // the paragraph's fill, so white footer text on a shaded band vanished
+    // as the header's did before.
+    let ftr = r#"<w:p><w:pPr><w:pBdr><w:top w:val="single" w:sz="4" w:space="1" w:color="408287"/><w:left w:val="single" w:sz="4" w:space="4" w:color="408287"/><w:bottom w:val="single" w:sz="4" w:space="1" w:color="408287"/><w:right w:val="single" w:sz="4" w:space="4" w:color="408287"/></w:pBdr><w:shd w:val="clear" w:color="auto" w:fill="408287"/></w:pPr><w:r><w:rPr><w:b/><w:color w:val="FFFFFF"/><w:sz w:val="32"/></w:rPr><w:t>Footline</w:t></w:r></w:p>"#;
+    let pdf = docx_to_pdf(&footer_part_docx(ftr)).expect("shaded footer");
+    let (_, y) = pdf_glyph_text_xy(&pdf, "Footline").expect("the footer paints");
+    let bands = pdf_fill_rects(&pdf, 0.251, 0.510, 0.529);
+    assert!(
+        bands
+            .iter()
+            .any(|(w, h)| (460.0..480.0).contains(w) && (17.0..26.0).contains(h)),
+        "a text-area-wide band behind the footer (baseline {y}); fills {bands:?}"
+    );
+}
+
+#[test]
 fn header_ptabs_align_to_the_margins() {
     // Redlines vs 000e3e7b: "FORM<ptab center>" and "<ptab right>PAGE 1 OF 2"
     // sit centred on the text area and flush with the right margin,
@@ -2750,7 +2767,32 @@ fn a_left_ptab_after_text_starts_a_new_line() {
         ptab("right"),
         ptab("left")
     );
-    let pdf = docx_to_pdf(&header_part_docx(&hdr)).expect("ptab header");
+    left_ptab_lines(&hdr);
+}
+
+#[test]
+fn a_left_ptab_sharing_a_run_with_its_text_starts_a_new_line() {
+    // PR #247 review: a run may hold the ptab and the text after it. The
+    // left ptab then fell through as a plain tab and "Down" stayed on the
+    // "Pg" line.
+    let run = |a: &str, t: &str| {
+        format!(
+            r#"<w:r><w:ptab w:relativeTo="margin" w:alignment="{a}" w:leader="none"/><w:t>{t}</w:t></w:r>"#
+        )
+    };
+    let hdr = format!(
+        "<w:p>{}{}{}</w:p>",
+        run("left", "Meta"),
+        run("right", "Pg"),
+        run("left", "Down")
+    );
+    left_ptab_lines(&hdr);
+}
+
+/// `hdr` prints "Meta" at the left margin, "Pg" flush right on its line
+/// and "Down" at the left margin of the next line.
+fn left_ptab_lines(hdr: &str) {
+    let pdf = docx_to_pdf(&header_part_docx(hdr)).expect("ptab header");
     let (xm, ym) = pdf_glyph_text_xy(&pdf, "Meta").expect("Meta paints");
     let (xp, yp) = pdf_glyph_text_xy(&pdf, "Pg").expect("Pg paints");
     let (xd, yd) = pdf_glyph_text_xy(&pdf, "Down").expect("Down paints");
@@ -9089,6 +9131,31 @@ fn a_hidden_row_of_hidden_text_takes_its_borders_with_it() {
         after > plain_after + 5.0 && before - after < 30.0,
         "the hidden row takes no height; before={before} after={after} plain={plain_after}"
     );
+}
+
+#[test]
+fn a_hidden_row_of_style_hidden_text_takes_its_borders_with_it() {
+    // PR #247 review: the row's text and mark vanish through a character
+    // style, not a direct w:vanish. Its runs already stayed off the page;
+    // the row test read only direct vanish, so the row kept its height and
+    // its green top border.
+    let styles = "<w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         <w:style w:type=\"character\" w:styleId=\"Hid\"><w:name w:val=\"Hid\"/><w:rPr><w:vanish/></w:rPr></w:style>\
+         </w:styles>";
+    let body = "<w:p><w:r><w:t>Before</w:t></w:r></w:p>\
+         <w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"pct\"/><w:tblBorders>\
+           <w:top w:val=\"single\" w:sz=\"12\" w:space=\"0\" w:color=\"106B62\"/></w:tblBorders></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"8460\"/></w:tblGrid><w:tr><w:trPr><w:hidden/></w:trPr>\
+         <w:tc><w:tcPr><w:tcW w:w=\"0\" w:type=\"auto\"/></w:tcPr>\
+         <w:p><w:pPr><w:spacing w:after=\"0\"/><w:rPr><w:rStyle w:val=\"Hid\"/></w:rPr></w:pPr>\
+           <w:r><w:rPr><w:rStyle w:val=\"Hid\"/></w:rPr><w:t>Gone</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+         <w:p><w:r><w:t>After</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&docx_with_styles(body, styles)).expect("style-hidden row");
+    assert!(
+        !String::from_utf8_lossy(&pdf).contains("0.063 0.420 0.384 rg"),
+        "the hidden row's green border is not painted"
+    );
+    assert_eq!(page_with_text(&pdf, "Gone"), None, "its text stays hidden");
 }
 
 #[test]
