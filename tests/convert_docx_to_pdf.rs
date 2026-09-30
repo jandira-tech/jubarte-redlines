@@ -4706,6 +4706,44 @@ fn a_character_styles_vanish_hides_its_runs() {
 }
 
 #[test]
+fn an_empty_paragraph_whose_mark_style_vanishes_takes_no_line() {
+    // clean/4910ce2060: under "System Name" two empty paragraphs, both
+    // marks in rStyle ContentControlHidden (a vanish style), the first
+    // with a direct vanish=0. Word keeps one empty line (27.6pt from System
+    // Name to Compliance Period); we kept both and page 1 overflowed.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+          <w:style w:type=\"character\" w:styleId=\"ContentControlHidden\"><w:name w:val=\"Content Control (Hidden)\"/>\
+            <w:rPr><w:vanish/></w:rPr></w:style>\
+        </w:styles>";
+    let mark = |extra: &str| {
+        format!(
+            "<w:p><w:pPr><w:rPr><w:rStyle w:val=\"ContentControlHidden\"/>{extra}</w:rPr></w:pPr></w:p>"
+        )
+    };
+    let below_y = |between: &str| {
+        let body = format!(
+            "<w:p><w:r><w:t>Above</w:t></w:r></w:p>{between}<w:p><w:r><w:t>Below</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        );
+        let pdf = docx_to_pdf(&docx_with_styles(&body, styles)).expect("hidden mark");
+        pdf_glyph_text_xy(&pdf, "Below").expect("Below painted").1
+    };
+    let shown = mark("<w:vanish w:val=\"0\"/>");
+    let (one, both) = (below_y(&shown), below_y(&format!("{shown}{}", mark(""))));
+    assert!(
+        (one - both).abs() < 0.05,
+        "the styled-hidden empty mark adds no line; {both} vs {one}"
+    );
+    assert!(
+        (below_y("") - one).abs() > 5.0,
+        "the vanish=0 mark keeps its line"
+    );
+}
+
+#[test]
 fn a_line_breaks_own_size_does_not_raise_a_cell_line() {
     // Word sizes a line by its text, not by the run holding its w:br
     // (246c7fcf50's header cell: a white 24pt break after the 16pt title

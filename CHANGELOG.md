@@ -147,6 +147,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   246c7fcf50's "Year 6 …" footer table printed 27.6pt high (its redline
   went from 38.9/12.1 to 45.7/20.7, the clean document from 49.7/28.7 to
   53.8/35.5).
+- An empty paragraph whose mark's character style vanishes takes no line.
+  4910ce2060's ContentControlHidden marks under "System Name" each added a
+  line and pushed the document onto a third page; it prints on Word's two
+  (31.4/12.2 to 54.1/18.2).
 - Rejecting a redline gives back what a changed style inherited in the
   original. Word's Reject All reads a style's old record against its
   built-in defaults, so a record holding only the style's own properties

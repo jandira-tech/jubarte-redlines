@@ -6972,7 +6972,7 @@ fn walk_container(
                 && sect_here.is_none()
                 && !page_br
                 && !column_br
-                && para_mark_hidden(dom, child)
+                && para_mark_hidden(dom, child, &ctx.sheet.by_id)
             {
                 continue;
             }
@@ -10927,12 +10927,24 @@ fn table_pad_h(dom: &Dom, table: NodeId) -> (f32, f32) {
     )
 }
 
-/// The paragraph mark carries a direct `w:vanish`.
-fn para_mark_hidden(dom: &Dom, para: NodeId) -> bool {
-    dom.element(para, &W::p_pr())
+/// The paragraph mark is hidden: its direct `w:vanish`, else its character
+/// style's (4910ce2060's ContentControlHidden marks under "System Name").
+fn para_mark_hidden(dom: &Dom, para: NodeId, styles: &HashMap<String, NamedStyle>) -> bool {
+    let Some(rpr) = dom
+        .element(para, &W::p_pr())
         .and_then(|ppr| dom.element(ppr, &W::r_pr()))
-        .and_then(|rpr| first_named(dom, rpr, "vanish"))
-        .is_some_and(|n| !val_is_false(dom, Some(n)))
+    else {
+        return false;
+    };
+    first_named(dom, rpr, "vanish").map_or_else(
+        || {
+            first_named(dom, rpr, "rStyle")
+                .and_then(|n| dom.attribute(n, &W::val()))
+                .and_then(|sid| styles.get(sid))
+                .is_some_and(|named| named.hidden)
+        },
+        |n| !val_is_false(dom, Some(n)),
+    )
 }
 
 /// A row Word does not lay out: marked `trPr/hidden` with nothing but
