@@ -25,6 +25,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 - A paragraph that opens with a page break takes no line before the
   break, so a page filled to its last line breaks once instead of
   leaving a blank page. Priority d9b54326f3: 32 pages → Word's 30.
+- An object taller than what is left of a page under nothing but the
+  space before that opened the page stays on that page, past the bottom
+  margin, as in Word, instead of leaving it blank. Priority 9f2c60b301's
+  648pt cover box under Heading 1's 18pt before: 9 pages → Word's 8.
 
 ## [0.10.1] - 2026-09-30
 

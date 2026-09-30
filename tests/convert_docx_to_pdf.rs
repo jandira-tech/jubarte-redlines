@@ -6810,6 +6810,38 @@ fn a_picture_paragraphs_mark_rpr_sets_its_extra_leading() {
 }
 
 #[test]
+fn a_page_tall_inline_picture_under_its_space_before_stays_on_the_first_page() {
+    // Priority 9f2c60b301 (Word 16): a 648pt inline cover box fills the
+    // body of a 1in-margin Letter page, in a Heading 1 with 18pt before at
+    // the document start. Word keeps the space (its title sits 19pt lower
+    // than with none) and draws the box on page 1, past the bottom margin;
+    // jubarte broke to page 2 and left page 1 blank (9 pages, Word 8).
+    let pic = blip(
+        "5943600",
+        "8229600",
+        "<wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">",
+        "</wp:inline>",
+    );
+    let docx = drawing_docx(&format!(
+        "<w:p><w:pPr><w:spacing w:before=\"360\"/></w:pPr><w:r>{pic}</w:r></w:p>\
+         <w:p><w:r><w:t>After</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    ));
+    let pdf = docx_to_pdf(&docx).expect("cover box");
+    assert_eq!(
+        pdf_page_count(&pdf),
+        2,
+        "the cover stays on page 1, After opens page 2"
+    );
+    let top = pdf_image_boxes(&pdf).first().expect("picture").1 + 648.0;
+    assert!(
+        (top - (720.0 - 18.0)).abs() < 1.5,
+        "its 18pt before is kept; top={top}"
+    );
+}
+
+#[test]
 fn inline_picture_para_does_not_add_a_text_line_box() {
     // xml 3.4 ckpt 3 / case12: a drawing-only inline picture is the
     // paragraph's line box (cy), not a Normal text line plus the picture
