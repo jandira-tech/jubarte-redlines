@@ -1,10 +1,14 @@
-> **See every page side by side: [jandira-tech.github.io/jubarte-redlines](https://jandira-tech.github.io/jubarte-redlines/)**  
-> jubarte vs Microsoft Word, docxide-pdf, LibreOffice, PyMuPDF Pro, MiniPdf, rdocx and office2pdf on 808 documents, DOCX to PDF, scored per page.
+# jubarte-redlines
 
-# jubarte-redlines — #1 DOCX → PDF & #1 DOCX-vs-DOCX Comparison (Redlines) Rust Tool
+**Word-faithful DOCX tooling in pure Rust, with no Word and no LibreOffice.**
+Convert `.docx` to PDF the way Microsoft Word lays it out, compare two
+versions into a Word redline, accept or reject tracked changes, and apply
+edits as tracked changes. It ships as a CLI, a Rust crate, a Python wheel and
+an npm (WebAssembly) package.
 
-*Benchmarked against Microsoft Word®'s own output across an aggregate of 3,500+
-document fixtures — full tables in [RESULTS.md](RESULTS.md).*
+**Live benchmark, every page against Microsoft Word:
+[jandira-tech.github.io/neurotic_docx_bench](https://jandira-tech.github.io/neurotic_docx_bench/)**
+· tables: [neurotic_docx_bench RESULTS.md](https://github.com/jandira-tech/neurotic_docx_bench/blob/main/RESULTS.md)
 
 [![CI](https://github.com/jandira-tech/jubarte-redlines/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jandira-tech/jubarte-redlines/actions/workflows/ci.yml)
 [![REUSE status](https://api.reuse.software/badge/github.com/jandira-tech/jubarte-redlines)](https://api.reuse.software/info/github.com/jandira-tech/jubarte-redlines)
@@ -16,31 +20,35 @@ document fixtures — full tables in [RESULTS.md](RESULTS.md).*
 [![npm](https://img.shields.io/npm/v/jubarte-wasm.svg)](https://www.npmjs.com/package/jubarte-wasm)
 [![MSRV](https://img.shields.io/badge/MSRV-1.88-blue)](./Cargo.toml)
 [![license](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](./LICENSE)
-[![unsafe forbidden](https://img.shields.io/badge/unsafe-forbidden-success.svg)](./Cargo.toml)
+[![unsafe denied](https://img.shields.io/badge/unsafe-denied-success.svg)](./Cargo.toml)
 [![cargo-deny](https://img.shields.io/badge/cargo--deny-checked-success.svg)](./deny.toml)
 [![github](https://img.shields.io/badge/github-jandira--tech%2Fjubarte--redlines-181717?logo=github)](https://github.com/jandira-tech/jubarte-redlines)
 
-`jubarte convert` reconstructs Word's page layout in pure Rust — no Word, no
-LibreOffice — and paints tracked changes the way Word does. Scored against
-Word's own PDF exports, **jubarte 0.9.2 ranks #1 on both pooled corpora**,
-every tool scored on the same documents: mean Jaccard **0.603 vs 0.334**
-(LibreOffice 26.8, the next best) over 1,204 clean documents, and **0.392 vs
-0.214** over 451 redlined ones ([RESULTS.md](RESULTS.md)).
+## What it does
 
-And `jubarte redlines`: compare two `.docx` into a tracked-changes
-document — native `w:ins` / `w:del` / move / format-change markup on the
-original package that Word opens without repair — or list, accept, and reject
-revisions in an existing one, all of them or one change at a time.
+| Task | Command |
+| --- | --- |
+| **DOCX → PDF / PNG**, laid out as Word does, tracked changes painted | `jubarte convert contract.docx` |
+| **Compare** two `.docx` into a redline that Word opens without repair (`w:ins` / `w:del` / moves / format changes) | `jubarte old.docx new.docx` |
+| **Accept / reject** every change, or only some by id, author or kind | `jubarte accept redline.docx -o out.docx --author Ann` |
+| **Edit with a plan**: get the clean copy, a redline with comments, and a report | `jubarte edit contract.docx --plan plan.json --out-dir review` |
+| **Read** the paragraphs with their ids, as Markdown or JSON | `jubarte text contract.docx` |
+| **Triage** a package Word refuses | `jubarte debug file.docx` |
 
-And `jubarte edit`: apply a plan of exact, anchored edits (for a person or
-an agent) and get the clean copy, the Word redline with comments, a
-per-operation report and, optionally, the rendered pages. A plan that does
-not apply cleanly writes nothing.
+```sh
+cargo install jubarte-redlines      # CLI (binary: jubarte)
+pip install jubarte-redlines        # Python ≥ 3.10
+npm install jubarte-wasm            # Node ≥ 18 + browsers
+```
 
-Both are APIs first, not just the `jubarte` CLI: `jubarte::convert` /
-`jubarte::document_comparer` in **Rust**, `jubarte_redlines` on **PyPI**, and
-`jubarte-wasm` on **npm** (Node + browser) — the same engine and output model
-everywhere.
+How it scores against Microsoft Word's own output, from the
+[bench tables](https://github.com/jandira-tech/neurotic_docx_bench/blob/main/RESULTS.md)
+(0–100, higher is better; a failed document scores 0):
+
+| Benchmark | jubarte | next best |
+| --- | --- | --- |
+| DOCX → PDF vs Word's PDF, 3,554 docs | **77.8** mean · **81.7** median (0.9.3) | LibreOffice 26.8: 62.9 · 65.8 |
+| Redline vs Word's own compare, 3,502 pairs | **72.2** · **81.7** (0.10.0) | Docxodus 12.6.5: 53.9 · 62.9 |
 
 - **Repo:** [jandira-tech/jubarte-redlines](https://github.com/jandira-tech/jubarte-redlines)
 - **crates.io:** [`jubarte-redlines`](https://crates.io/crates/jubarte-redlines)
@@ -59,9 +67,9 @@ everywhere.
 
 | Need | What jubarte-redlines does |
 | --- | --- |
-| Word-faithful PDF | Layout engine whose rules were probed against live Microsoft Word — **#1 vs Word's own exports** (0.647 mean Jaccard, 2,102 docs; LibreOffice 0.335, docxide-pdf 0.216) — no Office runtime needed |
+| Word-faithful PDF | Layout engine whose rules were probed against live Microsoft Word, ranked first against Word's own exports on the bench's 3,554-document set, with no Office runtime |
 | Revisions in the PDF | Paints tracked changes in conventional marks, Word's own markup (per-author palette, balloon pane, change bars), or a custom palette |
-| Word-valid redlines | Emits native `w:ins` / `w:del` / move / format-change markup that Word opens without repair — **#1 markup fidelity** on the 763-doc benchmark (84.5 vs docxodus 80.2) |
+| Word-valid redlines | Emits native `w:ins` / `w:del` / move / format-change markup that Word opens without repair, closest to Word's own compare on the bench's 3,502 pairs |
 | Selective accept / reject | Lists every tracked change with a stable id (`body:rev:12`) and resolves any selection by id, author or kind, the way Word's Accept/Reject does; the rest stay tracked |
 | Edit plans | Guarded edits anchored to `[body:p:N]` paragraph ids, applied as tracked changes plus comments, across the body, headers, footers and notes |
 | Lossless package | Keeps parts, relationships, headers/footers, footnotes, styles, and media from the original |
@@ -348,78 +356,22 @@ reproduces classic PowerTools behavior.
 
 ## Benchmarks — scored against Microsoft Word
 
-Independent harnesses render each tool's output and score it against PDFs
-exported by **Microsoft Word** itself. Numbers below are from the last full
-runs, on **0.9.2**, plus the latest **jubarte-rust** stamps (this engine's
-native benchmark lane). 0.10 has not been re-scored on the full pools yet; full tables, corpus provenance, and per-version history:
-[RESULTS.md](RESULTS.md). Every scored page, side by side with Word's and the
-other engines': [jandira-tech.github.io/jubarte-redlines](https://jandira-tech.github.io/jubarte-redlines/).
+[neurotic_docx_bench](https://github.com/jandira-tech/neurotic_docx_bench)
+renders each tool's output and scores it against what **Microsoft Word**
+itself produces: Word's PDF export for conversion, and Word's own compare
+(opened and exported by Word) for redlines. It keeps the current numbers, so
+this README does not copy them:
 
-### docx→pdf — Jaccard vs Word's own export (0–1, higher is better)
+- **Every page, side by side:** [jandira-tech.github.io/neurotic_docx_bench](https://jandira-tech.github.io/neurotic_docx_bench/)
+- **Tables, one row per tool version:** [RESULTS.md](https://github.com/jandira-tech/neurotic_docx_bench/blob/main/RESULTS.md)
+  (methodology and history in `RESULTS_DETAILED.md` there)
 
-docxide-metrics pools the per-document score of the corpora every tool
-converted, over the same documents; a document a tool fails scores 0.
-**jubarte 0.9.2 ranks #1 on both pools:**
-
-| corpus pool | docs | jubarte 0.9.2 | best other tool |
-| --- | ---: | --- | --- |
-| clean documents | 1,204 | **0.603** mean · **0.690** median | LibreOffice 26.8 — 0.334 / 0.287 |
-| redlined documents | 451 | **0.392** · **0.383** | LibreOffice 26.8 — 0.214 / 0.185 |
-
-~1.8× LibreOffice's mean and ~3.3× docxide-pdf 0.17.1's (0.184) on the clean
-pool; office2pdf, rdocx and minipdf score ≤ 0.13. `--compress` scores the
-same — it only deflates finished streams. The clean pool is English parts
-a+b and docxide's 208-case suite; the redlined pool is the 451 English
-redlines. Corpora only some tools ran (fixtures_500, neurotic's 398, the
-965-document redline set) get their own columns in RESULTS.md and never
-enter the rank.
-
-### Tracked-changes docs → PDF — neurotic harness (0–100)
-
-428 redline documents vs Word's export (competitors as of their 2026-08-16
-run):
-
-| tool | mean | median |
-| --- | ---: | ---: |
-| **jubarte 0.9.2** | **84.6** | **88.7** |
-| office2pdf 0.6.7 / pdfitdown 4.0.0 | 60.3 | 57.0 |
-| rdocx 0.7.0 | 50.3 | 48.8 |
-
-### Redlining — vs Word's own redline (Word truth)
-
-Each tool redlines the pair; Word converts that redline to PDF, and it is
-scored against Word's own redline of the same pair, also converted by Word.
-Only the redline differs:
-
-| pairs | jubarte | Docxodus 12.6.2 |
-| --- | --- | --- |
-| neurotic redline pools (744) | **80.93** harness · **0.787** Jaccard | 76.87 · 0.720 |
-| English redlines (451) | **51.87** · **0.361** | 33.94 · 0.202 |
-
-The older `script_redlines` tables render each redline with LibreOffice
-before scoring. jubarte-rust's latest run there fell from 84.5 to 75.6 once
-LibreOffice 26.8 began substituting Aptos, while docxodus 9.8.0's 80.2 was
-scored before that switch, so those rows no longer compare; RESULTS.md keeps
-them as superseded history.
-
-A redline's first contract stays **Word-validity** — markup Word opens
-without repair, enforced by the
+The bench covers DOCX → PDF on clean, tracked-changes and commented
+documents, docxide-pdf's own metrics, redlines against Word's compare, Word
+accepting or rejecting each tool's redline, and redline speed. A redline's
+first requirement stays **Word validity**: markup that Word opens without
+repair, enforced by the
 [validity rings](#validity-rings-word-valid-output) on every release.
-
-### Speed — ms per compared pair (lower is better)
-
-Latest stamps (2026-08-15), warm persistent-process lane over the same
-5,000 pairs:
-
-| lane | this engine | docxodus equivalent |
-| --- | ---: | ---: |
-| native inproc | **26.0** mean · **6.4** median | 27.4 · 8.7 (csharp-inproc, 4,880 pairs timed) |
-| WebAssembly | **41.5** · **9.7** | 428.2 · 74.6 (dotnet-wasm, 5,000 pairs) |
-
-Ahead of the fastest .NET in-process lane, and ~10× faster in the browser
-lane — where the npm package actually runs. (`docx-redline-js` posts 2.8 ms
-on a 90-doc set but scores ~45 on markup fidelity — a different product
-category.)
 
 ### In-repo microbenches
 
@@ -514,7 +466,7 @@ Original MIT texts are preserved as attribution records — see
 > Corporation. This project is not affiliated with, endorsed by, or supported
 > by Microsoft. "Word-faithful" and the #1 rankings are independent
 > engineering measurements scored against PDFs exported by Microsoft Word —
-> see [RESULTS.md](RESULTS.md). All trademarks remain the property of their
+> see the [bench results](https://github.com/jandira-tech/neurotic_docx_bench/blob/main/RESULTS.md). All trademarks remain the property of their
 > respective owners.
 
 ## License
@@ -526,7 +478,7 @@ Copyright (c) 2026 Jandira Technologies, LLC for its contributions.
 
 ## Find us
 
-[Engine comparison site](https://jandira-tech.github.io/jubarte-redlines/) ·
+[Benchmark vs Word](https://jandira-tech.github.io/neurotic_docx_bench/) ·
 [jandira.tech](https://www.jandira.tech) · [arthur.law](https://arthur.law) ·
 [Cicero](https://www.cicero.im) · [LinkedIn](https://linkedin.com/in/arthrod) ·
 `contact@arthur.law`

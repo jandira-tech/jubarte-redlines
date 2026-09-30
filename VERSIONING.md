@@ -229,7 +229,7 @@ app-only release:
 |---|---|---|
 | `Cargo.toml` version | crate semver | crates.io, docs.rs, dependants |
 | git tag `vX.Y.Z` | immutable release id | humans, CI |
-| binary content hash under `utils/jubarte/jubarte-rust/` | neurotic `tool_version` (`jubarte-rust@<sha12>`) | RESULTS.md ranking |
+| binary content hash under `utils/jubarte/jubarte-rust/` | neurotic `tool_version` (`jubarte-rust@<sha12>`) | [bench RESULTS.md](https://github.com/jandira-tech/neurotic_docx_bench/blob/main/RESULTS.md) ranking |
 | app store build number | Tauri/MAS | App Store Connect |
 
 The neurotic bench does **not** use Cargo semver for jubarte-rust; it hashes the
