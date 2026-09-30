@@ -25,11 +25,13 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   element's path (`word/styles.xml › style paragraph "Body Text" › rPr`)
   and prints the property items or run segments not every file holds; with
   three or more files each line names the files holding it. rsids,
-  paragraph ids, revision ids/authors/dates, relationship ids, attribute
-  order, on/off values and empty property blocks are dropped unless
-  `--raw`; `--style`, `--para-text` and `-p` narrow the report, `--full`
-  prints the shown elements' common lines too. The same in the library
-  (`jubarte::debug::diff::diff`).
+  paragraph ids, revision ids/authors/dates, relationship ids (a link or
+  image shows what it points to instead), docProps save stamps and counts,
+  attribute order, on/off values and empty property blocks are dropped
+  unless `--raw`; a part that is not well-formed XML is reported, not
+  compared. `--style`, `--para-text` and `-p` narrow the report, `--full`
+  prints the shown elements' common lines too without counting them. The
+  same in the library (`jubarte::debug::diff::diff`).
 - Tracked changes one at a time, as Word's Accept / Reject This Change:
   `jubarte changes FILE` lists every change with an id (`body:rev:12`,
   `header1:rev:3`), its kind, target, author and text (`--json` for JSON
