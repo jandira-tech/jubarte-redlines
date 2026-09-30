@@ -201,6 +201,13 @@ jubarte reject redline.docx -o base.docx
 Accepting a deleted paragraph mark joins that paragraph to the next one, as
 Word does; a paragraph whose runs are all deleted disappears.
 
+Either side may be Markdown (the `jubarte` binary): `jubarte contract.docx
+edited.md -o redline.docx` applies the Markdown's edits to the Word document
+and redlines only those, keeping empty paragraphs, fields and formatting.
+`jubarte diff old.md new.md` prints two Markdown documents' changes as
+CriticMarkup (`{~~old~>new~~}`); `-o changes.docx` writes them as tracked
+changes. See docs/MARKDOWN.md.
+
 ## 5. Create a new document (docx-js)
 
 `docx` (npm) is preinstalled; write a script and `require('docx')`. Footguns:
@@ -214,6 +221,11 @@ Word does; a paragraph whose runs are all deleted disappears.
 - Horizontal rule: a paragraph bottom border, not a table. Dot leaders: `PositionalTab`.
 
 Then verify with `jubarte convert output.docx --png --dpi 100` and `Read` the pages.
+
+For prose, Markdown is shorter: `jubarte convert draft.md --reference-doc
+house.docx -o draft.docx` takes the house styles, and CriticMarkup in the
+Markdown (`{++added++}`, `{--removed--}`, `{==text==}{>>comment<<}`) becomes
+tracked changes and comments.
 
 ## Dependencies
 

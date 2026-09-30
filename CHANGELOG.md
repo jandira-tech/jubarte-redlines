@@ -80,6 +80,30 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   leaves follows `existing_revisions`. A change selected by both sides is
   refused with `REVISION_CONFLICT`, an id the document lacks with
   `UNKNOWN_CHANGE`; the report lists the resolved ids.
+- Markdown alongside Word ([docs/MARKDOWN.md](docs/MARKDOWN.md)):
+  - `jubarte convert draft.md` (`markdown::markdown_to_docx`) writes
+    CommonMark with GitHub's tables, strikethrough, task lists and footnotes
+    as `.docx`, PDF or PNG, pandoc style (`-f`/`-t`, `--reference-doc`,
+    `--resource-path`). CriticMarkup becomes Word tracked changes and
+    comments; `--track-changes all|accept|reject` (pandoc's flag) keeps,
+    accepts or rejects them, and `--no-critic` reads the delimiters as text.
+    A change can cross paragraph breaks; a block that is one change whole is
+    added or removed with its paragraph mark.
+  - `jubarte diff OLD NEW`, pandiff style: two Markdown documents' changes
+    as CriticMarkup on stdout (`markdown::diff_markdown`), or with `-o` a
+    Word redline or PDF of any two documents, Word or Markdown
+    (`markdown::redline`). The positional compare takes Markdown too.
+  - Word against Markdown: the Markdown's edits are applied to the Word
+    document (`markdown::apply_markdown`) and only they show in the
+    redline; empty paragraphs, fields, links, formatting and section breaks
+    stay. On a fixture with three edits, the redline has 4 revisions where
+    writing the Markdown to Word and comparing gave 434.
+  - `markdown::resolve_critic` accepts or rejects CriticMarkup in Markdown.
+- Edit plans: `rewrite` gives a paragraph its new text and applies only the
+  words that differ, keeping runs, formatting, tabs and fields; and
+  `insert_paragraph` takes `like`, the paragraph whose properties the new
+  one copies instead of the anchor's. Both are in `jubarte capabilities`,
+  the Python plan builder and the agent skill.
 
 - `jubarte debug FILE -c text` prints each story part's paragraphs with
   `{+inserted+}` / `[-deleted-]` runs, the paragraph mark's revision state

@@ -177,7 +177,23 @@ jubarte -b old.docx -m new.docx -o redline.docx --author "Legal"
 jubarte revisions redline.docx --json     # list tracked revisions
 jubarte accept redline.docx -o final.docx # accept every revision
 jubarte reject redline.docx -o clean.docx # reject every revision
+
+jubarte convert draft.md                  # Markdown → draft.docx, CriticMarkup as tracked changes
+jubarte convert draft.md --reference-doc house.docx -o draft.docx
+jubarte diff old.md new.md                # the changes as CriticMarkup (pandiff style)
+jubarte diff old.md new.md -o changes.docx
+jubarte diff contract.docx edited.md -o redline.docx   # a Markdown edit as a Word redline
 ```
+
+Either side of a comparison may be Markdown. `jubarte convert` reads
+CriticMarkup (`{++ ++}`, `{-- --}`, `{~~ ~> ~~}`, `{== ==}{>> <<}`) as Word
+tracked changes and comments, with pandoc's `--track-changes
+all|accept|reject` and `--reference-doc`; `--no-critic` reads it as text.
+`jubarte diff` prints two Markdown documents' changes as CriticMarkup, or
+writes a Word redline or PDF. Against a Word document, a Markdown edit is
+applied to that document, so everything Markdown cannot hold (empty
+paragraphs, fields, formatting, section breaks) stays and only the edits
+show. [docs/MARKDOWN.md](docs/MARKDOWN.md) has the details.
 
 `jubarte convert` paints tracked changes in the conventional redline marks by
 default: deletions red and struck through, insertions blue with a double
