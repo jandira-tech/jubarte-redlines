@@ -25,7 +25,7 @@ use std::fmt;
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::namespaces::{A, M, MC, R, W, W14, WNE, WP};
+use crate::namespaces::{A, M, MC, R, W, W14, W15, WNE, WP};
 use crate::opc::PartFs;
 use crate::xmllinq::{Dom, NodeId, XName, XNamespace};
 
@@ -504,7 +504,8 @@ fn with_pages<T>(
             // deletions with w:trackRevisions, with or without formatting
             // changes, keep the full page (English redline e1de10f3 was
             // shrunk on a 100/100 count).
-            if document_has_balloons(&pkg, &main) {
+            let balloons = word_balloon_comments(&pkg, &main, &dom, body);
+            if document_has_balloons(&pkg, &main, balloons.as_ref()) {
                 sheet.defaults.page.balloon_gutter = 144.0;
             }
             let page = load_page_setup(&dom, body, &sheet.defaults.page);
@@ -6273,12 +6274,151 @@ fn settings_default_tab_pt(pkg: &PartFs) -> Option<f32> {
 /// Cells" / "Deleted Cells" mark only a balloon can carry (English
 /// b/57439183; live Word 2026-09-26: one w:cellIns or w:cellDel suffices,
 /// a w:ins run inside a cell does not).
-fn document_has_balloons(pkg: &PartFs, main: &str) -> bool {
+///
+/// `balloons` is `word_balloon_comments`: in Word mode only the comments
+/// Word draws a balloon for bring the pane.
+fn document_has_balloons(pkg: &PartFs, main: &str, balloons: Option<&HashSet<String>>) -> bool {
     pkg.part_string(main).is_some_and(|xml| {
-        ["<w:commentReference", "<w:cellIns", "<w:cellDel"]
-            .iter()
-            .any(|tag| w_revision_count(&xml, tag) > 0)
+        let comments = balloons.map_or_else(
+            || w_revision_count(&xml, "<w:commentReference") > 0,
+            |ids| !ids.is_empty(),
+        );
+        comments
+            || ["<w:cellIns", "<w:cellDel"]
+                .iter()
+                .any(|tag| w_revision_count(&xml, tag) > 0)
     })
+}
+
+/// `RevisionStyle::Word` only: the comments Word's Save as PDF draws a
+/// balloon for, or `None` in the other styles (every comment gets one).
+/// Live Word 16.114, 2026-09-29 (`comment_balloons_0929`, 149 of 151 corpus
+/// comment documents; docs/WORD_COMMENT_BALLOONS.md): a comment the body
+/// references gets a balloon unless its `w:commentRangeEnd` is dead (at body
+/// or cell level, or before any content in its paragraph); a reply
+/// (`w15:paraIdParent`) shares its parent's fate. Dropping a comment is a
+/// Word mistake, so the other styles keep them all.
+fn word_balloon_comments(
+    pkg: &PartFs,
+    main: &str,
+    dom: &Dom,
+    body: NodeId,
+) -> Option<HashSet<String>> {
+    if !matches!(REVISIONS.with(std::cell::Cell::get), RevisionStyle::Word) {
+        return None;
+    }
+    let mut dead = HashSet::new();
+    for end in dom.descendants(body, Some(&W::name("commentRangeEnd"))) {
+        let Some(id) = attr_any(dom, end, "id") else {
+            continue;
+        };
+        if !comment_range_end_is_live(dom, end) {
+            dead.insert(id.to_string());
+        }
+    }
+    let parents = comment_reply_parents(pkg, main);
+    let alive = |id: &str| {
+        let mut seen = HashSet::new();
+        let mut at = id;
+        loop {
+            if dead.contains(at) {
+                return false;
+            }
+            match parents.get(at) {
+                Some(parent) if seen.insert(at) => at = parent,
+                _ => return true,
+            }
+        }
+    };
+    Some(
+        dom.descendants(body, Some(&W::name("commentReference")))
+            .into_iter()
+            .filter_map(|r| attr_any(dom, r, "id"))
+            .filter(|id| alive(id))
+            .map(str::to_string)
+            .collect(),
+    )
+}
+
+/// A range end is live inside a `w:p` with content before it there: text or
+/// deleted text, a drawing, picture, object, symbol, tab, or a comment
+/// reference mark.
+fn comment_range_end_is_live(dom: &Dom, end: NodeId) -> bool {
+    let mut up = dom.parent(end);
+    while let Some(node) = up {
+        if dom.name_is(node, &W::name("p")) {
+            break;
+        }
+        if dom.name_is(node, &W::body()) || dom.name_is(node, &W::name("tc")) {
+            return false;
+        }
+        up = dom.parent(node);
+    }
+    let Some(para) = up else {
+        return false;
+    };
+    dom.descendants(para, None)
+        .into_iter()
+        .take_while(|&node| node != end)
+        .any(|node| {
+            if dom.name_is(node, &W::t()) || dom.name_is(node, &W::name("delText")) {
+                return (0..dom.child_count(node))
+                    .filter_map(|i| dom.text_value(dom.child_at(node, i)))
+                    .any(|s| !s.is_empty());
+            }
+            [
+                "drawing",
+                "pict",
+                "object",
+                "sym",
+                "tab",
+                "commentReference",
+            ]
+            .iter()
+            .any(|tag| dom.name_is(node, &W::name(tag)))
+        })
+}
+
+/// Reply comment id → parent comment id, from `commentsExtended.xml`'s
+/// `w15:paraIdParent` matched to each comment's last `w14:paraId`.
+fn comment_reply_parents(pkg: &PartFs, main: &str) -> HashMap<String, String> {
+    let (Some(comments), Some(extended)) = (
+        part_xml_by_rel_kind(pkg, main, "comments"),
+        part_xml_by_rel_kind(pkg, main, "commentsExtended"),
+    ) else {
+        return HashMap::new();
+    };
+    let mut cdom = Dom::new();
+    let cdoc = cdom.parse_xdocument(&comments);
+    let mut by_para = HashMap::new();
+    if let Some(root) = cdom.root(cdoc) {
+        for comment in cdom.descendants(root, Some(&W::name("comment"))) {
+            let last = cdom
+                .descendants(comment, Some(&W::name("p")))
+                .last()
+                .and_then(|&p| cdom.attribute(p, &W14::name("paraId")));
+            if let (Some(para), Some(id)) = (last, attr_any(&cdom, comment, "id")) {
+                by_para.insert(para.to_string(), id.to_string());
+            }
+        }
+    }
+    let mut edom = Dom::new();
+    let edoc = edom.parse_xdocument(&extended);
+    let mut out = HashMap::new();
+    if let Some(root) = edom.root(edoc) {
+        for ex in edom.descendants(root, Some(&W15::name("commentEx"))) {
+            let kid = edom
+                .attribute(ex, &W15::name("paraId"))
+                .and_then(|p| by_para.get(p));
+            let parent = edom
+                .attribute(ex, &W15::name("paraIdParent"))
+                .and_then(|p| by_para.get(p));
+            if let (Some(kid), Some(parent)) = (kid, parent) {
+                out.insert(kid.clone(), parent.clone());
+            }
+        }
+    }
+    out
 }
 
 fn w_revision_count(xml: &str, tag: &str) -> usize {
@@ -6304,7 +6444,10 @@ fn collect_blocks(
     let mut blocks = Vec::new();
     let mut numbering = load_numbering(pkg);
     let sects = live_sect_prs(dom, body);
-    let comments = load_comments(pkg, main);
+    let mut comments = load_comments(pkg, main);
+    if let Some(balloons) = word_balloon_comments(pkg, main, dom, body) {
+        comments.retain(|id, _| balloons.contains(id));
+    }
     let ctx = WalkCtx {
         pkg,
         main,
@@ -20682,6 +20825,7 @@ impl<'a> Layout<'a> {
                 continue;
             }
             let parts: Vec<&str> = run.text.split('\t').collect();
+            let start = x;
             for (pi, part) in parts.iter().enumerate() {
                 if pi > 0 {
                     let after_w = self.tab_suffix_width(part, run, &line[i + 1..]);
@@ -20693,6 +20837,11 @@ impl<'a> Layout<'a> {
                     piece.text = (*part).to_string();
                     x = self.paint_run(&piece, x, y);
                 }
+            }
+            // A run of tabs alone paints no glyph; its comment still
+            // hangs on the tab (Word draws the balloon).
+            if parts.iter().all(|part| part.is_empty()) {
+                self.place_run_comments(run, start, y, x - start);
             }
             i += 1;
         }

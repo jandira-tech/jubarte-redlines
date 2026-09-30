@@ -111,6 +111,21 @@ The other 3 of the 32 are not differences:
   the number like any other revised text.
 - **Which is better.** Ours; Word's version hides a revision.
 
+### 6. Comments Word draws no balloon for
+
+- **What happens.** Word's Save as PDF draws no balloon for a comment whose
+  `w:commentRangeEnd` is dead, that is, at body or cell level, or before any
+  content in its paragraph. A reply shares its parent's fate. When no
+  balloon is left, Word also drops the grey markup pane, and the page stays
+  full width. Live Word 16.114 on 2026-09-29: the rule predicts the balloon
+  count of 149 of the 151 corpus documents with comments
+  (`comment_balloons_0929` in neurotic_docx_bench, `WORD_COMMENT_BALLOONS.md`
+  on `notes/word-comment-balloons`).
+- **What we do.** Only `--revisions word` copies this
+  (`word_balloon_comments` in `src/convert/mod.rs`). The other styles draw
+  every comment the body references.
+- **Which is better.** Ours; Word's version hides the comment.
+
 ## Accept All / Reject All: where Word's result is worse (not copied yet)
 
 `jubarte accept` / `jubarte reject` (and per-change accept/reject) follow

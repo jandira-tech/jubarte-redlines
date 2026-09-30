@@ -71,6 +71,17 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- `jubarte convert --revisions word` draws a comment balloon only where
+  Word's Save as PDF does. Word draws none for a comment whose range ends at
+  body or cell level, or before any content in its paragraph, and none for a
+  reply to such a comment. With no balloon left, Word keeps the full page,
+  with no grey markup pane. 29 of the 222 documents in the docx-to-pdf worst
+  set were shrunk beside a pane Word never draws. The other revision styles
+  still draw every comment.
+- A comment whose range holds only a tab keeps its balloon.
+- Comments load when `commentsExtended.xml` is related before
+  `comments.xml`. The lookup took the extended part for the comments part,
+  and every comment was lost (with_comments_clean/37c6c62345).
 - Rejecting a redline gives back what a changed style inherited in the
   original. Word's Reject All reads a style's old record against its
   built-in defaults, so a record holding only the style's own properties

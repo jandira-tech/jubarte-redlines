@@ -39273,3 +39273,136 @@ fn comments_load_when_comments_extended_is_listed_first() {
         assert!(notes[0].contents.contains("Kept"), "{notes:?}");
     }
 }
+/// Word's grey 0.949 pasteboard beside the shrunk page.
+fn has_balloon_pane(pdf: &[u8]) -> bool {
+    pdf_content_streams(pdf)
+        .concat()
+        .contains("0.949 0.949 0.949 rg")
+}
+
+const LETTER: &str = "<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+     <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+
+#[test]
+fn word_draws_no_balloon_for_a_comment_whose_range_ends_between_paragraphs() {
+    // Word's compare of b175a00954_file_27 vs f32428a03a_file_28 keeps the
+    // source's range ends at body level; Word's PDF has no balloon and no
+    // pane (the page stays 612pt wide). Live Word 16.114, 2026-09-29
+    // (comment_balloons_0929 R4/R5; docs/WORD_COMMENT_BALLOONS.md).
+    let body = format!(
+        "<w:p><w:commentRangeStart w:id=\"0\"/><w:r><w:t>Commented words.</w:t></w:r></w:p>\
+         <w:commentRangeEnd w:id=\"0\"/>\
+         <w:p><w:r><w:commentReference w:id=\"0\"/></w:r><w:r><w:t>After.</w:t></w:r></w:p>{LETTER}"
+    );
+    let docx = comments_docx(&body, &comments_part("0", "Ada", "Note"));
+    let pdf = docx_to_pdf(&docx).expect("word mode");
+    assert!(
+        !has_balloon_pane(&pdf),
+        "a body-level range end brings no pane"
+    );
+    assert!(pdf_notes(&pdf).is_empty(), "and no balloon");
+    let ours = docx_to_pdf_with(&docx, PdfOptions::default()).expect("default mode");
+    assert!(
+        has_balloon_pane(&ours),
+        "the default renderer keeps the comment"
+    );
+    assert_eq!(pdf_notes(&ours).len(), 1);
+}
+
+#[test]
+fn word_draws_no_balloon_for_a_range_end_first_in_its_paragraph() {
+    let body = format!(
+        "<w:p><w:commentRangeStart w:id=\"0\"/><w:r><w:t>Commented words.</w:t></w:r></w:p>\
+         <w:p><w:commentRangeEnd w:id=\"0\"/><w:r><w:commentReference w:id=\"0\"/></w:r>\
+         <w:r><w:t>Later text.</w:t></w:r></w:p>{LETTER}"
+    );
+    let pdf = docx_to_pdf(&comments_docx(&body, &comments_part("0", "Ada", "Note"))).expect("pdf");
+    assert!(!has_balloon_pane(&pdf), "an end before any content is dead");
+    assert!(pdf_notes(&pdf).is_empty());
+}
+
+#[test]
+fn a_range_end_after_text_or_a_tab_gets_word_s_balloon() {
+    for before in [
+        "<w:r><w:t>Commented words.</w:t></w:r>",
+        "<w:r><w:tab/></w:r>",
+        "<w:del w:id=\"9\" w:author=\"B\" w:date=\"2026-01-01T00:00:00Z\"><w:r><w:delText>gone</w:delText></w:r></w:del>",
+    ] {
+        let body = format!(
+            "<w:p><w:commentRangeStart w:id=\"0\"/>{before}<w:commentRangeEnd w:id=\"0\"/>\
+             <w:r><w:commentReference w:id=\"0\"/></w:r></w:p>{LETTER}"
+        );
+        let pdf =
+            docx_to_pdf(&comments_docx(&body, &comments_part("0", "Ada", "Note"))).expect("pdf");
+        assert!(has_balloon_pane(&pdf), "live end after {before}");
+        assert_eq!(pdf_notes(&pdf).len(), 1, "one balloon after {before}");
+    }
+    // An empty w:t is no content: the end stays dead.
+    let body = format!(
+        "<w:p><w:commentRangeStart w:id=\"0\"/><w:r><w:t></w:t></w:r><w:commentRangeEnd w:id=\"0\"/>\
+         <w:r><w:commentReference w:id=\"0\"/></w:r></w:p>{LETTER}"
+    );
+    let pdf = docx_to_pdf(&comments_docx(&body, &comments_part("0", "Ada", "Note"))).expect("pdf");
+    assert!(!has_balloon_pane(&pdf), "an empty w:t is not content");
+}
+
+#[test]
+fn a_comment_without_a_range_gets_word_s_balloon() {
+    let body = format!(
+        "<w:p><w:r><w:t>Text.</w:t></w:r><w:r><w:commentReference w:id=\"0\"/></w:r></w:p>{LETTER}"
+    );
+    let pdf = docx_to_pdf(&comments_docx(&body, &comments_part("0", "Ada", "Note"))).expect("pdf");
+    assert!(has_balloon_pane(&pdf), "a reference alone is a balloon");
+    assert_eq!(pdf_notes(&pdf).len(), 1);
+}
+
+#[test]
+fn a_reply_takes_its_parent_s_balloon_fate() {
+    // comment_balloons_0929: a reply (commentsExtended paraIdParent, matched
+    // to the parent's last w14:paraId) gets no balloon when its parent has
+    // none, even with a live end of its own.
+    let comments = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:comments xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+          xmlns:w14=\"http://schemas.microsoft.com/office/word/2010/wordml\">\
+        <w:comment w:id=\"0\" w:author=\"Ada\" w:initials=\"A\">\
+          <w:p w14:paraId=\"00000001\"><w:r><w:t>Parent</w:t></w:r></w:p></w:comment>\
+        <w:comment w:id=\"1\" w:author=\"Bo\" w:initials=\"B\">\
+          <w:p w14:paraId=\"00000002\"><w:r><w:t>Reply</w:t></w:r></w:p></w:comment>\
+        </w:comments>";
+    let extended = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w15:commentsEx xmlns:w15=\"http://schemas.microsoft.com/office/word/2012/wordml\">\
+        <w15:commentEx w15:paraId=\"00000001\" w15:done=\"0\"/>\
+        <w15:commentEx w15:paraId=\"00000002\" w15:paraIdParent=\"00000001\" w15:done=\"0\"/>\
+        </w15:commentsEx>";
+    let body = |parent_end: &str| {
+        format!(
+            "<w:p><w:commentRangeStart w:id=\"0\"/><w:commentRangeStart w:id=\"1\"/>\
+             <w:r><w:t>Commented words.</w:t></w:r>{parent_end}<w:commentRangeEnd w:id=\"1\"/>\
+             <w:r><w:commentReference w:id=\"0\"/></w:r><w:r><w:commentReference w:id=\"1\"/></w:r></w:p>\
+             {}{LETTER}",
+            if parent_end.is_empty() {
+                "<w:commentRangeEnd w:id=\"0\"/>"
+            } else {
+                ""
+            }
+        )
+    };
+    let dead = docx_to_pdf(&with_comments_extended(
+        comments_docx(&body(""), comments),
+        extended,
+        false,
+    ))
+    .expect("dead parent");
+    assert!(
+        pdf_notes(&dead).is_empty(),
+        "the reply dies with its parent"
+    );
+    assert!(!has_balloon_pane(&dead));
+    let live = docx_to_pdf(&with_comments_extended(
+        comments_docx(&body("<w:commentRangeEnd w:id=\"0\"/>"), comments),
+        extended,
+        false,
+    ))
+    .expect("live parent");
+    assert_eq!(pdf_notes(&live).len(), 2, "a live parent keeps its reply");
+}
