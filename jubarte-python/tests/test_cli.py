@@ -221,3 +221,23 @@ def test_changes_lists_ids_and_accept_reject_select_by_them(tmp_path: Path, caps
     assert capsys.readouterr().out.splitlines()[-2:] == ['body:rev:1\tdeletion\ttext\ta\t"gone"', "1 change(s)"]
     assert main(["accept", str(source), "-o", str(tmp_path / "bad.docx"), "--id", "body:rev:9"]) == 1
     assert "body:rev:9" in capsys.readouterr().err
+
+
+def test_edit_writes_and_prints_the_patch_unless_quiet(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    plan = {
+        "schema_version": 1,
+        "author": "Claude",
+        "date": "2026-09-25T12:00:00Z",
+        "operations": [{"id": "pronoun", "kind": "replace", "paragraph": {"index": 1}, "find": "his or her", "replacement": "an"}],
+    }
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps(plan))
+    assert main(["edit", str(letter), "--plan", str(plan_path), "--out-dir", str(tmp_path / "review")]) == 0
+    patch = (tmp_path / "review" / "patch.diff").read_text()
+    assert patch.startswith("--- a/letter.docx\n+++ b/letter.docx\tClaude\t2026-09-25T12:00:00Z\n@@ [body:p:1] @@\n"), patch
+    assert "[-his or her-]{+an+}" in patch
+    stdout = capsys.readouterr().out
+    assert stdout.endswith(patch) and '"ev":"summary"' in stdout.replace(" ", ""), stdout
+    assert main(["edit", str(letter), "--plan", str(plan_path), "--out-dir", str(tmp_path / "quiet"), "-q"]) == 0
+    assert capsys.readouterr().out == ""
+    assert (tmp_path / "quiet" / "patch.diff").read_text() == patch

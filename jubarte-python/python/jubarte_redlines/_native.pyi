@@ -46,3 +46,17 @@ def edit_json(docx: bytes, plan_json: str) -> tuple[bool, bytes | None, bytes | 
 def preview_json(docx: bytes, plan_json: str) -> tuple[bool, str]: ...
 def report_jsonl(report_json: str) -> str: ...
 def capabilities_json() -> str: ...
+def diff_json(
+    old: bytes | str,
+    new: bytes | str,
+    *,
+    old_name: str,
+    new_name: str,
+    author: str,
+    date: str,
+    columns: int = 72,
+    critic: bool = False,
+) -> tuple[str, str]: ...
+def redline_diff_json(
+    docx: bytes, *, name: str, author: str, date: str, columns: int = 72
+) -> tuple[str, str]: ...

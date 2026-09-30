@@ -140,7 +140,11 @@ def cmd_edit(args: argparse.Namespace) -> int:
         return EXIT_PLAN_REFUSED
     lines = result.report.to_jsonl().splitlines()
     summary = lines.pop()
-    outputs: list[tuple[str, bytes]] = [("clean.docx", result.clean.to_bytes()), ("redline.docx", result.redline.to_bytes())]
+    outputs: list[tuple[str, bytes]] = [
+        ("clean.docx", result.clean.to_bytes()),
+        ("redline.docx", result.redline.to_bytes()),
+        ("patch.diff", result.diff.text.encode("utf-8")),
+    ]
     if args.pdf or args.png:
         options = PdfOptions(compress=True, revisions=args.revisions, revision_palette=args.revision_palette)
         pages: dict[str, int] = {}
@@ -164,8 +168,11 @@ def cmd_edit(args: argparse.Namespace) -> int:
     lines.append(json.dumps({"ev": "save", "dir": str(out_dir), "outputs": saved}, ensure_ascii=False))
     lines.append(summary)
     _write(out_dir / "report.jsonl", "\n".join(lines) + "\n")
+    if args.quiet:
+        return EXIT_OK
     print(summary)
-    print(f"wrote {out_dir} ({len(outputs) + 1} files: clean.docx, redline.docx, report.jsonl{', …' if len(outputs) > 2 else ''})")
+    print(f"wrote {out_dir} ({len(outputs) + 1} files: clean.docx, redline.docx, patch.diff, report.jsonl{', …' if len(outputs) > 3 else ''})")
+    sys.stdout.write(result.diff.text)
     return EXIT_OK
 
 
@@ -288,7 +295,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("file", type=Path)
     p.set_defaults(func=cmd_text)
 
-    p = sub.add_parser("edit", help="apply an edit plan: clean.docx, redline.docx, report.jsonl (+ PDF/PNG)")
+    p = sub.add_parser("edit", help="apply an edit plan: clean.docx, redline.docx, patch.diff, report.jsonl (+ PDF/PNG)")
     p.add_argument("file", type=Path)
     p.add_argument("--plan", type=Path, required=True, metavar="PLAN.json")
     p.add_argument("--out-dir", type=Path, required=True, metavar="DIR")
@@ -297,6 +304,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--pdf", action="store_true", help="also write redline.pdf and clean.pdf")
     p.add_argument("--png", action="store_true", help="also write redline-page-NN.png and clean-page-NN.png")
     p.add_argument("--dpi", type=float, default=96.0)
+    p.add_argument("-q", "--quiet", action="store_true", help="print nothing on success (patch.diff and report.jsonl are still written)")
     _add_revision_flags(p)
     p.set_defaults(func=cmd_edit)
 

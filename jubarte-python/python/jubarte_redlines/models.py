@@ -773,3 +773,48 @@ def _decode_render_report(payload: str) -> RenderReport:
         pages=tuple(PageText(**p) for p in data["pages"]),
         fonts=tuple(FontResolution(**f) for f in data["fonts"]),
     )
+
+
+@dataclass(frozen=True, slots=True)
+class Hunk:
+    """One changed paragraph of a ``Diff``.
+
+    ``at`` is where it is: ``body:p:N`` (or a header's, footer's or note's
+    ``header1:p:N``, ``footnotes:p:N``...) in a Word document, as
+    ``Document.markdown`` and edit plans number paragraphs, or ``line:N`` in
+    Markdown; in the new version, or the old one when ``removed``. ``text``
+    is the paragraph with its changes, unwrapped.
+    """
+
+    at: str
+    removed: bool
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class Diff:
+    """The changes between two documents, as ``git diff --word-diff`` shows
+    them: only the changed paragraphs, each whole, with ``[-old-]{+new+}``
+    for the changes and CriticMarkup ``{==highlights==}`` and
+    ``{>>comments<<}``.
+
+    ``str(diff)`` is the text; in Jupyter it displays as a ``diff`` block.
+    ``hunks`` are the changed paragraphs (none for ``format="critic"``).
+    """
+
+    text: str
+    hunks: tuple[Hunk, ...] = ()
+
+    def __str__(self) -> str:
+        return self.text
+
+    def _repr_markdown_(self) -> str:
+        return f"```diff\n{self.text}```\n"
+
+
+def _decode_diff(diffed: tuple[str, str]) -> Diff:
+    text, hunks = diffed
+    return Diff(
+        text=text,
+        hunks=tuple(Hunk(at=h["at"], removed=h["removed"], text=h["text"]) for h in json.loads(hunks)),
+    )
