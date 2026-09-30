@@ -28,16 +28,30 @@
 //!   `w:sectPr` that is not last.
 //! - `ids`: revision and `wp:docPr` ids used twice in the package. Word opens
 //!   files that repeat them, so they are leads, not causes.
+//! - `styles`: `basedOn`/`next`/`link` and `pStyle`/`rStyle`/`tblStyle`
+//!   values naming no style, and two styles of one type whose names match
+//!   case-insensitively (Word pairs styles by type and name, not by id).
 //! - `chains`: where bookmark starts and ends sit (parent chains, tallied).
 //! - `elements`: element counts (with two files, only the ones that differ).
 //! - `textbox`: the XML of each text box story (namespace declarations
 //!   dropped), filtered by `grep`.
+//! - `render` (a listing, like `text`): what each story part should put on
+//!   the page, for diagnosing a low score against Word's PDF. Every story
+//!   part is read, not only the body: sections, tables (size, style, float,
+//!   direct, cell and style shading, first row), frames, anchored drawings,
+//!   fields, paragraph styles and shading, text colour, highlight, run
+//!   shading, hidden text, requested fonts, and the order of deleted and
+//!   inserted runs. `(layout)` adds jubarte's page count (Word revision
+//!   style) and the face each requested font resolved to.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::io::{Cursor, Read};
 
 use crate::xmllinq::{Dom, NodeId};
+
+pub mod diff;
+mod render;
 
 /// Which reports to print.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -54,12 +68,43 @@ pub enum Check {
     Structure,
     /// Revision and drawing ids used twice.
     Ids,
+    /// Style links and references naming no style; two styles with one type
+    /// and name.
+    Styles,
     /// Bookmark parent chains, tallied.
     Chains,
     /// Element counts.
     Elements,
     /// Text box stories as XML.
     Textbox,
+    /// Paragraph text per story with revision marks (`{+ins+}`, `[-del-]`,
+    /// a deleted or inserted paragraph mark as `¶-` / `¶+`).
+    Text,
+    /// Part XML without namespace declarations, rsids and paragraph ids, one
+    /// element per line.
+    Xml,
+    /// `Text` with each paragraph's direct properties and each run's direct
+    /// formatting, revision marks left out; adjacent runs formatted alike
+    /// merge.
+    Runs,
+    /// Property-change records (`pPrChange`, `tcPrChange`, `sectPrChange`,
+    /// …): where each sits and what the live properties add and drop
+    /// against the recorded ones.
+    Changes,
+    /// Style definitions by type and name (ids name nothing across
+    /// documents): docDefaults, then each style's default flag, basedOn and
+    /// link by name, and its pPr/rPr/tblPr/trPr/tcPr items.
+    StyleDefs,
+    /// List levels by `numId` and level, as paragraphs see them: the
+    /// abstract definition with the list's overrides applied.
+    Numbering,
+    /// What each story part should put on the page: sections, tables (size,
+    /// style, float, direct, cell and style shading, first row), frames,
+    /// anchored drawings, fields, paragraph styles and shading, text colour,
+    /// highlight, run shading, hidden text, requested fonts and the order of
+    /// deleted and inserted runs; `(layout)` adds jubarte's page count and
+    /// the face each font resolved to.
+    Render,
 }
 
 /// The checks a bare `jubarte debug FILE` runs.
@@ -78,10 +123,15 @@ pub struct Options {
     pub checks: Vec<Check>,
     /// Only parts whose name contains this.
     pub part: Option<String>,
-    /// `textbox`: only stories whose text contains this.
+    /// `textbox`: only stories whose text contains this; `text`, `runs`,
+    /// `xml`, `changes`, `styledefs`, `numbering`: only lines that hold it, a `runs`
+    /// line read as plain text, printed whole.
     pub grep: Option<String>,
     /// Examples per finding kind, lines per listing.
     pub limit: usize,
+    /// `text`/`xml`/`runs` of two files: common lines shown around each
+    /// change.
+    pub context: usize,
 }
 
 impl Default for Options {
@@ -91,6 +141,7 @@ impl Default for Options {
             part: None,
             grep: None,
             limit: 5,
+            context: 0,
         }
     }
 }
@@ -111,6 +162,8 @@ struct Entry {
 /// A package's zip entries, in archive order.
 struct Package {
     entries: Vec<Entry>,
+    /// The package's bytes, for a layout pass.
+    raw: Vec<u8>,
 }
 
 impl Package {
@@ -130,7 +183,10 @@ impl Package {
                 data,
             });
         }
-        Ok(Package { entries })
+        Ok(Package {
+            entries,
+            raw: bytes.to_vec(),
+        })
     }
 
     /// XML parts selected by `part`, parsed. A part that does not parse is
@@ -884,6 +940,68 @@ fn collect_ids(dom: &Dom, root: NodeId, part: &str, seen: &mut IdUses) {
     }
 }
 
+const STYLES_PART: &str = "word/styles.xml";
+
+/// Style links in `styles.xml` and style references in every part that name
+/// no defined style, and styles of one type whose names match
+/// case-insensitively. Word resolves a dangling reference to the default
+/// style and pairs stylesheets by type and name, so twins merge in Word's
+/// compare while jubarte keeps both.
+fn check_styles(parts: &[(String, Dom, NodeId)], f: &mut Findings) {
+    let Some((_, sd, sr)) = parts.iter().find(|(p, _, _)| p == STYLES_PART) else {
+        return;
+    };
+    let styles: Vec<NodeId> = sd
+        .descendants(*sr, None)
+        .into_iter()
+        .filter(|&n| local(sd, n) == "style")
+        .collect();
+    let ids: HashSet<String> = styles.iter().map(|&s| attr(sd, s, "styleId")).collect();
+    let mut twins: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
+    for &s in &styles {
+        let id = attr(sd, s, "styleId");
+        let mut ty = attr(sd, s, "type");
+        if ty.is_empty() {
+            ty = "paragraph".to_string();
+        }
+        let mut name = String::new();
+        for c in sd.elements(s, None) {
+            let what = local(sd, c);
+            let val = attr(sd, c, "val");
+            match what.as_str() {
+                "name" => name = val.to_lowercase(),
+                "basedOn" | "next" | "link" if !ids.contains(&val) => {
+                    f.add(
+                        "style-link-dangling",
+                        STYLES_PART,
+                        format!("{id} {what} {val}"),
+                    );
+                }
+                _ => {}
+            }
+        }
+        twins.entry((ty, name)).or_default().push(id);
+    }
+    for ((ty, name), ids) in twins.into_iter().filter(|(_, v)| v.len() > 1) {
+        f.add(
+            "style-name-twin",
+            STYLES_PART,
+            format!("{ty} {name:?}: {}", ids.join(", ")),
+        );
+    }
+    for (part, dom, root) in parts {
+        for n in dom.descendants(*root, None) {
+            let what = local(dom, n);
+            if matches!(what.as_str(), "pStyle" | "rStyle" | "tblStyle") {
+                let val = attr(dom, n, "val");
+                if !ids.contains(&val) {
+                    f.add("style-ref-dangling", part, format!("{what} {val}"));
+                }
+            }
+        }
+    }
+}
+
 /// Everything one package yields for the selected checks.
 struct Analysis {
     findings: Findings,
@@ -908,6 +1026,16 @@ fn analyze(pkg: &Package, opts: &Options) -> Analysis {
             Some(_) => {
                 let all = pkg.xml_parts(None, &mut Findings::default());
                 check_package(pkg, &all, &mut a.findings);
+            }
+        }
+    }
+    if on(Check::Styles) {
+        // References need the stylesheet, whatever `part` selects.
+        match opts.part {
+            None => check_styles(&parts, &mut a.findings),
+            Some(_) => {
+                let all = pkg.xml_parts(None, &mut Findings::default());
+                check_styles(&all, &mut a.findings);
             }
         }
     }
@@ -1011,8 +1139,960 @@ fn strip_namespace_declarations(xml: &str) -> String {
     out
 }
 
+/// Root elements of the parts `text` walks.
+const TEXT_PARTS: [&str; 6] = [
+    "document",
+    "hdr",
+    "ftr",
+    "footnotes",
+    "endnotes",
+    "comments",
+];
+
+/// Direct properties of `pr` (a `pPr` or `rPr`) on one line: children sorted,
+/// `name`, `name=val` or `name(attr=value,…)`; revision records, the mark's
+/// `rPr` and `sectPr` left out.
+fn props_line(dom: &Dom, pr: NodeId) -> String {
+    let mut items: Vec<String> = dom
+        .nodes(pr)
+        .into_iter()
+        .filter(|&c| dom.is_element(c))
+        .filter(|&c| {
+            !matches!(
+                local(dom, c).as_str(),
+                "ins"
+                    | "del"
+                    | "moveFrom"
+                    | "moveTo"
+                    | "rPrChange"
+                    | "pPrChange"
+                    | "rPr"
+                    | "sectPr"
+            )
+        })
+        .map(|c| {
+            let name = local(dom, c);
+            let mut attrs: Vec<(String, String)> = dom
+                .attributes(c)
+                .into_iter()
+                .filter(|(n, _)| !n.local_name().starts_with("rsid"))
+                .map(|(n, v)| (n.local_name().to_string(), v))
+                .collect();
+            attrs.sort();
+            match attrs.as_slice() {
+                [] => name,
+                [(k, v)] if k == "val" => format!("{name}={v}"),
+                _ => {
+                    let a: Vec<String> = attrs.iter().map(|(k, v)| format!("{k}={v}")).collect();
+                    format!("{name}({})", a.join(","))
+                }
+            }
+        })
+        .collect();
+    items.sort();
+    items.join(" ")
+}
+
+/// The property-change records `changes` lists.
+const CHANGE_RECORDS: [&str; 8] = [
+    "pPrChange",
+    "rPrChange",
+    "tblPrChange",
+    "tblPrExChange",
+    "trPrChange",
+    "tcPrChange",
+    "sectPrChange",
+    "tblGridChange",
+];
+
+/// Each child of the property block `pr` as one item: `name`, `name=val`
+/// or `name(attr=value,…)`, its own children in braces; revision records,
+/// the mark's `rPr` and `sectPr` left out. Sorted.
+fn prop_items(dom: &Dom, pr: NodeId) -> Vec<String> {
+    fn item(dom: &Dom, c: NodeId) -> String {
+        let name = local(dom, c);
+        let mut attrs: Vec<(String, String)> = dom
+            .attributes(c)
+            .into_iter()
+            .filter(|(n, _)| {
+                !n.local_name().starts_with("rsid") && !dom.is_namespace_declaration(n)
+            })
+            .map(|(n, v)| (n.local_name().to_string(), v))
+            .collect();
+        attrs.sort();
+        let mut s = match attrs.as_slice() {
+            [] => name,
+            [(k, v)] if k == "val" => format!("{name}={v}"),
+            _ => {
+                let a: Vec<String> = attrs.iter().map(|(k, v)| format!("{k}={v}")).collect();
+                format!("{name}({})", a.join(","))
+            }
+        };
+        let kids: Vec<String> = dom
+            .nodes(c)
+            .into_iter()
+            .filter(|&k| dom.is_element(k))
+            .map(|k| item(dom, k))
+            .collect();
+        if !kids.is_empty() {
+            s.push('{');
+            s.push_str(&kids.join(" "));
+            s.push('}');
+        }
+        s
+    }
+    let mut items: Vec<String> = dom
+        .nodes(pr)
+        .into_iter()
+        .filter(|&c| dom.is_element(c))
+        .filter(|&c| {
+            let n = local(dom, c);
+            !CHANGE_RECORDS.contains(&n.as_str())
+                && !matches!(
+                    n.as_str(),
+                    "ins" | "del" | "moveFrom" | "moveTo" | "rPr" | "sectPr"
+                )
+        })
+        .map(|c| item(dom, c))
+        .collect();
+    items.sort();
+    items
+}
+
+/// `changes`: one line per property-change record of a part — its kind,
+/// where it sits (style id, or the start of the cell, row, table or
+/// paragraph text) and what the live properties add (`+`) and drop (`-`)
+/// against the recorded old ones. Returns the lines and the record count.
+fn change_lines(dom: &Dom, root: NodeId) -> (Vec<String>, usize) {
+    let text_of = |n: NodeId| -> String {
+        let t: String = dom
+            .descendants(n, None)
+            .into_iter()
+            .filter(|&d| matches!(local(dom, d).as_str(), "t" | "delText"))
+            .map(|d| dom.value(d))
+            .collect();
+        t.chars().take(30).collect()
+    };
+    let mut lines = Vec::new();
+    for rec in dom.descendants(root, None) {
+        let kind = local(dom, rec);
+        if !CHANGE_RECORDS.contains(&kind.as_str()) {
+            continue;
+        }
+        let Some(live) = dom.parent(rec) else {
+            continue;
+        };
+        let old = dom.nodes(rec).into_iter().find(|&c| dom.is_element(c));
+        let place = dom
+            .ancestors(rec, None)
+            .into_iter()
+            .find_map(|a| match local(dom, a).as_str() {
+                "style" => Some(format!("style={}", attr(dom, a, "styleId"))),
+                "p" | "tc" | "tr" | "tbl" => Some(format!("{} \"{}\"", local(dom, a), text_of(a))),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let l = prop_items(dom, live);
+        let o = old.map(|o| prop_items(dom, o)).unwrap_or_default();
+        let mut diff: Vec<String> = l
+            .iter()
+            .filter(|x| !o.contains(x))
+            .map(|x| format!("+{x}"))
+            .collect();
+        diff.extend(o.iter().filter(|x| !l.contains(x)).map(|x| format!("-{x}")));
+        if diff.is_empty() {
+            diff.push("(no difference)".to_string());
+        }
+        lines.push(format!("  {kind} {place}: {}", diff.join(" ")));
+    }
+    let n = lines.len();
+    (lines, n)
+}
+
+/// `styledefs`: the docDefaults' blocks, then each style of a stylesheet
+/// as lines that name it by type and name: one with `default` and
+/// `basedOn`/`link` by the name they point at, one per property block
+/// (pPr and rPr always, tblPr/trPr/tcPr when present) and per conditional
+/// `tblStylePr` block. Sorted, so a style's lines stay together. Returns
+/// the lines and the style count.
+fn style_lines(dom: &Dom, root: NodeId) -> (Vec<String>, usize) {
+    let child = |n: NodeId, name: &str| {
+        dom.nodes(n)
+            .into_iter()
+            .find(|&c| dom.is_element(c) && local(dom, c) == name)
+    };
+    let items = |n: Option<NodeId>| n.map(|b| prop_items(dom, b).join(" ")).unwrap_or_default();
+    let styles: Vec<NodeId> = dom
+        .nodes(root)
+        .into_iter()
+        .filter(|&c| dom.is_element(c) && local(dom, c) == "style")
+        .collect();
+    let name_of = |s: NodeId| -> String {
+        child(s, "name")
+            .map(|n| attr(dom, n, "val"))
+            .unwrap_or_else(|| attr(dom, s, "styleId"))
+    };
+    let name_for_id = |id: &str| -> String {
+        styles
+            .iter()
+            .find(|&&s| attr(dom, s, "styleId") == id)
+            .map(|&s| name_of(s))
+            .unwrap_or_else(|| id.to_string())
+    };
+    // One line per property block of a style or conditional block.
+    let blocks = |head: &str, s: NodeId, out: &mut Vec<String>| {
+        for k in ["pPr", "rPr", "tblPr", "trPr", "tcPr"] {
+            let b = child(s, k);
+            if b.is_some() || matches!(k, "pPr" | "rPr") {
+                out.push(format!("{head} {k}[{}]", items(b)));
+            }
+        }
+    };
+    let mut lines = Vec::new();
+    if let Some(dd) = child(root, "docDefaults") {
+        let p = child(dd, "pPrDefault").and_then(|x| child(x, "pPr"));
+        let r = child(dd, "rPrDefault").and_then(|x| child(x, "rPr"));
+        lines.push(format!("  docDefaults pPr[{}]", items(p)));
+        lines.push(format!("  docDefaults rPr[{}]", items(r)));
+    }
+    let mut rows: Vec<String> = Vec::new();
+    for &s in &styles {
+        let head = format!("  {} \"{}\"", attr(dom, s, "type"), name_of(s));
+        let mut l = head.clone();
+        if matches!(attr(dom, s, "default").as_str(), "1" | "true") {
+            l.push_str(" default");
+        }
+        for k in ["basedOn", "link"] {
+            if let Some(b) = child(s, k) {
+                l.push_str(&format!(" {k}=\"{}\"", name_for_id(&attr(dom, b, "val"))));
+            }
+        }
+        rows.push(l);
+        blocks(&head, s, &mut rows);
+        for c in dom.nodes(s) {
+            if dom.is_element(c) && local(dom, c) == "tblStylePr" {
+                blocks(&format!("{head} {}", attr(dom, c, "type")), c, &mut rows);
+            }
+        }
+    }
+    rows.sort();
+    lines.extend(rows);
+    (lines, styles.len())
+}
+
+/// `numbering`: one line per level of each list (`w:num`), keyed by the
+/// `numId` paragraphs point at: the abstract definition's level, or the
+/// list's `lvlOverride` level when it brings one, with a `startOverride`
+/// applied. The abstract's id is left out: Word renumbers it on save.
+/// Returns the lines and the list count.
+fn numbering_lines(dom: &Dom, root: NodeId) -> (Vec<String>, usize) {
+    let kids = |n: NodeId, name: &str| -> Vec<NodeId> {
+        dom.nodes(n)
+            .into_iter()
+            .filter(|&c| dom.is_element(c) && local(dom, c) == name)
+            .collect()
+    };
+    let child = |n: NodeId, name: &str| kids(n, name).into_iter().next();
+    let val = |n: NodeId, name: &str| child(n, name).map(|c| attr(dom, c, "val"));
+    let items = |n: Option<NodeId>| n.map(|b| prop_items(dom, b).join(" ")).unwrap_or_default();
+    let abstracts = kids(root, "abstractNum");
+    let nums = kids(root, "num");
+    let mut rows = Vec::new();
+    for &num in &nums {
+        let id = attr(dom, num, "numId");
+        let abs_id = val(num, "abstractNumId").unwrap_or_default();
+        let Some(abs) = abstracts
+            .iter()
+            .copied()
+            .find(|&a| attr(dom, a, "abstractNumId") == abs_id)
+        else {
+            rows.push(format!("  num {id} abstract {abs_id} missing"));
+            continue;
+        };
+        let overrides = kids(num, "lvlOverride");
+        for lvl in kids(abs, "lvl") {
+            let ilvl = attr(dom, lvl, "ilvl");
+            let ov = overrides
+                .iter()
+                .copied()
+                .find(|&o| attr(dom, o, "ilvl") == ilvl);
+            let lvl = ov.and_then(|o| child(o, "lvl")).unwrap_or(lvl);
+            let start = ov
+                .and_then(|o| val(o, "startOverride"))
+                .or_else(|| val(lvl, "start"))
+                .unwrap_or_default();
+            rows.push(format!(
+                "  num {id} lvl {ilvl} start={start} {} \"{}\" jc={} pPr[{}] rPr[{}]",
+                val(lvl, "numFmt").unwrap_or_default(),
+                val(lvl, "lvlText").unwrap_or_default(),
+                val(lvl, "lvlJc").unwrap_or_default(),
+                items(child(lvl, "pPr")),
+                items(child(lvl, "rPr")),
+            ));
+        }
+    }
+    // Numerically by list, then level.
+    let key = |l: &String| -> (u32, u32) {
+        let mut w = l.split_whitespace().skip(1);
+        let n = w.next().and_then(|x| x.parse().ok()).unwrap_or(u32::MAX);
+        let v = w.nth(1).and_then(|x| x.parse().ok()).unwrap_or(0);
+        (n, v)
+    };
+    rows.sort_by_key(key);
+    (rows, nums.len())
+}
+
+/// `text`: one line per paragraph, table and row of a story part, indented
+/// by table and text box depth; with `props`, the `runs` view. Returns the
+/// lines and the paragraph count.
+fn text_lines(dom: &Dom, root: NodeId, props: bool) -> (Vec<String>, usize) {
+    fn mark(dom: &Dom, n: NodeId, props: &str) -> &'static str {
+        let Some(pr) = dom.nodes(n).into_iter().find(|&c| local(dom, c) == props) else {
+            return " ";
+        };
+        let holder = if props == "pPr" {
+            match dom.nodes(pr).into_iter().find(|&c| local(dom, c) == "rPr") {
+                Some(r) => r,
+                None => return " ",
+            }
+        } else {
+            pr
+        };
+        for c in dom.nodes(holder) {
+            match local(dom, c).as_str() {
+                "del" | "moveFrom" => return "-",
+                "ins" | "moveTo" => return "+",
+                _ => {}
+            }
+        }
+        " "
+    }
+    /// A stretch of text: revision kind (0 plain, 1 inserted, 2 deleted),
+    /// the run's direct formatting (`runs` view only), the text.
+    type Seg = (u8, Option<String>, String);
+    /// Text of `n`'s subtree, nested paragraphs left out.
+    fn runs(dom: &Dom, n: NodeId, kind: u8, fmt: &Option<String>, props: bool, out: &mut Vec<Seg>) {
+        let push = |t: &str, out: &mut Vec<Seg>| match out.last_mut() {
+            Some((lk, lf, lt)) if *lk == kind && lf == fmt => lt.push_str(t),
+            _ => out.push((kind, fmt.clone(), t.to_string())),
+        };
+        for c in dom.nodes(n) {
+            if dom.is_text(c) {
+                continue;
+            }
+            match local(dom, c).as_str() {
+                "p" | "txbxContent" | "pPr" | "rPr" | "instrText" | "delInstrText" => {}
+                "t" | "delText" => push(&dom.value(c), out),
+                "tab" => push("→", out),
+                "br" | "cr" => push("↵", out),
+                "commentReference" => push(&format!("[c{}]", attr(dom, c, "id")), out),
+                "footnoteReference" => push(&format!("[f{}]", attr(dom, c, "id")), out),
+                "endnoteReference" => push(&format!("[e{}]", attr(dom, c, "id")), out),
+                "ins" | "moveTo" => runs(dom, c, 1, fmt, props, out),
+                "del" | "moveFrom" => runs(dom, c, 2, fmt, props, out),
+                "r" if props => {
+                    let rpr = dom.nodes(c).into_iter().find(|&x| local(dom, x) == "rPr");
+                    let f = Some(rpr.map(|r| props_line(dom, r)).unwrap_or_default());
+                    runs(dom, c, kind, &f, props, out);
+                }
+                _ => runs(dom, c, kind, fmt, props, out),
+            }
+        }
+    }
+    /// `[pPr] ¶«mark rPr» ` for the `runs` view.
+    fn para_props(dom: &Dom, p: NodeId) -> String {
+        let Some(ppr) = dom.nodes(p).into_iter().find(|&c| local(dom, c) == "pPr") else {
+            return "[] ¶«» ".to_string();
+        };
+        let mark = dom
+            .nodes(ppr)
+            .into_iter()
+            .find(|&c| local(dom, c) == "rPr")
+            .map(|r| props_line(dom, r))
+            .unwrap_or_default();
+        format!("[{}] ¶«{mark}» ", props_line(dom, ppr))
+    }
+    /// Walk state: the lines, the paragraph count, the `runs` view flag.
+    struct Walk {
+        out: Vec<String>,
+        paras: usize,
+        props: bool,
+    }
+    fn nested(dom: &Dom, n: NodeId, depth: usize, w: &mut Walk) {
+        for c in dom.nodes(n) {
+            match local(dom, c).as_str() {
+                "p" => {}
+                "txbxContent" => walk(dom, c, depth + 1, w),
+                _ => nested(dom, c, depth, w),
+            }
+        }
+    }
+    fn walk(dom: &Dom, n: NodeId, depth: usize, w: &mut Walk) {
+        let pad = " ".repeat(2 + 2 * depth);
+        for c in dom.nodes(n) {
+            match local(dom, c).as_str() {
+                "p" => {
+                    w.paras += 1;
+                    let mut segs = Vec::new();
+                    runs(dom, c, 0, &None, w.props, &mut segs);
+                    let text: String = segs
+                        .iter()
+                        .map(|(k, f, t)| {
+                            let f = f.as_ref().map(|f| format!("«{f}»")).unwrap_or_default();
+                            match k {
+                                1 => format!("{{+{f}{t}+}}"),
+                                2 => format!("[-{f}{t}-]"),
+                                _ => format!("{f}{t}"),
+                            }
+                        })
+                        .collect();
+                    let pp = if w.props {
+                        para_props(dom, c)
+                    } else {
+                        String::new()
+                    };
+                    w.out
+                        .push(format!("{pad}¶{} {pp}{text}", mark(dom, c, "pPr")));
+                    nested(dom, c, depth, w);
+                }
+                "tbl" => {
+                    w.out.push(format!("{pad}table"));
+                    for tr in dom.nodes(c).into_iter().filter(|&r| local(dom, r) == "tr") {
+                        w.out
+                            .push(format!("{pad} row{}", mark(dom, tr, "trPr").trim()));
+                        for tc in dom.nodes(tr).into_iter().filter(|&t| local(dom, t) == "tc") {
+                            walk(dom, tc, depth + 1, w);
+                        }
+                    }
+                }
+                _ if dom.is_element(c) => walk(dom, c, depth, w),
+                _ => {}
+            }
+        }
+    }
+    let mut w = Walk {
+        out: Vec::new(),
+        paras: 0,
+        props,
+    };
+    walk(dom, root, 0, &mut w);
+    (w.out, w.paras)
+}
+
+/// `xml`: `xml` without its declaration, namespace declarations,
+/// `mc:Ignorable`, rsids and paragraph ids; attributes sorted, one element
+/// per line indented by depth, an element holding only text on one line.
+fn xml_lines(xml: &str) -> Vec<String> {
+    enum Tok {
+        Open(String, bool),
+        Close(String),
+        Text(String),
+    }
+    fn noise(name: &str) -> bool {
+        let local = name.rsplit(':').next().unwrap_or(name);
+        name.starts_with("xmlns")
+            || name == "mc:Ignorable"
+            || local.starts_with("rsid")
+            || name == "w14:paraId"
+            || name == "w14:textId"
+    }
+    /// A rebuilt open tag of an element whose content is text.
+    fn holds_text(tag: &str) -> bool {
+        let name = tag.trim_start_matches('<').split(' ').next().unwrap_or("");
+        let local = name.rsplit(':').next().unwrap_or(name);
+        matches!(local, "t" | "delText" | "instrText" | "delInstrText")
+    }
+    /// `<name a="1" b='2'/>` → the rebuilt tag text and whether it closes itself.
+    fn open_tag(inner: &str) -> (String, bool) {
+        let (inner, closed) = match inner.strip_suffix('/') {
+            Some(i) => (i, true),
+            None => (inner, false),
+        };
+        let inner = inner.trim();
+        let name_end = inner.find(char::is_whitespace).unwrap_or(inner.len());
+        let name = &inner[..name_end];
+        let mut attrs = Vec::new();
+        let mut rest = inner[name_end..].trim_start();
+        while let Some(eq) = rest.find('=') {
+            let key = rest[..eq].trim();
+            let after = rest[eq + 1..].trim_start();
+            let Some(q) = after.chars().next() else { break };
+            let Some(end) = after[1..].find(q) else { break };
+            let value = &after[1..1 + end];
+            if !noise(key) {
+                attrs.push(format!("{key}=\"{value}\""));
+            }
+            rest = after[1 + end + 1..].trim_start();
+        }
+        attrs.sort();
+        let mut tag = format!("<{name}");
+        for a in attrs {
+            tag.push(' ');
+            tag.push_str(&a);
+        }
+        (tag, closed)
+    }
+    let mut toks = Vec::new();
+    let mut rest = xml;
+    while let Some(lt) = rest.find('<') {
+        let text = &rest[..lt];
+        // Whitespace between a text element's open and close tags is its
+        // text (`<w:t> </w:t>`); elsewhere, even inside `<w:p>\n</w:p>`,
+        // it is pretty-print.
+        let content = !text.is_empty()
+            && rest[lt..].starts_with("</")
+            && matches!(toks.last(), Some(Tok::Open(tag, false)) if holds_text(tag));
+        if !text.trim().is_empty() || content {
+            toks.push(Tok::Text(text.to_string()));
+        }
+        // The tag ends at the first `>` outside quotes.
+        let bytes = rest.as_bytes();
+        let (mut i, mut quote) = (lt + 1, 0u8);
+        while i < bytes.len() {
+            match bytes[i] {
+                b'"' | b'\'' if quote == 0 => quote = bytes[i],
+                c if c == quote => quote = 0,
+                b'>' if quote == 0 => break,
+                _ => {}
+            }
+            i += 1;
+        }
+        let inner = &rest[lt + 1..i.min(rest.len())];
+        rest = &rest[(i + 1).min(rest.len())..];
+        if inner.starts_with('?') || inner.starts_with('!') {
+            continue;
+        }
+        match inner.strip_prefix('/') {
+            Some(name) => toks.push(Tok::Close(name.trim().to_string())),
+            None => {
+                let (tag, closed) = open_tag(inner);
+                toks.push(Tok::Open(tag, closed));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let mut i = 0;
+    while i < toks.len() {
+        let pad = "  ".repeat(depth);
+        match &toks[i] {
+            Tok::Open(tag, true) => out.push(format!("{pad}{tag}/>")),
+            Tok::Open(tag, false) => match (toks.get(i + 1), toks.get(i + 2)) {
+                (Some(Tok::Close(_)), _) => {
+                    out.push(format!("{pad}{tag}/>"));
+                    i += 1;
+                }
+                (Some(Tok::Text(t)), Some(Tok::Close(c))) => {
+                    out.push(format!("{pad}{tag}>{t}</{c}>"));
+                    i += 2;
+                }
+                _ => {
+                    out.push(format!("{pad}{tag}>"));
+                    depth += 1;
+                }
+            },
+            Tok::Close(name) => {
+                depth = depth.saturating_sub(1);
+                out.push(format!("{}</{name}>", "  ".repeat(depth)));
+            }
+            Tok::Text(t) => out.push(format!("{pad}{}", t.trim())),
+        }
+        i += 1;
+    }
+    out
+}
+
+/// One change hunk: where it starts in A, the lines only in A, then the
+/// lines only in B.
+type Hunk<'a> = (usize, Vec<&'a str>, Vec<&'a str>);
+
+/// Line diff: common prefix and suffix trimmed, LCS on the rest (a middle
+/// too large for LCS is one replaced block).
+fn diff_lines<'a>(a: &'a [String], b: &'a [String]) -> Vec<Hunk<'a>> {
+    let pre = a.iter().zip(b).take_while(|(x, y)| x == y).count();
+    let suf = a[pre..]
+        .iter()
+        .rev()
+        .zip(b[pre..].iter().rev())
+        .take_while(|(x, y)| x == y)
+        .count();
+    let (am, bm) = (&a[pre..a.len() - suf], &b[pre..b.len() - suf]);
+    if am.is_empty() && bm.is_empty() {
+        return Vec::new();
+    }
+    let (n, m) = (am.len(), bm.len());
+    if n.saturating_mul(m) > 4_000_000 {
+        return vec![(
+            pre,
+            am.iter().map(String::as_str).collect(),
+            bm.iter().map(String::as_str).collect(),
+        )];
+    }
+    // lcs[i][j]: LCS length of am[i..] and bm[j..].
+    let mut lcs = vec![0u32; (n + 1) * (m + 1)];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            lcs[i * (m + 1) + j] = if am[i] == bm[j] {
+                lcs[(i + 1) * (m + 1) + j + 1] + 1
+            } else {
+                lcs[(i + 1) * (m + 1) + j].max(lcs[i * (m + 1) + j + 1])
+            };
+        }
+    }
+    let (mut hunks, mut cur): (Vec<Hunk>, Hunk) = (Vec::new(), (pre, Vec::new(), Vec::new()));
+    let (mut i, mut j) = (0, 0);
+    while i < n || j < m {
+        if i < n && j < m && am[i] == bm[j] {
+            if !cur.1.is_empty() || !cur.2.is_empty() {
+                hunks.push(std::mem::take(&mut cur));
+            }
+            i += 1;
+            j += 1;
+            continue;
+        }
+        if cur.1.is_empty() && cur.2.is_empty() {
+            cur.0 = pre + i;
+        }
+        if j == m || (i < n && lcs[(i + 1) * (m + 1) + j] >= lcs[i * (m + 1) + j + 1]) {
+            cur.1.push(&am[i]);
+            i += 1;
+        } else {
+            cur.2.push(&bm[j]);
+            j += 1;
+        }
+    }
+    if !cur.1.is_empty() || !cur.2.is_empty() {
+        hunks.push(cur);
+    }
+    hunks
+}
+
+type PartLines = BTreeMap<String, (Vec<String>, usize)>;
+
+/// Rekey both packages' header and footer parts by their role (the first
+/// section reference that shows them); a pair whose part names differ shows
+/// both.
+fn pair_by_role(a: PartLines, pa: &Package, b: PartLines, pb: &Package) -> (PartLines, PartLines) {
+    let (ra, rb) = (story_roles(pa), story_roles(pb));
+    let name_of = |roles: &HashMap<String, String>, role: &str| {
+        roles
+            .iter()
+            .find(|(_, r)| r.as_str() == role)
+            .map(|(n, _)| n.clone())
+    };
+    let rekey = |lines: PartLines, roles: &HashMap<String, String>| -> PartLines {
+        lines
+            .into_iter()
+            .map(|(name, v)| {
+                let Some(role) = roles.get(&name) else {
+                    return (name, v);
+                };
+                let (na, nb) = (name_of(&ra, role), name_of(&rb, role));
+                let key = match (na, nb) {
+                    (Some(x), Some(y)) if x != y => format!("{role} (A {x}, B {y})"),
+                    _ => name,
+                };
+                (key, v)
+            })
+            .collect()
+    };
+    (rekey(a, &ra), rekey(b, &rb))
+}
+
+/// Header and footer part name → "section N TYPE header|footer", from the
+/// first section reference that shows it.
+fn story_roles(pkg: &Package) -> HashMap<String, String> {
+    story_roles_all(pkg)
+        .into_iter()
+        .filter_map(|(part, roles)| roles.into_iter().next().map(|r| (part, r)))
+        .collect()
+}
+
+/// Header and footer part name → every "section N TYPE header|footer" that
+/// shows it, in section order.
+fn story_roles_all(pkg: &Package) -> HashMap<String, Vec<String>> {
+    let parse = |name: &str| -> Option<(Dom, NodeId)> {
+        let e = pkg.entries.iter().find(|e| e.name == name)?;
+        let xml = decode_xml(&e.data)?;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let root = dom.root(doc)?;
+        Some((dom, root))
+    };
+    let rel_targets = |rels: &str| -> Vec<(String, String, String)> {
+        let Some((dom, root)) = parse(rels) else {
+            return Vec::new();
+        };
+        dom.elements(root, None)
+            .into_iter()
+            .map(|r| {
+                (
+                    attr(&dom, r, "Id"),
+                    attr(&dom, r, "Type"),
+                    attr(&dom, r, "Target"),
+                )
+            })
+            .collect()
+    };
+    let mut roles = HashMap::new();
+    let Some(main) = rel_targets("_rels/.rels")
+        .into_iter()
+        .find(|(_, t, _)| t.ends_with("/officeDocument"))
+        .map(|(_, _, target)| target.trim_start_matches('/').to_string())
+    else {
+        return roles;
+    };
+    let (dir, file) = main.rsplit_once('/').unwrap_or(("", main.as_str()));
+    let targets: HashMap<String, String> = rel_targets(&format!("{dir}/_rels/{file}.rels"))
+        .into_iter()
+        .map(|(id, _, target)| {
+            let part = match target.strip_prefix('/') {
+                Some(absolute) => absolute.to_string(),
+                None if dir.is_empty() => target,
+                None => format!("{dir}/{target}"),
+            };
+            (id, part)
+        })
+        .collect();
+    let Some((dom, root)) = parse(&main) else {
+        return roles;
+    };
+    let sections = dom
+        .descendants(root, None)
+        .into_iter()
+        .filter(|&e| local(&dom, e) == "sectPr");
+    for (i, sect) in sections.enumerate() {
+        for r in dom.elements(sect, None) {
+            let kind = match local(&dom, r).as_str() {
+                "headerReference" => "header",
+                "footerReference" => "footer",
+                _ => continue,
+            };
+            // w:type and r:id share no local name, so `attr` tells them apart.
+            let ty = attr(&dom, r, "type");
+            let ty = if ty.is_empty() {
+                "default".to_string()
+            } else {
+                ty
+            };
+            if let Some(part) = targets.get(&attr(&dom, r, "id")) {
+                roles
+                    .entry(part.clone())
+                    .or_insert_with(Vec::new)
+                    .push(format!("section {} {ty} {kind}", i + 1));
+            }
+        }
+    }
+    roles
+}
+
+/// `text` / `xml` for one package, or their per-part differences between two.
+fn text_or_xml(pa: &Package, pb: Option<&Package>, check: Check, opts: &Options) -> String {
+    let lines_of = |pkg: &Package| -> BTreeMap<String, (Vec<String>, usize)> {
+        // `render` reads the package as a whole; the others part by part.
+        let (mut map, entries) = if check == Check::Render {
+            (render::render_parts(pkg, opts.part.as_deref()), &[][..])
+        } else {
+            (BTreeMap::new(), &pkg.entries[..])
+        };
+        for e in entries {
+            if opts.part.as_deref().is_some_and(|p| !e.name.contains(p)) {
+                continue;
+            }
+            if !(e.name.ends_with(".xml") || e.name.ends_with(".rels")) {
+                continue;
+            }
+            let Some(xml) = decode_xml(&e.data) else {
+                continue;
+            };
+            if check == Check::Xml {
+                map.insert(e.name.clone(), (xml_lines(&xml), 0));
+                continue;
+            }
+            let mut dom = Dom::new();
+            let doc = dom.parse_xdocument(&xml);
+            let Some(root) = dom.root(doc) else { continue };
+            if check == Check::Changes {
+                let (lines, n) = change_lines(&dom, root);
+                if n > 0 {
+                    map.insert(e.name.clone(), (lines, n));
+                }
+                continue;
+            }
+            if check == Check::StyleDefs {
+                if local(&dom, root) == "styles" {
+                    map.insert(e.name.clone(), style_lines(&dom, root));
+                }
+                continue;
+            }
+            if check == Check::Numbering {
+                if local(&dom, root) == "numbering" {
+                    map.insert(e.name.clone(), numbering_lines(&dom, root));
+                }
+                continue;
+            }
+            if TEXT_PARTS.contains(&local(&dom, root).as_str()) {
+                map.insert(e.name.clone(), text_lines(&dom, root, check == Check::Runs));
+            }
+        }
+        if let Some(g) = opts.grep.as_deref() {
+            for (lines, _) in map.values_mut() {
+                lines.retain(|l| line_has(l, g));
+            }
+            map.retain(|_, (lines, _)| !lines.is_empty());
+        }
+        map
+    };
+    let label = match check {
+        Check::Xml => "xml",
+        Check::Runs => "runs",
+        Check::Changes => "changes",
+        Check::StyleDefs => "styledefs",
+        Check::Numbering => "numbering",
+        Check::Render => "render",
+        _ => "text",
+    };
+    let mut out = String::new();
+    let a = lines_of(pa);
+    let Some(pb) = pb else {
+        for (part, (lines, paras)) in &a {
+            if check == Check::Xml {
+                line(&mut out, part);
+            } else if check == Check::Changes {
+                line(&mut out, &format!("{part}: {paras} property changes"));
+            } else if check == Check::StyleDefs {
+                line(&mut out, &format!("{part}: {paras} styles"));
+            } else if check == Check::Numbering {
+                line(&mut out, &format!("{part}: {paras} lists"));
+            } else if check == Check::Render && part == "(layout)" {
+                line(&mut out, &format!("{part}: {paras} pages"));
+            } else {
+                line(&mut out, &format!("{part}: {paras} paragraphs"));
+            }
+            for l in lines {
+                if opts.grep.is_some() {
+                    // Asked for by name: the whole paragraph.
+                    let _ = writeln!(out, "{l}");
+                } else {
+                    line(&mut out, l);
+                }
+            }
+        }
+        return out;
+    };
+    let b = lines_of(pb);
+    // Header and footer parts pair by the section that shows them (Word
+    // renumbers them on save); XML stays by part name.
+    let (a, b) = if check == Check::Xml {
+        (a, b)
+    } else {
+        pair_by_role(a, pa, b, pb)
+    };
+    let names: std::collections::BTreeSet<&String> = a.keys().chain(b.keys()).collect();
+    for name in names {
+        let (la, lb) = match (a.get(name), b.get(name)) {
+            (Some(x), Some(y)) => (&x.0, &y.0),
+            (Some(_), None) => {
+                line(&mut out, &format!("{name}: only in A"));
+                continue;
+            }
+            (None, _) => {
+                line(&mut out, &format!("{name}: only in B"));
+                continue;
+            }
+        };
+        let hunks = diff_lines(la, lb);
+        if hunks.is_empty() {
+            continue;
+        }
+        let dels: usize = hunks.iter().map(|h| h.1.len()).sum();
+        let adds: usize = hunks.iter().map(|h| h.2.len()).sum();
+        let n = dels.max(adds);
+        line(
+            &mut out,
+            &format!(
+                "{name}: {n} line{} differ{}",
+                if n == 1 { "" } else { "s" },
+                if n == 1 { "s" } else { "" }
+            ),
+        );
+        for (k, (at, del, add)) in hunks.iter().enumerate() {
+            if k == opts.limit {
+                line(
+                    &mut out,
+                    &format!("  … {} more hunks (raise --limit)", hunks.len() - k),
+                );
+                break;
+            }
+            if k > 0 {
+                line(&mut out, "  ~");
+            }
+            // A line paired with its counterpart is clipped from a little
+            // before their first difference, so the change stays visible.
+            let from = |i: usize| match (del.get(i), add.get(i)) {
+                (Some(x), Some(y)) => x
+                    .chars()
+                    .zip(y.chars())
+                    .take_while(|(c, d)| c == d)
+                    .count()
+                    .saturating_sub(WIDTH / 3),
+                _ => 0,
+            };
+            for l in &la[at.saturating_sub(opts.context)..*at] {
+                line(&mut out, &format!("   {l}"));
+            }
+            for (i, l) in del.iter().enumerate() {
+                line(&mut out, &format!("-A {}", clip_from(l, from(i))));
+            }
+            for (i, l) in add.iter().enumerate() {
+                line(&mut out, &format!("+B {}", clip_from(l, from(i))));
+            }
+            let after = at + del.len();
+            for l in &la[after..(after + opts.context).min(la.len())] {
+                line(&mut out, &format!("   {l}"));
+            }
+        }
+    }
+    if out.is_empty() {
+        line(&mut out, &format!("{label} identical"));
+    }
+    out
+}
+
+/// `l` holds `g`, read as plain text when `l` is a `runs` line: run
+/// properties (`«…»`) and revision marks (`{+ +}`, `[- -]`) dropped, so a
+/// phrase split over runs still matches.
+fn line_has(l: &str, g: &str) -> bool {
+    if l.contains(g) {
+        return true;
+    }
+    let mut plain = String::with_capacity(l.len());
+    let mut depth = 0usize;
+    for c in l.chars() {
+        match c {
+            '«' => depth += 1,
+            '»' => depth = depth.saturating_sub(1),
+            _ if depth == 0 => plain.push(c),
+            _ => {}
+        }
+    }
+    ["{+", "+}", "[-", "-]"]
+        .iter()
+        .fold(plain, |t, m| t.replace(m, ""))
+        .contains(g)
+}
+
 fn line(out: &mut String, s: &str) {
     let _ = writeln!(out, "{}", clip_line(s));
+}
+
+/// `s` from its `from`-th character, the dropped head marked `…`.
+fn clip_from(s: &str, from: usize) -> String {
+    if from == 0 || s.chars().count() <= WIDTH {
+        s.to_string()
+    } else {
+        format!("…{}", s.chars().skip(from).collect::<String>())
+    }
 }
 
 fn clip_line(s: &str) -> String {
@@ -1086,6 +2166,43 @@ pub fn list(a: &[u8], b: Option<&[u8]>, opts: &Options) -> Result<String, String
 
 /// The report for one package, or the differences between two.
 pub fn report(a: &[u8], b: Option<&[u8]>, opts: &Options) -> Result<String, String> {
+    let is_listing = |c: &Check| {
+        matches!(
+            c,
+            Check::Text
+                | Check::Xml
+                | Check::Runs
+                | Check::Changes
+                | Check::StyleDefs
+                | Check::Numbering
+                | Check::Render
+        )
+    };
+    if opts.checks.iter().any(is_listing) {
+        let pa = Package::open(a)?;
+        let pb = match b {
+            Some(b) => Some(Package::open(b)?),
+            None => None,
+        };
+        let mut out = String::new();
+        for c in opts.checks.iter().filter(|c| is_listing(c)) {
+            out.push_str(&text_or_xml(&pa, pb.as_ref(), *c, opts));
+        }
+        let rest: Vec<Check> = opts
+            .checks
+            .iter()
+            .copied()
+            .filter(|c| !is_listing(c))
+            .collect();
+        if !rest.is_empty() {
+            let more = Options {
+                checks: rest,
+                ..opts.clone()
+            };
+            out.push_str(&report(a, b, &more)?);
+        }
+        return Ok(out);
+    }
     let ra = analyze(&Package::open(a)?, opts);
     let rb = match b {
         Some(b) => Some(analyze(&Package::open(b)?, opts)),
@@ -1510,5 +2627,676 @@ mod tests {
             out.contains("docpr-duplicate-id: 1\n  package id 1 ×2"),
             "{out}"
         );
+    }
+
+    #[test]
+    fn dangling_style_links_and_twin_names_are_reported_only_when_asked() {
+        let styles = r#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="a"><w:name w:val="normal"/></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="a0"/><w:next w:val="Normal"/></w:style><w:style w:type="character" w:styleId="Normal0"><w:name w:val="Normal"/></w:style></w:styles>"#;
+        let body = r#"<w:p><w:pPr><w:pStyle w:val="Missing"/></w:pPr><w:r><w:rPr><w:rStyle w:val="Normal0"/></w:rPr><w:t>x</w:t></w:r></w:p>"#;
+        let pkg = zip_of(&[
+            ("[Content_Types].xml", TYPES),
+            ("_rels/.rels", ROOT_RELS),
+            ("word/document.xml", &document(body)),
+            ("word/styles.xml", styles),
+        ]);
+        let out = report(&pkg, None, &opts_for(Check::Styles)).unwrap();
+        assert!(
+            out.contains("style-link-dangling: 1\n  word/styles.xml Quote basedOn a0"),
+            "{out}"
+        );
+        assert!(
+            out.contains("style-ref-dangling: 1\n  word/document.xml pStyle Missing"),
+            "{out}"
+        );
+        // Word pairs styles by type and name, case-insensitively; a character
+        // style may share a paragraph style's name.
+        assert!(
+            out.contains("style-name-twin: 1\n  word/styles.xml paragraph \"normal\": Normal, a"),
+            "{out}"
+        );
+        let triage = report(&pkg, None, &Options::default()).unwrap();
+        assert!(!triage.contains("style-"), "{triage}");
+    }
+
+    fn opts_for(check: Check) -> Options {
+        Options {
+            checks: vec![check],
+            ..Default::default()
+        }
+    }
+
+    /// A deleted paragraph mark, inserted and deleted text, a comment
+    /// reference and a table whose one row is deleted.
+    const TRACKED: &str = r#"<w:p><w:r><w:t>Plain</w:t></w:r></w:p><w:p><w:pPr><w:rPr><w:del w:id="1" w:author="A"/></w:rPr></w:pPr><w:ins w:id="2" w:author="A"><w:r><w:t>Track</w:t></w:r></w:ins><w:del w:id="3" w:author="A"><w:r><w:delText>old</w:delText></w:r></w:del><w:r><w:commentReference w:id="7"/></w:r></w:p><w:tbl><w:tr><w:trPr><w:del w:id="4" w:author="A"/></w:trPr><w:tc><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#;
+
+    #[test]
+    fn text_lists_paragraphs_with_their_revision_marks() {
+        let out = report(&docx(TRACKED), None, &opts_for(Check::Text)).unwrap();
+        for expected in [
+            "word/document.xml: 4 paragraphs\n",
+            "  ¶  Plain\n",
+            "  ¶- {+Track+}[-old-][c7]\n",
+            "  table\n",
+            "   row-\n",
+            "    ¶  cell\n",
+            "  ¶  \n",
+        ] {
+            assert!(out.contains(expected), "{expected:?} in\n{out}");
+        }
+    }
+
+    #[test]
+    fn runs_show_each_paragraph_with_its_direct_formatting() {
+        let body = r#"<w:p><w:pPr><w:pStyle w:val="Body"/><w:jc w:val="both"/><w:rPr><w:del w:id="1" w:author="A"/><w:sz w:val="20"/></w:rPr></w:pPr><w:r><w:rPr><w:b/><w:rFonts w:cs="Arial" w:ascii="Arial"/><w:sz w:val="24"/></w:rPr><w:t>Bold</w:t></w:r><w:r><w:rPr><w:sz w:val="24"/><w:b/><w:rFonts w:ascii="Arial" w:cs="Arial"/><w:rPrChange w:id="2" w:author="A"><w:rPr/></w:rPrChange></w:rPr><w:t> too</w:t></w:r><w:r><w:t>plain</w:t></w:r><w:r><w:rPr/><w:t> end</w:t></w:r></w:p>"#;
+        let out = report(&docx(body), None, &opts_for(Check::Runs)).unwrap();
+        let expected = "  ¶- [jc=both pStyle=Body] ¶«sz=20» «b rFonts(ascii=Arial,cs=Arial) sz=24»Bold too«»plain end\n";
+        assert!(out.contains(expected), "{expected:?} in\n{out}");
+    }
+
+    #[test]
+    fn changes_list_what_each_property_record_changed() {
+        let body = r#"<w:tbl><w:tr><w:tc><w:tcPr><w:tcW w:w="3120" w:type="dxa"/><w:tcPrChange w:id="1" w:author="A"><w:tcPr><w:tcW w:w="3120" w:type="dxa"/><w:shd w:val="clear" w:fill="F8FAFC"/></w:tcPr></w:tcPrChange></w:tcPr><w:p><w:r><w:t>Name</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:pPr><w:jc w:val="center"/><w:pPrChange w:id="2" w:author="A"><w:pPr/></w:pPrChange></w:pPr><w:r><w:t>Title</w:t></w:r></w:p>"#;
+        let out = report(&docx(body), None, &opts_for(Check::Changes)).unwrap();
+        for expected in [
+            "word/document.xml: 2 property changes\n",
+            "  tcPrChange tc \"Name\": -shd(fill=F8FAFC,val=clear)\n",
+            "  pPrChange p \"Title\": +jc=center\n",
+        ] {
+            assert!(out.contains(expected), "{expected:?} in\n{out}");
+        }
+        let same = report(&docx(body), Some(&docx(body)), &opts_for(Check::Changes)).unwrap();
+        assert!(!same.contains("Change"), "{same}");
+    }
+
+    /// A package whose stylesheet is `styles` (the `w:styles` children).
+    fn docx_with_styles(styles: &str) -> Vec<u8> {
+        zip_of(&[
+            ("[Content_Types].xml", TYPES),
+            ("_rels/.rels", ROOT_RELS),
+            ("word/document.xml", &document(CLEAN)),
+            (
+                "word/styles.xml",
+                &format!(
+                    r#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">{styles}</w:styles>"#
+                ),
+            ),
+        ])
+    }
+
+    /// Styles list by type and name, whatever their ids: a localized
+    /// stylesheet (`Norml`, `Listaszerbekezds`) and an English one compare
+    /// on what each style defines.
+    #[test]
+    fn styledefs_list_each_style_by_name() {
+        let hu = r#"<w:docDefaults><w:pPrDefault><w:pPr><w:spacing w:after="200" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Norml"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Listaszerbekezds"><w:name w:val="List Paragraph"/><w:basedOn w:val="Norml"/><w:pPr><w:ind w:left="720"/></w:pPr><w:rPr><w:b/></w:rPr></w:style>"#;
+        let out = report(&docx_with_styles(hu), None, &opts_for(Check::StyleDefs)).unwrap();
+        for expected in [
+            "word/styles.xml: 2 styles\n",
+            "  docDefaults pPr[spacing(after=200,line=276,lineRule=auto)]\n",
+            "  docDefaults rPr[]\n",
+            "  paragraph \"Normal\" default\n",
+            "  paragraph \"Normal\" pPr[]\n",
+            "  paragraph \"List Paragraph\" basedOn=\"Normal\"\n",
+            "  paragraph \"List Paragraph\" pPr[ind(left=720)]\n",
+            "  paragraph \"List Paragraph\" rPr[b]\n",
+        ] {
+            assert!(out.contains(expected), "{expected:?} in\n{out}");
+        }
+        let en = hu
+            .replace("Norml", "Normal")
+            .replace("Listaszerbekezds", "ListParagraph");
+        let same = report(
+            &docx_with_styles(hu),
+            Some(&docx_with_styles(&en)),
+            &opts_for(Check::StyleDefs),
+        )
+        .unwrap();
+        assert_eq!(same, "styledefs identical\n");
+        let bolder = en.replace("<w:b/>", "<w:b/><w:i/>");
+        let out = report(
+            &docx_with_styles(hu),
+            Some(&docx_with_styles(&bolder)),
+            &opts_for(Check::StyleDefs),
+        )
+        .unwrap();
+        assert!(
+            out.contains("+B   paragraph \"List Paragraph\" rPr[b i]\n"),
+            "{out}"
+        );
+    }
+
+    fn docx_with_numbering(numbering: &str) -> Vec<u8> {
+        zip_of(&[
+            ("[Content_Types].xml", TYPES),
+            ("_rels/.rels", ROOT_RELS),
+            ("word/document.xml", &document(CLEAN)),
+            (
+                "word/numbering.xml",
+                &format!(
+                    r#"<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">{numbering}</w:numbering>"#
+                ),
+            ),
+        ])
+    }
+
+    /// Each list level as the paragraphs naming the list see it: the
+    /// abstract definition with the list's overrides applied, by `numId`
+    /// (what paragraphs point at), never by the abstract's id, which Word
+    /// renumbers.
+    #[test]
+    fn numbering_lists_each_level_a_list_resolves_to() {
+        let abs = |id: &str, left: &str| {
+            format!(
+                r#"<w:abstractNum w:abstractNumId="{id}"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1)"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="{left}" w:hanging="360"/></w:pPr></w:lvl><w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="lowerLetter"/><w:lvlText w:val="%2."/><w:lvlJc w:val="left"/><w:rPr><w:b/></w:rPr></w:lvl></w:abstractNum>"#
+            )
+        };
+        let num = r#"<w:num w:numId="20"><w:abstractNumId w:val="9"/><w:lvlOverride w:ilvl="0"><w:startOverride w:val="3"/></w:lvlOverride></w:num>"#;
+        let a = docx_with_numbering(&format!("{}{num}", abs("9", "1069")));
+        let out = report(&a, None, &opts_for(Check::Numbering)).unwrap();
+        for expected in [
+            "word/numbering.xml: 1 lists\n",
+            "  num 20 lvl 0 start=3 decimal \"%1)\" jc=left pPr[ind(hanging=360,left=1069)] rPr[]\n",
+            "  num 20 lvl 1 start=1 lowerLetter \"%2.\" jc=left pPr[] rPr[b]\n",
+        ] {
+            assert!(out.contains(expected), "{expected:?} in\n{out}");
+        }
+        // The same list under another abstract id reads the same.
+        let renumbered = docx_with_numbering(&format!(
+            "{}{}",
+            abs("4", "1069"),
+            num.replace(r#"w:val="9""#, r#"w:val="4""#)
+        ));
+        let same = report(&a, Some(&renumbered), &opts_for(Check::Numbering)).unwrap();
+        assert_eq!(same, "numbering identical\n");
+        let wider = docx_with_numbering(&format!("{}{num}", abs("9", "1800")));
+        let out = report(&a, Some(&wider), &opts_for(Check::Numbering)).unwrap();
+        assert!(
+            out.contains("+B   num 20 lvl 0 start=3 decimal \"%1)\" jc=left pPr[ind(hanging=360,left=1800)] rPr[]\n"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn grep_narrows_runs_to_the_paragraphs_whose_text_has_it() {
+        let long = "x".repeat(300);
+        let body = format!(
+            r#"<w:p><w:r><w:rPr><w:sz w:val="24"/></w:rPr><w:t xml:space="preserve">{long} Q: Can you do PT/</w:t></w:r><w:r><w:rPr><w:b/><w:sz w:val="24"/></w:rPr><w:t>INRs?</w:t></w:r></w:p><w:p><w:r><w:t>Q: Other</w:t></w:r></w:p>"#
+        );
+        let opts = Options {
+            grep: Some("PT/INRs".into()),
+            ..opts_for(Check::Runs)
+        };
+        let out = report(&docx(&body), None, &opts).unwrap();
+        assert!(out.contains("«b sz=24»INRs?"), "{out}");
+        assert!(out.contains(&long), "printed whole: {out}");
+        assert!(!out.contains("Other"), "{out}");
+    }
+
+    /// A package whose one section shows `header_text` from the header part
+    /// `part`, related as `rid`.
+    fn docx_with_header(part: &str, rid: &str, header_text: &str) -> Vec<u8> {
+        let body = format!(
+            r#"<w:p><w:r><w:t>Body</w:t></w:r></w:p><w:sectPr><w:headerReference w:type="first" r:id="{rid}"/></w:sectPr>"#
+        );
+        let rels = format!(
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="{rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="{}"/></Relationships>"#,
+            part.trim_start_matches("word/")
+        );
+        let header = format!(
+            r#"<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>{header_text}</w:t></w:r></w:p></w:hdr>"#
+        );
+        zip_of(&[
+            ("[Content_Types].xml", TYPES),
+            ("_rels/.rels", ROOT_RELS),
+            ("word/document.xml", &document(&body)),
+            ("word/_rels/document.xml.rels", &rels),
+            (part, &header),
+        ])
+    }
+
+    /// Word renumbers header and footer parts on save: two packages pair
+    /// them by the section reference that shows them, not by part name.
+    #[test]
+    fn text_pairs_headers_by_the_section_that_shows_them() {
+        let a = docx_with_header("word/header1.xml", "rId7", "Top");
+        let b = docx_with_header("word/header3.xml", "rId10", "Top");
+        let same = report(&a, Some(&b), &opts_for(Check::Text)).unwrap();
+        assert_eq!(same, "text identical\n");
+        let c = docx_with_header("word/header3.xml", "rId10", "Topper");
+        let out = report(&a, Some(&c), &opts_for(Check::Text)).unwrap();
+        assert!(
+            out.starts_with(
+                "section 1 first header (A word/header1.xml, B word/header3.xml): 1 line differs\n"
+            ),
+            "{out}"
+        );
+    }
+
+    /// A header with a PAGE field in a shaded table cell, and a body with a
+    /// styled floating table, shaded and highlighted text, a hidden run and
+    /// a replacement laid out as the deletion first.
+    fn docx_for_render() -> Vec<u8> {
+        let w = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#;
+        let body = r#"<w:p><w:pPr><w:pStyle w:val="Title"/></w:pPr><w:r><w:t>Heading</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblStyle w:val="GridTable4"/><w:tblpPr w:vertAnchor="text" w:tblpX="100" w:tblpY="200"/><w:shd w:val="clear" w:color="auto" w:fill="FFFF00"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="D9E2F3"/></w:tcPr><w:p><w:r><w:t>A1</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>B1</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p/></w:tc><w:tc><w:p/></w:tc></w:tr></w:tbl><w:p><w:pPr><w:shd w:val="clear" w:color="auto" w:fill="FFC000"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:highlight w:val="yellow"/></w:rPr><w:t>marked</w:t></w:r><w:r><w:rPr><w:color w:val="FF0000"/></w:rPr><w:t>red</w:t></w:r><w:r><w:rPr><w:vanish/></w:rPr><w:t>hidden</w:t></w:r><w:r><w:rPr><w:rStyle w:val="Hidden"/></w:rPr><w:t>styled</w:t></w:r></w:p><w:p><w:del w:id="1" w:author="A"><w:r><w:delText>old</w:delText></w:r></w:del><w:ins w:id="2" w:author="A"><w:r><w:t>new</w:t></w:r></w:ins></w:p><w:sectPr><w:headerReference w:type="default" r:id="rId7"/><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1800" w:bottom="1440" w:left="1800" w:header="720" w:footer="720" w:gutter="0"/><w:titlePg/></w:sectPr>"#;
+        let styles = format!(
+            r#"<w:styles {w}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:pPr><w:shd w:val="clear" w:color="auto" w:fill="E7E6E6"/></w:pPr><w:rPr><w:color w:val="2F5496"/></w:rPr></w:style><w:style w:type="character" w:styleId="Hidden"><w:name w:val="Hidden Text"/><w:rPr><w:vanish/></w:rPr></w:style><w:style w:type="table" w:styleId="GridTable4"><w:name w:val="Grid Table 4"/><w:tblStylePr w:type="firstRow"><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="4472C4"/></w:tcPr></w:tblStylePr></w:style></w:styles>"#
+        );
+        let header = format!(
+            r#"<w:hdr {w}><w:tbl><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="1F3864"/></w:tcPr><w:p><w:r><w:t xml:space="preserve">Page </w:t></w:r><w:fldSimple w:instr=" PAGE \* MERGEFORMAT "><w:r><w:t>1</w:t></w:r></w:fldSimple></w:p></w:tc></w:tr></w:tbl></w:hdr>"#
+        );
+        let rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/><Relationship Id="rId8" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>"#;
+        zip_of(&[
+            ("[Content_Types].xml", TYPES),
+            ("_rels/.rels", ROOT_RELS),
+            ("word/document.xml", &document(body)),
+            ("word/_rels/document.xml.rels", rels),
+            ("word/styles.xml", &styles),
+            ("word/header1.xml", &header),
+        ])
+    }
+
+    /// `render` lists, for every story part and not only the body, what
+    /// should reach the page: tables with their style, float and shading
+    /// (direct, per cell, and from the table style), shaded, highlighted,
+    /// coloured and hidden text, fields, the order of deleted and inserted
+    /// runs, and the sections; `(layout)` adds the page count and the face
+    /// each requested font resolved to.
+    #[test]
+    fn render_lists_what_each_part_puts_on_the_page() {
+        let out = report(&docx_for_render(), None, &opts_for(Check::Render)).unwrap();
+        for expected in [
+            "word/document.xml: 7 paragraphs\n",
+            "  section 1 page=12240x15840 margins=1440,1800,1440,1800 header=720 footer=720 titlePg default-header=word/header1.xml\n",
+            "  table 1 2x2 style=\"Grid Table 4\" float(tblpX=100,tblpY=200,vertAnchor=text) shd=FFFF00 cells-shd[D9E2F3×1] style-shd[firstRow=4472C4] \"A1 | B1\"\n",
+            "  pstyle \"Title\" ×1\n",
+            "  para-shd E7E6E6 via \"Title\" ×1 \"Heading\"\n",
+            "  para-shd FFC000 ×1 \"markedredhiddenstyled\"\n",
+            "  color 2F5496 via \"Title\" ×1 \"Heading\"\n",
+            "  color FF0000 ×1 \"red\"\n",
+            "  highlight yellow ×1 \"marked\"\n",
+            "  vanish ×1 \"hidden\"\n",
+            "  vanish via \"Hidden Text\" ×1 \"styled\"\n",
+            "  rfonts \"Arial\" ×1\n",
+            "  revisions del→ins ×1 \"oldnew\"\n",
+            "word/header1.xml: 1 paragraphs\n",
+            "  shown as section 1 default header\n",
+            "  table 1 1x1 cells-shd[1F3864×1] \"Page 1\"\n",
+            "  field PAGE ×1\n",
+            "(layout): 1 pages\n",
+            "  docDefaults rfonts ascii=Calibri hAnsi=Calibri\n",
+        ] {
+            assert!(out.contains(expected), "{expected:?} in\n{out}");
+        }
+        assert!(out.contains("  font \"Arial\" regular → "), "{out}");
+        // Two files: only what differs.
+        let same = report(
+            &docx_for_render(),
+            Some(&docx_for_render()),
+            &opts_for(Check::Render),
+        )
+        .unwrap();
+        assert_eq!(same, "render identical\n");
+        let pick = |fill: &str| {
+            let pkg = docx_for_render();
+            let mut z = zip::ZipArchive::new(Cursor::new(pkg)).unwrap();
+            let mut parts: Vec<(String, String)> = Vec::new();
+            for i in 0..z.len() {
+                let mut f = z.by_index(i).unwrap();
+                let mut s = String::new();
+                f.read_to_string(&mut s).unwrap();
+                parts.push((f.name().to_string(), s.replace("1F3864", fill)));
+            }
+            let refs: Vec<(&str, &str)> = parts
+                .iter()
+                .map(|(n, s)| (n.as_str(), s.as_str()))
+                .collect();
+            zip_of(&refs)
+        };
+        let out = report(
+            &docx_for_render(),
+            Some(&pick("FFFFFF")),
+            &opts_for(Check::Render),
+        )
+        .unwrap();
+        assert!(
+            out.contains("-A   table 1 1x1 cells-shd[1F3864×1] \"Page 1\"\n")
+                && out.contains("+B   table 1 1x1 cells-shd[FFFFFF×1] \"Page 1\"\n"),
+            "{out}"
+        );
+    }
+
+    /// PR #247 review: `color auto`, `highlight none` and a nil `shd` are
+    /// resets, not absences. Direct on a run, or in a style over its base,
+    /// they stop the style's value from reaching the page, so `render`
+    /// must not report it.
+    #[test]
+    fn render_honours_formatting_resets() {
+        let w = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#;
+        let loud = r#"<w:color w:val="FF0000"/><w:highlight w:val="yellow"/><w:shd w:val="clear" w:color="auto" w:fill="00FF00"/>"#;
+        let reset = r#"<w:color w:val="auto"/><w:highlight w:val="none"/><w:shd w:val="nil"/>"#;
+        let body = format!(
+            r#"<w:p><w:r><w:rPr><w:rStyle w:val="Loud"/></w:rPr><w:t>shout</w:t></w:r><w:r><w:rPr><w:rStyle w:val="Loud"/>{reset}</w:rPr><w:t>hush</w:t></w:r><w:r><w:rPr><w:rStyle w:val="Quiet"/></w:rPr><w:t>calm</w:t></w:r></w:p>"#
+        );
+        let styles = format!(
+            r#"<w:styles {w}><w:style w:type="character" w:styleId="Loud"><w:name w:val="Loud"/><w:rPr>{loud}</w:rPr></w:style><w:style w:type="character" w:styleId="Quiet"><w:name w:val="Quiet"/><w:basedOn w:val="Loud"/><w:rPr>{reset}</w:rPr></w:style></w:styles>"#
+        );
+        let rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId8" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>"#;
+        let pkg = zip_of(&[
+            ("[Content_Types].xml", TYPES),
+            ("_rels/.rels", ROOT_RELS),
+            ("word/document.xml", &document(&body)),
+            ("word/_rels/document.xml.rels", rels),
+            ("word/styles.xml", &styles),
+        ]);
+        let out = report(&pkg, None, &opts_for(Check::Render)).unwrap();
+        for expected in [
+            "  color FF0000 via \"Loud\" ×1 \"shout\"\n",
+            "  highlight yellow via \"Loud\" ×1 \"shout\"\n",
+            "  run-shd 00FF00 via \"Loud\" ×1 \"shout\"\n",
+        ] {
+            assert!(out.contains(expected), "{expected:?} in\n{out}");
+        }
+        assert!(
+            !out.contains("\"hush\"") && !out.contains("\"calm\""),
+            "reset runs report no inherited formatting:\n{out}"
+        );
+    }
+
+    /// `render` over a body and a styles part (PR #247 review probes).
+    fn render_of(body: &str, styles: &str) -> String {
+        let w = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#;
+        let styles = format!(r#"<w:styles {w}>{styles}</w:styles>"#);
+        let rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId8" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>"#;
+        let pkg = zip_of(&[
+            ("[Content_Types].xml", TYPES),
+            ("_rels/.rels", ROOT_RELS),
+            ("word/document.xml", &document(body)),
+            ("word/_rels/document.xml.rels", rels),
+            ("word/styles.xml", &styles),
+        ]);
+        report(&pkg, None, &opts_for(Check::Render)).unwrap()
+    }
+
+    const ONE_CELL: &str = r#"<w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>A1</w:t></w:r></w:p></w:tc></w:tr>"#;
+
+    /// PR #247 review: a derived table style keeps its base's conditions
+    /// (the base's whole-table fill under the derived first row).
+    #[test]
+    fn render_merges_table_style_shading_down_the_chain() {
+        let styles = r#"<w:style w:type="table" w:styleId="Base"><w:name w:val="Base"/><w:tblPr><w:shd w:val="clear" w:color="auto" w:fill="FFFF00"/></w:tblPr></w:style><w:style w:type="table" w:styleId="Derived"><w:name w:val="Derived"/><w:basedOn w:val="Base"/><w:tblStylePr w:type="firstRow"><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="4472C4"/></w:tcPr></w:tblStylePr></w:style>"#;
+        let body = format!(
+            r#"<w:tbl><w:tblPr><w:tblStyle w:val="Derived"/></w:tblPr>{ONE_CELL}</w:tbl><w:p/>"#
+        );
+        let out = render_of(&body, styles);
+        assert!(
+            out.contains(" style-shd[whole=FFFF00,firstRow=4472C4] "),
+            "{out}"
+        );
+    }
+
+    /// PR #247 review: a replacement inside a hyperlink, smart tag or
+    /// content control still reports its order.
+    #[test]
+    fn render_reports_revision_order_inside_run_containers() {
+        let pair = r#"<w:del w:id="1" w:author="A"><w:r><w:delText>old</w:delText></w:r></w:del><w:ins w:id="2" w:author="A"><w:r><w:t>new</w:t></w:r></w:ins>"#;
+        for wrap in [
+            format!("<w:hyperlink>{pair}</w:hyperlink>"),
+            format!("<w:smartTag>{pair}</w:smartTag>"),
+            format!("<w:sdt><w:sdtContent>{pair}</w:sdtContent></w:sdt>"),
+        ] {
+            let out = render_of(&format!("<w:p>{wrap}</w:p>"), "");
+            assert!(
+                out.contains("  revisions del→ins ×1 \"oldnew\"\n"),
+                "{wrap}:\n{out}"
+            );
+        }
+        // A plain run between them still breaks the pair.
+        let split = r#"<w:p><w:hyperlink><w:del w:id="1" w:author="A"><w:r><w:delText>old</w:delText></w:r></w:del><w:r><w:t>mid</w:t></w:r><w:ins w:id="2" w:author="A"><w:r><w:t>new</w:t></w:r></w:ins></w:hyperlink></w:p>"#;
+        assert!(!render_of(split, "").contains("revisions"));
+    }
+
+    /// PR #247 review: the old `w:sectPr` a `w:sectPrChange` records is
+    /// history, not a live section.
+    #[test]
+    fn render_lists_only_live_sections() {
+        let body = r#"<w:p/><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:sectPrChange w:id="1" w:author="A"><w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr></w:sectPrChange></w:sectPr>"#;
+        let out = render_of(body, "");
+        assert!(out.contains("  section 1 page=12240x15840"), "{out}");
+        assert!(
+            !out.contains("section 2") && !out.contains("11906"),
+            "{out}"
+        );
+    }
+
+    /// PR #247 review: a derived paragraph style's nil `shd` stops its
+    /// base's fill.
+    #[test]
+    fn render_honours_a_paragraph_style_shading_reset() {
+        let styles = r#"<w:style w:type="paragraph" w:styleId="Loud"><w:name w:val="Loud"/><w:pPr><w:shd w:val="clear" w:color="auto" w:fill="00FF00"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="Quiet"><w:name w:val="Quiet"/><w:basedOn w:val="Loud"/><w:pPr><w:shd w:val="nil"/></w:pPr></w:style>"#;
+        let body = r#"<w:p><w:pPr><w:pStyle w:val="Loud"/></w:pPr><w:r><w:t>shout</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Quiet"/></w:pPr><w:r><w:t>calm</w:t></w:r></w:p>"#;
+        let out = render_of(body, styles);
+        assert!(
+            out.contains("  para-shd 00FF00 via \"Loud\" ×1 \"shout\"\n"),
+            "{out}"
+        );
+        assert!(!out.contains("\"calm\""), "{out}");
+    }
+
+    /// PR #247 review: a `w:customXml` row is a row of its table, as the
+    /// converter lays it out.
+    #[test]
+    fn render_counts_rows_wrapped_in_custom_xml() {
+        let body = r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:customXml w:element="row"><w:tr><w:tc><w:p><w:r><w:t>A1</w:t></w:r></w:p></w:tc></w:tr></w:customXml><w:tr><w:tc><w:p><w:r><w:t>A2</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#;
+        let out = render_of(body, "");
+        assert!(out.contains("  table 1 2x1 \"A1\"\n"), "{out}");
+    }
+
+    /// PR #247 review: `behindDoc="true"` is behind the text, like `"1"`.
+    #[test]
+    fn render_marks_a_true_behind_doc_anchor() {
+        let anchor = |v: &str| {
+            format!(
+                r#"<w:p><w:r><w:drawing><wp:anchor behindDoc="{v}" distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="1" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="100" cy="100"/><wp:wrapNone/><wp:docPr id="1" name="Pic"/></wp:anchor></w:drawing></w:r></w:p>"#
+            )
+        };
+        for v in ["1", "true"] {
+            let out = render_of(&anchor(v), "");
+            assert!(out.contains(" behind \"Pic\""), "{v}:\n{out}");
+        }
+        assert!(!render_of(&anchor("false"), "").contains(" behind "));
+    }
+
+    /// PR #247 review: each font slot a run asks for is reported, explicit
+    /// or theme, not only the first.
+    #[test]
+    fn render_reports_every_requested_font_slot() {
+        let body = r#"<w:p><w:r><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:eastAsia="MS Mincho" w:cstheme="minorBidi"/></w:rPr><w:t>mixed</w:t></w:r></w:p>"#;
+        let out = render_of(body, "");
+        for expected in [
+            "  rfonts \"Arial\" ×1\n",
+            "  rfonts \"MS Mincho\" ×1\n",
+            "  rfonts \"theme:minorBidi\" ×1\n",
+        ] {
+            assert!(out.contains(expected), "{expected:?} in\n{out}");
+        }
+    }
+
+    /// PR #247 review: unequal columns report their widths and gaps, so
+    /// two builds that move them differ.
+    #[test]
+    fn render_reports_custom_column_geometry() {
+        let sect = |a: &str, b: &str| {
+            format!(
+                r#"<w:p/><w:sectPr><w:cols w:equalWidth="0"><w:col w:w="{a}" w:space="720"/><w:col w:w="{b}"/></w:cols></w:sectPr>"#
+            )
+        };
+        let out = render_of(&sect("3000", "5000"), "");
+        assert!(out.contains(" cols=2[3000+720,5000]"), "{out}");
+        assert!(!render_of(&sect("4000", "4000"), "").contains("3000"));
+    }
+
+    /// PR #247 review: only the branch Word renders counts; a DrawingML
+    /// `mc:Choice` and its VML `mc:Fallback` are one picture.
+    #[test]
+    fn render_skips_the_fallback_of_an_alternate_content() {
+        let body = r#"<w:p><w:r><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:Choice Requires="wps"><w:drawing><wp:inline><wp:extent cx="100" cy="100"/><wp:docPr id="1" name="Box"/></wp:inline></w:drawing></mc:Choice><mc:Fallback><w:pict><v:rect/></w:pict></mc:Fallback></mc:AlternateContent></w:r></w:p>"#;
+        let out = render_of(body, "");
+        assert!(out.contains("  inline ×1\n"), "{out}");
+        assert!(!out.contains("vml pict"), "{out}");
+    }
+
+    /// PR #247 review: an unstyled paragraph takes the default paragraph
+    /// style's shading and run colour, as the converter paints them.
+    #[test]
+    fn render_applies_the_default_paragraph_style() {
+        let styles = r#"<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:pPr><w:shd w:val="clear" w:color="auto" w:fill="EEEEEE"/></w:pPr><w:rPr><w:color w:val="C00000"/></w:rPr></w:style>"#;
+        let out = render_of(r#"<w:p><w:r><w:t>plain</w:t></w:r></w:p>"#, styles);
+        assert!(out.contains("para-shd EEEEEE via \"Normal\""), "{out}");
+        assert!(out.contains("color C00000 via \"Normal\""), "{out}");
+    }
+
+    /// PR #247 review: a frame from the paragraph style's chain is the
+    /// paragraph's frame; direct attributes override the style's.
+    #[test]
+    fn render_reports_a_frame_from_the_style_chain() {
+        let styles = r#"<w:style w:type="paragraph" w:styleId="Boxed"><w:name w:val="Boxed"/><w:pPr><w:framePr w:w="3000" w:hAnchor="page" w:x="1000"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="Side"><w:name w:val="Side"/><w:basedOn w:val="Boxed"/></w:style>"#;
+        let body = r#"<w:p><w:pPr><w:pStyle w:val="Side"/><w:framePr w:x="2000"/></w:pPr><w:r><w:t>framed</w:t></w:r></w:p>"#;
+        let out = render_of(body, styles);
+        assert!(
+            out.contains("  frame(hAnchor=page,w=3000,x=2000) \"framed\""),
+            "{out}"
+        );
+    }
+
+    /// PR #247 review: a theme colour's tint and shade change the ink, so
+    /// they are part of the colour.
+    #[test]
+    fn render_keeps_a_theme_colours_tint_and_shade() {
+        let body = r#"<w:p><w:r><w:rPr><w:color w:val="4472C4" w:themeColor="accent1" w:themeShade="BF"/></w:rPr><w:t>dark</w:t></w:r><w:r><w:rPr><w:color w:val="4472C4" w:themeColor="accent1" w:themeTint="99"/></w:rPr><w:t>light</w:t></w:r></w:p>"#;
+        let out = render_of(body, "");
+        assert!(out.contains("color theme:accent1/shade:BF ×1"), "{out}");
+        assert!(out.contains("color theme:accent1/tint:99 ×1"), "{out}");
+    }
+
+    /// PR #247 review: fonts a run takes from its character or paragraph
+    /// style are the fonts it paints in.
+    #[test]
+    fn render_reports_fonts_from_run_and_paragraph_styles() {
+        let styles = r#"<w:style w:type="paragraph" w:styleId="Code"><w:name w:val="Code"/><w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas"/></w:rPr></w:style><w:style w:type="character" w:styleId="Quote"><w:name w:val="Quote"/><w:rPr><w:rFonts w:ascii="Georgia" w:hAnsi="Georgia"/></w:rPr></w:style>"#;
+        let body = r#"<w:p><w:pPr><w:pStyle w:val="Code"/></w:pPr><w:r><w:t>code</w:t></w:r><w:r><w:rPr><w:rStyle w:val="Quote"/></w:rPr><w:t>quote</w:t></w:r></w:p>"#;
+        let out = render_of(body, styles);
+        assert!(out.contains("rfonts \"Consolas\" via \"Code\""), "{out}");
+        assert!(out.contains("rfonts \"Georgia\" via \"Quote\""), "{out}");
+    }
+
+    /// PR #247 review: pretty-print inside an element with no text is not
+    /// its text; `<w:p>\n  </w:p>` prints as `<w:p></w:p>` does.
+    #[test]
+    fn xml_drops_pretty_print_inside_a_textless_element() {
+        let pretty = report(&docx("<w:p>\n  </w:p>"), None, &opts_for(Check::Xml)).unwrap();
+        let tight = report(&docx("<w:p></w:p>"), None, &opts_for(Check::Xml)).unwrap();
+        assert_eq!(pretty, tight);
+        // A text element keeps its whitespace.
+        let space = report(
+            &docx(r#"<w:p><w:r><w:t xml:space="preserve"> </w:t></w:r></w:p>"#),
+            None,
+            &opts_for(Check::Xml),
+        )
+        .unwrap();
+        assert!(
+            space.contains("<w:t xml:space=\"preserve\"> </w:t>"),
+            "{space}"
+        );
+    }
+
+    #[test]
+    fn text_of_two_packages_shows_only_the_changed_lines() {
+        let a = docx(TRACKED);
+        let b = docx(&TRACKED.replace("cell", "cellar"));
+        let out = report(&a, Some(&b), &opts_for(Check::Text)).unwrap();
+        assert!(out.contains("word/document.xml: 1 line differs\n"), "{out}");
+        assert!(out.contains("-A     ¶  cell\n"), "{out}");
+        assert!(out.contains("+B     ¶  cellar\n"), "{out}");
+        assert!(!out.contains("Plain"), "unchanged lines stay out: {out}");
+        let same = report(&a, Some(&a), &opts_for(Check::Text)).unwrap();
+        assert_eq!(same, "text identical\n");
+    }
+
+    #[test]
+    fn context_shows_the_common_lines_around_a_change() {
+        let body = |x: &str| {
+            ["one", "two", x, "four", "five"]
+                .map(|t| format!("<w:p><w:r><w:t>{t}</w:t></w:r></w:p>"))
+                .concat()
+        };
+        let opts = Options {
+            context: 1,
+            ..opts_for(Check::Text)
+        };
+        let out = report(&docx(&body("three")), Some(&docx(&body("3"))), &opts).unwrap();
+        assert!(
+            out.contains("     ¶  two\n-A   ¶  three\n+B   ¶  3\n     ¶  four\n"),
+            "{out}"
+        );
+        assert!(!out.contains("one") && !out.contains("five"), "{out}");
+    }
+
+    #[test]
+    fn a_long_changed_line_is_clipped_around_its_first_difference() {
+        let long = "word ".repeat(80);
+        let body = |tail: &str| format!(r#"<w:p><w:r><w:t>{long}{tail}</w:t></w:r></w:p>"#);
+        let out = report(
+            &docx(&body("apples")),
+            Some(&docx(&body("pears"))),
+            &opts_for(Check::Text),
+        )
+        .unwrap();
+        assert!(out.contains("apples"), "{out}");
+        assert!(out.contains("pears"), "{out}");
+        assert!(out.contains("-A …"), "the clipped head is marked: {out}");
+    }
+
+    #[test]
+    fn xml_prints_one_element_per_line_without_noise() {
+        let body = r#"<w:p w:rsidR="00AB12CD" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" w14:paraId="1A2B3C4D" w14:textId="77777777"><w:pPr><w:jc w:val="center"/></w:pPr><w:r w:rsidRPr="00FF00FF"><w:t xml:space="preserve">Hi </w:t></w:r><w:r><w:delText xml:space="preserve"> </w:delText></w:r></w:p>"#;
+        let out = report(&docx(body), None, &opts_for(Check::Xml)).unwrap();
+        for expected in [
+            "word/document.xml\n",
+            "<w:document>\n",
+            "  <w:body>\n",
+            "    <w:p>\n",
+            "      <w:pPr>\n",
+            "        <w:jc w:val=\"center\"/>\n",
+            "        <w:t xml:space=\"preserve\">Hi </w:t>\n",
+            // A space-only text is content (246c7fcf50's footer), not
+            // the pretty-print between elements.
+            "        <w:delText xml:space=\"preserve\"> </w:delText>\n",
+            "    </w:p>\n",
+        ] {
+            assert!(out.contains(expected), "{expected:?} in\n{out}");
+        }
+        for noise in ["xmlns", "rsid", "paraId", "textId"] {
+            assert!(!out.contains(noise), "{noise} in\n{out}");
+        }
+    }
+
+    #[test]
+    fn xml_of_two_packages_diffs_only_what_changed() {
+        let a = docx(
+            r#"<w:p><w:pPr><w:pStyle w:val="X"/><w:rPr/></w:pPr><w:r><w:t>same</w:t></w:r></w:p>"#,
+        );
+        let b = docx(r#"<w:p w:rsidR="00000001"><w:r><w:t>same</w:t></w:r></w:p>"#);
+        let out = report(&a, Some(&b), &opts_for(Check::Xml)).unwrap();
+        assert!(out.contains("word/document.xml: 4 lines differ\n"), "{out}");
+        let pad = " ".repeat(8);
+        assert!(
+            out.contains(&format!("-A {pad}<w:pStyle w:val=\"X\"/>\n")),
+            "{out}"
+        );
+        assert!(out.contains(&format!("-A {pad}<w:rPr/>\n")), "{out}");
+        assert!(!out.contains("+B"), "{out}");
+        assert!(!out.contains("same"), "{out}");
+        let same = report(&b, Some(&b), &opts_for(Check::Xml)).unwrap();
+        assert_eq!(same, "xml identical\n");
     }
 }

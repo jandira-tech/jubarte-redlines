@@ -22,6 +22,8 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use crate::changes::{Change, ChangeError, ChangeFilter};
+
 use crate::comparer::{WmlComparerRevisionType, WmlComparerSettings};
 use crate::inspect::{Opened, Piece, Projection, SCHEMA_VERSION, project_paragraph, source_sha256};
 use crate::namespaces::{R, W};
@@ -53,11 +55,49 @@ pub struct EditPlan {
     /// Comment initials; derived from `author` when omitted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initials: Option<String>,
+    /// Tracked changes to accept and reject before anything else; the
+    /// changes it leaves follow `existing_revisions`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolve_revisions: Option<ResolveRevisions>,
     /// What to do when the source already holds tracked changes.
     #[serde(default)]
     pub existing_revisions: ExistingRevisions,
     /// Operations in report order.
     pub operations: Vec<Operation>,
+}
+
+/// The tracked changes a plan accepts and rejects before it edits, as
+/// Word's Accept / Reject This Change (see [`crate::changes`]). Each side
+/// is a [`ChangeFilter`]; left out, it resolves nothing. No change may be
+/// selected by both (`REVISION_CONFLICT`); both sides of a move count as
+/// one change.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResolveRevisions {
+    /// Changes to accept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accept: Option<ChangeFilter>,
+    /// Changes to reject (after the accepted ones).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reject: Option<ChangeFilter>,
+}
+
+/// The changes `resolve_revisions` resolved, by id.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResolvedRevisions {
+    /// Accepted changes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub accepted: Vec<String>,
+    /// Rejected changes (a change an accepted one took along is not listed).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rejected: Vec<String>,
+}
+
+impl ResolvedRevisions {
+    /// Nothing resolved.
+    pub fn is_empty(&self) -> bool {
+        self.accepted.is_empty() && self.rejected.is_empty()
+    }
 }
 
 /// Policy for a source that already contains tracked changes.
@@ -472,6 +512,9 @@ pub struct EditReport {
     pub date: String,
     /// Policy that was applied.
     pub existing_revisions: ExistingRevisions,
+    /// Changes `resolve_revisions` accepted and rejected.
+    #[serde(default, skip_serializing_if = "ResolvedRevisions::is_empty")]
+    pub resolved_revisions: ResolvedRevisions,
     /// Body paragraph count before and after.
     pub paragraphs: ParagraphDelta,
     /// One outcome per operation, in plan order.
@@ -491,7 +534,7 @@ impl EditReport {
             out.push_str(&v.to_string());
             out.push('\n');
         };
-        push(serde_json::json!({
+        let mut load = serde_json::json!({
             "ev": "load",
             "sha256": self.source_sha256,
             "base_sha256": self.base_sha256,
@@ -500,7 +543,14 @@ impl EditReport {
             "author": self.author,
             "date": self.date,
             "existing_revisions": self.existing_revisions,
-        }));
+        });
+        if !self.resolved_revisions.is_empty() {
+            load.as_object_mut().expect("object").insert(
+                "resolved_revisions".into(),
+                serde_json::to_value(&self.resolved_revisions).expect("serializes"),
+            );
+        }
+        push(load);
         for (i, op) in self.operations.iter().enumerate() {
             let mut v = serde_json::json!({
                 "ev": "op",
@@ -594,6 +644,80 @@ fn open_error(error: crate::inspect::InspectError) -> EditError {
         }
         other => err("INVALID_DOCUMENT", None, other.to_string()),
     }
+}
+
+/// Accept, then reject, the changes `resolve_revisions` selects: the new
+/// source (`None` when it selects nothing) and what was resolved.
+fn resolve_selected(
+    source: &[u8],
+    selection: Option<&ResolveRevisions>,
+) -> Result<(Option<Vec<u8>>, ResolvedRevisions), EditError> {
+    let mut resolved = ResolvedRevisions::default();
+    let Some(selection) = selection else {
+        return Ok((None, resolved));
+    };
+    let change_err = |e: ChangeError| match e {
+        ChangeError::UnknownChange(id) => err(
+            "UNKNOWN_CHANGE",
+            None,
+            format!("resolve_revisions: no tracked change {id}"),
+        ),
+        ChangeError::Package(m) => err("INVALID_DOCUMENT", None, m),
+    };
+    let listed = crate::changes::list_changes(source).map_err(change_err)?;
+    // The ids a side selects, a move's other side included.
+    let select = |filter: Option<&ChangeFilter>| -> Result<Vec<String>, EditError> {
+        let Some(filter) = filter else {
+            return Ok(Vec::new());
+        };
+        if let Some(unknown) = filter
+            .ids
+            .iter()
+            .flatten()
+            .find(|id| !listed.iter().any(|c| &c.id == *id))
+        {
+            return Err(change_err(ChangeError::UnknownChange(unknown.clone())));
+        }
+        let hit: Vec<&Change> = listed.iter().filter(|c| filter.matches(c)).collect();
+        Ok(listed
+            .iter()
+            .filter(|c| {
+                hit.iter()
+                    .any(|h| h.id == c.id || h.move_name.is_some() && h.move_name == c.move_name)
+            })
+            .map(|c| c.id.clone())
+            .collect())
+    };
+    let accept = select(selection.accept.as_ref())?;
+    let reject = select(selection.reject.as_ref())?;
+    if let Some(both) = accept.iter().find(|id| reject.contains(id)) {
+        return Err(err(
+            "REVISION_CONFLICT",
+            None,
+            format!("resolve_revisions selects {both} to accept and to reject"),
+        ));
+    }
+    if accept.is_empty() && reject.is_empty() {
+        return Ok((None, resolved));
+    }
+    let mut bytes = source.to_vec();
+    if !accept.is_empty() {
+        bytes = crate::changes::accept_changes(&bytes, &ChangeFilter::ids(accept.clone()))
+            .map_err(change_err)?;
+        resolved.accepted = accept;
+    }
+    // A change the accepted ones took along is gone, not rejected.
+    let left = crate::changes::list_changes(&bytes).map_err(change_err)?;
+    let reject: Vec<String> = reject
+        .into_iter()
+        .filter(|id| left.iter().any(|c| &c.id == id))
+        .collect();
+    if !reject.is_empty() {
+        bytes = crate::changes::reject_changes(&bytes, &ChangeFilter::ids(reject.clone()))
+            .map_err(change_err)?;
+        resolved.rejected = reject;
+    }
+    Ok((Some(bytes), resolved))
 }
 
 fn err(code: &str, operation: Option<&str>, message: impl Into<String>) -> EditError {
@@ -856,6 +980,7 @@ struct Transaction<'p> {
     source_sha256: String,
     base: Vec<u8>,
     base_sha256: String,
+    resolved_revisions: ResolvedRevisions,
     date: String,
     initials: String,
     opened: Opened,
@@ -921,6 +1046,12 @@ impl<'p> Transaction<'p> {
                 "signed or macro-bearing package",
             ));
         }
+        let (resolved_source, resolved_revisions) =
+            resolve_selected(source, plan.resolve_revisions.as_ref())?;
+        let (source, probe) = match &resolved_source {
+            Some(bytes) => (bytes.as_slice(), Opened::open(bytes).map_err(open_error)?),
+            None => (source, probe),
+        };
         let story_revisions: usize = probe
             .story_parts()
             .iter()
@@ -1008,6 +1139,7 @@ impl<'p> Transaction<'p> {
             source_sha256: source_hash,
             base,
             base_sha256,
+            resolved_revisions,
             date,
             initials,
             opened,
@@ -1034,6 +1166,7 @@ impl<'p> Transaction<'p> {
             author: self.plan.author.clone(),
             date: self.date.clone(),
             existing_revisions: self.plan.existing_revisions,
+            resolved_revisions: self.resolved_revisions.clone(),
             paragraphs: ParagraphDelta {
                 from: self.body_paragraph_count(),
                 to: self.body_paragraph_count(),

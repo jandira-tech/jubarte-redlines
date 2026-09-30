@@ -25,7 +25,7 @@ use std::fmt;
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::namespaces::{A, M, MC, R, W, W14, WNE, WP};
+use crate::namespaces::{A, M, MC, R, W, W14, W15, WNE, WP};
 use crate::opc::PartFs;
 use crate::xmllinq::{Dom, NodeId, XName, XNamespace};
 
@@ -481,7 +481,7 @@ fn with_pages<T>(
             run_faces.extend(latin_font_names(&text));
         }
     }
-    let has_cjk = xml.chars().any(is_cjk);
+    let has_cjk = xml.chars().any(takes_east_asian_face);
     font::add_installed_faces(&mut embedded, &table, &family_names, &run_faces, has_cjk);
     if has_cjk {
         font::add_cjk_fallbacks(&mut embedded);
@@ -504,7 +504,8 @@ fn with_pages<T>(
             // deletions with w:trackRevisions, with or without formatting
             // changes, keep the full page (English redline e1de10f3 was
             // shrunk on a 100/100 count).
-            if document_has_balloons(&pkg, &main) {
+            let balloons = word_balloon_comments(&pkg, &main, &dom, body);
+            if document_has_balloons(&pkg, &main, balloons.as_ref()) {
                 sheet.defaults.page.balloon_gutter = 144.0;
             }
             let page = load_page_setup(&dom, body, &sheet.defaults.page);
@@ -722,7 +723,8 @@ impl RunStyle {
 #[derive(Clone)]
 struct ParaStyle {
     /// The paragraph carries a tracked formatting change (`w:pPrChange` or a
-    /// `w:rPrChange`): Word bars it like an insertion or deletion.
+    /// `w:rPrChange`) or its mark is revised: Word bars it like an
+    /// insertion or deletion.
     fmt_rev: bool,
     /// The paragraph mark's own run style (pPr/rPr with a size or face):
     /// a picture-only line takes its multiple's leading from it (0023298b).
@@ -997,6 +999,10 @@ struct NamedStyle {
     /// base's; a paragraph's own framePr overlays them attribute by
     /// attribute (e73ba1e0's footer frame takes Marginalie's x=9016).
     frame: Vec<(String, String)>,
+    /// The chain's nearest `w:vanish`, when one sets it: a character style
+    /// that turns it on hides its runs (4910ce2060's ContentControlHidden
+    /// placeholders), one that turns it off shows them again.
+    hidden: Option<bool>,
 }
 
 #[derive(Clone, Default)]
@@ -1365,6 +1371,9 @@ struct TextRun {
     /// the right margin with no stop wraps (ecd9fba7; mode 14 keeps it on
     /// the line, 7695f5c2).
     hf_tab_wrap: bool,
+    /// Header/footer run: the document's default tab stop, for wrapping a
+    /// line that holds a tab (0 falls back to 36pt).
+    hf_default_tab: f32,
     /// A FORMCHECKBOX legacy form field: an em space advanced like Word's
     /// box (1.15 x the box size) that paints the box, crossed when checked.
     checkbox: Option<bool>,
@@ -1393,6 +1402,7 @@ impl TextRun {
             frame_center: false,
             hf_cont: false,
             hf_tab_wrap: false,
+            hf_default_tab: 0.0,
             checkbox: None,
         }
     }
@@ -1788,6 +1798,13 @@ struct LaidImage {
     /// wraps the tab to a line of its own in this mark's face (redlines vs
     /// 000e3e7b: a 441.75pt banner + tab stands 16.2pt taller).
     chrome_tab_line: Option<RunStyle>,
+    /// A chrome picture with its paragraph's text on the lines under it:
+    /// the picture's line keeps this mark's descent (0800162a66 vs
+    /// 000e3e7b: the 18pt text's baseline 20.64pt under the banner).
+    chrome_text_under: Option<RunStyle>,
+    /// A header picture wrapped under its paragraph's text: how far below
+    /// the part's top its line starts (PR #247 review).
+    chrome_above: f32,
     /// A chrome flow picture that wrapped below earlier pictures of its
     /// paragraph: the picture rows above it (pt) and the wrapped tab line
     /// between them, if any (redlines vs 000e3e7b: A's deleted 455pt VML
@@ -2954,6 +2971,21 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
             hit
         };
         let sets_size = chain_sets("sz", false);
+        let hidden = {
+            let mut cur = Some(id.as_str());
+            let mut on = None;
+            for _ in 0..12 {
+                let Some(r) = cur.and_then(|c| raw.get(c)) else {
+                    break;
+                };
+                if let Some(v) = r.rpr.and_then(|pr| first_named(&dom, pr, "vanish")) {
+                    on = Some(!val_is_false(&dom, Some(v)));
+                    break;
+                }
+                cur = r.based.as_deref();
+            }
+            on
+        };
         let chain_ind = |names: &[&str]| {
             let mut cur = Some(id.as_str());
             for _ in 0..12 {
@@ -3025,6 +3057,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
                 sets_spacing,
                 not_para: style_not_para,
                 frame,
+                hidden,
             },
         );
     }
@@ -3058,8 +3091,16 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
     // no docDefaults sz -> 12pt; table style 14/9pt -> 14/9pt; table style
     // 10pt (00587c73) -> 12pt. Mode 15, or
     // overrideTableStyleFontSizeAndJustification (the I_am_sharing lock,
-    // mode 14), keeps Normal's throughout.
-    let legacy = settings_compat_mode(pkg) < 15 && !settings_override_table_style_size(pkg);
+    // mode 14), keeps Normal's throughout. So does a Normal sized other
+    // than 11 or 12pt (probe tsz_*_0930: 9, 10.5, 11.5 and 14pt stay under
+    // a 14pt table style; LibreOffice's writerfilter has the same rule).
+    let normal_gives_way = !defaults.normal_run.0
+        || [11.0, 12.0]
+            .iter()
+            .any(|pt| (defaults.run.size - pt).abs() < 0.01);
+    let legacy = settings_compat_mode(pkg) < 15
+        && !settings_override_table_style_size(pkg)
+        && normal_gives_way;
     for table in tables.values_mut() {
         let size = table.run_size.or(doc_default_size).unwrap_or(10.0);
         table.run_size = (legacy && (size - 10.0).abs() > 0.01).then_some(size);
@@ -3655,6 +3696,9 @@ fn script_glyph_fallback(fonts: &Fonts, bold: bool, text: &str) -> Option<FaceRe
     if text.chars().any(is_thaana) {
         return fonts.thaana_glyph_fallback(bold);
     }
+    if text.chars().any(is_hangul) {
+        return fonts.hangul_glyph_fallback(bold);
+    }
     fonts
         .cjk_glyph_fallback(bold)
         .filter(|_| text.chars().any(is_cjk))
@@ -3684,6 +3728,23 @@ fn is_cjk(c: char) -> bool {
     )
 }
 
+/// Hangul syllables and jamo outside `is_cjk`'s blocks (the compatibility
+/// jamo U+3130..318F are inside it).
+fn is_hangul(c: char) -> bool {
+    matches!(
+        c,
+        '\u{1100}'..='\u{11FF}' | '\u{A960}'..='\u{A97F}' | '\u{AC00}'..='\u{D7FF}'
+    )
+}
+
+/// A character Word paints in the run's East Asian face: ideographs, kana
+/// and Hangul (the korean_japanese_conference_form title's "발표" is 맑은
+/// 고딕, its eastAsia face, not the Yu Mincho its ascii face names). Line
+/// breaking and Latin/CJK spacing keep `is_cjk`.
+fn takes_east_asian_face(c: char) -> bool {
+    is_cjk(c) || is_hangul(c)
+}
+
 fn paint_family<'a>(style: &'a RunStyle, text: &str) -> &'a str {
     // w:hint="eastAsia" decides only characters either script may own
     // (curly quotes, dashes, symbols); Latin letters and digits keep the
@@ -3691,9 +3752,11 @@ fn paint_family<'a>(style: &'a RunStyle, text: &str) -> &'a str {
     // Letters of any other script keep it too (006ad742's hinted Cyrillic
     // "гарантиране" is Arial in Word, not the East Asian face).
     if let Some(ea) = style.family_ea.as_deref()
-        && (text.chars().any(is_cjk)
+        && (text.chars().any(takes_east_asian_face)
             || (style.hint == FontHint::EastAsia
-                && !text.chars().any(|c| c.is_alphanumeric() && !is_cjk(c))
+                && !text
+                    .chars()
+                    .any(|c| c.is_alphanumeric() && !takes_east_asian_face(c))
                 && !text.is_ascii()))
     {
         return ea;
@@ -6273,12 +6336,151 @@ fn settings_default_tab_pt(pkg: &PartFs) -> Option<f32> {
 /// Cells" / "Deleted Cells" mark only a balloon can carry (English
 /// b/57439183; live Word 2026-09-26: one w:cellIns or w:cellDel suffices,
 /// a w:ins run inside a cell does not).
-fn document_has_balloons(pkg: &PartFs, main: &str) -> bool {
+///
+/// `balloons` is `word_balloon_comments`: in Word mode only the comments
+/// Word draws a balloon for bring the pane.
+fn document_has_balloons(pkg: &PartFs, main: &str, balloons: Option<&HashSet<String>>) -> bool {
     pkg.part_string(main).is_some_and(|xml| {
-        ["<w:commentReference", "<w:cellIns", "<w:cellDel"]
-            .iter()
-            .any(|tag| w_revision_count(&xml, tag) > 0)
+        let comments = balloons.map_or_else(
+            || w_revision_count(&xml, "<w:commentReference") > 0,
+            |ids| !ids.is_empty(),
+        );
+        comments
+            || ["<w:cellIns", "<w:cellDel"]
+                .iter()
+                .any(|tag| w_revision_count(&xml, tag) > 0)
     })
+}
+
+/// `RevisionStyle::Word` only: the comments Word's Save as PDF draws a
+/// balloon for, or `None` in the other styles (every comment gets one).
+/// Live Word 16.114, 2026-09-29 (`comment_balloons_0929`, 149 of 151 corpus
+/// comment documents; docs/WORD_COMMENT_BALLOONS.md): a comment the body
+/// references gets a balloon unless its `w:commentRangeEnd` is dead (at body
+/// or cell level, or before any content in its paragraph); a reply
+/// (`w15:paraIdParent`) shares its parent's fate. Dropping a comment is a
+/// Word mistake, so the other styles keep them all.
+fn word_balloon_comments(
+    pkg: &PartFs,
+    main: &str,
+    dom: &Dom,
+    body: NodeId,
+) -> Option<HashSet<String>> {
+    if !matches!(REVISIONS.with(std::cell::Cell::get), RevisionStyle::Word) {
+        return None;
+    }
+    let mut dead = HashSet::new();
+    for end in dom.descendants(body, Some(&W::name("commentRangeEnd"))) {
+        let Some(id) = attr_any(dom, end, "id") else {
+            continue;
+        };
+        if !comment_range_end_is_live(dom, end) {
+            dead.insert(id.to_string());
+        }
+    }
+    let parents = comment_reply_parents(pkg, main);
+    let alive = |id: &str| {
+        let mut seen = HashSet::new();
+        let mut at = id;
+        loop {
+            if dead.contains(at) {
+                return false;
+            }
+            match parents.get(at) {
+                Some(parent) if seen.insert(at) => at = parent,
+                _ => return true,
+            }
+        }
+    };
+    Some(
+        dom.descendants(body, Some(&W::name("commentReference")))
+            .into_iter()
+            .filter_map(|r| attr_any(dom, r, "id"))
+            .filter(|id| alive(id))
+            .map(str::to_string)
+            .collect(),
+    )
+}
+
+/// A range end is live inside a `w:p` with content before it there: text or
+/// deleted text, a drawing, picture, object, symbol, tab, or a comment
+/// reference mark.
+fn comment_range_end_is_live(dom: &Dom, end: NodeId) -> bool {
+    let mut up = dom.parent(end);
+    while let Some(node) = up {
+        if dom.name_is(node, &W::name("p")) {
+            break;
+        }
+        if dom.name_is(node, &W::body()) || dom.name_is(node, &W::name("tc")) {
+            return false;
+        }
+        up = dom.parent(node);
+    }
+    let Some(para) = up else {
+        return false;
+    };
+    dom.descendants(para, None)
+        .into_iter()
+        .take_while(|&node| node != end)
+        .any(|node| {
+            if dom.name_is(node, &W::t()) || dom.name_is(node, &W::name("delText")) {
+                return (0..dom.child_count(node))
+                    .filter_map(|i| dom.text_value(dom.child_at(node, i)))
+                    .any(|s| !s.is_empty());
+            }
+            [
+                "drawing",
+                "pict",
+                "object",
+                "sym",
+                "tab",
+                "commentReference",
+            ]
+            .iter()
+            .any(|tag| dom.name_is(node, &W::name(tag)))
+        })
+}
+
+/// Reply comment id → parent comment id, from `commentsExtended.xml`'s
+/// `w15:paraIdParent` matched to each comment's last `w14:paraId`.
+fn comment_reply_parents(pkg: &PartFs, main: &str) -> HashMap<String, String> {
+    let (Some(comments), Some(extended)) = (
+        part_xml_by_rel_kind(pkg, main, "comments"),
+        part_xml_by_rel_kind(pkg, main, "commentsExtended"),
+    ) else {
+        return HashMap::new();
+    };
+    let mut cdom = Dom::new();
+    let cdoc = cdom.parse_xdocument(&comments);
+    let mut by_para = HashMap::new();
+    if let Some(root) = cdom.root(cdoc) {
+        for comment in cdom.descendants(root, Some(&W::name("comment"))) {
+            let last = cdom
+                .descendants(comment, Some(&W::name("p")))
+                .last()
+                .and_then(|&p| cdom.attribute(p, &W14::name("paraId")));
+            if let (Some(para), Some(id)) = (last, attr_any(&cdom, comment, "id")) {
+                by_para.insert(para.to_string(), id.to_string());
+            }
+        }
+    }
+    let mut edom = Dom::new();
+    let edoc = edom.parse_xdocument(&extended);
+    let mut out = HashMap::new();
+    if let Some(root) = edom.root(edoc) {
+        for ex in edom.descendants(root, Some(&W15::name("commentEx"))) {
+            let kid = edom
+                .attribute(ex, &W15::name("paraId"))
+                .and_then(|p| by_para.get(p));
+            let parent = edom
+                .attribute(ex, &W15::name("paraIdParent"))
+                .and_then(|p| by_para.get(p));
+            if let (Some(kid), Some(parent)) = (kid, parent) {
+                out.insert(kid.clone(), parent.clone());
+            }
+        }
+    }
+    out
 }
 
 fn w_revision_count(xml: &str, tag: &str) -> usize {
@@ -6304,7 +6506,10 @@ fn collect_blocks(
     let mut blocks = Vec::new();
     let mut numbering = load_numbering(pkg);
     let sects = live_sect_prs(dom, body);
-    let comments = load_comments(pkg, main);
+    let mut comments = load_comments(pkg, main);
+    if let Some(balloons) = word_balloon_comments(pkg, main, dom, body) {
+        comments.retain(|id, _| balloons.contains(id));
+    }
     let ctx = WalkCtx {
         pkg,
         main,
@@ -6394,14 +6599,22 @@ fn is_cover_pages_sdt(dom: &Dom, sdt: NodeId) -> bool {
         .is_some_and(|v| v.eq_ignore_ascii_case("Cover Pages"))
 }
 
+/// The part `main` relates to by type `…/kind`, then by a type or target
+/// merely containing `kind`. The exact type goes first: a target check
+/// alone took `commentsExtended.xml` for the comments part when its
+/// relationship came first (with_comments_clean/37c6c62345).
 fn part_xml_by_rel_kind(pkg: &PartFs, main: &str, kind: &str) -> Option<String> {
     if let Some(rels) = pkg.read_rels_for(main) {
-        for item in &rels.items {
-            if item.rel_type.ends_with(kind) || item.target.contains(kind) {
-                let path = pkg.resolve_rel_target(main, &item.target);
-                if let Some(xml) = pkg.part_string(&path) {
-                    return Some(xml);
-                }
+        let exact = format!("/{kind}");
+        let by_type = rels.items.iter().filter(|i| i.rel_type.ends_with(&exact));
+        let loose = rels
+            .items
+            .iter()
+            .filter(|i| i.rel_type.ends_with(kind) || i.target.contains(kind));
+        for item in by_type.chain(loose) {
+            let path = pkg.resolve_rel_target(main, &item.target);
+            if let Some(xml) = pkg.part_string(&path) {
+                return Some(xml);
             }
         }
     }
@@ -6780,9 +6993,19 @@ fn walk_container(
             // The break before a section has *that* section's type
             // (ECMA-376 17.6.22): 00ac06fe's continuous section 2 follows
             // an untyped section 1 on the same page.
+            // A continuous section that turns or resizes the page still
+            // opens a new one (priority b535008087: Word's landscape
+            // section after a continuous break starts page 4).
             let sect_br = sect_here.is_some_and(|s| {
                 !is_final_sect(ctx.sects, s)
-                    && next_sect_pr(ctx.sects, s).is_none_or(|n| sect_starts_new_page(dom, n))
+                    && next_sect_pr(ctx.sects, s).is_none_or(|n| {
+                        let base = &ctx.sheet.defaults.page;
+                        let (was, page) =
+                            (apply_sect_pr(dom, s, base), apply_sect_pr(dom, n, base));
+                        sect_starts_new_page(dom, n)
+                            || (was.width - page.width).abs() > 0.5
+                            || (was.height - page.height).abs() > 0.5
+                    })
             });
             endnotes.observe_para(dom, child);
             let mut block = paragraph_block(ctx, dom, child, false, numbering);
@@ -6802,7 +7025,7 @@ fn walk_container(
                 && sect_here.is_none()
                 && !page_br
                 && !column_br
-                && para_mark_hidden(dom, child)
+                && para_mark_hidden(dom, child, &ctx.sheet.by_id)
             {
                 continue;
             }
@@ -6812,13 +7035,18 @@ fn walk_container(
             // Text after a page break inside the paragraph continues it on
             // the next page (checked in Word: "Aa<br page/>Cc" opens page
             // two with Cc); a break with nothing after it breaks as before.
-            // The run holding the paragraph's last column break: a
-            // break-only paragraph leaves a line of its height behind.
+            // The run holding the paragraph's last column (or page) break:
+            // a break-only paragraph leaves a line of its height behind.
+            let break_mark = if column_br {
+                COLUMN_BREAK_MARK
+            } else {
+                PAGE_BREAK_MARK
+            };
             let break_run = match &block {
                 Block::Paragraph { runs, .. } => runs
                     .iter()
                     .rev()
-                    .find(|r| r.text.contains(COLUMN_BREAK_MARK))
+                    .find(|r| r.text.contains(break_mark))
                     .map(|r| r.style.clone()),
                 _ => None,
             };
@@ -6881,7 +7109,7 @@ fn walk_container(
                 && !(blocks.is_empty() && !page_br && !column_br);
             if !blank || (!page_br && !sect_br && !column_br && !sect_mark) {
                 blocks.push(block);
-            } else if column_br
+            } else if (column_br || (page_br && sect_here.is_none()))
                 && let (Some(run_style), Block::Paragraph { style, .. }) = (break_run, &block)
                 && settings_compat_mode(ctx.pkg) >= 15
             {
@@ -6890,7 +7118,10 @@ fn walk_container(
                 // run, without its space before (live Word: 003329b5's
                 // before=338 break-only paragraph ends column one 12.7pt
                 // under the text above, before=0 or not; mode 12 leaves no
-                // line). Its mark then opens the next column.
+                // line). Its mark then opens the next column. A page break
+                // takes the same line: when it no longer fits, the break
+                // moves down a page and leaves that page blank
+                // (a9de4ed3f9's cover, lastRenderedPageBreak on the break).
                 let mut style = style.clone();
                 style.before = 0.0;
                 style.before_auto = false;
@@ -7023,22 +7254,30 @@ fn page_frame_key(dom: &Dom, para: NodeId, sheet: &StyleSheet) -> Option<String>
 /// A body paragraph's floating frame: page-anchored, or anchored to the
 /// text with wrap="around" (4ca9d50a's contact frame: vAnchor="text",
 /// hAnchor="page"); the frame takes no flow space and the next paragraph
-/// wraps beside it (live Word).
+/// wraps beside it (live Word). A frame at a page y may run from the
+/// margin or the column instead, and without an x it sits on it
+/// (61e3967518's hAnchor="margin" y=2621 frame).
 fn body_frame_key(dom: &Dom, para: NodeId, sheet: &StyleSheet) -> Option<String> {
     page_frame_key(dom, para, sheet).or_else(|| {
         let fp = para_frame_attrs(dom, para, sheet)?;
         let attr = |n: &str| frame_attr(&fp, n).unwrap_or("").to_string();
-        (attr("vAnchor") == "text"
-            && matches!(attr("hAnchor").as_str(), "page" | "margin" | "text")
+        let h_anchor = attr("hAnchor");
+        let beside_text = attr("vAnchor") == "text"
+            && matches!(h_anchor.as_str(), "page" | "margin" | "text")
             && attr("wrap") == "around"
-            && !attr("x").is_empty()
-            && !attr("y").is_empty())
-        .then(|| {
-            ["hAnchor", "x", "y", "w", "h", "hRule", "hSpace", "vSpace"]
-                .iter()
-                .map(|n| attr(n))
-                .collect::<Vec<_>>()
-                .join("|")
+            && !attr("x").is_empty();
+        let on_page = attr("vAnchor") == "page"
+            && matches!(h_anchor.as_str(), "margin" | "text")
+            && matches!(attr("wrap").as_str(), "around" | "")
+            && (!attr("x").is_empty() || attr("xAlign").is_empty());
+        ((beside_text || on_page) && !attr("y").is_empty()).then(|| {
+            [
+                "vAnchor", "hAnchor", "x", "y", "w", "h", "hRule", "hSpace", "vSpace",
+            ]
+            .iter()
+            .map(|n| attr(n))
+            .collect::<Vec<_>>()
+            .join("|")
         })
     })
 }
@@ -7108,7 +7347,9 @@ fn frame_box(
             .and_then(|v| v.parse::<f32>().ok())
             .map(|v| v / 20.0)
     };
-    let (x, y) = (tw("x")?, tw("y")?);
+    // No x puts the frame on its anchor's edge (the key admits that only
+    // for a margin or column anchor).
+    let (x, y) = (tw("x").unwrap_or(0.0), tw("y")?);
     let mut laid = Vec::new();
     let mut outline: Option<([f32; 3], f32)> = None;
     for &p in paras {
@@ -7133,6 +7374,11 @@ fn frame_box(
         .map(|(runs, style)| runs_size(runs).max(10.0) * 1.2 * style.line_mult.max(1.0))
         .sum();
     let w = tw("w").unwrap_or(144.0);
+    // No w (or w=0) and no h size the frame to its text: its widest line up
+    // to the column, its lines at that width (61e3967518's frame spans the
+    // column and runs 108 lines).
+    let auto_w = tw("w").is_none_or(|w| w <= 0.0);
+    let auto_h = tw("h").is_none_or(|h| h <= 0.0);
     // An auto / at-least frame grows to its paragraphs (live Word: a 27pt
     // frame holding two lines spans 53pt); only hRule="exact" clips.
     let content: f32 = laid
@@ -7223,8 +7469,8 @@ fn frame_box(
         custom: None,
         group: Vec::new(),
         chrome_para_top: 0.0,
-        fit_width: false,
-        fit_height: false,
+        fit_width: auto_w,
+        fit_height: auto_h,
         raise: 0.0,
         frame: true,
     })
@@ -7487,7 +7733,9 @@ fn face_lacks_ink(face: &Face, text: &str) -> bool {
 /// .notdef-wide box it measures, whatever face paints it.
 fn ink_face(fonts: &Fonts, style: &RunStyle, text: &str) -> FaceRef {
     let fid = fonts.resolve(paint_family(style, text), style.bold, style.italic);
-    let script = text.chars().any(|c| is_rtl_char(c) || is_cjk(c));
+    let script = text
+        .chars()
+        .any(|c| is_rtl_char(c) || takes_east_asian_face(c));
     if !script || !face_lacks_ink(fonts.get(fid), text) {
         return fid;
     }
@@ -7536,8 +7784,48 @@ fn para_is_empty_toc_field(dom: &Dom, para: NodeId) -> bool {
 }
 
 /// Column widths as laid out: Word's autofit on the cells' content for a
-/// grid another tool wrote, else `table_col_widths`.
+/// grid another tool wrote, else `table_col_widths`; never past Word's
+/// 22in limit (`clamp_to_word_max_width`).
 fn resolved_col_widths(
+    fonts: &Fonts,
+    cols: &[f32],
+    rows: &[Vec<TableCell>],
+    geom: &TableGeom,
+    avail: f32,
+) -> Vec<f32> {
+    clamp_to_word_max_width(
+        unclamped_col_widths(fonts, cols, rows, geom, avail),
+        geom.tbl_ind,
+    )
+}
+
+/// Word's widest page, 22in: no table ends further right of the margin.
+const WORD_MAX_TABLE_RIGHT: f32 = 1584.0;
+/// What Word leaves each column past the 22in limit.
+const WORD_SQUEEZED_COL: f32 = 1.4;
+
+/// Word ends a table 22in right of the margin, wherever its indent starts
+/// it. The column that crosses the limit keeps what is left before it, and
+/// each later one keeps 1.4pt (2b479f55f8's 1989pt process table ends at
+/// 1620 = margin 36 + 1584 with tblInd 7pt or none; probes over a 72pt
+/// margin end at 1656, their last 600pt column 1.4pt wide).
+fn clamp_to_word_max_width(mut widths: Vec<f32>, tbl_ind: f32) -> Vec<f32> {
+    let limit = WORD_MAX_TABLE_RIGHT - tbl_ind;
+    if widths.iter().sum::<f32>() <= limit {
+        return widths;
+    }
+    let n = widths.len();
+    let (mut edge, mut prev) = (0.0_f32, 0.0_f32);
+    for (i, w) in widths.iter_mut().enumerate() {
+        edge += *w;
+        let right = edge.min(limit - (n - 1 - i) as f32 * WORD_SQUEEZED_COL);
+        *w = (right - prev).max(0.0);
+        prev = right;
+    }
+    widths
+}
+
+fn unclamped_col_widths(
     fonts: &Fonts,
     cols: &[f32],
     rows: &[Vec<TableCell>],
@@ -7852,10 +8140,18 @@ fn cell_para_line_box(fonts: &Fonts, para: &CellPara) -> (f32, f32) {
 
 /// A wrapped cell line's (size, face, line box): Word sizes each line by
 /// its own runs, so 11pt text wrapped under 03db4d3e's 72pt "call" steps
-/// at 11pt. A line with no ink keeps its paragraph's box.
+/// at 11pt. A line with no ink keeps its paragraph's box. Neither
+/// whitespace nor the `w:br` ending the line sizes an inked line:
+/// 246c7fcf50's white 24pt break after a 16pt title leaves Word's title
+/// line 16pt tall (a break alone on its line does size it, 00accd5b).
 fn cell_line_metrics(fonts: &Fonts, para: &CellPara, line: &[TextRun]) -> (f32, FaceRef, f32) {
+    let inked: Vec<TextRun> = line
+        .iter()
+        .filter(|r| !r.text.trim().is_empty())
+        .cloned()
+        .collect();
     let runs = if line.iter().any(|r| !r.text.trim().is_empty()) {
-        line
+        &inked[..]
     } else {
         &para.runs
     };
@@ -8164,8 +8460,14 @@ fn nested_table_height(fonts: &Fonts, block: &Block, avail: f32, space_for_ul: b
 }
 
 /// A nested table cut before row `m`: the rows that fit on this page and
-/// the rest, each with its own slice of the per-row geometry.
-fn split_nested_rows(block: &Block, m: usize) -> Option<(Block, Block)> {
+/// the rest, each with its own slice of the per-row geometry. With `mid`,
+/// row `m` itself breaks: its head closes the first part and its tail
+/// opens the second, neither held to the row's height.
+fn split_nested_rows(
+    block: &Block,
+    m: usize,
+    mid: Option<(Vec<TableCell>, Vec<TableCell>)>,
+) -> Option<(Block, Block)> {
     let Block::Table {
         cols,
         rows,
@@ -8176,42 +8478,62 @@ fn split_nested_rows(block: &Block, m: usize) -> Option<(Block, Block)> {
     else {
         return None;
     };
-    if m == 0 || m >= rows.len() {
+    if m >= rows.len() || (m == 0 && mid.is_none()) {
         return None;
     }
-    let part = |range: std::ops::Range<usize>, after: f32| {
-        let mut g = (**geom).clone();
-        let cut = |v: &Vec<f32>| {
-            v.get(range.clone())
-                .map(<[f32]>::to_vec)
-                .unwrap_or_default()
+    let part =
+        |range: std::ops::Range<usize>, after: f32, split: Option<(usize, Vec<TableCell>)>| {
+            let mut g = (**geom).clone();
+            let cut = |v: &Vec<f32>| {
+                v.get(range.clone())
+                    .map(<[f32]>::to_vec)
+                    .unwrap_or_default()
+            };
+            g.row_min = cut(&geom.row_min);
+            g.bottom_above = cut(&geom.bottom_above);
+            g.row_exact = geom
+                .row_exact
+                .get(range.clone())
+                .map(<[bool]>::to_vec)
+                .unwrap_or_default();
+            g.row_cant_split = geom
+                .row_cant_split
+                .get(range.clone())
+                .map(<[bool]>::to_vec)
+                .unwrap_or_default();
+            if range.start > 0 || (split.is_some() && range.start == m) {
+                g.header_rows = 0;
+            }
+            let mut part_rows = rows[range].to_vec();
+            if let Some((at, cells)) = split {
+                part_rows[at] = cells;
+                if let Some(v) = g.row_min.get_mut(at) {
+                    *v = 0.0;
+                }
+                if let Some(v) = g.row_exact.get_mut(at) {
+                    *v = false;
+                }
+            }
+            let mut st = style.clone();
+            st.after = after;
+            Block::Table {
+                cols: cols.clone(),
+                rows: part_rows,
+                style: st,
+                borders: *borders,
+                geom: Box::new(g),
+            }
         };
-        g.row_min = cut(&geom.row_min);
-        g.bottom_above = cut(&geom.bottom_above);
-        g.row_exact = geom
-            .row_exact
-            .get(range.clone())
-            .map(<[bool]>::to_vec)
-            .unwrap_or_default();
-        g.row_cant_split = geom
-            .row_cant_split
-            .get(range.clone())
-            .map(<[bool]>::to_vec)
-            .unwrap_or_default();
-        if range.start > 0 {
-            g.header_rows = 0;
-        }
-        let mut st = style.clone();
-        st.after = after;
-        Block::Table {
-            cols: cols.clone(),
-            rows: rows[range].to_vec(),
-            style: st,
-            borders: *borders,
-            geom: Box::new(g),
-        }
-    };
-    Some((part(0..m, 0.0), part(m..rows.len(), style.after)))
+    Some(match mid {
+        None => (
+            part(0..m, 0.0, None),
+            part(m..rows.len(), style.after, None),
+        ),
+        Some((head, tail)) => (
+            part(0..m + 1, 0.0, Some((m, head))),
+            part(m..rows.len(), style.after, Some((0, tail))),
+        ),
+    })
 }
 
 /// Every row's height: each row on its own cells, then a vertically
@@ -8380,8 +8702,11 @@ fn keep_next_follow_pt(
         } => {
             // Widow/orphan control keeps a 2–3 line paragraph whole and
             // leaves at least 2 lines of a longer one (011c597c's AFG.316
-            // moves with its 3-line body).
-            let lines = if style.widow_control {
+            // moves with its 3-line body); keepLines keeps it all (probe
+            // kn8 0930).
+            let lines = if style.keep_lines {
+                para_lines.max(1)
+            } else if style.widow_control {
                 match para_lines {
                     n @ 2..=3 => n,
                     n if n > 3 => 2,
@@ -8552,6 +8877,7 @@ fn para_base(
     if pstyle.bidi {
         mirror_bidi(&mut pstyle);
     }
+    pstyle.fmt_rev = para_formatting_changed(dom, para) || para_mark_revised(dom, para);
     (pstyle, rstyle)
 }
 
@@ -8697,6 +9023,19 @@ fn para_formatting_changed(dom: &Dom, para: NodeId) -> bool {
     })
 }
 
+/// The paragraph mark itself is inserted, deleted or moved (`pPr/rPr` holds
+/// the revision): Word bars the paragraph even when it has no text
+/// (9b22b88370's empty paragraphs between deleted tables).
+fn para_mark_revised(dom: &Dom, para: NodeId) -> bool {
+    dom.element(para, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+        .is_some_and(|rpr| {
+            dom.elements(rpr, None)
+                .into_iter()
+                .any(|c| rev_mark_of(dom, c).is_some())
+        })
+}
+
 /// The paragraph's `v:rect o:hr="t"` (not a Fallback copy), if any.
 fn para_hrule(dom: &Dom, para: NodeId) -> Option<HRule> {
     let rect = descendants_local(dom, para, "rect").into_iter().find(|r| {
@@ -8750,7 +9089,6 @@ fn paragraph_block(
     let sheet = ctx.sheet;
     let (mut pstyle, rstyle) = para_base(dom, para, sheet, None);
     pstyle.hrule = para_hrule(dom, para);
-    pstyle.fmt_rev = para_formatting_changed(dom, para);
     let (marker, num_id, ilvl) = list_marker(dom, para, sheet, numbering);
     // numId=0 over a numbered style removes the list and the style's list
     // indent with it (000ebd12 Förslagstext: ind 397/397 renders flush
@@ -8870,6 +9208,8 @@ fn paragraph_block(
                 inset: [0.0; 4],
                 chrome_leading: None,
                 chrome_tab_line: None,
+                chrome_text_under: None,
+                chrome_above: 0.0,
                 chrome_drop: 0.0,
                 chrome_drop_tab: None,
                 chrome_para: 0,
@@ -10042,7 +10382,7 @@ fn table_block(
                 Vec::new()
             }
         })
-        .filter(|&row| !row_is_hidden(dom, row))
+        .filter(|&row| !row_is_hidden(dom, row, &sheet.by_id))
         .collect();
     let row_count = all_rows.len();
     // The rules an edge a cell's tcBorders leaves unnamed falls back to.
@@ -10096,7 +10436,6 @@ fn table_block(
                         .map_or([false; 2], |t| [t.sets_space, t.sets_line]),
                 };
                 let (mut pstyle, mut r) = para_base(dom, child, sheet, Some(&table_spacing));
-                pstyle.fmt_rev = para_formatting_changed(dom, child);
                 // An explicit table style's size beats the default paragraph
                 // style's in a paragraph with no pStyle (checked in Word on
                 // 00004116: Normal 12pt, docDefaults 11pt, cells paint 11pt;
@@ -10251,26 +10590,8 @@ fn table_block(
             if cell_vertical(dom, cell) {
                 cell_paras.iter_mut().for_each(|p| p.vertical = true);
             }
-            // HTML auto spacing does not reach a cell's edges: Word drops
-            // the first paragraph's auto before and the last one's after.
-            if let Some(first) = cell_paras.first_mut()
-                && first.style.before_auto
-            {
-                first.style.before = 0.0;
-            }
-            if let Some(last) = cell_paras.last_mut()
-                && last.style.after_auto
-            {
-                last.style.after = 0.0;
-            }
-            // Between two paragraphs Word keeps max(after, next before),
-            // as in the body (0129b302's auto-spaced "1.300.000" cell is
-            // 14pt apart, not 28): the next before keeps only its excess.
-            for i in 1..cell_paras.len() {
-                let after = cell_paras[i - 1].style.after;
-                let next = &mut cell_paras[i].style;
-                next.before = (next.before - after).max(0.0);
-            }
+            // 0129b302's auto-spaced "1.300.000" cell is 14pt apart, not 28.
+            fold_stacked_spacing(cell_paras.iter_mut().map(|p| &mut p.style).collect());
             let (colspan, vmerge) = cell_span(dom, cell);
             let last_col = grid_at + colspan.max(1) >= cols.len();
             let at = |b: TblBorders| {
@@ -10628,7 +10949,9 @@ fn table_float(dom: &Dom, table: NodeId) -> Option<ImageSlot> {
     let pr = table_pr(dom, table)?;
     let p = first_named(dom, pr, "tblpPr")?;
     let horz = attr_any(dom, p, "horzAnchor").unwrap_or("text");
-    let vert = attr_any(dom, p, "vertAnchor").unwrap_or("text");
+    // A missing vertAnchor is "margin" (Word probes g1-g6, 2026-09-30:
+    // the table sits at the top margin + tblpY on its paragraph's page).
+    let vert = attr_any(dom, p, "vertAnchor").unwrap_or("margin");
     let x_spec = attr_any(dom, p, "tblpXSpec").unwrap_or("");
     let x_raw = attr_any(dom, p, "tblpX").unwrap_or("");
     let y_raw = attr_any(dom, p, "tblpY").unwrap_or("");
@@ -10726,22 +11049,45 @@ fn table_pad_h(dom: &Dom, table: NodeId) -> (f32, f32) {
     )
 }
 
-/// The paragraph mark carries a direct `w:vanish`.
-fn para_mark_hidden(dom: &Dom, para: NodeId) -> bool {
-    dom.element(para, &W::p_pr())
+/// The paragraph mark is hidden: its direct `w:vanish`, else its character
+/// style's (4910ce2060's ContentControlHidden marks under "System Name").
+fn para_mark_hidden(dom: &Dom, para: NodeId, styles: &HashMap<String, NamedStyle>) -> bool {
+    let Some(rpr) = dom
+        .element(para, &W::p_pr())
         .and_then(|ppr| dom.element(ppr, &W::r_pr()))
-        .and_then(|rpr| first_named(dom, rpr, "vanish"))
-        .is_some_and(|n| !val_is_false(dom, Some(n)))
+    else {
+        return false;
+    };
+    first_named(dom, rpr, "vanish").map_or_else(
+        || {
+            first_named(dom, rpr, "rStyle")
+                .and_then(|n| dom.attribute(n, &W::val()))
+                .and_then(|sid| styles.get(sid))
+                .is_some_and(|named| named.hidden == Some(true))
+        },
+        |n| !val_is_false(dom, Some(n)),
+    )
 }
 
 /// A row Word does not lay out: marked `trPr/hidden` with nothing but
 /// hidden content (live Word: its borders and height go with it; without
 /// the marker a vanished row keeps a line). The empty cell-end paragraph
 /// after a nested table goes with the table (9617d33f's separators).
-fn row_is_hidden(dom: &Dom, row: NodeId) -> bool {
+fn row_is_hidden(dom: &Dom, row: NodeId, styles: &HashMap<String, NamedStyle>) -> bool {
+    // A direct w:vanish decides; without one, the character style's (as
+    // the runs themselves are collected).
     let vanish = |rpr: Option<NodeId>| {
-        rpr.and_then(|rpr| first_named(dom, rpr, "vanish"))
-            .is_some_and(|n| !val_is_false(dom, Some(n)))
+        rpr.is_some_and(|rpr| {
+            first_named(dom, rpr, "vanish").map_or_else(
+                || {
+                    first_named(dom, rpr, "rStyle")
+                        .and_then(|n| dom.attribute(n, &W::val()))
+                        .and_then(|sid| styles.get(sid))
+                        .is_some_and(|named| named.hidden == Some(true))
+                },
+                |n| !val_is_false(dom, Some(n)),
+            )
+        })
     };
     let marked = direct_named(dom, row, "trPr")
         .and_then(|pr| direct_named(dom, pr, "hidden"))
@@ -10754,10 +11100,7 @@ fn row_is_hidden(dom: &Dom, row: NodeId) -> bool {
                         .map(|i| dom.child_at(r, i))
                         .all(|c| dom.name_is(c, &W::r_pr()) || !dom.is_element(c))
             });
-            let mark_hidden = vanish(
-                dom.element(p, &W::p_pr())
-                    .and_then(|ppr| dom.element(ppr, &W::r_pr())),
-            );
+            let mark_hidden = para_mark_hidden(dom, p, styles);
             let after_table = dom.parent(p).is_some_and(|parent| {
                 let kids: Vec<NodeId> = (0..dom.child_count(parent))
                     .map(|i| dom.child_at(parent, i))
@@ -11118,10 +11461,11 @@ fn fixed_width_cell(dom: &Dom, table: NodeId, cell: NodeId) -> bool {
 
 /// A cell paragraph's (first line, other lines) wrap widths inside the
 /// cell's text width: its w:ind left/right narrow or (negative, 00bbcc14)
-/// widen it; the signed first-line indent moves the first line only.
+/// widen it; the signed first-line indent moves the first line only. No
+/// room at all still sets a character a line (see `cell_wrap_width`).
 fn cell_para_measure(style: &ParaStyle, wrap_w: f32) -> (f32, f32) {
-    let rest = (wrap_w - style.indent_left - style.indent_right).max(8.0);
-    ((rest - style.indent_first).max(8.0), rest)
+    let rest = (wrap_w - style.indent_left - style.indent_right).max(0.01);
+    ((rest - style.indent_first).max(0.01), rest)
 }
 
 /// A cell paragraph's (first, rest) wrap widths. A hanging list marker
@@ -11146,11 +11490,15 @@ fn cell_para_widths(fonts: &Fonts, para: &CellPara, wrap_w: f32) -> (f32, f32) {
     }
 }
 
+/// A column narrower than its margins leaves no room at all: Word still
+/// sets a character a line (2b479f55f8's 1.3pt grid column under 10.8pt of
+/// margins stacks "Customer contact spreadsheet" 26 lines tall), so the
+/// width only stays above zero for the character break to run.
 fn cell_wrap_width(cell: &TableCell, avail: f32) -> f32 {
     if cell.nowrap {
         10_000.0
     } else {
-        (avail - cell.pad_l - cell.pad_r).max(8.0)
+        (avail - cell.pad_l - cell.pad_r).max(0.01)
     }
 }
 
@@ -11403,8 +11751,10 @@ fn collect_runs_in(
 /// punctuation stay with the piece before them.
 fn script_pieces<'t>(style: &RunStyle, text: &'t str) -> Option<Vec<&'t str>> {
     if style.family_ea.is_none()
-        || !text.chars().any(is_cjk)
-        || !text.chars().any(|c| c.is_alphanumeric() && !is_cjk(c))
+        || !text.chars().any(takes_east_asian_face)
+        || !text
+            .chars()
+            .any(|c| c.is_alphanumeric() && !takes_east_asian_face(c))
     {
         return None;
     }
@@ -11412,7 +11762,7 @@ fn script_pieces<'t>(style: &RunStyle, text: &'t str) -> Option<Vec<&'t str>> {
     let mut start = 0;
     let mut class: Option<bool> = None;
     for (i, c) in text.char_indices() {
-        let this = if is_cjk(c) {
+        let this = if takes_east_asian_face(c) {
             Some(true)
         } else if c.is_alphanumeric() {
             Some(false)
@@ -11886,9 +12236,20 @@ fn collect_runs_rec(
             }
         }
         let rprs = leading_rprs(ctx.dom, node);
-        if rprs.iter().any(|rpr| {
-            first_named(ctx.dom, *rpr, "vanish").is_some_and(|n| !val_is_false(ctx.dom, Some(n)))
-        }) {
+        // The rPr blocks apply in order, each its character style's
+        // w:vanish and then its own (PR #247 review: a later style that
+        // turns vanish off shows the run again).
+        let hidden = rprs.iter().fold(false, |on, rpr| {
+            let styled = first_named(ctx.dom, *rpr, "rStyle")
+                .and_then(|n| ctx.dom.attribute(n, &W::val()))
+                .and_then(|sid| ctx.styles.and_then(|s| s.get(sid)))
+                .and_then(|named| named.hidden);
+            first_named(ctx.dom, *rpr, "vanish")
+                .map(|n| !val_is_false(ctx.dom, Some(n)))
+                .or(styled)
+                .unwrap_or(on)
+        });
+        if hidden {
             // webHidden is web-view only (ECMA-376 17.3.2.42). Word print
             // and Save-as-PDF still paint those runs (TOC leaders / PAGEREF).
             return;
@@ -12192,9 +12553,14 @@ fn para_keeps_xml_space(dom: &Dom, para: NodeId) -> bool {
 
 /// Pretty-printed XML between elements is whitespace-only and is not text.
 /// A whitespace-only `w:t` is: `birds.` + `<w:t> </w:t>` + `We` is
-/// "birds. We" in Word (fixtures_500 014babb2 painted "birds.We").
+/// "birds. We" in Word (fixtures_500 014babb2 painted "birds.We"). So is
+/// a deleted one (246c7fcf50's footer "2026" + `<w:delText> </w:delText>`
+/// + "Government").
 fn is_run_text(dom: &Dom, node: NodeId, text: &str) -> bool {
-    !text.trim().is_empty() || dom.parent(node).is_some_and(|p| dom.name_is(p, &W::t()))
+    !text.trim().is_empty()
+        || dom
+            .parent(node)
+            .is_some_and(|p| dom.name_is(p, &W::t()) || dom.name_is(p, &W::del_text()))
 }
 
 /// A run whose `w:t` carries `xml:space="preserve"`.
@@ -13190,7 +13556,41 @@ fn txbx_lays_out_paragraphs(dom: &Dom, shape: NodeId, txbx: NodeId) -> bool {
             .any(|p| !w_text(dom, *p).trim().is_empty())
 }
 
-/// The text box's own paragraphs, each from its own style.
+/// Word's spacing between the paragraphs stacked in a cell or a text box.
+/// HTML auto spacing does not reach the container's edges: the first
+/// paragraph's auto before and the last one's auto after drop. Between two
+/// paragraphs only max(after, next before) stands, as in the body, so the
+/// next before keeps only its excess.
+fn fold_stacked_spacing(mut styles: Vec<&mut ParaStyle>) {
+    if let Some(first) = styles.first_mut()
+        && first.before_auto
+    {
+        first.before = 0.0;
+    }
+    if let Some(last) = styles.last_mut()
+        && last.after_auto
+    {
+        last.after = 0.0;
+    }
+    for i in 1..styles.len() {
+        let (head, rest) = styles.split_at_mut(i);
+        let (prev, next) = (&mut *head[i - 1], &mut *rest[0]);
+        // contextualSpacing drops the space between same-style paragraphs
+        // here as in the body (Word 16 probe ctx_cell_0930: a cell's
+        // contextual Title lines step 20pt, plain ones 28).
+        if same_contextual_pair(prev, next) {
+            prev.after = 0.0;
+        }
+        if same_contextual_pair(next, prev) {
+            next.before = 0.0;
+        }
+        next.before = (next.before - prev.after).max(0.0);
+    }
+}
+
+/// The text box's own paragraphs, each from its own style, spaced as Word
+/// stacks them (`fold_stacked_spacing`: air_pollution_permit_form's
+/// auto-spaced form lines stand 14pt apart, not 28).
 fn txbx_paragraphs(
     dom: &Dom,
     txbx: NodeId,
@@ -13200,7 +13600,8 @@ fn txbx_paragraphs(
 ) -> Vec<(Vec<TextRun>, ParaStyle)> {
     // A box's lists number on their own copy of the document's lists.
     let mut numbering = numbering.cloned();
-    dom.descendants(txbx, Some(&W::p()))
+    let mut paras = dom
+        .descendants(txbx, Some(&W::p()))
         .into_iter()
         .filter(|p| {
             dom.ancestors(*p, Some(&W::txbx_content()))
@@ -13238,7 +13639,9 @@ fn txbx_paragraphs(
             }
             (runs, style)
         })
-        .collect()
+        .collect::<Vec<_>>();
+    fold_stacked_spacing(paras.iter_mut().map(|(_, style)| style).collect());
+    paras
 }
 
 /// `bodyPr` insets (EMU) or VML `v:textbox/@inset`, defaulting to Word's.
@@ -14173,6 +14576,8 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     inset: [0.0; 4],
                     chrome_leading: None,
                     chrome_tab_line: None,
+                    chrome_text_under: None,
+                    chrome_above: 0.0,
                     chrome_drop: 0.0,
                     chrome_drop_tab: None,
                     chrome_para: 0,
@@ -14227,6 +14632,8 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     inset: [0.0; 4],
                     chrome_leading: None,
                     chrome_tab_line: None,
+                    chrome_text_under: None,
+                    chrome_above: 0.0,
                     chrome_drop: 0.0,
                     chrome_drop_tab: None,
                     chrome_para: 0,
@@ -14288,6 +14695,8 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         inset,
                         chrome_leading: None,
                         chrome_tab_line: None,
+                        chrome_text_under: None,
+                        chrome_above: 0.0,
                         chrome_drop: 0.0,
                         chrome_drop_tab: None,
                         chrome_para: 0,
@@ -14316,6 +14725,8 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         inset: [0.0; 4],
                         chrome_leading: None,
                         chrome_tab_line: None,
+                        chrome_text_under: None,
+                        chrome_above: 0.0,
                         chrome_drop: 0.0,
                         chrome_drop_tab: None,
                         chrome_para: 0,
@@ -14389,6 +14800,8 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         inset: [0.0; 4],
                         chrome_leading: None,
                         chrome_tab_line: None,
+                        chrome_text_under: None,
+                        chrome_above: 0.0,
                         chrome_drop: 0.0,
                         chrome_drop_tab: None,
                         chrome_para: 0,
@@ -14423,6 +14836,8 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     inset: [0.0; 4],
                     chrome_leading: None,
                     chrome_tab_line: None,
+                    chrome_text_under: None,
+                    chrome_above: 0.0,
                     chrome_drop: 0.0,
                     chrome_drop_tab: None,
                     chrome_para: 0,
@@ -14585,6 +15000,8 @@ fn vml_line_image(dom: &Dom, line: NodeId, root: NodeId) -> Option<LaidImage> {
         inset: [0.0; 4],
         chrome_leading: None,
         chrome_tab_line: None,
+        chrome_text_under: None,
+        chrome_above: 0.0,
         chrome_drop: 0.0,
         chrome_drop_tab: None,
         chrome_para: 0,
@@ -16135,11 +16552,28 @@ struct PickedHf {
 
 /// A `w:headerReference` / `w:footerReference` (`local`) of `kind`
 /// directly on `sect`.
-fn sect_has_typed_ref(dom: &Dom, sect: NodeId, local: &str, kind: &str) -> bool {
-    (0..dom.child_count(sect)).any(|i| {
-        let c = dom.child_at(sect, i);
-        local_name_is(dom, c, local) && attr_any(dom, c, "type") == Some(kind)
-    })
+/// The relationship id of `sect`'s `local` reference of type `want`; a
+/// type the section omits comes from the nearest earlier section that
+/// names it (ECMA-376 17.10.5: priority 2b479f55f8's third section names
+/// only a footer and still shows section 1's default header in Word).
+fn inherited_ref_id(dom: &Dom, sect: NodeId, local: &str, want: &str) -> Option<String> {
+    let own = |s: NodeId| {
+        dom.descendants(s, Some(&W::name(local)))
+            .into_iter()
+            .find(|&node| dom.attribute(node, &W::name("type")).unwrap_or("default") == want)
+            .and_then(|node| attr_any(dom, node, "id"))
+            .map(str::to_string)
+    };
+    if let Some(id) = own(sect) {
+        return Some(id);
+    }
+    let mut body = sect;
+    while !dom.name_is(body, &W::body()) {
+        body = dom.parent(body)?;
+    }
+    let sects = live_sect_prs(dom, body);
+    let at = sects.iter().position(|&s| s == sect)?;
+    sects[..at].iter().rev().find_map(|&s| own(s))
 }
 
 fn chrome_present(part: &ChromePart) -> bool {
@@ -16159,6 +16593,9 @@ struct ChromeTable {
     /// The empty paragraphs above it: each a line of its mark (0107980d's
     /// header opens with one before its logo table).
     lead: Vec<TextRun>,
+    /// How many of those paragraphs are also the part's own leading lines
+    /// (`collect_hf_runs` keeps only bare lines).
+    lead_lines: usize,
     w: f32,
     h: f32,
     color: [f32; 3],
@@ -16237,10 +16674,26 @@ fn collect_hf_tables(
                 run
             })
             .collect();
+        let lead_lines = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .filter(|p| p.0 > prev && p.0 < tbl.0 && hf_node_is_top_level(dom, root, *p))
+            .filter(|p| hf_para_is_bare_line(dom, root, *p))
+            // Each w:br is one more line, as `collect_hf_runs` stacks them
+            // (PR #247 review).
+            .map(|p| {
+                1 + dom
+                    .descendants(p, Some(&W::name("br")))
+                    .into_iter()
+                    .filter(|br| attr_any(dom, *br, "type").is_none_or(|t| t == "textWrapping"))
+                    .count()
+            })
+            .sum();
         prev = tbl.0;
         out.push(ChromeTable {
             block: Some(std::rc::Rc::new(block)),
             lead,
+            lead_lines,
             before_text: first_text.is_none_or(|t| tbl.0 < t),
             w: hf_table_width_pt(dom, tbl),
             h: 0.0,
@@ -16283,7 +16736,7 @@ fn pick_section_hf(
     let even_raw = sect_ref_chrome_of(pkg, main, dom, sect, local, sheet, "even");
     // An explicit type="even" reference counts even when its part is
     // blank: even pages then show no header, not the default one.
-    let even_explicit = sect_has_typed_ref(dom, sect, local, "even");
+    let even_explicit = inherited_ref_id(dom, sect, local, "even").is_some();
     let even = (settings_even_and_odd_headers(pkg) && (even_explicit || chrome_present(&even_raw)))
         .then_some(even_raw);
     // The first-page part shows only under titlePg: without it Word never
@@ -16323,17 +16776,7 @@ fn sect_ref_chrome_of(
     sheet: &StyleSheet,
     want: &str,
 ) -> ChromePart {
-    let name = W::name(local);
-    let mut rid = None;
-    for node in dom.descendants(sect, Some(&name)) {
-        let ty = dom.attribute(node, &W::name("type")).unwrap_or("default");
-        if ty == want
-            && let Some(id) = attr_any(dom, node, "id")
-        {
-            rid = Some(id.to_string());
-            break;
-        }
-    }
+    let rid = inherited_ref_id(dom, sect, local, want);
     let page = apply_sect_pr(dom, sect, &sheet.defaults.page);
     let text_w = page.width - page.margin_l - page.margin_r;
     let background = local == "headerReference" && page_background(dom, sect);
@@ -16406,7 +16849,7 @@ fn chrome_part_xml(
     let Some(root) = part_dom.root(doc) else {
         return empty_chrome();
     };
-    let runs = collect_hf_runs(&part_dom, root, sheet);
+    let runs = collect_hf_runs(&part_dom, root, sheet, text_w);
     let mut images = Vec::new();
     let mut boxes = Vec::new();
     let watermark = parse_header_watermark(&part_dom, root);
@@ -16482,6 +16925,7 @@ fn chrome_part_xml(
                 }),
             );
         }
+        let this_top = para_top;
         if top_level {
             let size = part_dom
                 .descendants(para, Some(&W::name("sz")))
@@ -16503,6 +16947,8 @@ fn chrome_part_xml(
             para_top += (pstyle.before - last_after).max(0.0) + line + pstyle.after;
             last_after = pstyle.after;
         }
+        // Under the paragraph's text line, above its space after.
+        let trail_top = para_top - pstyle.after;
         let jc = pstyle.align;
         let leading = (pstyle.line_exact.is_none()
             && pstyle.line_at_least.is_none()
@@ -16556,7 +17002,11 @@ fn chrome_part_xml(
                                     .contains("position:absolute")
                         })
             });
-        let flow = para_own_text(&part_dom, para).trim().is_empty()
+        // Deleted text is text here: the redline paints it (0800162a66 vs
+        // 000e3e7b's deleted "Akreditācijas ekspertu" under the banner).
+        let no_text = para_shown_text(&part_dom, para).trim().is_empty();
+        let trails = hf_pic_trails_line(&part_dom, para, sheet, text_w);
+        let flow = (no_text || hf_pic_owns_line(&part_dom, para, sheet, text_w))
             && (vml_inline
                 || part_dom
                     .descendants(para, Some(&WP::name("inline")))
@@ -16566,9 +17016,7 @@ fn chrome_part_xml(
                             .ancestors(inl, Some(&W::name("txbxContent")))
                             .is_empty()
                     }));
-        if !hf_para_in_table(&part_dom, root, para)
-            && !para_own_text(&part_dom, para).trim().is_empty()
-        {
+        if !hf_para_in_table(&part_dom, root, para) && !no_text {
             seen_text = true;
         }
         // A top-level chrome table lays out the pictures its cells hold,
@@ -16614,9 +17062,25 @@ fn chrome_part_xml(
                 .filter(|img| !(table_owned && cell_holds_image(img)))
                 .map(|mut img| {
                     img.chrome_align = jc;
-                    img.chrome_lead = lead;
+                    // A picture wrapped under its paragraph's text stands on
+                    // the part's lines below it, not above its text.
+                    img.chrome_lead = lead && !trails;
+                    if trails {
+                        img.chrome_above = trail_top;
+                    }
                     img.chrome_under_table = under_table;
                     img.chrome_para = para_no;
+                    // A footer picture placed from its paragraph sits under
+                    // the part's paragraphs above it (432bf1c280's logos on
+                    // "January 2025", the footer's second line).
+                    if top_level
+                        && local.starts_with("footer")
+                        && let ImageSlot::Float {
+                            para_y: Some(py), ..
+                        } = &mut img.slot
+                    {
+                        *py += this_top;
+                    }
                     if let Some((fx, fy, fw)) = frame_at
                         && matches!(img.slot, ImageSlot::Flow)
                     {
@@ -16654,12 +17118,17 @@ fn chrome_part_xml(
                             v_off: None,
                         };
                     }
-                    if last_para == Some(para) {
+                    // Text under the picture closes the paragraph and
+                    // takes its space after (in the part's text height).
+                    if last_para == Some(para) && no_text {
                         img.chrome_after = pstyle.after;
                     }
                     img.chrome_flow = flow && matches!(img.slot, ImageSlot::Flow);
                     if img.chrome_flow {
                         img.chrome_leading.clone_from(&leading);
+                        if !no_text {
+                            img.chrome_text_under = Some(mark_style());
+                        }
                         let first_row = row_h <= 0.0 || cursor + img.w <= text_w + 0.5;
                         if cursor > 0.0 && cursor + img.w > text_w + 0.5 {
                             drop += row_h;
@@ -16676,7 +17145,10 @@ fn chrome_part_xml(
                         if para_no == 1 && lead && !pstyle.before_auto {
                             img.chrome_drop += pstyle.before;
                         }
-                        if first_row && drop <= 0.0 && tab_after && img.w >= text_w - 0.5 {
+                        // Text after the tab shares its line (0800162a66 vs
+                        // 000e3e7b: the deleted "Akreditācijas ekspertu").
+                        if first_row && drop <= 0.0 && tab_after && img.w >= text_w - 0.5 && no_text
+                        {
                             img.chrome_tab_line = Some(mark_style());
                             tab_wrapped = true;
                         }
@@ -16695,6 +17167,9 @@ fn chrome_part_xml(
             &mut Numbering::default(),
         ));
     }
+    if local.starts_with("header") {
+        drop_flow_under_square_floats(&mut images, text_w);
+    }
     let align = first_para_align(&part_dom, root);
     let edge = if local.starts_with("header") {
         "bottom"
@@ -16710,6 +17185,57 @@ fn chrome_part_xml(
         tables: collect_hf_tables(pkg, path, &part_dom, root, sheet),
         boxes: std::rc::Rc::new(boxes),
     }
+}
+
+/// A header's flow picture wider than the room beside a square-wrapped
+/// picture of its paragraph starts under that picture, its wrap distance
+/// and effect extent included (0800162a66 vs 000e3e7b: Word sets the
+/// 441.75pt banner under the 117.75pt logo, 315pt of room beside it).
+fn drop_flow_under_square_floats(images: &mut [LaidImage], text_w: f32) {
+    let floats: Vec<(u32, f32, f32, f32)> = images
+        .iter()
+        .filter(|img| !img.behind)
+        .filter_map(|img| match img.slot {
+            ImageSlot::Float {
+                wrap_square: true,
+                page_y: None,
+                para_y: Some(top),
+                dist_l,
+                dist_r,
+                dist_b,
+                ..
+            } => Some((
+                img.chrome_para,
+                top,
+                top + img.h + dist_b,
+                img.w + dist_l + dist_r,
+            )),
+            _ => None,
+        })
+        .collect();
+    for img in images.iter_mut().filter(|img| img.chrome_flow) {
+        for &(para, top, bottom, taken) in &floats {
+            if para == img.chrome_para
+                && img.chrome_drop >= top - 0.5
+                && img.chrome_drop < bottom
+                && img.w > text_w - taken + 0.5
+            {
+                img.chrome_drop = bottom;
+            }
+        }
+    }
+}
+
+/// A paragraph's text as a redline shows it, deleted runs included (not
+/// its text boxes').
+fn para_shown_text(dom: &Dom, para: NodeId) -> String {
+    let mut out = para_own_text(dom, para);
+    for t in dom.descendants(para, Some(&W::del_text())) {
+        if dom.ancestors(t, Some(&W::txbx_content())).is_empty() {
+            out.push_str(&element_text(dom, t));
+        }
+    }
+    out
 }
 
 fn rel_target_path(pkg: &PartFs, source: &str, rid: &str) -> Option<String> {
@@ -16950,7 +17476,7 @@ fn hf_para_is_shape_text(dom: &Dom, para: NodeId) -> bool {
     false
 }
 
-fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet) -> Vec<TextRun> {
+fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet, text_w: f32) -> Vec<TextRun> {
     let theme = &sheet.theme;
     let header = dom.name_is(node, &W::name("hdr"));
     // One footer/header <w:p> is one painted line. Flattening sd_2517's
@@ -17015,10 +17541,22 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet) -> Vec<TextRun> 
         let mut scan = FieldScan::default();
         let mut line = Vec::new();
         collect_hf_rec(dom, para, &prun, sheet, &mut scan, &mut line);
+        // A right or centre ptab relative to the margin stretches an
+        // auto-width frame to the margins, so it prints as the unframed
+        // line (54f4bb7's centred footer frame: "Metadata" at the left
+        // margin, "Page 2 of 28" flush right).
+        let spans_margins = dom
+            .descendants(para, Some(&W::name("ptab")))
+            .into_iter()
+            .any(|n| {
+                attr_any(dom, n, "relativeTo") == Some("margin")
+                    && matches!(attr_any(dom, n, "alignment"), Some("right" | "center"))
+            });
         let frame_align = dom
             .element(para, &W::p_pr())
             .and_then(|ppr| first_named(dom, ppr, "framePr"))
-            .and_then(|fp| attr_any(dom, fp, "xAlign"));
+            .and_then(|fp| attr_any(dom, fp, "xAlign"))
+            .filter(|_| !spans_margins);
         if matches!(frame_align, Some("right" | "center")) && !line.is_empty() {
             for mut run in line {
                 run.frame_right = frame_align == Some("right");
@@ -17084,11 +17622,31 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet) -> Vec<TextRun> 
             }
             continue;
         }
-        let pic_h = hf_inline_pic_h(dom, para);
+        // Text under a line-filling picture is a line of its own; one after
+        // the text wraps to a line of its own under it (PR #247 review).
+        let trails = hf_pic_trails_line(dom, para, sheet, text_w);
+        let pic_h = if trails || hf_pic_owns_line(dom, para, sheet, text_w) {
+            0.0
+        } else {
+            hf_inline_pic_h(dom, para)
+        };
+        if trails {
+            let mark = line
+                .last()
+                .map_or_else(|| prun.clone(), |r| r.style.clone());
+            let mut pic_line = TextRun::new("", mark.clone());
+            pic_line.hf_pic_h = hf_inline_pic_h(dom, para);
+            pic_line.ends_line = true;
+            line.push(TextRun::new(HF_LINE_BREAK, mark));
+            line.push(pic_line);
+        }
         for run in &mut line {
             run.hf_para = Some(pstyle.clone());
-            run.hf_pic_h = pic_h;
+            if !trails {
+                run.hf_pic_h = pic_h;
+            }
             run.hf_tab_wrap = !sheet.defaults.legacy_compat;
+            run.hf_default_tab = sheet.defaults.page.default_tab;
         }
         if runs.is_empty() {
             // Below leading empty paragraphs the text keeps its before,
@@ -17172,6 +17730,77 @@ fn hf_inline_pic_h(dom: &Dom, para: NodeId) -> f32 {
         .fold(0.0_f32, f32::max)
 }
 
+/// A chrome paragraph's inline pictures fill its first line, leaving no
+/// room for its text: Word sets the text on the lines under them
+/// (0800162a66's 441.9pt footer banner over "ŠIS DOKUMENTS …" in 441.9pt
+/// of room). Half an em of the paragraph's text is the least a first
+/// word takes. Only the pictures ahead of the text count: text first
+/// sets the first line itself (PR #247 review).
+fn hf_pic_owns_line(dom: &Dom, para: NodeId, sheet: &StyleSheet, text_w: f32) -> bool {
+    let mut pics_w = 0.0_f32;
+    for n in dom.descendants(para, None) {
+        if !dom.ancestors(n, Some(&W::name("txbxContent"))).is_empty() {
+            continue;
+        }
+        if (dom.name_is(n, &W::t()) || dom.name_is(n, &W::name("delText")))
+            && !element_text(dom, n).trim().is_empty()
+        {
+            break;
+        }
+        if dom.name_is(n, &WP::name("inline"))
+            && let Some(cx) = first_named_any(dom, n, "extent")
+                .and_then(|ext| attr_any(dom, ext, "cx"))
+                .and_then(|v| v.parse::<f32>().ok())
+        {
+            pics_w += cx / 12700.0;
+        }
+    }
+    if pics_w <= 0.0 {
+        return false;
+    }
+    let (pstyle, prun) = para_base(dom, para, sheet, None);
+    let room = text_w - pstyle.indent_left - pstyle.indent_right - pstyle.indent_first;
+    room - pics_w < prun.size * 0.5
+}
+
+/// A chrome paragraph's text comes first and its later inline pictures
+/// fill a line: Word wraps them to the line under the text. Pictures with
+/// no height open no line (e0fe3a82eb's 0pt connector under its header
+/// text).
+fn hf_pic_trails_line(dom: &Dom, para: NodeId, sheet: &StyleSheet, text_w: f32) -> bool {
+    let mut seen_text = false;
+    let mut pics_w = 0.0_f32;
+    let mut pics_h = 0.0_f32;
+    for n in dom.descendants(para, None) {
+        if !dom.ancestors(n, Some(&W::name("txbxContent"))).is_empty() {
+            continue;
+        }
+        if (dom.name_is(n, &W::t()) || dom.name_is(n, &W::name("delText")))
+            && !element_text(dom, n).trim().is_empty()
+        {
+            if pics_w > 0.0 {
+                // Text after the pictures too: not one trailing row.
+                return false;
+            }
+            seen_text = true;
+        } else if seen_text
+            && dom.name_is(n, &WP::name("inline"))
+            && let Some(ext) = first_named_any(dom, n, "extent")
+            && let Some(cx) = attr_any(dom, ext, "cx").and_then(|v| v.parse::<f32>().ok())
+        {
+            pics_w += cx / 12700.0;
+            let cy = attr_any(dom, ext, "cy").and_then(|v| v.parse::<f32>().ok());
+            pics_h = pics_h.max(cy.unwrap_or(0.0) / 12700.0);
+        }
+    }
+    if pics_w <= 0.0 || pics_h <= 0.0 {
+        return false;
+    }
+    let (pstyle, prun) = para_base(dom, para, sheet, None);
+    let room = text_w - pstyle.indent_left - pstyle.indent_right - pstyle.indent_first;
+    room - pics_w < prun.size * 0.5
+}
+
 /// Table-cell paragraphs belong to the part's laid-out tables.
 fn hf_para_in_table(dom: &Dom, root: NodeId, para: NodeId) -> bool {
     let mut cur = dom.parent(para);
@@ -17241,7 +17870,13 @@ fn hf_styled_lines(fonts: &Fonts, runs: &[TextRun], width: f32) -> Vec<(Vec<Text
                     (rest - p.indent_first, rest)
                 });
         let pieces = if line.iter().any(|r| r.text.contains('\t')) {
-            hf_tab_line_breaks(fonts, &line, width)
+            let cut = hf_tab_line_breaks(fonts, &line, width);
+            let cut = if cut.is_empty() {
+                vec![line.clone()]
+            } else {
+                cut
+            };
+            hf_wrap_tab_pieces(fonts, cut, width)
         } else {
             wrap_runs(fonts, &line, first, room, false)
         };
@@ -17268,6 +17903,105 @@ fn hf_styled_lines(fonts: &Fonts, runs: &[TextRun], width: f32) -> Vec<(Vec<Text
     out
 }
 
+/// Every character of a header/footer line with its run and width (a
+/// tab is 0 wide).
+fn hf_line_chars(fonts: &Fonts, line: &[TextRun]) -> Vec<(usize, char, f32)> {
+    line.iter()
+        .enumerate()
+        .flat_map(|(ri, run)| {
+            let face = fonts.get(ink_face(fonts, &run.style, &run.text));
+            let size = run.style.layout_size();
+            run.text.chars().map(move |ch| {
+                let w = if ch == '\t' {
+                    0.0
+                } else {
+                    face.width_pt(ch.encode_utf8(&mut [0; 4]), size) * run.style.hscale()
+                };
+                (ri, ch, w)
+            })
+        })
+        .collect()
+}
+
+/// Where a tab-laid header/footer piece's ink ends: its tabs on the
+/// paragraph's stops, as `hf_tab_line_breaks` measures them (a tab with
+/// no stop left adds nothing), trailing spaces hanging.
+fn hf_tab_piece_end(fonts: &Fonts, piece: &[TextRun], para: &ParaStyle, start: f32) -> f32 {
+    let chars = hf_line_chars(fonts, piece);
+    let mut pos = start;
+    let mut k = 0;
+    while k < chars.len() {
+        let (_, ch, w) = chars[k];
+        k += 1;
+        if ch != '\t' {
+            pos += w;
+            continue;
+        }
+        let seg_n = chars[k..].iter().take_while(|(_, c, _)| *c != '\t').count();
+        let seg: f32 = chars[k..k + seg_n].iter().map(|(_, _, w)| w).sum();
+        pos = match para.tab_stops.iter().find(|t| t.pos > pos + 0.01) {
+            Some(t) => match t.align {
+                TabAlign::Right => t.pos.max(pos + seg),
+                TabAlign::Center => (t.pos + seg * 0.5).max(pos + seg),
+                _ => t.pos + seg,
+            },
+            None => pos + seg,
+        };
+        k += seg_n;
+    }
+    pos - trailing_ws_pt(fonts, piece)
+}
+
+/// Word-wraps each tab-laid piece that still overflows its line, its
+/// tabs jumping from where they stand (3ee2d0c's centred banner, tab and
+/// "Zgłoszenie … 2024 rok”" are two lines in Word). A piece that fits
+/// stays whole.
+fn hf_wrap_tab_pieces(fonts: &Fonts, pieces: Vec<Vec<TextRun>>, width: f32) -> Vec<Vec<TextRun>> {
+    let mut out = Vec::new();
+    for (i, piece) in pieces.into_iter().enumerate() {
+        let Some(para) = piece.iter().find_map(|r| r.hf_para.clone()) else {
+            out.push(piece);
+            continue;
+        };
+        if para.tab_stops.iter().any(|t| t.pos < 0.0) {
+            out.push(piece);
+            continue;
+        }
+        let first_start = if i == 0 {
+            para.indent_left + para.indent_first
+        } else {
+            para.indent_left
+        };
+        let default_tab = piece.first().map_or(0.0, |r| r.hf_default_tab);
+        let tabs = WrapTabs {
+            stops: &para.tab_stops,
+            default_tab,
+            first_start,
+            start: para.indent_left,
+            squeeze: 0.0,
+        };
+        let right = width - para.indent_right;
+        if hf_tab_piece_end(fonts, &piece, &para, first_start) <= right + 0.5 {
+            out.push(piece);
+            continue;
+        }
+        let (lines, _) = wrap_runs_tabbed(
+            fonts,
+            &piece,
+            right - first_start,
+            right - para.indent_left,
+            false,
+            Some(&tabs),
+        );
+        if lines.len() < 2 {
+            out.push(piece);
+        } else {
+            out.extend(lines);
+        }
+    }
+    out
+}
+
 /// A tab-laid header/footer line, cut before each tab that has no stop
 /// left on the line and whose text would run past the right edge (00e23d67:
 /// Word right-aligns "Program Studi … Surabaya" on the margin stop, then
@@ -17283,23 +18017,7 @@ fn hf_tab_line_breaks(fonts: &Fonts, line: &[TextRun], width: f32) -> Vec<Vec<Te
     }
     let right = width - para.indent_right;
     let wrap15 = line.iter().any(|r| r.hf_tab_wrap);
-    // Every character with its run and width.
-    let chars: Vec<(usize, char, f32)> = line
-        .iter()
-        .enumerate()
-        .flat_map(|(ri, run)| {
-            let face = fonts.get(ink_face(fonts, &run.style, &run.text));
-            let size = run.style.layout_size();
-            run.text.chars().map(move |ch| {
-                let w = if ch == '\t' {
-                    0.0
-                } else {
-                    face.width_pt(ch.encode_utf8(&mut [0; 4]), size) * run.style.hscale()
-                };
-                (ri, ch, w)
-            })
-        })
-        .collect();
+    let chars = hf_line_chars(fonts, line);
     let seg_after = |k: usize| -> f32 {
         chars[k + 1..]
             .iter()
@@ -17425,6 +18143,25 @@ struct FieldScan {
     instr: String,
 }
 
+/// A left-aligned `w:ptab`.
+fn left_ptab(dom: &Dom, node: NodeId) -> bool {
+    dom.name_is(node, &W::name("ptab"))
+        && matches!(attr_any(dom, node, "alignment"), None | Some("left"))
+}
+
+/// The header/footer line being collected already holds text or a field.
+fn line_has_content(runs: &[TextRun]) -> bool {
+    for r in runs.iter().rev() {
+        if let Some((_, tail)) = r.text.rsplit_once('\n') {
+            return !tail.trim().is_empty();
+        }
+        if !r.text.trim().is_empty() || r.field != FieldKind::None {
+            return true;
+        }
+    }
+    false
+}
+
 fn collect_hf_rec(
     dom: &Dom,
     node: NodeId,
@@ -17439,8 +18176,28 @@ fn collect_hf_rec(
 /// `collect_hf_rec` under a tracked change: Word's markup view paints a
 /// header/footer's deletions struck through and its insertions underlined,
 /// both in the first author's red (redlines vs 000e3e7b: the deleted
-/// "FRESHCARE AWISSP ... PAGE 1 OF 2" footer line).
+/// "FRESHCARE AWISSP ... PAGE 1 OF 2" footer line). Its runs are revised:
+/// their lines carry the change bar.
 fn collect_hf_rev(
+    dom: &Dom,
+    node: NodeId,
+    base: &RunStyle,
+    sheet: &StyleSheet,
+    scan: &mut FieldScan,
+    runs: &mut Vec<TextRun>,
+    mark: RevMark,
+) {
+    let start = runs.len();
+    collect_hf_rev_runs(dom, node, base, sheet, scan, runs, mark);
+    if mark != RevMark::None {
+        for run in &mut runs[start..] {
+            run.rev = true;
+        }
+    }
+}
+
+/// `collect_hf_rev`'s runs, before they are flagged revised.
+fn collect_hf_rev_runs(
     dom: &Dom,
     node: NodeId,
     base: &RunStyle,
@@ -17543,6 +18300,34 @@ fn collect_hf_rev(
             }
             return;
         }
+        // A left ptab stops where the margin (or indent) starts: before any
+        // text it moves nothing; after text it cannot go back, and Word
+        // starts a new line (a9de4ed3f9's "Downloaded" under "Page 2 of 17").
+        // The ptab may share its run with the text after it (PR #247
+        // review): that text still follows the break.
+        if (0..dom.child_count(node)).any(|i| left_ptab(dom, dom.child_at(node, i))) {
+            let preserve = run_preserves_space(dom, node);
+            for i in 0..dom.child_count(node) {
+                let kid = dom.child_at(node, i);
+                if !dom.is_element(kid) || dom.name_is(kid, &W::r_pr()) {
+                    continue;
+                }
+                if left_ptab(dom, kid) {
+                    if line_has_content(runs) {
+                        runs.push(TextRun::new("\n", style.clone()));
+                    }
+                    continue;
+                }
+                let text = visible_text(dom, kid, mark, preserve);
+                if !text.is_empty() {
+                    runs.push(TextRun::new(text, style.clone()));
+                    if scan.result {
+                        scan.emitted = true;
+                    }
+                }
+            }
+            return;
+        }
         // Word paints every space of an xml:space="preserve" run (0005052e
         // footer indents "BGYS.F-06" with six); plain runs still squeeze.
         let text = visible_text(dom, node, mark, run_preserves_space(dom, node));
@@ -17613,6 +18398,20 @@ struct Layout<'a> {
     /// behind boxes already under the body text.
     behind_end: usize,
     at_page_top: bool,
+    /// The paragraph being laid carries a float after all its text that
+    /// fills its page (`Layout::tail_float_bars_page`): no other line may
+    /// share the page its last line lands on.
+    tail_bar: bool,
+    /// Blocks before this index belong to a keepNext chain taller than a
+    /// page, which keeps no more once it has moved (probe kn8 0930).
+    keep_chain_until: usize,
+    /// The paragraph being laid keeps with the next block, which needs this
+    /// much below its last line (`Layout::keep_next_break`); 0 otherwise.
+    keep_next_follow: f32,
+    /// The revised paragraph being laid: the page and column its change
+    /// bar was opened on, and the bar's top there. A page or column break
+    /// closes the bar at the last line (`Layout::close_rev_bar`).
+    rev_bar: Option<(usize, u8, f32)>,
     /// True when this page top was reached by overflow or a manual
     /// `w:br type=page`: the space before is dropped. Document start keeps
     /// it; pageBreakBefore and section breaks keep its excess (`top_credit`).
@@ -17804,6 +18603,7 @@ fn chrome_pic_line(fonts: &Fonts, img: &LaidImage) -> f32 {
     chrome_pic_top(fonts, img)
         + img.chrome_after
         + img.h
+        + chrome_pic_descent(fonts, img)
         + img.chrome_leading.as_ref().map_or(0.0, |(extra, mark)| {
             let face = fonts.get(fonts.resolve(&mark.family, mark.bold, mark.italic));
             extra * face.single_line_pt(mark.size)
@@ -17813,6 +18613,15 @@ fn chrome_pic_line(fonts: &Fonts, img: &LaidImage) -> f32 {
             let face = fonts.get(fonts.resolve(&mark.family, mark.bold, mark.italic));
             face.line_descent_pt(mark.size) + mult * face.single_line_pt(mark.size)
         })
+}
+
+/// The descent a chrome picture's line keeps over its paragraph's text on
+/// the lines under it.
+fn chrome_pic_descent(fonts: &Fonts, img: &LaidImage) -> f32 {
+    img.chrome_text_under.as_ref().map_or(0.0, |mark| {
+        let face = fonts.get(fonts.resolve(&mark.family, mark.bold, mark.italic));
+        face.line_descent_pt(mark.size)
+    })
 }
 
 /// How far below its paragraph's top a wrapped chrome picture's row starts:
@@ -17908,6 +18717,24 @@ fn chrome_line_metrics(fonts: &Fonts, line: &[TextRun]) -> (f32, f32) {
         return (pic, line_box + pic - drop);
     }
     (drop, line_box)
+}
+
+/// A paragraph's runs cut at its explicit line breaks (`'\n'`), the
+/// breaks dropped.
+fn split_at_breaks(runs: &[TextRun]) -> Vec<Vec<TextRun>> {
+    let mut lines = vec![Vec::new()];
+    for run in runs {
+        let mut pieces = run.text.split('\n');
+        if let Some(first) = pieces.next()
+            && let Some(line) = lines.last_mut()
+        {
+            line.push(run.with_text(first));
+        }
+        for piece in pieces {
+            lines.push(vec![run.with_text(piece)]);
+        }
+    }
+    lines
 }
 
 /// Baseline depth of an exact line: Word puts it 4/5 down the box.
@@ -18073,6 +18900,10 @@ impl<'a> Layout<'a> {
             chrome_end: 0,
             behind_end: 0,
             at_page_top: true,
+            tail_bar: false,
+            keep_next_follow: 0.0,
+            keep_chain_until: 0,
+            rev_bar: None,
             suppress_space_before: false,
             top_credit: 0.0,
             top_pending: false,
@@ -18432,6 +19263,7 @@ impl<'a> Layout<'a> {
     }
 
     fn new_page(&mut self) {
+        self.close_rev_bar();
         if self.pages.len() == 1 {
             self.center_first_page_body();
         }
@@ -18625,6 +19457,58 @@ impl<'a> Layout<'a> {
         if untouched {
             return None;
         }
+        let (fit, _) = self.lines_fit(lines, marker, style);
+        let n = lines.len();
+        if fit >= n || fit == 0 {
+            return None;
+        }
+        if fit < 2 {
+            return Some(0);
+        }
+        if n - fit < 2 {
+            return Some(if n >= 4 { n - 2 } else { 0 });
+        }
+        None
+    }
+
+    /// Word keeps a keepNext paragraph's last line with the next block.
+    /// When the whole paragraph fits here but the `follow` the next block
+    /// needs does not, compat 15 splits it and carries its widow lines over
+    /// (two, or one with widowControl off) and compat 14, or keepLines,
+    /// moves it whole (Word 16 probes kn1–kn7 0930). One that runs past the page splits as
+    /// usual (`Layout::widow_break`). Returns the line index to break
+    /// before.
+    fn keep_next_break(
+        &self,
+        lines: &[Vec<TextRun>],
+        marker: Option<&TextRun>,
+        style: &ParaStyle,
+        follow: f32,
+    ) -> Option<usize> {
+        let n = lines.len();
+        if follow <= 0.0 || n < 2 || self.nested_depth > 0 {
+            return None;
+        }
+        let (fit, y) = self.lines_fit(lines, marker, style);
+        if fit < n || y - style.after - follow >= self.body_floor {
+            return None;
+        }
+        let tail = if style.widow_control { 2 } else { 1 };
+        if self.compat_mode >= 15 && !style.keep_lines && n >= 2 * tail {
+            return Some(n - tail);
+        }
+        let untouched = (self.page.height - self.body_top - self.y).abs() < 0.5;
+        (!untouched).then_some(0)
+    }
+
+    /// How many of `lines` fit above the body floor from the cursor, and
+    /// the cursor below the last one that does.
+    fn lines_fit(
+        &self,
+        lines: &[Vec<TextRun>],
+        marker: Option<&TextRun>,
+        style: &ParaStyle,
+    ) -> (usize, f32) {
         let mut y = self.y;
         let mut fit = 0usize;
         for (line_i, line) in lines.iter().enumerate() {
@@ -18641,17 +19525,7 @@ impl<'a> Layout<'a> {
             y -= line_box;
             fit += 1;
         }
-        let n = lines.len();
-        if fit >= n || fit == 0 {
-            return None;
-        }
-        if fit < 2 {
-            return Some(0);
-        }
-        if n - fit < 2 {
-            return Some(if n >= 4 { n - 2 } else { 0 });
-        }
-        None
+        (fit, y)
     }
 
     /// Word sizes a line by its tallest face: the single-line height and
@@ -18858,6 +19732,7 @@ impl<'a> Layout<'a> {
             // (live Word: 019d92d9's "Controls - cont." sits 4pt under column
             // one's top); a page-top column drops it.
             let first_line = (self.y - self.para_top).abs() < 0.01;
+            self.close_rev_bar();
             self.col_floor = Some(self.col_floor.map_or(self.y, |f| f.min(self.y)));
             // A floating table beside column one's text is no float for
             // the next column's (003329b5's table sent column two's lines
@@ -19253,7 +20128,7 @@ impl<'a> Layout<'a> {
             consider(img.slot, img.w, img.h, false);
         }
         for box_ in boxes {
-            consider(box_.slot, box_.w, self.box_h(box_), box_.frame);
+            consider(box_.slot, self.box_w(box_), self.box_h(box_), box_.frame);
         }
         if let Some(sf) = self.side_float_holds_line() {
             first_hit = true;
@@ -19374,7 +20249,7 @@ impl<'a> Layout<'a> {
             } else {
                 MIN_SIDE_FLOAT_ROOM_PT
             };
-            consider(box_.slot, box_.w, self.box_h(box_), min_room);
+            consider(box_.slot, self.box_w(box_), self.box_h(box_), min_room);
         }
         if hangs.is_some() {
             self.tb_band = hangs;
@@ -19389,6 +20264,78 @@ impl<'a> Layout<'a> {
             self.suppress_space_before = false;
             self.line_probe.top = jump;
         }
+    }
+
+    /// A paragraph-relative square float with no room beside it, or a
+    /// top-and-bottom one, whose foot, held on the page, leaves the
+    /// paragraph's first line (`first` pt, under `before` pt of space) no
+    /// room under it: Word starts the paragraph and its float on the next
+    /// page (probes h1, t3; 3bfcb371e2's 615x797 cover after the minutes).
+    /// A float whose top is below that line leaves it where it is
+    /// (2b479f55f8's cover box 360pt under its anchor).
+    fn square_float_bars_line(
+        &self,
+        images: &[LaidImage],
+        boxes: &[LaidTextBox],
+        before: f32,
+        first: f32,
+    ) -> bool {
+        let line_foot = self.para_top + self.para_space_above - before - first;
+        let left_edge = self.flow_left();
+        let right_edge = left_edge + self.content_width();
+        let bars = |slot: ImageSlot, w: f32, h: f32| {
+            let ImageSlot::Float {
+                wrap_square,
+                wrap_top_bottom,
+                para_y: Some(_),
+                dist_l,
+                dist_r,
+                dist_t,
+                dist_b,
+                ..
+            } = slot
+            else {
+                return false;
+            };
+            if !wrap_square && !wrap_top_bottom {
+                return false;
+            }
+            let (dw, dh) = self.sized_wh(slot, w, h, 1.0, 1.0);
+            let (fx, fy) = self.float_xy(dw, dh.max(1.0), slot);
+            if fy + dh.max(1.0) + dist_t <= line_foot {
+                return false;
+            }
+            let no_side_room = wrap_top_bottom
+                || (fx - dist_l - left_edge < MIN_SIDE_FLOAT_ROOM_PT
+                    && right_edge - (fx + dw + dist_r) < MIN_SIDE_FLOAT_ROOM_PT);
+            no_side_room && fy - dist_b - first < self.body_floor
+        };
+        images.iter().any(|img| bars(img.slot, img.w, img.h))
+            || boxes
+                .iter()
+                .filter(|b| !b.frame)
+                .any(|b| bars(b.slot, self.box_w(b), self.box_h(b)))
+    }
+
+    /// A float after all of a paragraph's text (`LaidImage::tail_anchor`)
+    /// that bars `first` pt of line even from a part at the page top: it
+    /// fills the page its anchor line lands on (Word probes k1-k11,
+    /// 2026-09-30; 9b22b88370's 615x797 cover).
+    fn tail_float_bars_page(&mut self, images: &[LaidImage], first: f32) -> bool {
+        let tails: Vec<LaidImage> = images
+            .iter()
+            .filter(|img| img.tail_anchor && !matches!(img.slot, ImageSlot::Flow))
+            .cloned()
+            .collect();
+        if tails.is_empty() {
+            return false;
+        }
+        let saved = (self.para_top, self.para_space_above);
+        self.para_top = self.page.height - self.body_top;
+        self.para_space_above = 0.0;
+        let bars = self.square_float_bars_line(&tails, &[], 0.0, first);
+        (self.para_top, self.para_space_above) = saved;
+        bars
     }
 
     /// A page-placed float with no room beside it that the next paragraph
@@ -19444,7 +20391,7 @@ impl<'a> Layout<'a> {
             consider(img.slot, img.w, img.h);
         }
         for box_ in boxes.iter().filter(|b| !b.frame) {
-            consider(box_.slot, box_.w, self.box_h(box_));
+            consider(box_.slot, self.box_w(box_), self.box_h(box_));
         }
         if let Some((top, bottom, step)) = band {
             self.tb_step = step && self.tb_band.is_none_or(|_| self.tb_step);
@@ -19482,7 +20429,7 @@ impl<'a> Layout<'a> {
             consider(img.slot, img.w, img.h);
         }
         for box_ in boxes {
-            consider(box_.slot, box_.w, self.box_h(box_));
+            consider(box_.slot, self.box_w(box_), self.box_h(box_));
         }
         // A floating table narrows only the lines beside it: lines past
         // its bottom return to the full measure (reflow_past_float).
@@ -19617,6 +20564,13 @@ impl<'a> Layout<'a> {
         }
         self.para_top = self.y;
         let y_top = self.y;
+        // A header's text box laid while this paragraph breaks a page has
+        // its own bar; this one resumes after it.
+        let revised = style.fmt_rev || runs.iter().any(|r| r.rev);
+        let outer_bar = std::mem::replace(
+            &mut self.rev_bar,
+            revised.then_some((self.pages.len(), self.col_i, y_top)),
+        );
         let hanging = if style.indent_first < 0.0 {
             -style.indent_first
         } else {
@@ -19692,7 +20646,14 @@ impl<'a> Layout<'a> {
                 run.style = mark.clone();
             }
         }
-        let widow_break = self.widow_break(&lines, marker, style);
+        let keep_follow = std::mem::take(&mut self.keep_next_follow);
+        let widow_break = self
+            .widow_break(&lines, marker, style)
+            .or_else(|| self.keep_next_break(&lines, marker, style, keep_follow));
+        // Taken, not read: the text boxes and header boxes these lines
+        // paint lay their own lines, which the rule must not move
+        // (842ef93738's header box repainted by every page it broke).
+        let tail_bar = std::mem::take(&mut self.tail_bar);
         for (line_i, line) in lines.iter().enumerate() {
             if widow_break == Some(line_i) {
                 self.flow_break();
@@ -19749,7 +20710,33 @@ impl<'a> Layout<'a> {
                 }
                 self.claim_line_footnotes(line);
             }
-            self.ensure(line_fit_need(natural, ascent, style, line_box));
+            // Under a page-filling tail float no line shares the page the
+            // last one lands on. A page that could hold the rest keeps only
+            // its first line; the last line opens its page with its top at
+            // the body floor, under the float, and what follows starts the
+            // next page (Word probes k1, k2, k5, k7, k11).
+            let mut at_floor = false;
+            if tail_bar {
+                let fresh = self.y >= self.page.height - self.body_top - 0.5;
+                if line_i + 1 == lines.len() {
+                    if !fresh {
+                        self.new_page();
+                    }
+                    self.y = self.body_floor;
+                    at_floor = true;
+                } else if !fresh {
+                    let rest: f32 = lines[line_i..]
+                        .iter()
+                        .map(|l| self.band_line_h(l, style))
+                        .sum();
+                    if self.y - rest >= self.body_floor - 0.5 {
+                        self.new_page();
+                    }
+                }
+            }
+            if !at_floor {
+                self.ensure(line_fit_need(natural, ascent, style, line_box));
+            }
             if let Some(fill) = style.fill {
                 let fx = self.flow_left() + style.indent_left;
                 let fw = (self.content_width() - style.indent_left - style.indent_right).max(1.0);
@@ -19930,9 +20917,8 @@ impl<'a> Layout<'a> {
             bdr_top.is_some(),
             bdr_bottom.is_some(),
         );
-        if style.fmt_rev || runs.iter().any(|r| r.rev) {
-            self.paint_rev_bar(self.rev_bar_x(), text_bottom, y_top);
-        }
+        self.close_rev_bar_at(text_bottom);
+        self.rev_bar = outer_bar;
         self.y -= style.after;
     }
 
@@ -19982,6 +20968,63 @@ impl<'a> Layout<'a> {
         let x1 = self.page.margin_l + para.indent_left - 1.44;
         let x2 = self.page.width - self.page.margin_r - para.indent_right + 1.44;
         self.hairline_h(x1, text_top + space + width * 0.5, x2, width, color);
+    }
+
+    /// A chrome paragraph's `w:shd` behind one of its lines: the text
+    /// area's width (out to the rules when bordered), from the line box's
+    /// top to its bottom, reaching the rule above on the paragraph's first
+    /// line and the rule below on its last (clean/2261da4dae's teal
+    /// Heading1 band with white text).
+    fn hf_line_fill(
+        &mut self,
+        para: &ParaStyle,
+        above: Option<&ParaStyle>,
+        next: Option<&ParaStyle>,
+        top: f32,
+        line_h: f32,
+    ) {
+        let Some(color) = para.fill else {
+            return;
+        };
+        let same = |other: Option<&ParaStyle>| other.is_some_and(|o| std::ptr::eq(o, para));
+        let outset = if para.border_left.is_some() || para.border_right.is_some() {
+            1.44
+        } else {
+            0.0
+        };
+        let reach =
+            |edge: Option<([f32; 3], f32, f32)>| edge.map_or(0.0, |(_, w, space)| space + w);
+        let up = if same(above) {
+            0.0
+        } else {
+            reach(para.border_top)
+        };
+        let down = if same(next) {
+            0.0
+        } else {
+            reach(para.border_bottom)
+        };
+        let x1 = self.page.margin_l + para.indent_left - outset;
+        let x2 = self.page.width - self.page.margin_r - para.indent_right + outset;
+        let y = top - line_h - down;
+        self.current().ops.push(Op::FillRect {
+            x: x1,
+            y,
+            w: (x2 - x1).max(1.0),
+            h: top + up - y,
+            color,
+        });
+    }
+
+    /// The shading band of the empty paragraph `runs[i]`, `h` down from
+    /// `top`: Word paints it across the mark's line (PR #247 review).
+    fn hf_break_fill(&mut self, runs: &[TextRun], i: usize, top: f32, h: f32) {
+        let Some(para) = runs[i].hf_para.as_deref() else {
+            return;
+        };
+        let above = i.checked_sub(1).and_then(|j| runs[j].hf_para.as_deref());
+        let next = runs.get(i + 1).and_then(|r| r.hf_para.as_deref());
+        self.hf_line_fill(para, above, next, top, h);
     }
 
     /// A chrome paragraph's bottom rule, its space under the line box
@@ -20070,6 +21113,27 @@ impl<'a> Layout<'a> {
         } else {
             left
         }
+    }
+
+    /// The open change bar's part on this page and column: from its top,
+    /// or the column's top once the paragraph has broken onto it, down to
+    /// the last line laid (Word bars 9b22b88370's page-filling insertion
+    /// on each of its pages).
+    fn close_rev_bar(&mut self) {
+        self.close_rev_bar_at(self.y);
+    }
+
+    /// `close_rev_bar` down to `bottom`.
+    fn close_rev_bar_at(&mut self, bottom: f32) {
+        let Some((page, col, top)) = self.rev_bar else {
+            return;
+        };
+        let top = if (page, col) == (self.pages.len(), self.col_i) {
+            top
+        } else {
+            self.col_top.unwrap_or(self.page.height - self.body_top)
+        };
+        self.paint_rev_bar(self.rev_bar_x(), bottom, top);
     }
 
     fn paint_rev_bar(&mut self, x: f32, y_bot: f32, y_top: f32) {
@@ -20227,6 +21291,122 @@ impl<'a> Layout<'a> {
     /// Lines `emit_runs` would lay `runs` out in (tabs, markers and
     /// hanging indents included), for keepNext's widow arithmetic: a TOC
     /// entry with a dot-leader tab is one line, not a plain-wrap three.
+    /// What a keepNext paragraph needs below its last line: the next
+    /// block's first lines (`keep_next_follow_pt`) and, while that block is
+    /// a keepNext paragraph too short to split, the block after it too (a
+    /// one-line keepNext heading over its body): the chain's height (grown
+    /// past a page at most), the next block's alone, and the index of the
+    /// block the chain ends on. The paragraph's own space
+    /// after already holds the next block's before (max of the two), and
+    /// the chain's gaps are the same max, so no space counts twice
+    /// (sd_2517's TOC chapter lines 18pt apart).
+    fn keep_next_chain_follow(&mut self, blocks: &[Block], from: usize) -> (f32, f32, usize) {
+        let page_h = (self.page.height - self.body_top - self.body_floor).max(1.0);
+        let mut total = 0.0;
+        let mut first = 0.0;
+        let mut prev_after = None;
+        let mut j = from;
+        while let Some(b) = blocks.get(j) {
+            let lines = match b {
+                Block::Paragraph {
+                    runs, style, list, ..
+                } => self.para_line_count(runs, style, *list),
+                _ => 1,
+            };
+            let need = keep_next_follow_pt(
+                self.fonts,
+                self.content_width(),
+                b,
+                self.page.grid_pitch,
+                self.space_for_ul,
+                lines,
+            );
+            let (before, after) = block_para_style(b).map_or((0.0, 0.0), |s| (s.before, s.after));
+            let gap = prev_after.map_or(0.0, |a: f32| a.max(before));
+            let need = need - before + gap;
+            if total <= page_h {
+                total += need;
+            }
+            if j == from {
+                first = need;
+            }
+            prev_after = Some(after);
+            let whole = matches!(b, Block::Paragraph { style, .. }
+                if style.keep_next
+                    && (lines <= 1 || style.keep_lines || style.widow_control && lines <= 3));
+            if !whole {
+                break;
+            }
+            j += 1;
+        }
+        (total, first, j)
+    }
+
+    /// Compat 14 moves a keepNext paragraph that ends on this page whole
+    /// when the block after it cannot start here, and with it every
+    /// keepNext paragraph chained before it (Word 16 probes kn1/kn3 0930;
+    /// priority 4e7bb2a1be's "Location/Date" chain under its one-line
+    /// keepNext "Event No 3"). Walks the chain from block `i`, whose whole
+    /// height is `head`: the height to ensure when the chain must move (a
+    /// chain taller than the page moves too, probe kn8 0930).
+    fn legacy_keep_chain_need(
+        &mut self,
+        blocks: &[Block],
+        i: usize,
+        head: f32,
+        head_after: f32,
+    ) -> Option<f32> {
+        if self.nested_depth > 0 {
+            return None;
+        }
+        let room = self.y - self.body_floor;
+        if head > room {
+            return None;
+        }
+        let mut cum = head;
+        let mut prev_after = head_after;
+        let mut j = i + 1;
+        let chunk = loop {
+            let b = blocks.get(j)?;
+            let lines = match b {
+                Block::Paragraph {
+                    runs, style, list, ..
+                } => self.para_line_count(runs, style, *list),
+                _ => 1,
+            };
+            let chunk = keep_next_follow_pt(
+                self.fonts,
+                self.content_width(),
+                b,
+                self.page.grid_pitch,
+                self.space_for_ul,
+                lines,
+            );
+            let Block::Paragraph { runs, style, .. } = b else {
+                break chunk;
+            };
+            if !style.keep_next {
+                break chunk;
+            }
+            let line = para_first_line_pt(self.fonts, runs, style, self.page.grid_pitch);
+            let whole =
+                style.before.max(prev_after) - prev_after + line * lines as f32 + style.after;
+            if cum + whole > room {
+                break chunk;
+            }
+            cum += whole;
+            prev_after = style.after;
+            j += 1;
+        };
+        // The chunk's own before collapses with the space after above it.
+        let before = blocks
+            .get(j)
+            .and_then(block_para_style)
+            .map_or(0.0, |s| s.before);
+        let need = cum + chunk - before + (before.max(prev_after) - prev_after);
+        (need > room).then_some(need)
+    }
+
     fn para_line_count(&mut self, runs: &[TextRun], style: &ParaStyle, list: bool) -> usize {
         let hanging = if style.indent_first < 0.0 {
             -style.indent_first
@@ -20674,6 +21854,7 @@ impl<'a> Layout<'a> {
                 continue;
             }
             let parts: Vec<&str> = run.text.split('\t').collect();
+            let start = x;
             for (pi, part) in parts.iter().enumerate() {
                 if pi > 0 {
                     let after_w = self.tab_suffix_width(part, run, &line[i + 1..]);
@@ -20685,6 +21866,11 @@ impl<'a> Layout<'a> {
                     piece.text = (*part).to_string();
                     x = self.paint_run(&piece, x, y);
                 }
+            }
+            // A run of tabs alone paints no glyph; its comment still
+            // hangs on the tab (Word draws the balloon).
+            if parts.iter().all(|part| part.is_empty()) {
+                self.place_run_comments(run, start, y, x - start);
             }
             i += 1;
         }
@@ -20952,6 +22138,13 @@ impl<'a> Layout<'a> {
 
     fn paint_justified_line(&mut self, line: &[TextRun], mut x: f32, y: f32, leftover: f32) {
         let gaps = inter_word_gaps(line);
+        // Justifying stretches only the spaces after the last tab. With
+        // none, the line is its tabs: they go to their stops with their
+        // leaders (air_pollution_permit_form's text box of dotted lines).
+        if gaps == 0 && line.iter().any(|r| r.text.contains('\t')) {
+            self.paint_line_with_tabs(line, x, y);
+            return;
+        }
         let pad = if gaps > 0 {
             leftover / gaps as f32
         } else {
@@ -21062,6 +22255,8 @@ impl<'a> Layout<'a> {
             h_rel,
             v_rel,
             v_off,
+            wrap_square,
+            wrap_top_bottom,
             ..
         } = slot
         else {
@@ -21134,6 +22329,22 @@ impl<'a> Layout<'a> {
                     Align::Left | Align::Justify => top - dh,
                 }
             }
+        };
+        // A wrapping float (square, tight, top-and-bottom) off its column or
+        // paragraph stays on the page: Word pulls it in from the left, top
+        // and foot edges (probes h3-h6, g3, g5, t3, t4, 2026-09-30;
+        // 3bfcb371e2's cover at 0,0). A wrapNone float may still leave the
+        // page (0004c94c above; probes n3-n5).
+        let wraps = wrap_square || wrap_top_bottom;
+        let x = if wraps && col_x.is_some() && pct_x.is_none() && page_x.is_none() {
+            x.min(self.page.width - dw).max(0.0)
+        } else {
+            x
+        };
+        let y = if wraps && para_y.is_some() && pct_y.is_none() && page_y.is_none() {
+            y.max(0.0).min(self.page.height - dh)
+        } else {
+            y
         };
         (x, y)
     }
@@ -21212,12 +22423,36 @@ impl<'a> Layout<'a> {
 
     /// A box's height: its extent, or for a floating `a:spAutoFit` box its
     /// paragraphs' height inside its insets at its laid width.
+    /// A box's width: a fitted box is its widest line wide, plus its
+    /// insets; a fitted frame stops at the column (Word wraps an auto-width
+    /// frame's long lines there).
+    fn box_w(&self, box_: &LaidTextBox) -> f32 {
+        if !box_.fit_width || box_.paras.is_empty() {
+            return box_.w;
+        }
+        // A w:br ends a line: the widest of them sets the width (PR #247
+        // review), not the text on both sides of a break added up.
+        let text_w = box_
+            .paras
+            .iter()
+            .flat_map(|(runs, _)| split_at_breaks(runs))
+            .map(|line| self.line_width_pt(&line))
+            .fold(0.0_f32, f32::max);
+        let w = text_w + box_.insets[0] + box_.insets[2];
+        if box_.frame {
+            w.min(self.content_width())
+        } else {
+            w
+        }
+    }
+
     fn box_h(&self, box_: &LaidTextBox) -> f32 {
         if !box_.fit_height || box_.paras.is_empty() || matches!(box_.slot, ImageSlot::Flow) {
             return box_.h;
         }
         let [li, ti, ri, bi] = box_.insets;
-        let (dw, _) = self.sized_wh(box_.slot, box_.w, box_.h, 1.0, 1.0);
+        let w = if box_.frame { self.box_w(box_) } else { box_.w };
+        let (dw, _) = self.sized_wh(box_.slot, w, box_.h, 1.0, 1.0);
         let mut h = ti + bi;
         for (runs, style) in &box_.paras {
             let measure = (dw - li - ri - style.indent_left - style.indent_right).max(8.0);
@@ -21557,6 +22792,25 @@ impl<'a> Layout<'a> {
         });
     }
 
+    /// An in-flow table row too wide to sit beside a square float starts
+    /// under it; a narrower one stays beside it (Word 16 probe
+    /// tfl_*_0930: a 468pt table under a 200pt picture at the column's
+    /// right edge starts at its foot, a 150pt table beside it; work set
+    /// 109f20a2b3's continued table clears its header logo the same way).
+    fn drop_below_side_float(&mut self, table_w: f32) {
+        if self.nested_depth != 0 {
+            return;
+        }
+        let Some(sf) = self.side_float else {
+            return;
+        };
+        let beside = self.content_width() - sf.inset;
+        if self.y > sf.bottom + 0.5 && self.y <= sf.top + 0.5 && table_w > beside + 0.5 {
+            self.y = sf.bottom;
+            self.side_float = None;
+        }
+    }
+
     /// A header float wraps the body like a body float (live Word: a
     /// 160pt picture at page y 40 starts the body under it when square
     /// has no room or wrap is top and bottom, beside it when square has;
@@ -21706,13 +22960,14 @@ impl<'a> Layout<'a> {
             };
             let lift = if in_header {
                 row_top
+                    + img.chrome_above
                     + if img.chrome_under_table && matches!(img.slot, ImageSlot::Flow) {
                         tables_h
                     } else {
                         0.0
                     }
             } else if img.chrome_lead {
-                text_h + rows_below + img.chrome_after
+                text_h + rows_below + img.chrome_after + chrome_pic_descent(self.fonts, img)
             } else {
                 rows_below + img.chrome_after
             };
@@ -21762,13 +23017,11 @@ impl<'a> Layout<'a> {
                 y = fy;
             } else if in_header {
                 y = self.page.height - self.page.header.max(0.0) - para_y.unwrap_or(0.0) - dh;
-            } else if let Some(off) = para_y
-                && img.chrome_lead
-            {
-                // From the footer's top when no text paragraph precedes
-                // its own, like the footer's text boxes (01838a08's banner:
-                // 23.9pt above it, not on the footer distance). Below text
-                // paragraphs its paragraph's top is not known here.
+            } else if let Some(off) = para_y {
+                // From the footer's top, its paragraph's estimated top
+                // included (`chrome_part_xml`), like the footer's text
+                // boxes (01838a08's banner: 23.9pt above it, not on the
+                // footer distance).
                 y = self.page.footer.max(0.0) + foot_band - off - dh;
             }
         }
@@ -22670,17 +23923,7 @@ impl<'a> Layout<'a> {
     }
 
     fn emit_textbox(&mut self, box_: &LaidTextBox, indent_left: f32) {
-        // A fitted box is its widest line wide, plus its insets.
-        let box_w = if box_.fit_width && !box_.paras.is_empty() {
-            let text_w = box_
-                .paras
-                .iter()
-                .map(|(runs, _)| self.line_width_pt(runs))
-                .fold(0.0_f32, f32::max);
-            text_w + box_.insets[0] + box_.insets[2]
-        } else {
-            box_.w
-        };
+        let box_w = self.box_w(box_);
         self.page_has_body = true;
         // A filled box or a group keeps its extent: 8aea3634's section
         // rules are 0.5pt groups and rects in Word. Only an empty box
@@ -22712,7 +23955,17 @@ impl<'a> Layout<'a> {
                 match p.wrap {
                     WrapMode::None | WrapMode::Square { .. } | WrapMode::TopBottom => {}
                 }
-                (p.x, p.y, p.w, p.h)
+                // A frame at a page y that runs past the page's bottom
+                // moves up until it ends there, never above the page's top;
+                // what still overflows is off the page (61e3967518's
+                // 108-line frame at y=2621tw starts at the top in Word).
+                let y = match slot {
+                    ImageSlot::Float {
+                        page_y: Some(_), ..
+                    } if box_.frame && p.y < 0.0 => (self.page.height - p.h).min(0.0),
+                    _ => p.y,
+                };
+                (p.x, y, p.w, p.h)
             }
         };
         if box_.reserve_only {
@@ -23527,10 +24780,28 @@ impl<'a> Layout<'a> {
             self.float_table_top(slot) - th < self.body_floor
         });
         let mut table_left = origin + shift + ind - pull;
+        // A top-margin float's first page keeps the floor raised to one
+        // body height under its top; restored if the table never breaks.
+        let mut first_floor: Option<(usize, f32)> = None;
         if overflows
             && self.nested_depth == 0
             && let Some(slot) = geom.float
         {
+            // A tall top-margin float after text on its page leaves that
+            // text alone and starts the next page at its offset (Word,
+            // 6c2c8f1b79 and probe fe: two paragraphs stay on page 1).
+            let margin_float = matches!(
+                slot,
+                ImageSlot::Float {
+                    page_y: None,
+                    v_off: Some(_),
+                    ..
+                }
+            );
+            let untouched = (self.page.height - self.body_top - self.y).abs() < 0.5;
+            if margin_float && !untouched {
+                self.new_page();
+            }
             // It starts where it floats (0011e415's first row at 219pt),
             // lifted so the leading rows one body page holds end above
             // the page's edge. Live Word 2026-09-26, 17.46pt rows under a
@@ -23557,6 +24828,13 @@ impl<'a> Layout<'a> {
             } else {
                 top
             };
+            // Its first page holds one body height of rows from its top
+            // (probe fe: R00..R31 at 12.75..652.75, not down to the 720
+            // floor); later pages break at the floor as usual.
+            if margin_float {
+                first_floor = Some((self.pages.len(), self.body_floor));
+                self.body_floor = self.body_floor.max(top - room);
+            }
             // Every page of it keeps the float's column (a 360pt centred
             // table's border at 216 on pages 1-3), not the margin.
             let th: f32 = row_h.iter().sum();
@@ -23601,10 +24879,46 @@ impl<'a> Layout<'a> {
                 ImageSlot::Flow => Align::Left,
             };
             let top = self.float_table_top(slot);
-            let saved_y = self.y;
+            let mut saved_y = self.y;
             let saved_ml = self.page.margin_l;
             let saved_mr = self.page.margin_r;
             let saved_top = self.at_page_top;
+            // A left float's text starts its distance past the drawn right
+            // edge: the mode<15 pull moves the table left of fx (case46:
+            // 246.6 + 7.2 = 253.8, as Word's 254.1).
+            let inset = if matches!(align, Align::Left) && (fx - pull - saved_ml).abs() < 12.0 {
+                (fx - pull + used + dist - saved_ml).max(0.0)
+            } else {
+                used + dist
+            };
+            // With no room beside the table, lines above its tblpY top keep
+            // their place (09d6d940's anchor paragraph and heading sit in
+            // the 51pt over the table in Word).
+            let no_room = matches!(align, Align::Center)
+                || self.content_width() - inset < MIN_SIDE_FLOAT_ROOM_PT;
+            // A margin- or page-placed float at the body's top with no room
+            // beside it pushes the text already on its page below it: Word
+            // lays the page out around the float (probes g2/fb: Head0 at
+            // 113.3 under a table filling 12.75..112.75).
+            let body_top_y = self.page.height - self.body_top;
+            let push = body_top_y - (top - th - dist_b);
+            if no_room
+                && !float_is_text_anchored(slot)
+                && top >= body_top_y - 0.5
+                && saved_y < body_top_y - 0.5
+                && push > 0.0
+                && saved_y - push >= self.body_floor
+            {
+                let start = self.chrome_end;
+                let page = self.current();
+                for op in &mut page.ops[start..] {
+                    shift_op_y(op, -push);
+                }
+                for note in &mut page.comments {
+                    note.y -= push;
+                }
+                saved_y -= push;
+            }
             self.nested_depth = 1;
             // A centred/right float's border box sits at fx itself: undo
             // the nested pass's mode<15 pull and tblInd (00aaa7af).
@@ -23627,19 +24941,6 @@ impl<'a> Layout<'a> {
             // table's band starts at the cursor so the following paragraph
             // wraps from its first line (Word keeps that one line full when
             // tblpY pushes the table below it; case45).
-            // A left float's text starts its distance past the drawn right
-            // edge: the mode<15 pull moves the table left of fx (case46:
-            // 246.6 + 7.2 = 253.8, as Word's 254.1).
-            let inset = if matches!(align, Align::Left) && (fx - pull - saved_ml).abs() < 12.0 {
-                (fx - pull + used + dist - saved_ml).max(0.0)
-            } else {
-                used + dist
-            };
-            // With no room beside the table, lines above its tblpY top keep
-            // their place (09d6d940's anchor paragraph and heading sit in
-            // the 51pt over the table in Word).
-            let no_room = matches!(align, Align::Center)
-                || self.content_width() - inset < MIN_SIDE_FLOAT_ROOM_PT;
             let band_top = if float_is_text_anchored(slot) && !no_room {
                 saved_y
             } else {
@@ -23671,6 +24972,7 @@ impl<'a> Layout<'a> {
             .collect();
         let mut ri = 0;
         while ri < work.len() {
+            self.drop_below_side_float(used);
             // A keepNext row stays with the row after it when the two fit on
             // a page (000aba38's Heading 2 label rows start page 2 together).
             let keeps_next = self.nested_depth == 0
@@ -23708,8 +25010,14 @@ impl<'a> Layout<'a> {
                     self.ensure(pair);
                 }
             }
-            let splittable = self.nested_depth == 0 && ri >= header_n && !work[ri].2;
-            if splittable {
+            // A cantSplit row taller than a whole page still breaks, from a
+            // fresh page: Word 16 probes cs_*_0930 move a 40-line row off
+            // the page it started on and cut it at the next page's foot
+            // (priority 2b479f55f8's 5e row ran 116pt below its page).
+            let page_room = self.page.height - self.body_top - self.body_floor;
+            let too_tall = work[ri].2 && work[ri].1 > page_room + 0.5;
+            let splittable = self.nested_depth == 0 && ri >= header_n && (!work[ri].2 || too_tall);
+            if splittable && (self.at_page_top || !too_tall) {
                 self.split_work_row(&mut work, ri, &col_w);
             }
             let pages_before = self.pages.len();
@@ -23729,6 +25037,10 @@ impl<'a> Layout<'a> {
                 // room (015e4665's split row stayed whole and left 230pt).
                 && (broke_here || (!self.at_page_top && self.y - rh < self.body_floor));
             self.ensure(rh + if will_break { header_h } else { 0.0 });
+            // A page opened here may bring a header float the rows must clear.
+            if self.pages.len() > pages_before {
+                self.drop_below_side_float(used);
+            }
             let paint: Vec<usize> = if will_break {
                 (0..header_n).chain(std::iter::once(ri)).collect()
             } else {
@@ -24086,6 +25398,11 @@ impl<'a> Layout<'a> {
             }
             ri += 1;
         }
+        if let Some((pages, floor)) = first_floor
+            && self.pages.len() == pages
+        {
+            self.body_floor = floor;
+        }
         // Word starts the next block at the table's bottom edge (001f4e98);
         // the flat 4pt floor here was an old-corpus page-count tune. Layout
         // still sets after=10 for unstyled callouts before Heading*.
@@ -24109,9 +25426,9 @@ impl<'a> Layout<'a> {
         if rh <= room + 0.5
             || room < 1.0
             || room < min
-            || row
-                .iter()
-                .any(|c| c.rowspan > 1 || c.valign_center || c.valign_bottom)
+            // Word breaks a centred or bottom-aligned row like any other
+            // (va6_Ctr/Bot/Top_0930 probes): only row spans stay whole.
+            || row.iter().any(|c| c.rowspan > 1)
         {
             return;
         }
@@ -24133,8 +25450,40 @@ impl<'a> Layout<'a> {
         }
         let height =
             |cell: &TableCell| cell_content_height(self.fonts, cell, col_w, self.space_for_ul);
+        let Some((head, tail, nested_broke)) = self.split_row_cells(row, room, col_w) else {
+            return;
+        };
+        // A nested table breaks between its rows (English part b c8d1d38a's
+        // one-row form starts its 26-row table on page 1, as in Word). One
+        // that cannot, such as a single tall nested row, keeps a row that a
+        // page can hold whole: splitting around it left only b fcb45876's
+        // logo on page 1.
+        if has_nested && !nested_broke && rh <= page_room * 1.05 {
+            return;
+        }
+        let tail_h = tail.iter().map(height).fold(0.0_f32, f32::max);
+        // The head fills the page: its borders run to the bottom margin.
+        work[ri] = (RowSrc::Owned(head), room - 0.01, false, 0.0);
+        work.insert(ri + 1, (RowSrc::Owned(tail), tail_h, false, 0.0));
+    }
+
+    /// A row's cells cut where `room` points run out: the heads, the
+    /// tails, and whether a nested table broke. `None` when no cell
+    /// splits or nothing is left for one side.
+    fn split_row_cells(
+        &self,
+        row: &[TableCell],
+        room: f32,
+        col_w: &[f32],
+    ) -> Option<(Vec<TableCell>, Vec<TableCell>, bool)> {
+        if room < 1.0 || row.iter().any(|c| c.rowspan > 1) {
+            return None;
+        }
+        let height =
+            |cell: &TableCell| cell_content_height(self.fonts, cell, col_w, self.space_for_ul);
         let (mut head, mut tail) = (Vec::new(), Vec::new());
         let (mut any_head, mut any_tail) = (false, false);
+        let mut starved = false;
         let mut nested_broke = false;
         for cell in row {
             let mut k = 0;
@@ -24142,15 +25491,24 @@ impl<'a> Layout<'a> {
                 k += 1;
             }
             let (mut h, mut t) = cell.split_at(k);
+            // With nothing above the cut, the head holds only the cell's
+            // margins: measured as a cell it would hold a default empty
+            // paragraph (priority 3138fff3a6: 25pt, not 10, so its 8pt
+            // titles placed no line and the row moved, where Word splits).
+            let head_h = if k == 0 {
+                cell.pad_t + cell.pad_b
+            } else {
+                height(&h)
+            };
             let mut broke = false;
-            // Word breaks the next paragraph between its lines, with no
-            // widow control across the row split (00297360's item 6 leaves
-            // one line on page 1).
+            // Word breaks the next paragraph between its lines (00297360's
+            // item 6 leaves one line on page 1); from compat 15 widow
+            // control holds across the cut (split_cell_para).
             if k < cell.paras.len() && t.nested_at.iter().all(|&at| at > 0) {
                 let cw: f32 = (0..cell.colspan)
                     .map(|i| col_w.get(cell.col + i).copied().unwrap_or(80.0))
                     .sum();
-                let left = room - height(&h);
+                let left = room - head_h;
                 if let Some((hp, tp)) =
                     self.split_cell_para(&cell.paras[k], left, cell_wrap_width(cell, cw))
                 {
@@ -24170,7 +25528,7 @@ impl<'a> Layout<'a> {
                     .map(|i| col_w.get(cell.col + i).copied().unwrap_or(80.0))
                     .sum();
                 let wrap_w = cell_wrap_width(cell, cw);
-                let left = room - height(&h);
+                let left = room - head_h;
                 if let Block::Table {
                     cols,
                     rows: inner,
@@ -24191,8 +25549,24 @@ impl<'a> Layout<'a> {
                     // tall nested row Word breaks inside, which we cannot.
                     let page_room = self.page.height - self.body_top - self.body_floor;
                     let fills = left - used <= page_room * 0.25;
-                    if fills && let Some((head_tbl, tail_tbl)) = split_nested_rows(&t.nested[ti], m)
+                    let mut cut = if fills {
+                        split_nested_rows(&t.nested[ti], m, None)
+                    } else {
+                        None
+                    };
+                    // Or it breaks inside that row, as Word does (work set
+                    // a7e5b7872c's newsletter: a story row taller than the
+                    // room left carries on on the next page).
+                    if cut.is_none()
+                        && m < inner.len()
+                        && !geom.row_cant_split.get(m).copied().unwrap_or(false)
+                        && !geom.row_exact.get(m).copied().unwrap_or(false)
+                        && let Some((row_head, row_tail, _)) =
+                            self.split_row_cells(&inner[m], left - used, &inner_w)
                     {
+                        cut = split_nested_rows(&t.nested[ti], m, Some((row_head, row_tail)));
+                    }
+                    if let Some((head_tbl, tail_tbl)) = cut {
                         h.nested.push(std::rc::Rc::new(head_tbl));
                         h.nested_at.push(h.paras.len());
                         t.nested[ti] = std::rc::Rc::new(tail_tbl);
@@ -24213,25 +25587,15 @@ impl<'a> Layout<'a> {
             if !blank {
                 any_head |= k > 0 || broke;
                 any_tail |= k < cell.paras.len();
+                // A cell with nothing on this page moves the row whole
+                // (starve_top/center_0930 probes; English b 5f8a5a4c8e44's
+                // three-line first cell took its one-line neighbours along).
+                starved |= k == 0 && !broke && !cell.paras.is_empty();
             }
             head.push(h);
             tail.push(t);
         }
-        if !any_head || !any_tail {
-            return;
-        }
-        // A nested table breaks between its rows (English part b c8d1d38a's
-        // one-row form starts its 26-row table on page 1, as in Word). One
-        // that cannot, such as a single tall nested row, keeps a row that a
-        // page can hold whole: splitting around it left only b fcb45876's
-        // logo on page 1.
-        if has_nested && !nested_broke && rh <= page_room * 1.05 {
-            return;
-        }
-        let tail_h = tail.iter().map(height).fold(0.0_f32, f32::max);
-        // The head fills the page: its borders run to the bottom margin.
-        work[ri] = (RowSrc::Owned(head), room - 0.01, false, 0.0);
-        work.insert(ri + 1, (RowSrc::Owned(tail), tail_h, false, 0.0));
+        (any_head && any_tail && !starved).then_some((head, tail, nested_broke))
     }
 
     /// A cell paragraph cut after the lines that fit in `left` points:
@@ -24244,7 +25608,30 @@ impl<'a> Layout<'a> {
         wrap_w: f32,
     ) -> Option<(CellPara, CellPara)> {
         let (first_w, rest_w) = cell_para_widths(self.fonts, para, wrap_w);
-        let lines = wrap_cell_runs(self.fonts, para, first_w, rest_w).0;
+        let (lines, ends_br) = wrap_cell_runs(self.fonts, para, first_w, rest_w);
+        // The halves are wrapped again, so a line a w:br ended gives its
+        // break back as text (a7e5b7872c's story parts ran together); the
+        // page end stands for the break closing the head.
+        let rejoin = |range: std::ops::Range<usize>| -> Vec<TextRun> {
+            let mut runs = Vec::new();
+            let end = range.end;
+            for j in range {
+                let line = &lines[j];
+                let n = line.len();
+                for (r, run) in line.iter().enumerate() {
+                    if ends_br[j] && r + 1 == n && run.ends_line && run.text.is_empty() {
+                        if j + 1 < end {
+                            let mut br = run.with_text("\n");
+                            br.ends_line = false;
+                            runs.push(br);
+                        }
+                    } else {
+                        runs.push(run.clone());
+                    }
+                }
+            }
+            runs
+        };
         let mut used = para.style.before;
         let mut n = 0;
         while n < lines.len() {
@@ -24259,12 +25646,24 @@ impl<'a> Layout<'a> {
         if n == 0 || n >= lines.len() {
             return None;
         }
+        // From compat 15 the cut keeps two lines on each side, as in the
+        // body; compat 14 cuts anywhere (Word 16 probes k15_*/k14_* 0930:
+        // priority 30f195a272's two-line cell moves whole, fixtures_500
+        // 00297360's item 6 leaves one line).
+        if self.compat_mode >= 15 && para.style.widow_control {
+            if lines.len() - n < 2 {
+                n = lines.len().saturating_sub(2);
+            }
+            if n < 2 {
+                return None;
+            }
+        }
         let mut head = para.clone();
-        head.runs = lines[..n].concat();
+        head.runs = rejoin(0..n);
         head.style.after = 0.0;
         head.continued = true;
         let mut tail = para.clone();
-        tail.runs = lines[n..].concat();
+        tail.runs = rejoin(n..lines.len());
         tail.images = Vec::new();
         tail.boxes = Vec::new();
         tail.bookmarks = Vec::new();
@@ -24491,8 +25890,19 @@ impl<'a> Layout<'a> {
         // A tab moves to its paragraph's stops; it paints no glyph
         // (000f8dcd's email line ended in two .notdef boxes).
         let tabbed = runs.iter().any(|r| r.text.contains('\t'));
-        if tabbed && matches!(align, Align::Left | Align::Justify) {
-            let para = runs.iter().find_map(|r| r.hf_para.clone());
+        let ptab = |p: &ParaStyle| {
+            p.tab_stops
+                .iter()
+                .any(|t| t.pos == PTAB_CENTER || t.pos == PTAB_RIGHT)
+        };
+        let para = runs.iter().find_map(|r| r.hf_para.clone());
+        // A centred or right line with tabs lays out from its start, then
+        // moves over as a whole, as body lines do (3ee2d0c's centred tab
+        // spans 102.5 to 137.9 in Word).
+        let aligned_tabs = tabbed
+            && matches!(align, Align::Center | Align::Right)
+            && !para.as_deref().is_some_and(ptab);
+        if tabbed && matches!(align, Align::Left | Align::Justify) || aligned_tabs {
             let width = self.content_width();
             let stops = para
                 .as_ref()
@@ -24514,7 +25924,22 @@ impl<'a> Layout<'a> {
                 .unwrap_or_default();
             let indent = para.as_ref().map_or(0.0, |p| hf_line_indent(p, runs));
             let saved = std::mem::replace(&mut self.tab_stops, stops);
-            self.paint_line_with_tabs(runs, self.page.margin_l + indent, y);
+            let x0 = self.page.margin_l + indent;
+            let shift = if aligned_tabs {
+                let room = width - indent - para.as_ref().map_or(0.0, |p| p.indent_right);
+                let line_w = self.tab_line_width(runs, x0) - trailing_ws_pt(self.fonts, runs);
+                let free = (room - line_w).max(0.0);
+                if matches!(align, Align::Center) {
+                    free / 2.0
+                } else {
+                    free
+                }
+            } else {
+                0.0
+            };
+            self.tab_shift = shift;
+            self.paint_line_with_tabs(runs, x0 + shift, y);
+            self.tab_shift = 0.0;
             self.tab_stops = saved;
             return;
         }
@@ -24543,6 +25968,9 @@ impl<'a> Layout<'a> {
                     + r.style.track * measure.chars().count().saturating_sub(1) as f32
             })
             .sum();
+        // Trailing spaces hang past a centred or right line, as in the
+        // body (0800162a66's "Akreditācijas ekspertu " ends at the margin).
+        let line_w = (line_w - trailing_ws_pt(self.fonts, runs)).max(0.0);
         let extra = match align {
             Align::Left | Align::Justify => 0.0,
             Align::Center => ((width - line_w) / 2.0).max(0.0),
@@ -24581,6 +26009,13 @@ impl<'a> Layout<'a> {
                 run.style.color,
                 run.text.clone(),
             ));
+            // Its strike and underline too, over the ink (9b22b88370's
+            // header strikes its deleted jc=right line).
+            let ink = face.width_pt(
+                chrome_measure_text(run.text.trim_end()),
+                run.style.layout_size(),
+            );
+            self.decorate_run(x, run.style.paint_y(y), ink, &run.style);
             x += w;
         }
     }
@@ -24702,6 +26137,26 @@ impl<'a> Layout<'a> {
                 - head_before
                 - pics_h
                 - hf_opening_pad(&header);
+            // The empty paragraphs over the text paint their shading and
+            // rules (c73c128db4's running head: a title table, then an
+            // empty Header paragraph whose top border Word draws under it).
+            let mut band = top + lead;
+            let mut lead_rules = false;
+            for (i, r) in header.iter().enumerate() {
+                if r.text != HF_LINE_BREAK {
+                    break;
+                }
+                let h = hf_break_box(self.fonts, r);
+                self.hf_break_fill(&header, i, band, h);
+                if let Some(p) = r.hf_para.as_deref() {
+                    let prev = header[..i].iter().rev().find_map(|n| n.hf_para.as_deref());
+                    let next = header[i + 1..].iter().find_map(|n| n.hf_para.as_deref());
+                    self.hf_top_rule(prev, p, band);
+                    self.hf_bottom_rule(p, next, band - h);
+                    lead_rules = true;
+                }
+                band -= h + r.para_gap;
+            }
             let mut y = top;
             let mut above: Option<std::rc::Rc<ParaStyle>> = None;
             let lines = hf_styled_lines(self.fonts, &header, self.content_width());
@@ -24721,7 +26176,12 @@ impl<'a> Layout<'a> {
                 let (ascent, line_h) = chrome_line_metrics(self.fonts, line);
                 y = top - ascent;
                 let para = line.iter().find_map(|r| r.hf_para.clone());
+                let next = lines
+                    .get(i + 1)
+                    .and_then(|(l, _)| l.iter().find_map(|r| r.hf_para.clone()))
+                    .or_else(|| trail_para.clone());
                 if let Some(p) = para.as_ref() {
+                    self.hf_line_fill(p, above.as_deref(), next.as_deref(), top, line_h);
                     self.hf_top_rule(above.as_deref(), p, top);
                 }
                 let align = para.as_ref().map_or(self.header_align, |p| p.align);
@@ -24730,10 +26190,7 @@ impl<'a> Layout<'a> {
                     .and_then(|(l, _)| l.first())
                     .is_some_and(|r| r.hf_cont);
                 self.draw_hf_line(line, y, align, wraps_on);
-                let next = lines
-                    .get(i + 1)
-                    .and_then(|(l, _)| l.iter().find_map(|r| r.hf_para.clone()))
-                    .or_else(|| trail_para.clone());
+                self.hf_rev_bar(line, para.as_deref(), top, line_h);
                 if let Some(p) = para.as_ref()
                     && next.as_ref().is_none_or(|n| !std::rc::Rc::ptr_eq(n, p))
                 {
@@ -24761,9 +26218,13 @@ impl<'a> Layout<'a> {
                     }
                     above = Some(p.clone());
                 }
-                top -= hf_break_box(self.fonts, r);
+                let h = hf_break_box(self.fonts, r);
+                self.hf_break_fill(&header, trail_at + i, top, h);
+                self.hf_rev_bar(std::slice::from_ref(r), r.hf_para.as_deref(), top, h);
+                top -= h;
             }
-            if let Some((color, width)) = self.header_bottom.filter(|_| !line_rules) {
+            if let Some((color, width)) = self.header_bottom.filter(|_| !line_rules && !lead_rules)
+            {
                 // Only a border no text line painted (an empty paragraph's).
                 let x1 = self.page.margin_l;
                 let x2 = self.page.width - self.page.margin_r;
@@ -24795,8 +26256,24 @@ impl<'a> Layout<'a> {
             } else {
                 chrome_line_pt(self.fonts, &self.footer, self.content_width())
             };
+            // The part grows up from the page bottom: the empty lines above
+            // its first tables sit above them and lift nothing (246c7fcf50's
+            // two empty paragraphs over the "Year 6" table).
+            let above_n: usize = tables
+                .iter()
+                .filter(|t| t.before_text)
+                .map(|t| t.lead_lines)
+                .sum();
+            let above: f32 = self
+                .footer
+                .iter()
+                .take(above_n)
+                .take_while(|r| r.text == HF_LINE_BREAK)
+                .map(|r| hf_break_box(self.fonts, r) + r.para_gap)
+                .sum();
             let before = chrome_tables_h(self.fonts, &tables, avail, self.space_for_ul, Some(true));
-            let mut top = self.page.footer.max(0.0) + foot_after + text_h + before;
+            let mut top =
+                self.page.footer.max(0.0) + foot_after + (text_h - above).max(0.0) + before;
             for table in tables.iter().filter(|t| t.before_text) {
                 if let Some(block) = table.block.as_deref() {
                     top -= self.emit_nested_table(block, self.page.margin_l, top, avail);
@@ -24863,11 +26340,17 @@ impl<'a> Layout<'a> {
                 .filter(|r| r.text != HF_LINE_BREAK)
                 .and_then(|r| r.hf_para.clone())
                 .filter(|p| p.border_top.is_some());
+            // Empty paragraphs over the text paint their own rules below.
+            let lead_rules = footer
+                .iter()
+                .take_while(|r| r.text == HF_LINE_BREAK)
+                .any(|r| r.hf_para.is_some());
+            let opened = opening.is_some();
             if let Some(p) = opening {
                 // The rule stands its space over the first line's top.
                 let line_top = base + above + metrics.first().map_or(0.0, |m| m.0);
                 self.hf_top_rule(None, &p, line_top);
-            } else if let Some((color, width)) = self.footer_top {
+            } else if let Some((color, width)) = self.footer_top.filter(|_| !lead_rules) {
                 let top = base + above + 10.0;
                 // mini 244 chrome outset ITT-neg; keep content box.
                 let x1 = self.page.margin_l;
@@ -24875,6 +26358,32 @@ impl<'a> Layout<'a> {
                 self.hairline_h(x1, top, x2, width, color);
             }
             let y = base;
+            // The empty paragraphs over the text paint their shading,
+            // stacked up from the first line's top.
+            if let Some(first) = footer.iter().position(|r| r.text != HF_LINE_BREAK) {
+                let mut bottom = base + above + metrics.first().map_or(0.0, |m| m.0);
+                for (i, r) in footer[..first].iter().enumerate().rev() {
+                    let h = hf_break_box(self.fonts, r);
+                    bottom += r.para_gap;
+                    self.hf_break_fill(&footer, i, bottom + h, h);
+                    // Its borders paint too (probe fb_f4_0930: the empty
+                    // opening paragraph's bottom rule, c73c128db4's footer4).
+                    if let Some(p) = r.hf_para.as_deref() {
+                        let next = footer[i + 1..].iter().find_map(|n| n.hf_para.as_deref());
+                        let prev = footer[..i].iter().rev().find_map(|n| n.hf_para.as_deref());
+                        self.hf_bottom_rule(p, next, bottom);
+                        self.hf_top_rule(prev, p, bottom + h);
+                    }
+                    bottom += h;
+                }
+            }
+            // The text's first paragraph borders the empty one over it
+            // (probe fb_f7_0930: c73c128db4's footer7 rule over "page").
+            let mut above: Option<std::rc::Rc<ParaStyle>> = footer
+                .iter()
+                .take_while(|r| r.text == HF_LINE_BREAK)
+                .filter_map(|r| r.hf_para.clone())
+                .last();
             for (i, (line, _)) in lines.iter().enumerate() {
                 let align = line
                     .first()
@@ -24884,20 +26393,64 @@ impl<'a> Layout<'a> {
                     .get(i + 1)
                     .and_then(|(l, _)| l.first())
                     .is_some_and(|r| r.hf_cont);
-                self.draw_hf_line(line, y + baselines[i], align, wraps_on);
                 let para = line.iter().find_map(|r| r.hf_para.clone());
                 let next = lines
                     .get(i + 1)
                     .and_then(|(l, _)| l.iter().find_map(|r| r.hf_para.clone()));
+                // A shaded footer paragraph paints its band under the text,
+                // as the header's does.
+                if let Some(p) = para.as_ref() {
+                    let (ascent, line_h) = metrics[i];
+                    let top = y + baselines[i] + ascent;
+                    self.hf_line_fill(p, above.as_deref(), next.as_deref(), top, line_h);
+                    if !(i == 0 && opened) {
+                        self.hf_top_rule(above.as_deref(), p, top);
+                    }
+                }
+                self.draw_hf_line(line, y + baselines[i], align, wraps_on);
+                let (ascent, line_h) = metrics[i];
+                self.hf_rev_bar(line, para.as_deref(), y + baselines[i] + ascent, line_h);
                 if let Some(p) = para.as_ref()
                     && next.as_ref().is_none_or(|n| !std::rc::Rc::ptr_eq(n, p))
                 {
                     let below = metrics[i].1 - metrics[i].0;
                     self.hf_bottom_rule(p, next.as_deref(), y + baselines[i] - below);
                 }
+                if para.is_some() {
+                    above = para;
+                }
+            }
+            // The empty paragraphs under the text: a revised mark bars
+            // its line.
+            if let Some(last) = footer.iter().rposition(|r| r.text != HF_LINE_BREAK) {
+                let mut top = base - self.fonts.get(fid).descent_pt(size) - hang;
+                for (i, r) in footer.iter().enumerate().skip(last + 1) {
+                    let h = hf_break_box(self.fonts, r);
+                    self.hf_break_fill(&footer, i, top, h);
+                    self.hf_rev_bar(std::slice::from_ref(r), r.hf_para.as_deref(), top, h);
+                    top -= h + r.para_gap;
+                }
+            } else {
+                // A part of empty paragraphs stands on w:footer, its last
+                // lowest (9b22b88370's pPrChange footer).
+                let mut bottom = self.page.footer.max(0.0) + foot_after;
+                for (i, r) in footer.iter().enumerate().rev() {
+                    let h = hf_break_box(self.fonts, r);
+                    self.hf_break_fill(&footer, i, bottom + h, h);
+                    self.hf_rev_bar(std::slice::from_ref(r), r.hf_para.as_deref(), bottom + h, h);
+                    bottom += h + r.para_gap;
+                }
             }
         }
         self.paint_pg_borders();
+    }
+
+    /// A revised header or footer line's change bar, `h` down from `top`
+    /// (9b22b88370's deleted header line and its footer).
+    fn hf_rev_bar(&mut self, line: &[TextRun], para: Option<&ParaStyle>, top: f32, h: f32) {
+        if line.iter().any(|r| r.rev) || para.is_some_and(|p| p.fmt_rev) {
+            self.paint_rev_bar(self.rev_bar_x(), top - h, top);
+        }
     }
 
     fn paint_pg_borders(&mut self) {
@@ -25726,13 +27279,18 @@ fn mirror_bracket(c: char, neutral: bool) -> char {
     }
 }
 
+/// A tab is not trailing space: it ends on its stop and fills the line up
+/// to it (cb4f8b4a43's centred "Date:" and 14 tabs sit 3.6pt in, as Word
+/// centres the 10080 twips they reach), so the scan stops at one.
 fn trailing_ws_pt(fonts: &Fonts, line: &[TextRun]) -> f32 {
     let mut extra = 0.0;
     for run in line.iter().rev() {
         let fid = fonts.resolve(&run.style.family, run.style.bold, run.style.italic);
         let face = fonts.get(fid);
         let paint = run.style.layout_size();
-        let trimmed = run.text.trim_end_matches(char::is_whitespace);
+        let trimmed = run
+            .text
+            .trim_end_matches(|c: char| c.is_whitespace() && c != '\t');
         if trimmed.len() < run.text.len() {
             extra += face.width_pt(&run.text[trimmed.len()..], paint);
         }
@@ -26024,12 +27582,15 @@ fn wrap_runs_segment(
     for (ui, (unit, is_space)) in units.into_iter().enumerate() {
         let mut w: f32 = unit.iter().map(|(_, _, w)| w).sum();
         // A tab jumps to the next stop from where it stands (00996ee5's
-        // leading tab took 35pt of the first line in Word).
-        if let Some(t) = tabs
-            && is_space
-            && unit.iter().any(|(_, tok, _)| tok.contains('\t'))
-        {
+        // leading tab took 35pt of the first line in Word). Also whether
+        // its first tab has no stop of its own left and its default stop
+        // lies past the line's right edge.
+        let tab_unit = is_space && unit.iter().any(|(_, tok, _)| tok.contains('\t'));
+        let tab_w = |t: &WrapTabs<'_>, line_i: usize, x: f32| -> (f32, bool) {
             let start = if line_i == 0 { t.first_start } else { t.start };
+            let right = start + if line_i == 0 { first_width } else { width };
+            let mut past = false;
+            let mut first_tab = true;
             let mut pos = start + x;
             let char_w = |run: &TextRun, ch: char| {
                 let fid = fonts.resolve(&run.style.family, run.style.bold, run.style.italic);
@@ -26046,6 +27607,14 @@ fn wrap_runs_segment(
                 {
                     if ch == '\t' {
                         let stop = next_tab_stop(pos, 0.0, t.stops, t.default_tab);
+                        if first_tab {
+                            first_tab = false;
+                            past = stop.pos > right + 0.01
+                                && !t
+                                    .stops
+                                    .iter()
+                                    .any(|s| s.align != TabAlign::Bar && s.pos > pos + 0.01);
+                        }
                         let rest = &chars[k + 1..];
                         let own: f32 = rest
                             .iter()
@@ -26072,16 +27641,36 @@ fn wrap_runs_segment(
                     }
                 }
             }
-            w = pos - start - x;
+            (pos - start - x, past)
+        };
+        let mut tab_past = false;
+        if let Some(t) = tabs
+            && tab_unit
+        {
+            (w, tab_past) = tab_w(t, line_i, x);
         }
         let limit = if line_i == 0 { first_width } else { width };
         let squeezed = tabs.is_some_and(|t| x + w - limit <= t.squeeze * line_spaces);
         let hang = hanging_punct_width(fonts, &unit);
-        if !is_space && x + w - hang > limit && x > 0.0 && !squeezed {
+        // A space hangs past the edge unless one space is wider than the
+        // line: then each is a line of its own, as each character is
+        // (2b479f55f8's 1.4pt column; Word stacks "r", " ", "c"). A run of
+        // fill-in spaces wider than its cell still hangs (file_146).
+        let chars: usize = unit.iter().map(|(_, tok, _)| tok.chars().count()).sum();
+        // A tab whose default stop is past the edge starts the next line
+        // and resolves from its start (air_pollution_permit_form's six
+        // dotted tabs are three lines in Word).
+        let breaks = !is_space || w / chars.max(1) as f32 > limit || tab_past;
+        if breaks && x + w - hang > limit && x > 0.0 && !squeezed {
             lines.push(Vec::new());
             line_i += 1;
             x = 0.0;
             line_spaces = 0.0;
+            if let Some(t) = tabs
+                && tab_unit
+            {
+                w = tab_w(t, line_i, x).0;
+            }
         }
         // A word wider than the whole line breaks at the character that
         // reaches the edge (001472bb). A
@@ -26129,7 +27718,11 @@ fn wrap_runs_segment(
                     let piece = ch.to_string();
                     let cw = face.width_pt(&piece, size) * run.style.hscale();
                     let limit = if line_i == 0 { first_width } else { width };
-                    if x + cw > limit && x > 0.0 {
+                    // Closing punctuation stays with the character before
+                    // it (2b479f55f8: "PEEP’s register," in a column with
+                    // no room keeps "P’" and "r," on a line each).
+                    let starts_line = !cjk_no_line_start(ch) && !matches!(ch, '’' | '”');
+                    if x + cw > limit && x > 0.0 && starts_line {
                         lines.push(Vec::new());
                         line_i += 1;
                         x = 0.0;
@@ -26292,40 +27885,44 @@ fn layout(
                     // down).
                     style.before = (style.before - prev.after).max(0.0);
                 }
-                if style.keep_next {
+                if style.keep_next && i >= lay.keep_chain_until {
                     let pitch = lay.page.grid_pitch;
                     let own = para_first_line_pt(lay.fonts, runs, &style, pitch);
-                    let follow = blocks
-                        .get(i + 1)
-                        .map(|b| {
-                            let para_lines = match b {
-                                Block::Paragraph {
-                                    runs, style, list, ..
-                                } => lay.para_line_count(runs, style, *list),
-                                _ => 1,
+                    let lines = lay.para_line_count(runs, &style, *list);
+                    let own_all = style.before + own * lines as f32 + style.after;
+                    let (total, first, end) = lay.keep_next_chain_follow(blocks, i + 1);
+                    let page_h = lay.page.height - lay.body_top - lay.body_floor;
+                    let whole = lines <= 1 || style.keep_lines || style.widow_control && lines <= 3;
+                    let overlong = own_all + total > page_h;
+                    // A chain of unsplittable paragraphs taller than a page
+                    // still leaves for a fresh page, then fills the pages
+                    // it runs over: its members keep no more (probe kn8
+                    // 0930; the redline of 4e7bb2a1be's references).
+                    if overlong && whole {
+                        lay.ensure(own_all + total);
+                        lay.keep_chain_until = end;
+                    } else {
+                        let follow = if overlong { first } else { total };
+                        if lay.compat_mode >= 15 {
+                            lay.keep_next_follow = follow;
+                        } else if let Some(need) =
+                            lay.legacy_keep_chain_need(blocks, i, own_all, style.after)
+                        {
+                            lay.ensure(need);
+                        }
+                        if follow > 0.0 {
+                            // +2pt breaks leftover==need ties so a heading is
+                            // not orphaned above a table row that then wraps
+                            // (comments-lots Heading1 + capability header). A
+                            // following paragraph's line is exact: two 8pt
+                            // lines fit in 21pt.
+                            let tie = if matches!(blocks.get(i + 1), Some(Block::Table { .. })) {
+                                2.0
+                            } else {
+                                0.0
                             };
-                            keep_next_follow_pt(
-                                lay.fonts,
-                                lay.content_width(),
-                                b,
-                                pitch,
-                                lay.space_for_ul,
-                                para_lines,
-                            )
-                        })
-                        .unwrap_or(0.0);
-                    if follow > 0.0 {
-                        // +2pt breaks leftover==need ties so a heading is
-                        // not orphaned above a table row that then wraps
-                        // (comments-lots Heading1 + capability header). A
-                        // following paragraph's line is exact: two 8pt
-                        // lines fit in 21pt.
-                        let tie = if matches!(blocks.get(i + 1), Some(Block::Table { .. })) {
-                            2.0
-                        } else {
-                            0.0
-                        };
-                        lay.ensure(style.before + own + style.after + follow + tie);
+                            lay.ensure(style.before + own + style.after + follow + tie);
+                        }
                     }
                 }
                 if style.keep_lines {
@@ -26352,12 +27949,20 @@ fn layout(
                 // Only when its first line fits here: one that cannot moves the
                 // whole paragraph, floats included, to the next page
                 // (00c975b8).
-                let defer_tail = has_ink && images.iter().any(tail_float) && {
-                    let lines = lay.para_line_count(runs, &style, *list) as f32;
-                    let line = para_first_line_pt(lay.fonts, runs, &style, lay.page.grid_pitch);
-                    let room = lay.y - style.before - lay.body_floor;
-                    line <= room && lines * line > room
+                // One that fills its page takes it alone: the paragraph's
+                // lines move on until the last one opens that page
+                // (`Layout::tail_bar`).
+                let tail_bar = has_ink && {
+                    let first = para_first_line_pt(lay.fonts, runs, &style, lay.page.grid_pitch);
+                    lay.tail_float_bars_page(images, first)
                 };
+                let defer_tail = tail_bar
+                    || has_ink && images.iter().any(tail_float) && {
+                        let lines = lay.para_line_count(runs, &style, *list) as f32;
+                        let line = para_first_line_pt(lay.fonts, runs, &style, lay.page.grid_pitch);
+                        let room = lay.y - style.before - lay.body_floor;
+                        line <= room && lines * line > room
+                    };
                 let (tail_images, images): (Vec<LaidImage>, Vec<LaidImage>) = if defer_tail {
                     images.iter().cloned().partition(|img| tail_float(img))
                 } else {
@@ -26403,10 +28008,16 @@ fn layout(
                         if lay.y - style.before - first < lay.body_floor {
                             lay.ensure(style.before + first);
                             lay.para_top = lay.y;
+                        } else if lay.square_float_bars_line(images, boxes, style.before, first) {
+                            // The next column when there is one (PR #247
+                            // review; Word probe c1 keeps the page).
+                            lay.column_break();
+                            lay.para_top = lay.y;
                         }
                     }
                     lay.set_line_probe(runs, &style);
                     lay.clear_full_width_side_float(runs, &style);
+                    lay.tail_bar = tail_bar;
                     // Floats keep the paragraph's own top even when their
                     // wrap pushes its text below them (00c975b8's picture
                     // stays at 89pt while its text starts at 266).
@@ -37464,7 +39075,7 @@ mod comments_spacing_tests {
     use super::*;
 
     const COMMENTS: &str =
-        "../neurotic_docx_bench/corpus/word_based/docx_source/docx_lots_of_comments.docx";
+        "tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source/docx_lots_of_comments.docx";
 
     /// Sibling `neurotic_docx_bench` fixtures exist locally, not in GitHub Actions.
     /// Only an absent file skips; any other read error fails the test.
@@ -37644,7 +39255,7 @@ mod comments_spacing_tests {
 
     #[test]
     fn potpourri_listnumber_gets_numbering_hanging() {
-        let path = "../neurotic_docx_bench/corpus/word/tracking_without_comments/docx/32997dd3c9_potpourritest.docx";
+        let path = "tests/corpus/neurotic_docx_bench/corpus/word/tracking_without_comments/docx/32997dd3c9_potpourritest.docx";
         let Some(bytes) = sibling_bytes(path) else {
             return;
         };
@@ -37888,7 +39499,7 @@ mod comments_spacing_tests {
 
     #[test]
     fn sd_2517_pagebreak_census() {
-        let path = "../neurotic_docx_bench/corpus/word_based/docx_source/sd_2517_localized_heading_styles.docx";
+        let path = "tests/corpus/neurotic_docx_bench/corpus/word_based/docx_source/sd_2517_localized_heading_styles.docx";
         let Some(bytes) = sibling_bytes(path) else {
             return;
         };

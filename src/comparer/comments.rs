@@ -32,7 +32,7 @@ use crate::opc::PartFs;
 use crate::xmllinq::{Dom, NodeId, XName, XNamespace};
 
 /// (part name, content type, relationship type) for the comment part family.
-const FAMILY: [(&str, &str, &str); 4] = [
+pub(crate) const FAMILY: [(&str, &str, &str); 4] = [
     (
         "word/comments.xml",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
@@ -230,6 +230,8 @@ struct Event {
     offset: usize,
     kind: Kind,
     id: String,
+    /// Document order of the range's start in its source.
+    seq: usize,
 }
 
 /// A comment's [start, end) character interval in its source projection.
@@ -237,11 +239,18 @@ struct Range {
     id: String,
     start: usize,
     end: usize,
+    /// Document order of the start among the source's starts.
+    seq: usize,
 }
 
+/// The paragraph mark in a projection: a marker after it sits in a later
+/// paragraph than the text before it (an end past a table stays past it).
+const MARK: char = '\n';
+
 /// Extract anchor ranges + the projection text from a source document's main
-/// part. Counted text = every `w:t` character in body order (the inputs are
-/// post-PreProcessMarkup, i.e. revisions accepted — no live `w:delText`).
+/// part. Counted text = every `w:t` character in body order, each paragraph
+/// closed by a [`MARK`] (the inputs are post-PreProcessMarkup, i.e.
+/// revisions accepted — no live `w:delText`).
 fn extract_events(pkg: &PartFs, main: &str) -> Option<(String, Vec<Range>)> {
     let xml = pkg.part_string(main)?;
     let mut dom = Dom::new();
@@ -254,23 +263,37 @@ fn extract_events(pkg: &PartFs, main: &str) -> Option<(String, Vec<Range>)> {
     let mut references: Vec<(String, usize)> = Vec::new();
     let mut text = String::new();
     let mut offset = 0usize;
-    let mut starts: HashMap<String, usize> = HashMap::new();
+    let mut starts: HashMap<String, (usize, usize)> = HashMap::new();
     let mut ranges: Vec<Range> = Vec::new();
+    let mut open: Vec<NodeId> = Vec::new();
     for n in dom.descendant_nodes(body) {
+        while open
+            .last()
+            .is_some_and(|&p| !dom.ancestors(n, None).contains(&p))
+        {
+            open.pop();
+            text.push(MARK);
+            offset += 1;
+        }
+        if dom.name_is(n, &W::p()) {
+            open.push(n);
+        }
         if dom.is_element(n) {
             let name = dom.name(n).unwrap();
             if name == start {
                 if let Some(id) = dom.attribute(n, &W::name("id")) {
-                    starts.entry(id.to_string()).or_insert(offset);
+                    let seq = starts.len();
+                    starts.entry(id.to_string()).or_insert((offset, seq));
                 }
             } else if name == end
                 && let Some(id) = dom.attribute(n, &W::name("id"))
-                && let Some(s) = starts.get(id)
+                && let Some(&(s, seq)) = starts.get(id)
             {
                 ranges.push(Range {
                     id: id.to_string(),
-                    start: *s,
+                    start: s,
                     end: offset,
+                    seq,
                 });
             } else if name == reference
                 && let Some(id) = dom.attribute(n, &W::name("id"))
@@ -288,6 +311,7 @@ fn extract_events(pkg: &PartFs, main: &str) -> Option<(String, Vec<Range>)> {
             offset += t.chars().count();
         }
     }
+    text.extend(open.iter().map(|_| MARK));
     // A reference with no range markers is a point comment: an empty range
     // where the reference sits, which is how Word's redline writes it.
     for (id, at) in references {
@@ -296,6 +320,7 @@ fn extract_events(pkg: &PartFs, main: &str) -> Option<(String, Vec<Range>)> {
                 id,
                 start: at,
                 end: at,
+                seq: usize::MAX, // no start marker
             });
         }
     }
@@ -413,15 +438,42 @@ pub(super) struct Seg {
     len: usize,
 }
 
+impl Seg {
+    /// A paragraph's [`MARK`]: `leaf` and `run` are the paragraph.
+    fn is_mark(&self) -> bool {
+        self.leaf == self.run
+    }
+}
+
+/// Whether a paragraph's mark is on this side: not inserted on A's, not
+/// deleted on B's (a moved mark counts at its own end).
+fn mark_on_side(dom: &Dom, p: NodeId, b_side: bool) -> bool {
+    let changes: &[&str] = if b_side {
+        &["del", "moveFrom"]
+    } else {
+        &["ins", "moveTo"]
+    };
+    !dom.element(p, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+        .is_some_and(|rpr| {
+            changes
+                .iter()
+                .any(|c| dom.element(rpr, &W::name(c)).is_some())
+        })
+}
+
 /// Collect the merged body's counted leaves for one side's projection.
 /// B side: every `w:t` not inside any `w:del` (= B's visible text).
 /// A side: `w:t` not inside any `w:ins` + `w:delText` inside a `w:del`
 /// authored by the comparer (foreign carried revisions are B's, not A's).
+/// With `marks`, each paragraph whose mark is on the side closes with a
+/// [`MARK`] segment, as [`extract_events`] projects its source.
 pub(super) fn collect_segments(
     dom: &Dom,
     result_root: NodeId,
     b_side: bool,
     author: &str,
+    marks: bool,
 ) -> (String, Vec<Seg>) {
     // The document's body, or a header, footer or notes part's root.
     let body = dom.element(result_root, &W::body()).unwrap_or(result_root);
@@ -430,7 +482,31 @@ pub(super) fn collect_segments(
     let mut text = String::new();
     let mut segs = Vec::new();
     let mut offset = 0usize;
+    let mut open: Vec<NodeId> = Vec::new();
+    let close = |p: NodeId, text: &mut String, segs: &mut Vec<Seg>, offset: &mut usize| {
+        if mark_on_side(dom, p, b_side) {
+            text.push(MARK);
+            segs.push(Seg {
+                leaf: p,
+                run: p,
+                start: *offset,
+                len: 1,
+            });
+            *offset += 1;
+        }
+    };
     for n in dom.descendant_nodes(body) {
+        if marks {
+            while let Some(&p) = open.last()
+                && !dom.ancestors(n, None).contains(&p)
+            {
+                open.pop();
+                close(p, &mut text, &mut segs, &mut offset);
+            }
+            if dom.name_is(n, &W::p()) {
+                open.push(n);
+            }
+        }
         if !dom.is_text(n) {
             continue;
         }
@@ -466,6 +542,9 @@ pub(super) fn collect_segments(
             len,
         });
         offset += len;
+    }
+    while let Some(p) = open.pop() {
+        close(p, &mut text, &mut segs, &mut offset);
     }
     (text, segs)
 }
@@ -546,6 +625,9 @@ fn split_seg(dom: &mut Dom, segs: &mut Vec<Seg>, i: usize, k: usize) {
 /// the two leaves ("ação 🐋" and "東京" of one run, each followed by its own
 /// point comment).
 fn split_run_before_leaf(dom: &mut Dom, segs: &mut [Seg], i: usize) {
+    if segs[i].is_mark() {
+        return;
+    }
     let (leaf, run) = (segs[i].leaf, segs[i].run);
     let has_earlier = dom
         .nodes(run)
@@ -578,11 +660,14 @@ pub(super) fn place_before_offset(dom: &mut Dom, segs: &mut Vec<Seg>, o: usize, 
     // segments are contiguous in projection order: both keys are monotonic
     let i = segs.partition_point(|s| s.start + s.len <= o);
     match (i < segs.len()).then_some(i) {
-        None => {
-            if let Some(last) = segs.last() {
-                dom.add_after_self(last.run, node);
-            }
-        }
+        None => match segs.last() {
+            // past the last mark: the end of that paragraph
+            Some(last) if last.is_mark() => dom.add(last.leaf, node),
+            Some(last) => dom.add_after_self(last.run, node),
+            None => {}
+        },
+        // before a mark: the end of its paragraph
+        Some(i) if segs[i].is_mark() => dom.add(segs[i].leaf, node),
         Some(i) if segs[i].start >= o => {
             split_run_before_leaf(dom, segs, i);
             dom.add_before_self(segs[i].run, node);
@@ -604,6 +689,41 @@ pub(super) fn place_after_offset(dom: &mut Dom, segs: &mut Vec<Seg>, o: usize, n
                 dom.add_before_self(first.run, node);
             }
         }
+        // after a mark: the start of the next paragraph's content, or the
+        // end of the last paragraph
+        Some(i) if segs[i].is_mark() => match segs.get(i + 1) {
+            Some(next) if next.is_mark() => {
+                let p = next.leaf;
+                // A paragraph whose content opens with a deletion takes the
+                // end inside it, as Word writes a range's end in deleted text.
+                let content = dom
+                    .elements(p, None)
+                    .into_iter()
+                    .find(|&c| dom.name(c) != Some(W::p_pr()));
+                // A range ending on a deleted mark, before a paragraph with
+                // no content and a deleted mark, ends in a deletion of its
+                // own there (5f0fed8e2a).
+                let ends_deleted = mark_deletion(dom, segs[i].leaf).is_some();
+                let content = match (content, mark_deletion(dom, p)) {
+                    (None, Some(mark)) if ends_deleted => {
+                        let del = dom.clone_subtree(mark);
+                        dom.add(p, del);
+                        Some(del)
+                    }
+                    (c, _) => c,
+                };
+                match (content, dom.element(p, &W::p_pr())) {
+                    (Some(del), _) if dom.name(del) == Some(W::del()) => dom.add_first(del, node),
+                    (_, Some(ppr)) => dom.add_after_self(ppr, node),
+                    (_, None) => dom.add_first(p, node),
+                }
+            }
+            Some(_) => {
+                split_run_before_leaf(dom, segs, i + 1);
+                dom.add_before_self(segs[i + 1].run, node);
+            }
+            None => dom.add(segs[i].leaf, node),
+        },
         Some(i) if segs[i].start + segs[i].len <= o => {
             // A later leaf of the same run starts after `o`: split there.
             if segs.get(i + 1).is_some_and(|n| n.run == segs[i].run) {
@@ -669,7 +789,7 @@ fn inject_side(
     if ranges.is_empty() {
         return HashMap::new();
     }
-    let (merged_text, mut segs) = collect_segments(dom, result_root, b_side, author);
+    let (merged_text, mut segs) = collect_segments(dom, result_root, b_side, author, true);
     let src_chars: Vec<char> = src_text.chars().collect();
     let merged_chars: Vec<char> = merged_text.chars().collect();
     // map each comment range through context matching, then flatten to
@@ -692,6 +812,7 @@ fn inject_side(
                 offset: e,
                 kind: Kind::Point,
                 id: r.id.clone(),
+                seq: r.seq,
             });
             continue;
         }
@@ -699,16 +820,29 @@ fn inject_side(
             offset: s,
             kind: Kind::Start,
             id: r.id.clone(),
+            seq: r.seq,
         });
         events.push(Event {
             offset: e,
             kind: Kind::End,
             id: r.id.clone(),
+            seq: r.seq,
         });
     }
     let mut order: Vec<usize> = (0..events.len()).collect();
     order.sort_by_key(|&i| (events[i].offset, i));
+    // Ranges come in the order they end; starts at one place follow the
+    // order they start in (01f3deda92's nested comments).
+    for run in order.chunk_by_mut(|&a, &b| {
+        let (a, b) = (&events[a], &events[b]);
+        a.kind == Kind::Start && b.kind == Kind::Start && a.offset == b.offset
+    }) {
+        run.sort_by_key(|&i| events[i].seq);
+    }
 
+    // The reference run of the last end placed, by offset: a second end at
+    // the same place follows it, so the source order holds.
+    let mut last_end: Option<(usize, NodeId)> = None;
     for idx in order {
         let ev = &events[idx];
         let out_id = id_map.get(&ev.id).cloned().unwrap_or_else(|| ev.id.clone());
@@ -720,17 +854,72 @@ fn inject_side(
             }
             Kind::End | Kind::Point => {
                 let anchor = new_anchor(dom, false, &out_id);
-                place_after_offset(dom, &mut segs, o, anchor);
+                match last_end {
+                    Some((at, prev)) if at == o => dom.add_after_self(prev, anchor),
+                    _ => place_after_offset(dom, &mut segs, o, anchor),
+                }
                 if ev.kind == Kind::Point {
                     let start = new_anchor(dom, true, &out_id);
                     dom.add_before_self(anchor, start);
                 }
                 let refrun = new_reference_run(dom, &out_id);
                 dom.add_after_self(anchor, refrun);
+                if ev.kind == Kind::Point {
+                    step_out_of_deletion_end(dom, anchor);
+                }
+                last_end = Some((o, refrun));
             }
         }
     }
     anchored_ranges
+}
+
+/// The `w:del` recording a paragraph's deleted mark.
+fn mark_deletion(dom: &Dom, p: NodeId) -> Option<NodeId> {
+    dom.element(p, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+        .and_then(|rpr| dom.element(rpr, &W::del()))
+}
+
+/// A point comment (no range) that lands at the end of deleted text sits
+/// just after the deletion in Word's redline, so accepting it keeps the
+/// comment (145b9e67e2, ff27140d0a). A range comment's reference stays in
+/// the deletion it ends in, as Word writes it (11 of 11 in Word's redlines).
+fn step_out_of_deletion_end(dom: &mut Dom, end: NodeId) {
+    let Some(del) = dom.parent(end).filter(|&d| dom.name(d) == Some(W::del())) else {
+        return;
+    };
+    let marker = |dom: &Dom, n: NodeId| {
+        dom.name(n).is_some_and(|nm| {
+            nm == W::name("commentRangeStart")
+                || nm == W::name("commentRangeEnd")
+                || (nm == W::r()
+                    && dom.elements(n, None).into_iter().all(|c| {
+                        dom.name(c)
+                            .is_some_and(|cn| cn == W::r_pr() || cn == W::name("commentReference"))
+                    }))
+        })
+    };
+    let kids = dom.elements(del, None);
+    let Some(at) = kids.iter().position(|&k| k == end) else {
+        return;
+    };
+    if !kids[at..].iter().all(|&k| marker(dom, k)) {
+        return;
+    }
+    // The point's own start marker precedes its end; move the markers from
+    // there on, in order, after the deletion.
+    let from = kids[..at]
+        .iter()
+        .rposition(|&k| dom.name(k) != Some(W::name("commentRangeStart")))
+        .map_or(0, |i| i + 1);
+    let moving: Vec<NodeId> = kids[from..].to_vec();
+    let mut after = del;
+    for n in moving {
+        dom.remove(n);
+        dom.add_after_self(after, n);
+        after = n;
+    }
 }
 
 /// Copy `src`'s comment family into `out` (overwriting), wire content-type
@@ -1309,10 +1498,16 @@ fn drop_orphans(out: &mut PartFs, out_main: &str, anchored: &HashSet<String>) {
 }
 
 /// Select comments using both their definition fingerprint and mapped anchor.
-/// Equal bodies on distinct non-empty ranges are independent comments. Exact
-/// duplicate anchors collapse deterministically, and a live non-empty anchor
-/// supersedes a stale zero-length revision copy of the same comment.
-fn select_anchor_aware_comments(out: &PartFs, anchored: &AnchoredRanges) -> HashSet<String> {
+/// Equal bodies on distinct non-empty ranges are independent comments, and so
+/// are equal bodies one document stacks on one range (Word keeps each). An
+/// A-side comment (`a_side`, the union's appended ids) whose body and range
+/// equal a B-side one is B's copy and collapses into it; a live non-empty
+/// anchor supersedes a stale zero-length revision copy of the same comment.
+fn select_anchor_aware_comments(
+    out: &PartFs,
+    anchored: &AnchoredRanges,
+    a_side: &HashSet<String>,
+) -> HashSet<String> {
     let Some(xml) = out.part_string("word/comments.xml") else {
         return anchored.keys().cloned().collect();
     };
@@ -1336,14 +1531,19 @@ fn select_anchor_aware_comments(out: &PartFs, anchored: &AnchoredRanges) -> Hash
     let mut keep = HashSet::new();
     for candidates in groups.values() {
         let has_nonempty = candidates.iter().any(|(_, (start, end))| end > start);
-        let mut seen_ranges = HashSet::new();
+        let b_ranges: HashSet<_> = candidates
+            .iter()
+            .filter(|(id, _)| !a_side.contains(id))
+            .map(|(_, range)| *range)
+            .collect();
         for (id, range) in candidates {
             if has_nonempty && range.0 == range.1 {
                 continue;
             }
-            if seen_ranges.insert(*range) {
-                keep.insert(id.clone());
+            if a_side.contains(id) && b_ranges.contains(range) {
+                continue;
             }
+            keep.insert(id.clone());
         }
     }
     keep
@@ -1365,6 +1565,7 @@ pub fn carry_comments(
         return;
     }
     let no_map = HashMap::new();
+    let mut a_side = HashSet::new();
     let anchored = if ids_b.is_empty() {
         // only A has comments; its parts are already in out (out is A's clone)
         inject_side(
@@ -1394,6 +1595,7 @@ pub fn carry_comments(
         let mut anchored =
             inject_side(dom, result_root, (pkg2, main2), true, author, &no_map, None);
         let a_only: HashSet<String> = id_map.keys().cloned().collect();
+        a_side = id_map.values().cloned().collect();
         anchored.extend(inject_side(
             dom,
             result_root,
@@ -1405,7 +1607,7 @@ pub fn carry_comments(
         ));
         anchored
     };
-    let anchored = select_anchor_aware_comments(out, &anchored);
+    let anchored = select_anchor_aware_comments(out, &anchored, &a_side);
     // Also strip body anchors for dropped ids so they don't linger orphan-free
     // as range markers without a comments.xml entry (Ring-1).
     strip_unanchored_comment_markers(dom, result_root, &anchored);
@@ -1478,6 +1680,7 @@ mod tests {
             id: "19".into(),
             start,
             end,
+            seq: 0,
         };
         assert_eq!(map_range(&src, &merged, &r), Some((start, end)));
         // The tail must follow the head: a merged text holding only the tail
@@ -1504,6 +1707,7 @@ mod tests {
             id: "19".into(),
             start: second,
             end: second + len,
+            seq: 0,
         };
         let merged_second = format!("Intro. {section} Middle part added. ")
             .chars()
@@ -1526,9 +1730,12 @@ mod tests {
             "</w:body></w:document>"
         ));
         let root = dom.root(d).unwrap();
-        assert_eq!(collect_segments(&dom, root, true, "Redline").0, "KeptMoved");
         assert_eq!(
-            collect_segments(&dom, root, false, "Redline").0,
+            collect_segments(&dom, root, true, "Redline", false).0,
+            "KeptMoved"
+        );
+        assert_eq!(
+            collect_segments(&dom, root, false, "Redline", false).0,
             "MovedKept"
         );
     }
@@ -1542,7 +1749,7 @@ mod tests {
             "</w:body></w:document>"
         ));
         let root = dom.root(d).unwrap();
-        let (text, mut segs) = collect_segments(&dom, root, true, "Redline");
+        let (text, mut segs) = collect_segments(&dom, root, true, "Redline", false);
         assert_eq!(text, "Alpha betaGamma delta");
         let first = new_anchor(&mut dom, true, "1");
         place_before_offset(&mut dom, &mut segs, 6, first);

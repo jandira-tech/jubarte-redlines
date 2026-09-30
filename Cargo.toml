@@ -8,7 +8,7 @@
 
 [package]
 name = "jubarte-redlines"
-version = "0.10.0"
+version = "0.10.1"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Jandira Technologies, LLC"]
@@ -48,6 +48,7 @@ include = [
 
 "0.9.3" = "Redlines Word refused to open now open. A field whose code changed is replaced whole, and a same-code field stays whole, as in Word's redline. Table, list and section markup follow Word, and the same input writes the same bytes."
 "0.10.0" = "Adds jubarte inspect, text, edit and capabilities with input-admission budgets, --mode word|powertools, convert --png and self-update; Word-mode redlines keep changed text boxes, per-section headers and footers, and comment anchors as Word does."
+"0.10.1" = "Per-change accept/reject (Word's Accept / Reject This Change) in the library and edit plans; Word-parity fixes to Reject All; many docx-to-PDF layout fixes (page breaks, keep-with-next by compat mode, table row splits, floating tables, headers/footers, comment balloons); new debug checks (--check render, diff, -c text)."
 [lib]
 name = "jubarte"
 path = "src/lib.rs"

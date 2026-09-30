@@ -41,6 +41,8 @@
 pub mod admission;
 /// Machine-readable manifest of what this build can do.
 pub mod capabilities;
+/// Tracked changes one at a time: list, accept or reject a selection.
+pub mod changes;
 /// Core WmlComparer engine (atomize → LCS → produce → finalize).
 pub mod comparer;
 /// Structured comparison log (info / warning / error entries).
@@ -76,6 +78,8 @@ pub mod update;
 pub mod util;
 /// `WmlDocument` — document bytes + lazily parsed main part.
 pub mod wml_document;
+/// Word's default theme part, for originals without one.
+mod word_default_theme;
 /// Arena DOM (`xmllinq`) used by the comparer.
 pub mod xmllinq;
 

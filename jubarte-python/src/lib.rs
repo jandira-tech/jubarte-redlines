@@ -86,6 +86,46 @@ fn reject_revisions(py: Python<'_>, docx: &[u8]) -> PyResult<Py<PyBytes>> {
     Ok(PyBytes::new(py, &out).unbind())
 }
 
+/// List the tracked changes one by one as a JSON array string, each with the
+/// id `accept_changes` / `reject_changes` select by (the same objects as
+/// `jubarte changes --json`).
+#[pyfunction]
+fn list_changes_json(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
+    py.detach(|| {
+        let changes = jubarte::changes::list_changes(docx).map_err(|e| e.to_string())?;
+        serde_json::to_string(&changes).map_err(|e| e.to_string())
+    })
+    .map_err(|e: String| JubarteError::new_err(e))
+}
+
+fn change_filter(filter_json: &str) -> PyResult<jubarte::changes::ChangeFilter> {
+    serde_json::from_str(filter_json)
+        .map_err(|e| JubarteError::new_err(format!("invalid change filter: {e}")))
+}
+
+/// Accept the changes `filter_json` selects (`{"ids": [...], "authors":
+/// [...], "kinds": [...]}`, every list given must match; `{}` selects every
+/// change, an empty list none) and keep the rest tracked → DOCX bytes.
+#[pyfunction]
+fn accept_changes(py: Python<'_>, docx: &[u8], filter_json: &str) -> PyResult<Py<PyBytes>> {
+    let filter = change_filter(filter_json)?;
+    let out = py
+        .detach(|| jubarte::changes::accept_changes(docx, &filter))
+        .map_err(err)?;
+    Ok(PyBytes::new(py, &out).unbind())
+}
+
+/// Reject the changes `filter_json` selects (as in `accept_changes`) and
+/// keep the rest tracked → DOCX bytes.
+#[pyfunction]
+fn reject_changes(py: Python<'_>, docx: &[u8], filter_json: &str) -> PyResult<Py<PyBytes>> {
+    let filter = change_filter(filter_json)?;
+    let out = py
+        .detach(|| jubarte::changes::reject_changes(docx, &filter))
+        .map_err(err)?;
+    Ok(PyBytes::new(py, &out).unbind())
+}
+
 /// List the tracked revisions in a DOCX as a JSON array string — the same
 /// object shape as the CLI `jubarte revisions --json` lines
 /// (`type`/`author`/`date`/`part`/`moveGroupId`/`isMoveSource`/`formatChange`/`text`).
@@ -256,6 +296,9 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(accept_revisions, m)?)?;
     m.add_function(wrap_pyfunction!(reject_revisions, m)?)?;
     m.add_function(wrap_pyfunction!(get_revisions_json, m)?)?;
+    m.add_function(wrap_pyfunction!(list_changes_json, m)?)?;
+    m.add_function(wrap_pyfunction!(accept_changes, m)?)?;
+    m.add_function(wrap_pyfunction!(reject_changes, m)?)?;
     m.add_function(wrap_pyfunction!(docx_to_pdf, m)?)?;
     m.add_function(wrap_pyfunction!(docx_to_png, m)?)?;
     m.add_function(wrap_pyfunction!(render, m)?)?;

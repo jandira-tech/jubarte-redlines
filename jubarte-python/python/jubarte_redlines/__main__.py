@@ -11,6 +11,8 @@ installed wheel, with the same names, flags, output files and exit codes.
     python -m jubarte_redlines convert letter.docx --png --dpi 150 --report pages.json
     python -m jubarte_redlines compare a.docx b.docx -o redline.docx --author Legal
     python -m jubarte_redlines accept redline.docx -o clean.docx
+    python -m jubarte_redlines changes redline.docx --json
+    python -m jubarte_redlines reject redline.docx -o out.docx --id body:rev:12
     python -m jubarte_redlines capabilities --json
 
 Exit codes: 0 success, 1 error (I/O, engine, existing output), 2 usage, 3 edit
@@ -227,10 +229,25 @@ def cmd_revisions(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_changes(args: argparse.Namespace) -> int:
+    for change in (changes := _read(args.file).changes()):
+        row = {key: value for key, value in asdict(change).items() if value is not None}
+        if args.json:
+            print(json.dumps(row, ensure_ascii=False))
+            continue
+        preview = json.dumps(change.text[:60], ensure_ascii=False)
+        inside = f"\tinside {change.inside}" if change.inside else ""
+        print(f"{change.id}\t{change.kind}\t{change.target}\t{change.author or '-'}\t{preview}{inside}")
+    if not args.json:
+        print(f"{len(changes)} change(s)")
+    return EXIT_OK
+
+
 def _resolution(args: argparse.Namespace, accept: bool) -> int:
     doc = _read(args.file)
     _ensure_writable(args.output, args.force)
-    result = doc.accept() if accept else doc.reject()
+    selection = {"ids": args.id, "authors": args.author, "kinds": args.kind}
+    result = doc.accept(**selection) if accept else doc.reject(**selection)
     _write(args.output, result.to_bytes())
     print(f"wrote {args.output} ({len(result.to_bytes())} bytes)")
     return EXIT_OK
@@ -310,11 +327,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true", help="one JSON object per line")
     p.set_defaults(func=cmd_revisions)
 
-    for name, func, help_text in (("accept", cmd_accept, "accept every revision"), ("reject", cmd_reject, "reject every revision")):
+    p = sub.add_parser("changes", help="list each tracked change with the id accept/reject --id and edit plans take")
+    p.add_argument("file", type=Path)
+    p.add_argument("--json", action="store_true", help="one JSON object per line")
+    p.set_defaults(func=cmd_changes)
+
+    for name, func, help_text in (("accept", cmd_accept, "accept tracked changes (all, or the ones selected)"), ("reject", cmd_reject, "reject tracked changes (all, or the ones selected)")):
         p = sub.add_parser(name, help=help_text)
         p.add_argument("file", type=Path)
         p.add_argument("-o", "--output", type=Path, required=True)
         p.add_argument("--force", action="store_true")
+        p.add_argument("--id", action="append", metavar="ID", help="only this change (body:rev:12); repeatable")
+        p.add_argument("--author", action="append", metavar="NAME", help="only changes by this author; repeatable")
+        p.add_argument("--kind", action="append", choices=["insertion", "deletion", "move", "formatting"], help="only changes of this kind; repeatable")
         p.set_defaults(func=func)
 
     p = sub.add_parser("capabilities", help="what this build can do")

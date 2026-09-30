@@ -230,7 +230,7 @@ fn inject_side(
         return;
     }
     let (merged_text, mut segs): (String, Vec<Seg>) =
-        collect_segments(dom, result_root, b_side, author);
+        collect_segments(dom, result_root, b_side, author, false);
     if segs.is_empty() {
         return; // no text on this side to anchor to
     }

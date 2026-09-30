@@ -15,6 +15,408 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-09-30
+
+> **Summary.** Tracked changes can be accepted or rejected one at a time, as Word's Accept / Reject This Change, from the CLI, edit plans (resolve_revisions), Python and WASM; Reject All matches Word on text and mark state; docx-to-PDF follows Word far more closely on page breaks, keep-with-next, table rows, floating tables, headers, footers and comment balloons; jubarte debug gains --check render, diff A B [C …] and -c text.
+>
+> **Docs.** New docs/WORD_COMMENT_BALLOONS.md (when Word draws no comment balloon) and docs/api/ snapshots of the Rust and WASM API surface for release drift review; docs/WORD_DIFFERENCES.md extended; VERSIONING.md documents the step-5 API-docs review; the jubarte-documents skill and the npm README cover per-change accept/reject.
+
+### Changed
+
+- The tests no longer need neurotic_docx_bench (or the local
+  `_to_improve_accepted_changes` folder) checked out beside this repository.
+  The 537 documents they read are copied into `tests/corpus/` under the
+  relative paths the tests name. Their provenance, including the
+  docx-corpus ODC-By attribution, is in
+  `LICENSES/LicenseRef-Bench-Fixtures.txt`. About 180 fixtures had
+  moved in the bench, so the tests naming them skipped without a word;
+  they run again, and `tests/bench_fixture_paths_resolve.rs` fails on any
+  named copy that is missing.
+
+### Added
+
+- `jubarte debug FILE --check render` lists what each story part should put
+  on the page, for diagnosing a PDF that scores low against Word's. It reads
+  every part: body, headers, footers, footnotes, endnotes and comments, with
+  their text boxes. For each part it lists:
+  - the sections;
+  - tables, with their size, style, float position, direct and cell shading,
+    the table style's shading, and the first row's text;
+  - frames and anchored drawings;
+  - fields such as PAGE;
+  - paragraph styles and shading;
+  - text colour, highlight, run shading and hidden text, direct or from a
+    style;
+  - requested fonts;
+  - whether a replaced run's deletion comes before its insertion or after
+    it.
+
+  A `(layout)` entry adds jubarte's page count and the face each requested
+  font resolved to (installed, embedded, altName or a substitute), plus the
+  `docDefaults`, theme and `fontTable.xml` fonts. With two files it prints
+  only the lines that differ.
+- `jubarte debug diff A B [C …]` compares two or more packages element by
+  element instead of line by line: styles pair by type and name, paragraphs
+  by their text (a rewritten one meets the one it replaced), tables by
+  their first text, cells by position, notes and comments by text, headers
+  and footers by the section role that shows them. Each hunk names the
+  element's path (`word/styles.xml › style paragraph "Body Text" › rPr`)
+  and prints the property items or run segments not every file holds; with
+  three or more files each line names the files holding it. rsids,
+  paragraph ids, revision ids/authors/dates, relationship ids (a link or
+  image shows what it points to instead), docProps save stamps and counts,
+  attribute order, on/off values and empty property blocks are dropped
+  unless `--raw`; a part that is not well-formed XML is reported, not
+  compared. `--style`, `--para-text` and `-p` narrow the report, `--full`
+  prints the shown elements' common lines too without counting them. The
+  same in the library (`jubarte::debug::diff::diff`).
+- Tracked changes one at a time, as Word's Accept / Reject This Change:
+  `jubarte changes FILE` lists every change with an id (`body:rev:12`,
+  `header1:rev:3`), its kind, target, author and text (`--json` for JSON
+  lines); `jubarte accept` / `reject` take `--id`, `--author` and `--kind`
+  (repeatable; a change must match every flag given) and keep every other
+  change tracked. Ids stay valid while changes remain, both sides of a move
+  resolve together, and a change's `inside` names the change whose
+  resolution takes it along. The same in the library
+  (`jubarte::changes::{list_changes, accept_changes, reject_changes}`),
+  Python (`Document.changes()`, `Document.accept(ids=, authors=, kinds=)`)
+  and WASM (`listChanges`, `acceptChanges`, `rejectChanges`).
+- Edit plans take `resolve_revisions: {"accept": FILTER, "reject": FILTER}`
+  to resolve a selection of the tracked changes before editing; what it
+  leaves follows `existing_revisions`. A change selected by both sides is
+  refused with `REVISION_CONFLICT`, an id the document lacks with
+  `UNKNOWN_CHANGE`; the report lists the resolved ids.
+
+- `jubarte debug FILE -c text` prints each story part's paragraphs with
+  `{+inserted+}` / `[-deleted-]` runs, the paragraph mark's revision state
+  and table rows; `-c xml` prints part XML one element per line without
+  namespace declarations, rsids or paragraph ids. With two files both print
+  only the lines that differ, part by part. `-c runs` is `text` with each
+  paragraph's direct properties and each run's direct formatting, so two
+  builds compare formatting without XML noise.
+
+### Fixed
+
+- Consecutive paragraphs in a text box are spaced by the larger of one's
+  space after and the next one's space before, as in a table cell. The
+  first paragraph's auto space before and the last one's auto space after
+  are dropped. Before, the two were added together.
+- A tab whose next default stop lies past the right edge, with no custom
+  stop left on the line, moves to the next line and is measured from that
+  line's start, as Word does in compatibility modes 14 and 15.
+- A table row whose cells are centred or bottom-aligned breaks at the page
+  end like any other row. Before, it stayed whole and moved to the next
+  page. The docxide suite's education_consultant_posting now starts its
+  Background row on page 1, as Word does.
+- A Korean font the machine lacks (charset 81, or Hangul in its name) is
+  painted in Batang when the font table calls it roman, and in Malgun
+  Gothic otherwise, as Word 16 paints it. Before, it fell back to Microsoft
+  YaHei, which has no Hangul, so the text was lost.
+- Hangul in a run whose fonts are named only for Latin text is painted in
+  the run's East Asian face, as ideographs and kana already were. With
+  an empty theme `a:ea` and a ko-KR East Asian language, that face is
+  the theme's Hang script font. Before, the Latin face drew nothing for
+  the syllables: the docxide suite's Korean conference form lost "발표"
+  from its title.
+- Trailing tabs count toward a centred or right-aligned line; only
+  trailing spaces hang past it. Before, the tabs were measured as glyphs
+  and taken off, so cb4f8b4a43's centred "Date:" and its 14 tabs sat
+  61pt in from the margin, not 3.6pt.
+- A table row moves to the next page whole when one of its cells can put
+  nothing on the page, as Word 16 does whatever the row's vertical
+  alignment. Before, the other cells' first lines stayed behind.
+- A justified line holding only tabs keeps their stops and dot leaders.
+  Before, the justified painter drew the tabs as text, so the docxide
+  suite's air_pollution_permit_form lost two of its four dotted lines.
+- A missing script-family font (a `w:family="script"` font-table entry
+  such as Vivaldi) paints in Calibri, as Word 16 does. Before, it fell to
+  Cambria, whose wider 100pt bold "Messiah" wrapped and gave
+  handels_messiah a ninth page.
+- `w:contextualSpacing` drops the space between same-style paragraphs
+  inside a table cell, as it already did in the body. Before, cb4f8b4a43's
+  Title lines stepped 28pt apart, not Word's 20pt.
+- Below compatibility mode 15, a table style's font size overrides the
+  Normal style's in unstyled cells only when Normal is 11 or 12pt, as in
+  Word 16. Before, it overrode any size, so the cf02 redline's 10.5pt
+  Normal cells painted at 11pt and ran to 12 pages, not Word's 11.
+- A table row splitting at the page end measures a cell's first cut
+  against the room its margins leave. Before, the empty head was sized as
+  a default 11pt paragraph, so 3138fff3a6's two-line 8pt titles placed no
+  line and their rows moved to the next page whole, where Word splits
+  them.
+- From compatibility mode 15, a cell paragraph cut by a table row split
+  keeps widow/orphan control: two lines on each side, or it moves to the
+  next page whole, as Word 16 does. Below mode 15, Word still cuts it
+  anywhere. Before, compat-15 two-line cells split one line each side:
+  30f195a272's first table row started on page 1, where Word's starts on
+  page 2.
+- A table too wide to sit beside a square-wrapped picture starts below
+  it, as in Word 16; a narrower table still sits beside it. Before, the
+  table ran over the picture: 109f20a2b3's continued table painted
+  across its header logo, 74pt higher than Word's.
+- A "keep with next" paragraph that ends on a page's last line, its
+  successor pushed over, keeps its tail with that successor as Word does.
+  From compatibility mode 15 it splits and carries its last two lines
+  over (one with widow control off). Older modes move it whole, together
+  with the keep-with-next paragraphs chained before it. A chain of short
+  keep-with-next paragraphs now stays with the body below it, and its
+  spacing no longer counts the space between two paragraphs twice. A
+  chain of unsplittable ones taller than a page moves to a fresh page
+  once and then fills pages. A keepLines paragraph comes whole with the
+  heading above it.
+  Priority 4e7bb2a1be's event chain moves to page 2 as in Word (2 pages
+  → Word's 3).
+- Paragraph borders in headers and footers paint wherever Word draws
+  them: on an empty paragraph above the part's text (a footer's opening
+  rule, a running head's rule under its title table) and on a text
+  paragraph below one. Before, jubarte reserved their space but drew no
+  rule: c73c128db4's legislation pages lost both the head and foot rules.
+- A `cantSplit` table row taller than a whole page breaks anyway, as in
+  Word 16: it moves off the page it started on and breaks at the foot of
+  the next one. Before, it stayed whole and ran off the page: 2b479f55f8's
+  5e row painted 116pt below its page, and the file came to 31 pages, not
+  Word's 33.
+- A section that omits a header or footer type takes that type from the
+  nearest earlier section that names it (ECMA-376 17.10.5), as Word does.
+  Before, a section naming only some types lost the rest: 2b479f55f8's
+  sections 2 and 3 dropped the "ICA Internship Award 2022/23" header from
+  page 4 on, and its pages ran two short of Word's.
+- A continuous section break that changes the page size or orientation
+  starts a new page with the new size, as Word does. Before, the page
+  kept its old size: b535008087's landscape section ran on portrait pages
+  and came to 18 pages, not Word's 21.
+- A nested table row taller than what is left of the page breaks inside
+  itself, as Word breaks it, when keeping it whole would leave a quarter
+  of the page empty. Rows marked `cantSplit` or with an exact height stay
+  whole. The `w:br` line breaks of a cell paragraph split across pages
+  stay where they were. Before, the story parts ran together. In the
+  docx-to-pdf work set, three newsletters of one family gained 4 to 16
+  pixel points each (net +30.2), with nothing worse. 931e978ee2 is back at
+  Word's three pages.
+- A float that leaves no room on its line in a multi-column section moves
+  the text to the next column, not to the next page.
+- A fixed-layout table whose cell widths run past 22 inches ends 22
+  inches right of the margin, as Word ends it. The column that crosses
+  that line keeps what is left, and each later one about 1.4pt, so its
+  text stacks a character, or a space, per line. 2b479f55f8's landscape
+  process table now makes that document 32 pages (Word 33, was 24).
+- A square-wrapped float whose top sits below its anchor's first line no
+  longer pushes that line to the next page.
+- A header picture with no height adds no line under the header text.
+- An empty header or footer paragraph paints its shading across its
+  line, above or below the text or in a part with no text, as Word does.
+- The review fixes for PR #247:
+  - A run's `w:rPr` blocks apply `w:vanish` in order, so a later
+    character style that turns it off shows the run again.
+  - In a header or footer, a full-width picture that follows the
+    paragraph's text wraps to the line under that text, and the text
+    keeps its first line.
+  - The empty paragraphs above a footer table count each `w:br` as a line.
+  - An auto-width frame is as wide as its widest line, measured between
+    `w:br` breaks, not the text on both sides of a break added up.
+- `jubarte convert --revisions word` draws a comment balloon only where
+  Word's Save as PDF does. Word draws none for a comment whose range ends at
+  body or cell level, or before any content in its paragraph, and none for a
+  reply to such a comment. With no balloon left, Word keeps the full page,
+  with no grey markup pane. 29 of the 222 documents in the docx-to-pdf worst
+  set were shrunk beside a pane Word never draws. The other revision styles
+  still draw every comment.
+- A comment whose range holds only a tab keeps its balloon.
+- Comments load when `commentsExtended.xml` is related before
+  `comments.xml`. The lookup took the extended part for the comments part,
+  and every comment was lost (with_comments_clean/37c6c62345).
+- A frame at a page y that runs from the margin or the column
+  (`w:framePr vAnchor="page" hAnchor="margin"`) floats at its position, as
+  Word paints it, instead of flowing as a plain paragraph. Without an x it
+  sits on the margin; without a width or height it takes its text's size, up
+  to the column's width. A frame too tall for the page moves up to the
+  page's top. The worst document in the docx-to-pdf set (61e3967518 ×
+  1424386e9b) went from 25.6 to 42.1 pixel, 8.4 to 20.2 Jaccard.
+- A header paragraph's shading (`w:shd`) paints behind its lines, out to
+  its border. Only the top and bottom rules were painted, so white text on
+  a shaded heading vanished (clean/2261da4dae: 32.9 to 43.3 pixel, 7.2 to
+  23.3 Jaccard).
+- A left `w:ptab` in a header or footer moves nothing before any text and
+  starts a new line after it, as Word prints it. "Metadata", then a right
+  ptab and "Page N of M", then a left ptab and "Downloaded" printed on one
+  line and ran off the page. Five documents in the docx-to-pdf set gained
+  4 to 17 points (pixel plus Jaccard), e.g. clean/ef7870f9f4 from 45.9/10.7
+  to 50.1/24.1.
+- In compatibility mode 15, a paragraph holding only a page break is one
+  line on the page it ends. When that line doesn't fit, Word moves it down
+  a page and the break leaves that page blank (a9de4ed3f9's cover, then an
+  empty page 2, then the register on page 3). Together with the ptab fix,
+  a9de4ed3f9 went from 34.2/9.4 to 42.9/18.0, and clean/3936a8fe56 from
+  39.7/10.9 to 45.8/19.6.
+- A character style's `w:vanish` hides its runs; a direct `w:vanish
+  w:val="0"` shows them again. 4910ce2060's content-control placeholders
+  printed in cells Word leaves empty. `jubarte debug --check render` lists
+  them as `vanish via "Style"`.
+- A run whose `w:t` or `w:delText` is a single space prints that space.
+  Redlines that delete a lone space between words ("under Section",
+  "for the period") printed the words fused. In the docx-to-pdf work set,
+  a189917's redline went from 45.5/20.9 to 59.3/51.3 and back to Word's
+  page count, and fc5d9fe's from 48.1/17.1 to 62.9/37.7.
+  `jubarte debug --check xml` now shows such a space as the element's text.
+- A header or footer paragraph whose frame holds a right or centre
+  `w:ptab` relative to the margin spans the margins, as Word prints it.
+  54f4bb7's centred footer frame printed "Metadata … Page 2 of 28" as a
+  narrow block in the page centre (42.7/11.1 to 54.6/21.3).
+- The `w:br` ending a table-cell line no longer sizes a line that holds
+  text. 246c7fcf50's white 24pt break after a 16pt title made the title
+  line 24pt tall and pushed the header down (43.9/24.1 to 49.7/28.7).
+- Empty paragraphs above a footer's first table no longer lift it. The
+  footer grows up from the page bottom, so those lines sit above the table;
+  246c7fcf50's "Year 6 …" footer table printed 27.6pt high (its redline
+  went from 38.9/12.1 to 45.7/20.7, the clean document from 49.7/28.7 to
+  53.8/35.5).
+- An empty paragraph whose mark's character style vanishes takes no line.
+  4910ce2060's ContentControlHidden marks under "System Name" each added a
+  line and pushed the document onto a third page; it prints on Word's two
+  (31.4/12.2 to 54.1/18.2).
+- A header or footer picture as wide as its line puts the paragraph's text
+  on the line under it, and that picture line keeps the text's descent.
+  A tab after it shares the next line with the text that follows it, and
+  deleted text counts as text there because the redline paints it.
+  0800162a66's banner and "Akreditācijas ekspertu" took five pages
+  against Word's four (34.4/10.2 to 64.7/48.2).
+- A header picture too wide to sit beside a square-wrapped float in its
+  paragraph starts under the float, below its distB and effect extent.
+- Trailing spaces hang past centred and right-aligned header and footer
+  lines, as they do in the body.
+- Footer pictures placed from their paragraph sit on that paragraph's top,
+  not on the footer's (432bf1c280's logos under "January 2025").
+- A header or footer line holding a tab wraps at its words when its text
+  runs past the margin. A tab in a centred or right-aligned line jumps from
+  the line's start before the line is aligned, as in the body. 3ee2d0c's
+  centred banner, tab and deleted "Zgłoszenie … 2024 rok”" printed as one
+  line running 56pt past the margin (53.3/39.0 to 73.1/62.2).
+- A floating table with no `vertAnchor` is placed from the top margin, as
+  Word reads it, not from the text cursor. The text before it on its page
+  moves under it when there is no room beside it. A table too tall for
+  the page holds one body height of rows on its first page. It starts the
+  next page when text is already on this one. e11fc429b2's two
+  page-anchored tables went from 49.7/42.3 to 87.3/83.3 (Word probes g1-g6,
+  fb, fe).
+- A wrapping picture (square, tight or top-and-bottom) placed off its column
+  or paragraph stays on the page, as in Word: it is pulled in from the left,
+  top and foot edges instead of running off them. A wrapNone picture may
+  still leave the page. When such a picture leaves its paragraph's first
+  line no room beside or under it, the paragraph and the picture start the
+  next page. 3bfcb371e2's 615x797 cover used to paint over the minutes
+  before it; now it opens its own page at 0,0. 30b6e87178 went from
+  33.4/20.9 to 62.1/54.7, 49fe5bd42a from 47.1/9.1 to 58.6/19.3 (Word
+  probes h1-h6, g3, g5, n3-n5, t3, t4).
+- A picture anchored after all of a paragraph's text that fills its page
+  (no room beside or under it) takes that page alone, as in Word. Each
+  page that could still hold the rest of the paragraph keeps only its
+  first line. The last line opens the picture's page with its top at the
+  body floor, and what follows starts the next page. 9b22b88370 went from
+  26.4/23.1 to 64.5/49.4, 842ef93738 from 25.2/37.1 to 70.8/79.5 (Word
+  probes k1-k14).
+- A header or footer line without tabs paints its strikes and underlines:
+  a deleted run's strike, an inserted run's underline, `w:u` and
+  `w:strike`. Only its glyphs used to reach the page. 9b22b88370's
+  deleted header title is struck as in Word; clean 00163e55a0 went from
+  49.3 to 72.7 pixel, and the work set from 48.22 to 48.34.
+- Change bars follow Word further. A revised paragraph that crosses a page
+  or column is barred on each one it fills, not only where it starts; a
+  paragraph whose mark alone is inserted, deleted or reformatted is barred;
+  and so are a header's or footer's revised lines and empty paragraphs.
+  450945a41c went from 11.6 to 36.6 jaccard; the work set from
+  48.34/25.98 to 48.41/26.23 (93 better, 1 worse), with the tip holdout
+  at 46.08 to 46.15.
+- Rejecting a redline gives back what a changed style inherited in the
+  original. Word's Reject All reads a style's old record against its
+  built-in defaults, so a record holding only the style's own properties
+  rejected to Times New Roman 10 pt, left-aligned and single-spaced
+  (b6f757462e's List Paragraph lost Normal's justification and 1.08 lines).
+  The records of styles based on another now carry what the original's
+  docDefaults and chain gave them, less the built-in values. Paragraph-style
+  mismatches against the original after our own reject, 150 pairs: 267 to
+  30, and every pPr now matches. A bold or italic that an unrecorded parent
+  (or the docDefaults) turns on stays in the record, so it is not rejected
+  to off.
+- Rejecting a redline in which Normal changed no longer strips the run
+  properties of the styles based on Normal: the change record each of them
+  gets keeps the style's own fonts, sizes and languages, font slot by font
+  slot and language by language, over Normal's old ones, as Word records them (a67dcf9e05's Balloon Text went
+  from Tahoma 8 pt to Times New Roman 12 pt). Paragraph-style property
+  mismatches against the original after our own reject, over the same 150
+  pairs: 298 to 236.
+- `jubarte reject` no longer panics ("No parent for AddBeforeSelf") on
+  nested block content controls whose every paragraph is inserted, as in
+  Word's "Page Numbers" footer parts. A control whose every paragraph goes
+  is dropped with them instead of being restored over the paragraph that
+  follows. A control whose text alone is deleted, or that holds no run,
+  stays (emptied) even when another paragraph mark of the part is deleted,
+  as it already did otherwise.
+- `jubarte accept` / `reject` (and `accept_revisions` / `reject_revisions`)
+  now save what Word's Accept All / Reject All save. Measured against Word on
+  51 of Word's own redlines: every paragraph's text and mark state match
+  (5 files differed), 46 match run formatting too, and all 51 pass the
+  OOXML validator.
+  - A comment whose reference was deleted (or, on reject, inserted) goes with
+    its anchors and its commentsExtended / commentsIds / commentsExtensible
+    entries; with no comment left the comment parts are not written;
+    people.xml keeps only the remaining authors.
+  - A run of deleted paragraph marks continues through moved-from marks and
+    across a table whose rows are all deleted.
+  - A bookmark whose span was wholly deleted goes; an empty bookmark inside
+    deleted text now survives, where the deletion was. No half bookmark is
+    left behind.
+  - Bookmarks and comments are renumbered from one counter in document
+    order, as Word numbers them.
+  - A paragraph style naming a character style is dropped, and no empty
+    `w:rPr` / `w:pPr` is written.
+- `jubarte reject` matches Word's Reject All on the text and mark state of
+  all 100 of Word's redlines in the bench's `rejected_tracking` set (12
+  differed). All outputs but one pass the OOXML validator; that one's input
+  and Word's own Reject All fail it too.
+  - A move range that ends inside a table no longer takes the table's
+    `tblPr` and `tblGrid` with it (Word refused the file), and an emptied
+    moved heading before a table goes instead of keeping a live `moveFrom`
+    mark.
+  - A footnote or endnote whose reference was resolved away goes.
+  - Adjacent tables alike in every whole-table property (style, float,
+    direction) become one table, as Word holds them; a later table's own
+    borders, widths and margins ride on its rows as `tblPrEx`.
+  - Rejecting a section change keeps the section's header and footer
+    references. When a section break goes, the next section takes its
+    headers and footers if it had none of its own. Header and footer parts
+    no section shows are not written.
+  - Rejecting a paragraph style's recorded change restores its old
+    properties the way Word reads them: against Word's built-in defaults
+    (Times New Roman, 10pt, single spacing, left-aligned), not against the
+    style's ancestors. A property the old record lacks takes the built-in
+    value, and a value the style would inherit anyway is dropped. The
+    style's linked character style takes the restored run properties.
+  - A numbered style's restored paragraph properties drop what its numbering
+    level already says (the level's indents, tabs and spacing), as Word does.
+    The level is the one Word numbers with: through a numbering style link,
+    at the nearest defined ilvl, a full level override without paragraph
+    properties saying none, and none at all under an explicit `numId=0`.
+  - A linked character style takes its paragraph style's whole effective run
+    properties, less what the docDefaults say, and a linked character style
+    based on it follows. An old record's bold, italic or other run toggle
+    reads against the nearest ancestor the same reject restores, as Word
+    reads it. The built-in off hyphenation suppression, auto text alignment
+    and auto colour are written where the style chain says otherwise.
+- A redline re-caches every themed colour its styles carry against the theme
+  it ships, as Word does: table-style shading fills and colours and border
+  colours too, not only text colours. Tints and shades are truncated per
+  channel the way Word writes them (accent 156082, tint 3F: B2DEF2).
+- A redline whose original has no theme (or only one nothing references)
+  ships Word's own default Office theme, byte for byte, instead of the
+  revision's theme; Word never takes the revision's (664 of 664 bench
+  redlines, and Word probes with a custom revision theme).
+- A redline whose original has a theme but no styles part keeps the
+  original's theme. It was replaced with Word's default theme along with the
+  missing stylesheet.
+- `jubarte debug A B -c text` / `-c runs` pairs header and footer parts by
+  the section reference that shows them, so Word's renumbered parts compare
+  with their counterparts.
+
 ## [0.10.0] - 2026-09-28
 
 > **Summary.** Documents are now editable by agents: inspect, JSON edit plans that write a clean copy plus a tracked redline, and headers, footers and notes as editable stories, from the CLI, Python and WASM alike; Word-mode redlines keep changed text boxes, per-section headers and footers, and comment anchors where Word does.
@@ -1209,6 +1611,7 @@ measured Q0 performance stack) plus release tooling (`VERSIONING.md`,
 - See [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the covering tests are marked
   `#[ignore]` with matching reasons.
 
+[0.10.1]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.10.1
 [0.10.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.10.0
 [0.9.3]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.9.3
 [0.9.2]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.9.2

@@ -134,7 +134,18 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Accept every tracked revision (package-wide) and write the result.
+    /// List each tracked change with the id `accept --id`, `reject --id` and
+    /// edit plans take.
+    Changes {
+        /// The document (.docx).
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Emit one JSON object per line.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Accept tracked changes (package-wide) and write the result: every
+    /// change, or those --id/--author/--kind select (the rest stay tracked).
     Accept {
         /// The document (.docx) whose revisions to accept.
         #[arg(value_name = "FILE")]
@@ -145,8 +156,11 @@ enum Command {
         /// Overwrite the output file if it already exists.
         #[arg(long)]
         force: bool,
+        #[command(flatten)]
+        selection: Selection,
     },
-    /// Reject every tracked revision (package-wide) and write the result.
+    /// Reject tracked changes (package-wide) and write the result: every
+    /// change, or those --id/--author/--kind select (the rest stay tracked).
     Reject {
         /// The document (.docx) whose revisions to reject.
         #[arg(value_name = "FILE")]
@@ -157,6 +171,8 @@ enum Command {
         /// Overwrite the output file if it already exists.
         #[arg(long)]
         force: bool,
+        #[command(flatten)]
+        selection: Selection,
     },
     /// Convert a .docx to PDF and/or PNG pages (independent of LibreOffice).
     Convert {
@@ -290,8 +306,20 @@ enum Command {
         jubarte debug old.docx new.docx --list    entries that differ\n  \
         jubarte debug old.docx new.docx -c elements -p document.xml\n  \
         jubarte debug out.docx -c ids             revision/docPr ids used twice\n  \
-        jubarte debug out.docx -c textbox -g FILENAME")]
+        jubarte debug out.docx -c textbox -g FILENAME\n  \
+        jubarte debug out.docx -c text            paragraphs with ins/del marks\n  \
+        jubarte debug a.docx b.docx -c text       paragraphs that differ, per part\n  \
+        jubarte debug a.docx b.docx -c runs       the same, with direct formatting\n  \
+        jubarte debug out.docx -c runs -g \"Q: Can\"   one paragraph's runs, whole\n  \
+        jubarte debug out.docx -c changes         what each pPrChange/tcPrChange/… records\n  \
+        jubarte debug a.docx b.docx -c styledefs  style definitions that differ, paired by name\n  \
+        jubarte debug a.docx b.docx -c numbering  list levels that differ, by numId\n  \
+        jubarte debug a.docx b.docx -c xml -p document.xml\n  \
+        jubarte debug diff a.docx ours.docx word.docx   element by element, three-way")]
+    #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
     Debug {
+        #[command(subcommand)]
+        sub: Option<DebugCommand>,
         /// One package, or two to compare (A then B).
         #[arg(value_name = "FILE", num_args = 1..=2, required = true)]
         files: Vec<PathBuf>,
@@ -306,11 +334,56 @@ enum Command {
         /// Only parts whose name contains this (e.g. document.xml).
         #[arg(short = 'p', long, value_name = "NAME")]
         part: Option<String>,
-        /// textbox: only stories whose text contains this.
+        /// Only what contains this: textbox stories; text/runs/xml/changes/styledefs/numbering lines (a runs paragraph matched on its plain text, printed whole).
         #[arg(short = 'g', long, value_name = "TEXT")]
         grep: Option<String>,
         /// Examples per finding kind.
         #[arg(short = 'n', long, value_name = "N", default_value_t = 5)]
+        limit: usize,
+        /// text/xml/runs of two files: common lines shown around each change.
+        #[arg(short = 'C', long, value_name = "N", default_value_t = 0)]
+        context: usize,
+    },
+}
+
+/// `jubarte debug` subcommands.
+#[derive(clap::Subcommand, Debug)]
+enum DebugCommand {
+    /// What differs between two or more packages, element by element:
+    /// styles paired by type and name, paragraphs by their text, headers
+    /// and footers by section role. Each hunk prints the lines not every
+    /// file holds; with three or more files each line names the files that
+    /// hold it. rsids, paragraph ids, revision ids/authors/dates,
+    /// relationship ids (shown as what they point to), docProps save
+    /// stamps, attribute order, on/off values and empty property blocks
+    /// are dropped unless --raw.
+    #[command(after_help = "EXAMPLES:\n  \
+        jubarte debug diff a.docx b.docx\n  \
+        jubarte debug diff a.docx ours_rej.docx word_rej.docx -p styles\n  \
+        jubarte debug diff a.docx ours_rej.docx word_rej.docx --style \"Body Text\" --full\n  \
+        jubarte debug diff a.docx ours.docx --para-text \"Section 4\"")]
+    Diff {
+        /// Two or more packages; the first is the reference (`-` lines).
+        #[arg(value_name = "FILE", num_args = 2.., required = true)]
+        files: Vec<PathBuf>,
+        /// Only parts whose name or role contains this (e.g. styles,
+        /// document.xml, "default header").
+        #[arg(short = 'p', long, value_name = "NAME")]
+        part: Option<String>,
+        /// Only the style with this name or id (case-insensitive).
+        #[arg(long, value_name = "NAME")]
+        style: Option<String>,
+        /// Only paragraphs whose text contains this, in any file.
+        #[arg(long = "para-text", value_name = "TEXT")]
+        para_text: Option<String>,
+        /// Keep rsids, ids, authors, dates, on/off values and empty blocks.
+        #[arg(long)]
+        raw: bool,
+        /// Print each shown element's common lines too.
+        #[arg(long)]
+        full: bool,
+        /// Hunks per part (0: all).
+        #[arg(short = 'n', long, value_name = "N", default_value_t = 60)]
         limit: usize,
     },
 }
@@ -335,12 +408,43 @@ enum DebugCheck {
     /// Revision and docPr ids used twice (not in the default triage: Word
     /// opens such files).
     Ids,
+    /// Style links and references naming no style; two styles with one type
+    /// and name (Word pairs styles by name).
+    Styles,
     /// Where bookmark starts and ends sit (parent chains, tallied).
     Chains,
     /// Element counts.
     Elements,
     /// Text box stories as XML (see --grep).
     Textbox,
+    /// Paragraph text per story part, with {+inserted+} / [-deleted-] runs
+    /// and the mark state; with two files, the lines that differ.
+    Text,
+    /// Part XML one element per line, without namespace declarations,
+    /// rsids or paraIds; with two files, the lines that differ.
+    Xml,
+    /// `text` with each paragraph's direct properties [..], its mark's «..»
+    /// and each run's direct formatting «..»; with two files, the lines that
+    /// differ.
+    Runs,
+    /// Property-change records (pPrChange, tcPrChange, sectPrChange, …):
+    /// where each sits and what the live properties add (+) and drop (-)
+    /// against the recorded ones; with two files, the lines that differ.
+    Changes,
+    /// Style definitions by type and name (localized ids pair): docDefaults,
+    /// then each style's default flag and basedOn/link by name, and a line
+    /// per pPr/rPr/tblPr/… block; with two files, the lines that differ.
+    Styledefs,
+    /// List levels by numId and level as paragraphs see them (abstract
+    /// definition plus the list's overrides; abstract ids renumber, so
+    /// they are left out); with two files, the lines that differ.
+    Numbering,
+    /// What each story part should put on the page (tables with style,
+    /// float and shading; shaded, highlighted, coloured and hidden text;
+    /// fonts; fields; ins/del order; frames; sections), and "(layout)":
+    /// jubarte's page count and the face each font resolved to; with two
+    /// files, the lines that differ.
+    Render,
 }
 
 impl From<DebugCheck> for jubarte::debug::Check {
@@ -353,9 +457,17 @@ impl From<DebugCheck> for jubarte::debug::Check {
             DebugCheck::Package => Check::Package,
             DebugCheck::Structure => Check::Structure,
             DebugCheck::Ids => Check::Ids,
+            DebugCheck::Styles => Check::Styles,
             DebugCheck::Chains => Check::Chains,
             DebugCheck::Elements => Check::Elements,
             DebugCheck::Textbox => Check::Textbox,
+            DebugCheck::Text => Check::Text,
+            DebugCheck::Xml => Check::Xml,
+            DebugCheck::Runs => Check::Runs,
+            DebugCheck::Changes => Check::Changes,
+            DebugCheck::Styledefs => Check::StyleDefs,
+            DebugCheck::Numbering => Check::Numbering,
+            DebugCheck::Render => Check::Render,
         }
     }
 }
@@ -437,17 +549,97 @@ fn ensure_writable(output: &Path, force: bool) -> Result<(), String> {
 /// resolution, and write the result under the compare path's no-clobber
 /// contract. Generic over the resolver's error so neither `OpcError`'s path nor
 /// the two arms' bodies are duplicated.
-fn run_resolution<E: std::fmt::Debug>(
+/// Which tracked changes `accept` / `reject` resolve; all of them when no
+/// flag is given, else those matching every flag kind given.
+#[derive(clap::Args, Debug, Default, PartialEq)]
+struct Selection {
+    /// Only this change (`body:rev:12`, as `jubarte changes` lists it).
+    /// Repeatable.
+    #[arg(long = "id", value_name = "ID")]
+    ids: Vec<String>,
+    /// Only changes by this author. Repeatable.
+    #[arg(long = "author", value_name = "NAME")]
+    authors: Vec<String>,
+    /// Only changes of this kind. Repeatable.
+    #[arg(long = "kind", value_enum, value_name = "KIND")]
+    kinds: Vec<KindArg>,
+}
+
+/// `--kind` values.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq)]
+enum KindArg {
+    Insertion,
+    Deletion,
+    Move,
+    Formatting,
+}
+
+impl Selection {
+    fn filter(&self) -> jubarte::changes::ChangeFilter {
+        use jubarte::changes::ChangeKind;
+        let given = |v: &[String]| (!v.is_empty()).then(|| v.to_vec());
+        jubarte::changes::ChangeFilter {
+            ids: given(&self.ids),
+            authors: given(&self.authors),
+            kinds: (!self.kinds.is_empty()).then(|| {
+                self.kinds
+                    .iter()
+                    .map(|k| match k {
+                        KindArg::Insertion => ChangeKind::Insertion,
+                        KindArg::Deletion => ChangeKind::Deletion,
+                        KindArg::Move => ChangeKind::Move,
+                        KindArg::Formatting => ChangeKind::Formatting,
+                    })
+                    .collect()
+            }),
+        }
+    }
+}
+
+fn run_resolution(
     file: &Path,
     output: &Path,
     force: bool,
-    apply: fn(&[u8]) -> Result<Vec<u8>, E>,
+    filter: &jubarte::changes::ChangeFilter,
+    apply: fn(
+        &[u8],
+        &jubarte::changes::ChangeFilter,
+    ) -> Result<Vec<u8>, jubarte::changes::ChangeError>,
     what: &str,
 ) -> Result<(), String> {
     ensure_writable(output, force)?;
     let bytes = std::fs::read(file).map_err(|e| format!("reading {}: {e}", file.display()))?;
-    let out = apply(&bytes).map_err(|e| format!("{what} failed: {e:?}"))?;
+    let out = apply(&bytes, filter).map_err(|e| format!("{what} failed: {e}"))?;
     std::fs::write(output, &out).map_err(|e| format!("writing {}: {e}", output.display()))
+}
+
+fn run_changes(file: &Path, json: bool) -> Result<(), String> {
+    let bytes = std::fs::read(file).map_err(|e| format!("reading {}: {e}", file.display()))?;
+    let changes = jubarte::changes::list_changes(&bytes).map_err(|e| e.to_string())?;
+    for c in &changes {
+        if json {
+            println!("{}", serde_json::to_string(c).map_err(|e| e.to_string())?);
+            continue;
+        }
+        let kind = serde_json::to_value(c.kind).map_err(|e| e.to_string())?;
+        let preview: String = c.text.chars().take(60).collect();
+        let inside = c
+            .inside
+            .as_deref()
+            .map(|id| format!("\tinside {id}"))
+            .unwrap_or_default();
+        println!(
+            "{}\t{}\t{}\t{}\t{preview:?}{inside}",
+            c.id,
+            kind.as_str().unwrap_or("?"),
+            c.target,
+            c.author.as_deref().unwrap_or("-"),
+        );
+    }
+    if !json {
+        println!("{} change(s)", changes.len());
+    }
+    Ok(())
 }
 
 /// Which artifacts `convert` writes and where.
@@ -944,6 +1136,7 @@ fn run_debug(
     part: Option<String>,
     grep: Option<String>,
     limit: usize,
+    context: usize,
 ) -> Result<(), String> {
     let read = |p: &PathBuf| std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()));
     let a = read(&files[0])?;
@@ -952,6 +1145,7 @@ fn run_debug(
         part,
         grep,
         limit,
+        context,
         ..Default::default()
     };
     if !checks.is_empty() {
@@ -966,22 +1160,75 @@ fn run_debug(
     Ok(())
 }
 
+/// `jubarte debug diff`: each file labelled by its stem (by its folder too
+/// when stems repeat, by position when both do).
+fn run_debug_diff(
+    files: &[PathBuf],
+    opts: &jubarte::debug::diff::DiffOptions,
+) -> Result<(), String> {
+    let stem = |p: &PathBuf| {
+        p.file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    };
+    let with_dir = |p: &PathBuf| {
+        let dir = p
+            .parent()
+            .and_then(|d| d.file_name())
+            .map(|d| d.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        format!("{dir}/{}", stem(p))
+    };
+    let unique = |labels: &[String]| {
+        labels
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            == labels.len()
+    };
+    let mut labels: Vec<String> = files.iter().map(stem).collect();
+    if !unique(&labels) {
+        labels = files.iter().map(with_dir).collect();
+    }
+    if !unique(&labels) {
+        labels = (0..files.len())
+            .map(|i| char::from(b'A' + (i % 26) as u8).to_string())
+            .collect();
+    }
+    let bytes = files
+        .iter()
+        .map(|p| std::fs::read(p).map_err(|e| format!("{}: {e}", p.display())))
+        .collect::<Result<Vec<_>, _>>()?;
+    let pairs: Vec<(&str, &[u8])> = labels
+        .iter()
+        .map(String::as_str)
+        .zip(bytes.iter().map(Vec::as_slice))
+        .collect();
+    print!("{}", jubarte::debug::diff::diff(&pairs, opts)?);
+    Ok(())
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
         Some(Command::Revisions { file, json }) => {
             return exit_code(run_revisions(&file, json));
         }
+        Some(Command::Changes { file, json }) => {
+            return exit_code(run_changes(&file, json));
+        }
         Some(Command::Accept {
             file,
             output,
             force,
+            selection,
         }) => {
             return exit_code(run_resolution(
                 &file,
                 &output,
                 force,
-                jubarte::document_comparer::accept_revisions,
+                &selection.filter(),
+                jubarte::changes::accept_changes,
                 "accept",
             ));
         }
@@ -989,12 +1236,14 @@ fn main() -> ExitCode {
             file,
             output,
             force,
+            selection,
         }) => {
             return exit_code(run_resolution(
                 &file,
                 &output,
                 force,
-                jubarte::document_comparer::reject_revisions,
+                &selection.filter(),
+                jubarte::changes::reject_changes,
                 "reject",
             ));
         }
@@ -1074,14 +1323,39 @@ fn main() -> ExitCode {
             version,
         }) => return exit_code(run_self_update(check, yes, version)),
         Some(Command::Debug {
+            sub:
+                Some(DebugCommand::Diff {
+                    files,
+                    part,
+                    style,
+                    para_text,
+                    raw,
+                    full,
+                    limit,
+                }),
+            ..
+        }) => {
+            let opts = jubarte::debug::diff::DiffOptions {
+                part,
+                style,
+                para_text,
+                raw,
+                full,
+                limit,
+            };
+            return exit_code(run_debug_diff(&files, &opts));
+        }
+        Some(Command::Debug {
+            sub: None,
             files,
             list,
             checks,
             part,
             grep,
             limit,
+            context,
         }) => {
-            return exit_code(run_debug(&files, list, checks, part, grep, limit));
+            return exit_code(run_debug(&files, list, checks, part, grep, limit, context));
         }
         None => {}
     }
@@ -1360,7 +1634,12 @@ mod tests {
                 file,
                 output,
                 force,
+                selection,
             }) => {
+                assert_eq!(
+                    selection.filter(),
+                    jubarte::changes::ChangeFilter::default()
+                );
                 assert_eq!(file, PathBuf::from("rl.docx"));
                 assert_eq!(output, PathBuf::from("out.docx"));
                 assert!(force);
@@ -1379,13 +1658,50 @@ mod tests {
                 file,
                 output,
                 force,
+                selection,
             }) => {
+                assert_eq!(
+                    selection.filter(),
+                    jubarte::changes::ChangeFilter::default()
+                );
                 assert_eq!(file, PathBuf::from("rl.docx"));
                 assert_eq!(output, PathBuf::from("out.docx"));
                 assert!(!force);
             }
             other => panic!("expected reject subcommand, got {other:?}"),
         }
+    }
+
+    /// `--id`, `--author` and `--kind` repeat and select the changes to
+    /// resolve; a flag left out constrains nothing.
+    #[test]
+    fn accept_selection_flags_build_the_change_filter() {
+        use jubarte::changes::{ChangeFilter, ChangeKind};
+        let cli = Cli::try_parse_from([
+            "jubarte",
+            "accept",
+            "rl.docx",
+            "-o",
+            "out.docx",
+            "--id",
+            "body:rev:1",
+            "--id",
+            "header1:rev:2",
+            "--kind",
+            "move",
+        ])
+        .unwrap();
+        let Some(Command::Accept { selection, .. }) = cli.command else {
+            panic!("expected accept subcommand");
+        };
+        assert_eq!(
+            selection.filter(),
+            ChangeFilter {
+                ids: Some(vec!["body:rev:1".into(), "header1:rev:2".into()]),
+                authors: None,
+                kinds: Some(vec![ChangeKind::Move]),
+            }
+        );
     }
 
     /// `reject` requires `-o/--output` (clap usage error when omitted), matching

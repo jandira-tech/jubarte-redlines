@@ -156,7 +156,10 @@ pub(crate) fn generic_physical(family: FontFamilyClass, pitch: Pitch) -> &'stati
         FontFamilyClass::Roman => "Times New Roman",
         FontFamilyClass::Swiss => "Arial",
         FontFamilyClass::Modern => "Courier New",
-        FontFamilyClass::Script | FontFamilyClass::Decorative | FontFamilyClass::Auto => "",
+        // Word 16 paints an absent script face in Calibri (probe
+        // script_missing_0930: Vivaldi's font-table entry, renamed).
+        FontFamilyClass::Script => "Calibri",
+        FontFamilyClass::Decorative | FontFamilyClass::Auto => "",
     }
 }
 

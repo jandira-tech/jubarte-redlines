@@ -16,6 +16,7 @@ use crate::namespaces::{M, MC, PT, R, W, W14, WP14};
 use crate::xmllinq::{Dom, NodeId, XName, XNamespace};
 
 use super::WmlComparerSettings;
+use super::formatchg;
 use super::tables::ALLOWABLE_RUN_CHILDREN;
 
 // Per-paragraph pure-del / mixed classification cache for finalize peels.
@@ -288,13 +289,10 @@ pub fn mark_content_transform(
         };
         // M81: paragraph-formatting-only change — live pPr is MODIFIED (B);
         // w:pPrChange records ORIGINAL (A) from pt:OldPPr (docxodus :5040).
-        //
-        // M81c (file_69): when B clears spacing and A had **after-only** small
-        // spacing (`after≤40`, no before/line), also materialize it live.
-        // Word keeps live after=20 on the drawing residual; pPrChange alone
-        // does not affect LO line boxes (score stuck 89.89). Do **not**
-        // re-promote Heading residuals (before=400…) — that re-bloats file_33
-        // (−15 score when ungated).
+        // A spacing B cleared stays out of the live pPr: Word's redline of
+        // file_69 × file_70 (ac6cd8d92f) keeps after=20 live only on the
+        // deleted drawing residual, and the title's pPrChange alone; copying
+        // it live left it on the accepted title.
         if status == "FormatChanged" {
             let ppr = dom.clone_subtree(node);
             // Drop internal pt: attrs used only for the transform pipeline.
@@ -338,27 +336,6 @@ pub fn mark_content_transform(
                 .map(|s| s.to_string())
             {
                 dom.set_attribute_value(ppr, &PT::name("OldPPr"), None);
-                let old_ppr = parse_ppr(dom, Some(&old_s));
-                // Only a bare new pPr inherits the micro spacing: when B has
-                // layout of its own (file_143_144 jc=both), Word keeps B's pPr.
-                let new_is_bare = dom
-                    .elements(ppr, None)
-                    .into_iter()
-                    .all(|c| dom.name_is(c, &W::r_pr()));
-                if new_is_bare
-                    && dom.element(ppr, &W::spacing_el()).is_none()
-                    && let Some(old_sp) = dom.element(old_ppr, &W::spacing_el())
-                {
-                    let after = dom.attribute(old_sp, &W::name("after")).unwrap_or("");
-                    let before = dom.attribute(old_sp, &W::name("before")).unwrap_or("");
-                    let line = dom.attribute(old_sp, &W::name("line")).unwrap_or("");
-                    let after_n: i64 = after.parse().unwrap_or(i64::MAX);
-                    // after-only micro spacing (file_69 after=20)
-                    if before.is_empty() && line.is_empty() && after_n > 0 && after_n <= 40 {
-                        let sp = dom.clone_subtree(old_sp);
-                        dom.add_first(ppr, sp);
-                    }
-                }
                 let chg = dom.new_element(W::p_pr_change());
                 dom.set_attribute_value(chg, &W::id(), Some(&id_gen.to_string()));
                 *id_gen += 1;
@@ -2728,6 +2705,183 @@ pub fn trailing_empty_spacing_to_pprchange(
     }
 }
 
+/// The paragraph properties of the story's closing paragraph, cloned
+/// without scratch attributes before atomize consumes `body`: `None` when
+/// the story does not end on a paragraph, an empty `w:pPr` when the
+/// paragraph has none.
+pub fn closing_paragraph_properties(dom: &mut Dom, body: NodeId) -> Option<NodeId> {
+    let last = dom
+        .elements(body, None)
+        .into_iter()
+        .rev()
+        .find(|&k| !dom.name_is(k, &W::sect_pr()))?;
+    if !dom.name_is(last, &W::p()) {
+        return None;
+    }
+    Some(match dom.element(last, &W::p_pr()) {
+        Some(ppr) => drop_pt_bookkeeping(dom, ppr),
+        None => dom.new_element(W::p_pr()),
+    })
+}
+
+/// The story's closing mark is never revised: accepted, it closes the
+/// revision; rejected, the original. Word writes the revision's closing
+/// paragraph properties live on it and records the original's in a
+/// `pPrChange` (cda19d51ed: `pStyle=Cuerpo jc=both` live over the
+/// original's `spacing line=276`). A revision whose closing paragraph folded
+/// into the original's left the original's properties live, so accepting
+/// dropped the revision's style and alignment.
+pub fn closing_mark_takes_revised_properties(
+    dom: &mut Dom,
+    root: NodeId,
+    original: Option<NodeId>,
+    revised: Option<NodeId>,
+    default_lines: (Option<&str>, Option<&str>),
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let (Some(original), Some(revised)) = (original, revised) else {
+        return;
+    };
+    // The revision's properties in the form every revised paragraph took
+    // above: twips, no demo-default line, spacing with its line rule.
+    let scratch = dom.new_element(W::body());
+    let scratch_p = dom.new_element(W::p());
+    dom.add(scratch, scratch_p);
+    let revised = dom.clone_subtree(revised);
+    dom.add(scratch_p, revised);
+    normalize_universal_measures(dom, scratch);
+    strip_redundant_demo_default_spacing(dom, scratch, default_lines);
+    normalize_incomplete_spacing(dom, scratch);
+    let Some(body) = dom.element(root, &W::body()) else {
+        return;
+    };
+    let Some(last) = dom
+        .elements(body, None)
+        .into_iter()
+        .rev()
+        .find(|&k| !dom.name_is(k, &W::sect_pr()))
+    else {
+        return;
+    };
+    if !dom.name_is(last, &W::p()) {
+        return;
+    }
+    let ppr = match dom.element(last, &W::p_pr()) {
+        Some(p) => p,
+        None => {
+            let p = dom.new_element(W::p_pr());
+            dom.add_first(last, p);
+            p
+        }
+    };
+    let mark = dom.element(ppr, &W::r_pr());
+    if mark.is_some_and(|m| {
+        ["ins", "del", "moveFrom", "moveTo"]
+            .iter()
+            .any(|k| dom.element(m, &W::name(k)).is_some())
+    }) {
+        return;
+    }
+    // Revised text on the closing paragraph is the revision's own paragraph
+    // run into it (the comment list item `unmerge_comment_list_item` splits
+    // back out): its properties are that paragraph's, not the closing one's.
+    if dom.elements(last, Some(&W::ins())).len()
+        + dom.elements(last, Some(&W::name("moveTo"))).len()
+        > 0
+    {
+        return;
+    }
+    closing_mark_takes_revised_mark_formatting(dom, ppr, revised, settings, id_gen);
+    let live = formatchg::normalize_para_properties(dom, ppr);
+    let new = formatchg::normalize_para_properties(dom, revised);
+    if live == new {
+        return;
+    }
+    let old = formatchg::project_para_properties_for_change(dom, original);
+    let old_sig = formatchg::normalize_para_properties(dom, old);
+    let keep: Vec<NodeId> = [W::r_pr(), W::sect_pr()]
+        .iter()
+        .filter_map(|n| dom.element(ppr, n))
+        .collect();
+    for c in dom.elements(ppr, None) {
+        dom.remove(c);
+    }
+    let fresh = formatchg::project_para_properties_for_change(dom, revised);
+    for c in dom.elements(fresh, None) {
+        dom.remove(c);
+        dom.add(ppr, c);
+    }
+    for c in keep {
+        dom.add(ppr, c);
+    }
+    if old_sig != new {
+        let chg = dom.new_element(W::p_pr_change());
+        dom.set_attribute_value(chg, &W::id(), Some(&id_gen.to_string()));
+        *id_gen += 1;
+        dom.set_attribute_value(chg, &W::author(), Some(&settings.author_for_revisions));
+        dom.set_attribute_value(chg, &W::date(), Some(&settings.date_time_for_revisions));
+        dom.add(chg, old);
+        dom.add(ppr, chg);
+    }
+    // The original's, in twips like every other recorded change.
+    normalize_universal_measures(dom, ppr);
+}
+
+/// The closing mark's own formatting follows the same way: Word writes the
+/// revised closing paragraph's mark `rPr` live and records the original's
+/// in a `rPrChange` (b4cd671041: `sz=28` live over the original's
+/// `b rFonts=Arial sz=24 u`). A mark that already records a change keeps it.
+fn closing_mark_takes_revised_mark_formatting(
+    dom: &mut Dom,
+    ppr: NodeId,
+    revised: NodeId,
+    settings: &WmlComparerSettings,
+    id_gen: &mut u32,
+) {
+    let live = dom.element(ppr, &W::r_pr());
+    if live.is_some_and(|m| dom.element(m, &W::name("rPrChange")).is_some()) {
+        return;
+    }
+    let new = dom.element(revised, &W::r_pr());
+    if formatchg::are_run_properties_equal(dom, live, new) {
+        return;
+    }
+    let fresh = dom.new_element(W::r_pr());
+    if let Some(n) = new {
+        for c in dom.elements(n, None) {
+            let skip = ["ins", "del", "moveFrom", "moveTo", "rPrChange"]
+                .iter()
+                .any(|k| dom.name_is(c, &W::name(k)));
+            if !skip {
+                let c = dom.clone_subtree(c);
+                dom.add(fresh, c);
+            }
+        }
+    }
+    let old = match live {
+        Some(m) => dom.clone_subtree(m),
+        None => dom.new_element(W::r_pr()),
+    };
+    let chg = dom.new_element(W::name("rPrChange"));
+    dom.set_attribute_value(chg, &W::id(), Some(&id_gen.to_string()));
+    *id_gen += 1;
+    dom.set_attribute_value(chg, &W::author(), Some(&settings.author_for_revisions));
+    dom.set_attribute_value(chg, &W::date(), Some(&settings.date_time_for_revisions));
+    dom.add(chg, old);
+    dom.add(fresh, chg);
+    match live {
+        Some(m) => dom.replace_with(m, &[fresh]),
+        None => match [W::sect_pr(), W::p_pr_change()]
+            .iter()
+            .find_map(|n| dom.element(ppr, n))
+        {
+            Some(next) => dom.add_before_self(next, fresh),
+            None => dom.add(ppr, fresh),
+        },
+    }
+}
+
 /// Sorted `(namespace, local name, value)` attributes of the last body
 /// paragraph's `w:spacing` under `body`, if it has one.
 pub fn last_body_para_spacing(dom: &Dom, body: NodeId) -> Option<Vec<(String, String, String)>> {
@@ -3800,30 +3954,20 @@ pub fn rotate_ins_mark_del_only_paragraph(dom: &mut Dom, root: NodeId) {
                 continue;
             }
             // --- rewrite ---
-            // Pi mark MD → MI (copy attrs).
-            let flip_mark = |dom: &mut Dom,
-                             p: NodeId,
-                             from: &crate::xmllinq::XName,
-                             to: crate::xmllinq::XName| {
-                let Some(ppr) = dom.element(p, &W::p_pr()) else {
-                    return;
-                };
-                let Some(rpr) = dom.element(ppr, &W::r_pr()) else {
-                    return;
-                };
-                let Some(old) = dom.element(rpr, from) else {
-                    return;
-                };
-                let attrs: Vec<_> = dom.attributes(old).into_iter().collect();
-                dom.remove(old);
-                let neu = dom.new_element(to);
-                for (n, v) in attrs {
-                    dom.set_attribute_value(neu, &n, Some(&v));
-                }
-                dom.add_first(rpr, neu);
+            // The marks trade places with their properties: Pi takes the
+            // inserted mark's pPr (the revision's), Pi+1 the deleted mark's
+            // (29e3872eed: the deleted title's jc=center stays on the deleted
+            // mark; flipping only the revision marks left it live on the
+            // inserted paragraph, so accept-all centred it).
+            let (Some(ppr0), Some(ppr1)) =
+                (dom.element(p0, &W::p_pr()), dom.element(p1, &W::p_pr()))
+            else {
+                continue;
             };
-            flip_mark(dom, p0, &W::del(), W::ins());
-            flip_mark(dom, p1, &W::ins(), W::del());
+            dom.remove(ppr0);
+            dom.remove(ppr1);
+            dom.add_first(p0, ppr1);
+            dom.add_first(p1, ppr0);
             // p1's old del-blocks → front of p2 (in order).
             for &d in c1.iter().rev() {
                 dom.remove(d);
@@ -5132,14 +5276,18 @@ pub(crate) fn pg_num_type_is_implicit_decimal(dom: &Dom, n: NodeId) -> bool {
 /// Default table `w:jc` left/start
 /// is omitted. `w:pgNumType` that is only `fmt=decimal` is omitted.
 /// `w:spacing` that is only `line=276` on a deleted paragraph mark restates
-/// Normal when the paragraph inserts nothing. Pure insertions keep that
+/// Normal when the paragraph inserts nothing, and only where the original's
+/// unstyled paragraphs are 276 themselves (`original_line`, `None` when
+/// unknown): over a single-spaced Normal Word keeps it, and Reject All gives
+/// the original's 1.15 lines back (221997f1c7). Pure insertions keep that
 /// spacing, and so does a paragraph that also holds inserted text: Word's
 /// redline keeps `line=276` there (simple_ordered_list × sublist_issue,
 /// "Lvl 1 – a"). An inserted pilcrow
 /// (`w:pPr/w:rPr/w:ins` and nothing else) on a paragraph that already
 /// contains both inserted and deleted text is not in Word's redline of
 /// italic-and-underline × italic-subscript.
-pub fn strip_unrecorded_word_defaults(dom: &mut Dom, root: NodeId) {
+pub fn strip_unrecorded_word_defaults(dom: &mut Dom, root: NodeId, original_line: Option<&str>) {
+    let line_restates_normal = original_line.is_none_or(|l| l == "276");
     let Some(body) = dom.element(root, &W::body()) else {
         return;
     };
@@ -5181,6 +5329,7 @@ pub fn strip_unrecorded_word_defaults(dom: &mut Dom, root: NodeId) {
         if let Some(rpr) = dom.element(ppr, &W::r_pr())
             && dom.element(rpr, &W::del()).is_some()
             && let Some(sp) = dom.element(ppr, &W::spacing_el())
+            && line_restates_normal
             && spacing_is_only_line_276(dom, sp)
             && !content_revision_marks(dom, p, ppr).0
         {
@@ -5555,7 +5704,15 @@ pub fn promote_heading_spacing_from_pprchange_on_last_mix(dom: &mut Dom, root: N
 /// Gate: **non-last** MIX with `pPrChange` carrying `jc`, no live `jc`, and
 /// ins_side+del_side tokens ≥6. Promote live `jc`; if old pPr is jc-only,
 /// drop `pPrChange` (Word mid-body shape).
-pub fn promote_live_jc_from_pprchange_on_body_mix(dom: &mut Dom, root: NodeId) {
+///
+/// A MIX whose revised text is a paragraph the revision leaves unaligned
+/// keeps the `pPrChange`: Word records the old centring over the revision's
+/// bare properties (29e3872eed), and promoting it centred the accepted text.
+pub fn promote_live_jc_from_pprchange_on_body_mix(
+    dom: &mut Dom,
+    root: NodeId,
+    revised_unaligned: &HashSet<String>,
+) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
     };
@@ -5598,7 +5755,7 @@ pub fn promote_live_jc_from_pprchange_on_body_mix(dom: &mut Dom, root: NodeId) {
             continue;
         };
         let val = dom.attribute(old_jc, &W::val()).unwrap_or("").to_string();
-        if val.is_empty() {
+        if val.is_empty() || revised_unaligned.contains(&accepted_text(dom, &kids, p)) {
             continue;
         }
         // Live jc before pPrChange.
@@ -11148,6 +11305,54 @@ pub fn ensure_empty_pprchange_on_live_heading_spacing(
     }
 }
 
+/// The text of each paragraph that sets no `w:jc`.
+pub fn unaligned_paragraph_texts(dom: &Dom, body: NodeId) -> HashSet<String> {
+    dom.descendants(body, Some(&W::p()))
+        .into_iter()
+        .filter(|&p| {
+            dom.element(p, &W::p_pr())
+                .and_then(|ppr| dom.element(ppr, &W::jc_el()))
+                .is_none()
+        })
+        .map(|p| {
+            dom.descendants(p, Some(&W::t()))
+                .into_iter()
+                .map(|t| dom.value(t))
+                .collect()
+        })
+        .collect()
+}
+
+/// The text `p` holds once accepted: its revised text after that of the
+/// paragraphs before it whose deleted marks merge them into `p`.
+fn accepted_text(dom: &Dom, kids: &[NodeId], p: NodeId) -> String {
+    let Some(at) = kids.iter().position(|&k| k == p) else {
+        return revised_text(dom, p);
+    };
+    let first = kids[..at]
+        .iter()
+        .rposition(|&k| !dom.name_is(k, &W::p()) || !para_mark_revision(dom, k, &W::del()))
+        .map_or(0, |i| i + 1);
+    kids[first..=at]
+        .iter()
+        .map(|&k| revised_text(dom, k))
+        .collect()
+}
+
+/// A redline paragraph's revised text: its live and inserted `w:t`.
+fn revised_text(dom: &Dom, p: NodeId) -> String {
+    dom.descendants(p, Some(&W::t()))
+        .into_iter()
+        .filter(|&t| {
+            !dom.ancestors(t, None)
+                .into_iter()
+                .take_while(|&a| a != p)
+                .any(|a| dom.name_is(a, &W::del()))
+        })
+        .map(|t| dom.value(t))
+        .collect()
+}
+
 /// Each paragraph's text and `w:jc` value, for paragraphs with a `w:jc`.
 pub fn paragraph_alignments(dom: &Dom, body: NodeId) -> HashSet<(String, String)> {
     dom.descendants(body, Some(&W::p()))
@@ -12713,6 +12918,14 @@ fn split_insertion_at(
         let rest = dom.new_element(name);
         copy_attrs(dom, leaf, rest, false);
         dom.set_value(rest, &suffix);
+        // Either half may now start or end with a space Word would trim
+        // (1bbdcbcf65 accepted "4-hour SLAand").
+        let space = XNamespace::xml().name("space");
+        for (half, text) in [(leaf, &prefix), (rest, &suffix)] {
+            if let Some(sp) = xml_space_attr(text) {
+                dom.set_attribute_value(half, &space, Some(sp));
+            }
+        }
         dom.add_after_self(leaf, rest);
         nodes.insert(idx + 1, rest);
         idx += 1;
@@ -13113,7 +13326,9 @@ fn stamp_trailing_numbering(
     if kids.len() != 1 || !dom.name_is(kids[0], &style_name) {
         return;
     }
-    if dom.attribute(kids[0], &W::val()) != Some("style0") {
+    // The default paragraph style: LibreOffice's `style0`, or its canonical
+    // id once the stylesheets are paired by name.
+    if !matches!(dom.attribute(kids[0], &W::val()), Some("style0" | "Normal")) {
         return;
     }
     if body_paragraphs(dom, revised)

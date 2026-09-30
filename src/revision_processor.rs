@@ -7,6 +7,16 @@
 //! Scope (per the implementation plan): the ACCEPT path only. Reject,
 //! consolidate, and the HTML/markdown surfaces are out of scope.
 
+mod annotation_ids;
+mod bookmarks;
+mod comments;
+mod notes;
+mod sections;
+pub(crate) mod style_records;
+mod word_save;
+
+pub(crate) use sections::Resolution;
+
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -114,7 +124,18 @@ pub fn accept_move_from_move_to_transform(dom: &mut Dom, node: NodeId) -> Vec<No
         return out;
     }
     if name == W::move_from() {
-        return vec![];
+        // A moved-from paragraph mark (`pPr/rPr/moveFrom`) stays for A.5a,
+        // which joins that paragraph with the next as Word does; dropping it
+        // here left an empty paragraph behind.
+        let is_mark = dom.parent(node).is_some_and(|rpr| {
+            dom.name(rpr) == Some(W::r_pr())
+                && dom.parent(rpr).and_then(|ppr| dom.name(ppr)) == Some(W::p_pr())
+        });
+        return if is_mark {
+            take_subtree(dom, node)
+        } else {
+            vec![]
+        };
     }
     let ne = dom.new_element(name);
     for (an, av) in dom.attributes(node) {
@@ -266,9 +287,11 @@ pub fn accept_all_other_revisions_transform(dom: &mut Dom, node: NodeId) -> Vec<
     // Accept deleted text: drop w:del. Hoist comment range markers that lived
     // inside the deletion so nested/table comment anchors survive accept
     // (docx_lots_of_comments redline: starts 9/10 sit between delText runs;
-    // dropping the whole w:del orphaned those comments → carry 2/6).
+    // dropping the whole w:del orphaned those comments → carry 2/6), and the
+    // bookmarks left there: `bookmarks::drop_wholly_deleted_bookmarks` has
+    // already removed those whose every character went.
     if name == W::del() {
-        return hoist_comment_markers_from(dom, node);
+        return hoist_range_markers_from(dom, node);
     }
 
     // Vertically-merged cell markers.
@@ -491,6 +514,9 @@ fn rebuild_named(dom: &mut Dom, new_name: XName, src: NodeId, keep_attrs: bool) 
 /// Port of `RejectRevisionsForPartTransform` — revert the *non-invertible*
 /// revisions (property changes) and drop inserted structural markers. Returns
 /// `None` to drop the node.
+///
+/// A property element reverting to its saved copy keeps the revisions a
+/// selective resolution left tracked in it ([`carry_kept_revisions`]).
 fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<NodeId> {
     if !dom.is_element(node) {
         return Some(dom.clone_subtree(node));
@@ -529,6 +555,25 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
             let rpr_clone = dom.clone_subtree(rpr);
             dom.add(new_prop, rpr_clone);
         }
+        // R9: a sectPrChange records the section's properties, never its
+        // header and footer references (CT_SectPrBase has none): the live
+        // ones stay, first as the schema orders them (205503ead9).
+        if name == W::sect_pr() {
+            let refs: Vec<NodeId> = dom
+                .elements(node, None)
+                .into_iter()
+                .filter(|&e| {
+                    dom.name(e).is_some_and(|n| {
+                        n == W::name("headerReference") || n == W::name("footerReference")
+                    })
+                })
+                .collect();
+            for r in refs.into_iter().rev() {
+                let c = dom.clone_subtree(r);
+                dom.add_first(new_prop, c);
+            }
+        }
+        carry_kept_revisions(dom, node, new_prop, false);
         return reject_revisions_for_part_transform(dom, new_prop);
     }
     // rPrChange: replace rPr by the change's saved rPr.
@@ -540,6 +585,7 @@ fn reject_revisions_for_part_transform(dom: &mut Dom, node: NodeId) -> Option<No
             Some(sp) => dom.clone_subtree(sp),
             None => dom.new_element(W::r_pr()),
         };
+        carry_kept_revisions(dom, node, new_rpr, true);
         return reject_revisions_for_part_transform(dom, new_rpr);
     }
     // numberingChange / cellDel / cellMerge → drop.
@@ -1025,15 +1071,42 @@ pub fn accept_move_from_ranges(dom: &mut Dom, document: NodeId) -> NodeId {
     }
 
     let end_set: HashSet<NodeId> = end_tags_in_range.into_iter().collect();
+    // A range is a pair of markers, not a container: Word ends one inside the
+    // first cell of the table after a moved heading (30f20e787b). The
+    // properties of a container the range only enters stay with it (a table
+    // keeps its tblPr and tblGrid); one wholly inside goes with its container.
+    // A paragraph's pPr inside the range is its mark, not moved text: its
+    // deleted or moved-from state is what A.5a joins paragraphs by (Word),
+    // and a paragraph that survives keeps its formatting.
     let to_delete: HashSet<NodeId> = start_tags_in_range
         .into_iter()
-        .filter(|e| end_set.contains(e))
+        .filter(|&e| {
+            end_set.contains(&e)
+                && !is_container_property(dom, e)
+                && !dom
+                    .ancestors(e, None)
+                    .into_iter()
+                    .any(|a| is_container_property(dom, a))
+        })
         .collect();
     if to_delete.is_empty() {
         return document;
     }
     accept_move_from_ranges_transform(dom, document, &to_delete)
         .expect("the document root is never in a moveFrom range")
+}
+
+/// Is `e` the property element of its container (a paragraph's pPr, a
+/// table's tblPr or tblGrid, a row's trPr or tblPrEx, a cell's tcPr, a
+/// content control's sdtPr or sdtEndPr)?
+fn is_container_property(dom: &Dom, e: NodeId) -> bool {
+    dom.name(e).is_some_and(|n| {
+        n.namespace_name() == W::URI
+            && matches!(
+                n.local_name(),
+                "pPr" | "tblPr" | "tblGrid" | "tblPrEx" | "trPr" | "tcPr" | "sdtPr" | "sdtEndPr"
+            )
+    })
 }
 
 /// A.2 — `AcceptMoveFromRangesTransform` (:2629): rebuild, dropping the
@@ -1420,6 +1493,11 @@ fn is_run_content(name: &XName) -> Option<bool> {
     if name.namespace_name() == crate::namespaces::M::URI {
         return Some(true);
     }
+    // A revision kept tracked holds content the paragraph keeps; its move
+    // range markers hold none.
+    if name.namespace_name() == FROZEN_NS {
+        return Some(!name.local_name().contains("Range"));
+    }
     if name.namespace_name() != W::URI {
         return None;
     }
@@ -1511,6 +1589,16 @@ fn all_para_content_is_deleted(dom: &mut Dom, p: NodeId) -> bool {
     })
 }
 
+/// Does every row of `tbl` carry `trPr/w:del` (and is there a row)?
+fn table_rows_all_deleted(dom: &Dom, tbl: NodeId) -> bool {
+    let rows = dom.elements(tbl, Some(&W::tr()));
+    !rows.is_empty()
+        && rows.into_iter().all(|tr| {
+            dom.element(tr, &W::tr_pr())
+                .is_some_and(|pr| dom.element(pr, &W::del()).is_some())
+        })
+}
+
 /// `p / pPr / rPr / (del | moveFrom)` — is the paragraph mark deleted or
 /// moved from?
 fn paragraph_mark_is_deleted_or_moved_from(dom: &Dom, p: NodeId) -> bool {
@@ -1551,8 +1639,9 @@ fn has_deleted_or_moved_from_paragraph_mark(dom: &Dom, root: NodeId) -> bool {
 /// form one DeletedRange group, which merges into a single paragraph carrying
 /// `g.Last()`'s pPr (:2271, the RP052 fix) and every member's collapsed
 /// content; the merged paragraph is nuked when its content is entirely
-/// deleted, its last member's mark is `w:del`, and it is the container's last
-/// block content (or a table follows) (:2276). Tables (and m:* block content)
+/// deleted, its last member's mark is deleted or moved away (C#: deleted
+/// only), and it is the container's last block content (or a table follows)
+/// (:2276). Tables (and m:* block content)
 /// bound groups and reset the state. FAITHFUL: the container rebuild keeps
 /// only `w:tcPr` children + the chain elements + the body-level `sectPr`
 /// (re-appended last); other non-chain children are dropped, and merged
@@ -1619,6 +1708,16 @@ pub fn accept_deleted_and_move_from_paragraph_marks_transform(
                     }
                 }
             }
+        } else if tn == W::tbl()
+            && state == 1
+            && c.next_block_content_element
+                .is_some_and(|n| dom.name(n) == Some(W::p()))
+            && table_rows_all_deleted(dom, this)
+        {
+            // Word: a table whose rows are all deleted vanishes on accept
+            // and does not end the deleted-mark run, which goes on to join
+            // the paragraph after it.
+            infos.push((true, current_key));
         } else if tn == W::tbl() || tn.namespace_name() == M::URI {
             current_key += 1;
             infos.push((false, current_key));
@@ -1651,21 +1750,25 @@ pub fn accept_deleted_and_move_from_paragraph_marks_transform(
             for z in group {
                 let this = z.0.this_block_content_element.unwrap();
                 orig_ids.push(this);
+                if dom.name(this) == Some(W::tbl()) {
+                    // A wholly deleted table absorbed into the run.
+                    continue;
+                }
                 for collapsed in collapse_paragraph_transform(dom, this) {
                     dom.add(np, collapsed);
                 }
             }
-            let last_mark_is_del = dom
-                .element(last_this, &W::p_pr())
-                .and_then(|ppr| dom.element(ppr, &W::r_pr()))
-                .is_some_and(|rpr| dom.element(rpr, &W::del()).is_some());
+            // Word also drops an emptied moved-away paragraph before a table
+            // (its Reject All of 30f20e787b's moved heading).
+            let last_mark_goes = paragraph_mark_is_deleted_or_moved_from(dom, last_this);
             let next = group.last().unwrap().0.next_block_content_element;
             let next_is_none_or_tbl =
                 next.is_none() || next.is_some_and(|n| dom.name(n) == Some(W::tbl()));
-            if all_para_content_is_deleted(dom, np) && last_mark_is_del && next_is_none_or_tbl {
+            if all_para_content_is_deleted(dom, np) && last_mark_goes && next_is_none_or_tbl {
                 // Nuke empty deleted para, but keep comment anchors that lived
-                // inside its w:del runs (starts 9/10 between delText).
-                let markers = hoist_comment_markers_from(dom, np);
+                // and bookmarks that lived inside its w:del runs (starts 9/10
+                // between delText).
+                let markers = hoist_range_markers_from(dom, np);
                 rebuilt.push((orig_ids, None, markers));
             } else {
                 rebuilt.push((orig_ids, Some(np), Vec::new()));
@@ -1771,16 +1874,19 @@ fn is_body_level_range_marker(name: &XName) -> bool {
         )
 }
 
-/// Pull comment range markers out of a subtree being discarded (e.g. accepted
-/// `w:del`) so nested anchors between delText runs are not lost.
-fn hoist_comment_markers_from(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
+/// Pull comment range and bookmark markers out of a subtree being discarded
+/// (e.g. accepted `w:del`) so anchors between delText runs are not lost.
+fn hoist_range_markers_from(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
     let mut out = Vec::new();
     for e in dom.descendants(node, None) {
         let Some(n) = dom.name(e) else {
             continue;
         };
         if n.namespace_name() == W::URI
-            && matches!(n.local_name(), "commentRangeStart" | "commentRangeEnd")
+            && matches!(
+                n.local_name(),
+                "commentRangeStart" | "commentRangeEnd" | "bookmarkStart" | "bookmarkEnd"
+            )
         {
             out.push(dom.clone_subtree(e));
         }
@@ -1796,6 +1902,18 @@ pub fn annotate_run_elements_with_id(dom: &mut Dom, element: NodeId) {
     let unique_id = PT::unique_id();
     for (run_id, r) in (0..).zip(dom.descendants(element, Some(&W::r()))) {
         dom.set_attribute_value(r, &unique_id, Some(&run_id.to_string()));
+    }
+}
+
+/// Number every descendant `w:p` (`pt:UniqueId` `p0`, `p1`, …) so A.5b can
+/// find a control's paragraphs when it has no run to anchor on (an empty
+/// control keeps its paragraph mark, and so its place). Not in the C#, which
+/// anchors on runs only and drops such a control whenever another paragraph
+/// mark of the part is deleted.
+fn annotate_paragraph_elements_with_id(dom: &mut Dom, element: NodeId) {
+    let unique_id = PT::unique_id();
+    for (paragraph_id, p) in (0..).zip(dom.descendants(element, Some(&W::p()))) {
+        dom.set_attribute_value(p, &unique_id, Some(&format!("p{paragraph_id}")));
     }
 }
 
@@ -1893,6 +2011,13 @@ pub fn add_block_level_content_controls(
         }
     }
 
+    let mut paragraph_by_id: HashMap<String, NodeId> = HashMap::new();
+    for p in dom.descendants(new_document, Some(&W::p())) {
+        if let Some(id) = dom.attribute(p, &unique_id) {
+            paragraph_by_id.entry(id.to_string()).or_insert(p);
+        }
+    }
+
     for cc in original_ccs {
         let cc_id = dom.attribute(cc, &unique_id).unwrap_or("").to_string();
         if existing_ids.contains(&cc_id) {
@@ -1914,10 +2039,75 @@ pub fn add_block_level_content_controls(
         // revision no longer exist after acceptance — filter_map skips them
         // and empty controls fall through to `continue` below (upstream C#
         // used .First() and crashed on fully-deleted sdt).
-        let runs_in_new_document: Vec<NodeId> = runs
+        // A run an earlier whole-paragraph wrap took out of the document (a
+        // control nested in one already restored from its clone) is gone.
+        // When every paragraph of the control goes, its deleted or moved-away
+        // text does not anchor it either: a control holding nothing else goes
+        // with its paragraphs, else its clone would replace the paragraph
+        // their marks merged into. A control whose text alone is deleted
+        // keeps its mark and so stays, emptied.
+        let paragraphs = dom.descendants(cc, Some(&W::p()));
+        let block_removed = !paragraphs.is_empty()
+            && paragraphs.iter().all(|&p| {
+                dom.element(p, &W::p_pr())
+                    .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+                    .is_some_and(|rpr| {
+                        dom.element(rpr, &W::del()).is_some()
+                            || dom.element(rpr, &W::move_from()).is_some()
+                    })
+            });
+        let mut runs_in_new_document: Vec<NodeId> = runs
             .iter()
             .filter_map(|id| run_by_id.get(id).copied())
+            .filter(|&r| {
+                let ancestors = dom.ancestors(r, None);
+                ancestors.contains(&new_document)
+                    && !(block_removed
+                        && ancestors.iter().any(|&a| {
+                            dom.name(a)
+                                .is_some_and(|n| n == W::del() || n == W::move_from())
+                        }))
+            })
             .collect();
+        // No run left to anchor it: the control stands on the paragraphs
+        // that kept their marks, emptied. A paragraph nested in the
+        // control's own content (a cell of the table it wraps) anchors it
+        // through that content, else the control would be rebuilt inside
+        // the table.
+        if runs_in_new_document.is_empty() && !block_removed {
+            let wrapper = |n: XName| n == sdt || n == W::sdt_content();
+            let content = dom.element(cc, &W::sdt_content());
+            let mut anchors: Vec<NodeId> = Vec::new();
+            for &p in &paragraphs {
+                let levels = dom
+                    .ancestors(p, None)
+                    .into_iter()
+                    .take_while(|&a| Some(a) != content)
+                    .filter(|&a| dom.name(a).is_some_and(|n| !wrapper(n)))
+                    .count();
+                let Some(mut anchor) = dom
+                    .attribute(p, &unique_id)
+                    .and_then(|id| paragraph_by_id.get(id).copied())
+                    .filter(|&p| dom.ancestors(p, None).contains(&new_document))
+                else {
+                    continue;
+                };
+                let mut climbed = 0;
+                while climbed < levels {
+                    let Some(parent) = dom.parent(anchor).filter(|&a| a != new_document) else {
+                        break;
+                    };
+                    if dom.name(parent).is_some_and(|n| !wrapper(n)) {
+                        climbed += 1;
+                    }
+                    anchor = parent;
+                }
+                if !anchors.contains(&anchor) {
+                    anchors.push(anchor);
+                }
+            }
+            runs_in_new_document = anchors;
+        }
 
         // deepest common ancestor of all the runs (nearest-first intersection)
         let Some(first_run) = runs_in_new_document.first().copied() else {
@@ -1928,18 +2118,20 @@ pub fn add_block_level_content_controls(
             let anc: HashSet<NodeId> = dom.ancestors(run, None).into_iter().collect();
             intersection.retain(|a| anc.contains(a));
         }
-        let Some(&common_ancestor) = intersection.first() else {
+        // A revision wrapper is no place for a block control: rebuilt inside
+        // the `w:del` holding all its text, the control would go with it.
+        let Some(&common_ancestor) = intersection.iter().find(|&&a| {
+            dom.name(a).is_none_or(|n| {
+                n != W::del() && n != W::ins() && n != W::move_from() && n != W::move_to()
+            })
+        }) else {
             continue;
         };
 
         let child_containing = |dom: &Dom, run: NodeId| -> NodeId {
-            dom.elements(common_ancestor, None)
+            dom.ancestors_and_self(run, None)
                 .into_iter()
-                .find(|&c| {
-                    dom.descendants_and_self(c, Some(&W::r()))
-                        .into_iter()
-                        .any(|z| z == run)
-                })
+                .find(|&c| dom.parent(c) == Some(common_ancestor))
                 .expect("common ancestor child containing the run")
         };
         let first_run_child = child_containing(dom, *runs_in_new_document.first().unwrap());
@@ -2033,6 +2225,7 @@ pub fn accept_deleted_and_move_from_paragraph_marks(dom: &mut Dom, element: Node
         return element;
     }
     annotate_run_elements_with_id(dom, element);
+    annotate_paragraph_elements_with_id(dom, element);
     annotate_content_controls_with_run_ids(dom, element);
     let new_element = accept_deleted_and_move_from_paragraph_marks_transform(dom, element);
     add_block_level_content_controls(dom, new_element, element)
@@ -2238,6 +2431,51 @@ pub fn accept_deleted_cells_transform(dom: &mut Dom, node: NodeId) -> NodeId {
 
 // ─────────────── A.8 — merge adjacent tables ────────────────────────────────
 
+/// R8: the `tblPrEx`-able properties of `member` that `first` (whose
+/// `tblPr` the merged table keeps) does not share.
+fn own_tbl_pr_ex(dom: &Dom, first: NodeId, member: NodeId) -> Vec<NodeId> {
+    let ex_of = |t: NodeId| -> Vec<NodeId> {
+        dom.element(t, &W::tbl_pr())
+            .map(|pr| {
+                dom.elements(pr, None)
+                    .into_iter()
+                    .filter(|&c| tbl_pr_ex_rank(dom, c).is_some())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let shared: HashSet<String> = ex_of(first)
+        .into_iter()
+        .map(|c| dom.serialize_element(c))
+        .collect();
+    ex_of(member)
+        .into_iter()
+        .filter(|&c| !shared.contains(&dom.serialize_element(c)))
+        .collect()
+}
+
+/// R8: row `tr`'s `tblPrEx` with its table's `own` properties under the
+/// row's own, in schema order.
+fn row_tbl_pr_ex(dom: &mut Dom, tr: NodeId, own: &[NodeId]) -> NodeId {
+    let row_ex: Vec<NodeId> = dom
+        .element(tr, &W::name("tblPrEx"))
+        .map(|ex| dom.elements(ex, None))
+        .unwrap_or_default();
+    let mut kids: Vec<NodeId> = row_ex.clone();
+    for &c in own {
+        if !row_ex.iter().any(|&r| dom.name(r) == dom.name(c)) {
+            kids.push(c);
+        }
+    }
+    kids.sort_by_key(|&c| tbl_pr_ex_rank(dom, c).unwrap_or(TBL_PR_EX.len()));
+    let ex = dom.new_element(W::name("tblPrEx"));
+    for c in kids {
+        let cc = dom.clone_subtree(c);
+        dom.add(ex, cc);
+    }
+    ex
+}
+
 /// A.8 — `FixWidths` (:1484): clone the table and rewrite each `w:tcW`'s
 /// `w:w` to the sum of the grid columns its cell spans (per the ORIGINAL
 /// table's `tblGrid`). FAITHFUL: cells without a `tcW` do not advance the
@@ -2294,40 +2532,111 @@ fn table_has_revision_marks(dom: &Dom, tbl: NodeId) -> bool {
     false
 }
 
+/// Which runs of adjacent tables A.8 merges.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TableMerge {
+    /// M112 (compare): a run with a revision-marked member.
+    Revised,
+    /// Word's save after Accept / Reject All: a run of tables alike in every
+    /// property only a whole table carries (R8).
+    WordSave,
+}
+
+/// The `tblPr` children a row can override through `w:tblPrEx`
+/// (`CT_TblPrExBase`), in schema order.
+const TBL_PR_EX: [&str; 9] = [
+    "tblW",
+    "jc",
+    "tblCellSpacing",
+    "tblInd",
+    "tblBorders",
+    "shd",
+    "tblLayout",
+    "tblCellMar",
+    "tblLook",
+];
+
+fn tbl_pr_ex_rank(dom: &Dom, e: NodeId) -> Option<usize> {
+    let n = dom.name(e)?;
+    (n.namespace_name() == W::URI)
+        .then(|| TBL_PR_EX.iter().position(|&l| l == n.local_name()))
+        .flatten()
+}
+
+/// A table's whole-table properties (its `tblPr` minus what `tblPrEx` can
+/// carry), serialized: Word joins adjacent tables whose keys agree. A grid
+/// change still tracked (a selective resolution kept it) is the table's own,
+/// so it keys the table apart.
+fn whole_table_key(dom: &Dom, tbl: NodeId) -> String {
+    let mut key = String::from("tbl");
+    if let Some(pr) = dom.element(tbl, &W::tbl_pr()) {
+        for c in dom.elements(pr, None) {
+            if tbl_pr_ex_rank(dom, c).is_none() {
+                key.push_str(&dom.serialize_element(c));
+            }
+        }
+    }
+    for grid in dom.elements(tbl, Some(&W::name("tblGrid"))) {
+        for change in dom.elements(grid, Some(&W::name("tblGridChange"))) {
+            key.push_str(&dom.serialize_element(change));
+        }
+    }
+    key
+}
+
+/// The grouping key of A.8 for `e` (empty: not a table).
+fn table_merge_key(dom: &Dom, e: NodeId, mode: TableMerge) -> String {
+    if dom.name(e) != Some(W::tbl()) {
+        return String::new();
+    }
+    if mode == TableMerge::WordSave {
+        return whole_table_key(dom, e);
+    }
+    let bidi = dom
+        .elements(e, Some(&W::tbl_pr()))
+        .into_iter()
+        .any(|p| dom.element(p, &W::name("bidiVisual")).is_some());
+    if bidi {
+        "tbl|bidiVisual".to_string()
+    } else {
+        "tbl".to_string()
+    }
+}
+
 /// True if any element under `root` has ≥2 adjacent direct `w:tbl` children
-/// where at least one member carries revision marks (the only case A.8 merges).
-fn subtree_needs_adjacent_table_merge(dom: &Dom, root: NodeId) -> bool {
-    let tbl_name = W::tbl();
-    fn walk(dom: &Dom, id: NodeId, tbl_name: &XName) -> bool {
+/// that A.8 merges in `mode`.
+fn subtree_needs_adjacent_table_merge(dom: &Dom, root: NodeId, mode: TableMerge) -> bool {
+    fn walk(dom: &Dom, id: NodeId, mode: TableMerge) -> bool {
         if !dom.is_element(id) {
             return false;
         }
         // Scan direct element children for adjacent tbl runs.
         let kids = dom.elements(id, None);
-        let mut run = 0usize;
+        let mut prev_key = String::new();
         let mut run_has_rev = false;
         for &k in &kids {
-            if dom.name(k).as_ref() == Some(tbl_name) {
-                run += 1;
-                if table_has_revision_marks(dom, k) {
-                    run_has_rev = true;
-                }
-                if run >= 2 && run_has_rev {
-                    return true;
-                }
-            } else {
-                run = 0;
+            let key = table_merge_key(dom, k, mode);
+            if key.is_empty() {
+                prev_key = key;
                 run_has_rev = false;
+                continue;
             }
-        }
-        for &k in &kids {
-            if walk(dom, k, tbl_name) {
-                return true;
+            let joins = key == prev_key;
+            match mode {
+                TableMerge::WordSave if joins => return true,
+                TableMerge::WordSave => {}
+                TableMerge::Revised => {
+                    run_has_rev = (joins && run_has_rev) || table_has_revision_marks(dom, k);
+                    if joins && run_has_rev {
+                        return true;
+                    }
+                }
             }
+            prev_key = key;
         }
-        false
+        kids.into_iter().any(|k| walk(dom, k, mode))
     }
-    walk(dom, root, &tbl_name)
+    walk(dom, root, mode)
 }
 
 /// A.8 — `MergeAdjacentTablesTransform` (:464): where an element has direct
@@ -2347,8 +2656,20 @@ fn subtree_needs_adjacent_table_merge(dom: &Dom, root: NodeId) -> bool {
 /// ACCEPT-SKIP-A8: when no mergeable adjacent revision-bearing table group
 /// exists anywhere under `node`, transfer without a full-tree rebuild.
 pub fn merge_adjacent_tables_transform(dom: &mut Dom, node: NodeId) -> NodeId {
+    merge_adjacent_tables(dom, node, TableMerge::Revised)
+}
+
+/// R8 — Word's save after Accept / Reject All: adjacent tables alike in every
+/// whole-table property are one table in Word's model (72cc9f4ac6,
+/// 3d4318d7e9); a later member's own `tblPrEx`-able properties ride on its
+/// rows. Identity when nothing merges.
+fn merge_adjacent_tables_like_word(dom: &mut Dom, node: NodeId) -> NodeId {
+    merge_adjacent_tables(dom, node, TableMerge::WordSave)
+}
+
+fn merge_adjacent_tables(dom: &mut Dom, node: NodeId, mode: TableMerge) -> NodeId {
     // ACCEPT-SKIP-A8: nothing to merge → identity (keep parent links).
-    if !subtree_needs_adjacent_table_merge(dom, node) {
+    if !subtree_needs_adjacent_table_merge(dom, node, mode) {
         return node;
     }
     if !dom.is_element(node) {
@@ -2362,27 +2683,14 @@ pub fn merge_adjacent_tables_transform(dom: &mut Dom, node: NodeId) -> NodeId {
             dom.set_attribute_value(ne, &an, Some(&av));
         }
         for c in dom.nodes(node) {
-            let tc = merge_adjacent_tables_transform(dom, c);
+            let tc = merge_adjacent_tables(dom, c, mode);
             dom.add(ne, tc);
         }
         return ne;
     }
 
     let children = dom.elements(node, None);
-    let grouped = crate::util::group_adjacent(children, |&e| {
-        if dom.name(e) != Some(tbl_name.clone()) {
-            return String::new();
-        }
-        let bidi = dom
-            .elements(e, Some(&W::tbl_pr()))
-            .into_iter()
-            .any(|p| dom.element(p, &W::name("bidiVisual")).is_some());
-        if bidi {
-            "tbl|bidiVisual".to_string()
-        } else {
-            "tbl".to_string()
-        }
-    });
+    let grouped = crate::util::group_adjacent(children, |&e| table_merge_key(dom, e, mode));
 
     let ne = dom.new_element(name);
     for (an, av) in dom.attributes(node) {
@@ -2397,7 +2705,7 @@ pub fn merge_adjacent_tables_transform(dom: &mut Dom, node: NodeId) -> NodeId {
             continue;
         }
         // M112: leave clean adjacent tables unmerged (Word Compare shape).
-        if !group.iter().any(|&t| table_has_revision_marks(dom, t)) {
+        if mode == TableMerge::Revised && !group.iter().any(|&t| table_has_revision_marks(dom, t)) {
             for e in group {
                 let c = dom.clone_subtree(e);
                 dom.add(ne, c);
@@ -2437,16 +2745,28 @@ pub fn merge_adjacent_tables_transform(dom: &mut Dom, node: NodeId) -> NodeId {
         dom.add(new_table, new_grid);
 
         for &tbl in &group {
+            let own_ex = if mode == TableMerge::WordSave && tbl != group[0] {
+                own_tbl_pr_ex(dom, group[0], tbl)
+            } else {
+                Vec::new()
+            };
             let fixed = fix_widths(dom, tbl);
             for tr in dom.elements(fixed, Some(&W::tr())) {
                 let new_row = dom.new_element(W::tr());
                 for (an, av) in dom.attributes(tr) {
                     dom.set_attribute_value(new_row, &an, Some(&av));
                 }
+                if !own_ex.is_empty() {
+                    let ex = row_tbl_pr_ex(dom, tr, &own_ex);
+                    dom.add(new_row, ex);
+                }
                 let non_cells: Vec<NodeId> = dom
                     .elements(tr, None)
                     .into_iter()
-                    .filter(|&e| dom.name(e) != Some(W::tc()))
+                    .filter(|&e| {
+                        dom.name(e) != Some(W::tc())
+                            && (own_ex.is_empty() || dom.name(e) != Some(W::name("tblPrEx")))
+                    })
                     .collect();
                 for e in non_cells {
                     let c = dom.clone_subtree(e);
@@ -2632,6 +2952,7 @@ pub fn accept_revisions_for_part_content(dom: &mut Dom, root: NodeId) -> NodeId 
     let has_rev = element_has_tracked_revisions(dom, root);
     let e = remove_rsid_transform(dom, root).expect("root not dropped by rsid removal");
     let e = if has_rev {
+        bookmarks::drop_wholly_deleted_bookmarks(dom, e);
         let e = fix_up_deleted_or_inserted_field_codes_transform(dom, e);
         let contains_move_from = !dom.descendants(e, Some(&W::move_from())).is_empty();
         let e = {
@@ -2654,7 +2975,9 @@ pub fn accept_revisions_for_part_content(dom: &mut Dom, root: NodeId) -> NodeId 
             v[0]
         };
         let e = accept_deleted_cells_transform(dom, e);
-        merge_adjacent_tables_transform(dom, e)
+        let e = merge_adjacent_tables_transform(dom, e);
+        bookmarks::drop_unpaired_bookmarks(dom, e);
+        e
     } else {
         e
     };
@@ -2683,6 +3006,28 @@ pub fn accept_revisions_for_part_content(dom: &mut Dom, root: NodeId) -> NodeId 
 }
 
 // ─────────────── A.11 — package-scope accept / reject ───────────────────────
+
+/// A property element `live` reverting to its saved copy `reverted` keeps
+/// the revisions left tracked in it (frozen by a selective resolution): a
+/// paragraph mark's insertion or deletion ahead of the run properties
+/// (`first`), a row's or a cell's marks after the rest.
+fn carry_kept_revisions(dom: &mut Dom, live: NodeId, reverted: NodeId, first: bool) {
+    let kept: Vec<NodeId> = dom
+        .elements(live, None)
+        .into_iter()
+        .filter(|&e| dom.name(e).is_some_and(|n| n.namespace_name() == FROZEN_NS))
+        .collect();
+    let kept: Vec<NodeId> = kept.into_iter().map(|e| dom.clone_subtree(e)).collect();
+    if first {
+        for c in kept.into_iter().rev() {
+            dom.add_first(reverted, c);
+        }
+    } else {
+        for c in kept {
+            dom.add(reverted, c);
+        }
+    }
+}
 
 /// A.11 — `AcceptRevisionsForStylesTransform` (:1300): drop `pPrChange`/
 /// `rPrChange` from the styles part, rebuild the rest.
@@ -2741,7 +3086,20 @@ fn reject_revisions_for_styles_transform(dom: &mut Dom, node: NodeId) -> Option<
 
 /// The parts `AcceptRevisions`/`RejectRevisions` (:1277/:31) walk, in the C#
 /// order: main, headers, footers, endnotes, footnotes, then styles (flagged).
-fn revision_bearing_parts(pkg: &crate::opc::PartFs) -> Vec<(String, bool)> {
+/// The main document's numbering part, when it has one.
+fn numbering_part(pkg: &crate::opc::PartFs) -> Option<String> {
+    let main = pkg.main_document_part()?;
+    let rels = pkg.read_rels_for(&main)?;
+    rels.items
+        .iter()
+        .find(|r| {
+            r.target_mode.as_deref() != Some("External")
+                && r.rel_type.rsplit('/').next() == Some("numbering")
+        })
+        .map(|r| pkg.resolve_rel_target(&main, &r.target))
+}
+
+pub(crate) fn revision_bearing_parts(pkg: &crate::opc::PartFs) -> Vec<(String, bool)> {
     let main = pkg
         .main_document_part()
         .unwrap_or_else(|| "word/document.xml".to_string());
@@ -2804,17 +3162,7 @@ where
 /// pipeline over main + headers + footers + endnotes + footnotes, and the
 /// styles transform over the styles part.
 pub fn accept_revisions_package(pkg: &mut crate::opc::PartFs) {
-    for (part, is_styles) in revision_bearing_parts(pkg) {
-        if is_styles {
-            process_part(pkg, &part, |dom, root| {
-                accept_revisions_for_styles_transform(dom, root)
-            });
-        } else {
-            process_part(pkg, &part, |dom, root| {
-                Some(accept_revisions_for_part_content(dom, root))
-            });
-        }
-    }
+    resolve_package(pkg, Resolution::Accept, None);
 }
 
 /// A.11 — `RejectRevisions` (:31) at package scope: per content part, the
@@ -2823,16 +3171,87 @@ pub fn accept_revisions_package(pkg: &mut crate::opc::PartFs) {
 /// is equivalent); the styles part reverts its property changes then accepts
 /// the leftovers.
 pub fn reject_revisions_package(pkg: &mut crate::opc::PartFs) {
-    for (part, is_styles) in revision_bearing_parts(pkg) {
-        if is_styles {
-            process_part(pkg, &part, |dom, root| {
-                let rejected = reject_revisions_for_styles_transform(dom, root)?;
-                accept_revisions_for_styles_transform(dom, rejected)
-            });
-        } else {
-            process_part(pkg, &part, |dom, root| {
-                Some(reject_revisions_document(dom, root))
-            });
-        }
+    resolve_package(pkg, Resolution::Reject, None);
+}
+
+/// Revision elements renamed into this namespace sit a resolution out and
+/// come back unchanged ([`crate::changes`]).
+pub(crate) const FROZEN_NS: &str = "urn:jubarte:frozen-revision";
+
+/// Called with each revision-bearing part's name and parsed root before it
+/// is resolved; renames the revisions to keep into [`FROZEN_NS`].
+pub(crate) type Freeze<'a> = &'a dyn Fn(&str, &mut Dom, NodeId);
+
+/// Accept or reject every revision `freeze` leaves in place. Annotation ids
+/// are renumbered only when no revision is left, so the ids of the ones kept
+/// still name them.
+pub(crate) fn resolve_package(
+    pkg: &mut crate::opc::PartFs,
+    resolution: Resolution,
+    freeze: Option<Freeze<'_>>,
+) {
+    let parts = revision_bearing_parts(pkg);
+    let levels = numbering_part(pkg)
+        .and_then(|p| pkg.part_string(&p))
+        .map(|xml| style_records::Levels::parse(&xml))
+        .unwrap_or_default();
+    let mut kept = false;
+    for (part, is_styles) in parts.clone() {
+        process_part(pkg, &part, |dom, root| {
+            if let Some(freeze) = freeze {
+                freeze(&part, dom, root);
+            }
+            let resolved = match (is_styles, resolution) {
+                (true, Resolution::Accept) => accept_revisions_for_styles_transform(dom, root),
+                (true, Resolution::Reject) => {
+                    let recorded = style_records::recorded_blocks(dom, root);
+                    let rejected = reject_revisions_for_styles_transform(dom, root)?;
+                    style_records::restore_against_built_ins(dom, rejected, &recorded, &levels);
+                    accept_revisions_for_styles_transform(dom, rejected)
+                }
+                (false, _) => {
+                    sections::carry_vanishing_section_references(dom, root, resolution);
+                    Some(match resolution {
+                        Resolution::Accept => accept_revisions_for_part_content(dom, root),
+                        Resolution::Reject => reject_revisions_document(dom, root),
+                    })
+                }
+            }?;
+            kept |= thaw(dom, resolved);
+            Some(resolved)
+        });
     }
+    let stories = story_parts(&parts);
+    comments::prune_orphan_comments(pkg, &stories);
+    notes::prune_orphan_notes(pkg, &stories);
+    if !kept {
+        annotation_ids::renumber(pkg, &stories);
+    }
+    word_save::tidy(pkg, &stories);
+}
+
+/// Rename every frozen revision element under `root` back into `w:`; true
+/// when there was one.
+fn thaw(dom: &mut Dom, root: NodeId) -> bool {
+    let frozen: Vec<(NodeId, String)> = dom
+        .descendants_and_self(root, None)
+        .into_iter()
+        .filter_map(|e| {
+            let name = dom.name(e)?;
+            (name.namespace_name() == FROZEN_NS).then(|| (e, name.local_name().to_string()))
+        })
+        .collect();
+    for (e, local) in &frozen {
+        dom.set_name(*e, W::name(local));
+    }
+    !frozen.is_empty()
+}
+
+/// The content parts of [`revision_bearing_parts`] (styles left out).
+fn story_parts(parts: &[(String, bool)]) -> Vec<String> {
+    parts
+        .iter()
+        .filter(|(_, is_styles)| !is_styles)
+        .map(|(p, _)| p.clone())
+        .collect()
 }

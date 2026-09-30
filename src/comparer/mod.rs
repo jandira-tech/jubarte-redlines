@@ -155,9 +155,17 @@ pub fn compare_bodies_faithful_with_notes(
     // M92 guard: the revised document's own final-paragraph spacing, read
     // before atomize consumes body2.
     let revised_tail_spacing = finalize::last_body_para_spacing(dom, body2);
+    // The closing paragraphs' properties: the revision's go live on the
+    // story's closing mark, the original's into its pPrChange.
+    let closing_pprs = (
+        finalize::closing_paragraph_properties(dom, body1),
+        finalize::closing_paragraph_properties(dom, body2),
+    );
     // M454 guard: the original's aligned paragraphs, read before the compare
     // consumes body1.
     let original_alignment = finalize::paragraph_alignments(dom, body1);
+    // M449 guard: the revision's paragraphs that set no alignment.
+    let revised_unaligned = finalize::unaligned_paragraph_texts(dom, body2);
     let saved_sectpr: Option<NodeId> = {
         let last_sect = |dom: &mut Dom, body: NodeId| {
             dom.element(body, &W::sect_pr())
@@ -341,6 +349,34 @@ pub fn compare_bodies_faithful_with_notes(
                     }
                     dom.add(change, old_clean);
                     dom.add(clean, change);
+                    // Word's Accept All fills the attributes the live cols
+                    // leaves out from the recorded section: `<w:cols
+                    // w:space="720"/>` over two old columns accepted into two
+                    // columns (440c36d875). Word's redline spells the column
+                    // count and equal widths out.
+                    let cols = W::name("cols");
+                    if let (Some(live), Some(old)) =
+                        (dom.element(clean, &cols), dom.element(old_sp, &cols))
+                    {
+                        for attr in ["num", "equalWidth"] {
+                            let name = W::name(attr);
+                            if dom.attribute(live, &name).is_none()
+                                && dom.attribute(old, &name).is_some()
+                            {
+                                dom.set_attribute_value(live, &name, Some("1"));
+                            }
+                        }
+                    }
+                    // Likewise a docGrid the live section leaves out: Accept
+                    // All kept the old `type="lines" linePitch="312"` grid
+                    // (bf3d5eb650). Word's redline writes the default grid.
+                    let grid = W::name("docGrid");
+                    if dom.element(clean, &grid).is_none() && dom.element(old_sp, &grid).is_some() {
+                        let g = dom.new_element(grid);
+                        dom.set_attribute_value(g, &W::name("linePitch"), Some("0"));
+                        dom.set_attribute_value(g, &W::name("type"), Some("default"));
+                        dom.add_before_self(change, g);
+                    }
                 }
             }
             clean
@@ -577,6 +613,16 @@ pub fn compare_bodies_faithful_with_notes(
     if settings.merge_replaced_paragraphs && !story_final_paired {
         story_final_paired = final_empty_paragraphs_paired(dom, &seqs);
     }
+    // The revised story's closing mark is paired: every inserted paragraph
+    // before the trailing deletions is the revision's own, none stands in
+    // for its closing paragraph (73105518ef, 6fb9bbdb49).
+    let revised_close_paired = seqs.last().is_some_and(|s| {
+        s.correlation_status == CorrelationStatus::Equal
+            && s.com_units_2
+                .as_deref()
+                .and_then(<[atoms::ComparisonUnit]>::last)
+                .is_some_and(|u| lcs::unit_closes_story(dom, u))
+    });
     // Word skip-ahead moves: Equal after pure A-only deletes → ins early +
     // del late so detect_moves can emit moveTo/moveFrom (page-order parity).
     moves::promote_skip_ahead_equals(&mut seqs, settings);
@@ -781,11 +827,17 @@ pub fn compare_bodies_faithful_with_notes(
         // base title (Word IIIIM). Strip-first removed the empty, then
         // merge_replaced MIX-ed "something" into the del (~66 vs e3 ~97).
         // M86: whitespace pure-ins + following pure-del → mixed (file_88).
-        finalize::fold_whitespace_pure_ins_into_following_pure_del(dom, root);
+        // Only B's closing paragraph folds; a paired closing mark leaves none.
+        if !revised_close_paired {
+            finalize::fold_whitespace_pure_ins_into_following_pure_del(dom, root);
+        }
         // M392: restore empty pure-I spacers before short pure-D title (file_36).
         finalize::ensure_empty_pure_i_before_short_title_del(dom, root, settings, &mut id);
-        // M85a: empty pure-ins before trailing pure-del residual (file_49).
-        finalize::strip_empty_pure_ins_before_trailing_pure_dels(dom, root);
+        // M85a: empty pure-ins before trailing pure-del residual (file_49),
+        // unless the revision's closing mark is paired: then they are its own.
+        if !revised_close_paired {
+            finalize::strip_empty_pure_ins_before_trailing_pure_dels(dom, root);
+        }
         // M85b: last pure-del mark-only pPr → bare del (file_186/49).
         finalize::strip_last_pure_del_mark_only_ppr(dom, root);
         finalize::strip_last_pure_del_mark_when_pprchange(dom, root);
@@ -869,7 +921,7 @@ pub fn compare_bodies_faithful_with_notes(
         // M102c: last pure-del inherits prev live jc (file_148 center+spacing).
         finalize::last_pure_del_inherit_prev_jc(dom, root);
         // M449: body MIX parks jc in pPrChange; Word keeps live jc (right-align).
-        finalize::promote_live_jc_from_pprchange_on_body_mix(dom, root);
+        finalize::promote_live_jc_from_pprchange_on_body_mix(dom, root, &revised_unaligned);
         // M452: short title MIX has no pPr; Word parks body live jc into
         // pPrChange only (right_aligned_italic×right_alignment_2 residual).
         // Park-only — live title jc thrash'd (abandoned M451 title attempt).
@@ -898,10 +950,14 @@ pub fn compare_bodies_faithful_with_notes(
         // Structure-mutating peels (invalidate pure-del/mixed classification).
         finalize::strip_trailing_empty_pure_ins(dom, root);
         // M341: fold before strip (see pre-merge order note above).
-        finalize::fold_whitespace_pure_ins_into_following_pure_del(dom, root);
+        if !revised_close_paired {
+            finalize::fold_whitespace_pure_ins_into_following_pure_del(dom, root);
+        }
         // M392: restore empty pure-I spacers before short pure-D title (file_36).
         finalize::ensure_empty_pure_i_before_short_title_del(dom, root, settings, &mut id);
-        finalize::strip_empty_pure_ins_before_trailing_pure_dels(dom, root);
+        if !revised_close_paired {
+            finalize::strip_empty_pure_ins_before_trailing_pure_dels(dom, root);
+        }
         // M438: title-page pure-I e×6 DD E — relocate last empty pure-I after
         // pure-D as bare trailing empty (doc_with_spaces×spacing Word shape).
         // The paired story-final mark is already that trailing paragraph.
@@ -981,6 +1037,25 @@ pub fn compare_bodies_faithful_with_notes(
         // A deleted section that echoes the inserted heading belongs before
         // the table, in the original's order (lots-of-comments).
         finalize::restore_echoed_heading_deletions_before_table(dom, root);
+        // After every peel, the closing mark carries the revision's
+        // properties live and the original's in its pPrChange.
+        let default_line = |dom: &Dom, r: NodeId| {
+            dom.attribute(r, &crate::namespaces::PT::default_line())
+                .map(str::to_string)
+        };
+        let lines = (
+            default_line(dom, source_root1),
+            default_line(dom, source_root2),
+        );
+        finalize::closing_mark_takes_revised_properties(
+            dom,
+            root,
+            closing_pprs.0,
+            closing_pprs.1,
+            (lines.0.as_deref(), lines.1.as_deref()),
+            settings,
+            &mut id,
+        );
         // After every peel: a pPr that carries neither layout nor a pilcrow
         // mark is not in Word's redline. Empty pPrChange shells on the short
         // title mixes are the same nothing.
@@ -988,7 +1063,7 @@ pub fn compare_bodies_faithful_with_notes(
         // Default nextPage, false cantSplit, rtl 0, table jc left, line=276
         // on a deleted mark, and an inserted pilcrow on a mixed paragraph
         // are absent from Word's redline once the text matches.
-        finalize::strip_unrecorded_word_defaults(dom, root);
+        finalize::strip_unrecorded_word_defaults(dom, root, lines.0.as_deref());
         // Table look and comment-reference size are present on Word's
         // redline whenever this corpus has the underlying table or mark.
         finalize::align_word_table_and_comment_chrome(dom, root);

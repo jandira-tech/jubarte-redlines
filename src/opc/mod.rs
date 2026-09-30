@@ -363,6 +363,45 @@ impl PartFs {
         rels.items.retain(|r| r.rel_type != rel_type);
     }
 
+    /// Remove the relationship `rel_id` of `source_part` and, unless another
+    /// internal relationship still targets it, the part it names with that
+    /// part's own relationships and content-type override. No-op for an
+    /// unknown or external relationship.
+    pub fn remove_related_part(&mut self, source_part: &str, rel_id: &str) {
+        let key = norm(source_part);
+        let Some(target) = self.pkg.get_part_rels(&key).and_then(|rels| {
+            rels.items
+                .iter()
+                .find(|r| r.id == rel_id && r.target_mode.as_deref() != Some("External"))
+                .map(|r| r.target.clone())
+        }) else {
+            return;
+        };
+        let part = self.resolve_rel_target(source_part, &target);
+        self.pkg
+            .get_or_create_part_rels(&key)
+            .items
+            .retain(|r| r.id != rel_id);
+        let still_targeted = self
+            .pkg
+            .part_rels
+            .iter()
+            .map(|(source, rels)| (source.as_str(), rels))
+            .chain(std::iter::once(("/", &self.pkg.package_rels)))
+            .any(|(source, rels)| {
+                rels.items.iter().any(|r| {
+                    r.target_mode.as_deref() != Some("External")
+                        && self.resolve_rel_target(source, &r.target) == part
+                })
+            });
+        if still_targeted {
+            return;
+        }
+        self.pkg.parts.remove(&norm(&part));
+        self.pkg.part_rels.remove(&norm(&part));
+        self.remove_content_type_override(&format!("/{part}"));
+    }
+
     /// `readRelsFor(part)` — the relationships of a part, if any.
     pub fn read_rels_for(&self, part_name: &str) -> Option<&Relationships> {
         self.pkg.get_part_rels(&norm(part_name))
@@ -377,6 +416,16 @@ impl PartFs {
         target: &str,
     ) -> String {
         self.part_rels_mut(source_part).add(rel_type, target)
+    }
+
+    /// The package's own relationships (`_rels/.rels`).
+    pub fn package_relationships(&self) -> &Relationships {
+        &self.pkg.package_rels
+    }
+
+    /// Add a package-level relationship, returning its id.
+    pub fn add_package_relationship(&mut self, rel_type: &str, target: &str) -> String {
+        self.pkg.package_rels.add(rel_type, target)
     }
 
     /// A part's relationships, created empty when missing. Created through
