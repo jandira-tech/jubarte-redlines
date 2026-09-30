@@ -6946,8 +6946,11 @@ fn compare_documents_impl(
             changed |= restore_styles(&mut sd, or, only_a);
             // M483: re-cache themed color hexes against the shipped theme —
             // must run AFTER the merge writes B's blocks (their w:val hexes
-            // were cached under B's theme).
-            if let Some(theme_xml) = out.part_string("word/theme/theme1.xml") {
+            // were cached under B's theme). The shipped theme is the one the
+            // main part references, wherever it lives.
+            if let Some(theme_xml) =
+                referenced_theme_part(&out, &main1).and_then(|p| out.part_string(&p))
+            {
                 changed |= reresolve_theme_color_hexes(&mut sd, or, &theme_xml);
             }
             if changed {

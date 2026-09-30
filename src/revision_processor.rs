@@ -2070,14 +2070,43 @@ pub fn add_block_level_content_controls(
             })
             .collect();
         // No run left to anchor it: the control stands on the paragraphs
-        // that kept their marks, emptied.
+        // that kept their marks, emptied. A paragraph nested in the
+        // control's own content (a cell of the table it wraps) anchors it
+        // through that content, else the control would be rebuilt inside
+        // the table.
         if runs_in_new_document.is_empty() && !block_removed {
-            runs_in_new_document = paragraphs
-                .iter()
-                .filter_map(|&p| dom.attribute(p, &unique_id))
-                .filter_map(|id| paragraph_by_id.get(id).copied())
-                .filter(|&p| dom.ancestors(p, None).contains(&new_document))
-                .collect();
+            let wrapper = |n: XName| n == sdt || n == W::sdt_content();
+            let content = dom.element(cc, &W::sdt_content());
+            let mut anchors: Vec<NodeId> = Vec::new();
+            for &p in &paragraphs {
+                let levels = dom
+                    .ancestors(p, None)
+                    .into_iter()
+                    .take_while(|&a| Some(a) != content)
+                    .filter(|&a| dom.name(a).is_some_and(|n| !wrapper(n)))
+                    .count();
+                let Some(mut anchor) = dom
+                    .attribute(p, &unique_id)
+                    .and_then(|id| paragraph_by_id.get(id).copied())
+                    .filter(|&p| dom.ancestors(p, None).contains(&new_document))
+                else {
+                    continue;
+                };
+                let mut climbed = 0;
+                while climbed < levels {
+                    let Some(parent) = dom.parent(anchor).filter(|&a| a != new_document) else {
+                        break;
+                    };
+                    if dom.name(parent).is_some_and(|n| !wrapper(n)) {
+                        climbed += 1;
+                    }
+                    anchor = parent;
+                }
+                if !anchors.contains(&anchor) {
+                    anchors.push(anchor);
+                }
+            }
+            runs_in_new_document = anchors;
         }
 
         // deepest common ancestor of all the runs (nearest-first intersection)

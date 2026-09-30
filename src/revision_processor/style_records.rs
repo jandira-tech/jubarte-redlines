@@ -27,7 +27,7 @@
 //! level's pPr, which supplies it anyway (R29: 2288f27be1 and 2e3f1e261d's
 //! List Bullet / List Number indents and num tabs, 512b24be1e, f8c1ce3e92).
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::comparer::order_tables::{PPR_ORDER, RPR_ORDER};
 use crate::namespaces::{W, W14};
@@ -270,10 +270,12 @@ fn signature(dom: &Dom, e: NodeId) -> String {
     format!("{name}({}){{{}}}", attrs.join(","), children.concat())
 }
 
-/// The pPr slots of each numbering level by `(numId, ilvl)`, a
-/// `lvlOverride`'s level taking over the abstract one.
+/// The pPr slots of each numbering level, by numId and ilvl: the abstract's
+/// levels (through a `w:numStyleLink`, the linked abstract's, as rendering
+/// reads them), a full `lvlOverride` level taking over the abstract one.
+/// A level without pPr has no slots.
 #[derive(Default)]
-pub(super) struct Levels(HashMap<(String, String), HashMap<Slot, String>>);
+pub(super) struct Levels(HashMap<String, BTreeMap<u32, HashMap<Slot, String>>>);
 
 impl Levels {
     pub(super) fn parse(numbering_xml: &str) -> Self {
@@ -282,53 +284,83 @@ impl Levels {
         let Some(root) = dom.root(doc) else {
             return Self::default();
         };
-        let level_pprs = |dom: &Dom, parent: NodeId| -> Vec<(String, NodeId)> {
+        let val = |dom: &Dom, parent: NodeId, local: &str| -> Option<String> {
+            dom.element(parent, &W::name(local))
+                .and_then(|e| dom.attribute(e, &W::val()))
+                .map(str::to_string)
+        };
+        let level_pprs = |dom: &Dom, parent: NodeId| -> Vec<(u32, Option<NodeId>)> {
             dom.elements(parent, Some(&W::name("lvl")))
                 .into_iter()
-                .filter_map(|l| {
-                    let ilvl = dom.attribute(l, &W::name("ilvl")).unwrap_or("0");
-                    Some((ilvl.to_string(), dom.element(l, &W::name("pPr"))?))
+                .map(|l| {
+                    let ilvl = dom
+                        .attribute(l, &W::name("ilvl"))
+                        .and_then(|i| i.parse().ok())
+                        .unwrap_or(0);
+                    (ilvl, dom.element(l, &W::name("pPr")))
                 })
                 .collect()
         };
-        let abstracts: HashMap<String, Vec<(String, NodeId)>> = dom
-            .elements(root, Some(&W::name("abstractNum")))
-            .into_iter()
-            .filter_map(|a| {
-                let id = dom.attribute(a, &W::name("abstractNumId"))?;
-                Some((id.to_string(), level_pprs(&dom, a)))
-            })
-            .collect();
+        let mut abstracts: HashMap<String, Vec<(u32, Option<NodeId>)>> = HashMap::new();
+        // Numbering style name → the abstract defining it (`w:styleLink`),
+        // and abstract → the style it only links to (`w:numStyleLink`).
+        let mut style_links: HashMap<String, String> = HashMap::new();
+        let mut linked_to: HashMap<String, String> = HashMap::new();
+        for a in dom.elements(root, Some(&W::name("abstractNum"))) {
+            let Some(id) = dom.attribute(a, &W::name("abstractNumId")) else {
+                continue;
+            };
+            if let Some(name) = val(&dom, a, "styleLink") {
+                style_links.insert(name, id.to_string());
+            }
+            if let Some(name) = val(&dom, a, "numStyleLink") {
+                linked_to.insert(id.to_string(), name);
+            }
+            abstracts.insert(id.to_string(), level_pprs(&dom, a));
+        }
         let mut out = HashMap::new();
         for num in dom.elements(root, Some(&W::name("num"))) {
             let Some(num_id) = dom.attribute(num, &W::name("numId")) else {
                 continue;
             };
-            let mut levels: HashMap<String, NodeId> = dom
-                .element(num, &W::name("abstractNumId"))
-                .and_then(|a| dom.attribute(a, &W::val()))
-                .and_then(|a| abstracts.get(a))
-                .map(|l| l.iter().cloned().collect())
+            let abstract_id = val(&dom, num, "abstractNumId")
+                .or_else(|| {
+                    val(&dom, num, "numStyleLink").and_then(|n| style_links.get(&n).cloned())
+                })
+                .map(|a| {
+                    linked_to
+                        .get(&a)
+                        .and_then(|n| style_links.get(n))
+                        .cloned()
+                        .unwrap_or(a)
+                });
+            let mut levels: BTreeMap<u32, Option<NodeId>> = abstract_id
+                .and_then(|a| abstracts.get(&a))
+                .map(|l| l.iter().copied().collect())
                 .unwrap_or_default();
             for over in dom.elements(num, Some(&W::name("lvlOverride"))) {
                 levels.extend(level_pprs(&dom, over));
             }
-            for (ilvl, ppr) in levels {
-                out.insert((num_id.to_string(), ilvl), slot_values(&dom, ppr));
-            }
+            let slots = levels
+                .into_iter()
+                .map(|(ilvl, ppr)| (ilvl, ppr.map(|p| slot_values(&dom, p)).unwrap_or_default()))
+                .collect();
+            out.insert(num_id.to_string(), slots);
         }
         Self(out)
     }
 
-    /// The level `pPr` numPr names: its numId and ilvl (0 when absent).
-    fn of(&self, dom: &Dom, num_pr: NodeId) -> Option<&HashMap<Slot, String>> {
-        let val = |local: &str| {
-            dom.element(num_pr, &W::name(local))
-                .and_then(|e| dom.attribute(e, &W::val()))
-        };
-        let num_id = val("numId")?;
-        self.0
-            .get(&(num_id.to_string(), val("ilvl").unwrap_or("0").to_string()))
+    /// The level a `numPr` naming `num_id` numbers with: its ilvl (0 when
+    /// absent), or the nearest lower level its definition has, as Word
+    /// continues the parent level (`resolve_ilvl`). None for `numId=0`.
+    fn of(&self, dom: &Dom, num_pr: NodeId, num_id: &str) -> Option<&HashMap<Slot, String>> {
+        let levels = self.0.get(num_id)?;
+        let ilvl: u32 = dom
+            .element(num_pr, &W::name("ilvl"))
+            .and_then(|e| dom.attribute(e, &W::val()))
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        levels.range(..=ilvl).next_back().map(|(_, slots)| slots)
     }
 }
 
@@ -661,14 +693,19 @@ fn resolve(
         .filter_map(|a| dom.element(a, &W::name(block_local)))
         .collect();
     let own_block = dom.element(style, &W::name(block_local));
-    // The level of the nearest numPr naming a list, own first.
+    // The level of the nearest numPr that names a numId, own first; a
+    // `numId=0` there ends the list, so no level speaks.
     let level = (block_local == "pPr")
         .then(|| {
             own_block.iter().chain(&inherited).find_map(|&b| {
                 let num_pr = dom.element(b, &W::name("numPr"))?;
-                levels.of(dom, num_pr)
+                let num_id = dom
+                    .element(num_pr, &W::name("numId"))
+                    .and_then(|e| dom.attribute(e, &W::val()))?;
+                Some(levels.of(dom, num_pr, num_id))
             })
         })
+        .flatten()
         .flatten();
     if let Some(dd) = dom
         .element(styles_root, &W::name("docDefaults"))

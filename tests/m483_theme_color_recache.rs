@@ -267,3 +267,55 @@ fn an_original_with_a_theme_keeps_it() {
     let theme = referenced_theme(&out).expect("theme");
     assert!(theme.contains("00FFFF") && theme.contains("Georgia"));
 }
+
+/// The re-cache reads the theme the main part references, wherever it
+/// lives: an original whose theme is `word/theme/custom.xml` recaches B's
+/// table style under that theme's accent1, not under B's.
+#[test]
+fn themed_hexes_are_recached_against_a_referenced_theme_at_any_path() {
+    let para = r#"<w:p><w:r><w:t>Intro</w:t></w:r></w:p>"#;
+    let table = r#"<w:tbl><w:tblPr><w:tblStyle w:val="LightShadingAccent1"/><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+    let (theme_a, theme_b) = (theme("156082"), theme("4F81BD"));
+    let styles = |xml| Part {
+        name: "word/styles.xml",
+        content_type: STYLES_CT,
+        rel_type: STYLES_REL,
+        xml,
+    };
+    let a = docx_with(
+        para,
+        &[
+            styles(STYLES_A),
+            Part {
+                name: "word/theme/custom.xml",
+                content_type: THEME_CT,
+                rel_type: THEME_REL,
+                xml: &theme_a,
+            },
+        ],
+    );
+    let b = docx_with(
+        &format!("{para}{table}<w:p/>"),
+        &[
+            styles(STYLES_B),
+            Part {
+                name: "word/theme/theme1.xml",
+                content_type: THEME_CT,
+                rel_type: THEME_REL,
+                xml: &theme_b,
+            },
+        ],
+    );
+    let out = compare_documents(&a, &b, "Redline").expect("compare");
+    let styles = part_string(&out, "word/styles.xml").expect("styles");
+    let i = styles
+        .find("w:styleId=\"LightShadingAccent1\"")
+        .expect("B's table style is copied");
+    let style = &styles[i..i + styles[i..].find("</w:style>").unwrap()];
+    for want in [
+        r#"w:bottom w:val="single" w:sz="8" w:space="0" w:color="156082""#,
+        r#"w:fill="B2DEF2""#,
+    ] {
+        assert!(style.contains(want), "missing {want} in {style}");
+    }
+}
