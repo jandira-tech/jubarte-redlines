@@ -1369,6 +1369,9 @@ struct TextRun {
     /// the right margin with no stop wraps (ecd9fba7; mode 14 keeps it on
     /// the line, 7695f5c2).
     hf_tab_wrap: bool,
+    /// Header/footer run: the document's default tab stop, for wrapping a
+    /// line that holds a tab (0 falls back to 36pt).
+    hf_default_tab: f32,
     /// A FORMCHECKBOX legacy form field: an em space advanced like Word's
     /// box (1.15 x the box size) that paints the box, crossed when checked.
     checkbox: Option<bool>,
@@ -1397,6 +1400,7 @@ impl TextRun {
             frame_center: false,
             hf_cont: false,
             hf_tab_wrap: false,
+            hf_default_tab: 0.0,
             checkbox: None,
         }
     }
@@ -1792,6 +1796,10 @@ struct LaidImage {
     /// wraps the tab to a line of its own in this mark's face (redlines vs
     /// 000e3e7b: a 441.75pt banner + tab stands 16.2pt taller).
     chrome_tab_line: Option<RunStyle>,
+    /// A chrome picture with its paragraph's text on the lines under it:
+    /// the picture's line keeps this mark's descent (0800162a66 vs
+    /// 000e3e7b: the 18pt text's baseline 20.64pt under the banner).
+    chrome_text_under: Option<RunStyle>,
     /// A chrome flow picture that wrapped below earlier pictures of its
     /// paragraph: the picture rows above it (pt) and the wrapped tab line
     /// between them, if any (redlines vs 000e3e7b: A's deleted 455pt VML
@@ -9071,6 +9079,7 @@ fn paragraph_block(
                 inset: [0.0; 4],
                 chrome_leading: None,
                 chrome_tab_line: None,
+                chrome_text_under: None,
                 chrome_drop: 0.0,
                 chrome_drop_tab: None,
                 chrome_para: 0,
@@ -14404,6 +14413,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     inset: [0.0; 4],
                     chrome_leading: None,
                     chrome_tab_line: None,
+                    chrome_text_under: None,
                     chrome_drop: 0.0,
                     chrome_drop_tab: None,
                     chrome_para: 0,
@@ -14458,6 +14468,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     inset: [0.0; 4],
                     chrome_leading: None,
                     chrome_tab_line: None,
+                    chrome_text_under: None,
                     chrome_drop: 0.0,
                     chrome_drop_tab: None,
                     chrome_para: 0,
@@ -14519,6 +14530,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         inset,
                         chrome_leading: None,
                         chrome_tab_line: None,
+                        chrome_text_under: None,
                         chrome_drop: 0.0,
                         chrome_drop_tab: None,
                         chrome_para: 0,
@@ -14547,6 +14559,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         inset: [0.0; 4],
                         chrome_leading: None,
                         chrome_tab_line: None,
+                        chrome_text_under: None,
                         chrome_drop: 0.0,
                         chrome_drop_tab: None,
                         chrome_para: 0,
@@ -14620,6 +14633,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         inset: [0.0; 4],
                         chrome_leading: None,
                         chrome_tab_line: None,
+                        chrome_text_under: None,
                         chrome_drop: 0.0,
                         chrome_drop_tab: None,
                         chrome_para: 0,
@@ -14654,6 +14668,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     inset: [0.0; 4],
                     chrome_leading: None,
                     chrome_tab_line: None,
+                    chrome_text_under: None,
                     chrome_drop: 0.0,
                     chrome_drop_tab: None,
                     chrome_para: 0,
@@ -14816,6 +14831,7 @@ fn vml_line_image(dom: &Dom, line: NodeId, root: NodeId) -> Option<LaidImage> {
         inset: [0.0; 4],
         chrome_leading: None,
         chrome_tab_line: None,
+        chrome_text_under: None,
         chrome_drop: 0.0,
         chrome_drop_tab: None,
         chrome_para: 0,
@@ -16647,7 +16663,7 @@ fn chrome_part_xml(
     let Some(root) = part_dom.root(doc) else {
         return empty_chrome();
     };
-    let runs = collect_hf_runs(&part_dom, root, sheet);
+    let runs = collect_hf_runs(&part_dom, root, sheet, text_w);
     let mut images = Vec::new();
     let mut boxes = Vec::new();
     let watermark = parse_header_watermark(&part_dom, root);
@@ -16723,6 +16739,7 @@ fn chrome_part_xml(
                 }),
             );
         }
+        let this_top = para_top;
         if top_level {
             let size = part_dom
                 .descendants(para, Some(&W::name("sz")))
@@ -16797,7 +16814,10 @@ fn chrome_part_xml(
                                     .contains("position:absolute")
                         })
             });
-        let flow = para_own_text(&part_dom, para).trim().is_empty()
+        // Deleted text is text here: the redline paints it (0800162a66 vs
+        // 000e3e7b's deleted "Akreditācijas ekspertu" under the banner).
+        let no_text = para_shown_text(&part_dom, para).trim().is_empty();
+        let flow = (no_text || hf_pic_owns_line(&part_dom, para, sheet, text_w))
             && (vml_inline
                 || part_dom
                     .descendants(para, Some(&WP::name("inline")))
@@ -16807,9 +16827,7 @@ fn chrome_part_xml(
                             .ancestors(inl, Some(&W::name("txbxContent")))
                             .is_empty()
                     }));
-        if !hf_para_in_table(&part_dom, root, para)
-            && !para_own_text(&part_dom, para).trim().is_empty()
-        {
+        if !hf_para_in_table(&part_dom, root, para) && !no_text {
             seen_text = true;
         }
         // A top-level chrome table lays out the pictures its cells hold,
@@ -16858,6 +16876,17 @@ fn chrome_part_xml(
                     img.chrome_lead = lead;
                     img.chrome_under_table = under_table;
                     img.chrome_para = para_no;
+                    // A footer picture placed from its paragraph sits under
+                    // the part's paragraphs above it (432bf1c280's logos on
+                    // "January 2025", the footer's second line).
+                    if top_level
+                        && local.starts_with("footer")
+                        && let ImageSlot::Float {
+                            para_y: Some(py), ..
+                        } = &mut img.slot
+                    {
+                        *py += this_top;
+                    }
                     if let Some((fx, fy, fw)) = frame_at
                         && matches!(img.slot, ImageSlot::Flow)
                     {
@@ -16895,12 +16924,17 @@ fn chrome_part_xml(
                             v_off: None,
                         };
                     }
-                    if last_para == Some(para) {
+                    // Text under the picture closes the paragraph and
+                    // takes its space after (in the part's text height).
+                    if last_para == Some(para) && no_text {
                         img.chrome_after = pstyle.after;
                     }
                     img.chrome_flow = flow && matches!(img.slot, ImageSlot::Flow);
                     if img.chrome_flow {
                         img.chrome_leading.clone_from(&leading);
+                        if !no_text {
+                            img.chrome_text_under = Some(mark_style());
+                        }
                         let first_row = row_h <= 0.0 || cursor + img.w <= text_w + 0.5;
                         if cursor > 0.0 && cursor + img.w > text_w + 0.5 {
                             drop += row_h;
@@ -16917,7 +16951,10 @@ fn chrome_part_xml(
                         if para_no == 1 && lead && !pstyle.before_auto {
                             img.chrome_drop += pstyle.before;
                         }
-                        if first_row && drop <= 0.0 && tab_after && img.w >= text_w - 0.5 {
+                        // Text after the tab shares its line (0800162a66 vs
+                        // 000e3e7b: the deleted "Akreditācijas ekspertu").
+                        if first_row && drop <= 0.0 && tab_after && img.w >= text_w - 0.5 && no_text
+                        {
                             img.chrome_tab_line = Some(mark_style());
                             tab_wrapped = true;
                         }
@@ -16936,6 +16973,9 @@ fn chrome_part_xml(
             &mut Numbering::default(),
         ));
     }
+    if local.starts_with("header") {
+        drop_flow_under_square_floats(&mut images, text_w);
+    }
     let align = first_para_align(&part_dom, root);
     let edge = if local.starts_with("header") {
         "bottom"
@@ -16951,6 +16991,57 @@ fn chrome_part_xml(
         tables: collect_hf_tables(pkg, path, &part_dom, root, sheet),
         boxes: std::rc::Rc::new(boxes),
     }
+}
+
+/// A header's flow picture wider than the room beside a square-wrapped
+/// picture of its paragraph starts under that picture, its wrap distance
+/// and effect extent included (0800162a66 vs 000e3e7b: Word sets the
+/// 441.75pt banner under the 117.75pt logo, 315pt of room beside it).
+fn drop_flow_under_square_floats(images: &mut [LaidImage], text_w: f32) {
+    let floats: Vec<(u32, f32, f32, f32)> = images
+        .iter()
+        .filter(|img| !img.behind)
+        .filter_map(|img| match img.slot {
+            ImageSlot::Float {
+                wrap_square: true,
+                page_y: None,
+                para_y: Some(top),
+                dist_l,
+                dist_r,
+                dist_b,
+                ..
+            } => Some((
+                img.chrome_para,
+                top,
+                top + img.h + dist_b,
+                img.w + dist_l + dist_r,
+            )),
+            _ => None,
+        })
+        .collect();
+    for img in images.iter_mut().filter(|img| img.chrome_flow) {
+        for &(para, top, bottom, taken) in &floats {
+            if para == img.chrome_para
+                && img.chrome_drop >= top - 0.5
+                && img.chrome_drop < bottom
+                && img.w > text_w - taken + 0.5
+            {
+                img.chrome_drop = bottom;
+            }
+        }
+    }
+}
+
+/// A paragraph's text as a redline shows it, deleted runs included (not
+/// its text boxes').
+fn para_shown_text(dom: &Dom, para: NodeId) -> String {
+    let mut out = para_own_text(dom, para);
+    for t in dom.descendants(para, Some(&W::del_text())) {
+        if dom.ancestors(t, Some(&W::txbx_content())).is_empty() {
+            out.push_str(&element_text(dom, t));
+        }
+    }
+    out
 }
 
 fn rel_target_path(pkg: &PartFs, source: &str, rid: &str) -> Option<String> {
@@ -17191,7 +17282,7 @@ fn hf_para_is_shape_text(dom: &Dom, para: NodeId) -> bool {
     false
 }
 
-fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet) -> Vec<TextRun> {
+fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet, text_w: f32) -> Vec<TextRun> {
     let theme = &sheet.theme;
     let header = dom.name_is(node, &W::name("hdr"));
     // One footer/header <w:p> is one painted line. Flattening sd_2517's
@@ -17337,11 +17428,17 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet) -> Vec<TextRun> 
             }
             continue;
         }
-        let pic_h = hf_inline_pic_h(dom, para);
+        // Text under a line-filling picture is a line of its own.
+        let pic_h = if hf_pic_owns_line(dom, para, sheet, text_w) {
+            0.0
+        } else {
+            hf_inline_pic_h(dom, para)
+        };
         for run in &mut line {
             run.hf_para = Some(pstyle.clone());
             run.hf_pic_h = pic_h;
             run.hf_tab_wrap = !sheet.defaults.legacy_compat;
+            run.hf_default_tab = sheet.defaults.page.default_tab;
         }
         if runs.is_empty() {
             // Below leading empty paragraphs the text keeps its before,
@@ -17425,6 +17522,31 @@ fn hf_inline_pic_h(dom: &Dom, para: NodeId) -> f32 {
         .fold(0.0_f32, f32::max)
 }
 
+/// A chrome paragraph's inline pictures fill its first line, leaving no
+/// room for its text: Word sets the text on the lines under them
+/// (0800162a66's 441.9pt footer banner over "ŠIS DOKUMENTS …" in 441.9pt
+/// of room). Half an em of the paragraph's text is the least a first
+/// word takes.
+fn hf_pic_owns_line(dom: &Dom, para: NodeId, sheet: &StyleSheet, text_w: f32) -> bool {
+    let pics_w: f32 = dom
+        .descendants(para, Some(&WP::name("inline")))
+        .into_iter()
+        .filter(|inl| {
+            dom.ancestors(*inl, Some(&W::name("txbxContent")))
+                .is_empty()
+        })
+        .filter_map(|inl| first_named_any(dom, inl, "extent"))
+        .filter_map(|ext| attr_any(dom, ext, "cx").and_then(|v| v.parse::<f32>().ok()))
+        .map(|cx| cx / 12700.0)
+        .sum();
+    if pics_w <= 0.0 {
+        return false;
+    }
+    let (pstyle, prun) = para_base(dom, para, sheet, None);
+    let room = text_w - pstyle.indent_left - pstyle.indent_right - pstyle.indent_first;
+    room - pics_w < prun.size * 0.5
+}
+
 /// Table-cell paragraphs belong to the part's laid-out tables.
 fn hf_para_in_table(dom: &Dom, root: NodeId, para: NodeId) -> bool {
     let mut cur = dom.parent(para);
@@ -17494,7 +17616,13 @@ fn hf_styled_lines(fonts: &Fonts, runs: &[TextRun], width: f32) -> Vec<(Vec<Text
                     (rest - p.indent_first, rest)
                 });
         let pieces = if line.iter().any(|r| r.text.contains('\t')) {
-            hf_tab_line_breaks(fonts, &line, width)
+            let cut = hf_tab_line_breaks(fonts, &line, width);
+            let cut = if cut.is_empty() {
+                vec![line.clone()]
+            } else {
+                cut
+            };
+            hf_wrap_tab_pieces(fonts, cut, width)
         } else {
             wrap_runs(fonts, &line, first, room, false)
         };
@@ -17521,6 +17649,105 @@ fn hf_styled_lines(fonts: &Fonts, runs: &[TextRun], width: f32) -> Vec<(Vec<Text
     out
 }
 
+/// Every character of a header/footer line with its run and width (a
+/// tab is 0 wide).
+fn hf_line_chars(fonts: &Fonts, line: &[TextRun]) -> Vec<(usize, char, f32)> {
+    line.iter()
+        .enumerate()
+        .flat_map(|(ri, run)| {
+            let face = fonts.get(ink_face(fonts, &run.style, &run.text));
+            let size = run.style.layout_size();
+            run.text.chars().map(move |ch| {
+                let w = if ch == '\t' {
+                    0.0
+                } else {
+                    face.width_pt(ch.encode_utf8(&mut [0; 4]), size) * run.style.hscale()
+                };
+                (ri, ch, w)
+            })
+        })
+        .collect()
+}
+
+/// Where a tab-laid header/footer piece's ink ends: its tabs on the
+/// paragraph's stops, as `hf_tab_line_breaks` measures them (a tab with
+/// no stop left adds nothing), trailing spaces hanging.
+fn hf_tab_piece_end(fonts: &Fonts, piece: &[TextRun], para: &ParaStyle, start: f32) -> f32 {
+    let chars = hf_line_chars(fonts, piece);
+    let mut pos = start;
+    let mut k = 0;
+    while k < chars.len() {
+        let (_, ch, w) = chars[k];
+        k += 1;
+        if ch != '\t' {
+            pos += w;
+            continue;
+        }
+        let seg_n = chars[k..].iter().take_while(|(_, c, _)| *c != '\t').count();
+        let seg: f32 = chars[k..k + seg_n].iter().map(|(_, _, w)| w).sum();
+        pos = match para.tab_stops.iter().find(|t| t.pos > pos + 0.01) {
+            Some(t) => match t.align {
+                TabAlign::Right => t.pos.max(pos + seg),
+                TabAlign::Center => (t.pos + seg * 0.5).max(pos + seg),
+                _ => t.pos + seg,
+            },
+            None => pos + seg,
+        };
+        k += seg_n;
+    }
+    pos - trailing_ws_pt(fonts, piece)
+}
+
+/// Word-wraps each tab-laid piece that still overflows its line, its
+/// tabs jumping from where they stand (3ee2d0c's centred banner, tab and
+/// "Zgłoszenie … 2024 rok”" are two lines in Word). A piece that fits
+/// stays whole.
+fn hf_wrap_tab_pieces(fonts: &Fonts, pieces: Vec<Vec<TextRun>>, width: f32) -> Vec<Vec<TextRun>> {
+    let mut out = Vec::new();
+    for (i, piece) in pieces.into_iter().enumerate() {
+        let Some(para) = piece.iter().find_map(|r| r.hf_para.clone()) else {
+            out.push(piece);
+            continue;
+        };
+        if para.tab_stops.iter().any(|t| t.pos < 0.0) {
+            out.push(piece);
+            continue;
+        }
+        let first_start = if i == 0 {
+            para.indent_left + para.indent_first
+        } else {
+            para.indent_left
+        };
+        let default_tab = piece.first().map_or(0.0, |r| r.hf_default_tab);
+        let tabs = WrapTabs {
+            stops: &para.tab_stops,
+            default_tab,
+            first_start,
+            start: para.indent_left,
+            squeeze: 0.0,
+        };
+        let right = width - para.indent_right;
+        if hf_tab_piece_end(fonts, &piece, &para, first_start) <= right + 0.5 {
+            out.push(piece);
+            continue;
+        }
+        let (lines, _) = wrap_runs_tabbed(
+            fonts,
+            &piece,
+            right - first_start,
+            right - para.indent_left,
+            false,
+            Some(&tabs),
+        );
+        if lines.len() < 2 {
+            out.push(piece);
+        } else {
+            out.extend(lines);
+        }
+    }
+    out
+}
+
 /// A tab-laid header/footer line, cut before each tab that has no stop
 /// left on the line and whose text would run past the right edge (00e23d67:
 /// Word right-aligns "Program Studi … Surabaya" on the margin stop, then
@@ -17536,23 +17763,7 @@ fn hf_tab_line_breaks(fonts: &Fonts, line: &[TextRun], width: f32) -> Vec<Vec<Te
     }
     let right = width - para.indent_right;
     let wrap15 = line.iter().any(|r| r.hf_tab_wrap);
-    // Every character with its run and width.
-    let chars: Vec<(usize, char, f32)> = line
-        .iter()
-        .enumerate()
-        .flat_map(|(ri, run)| {
-            let face = fonts.get(ink_face(fonts, &run.style, &run.text));
-            let size = run.style.layout_size();
-            run.text.chars().map(move |ch| {
-                let w = if ch == '\t' {
-                    0.0
-                } else {
-                    face.width_pt(ch.encode_utf8(&mut [0; 4]), size) * run.style.hscale()
-                };
-                (ri, ch, w)
-            })
-        })
-        .collect();
+    let chars = hf_line_chars(fonts, line);
     let seg_after = |k: usize| -> f32 {
         chars[k + 1..]
             .iter()
@@ -18091,6 +18302,7 @@ fn chrome_pic_line(fonts: &Fonts, img: &LaidImage) -> f32 {
     chrome_pic_top(fonts, img)
         + img.chrome_after
         + img.h
+        + chrome_pic_descent(fonts, img)
         + img.chrome_leading.as_ref().map_or(0.0, |(extra, mark)| {
             let face = fonts.get(fonts.resolve(&mark.family, mark.bold, mark.italic));
             extra * face.single_line_pt(mark.size)
@@ -18100,6 +18312,15 @@ fn chrome_pic_line(fonts: &Fonts, img: &LaidImage) -> f32 {
             let face = fonts.get(fonts.resolve(&mark.family, mark.bold, mark.italic));
             face.line_descent_pt(mark.size) + mult * face.single_line_pt(mark.size)
         })
+}
+
+/// The descent a chrome picture's line keeps over its paragraph's text on
+/// the lines under it.
+fn chrome_pic_descent(fonts: &Fonts, img: &LaidImage) -> f32 {
+    img.chrome_text_under.as_ref().map_or(0.0, |mark| {
+        let face = fonts.get(fonts.resolve(&mark.family, mark.bold, mark.italic));
+        face.line_descent_pt(mark.size)
+    })
 }
 
 /// How far below its paragraph's top a wrapped chrome picture's row starts:
@@ -22072,7 +22293,7 @@ impl<'a> Layout<'a> {
                         0.0
                     }
             } else if img.chrome_lead {
-                text_h + rows_below + img.chrome_after
+                text_h + rows_below + img.chrome_after + chrome_pic_descent(self.fonts, img)
             } else {
                 rows_below + img.chrome_after
             };
@@ -22122,13 +22343,11 @@ impl<'a> Layout<'a> {
                 y = fy;
             } else if in_header {
                 y = self.page.height - self.page.header.max(0.0) - para_y.unwrap_or(0.0) - dh;
-            } else if let Some(off) = para_y
-                && img.chrome_lead
-            {
-                // From the footer's top when no text paragraph precedes
-                // its own, like the footer's text boxes (01838a08's banner:
-                // 23.9pt above it, not on the footer distance). Below text
-                // paragraphs its paragraph's top is not known here.
+            } else if let Some(off) = para_y {
+                // From the footer's top, its paragraph's estimated top
+                // included (`chrome_part_xml`), like the footer's text
+                // boxes (01838a08's banner: 23.9pt above it, not on the
+                // footer distance).
                 y = self.page.footer.max(0.0) + foot_band - off - dh;
             }
         }
@@ -24851,8 +25070,19 @@ impl<'a> Layout<'a> {
         // A tab moves to its paragraph's stops; it paints no glyph
         // (000f8dcd's email line ended in two .notdef boxes).
         let tabbed = runs.iter().any(|r| r.text.contains('\t'));
-        if tabbed && matches!(align, Align::Left | Align::Justify) {
-            let para = runs.iter().find_map(|r| r.hf_para.clone());
+        let ptab = |p: &ParaStyle| {
+            p.tab_stops
+                .iter()
+                .any(|t| t.pos == PTAB_CENTER || t.pos == PTAB_RIGHT)
+        };
+        let para = runs.iter().find_map(|r| r.hf_para.clone());
+        // A centred or right line with tabs lays out from its start, then
+        // moves over as a whole, as body lines do (3ee2d0c's centred tab
+        // spans 102.5 to 137.9 in Word).
+        let aligned_tabs = tabbed
+            && matches!(align, Align::Center | Align::Right)
+            && !para.as_deref().is_some_and(ptab);
+        if tabbed && matches!(align, Align::Left | Align::Justify) || aligned_tabs {
             let width = self.content_width();
             let stops = para
                 .as_ref()
@@ -24874,7 +25104,22 @@ impl<'a> Layout<'a> {
                 .unwrap_or_default();
             let indent = para.as_ref().map_or(0.0, |p| hf_line_indent(p, runs));
             let saved = std::mem::replace(&mut self.tab_stops, stops);
-            self.paint_line_with_tabs(runs, self.page.margin_l + indent, y);
+            let x0 = self.page.margin_l + indent;
+            let shift = if aligned_tabs {
+                let room = width - indent - para.as_ref().map_or(0.0, |p| p.indent_right);
+                let line_w = self.tab_line_width(runs, x0) - trailing_ws_pt(self.fonts, runs);
+                let free = (room - line_w).max(0.0);
+                if matches!(align, Align::Center) {
+                    free / 2.0
+                } else {
+                    free
+                }
+            } else {
+                0.0
+            };
+            self.tab_shift = shift;
+            self.paint_line_with_tabs(runs, x0 + shift, y);
+            self.tab_shift = 0.0;
             self.tab_stops = saved;
             return;
         }
@@ -24903,6 +25148,9 @@ impl<'a> Layout<'a> {
                     + r.style.track * measure.chars().count().saturating_sub(1) as f32
             })
             .sum();
+        // Trailing spaces hang past a centred or right line, as in the
+        // body (0800162a66's "Akreditācijas ekspertu " ends at the margin).
+        let line_w = (line_w - trailing_ws_pt(self.fonts, runs)).max(0.0);
         let extra = match align {
             Align::Left | Align::Justify => 0.0,
             Align::Center => ((width - line_w) / 2.0).max(0.0),

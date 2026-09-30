@@ -151,6 +151,23 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   4910ce2060's ContentControlHidden marks under "System Name" each added a
   line and pushed the document onto a third page; it prints on Word's two
   (31.4/12.2 to 54.1/18.2).
+- A header or footer picture as wide as its line puts the paragraph's text
+  on the line under it, and that picture line keeps the text's descent.
+  A tab after it shares the next line with the text that follows it, and
+  deleted text counts as text there because the redline paints it.
+  0800162a66's banner and "Akreditācijas ekspertu" took five pages
+  against Word's four (34.4/10.2 to 64.7/48.2).
+- A header picture too wide to sit beside a square-wrapped float in its
+  paragraph starts under the float, below its distB and effect extent.
+- Trailing spaces hang past centred and right-aligned header and footer
+  lines, as they do in the body.
+- Footer pictures placed from their paragraph sit on that paragraph's top,
+  not on the footer's (432bf1c280's logos under "January 2025").
+- A header or footer line holding a tab wraps at its words when its text
+  runs past the margin. A tab in a centred or right-aligned line jumps from
+  the line's start before the line is aligned, as in the body. 3ee2d0c's
+  centred banner, tab and deleted "Zgłoszenie … 2024 rok”" printed as one
+  line running 56pt past the margin (53.3/39.0 to 73.1/62.2).
 - Rejecting a redline gives back what a changed style inherited in the
   original. Word's Reject All reads a style's old record against its
   built-in defaults, so a record holding only the style's own properties

@@ -22428,6 +22428,252 @@ const HEADER_INLINE_DOT: &str = "<w:r><w:drawing><wp:inline>\
              </a:graphicData></a:graphic>\
            </wp:inline></w:drawing></w:r>";
 
+#[test]
+fn a_footer_picture_as_wide_as_the_line_puts_its_text_under_it() {
+    // 0800162a66's footer: a 441.9pt inline banner, then "ŠIS DOKUMENTS
+    // …" in the same paragraph, 441.9pt of room. Word lays the text on the
+    // line under the banner (banner bottom 776.8, text top 777.6); we let
+    // the text line stand on the banner and lifted the banner over that
+    // tall line too, 51pt above the text.
+    let tail = |cx: u32| {
+        let pic = HEADER_INLINE_DOT.replace("cx=\"914400\"", &format!("cx=\"{cx}\""));
+        let pdf = docx_to_pdf(&footer_part_docx(&format!(
+            "<w:p>{pic}<w:r><w:t>Tail</w:t></w:r></w:p>"
+        )))
+        .expect("footer picture");
+        let (_, pic_y, _, _) = pdf_image_boxes(&pdf)[0];
+        let (_, text_y) = pdf_glyph_text_xy(&pdf, "Tail").expect("Tail painted");
+        pic_y - text_y
+    };
+    let wide = tail(468 * 12700);
+    assert!(
+        (0.0..16.0).contains(&wide),
+        "the text's line sits under the full-width picture; baseline {wide}pt below it"
+    );
+}
+
+#[test]
+fn a_footer_picture_placed_from_its_paragraph_sits_on_that_paragraph() {
+    // 432bf1c280 vs 017447de's footer: behind-text pictures anchored 0.8pt
+    // and 3.9pt below the second paragraph's top ("January 2025"), under
+    // the deleted "Small Businesses … Page 3 of 5". Word paints them on
+    // that line (718.7, its text at 718.4); we measured from the footer's
+    // top or dropped them to the footer's foot.
+    let logo = "<w:r><w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" \
+          simplePos=\"0\" relativeHeight=\"1\" behindDoc=\"1\" locked=\"0\" layoutInCell=\"1\" \
+          allowOverlap=\"1\"><wp:simplePos x=\"0\" y=\"0\"/>\
+          <wp:positionH relativeFrom=\"column\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+          <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+          <wp:extent cx=\"635000\" cy=\"762000\"/><wp:wrapNone/>\
+          <wp:docPr id=\"2\" name=\"Logo\"/><a:graphic><a:graphicData \
+            uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+            <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill></pic:pic>\
+          </a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>";
+    for top in [
+        "<w:r><w:t>Top</w:t></w:r>",
+        "<w:del w:id=\"1\" w:author=\"A\"><w:r><w:delText>Top</w:delText></w:r></w:del>",
+    ] {
+        let pdf = docx_to_pdf(&footer_part_docx(&format!(
+            "<w:p>{top}</w:p><w:p>{logo}<w:r><w:t>Below</w:t></w:r></w:p>"
+        )))
+        .expect("footer picture");
+        let (_, y, _, h) = pdf_image_boxes(&pdf)[0];
+        let (_, below_y) = pdf_glyph_text_xy(&pdf, "Below").expect("Below painted");
+        let over = y + h - below_y;
+        assert!(
+            (0.0..15.0).contains(&over),
+            "{top}: the picture's top sits on the second line's top, {over}pt over its \
+             baseline"
+        );
+    }
+}
+
+/// A 468pt (full measure) `HEADER_INLINE_DOT`.
+fn full_width_dot() -> String {
+    HEADER_INLINE_DOT.replace("cx=\"914400\"", &format!("cx=\"{}\"", 468 * 12700))
+}
+
+#[test]
+fn text_after_a_full_width_header_picture_and_tab_shares_the_tabs_line() {
+    // 0800162a66 vs 000e3e7b's header: a 441.75pt banner in 441.9pt of
+    // room, a tab, then the deleted "Akreditācijas ekspertu". Word wraps
+    // the tab and the text onto one line under the banner (banner bottom
+    // 219.6, text top 224.2); we gave the tab a line of its own and set
+    // the text 20pt lower. Deleted text shares the line like live text.
+    let pic = full_width_dot();
+    for tail in [
+        "<w:r><w:t>Tail</w:t></w:r>",
+        "<w:del w:id=\"1\" w:author=\"A\"><w:r><w:delText>Tail</w:delText></w:r></w:del>",
+    ] {
+        let pdf = docx_to_pdf(&header_part_docx(&format!(
+            "<w:p>{pic}<w:r><w:tab/></w:r>{tail}</w:p>"
+        )))
+        .expect("header picture");
+        let (_, pic_y, _, _) = pdf_image_boxes(&pdf)[0];
+        let (_, text_y) = pdf_glyph_text_xy(&pdf, "Tail").expect("Tail painted");
+        let gap = pic_y - text_y;
+        assert!(
+            (0.0..16.0).contains(&gap),
+            "{tail}: the text sits on the wrapped tab's line under the picture; \
+             baseline {gap}pt below it"
+        );
+    }
+}
+
+#[test]
+fn a_long_header_line_after_a_tab_wraps_at_its_words() {
+    // 3ee2d0c vs 000e3e7b's header: a centred paragraph of a full-width
+    // banner, a tab, then the deleted "Zgłoszenie do zabrania głosu …
+    // 2024 rok”" (Times Bold 12). Word wraps the text into two centred
+    // lines under the banner ("Zwoleńskiego za 2024 rok”" at 236.7); a
+    // line holding a tab only broke at tabs, so ours ran 56pt past the
+    // right margin.
+    let bold = "<w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+                <w:b/></w:rPr>";
+    let text = "Report on the state of the district council for the year two \
+                thousand twenty four and the plans beyond it Omega";
+    for tail in [
+        format!("<w:r>{bold}<w:t>{text}</w:t></w:r>"),
+        format!(
+            "<w:del w:id=\"1\" w:author=\"A\"><w:r>{bold}<w:delText>{text}</w:delText></w:r></w:del>"
+        ),
+    ] {
+        let pdf = docx_to_pdf(&header_part_docx(&format!(
+            "<w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr>{pic}<w:r><w:tab/></w:r>{tail}</w:p>",
+            pic = full_width_dot()
+        )))
+        .expect("header picture");
+        let (_, first_y) = pdf_glyph_text_xy(&pdf, "Report").expect("Report painted");
+        let (omega_x, omega_y) = pdf_glyph_text_xy(&pdf, "Omega").expect("Omega painted");
+        assert!(
+            first_y - omega_y > 10.0,
+            "the text wraps onto a second line; Report at {first_y}, Omega at {omega_y}"
+        );
+        assert!(
+            omega_x > 150.0 && omega_x < 540.0,
+            "the second line is centred inside the margins; Omega at x {omega_x}"
+        );
+    }
+}
+
+#[test]
+fn a_tab_in_a_centred_header_line_takes_its_jump_from_the_line_start() {
+    // 3ee2d0c vs 000e3e7b's header: a centred line opening with a tab. Word
+    // lays the line out from its start (the tab to the 35.4pt default
+    // stop), then centres it: the tab spans 102.5 to 137.9, the text after
+    // it. We dropped the tab and centred the text alone, 17.6pt left.
+    let x = |text: &str| {
+        let pdf = docx_to_pdf(&header_part_docx(&format!(
+            "<w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr>{text}</w:p>"
+        )))
+        .expect("header line");
+        pdf_glyph_text_xy(&pdf, "Tail").expect("Tail painted").0
+    };
+    let bare = x("<w:r><w:t>Tail</w:t></w:r>");
+    let tabbed = x("<w:r><w:tab/><w:t>Tail</w:t></w:r>");
+    assert!(
+        (tabbed - bare - 18.0).abs() < 0.1,
+        "half the 36pt default tab moves the centred text; Tail at {tabbed} vs {bare}"
+    );
+}
+
+#[test]
+fn a_right_aligned_header_line_hangs_its_trailing_space() {
+    // 0800162a66 vs 000e3e7b's header: "Akreditācijas ekspertu " right
+    // aligned starts at 351.4 in Word, its trailing space past the margin
+    // as in the body; we set it 4.4pt (an 18pt space) further left.
+    for jc in ["right", "center"] {
+        let x = |text: &str| {
+            let pdf = docx_to_pdf(&header_part_docx(&format!(
+                "<w:p><w:pPr><w:jc w:val=\"{jc}\"/></w:pPr>\
+                 <w:r><w:t xml:space=\"preserve\">{text}</w:t></w:r></w:p>"
+            )))
+            .expect("header line");
+            pdf_glyph_text_xy(&pdf, "Tail").expect("Tail painted").0
+        };
+        let (bare, spaced) = (x("Tail"), x("Tail   "));
+        assert!(
+            (bare - spaced).abs() < 0.05,
+            "{jc}: the trailing spaces hang past the line; Tail at {bare} vs {spaced}"
+        );
+    }
+}
+
+#[test]
+fn a_full_width_header_picture_keeps_its_descent_above_the_text_under_it() {
+    // 0800162a66 vs 000e3e7b's header: Times New Roman Bold 18pt, single
+    // spacing, under a 441.75pt banner. Word's baseline sits 20.64pt under
+    // the banner: the picture line's descent (3.9pt), then the text line
+    // (gap and ascent); ours stood the text line on the picture.
+    let tnr = "<w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+               <w:b/><w:sz w:val=\"36\"/></w:rPr>";
+    let pdf = docx_to_pdf(&header_part_docx(&format!(
+        "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/>\
+         <w:jc w:val=\"right\"/>{tnr}</w:pPr>{pic}<w:r>{tnr}<w:tab/></w:r>\
+         <w:r>{tnr}<w:t>Tail</w:t></w:r></w:p>",
+        pic = full_width_dot().replace("<w:r>", &format!("<w:r>{tnr}"))
+    )))
+    .expect("header picture");
+    let (_, pic_y, _, _) = pdf_image_boxes(&pdf)[0];
+    let (_, text_y) = pdf_glyph_text_xy(&pdf, "Tail").expect("Tail painted");
+    let gap = pic_y - text_y;
+    assert!(
+        (gap - 20.64).abs() < 0.6,
+        "Word's baseline sits 20.64pt under the picture; ours {gap}pt"
+    );
+}
+
+#[test]
+fn a_header_picture_too_wide_beside_a_square_float_starts_under_it() {
+    // 0800162a66 vs 000e3e7b's header: a 117.75pt logo, wrapSquare at its
+    // paragraph's top, and in that paragraph a 441.75pt banner with 315pt
+    // of room beside the logo. Word starts the banner's line under the
+    // logo and its 0.75pt effectExtent (banner top 106.3, logo bottom
+    // 105.55); we painted the banner over the logo.
+    let logo = "<w:r><w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" \
+          distR=\"114300\" simplePos=\"0\" relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" \
+          layoutInCell=\"1\" allowOverlap=\"1\"><wp:simplePos x=\"0\" y=\"0\"/>\
+          <wp:positionH relativeFrom=\"column\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+          <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+          <wp:extent cx=\"1270000\" cy=\"1016000\"/>\
+          <wp:effectExtent l=\"0\" t=\"0\" r=\"0\" b=\"9525\"/>\
+          <wp:wrapSquare wrapText=\"bothSides\"/><wp:docPr id=\"2\" name=\"Logo\"/>\
+          <a:graphic><a:graphicData \
+            uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+            <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill></pic:pic>\
+          </a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>";
+    let boxes = |pic: &str| {
+        let pdf = docx_to_pdf(&header_part_docx(&format!("<w:p>{pic}{logo}</w:p>")))
+            .expect("header float");
+        let boxes = pdf_image_boxes(&pdf);
+        let logo = *boxes
+            .iter()
+            .find(|b| (b.2 - 100.0).abs() < 0.5)
+            .expect("logo");
+        let pic = *boxes
+            .iter()
+            .find(|b| (b.2 - 100.0).abs() >= 0.5)
+            .expect("picture");
+        (logo, pic)
+    };
+    let (logo, wide) = boxes(&full_width_dot());
+    let under = logo.1 - 0.75;
+    assert!(
+        (wide.1 + wide.3 - under).abs() < 0.1,
+        "the banner's top sits under the logo at {under}; it is at {}",
+        wide.1 + wide.3
+    );
+    // A picture that fits beside the logo keeps the first line.
+    let (logo, narrow) =
+        boxes(&HEADER_INLINE_DOT.replace("cx=\"914400\"", &format!("cx=\"{}\"", 200 * 12700)));
+    assert!(
+        narrow.1 + narrow.3 > logo.1 + logo.3 - 1.0,
+        "the narrow picture stays on the logo's line: top {} vs logo top {}",
+        narrow.1 + narrow.3,
+        logo.1 + logo.3
+    );
+}
+
 fn header_image_docx() -> Vec<u8> {
     header_part_docx(&format!("<w:p>{HEADER_INLINE_DOT}</w:p>"))
 }
@@ -22440,6 +22686,24 @@ fn header_part_docx(inner: &str) -> Vec<u8> {
 
 /// `header_part_docx` with the header `header` twips from the page top.
 fn header_part_docx_at(inner: &str, header: u32) -> Vec<u8> {
+    chrome_part_docx("header", inner, header)
+}
+
+/// A one-paragraph body whose default footer holds `inner` (footer1.xml
+/// with an `rIdImg` 1×1 PNG relationship), 720 twips from the page bottom.
+fn footer_part_docx(inner: &str) -> Vec<u8> {
+    chrome_part_docx("footer", inner, 720)
+}
+
+/// The body of `header_part_docx_at` / `footer_part_docx`: `kind`'s part
+/// holds `inner`, `dist` twips from its page edge.
+fn chrome_part_docx(kind: &str, inner: &str, dist: u32) -> Vec<u8> {
+    let (header, footer) = if kind == "header" {
+        (dist, 720)
+    } else {
+        (720, dist)
+    };
+    let root = if kind == "header" { "hdr" } else { "ftr" };
     // xml leftover: images in headers. The blip lives on header1.xml.rels,
     // not document.xml.rels; collect_hf_runs currently skips w:drawing.
     let document = format!(
@@ -22448,42 +22712,46 @@ fn header_part_docx_at(inner: &str, header: u32) -> Vec<u8> {
            xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
          <w:body><w:p><w:r><w:t>HdrImgBodyX</w:t></w:r></w:p>\
            <w:sectPr>\
-             <w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+             <w:{kind}Reference w:type=\"default\" r:id=\"rIdH1\"/>\
              <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
              <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
-               w:header=\"{header}\" w:footer=\"720\"/></w:sectPr>\
+               w:header=\"{header}\" w:footer=\"{footer}\"/></w:sectPr>\
          </w:body></w:document>"
     );
-    let header = format!(
+    let part = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-         <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+         <w:{root} xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
            xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" \
            xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
            xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" \
-           xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">{inner}</w:hdr>"
+           xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">{inner}</w:{root}>"
     );
-    let types = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+    let types = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
         <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
         <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
         <Default Extension=\"xml\" ContentType=\"application/xml\"/>\
         <Default Extension=\"png\" ContentType=\"image/png\"/>\
         <Override PartName=\"/word/document.xml\" \
           ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>\
-        <Override PartName=\"/word/header1.xml\" \
-          ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml\"/>\
-        </Types>";
+        <Override PartName=\"/word/{kind}1.xml\" \
+          ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.{kind}+xml\"/>\
+        </Types>"
+    );
     let pkg_rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
         <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
         <Relationship Id=\"rId1\" \
           Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" \
           Target=\"word/document.xml\"/>\
         </Relationships>";
-    let doc_rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+    let doc_rels = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
         <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
         <Relationship Id=\"rIdH1\" \
-          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/header\" \
-          Target=\"header1.xml\"/>\
-        </Relationships>";
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/{kind}\" \
+          Target=\"{kind}1.xml\"/>\
+        </Relationships>"
+    );
     let hdr_rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
         <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
         <Relationship Id=\"rIdImg\" \
@@ -22501,9 +22769,10 @@ fn header_part_docx_at(inner: &str, header: u32) -> Vec<u8> {
     zip.start_file("word/_rels/document.xml.rels", opts)
         .unwrap();
     zip.write_all(doc_rels.as_bytes()).unwrap();
-    zip.start_file("word/header1.xml", opts).unwrap();
-    zip.write_all(header.as_bytes()).unwrap();
-    zip.start_file("word/_rels/header1.xml.rels", opts).unwrap();
+    zip.start_file(format!("word/{kind}1.xml"), opts).unwrap();
+    zip.write_all(part.as_bytes()).unwrap();
+    zip.start_file(format!("word/_rels/{kind}1.xml.rels"), opts)
+        .unwrap();
     zip.write_all(hdr_rels.as_bytes()).unwrap();
     zip.start_file("word/media/dot.png", opts).unwrap();
     zip.write_all(TINY_PNG).unwrap();
