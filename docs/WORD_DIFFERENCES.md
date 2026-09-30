@@ -126,6 +126,22 @@ The other 3 of the 32 are not differences:
   every comment the body references.
 - **Which is better.** Ours; Word's version hides the comment.
 
+### 7. An autofit table Word widens past the page (PDF, not copied)
+
+- **What happens.** In `tracking_without_comments/f94aeed5f5` (a redline),
+  the first table has a six-column grid, `tblW` auto, `jc=center`, and a
+  tracked change from an older fixed-layout grid. Word's Save as PDF lays it
+  out wider than the page, so its left columns print past the page's left
+  edge and their labels ("Dersin Kodu", …) can't be read. The document takes
+  4 pages.
+- **What we do.** Both modes keep the table's grid (453pt, inside the
+  margins). Every cell stays readable, but the long cells wrap, and the
+  document takes 6 pages.
+- **Which is better.** Ours. Word's output loses text off the page.
+- **Status.** Not copied: `--revisions word` would need Word's autofit
+  widths. If it is ever copied, it belongs in Word mode only, with ours kept
+  as the default.
+
 ## Accept All / Reject All: where Word's result is worse (not copied yet)
 
 `jubarte accept` / `jubarte reject` (and per-change accept/reject) follow
