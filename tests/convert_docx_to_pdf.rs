@@ -41333,3 +41333,47 @@ fn a_justified_line_of_tabs_keeps_its_stops_and_leaders() {
     let dots = line_baselines_between(&pdf, 400.0, 560.0);
     assert_eq!(dots.len(), 3, "three dotted lines at {dots:?}");
 }
+
+#[test]
+fn contextual_spacing_drops_the_space_between_same_style_paragraphs_in_a_cell() {
+    // cb4f8b4a43's title block and Word 16 probe ctx_cell_0930: Title
+    // paragraphs (after 8pt,
+    // contextualSpacing) in a layout table cell. Word stacks their lines
+    // with no space between; we honoured contextualSpacing in the body
+    // only, so each title line stood 8pt lower and page 2 ended a
+    // paragraph early.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/>\
+           </w:rPr></w:rPrDefault></w:docDefaults>\
+           <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+           <w:style w:type=\"paragraph\" w:styleId=\"Title\"><w:name w:val=\"Title\"/><w:basedOn w:val=\"Normal\"/>\
+             <w:pPr><w:spacing w:before=\"0\" w:after=\"160\" w:line=\"400\" w:lineRule=\"exact\"/>\
+             <w:contextualSpacing/></w:pPr></w:style>\
+         </w:styles>";
+    let title = |t: &str| {
+        format!("<w:p><w:pPr><w:pStyle w:val=\"Title\"/></w:pPr><w:r><w:t>{t}</w:t></w:r></w:p>")
+    };
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"dxa\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"5000\"/></w:tblGrid><w:tr><w:tc><w:tcPr>\
+         <w:tcW w:w=\"5000\" w:type=\"dxa\"/></w:tcPr>{}{}{}</w:tc></w:tr></w:tbl><w:p/>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+        title("Q"),
+        title("X"),
+        title("Z")
+    );
+    let pdf = docx_to_pdf(&docx_with_styles(&body, styles)).expect("contextual cell");
+    let hay = String::from_utf8_lossy(&pdf);
+    let ys: Vec<f32> = ["Q", "X", "Z"]
+        .iter()
+        .map(|g| pdf_tj_xy(&hay, g).first().expect("title line").1)
+        .collect();
+    for w in ys.windows(2) {
+        assert!(
+            (w[0] - w[1] - 20.0).abs() < 0.3,
+            "20pt line pitch, no space: {ys:?}"
+        );
+    }
+}

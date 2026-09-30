@@ -3447,6 +3447,28 @@ mod tests {
     }
 
     #[test]
+    fn a_missing_script_family_is_calibri_not_the_unknown_cambria() {
+        // docxide suite handels_messiah_biblical_analysis: Vivaldi (script,
+        // panose 03…) is not installed. Word 16 probe script_missing_0930
+        // (the same font-table entry under a made-up name) paints it in
+        // Calibri; our Cambria Bold 100pt "Messiah" wrapped and cost a page.
+        let table = super::super::font_table::parse_font_table_xml(
+            r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                 <w:font w:name="Zqvaldi Script"><w:panose1 w:val="03020602050506090804"/><w:charset w:val="00"/><w:family w:val="script"/><w:pitch w:val="variable"/></w:font>
+               </w:fonts>"#,
+        );
+        let fonts = Fonts::new();
+        for bold in [false, true] {
+            let (face, _) = fonts.classify_in("Zqvaldi Script", bold, false, &table);
+            let name = fonts.get(face).pdf_name().to_string();
+            assert!(
+                name.starts_with("Calibri") || name.starts_with("Carlito"),
+                "bold={bold}: {name}"
+            );
+        }
+    }
+
+    #[test]
     fn resolve_wide_latin_stays_calibri_mini_505() {
         let fonts = Fonts::new();
         assert_eq!(

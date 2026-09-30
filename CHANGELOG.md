@@ -122,6 +122,13 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 - A justified line holding only tabs keeps their stops and dot leaders.
   Before, the justified painter drew the tabs as text, so the docxide
   suite's air_pollution_permit_form lost two of its four dotted lines.
+- A missing script-family font (a `w:family="script"` font-table entry
+  such as Vivaldi) paints in Calibri, as Word 16 does. Before, it fell to
+  Cambria, whose wider 100pt bold "Messiah" wrapped and gave
+  handels_messiah a ninth page.
+- `w:contextualSpacing` drops the space between same-style paragraphs
+  inside a table cell, as it already did in the body. Before, cb4f8b4a43's
+  Title lines stepped 28pt apart, not Word's 20pt.
 - A nested table row taller than what is left of the page breaks inside
   itself, as Word breaks it, when keeping it whole would leave a quarter
   of the page empty. Rows marked `cantSplit` or with an exact height stay

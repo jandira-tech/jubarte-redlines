@@ -13552,9 +13552,18 @@ fn fold_stacked_spacing(mut styles: Vec<&mut ParaStyle>) {
         last.after = 0.0;
     }
     for i in 1..styles.len() {
-        let after = styles[i - 1].after;
-        let next = &mut *styles[i];
-        next.before = (next.before - after).max(0.0);
+        let (head, rest) = styles.split_at_mut(i);
+        let (prev, next) = (&mut *head[i - 1], &mut *rest[0]);
+        // contextualSpacing drops the space between same-style paragraphs
+        // here as in the body (Word 16 probe ctx_cell_0930: a cell's
+        // contextual Title lines step 20pt, plain ones 28).
+        if same_contextual_pair(prev, next) {
+            prev.after = 0.0;
+        }
+        if same_contextual_pair(next, prev) {
+            next.before = 0.0;
+        }
+        next.before = (next.before - prev.after).max(0.0);
     }
 }
 
