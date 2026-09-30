@@ -88,7 +88,9 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
     comments; `--track-changes all|accept|reject` (pandoc's flag) keeps,
     accepts or rejects them, and `--no-critic` reads the delimiters as text.
     A change can cross paragraph breaks; a block that is one change whole is
-    added or removed with its paragraph mark.
+    added or removed with its paragraph mark. On a `.docx`,
+    `--track-changes accept|reject` renders the accepted or rejected
+    document.
   - `jubarte diff OLD NEW`, pandiff style: two Markdown documents' changes
     as CriticMarkup on stdout (`markdown::diff_markdown`), or with `-o` a
     Word redline or PDF of any two documents, Word or Markdown

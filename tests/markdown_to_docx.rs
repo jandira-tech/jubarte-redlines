@@ -415,3 +415,122 @@ fn images_are_embedded_through_the_loader() {
         }
     );
 }
+
+#[test]
+fn inline_html_quotes_code_in_lists_and_anchors() {
+    let docx = write(
+        "H<sub>2</sub>O and E=mc<sup>2</sup>, <u>underlined</u>, a<br>break, <span>kept</span>.\n\n\
+         > > deeper\n\n\
+         - item\n\n  ```\n  code in a list\n  ```\n\n\
+         [back to top](#top)\n",
+    );
+    let xml = document_xml(&docx);
+    assert!(xml.contains("<w:vertAlign w:val=\"subscript\"/>"));
+    assert!(xml.contains("<w:vertAlign w:val=\"superscript\"/>"));
+    assert!(xml.contains("<w:u w:val=\"single\"/>"));
+    assert!(xml.contains("<w:hyperlink w:anchor=\"top\""));
+    let paragraphs = inspect::paragraphs(&docx).unwrap();
+    let find = |text: &str| paragraphs.iter().find(|p| p.text == text).unwrap();
+    assert_eq!(
+        find("H2O and E=mc2, underlined, a\nbreak, kept.").style,
+        None
+    );
+    assert_eq!(find("deeper").style.as_deref(), Some("Quote"));
+    assert_eq!(find("code in a list").style.as_deref(), Some("SourceCode"));
+    assert!(
+        xml.contains("<w:ind w:left=\"1440\"/>"),
+        "a nested quote is indented"
+    );
+    assert!(
+        xml.contains("<w:ind w:left=\"720\"/>"),
+        "code in a list is indented"
+    );
+}
+
+#[test]
+fn comments_take_breaks_and_note_references_as_text() {
+    let docx = write("Text{>>first line<br>second  \nthird [^n] end<<}.\n\n[^n]: Note.\n");
+    let comments = part_string(&docx, "word/comments.xml").unwrap();
+    for line in ["first line", "second", "third [^n] end"] {
+        assert!(comments.contains(line), "{line} in {comments}");
+    }
+    assert_eq!(comments.matches("<w:p>").count(), 3, "{comments}");
+    assert_eq!(texts(&docx), ["Text."]);
+}
+
+#[test]
+fn front_matter_without_values_and_a_second_definition_are_ignored() {
+    let docx = write(
+        "---\ntitle:\nnot a pair\nauthor: 'Quoted Name'\n---\n\nText.[^a]\n\n[^a]: First.\n\n[^a]: Second.\n",
+    );
+    let core = part_string(&docx, "docProps/core.xml").unwrap();
+    assert!(
+        core.contains("<dc:creator>Quoted Name</dc:creator>"),
+        "{core}"
+    );
+    assert!(!core.contains("<dc:title>"), "{core}");
+    let notes = part_string(&docx, "word/footnotes.xml").unwrap();
+    assert!(
+        notes.contains("First.") && !notes.contains("Second."),
+        "{notes}"
+    );
+}
+
+#[test]
+fn an_image_the_loader_cannot_read_as_a_picture_is_its_alt_text() {
+    let loader = |_: &str| Some(b"not an image".to_vec());
+    let written = markdown_to_docx(
+        "![Chart](chart.svg) and ![](empty.png)\n",
+        &DocxOptions {
+            images: Some(&loader),
+            ..DocxOptions::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(texts(&written.docx), ["Chart and "]);
+    assert_eq!(written.warnings.len(), 2);
+    // Without a loader, alt text is written and nothing is reported.
+    let written = markdown_to_docx("![Chart](chart.png)\n", &DocxOptions::default()).unwrap();
+    assert_eq!(texts(&written.docx), ["Chart"]);
+    assert!(written.warnings.is_empty());
+}
+
+#[test]
+fn a_wide_picture_is_scaled_to_the_text_width() {
+    let mut png = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut png)
+        .write_image(
+            &vec![0u8; 1000 * 10],
+            1000,
+            10,
+            image::ExtendedColorType::L8,
+        )
+        .unwrap();
+    let loader = |_: &str| Some(png.clone());
+    let written = markdown_to_docx(
+        "![wide](w.png)\n",
+        &DocxOptions {
+            images: Some(&loader),
+            ..DocxOptions::default()
+        },
+    )
+    .unwrap();
+    let xml = document_xml(&written.docx);
+    assert!(
+        xml.contains("<wp:extent cx=\"5943600\" cy=\"59436\"/>"),
+        "{xml}"
+    );
+}
+
+#[test]
+fn a_reference_that_is_not_a_docx_is_refused() {
+    let err = markdown_to_docx(
+        "Text.\n",
+        &DocxOptions {
+            reference: Some(b"not a zip"),
+            ..DocxOptions::default()
+        },
+    )
+    .unwrap_err();
+    assert!(err.to_string().starts_with("reference document:"), "{err}");
+}

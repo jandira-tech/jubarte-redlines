@@ -87,7 +87,9 @@ paragraph) can be inserted or deleted too:
 
 `--track-changes accept` or `reject` writes the document with every change
 accepted or rejected, through the same engine as `jubarte accept` and
-`jubarte reject`. With `-t md` the Markdown itself is resolved instead.
+`jubarte reject`. With `-t md` the Markdown itself is resolved instead. The
+flag works on a `.docx` too: `jubarte convert redline.docx --track-changes
+accept` renders the accepted document to PDF.
 `--no-critic` reads the delimiters as text. A delimiter behind a backslash
 (`\{++`) or without its partner is text too.
 

@@ -647,9 +647,9 @@ struct MarkdownArgs {
     /// Markdown].
     #[arg(short = 't', long = "to", value_enum, value_name = "FORMAT")]
     to: Option<Format>,
-    /// Markdown: keep CriticMarkup as tracked changes (all), or write the
-    /// text with every change accepted or rejected (pandoc's flag). With
-    /// --to md, the Markdown itself is resolved.
+    /// Keep tracked changes (all), or write the document with every change
+    /// accepted or rejected (pandoc's flag): CriticMarkup in Markdown, Word's
+    /// revisions in a .docx. With --to md, the Markdown itself is resolved.
     #[arg(long, value_enum, value_name = "CHOICE", default_value_t = TrackChanges::All)]
     track_changes: TrackChanges,
     /// Markdown: read `{++`, `{--` and the other CriticMarkup delimiters as
@@ -1593,7 +1593,19 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
         run_convert(&rendered)
     };
     match (from, to) {
-        (Format::Docx, Format::Pdf | Format::Png) => pdf_job(None, to),
+        (Format::Docx, Format::Pdf | Format::Png) => match markdown.track_changes {
+            TrackChanges::All => pdf_job(None, to),
+            // The pages of the document with every change accepted or rejected.
+            choice => {
+                let resolve = if choice == TrackChanges::Accept {
+                    jubarte::document_comparer::accept_revisions
+                } else {
+                    jubarte::document_comparer::reject_revisions
+                };
+                let resolved = resolve(&bytes).map_err(|e| format!("convert failed: {e:?}"))?;
+                pdf_job(Some(&resolved), to)
+            }
+        },
         (Format::Docx, Format::Md) => Err(
             "Word to Markdown is not in this build yet; `jubarte text FILE` prints the body \
              as Markdown with paragraph ids"

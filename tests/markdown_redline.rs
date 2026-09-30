@@ -200,3 +200,84 @@ fn footnotes_are_reported_not_applied() {
         ["footnote text is not applied: only the body is edited"]
     );
 }
+
+#[test]
+fn a_new_heading_takes_the_documents_heading_style() {
+    // Heading styles defined (from the reference) but no heading paragraph.
+    let reference = std::fs::read("tests/fixtures/redline-inpi/original-new.docx").unwrap();
+    let base = jubarte::markdown::markdown_to_docx(
+        "Intro.\n\nBody.\n",
+        &jubarte::markdown::DocxOptions {
+            reference: Some(&reference),
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .docx;
+    let patched = apply_markdown(&base, "# New heading\n\nIntro.\n\nBody.\n").unwrap();
+    assert!(patched.warnings.is_empty(), "{:?}", patched.warnings);
+    let paragraphs = inspect::paragraphs(&patched.docx).unwrap();
+    assert_eq!(paragraphs[0].text, "New heading");
+    assert!(paragraphs[0].style.is_some(), "{:?}", paragraphs[0]);
+    assert_eq!(paragraphs[1].style, paragraphs[2].style);
+    // Without heading styles the heading comes in as a plain paragraph.
+    let plain = jubarte::markdown::markdown_to_docx("Intro.\n", &Default::default())
+        .unwrap()
+        .docx;
+    let patched = apply_markdown(&plain, "Intro.\n\n## Added\n").unwrap();
+    assert_eq!(texts(&patched.docx), ["Intro.", "Added"]);
+}
+
+#[test]
+fn table_rows_removed_empty_their_cells_and_added_ones_are_reported() {
+    let source = contract();
+    let removed = CONTRACT_MD.replace("| Goods | 10000 |\n", "");
+    let patched = apply_markdown(&source, &removed).unwrap();
+    let after = texts(&patched.docx);
+    assert!(!after.contains(&"Goods".to_string()) && !after.contains(&"10000".to_string()));
+    assert_eq!(
+        after.len(),
+        texts(&source).len(),
+        "the cells stay, emptied: {after:?}"
+    );
+    let added = CONTRACT_MD.replace("| Goods | 10000 |", "| Goods | 10000 |\n| Freight | 500 |");
+    let patched = apply_markdown(&source, &added).unwrap();
+    assert_eq!(
+        patched.warnings,
+        [
+            "table cell \"Freight\" not applied: rows and columns are not added",
+            "table cell \"500\" not applied: rows and columns are not added",
+        ]
+    );
+}
+
+#[test]
+fn an_edit_no_plan_can_take_is_left_out_and_reported() {
+    // A link that is a cell's only paragraph: the rewrite is refused, and
+    // replacing the paragraph would leave the cell empty.
+    let body = r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:hyperlink r:id="rId9"><w:r><w:t>old link</w:t></w:r></w:hyperlink></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After.</w:t></w:r></w:p>"#;
+    let mut package = PartFs::open(&docx(body)).unwrap();
+    let id = package.add_document_relationship_external(
+        "word/document.xml",
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+        "https://example.com",
+    );
+    let xml = package
+        .part_string("word/document.xml")
+        .unwrap()
+        .replace("rId9", &id);
+    package.set_part("word/document.xml", xml.into_bytes());
+    let source = package.to_zip().unwrap();
+    let patched = apply_markdown(
+        &source,
+        "| [new link](https://example.com) |\n|---|\n\nAfter, changed.\n",
+    )
+    .unwrap();
+    assert_eq!(patched.warnings.len(), 1, "{:?}", patched.warnings);
+    assert!(
+        patched.warnings[0].starts_with("rewriting paragraph 0 as \"new link\" not applied:"),
+        "{:?}",
+        patched.warnings
+    );
+    assert_eq!(texts(&patched.docx), ["old link", "After, changed."]);
+}

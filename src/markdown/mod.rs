@@ -164,3 +164,52 @@ impl std::fmt::Display for MarkdownError {
 }
 
 impl std::error::Error for MarkdownError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn track_changes_takes_pandocs_values() {
+        assert_eq!(TrackChanges::parse("all"), Some(TrackChanges::All));
+        assert_eq!(TrackChanges::parse("accept"), Some(TrackChanges::Accept));
+        assert_eq!(TrackChanges::parse("reject"), Some(TrackChanges::Reject));
+        assert_eq!(TrackChanges::parse("markup"), None);
+        assert_eq!(TrackChanges::default(), TrackChanges::All);
+    }
+
+    #[test]
+    fn resolve_critic_all_is_the_markdown_as_it_is() {
+        let text = "a {++b++} c";
+        assert_eq!(resolve_critic(text, TrackChanges::All), text);
+    }
+
+    #[test]
+    fn errors_and_options_describe_themselves() {
+        assert_eq!(
+            MarkdownError::Reference("not a zip".into()).to_string(),
+            "reference document: not a zip"
+        );
+        assert_eq!(
+            MarkdownError::Package("full".into()).to_string(),
+            "cannot write the document: full"
+        );
+        let loader = |_: &str| None;
+        let reference = [0u8; 3];
+        let options = DocxOptions {
+            reference: Some(&reference),
+            images: Some(&loader),
+            ..DocxOptions::default()
+        };
+        let debug = format!("{options:?}");
+        assert!(
+            debug.contains("reference: Some(3)") && debug.contains("images: true"),
+            "{debug}"
+        );
+        let debug = format!("{:?}", RedlineOptions::default());
+        assert!(
+            debug.contains("critic: false") && debug.contains("images: false"),
+            "{debug}"
+        );
+    }
+}
