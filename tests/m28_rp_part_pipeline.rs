@@ -1677,6 +1677,39 @@ fn a5b_control_without_runs_stays_beside_a_deleted_mark() {
     );
 }
 
+/// A control with no run around a table (empty cells) stands around the
+/// table beside a deleted mark (PR #243 review): its paragraphs anchor it
+/// through the table they sit in, so it is not rebuilt inside a cell or
+/// around the table's rows.
+#[test]
+fn a5b_control_without_runs_around_a_table_stays_around_the_table() {
+    let mut d = Dom::new();
+    let body = body_from(
+        &mut d,
+        "<w:sdt><w:sdtPr><w:alias w:val=\"Grid\"/></w:sdtPr><w:sdtContent>\
+         <w:tbl><w:tblGrid><w:gridCol w:w=\"100\"/><w:gridCol w:w=\"100\"/></w:tblGrid>\
+         <w:tr><w:tc><w:p/></w:tc><w:tc><w:p/></w:tc></w:tr>\
+         <w:tr><w:tc><w:p/></w:tc><w:tc><w:p/></w:tc></w:tr>\
+         </w:tbl></w:sdtContent></w:sdt>\
+         <w:p><w:pPr><w:rPr><w:del w:id=\"2\" w:author=\"x\"/></w:rPr></w:pPr><w:r><w:t>one</w:t></w:r></w:p>\
+         <w:p><w:r><w:t>two</w:t></w:r></w:p>",
+    );
+
+    let out = accept_revisions_document(&mut d, body);
+
+    let xml = d.serialize_element(out);
+    let controls = d.descendants(out, Some(&W::name("sdt")));
+    assert_eq!(controls.len(), 1, "{xml}");
+    assert_eq!(d.parent(controls[0]), Some(out), "{xml}");
+    let content = d
+        .element(controls[0], &W::sdt_content())
+        .expect("sdtContent");
+    let kids: Vec<_> = d.elements(content, None);
+    assert_eq!(kids.len(), 1, "{xml}");
+    assert_eq!(d.name(kids[0]), Some(W::tbl()), "{xml}");
+    assert_eq!(d.descendants(kids[0], Some(&W::tr())).len(), 2, "{xml}");
+}
+
 /// A control whose only run is inserted stays a block control around its
 /// paragraph beside a deleted mark: it is not rebuilt inside the `w:ins`,
 /// which accepting unwraps into the paragraph.
