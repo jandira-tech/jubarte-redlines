@@ -5469,6 +5469,122 @@ fn a_row_split_keeps_widow_control_from_compat_15() {
 }
 
 #[test]
+fn a_keep_next_paragraph_ending_a_page_splits_or_moves_by_compat_mode() {
+    // Word 16 probes kn1–kn7 0930 (32 exact 20pt lines a page): a keepNext
+    // paragraph that ends on the page's last line, its successor pushed
+    // over, keeps its tail with that successor. Compat 15 splits it and
+    // carries the widow lines (two, or one with widowControl off); compat 14
+    // moves it whole, with any keepNext paragraphs chained before it
+    // (priority 4e7bb2a1be's "Location/Date" chain). One that runs past the
+    // page splits as usual in both modes.
+    let para = |t: &str, ppr: &str| {
+        let runs: Vec<String> = t
+            .split('|')
+            .map(|x| format!("<w:r><w:t>{x}</w:t></w:r>"))
+            .collect();
+        format!(
+            "<w:p><w:pPr>{ppr}</w:pPr>{}</w:p>",
+            runs.join("<w:r><w:br/></w:r>")
+        )
+    };
+    let exact = "<w:spacing w:before=\"0\" w:after=\"0\" w:line=\"400\" w:lineRule=\"exact\"/>";
+    let kn = format!("<w:keepNext/>{exact}");
+    let pages = |mode: u32, fillers: usize, tail: &str| {
+        let fill: String = (0..fillers)
+            .map(|i| para(&format!("Fill{i:02}"), exact))
+            .collect();
+        let body = format!(
+            "{fill}{tail}<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+                 w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>"
+        );
+        let settings = format!(
+            r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="{mode}"/></w:compat>"#
+        );
+        docx_to_pdf(&minimal_docx_with_settings(&body, &settings)).expect("keepNext")
+    };
+    let on = |pdf: &[u8], t: &str| page_with_text(pdf, t).expect(t);
+    let five = para("Kp1|Kp2|Kp3|Kp4|Kp5", &kn) + &para("Nx1", exact);
+    let split = pages(15, 27, &five);
+    assert_eq!(
+        (on(&split, "Kp3"), on(&split, "Kp4"), on(&split, "Nx1")),
+        (0, 1, 1),
+        "compat 15 carries the last two lines over"
+    );
+    let unguarded = format!("<w:keepNext/><w:widowControl w:val=\"0\"/>{exact}");
+    let one = pages(
+        15,
+        27,
+        &(para("Kp1|Kp2|Kp3|Kp4|Kp5", &unguarded) + &para("Nx1", exact)),
+    );
+    assert_eq!(
+        (on(&one, "Kp4"), on(&one, "Kp5")),
+        (0, 1),
+        "without widow control one line goes over"
+    );
+    let kept = pages(
+        15,
+        27,
+        &(para(
+            "Kp1|Kp2|Kp3|Kp4|Kp5",
+            &format!("<w:keepNext/><w:keepLines/>{exact}"),
+        ) + &para("Nx1", exact)),
+    );
+    assert_eq!(on(&kept, "Kp1"), 1, "keepLines moves it whole at compat 15");
+    let whole = pages(14, 27, &five);
+    assert_eq!(
+        (on(&whole, "Kp1"), on(&whole, "Nx1")),
+        (1, 1),
+        "compat 14 moves the paragraph whole"
+    );
+    let chain = para("Ka1|Ka2|Ka3", &kn) + &five;
+    let legacy = pages(14, 24, &chain);
+    assert_eq!(on(&legacy, "Ka1"), 1, "compat 14 moves the chain before it");
+    let modern = pages(15, 24, &chain);
+    assert_eq!(
+        (on(&modern, "Ka1"), on(&modern, "Kp3"), on(&modern, "Kp4")),
+        (0, 0, 1),
+        "compat 15 leaves the chain and splits the last paragraph"
+    );
+    let short = pages(15, 29, &(para("Kp1|Kp2|Kp3", &kn) + &para("Nx1", exact)));
+    assert_eq!(
+        on(&short, "Kp1"),
+        1,
+        "a three-line paragraph cannot split 1|2"
+    );
+    // An unsplittable chain longer than a page (kn8: twelve four-line
+    // keepLines paragraphs) still starts on a fresh page, then fills
+    // pages: its members are not weighed again one by one (the redline
+    // of 4e7bb2a1be's Heading 3 references).
+    let long: String = (0..12)
+        .map(|k| {
+            para(
+                &format!("H{k:02}a|H{k:02}b|H{k:02}c|H{k:02}d"),
+                &format!("<w:keepNext/><w:keepLines/>{exact}"),
+            )
+        })
+        .collect();
+    for mode in [14, 15] {
+        let filled = pages(mode, 5, &(long.clone() + &para("Nx1", exact)));
+        assert_eq!(
+            (
+                on(&filled, "H00a"),
+                on(&filled, "H07d"),
+                on(&filled, "H08a")
+            ),
+            (1, 1, 2),
+            "compat {mode}: the chain opens page 2 and fills it"
+        );
+    }
+    let past = pages(14, 29, &five);
+    assert_eq!(
+        (on(&past, "Kp3"), on(&past, "Kp4")),
+        (0, 1),
+        "one that runs past the page splits as usual"
+    );
+}
+
+#[test]
 fn a_cant_split_row_taller_than_a_page_breaks_from_a_fresh_page() {
     // Word 16 probes cs_mid/cs_top_0930 (32 exact 20pt lines a page): a
     // cantSplit row of 40 lines moves off a page it started part-way

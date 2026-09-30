@@ -148,6 +148,18 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   it, as in Word 16; a narrower table still sits beside it. Before, the
   table ran over the picture: 109f20a2b3's continued table painted
   across its header logo, 74pt higher than Word's.
+- A "keep with next" paragraph that ends on a page's last line, its
+  successor pushed over, keeps its tail with that successor as Word does.
+  From compatibility mode 15 it splits and carries its last two lines
+  over (one with widow control off). Older modes move it whole, together
+  with the keep-with-next paragraphs chained before it. A chain of short
+  keep-with-next paragraphs now stays with the body below it, and its
+  spacing no longer counts the space between two paragraphs twice. A
+  chain of unsplittable ones taller than a page moves to a fresh page
+  once and then fills pages. A keepLines paragraph comes whole with the
+  heading above it.
+  Priority 4e7bb2a1be's event chain moves to page 2 as in Word (2 pages
+  → Word's 3).
 - Paragraph borders in headers and footers paint wherever Word draws
   them: on an empty paragraph above the part's text (a footer's opening
   rule, a running head's rule under its title table) and on a text
