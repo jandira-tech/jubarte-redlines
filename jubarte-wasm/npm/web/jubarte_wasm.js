@@ -97,6 +97,40 @@ export class EditOutput {
 if (Symbol.dispose) EditOutput.prototype[Symbol.dispose] = EditOutput.prototype.free;
 
 /**
+ * Accept the changes `filterJson` selects and keep the rest tracked, as
+ * Word's Accept This Change does. The filter is `{"ids": [...],
+ * "authors": [...], "kinds": [...]}`: a change is selected when it matches
+ * every list given (`{}` selects every change; an empty list, none).
+ *
+ * Mirrors `jubarte::changes::accept_changes`.
+ * @param {Uint8Array} docx
+ * @param {string} filter_json
+ * @returns {Uint8Array}
+ */
+export function acceptChanges(docx, filter_json) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(filter_json, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.acceptChanges(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v3 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export(r0, r1 * 1, 1);
+        return v3;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
  * Accept every tracked revision (package-wide) → clean DOCX bytes.
  *
  * Mirrors `jubarte::document_comparer::accept_revisions`.
@@ -411,6 +445,43 @@ export function inspectDocument(docx) {
 }
 
 /**
+ * List the tracked changes one by one as a JSON array string, each with the
+ * id `acceptChanges` / `rejectChanges` select by (the same objects as
+ * `jubarte changes --json`: `id`, `kind`, `target`, `author`, `date`,
+ * `text`, `move_name`, `move_side`, `inside`).
+ *
+ * Mirrors `jubarte::changes::list_changes`.
+ * @param {Uint8Array} docx
+ * @returns {string}
+ */
+export function listChanges(docx) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.listChanges(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr2 = r0;
+        var len2 = r1;
+        if (r3) {
+            ptr2 = 0; len2 = 0;
+            throw takeObject(r2);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Number of pages in a PDF (cheap object scan; `0` if the bytes are not a
  * readable PDF).
  *
@@ -448,6 +519,38 @@ export function previewEditPlan(docx, plan_json) {
             throw takeObject(r1);
         }
         return EditOutput.__wrap(r0);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * Reject the changes `filterJson` selects and keep the rest tracked
+ * (filter as in `acceptChanges`).
+ *
+ * Mirrors `jubarte::changes::reject_changes`.
+ * @param {Uint8Array} docx
+ * @param {string} filter_json
+ * @returns {Uint8Array}
+ */
+export function rejectChanges(docx, filter_json) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(filter_json, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.rejectChanges(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v3 = getArrayU8FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export(r0, r1 * 1, 1);
+        return v3;
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }

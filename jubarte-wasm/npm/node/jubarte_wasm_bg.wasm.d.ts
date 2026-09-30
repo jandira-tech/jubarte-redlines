@@ -2,6 +2,7 @@
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
 export const __wbg_editoutput_free: (a: number, b: number) => void;
+export const acceptChanges: (a: number, b: number, c: number, d: number, e: number) => void;
 export const acceptRevisions: (a: number, b: number, c: number) => void;
 export const applyEditPlan: (a: number, b: number, c: number, d: number, e: number) => void;
 export const capabilities: (a: number) => void;
@@ -15,8 +16,10 @@ export const editoutput_ok: (a: number) => number;
 export const editoutput_redline: (a: number, b: number) => void;
 export const getRevisions: (a: number, b: number, c: number) => void;
 export const inspectDocument: (a: number, b: number, c: number) => void;
+export const listChanges: (a: number, b: number, c: number) => void;
 export const pdfPageCount: (a: number, b: number) => number;
 export const previewEditPlan: (a: number, b: number, c: number, d: number, e: number) => void;
+export const rejectChanges: (a: number, b: number, c: number, d: number, e: number) => void;
 export const rejectRevisions: (a: number, b: number, c: number) => void;
 export const sourceSha256: (a: number, b: number, c: number) => void;
 export const initPanicHook: () => void;
