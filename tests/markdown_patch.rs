@@ -363,3 +363,36 @@ fn every_hunk_is_its_paragraph_in_both_versions_at_its_line() {
         }
     }
 }
+
+#[test]
+fn a_long_clause_with_amounts_formatting_and_links() {
+    let old = include_str!("fixtures/patch/indemnification.old.md");
+    let new = include_str!("fixtures/patch/indemnification.new.md");
+    let patch = patch_markdown(
+        old,
+        new,
+        &options("purchase-agreement.md", "purchase-agreement.md"),
+    );
+    let text = patch.render(0);
+    assert_eq!(patch.hunks.len(), 1, "{text}");
+    for expected in [
+        "harmless [-*Buyer*-]{+Buyer+}, its",
+        "{+(including reasonable attorneys' fees) +}incurred",
+        "(b) any {+material +}breach",
+        "Agreement[-; (c) any Excluded Asset or any Excluded Liability-]; or ([-d-]{+c+}) any",
+        "exceeds **[-$250,000-]{+$150,000+}** (the \"[-Basket-]{+**Basket**+}\")",
+        "pay [-only-]{+all+} such Losses [-in excess of the Basket-]{+from the first dollar+}, and",
+        "exceed **[-$5,000,000-]{+$7,500,000+}** (the \"Cap\")",
+        "described in [-[Section 7.4](#section-7-4)-]{+[Section 7.5](#section-7-5)+}.",
+    ] {
+        assert!(text.contains(expected), "missing {expected:?} in\n{text}");
+    }
+    assert_eq!(resolve(&patch.hunks[0].text, true), new.trim_end());
+    assert_eq!(resolve(&patch.hunks[0].text, false), old.trim_end());
+    for line in patch.to_string().lines() {
+        assert!(
+            line.chars().count() <= 72 || line.starts_with("+++"),
+            "{line:?}"
+        );
+    }
+}

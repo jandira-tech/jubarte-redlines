@@ -16,6 +16,7 @@
 
 use std::borrow::Cow;
 
+use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use similar::{Algorithm, DiffTag, capture_diff_slices};
 
 use crate::util::word_tokens as tokens;
@@ -484,7 +485,7 @@ fn words_diff(old: &str, new: &str) -> String {
         merged.push((equal, old_text, new_text));
         index += 1;
     }
-    merged
+    widen(merged, old, new)
         .into_iter()
         .map(|(equal, old_text, new_text)| {
             if equal {
@@ -494,6 +495,235 @@ fn words_diff(old: &str, new: &str) -> String {
             }
         })
         .collect()
+}
+
+/// A span that is read whole: a change that touches its `triggers` covers
+/// all of `range`.
+struct Atom {
+    range: (usize, usize),
+    triggers: Vec<(usize, usize)>,
+}
+
+/// Numbers (`$5,000,000`, `04/20/26`, `3.5%`), the delimiters of emphasis,
+/// strikethrough and code, and the syntax of links (all but their text).
+fn atoms(text: &str) -> Vec<Atom> {
+    let mut out = numbers(text);
+    let mut open: Vec<(usize, Option<(usize, usize)>)> = Vec::new();
+    let options = Options::ENABLE_STRIKETHROUGH;
+    for (event, range) in Parser::new_ext(text, options).into_offset_iter() {
+        match event {
+            Event::Start(Tag::Emphasis | Tag::Strong | Tag::Strikethrough | Tag::Link { .. }) => {
+                open.push((range.start, None));
+            }
+            Event::End(
+                TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough | TagEnd::Link,
+            ) => {
+                if let Some((start, inner)) = open.pop() {
+                    let (inner_start, inner_end) = inner.unwrap_or((range.end, range.end));
+                    out.push(Atom {
+                        range: (start, range.end),
+                        triggers: vec![(start, inner_start), (inner_end, range.end)],
+                    });
+                    extend(&mut open, (start, range.end));
+                }
+            }
+            Event::Code(_) => {
+                let ticks = text[range.clone()]
+                    .bytes()
+                    .take_while(|b| *b == b'`')
+                    .count();
+                out.push(Atom {
+                    range: (range.start, range.end),
+                    triggers: vec![
+                        (range.start, range.start + ticks),
+                        (range.end - ticks, range.end),
+                    ],
+                });
+                extend(&mut open, (range.start, range.end));
+            }
+            _ => extend(&mut open, (range.start, range.end)),
+        }
+    }
+    out
+}
+
+/// Widens the innermost open span's text to cover `range`.
+fn extend(open: &mut [(usize, Option<(usize, usize)>)], range: (usize, usize)) {
+    if let Some((_, inner)) = open.last_mut() {
+        *inner = Some(match inner {
+            Some((start, end)) => ((*start).min(range.0), (*end).max(range.1)),
+            None => range,
+        });
+    }
+}
+
+/// Runs of digits joined by `,` `.` `/` `:` `-` between digits, with a
+/// currency sign before and a `%` after.
+fn numbers(text: &str) -> Vec<Atom> {
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    let mut out = Vec::new();
+    let mut at = 0;
+    while at < chars.len() {
+        let currency = matches!(chars[at].1, '$' | '€' | '£' | '¥');
+        let first = if currency { at + 1 } else { at };
+        if !chars.get(first).is_some_and(|(_, c)| c.is_ascii_digit()) {
+            at += 1;
+            continue;
+        }
+        let mut end = first;
+        while end < chars.len() {
+            let c = chars[end].1;
+            let joins = matches!(c, ',' | '.' | '/' | ':' | '-')
+                && chars.get(end + 1).is_some_and(|(_, n)| n.is_ascii_digit())
+                && end > first;
+            if c.is_ascii_digit() || joins {
+                end += 1;
+            } else {
+                break;
+            }
+        }
+        if chars.get(end).is_some_and(|(_, c)| *c == '%') {
+            end += 1;
+        }
+        let range = (chars[at].0, chars.get(end).map_or(text.len(), |(i, _)| *i));
+        out.push(Atom {
+            range,
+            triggers: vec![range],
+        });
+        at = end;
+    }
+    out
+}
+
+/// Whether a change over `range` (empty: a point) touches `span`.
+fn touches(range: (usize, usize), span: (usize, usize)) -> bool {
+    if range.0 == range.1 {
+        span.0 < range.0 && range.0 < span.1
+    } else {
+        range.0 < span.1 && span.0 < range.1
+    }
+}
+
+/// Changes that touch a number, a formatting delimiter or a link's syntax,
+/// widened to all of it (in both versions), so `$5,000,000` is replaced
+/// whole and `*Buyer*` becoming `Buyer` reads as one change.
+fn widen(
+    mut segments: Vec<(bool, String, String)>,
+    old: &str,
+    new: &str,
+) -> Vec<(bool, String, String)> {
+    let (old_atoms, new_atoms) = (atoms(old), atoms(new));
+    let mut index = 0;
+    while index < segments.len() {
+        if segments[index].0 {
+            index += 1;
+            continue;
+        }
+        loop {
+            let (mut o, mut n) = (0, 0);
+            for segment in &segments[..index] {
+                o += segment.1.len();
+                n += segment.2.len();
+            }
+            let (_, old_text, new_text) = &segments[index];
+            let old_range = (o, o + old_text.len());
+            let new_range = (n, n + new_text.len());
+            let cover = |range: (usize, usize), atoms: &[Atom]| {
+                atoms
+                    .iter()
+                    .filter(|a| a.triggers.iter().any(|t| touches(range, *t)))
+                    .fold(range, |(s, e), a| (s.min(a.range.0), e.max(a.range.1)))
+            };
+            let (old_to, new_to) = (cover(old_range, &old_atoms), cover(new_range, &new_atoms));
+            let left = (old_range.0 - old_to.0).max(new_range.0 - new_to.0);
+            let right = (old_to.1 - old_range.1).max(new_to.1 - new_range.1);
+            if left == 0 && right == 0 {
+                break;
+            }
+            // Atoms lie inside the text, so there is a segment on each side
+            // to take from; were there not, the widening stops.
+            let before = left > 0 && index > 0;
+            let after = right > 0 && index + 1 < segments.len();
+            if !before && !after {
+                break;
+            }
+            // A segment taken whole is removed: the change moves back one.
+            if before && take(&mut segments, index - 1, left, true) {
+                index -= 1;
+            }
+            if after {
+                take(&mut segments, index + 1, right, false);
+            }
+        }
+        index += 1;
+    }
+    segments
+}
+
+/// Moves `length` bytes (or all) of the segment at `at` into the change
+/// next to it: its end into the change after it (`into_next`), or its start
+/// into the change before it. A change is taken whole. Returns whether the
+/// segment was taken whole (and so removed).
+fn take(
+    segments: &mut Vec<(bool, String, String)>,
+    at: usize,
+    length: usize,
+    into_next: bool,
+) -> bool {
+    let (equal, old_text, new_text) = segments[at].clone();
+    let whole = !equal || length >= old_text.len();
+    let (moved_old, moved_new, kept) = if whole {
+        (old_text, new_text, None)
+    } else if into_next {
+        let cut = floor(&old_text, old_text.len() - length);
+        (
+            old_text[cut..].to_string(),
+            old_text[cut..].to_string(),
+            Some(old_text[..cut].to_string()),
+        )
+    } else {
+        let cut = ceil(&old_text, length);
+        (
+            old_text[..cut].to_string(),
+            old_text[..cut].to_string(),
+            Some(old_text[cut..].to_string()),
+        )
+    };
+    let change = if into_next { at + 1 } else { at - 1 };
+    {
+        let (_, o, n) = &mut segments[change];
+        if into_next {
+            o.insert_str(0, &moved_old);
+            n.insert_str(0, &moved_new);
+        } else {
+            o.push_str(&moved_old);
+            n.push_str(&moved_new);
+        }
+    }
+    match kept {
+        Some(kept) => {
+            segments[at] = (true, kept.clone(), kept);
+            false
+        }
+        None => {
+            segments.remove(at);
+            true
+        }
+    }
+}
+
+fn floor(text: &str, mut at: usize) -> usize {
+    while !text.is_char_boundary(at) {
+        at -= 1;
+    }
+    at
+}
+
+fn ceil(text: &str, mut at: usize) -> usize {
+    while !text.is_char_boundary(at) {
+        at += 1;
+    }
+    at
 }
 
 /// Lines only in one version. Lines that continue the paragraph written
@@ -593,6 +823,73 @@ mod tests {
         );
         assert_eq!(words_diff("a b", "a b c"), "a b{++ c++}");
         assert_eq!(words_diff("a b c", "a c"), "a {--b --}c");
+    }
+
+    #[test]
+    fn a_change_inside_a_number_is_the_whole_number() {
+        for (old, new, expected) in [
+            (
+                "exceeds **$250,000** now",
+                "exceeds **$150,000** now",
+                "exceeds **{~~$250,000~>$150,000~~}** now",
+            ),
+            (
+                "on 04/20/26.",
+                "on 10/30/26.",
+                "on {~~04/20/26~>10/30/26~~}.",
+            ),
+            ("grew 3.5% a", "grew 4.25% a", "grew {~~3.5%~>4.25%~~} a"),
+            (
+                "cap of $5,000,000 total",
+                "cap of $7,500,000 total",
+                "cap of {~~$5,000,000~>$7,500,000~~} total",
+            ),
+            ("5 days", "5 business days", "5 {++business ++}days"),
+            // Next to a number, not in it.
+            ("5 days", "5, days", "5{++,++} days"),
+        ] {
+            assert_eq!(words_diff(old, new), expected, "{old}");
+        }
+    }
+
+    #[test]
+    fn a_formatting_change_is_the_whole_span() {
+        for (old, new, expected) in [
+            (
+                "harmless *Buyer*, its",
+                "harmless Buyer, its",
+                "harmless {~~*Buyer*~>Buyer~~}, its",
+            ),
+            (
+                "the \"Basket\")",
+                "the \"**Basket**\")",
+                "the \"{~~Basket~>**Basket**~~}\")",
+            ),
+            // Text changed inside emphasis stays inside it.
+            (
+                "*provided, however*, that",
+                "*provided, further*, that",
+                "*provided, {~~however~>further~~}*, that",
+            ),
+        ] {
+            assert_eq!(words_diff(old, new), expected, "{old}");
+        }
+    }
+
+    #[test]
+    fn a_changed_link_target_is_the_whole_link() {
+        assert_eq!(
+            words_diff(
+                "in [Section 7.4](#section-7-4).",
+                "in [Section 7.5](#section-7-5)."
+            ),
+            "in {~~[Section 7.4](#section-7-4)~>[Section 7.5](#section-7-5)~~}."
+        );
+        // Only the link text: the change stays in it.
+        assert_eq!(
+            words_diff("see [the old terms](x)", "see [the new terms](x)"),
+            "see [the {~~old~>new~~} terms](x)"
+        );
     }
 
     #[test]
