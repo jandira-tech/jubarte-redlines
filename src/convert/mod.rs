@@ -6394,14 +6394,22 @@ fn is_cover_pages_sdt(dom: &Dom, sdt: NodeId) -> bool {
         .is_some_and(|v| v.eq_ignore_ascii_case("Cover Pages"))
 }
 
+/// The part `main` relates to by type `…/kind`, then by a type or target
+/// merely containing `kind`. The exact type goes first: a target check
+/// alone took `commentsExtended.xml` for the comments part when its
+/// relationship came first (with_comments_clean/37c6c62345).
 fn part_xml_by_rel_kind(pkg: &PartFs, main: &str, kind: &str) -> Option<String> {
     if let Some(rels) = pkg.read_rels_for(main) {
-        for item in &rels.items {
-            if item.rel_type.ends_with(kind) || item.target.contains(kind) {
-                let path = pkg.resolve_rel_target(main, &item.target);
-                if let Some(xml) = pkg.part_string(&path) {
-                    return Some(xml);
-                }
+        let exact = format!("/{kind}");
+        let by_type = rels.items.iter().filter(|i| i.rel_type.ends_with(&exact));
+        let loose = rels
+            .items
+            .iter()
+            .filter(|i| i.rel_type.ends_with(kind) || i.target.contains(kind));
+        for item in by_type.chain(loose) {
+            let path = pkg.resolve_rel_target(main, &item.target);
+            if let Some(xml) = pkg.part_string(&path) {
+                return Some(xml);
             }
         }
     }

@@ -30311,6 +30311,40 @@ fn comments_docx(body: &str, comments_xml: &str) -> Vec<u8> {
     zip.finish().unwrap().into_inner()
 }
 
+/// `docx` with a `commentsExtended.xml` part, its relationship listed
+/// before or after the comments one.
+fn with_comments_extended(docx: Vec<u8>, extended_xml: &str, listed_first: bool) -> Vec<u8> {
+    let rel = "<Relationship Id=\"rIdCommentsEx\" \
+         Type=\"http://schemas.microsoft.com/office/2011/relationships/commentsExtended\" \
+         Target=\"commentsExtended.xml\"/>";
+    let mut archive = ZipArchive::new(Cursor::new(docx)).unwrap();
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    let opts = SimpleFileOptions::default();
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).unwrap();
+        let name = file.name().to_string();
+        let mut text = String::new();
+        file.read_to_string(&mut text).unwrap();
+        let text = match name.as_str() {
+            "word/_rels/document.xml.rels" if listed_first => {
+                text.replace("<Relationship Id=\"rIdComments\"", &format!("{rel}<Relationship Id=\"rIdComments\""))
+            }
+            "word/_rels/document.xml.rels" => text.replace("</Relationships>", &format!("{rel}</Relationships>")),
+            "[Content_Types].xml" => text.replace(
+                "</Types>",
+                "<Override PartName=\"/word/commentsExtended.xml\" \
+                   ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml\"/></Types>",
+            ),
+            _ => text,
+        };
+        zip.start_file(name, opts).unwrap();
+        zip.write_all(text.as_bytes()).unwrap();
+    }
+    zip.start_file("word/commentsExtended.xml", opts).unwrap();
+    zip.write_all(extended_xml.as_bytes()).unwrap();
+    zip.finish().unwrap().into_inner()
+}
+
 fn comments_part(id: &str, author: &str, text: &str) -> String {
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
@@ -39217,4 +39251,25 @@ fn font_index_unwritable_parent_does_not_prevent_conversion() {
     convert_with_font_index(dir.path(), Some(path.as_os_str()));
     assert_eq!(std::fs::read(parent).unwrap(), b"keep me");
     assert!(!path.exists());
+}
+
+#[test]
+fn comments_load_when_comments_extended_is_listed_first() {
+    // with_comments_clean/37c6c62345 lists commentsExtended.xml before
+    // comments.xml. A target containing "comments" matched the extended
+    // part, so its one comment (Word draws its balloon on page 2) was lost.
+    let body = "<w:p><w:commentRangeStart w:id=\"0\"/><w:r><w:t>Commented words.</w:t></w:r>\
+         <w:commentRangeEnd w:id=\"0\"/><w:r><w:commentReference w:id=\"0\"/></w:r></w:p><w:sectPr/>";
+    let extended = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w15:commentsEx xmlns:w15=\"http://schemas.microsoft.com/office/word/2012/wordml\"/>";
+    for listed_first in [false, true] {
+        let docx = with_comments_extended(
+            comments_docx(body, &comments_part("0", "Ada", "Kept")),
+            extended,
+            listed_first,
+        );
+        let notes = pdf_notes(&docx_to_pdf(&docx).expect("pdf"));
+        assert_eq!(notes.len(), 1, "extended part listed first: {listed_first}");
+        assert!(notes[0].contents.contains("Kept"), "{notes:?}");
+    }
 }
