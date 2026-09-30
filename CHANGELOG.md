@@ -191,6 +191,18 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   body floor, and what follows starts the next page. 9b22b88370 went from
   26.4/23.1 to 64.5/49.4, 842ef93738 from 25.2/37.1 to 70.8/79.5 (Word
   probes k1-k14).
+- A header or footer line without tabs paints its strikes and underlines:
+  a deleted run's strike, an inserted run's underline, `w:u` and
+  `w:strike`. Only its glyphs used to reach the page. 9b22b88370's
+  deleted header title is struck as in Word; clean 00163e55a0 went from
+  49.3 to 72.7 pixel, and the work set from 48.22 to 48.34.
+- Change bars follow Word further. A revised paragraph that crosses a page
+  or column is barred on each one it fills, not only where it starts; a
+  paragraph whose mark alone is inserted, deleted or reformatted is barred;
+  and so are a header's or footer's revised lines and empty paragraphs.
+  450945a41c went from 11.6 to 36.6 jaccard; the work set from
+  48.34/25.98 to 48.41/26.23 (93 better, 1 worse), with the tip holdout
+  at 46.08 to 46.15.
 - Rejecting a redline gives back what a changed style inherited in the
   original. Word's Reject All reads a style's old record against its
   built-in defaults, so a record holding only the style's own properties
