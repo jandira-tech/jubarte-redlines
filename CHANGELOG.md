@@ -17,6 +17,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [0.10.1] - 2026-09-30
 
+> **Summary.** Tracked changes can be accepted or rejected one at a time, as Word's Accept / Reject This Change, from the CLI, edit plans (resolve_revisions), Python and WASM; Reject All matches Word on text and mark state; docx-to-PDF follows Word far more closely on page breaks, keep-with-next, table rows, floating tables, headers, footers and comment balloons; jubarte debug gains --check render, diff A B [C …] and -c text.
+>
+> **Docs.** New docs/WORD_COMMENT_BALLOONS.md (when Word draws no comment balloon) and docs/api/ snapshots of the Rust and WASM API surface for release drift review; docs/WORD_DIFFERENCES.md extended; VERSIONING.md documents the step-5 API-docs review; the jubarte-documents skill and the npm README cover per-change accept/reject.
+
 ### Changed
 
 - The tests no longer need neurotic_docx_bench (or the local
