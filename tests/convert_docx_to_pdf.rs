@@ -26033,6 +26033,26 @@ fn pdf_fill_rects(pdf: &[u8], r: f32, g: f32, b: f32) -> Vec<(f32, f32)> {
     out
 }
 
+/// Each `r g b` filled rect as its (top, bottom) in points from the top of
+/// a Letter page.
+fn pdf_fill_bands(pdf: &[u8], r: f32, g: f32, b: f32) -> Vec<(f32, f32)> {
+    let needle = format!("{r:.3} {g:.3} {b:.3} rg ");
+    let hay = String::from_utf8_lossy(pdf);
+    let mut out = Vec::new();
+    for (at, _) in hay.match_indices(&needle) {
+        let rest = &hay[at + needle.len()..];
+        let end = rest.find(" re f").unwrap_or(0);
+        let parts: Vec<f32> = rest[..end]
+            .split_whitespace()
+            .filter_map(|p| p.parse().ok())
+            .collect();
+        if let [_, y, _, h] = parts[..] {
+            out.push((792.0 - y - h, 792.0 - y));
+        }
+    }
+    out
+}
+
 fn pdf_has_filled_polygon(hay: &str) -> bool {
     hay.contains(" h f") || hay.contains("\nh f") || hay.contains(" h f\n")
 }
@@ -40929,6 +40949,56 @@ fn a_fixed_table_past_22_inches_squeezes_its_last_columns_to_the_limit() {
         (fits - 22.8).abs() < 3.0,
         "a table within 22in keeps its tcW: Top-to-After {fits}, Word 22.8"
     );
+}
+
+#[test]
+fn shaded_empty_header_and_footer_paragraphs_paint_their_bands() {
+    // PR #247 review: Word paints an empty paragraph's shading across its
+    // mark's line. Word, these parts (Arial 10, single, no spacing): the
+    // header's three green bands stack 36 -> 47.5 -> 59 -> 70.6, the
+    // footer's 721.4 -> 756, an all-empty header's 36 -> 59. We painted
+    // only the band of the paragraph holding "Head".
+    let rpr = "<w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/><w:sz w:val=\"20\"/></w:rPr>";
+    let para = |text: &str| {
+        let run = if text.is_empty() {
+            String::new()
+        } else {
+            format!("<w:r>{rpr}<w:t>{text}</w:t></w:r>")
+        };
+        format!(
+            "<w:p><w:pPr><w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"00FF00\"/>\
+               <w:spacing w:before=\"0\" w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/>{rpr}</w:pPr>{run}</w:p>"
+        )
+    };
+    let three = format!("{}{}{}", para(""), para("Head"), para(""));
+    let span = |pdf: &[u8]| {
+        let bands = pdf_fill_bands(pdf, 0.0, 1.0, 0.0);
+        let top = bands.iter().map(|b| b.0).fold(f32::MAX, f32::min);
+        let bottom = bands.iter().map(|b| b.1).fold(f32::MIN, f32::max);
+        let height: f32 = bands.iter().map(|b| b.1 - b.0).sum();
+        (top, bottom, height)
+    };
+    let cases = [
+        ("header", header_part_docx(&three), (36.0, 70.6)),
+        ("footer", footer_part_docx(&three), (721.4, 756.0)),
+        (
+            "all-empty header",
+            header_part_docx(&format!("{}{}", para(""), para(""))),
+            (36.0, 59.0),
+        ),
+    ];
+    for (name, docx, (want_top, want_bottom)) in cases {
+        let pdf = docx_to_pdf(&docx).expect("shaded chrome");
+        let (top, bottom, height) = span(&pdf);
+        assert!(
+            (top - want_top).abs() < 1.0 && (bottom - want_bottom).abs() < 1.0,
+            "{name}: green spans {top}..{bottom}, Word {want_top}..{want_bottom}"
+        );
+        assert!(
+            (height - (want_bottom - want_top)).abs() < 1.0,
+            "{name}: the bands tile the span without gaps or overlap ({height})"
+        );
+    }
 }
 
 #[test]

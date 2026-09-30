@@ -109,6 +109,8 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 - A square-wrapped float whose top sits below its anchor's first line no
   longer pushes that line to the next page.
 - A header picture with no height adds no line under the header text.
+- An empty header or footer paragraph paints its shading across its
+  line, above or below the text or in a part with no text, as Word does.
 - The review fixes for PR #247:
   - A run's `w:rPr` blocks apply `w:vanish` in order, so a later
     character style that turns it off shows the run again.

@@ -20890,6 +20890,17 @@ impl<'a> Layout<'a> {
         });
     }
 
+    /// The shading band of the empty paragraph `runs[i]`, `h` down from
+    /// `top`: Word paints it across the mark's line (PR #247 review).
+    fn hf_break_fill(&mut self, runs: &[TextRun], i: usize, top: f32, h: f32) {
+        let Some(para) = runs[i].hf_para.as_deref() else {
+            return;
+        };
+        let above = i.checked_sub(1).and_then(|j| runs[j].hf_para.as_deref());
+        let next = runs.get(i + 1).and_then(|r| r.hf_para.as_deref());
+        self.hf_line_fill(para, above, next, top, h);
+    }
+
     /// A chrome paragraph's bottom rule, its space under the line box
     /// bottom, when the paragraph closes its border group.
     fn hf_bottom_rule(&mut self, para: &ParaStyle, next: Option<&ParaStyle>, line_bottom: f32) {
@@ -25821,6 +25832,16 @@ impl<'a> Layout<'a> {
                 - head_before
                 - pics_h
                 - hf_opening_pad(&header);
+            // The empty paragraphs over the text paint their shading.
+            let mut band = top + lead;
+            for (i, r) in header.iter().enumerate() {
+                if r.text != HF_LINE_BREAK {
+                    break;
+                }
+                let h = hf_break_box(self.fonts, r);
+                self.hf_break_fill(&header, i, band, h);
+                band -= h + r.para_gap;
+            }
             let mut y = top;
             let mut above: Option<std::rc::Rc<ParaStyle>> = None;
             let lines = hf_styled_lines(self.fonts, &header, self.content_width());
@@ -25883,6 +25904,7 @@ impl<'a> Layout<'a> {
                     above = Some(p.clone());
                 }
                 let h = hf_break_box(self.fonts, r);
+                self.hf_break_fill(&header, trail_at + i, top, h);
                 self.hf_rev_bar(std::slice::from_ref(r), r.hf_para.as_deref(), top, h);
                 top -= h;
             }
@@ -26014,6 +26036,17 @@ impl<'a> Layout<'a> {
                 self.hairline_h(x1, top, x2, width, color);
             }
             let y = base;
+            // The empty paragraphs over the text paint their shading,
+            // stacked up from the first line's top.
+            if let Some(first) = footer.iter().position(|r| r.text != HF_LINE_BREAK) {
+                let mut bottom = base + above + metrics.first().map_or(0.0, |m| m.0);
+                for (i, r) in footer[..first].iter().enumerate().rev() {
+                    let h = hf_break_box(self.fonts, r);
+                    bottom += r.para_gap;
+                    self.hf_break_fill(&footer, i, bottom + h, h);
+                    bottom += h;
+                }
+            }
             let mut above: Option<std::rc::Rc<ParaStyle>> = None;
             for (i, (line, _)) in lines.iter().enumerate() {
                 let align = line
@@ -26052,8 +26085,9 @@ impl<'a> Layout<'a> {
             // its line.
             if let Some(last) = footer.iter().rposition(|r| r.text != HF_LINE_BREAK) {
                 let mut top = base - self.fonts.get(fid).descent_pt(size) - hang;
-                for r in &footer[last + 1..] {
+                for (i, r) in footer.iter().enumerate().skip(last + 1) {
                     let h = hf_break_box(self.fonts, r);
+                    self.hf_break_fill(&footer, i, top, h);
                     self.hf_rev_bar(std::slice::from_ref(r), r.hf_para.as_deref(), top, h);
                     top -= h + r.para_gap;
                 }
@@ -26061,8 +26095,9 @@ impl<'a> Layout<'a> {
                 // A part of empty paragraphs stands on w:footer, its last
                 // lowest (9b22b88370's pPrChange footer).
                 let mut bottom = self.page.footer.max(0.0) + foot_after;
-                for r in footer.iter().rev() {
+                for (i, r) in footer.iter().enumerate().rev() {
                     let h = hf_break_box(self.fonts, r);
+                    self.hf_break_fill(&footer, i, bottom + h, h);
                     self.hf_rev_bar(std::slice::from_ref(r), r.hf_para.as_deref(), bottom + h, h);
                     bottom += h + r.para_gap;
                 }
