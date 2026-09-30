@@ -7174,22 +7174,30 @@ fn page_frame_key(dom: &Dom, para: NodeId, sheet: &StyleSheet) -> Option<String>
 /// A body paragraph's floating frame: page-anchored, or anchored to the
 /// text with wrap="around" (4ca9d50a's contact frame: vAnchor="text",
 /// hAnchor="page"); the frame takes no flow space and the next paragraph
-/// wraps beside it (live Word).
+/// wraps beside it (live Word). A frame at a page y may run from the
+/// margin or the column instead, and without an x it sits on it
+/// (61e3967518's hAnchor="margin" y=2621 frame).
 fn body_frame_key(dom: &Dom, para: NodeId, sheet: &StyleSheet) -> Option<String> {
     page_frame_key(dom, para, sheet).or_else(|| {
         let fp = para_frame_attrs(dom, para, sheet)?;
         let attr = |n: &str| frame_attr(&fp, n).unwrap_or("").to_string();
-        (attr("vAnchor") == "text"
-            && matches!(attr("hAnchor").as_str(), "page" | "margin" | "text")
+        let h_anchor = attr("hAnchor");
+        let beside_text = attr("vAnchor") == "text"
+            && matches!(h_anchor.as_str(), "page" | "margin" | "text")
             && attr("wrap") == "around"
-            && !attr("x").is_empty()
-            && !attr("y").is_empty())
-        .then(|| {
-            ["hAnchor", "x", "y", "w", "h", "hRule", "hSpace", "vSpace"]
-                .iter()
-                .map(|n| attr(n))
-                .collect::<Vec<_>>()
-                .join("|")
+            && !attr("x").is_empty();
+        let on_page = attr("vAnchor") == "page"
+            && matches!(h_anchor.as_str(), "margin" | "text")
+            && matches!(attr("wrap").as_str(), "around" | "")
+            && (!attr("x").is_empty() || attr("xAlign").is_empty());
+        ((beside_text || on_page) && !attr("y").is_empty()).then(|| {
+            [
+                "vAnchor", "hAnchor", "x", "y", "w", "h", "hRule", "hSpace", "vSpace",
+            ]
+            .iter()
+            .map(|n| attr(n))
+            .collect::<Vec<_>>()
+            .join("|")
         })
     })
 }
@@ -7259,7 +7267,9 @@ fn frame_box(
             .and_then(|v| v.parse::<f32>().ok())
             .map(|v| v / 20.0)
     };
-    let (x, y) = (tw("x")?, tw("y")?);
+    // No x puts the frame on its anchor's edge (the key admits that only
+    // for a margin or column anchor).
+    let (x, y) = (tw("x").unwrap_or(0.0), tw("y")?);
     let mut laid = Vec::new();
     let mut outline: Option<([f32; 3], f32)> = None;
     for &p in paras {
@@ -7284,6 +7294,11 @@ fn frame_box(
         .map(|(runs, style)| runs_size(runs).max(10.0) * 1.2 * style.line_mult.max(1.0))
         .sum();
     let w = tw("w").unwrap_or(144.0);
+    // No w (or w=0) and no h size the frame to its text: its widest line up
+    // to the column, its lines at that width (61e3967518's frame spans the
+    // column and runs 108 lines).
+    let auto_w = tw("w").is_none_or(|w| w <= 0.0);
+    let auto_h = tw("h").is_none_or(|h| h <= 0.0);
     // An auto / at-least frame grows to its paragraphs (live Word: a 27pt
     // frame holding two lines spans 53pt); only hRule="exact" clips.
     let content: f32 = laid
@@ -7374,8 +7389,8 @@ fn frame_box(
         custom: None,
         group: Vec::new(),
         chrome_para_top: 0.0,
-        fit_width: false,
-        fit_height: false,
+        fit_width: auto_w,
+        fit_height: auto_h,
         raise: 0.0,
         frame: true,
     })
@@ -19404,7 +19419,7 @@ impl<'a> Layout<'a> {
             consider(img.slot, img.w, img.h, false);
         }
         for box_ in boxes {
-            consider(box_.slot, box_.w, self.box_h(box_), box_.frame);
+            consider(box_.slot, self.box_w(box_), self.box_h(box_), box_.frame);
         }
         if let Some(sf) = self.side_float_holds_line() {
             first_hit = true;
@@ -19525,7 +19540,7 @@ impl<'a> Layout<'a> {
             } else {
                 MIN_SIDE_FLOAT_ROOM_PT
             };
-            consider(box_.slot, box_.w, self.box_h(box_), min_room);
+            consider(box_.slot, self.box_w(box_), self.box_h(box_), min_room);
         }
         if hangs.is_some() {
             self.tb_band = hangs;
@@ -19595,7 +19610,7 @@ impl<'a> Layout<'a> {
             consider(img.slot, img.w, img.h);
         }
         for box_ in boxes.iter().filter(|b| !b.frame) {
-            consider(box_.slot, box_.w, self.box_h(box_));
+            consider(box_.slot, self.box_w(box_), self.box_h(box_));
         }
         if let Some((top, bottom, step)) = band {
             self.tb_step = step && self.tb_band.is_none_or(|_| self.tb_step);
@@ -19633,7 +19648,7 @@ impl<'a> Layout<'a> {
             consider(img.slot, img.w, img.h);
         }
         for box_ in boxes {
-            consider(box_.slot, box_.w, self.box_h(box_));
+            consider(box_.slot, self.box_w(box_), self.box_h(box_));
         }
         // A floating table narrows only the lines beside it: lines past
         // its bottom return to the full measure (reflow_past_float).
@@ -21369,12 +21384,33 @@ impl<'a> Layout<'a> {
 
     /// A box's height: its extent, or for a floating `a:spAutoFit` box its
     /// paragraphs' height inside its insets at its laid width.
+    /// A box's width: a fitted box is its widest line wide, plus its
+    /// insets; a fitted frame stops at the column (Word wraps an auto-width
+    /// frame's long lines there).
+    fn box_w(&self, box_: &LaidTextBox) -> f32 {
+        if !box_.fit_width || box_.paras.is_empty() {
+            return box_.w;
+        }
+        let text_w = box_
+            .paras
+            .iter()
+            .map(|(runs, _)| self.line_width_pt(runs))
+            .fold(0.0_f32, f32::max);
+        let w = text_w + box_.insets[0] + box_.insets[2];
+        if box_.frame {
+            w.min(self.content_width())
+        } else {
+            w
+        }
+    }
+
     fn box_h(&self, box_: &LaidTextBox) -> f32 {
         if !box_.fit_height || box_.paras.is_empty() || matches!(box_.slot, ImageSlot::Flow) {
             return box_.h;
         }
         let [li, ti, ri, bi] = box_.insets;
-        let (dw, _) = self.sized_wh(box_.slot, box_.w, box_.h, 1.0, 1.0);
+        let w = if box_.frame { self.box_w(box_) } else { box_.w };
+        let (dw, _) = self.sized_wh(box_.slot, w, box_.h, 1.0, 1.0);
         let mut h = ti + bi;
         for (runs, style) in &box_.paras {
             let measure = (dw - li - ri - style.indent_left - style.indent_right).max(8.0);
@@ -22827,17 +22863,7 @@ impl<'a> Layout<'a> {
     }
 
     fn emit_textbox(&mut self, box_: &LaidTextBox, indent_left: f32) {
-        // A fitted box is its widest line wide, plus its insets.
-        let box_w = if box_.fit_width && !box_.paras.is_empty() {
-            let text_w = box_
-                .paras
-                .iter()
-                .map(|(runs, _)| self.line_width_pt(runs))
-                .fold(0.0_f32, f32::max);
-            text_w + box_.insets[0] + box_.insets[2]
-        } else {
-            box_.w
-        };
+        let box_w = self.box_w(box_);
         self.page_has_body = true;
         // A filled box or a group keeps its extent: 8aea3634's section
         // rules are 0.5pt groups and rects in Word. Only an empty box
@@ -22869,7 +22895,17 @@ impl<'a> Layout<'a> {
                 match p.wrap {
                     WrapMode::None | WrapMode::Square { .. } | WrapMode::TopBottom => {}
                 }
-                (p.x, p.y, p.w, p.h)
+                // A frame at a page y that runs past the page's bottom
+                // moves up until it ends there, never above the page's top;
+                // what still overflows is off the page (61e3967518's
+                // 108-line frame at y=2621tw starts at the top in Word).
+                let y = match slot {
+                    ImageSlot::Float {
+                        page_y: Some(_), ..
+                    } if box_.frame && p.y < 0.0 => (self.page.height - p.h).min(0.0),
+                    _ => p.y,
+                };
+                (p.x, y, p.w, p.h)
             }
         };
         if box_.reserve_only {

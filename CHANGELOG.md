@@ -82,6 +82,13 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 - Comments load when `commentsExtended.xml` is related before
   `comments.xml`. The lookup took the extended part for the comments part,
   and every comment was lost (with_comments_clean/37c6c62345).
+- A frame at a page y that runs from the margin or the column
+  (`w:framePr vAnchor="page" hAnchor="margin"`) floats at its position, as
+  Word paints it, instead of flowing as a plain paragraph. Without an x it
+  sits on the margin; without a width or height it takes its text's size, up
+  to the column's width. A frame too tall for the page moves up to the
+  page's top. The worst document in the docx-to-pdf set (61e3967518 ×
+  1424386e9b) went from 25.6 to 42.1 pixel, 8.4 to 20.2 Jaccard.
 - Rejecting a redline gives back what a changed style inherited in the
   original. Word's Reject All reads a style's old record against its
   built-in defaults, so a record holding only the style's own properties

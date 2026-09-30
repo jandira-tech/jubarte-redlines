@@ -3162,6 +3162,77 @@ fn a_page_anchored_body_frame_floats_out_of_the_flow() {
     );
 }
 
+/// A4 page, inch margins: the frame tests below measure from its top.
+const A4_INCH: &str = "<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/>\
+    <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+    w:header=\"720\" w:footer=\"720\"/></w:sectPr>";
+
+/// A paragraph in 61e3967518's frame: page-anchored in y, margin-anchored
+/// in x with no x (so on the margin) and no width.
+fn margin_frame_para(content: &str) -> String {
+    format!(
+        "<w:p><w:pPr><w:framePr w:hSpace=\"180\" w:wrap=\"around\" w:vAnchor=\"page\" \
+         w:hAnchor=\"margin\" w:y=\"2621\"/></w:pPr>{content}</w:p>"
+    )
+}
+
+#[test]
+fn a_page_anchored_frame_on_the_margin_floats_at_its_page_y() {
+    // tracking_without_comments/61e3967518 × 333bfe069a: Word paints the
+    // frame paragraph (vAnchor=page y=2621tw, hAnchor=margin, no x) with
+    // its first line's top at 132.3pt, on the left margin, and the body
+    // text keeps the top margin. We laid the frame out as a plain
+    // paragraph in the flow.
+    let body = format!(
+        "{}<w:p><w:r><w:t>BodyStart</w:t></w:r></w:p>{A4_INCH}",
+        margin_frame_para("<w:r><w:t>FrameText</w:t></w:r>")
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("margin frame");
+    let (fx, fy) = pdf_glyph_text_xy(&pdf, "FrameText").expect("frame paints");
+    let from_top = 841.9 - fy;
+    assert!(
+        (fx - 72.0).abs() < 1.0,
+        "the frame sits on the margin; x={fx}"
+    );
+    assert!(
+        (131.0..150.0).contains(&from_top),
+        "the frame's baseline sits under its page y (131pt); {from_top} from the top"
+    );
+    let (_, by) = pdf_glyph_text_xy(&pdf, "BodyStart").expect("body paints");
+    assert!(
+        841.9 - by < 90.0,
+        "the body keeps the top margin; {} from the top",
+        841.9 - by
+    );
+}
+
+#[test]
+fn a_page_anchored_frame_taller_than_the_page_moves_up_to_its_top() {
+    // tracking_without_comments/61e3967518 × 1424386e9b: the frame holds
+    // 108 lines (w:br) at y=2621tw. Word moves it up to the page top
+    // (the first line's top at 0.05pt, on the margin) and paints the lines
+    // down to the page's bottom edge; the rest of the frame is not drawn.
+    let mut content = String::from("<w:r><w:t>FirstLine</w:t></w:r>");
+    for i in 0..80 {
+        content.push_str(&format!("<w:r><w:br/><w:t>Line{i}</w:t></w:r>"));
+    }
+    let body = format!(
+        "{}<w:p><w:r><w:t>After</w:t></w:r></w:p>{A4_INCH}",
+        margin_frame_para(&content)
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("tall frame");
+    let (fx, fy) = pdf_glyph_text_xy(&pdf, "FirstLine").expect("frame paints");
+    assert!(
+        (fx - 72.0).abs() < 1.0,
+        "the frame sits on the margin; x={fx}"
+    );
+    assert!(
+        841.9 - fy < 20.0,
+        "the frame moves up to the page top; {} from the top",
+        841.9 - fy
+    );
+}
+
 #[test]
 fn a_text_anchored_frame_floats_beside_the_next_paragraph() {
     // Live Word: two paragraphs in a frame anchored to the text (y=75 twips)
