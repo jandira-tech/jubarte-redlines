@@ -81,7 +81,7 @@ fn lines(text: &str) -> Vec<&str> {
 /// The length of a line's block markers: indentation, `>` quote markers, a
 /// list marker with its task box, or a heading's `#`s. A change starts
 /// after them.
-fn marker_len(line: &str) -> usize {
+pub(super) fn marker_len(line: &str) -> usize {
     let bytes = line.as_bytes();
     let mut at = bytes
         .iter()
@@ -131,14 +131,14 @@ fn marker_len(line: &str) -> usize {
 
 /// Whether a line continues the paragraph of a non-blank line before it:
 /// it has text and no block marker, and is not a table row or code fence.
-fn continues(line: &str) -> bool {
+pub(super) fn continues(line: &str) -> bool {
     let trimmed = line.trim_start();
     !trimmed.is_empty() && marker_len(line) == 0 && !trimmed.starts_with("```") && !table_row(line)
 }
 
 /// Whether text may continue after a line: not blank, not a heading, a
 /// table row or a code fence.
-fn open_paragraph(line: &str) -> bool {
+pub(super) fn open_paragraph(line: &str) -> bool {
     let trimmed = line.trim_start();
     !trimmed.is_empty()
         && !trimmed.starts_with('#')
@@ -147,7 +147,7 @@ fn open_paragraph(line: &str) -> bool {
 }
 
 /// A table row: the line starts with a pipe.
-fn table_row(line: &str) -> bool {
+pub(super) fn table_row(line: &str) -> bool {
     line.trim_start().starts_with('|')
 }
 

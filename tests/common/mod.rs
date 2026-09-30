@@ -22,6 +22,7 @@
 #![allow(dead_code)]
 
 pub mod docx;
+pub mod markdown_pairs;
 pub mod validity;
 
 use std::collections::BTreeMap;

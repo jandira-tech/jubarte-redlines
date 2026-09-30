@@ -235,6 +235,12 @@ fn footnote_label(text: &str) -> Option<&str> {
     Some(&text[..2 + close + 2 + spaces])
 }
 
+/// [`encode`] without moving footnote labels: the spans as written, for
+/// reading the markup rather than the Markdown.
+pub(crate) fn encode_spans_only(source: &str) -> String {
+    encode_spans(source, ALL, false)
+}
+
 /// The source of text that holds no stand-ins, as it was.
 pub(crate) fn decode(text: &str) -> String {
     let mut out = String::with_capacity(text.len());

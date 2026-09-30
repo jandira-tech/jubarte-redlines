@@ -1178,7 +1178,7 @@ fn attribution(text: &str) -> Option<(Option<String>, &str)> {
 
 /// `Name (date)` or `(date)` at the start of `text`: the name, the date and
 /// the text after them.
-fn named(text: &str) -> Option<(Option<String>, &str, &str)> {
+pub(super) fn named(text: &str) -> Option<(Option<String>, &str, &str)> {
     let open = text.find('(')?;
     let close = open + text[open..].find(')')?;
     let date = &text[open + 1..close];

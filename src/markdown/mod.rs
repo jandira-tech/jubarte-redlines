@@ -35,12 +35,17 @@ mod from_docx;
 mod package;
 mod patch;
 mod redline;
+mod unified;
 mod write;
 mod xml;
 
 pub use diff::diff_markdown;
 pub use patch::{Patched, apply_markdown};
 pub use redline::{RedlineOptions, Source, redline};
+pub use unified::{
+    Attribution, Change, Comment, DEFAULT_COLUMNS, Hunk, Locator, Patch, PatchOptions,
+    patch_critic, patch_markdown,
+};
 pub use write::markdown_to_docx;
 
 /// What happens to the tracked changes a document describes.
