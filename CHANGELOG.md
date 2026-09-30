@@ -155,6 +155,56 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 - `w:contextualSpacing` drops the space between same-style paragraphs
   inside a table cell, as it already did in the body. Before, cb4f8b4a43's
   Title lines stepped 28pt apart, not Word's 20pt.
+- Below compatibility mode 15, a table style's font size overrides the
+  Normal style's in unstyled cells only when Normal is 11 or 12pt, as in
+  Word 16. Before, it overrode any size, so the cf02 redline's 10.5pt
+  Normal cells painted at 11pt and ran to 12 pages, not Word's 11.
+- A table row splitting at the page end measures a cell's first cut
+  against the room its margins leave. Before, the empty head was sized as
+  a default 11pt paragraph, so 3138fff3a6's two-line 8pt titles placed no
+  line and their rows moved to the next page whole, where Word splits
+  them.
+- From compatibility mode 15, a cell paragraph cut by a table row split
+  keeps widow/orphan control: two lines on each side, or it moves to the
+  next page whole, as Word 16 does. Below mode 15, Word still cuts it
+  anywhere. Before, compat-15 two-line cells split one line each side:
+  30f195a272's first table row started on page 1, where Word's starts on
+  page 2.
+- A table too wide to sit beside a square-wrapped picture starts below
+  it, as in Word 16; a narrower table still sits beside it. Before, the
+  table ran over the picture: 109f20a2b3's continued table painted
+  across its header logo, 74pt higher than Word's.
+- A "keep with next" paragraph that ends on a page's last line, its
+  successor pushed over, keeps its tail with that successor as Word does.
+  From compatibility mode 15 it splits and carries its last two lines
+  over (one with widow control off). Older modes move it whole, together
+  with the keep-with-next paragraphs chained before it. A chain of short
+  keep-with-next paragraphs now stays with the body below it, and its
+  spacing no longer counts the space between two paragraphs twice. A
+  chain of unsplittable ones taller than a page moves to a fresh page
+  once and then fills pages. A keepLines paragraph comes whole with the
+  heading above it.
+  Priority 4e7bb2a1be's event chain moves to page 2 as in Word (2 pages
+  → Word's 3).
+- Paragraph borders in headers and footers paint wherever Word draws
+  them: on an empty paragraph above the part's text (a footer's opening
+  rule, a running head's rule under its title table) and on a text
+  paragraph below one. Before, jubarte reserved their space but drew no
+  rule: c73c128db4's legislation pages lost both the head and foot rules.
+- A `cantSplit` table row taller than a whole page breaks anyway, as in
+  Word 16: it moves off the page it started on and breaks at the foot of
+  the next one. Before, it stayed whole and ran off the page: 2b479f55f8's
+  5e row painted 116pt below its page, and the file came to 31 pages, not
+  Word's 33.
+- A section that omits a header or footer type takes that type from the
+  nearest earlier section that names it (ECMA-376 17.10.5), as Word does.
+  Before, a section naming only some types lost the rest: 2b479f55f8's
+  sections 2 and 3 dropped the "ICA Internship Award 2022/23" header from
+  page 4 on, and its pages ran two short of Word's.
+- A continuous section break that changes the page size or orientation
+  starts a new page with the new size, as Word does. Before, the page
+  kept its old size: b535008087's landscape section ran on portrait pages
+  and came to 18 pages, not Word's 21.
 - A nested table row taller than what is left of the page breaks inside
   itself, as Word breaks it, when keeping it whole would leave a quarter
   of the page empty. Rows marked `cantSplit` or with an exact height stay

@@ -702,6 +702,29 @@ fn continuous_section_does_not_add_a_page() {
 }
 
 #[test]
+fn a_continuous_section_that_turns_the_page_starts_a_new_page() {
+    // Priority b535008087: a portrait section, then a landscape one whose
+    // break is continuous. Word opens the landscape section on a new page
+    // (its page 4 turns); we kept the portrait page and ran the whole
+    // landscape section on portrait pages, three pages short.
+    let docx = minimal_docx_body(
+        "<w:p><w:pPr><w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/></w:sectPr></w:pPr>\
+         <w:r><w:t>Portrait</w:t></w:r></w:p>\
+         <w:p><w:r><w:t>Landscape</w:t></w:r></w:p>\
+         <w:sectPr><w:type w:val=\"continuous\"/>\
+           <w:pgSz w:w=\"16838\" w:h=\"11906\" w:orient=\"landscape\"/></w:sectPr>",
+    );
+    let pdf = docx_to_pdf(&docx).expect("turned section");
+    assert_eq!(pdf_page_count(&pdf), 2, "the turn opens a page");
+    assert_eq!(page_with_text(&pdf, "Landscape"), Some(1));
+    let boxes = pdf_mediaboxes(&pdf);
+    assert!(
+        boxes.len() == 2 && boxes[0].0 < boxes[0].1 && boxes[1].0 > boxes[1].1,
+        "portrait, then landscape: {boxes:?}"
+    );
+}
+
+#[test]
 fn pprchange_ghost_list_does_not_hang_live_text() {
     // file_146 / sample_iter2: live pPr is pBdr+spacing; ListParagraph
     // hanging 320 / numPr lives only in w:pPrChange. first_named
@@ -2967,6 +2990,61 @@ fn float_after(gap: Option<u32>, w: i64, h: i64, wrap: &str) -> Vec<u8> {
          <w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/>\
            <w:pgMar w:top=\"1417\" w:right=\"1701\" w:bottom=\"1417\" w:left=\"1701\"/></w:sectPr>"
     ))
+}
+
+#[test]
+fn a_table_too_wide_to_sit_beside_a_square_float_starts_below_it() {
+    // Word 16 probe tfl_*_0930 (Letter, 1in margins): a 200x150pt square
+    // picture at the column's right edge, anchored in the first line. A
+    // 468pt table under that line starts below the picture (text at 225
+    // under its 222 foot); a 150pt one sits beside it (100). Work set
+    // 109f20a2b3's header logo sends its continued table below it the
+    // same way. We painted the wide table over the picture.
+    let img = blip(
+        &(200 * 12700).to_string(),
+        &(150 * 12700).to_string(),
+        &format!(
+            "<wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" \
+             relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+             <wp:simplePos x=\"0\" y=\"0\"/>\
+             <wp:positionH relativeFrom=\"column\"><wp:posOffset>{}</wp:posOffset></wp:positionH>\
+             <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+             {SQUARE_BOTH}",
+            268 * 12700
+        ),
+        "</wp:anchor>",
+    );
+    let table = |w: u32, text: &str| {
+        format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"{w}\" w:type=\"dxa\"/></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"{w}\"/></w:tblGrid><w:tr><w:tc>\
+             <w:tcPr><w:tcW w:w=\"{w}\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
+        )
+    };
+    let pdf_for = |tbl: String| {
+        docx_to_pdf(&drawing_docx(&format!(
+            "<w:p><w:r><w:t>Anchor</w:t></w:r><w:r>{img}</w:r></w:p>{tbl}\
+             <w:p><w:r><w:t>After</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        )))
+        .expect("table by a float")
+    };
+    // The picture's foot, in PDF space: 792 - (72 + 150).
+    let foot = 570.0;
+    let wide = pdf_for(table(9360, "WideTable"));
+    let (_, y) = pdf_glyph_text_xy(&wide, "WideTable").expect("wide table paints");
+    assert!(
+        y < foot - 2.0,
+        "the wide table starts under the picture: {y}"
+    );
+    let narrow = pdf_for(table(3000, "NarrowTable"));
+    let (_, y) = pdf_glyph_text_xy(&narrow, "NarrowTable").expect("narrow table paints");
+    assert!(
+        y > foot + 90.0,
+        "the narrow table stays beside the picture: {y}"
+    );
 }
 
 #[test]
@@ -5319,6 +5397,248 @@ fn a_split_row_breaks_its_paragraph_between_lines() {
         "the long paragraph starts on page 1; page1={first:?}"
     );
     assert!(rest.contains("LongEnd"), "and ends on a later page");
+}
+
+#[test]
+fn a_row_split_keeps_widow_control_from_compat_15() {
+    // Word 16 probes k15_*/k14_* 0930 (32 exact 20pt lines a page): from
+    // compat 15 a cell paragraph cut by a row split keeps two lines on
+    // each side, as in the body (priority 30f195a272 and 3ec493ae9c move
+    // their two-line cells whole); compat 14 cuts it anywhere (fixtures_500
+    // 00297360), and so does widowControl off (priority 3138fff3a6).
+    let para = |t: &str, ppr: &str| {
+        let runs: Vec<String> = t
+            .split('|')
+            .map(|x| format!("<w:r><w:t>{x}</w:t></w:r>"))
+            .collect();
+        format!(
+            "<w:p><w:pPr>{ppr}</w:pPr>{}</w:p>",
+            runs.join("<w:r><w:br/></w:r>")
+        )
+    };
+    let exact = "<w:spacing w:after=\"0\" w:line=\"400\" w:lineRule=\"exact\"/>";
+    let pages = |mode: u32, fillers: usize, cell: &str| {
+        let fill: String = (0..fillers)
+            .map(|i| para(&format!("Fill{i:02}"), exact))
+            .collect();
+        let body = format!(
+            "{fill}<w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"dxa\"/>\
+               <w:tblLayout w:type=\"fixed\"/></w:tblPr>\
+               <w:tblGrid><w:gridCol w:w=\"5000\"/></w:tblGrid><w:tr><w:tc>\
+               <w:tcPr><w:tcW w:w=\"5000\" w:type=\"dxa\"/></w:tcPr>{cell}</w:tc></w:tr></w:tbl>\
+             {}<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+                 w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>",
+            para("After", exact)
+        );
+        let settings = format!(
+            r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="{mode}"/></w:compat>"#
+        );
+        docx_to_pdf(&minimal_docx_with_settings(&body, &settings)).expect("row split")
+    };
+    let on = |pdf: &[u8], t: &str| page_with_text(pdf, t).expect(t);
+    let off = format!("{exact}<w:widowControl w:val=\"0\"/>");
+    let two = pages(15, 31, &para("Xe1|Xe2", exact));
+    assert_eq!(
+        on(&two, "Xe1"),
+        1,
+        "compat 15 moves a two-line paragraph whole"
+    );
+    let legacy = pages(14, 31, &para("Xe1|Xe2", exact));
+    assert_eq!(on(&legacy, "Xe1"), 0, "compat 14 leaves one line on page 1");
+    let unguarded = pages(15, 31, &para("Xe1|Xe2", &off));
+    assert_eq!(
+        on(&unguarded, "Xe1"),
+        0,
+        "widowControl off splits at compat 15"
+    );
+    let three = pages(15, 30, &para("Xb1|Xb2|Xb3", exact));
+    assert_eq!(on(&three, "Xb1"), 1, "a 2|1 cut would strand a widow");
+    let four = pages(15, 29, &para("Qa1|Qa2|Qa3|Qa4", exact));
+    assert_eq!(
+        (on(&four, "Qa2"), on(&four, "Qa3")),
+        (0, 1),
+        "four lines in room for three cut 2|2"
+    );
+    let later = pages(15, 30, &(para("Yc0", exact) + &para("Yc1|Yc2", exact)));
+    assert_eq!(
+        (on(&later, "Yc0"), on(&later, "Yc1")),
+        (0, 1),
+        "a later paragraph that cannot cut moves whole behind the one before"
+    );
+}
+
+#[test]
+fn a_keep_next_paragraph_ending_a_page_splits_or_moves_by_compat_mode() {
+    // Word 16 probes kn1–kn7 0930 (32 exact 20pt lines a page): a keepNext
+    // paragraph that ends on the page's last line, its successor pushed
+    // over, keeps its tail with that successor. Compat 15 splits it and
+    // carries the widow lines (two, or one with widowControl off); compat 14
+    // moves it whole, with any keepNext paragraphs chained before it
+    // (priority 4e7bb2a1be's "Location/Date" chain). One that runs past the
+    // page splits as usual in both modes.
+    let para = |t: &str, ppr: &str| {
+        let runs: Vec<String> = t
+            .split('|')
+            .map(|x| format!("<w:r><w:t>{x}</w:t></w:r>"))
+            .collect();
+        format!(
+            "<w:p><w:pPr>{ppr}</w:pPr>{}</w:p>",
+            runs.join("<w:r><w:br/></w:r>")
+        )
+    };
+    let exact = "<w:spacing w:before=\"0\" w:after=\"0\" w:line=\"400\" w:lineRule=\"exact\"/>";
+    let kn = format!("<w:keepNext/>{exact}");
+    let pages = |mode: u32, fillers: usize, tail: &str| {
+        let fill: String = (0..fillers)
+            .map(|i| para(&format!("Fill{i:02}"), exact))
+            .collect();
+        let body = format!(
+            "{fill}{tail}<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+                 w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>"
+        );
+        let settings = format!(
+            r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="{mode}"/></w:compat>"#
+        );
+        docx_to_pdf(&minimal_docx_with_settings(&body, &settings)).expect("keepNext")
+    };
+    let on = |pdf: &[u8], t: &str| page_with_text(pdf, t).expect(t);
+    let five = para("Kp1|Kp2|Kp3|Kp4|Kp5", &kn) + &para("Nx1", exact);
+    let split = pages(15, 27, &five);
+    assert_eq!(
+        (on(&split, "Kp3"), on(&split, "Kp4"), on(&split, "Nx1")),
+        (0, 1, 1),
+        "compat 15 carries the last two lines over"
+    );
+    let unguarded = format!("<w:keepNext/><w:widowControl w:val=\"0\"/>{exact}");
+    let one = pages(
+        15,
+        27,
+        &(para("Kp1|Kp2|Kp3|Kp4|Kp5", &unguarded) + &para("Nx1", exact)),
+    );
+    assert_eq!(
+        (on(&one, "Kp4"), on(&one, "Kp5")),
+        (0, 1),
+        "without widow control one line goes over"
+    );
+    let kept = pages(
+        15,
+        27,
+        &(para(
+            "Kp1|Kp2|Kp3|Kp4|Kp5",
+            &format!("<w:keepNext/><w:keepLines/>{exact}"),
+        ) + &para("Nx1", exact)),
+    );
+    assert_eq!(on(&kept, "Kp1"), 1, "keepLines moves it whole at compat 15");
+    let whole = pages(14, 27, &five);
+    assert_eq!(
+        (on(&whole, "Kp1"), on(&whole, "Nx1")),
+        (1, 1),
+        "compat 14 moves the paragraph whole"
+    );
+    let chain = para("Ka1|Ka2|Ka3", &kn) + &five;
+    let legacy = pages(14, 24, &chain);
+    assert_eq!(on(&legacy, "Ka1"), 1, "compat 14 moves the chain before it");
+    let modern = pages(15, 24, &chain);
+    assert_eq!(
+        (on(&modern, "Ka1"), on(&modern, "Kp3"), on(&modern, "Kp4")),
+        (0, 0, 1),
+        "compat 15 leaves the chain and splits the last paragraph"
+    );
+    let short = pages(15, 29, &(para("Kp1|Kp2|Kp3", &kn) + &para("Nx1", exact)));
+    assert_eq!(
+        on(&short, "Kp1"),
+        1,
+        "a three-line paragraph cannot split 1|2"
+    );
+    // An unsplittable chain longer than a page (kn8: twelve four-line
+    // keepLines paragraphs) still starts on a fresh page, then fills
+    // pages: its members are not weighed again one by one (the redline
+    // of 4e7bb2a1be's Heading 3 references).
+    let long: String = (0..12)
+        .map(|k| {
+            para(
+                &format!("H{k:02}a|H{k:02}b|H{k:02}c|H{k:02}d"),
+                &format!("<w:keepNext/><w:keepLines/>{exact}"),
+            )
+        })
+        .collect();
+    for mode in [14, 15] {
+        let filled = pages(mode, 5, &(long.clone() + &para("Nx1", exact)));
+        assert_eq!(
+            (
+                on(&filled, "H00a"),
+                on(&filled, "H07d"),
+                on(&filled, "H08a")
+            ),
+            (1, 1, 2),
+            "compat {mode}: the chain opens page 2 and fills it"
+        );
+    }
+    let past = pages(14, 29, &five);
+    assert_eq!(
+        (on(&past, "Kp3"), on(&past, "Kp4")),
+        (0, 1),
+        "one that runs past the page splits as usual"
+    );
+}
+
+#[test]
+fn a_cant_split_row_taller_than_a_page_breaks_from_a_fresh_page() {
+    // Word 16 probes cs_mid/cs_top_0930 (32 exact 20pt lines a page): a
+    // cantSplit row of 40 lines moves off a page it started part-way
+    // down, then breaks at the foot of the fresh page (L31 | L32); at a
+    // page top it breaks there. jubarte kept it whole and painted L36..L39
+    // below the page (priority 2b479f55f8's 5e row ran to y 711 of 595).
+    let line = |t: &str| {
+        format!(
+            "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"400\" w:lineRule=\"exact\"/></w:pPr>\
+               <w:r><w:t>{t}</w:t></w:r></w:p>"
+        )
+    };
+    let tall: Vec<String> = (0..40).map(|i| format!("L{i:02}")).collect();
+    let cell = format!(
+        "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"400\" w:lineRule=\"exact\"/></w:pPr>{}</w:p>",
+        tall.iter()
+            .map(|t| format!("<w:r><w:t>{t}</w:t></w:r>"))
+            .collect::<Vec<_>>()
+            .join("<w:r><w:br/></w:r>")
+    );
+    let pages = |fillers: usize| {
+        let fill: String = (0..fillers).map(|i| line(&format!("Fill{i:02}"))).collect();
+        let body = format!(
+            "{fill}<w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"dxa\"/>\
+               <w:tblLayout w:type=\"fixed\"/></w:tblPr>\
+               <w:tblGrid><w:gridCol w:w=\"5000\"/></w:tblGrid>\
+               <w:tr><w:trPr><w:cantSplit/></w:trPr><w:tc>\
+               <w:tcPr><w:tcW w:w=\"5000\" w:type=\"dxa\"/></w:tcPr>{cell}</w:tc></w:tr></w:tbl>\
+             {}<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+                 w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>",
+            line("After")
+        );
+        let settings = r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>"#;
+        docx_to_pdf(&minimal_docx_with_settings(&body, settings)).expect("tall cantSplit row")
+    };
+    let on = |pdf: &[u8], t: &str| page_with_text(pdf, t).expect(t);
+    let mid = pages(5);
+    assert_eq!(
+        (
+            on(&mid, "L00"),
+            on(&mid, "L31"),
+            on(&mid, "L32"),
+            on(&mid, "After")
+        ),
+        (1, 1, 2, 2),
+        "the row moves to page 2 and breaks at its foot"
+    );
+    let top = pages(0);
+    assert_eq!(
+        (on(&top, "L31"), on(&top, "L32"), on(&top, "L39")),
+        (0, 1, 1),
+        "at a page top it breaks at that page's foot"
+    );
 }
 
 #[test]
@@ -13438,6 +13758,59 @@ fn a_ten_point_table_style_leaves_normals_size_in_its_cells() {
         pdf_content_streams(&explicit),
         "the unsized cell paints like an explicit 12pt run"
     );
+}
+
+#[test]
+fn a_table_style_overrides_normals_size_in_cells_only_at_11_or_12pt() {
+    // Word 16 probe tsz_*_0930 (legacy mode, docDefaults 11pt, Table Grid):
+    // a Normal of 9, 10.5, 11.5 or 14pt keeps its size in unstyled cells,
+    // even under a table style of 14pt; only a 12pt Normal gives way (to
+    // docDefaults' 11pt, or the style's 14pt). LibreOffice's writerfilter
+    // applies the same rule. The cf02 redline's 10.5pt Normal cells
+    // painted at 11pt and ran a page long.
+    let styles = |normal: u32, table: &str| {
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+               <w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault></w:docDefaults>\
+               <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>\
+                 <w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/><w:sz w:val=\"{normal}\"/></w:rPr></w:style>\
+               <w:style w:type=\"table\" w:styleId=\"TG\"><w:name w:val=\"Table Grid\"/>\
+                 <w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>{table}</w:style>\
+             </w:styles>"
+        )
+    };
+    let body = |rpr: &str| {
+        format!(
+            "<w:tbl><w:tblPr><w:tblStyle w:val=\"TG\"/><w:tblW w:w=\"4000\" w:type=\"dxa\"/></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid><w:tr><w:tc>\
+             <w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r>{rpr}<w:t>Cell text</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/><w:sectPr/>"
+        )
+    };
+    let sized_14 = "<w:rPr><w:sz w:val=\"28\"/></w:rPr>";
+    for (normal, table, painted) in [
+        (18, "", 18),
+        (21, "", 21),
+        (21, sized_14, 21),
+        (23, "", 23),
+        (28, "", 28),
+        (24, "", 22),
+        (24, sized_14, 28),
+    ] {
+        let styles = styles(normal, table);
+        let implicit = docx_to_pdf(&docx_with_styles(&body(""), &styles)).expect("unsized cell");
+        let explicit = docx_to_pdf(&docx_with_styles(
+            &body(&format!("<w:rPr><w:sz w:val=\"{painted}\"/></w:rPr>")),
+            &styles,
+        ))
+        .expect("sized cell");
+        assert_eq!(
+            pdf_content_streams(&implicit),
+            pdf_content_streams(&explicit),
+            "Normal sz {normal}, table rPr {table:?}: the cell must paint at sz {painted}"
+        );
+    }
 }
 
 #[test]
@@ -22739,6 +23112,73 @@ fn hf_part(tag: &str, half_points: u32, text: &str) -> String {
     )
 }
 
+#[test]
+fn a_section_inherits_each_header_type_it_omits_from_the_one_before() {
+    // ECMA-376 17.10.5, and Word on priority 2b479f55f8: section 2 names
+    // only a first-page header and section 3 only a footer, yet Word
+    // repeats section 1's default header ("ICA Internship Award 2022/23")
+    // on every later page; jubarte dropped it from section 2's second page.
+    let geom = "<w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+        <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+          w:header=\"720\" w:footer=\"720\"/>";
+    let page = |t: &str| format!("<w:p><w:r><w:t>{t}</w:t></w:r></w:p>");
+    let brk = "<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>";
+    let body = format!(
+        "{}{brk}{}<w:p><w:pPr><w:sectPr>\
+           <w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+           <w:headerReference w:type=\"first\" r:id=\"rIdH2\"/>{geom}<w:titlePg/></w:sectPr></w:pPr></w:p>\
+         {}{brk}{}<w:p><w:pPr><w:sectPr>\
+           <w:headerReference w:type=\"first\" r:id=\"rIdH3\"/>{geom}<w:titlePg/></w:sectPr></w:pPr></w:p>\
+         {}<w:sectPr><w:footerReference w:type=\"default\" r:id=\"rIdF1\"/>{geom}</w:sectPr>",
+        page("PageA1"),
+        page("PageA2"),
+        page("PageB1"),
+        page("PageB2"),
+        page("PageC1"),
+    );
+    let pdf = docx_to_pdf(&hf_docx(
+        &body,
+        &[
+            ("rIdH1", "header", "header1.xml"),
+            ("rIdH2", "header", "header2.xml"),
+            ("rIdH3", "header", "header3.xml"),
+            ("rIdF1", "footer", "footer1.xml"),
+        ],
+        &[
+            ("word/header1.xml", hf_part("hdr", 20, "DefHdr")),
+            ("word/header2.xml", hf_part("hdr", 20, "FirstOne")),
+            ("word/header3.xml", hf_part("hdr", 20, "FirstTwo")),
+            ("word/footer1.xml", hf_part("ftr", 20, "FootThree")),
+        ],
+    ))
+    .expect("convert inherited headers");
+    let streams = pdf_content_streams(&pdf);
+    let text: Vec<String> = streams
+        .iter()
+        .map(|s| pdf_winansi_text(s.as_bytes()))
+        .collect();
+    let on = |body: &str| {
+        text.iter()
+            .find(|t| t.contains(body))
+            .unwrap_or_else(|| panic!("no page holds {body}; pages={text:?}"))
+    };
+    assert!(on("PageA1").contains("FirstOne"), "section 1's first page");
+    assert!(on("PageA2").contains("DefHdr"), "section 1's default");
+    assert!(
+        on("PageB1").contains("FirstTwo"),
+        "section 2's own first page"
+    );
+    assert!(
+        on("PageB2").contains("DefHdr"),
+        "section 2 inherits section 1's default header"
+    );
+    let c1 = on("PageC1");
+    assert!(
+        c1.contains("DefHdr") && c1.contains("FootThree"),
+        "section 3 keeps the inherited default header beside its own footer; {c1:?}"
+    );
+}
+
 fn hf_docx(body: &str, rels: &[(&str, &str, &str)], parts: &[(&str, String)]) -> Vec<u8> {
     // A leading `<w:background .../>` is the document's, before the body.
     let (background, body) = match body.find("/>") {
@@ -23702,6 +24142,111 @@ fn a_header_paragraph_top_border_paints_and_pushes_the_band() {
         (rules[0].0 - (468.0 + 2.0 * 1.44)).abs() < 0.1,
         "the rule overhangs each margin by 1.44pt; rules={rules:?}"
     );
+}
+
+#[test]
+fn an_empty_header_paragraph_after_a_table_paints_its_top_border() {
+    // en holdout c73c128db4's running heads: a one-cell table holding the
+    // title lines, then an empty Header paragraph with pBdr top. Word draws
+    // the 0.5pt rule under the table (y 88.1 on page 4); jubarte drew none.
+    let inner = r#"<w:tbl><w:tblPr><w:tblW w:w="9000" w:type="dxa"/><w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid><w:gridCol w:w="9000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="9000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>HeadTitle</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:pPr><w:pBdr><w:top w:val="single" w:sz="4" w:space="1" w:color="auto"/></w:pBdr><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:p>"#;
+    let pdf = docx_to_pdf(&header_part_docx_at(inner, 720)).expect("header table rule");
+    let rules: Vec<(f32, f32)> = pdf_fill_bands(&pdf, 0.0, 0.0, 0.0)
+        .into_iter()
+        .filter(|(t, b)| (b - t - 0.5).abs() < 0.05 && *t < 200.0)
+        .collect();
+    assert_eq!(rules.len(), 1, "one 0.5pt header rule; rules={rules:?}");
+    let title = 792.0 - pdf_glyph_text_xy(&pdf, "HeadTitle").expect("title").1;
+    let body = 792.0 - pdf_glyph_text_xy(&pdf, "HdrImgBodyX").expect("body").1;
+    assert!(
+        rules[0].0 > title && rules[0].1 < body,
+        "the rule sits under the table's title ({title}) and over the body ({body}); rules={rules:?}"
+    );
+}
+
+#[test]
+fn footer_paragraph_borders_paint_below_an_empty_opening_paragraph() {
+    // Word 16 probes fb_f7/fb_f4_0930 (en holdout c73c128db4's legislation
+    // footers): under an empty opening Footer paragraph, the text line's
+    // top border (footer7) and the empty paragraph's own bottom border
+    // (footer4) paint 0.5pt rules at 733.92 and 734.88; jubarte painted
+    // neither, though it reserved their space.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+        <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Times New Roman\" \
+          w:hAnsi=\"Times New Roman\" w:cs=\"Times New Roman\"/></w:rPr></w:rPrDefault>\
+          <w:pPrDefault/></w:docDefaults>\
+        <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>\
+          <w:rPr><w:sz w:val=\"24\"/></w:rPr></w:style>\
+        <w:style w:type=\"paragraph\" w:styleId=\"Footer\"><w:name w:val=\"footer\"/>\
+          <w:basedOn w:val=\"Normal\"/><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/></w:rPr></w:style>\
+        </w:styles>";
+    let settings = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+        <w:compat><w:compatSetting w:name=\"compatibilityMode\" \
+          w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat></w:settings>";
+    let rule = |edge: &str| {
+        format!(
+            "<w:pBdr><w:{edge} w:val=\"single\" w:sz=\"4\" w:space=\"1\" w:color=\"auto\"/></w:pBdr>"
+        )
+    };
+    let footer = |lead: &str, text: &str| {
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:ftr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+             <w:p><w:pPr><w:pStyle w:val=\"Footer\"/>{lead}<w:rPr><w:sz w:val=\"{}\"/></w:rPr></w:pPr></w:p>\
+             <w:p><w:pPr><w:pStyle w:val=\"Footer\"/>{text}<w:rPr><w:sz w:val=\"20\"/></w:rPr></w:pPr>\
+               <w:r><w:rPr><w:sz w:val=\"20\"/></w:rPr><w:t>FootText</w:t></w:r></w:p>\
+             <w:p><w:pPr><w:pStyle w:val=\"Footer\"/><w:rPr><w:sz w:val=\"16\"/></w:rPr></w:pPr>\
+               <w:r><w:rPr><w:sz w:val=\"16\"/></w:rPr><w:t>FootSmall</w:t></w:r></w:p></w:ftr>",
+            if lead.is_empty() { 24 } else { 20 }
+        )
+    };
+    let body = "<w:p><w:r><w:t>Body</w:t></w:r></w:p>\
+        <w:sectPr><w:footerReference w:type=\"default\" r:id=\"rIdF\"/>\
+          <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+          <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"360\" w:left=\"1440\" \
+            w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>";
+    let render = |ftr: String| {
+        docx_to_pdf(&hf_docx(
+            body,
+            &[
+                ("rIdS", "styles", "styles.xml"),
+                ("rIdT", "settings", "settings.xml"),
+                ("rIdF", "footer", "footer1.xml"),
+            ],
+            &[
+                ("word/styles.xml", styles.to_string()),
+                ("word/settings.xml", settings.to_string()),
+                ("word/footer1.xml", ftr),
+            ],
+        ))
+        .expect("footer rules")
+    };
+    for (name, ftr, word) in [
+        ("text top border", footer("", &rule("top")), 733.92),
+        (
+            "empty paragraph bottom border",
+            footer(&rule("bottom"), ""),
+            734.88,
+        ),
+    ] {
+        let pdf = render(ftr);
+        let rules: Vec<(f32, f32)> = pdf_fill_bands(&pdf, 0.0, 0.0, 0.0)
+            .into_iter()
+            .filter(|(t, b)| (b - t - 0.5).abs() < 0.05 && *t > 600.0)
+            .collect();
+        assert_eq!(
+            rules.len(),
+            1,
+            "{name}: one 0.5pt footer rule; rules={rules:?}"
+        );
+        let mid = (rules[0].0 + rules[0].1) / 2.0;
+        assert!(
+            (mid - word).abs() < 0.75,
+            "{name}: Word's rule at {word}, ours at {mid}"
+        );
+    }
 }
 
 #[test]
@@ -41311,6 +41856,70 @@ fn a_row_moves_whole_when_one_of_its_cells_fits_nothing_on_the_page() {
             );
         }
     }
+}
+
+#[test]
+fn a_cell_paragraph_splits_on_the_room_its_margins_leave() {
+    // Priority 3138fff3a6: row 21 at the foot of page 2, cells with 99-twip
+    // top and bottom margins and 8pt text. Word keeps every cell's first
+    // line on page 2 and carries the two-line titles over. We measured the
+    // empty head as a cell holding a default 11pt paragraph (25pt, not the
+    // margins' 10), so the titles could place no line and the row moved.
+    let p = |t: &str| {
+        format!(
+            "<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"400\" \
+             w:lineRule=\"exact\"/></w:pPr><w:r><w:t>{t}</w:t></w:r></w:p>"
+        )
+    };
+    let fill: String = (0..31).map(|i| p(&format!("Filler{i}"))).collect();
+    let cell_p = |runs: &str| {
+        format!(
+            "<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"200\" \
+             w:lineRule=\"exact\"/></w:pPr><w:r>{runs}</w:r></w:p>"
+        )
+    };
+    let tc = |body: String| {
+        format!(
+            "<w:tc><w:tcPr><w:tcW w:w=\"3000\" w:type=\"dxa\"/><w:tcMar>\
+             <w:top w:w=\"99\" w:type=\"dxa\"/><w:bottom w:w=\"99\" w:type=\"dxa\"/></w:tcMar>\
+             </w:tcPr>{body}</w:tc>"
+        )
+    };
+    let row = format!(
+        "{}{}",
+        tc(cell_p("<w:t>Aone</w:t><w:br/><w:t>Atwo</w:t>")),
+        tc(cell_p("<w:t>Bcell</w:t>"))
+    );
+    let body = format!(
+        "{fill}<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"3000\"/><w:gridCol w:w=\"3000\"/></w:tblGrid>\
+         <w:tr>{row}</w:tr></w:tbl>{}\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+        p("After")
+    );
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("split row");
+    assert_eq!(
+        page_with_text(&pdf, "Filler30"),
+        Some(0),
+        "the fillers fill page 1"
+    );
+    // 28pt left: a line and both margins (20pt) fit, two lines (30pt) do not.
+    assert_eq!(
+        page_with_text(&pdf, "Aone"),
+        Some(0),
+        "the first line stays"
+    );
+    assert_eq!(
+        page_with_text(&pdf, "Bcell"),
+        Some(0),
+        "the one-line cell stays"
+    );
+    assert_eq!(
+        page_with_text(&pdf, "Atwo"),
+        Some(1),
+        "the second line carries over"
+    );
 }
 
 #[test]
