@@ -1155,10 +1155,11 @@ fn cascade_normal_change_to_based_styles(
                     }
                     let copy = dom.clone_subtree(own);
                     if let Some(stale) = dom.element(clone, &name) {
-                        // Per font slot: a slot the style leaves open keeps
-                        // Normal's old face (eastAsiaTheme, 0800162a66).
-                        if name == W::name("rFonts") {
-                            complete_attributes(dom, copy, stale, "rFonts");
+                        // Per attribute: a font slot or language the style
+                        // leaves open keeps Normal's old value
+                        // (eastAsiaTheme, 0800162a66).
+                        if ATTR_MERGED_PROPS.contains(&name.local_name()) {
+                            complete_attributes(dom, copy, stale, name.local_name());
                         }
                         dom.remove(stale);
                     }
