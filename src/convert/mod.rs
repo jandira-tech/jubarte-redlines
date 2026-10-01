@@ -7791,6 +7791,26 @@ fn block_para_style(block: &Block) -> Option<&ParaStyle> {
     }
 }
 
+/// Word's gap between paragraphs `prev` and `next`: `prev`'s `after` plus
+/// `next`'s `before` past it (max of the two), contextualSpacing dropping
+/// only the flagged paragraph's share. Word 16 probe_cx (2026-10-01): a
+/// flagged after 6 over a plain before 20 leaves 14, a flagged after 20
+/// over a plain before 6 leaves 0, a plain after 20 over a flagged
+/// before 6 keeps 20.
+fn contextual_gap(prev: &ParaStyle, next: &ParaStyle, after: f32, before: f32) -> f32 {
+    let own_after = if same_contextual_pair(prev, next) {
+        0.0
+    } else {
+        after
+    };
+    let own_before = if same_contextual_pair(next, prev) {
+        0.0
+    } else {
+        (before - after).max(0.0)
+    };
+    own_after + own_before
+}
+
 fn same_contextual_pair(left: &ParaStyle, right: &ParaStyle) -> bool {
     left.contextual && left.style_id == right.style_id
 }
@@ -13763,14 +13783,17 @@ fn fold_stacked_spacing(mut styles: Vec<&mut ParaStyle>, breaks: &[usize]) {
         let (prev, next) = (&mut *head[i - 1], &mut *rest[0]);
         // contextualSpacing drops the space between same-style paragraphs
         // here as in the body (Word 16 probe ctx_cell_0930: a cell's
-        // contextual Title lines step 20pt, plain ones 28).
+        // contextual Title lines step 20pt, plain ones 28), each flagged
+        // paragraph its own share only (`contextual_gap`).
+        let after = prev.after;
         if same_contextual_pair(prev, next) {
             prev.after = 0.0;
         }
-        if same_contextual_pair(next, prev) {
-            next.before = 0.0;
-        }
-        next.before = (next.before - prev.after).max(0.0);
+        next.before = if same_contextual_pair(next, prev) {
+            0.0
+        } else {
+            (next.before - after).max(0.0)
+        };
     }
 }
 
@@ -17840,11 +17863,7 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet, text_w: f32) -> 
                 if !runs.is_empty()
                     && let Some(p) = last.as_deref()
                 {
-                    first.para_gap = if same_contextual_pair(p, &pstyle) {
-                        0.0
-                    } else {
-                        f32::max(p.after, pstyle.before)
-                    };
+                    first.para_gap = contextual_gap(p, &pstyle, p.after, pstyle.before);
                 } else if let Some(p) = last.as_deref() {
                     // Stacked leading empty paragraphs: Word's gap between
                     // them is max(after, before), the earlier after already
@@ -17927,8 +17946,7 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet, text_w: f32) -> 
             // Word's inter-paragraph space is max(after, next.before),
             // none between contextual same-style paragraphs.
             br.para_gap = match last.as_deref() {
-                Some(p) if same_contextual_pair(p, &pstyle) => 0.0,
-                Some(p) => f32::max(p.after, pstyle.before),
+                Some(p) => contextual_gap(p, &pstyle, p.after, pstyle.before),
                 None => pstyle.before,
             } + border;
             runs.push(br);
@@ -28319,39 +28337,26 @@ fn layout(
                 }
                 let mut style = style.clone();
                 if let Some(next) = blocks.get(i + 1).and_then(block_para_style) {
-                    if same_contextual_pair(&style, next) {
-                        style.after = 0.0;
-                    } else if same_contextual_pair(next, &style) {
-                        // contextualSpacing drops the flagged paragraph's own
-                        // before next to its style (0014add1: an unflagged
-                        // NormalWeb above keeps its after only).
-                        style.after = if !style.list_num.is_empty()
-                            && style.list_num == next.list_num
-                            && style.after_auto
-                        {
-                            0.0
-                        } else {
-                            style.after
-                        };
+                    // Word inter-para space is max(after, next.before).
+                    // Heading2 after=10 + before=18 was 28pt vs Word 18.
+                    // Auto spacing drops between items of one list
+                    // (00df97e7's HTML bullets step one line apart).
+                    // contextualSpacing drops only the flagged paragraph's
+                    // share (0014add1: an unflagged NormalWeb above keeps
+                    // its after; 6ef1820785's flagged lines keep the empty
+                    // paragraphs' before under them).
+                    let one_list = !style.list_num.is_empty() && style.list_num == next.list_num;
+                    let after = if one_list && style.after_auto {
+                        0.0
                     } else {
-                        // Word inter-para space is max(after, next.before).
-                        // Heading2 after=10 + before=18 was 28pt vs Word 18.
-                        // Auto spacing drops between items of one list
-                        // (00df97e7's HTML bullets step one line apart).
-                        let one_list =
-                            !style.list_num.is_empty() && style.list_num == next.list_num;
-                        let after = if one_list && style.after_auto {
-                            0.0
-                        } else {
-                            style.after
-                        };
-                        let before = if one_list && next.before_auto {
-                            0.0
-                        } else {
-                            next.before
-                        };
-                        style.after = after.max(before);
-                    }
+                        style.after
+                    };
+                    let before = if one_list && next.before_auto {
+                        0.0
+                    } else {
+                        next.before
+                    };
+                    style.after = contextual_gap(&style, next, after, before);
                     // Do not max body→Heading1 (potpourri before=18): mini
                     // 209–212 dropped no-redline mean −0.057 (potpourri
                     // −1.13, file_170 −2.31). Ungated also packed Cicero
