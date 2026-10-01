@@ -2,13 +2,15 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! M-ANCHOR attempt 3 — strength+relatedness anchor gate (word mode).
+//! M-ANCHOR — anchors in large windows (word mode).
 //!
-//! A whole-document replacement (two UNRELATED large documents) must not let
-//! a single short junk paragraph shared by coincidence ("(dolore)") anchor
-//! the LCS: Word collapses such windows to insert-all + delete-all, keeping
-//! A's deleted paragraphs as ONE consolidated cluster (sd2517b GT shape).
-//! Evidence: parity/_scratch/anchor_sensitivity.md, sd2517b_physics.md.
+//! Word keeps a short paragraph two unrelated documents share as an anchor:
+//! 40 unrelated paragraphs around one shared "(dolore)" come out as
+//! insert/delete halves on either side of it (Word 16, 2026-10-01,
+//! tests/m_replaced_tail_final_marks.rs `kept_junk`). The synthetic
+//! "(dolore)" case once pinned here as one consolidated deletion was a
+//! seed-word revision, which Word marks word by word
+//! (tests/m_every_paragraph_edited.rs `seed_word`).
 //!
 //! Guard rails for the gate (must stay green, NOT duplicated here):
 //! - m32_word_alignment.rs w2b (1v1 paragraph merge) and w20a-family anchors
@@ -33,65 +35,6 @@ fn doc_body(dom: &mut Dom, inner: &str) -> (NodeId, NodeId) {
 
 fn para(text: &str) -> String {
     format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>")
-}
-
-/// 40 unique paragraphs, lorem-ish, with a single short "(dolore)" paragraph
-/// planted mid-document. `seed` makes the two sides fully disjoint except for
-/// that one junk paragraph.
-fn forty_paras(seed: &str) -> String {
-    let mut s = String::new();
-    for i in 0..40 {
-        if i == 20 {
-            s.push_str(&para("(dolore)"));
-        } else {
-            s.push_str(&para(&format!(
-                "{seed} paragraph {i} consectetur adipiscing elit {seed}{i} sed do eiusmod \
-                 tempor incididunt ut labore {seed} magna aliqua {i}"
-            )));
-        }
-    }
-    s
-}
-
-/// Whole-doc replacement: the "(dolore)" coincidence paragraph must NOT
-/// anchor — A's deleted paragraphs come out as one contiguous cluster.
-#[test]
-fn m41_junk_anchor_voided_in_large_unrelated_window() {
-    let mut dom = Dom::new();
-    let (r1, b1) = doc_body(&mut dom, &forty_paras("alpha"));
-    let (r2, b2) = doc_body(&mut dom, &forty_paras("zulu"));
-    let s = WmlComparerSettings::default();
-    let out = compare_bodies_faithful(&mut dom, r1, r2, b1, b2, &s);
-
-    // Classify each top-level output paragraph: does it carry a deletion?
-    let body = dom.element(out, &W::body()).unwrap();
-    let paras: Vec<NodeId> = dom
-        .elements(body, None)
-        .into_iter()
-        .filter(|&e| dom.name(e) == Some(W::p()))
-        .collect();
-    let del_flags: Vec<bool> = paras
-        .iter()
-        .map(|&p| !dom.descendants(p, Some(&W::del())).is_empty())
-        .collect();
-
-    let first = del_flags.iter().position(|&d| d);
-    let last = del_flags.iter().rposition(|&d| d);
-    let (Some(first), Some(last)) = (first, last) else {
-        panic!("no deleted paragraphs in output");
-    };
-    let holes: Vec<usize> = (first..=last).filter(|&i| !del_flags[i]).collect();
-    assert!(
-        holes.is_empty(),
-        "deleted paragraphs scattered: DEL paras span [{first}..={last}] \
-         with non-DEL holes at {holes:?} (junk '(dolore)' anchor split the cluster)"
-    );
-    // All 40 A paragraphs must be deleted (nothing survives as Equal).
-    let del_count = del_flags.iter().filter(|&&d| d).count();
-    assert_eq!(
-        del_count, 40,
-        "expected all 40 A paragraphs deleted, got {del_count}"
-    );
 }
 
 /// PROTECTED case — small window: a short replacement (4 paras vs 1 para)

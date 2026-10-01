@@ -2027,23 +2027,6 @@ fn stamp_confetti_then_replace(
     Some(stamp_seqs)
 }
 
-/// M-ANCHOR helper: window relatedness — at least 20% of the SMALLER side's
-/// units have some sha1 match anywhere on the other side. Computed with a
-/// hash-set of the larger side (O(n) extra).
-fn windows_related(cul1: &[ComparisonUnit], cul2: &[ComparisonUnit]) -> bool {
-    let (small, large) = if cul1.len() <= cul2.len() {
-        (cul1, cul2)
-    } else {
-        (cul2, cul1)
-    };
-    let large_hashes: std::collections::HashSet<&str> = large.iter().map(|u| u.sha1()).collect();
-    let hits = small
-        .iter()
-        .filter(|u| large_hashes.contains(u.sha1()))
-        .count();
-    hits * 5 >= small.len()
-}
-
 /// Lowercased word tokens from a paragraph group's descendant `w:t` values.
 fn para_text_tokens(dom: &Dom, u: &ComparisonUnit) -> std::collections::HashSet<String> {
     para_text_tokens_from_units(dom, std::slice::from_ref(u))
@@ -2978,9 +2961,13 @@ pub fn do_lcs_algorithm(
             } else {
                 len
             };
+            // The ratio is against the whole window, so it shrinks as a
+            // story of paired paragraphs grows; Word keeps their anchors.
             if max_len > 0
                 && !edge_word
                 && (ratio_len as f64) / (max_len as f64) < settings.detail_threshold
+                && !(settings.merge_replaced_paragraphs
+                    && stream_paragraphs_pair_in_order(dom, &cul1, &cul2))
             {
                 len = 0;
             }
@@ -3132,45 +3119,6 @@ pub fn do_lcs_algorithm(
                     || dom.value_str(a.content_element).trim().is_empty()
             })
         })
-    {
-        len = 0;
-    }
-
-    // M-ANCHOR attempt 3 (parity/_scratch/anchor_sensitivity.md): a SHORT,
-    // low-text common run inside a LARGE window of two UNRELATED sides is a
-    // coincidence collision (empty paras, 'ipsum', '(dolore)'), not an
-    // anchor — Word collapses such whole-doc replacements to insert-all +
-    // delete-all (sd2517b GT: consolidated 18-run shape). Void the run —
-    // never substitute another one; the alternatives in such windows are
-    // junk too (fs's '.', sd2517b's lorem tokens). Three conditions, ALL
-    // required:
-    //   1. both sides large — min side > 32 protects the paragraph-merge
-    //      pivot of short replacements (fs pair: window 53+5, pMark anchor
-    //      is the MIX-paragraph pivot);
-    //   2. run weak in absolute terms — len ≤ 2 AND < 15 chars of real
-    //      trimmed w:t text (deliberately NOT keyed on textless-ness);
-    //   3. window unrelated — fewer than 20% of the smaller side's units
-    //      have ANY sha1 match on the other side (related big documents
-    //      keep their legitimate empty-para alignment).
-    // Word-mode only. EMPIRICAL NOTE (2026-07-04): on the motivating real
-    // sd2517b pair this gate is a NO-OP — the junk anchors there fire in
-    // step_h-descended lopsided windows (3+1059, 225+2, 39+2, 5+46, 2+45;
-    // min side ≤ 5), never in a both-sides-large window, and the 131+120
-    // top window already resolves len=0 via the earlier guards. The gate
-    // still pins the synthetic whole-doc-replacement physics (m41 tests)
-    // without touching any of the four spot-oracle pairs.
-    // Lone paragraph-mark anchors (len==1, only w:pPr) are excluded: they
-    // score run_real_text_len==0 and would otherwise be voided in large
-    // unrelated windows, breaking the paragraph-merge pivot physics that
-    // Step D / the M-BLK path rely on (PR #81 review 3523298506).
-    if len > 0
-        && len <= 2
-        && !is_only_paragraph_mark
-        && settings.merge_replaced_paragraphs
-        && !edge_word
-        && cul1.len().min(cul2.len()) > 32
-        && run_real_text_len(dom, &cul1[i1..i1 + len]) < 15
-        && !windows_related(&cul1, &cul2)
     {
         len = 0;
     }
@@ -6095,6 +6043,70 @@ pub fn detect_unrelated_sources_word_mode(
     Some((head, false))
 }
 
+/// The two stories' paragraphs pair up in order: at least half of the
+/// shorter story's text paragraphs find, a few paragraphs past the last
+/// pair, one sharing most of their words. An edit in every paragraph leaves
+/// no paragraph hash in common, and the longest common run shrinks against
+/// a growing document, yet the documents are one revision: Word marks each
+/// changed word in its paragraph (Word 16, 2026-10-01: 28 paragraphs with
+/// one changed word each, 56 word revisions).
+fn paragraphs_pair_in_order(dom: &Dom, cu1: &[ComparisonUnit], cu2: &[ComparisonUnit]) -> bool {
+    let paragraphs = |cu: &[ComparisonUnit]| -> Vec<std::collections::HashSet<String>> {
+        cu.iter()
+            .filter(|u| {
+                as_group(u).is_some_and(|g| g.group_type == ComparisonUnitGroupType::Paragraph)
+                    && unit_has_text_token(dom, u)
+            })
+            .map(|u| para_text_tokens(dom, u))
+            .collect()
+    };
+    word_sets_pair_in_order(paragraphs(cu1), paragraphs(cu2))
+}
+
+/// `paragraphs_pair_in_order` over word streams, whose paragraphs end at
+/// their marks.
+fn stream_paragraphs_pair_in_order(
+    dom: &Dom,
+    cul1: &[ComparisonUnit],
+    cul2: &[ComparisonUnit],
+) -> bool {
+    let paragraphs = |cul: &[ComparisonUnit]| -> Vec<std::collections::HashSet<String>> {
+        cul.split_inclusive(|u| unit_is_single_atom_ppr(dom, u))
+            .map(|p| para_text_tokens_from_units(dom, p))
+            .filter(|words| !words.is_empty())
+            .collect()
+    };
+    word_sets_pair_in_order(paragraphs(cul1), paragraphs(cul2))
+}
+
+fn word_sets_pair_in_order(
+    p1: Vec<std::collections::HashSet<String>>,
+    p2: Vec<std::collections::HashSet<String>>,
+) -> bool {
+    /// Paragraphs the revision may insert between two pairs.
+    const REACH: usize = 8;
+    let (short, long) = if p1.len() <= p2.len() {
+        (p1, p2)
+    } else {
+        (p2, p1)
+    };
+    if short.len() < 4 {
+        return false;
+    }
+    let (mut next, mut paired) = (0, 0);
+    for words in &short {
+        if let Some(k) = long[next..]
+            .iter()
+            .take(REACH)
+            .position(|other| token_jaccard(words, other) >= 0.5)
+        {
+            paired += 1;
+            next += k + 1;
+        }
+    }
+    2 * paired >= short.len()
+}
+
 fn detect_unrelated_sources_word_mode_inner(
     dom: &mut Dom,
     cu1: &[ComparisonUnit],
@@ -7528,7 +7540,7 @@ fn detect_unrelated_sources_word_mode_inner(
         }
         return None;
     }
-    if !disjoint {
+    if !disjoint || paragraphs_pair_in_order(dom, cu1, cu2) {
         return None;
     }
     // M318/M394 (memo×nda, employment×lease): large-vocab related prose with
