@@ -9906,6 +9906,53 @@ fn a_hidden_row_of_hidden_text_takes_its_borders_with_it() {
 }
 
 #[test]
+fn a_paragraph_styles_vanish_hides_its_runs() {
+    // PR #247 review: a paragraph style's run properties are its runs'
+    // base, w:vanish included; a run's own vanish=0 still shows it.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+          <w:style w:type=\"paragraph\" w:styleId=\"Secret\"><w:name w:val=\"Secret\"/>\
+            <w:basedOn w:val=\"Normal\"/><w:rPr><w:vanish/></w:rPr></w:style>\
+        </w:styles>";
+    let body = "<w:p><w:r><w:t>Kept</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:pStyle w:val=\"Secret\"/></w:pPr><w:r><w:t>Classified</w:t></w:r>\
+           <w:r><w:rPr><w:vanish w:val=\"0\"/></w:rPr><w:t>Declassified</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&docx_with_styles(body, styles)).expect("hidden paragraph style");
+    let text = stream_glyph_text(&pdf_content_streams(&pdf)[0]);
+    assert!(text.contains("Kept"), "{text}");
+    assert!(
+        !text.contains("Classified"),
+        "the paragraph style hides it: {text}"
+    );
+    assert!(
+        text.contains("Declassified"),
+        "direct vanish=0 wins: {text}"
+    );
+}
+
+#[test]
+fn a_hidden_row_keeps_text_a_later_rpr_shows() {
+    // PR #247 review: the run's leading rPr blocks fold in order; the
+    // second turns vanish off, so the row has visible text and stays.
+    let doc = minimal_docx_body(
+        "<w:p><w:r><w:t>Before</w:t></w:r></w:p>\
+         <w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"pct\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"8460\"/></w:tblGrid><w:tr><w:trPr><w:hidden/></w:trPr><w:tc>\
+           <w:p><w:pPr><w:rPr><w:vanish/></w:rPr></w:pPr><w:r><w:rPr><w:vanish/></w:rPr><w:rPr><w:vanish w:val=\"0\"/></w:rPr>\
+             <w:t>Visible</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+         <w:p><w:r><w:t>After</w:t></w:r></w:p><w:sectPr/>",
+    );
+    let pdf = docx_to_pdf(&doc).expect("hidden row with shown text");
+    assert!(
+        pdf_glyph_text_xy(&pdf, "Visible").is_some(),
+        "the row's text shows, so the row is laid out"
+    );
+}
+
+#[test]
 fn a_hidden_row_of_style_hidden_text_takes_its_borders_with_it() {
     // PR #247 review: the row's text and mark vanish through a character
     // style, not a direct w:vanish. Its runs already stayed off the page;

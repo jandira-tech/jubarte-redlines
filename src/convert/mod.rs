@@ -619,6 +619,9 @@ struct RunStyle {
     /// conditional bold/italic ranks below them (00319da4's b=0 runs).
     bold_set: bool,
     italic_set: bool,
+    /// The nearest `w:vanish` of the styles and defaults under the run:
+    /// a paragraph style's hidden text hides its runs (PR #247 review).
+    hidden: bool,
     /// Size that sizes the line box when `size` is a rendering reduction
     /// (a small-caps piece keeps its run's authored size); 0 = `size`.
     box_size: f32,
@@ -1161,10 +1164,10 @@ struct CellBorders {
 }
 
 #[derive(Clone, Copy)]
-struct TblLook {
-    first_row: bool,
-    first_col: bool,
-    no_h_band: bool,
+pub(crate) struct TblLook {
+    pub(crate) first_row: bool,
+    pub(crate) first_col: bool,
+    pub(crate) no_h_band: bool,
 }
 
 struct RawStyle {
@@ -1221,6 +1224,7 @@ impl Defaults {
                 box_size: 0.0,
                 bold_set: false,
                 italic_set: false,
+                hidden: false,
                 offset: 0.0,
                 vert: VertAlign::Baseline,
                 kern_half: 0,
@@ -3800,6 +3804,9 @@ fn apply_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
     apply_theme_script_fonts(style, theme);
     if let Some(rtl) = first_named(dom, rpr, "rtl") {
         style.rtl = !val_is_false(dom, Some(rtl));
+    }
+    if let Some(vanish) = first_named(dom, rpr, "vanish") {
+        style.hidden = !val_is_false(dom, Some(vanish));
     }
     if first_named(dom, rpr, "b").is_some() {
         style.bold = !val_is_false(dom, first_named(dom, rpr, "b"));
@@ -10209,7 +10216,7 @@ fn table_style_id(dom: &Dom, table: NodeId) -> Option<&str> {
     first_named(dom, pr, "tblStyle").and_then(|n| dom.attribute(n, &W::val()))
 }
 
-fn table_look(dom: &Dom, table: NodeId) -> TblLook {
+pub(crate) fn table_look(dom: &Dom, table: NodeId) -> TblLook {
     let mut look = TblLook {
         first_row: true,
         first_col: false,
@@ -11082,22 +11089,19 @@ fn table_pad_h(dom: &Dom, table: NodeId) -> (f32, f32) {
 }
 
 /// The paragraph mark is hidden: its direct `w:vanish`, else its character
-/// style's (4910ce2060's ContentControlHidden marks under "System Name").
+/// style's (4910ce2060's ContentControlHidden marks under "System Name"),
+/// else its paragraph style's.
 fn para_mark_hidden(dom: &Dom, para: NodeId, styles: &HashMap<String, NamedStyle>) -> bool {
-    let Some(rpr) = dom
+    let rprs: Vec<NodeId> = dom
         .element(para, &W::p_pr())
         .and_then(|ppr| dom.element(ppr, &W::r_pr()))
-    else {
-        return false;
-    };
-    first_named(dom, rpr, "vanish").map_or_else(
-        || {
-            first_named(dom, rpr, "rStyle")
-                .and_then(|n| dom.attribute(n, &W::val()))
-                .and_then(|sid| styles.get(sid))
-                .is_some_and(|named| named.hidden == Some(true))
-        },
-        |n| !val_is_false(dom, Some(n)),
+        .into_iter()
+        .collect();
+    run_hidden(
+        dom,
+        &rprs,
+        Some(styles),
+        para_style_hidden(dom, para, styles),
     )
 }
 
@@ -11106,28 +11110,16 @@ fn para_mark_hidden(dom: &Dom, para: NodeId, styles: &HashMap<String, NamedStyle
 /// the marker a vanished row keeps a line). The empty cell-end paragraph
 /// after a nested table goes with the table (9617d33f's separators).
 fn row_is_hidden(dom: &Dom, row: NodeId, styles: &HashMap<String, NamedStyle>) -> bool {
-    // A direct w:vanish decides; without one, the character style's (as
-    // the runs themselves are collected).
-    let vanish = |rpr: Option<NodeId>| {
-        rpr.is_some_and(|rpr| {
-            first_named(dom, rpr, "vanish").map_or_else(
-                || {
-                    first_named(dom, rpr, "rStyle")
-                        .and_then(|n| dom.attribute(n, &W::val()))
-                        .and_then(|sid| styles.get(sid))
-                        .is_some_and(|named| named.hidden == Some(true))
-                },
-                |n| !val_is_false(dom, Some(n)),
-            )
-        })
-    };
+    // Every leading rPr in order, over the paragraph style, as the runs
+    // themselves are collected (PR #247 review).
     let marked = direct_named(dom, row, "trPr")
         .and_then(|pr| direct_named(dom, pr, "hidden"))
         .is_some_and(|n| !val_is_false(dom, Some(n)));
     marked
         && dom.descendants(row, Some(&W::p())).into_iter().all(|p| {
+            let style_hidden = para_style_hidden(dom, p, styles);
             let runs_hidden = dom.descendants(p, Some(&W::r())).into_iter().all(|r| {
-                vanish(dom.element(r, &W::r_pr()))
+                run_hidden(dom, &leading_rprs(dom, r), Some(styles), style_hidden)
                     || (0..dom.child_count(r))
                         .map(|i| dom.child_at(r, i))
                         .all(|c| dom.name_is(c, &W::r_pr()) || !dom.is_element(c))
@@ -11334,7 +11326,7 @@ fn column_prefs(raw_rows: &[Vec<RawCell>], grid: &[f32], fixed: bool) -> Vec<Pre
     pref
 }
 
-fn cell_is_deleted(dom: &Dom, cell: NodeId) -> bool {
+pub(crate) fn cell_is_deleted(dom: &Dom, cell: NodeId) -> bool {
     let Some(pr) = first_named(dom, cell, "tcPr") else {
         return false;
     };
@@ -11580,7 +11572,7 @@ fn shd_paint(dom: &Dom, shd: NodeId) -> Option<[f32; 3]> {
 
 /// `parent`'s `w:<local>` children, also those a content control or a
 /// custom-XML wrapper holds (003c9ddd's tr > sdt > sdtContent > tc).
-fn wrapped_children(dom: &Dom, parent: NodeId, local: &str) -> Vec<NodeId> {
+pub(crate) fn wrapped_children(dom: &Dom, parent: NodeId, local: &str) -> Vec<NodeId> {
     let mut out = Vec::new();
     for i in 0..dom.child_count(parent) {
         let child = dom.child_at(parent, i);
@@ -12268,20 +12260,7 @@ fn collect_runs_rec(
             }
         }
         let rprs = leading_rprs(ctx.dom, node);
-        // The rPr blocks apply in order, each its character style's
-        // w:vanish and then its own (PR #247 review: a later style that
-        // turns vanish off shows the run again).
-        let hidden = rprs.iter().fold(false, |on, rpr| {
-            let styled = first_named(ctx.dom, *rpr, "rStyle")
-                .and_then(|n| ctx.dom.attribute(n, &W::val()))
-                .and_then(|sid| ctx.styles.and_then(|s| s.get(sid)))
-                .and_then(|named| named.hidden);
-            first_named(ctx.dom, *rpr, "vanish")
-                .map(|n| !val_is_false(ctx.dom, Some(n)))
-                .or(styled)
-                .unwrap_or(on)
-        });
-        if hidden {
+        if run_hidden(ctx.dom, &rprs, ctx.styles, ctx.base.hidden) {
             // webHidden is web-view only (ECMA-376 17.3.2.42). Word print
             // and Save-as-PDF still paint those runs (TOC leaders / PAGEREF).
             return;
@@ -14048,7 +14027,40 @@ fn para_own_text(dom: &Dom, para: NodeId) -> String {
 /// applies each (001f2a51's hyperlink runs carry rStyle then sz in two)
 /// and ignores one after the text (its `<w:t/><w:rPr><w:sz 18/>` titles
 /// stay 11pt).
-fn leading_rprs(dom: &Dom, run: NodeId) -> Vec<NodeId> {
+/// Whether a run with the leading `w:rPr` blocks `rprs` is hidden. The
+/// blocks apply in order, each its character style's `w:vanish` and then
+/// its own, over `start`, what the paragraph's style gives (PR #247 review:
+/// a later style that turns vanish off shows the run again; a paragraph
+/// style's vanish hides runs that say nothing).
+fn run_hidden(
+    dom: &Dom,
+    rprs: &[NodeId],
+    styles: Option<&HashMap<String, NamedStyle>>,
+    start: bool,
+) -> bool {
+    rprs.iter().fold(start, |on, &rpr| {
+        let styled = first_named(dom, rpr, "rStyle")
+            .and_then(|n| dom.attribute(n, &W::val()))
+            .and_then(|sid| styles.and_then(|s| s.get(sid)))
+            .and_then(|named| named.hidden);
+        first_named(dom, rpr, "vanish")
+            .map(|n| !val_is_false(dom, Some(n)))
+            .or(styled)
+            .unwrap_or(on)
+    })
+}
+
+/// The `w:vanish` a paragraph's own `w:pStyle` chain gives its runs.
+fn para_style_hidden(dom: &Dom, para: NodeId, styles: &HashMap<String, NamedStyle>) -> bool {
+    dom.element(para, &W::p_pr())
+        .and_then(|ppr| first_named(dom, ppr, "pStyle"))
+        .and_then(|n| dom.attribute(n, &W::val()))
+        .and_then(|sid| styles.get(sid))
+        .and_then(|named| named.hidden)
+        .unwrap_or(false)
+}
+
+pub(crate) fn leading_rprs(dom: &Dom, run: NodeId) -> Vec<NodeId> {
     let mut out = Vec::new();
     for i in 0..dom.child_count(run) {
         let child = dom.child_at(run, i);
@@ -26930,6 +26942,7 @@ fn default_run_style() -> RunStyle {
         box_size: 0.0,
         bold_set: false,
         italic_set: false,
+        hidden: false,
         offset: 0.0,
         vert: VertAlign::Baseline,
         kern_half: 0,
