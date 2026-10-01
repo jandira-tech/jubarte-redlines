@@ -164,62 +164,110 @@ fn inside(kind: Allowed, allowed: Allowed) -> Allowed {
     }
 }
 
+/// Where every unescaped closer and separator sits in the source, found once
+/// so that an opener without its closer does not scan the rest of the text.
+struct Closers<'a> {
+    patterns: [&'a str; 6],
+    positions: [Vec<usize>; 6],
+}
+
+impl<'a> Closers<'a> {
+    fn new(source: &str) -> Self {
+        let patterns = ["++}", "--}", "~~}", "==}", "<<}", "~>"];
+        let positions = patterns.map(|pattern| {
+            source
+                .match_indices(pattern)
+                .map(|(at, _)| at)
+                .filter(|&at| !escaped(source, at))
+                .collect()
+        });
+        Self {
+            patterns,
+            positions,
+        }
+    }
+
+    /// The first `pattern` that lies whole in `from..until`.
+    fn find(&self, pattern: &str, from: usize, until: usize) -> Option<usize> {
+        let slot = self.patterns.iter().position(|p| *p == pattern)?;
+        let positions = &self.positions[slot];
+        let at = *positions.get(positions.partition_point(|&at| at < from))?;
+        (at + pattern.len() <= until).then_some(at)
+    }
+}
+
 /// [`encode`], opening only the spans `allowed` names, and moving footnote
 /// labels out of spans only when `labels`.
 fn encode_spans(source: &str, allowed: Allowed, labels: bool) -> String {
     let mut out = String::with_capacity(source.len());
-    let mut at = 0;
-    while at < source.len() {
-        let rest = &source[at..];
+    encode_range(
+        source,
+        &Closers::new(source),
+        0..source.len(),
+        allowed,
+        labels,
+        &mut out,
+    );
+    out
+}
+
+/// [`encode_spans`] for the part of `source` in `range`.
+fn encode_range(
+    source: &str,
+    closers: &Closers<'_>,
+    range: std::ops::Range<usize>,
+    allowed: Allowed,
+    labels: bool,
+    out: &mut String,
+) {
+    let mut at = range.start;
+    while at < range.end {
+        let rest = &source[at..range.end];
         let span = SPANS
             .iter()
             .find(|(open, ..)| rest.starts_with(open))
             .filter(|span| allowed & kind_of(span.3) != 0)
             .filter(|_| !escaped(source, at))
             .and_then(|&(open, close, separator, start, end)| {
-                let inner = &rest[open.len()..];
-                let length = inner.find(close)?;
-                let body = &inner[..length];
+                let from = at + open.len();
+                let to = closers.find(close, from, range.end)?;
                 let split = match separator {
-                    Some(separator) => Some((body.find(separator)?, separator.len())),
+                    Some(separator) => Some((closers.find(separator, from, to)?, separator.len())),
                     None => None,
                 };
-                Some((open.len() + length + close.len(), body, split, start, end))
+                Some((from..to, to + close.len(), split, start, end))
             });
         match span {
-            Some((consumed, mut body, split, start, end)) => {
+            Some((mut body, after, split, start, end)) => {
                 let nested = inside(kind_of(start), allowed);
-                let mut split = split;
                 if labels
                     && start != Token::CommentStart
                     && (at == 0 || source[..at].ends_with('\n'))
-                    && let Some(label) = footnote_label(body)
-                    && split.is_none_or(|(mid, _)| mid >= label.len())
+                    && let Some(label) = footnote_label(&source[body.clone()])
+                    && split.is_none_or(|(mid, _)| mid >= body.start + label.len())
                 {
-                    push_escaped(&mut out, label);
-                    body = &body[label.len()..];
-                    split = split.map(|(mid, width)| (mid - label.len(), width));
+                    push_escaped(out, label);
+                    body.start += label.len();
                 }
                 out.push(stand_in(start));
                 match split {
                     Some((mid, width)) => {
-                        out.push_str(&encode_spans(&body[..mid], nested, false));
+                        encode_range(source, closers, body.start..mid, nested, false, out);
                         out.push(stand_in(Token::SubstituteSeparator));
-                        out.push_str(&encode_spans(&body[mid + width..], nested, false));
+                        encode_range(source, closers, mid + width..body.end, nested, false, out);
                     }
-                    None => out.push_str(&encode_spans(body, nested, false)),
+                    None => encode_range(source, closers, body, nested, false, out),
                 }
                 out.push(stand_in(end));
-                at += consumed;
+                at = after;
             }
             None => {
                 let c = rest.chars().next().unwrap_or_default();
-                push_escaped(&mut out, &rest[..c.len_utf8()]);
+                push_escaped(out, &rest[..c.len_utf8()]);
                 at += c.len_utf8();
             }
         }
     }
-    out
 }
 
 /// The footnote label that starts `text` with the spaces after it
@@ -417,6 +465,48 @@ mod tests {
         }
         // An even number of backslashes escapes the backslash, not the brace.
         assert_ne!(encode(r"\\{++x++}"), r"\\{++x++}");
+    }
+
+    #[test]
+    fn an_escaped_closer_or_separator_is_text_inside_the_span() {
+        assert_eq!(
+            pieces(&encode(r"{++a \++} b++}")),
+            ["<InsertStart>", r"a \++} b", "<InsertEnd>"]
+        );
+        assert_eq!(
+            pieces(&encode(r"{~~a\~>b~>c~~}")),
+            [
+                "<SubstituteStart>",
+                r"a\~>b",
+                "<SubstituteSeparator>",
+                "c",
+                "<SubstituteEnd>"
+            ]
+        );
+        assert_eq!(
+            pieces(&encode(r"{>>x \<<} y<<}")),
+            ["<CommentStart>", r"x \<<} y", "<CommentEnd>"]
+        );
+        // Only an escaped closer: the span never closes.
+        assert_eq!(encode(r"{++a \++}"), r"{++a \++}");
+        assert_eq!(encode(r"{~~a\~>b~~}"), r"{~~a\~>b~~}");
+        // An escaped backslash leaves the closer a closer.
+        assert_eq!(
+            pieces(&encode(r"{++a\\++} b++}")),
+            ["<InsertStart>", r"a\\", "<InsertEnd>", " b++}"]
+        );
+        assert_eq!(resolve(r"{++a \++} b++}", true), r"a \++} b");
+        assert_eq!(resolve(r"{++a \++} b++}", false), "");
+    }
+
+    #[test]
+    fn unclosed_openers_encode_in_linear_time() {
+        // Every opener once scanned the rest of the text for its closer.
+        let source = "{++ {-- {~~ {== {>> ~> ".repeat(40_000);
+        let started = std::time::Instant::now();
+        assert_eq!(encode(&source), source);
+        let elapsed = started.elapsed();
+        assert!(elapsed.as_secs() < 2, "took {elapsed:?}");
     }
 
     #[test]

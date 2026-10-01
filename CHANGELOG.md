@@ -143,6 +143,11 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- CriticMarkup: a closing delimiter or `~>` behind a backslash is text, as
+  an escaped opener already was, so `{++a \++} b++}` inserts `a \++} b`.
+  Reading Markdown full of openers without closers no longer takes time
+  quadratic in its length (120,000 unclosed openers took minutes; now
+  milliseconds).
 - Consecutive paragraphs in a text box are spaced by the larger of one's
   space after and the next one's space before, as in a table cell. The
   first paragraph's auto space before and the last one's auto space after
