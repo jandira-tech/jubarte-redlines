@@ -33947,6 +33947,61 @@ fn a_shape_that_fits_its_text_ignores_its_percentage_height() {
 }
 
 #[test]
+fn a_box_that_fits_its_text_holds_its_grid_line() {
+    // Word 16 (2026-10-01, 4640e71ddd variants): a floating a:spAutoFit
+    // box around one Times 12 line is 25.7pt high on an 18pt line grid
+    // (one pitch plus its 3.6pt insets) and 21.5 without the grid. We sized
+    // the box by the face alone (21pt) while its text took the grid line,
+    // so the line fell under the box floor and was dropped: 4640e71ddd's
+    // "附件1" box painted empty.
+    let docx = |grid: &str| {
+        let body = format!(
+            "<w:p><w:r><w:drawing><wp:anchor simplePos=\"0\" relativeHeight=\"1\" \
+              behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+              <wp:positionH relativeFrom=\"column\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+              <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+              <wp:extent cx=\"711835\" cy=\"1404620\"/>\
+              <wp:wrapNone/>\
+              <wp:docPr id=\"1\" name=\"Text Box 2\"/>\
+              <a:graphic><a:graphicData \
+                uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+                <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+                  <wps:cNvSpPr txBox=\"1\"/>\
+                  <wps:spPr><a:prstGeom prst=\"rect\"/>\
+                    <a:solidFill><a:srgbClr val=\"FF0000\"/></a:solidFill>\
+                    <a:ln><a:noFill/></a:ln></wps:spPr>\
+                  <wps:txbx><w:txbxContent><w:p><w:pPr>\
+                    <w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/>\
+                    <w:jc w:val=\"center\"/></w:pPr>\
+                    <w:r><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+                    <w:sz w:val=\"24\"/></w:rPr><w:t>Annex1</w:t></w:r></w:p></w:txbxContent></wps:txbx>\
+                  <wps:bodyPr wrap=\"square\" lIns=\"91440\" tIns=\"45720\" rIns=\"91440\" bIns=\"45720\">\
+                    <a:spAutoFit/></wps:bodyPr>\
+                </wps:wsp>\
+              </a:graphicData></a:graphic>\
+            </wp:anchor></w:drawing></w:r></w:p><w:sectPr>{grid}</w:sectPr>"
+        );
+        docx_to_pdf(&drawing_docx(&body)).expect("fitted box")
+    };
+    for (grid, word_h) in [
+        (r#"<w:docGrid w:type="lines" w:linePitch="360"/>"#, 25.2),
+        ("", 21.0),
+    ] {
+        let pdf = docx(grid);
+        let text = pdf_winansi_text(&pdf);
+        let boxes = pdf_fill_boxes_in(&pdf_content_streams(&pdf)[0], 1.0, 0.0, 0.0);
+        assert!(
+            text.contains("Annex1"),
+            "grid {grid:?}: the box keeps its line; text={text}"
+        );
+        assert!(
+            boxes.len() == 1 && (boxes[0].3 - word_h).abs() < 0.6,
+            "grid {grid:?}: Word's box is {word_h} high; boxes={boxes:?}"
+        );
+    }
+}
+
+#[test]
 fn higher_relative_height_paints_after_lower_fill() {
     // Strict01 cover: white Rectangle 468 (z=251653632) must paint BEFORE
     // dark Rectangle 467 (z=251656704) so the abstract header stays visible.
