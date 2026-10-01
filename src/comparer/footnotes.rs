@@ -239,31 +239,25 @@ pub fn strip_unresolved_style_refs(
 }
 
 /// M4.H.8 — `CopyMissingStylesFromOneDocToAnother` (:2547): copy each `w:style`
-/// from `from_root` not already present in `to_root` (keyed by type+styleId),
-/// dropping its `w:default` attribute (avoid two defaults). Ensures inserted
-/// content's styles exist in the output.
+/// from `from_root` whose styleId `to_root` lacks, dropping its `w:default`
+/// attribute (avoid two defaults). Ensures inserted content's styles exist in
+/// the output. A styleId names one style of any type: upstream keys on type
+/// and id, which wrote an id twice, while Word keeps the original's style and
+/// leaves the revision's out (420a528aa0 × 178804f5ce: character `DocID`
+/// beside paragraph `DocID`).
 pub fn copy_missing_styles(dom: &mut Dom, to_root: NodeId, from_root: NodeId) {
     let style = W::name("style");
-    let type_a = W::name("type");
     let style_id = W::name("styleId");
-    let mut existing: std::collections::HashSet<(String, String)> = dom
+    let mut existing: std::collections::HashSet<String> = dom
         .elements(to_root, Some(&style))
         .into_iter()
-        .map(|st| {
-            (
-                dom.attribute(st, &type_a).unwrap_or("").to_string(),
-                dom.attribute(st, &style_id).unwrap_or("").to_string(),
-            )
-        })
+        .map(|st| dom.attribute(st, &style_id).unwrap_or("").to_string())
         .collect();
     let from_styles = dom.elements(from_root, Some(&style));
     for s in from_styles {
-        let key = (
-            dom.attribute(s, &type_a).unwrap_or("").to_string(),
-            dom.attribute(s, &style_id).unwrap_or("").to_string(),
-        );
+        let key = dom.attribute(s, &style_id).unwrap_or("").to_string();
         // Mirror the TS, which re-queries the growing destination each iteration:
-        // a (type, styleId) duplicated within `from_root` is copied at most once.
+        // a styleId duplicated within `from_root` is copied at most once.
         if !existing.insert(key) {
             continue;
         }
