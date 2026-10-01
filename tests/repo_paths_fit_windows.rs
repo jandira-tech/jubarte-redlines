@@ -27,7 +27,11 @@ fn every_tracked_path_fits_a_windows_checkout() {
     assert!(out.status.success(), "git ls-files failed");
     let listing = String::from_utf8(out.stdout).expect("utf-8 paths");
     let paths: Vec<&str> = listing.split('\0').filter(|p| !p.is_empty()).collect();
-    assert!(!paths.is_empty(), "no tracked files under {}", root.display());
+    assert!(
+        !paths.is_empty(),
+        "no tracked files under {}",
+        root.display()
+    );
     let long: Vec<String> = paths
         .iter()
         .filter(|p| p.chars().count() > MAX_REL_PATH)
