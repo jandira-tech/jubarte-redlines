@@ -24252,6 +24252,46 @@ fn a_taller_even_header_pushes_the_even_page_body_down() {
 }
 
 #[test]
+fn a_header_field_is_named_by_its_first_word_not_by_its_path() {
+    // _to_improve 2566689f0f: three result-less INCLUDEPICTURE fields in
+    // the header point at ".../page1image1105008"; Word's PDF paints
+    // nothing for them. Their "page" made each a PAGE field and we
+    // painted "111" over the header, which shifted every text line of
+    // the page against Word's. A PAGEREF is no PAGE either.
+    let field = |instr: &str| {
+        format!(
+            "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+             <w:r><w:instrText xml:space=\"preserve\">{instr}</w:instrText></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>"
+        )
+    };
+    let header = format!(
+        "<?xml version=\"1.0\"?>\
+         <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         <w:p><w:r><w:t>Hd</w:t></w:r>{}{}<w:r><w:t>Pg</w:t></w:r>{}</w:p></w:hdr>",
+        field(r#" INCLUDEPICTURE "C:\\T\\page1image1105008" \* MERGEFORMAT "#),
+        field(" PAGEREF _Toc1 \\h "),
+        field(" PAGE "),
+    );
+    let body = "<w:p><w:r><w:t>Body</w:t></w:r></w:p>\
+         <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[("rIdH1", "header", "header1.xml")],
+        &[("word/header1.xml", header)],
+    ))
+    .expect("header fields");
+    let page = pdf_winansi_text(pdf_content_streams(&pdf)[0].as_bytes());
+    assert!(
+        page.contains("HdPg1") && !page.contains("Hd1"),
+        "only the PAGE field paints a number; page={page}"
+    );
+}
+
+#[test]
 fn even_and_odd_headers_use_even_ref_on_even_pages() {
     // xml_parts_plan: w:evenAndOddHeaders + type=even headerReference.
     // Without the setting, Word paints type=default on every page.
