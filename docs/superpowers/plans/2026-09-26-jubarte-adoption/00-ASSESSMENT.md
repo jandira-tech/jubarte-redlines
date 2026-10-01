@@ -3,6 +3,11 @@
 
 # Assessment of the adoption plan bundle (Python API and CLI focus)
 
+> **Status (2026-10-01, bd262981): record — accurate as written.** It
+> documents the 2026-09-26 assessment behind the implemented corrections;
+> the gaps it left open on purpose are marked closed in place where
+> release/0.10 closed them. Not itself a to-do list.
+
 Written 2026-09-26 after reading, in this order: the four hand-rolled session
 files (`file_logs.jsonl`, `run_pipeline.sh`, `notes_spacing.py`, `redline.py`),
 the Anthropic `docx` SKILL.md they were written against, `RESULTS.md`, then the

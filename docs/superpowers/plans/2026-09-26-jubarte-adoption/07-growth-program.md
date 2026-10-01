@@ -1,5 +1,10 @@
 # Jubarte Distribution and User Acquisition Implementation Plan
 
+> **Status (2026-10-01, bd262981): no G-task started** — none of
+> `examples/adoption`, `docs/adoption/experiments.csv`, the playground or
+> `examples/document-ci` exists. This is a proposal shelf, not a running
+> program; re-decide before executing any of it.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Convert Jubarte's technical advantage into repeat usage through existing document-generation ecosystems and visibly useful review workflows.

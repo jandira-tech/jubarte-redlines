@@ -4,6 +4,16 @@ SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 SPDX-License-Identifier: AGPL-3.0-only
 -->
 
+> **Status: SNAPSHOT — ledger frozen at import (the "Living document" claim
+> below is historical; last substantive update 2026-07-17; re-checked
+> 2026-10-01, `bd262981`).** This file is a dated record, not a live plan:
+> do not resume or append to it. Current truth lives in TODO.md (backlog)
+> and CHANGELOG.md (shipped). Settled: W7 done 2026-07-17 (§0b/§8);
+> MEM-PROFILE-01 resolved (§10c) — history in TODO.md §1. Still open in
+> effect: lanes W1–W6 and W8 — consult TODO.md §4 before acting on any of
+> them, and keep the §6 fidelity gate (native/WASM score equality per
+> commit) ahead of any speed claim.
+
 # WASM performance plan — close the jubarte-wasm gap without losing parity
 
 > Living document, drafted iteratively as findings land. Companion to

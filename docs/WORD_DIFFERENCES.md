@@ -119,8 +119,8 @@ The other 3 of the 32 are not differences:
   balloon is left, Word also drops the grey markup pane, and the page stays
   full width. Live Word 16.114 on 2026-09-29: the rule predicts the balloon
   count of 149 of the 151 corpus documents with comments
-  (`comment_balloons_0929` in neurotic_docx_bench, `WORD_COMMENT_BALLOONS.md`
-  on `notes/word-comment-balloons`).
+  (`comment_balloons_0929` in neurotic_docx_bench,
+  [WORD_COMMENT_BALLOONS.md](WORD_COMMENT_BALLOONS.md)).
 - **What we do.** Only `--revisions word` copies this
   (`word_balloon_comments` in `src/convert/mod.rs`). The other styles draw
   every comment the body references.

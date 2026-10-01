@@ -1,5 +1,13 @@
 # Transactional DOCX Editing and the Acme Workflow Implementation Plan
 
+> **Status (2026-10-01, bd262981): E1–E5 done, plus what the banner below
+> added on release/0.10 (story editing of headers/footers/notes,
+> `format_paragraph`, `merge_paragraphs`, inline `format`, `whole`
+> replace).** E6's atomic write is not built — the CLI's `--out-dir` bundle
+> covers the need. Post-plan, unrecorded below: `resolve_revisions`
+> (0.10.1), `patch.diff` edit output and `delete_paragraph` comment hunks
+> (unreleased main).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let humans and agents propose, inspect, apply and verify Word-native edits without authoring OOXML or silently losing document features.

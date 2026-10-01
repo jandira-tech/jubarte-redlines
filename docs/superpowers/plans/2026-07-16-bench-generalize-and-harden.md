@@ -31,6 +31,12 @@ SPDX-License-Identifier: AGPL-3.0-only
 > `w:delText` under `w:del`. Note the ledger lane has since been superseded
 > as the headline metric by the 763-doc corpus `5ed816028d99` (jubarte-rust
 > 84.47 / 92.66, rank #1, 2026-08-13 — RESULTS.md).
+>
+> 2026-10-01: KNOWN_ISSUES has one open item left — item 6, the desktop-app
+> glib advisory (RUSTSEC-2024-0429), blocked upstream on Tauri/GTK4; the
+> engine items all closed (2 in 0.10.0, 3/4 in 0.9.3, 5 in 0.9.0, 1 settled
+> 2026-07-16). B4 remains this plan's sole open item (C4 memo still
+> deferred).
 
 ---
 

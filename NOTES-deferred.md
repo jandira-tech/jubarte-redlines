@@ -4,6 +4,13 @@ SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 SPDX-License-Identifier: AGPL-3.0-only
 -->
 
+> **Status: SNAPSHOT — frozen as of 2026-08-04 (workstream S / validity
+> sweep measurement base; re-checked 2026-10-01, `bd262981`).** This file
+> is a dated record, not a live plan: do not append to it. Current truth
+> lives in TODO.md (backlog) and CHANGELOG.md (shipped). Sections still
+> binding: none — every item is annotated below with its 2026-10-01 state,
+> verified by grep at that commit.
+
 # Deferred notes — workstream S (style-chain resolution)
 
 Findings surfaced while implementing `merge_revised_style_definitions`
@@ -60,10 +67,10 @@ The style ids in that family are disjoint between sides (`SD_StrikeChar` vs
 (`SDStrikeChar`, …), and both definitions already reach the output. There is
 nothing for S to repair.
 
-The token analysis in `plans/docxodus-version-diff.md` §7 grouped
-`rstyle`/`combos`/`linked`/`styles`/`ooxml` as one "style inheritance" family on
-the strength of the fixture *names*. The names are about what the fixture
-*tests*, not about why the engine loses on it.
+The token analysis in the pre-import `docxodus-version-diff.md` write-up (§7)
+grouped `rstyle`/`combos`/`linked`/`styles`/`ooxml` as one "style inheritance"
+family on the strength of the fixture *names*. The names are about what the
+fixture *tests*, not about why the engine loses on it.
 
 ## S-D2 — the population workstream S does address
 
@@ -83,6 +90,9 @@ addressable population, not the predicted lift.
 
 ## S-D3 — Word normalizes the value it records; we record it verbatim
 
+> 2026-10-01: still open — the merge still writes each side's declared
+> `w:pPr`/`w:rPr` blocks verbatim (grep `src/document_comparer.rs`).
+
 Oracle `two_column_two_page × vrect_node`, `Title`: A declares
 `<w:spacing w:after="300" w:line="240" w:lineRule="auto"/>` and Word's
 `w:pPrChange` holds `<w:spacing w:after="300"/>` — `line`/`lineRule` dropped
@@ -95,6 +105,11 @@ the recorded history differs. Per-fixture polish.
 
 ## S-D4 — table-style properties are not compared
 
+> 2026-10-01: still open — `merge_revised_style_definitions`
+> (`src/document_comparer.rs`) still handles `w:pPr`/`w:rPr` only;
+> `tblPrChange`/`trPrChange`/`tcPrChange` appear only in
+> `REVISION_CHANGE_ELEMENTS` (recognition), not in style merging.
+
 `merge_revised_style_definitions` handles `w:pPr` and `w:rPr` only.
 `w:tblPr` / `w:trPr` / `w:tcPr` / `w:tblStylePr` differences between two
 definitions of the same table style are neither detected nor recorded (Word
@@ -106,6 +121,10 @@ and its own oracle evidence, and because the paragraph/character styles carry
 the visible weight.
 
 ## S-D5 — per-attribute inheritance is limited to `w:rFonts` and `w:lang`
+
+> 2026-10-01: still open — `ATTR_MERGED_PROPS` in
+> `src/document_comparer.rs` is still `["rFonts", "lang"]`; `w:spacing` /
+> `w:ind` remain whole-element comparisons.
 
 `ATTR_MERGED_PROPS` covers the two elements whose per-attribute inheritance the
 corpus evidence forced (`Hello_docx_world × multi_image_types`: comparing
@@ -138,6 +157,10 @@ Revisit if a corpus ever shows a non-zero count.
 
 ## S-D7 — we now mark more styles than Word does
 
+> 2026-10-01: still open — `cascade_normal_change_to_based_styles` (M111)
+> still fires unconditionally in `src/document_comparer.rs`, and
+> `tests/m111_cascade_normal_style_change.rs` still pins it.
+
 On the 828 colliding styles measured across 135 pairs, style-level change
 markup: **ours 766, oracle 571**. Aggregate over all styles: ours 1163, oracle
 871.
@@ -155,6 +178,11 @@ pinned by four passing oracle tests (`m111_*`) and unpicking it needs its own
 evidence pass.
 
 ## S-D8 — pre-existing OOXML invalidity is unchanged, and large
+
+> 2026-10-01: overtaken by the validity ratchet — invalid outputs are now
+> tracked as a no-NEW-keys baseline in `tools/validity_baseline.tsv`
+> (SCHEMA_ORACLE_PLAN W2), so re-measuring this by hand is no longer how
+> the gap is watched.
 
 Validating 150 generated outputs with `tools/validate-docx`:
 **55 invalid before this change, the same 55 after.** No document became invalid
@@ -217,6 +245,9 @@ that isolates us, and it is the one to track.
 
 ## V-D2 — residual classes after this branch's two fixes
 
+> 2026-10-01: the `w:style` child-order residue landed as predicted —
+> `STYLE_CHILD_ORDER` now exists in `src/document_comparer.rs`.
+
 Measured base-vs-fixed on the same commit, 197 cluster documents:
 invalid 103 → 93; `w:author`/`w:date` 55 → 0; ordering 287 → 244; every other
 class unchanged; **0 documents gained an error**.
@@ -237,6 +268,11 @@ should be re-measured after that branch lands rather than fixed twice.
 
 ## V-D3 — `wml_order_elements_per_standard` covers only 7 containers
 
+> 2026-10-01: partially superseded by `tests/schema_consistency.rs`
+> (SCHEMA_ORACLE_PLAN W1), which cross-checks the exported order tables
+> against the vendored SDK schema every test run; containers outside the
+> tables remain unprotected.
+
 `finalize.rs` sorts the children of `pPr`, `rPr`, `tblPr`, `tcPr`, `tcBorders`,
 `tblBorders`, `pBdr`. It is a port of PowerTools'
 `WmlOrderElementsPerStandard`, and inherits that function's container list, so
@@ -248,9 +284,13 @@ The systematic version of this — enumerating every ordered complex type in
 was not attempted here. It is the difference between fixing the ordering bugs
 we tripped over and being unable to ship one.
 
-## V-D4 — Stage R2 of `plans/jubarte-rust-to-target.md` is built on a false premise
+## V-D4 — Stage R2 of the pre-import `jubarte-rust-to-target` plan is built on a false premise
 
 Not a validity item, recorded here because it is the reason this branch exists.
+(The `plans/…` documents this file used to cite — `jubarte-rust-to-target.md`,
+`reviews/what-the-50-cluster-actually-is.md`, and S-D1's
+`docxodus-version-diff.md` — were the pre-import location of those analyses;
+they do not exist in this repository.)
 
 Stage R2 prescribes emitting in-place intra-paragraph revisions instead of
 paragraph-granular replacement, transferring a defect diagnosed on
@@ -275,7 +315,7 @@ divergence, and measured on the full 763 it is worth +0.50 mean / +1.02 median.
 Real, small, and it leaves the cluster standing.
 
 I recorded the opposite of this for a while — see the provenance note above for
-how, and `plans/reviews/what-the-50-cluster-actually-is.md` for the current
+how, and the pre-import `what-the-50-cluster-actually-is` review for the current
 leading mechanism (list paragraphs resolving to a different format than Word,
 2.1x enriched in the cluster, with a rendered causal chain rather than an
 inferred one).

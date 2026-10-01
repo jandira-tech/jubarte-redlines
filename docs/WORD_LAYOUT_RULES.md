@@ -22,10 +22,12 @@ the probe wins.
 This file covers the rules found while beating the English corpus: HF
 `superdoc-dev/docx-corpus`, 500 + 500 files, plus 451 Word redlines of them.
 
-> **Re-checked 2026-09-26 (0.9.2):** still the live rulebook — the newest
-> entries carry live-Word probes from today's session and each convert fix
-> updates this file in the same commit. Pooled outcome vs Word's own exports
-> (RESULTS.md): **jubarte 0.9.2 ranks #1 on both pools** — mean Jaccard
+> **Re-checked 2026-10-01 (0.10.1 + unreleased main):** still the live
+> rulebook — each convert fix updates this file in the same commit. Pooled
+> outcome vs Word's own exports: the results tables live in
+> [neurotic_docx_bench](https://github.com/jandira-tech/neurotic_docx_bench/blob/main/RESULTS.md)
+> (this repo's own RESULTS.md was dropped 2026-09-30, c86aba43). When last
+> pooled, 2026-09-26, **jubarte 0.9.2 ranked #1 on both pools** — mean Jaccard
 > 0.647 / median 0.732 over 2,102 clean docs, and 0.466 / 0.492 over 1,416
 > redlined docs.
 
@@ -138,6 +140,13 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   - Probe: the first body baseline for none / before / after / both is
     67.92 / 73.2 / 73.2 / 79.2 in Word.
   - A right-aligned logo lowered this way stays right-aligned.
+- **A header picture after text keeps the body rule**, 2c1f1cee. A picture
+  that fits beside the text shares the text's last line: the line deepens to
+  the picture and the picture's bottom is the baseline. A picture that does
+  not fit leaves the text on line 1 and opens line 2 below it.
+  - Probe: text bottom 43.0, picture 45.3–135.3, body 152.2.
+  - jubarte used to put the picture first (redline 7429fdae's "RA ID" above
+    its journal banner).
 
 ## Fonts: macOS system fonts
 
@@ -189,29 +198,16 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
 - **Open:** a character-relative anchor (`mso-position-horizontal-relative:char`)
   starts at the anchor character's x. We still take it at the column edge.
 
-## A header picture after text (measured, not yet implemented)
-
-In a header paragraph, text followed by an inline picture keeps Word's body
-rule:
-
-- If the picture fits beside the text, it shares the line. The line deepens
-  to the picture and the picture's bottom is the baseline. jubarte does this.
-- If the picture does not fit, the text keeps line 1 and the picture opens
-  line 2 below it.
-  - Probe: text bottom 43.0, picture 45.3–135.3, body 152.2.
-  - jubarte puts the picture first (redline 7429fdae's "RA ID" above its
-    journal banner).
-
 ## Pages and keep-with-next
 
 - **Parity blank page (fb241e2).** With `w:evenAndOddHeaders`, a section that
   restarts page numbering on the same parity as the previous page's number
   gets a blank page first, without headers or footers, so odd numbers stay on
   right-hand pages.
-- **keepNext with an inline picture or box.** A `keepNext` paragraph moves to
-  the next page with the following paragraph when that paragraph's first line
-  holds an inline picture or text box that doesn't fit. The line counts at the
-  object's full height.
+- **keepNext with an inline picture or box**, 146c6b6d. A `keepNext`
+  paragraph moves to the next page with the following paragraph when that
+  paragraph's first line holds an inline picture or text box that doesn't
+  fit. The line counts at the object's full height.
   - Live Word probe: a heading over a 600pt inline picture opens page 2.
   - Redline d20125ec: 11 pages, as in Word.
 

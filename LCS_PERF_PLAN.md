@@ -4,6 +4,20 @@ SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 SPDX-License-Identifier: AGPL-3.0-only
 -->
 
+> **Status: SNAPSHOT — ledger frozen as of 2026-07-15 (authored 2026-07-13,
+> revised 2026-07-14; imported into this repository later; re-checked
+> 2026-10-01, `bd262981`).** This file is a dated record, not a live plan:
+> do not resume or append to it. Current truth lives in TODO.md (backlog)
+> and CHANGELOG.md (shipped). Sections still binding: the Q0/Q1 quality
+> ratchet (never hide a quality change inside a performance change), the
+> permanent ABBA fixture-matrix rule, and the dead-ends list — imported by
+> `docs/superpowers/plans/2026-07-16-bench-generalize-and-harden.md`. The
+> durable lab this plan produced ships as
+> `tools/perf/run_abba_matrix.sh`, `tools/perf/run_trials.sh`,
+> `tools/perf/summarize.py`, `tools/perf/quality_compare.py`,
+> `src/perf.rs`, `tests/perf_contract.rs` and `benches/redline.rs` (all
+> present at `bd262981`).
+
 # LCS and comparison performance implementation plan — bank every second without changing the winner
 
 > **For agentic workers:** execute one measured increment at a time. Use the
@@ -133,6 +147,8 @@ Absolute paths (when crate is `…/ooxmlsdk/jubarte-rs`):
 
 - `/Users/arthrod/temp/T/ooxmlsdk/redline_RFP17_vs_individual-contractor.docx`
 - `/Users/arthrod/temp/T/ooxmlsdk/5lb102!.docx`
+
+(machine paths reflect the pre-import checkout)
 
 Harness: `tools/perf/run_abba_matrix.sh <base> <cand> <out_dir> [rounds]`.
 Never remove these pairs from the harness; never accept a wall claim that skipped them.

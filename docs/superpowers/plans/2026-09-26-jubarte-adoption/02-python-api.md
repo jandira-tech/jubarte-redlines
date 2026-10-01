@@ -1,5 +1,11 @@
 # Typed Python Document API Implementation Plan
 
+> **Status (2026-10-01, bd262981): PY1 done, PY2 superseded (by the
+> `Snapshot` types), PY3 done (`python -m jubarte_redlines`), per the banner
+> below.** Unrecorded there: the Python `diff` API — `Document.diff`,
+> module-level `jubarte_redlines.diff` and `EditResult.diff` (2f2584f1,
+> unreleased main).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make everyday Python use familiar while retaining every existing byte-oriented API.

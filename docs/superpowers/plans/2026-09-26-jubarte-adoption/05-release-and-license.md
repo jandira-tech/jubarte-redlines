@@ -1,5 +1,14 @@
 # Distribution, Provenance and Apache Migration Implementation Plan
 
+> **Status (2026-10-01, bd262981): mostly not started.** Still no Windows
+> wheel (`release.yml` builds four: manylinux x86_64/aarch64, macOS
+> x86_64/aarch64); `scripts/release.sh` still publishes on user tokens
+> (`UV_PUBLISH_TOKEN` is required); no release manifest
+> (`scripts/check_release_artifacts.py` does not exist); the license is
+> still AGPL-3.0-only. R1 is partial — CI tests the npm CLI and
+> `scripts/release.sh` smoke-tests the npm artifacts, but there are no
+> installed-wheel or sdist consumer gates.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make installation and licensing predictable enough for production adoption, with releases traceable to tested source and artifacts.
