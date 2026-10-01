@@ -295,6 +295,32 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
 - **`w:noBreakHyphen` paints a hyphen and never breaks the line.** Word's
   PDF holds a plain 0x2D: most faces (Arial, Calibri, Aptos) have no
   U+2011 glyph. d06f02170c's "self-incrimination".
+- **Before compatibility mode 15, `w:compressPunctuation` narrows a
+  line's spaces to keep its last word**, 4e5607bc, with three gates.
+  - **Gate 1:** the document default (`w:docDefaults/w:rPrDefault`)
+    names no fonts. A missing styles part or an empty docDefaults still
+    squeezes. Probe_dd bisected 3f5209785f's "Duke" and "vocational"
+    down to the docDefaults `w:rFonts`.
+  - **Gate 2:** the squeeze is lost to balanced widths
+    (`w:balanceSingleByteDoubleByteWidth`) under an East Asian
+    `w:themeFontLang` (zh, ja, ko). 496e2984f7 keeps its lines whole.
+    Either setting alone still squeezes, and run languages do not count.
+  - **Gate 3:** only Times New Roman and Arial spaces narrow, by about a
+    fifth. Times keeps the word at 19.97% of its spaces and moves it at
+    20.3%; Arial ranges 17.8–21.3%. Calibri never narrows. Georgia
+    (5–10%) and Courier New (22–28%) differ, and the mechanism is
+    unknown: TNR's JSTF table (Arabic kashida only) and FreeType hinting
+    were ruled out. Word really narrows the spaces; glyph advances stay
+    linear.
+  - Tracked changes, size, `w:enableOpenTypeFeatures` and run-level East
+    Asian fonts or languages make no difference. Only 2 of ~7490 corpus
+    documents meet all three gates.
+  - Under compressed punctuation a hyphen holds its word on the line
+    (496e2984f7, +0.361); this is not the squeeze.
+- **Word paints a precomposed Latin, Greek or Cyrillic letter whole**,
+  f3ca28a2. Cambria's `ccmp` would split "ě" into e plus a caron. Word's
+  PDF of 3509b16c7d holds ě, č and ů as single glyphs, so `ccmp` stays
+  off for those scripts and on for complex ones.
 
 ## Paragraph spacing
 
@@ -330,6 +356,12 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   of notes, at docEnd or at a sectEnd section.
   - Open: on a page the notes continue onto, Word draws the
     `continuationSeparator` instead (9a1c0cc482 p3, 0.48pt there).
+- **A reference to a missing endnote makes the document Word-invalid.**
+  The middle of three `w:endnoteReference`s pointing at an id with no
+  `w:endnote` never finishes opening in Word 16: word_pdf.py timed out
+  twice, while the same file with every id resolved numbers i, ii, iii.
+  Each reference keeps its slot in document order, and a missing body is
+  not painted. No renumbering is invented around the hole.
 
 ## Breaks, typed labels and diagrams
 
