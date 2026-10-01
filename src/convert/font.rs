@@ -13,6 +13,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
+/// `w:noBreakHyphen` in run text: the line breaker never splits at it.
+pub(crate) const NO_BREAK_HYPHEN: char = '\u{2011}';
+
+/// The character a face paints for `ch`. Word paints a non-breaking hyphen
+/// as the face's hyphen-minus (0x2D in its PDFs): most faces (Arial,
+/// Calibri, Aptos) have no U+2011 glyph.
+fn painted_char(ch: char) -> char {
+    if ch == NO_BREAK_HYPHEN { '-' } else { ch }
+}
+
 thread_local! {
     static ACTIVE_FONT_TABLE: RefCell<super::font_table::FontTable> =
         RefCell::new(super::font_table::FontTable::default());
@@ -812,6 +822,7 @@ impl<'a> Face<'a> {
     }
 
     pub(crate) fn glyph(&self, ch: char) -> u16 {
+        let ch = painted_char(ch);
         self.cmap
             .iter()
             .find_map(|sub| sub.glyph_index(u32::from(ch)))
@@ -893,7 +904,7 @@ impl<'a> Face<'a> {
     /// to `é`, a lam-alef) carries all of them, for `/ToUnicode`.
     pub(crate) fn glyph_texts(&self, text: &str, kern: bool) -> Vec<String> {
         let Some(face) = self.buzz.as_ref() else {
-            return text.chars().map(String::from).collect();
+            return text.chars().map(|c| painted_char(c).to_string()).collect();
         };
         let units = self.shaped_units(face, text, kern);
         let mut starts: Vec<usize> = units.iter().map(|u| u.2 as usize).collect();
@@ -912,7 +923,11 @@ impl<'a> Face<'a> {
                     .find(|&&s| s > at)
                     .copied()
                     .unwrap_or(text.len());
-                text.get(at..end).unwrap_or_default().to_string()
+                text.get(at..end)
+                    .unwrap_or_default()
+                    .chars()
+                    .map(painted_char)
+                    .collect()
             })
             .collect()
     }
@@ -926,7 +941,10 @@ impl<'a> Face<'a> {
             return hit;
         }
         let mut buf = rustybuzz::UnicodeBuffer::new();
-        buf.push_str(text);
+        // Clusters stay byte offsets into `text`, as `push_str` makes them.
+        for (at, ch) in text.char_indices() {
+            buf.add(painted_char(ch), at as u32);
+        }
         // Word Quartz WinAnsi PDFs do not ligate Calibri and place glyphs
         // on hmtx (T=5.38pt), not GPOS/kern (T+e shrinks ~1pt and wipes
         // official color_sim). Title `w:kern val=28` (potpourri 28pt)
