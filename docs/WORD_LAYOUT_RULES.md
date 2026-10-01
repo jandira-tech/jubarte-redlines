@@ -370,6 +370,18 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   that empty line (Word 16 probe 2026-10-01). _to_improve e124592dd0's
   36pt break after a 28pt title made us a page longer than Word's 2;
   fixtures_500 00accd5b's 13.5pt break is the second of two, alone.
+- **An underlined inline picture keeps its run's descent under it.** Word
+  sets an inline picture on its line's baseline. When the picture's run is
+  drawn underlined, either by its own `w:u` or as a tracked insertion, the
+  line also keeps that run's descent below the baseline. Word 16 probes
+  2026-10-01, with a 30pt picture:
+  - in a TNR 12 run, the next baseline is 2.64pt lower, for single and
+    double underlines alike;
+  - in a 36pt run, 7.68pt lower;
+  - a deleted or plain run adds nothing.
+
+  _to_improve e1c745d784's inserted logo and map each lost 2.4pt, so page
+  1 held a line Word sets on page 2.
 - **A typed label its own tab places is tabbed text, not a hanging list
   marker.** English holdout c73c128db4's Defpara "⇥(a)⇥text" hangs 1616
   twips with a right stop at 1332 and a left one at 1616: Word right-aligns

@@ -38097,6 +38097,62 @@ fn an_inline_picture_line_ends_at_the_picture_bottom() {
 }
 
 #[test]
+fn an_underlined_picture_run_keeps_its_descent_under_the_picture() {
+    // e1c745d784's inserted logo and map: Word draws an inserted run
+    // underlined and keeps its descent under the picture, so the next
+    // baseline sits 2.64pt lower for TNR 12 (Word probes 2026-10-01: the
+    // same for w:u single or double, 7.68pt in a 36pt run, nothing for a
+    // deleted or plain run). Without it page 1 held one line too many.
+    let gap = |wrap: (&str, &str), rpr: &str| {
+        let r = "<w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+                 <w:sz w:val=\"24\"/>";
+        let body = format!(
+            "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+             {}<w:r><w:rPr>{r}{rpr}</w:rPr><w:drawing><wp:inline distT=\"0\" distB=\"0\" \
+             distL=\"0\" distR=\"0\"><wp:extent cx=\"762000\" cy=\"381000\"/>\
+             <wp:docPr id=\"1\" name=\"p\"/><a:graphic><a:graphicData \
+             uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\"><pic:pic>\
+             <pic:nvPicPr><pic:cNvPr id=\"1\" name=\"p\"/><pic:cNvPicPr/></pic:nvPicPr>\
+             <pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill><pic:spPr><a:xfrm>\
+             <a:off x=\"0\" y=\"0\"/><a:ext cx=\"762000\" cy=\"381000\"/></a:xfrm></pic:spPr>\
+             </pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>{}</w:p>\
+             <w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+             <w:r><w:rPr>{r}</w:rPr><w:t>After</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+             <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+            wrap.0, wrap.1
+        );
+        let pdf = docx_to_pdf(&drawing_docx(&body)).expect("convert picture run");
+        let (_, img_y) = image_cm_xy(&pdf, "60.00", "30.00");
+        let after = text_baselines(&pdf).into_iter().fold(f32::MIN, f32::max);
+        img_y - after
+    };
+    let ins = (
+        "<w:ins w:id=\"1\" w:author=\"A\" w:date=\"2026-01-01T00:00:00Z\">",
+        "</w:ins>",
+    );
+    let del = (
+        "<w:del w:id=\"1\" w:author=\"A\" w:date=\"2026-01-01T00:00:00Z\">",
+        "</w:del>",
+    );
+    let plain = gap(("", ""), "");
+    for (what, g) in [
+        ("inserted", gap(ins, "")),
+        ("underlined", gap(("", ""), "<w:u w:val=\"single\"/>")),
+    ] {
+        assert!(
+            (g - plain - 2.6).abs() < 0.3,
+            "{what}: TNR 12's descent under the picture; plain={plain} gap={g}"
+        );
+    }
+    let deleted = gap(del, "");
+    assert!(
+        (deleted - plain).abs() < 0.05,
+        "deleted: no descent; plain={plain} gap={deleted}"
+    );
+}
+
+#[test]
 fn a_hanging_label_keeps_the_full_measure_for_its_text() {
     // fixtures_500 00b7801e: ind left=2880 hanging=2880, "Monday 7/22⇥"
     // in the gutter. The text after the tab has the whole 288pt measure;

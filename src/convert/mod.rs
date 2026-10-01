@@ -1920,6 +1920,10 @@ struct LaidImage {
     /// The picture follows its paragraph's text with only whitespace and
     /// pictures after it: Word sets it at the end of the last text line.
     after_text: bool,
+    /// An inline picture whose run Word draws underlined (its own `w:u`,
+    /// or a tracked insertion): its line keeps this run's descent under
+    /// the picture.
+    under: Option<RunStyle>,
 }
 
 /// The last painted body line: its ops start at `ops_start` on page
@@ -9670,7 +9674,9 @@ fn paragraph_block(
             runs[0].rev = true;
         }
     }
-    let mut images = collect_images(ctx.pkg, ctx.main, dom, para);
+    let mut images = collect_images(ctx.pkg, ctx.main, dom, para, &|drawing| {
+        underlined_picture_run(dom, drawing, &rstyle, &sheet.theme, &sheet.by_id)
+    });
     if let Some(kind) = pic {
         // The bullet's own v:shape extent; the run size only when absent.
         let size = rstyle.size.max(8.0);
@@ -9705,6 +9711,7 @@ fn paragraph_block(
                 gap_before: 0.0,
                 lead_chars: 0,
                 after_text: false,
+                under: None,
             },
         );
     }
@@ -11020,7 +11027,7 @@ fn table_block(
                 // (fixtures_500 0126ebd8 menu rows are 27.6pt apart, not
                 // 13.8), sized from its mark's pPr/rPr.
                 let images: Vec<LaidImage> = media
-                    .map(|(pkg, part)| collect_images(pkg, part, dom, child))
+                    .map(|(pkg, part)| collect_images(pkg, part, dom, child, &|_| None))
                     .unwrap_or_default()
                     .into_iter()
                     .filter(cell_holds_image)
@@ -15112,7 +15119,55 @@ fn inline_effect_pt(dom: &Dom, drawing: NodeId) -> [f32; 4] {
     [side("l"), side("t"), side("r"), side("b")]
 }
 
-fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<LaidImage> {
+/// The style of an inline picture's run when Word draws the run
+/// underlined, as `collect_runs_rec` resolves it: Word then keeps the
+/// run's descent under the picture (probes 2026-10-01: a 30pt picture in
+/// an underlined or inserted TNR 12 run puts the next baseline 2.64pt
+/// lower, in a 36pt run 7.68pt; deleted, plain or alone in the mark,
+/// nothing).
+fn underlined_picture_run(
+    dom: &Dom,
+    drawing: NodeId,
+    base: &RunStyle,
+    theme: &ThemeFonts,
+    styles: &HashMap<String, NamedStyle>,
+) -> Option<RunStyle> {
+    let run = dom.parent(drawing).filter(|r| dom.name_is(*r, &W::r()))?;
+    let mut style = base.clone();
+    for rpr in leading_rprs(dom, run) {
+        if let Some(named) = first_named(dom, rpr, "rStyle")
+            .and_then(|n| dom.attribute(n, &W::val()))
+            .and_then(|sid| styles.get(sid))
+        {
+            apply_named_char_style(&mut style, named);
+        }
+        apply_rpr(dom, rpr, &mut style, theme);
+    }
+    let mark = dom
+        .ancestors(run, None)
+        .into_iter()
+        .find_map(|a| {
+            [
+                ("ins", RevMark::Ins),
+                ("del", RevMark::Del),
+                ("moveTo", RevMark::MoveTo),
+                ("moveFrom", RevMark::MoveFrom),
+            ]
+            .into_iter()
+            .find_map(|(name, mark)| local_name_is(dom, a, name).then_some(mark))
+        })
+        .unwrap_or(RevMark::None);
+    apply_rev(&mut style, mark, [0.0; 3]);
+    style.underline.then_some(style)
+}
+
+fn collect_images(
+    pkg: &PartFs,
+    main: &str,
+    dom: &Dom,
+    para: NodeId,
+    under: &dyn Fn(NodeId) -> Option<RunStyle>,
+) -> Vec<LaidImage> {
     let mut out = Vec::new();
     // Text nodes in document order: a drawing with none after it is a tail
     // anchor (`LaidImage::tail_anchor`).
@@ -15187,6 +15242,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     gap_before: 0.0,
                     lead_chars: 0,
                     after_text: false,
+                    under: None,
                 });
             }
             let child_slot = |slot: ImageSlot| match slot {
@@ -15243,6 +15299,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     gap_before: 0.0,
                     lead_chars: 0,
                     after_text: false,
+                    under: None,
                 });
             }
             continue;
@@ -15306,6 +15363,11 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         gap_before: space_before_drawing(dom, drawing),
                         lead_chars: lead_chars_before(dom, para, drawing),
                         after_text: trails_text(dom, para, drawing),
+                        under: if matches!(slot, ImageSlot::Flow) {
+                            under(drawing)
+                        } else {
+                            None
+                        },
                     });
                 } else {
                     out.push(LaidImage {
@@ -15336,6 +15398,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         gap_before: 0.0,
                         lead_chars: 0,
                         after_text: false,
+                        under: None,
                     });
                 }
             }
@@ -15411,6 +15474,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                         gap_before: 0.0,
                         lead_chars: 0,
                         after_text: false,
+                        under: None,
                     });
                     continue;
                 };
@@ -15447,6 +15511,7 @@ fn collect_images(pkg: &PartFs, main: &str, dom: &Dom, para: NodeId) -> Vec<Laid
                     gap_before: 0.0,
                     lead_chars: 0,
                     after_text: false,
+                    under: None,
                 });
             }
             for line in descendants_local(dom, root, "line") {
@@ -15611,6 +15676,7 @@ fn vml_line_image(dom: &Dom, line: NodeId, root: NodeId) -> Option<LaidImage> {
         gap_before: 0.0,
         lead_chars: 0,
         after_text: false,
+        under: None,
     })
 }
 
@@ -17666,7 +17732,7 @@ fn chrome_part_xml(
         let (mut cursor, mut row_h, mut drop) = (0.0_f32, 0.0_f32, 0.0_f32);
         let mut tab_wrapped = false;
         images.extend(
-            collect_images(pkg, path, &part_dom, para)
+            collect_images(pkg, path, &part_dom, para, &|_| None)
                 .into_iter()
                 .filter(|img| !(table_owned && cell_holds_image(img)))
                 .map(|mut img| {
@@ -23514,7 +23580,15 @@ impl<'a> Layout<'a> {
             let gaps: f32 = row.iter().skip(1).map(|r| r.0.gap_before).sum();
             let w: f32 = row.iter().map(|r| r.1).sum::<f32>() + gaps;
             let h = row.iter().map(|r| r.2).fold(0.0_f32, f32::max);
-            lay.ensure(h + extra);
+            let under = row
+                .iter()
+                .filter_map(|r| r.0.under.as_ref())
+                .map(|run| {
+                    let face = lay.fonts.resolve(&run.family, run.bold, run.italic);
+                    lay.fonts.get(face).line_descent_pt(run.layout_size())
+                })
+                .fold(0.0_f32, f32::max);
+            lay.ensure(h + under + extra);
             lay.y -= h;
             let spare = (room - w).max(0.0);
             let mut x = match style.align {
@@ -23531,7 +23605,7 @@ impl<'a> Layout<'a> {
                 x += dw;
             }
             lay.pic_row = Some((lay.pages.len(), x, lay.y, h));
-            lay.y -= extra;
+            lay.y -= under + extra;
         };
         for img in imgs {
             let (dw, dh) = self.image_wh(img);
