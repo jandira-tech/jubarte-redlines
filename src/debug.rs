@@ -3189,6 +3189,130 @@ mod tests {
         assert!(out.contains("rfonts \"Georgia\" via \"Quote\""), "{out}");
     }
 
+    /// PR #247 review: a run's leading `w:rPr` blocks apply in order, as
+    /// the converter folds them; an `rPr` after the run's content does not.
+    #[test]
+    fn render_folds_every_leading_rpr() {
+        let body = r#"<w:p><w:r><w:rPr><w:color w:val="FF0000"/><w:vanish/></w:rPr><w:rPr><w:color w:val="0000FF"/><w:vanish w:val="0"/></w:rPr><w:t>two</w:t></w:r><w:r><w:t>tail</w:t><w:rPr><w:color w:val="00FF00"/></w:rPr></w:r></w:p>"#;
+        let out = render_of(body, "");
+        assert!(out.contains("  color 0000FF ×1 \"two\"\n"), "{out}");
+        assert!(
+            !out.contains("FF0000") && !out.contains("00FF00") && !out.contains("vanish"),
+            "{out}"
+        );
+    }
+
+    /// PR #247 review: a direct `w:rFonts` overrides only the slots it
+    /// names; the style's other slots still reach the page.
+    #[test]
+    fn render_merges_partial_rfonts_by_slot() {
+        let styles = r#"<w:style w:type="character" w:styleId="Asian"><w:name w:val="Asian"/><w:rPr><w:rFonts w:ascii="Georgia" w:eastAsia="MS Mincho"/></w:rPr></w:style>"#;
+        let body = r#"<w:p><w:r><w:rPr><w:rStyle w:val="Asian"/><w:rFonts w:ascii="Arial"/></w:rPr><w:t>mixed</w:t></w:r></w:p>"#;
+        let out = render_of(body, styles);
+        assert!(out.contains("  rfonts \"Arial\" ×1\n"), "{out}");
+        assert!(
+            out.contains("  rfonts \"MS Mincho\" via \"Asian\" ×1\n"),
+            "{out}"
+        );
+        assert!(!out.contains("Georgia"), "{out}");
+    }
+
+    /// PR #247 review: a run that paints nothing does not separate a
+    /// deletion from the insertion after it.
+    #[test]
+    fn render_pairs_revisions_across_an_empty_run() {
+        let body = r#"<w:p><w:del w:id="1" w:author="A"><w:r><w:delText>old</w:delText></w:r></w:del><w:r><w:rPr><w:b/></w:rPr></w:r><w:r><w:t></w:t></w:r><w:ins w:id="2" w:author="A"><w:r><w:t>new</w:t></w:r></w:ins></w:p>"#;
+        let out = render_of(body, "");
+        assert!(out.contains("  revisions del→ins ×1 \"oldnew\"\n"), "{out}");
+    }
+
+    /// PR #247 review: `docDefaults` paint the unstyled text, so their
+    /// colour, highlight and shading are reported as the last layer.
+    #[test]
+    fn render_applies_doc_defaults_paint() {
+        let styles = r#"<w:docDefaults><w:rPrDefault><w:rPr><w:color w:val="112233"/><w:highlight w:val="cyan"/><w:shd w:val="clear" w:color="auto" w:fill="DDDDDD"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:shd w:val="clear" w:color="auto" w:fill="ABCDEF"/></w:pPr></w:pPrDefault></w:docDefaults>"#;
+        let out = render_of(r#"<w:p><w:r><w:t>plain</w:t></w:r></w:p>"#, styles);
+        for expected in [
+            "  color 112233 via \"docDefaults\" ×1 \"plain\"\n",
+            "  highlight cyan via \"docDefaults\" ×1 \"plain\"\n",
+            "  run-shd DDDDDD via \"docDefaults\" ×1 \"plain\"\n",
+            "  para-shd ABCDEF via \"docDefaults\" ×1 \"plain\"\n",
+        ] {
+            assert!(out.contains(expected), "{expected:?} in\n{out}");
+        }
+        // A style's own value still wins over the defaults.
+        let styled = format!(
+            r#"{styles}<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:rPr><w:color w:val="C00000"/></w:rPr></w:style>"#
+        );
+        let out = render_of(r#"<w:p><w:r><w:t>plain</w:t></w:r></w:p>"#, &styled);
+        assert!(out.contains("color C00000 via \"Normal\""), "{out}");
+        assert!(!out.contains("112233"), "{out}");
+    }
+
+    /// PR #247 review: a derived table style's nil `shd` resets the
+    /// condition its base fills.
+    #[test]
+    fn render_keeps_a_table_style_shading_reset() {
+        let styles = r#"<w:style w:type="table" w:styleId="Base"><w:name w:val="Base"/><w:tblStylePr w:type="firstRow"><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="4472C4"/></w:tcPr></w:tblStylePr></w:style><w:style w:type="table" w:styleId="Derived"><w:name w:val="Derived"/><w:basedOn w:val="Base"/><w:tblStylePr w:type="firstRow"><w:tcPr><w:shd w:val="nil"/></w:tcPr></w:tblStylePr></w:style>"#;
+        let table = |style: &str| {
+            format!(
+                r#"<w:tbl><w:tblPr><w:tblStyle w:val="{style}"/></w:tblPr>{ONE_CELL}</w:tbl><w:p/>"#
+            )
+        };
+        assert!(render_of(&table("Base"), styles).contains(" style-shd[firstRow=4472C4] "));
+        let out = render_of(&table("Derived"), styles);
+        assert!(!out.contains("style-shd"), "{out}");
+    }
+
+    /// PR #247 review: first-row cells inside a content control or
+    /// customXml are the row's cells, as the converter lays them out.
+    #[test]
+    fn render_reads_first_row_cells_through_wrappers() {
+        let body = r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:sdt><w:sdtContent><w:tc><w:p><w:r><w:t>A1</w:t></w:r></w:p></w:tc></w:sdtContent></w:sdt><w:customXml w:element="cell"><w:tc><w:p><w:r><w:t>B1</w:t></w:r></w:p></w:tc></w:customXml></w:tr></w:tbl><w:p/>"#;
+        let out = render_of(body, "");
+        assert!(out.contains("  table 1 1x2 \"A1 | B1\"\n"), "{out}");
+    }
+
+    /// PR #247 review: the conditions a table's `w:tblLook` turns off
+    /// paint nothing, so they are not reported.
+    #[test]
+    fn render_filters_table_style_shading_by_look() {
+        let styles = r#"<w:style w:type="table" w:styleId="Banded"><w:name w:val="Banded"/><w:tblStylePr w:type="firstRow"><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="4472C4"/></w:tcPr></w:tblStylePr><w:tblStylePr w:type="firstCol"><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="FF0000"/></w:tcPr></w:tblStylePr><w:tblStylePr w:type="band1Horz"><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="D9E2F3"/></w:tcPr></w:tblStylePr></w:style>"#;
+        let table = |look: &str| {
+            format!(
+                r#"<w:tbl><w:tblPr><w:tblStyle w:val="Banded"/>{look}</w:tblPr>{ONE_CELL}</w:tbl><w:p/>"#
+            )
+        };
+        // No tblLook: the converter's default look, first row on, first
+        // column off, horizontal bands on.
+        let out = render_of(&table(""), styles);
+        assert!(
+            out.contains(" style-shd[firstRow=4472C4,band1Horz=D9E2F3] "),
+            "{out}"
+        );
+        let out = render_of(
+            &table(r#"<w:tblLook w:firstRow="0" w:firstColumn="1" w:noHBand="1"/>"#),
+            styles,
+        );
+        assert!(out.contains(" style-shd[firstCol=FF0000] "), "{out}");
+    }
+
+    /// PR #247 review: a row with a live `w:cellDel` gains the "Deleted
+    /// Cells" column the converter paints.
+    #[test]
+    fn render_counts_the_deleted_cells_column() {
+        let body = r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>A1</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:cellDel w:id="1" w:author="A"/></w:tcPr><w:p><w:r><w:t>B1</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#;
+        let out = render_of(body, "");
+        assert!(out.contains("  table 1 1x3 "), "{out}");
+        assert!(
+            render_of(
+                &body.replace(r#"<w:tcPr><w:cellDel w:id="1" w:author="A"/></w:tcPr>"#, ""),
+                ""
+            )
+            .contains("  table 1 1x2 ")
+        );
+    }
+
     /// PR #247 review: pretty-print inside an element with no text is not
     /// its text; `<w:p>\n  </w:p>` prints as `<w:p></w:p>` does.
     #[test]

@@ -1547,6 +1547,81 @@ fn a_br_outside_a_run_still_breaks_the_line() {
 }
 
 #[test]
+fn a_br_before_the_text_of_its_run_breaks_the_line() {
+    // _to_improve f9b9dbd790 redline: each line of the product sheet is
+    // <w:r><w:br/><w:t>…</w:t></w:r>, in plain and inserted runs alike.
+    // Word starts each on its own line; we glued them ("vinduer.Praktisk")
+    // and ended on 9 pages to Word's 10.
+    let body = "<w:p><w:r><w:t>LeadPlain</w:t></w:r><w:r><w:br/><w:t>NextPlain</w:t></w:r></w:p>\
+                <w:p><w:ins w:id=\"1\" w:author=\"A\" w:date=\"2026-01-01T00:00:00Z\">\
+                <w:r><w:t>LeadIns</w:t></w:r><w:r><w:br/><w:t>NextIns</w:t></w:r></w:ins></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("br before text");
+    let y = |t: &str| {
+        pdf_glyph_text_xy(&pdf, t)
+            .unwrap_or_else(|| panic!("{t}"))
+            .1
+    };
+    assert!(
+        y("LeadPlain") - y("NextPlain") > 10.0,
+        "plain run: the br starts a new line"
+    );
+    assert!(
+        y("LeadIns") - y("NextIns") > 10.0,
+        "inserted run: the br starts a new line"
+    );
+}
+
+#[test]
+fn a_br_beside_a_square_float_still_breaks_the_line() {
+    // _to_improve f9b9dbd790 redline: the header's logos wrap square into
+    // the body, and the first paragraph is one w:p of <w:br/> lines.
+    // Word breaks at every br beside and below the logo; we glued them.
+    let float = blip(
+        "1270000",
+        "1270000",
+        "<wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:simplePos x=\"0\" y=\"0\"/>\
+           <wp:positionH relativeFrom=\"margin\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+           <wp:wrapSquare wrapText=\"bothSides\"/>",
+        "</wp:anchor>",
+    );
+    let right = float.replace(
+        "<wp:posOffset>0</wp:posOffset></wp:positionH>",
+        "<wp:posOffset>4572000</wp:posOffset></wp:positionH>",
+    );
+    let body = format!(
+        "<w:p><w:r>{float}</w:r><w:r>{right}</w:r><w:r><w:t>SqOne</w:t></w:r><w:r><w:br/><w:t>SqTwo</w:t></w:r>\
+         <w:r><w:br/></w:r><w:r><w:t>SqThree</w:t></w:r>{below}</w:p><w:sectPr/>",
+        below = (0..10)
+            .map(|i| format!("<w:r><w:br/><w:t>SqBelow{i}</w:t></w:r>"))
+            .collect::<String>()
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("br beside float");
+    let y = |t: &str| {
+        pdf_glyph_text_xy(&pdf, t)
+            .unwrap_or_else(|| panic!("{t}"))
+            .1
+    };
+    assert!(
+        y("SqOne") - y("SqTwo") > 10.0,
+        "the in-run br starts a new line"
+    );
+    assert!(
+        y("SqTwo") - y("SqThree") > 10.0,
+        "the br-only run starts a new line"
+    );
+    for i in 0..9 {
+        let (a, b) = (format!("SqBelow{i}"), format!("SqBelow{}", i + 1));
+        assert!(
+            y(&a) - y(&b) > 10.0,
+            "{b} starts its own line past the float"
+        );
+    }
+}
+
+#[test]
 fn a_newline_inside_w_t_is_a_space_not_a_break() {
     // fixtures_500 000312ea (PHPWord): the Heading1 text carries literal
     // newlines ("jeudi 27 avril 2017\nJeudi, 2ème …"). Word draws them as
@@ -3419,6 +3494,37 @@ fn a_header_picture_past_the_measure_wraps_to_a_new_row() {
     assert!(
         one - two > 50.0,
         "the second 50pt banner opens a row below; one {one} two {two}"
+    );
+}
+
+#[test]
+fn a_header_picture_after_text_that_cannot_share_its_line_wraps_under_it() {
+    // PR #247 review 4149916397: the trailing-picture test counted the
+    // pictures' width alone. Word 16 probe hpic (2026-10-01): 394pt of text
+    // and a 200pt picture in the 468pt measure do not share a line; the
+    // picture takes the next and the body starts 5.3pt lower than beside
+    // "Short".
+    let pic = "<w:r><w:drawing><wp:inline><wp:extent cx=\"2540000\" cy=\"635000\"/>\
+         <wp:docPr id=\"1\" name=\"Picture 1\"/><a:graphic><a:graphicData \
+         uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\"><pic:pic><pic:blipFill>\
+         <a:blip r:embed=\"rIdImg\"/></pic:blipFill></pic:pic></a:graphicData></a:graphic>\
+         </wp:inline></w:drawing></w:r>";
+    let body_y = |text: &str| {
+        let docx = header_part_docx_at(
+            &format!("<w:p><w:r><w:t xml:space=\"preserve\">{text}</w:t></w:r>{pic}</w:p>"),
+            0,
+        );
+        let pdf = docx_to_pdf(&docx).expect("header");
+        pdf_glyph_text_xy(&pdf, "HdrImgBodyX")
+            .expect("body paints")
+            .1
+    };
+    let short = body_y("Short");
+    let long = body_y(&"Header words that run on ".repeat(3));
+    // Word 5.3pt; we drop 8.4 (the extra line's descent, not yet Word's).
+    assert!(
+        (3.0..9.0).contains(&(short - long)),
+        "the picture drops under the long text; short {short} long {long}"
     );
 }
 
@@ -5585,6 +5691,91 @@ fn a_keep_next_paragraph_ending_a_page_splits_or_moves_by_compat_mode() {
 }
 
 #[test]
+fn a_page_break_opening_a_paragraph_after_a_full_page_breaks_once() {
+    // Word 16 probes lb0930 (compat 14 and 15): after 32 exact 20pt lines
+    // "<br page/>Heading" opens page 2. jubarte gave the empty text before
+    // the break a line of its own, which moved down a page, and the break
+    // then left that page blank (priority d9b54326f3: 31 pages, Word 30).
+    let line = |k: usize| {
+        format!(
+            "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"400\" w:lineRule=\"exact\"/></w:pPr>\
+             <w:r><w:t>L{k:02}</w:t></w:r></w:p>"
+        )
+    };
+    let lines: String = (0..32).map(line).collect();
+    let body = format!(
+        "{lines}<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"400\" w:lineRule=\"exact\"/></w:pPr>\
+           <w:r><w:br w:type=\"page\"/></w:r><w:r><w:t>Heading</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>"
+    );
+    for mode in [14, 15] {
+        let settings = format!(
+            r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="{mode}"/></w:compat>"#
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, &settings)).expect("break");
+        assert_eq!(
+            page_with_text(&pdf, "L31"),
+            Some(0),
+            "mode {mode}: 32 lines fill page 1"
+        );
+        assert_eq!(
+            (page_with_text(&pdf, "Heading"), pdf_page_count(&pdf)),
+            (Some(1), 2),
+            "mode {mode}: the break opens page 2 once"
+        );
+    }
+}
+
+#[test]
+fn a_legacy_page_float_gets_one_body_height_below_its_top() {
+    // Word 16 probes y2440_* 0930 (31 exact 20pt rows, tblpY 122pt under a
+    // 72pt margin, page-anchored): compat 14 gives the table one body
+    // height from its own top, so all 31 rows stay on page 1 past the
+    // 720pt floor and the next paragraph flows above the table (priority
+    // d9b54326f3's page 7 row reaches 524.5pt under a 523pt floor);
+    // compat 15 stops at the floor (R28).
+    let rows: String = (0..31)
+        .map(|k| {
+            format!(
+                "<w:tr><w:trPr><w:trHeight w:val=\"400\" w:hRule=\"exact\"/></w:trPr><w:tc>\
+                 <w:tcPr><w:tcW w:w=\"9000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr>\
+                 <w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>R{k:02}</w:t></w:r></w:p></w:tc></w:tr>"
+            )
+        })
+        .collect();
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblpPr w:leftFromText=\"180\" w:rightFromText=\"180\" \
+           w:vertAnchor=\"page\" w:horzAnchor=\"margin\" w:tblpY=\"2440\"/>\
+           <w:tblW w:w=\"9000\" w:type=\"dxa\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"9000\"/></w:tblGrid>{rows}</w:tbl>\
+         <w:p><w:r><w:t>After</w:t></w:r></w:p><w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>"
+    );
+    let pages = |mode: u32| {
+        let settings = format!(
+            r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="{mode}"/></w:compat>"#
+        );
+        docx_to_pdf(&minimal_docx_with_settings(&body, &settings)).expect("page float")
+    };
+    let on = |pdf: &[u8], t: &str| page_with_text(pdf, t).expect(t);
+    let legacy = pages(14);
+    assert_eq!(
+        (on(&legacy, "R30"), on(&legacy, "After")),
+        (0, 0),
+        "compat 14 holds the whole table and the paragraph after it on page 1"
+    );
+    let modern = pages(15);
+    assert_eq!(
+        (on(&modern, "R28"), on(&modern, "R29")),
+        (0, 1),
+        "compat 15 breaks at the floor"
+    );
+}
+
+#[test]
 fn a_cant_split_row_taller_than_a_page_breaks_from_a_fresh_page() {
     // Word 16 probes cs_mid/cs_top_0930 (32 exact 20pt lines a page): a
     // cantSplit row of 40 lines moves off a page it started part-way
@@ -6721,6 +6912,38 @@ fn a_picture_paragraphs_mark_rpr_sets_its_extra_leading() {
     assert!(
         (drop - 6.9).abs() < 0.2,
         "the mark's half line at 1.5; drop={drop}"
+    );
+}
+
+#[test]
+fn a_page_tall_inline_picture_under_its_space_before_stays_on_the_first_page() {
+    // Priority 9f2c60b301 (Word 16): a 648pt inline cover box fills the
+    // body of a 1in-margin Letter page, in a Heading 1 with 18pt before at
+    // the document start. Word keeps the space (its title sits 19pt lower
+    // than with none) and draws the box on page 1, past the bottom margin;
+    // jubarte broke to page 2 and left page 1 blank (9 pages, Word 8).
+    let pic = blip(
+        "5943600",
+        "8229600",
+        "<wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">",
+        "</wp:inline>",
+    );
+    let docx = drawing_docx(&format!(
+        "<w:p><w:pPr><w:spacing w:before=\"360\"/></w:pPr><w:r>{pic}</w:r></w:p>\
+         <w:p><w:r><w:t>After</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    ));
+    let pdf = docx_to_pdf(&docx).expect("cover box");
+    assert_eq!(
+        pdf_page_count(&pdf),
+        2,
+        "the cover stays on page 1, After opens page 2"
+    );
+    let top = pdf_image_boxes(&pdf).first().expect("picture").1 + 648.0;
+    assert!(
+        (top - (720.0 - 18.0)).abs() < 1.5,
+        "its 18pt before is kept; top={top}"
     );
 }
 
@@ -9710,6 +9933,53 @@ fn a_hidden_row_of_hidden_text_takes_its_borders_with_it() {
     assert!(
         after > plain_after + 5.0 && before - after < 30.0,
         "the hidden row takes no height; before={before} after={after} plain={plain_after}"
+    );
+}
+
+#[test]
+fn a_paragraph_styles_vanish_hides_its_runs() {
+    // PR #247 review: a paragraph style's run properties are its runs'
+    // base, w:vanish included; a run's own vanish=0 still shows it.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+          <w:style w:type=\"paragraph\" w:styleId=\"Secret\"><w:name w:val=\"Secret\"/>\
+            <w:basedOn w:val=\"Normal\"/><w:rPr><w:vanish/></w:rPr></w:style>\
+        </w:styles>";
+    let body = "<w:p><w:r><w:t>Kept</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:pStyle w:val=\"Secret\"/></w:pPr><w:r><w:t>Classified</w:t></w:r>\
+           <w:r><w:rPr><w:vanish w:val=\"0\"/></w:rPr><w:t>Declassified</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&docx_with_styles(body, styles)).expect("hidden paragraph style");
+    let text = stream_glyph_text(&pdf_content_streams(&pdf)[0]);
+    assert!(text.contains("Kept"), "{text}");
+    assert!(
+        !text.contains("Classified"),
+        "the paragraph style hides it: {text}"
+    );
+    assert!(
+        text.contains("Declassified"),
+        "direct vanish=0 wins: {text}"
+    );
+}
+
+#[test]
+fn a_hidden_row_keeps_text_a_later_rpr_shows() {
+    // PR #247 review: the run's leading rPr blocks fold in order; the
+    // second turns vanish off, so the row has visible text and stays.
+    let doc = minimal_docx_body(
+        "<w:p><w:r><w:t>Before</w:t></w:r></w:p>\
+         <w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"pct\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"8460\"/></w:tblGrid><w:tr><w:trPr><w:hidden/></w:trPr><w:tc>\
+           <w:p><w:pPr><w:rPr><w:vanish/></w:rPr></w:pPr><w:r><w:rPr><w:vanish/></w:rPr><w:rPr><w:vanish w:val=\"0\"/></w:rPr>\
+             <w:t>Visible</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+         <w:p><w:r><w:t>After</w:t></w:r></w:p><w:sectPr/>",
+    );
+    let pdf = docx_to_pdf(&doc).expect("hidden row with shown text");
+    assert!(
+        pdf_glyph_text_xy(&pdf, "Visible").is_some(),
+        "the row's text shows, so the row is laid out"
     );
 }
 
@@ -14494,6 +14764,65 @@ fn text_before_a_top_margin_float_table_on_its_page_flows_below_it() {
     );
 }
 
+#[test]
+fn a_page_anchored_picture_stays_when_a_body_top_float_pushes_the_text() {
+    // PR #247 review 4149916384: a full-width float table at the body top
+    // moves the text already on its page below it, and the loop moved
+    // every operation after the chrome, so a picture fixed 600pt down the
+    // page moved with the text. Its position is the page's, not the flow's.
+    let img = blip(
+        "635000",
+        "635000",
+        "<wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:positionH relativeFrom=\"page\"><wp:posOffset>3810000</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"page\"><wp:posOffset>7620000</wp:posOffset></wp:positionV>\
+           <wp:wrapNone/>",
+        "</wp:anchor>",
+    );
+    let table = r#"<w:tbl><w:tblPr><w:tblpPr w:leftFromText="180" w:rightFromText="180" w:horzAnchor="margin" w:tblpXSpec="center" w:tblpY="-1185"/><w:tblW w:w="11736" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="11736"/></w:tblGrid><w:tr><w:trPr><w:trHeight w:val="2000" w:hRule="exact"/></w:trPr><w:tc><w:tcPr><w:tcW w:w="11736" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>R00</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+    let pic_y = |with_table: bool| {
+        let body = format!(
+            "<w:p><w:r>{img}</w:r><w:r><w:t>Head0</w:t></w:r></w:p>{}<w:p><w:r><w:t>After</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+            if with_table { table } else { "" }
+        );
+        let pdf = docx_to_pdf(&drawing_docx(&body)).expect("page picture");
+        let head0 = pdf_glyph_text_xy(&pdf, "Head0").expect("Head0").1;
+        (pdf_image_boxes(&pdf)[0].1, head0)
+    };
+    let ((alone, head_alone), (pushed, head_pushed)) = (pic_y(false), pic_y(true));
+    assert!(
+        head_alone - head_pushed > 20.0,
+        "the text moves under the table"
+    );
+    assert!(
+        (alone - pushed).abs() < 0.1,
+        "the page-anchored picture keeps its place: {alone} vs {pushed}"
+    );
+}
+
+#[test]
+fn a_keep_next_picture_paragraph_goes_with_its_follower() {
+    // PR #247 review 4149916353, Word 16 probe kn (2026-10-01, compat 15):
+    // 19 exact 20pt lines leave 268pt; a keepNext paragraph holding only a
+    // 250pt inline picture fits, its 20pt follower does not. Word moves the
+    // picture to page 2 with "Follower"; we measured the paragraph as one
+    // text line and left the picture on page 1.
+    let pdf = docx_to_pdf(include_bytes!(
+        "fixtures/word_probes/keep_next_picture_kn_1001.docx"
+    ))
+    .expect("keepNext picture");
+    let streams = pdf_content_streams(&pdf);
+    assert_eq!(streams.len(), 2);
+    assert!(
+        !streams[0].contains(" Do") && streams[1].contains(" Do"),
+        "the picture starts page 2"
+    );
+    assert_eq!(page_with_text(&pdf, "Follower"), Some(1));
+}
+
 fn tall_unanchored_float_table(heads: &str) -> Vec<u8> {
     // Word probe fe (2026-09-30): 40 exact 20pt rows at tblpY -1185 (top
     // 12.75), no vertAnchor, on a Letter page with 72pt margins.
@@ -15574,6 +15903,48 @@ fn footer_xml_space_padding_is_painted_like_word() {
         text.contains("Page       "),
         "HF xml:space padding paints as Word does; tail {}",
         &text[text.len().saturating_sub(200)..]
+    );
+}
+
+#[test]
+fn a_sections_property_change_record_does_not_name_its_header() {
+    // PR #247 review 4149916330: section 2 omits its header but its
+    // w:sectPrChange keeps the old sectPr, which named "Beta". The record
+    // is history: section 2 inherits section 1's "Alpha".
+    let hdr = |text: &str| {
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+               <w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:hdr>"
+        )
+    };
+    let page = "<w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" w:header=\"720\" w:footer=\"720\"/>";
+    let body = format!(
+        "<w:p><w:pPr><w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>{page}</w:sectPr></w:pPr>\
+           <w:r><w:t>One</w:t></w:r></w:p>\
+         <w:p><w:r><w:t>Two</w:t></w:r></w:p>\
+         <w:sectPr>{page}<w:sectPrChange w:id=\"9\" w:author=\"A\"><w:sectPr>\
+           <w:headerReference w:type=\"default\" r:id=\"rIdH2\"/></w:sectPr></w:sectPrChange></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&hf_docx(
+        &body,
+        &[
+            ("rIdH1", "header", "header1.xml"),
+            ("rIdH2", "header", "header2.xml"),
+        ],
+        &[
+            ("word/header1.xml", hdr("Alpha")),
+            ("word/header2.xml", hdr("Beta")),
+        ],
+    ))
+    .expect("two sections");
+    let streams = pdf_content_streams(&pdf);
+    assert_eq!(streams.len(), 2, "one page per section");
+    assert!(
+        streams[1].contains("(Alpha)") && !streams[1].contains("(Beta)"),
+        "section 2 shows Alpha, not the record's Beta: {}",
+        streams[1]
     );
 }
 
@@ -17156,7 +17527,7 @@ fn page_field_uses_sectpr_ideograph_digital() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "ideographDigital 一 is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -17182,7 +17553,9 @@ fn page_num_fmt_pdf(fmt: &str, start: u32, marker: &str) -> Vec<u8> {
 }
 
 /// Hex glyph operands of the CID text painted in the footer band (below
-/// the 72pt bottom margin): the PAGE label, not any other CID text.
+/// the 72pt bottom margin): the PAGE label, not any other CID text. A face
+/// painted only as CID keeps its plain name, so the hex operand, not a
+/// `…CID` font name, marks the run.
 fn footer_cid_glyph_runs(pdf: &[u8]) -> Vec<String> {
     let mut out = Vec::new();
     for stream in pdf_content_streams(pdf) {
@@ -17198,7 +17571,7 @@ fn footer_cid_glyph_runs(pdf: &[u8]) -> Vec<String> {
                 .collect();
             let Some(&y) = nums.first() else { continue };
             let font = op[cm + 8..].split_whitespace().next().unwrap_or("");
-            if y >= 72.0 || !font.ends_with("CID") {
+            if y >= 72.0 || font.is_empty() {
                 continue;
             }
             if let (Some(a), Some(b)) = (op.find('<'), op.find("> Tj")) {
@@ -17209,6 +17582,31 @@ fn footer_cid_glyph_runs(pdf: &[u8]) -> Vec<String> {
     out.sort();
     out.dedup();
     out
+}
+
+#[test]
+fn scripts_a_latin_face_lacks_paint_from_words_fallbacks() {
+    // Word 16 probes ench and scripts (2026-10-01): Calibri's Thai is
+    // Leelawadee UI, its Devanagari Mangal, its compatibility jamo Malgun
+    // Gothic and its ⒇① MS Gothic. We painted .notdef boxes for all four.
+    if !word_dfonts_available() {
+        return;
+    }
+    let rpr = "<w:rPr><w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\"/></w:rPr>";
+    for text in ["กขค", "अआइ", "ㄱㄴ", "⒇①"] {
+        let body = format!("<w:p><w:r>{rpr}<w:t>{text}</w:t></w:r></w:p><w:sectPr/>");
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect(text);
+        let streams = pdf_content_streams(&pdf).join("\n");
+        assert!(
+            streams.contains("> Tj") && !streams.contains("<0000"),
+            "{text} paints real glyphs: {streams}"
+        );
+    }
+}
+
+/// Whether a hex Identity-H operand holds glyph 0, .notdef.
+fn has_notdef(hex: &str) -> bool {
+    hex.as_bytes().chunks(4).any(|g| g == b"0000")
 }
 
 /// The PAGE label in the footer is one CID run of `glyphs` glyphs.
@@ -17225,6 +17623,13 @@ fn assert_footer_page_label_glyphs(fmt: &str, start: u32, glyphs: usize) {
         glyphs * 4,
         "{fmt} start={start}: {glyphs} glyph(s); runs={runs:?}"
     );
+    // Word paints every label in a face that has it (Word 16: ㈩ and ⒇ in
+    // MS Gothic, 百 in MS Mincho), never a .notdef box.
+    // Script faces come from Word's fonts; elsewhere the label may box.
+    assert!(
+        !word_dfonts_available() || !has_notdef(&runs[0]),
+        "{fmt} start={start}: no .notdef glyph; runs={runs:?}"
+    );
     let lits = pdf_winansi_literals(&pdf);
     assert!(
         !lits.iter().any(|s| s == &start.to_string() || s == "1"),
@@ -17239,7 +17644,10 @@ fn page_labels_bind_to_the_footer_with_the_formatted_glyph_count() {
     // (exact code points are pinned in page_num_fmt_labels; the writer
     // has no ToUnicode map to decode against).
     assert_footer_page_label_glyphs("ideographEnclosedCircle", 10, 1); // ㈩
-    assert_footer_page_label_glyphs("ideographEnclosedCircle", 11, 2); // 一一
+    // Past ㈩ Word writes plain decimal: no CID run (Word 16 footer, "11").
+    let eleven = page_num_fmt_pdf("ideographEnclosedCircle", 11, "PgGlyphX");
+    assert!(footer_cid_glyph_runs(&eleven).is_empty());
+    assert!(pdf_winansi_literals(&eleven).iter().any(|s| s == "11"));
     assert_footer_page_label_glyphs("japaneseCounting", 100, 1); // 百
     assert_footer_page_label_glyphs("japaneseCounting", 101, 2); // 百一
     assert_footer_page_label_glyphs("japaneseCounting", 1000, 1); // 千
@@ -17274,12 +17682,14 @@ fn assert_ideograph_page_is_cid_not_decimal(fmt: &str, marker: &str) {
         !lits.iter().any(|s| s == "1"),
         "{fmt} PAGE must not stay decimal 1; lits={lits:?}"
     );
-    let streams = pdf_content_streams(&pdf);
+    // Identity-H text is a hex operand; a face painted only as CID keeps
+    // its plain name, so the font name proves nothing. Before the label
+    // loaded its CJK face it painted .notdef in Calibri's CID entry, which
+    // passed a name check (Word 16 paints it in MS Gothic or Mincho).
+    let runs = footer_cid_glyph_runs(&pdf);
     assert!(
-        streams
-            .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
-        "{fmt} PAGE must take Identity-H; streams={streams:?}"
+        !runs.is_empty() && (!word_dfonts_available() || runs.iter().all(|r| !has_notdef(r))),
+        "{fmt} PAGE must take Identity-H with real glyphs; runs={runs:?}"
     );
 }
 
@@ -17328,7 +17738,7 @@ fn page_field_uses_sectpr_japanese_counting() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "japaneseCounting 十 is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -17359,7 +17769,7 @@ fn page_field_uses_sectpr_decimal_full_width() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "decimalFullWidth １０ is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -17409,7 +17819,7 @@ fn page_field_uses_sectpr_hebrew1() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "hebrew1 י is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -17457,7 +17867,7 @@ fn page_field_uses_sectpr_thai_numbers() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "thaiNumbers ๑๐ is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -17481,7 +17891,7 @@ fn page_field_uses_sectpr_thai_counting() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "thaiCounting สิบ is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -17499,7 +17909,7 @@ fn page_field_uses_sectpr_hindi_numbers() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "hindiNumbers १० is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -17529,7 +17939,7 @@ fn page_field_uses_sectpr_hindi_counting() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "hindiCounting दस is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -17547,7 +17957,7 @@ fn page_field_uses_sectpr_korean_counting() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "koreanCounting 십 is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -17565,7 +17975,7 @@ fn page_field_uses_sectpr_korean_digital() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "koreanDigital 일영 is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -17583,7 +17993,7 @@ fn page_field_uses_sectpr_korean_digital2() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "koreanDigital2 一零 is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -26114,6 +26524,44 @@ fn do_not_expand_shift_return_skips_justify_on_soft_break() {
 }
 
 #[test]
+fn do_not_expand_shift_return_holds_past_a_side_float() {
+    // The lines a paragraph rewraps past a side float keep their w:br
+    // ends, so doNotExpandShiftReturn still leaves those lines unstretched
+    // (the rewrap marked every line as unbroken and justified them).
+    let filler = "Lorem ipsum dolor sit amet consectetur adipiscing elit sed do. ".repeat(6);
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblpPr w:leftFromText=\"180\" w:rightFromText=\"180\" \
+           w:vertAnchor=\"text\" w:horzAnchor=\"margin\" w:tblpY=\"1\"/>\
+           <w:tblW w:w=\"2160\" w:type=\"dxa\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"2160\"/></w:tblGrid>\
+           <w:tr><w:trPr><w:trHeight w:val=\"720\" w:hRule=\"exact\"/></w:trPr>\
+           <w:tc><w:p><w:r><w:t>Box</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+         <w:p><w:pPr><w:jc w:val=\"both\"/>\
+           <w:spacing w:before=\"0\" w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+           <w:r><w:t xml:space=\"preserve\">{filler}</w:t></w:r>\
+           <w:r><w:br/><w:t xml:space=\"preserve\">DxShA DxShB</w:t></w:r>\
+           <w:r><w:br/><w:t>DxShEnd</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(
+        &body,
+        "<w:compat><w:doNotExpandShiftReturn/></w:compat>",
+    ))
+    .expect("side float shift return");
+    let x = |t: &str| {
+        pdf_glyph_text_xy(&pdf, t)
+            .unwrap_or_else(|| panic!("{t}"))
+            .0
+    };
+    assert!(
+        x("DxShB") - x("DxShA") < 80.0,
+        "the br-ended line past the float stays unstretched; gap {}",
+        x("DxShB") - x("DxShA")
+    );
+}
+
+#[test]
 fn doc_grid_leaves_exact_and_unsnapped_lines_alone() {
     // fixtures_500 0016d88a: under docGrid lines (linePitch 286) Word
     // keeps an exact 10.6pt line at 10.6pt; we snapped it to 14.3. A
@@ -29663,6 +30111,42 @@ fn rev_bar_marks_revised_header_and_footer_lines() {
     assert!(
         (bot - 36.0).abs() < 1.0 && top > 45.0 && top < 60.0,
         "on w:footer: {footer:?}"
+    );
+}
+
+#[test]
+fn rev_bar_marks_leading_empty_header_and_footer_paragraphs() {
+    // PR #247 review: an empty revised paragraph over the part's text was
+    // painted by the leading-empty loop alone, which filled it but never
+    // barred it; trailing and all-empty paragraphs were barred.
+    let part = "<w:p><w:pPr><w:pPrChange w:id=\"3\" w:author=\"A\"><w:pPr><w:ind w:right=\"360\"/></w:pPr></w:pPrChange></w:pPr></w:p>\
+         <w:p><w:r><w:t>Kept chrome</w:t></w:r></w:p>";
+    for (name, docx) in [
+        ("header", header_part_docx(part)),
+        ("footer", footer_part_docx(part)),
+    ] {
+        let bars = pdf_page_bar_spans(&docx_to_pdf(&docx).expect(name));
+        assert_eq!(
+            bars[0].len(),
+            1,
+            "the {name}'s leading revised paragraph is barred: {bars:?}"
+        );
+    }
+}
+
+#[test]
+fn an_all_empty_footer_paints_its_paragraph_border() {
+    // PR #247 review: an empty first footer paragraph with a top border
+    // suppressed the part's fallback rule, but the all-empty path painted
+    // only fills and bars, so the rule vanished.
+    let part = "<w:p><w:pPr><w:pBdr><w:top w:val=\"single\" w:sz=\"8\" w:space=\"1\" w:color=\"000000\"/></w:pBdr></w:pPr></w:p>\
+         <w:p/>";
+    let pdf = docx_to_pdf(&footer_part_docx(part)).expect("footer");
+    let ys = pdf_horiz_rule_ys(&pdf);
+    // Over the two empty paragraphs stacked up from w:footer (36pt).
+    assert!(
+        matches!(ys[..], [y] if y > 60.0 && y < 100.0),
+        "the empty footer paragraph's top border paints once: {ys:?}"
     );
 }
 
@@ -38264,6 +38748,90 @@ fn latin_inside_east_asian_text_takes_the_ascii_face_and_a_quarter_em_gap() {
 }
 
 #[test]
+fn hangul_takes_the_quarter_em_gap_and_auto_space_de_off_drops_it() {
+    if !word_dfonts_available() {
+        return;
+    }
+    // Word 16 probe hgap (2026-10-01): "가나다ABC가나다" in Malgun Gothic
+    // 12pt sets ABC 3pt off the Hangul on each side, as for ideographs
+    // (PR #247 review 4147143789); w:autoSpaceDE="0" drops both gaps, for
+    // Hangul and for ideographs alike (we kept the ideograph gap).
+    let q_x = |text: &str, off: bool| {
+        let ppr = if off {
+            "<w:pPr><w:autoSpaceDE w:val=\"0\"/></w:pPr>"
+        } else {
+            ""
+        };
+        let body = format!(
+            "<w:p>{ppr}<w:r><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:eastAsia=\"Malgun Gothic\"/>\
+             <w:sz w:val=\"24\"/></w:rPr><w:t>{text}</w:t></w:r></w:p><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("autospace");
+        pdf_glyph_text_xy(&pdf, "Q").expect("Q").0
+    };
+    for text in ["가Q가", "漢Q漢"] {
+        let (on, off) = (q_x(text, false), q_x(text, true));
+        assert!(
+            (on - off - 3.0).abs() < 0.3,
+            "{text}: a 3pt gap that autoSpaceDE=0 drops; on={on} off={off}"
+        );
+    }
+}
+
+#[test]
+fn a_character_style_toggles_its_paragraph_styles_bold_italic_strike_and_caps() {
+    // Word 16 probes xor and tog (2026-10-01): a character style's w:b,
+    // w:i, w:strike and w:caps toggle what the paragraph style set: both
+    // on paint plain. A basedOn chain is nearest-wins (CharB on CharA, both
+    // bold, stays bold) and direct w:b wins outright.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>\
+            <w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/></w:rPr></w:style>\
+          <w:style w:type=\"paragraph\" w:styleId=\"P\"><w:name w:val=\"P\"/><w:basedOn w:val=\"Normal\"/>\
+            <w:rPr><w:b/><w:i/><w:strike/><w:caps/></w:rPr></w:style>\
+          <w:style w:type=\"character\" w:styleId=\"A\"><w:name w:val=\"A\"/>\
+            <w:rPr><w:b/><w:i/><w:strike/><w:caps/></w:rPr></w:style>\
+          <w:style w:type=\"character\" w:styleId=\"B\"><w:name w:val=\"B\"/><w:basedOn w:val=\"A\"/>\
+            <w:rPr><w:b/></w:rPr></w:style>\
+        </w:styles>";
+    let render = |para: &str| {
+        let body = format!("{para}<w:sectPr/>");
+        let pdf = docx_to_pdf(&docx_with_styles(&body, styles)).expect("toggles");
+        // The faces' names: "Italic" alone also matches /ItalicAngle.
+        let hay = String::from_utf8_lossy(&pdf)
+            .split("/BaseFont /")
+            .skip(1)
+            .filter_map(|s| s.split_whitespace().next())
+            .collect::<Vec<_>>()
+            .join(" ");
+        (pdf, hay)
+    };
+    let (pdf, hay) = render(
+        "<w:p><w:pPr><w:pStyle w:val=\"P\"/></w:pPr><w:r><w:rPr><w:rStyle w:val=\"A\"/></w:rPr>\
+         <w:t>toggled off entirely here</w:t></w:r></w:p>",
+    );
+    assert!(
+        !hay.contains("Bold") && !hay.contains("Italic"),
+        "plain face: {hay}"
+    );
+    assert!(pdf_horiz_rule_ys(&pdf).is_empty(), "no strike");
+    assert!(
+        pdf_winansi_text(&pdf).contains("toggled"),
+        "lowercase: {}",
+        pdf_winansi_text(&pdf)
+    );
+    let (_, chain) =
+        render("<w:p><w:r><w:rPr><w:rStyle w:val=\"B\"/></w:rPr><w:t>chain</w:t></w:r></w:p>");
+    assert!(chain.contains("Bold"), "a basedOn chain is nearest-wins");
+    let (_, direct) = render(
+        "<w:p><w:pPr><w:pStyle w:val=\"P\"/></w:pPr><w:r><w:rPr><w:rStyle w:val=\"A\"/><w:b/></w:rPr>\
+         <w:t>direct</w:t></w:r></w:p>",
+    );
+    assert!(direct.contains("Bold"), "direct w:b wins");
+}
+
+#[test]
 fn a_footer_runs_letter_spacing_is_painted() {
     // fixtures_500 013d00cf: the footer's "Page" carries w:spacing 60
     // (3pt); Word spaces its letters as in the body. The chrome painter
@@ -41613,6 +42181,38 @@ fn a_fixed_table_past_22_inches_squeezes_its_last_columns_to_the_limit() {
 }
 
 #[test]
+fn a_centred_table_past_22_inches_ignores_its_indent_in_the_cap() {
+    // PR #247 review: a centred table is placed without its tblInd, so the
+    // 22in cap must not subtract it either. A 7pt indent squeezed the
+    // table to 1577pt and moved its centred start 3.5pt right.
+    let table = |ind: u32| {
+        let cell = |text: &str| {
+            format!(
+                "<w:tc><w:tcPr><w:tcW w:w=\"20000\" w:type=\"dxa\"/></w:tcPr>\
+                 <w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"
+            )
+        };
+        format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:jc w:val=\"center\"/>\
+               <w:tblInd w:w=\"{ind}\" w:type=\"dxa\"/><w:tblLayout w:type=\"fixed\"/></w:tblPr>\
+               <w:tblGrid><w:gridCol w:w=\"20000\"/><w:gridCol w:w=\"20000\"/></w:tblGrid>\
+               <w:tr>{}{}</w:tr></w:tbl><w:p/><w:sectPr/>",
+            cell("Top"),
+            cell("Far")
+        )
+    };
+    let top_x = |ind: u32| {
+        let pdf = docx_to_pdf(&minimal_docx_body(&table(ind))).expect("centred table");
+        pdf_glyph_text_xy(&pdf, "Top").expect("Top paints").0
+    };
+    let (bare, indented) = (top_x(0), top_x(140));
+    assert!(
+        (bare - indented).abs() < 0.1,
+        "a centred table caps at 22in whatever its tblInd: x {bare} vs {indented}"
+    );
+}
+
+#[test]
 fn shaded_empty_header_and_footer_paragraphs_paint_their_bands() {
     // PR #247 review: Word paints an empty paragraph's shading across its
     // mark's line. Word, these parts (Arial 10, single, no spacing): the
@@ -41771,6 +42371,77 @@ fn hangul_in_a_run_that_names_only_latin_faces_paints_in_the_hang_script_font() 
     for code in ["<BC1C>", "<D45C>"] {
         assert!(text.contains(code), "the glyph for U+{code} is drawn");
     }
+}
+
+#[test]
+fn a_justified_line_with_spaces_after_its_tab_keeps_the_leader() {
+    // PR #247 review: a justified line whose text after its last tab has
+    // spaces took the word-by-word path, which sent the tab to paint_run:
+    // the next left stop, no leader. The tab now goes to its stop with
+    // its dot leader, and only the spaces after it stretch.
+    let words = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau";
+    let body = format!(
+        "<w:p><w:pPr><w:jc w:val=\"both\"/><w:tabs><w:tab w:val=\"left\" w:leader=\"dot\" w:pos=\"4320\"/></w:tabs></w:pPr>\
+         <w:r><w:t xml:space=\"preserve\">Item\t{words} {words}</w:t></w:r></w:p><w:sectPr/>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("justified tab");
+    let text = stream_glyph_text(&pdf_content_streams(&pdf)[0]);
+    assert!(text.contains("....."), "the dot leader is painted: {text}");
+    let (item_x, _) = pdf_glyph_text_xy(&pdf, "Item").expect("Item painted");
+    let (alpha_x, _) = pdf_glyph_text_xy(&pdf, "alpha").expect("alpha painted");
+    assert!(
+        (alpha_x - item_x - 216.0).abs() < 1.0,
+        "alpha starts at the 3in stop: item={item_x} alpha={alpha_x}"
+    );
+}
+
+#[test]
+fn contextual_spacing_does_not_reach_across_a_nested_table() {
+    // PR #247 review: a cell's paragraphs were folded as one stack, so two
+    // same-style contextual paragraphs on either side of a nested table
+    // lost their after/before spacing and the table touched the text.
+    // They are not consecutive: their spacing stays.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+          <w:style w:type=\"paragraph\" w:styleId=\"Item\"><w:name w:val=\"Item\"/>\
+            <w:pPr><w:spacing w:before=\"400\" w:after=\"400\"/>CTX</w:pPr></w:style>\
+        </w:styles>";
+    let body = "<w:tbl><w:tblGrid><w:gridCol w:w=\"6000\"/></w:tblGrid><w:tr><w:tc>\
+          <w:p><w:pPr><w:pStyle w:val=\"Item\"/></w:pPr><w:r><w:t>Above</w:t></w:r></w:p>\
+          <w:tbl><w:tblGrid><w:gridCol w:w=\"3000\"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Inner</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+          <w:p><w:pPr><w:pStyle w:val=\"Item\"/></w:pPr><w:r><w:t>Below</w:t></w:r></w:p>\
+        </w:tc></w:tr></w:tbl><w:p/><w:sectPr/>";
+    let below = |ctx: &str| {
+        let pdf =
+            docx_to_pdf(&docx_with_styles(body, &styles.replace("CTX", ctx))).expect("nested");
+        pdf_glyph_text_xy(&pdf, "Below").expect("Below painted").1
+    };
+    let (plain, contextual) = (below(""), below("<w:contextualSpacing/>"));
+    assert!(
+        (plain - contextual).abs() < 0.5,
+        "contextual spacing stops at the nested table: plain={plain} contextual={contextual}"
+    );
+}
+
+#[test]
+fn hangul_only_in_a_header_still_loads_the_korean_fallback() {
+    // PR #247 review: the CJK fallbacks were loaded only when the body
+    // held East Asian text, so Hangul in a header (or footer, or note)
+    // under a face without Hangul lost its glyphs.
+    if !word_dfonts_available() {
+        return;
+    }
+    let pdf = docx_to_pdf(&header_part_docx(
+        "<w:p><w:r><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:eastAsia=\"Arial\"/></w:rPr>\
+         <w:t>발표</w:t></w:r></w:p>",
+    ))
+    .expect("hangul header");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("/MalgunGothic"),
+        "the header's Hangul paints in Malgun Gothic"
+    );
 }
 
 #[test]

@@ -1174,6 +1174,11 @@ impl<'a> Fonts<'a> {
         self.embedded_index(key, bold, false)
     }
 
+    /// The face `add_script_fallback` loaded under `key`.
+    pub(crate) fn script_fallback(&self, key: &str, bold: bool) -> Option<FaceRef> {
+        self.embedded_index(key, bold, false).map(FaceRef::Embedded)
+    }
+
     /// Word's Thaana face (MV Boli) for Dhivehi the resolved face lacks.
     pub(crate) fn thaana_glyph_fallback(&self, bold: bool) -> Option<FaceRef> {
         self.embedded_index(THAANA_FALLBACK, bold, false)
@@ -2467,6 +2472,26 @@ pub(crate) const CJK_FALLBACK_KO: &str = "@cjk-ko";
 pub(crate) const CJK_FALLBACK_KO_SERIF: &str = "@cjk-ko-serif";
 /// Embedded-map key of the Thaana fallback face.
 pub(crate) const THAANA_FALLBACK: &str = "@thaana";
+/// Embedded-map key of the Thai fallback face.
+pub(crate) const THAI_FALLBACK: &str = "@thai";
+/// Embedded-map key of the Devanagari fallback face.
+pub(crate) const DEVANAGARI_FALLBACK: &str = "@devanagari";
+
+/// Loads the face Word paints a script in when the run's font has none:
+/// the first of `families` installed (Word 16 probe scripts 1001: Calibri's
+/// Thai is Leelawadee UI, its Devanagari Mangal).
+pub(crate) fn add_script_fallback(embedded: &mut EmbeddedFonts, key: &str, families: &[&str]) {
+    let faces = cached_faces(key, || {
+        families
+            .iter()
+            .map(|family| installed_family_faces(family))
+            .find(|faces| !faces.is_empty())
+            .unwrap_or_default()
+    });
+    for ((bold, italic), bytes) in faces {
+        embedded.insert((key.to_string(), bold, italic), bytes);
+    }
+}
 
 /// Loads the face Word paints Dhivehi in when the document's font is
 /// missing: MV Boli from Office's cloud fonts (fixtures_500 0003fc93's

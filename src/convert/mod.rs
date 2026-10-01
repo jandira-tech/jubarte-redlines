@@ -33,7 +33,9 @@ use font::{Face, FaceId, FaceRef, Fonts};
 
 pub use font::{FontReportEntry, FontStep, font_report_json};
 
-#[cfg(test)]
+/// The bundled catalogue faces alone (metric twins of Word's: Carlito for
+/// Calibri, Liberation for Arial and Times). Chrome parts load before the
+/// document's own faces exist; their measures come from these.
 fn fonts() -> &'static Fonts<'static> {
     use std::sync::LazyLock;
     static FONTS: LazyLock<Fonts<'static>> = LazyLock::new(Fonts::new);
@@ -481,13 +483,48 @@ fn with_pages<T>(
             run_faces.extend(latin_font_names(&text));
         }
     }
-    let has_cjk = xml.chars().any(takes_east_asian_face);
+    // Headers, footers, notes and comments paint too: their faces and
+    // their scripts count (PR #247 review: Hangul only in a header lost its
+    // glyphs without the Korean fallback).
+    let stories = story_parts_xml(&pkg, &main);
+    for text in &stories {
+        family_names.extend(rfont_names(text));
+        run_faces.extend(latin_font_names(text));
+    }
+    let any_text = |test: fn(char) -> bool| {
+        xml.chars().any(test) || stories.iter().any(|t| t.chars().any(test))
+    };
+    // List and page numbers in an East Asian format paint characters the
+    // text never holds (a footer's ideographEnclosedCircle PAGE label).
+    let numbering = pkg.part_string("word/numbering.xml");
+    let writes = |test: fn(char) -> bool| {
+        any_text(test)
+            || [Some(xml.as_str()), numbering.as_deref()]
+                .into_iter()
+                .flatten()
+                .any(|part| number_formats_write(part, test))
+    };
+    let has_cjk = writes(takes_cjk_fallback);
     font::add_installed_faces(&mut embedded, &table, &family_names, &run_faces, has_cjk);
     if has_cjk {
         font::add_cjk_fallbacks(&mut embedded);
     }
-    if xml.chars().any(is_thaana) {
+    if any_text(is_thaana) {
         font::add_thaana_fallback(&mut embedded);
+    }
+    if writes(is_thai) {
+        font::add_script_fallback(
+            &mut embedded,
+            font::THAI_FALLBACK,
+            &["Leelawadee UI", "Thonburi"],
+        );
+    }
+    if writes(is_devanagari) {
+        font::add_script_fallback(
+            &mut embedded,
+            font::DEVANAGARI_FALLBACK,
+            &["Mangal", "Kohinoor Devanagari", "Devanagari MT"],
+        );
     }
     let fonts = Fonts::for_document(&embedded);
     font::with_font_table(table, || {
@@ -619,6 +656,13 @@ struct RunStyle {
     /// conditional bold/italic ranks below them (00319da4's b=0 runs).
     bold_set: bool,
     italic_set: bool,
+    /// The nearest `w:vanish` of the styles and defaults under the run:
+    /// a paragraph style's hidden text hides its runs (PR #247 review).
+    hidden: bool,
+    /// The paragraph's `w:autoSpaceDE` / `w:autoSpaceDN` turned off: no
+    /// quarter em between East Asian text and Latin letters / digits.
+    auto_space_de_off: bool,
+    auto_space_dn_off: bool,
     /// Size that sizes the line box when `size` is a rendering reduction
     /// (a small-caps piece keeps its run's authored size); 0 = `size`.
     box_size: f32,
@@ -757,6 +801,9 @@ struct ParaStyle {
     indent_right: f32,
     indent_first: f32,
     contextual: bool,
+    /// `w:autoSpaceDE` / `w:autoSpaceDN` set off (see `script_gap`).
+    auto_space_de_off: bool,
+    auto_space_dn_off: bool,
     /// The paragraph's numbering instance (`w:numId`), empty when unlisted:
     /// auto spacing drops between items of one list (00df97e7).
     list_num: String,
@@ -1161,10 +1208,10 @@ struct CellBorders {
 }
 
 #[derive(Clone, Copy)]
-struct TblLook {
-    first_row: bool,
-    first_col: bool,
-    no_h_band: bool,
+pub(crate) struct TblLook {
+    pub(crate) first_row: bool,
+    pub(crate) first_col: bool,
+    pub(crate) no_h_band: bool,
 }
 
 struct RawStyle {
@@ -1221,6 +1268,9 @@ impl Defaults {
                 box_size: 0.0,
                 bold_set: false,
                 italic_set: false,
+                hidden: false,
+                auto_space_de_off: false,
+                auto_space_dn_off: false,
                 offset: 0.0,
                 vert: VertAlign::Baseline,
                 kern_half: 0,
@@ -1246,6 +1296,8 @@ impl Defaults {
                 indent_right: 0.0,
                 indent_first: 0.0,
                 contextual: false,
+                auto_space_de_off: false,
+                auto_space_dn_off: false,
                 list_num: String::new(),
                 style_id: String::new(),
                 style_name: String::new(),
@@ -3661,6 +3713,28 @@ fn latin_font_names(xml: &str) -> Vec<String> {
     out
 }
 
+/// Whether a w:numFmt or w:pgNumType format in `xml` writes characters
+/// that pass `test` (`ideographDigital`'s 一, `thaiLetters`' ก): labels
+/// whose script the text itself never shows.
+fn number_formats_write(xml: &str, test: fn(char) -> bool) -> bool {
+    ["numFmt", "pgNumType"].iter().any(|tag| {
+        xml.match_indices(tag).any(|(at, _)| {
+            let attrs = &xml[at..];
+            let attrs = &attrs[..attrs.find('>').unwrap_or(attrs.len())];
+            attrs
+                .split(['"', '\''])
+                .skip(1)
+                .step_by(2)
+                .map(parse_num_fmt)
+                .any(|fmt| {
+                    [1, 10, 100]
+                        .into_iter()
+                        .any(|n| format_num(fmt, n).chars().any(test))
+                })
+        })
+    })
+}
+
 fn rfont_names(xml: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for key in [
@@ -3699,9 +3773,40 @@ fn script_glyph_fallback(fonts: &Fonts, bold: bool, text: &str) -> Option<FaceRe
     if text.chars().any(is_hangul) {
         return fonts.hangul_glyph_fallback(bold);
     }
+    if text.chars().any(is_thai) {
+        return fonts.script_fallback(font::THAI_FALLBACK, bold);
+    }
+    if text.chars().any(is_devanagari) {
+        return fonts.script_fallback(font::DEVANAGARI_FALLBACK, bold);
+    }
     fonts
         .cjk_glyph_fallback(bold)
-        .filter(|_| text.chars().any(is_cjk))
+        .filter(|_| text.chars().any(|c| is_cjk(c) || is_enclosed_alnum(c)))
+}
+
+/// ① to ⓿ and ⒇: a Latin face rarely has them, and Word paints them from
+/// its East Asian face (Word 16 probe ench 1001: Calibri's "A⒇①B" sets
+/// ⒇① in MS Gothic, as a footer's decimalEnclosedParen PAGE label).
+fn is_enclosed_alnum(c: char) -> bool {
+    matches!(c, '\u{2460}'..='\u{24FF}')
+}
+
+/// A character that paints from the CJK fallback when its face has none.
+fn takes_cjk_fallback(c: char) -> bool {
+    takes_east_asian_face(c) || is_enclosed_alnum(c)
+}
+
+fn is_thai(c: char) -> bool {
+    matches!(c, '\u{0E00}'..='\u{0E7F}')
+}
+
+fn is_devanagari(c: char) -> bool {
+    matches!(c, '\u{0900}'..='\u{097F}' | '\u{A8E0}'..='\u{A8FF}')
+}
+
+/// A character a script fallback paints when its face has none.
+fn takes_script_fallback(c: char) -> bool {
+    is_rtl_char(c) || takes_cjk_fallback(c) || is_thai(c) || is_devanagari(c)
 }
 
 /// Hebrew, Arabic, Syriac, Thaana, NKo and their presentation forms.
@@ -3731,9 +3836,14 @@ fn is_cjk(c: char) -> bool {
 /// Hangul syllables and jamo outside `is_cjk`'s blocks (the compatibility
 /// jamo U+3130..318F are inside it).
 fn is_hangul(c: char) -> bool {
+    // The compatibility jamo too: Word paints chosung's ㄱ in Malgun
+    // Gothic (Word 16 probe scripts 1001), and YaHei has none.
     matches!(
         c,
-        '\u{1100}'..='\u{11FF}' | '\u{A960}'..='\u{A97F}' | '\u{AC00}'..='\u{D7FF}'
+        '\u{1100}'..='\u{11FF}'
+            | '\u{3130}'..='\u{318F}'
+            | '\u{A960}'..='\u{A97F}'
+            | '\u{AC00}'..='\u{D7FF}'
     )
 }
 
@@ -3800,6 +3910,9 @@ fn apply_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, theme: &ThemeFonts) {
     apply_theme_script_fonts(style, theme);
     if let Some(rtl) = first_named(dom, rpr, "rtl") {
         style.rtl = !val_is_false(dom, Some(rtl));
+    }
+    if let Some(vanish) = first_named(dom, rpr, "vanish") {
+        style.hidden = !val_is_false(dom, Some(vanish));
     }
     if first_named(dom, rpr, "b").is_some() {
         style.bold = !val_is_false(dom, first_named(dom, rpr, "b"));
@@ -4041,6 +4154,12 @@ fn apply_ppr(dom: &Dom, ppr: NodeId, style: &mut ParaStyle) {
     }
     if first_named(dom, ppr, "contextualSpacing").is_some() {
         style.contextual = !val_is_false(dom, first_named(dom, ppr, "contextualSpacing"));
+    }
+    if let Some(n) = first_named(dom, ppr, "autoSpaceDE") {
+        style.auto_space_de_off = val_is_false(dom, Some(n));
+    }
+    if let Some(n) = first_named(dom, ppr, "autoSpaceDN") {
+        style.auto_space_dn_off = val_is_false(dom, Some(n));
     }
     if first_named(dom, ppr, "tabs").is_some() {
         apply_tab_stops(&mut style.tab_stops, dom, ppr);
@@ -5146,12 +5265,13 @@ fn cjk_counting(n: u32, legal: bool) -> String {
 }
 
 fn ideograph_enclosed_circle_label(n: u32) -> String {
-    // U+3220..=U+3229 are ㈠–㈩. After 10, ECMA allows unenclosed digits.
+    // U+3220..=U+3229 are ㈠–㈩. Past them Word writes plain decimal
+    // (Word 16, a list and a footer PAGE at 11: "11", not 一一).
     const ENCLOSED: [char; 10] = ['㈠', '㈡', '㈢', '㈣', '㈤', '㈥', '㈦', '㈧', '㈨', '㈩'];
     if (1..=10).contains(&n) {
         ENCLOSED[(n - 1) as usize].to_string()
     } else {
-        ideograph_digital_label(n)
+        n.to_string()
     }
 }
 
@@ -6940,7 +7060,7 @@ fn section_parity_hf(
 }
 
 fn sect_has_ref(dom: &Dom, sect: NodeId, local: &str) -> bool {
-    !dom.descendants(sect, Some(&W::name(local))).is_empty()
+    !dom.elements(sect, Some(&W::name(local))).is_empty()
 }
 
 fn walk_container(
@@ -7056,11 +7176,18 @@ fn walk_container(
             let (page_br, column_br) = (trailing == Some(false), trailing == Some(true));
             let block = parts.pop().expect("split keeps the paragraph");
             for (i, (part, column)) in parts.into_iter().zip(seps).enumerate() {
-                // Nothing before a paragraph's opening column break is no
-                // line: live Word ends the column at the paragraph above
-                // ("Alpha" then "<br column/>Col2": the next section opens
-                // one line under Alpha).
-                if !(column && i == 0 && block_is_blank(&part)) {
+                // Nothing before a paragraph's opening column or page break
+                // is no line: live Word ends the column at the paragraph
+                // above ("Alpha" then "<br column/>Col2": the next section
+                // opens one line under Alpha), and a page filled to its last
+                // line breaks once (probes lb0930 at compat 14 and 15:
+                // "<br page/>Heading" after 32 exact 20pt lines opens page 2;
+                // priority d9b54326f3's page 27 was left blank). One holding
+                // a bookmark stays, so PAGEREF keeps the page before the
+                // break (Word's page for that case is unprobed).
+                let bookmarked =
+                    matches!(&part, Block::Paragraph { bookmarks, .. } if !bookmarks.is_empty());
+                if !(i == 0 && block_is_blank(&part) && (column || !bookmarked)) {
                     blocks.push(part);
                 }
                 blocks.push(if column {
@@ -7733,9 +7860,7 @@ fn face_lacks_ink(face: &Face, text: &str) -> bool {
 /// .notdef-wide box it measures, whatever face paints it.
 fn ink_face(fonts: &Fonts, style: &RunStyle, text: &str) -> FaceRef {
     let fid = fonts.resolve(paint_family(style, text), style.bold, style.italic);
-    let script = text
-        .chars()
-        .any(|c| is_rtl_char(c) || takes_east_asian_face(c));
+    let script = text.chars().any(takes_script_fallback);
     if !script || !face_lacks_ink(fonts.get(fid), text) {
         return fid;
     }
@@ -8878,6 +9003,8 @@ fn para_base(
         mirror_bidi(&mut pstyle);
     }
     pstyle.fmt_rev = para_formatting_changed(dom, para) || para_mark_revised(dom, para);
+    rstyle.auto_space_de_off = pstyle.auto_space_de_off;
+    rstyle.auto_space_dn_off = pstyle.auto_space_dn_off;
     (pstyle, rstyle)
 }
 
@@ -9711,6 +9838,31 @@ fn core_dates() -> CoreDates {
     CORE_DATES.with(Cell::get)
 }
 
+/// Now, in UTC, as `YYYY-MM-DDTHH:MM:SSZ`: the date Word writes on a
+/// revision.
+pub fn utc_now_iso8601() -> String {
+    iso8601(utc_now())
+}
+
+fn iso8601(CivilDateTime { y, m, d, h, min, s }: CivilDateTime) -> String {
+    format!("{y:04}-{m:02}-{d:02}T{h:02}:{min:02}:{s:02}Z")
+}
+
+#[cfg(test)]
+mod iso8601_tests {
+    use super::*;
+
+    #[test]
+    fn a_unix_time_is_written_as_word_dates_revisions() {
+        assert_eq!(iso8601(civil_from_unix_secs(0)), "1970-01-01T00:00:00Z");
+        assert_eq!(
+            iso8601(civil_from_unix_secs(1_790_777_100)),
+            "2026-09-30T14:05:00Z"
+        );
+        assert_eq!(utc_now_iso8601().len(), 20);
+    }
+}
+
 fn utc_now() -> CivilDateTime {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -10177,7 +10329,7 @@ fn table_style_id(dom: &Dom, table: NodeId) -> Option<&str> {
     first_named(dom, pr, "tblStyle").and_then(|n| dom.attribute(n, &W::val()))
 }
 
-fn table_look(dom: &Dom, table: NodeId) -> TblLook {
+pub(crate) fn table_look(dom: &Dom, table: NodeId) -> TblLook {
     let mut look = TblLook {
         first_row: true,
         first_col: false,
@@ -10591,7 +10743,10 @@ fn table_block(
                 cell_paras.iter_mut().for_each(|p| p.vertical = true);
             }
             // 0129b302's auto-spaced "1.300.000" cell is 14pt apart, not 28.
-            fold_stacked_spacing(cell_paras.iter_mut().map(|p| &mut p.style).collect());
+            fold_stacked_spacing(
+                cell_paras.iter_mut().map(|p| &mut p.style).collect(),
+                &nested_at,
+            );
             let (colspan, vmerge) = cell_span(dom, cell);
             let last_col = grid_at + colspan.max(1) >= cols.len();
             let at = |b: TblBorders| {
@@ -10806,6 +10961,7 @@ fn table_block(
                 on(b.bottom, b.outer_width),
             ]
         });
+    let centred = matches!(tstyle.align, Align::Center);
     Block::Table {
         cols,
         rows,
@@ -10822,7 +10978,9 @@ fn table_block(
                 unstyled,
                 header_rows,
                 table_grid: table_style_id(dom, table) == Some("TableGrid"),
-                tbl_ind: table_ind(dom, table),
+                // A centred table is placed without its indent, so the
+                // 22in cap ignores it too (PR #247 review).
+                tbl_ind: if centred { 0.0 } else { table_ind(dom, table) },
                 mar_l: first_pad_l,
                 pref,
                 fixed,
@@ -11050,22 +11208,19 @@ fn table_pad_h(dom: &Dom, table: NodeId) -> (f32, f32) {
 }
 
 /// The paragraph mark is hidden: its direct `w:vanish`, else its character
-/// style's (4910ce2060's ContentControlHidden marks under "System Name").
+/// style's (4910ce2060's ContentControlHidden marks under "System Name"),
+/// else its paragraph style's.
 fn para_mark_hidden(dom: &Dom, para: NodeId, styles: &HashMap<String, NamedStyle>) -> bool {
-    let Some(rpr) = dom
+    let rprs: Vec<NodeId> = dom
         .element(para, &W::p_pr())
         .and_then(|ppr| dom.element(ppr, &W::r_pr()))
-    else {
-        return false;
-    };
-    first_named(dom, rpr, "vanish").map_or_else(
-        || {
-            first_named(dom, rpr, "rStyle")
-                .and_then(|n| dom.attribute(n, &W::val()))
-                .and_then(|sid| styles.get(sid))
-                .is_some_and(|named| named.hidden == Some(true))
-        },
-        |n| !val_is_false(dom, Some(n)),
+        .into_iter()
+        .collect();
+    run_hidden(
+        dom,
+        &rprs,
+        Some(styles),
+        para_style_hidden(dom, para, styles),
     )
 }
 
@@ -11074,28 +11229,16 @@ fn para_mark_hidden(dom: &Dom, para: NodeId, styles: &HashMap<String, NamedStyle
 /// the marker a vanished row keeps a line). The empty cell-end paragraph
 /// after a nested table goes with the table (9617d33f's separators).
 fn row_is_hidden(dom: &Dom, row: NodeId, styles: &HashMap<String, NamedStyle>) -> bool {
-    // A direct w:vanish decides; without one, the character style's (as
-    // the runs themselves are collected).
-    let vanish = |rpr: Option<NodeId>| {
-        rpr.is_some_and(|rpr| {
-            first_named(dom, rpr, "vanish").map_or_else(
-                || {
-                    first_named(dom, rpr, "rStyle")
-                        .and_then(|n| dom.attribute(n, &W::val()))
-                        .and_then(|sid| styles.get(sid))
-                        .is_some_and(|named| named.hidden == Some(true))
-                },
-                |n| !val_is_false(dom, Some(n)),
-            )
-        })
-    };
+    // Every leading rPr in order, over the paragraph style, as the runs
+    // themselves are collected (PR #247 review).
     let marked = direct_named(dom, row, "trPr")
         .and_then(|pr| direct_named(dom, pr, "hidden"))
         .is_some_and(|n| !val_is_false(dom, Some(n)));
     marked
         && dom.descendants(row, Some(&W::p())).into_iter().all(|p| {
+            let style_hidden = para_style_hidden(dom, p, styles);
             let runs_hidden = dom.descendants(p, Some(&W::r())).into_iter().all(|r| {
-                vanish(dom.element(r, &W::r_pr()))
+                run_hidden(dom, &leading_rprs(dom, r), Some(styles), style_hidden)
                     || (0..dom.child_count(r))
                         .map(|i| dom.child_at(r, i))
                         .all(|c| dom.name_is(c, &W::r_pr()) || !dom.is_element(c))
@@ -11302,7 +11445,7 @@ fn column_prefs(raw_rows: &[Vec<RawCell>], grid: &[f32], fixed: bool) -> Vec<Pre
     pref
 }
 
-fn cell_is_deleted(dom: &Dom, cell: NodeId) -> bool {
+pub(crate) fn cell_is_deleted(dom: &Dom, cell: NodeId) -> bool {
     let Some(pr) = first_named(dom, cell, "tcPr") else {
         return false;
     };
@@ -11548,7 +11691,7 @@ fn shd_paint(dom: &Dom, shd: NodeId) -> Option<[f32; 3]> {
 
 /// `parent`'s `w:<local>` children, also those a content control or a
 /// custom-XML wrapper holds (003c9ddd's tr > sdt > sdtContent > tc).
-fn wrapped_children(dom: &Dom, parent: NodeId, local: &str) -> Vec<NodeId> {
+pub(crate) fn wrapped_children(dom: &Dom, parent: NodeId, local: &str) -> Vec<NodeId> {
     let mut out = Vec::new();
     for i in 0..dom.child_count(parent) {
         let child = dom.child_at(parent, i);
@@ -11786,23 +11929,25 @@ fn script_pieces<'t>(style: &RunStyle, text: &'t str) -> Option<Vec<&'t str>> {
 /// autoSpaceDE / autoSpaceDN: Word sets a quarter em between an East
 /// Asian piece and a Latin or digit one that touch (live Word: 3pt at
 /// 12pt around "5", "FM" and "abc" in "令和元年5月6日FM西東京abc放送").
+/// Hangul counts as East Asian, and either flag set off drops its gaps
+/// (Word 16 probe hgap 1001).
 fn script_gap(style: &RunStyle, before: &str, after: &str) -> f32 {
     let (Some(a), Some(b)) = (before.chars().last(), after.chars().next()) else {
         return 0.0;
     };
-    let class = |c: char| {
-        if is_cjk(c) {
-            Some(true)
-        } else if c.is_alphanumeric() {
-            Some(false)
-        } else {
-            None
-        }
+    let latin = match (takes_east_asian_face(a), takes_east_asian_face(b)) {
+        (true, false) => b,
+        (false, true) => a,
+        _ => return 0.0,
     };
-    match (class(a), class(b)) {
-        (Some(x), Some(y)) if x != y => style.layout_size() * 0.25,
-        _ => 0.0,
-    }
+    let off = if latin.is_numeric() {
+        style.auto_space_dn_off
+    } else if latin.is_alphanumeric() {
+        style.auto_space_de_off
+    } else {
+        true
+    };
+    if off { 0.0 } else { style.layout_size() * 0.25 }
 }
 
 fn split_hansi_runs(runs: Vec<TextRun>) -> Vec<TextRun> {
@@ -11904,14 +12049,20 @@ fn apply_named_char_style(style: &mut RunStyle, named: &NamedStyle) {
     if run.underline_wave {
         style.underline_wave = true;
     }
+    // Bold, italic, strike and caps toggle what the paragraph style set:
+    // both on paint plain (Word 16 probes xor and tog 1001). Direct rPr,
+    // applied after, still sets them outright.
     if run.strike {
-        style.strike = true;
+        style.strike = !style.strike;
     }
     if run.bold {
-        style.bold = true;
+        style.bold = !style.bold;
     }
     if run.italic {
-        style.italic = true;
+        style.italic = !style.italic;
+    }
+    if run.caps {
+        style.caps = !style.caps;
     }
     if run.color != [0.0, 0.0, 0.0] {
         style.color = run.color;
@@ -12236,20 +12387,7 @@ fn collect_runs_rec(
             }
         }
         let rprs = leading_rprs(ctx.dom, node);
-        // The rPr blocks apply in order, each its character style's
-        // w:vanish and then its own (PR #247 review: a later style that
-        // turns vanish off shows the run again).
-        let hidden = rprs.iter().fold(false, |on, rpr| {
-            let styled = first_named(ctx.dom, *rpr, "rStyle")
-                .and_then(|n| ctx.dom.attribute(n, &W::val()))
-                .and_then(|sid| ctx.styles.and_then(|s| s.get(sid)))
-                .and_then(|named| named.hidden);
-            first_named(ctx.dom, *rpr, "vanish")
-                .map(|n| !val_is_false(ctx.dom, Some(n)))
-                .or(styled)
-                .unwrap_or(on)
-        });
-        if hidden {
+        if run_hidden(ctx.dom, &rprs, ctx.styles, ctx.base.hidden) {
             // webHidden is web-view only (ECMA-376 17.3.2.42). Word print
             // and Save-as-PDF still paint those runs (TOC leaders / PAGEREF).
             return;
@@ -13560,8 +13698,10 @@ fn txbx_lays_out_paragraphs(dom: &Dom, shape: NodeId, txbx: NodeId) -> bool {
 /// HTML auto spacing does not reach the container's edges: the first
 /// paragraph's auto before and the last one's auto after drop. Between two
 /// paragraphs only max(after, next before) stands, as in the body, so the
-/// next before keeps only its excess.
-fn fold_stacked_spacing(mut styles: Vec<&mut ParaStyle>) {
+/// next before keeps only its excess. `breaks` lists the indices a nested
+/// table sits in front of: the paragraphs around it are not neighbours, so
+/// they keep their after and before in full.
+fn fold_stacked_spacing(mut styles: Vec<&mut ParaStyle>, breaks: &[usize]) {
     if let Some(first) = styles.first_mut()
         && first.before_auto
     {
@@ -13572,7 +13712,7 @@ fn fold_stacked_spacing(mut styles: Vec<&mut ParaStyle>) {
     {
         last.after = 0.0;
     }
-    for i in 1..styles.len() {
+    for i in (1..styles.len()).filter(|i| !breaks.contains(i)) {
         let (head, rest) = styles.split_at_mut(i);
         let (prev, next) = (&mut *head[i - 1], &mut *rest[0]);
         // contextualSpacing drops the space between same-style paragraphs
@@ -13640,7 +13780,7 @@ fn txbx_paragraphs(
             (runs, style)
         })
         .collect::<Vec<_>>();
-    fold_stacked_spacing(paras.iter_mut().map(|(_, style)| style).collect());
+    fold_stacked_spacing(paras.iter_mut().map(|(_, style)| style).collect(), &[]);
     paras
 }
 
@@ -14016,7 +14156,40 @@ fn para_own_text(dom: &Dom, para: NodeId) -> String {
 /// applies each (001f2a51's hyperlink runs carry rStyle then sz in two)
 /// and ignores one after the text (its `<w:t/><w:rPr><w:sz 18/>` titles
 /// stay 11pt).
-fn leading_rprs(dom: &Dom, run: NodeId) -> Vec<NodeId> {
+/// Whether a run with the leading `w:rPr` blocks `rprs` is hidden. The
+/// blocks apply in order, each its character style's `w:vanish` and then
+/// its own, over `start`, what the paragraph's style gives (PR #247 review:
+/// a later style that turns vanish off shows the run again; a paragraph
+/// style's vanish hides runs that say nothing).
+fn run_hidden(
+    dom: &Dom,
+    rprs: &[NodeId],
+    styles: Option<&HashMap<String, NamedStyle>>,
+    start: bool,
+) -> bool {
+    rprs.iter().fold(start, |on, &rpr| {
+        let styled = first_named(dom, rpr, "rStyle")
+            .and_then(|n| dom.attribute(n, &W::val()))
+            .and_then(|sid| styles.and_then(|s| s.get(sid)))
+            .and_then(|named| named.hidden);
+        first_named(dom, rpr, "vanish")
+            .map(|n| !val_is_false(dom, Some(n)))
+            .or(styled)
+            .unwrap_or(on)
+    })
+}
+
+/// The `w:vanish` a paragraph's own `w:pStyle` chain gives its runs.
+fn para_style_hidden(dom: &Dom, para: NodeId, styles: &HashMap<String, NamedStyle>) -> bool {
+    dom.element(para, &W::p_pr())
+        .and_then(|ppr| first_named(dom, ppr, "pStyle"))
+        .and_then(|n| dom.attribute(n, &W::val()))
+        .and_then(|sid| styles.get(sid))
+        .and_then(|named| named.hidden)
+        .unwrap_or(false)
+}
+
+pub(crate) fn leading_rprs(dom: &Dom, run: NodeId) -> Vec<NodeId> {
     let mut out = Vec::new();
     for i in 0..dom.child_count(run) {
         let child = dom.child_at(run, i);
@@ -16550,15 +16723,15 @@ struct PickedHf {
     odd: ChromePart,
 }
 
-/// A `w:headerReference` / `w:footerReference` (`local`) of `kind`
-/// directly on `sect`.
 /// The relationship id of `sect`'s `local` reference of type `want`; a
 /// type the section omits comes from the nearest earlier section that
 /// names it (ECMA-376 17.10.5: priority 2b479f55f8's third section names
 /// only a footer and still shows section 1's default header in Word).
+/// Only the section's own children count: a `w:sectPrChange` record's
+/// references are history (PR #247 review).
 fn inherited_ref_id(dom: &Dom, sect: NodeId, local: &str, want: &str) -> Option<String> {
     let own = |s: NodeId| {
-        dom.descendants(s, Some(&W::name(local)))
+        dom.elements(s, Some(&W::name(local)))
             .into_iter()
             .find(|&node| dom.attribute(node, &W::name("type")).unwrap_or("default") == want)
             .and_then(|node| attr_any(dom, node, "id"))
@@ -17238,6 +17411,24 @@ fn para_shown_text(dom: &Dom, para: NodeId) -> String {
     out
 }
 
+/// The main document's other story parts (headers, footers, footnotes,
+/// endnotes, comments), found by relationship type.
+fn story_parts_xml(pkg: &PartFs, main: &str) -> Vec<String> {
+    let Some(rels) = pkg.read_rels_for(main) else {
+        return Vec::new();
+    };
+    rels.items
+        .iter()
+        .filter(|r| {
+            r.target_mode.as_deref() != Some("External")
+                && ["/header", "/footer", "/footnotes", "/endnotes", "/comments"]
+                    .iter()
+                    .any(|k| r.rel_type.ends_with(k))
+        })
+        .filter_map(|r| pkg.part_string(&pkg.resolve_rel_target(main, &r.target)))
+        .collect()
+}
+
 fn rel_target_path(pkg: &PartFs, source: &str, rid: &str) -> Option<String> {
     let rels = pkg.read_rels_for(source)?;
     let rel = rels.items.iter().find(|item| item.id == rid)?;
@@ -17388,6 +17579,8 @@ fn first_para_align(dom: &Dom, root: NodeId) -> Align {
         indent_right: 0.0,
         indent_first: 0.0,
         contextual: false,
+        auto_space_de_off: false,
+        auto_space_dn_off: false,
         list_num: String::new(),
         style_id: String::new(),
         style_name: String::new(),
@@ -17769,6 +17962,7 @@ fn hf_pic_owns_line(dom: &Dom, para: NodeId, sheet: &StyleSheet, text_w: f32) ->
 /// text).
 fn hf_pic_trails_line(dom: &Dom, para: NodeId, sheet: &StyleSheet, text_w: f32) -> bool {
     let mut seen_text = false;
+    let mut text = String::new();
     let mut pics_w = 0.0_f32;
     let mut pics_h = 0.0_f32;
     for n in dom.descendants(para, None) {
@@ -17783,6 +17977,7 @@ fn hf_pic_trails_line(dom: &Dom, para: NodeId, sheet: &StyleSheet, text_w: f32) 
                 return false;
             }
             seen_text = true;
+            text.push_str(&element_text(dom, n));
         } else if seen_text
             && dom.name_is(n, &WP::name("inline"))
             && let Some(ext) = first_named_any(dom, n, "extent")
@@ -17798,7 +17993,13 @@ fn hf_pic_trails_line(dom: &Dom, para: NodeId, sheet: &StyleSheet, text_w: f32) 
     }
     let (pstyle, prun) = para_base(dom, para, sheet, None);
     let room = text_w - pstyle.indent_left - pstyle.indent_right - pstyle.indent_first;
-    room - pics_w < prun.size * 0.5
+    // The pictures follow the text's last line: what it leaves is the
+    // room (Word 16 probe hpic 1001: 394pt of text and a 200pt picture in
+    // 468pt set the picture on the next line; PR #247 review).
+    let face = fonts().get(fonts().resolve(&prun.family, prun.bold, prun.italic));
+    let text_end = face.width_pt(&text, prun.layout_size());
+    let last_line = if room > 0.0 { text_end % room } else { 0.0 };
+    room - last_line - pics_w < prun.size * 0.5
 }
 
 /// Table-cell paragraphs belong to the part's laid-out tables.
@@ -18523,6 +18724,9 @@ struct Layout<'a> {
     /// Word hangs paragraph-relative floats from above it (a before=20
     /// paragraph's offset-0 shape sits at the space's top, not the text's).
     para_space_above: f32,
+    /// The cursor under nothing but the space before that opened its page:
+    /// a break there would leave the page blank.
+    blank_below: Option<f32>,
     /// The part of the paragraph's space before folded into the previous
     /// paragraph's after: its excess over that after (Word: before=20
     /// under after=10 hangs the paragraph's floats 10pt above its text).
@@ -18735,6 +18939,38 @@ fn split_at_breaks(runs: &[TextRun]) -> Vec<Vec<TextRun>> {
         }
     }
     lines
+}
+
+/// Wrapped lines joined back into one run list for wrapping again: a line
+/// a w:br ended gives its break back as text, so the rewrap keeps it
+/// (a7e5b7872c's cell halves and f9b9dbd790's lines past a header logo ran
+/// together). The last line's break is dropped: whatever follows the range
+/// (a page end, a new band) stands for it.
+fn rejoin_lines(lines: &[Vec<TextRun>]) -> Vec<TextRun> {
+    let mut runs = Vec::new();
+    for (j, line) in lines.iter().enumerate() {
+        for (r, run) in line.iter().enumerate() {
+            if r + 1 == line.len() && run.ends_line && run.text.is_empty() {
+                if j + 1 < lines.len() {
+                    let mut br = run.with_text("\n");
+                    br.ends_line = false;
+                    runs.push(br);
+                }
+            } else {
+                runs.push(run.clone());
+            }
+        }
+    }
+    runs
+}
+
+/// Which lines a w:br ends (they carry `wrap_runs_split`'s empty marker
+/// last), so a rewrap keeps them unjustified.
+fn ended_by_breaks(lines: &[Vec<TextRun>]) -> Vec<bool> {
+    lines
+        .iter()
+        .map(|l| l.last().is_some_and(|r| r.ends_line && r.text.is_empty()))
+        .collect()
 }
 
 /// Baseline depth of an exact line: Word puts it 4/5 down the box.
@@ -18957,6 +19193,7 @@ impl<'a> Layout<'a> {
             para_top: y,
             para_before: 0.0,
             para_space_above: 0.0,
+            blank_below: None,
             para_fold_share: 0.0,
             pbdr_joins: (false, false),
             bookmark_pages: HashMap::new(),
@@ -19218,6 +19455,19 @@ impl<'a> Layout<'a> {
     /// float just painted from `start` goes under any earlier one on its
     /// page with a higher z, which move to paint after it (e83fa17a's
     /// photos over the white boxes anchored after them).
+    /// Runs `paint` inside `Op::Pin` brackets when `pin`: what it paints is
+    /// fixed to the page (`shift_flow_ops` leaves it).
+    fn pinned<T>(&mut self, pin: bool, paint: impl FnOnce(&mut Self) -> T) -> T {
+        if !pin {
+            return paint(self);
+        }
+        let page = self.pages.len();
+        self.current().ops.push(Op::Pin(true));
+        let out = paint(self);
+        self.pages[page - 1].ops.push(Op::Pin(false));
+        out
+    }
+
     fn stack_front_float(&mut self, page: usize, start: usize, z: u32) {
         if self.pages.len() != page || self.current().ops.len() <= start {
             return;
@@ -19263,6 +19513,7 @@ impl<'a> Layout<'a> {
     }
 
     fn new_page(&mut self) {
+        self.blank_below = None;
         self.close_rev_bar();
         if self.pages.len() == 1 {
             self.center_first_page_body();
@@ -19322,9 +19573,7 @@ impl<'a> Layout<'a> {
             return;
         }
         let dy = -(avail - used) / 2.0;
-        for op in &mut self.pages[0].ops[start..] {
-            shift_op_y(op, dy);
-        }
+        shift_flow_ops(&mut self.pages[0].ops[start..], dy);
         for note in &mut self.pages[0].comments {
             note.y += dy;
         }
@@ -19334,6 +19583,16 @@ impl<'a> Layout<'a> {
     /// at a page top reached by overflow or a manual break, and only its
     /// excess over `top_credit` at one reached by pageBreakBefore or a
     /// section break.
+    /// Move down by the space before `page_top_before` keeps, noting a page
+    /// it opens as still blank.
+    fn space_before(&mut self, before: f32) {
+        let opens = (self.page.height - self.body_top - self.y).abs() < 0.5;
+        self.y -= self.page_top_before(before);
+        if opens {
+            self.blank_below = Some(self.y);
+        }
+    }
+
     fn page_top_before(&self, before: f32) -> f32 {
         if !self.at_page_top {
             before
@@ -19684,7 +19943,11 @@ impl<'a> Layout<'a> {
         // Nothing placed yet (cursor at the body top): breaking would only
         // leave a blank page before an object taller than the page
         // (fixtures_500 00f45b1b's one-row brochure). Word starts it here.
-        let untouched = (self.page.height - self.body_top - self.y).abs() < 0.5;
+        // Nor under nothing but the paragraph's own space before (priority
+        // 9f2c60b301: Word draws a 648pt inline cover box under Heading 1's
+        // 18pt before on page 1, past the bottom margin).
+        let untouched = (self.page.height - self.body_top - self.y).abs() < 0.5
+            || self.blank_below.is_some_and(|y| (y - self.y).abs() < 0.5);
         if self.y - need < floor && !untouched {
             if self.page.col_count > 1 && self.col_i + 1 < self.page.col_count {
                 self.column_break();
@@ -20477,7 +20740,7 @@ impl<'a> Layout<'a> {
             return (lines, n);
         }
         let mut out = lines[..n].to_vec();
-        let rest: Vec<TextRun> = lines[n..].iter().flatten().cloned().collect();
+        let rest = rejoin_lines(&lines[n..]);
         if rest.iter().any(|r| !r.text.trim().is_empty()) {
             out.extend(wrap_runs(self.fonts, &rest, full_width, full_width, false));
         }
@@ -20548,7 +20811,7 @@ impl<'a> Layout<'a> {
         let auto_at_top = self.at_page_top && style.before_auto;
         let above = self.y;
         if !auto_at_top {
-            self.y -= self.page_top_before(style.before);
+            self.space_before(style.before);
         }
         self.para_space_above = std::mem::take(&mut self.para_fold_share) + above - self.y;
         self.at_page_top = false;
@@ -20616,13 +20879,12 @@ impl<'a> Layout<'a> {
                 k += 1;
             }
             if k < lines.len() {
-                let rest: Vec<TextRun> = lines[k..].iter().flatten().cloned().collect();
+                let rest = rejoin_lines(&lines[k..]);
                 let beside = wrap_runs(self.fonts, &rest, width, width, false);
                 let (beside, n) = self.reflow_past_float(beside, style, full_width, inset_h - used);
                 lines.truncate(k);
                 lines.extend(beside);
-                ends_br.truncate(k);
-                ends_br.resize(lines.len(), false);
+                ends_br = ended_by_breaks(&lines);
                 narrow = k..k + n;
             } else {
                 narrow = 0..0;
@@ -20630,7 +20892,7 @@ impl<'a> Layout<'a> {
         } else if reflow {
             let (reflowed, n) = self.reflow_past_float(lines, style, full_width, inset_h);
             lines = reflowed;
-            ends_br = vec![false; lines.len()];
+            ends_br = ended_by_breaks(&lines);
             narrow = 0..n;
         }
         // The empty line after a trailing break holds only the paragraph
@@ -22136,7 +22398,7 @@ impl<'a> Layout<'a> {
         }
     }
 
-    fn paint_justified_line(&mut self, line: &[TextRun], mut x: f32, y: f32, leftover: f32) {
+    fn paint_justified_line(&mut self, line: &[TextRun], x: f32, y: f32, leftover: f32) {
         let gaps = inter_word_gaps(line);
         // Justifying stretches only the spaces after the last tab. With
         // none, the line is its tabs: they go to their stops with their
@@ -22150,9 +22412,54 @@ impl<'a> Layout<'a> {
         } else {
             0.0
         };
+        let Some(k) = line.iter().rposition(|r| r.text.contains('\t')) else {
+            self.paint_stretched(line, x, y, pad);
+            return;
+        };
+        // What comes before the last tab is a tabbed line (leaders, right,
+        // centre and decimal stops); the last tab goes to its stop and only
+        // the text after it stretches (PR #247 review: paint_run sent it to
+        // the next left stop without its leader).
+        let at = line[k].text.rfind('\t').unwrap_or_default();
+        let mut head: Vec<TextRun> = line[..k].to_vec();
+        if at > 0 {
+            head.push(line[k].with_text(&line[k].text[..at]));
+        }
+        let mut tail: Vec<TextRun> = Vec::new();
+        if at + 1 < line[k].text.len() {
+            tail.push(line[k].with_text(&line[k].text[at + 1..]));
+        }
+        tail.extend_from_slice(&line[k + 1..]);
+        let x = self.paint_line_with_tabs(&head, x, y);
+        let stop = next_tab_stop(
+            x - self.tab_shift,
+            self.flow_left(),
+            &self.tab_stops,
+            self.page.default_tab,
+        );
+        if stop.align == TabAlign::Left {
+            let x = self.advance_tab(x, y, 0.0, 0.0, &line[k].style);
+            self.paint_stretched(&tail, x, y, pad);
+        } else {
+            // A right, centre or decimal stop aligns the text after it at
+            // its natural width.
+            let (after_w, decimal_w) = match tail.split_first() {
+                Some((first, rest)) => (
+                    self.tab_suffix_width(&first.text, first, rest),
+                    self.decimal_prefix_width(&first.text, first, rest),
+                ),
+                None => (0.0, 0.0),
+            };
+            let x = self.advance_tab(x, y, after_w, decimal_w, &line[k].style);
+            self.paint_line_with_tabs(&tail, x, y);
+        }
+    }
+
+    /// Paint `line` word by word, each space before its last ink widened
+    /// by `pad`.
+    fn paint_stretched(&mut self, line: &[TextRun], mut x: f32, y: f32, pad: f32) {
         let joined: String = line.iter().map(|r| r.text.as_str()).collect();
         let last_ink = joined.rfind(|c: char| !c.is_whitespace());
-        let last_tab = joined.rfind('\t');
         let mut idx = 0usize;
         for run in line {
             let mut word = String::new();
@@ -22166,7 +22473,7 @@ impl<'a> Layout<'a> {
                         );
                     }
                     x = self.paint_run(&TextRun::new(" ", run.style.clone()), x, y);
-                    if last_ink.is_some_and(|end| idx < end) && last_tab.is_none_or(|t| idx > t) {
+                    if last_ink.is_some_and(|end| idx < end) {
                         // Word's underline and strike run through the
                         // stretched space, not only its natural width.
                         self.decorate_run(x, y, pad, &run.style);
@@ -22347,6 +22654,27 @@ impl<'a> Layout<'a> {
             y
         };
         (x, y)
+    }
+
+    /// The floor a floating table's first page breaks at, its top at PDF
+    /// `top`. Before compat 15 a page-anchored one below the body top gets
+    /// one body height from its own top, past the bottom margin (Word 16
+    /// probes y2440_* 0930: 20pt rows from 122pt run to 770 on page 1, not
+    /// the 720 floor, and to 749 above a 21pt-taller footer band; priority
+    /// d9b54326f3's page 7). Compat 15 keeps the page's floor.
+    fn float_first_floor(&self, slot: ImageSlot, top: f32) -> f32 {
+        let page_float = matches!(
+            slot,
+            ImageSlot::Float {
+                page_y: Some(_),
+                ..
+            }
+        );
+        if self.compat_mode >= 15 || !page_float || self.nested_depth > 0 {
+            return self.body_floor;
+        }
+        let room = self.page.height - self.body_top - self.body_floor;
+        self.body_floor.min(top - room).max(0.0)
     }
 
     /// PDF top of a floating (tblpPr) table: `tblpY` from its vertAnchor
@@ -22737,7 +23065,9 @@ impl<'a> Layout<'a> {
             slot @ ImageSlot::Float { .. } => self.float_xy(dw, dh, slot),
         };
         let (page, start) = (self.pages.len(), self.current().ops.len());
-        self.push_image(img, x, y, dw, dh);
+        let fixed =
+            matches!(img.slot, ImageSlot::Float { .. }) && !float_is_text_anchored(img.slot);
+        self.pinned(fixed, |lay| lay.push_image(img, x, y, dw, dh));
         if !img.behind && matches!(img.slot, ImageSlot::Float { .. }) {
             self.stack_front_float(page, start, img.z);
         }
@@ -24777,7 +25107,8 @@ impl<'a> Layout<'a> {
         // table continues on page 2).
         let overflows = geom.float.is_some_and(|slot| {
             let th: f32 = row_h.iter().sum();
-            self.float_table_top(slot) - th < self.body_floor
+            let top = self.float_table_top(slot);
+            top - th < self.float_first_floor(slot, top)
         });
         let mut table_left = origin + shift + ind - pull;
         // A top-margin float's first page keeps the floor raised to one
@@ -24834,6 +25165,9 @@ impl<'a> Layout<'a> {
             if margin_float {
                 first_floor = Some((self.pages.len(), self.body_floor));
                 self.body_floor = self.body_floor.max(top - room);
+            } else if self.float_first_floor(slot, self.y) < self.body_floor {
+                first_floor = Some((self.pages.len(), self.body_floor));
+                self.body_floor = self.float_first_floor(slot, self.y);
             }
             // Every page of it keeps the float's column (a 360pt centred
             // table's border at 216 on pages 1-3), not the margin.
@@ -24909,11 +25243,10 @@ impl<'a> Layout<'a> {
                 && push > 0.0
                 && saved_y - push >= self.body_floor
             {
+                // Objects fixed to the page stay put (PR #247 review).
                 let start = self.chrome_end;
                 let page = self.current();
-                for op in &mut page.ops[start..] {
-                    shift_op_y(op, -push);
-                }
+                shift_flow_ops(&mut page.ops[start..], -push);
                 for note in &mut page.comments {
                     note.y -= push;
                 }
@@ -25608,30 +25941,9 @@ impl<'a> Layout<'a> {
         wrap_w: f32,
     ) -> Option<(CellPara, CellPara)> {
         let (first_w, rest_w) = cell_para_widths(self.fonts, para, wrap_w);
-        let (lines, ends_br) = wrap_cell_runs(self.fonts, para, first_w, rest_w);
-        // The halves are wrapped again, so a line a w:br ended gives its
-        // break back as text (a7e5b7872c's story parts ran together); the
-        // page end stands for the break closing the head.
-        let rejoin = |range: std::ops::Range<usize>| -> Vec<TextRun> {
-            let mut runs = Vec::new();
-            let end = range.end;
-            for j in range {
-                let line = &lines[j];
-                let n = line.len();
-                for (r, run) in line.iter().enumerate() {
-                    if ends_br[j] && r + 1 == n && run.ends_line && run.text.is_empty() {
-                        if j + 1 < end {
-                            let mut br = run.with_text("\n");
-                            br.ends_line = false;
-                            runs.push(br);
-                        }
-                    } else {
-                        runs.push(run.clone());
-                    }
-                }
-            }
-            runs
-        };
+        let (lines, _) = wrap_cell_runs(self.fonts, para, first_w, rest_w);
+        // The halves are wrapped again, so each keeps its w:br breaks.
+        let rejoin = |range: std::ops::Range<usize>| rejoin_lines(&lines[range]);
         let mut used = para.style.before;
         let mut n = 0;
         while n < lines.len() {
@@ -25953,14 +26265,14 @@ impl<'a> Layout<'a> {
         let line_w: f32 = runs
             .iter()
             .map(|r| {
-                let f = self
-                    .fonts
-                    .resolve(&r.style.family, r.style.bold, r.style.italic);
                 // NUMPAGES is painted as @@N@@ then patched to the real
                 // count. Measuring the mark (~45pt) shoved I_am_sharing
                 // "Page 1 of 9" to x=470 vs Word 509. A tab in an aligned
                 // line is not a glyph.
                 let text = r.text.replace('\t', "");
+                // The face that paints it, script fallback included, as in
+                // the body (PR #247 review: a header's Hangul in Arial).
+                let f = ink_face(self.fonts, &r.style, &text);
                 let measure = chrome_measure_text(&text);
                 // w:spacing tracks every letter here too (013d00cf's
                 // "P a g e" footer label).
@@ -25992,9 +26304,7 @@ impl<'a> Layout<'a> {
                 x = self.paint_run(run, x, y);
                 continue;
             }
-            let fid = self
-                .fonts
-                .resolve(&run.style.family, run.style.bold, run.style.italic);
+            let fid = ink_face(self.fonts, &run.style, &run.text);
             let face = self.fonts.get(fid);
             let size = run.style.paint_size();
             // Same measure as line_w: @@N@@/@@P@@ are patched after paint,
@@ -26148,6 +26458,7 @@ impl<'a> Layout<'a> {
                 }
                 let h = hf_break_box(self.fonts, r);
                 self.hf_break_fill(&header, i, band, h);
+                self.hf_rev_bar(std::slice::from_ref(r), r.hf_para.as_deref(), band, h);
                 if let Some(p) = r.hf_para.as_deref() {
                     let prev = header[..i].iter().rev().find_map(|n| n.hf_para.as_deref());
                     let next = header[i + 1..].iter().find_map(|n| n.hf_para.as_deref());
@@ -26366,6 +26677,7 @@ impl<'a> Layout<'a> {
                     let h = hf_break_box(self.fonts, r);
                     bottom += r.para_gap;
                     self.hf_break_fill(&footer, i, bottom + h, h);
+                    self.hf_rev_bar(std::slice::from_ref(r), r.hf_para.as_deref(), bottom + h, h);
                     // Its borders paint too (probe fb_f4_0930: the empty
                     // opening paragraph's bottom rule, c73c128db4's footer4).
                     if let Some(p) = r.hf_para.as_deref() {
@@ -26438,6 +26750,13 @@ impl<'a> Layout<'a> {
                     let h = hf_break_box(self.fonts, r);
                     self.hf_break_fill(&footer, i, bottom + h, h);
                     self.hf_rev_bar(std::slice::from_ref(r), r.hf_para.as_deref(), bottom + h, h);
+                    // Their borders stand in for the part's fallback rule.
+                    if let Some(p) = r.hf_para.as_deref() {
+                        let next = footer[i + 1..].iter().find_map(|n| n.hf_para.as_deref());
+                        let prev = footer[..i].iter().rev().find_map(|n| n.hf_para.as_deref());
+                        self.hf_bottom_rule(p, next, bottom);
+                        self.hf_top_rule(prev, p, bottom + h);
+                    }
                     bottom += h + r.para_gap;
                 }
             }
@@ -26844,6 +27163,9 @@ fn default_run_style() -> RunStyle {
         box_size: 0.0,
         bold_set: false,
         italic_set: false,
+        hidden: false,
+        auto_space_de_off: false,
+        auto_space_dn_off: false,
         offset: 0.0,
         vert: VertAlign::Baseline,
         kern_half: 0,
@@ -27887,7 +28209,28 @@ fn layout(
                 }
                 if style.keep_next && i >= lay.keep_chain_until {
                     let pitch = lay.page.grid_pitch;
-                    let own = para_first_line_pt(lay.fonts, runs, &style, pitch);
+                    // A paragraph of inline pictures alone is as tall as
+                    // they are, and lays out without emit_runs, which
+                    // would take the follow (Word 16 probe kn 1001: a
+                    // 250pt picture goes to the next page with its
+                    // follower; PR #247 review).
+                    let pictures = !runs.iter().any(|r| !r.text.trim().is_empty());
+                    let pic_h = if pictures {
+                        images
+                            .iter()
+                            .filter(|im| matches!(im.slot, ImageSlot::Flow))
+                            .map(|im| im.h)
+                            .chain(
+                                boxes
+                                    .iter()
+                                    .filter(|b| matches!(b.slot, ImageSlot::Flow))
+                                    .map(|b| b.h),
+                            )
+                            .fold(0.0_f32, f32::max)
+                    } else {
+                        0.0
+                    };
+                    let own = para_first_line_pt(lay.fonts, runs, &style, pitch).max(pic_h);
                     let lines = lay.para_line_count(runs, &style, *list);
                     let own_all = style.before + own * lines as f32 + style.after;
                     let (total, first, end) = lay.keep_next_chain_follow(blocks, i + 1);
@@ -27903,7 +28246,7 @@ fn layout(
                         lay.keep_chain_until = end;
                     } else {
                         let follow = if overlong { first } else { total };
-                        if lay.compat_mode >= 15 {
+                        if lay.compat_mode >= 15 && pic_h <= 0.0 {
                             lay.keep_next_follow = follow;
                         } else if let Some(need) =
                             lay.legacy_keep_chain_need(blocks, i, own_all, style.after)
@@ -28066,7 +28409,7 @@ fn layout(
                             word.is_some_and(|w| pics + w > room)
                         };
                     if leads {
-                        lay.y -= lay.page_top_before(style.before);
+                        lay.space_before(style.before);
                         lay.at_page_top = false;
                         lay.suppress_space_before = false;
                         lay.emit_inline_pictures(&flow, &style, None, runs);
@@ -28133,7 +28476,7 @@ fn layout(
                         lay.para_top = anchor_top;
                     }
                 } else if !lay.at_page_top || !lay.suppress_space_before {
-                    lay.y -= lay.page_top_before(style.before);
+                    lay.space_before(style.before);
                     lay.at_page_top = false;
                     lay.suppress_space_before = false;
                 }
@@ -28296,7 +28639,9 @@ fn layout(
                     // label backdrops hid "QUI SOMMES NOUS ?").
                     let page = lay.pages.len();
                     let start = lay.current().ops.len();
-                    lay.emit_textbox(box_, style.indent_left);
+                    let fixed = matches!(box_.slot, ImageSlot::Float { .. })
+                        && !float_is_text_anchored(box_.slot);
+                    lay.pinned(fixed, |lay| lay.emit_textbox(box_, style.indent_left));
                     if box_.behind && lay.pages.len() == page {
                         let at = lay.behind_end.min(start);
                         let ops: Vec<Op> = lay.current().ops.drain(start..).collect();
@@ -30398,7 +30743,21 @@ fn shift_op_y(op: &mut Op, dy: f32) {
                 }
             }
         }
-        Op::Watermark { .. } => {}
+        Op::Watermark { .. } | Op::Pin(_) => {}
+    }
+}
+
+/// `shift_op_y` over the text flow's operations: those an `Op::Pin`
+/// brackets belong to objects fixed to the page and stay.
+fn shift_flow_ops(ops: &mut [Op], dy: f32) {
+    let mut pinned = 0_usize;
+    for op in ops {
+        match op {
+            Op::Pin(true) => pinned += 1,
+            Op::Pin(false) => pinned = pinned.saturating_sub(1),
+            _ if pinned == 0 => shift_op_y(op, dy),
+            _ => {}
+        }
     }
 }
 
@@ -30440,7 +30799,7 @@ fn shift_op_x(op: &mut Op, dx: f32) {
                 }
             }
         }
-        Op::Watermark { .. } => {}
+        Op::Watermark { .. } | Op::Pin(_) => {}
     }
 }
 
@@ -30495,7 +30854,7 @@ fn body_op_yrange(ops: &[Op]) -> Option<(f32, f32)> {
                     }
                 }
             }
-            Op::Watermark { .. } => {}
+            Op::Watermark { .. } | Op::Pin(_) => {}
         }
     }
     (min_y.is_finite() && max_y.is_finite()).then_some((min_y, max_y))
@@ -30701,7 +31060,9 @@ mod page_num_fmt_labels {
     fn ideograph_enclosed_circle_is_parenthesized() {
         assert_eq!(ideograph_enclosed_circle_label(1), "㈠");
         assert_eq!(ideograph_enclosed_circle_label(2), "㈡");
-        assert_eq!(ideograph_enclosed_circle_label(11), "一一");
+        // Word 16 (probe lst 1001, and a footer PAGE): past ㈩ the label is
+        // plain decimal, "11.", not 一一.
+        assert_eq!(ideograph_enclosed_circle_label(11), "11");
     }
 
     #[test]
