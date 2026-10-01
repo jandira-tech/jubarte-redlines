@@ -211,6 +211,44 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   - Live Word probe: a heading over a 600pt inline picture opens page 2.
   - Redline d20125ec: 11 pages, as in Word.
 
+## Justified lines and hyphens
+
+- **A compat-15 justified line squeezes its spaces to keep a word, within
+  two limits.** The overflow must be at most a quarter of the line's space
+  width (e522f530, 00044aa0), and at most a third of the overflowing word
+  plus two spaces: shrinking may take half of what moving the word would
+  leave to stretch, its space included. Word 2010 mode (14) never squeezes.
+  - Word 16 probes, Times 9 and 11, 8 to 39 spaces, last words of 2 to 9
+    letters: "times" at 11pt is kept up to 9.7pt and moved at 9.92pt
+    (limit 9.86, with 19 or 30 spaces alike); "measured" kept at 15.2,
+    moved at 16.0 (limit 15.9); an 8-space line keeps "today" at 24% of
+    its spaces and moves it at 30%. Mirror words (`iiiiimmmm`,
+    `mmmmiiiii`) behave alike: width counts, not letters.
+  - _to_improve d06f02170c: 11.07pt over at "times" moves it (6 pages to
+    Word's 7). LibreOffice's Word-interop shrink has only the quarter
+    (`nMinimum = 75` in `sw/source/core/text/portxt.cxx`).
+- **`w:noBreakHyphen` paints a hyphen and never breaks the line.** Word's
+  PDF holds a plain 0x2D: most faces (Arial, Calibri, Aptos) have no
+  U+2011 glyph. d06f02170c's "self-incrimination".
+
+## Breaks, typed labels and diagrams
+
+- **A `w:br` run sizes only a line it stands alone on.** "Top" then a 20pt
+  break run keeps Top's 11pt line; a 20pt break alone on its line sizes
+  that empty line (Word 16 probe 2026-10-01). _to_improve e124592dd0's
+  36pt break after a 28pt title made us a page longer than Word's 2;
+  fixtures_500 00accd5b's 13.5pt break is the second of two, alone.
+- **A typed label its own tab places is tabbed text, not a hanging list
+  marker.** English holdout c73c128db4's Defpara "⇥(a)⇥text" hangs 1616
+  twips with a right stop at 1332 and a left one at 1616: Word right-aligns
+  "(a)" on 66.6pt, starts and wraps the text on 80.8pt. The stop a tab
+  aligns to ends the text it measures at the next tab, in the same run too.
+  Pages 108 to Word's 104.
+- **An inline SmartArt diagram takes the line of a picture its size.** No
+  empty text line above it, no gap below, and a multiple's extra under it
+  from the paragraph's run style (probe: 1.5 lines leave the next line at
+  209.52 for both).
+
 ## Page colour
 
 - **`w:background` is not in Word's PDF.** Word leaves the page colour out even
