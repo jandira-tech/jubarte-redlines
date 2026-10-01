@@ -311,5 +311,17 @@ class Downstream(unittest.TestCase):
         self.assertNotIn("--submit", text)
 
 
+
+class Header(unittest.TestCase):
+    def test_the_step_list_numbers_the_steps_the_script_prints(self) -> None:
+        """The header's "What it does" list counts the steps as `say` names them."""
+        import re
+
+        text = RELEASE_SH.read_text()
+        header = text.split("# What it does, in order:", 1)[1].split("\n#\n", 1)[0]
+        listed = [int(n) for n in re.findall(r"^#\s+(\d+)\. ", header, re.M)]
+        printed = list(dict.fromkeys(int(n) for n in re.findall(r'say "(\d+)\. ', text)))
+        self.assertEqual(listed, printed)
+
 if __name__ == "__main__":
     unittest.main()
