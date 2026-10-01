@@ -1547,6 +1547,81 @@ fn a_br_outside_a_run_still_breaks_the_line() {
 }
 
 #[test]
+fn a_br_before_the_text_of_its_run_breaks_the_line() {
+    // _to_improve f9b9dbd790 redline: each line of the product sheet is
+    // <w:r><w:br/><w:t>…</w:t></w:r>, in plain and inserted runs alike.
+    // Word starts each on its own line; we glued them ("vinduer.Praktisk")
+    // and ended on 9 pages to Word's 10.
+    let body = "<w:p><w:r><w:t>LeadPlain</w:t></w:r><w:r><w:br/><w:t>NextPlain</w:t></w:r></w:p>\
+                <w:p><w:ins w:id=\"1\" w:author=\"A\" w:date=\"2026-01-01T00:00:00Z\">\
+                <w:r><w:t>LeadIns</w:t></w:r><w:r><w:br/><w:t>NextIns</w:t></w:r></w:ins></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("br before text");
+    let y = |t: &str| {
+        pdf_glyph_text_xy(&pdf, t)
+            .unwrap_or_else(|| panic!("{t}"))
+            .1
+    };
+    assert!(
+        y("LeadPlain") - y("NextPlain") > 10.0,
+        "plain run: the br starts a new line"
+    );
+    assert!(
+        y("LeadIns") - y("NextIns") > 10.0,
+        "inserted run: the br starts a new line"
+    );
+}
+
+#[test]
+fn a_br_beside_a_square_float_still_breaks_the_line() {
+    // _to_improve f9b9dbd790 redline: the header's logos wrap square into
+    // the body, and the first paragraph is one w:p of <w:br/> lines.
+    // Word breaks at every br beside and below the logo; we glued them.
+    let float = blip(
+        "1270000",
+        "1270000",
+        "<wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:simplePos x=\"0\" y=\"0\"/>\
+           <wp:positionH relativeFrom=\"margin\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+           <wp:wrapSquare wrapText=\"bothSides\"/>",
+        "</wp:anchor>",
+    );
+    let right = float.replace(
+        "<wp:posOffset>0</wp:posOffset></wp:positionH>",
+        "<wp:posOffset>4572000</wp:posOffset></wp:positionH>",
+    );
+    let body = format!(
+        "<w:p><w:r>{float}</w:r><w:r>{right}</w:r><w:r><w:t>SqOne</w:t></w:r><w:r><w:br/><w:t>SqTwo</w:t></w:r>\
+         <w:r><w:br/></w:r><w:r><w:t>SqThree</w:t></w:r>{below}</w:p><w:sectPr/>",
+        below = (0..10)
+            .map(|i| format!("<w:r><w:br/><w:t>SqBelow{i}</w:t></w:r>"))
+            .collect::<String>()
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("br beside float");
+    let y = |t: &str| {
+        pdf_glyph_text_xy(&pdf, t)
+            .unwrap_or_else(|| panic!("{t}"))
+            .1
+    };
+    assert!(
+        y("SqOne") - y("SqTwo") > 10.0,
+        "the in-run br starts a new line"
+    );
+    assert!(
+        y("SqTwo") - y("SqThree") > 10.0,
+        "the br-only run starts a new line"
+    );
+    for i in 0..9 {
+        let (a, b) = (format!("SqBelow{i}"), format!("SqBelow{}", i + 1));
+        assert!(
+            y(&a) - y(&b) > 10.0,
+            "{b} starts its own line past the float"
+        );
+    }
+}
+
+#[test]
 fn a_newline_inside_w_t_is_a_space_not_a_break() {
     // fixtures_500 000312ea (PHPWord): the Heading1 text carries literal
     // newlines ("jeudi 27 avril 2017\nJeudi, 2ème …"). Word draws them as
@@ -26227,6 +26302,44 @@ fn do_not_expand_shift_return_skips_justify_on_soft_break() {
         bx - ax < 80.0,
         "doNotExpandShiftReturn must not justify the shift-return line; A={ax} B={bx} dx={}",
         bx - ax
+    );
+}
+
+#[test]
+fn do_not_expand_shift_return_holds_past_a_side_float() {
+    // The lines a paragraph rewraps past a side float keep their w:br
+    // ends, so doNotExpandShiftReturn still leaves those lines unstretched
+    // (the rewrap marked every line as unbroken and justified them).
+    let filler = "Lorem ipsum dolor sit amet consectetur adipiscing elit sed do. ".repeat(6);
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblpPr w:leftFromText=\"180\" w:rightFromText=\"180\" \
+           w:vertAnchor=\"text\" w:horzAnchor=\"margin\" w:tblpY=\"1\"/>\
+           <w:tblW w:w=\"2160\" w:type=\"dxa\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"2160\"/></w:tblGrid>\
+           <w:tr><w:trPr><w:trHeight w:val=\"720\" w:hRule=\"exact\"/></w:trPr>\
+           <w:tc><w:p><w:r><w:t>Box</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+         <w:p><w:pPr><w:jc w:val=\"both\"/>\
+           <w:spacing w:before=\"0\" w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+           <w:r><w:t xml:space=\"preserve\">{filler}</w:t></w:r>\
+           <w:r><w:br/><w:t xml:space=\"preserve\">DxShA DxShB</w:t></w:r>\
+           <w:r><w:br/><w:t>DxShEnd</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(
+        &body,
+        "<w:compat><w:doNotExpandShiftReturn/></w:compat>",
+    ))
+    .expect("side float shift return");
+    let x = |t: &str| {
+        pdf_glyph_text_xy(&pdf, t)
+            .unwrap_or_else(|| panic!("{t}"))
+            .0
+    };
+    assert!(
+        x("DxShB") - x("DxShA") < 80.0,
+        "the br-ended line past the float stays unstretched; gap {}",
+        x("DxShB") - x("DxShA")
     );
 }
 

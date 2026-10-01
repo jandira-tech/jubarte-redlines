@@ -18747,6 +18747,38 @@ fn split_at_breaks(runs: &[TextRun]) -> Vec<Vec<TextRun>> {
     lines
 }
 
+/// Wrapped lines joined back into one run list for wrapping again: a line
+/// a w:br ended gives its break back as text, so the rewrap keeps it
+/// (a7e5b7872c's cell halves and f9b9dbd790's lines past a header logo ran
+/// together). The last line's break is dropped: whatever follows the range
+/// (a page end, a new band) stands for it.
+fn rejoin_lines(lines: &[Vec<TextRun>]) -> Vec<TextRun> {
+    let mut runs = Vec::new();
+    for (j, line) in lines.iter().enumerate() {
+        for (r, run) in line.iter().enumerate() {
+            if r + 1 == line.len() && run.ends_line && run.text.is_empty() {
+                if j + 1 < lines.len() {
+                    let mut br = run.with_text("\n");
+                    br.ends_line = false;
+                    runs.push(br);
+                }
+            } else {
+                runs.push(run.clone());
+            }
+        }
+    }
+    runs
+}
+
+/// Which lines a w:br ends (they carry `wrap_runs_split`'s empty marker
+/// last), so a rewrap keeps them unjustified.
+fn ended_by_breaks(lines: &[Vec<TextRun>]) -> Vec<bool> {
+    lines
+        .iter()
+        .map(|l| l.last().is_some_and(|r| r.ends_line && r.text.is_empty()))
+        .collect()
+}
+
 /// Baseline depth of an exact line: Word puts it 4/5 down the box.
 fn exact_baseline(line_box: f32) -> f32 {
     line_box * 0.8
@@ -20503,7 +20535,7 @@ impl<'a> Layout<'a> {
             return (lines, n);
         }
         let mut out = lines[..n].to_vec();
-        let rest: Vec<TextRun> = lines[n..].iter().flatten().cloned().collect();
+        let rest = rejoin_lines(&lines[n..]);
         if rest.iter().any(|r| !r.text.trim().is_empty()) {
             out.extend(wrap_runs(self.fonts, &rest, full_width, full_width, false));
         }
@@ -20642,13 +20674,12 @@ impl<'a> Layout<'a> {
                 k += 1;
             }
             if k < lines.len() {
-                let rest: Vec<TextRun> = lines[k..].iter().flatten().cloned().collect();
+                let rest = rejoin_lines(&lines[k..]);
                 let beside = wrap_runs(self.fonts, &rest, width, width, false);
                 let (beside, n) = self.reflow_past_float(beside, style, full_width, inset_h - used);
                 lines.truncate(k);
                 lines.extend(beside);
-                ends_br.truncate(k);
-                ends_br.resize(lines.len(), false);
+                ends_br = ended_by_breaks(&lines);
                 narrow = k..k + n;
             } else {
                 narrow = 0..0;
@@ -20656,7 +20687,7 @@ impl<'a> Layout<'a> {
         } else if reflow {
             let (reflowed, n) = self.reflow_past_float(lines, style, full_width, inset_h);
             lines = reflowed;
-            ends_br = vec![false; lines.len()];
+            ends_br = ended_by_breaks(&lines);
             narrow = 0..n;
         }
         // The empty line after a trailing break holds only the paragraph
@@ -25659,30 +25690,9 @@ impl<'a> Layout<'a> {
         wrap_w: f32,
     ) -> Option<(CellPara, CellPara)> {
         let (first_w, rest_w) = cell_para_widths(self.fonts, para, wrap_w);
-        let (lines, ends_br) = wrap_cell_runs(self.fonts, para, first_w, rest_w);
-        // The halves are wrapped again, so a line a w:br ended gives its
-        // break back as text (a7e5b7872c's story parts ran together); the
-        // page end stands for the break closing the head.
-        let rejoin = |range: std::ops::Range<usize>| -> Vec<TextRun> {
-            let mut runs = Vec::new();
-            let end = range.end;
-            for j in range {
-                let line = &lines[j];
-                let n = line.len();
-                for (r, run) in line.iter().enumerate() {
-                    if ends_br[j] && r + 1 == n && run.ends_line && run.text.is_empty() {
-                        if j + 1 < end {
-                            let mut br = run.with_text("\n");
-                            br.ends_line = false;
-                            runs.push(br);
-                        }
-                    } else {
-                        runs.push(run.clone());
-                    }
-                }
-            }
-            runs
-        };
+        let (lines, _) = wrap_cell_runs(self.fonts, para, first_w, rest_w);
+        // The halves are wrapped again, so each keeps its w:br breaks.
+        let rejoin = |range: std::ops::Range<usize>| rejoin_lines(&lines[range]);
         let mut used = para.style.before;
         let mut n = 0;
         while n < lines.len() {

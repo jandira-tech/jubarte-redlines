@@ -17,6 +17,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- A line ended by a `w:br` keeps its break when the paragraph reflows
+  past a header or body float with square or tight wrapping. The lines
+  below the float no longer run together, and a justified line that
+  ends in a break stays unstretched under `doNotExpandShiftReturn`.
 - Below compatibility mode 15, a page-anchored floating table that
   starts below the body top gets one body height of rows from its own
   top on its first page, past the bottom margin, as Word does; the
