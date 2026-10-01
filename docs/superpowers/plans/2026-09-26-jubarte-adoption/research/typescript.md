@@ -1,5 +1,12 @@
 # Jubarte JavaScript/TypeScript API and distribution research
 
+> **Status (2026-10-01, bd262981): the facts under "Verified current
+> state" describe 0.9.2.** As of 2026-10-01 (0.10.1 + unreleased main): a
+> second npm package, the `jubarte-redlines` CLI, exists (a6d5e8ae); raw
+> edit/diff WASM exports shipped (bf1e0b21); there is still no JS facade
+> or worker. See CHANGELOG [0.10.1]/[Unreleased]. The recommendations
+> below stand as written.
+
 Prepared 2026-09-26; source inspected, no Cargo commands or source edits performed. Recommendations describe new APIs, not exports already available. The root checkout has unrelated uncommitted comparer/test changes, which must be preserved. Memory lookup had no relevant results.
 
 ## Verified current state

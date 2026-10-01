@@ -4,6 +4,8 @@ SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 SPDX-License-Identifier: AGPL-3.0-only
 -->
 
+> **Status: SNAPSHOT — frozen as of 2026-09-05. Re-checked 2026-10-01 (bd262981).** This file is a dated record, not a live plan: do not append to it. Current truth lives in TODO.md (backlog) and CHANGELOG.md (shipped). Sections still binding: none — evidence only; the one question since settled (Q7) is noted at section 5.
+
 # Redline benchmark assessment: are we fooling ourselves?
 
 2026-09-05. Scope: the `script_redlines` benchmark in `/Users/arthrod/temp/T/neurotic_docx_bench`
@@ -209,3 +211,8 @@ Not a plan; the decisions that the evidence puts on the table.
    an alarm nobody reads?
 7. Does VERSIONING.md's publish gate (Ring 1 at 0 NEW) get enforced, given 0.8.0 and
    0.9.0 both shipped past a red Ring 1 with 41 NEW rows?
+
+*[2026-10-01]* Q7 is settled: the Ring 1 gate — `tools/parity_ladder.py sweep
+--bin target/release/jubarte` at 0 NEW — is now a VERSIONING.md release-checklist
+item, and the parity baseline is `tools/parity_baseline.tsv` (146 blessed rows,
+0 NEW, re-counted at bd262981). Q1-Q6 remain undecided.

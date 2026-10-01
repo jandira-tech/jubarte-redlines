@@ -1059,6 +1059,11 @@ fn protected(line: &str) -> Vec<(usize, usize)> {
     out
 }
 
+/// The markers that open and close a deletion, insertion, highlight and
+/// comment.
+const OPENERS: [&str; 4] = ["[-", "{+", "{==", "{>>"];
+const CLOSERS: [&str; 4] = ["-]", "+}", "==}", "<<}"];
+
 /// Whether the space at byte `at` may become a line break.
 fn can_break(line: &str, at: usize, protected: &[(usize, usize)]) -> bool {
     if protected.iter().any(|&(start, end)| start < at && at < end) {
@@ -1071,6 +1076,12 @@ fn can_break(line: &str, at: usize, protected: &[(usize, usize)]) -> bool {
         || after.is_empty()
         || after.starts_with(' ')
     {
+        return false;
+    }
+    // A change marker stays on the line of the text it marks: no line ends
+    // with an opening marker or starts with a closing one (`{+paragraph` /
+    // `+}style` read as two changes).
+    if OPENERS.iter().any(|m| before.ends_with(m)) || CLOSERS.iter().any(|m| after.starts_with(m)) {
         return false;
     }
     !starts_block(after)
@@ -1104,7 +1115,10 @@ mod tests {
             assert_eq!(wrapped.replace('\n', " "), line, "{columns}");
             for row in wrapped.lines() {
                 for close in ["+}", "-]", "==}", "<<}"] {
-                    assert!(!row.starts_with(close), "{columns}: {row:?} starts with {close}");
+                    assert!(
+                        !row.starts_with(close),
+                        "{columns}: {row:?} starts with {close}"
+                    );
                 }
                 for open in ["{+", "[-", "{==", "{>>"] {
                     assert!(!row.ends_with(open), "{columns}: {row:?} ends with {open}");

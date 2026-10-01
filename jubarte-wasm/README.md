@@ -36,10 +36,31 @@ and the 8 MB shadow stack `-zstack-size=8388608`) is pinned in `.cargo/config.to
 and an env-var `RUSTFLAGS` would REPLACE — not merge — those flags. A bare
 `wasm-pack build` is the only invocation that guarantees both land. wasm-opt flags
 (`-O3`, SIMD, bulk-memory, …) live in `Cargo.toml [package.metadata.wasm-pack.profile.*]`;
-together those two files are the complete, pinnable recipe.
+together those two files are the complete, pinnable recipe. This applies to every
+`wasm-pack` invocation below, which all pass only the documented flags.
 
-The Cargo path dependency `jubarte = { path = ".." }` resolves to the enclosing
-jubarte-redlines crate. After building, run the speed lane in the bench; native and
+### Publish flow (`build-npm.sh`)
+
+A bare `wasm-pack build` is for local smoke tests only; the publishable npm
+package is assembled by [`build-npm.sh`](build-npm.sh) (run it from a **clean**
+tree — it refuses a dirty working tree, untracked files included, because the
+engine commit is stamped into the package; `ALLOW_DIRTY=1` overrides
+deliberately):
+
+- `wasm-pack build` four targets: `node` (default features), `web`
+  (`--out-dir pkg-web`), `node-slim` and `web-slim`
+  (`--no-default-features --features console-panic`, no PDF renderer);
+- copy the four artifact sets into `npm/node`, `npm/web`, `npm/node-slim`,
+  `npm/web-slim`;
+- copy the engine `LICENSE` into `npm/` and stamp `git rev-parse HEAD` into
+  `npm/ENGINE_COMMIT.txt`.
+
+`npm/package.json` and `npm/README.md` are hand-maintained — the script only
+refreshes the built artifacts and the commit stamp; publish with
+`cd npm && npm publish`.
+
+The Cargo path dependency `jubarte-redlines = { path = ".." }` resolves to the
+enclosing jubarte-redlines crate. After building, run the speed lane in the bench; native and
 WASM fidelity scores must match for the same source commit before publishing a
 speed comparison.
 

@@ -260,11 +260,18 @@ fn m4_a6_word_rollup() {
     // "a", " " (separator isolated), "b", "" (pPr word)
     assert_eq!(para_word_texts(&dom, &units), vec!["a", " ", "b", ""]);
 
-    // "3.14" → one word (digit-dot-digit), then pPr word
+    // Word mode: "3.14" → "3", ".", "14" (Word changes only the "5" of
+    // 1.5 → 1.6, tests/m_word_tokens.rs), then pPr word
     let mut dom2 = Dom::new();
     let body2 = body_from(&mut dom2, "<w:p><w:r><w:t>3.14</w:t></w:r></w:p>");
     let atoms2 = create_comparison_unit_atom_list(&mut dom2, body2, &s);
     let u2 = get_comparison_unit_list(&dom2, &atoms2, &s);
+    assert_eq!(para_word_texts(&dom2, &u2), vec!["3", ".", "14", ""]);
+
+    // PowerTools: "3.14" → one word (digit-dot-digit)
+    let faithful = WmlComparerSettings::powertools_faithful();
+    let atoms2 = create_comparison_unit_atom_list(&mut dom2, body2, &faithful);
+    let u2 = get_comparison_unit_list(&dom2, &atoms2, &faithful);
     assert_eq!(para_word_texts(&dom2, &u2), vec!["3.14", ""]);
 
     // "end." → "end" + "." separate

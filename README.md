@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+
+SPDX-License-Identifier: AGPL-3.0-only
+-->
+
 # jubarte
 
 **Word-faithful DOCX redlines and rendering, without Word.**
@@ -139,12 +145,28 @@ cargo install jubarte-redlines
 The installed binary is named `jubarte`.
 
 From the release after 0.10.1, the Python wheel and the npm package also
-run the CLI without an install, under the same command names:
+run the CLI without an install:
 
 ```sh
 uvx jubarte-redlines redline a.docx b.docx -o redline.docx
 npx jubarte-redlines redline a.docx b.docx -o redline.docx
 ```
+
+Both runners speak the shared command set — `compare`/`redline`,
+`revisions`, `changes`, `accept`, `reject`, `inspect`, `text`, `edit`,
+`convert`, `capabilities` — but not the whole binary surface: the Python
+wheel has no `diff`, `debug` or `self-update`, and the npm CLI, which
+mirrors the Python one, renders no PNG pages and takes no `--date`
+([`jubarte-wasm/cli/README.md`](jubarte-wasm/cli/README.md)).
+
+> **Unreleased (on main, ships with the next release).** The runner
+> one-liners above, plus a Markdown pipeline beside Word: `jubarte diff`
+> prints the changes between any two documents, Word or Markdown, as a
+> git-style patch; `jubarte convert draft.md` writes CommonMark (with
+> CriticMarkup as tracked changes) to DOCX/PDF/PNG; and `jubarte edit`
+> writes the redline's patch as `patch.diff`. See
+> [`docs/MARKDOWN.md`](docs/MARKDOWN.md) and
+> [`CHANGELOG.md`](CHANGELOG.md).
 
 For a source checkout, the repository also contains installation scripts that
 can install supplemental fonts used by the renderer:
@@ -425,6 +447,7 @@ A successful edit can produce:
 review/
   clean.docx
   redline.docx
+  patch.diff             (unreleased)
   report.jsonl
   clean.pdf
   redline.pdf
@@ -436,6 +459,8 @@ review/
 Supported operation kinds include:
 
 - `replace`
+- `rewrite` (unreleased: a paragraph's new text, applying only the words
+  that differ)
 - `insert`
 - `delete`
 - `comment`
@@ -658,7 +683,7 @@ DOCX rendering.
 The benchmark methodology, corpus provenance, current numbers and historical
 results belong in:
 
-- [`RESULTS.md`](RESULTS.md)
+- the [neurotic_docx_bench RESULTS.md](https://github.com/jandira-tech/neurotic_docx_bench/blob/main/RESULTS.md)
 - the [page-by-page comparison site](https://jandira-tech.github.io/jubarte-redlines/)
 
 Treat these as reproducible project-maintained measurements rather than as a
@@ -745,10 +770,14 @@ src/
   lib.rs                 public Rust crate
   document_comparer.rs   compare / revisions
   comparer/              comparison engine
+  changes.rs             tracked-change listing / resolution
+  inspect.rs             document inspection, edit-plan anchors
+  edit.rs + edit/        validated JSON edit plans
+  markdown/              Markdown in and out: convert, diff, patch
   convert/               DOCX → PDF/PNG layout engine
   opc/                   DOCX package layer
   xmllinq/               shared XML model
-  bin/jubarte.rs         CLI
+  bin/jubarte.rs         CLI (compare, edit, convert, diff, debug, …)
 
 jubarte-python/           PyO3 / maturin Python package
 jubarte-wasm/             wasm-bindgen / npm package

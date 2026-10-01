@@ -1,5 +1,11 @@
 # Safe Core, Inspection and Fidelity Implementation Plan
 
+> **Status (2026-10-01, bd262981): done — with corrections, per the banner
+> below.** The one item that banner still left open, task C2 (ZIP admission
+> limits), landed with 0.10.0: the agent surfaces refuse packages over
+> explicit budgets (64 MiB file, 10,000 entries, 256 MiB inflated total,
+> XML nesting 256, …) with `INPUT_LIMIT`-family codes (CHANGELOG 0.10.0).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Expose predictable document inspection without sacrificing existing Word behavior.

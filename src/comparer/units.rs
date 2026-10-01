@@ -45,9 +45,27 @@ fn is_cjk(c: char) -> bool {
     ('\u{4e00}'..='\u{9fff}').contains(&c)
 }
 
-/// Letter-ish (continues a word with non-digit letters / underscore).
-fn is_word_letter(c: char) -> bool {
-    c.is_alphabetic() || c == '_'
+/// Halfwidth and fullwidth forms: Word compares each as a word of its own,
+/// as it does an ideograph (`Ab１` → `Ab２` changes only the `１`).
+fn is_fullwidth(c: char) -> bool {
+    ('\u{ff00}'..='\u{ffef}').contains(&c)
+}
+
+/// Punctuation and symbols Word Compare treats as words of their own: every
+/// ASCII one but the apostrophe, the Latin-1 signs (NBSP, `§`, `¶`, `«`, `°`,
+/// `©`, `×`, `÷`), the visible General Punctuation but the right single quote
+/// (dashes, curly quotes, `•`, `…`) and the currency signs. The two
+/// apostrophes stay inside a word (`don't`, `it’s`); the joiners and
+/// direction marks of that block (U+200B–U+200F, U+202A–U+202E, U+2060 on)
+/// shape the word they sit in.
+fn is_word_punctuation(c: char) -> bool {
+    (c.is_ascii_punctuation() && c != '\'')
+        || ('\u{a0}'..='\u{bf}').contains(&c)
+        || c == '×'
+        || c == '÷'
+        || (('\u{2010}'..='\u{2027}').contains(&c) && c != '\u{2019}')
+        || ('\u{2030}'..='\u{205e}').contains(&c)
+        || ('\u{20a0}'..='\u{20cf}').contains(&c)
 }
 
 /// Port of `GetComparisonUnitList`.
@@ -58,11 +76,12 @@ pub fn get_comparison_unit_list(
 ) -> Vec<ComparisonUnit> {
     // 1. Rollup: assign each atom a word key (the `Atgbw` fold).
     //
-    // Word-mode (merge_replaced_paragraphs): also break at letter↔digit
-    // boundaries and attach `.`/` ,` to a following letter-run after digits
-    // (`137.docx` → `137` + `.docx`). Word Compare confetti on stamped
-    // filenames (`file_137.docx` ↔ `file_138.docx`) depends on this; PowerTools
-    // keeps the whole token as one word (faithful preset unchanged).
+    // Word mode (merge_replaced_paragraphs) splits as Word 16 Compare does
+    // (probes in tests/fixtures/word_probes/tokens): a run of letters and
+    // digits is one word (`R1C1`, `abc123`, `Ä1`), while `_`, `-` and `.`
+    // are words of their own, `.` between digits too (`1.5`), so
+    // `file_137.docx` ↔ `file_138.docx` changes only `137`. PowerTools keeps
+    // `1.5` and `snake_a` whole (faithful preset unchanged).
     let word_mode = settings.merge_replaced_paragraphs;
     // Word mode: a field's begin, separate and end are words of their own, as
     // Word tokenizes them. Glued to the result's first and last words, a field
@@ -77,14 +96,20 @@ pub fn get_comparison_unit_list(
     let alternate_content = MC::name("AlternateContent");
     let mut next_index: i64 = 0;
     let mut keyed: Vec<(i64, ComparisonUnitAtom)> = Vec::with_capacity(atoms.len());
-    let mut prev_t_char: Option<char> = None;
     for (i, atom) in atoms.iter().enumerate() {
         let key: i64;
         let cname = dom.name(atom.content_element).unwrap();
         if cname == W::t() {
             let val = dom.value_str(atom.content_element);
             let ch = val.chars().next().unwrap_or('\0');
-            if ch == '.' || ch == ',' {
+            if word_mode && (ch == '.' || ch == ',') {
+                // `.` and `,` are words of their own, between digits too
+                // (`1.5` → `1.6` changes only the `5`, `1,000` → `1,500`
+                // only the `000`).
+                next_index += 1;
+                key = next_index;
+                next_index += 1;
+            } else if ch == '.' || ch == ',' {
                 let before_is_digit = i > 0 && {
                     let prev = &atoms[i - 1];
                     dom.name(prev.content_element).unwrap() == W::t()
@@ -103,60 +128,24 @@ pub fn get_comparison_unit_list(
                             .next()
                             .is_some_and(is_digit_char)
                 };
-                let after_is_letter = i + 1 < atoms.len() && {
-                    let next = &atoms[i + 1];
-                    dom.name(next.content_element).unwrap() == W::t()
-                        && dom
-                            .value_str(next.content_element)
-                            .chars()
-                            .next()
-                            .is_some_and(is_word_letter)
-                };
-                // Decimal: digit . digit → stay in number word.
-                // Extension: digit . letter → new word starting at `.` (`.docx`).
-                // Bare `.` separator otherwise.
-                if before_is_digit && after_is_digit {
-                    key = next_index;
-                } else if word_mode && before_is_digit && after_is_letter {
-                    next_index += 1;
-                    key = next_index;
-                } else if before_is_digit || after_is_digit {
-                    // Faithful / non-extension: keep PowerTools attach-to-digit.
+                // PowerTools: a `.` or `,` beside a digit stays in the
+                // number word.
+                if before_is_digit || after_is_digit {
                     key = next_index;
                 } else {
                     next_index += 1;
                     key = next_index;
                     next_index += 1;
                 }
-                prev_t_char = Some(ch);
-            } else if word_mode && ch == '-' && prev_t_char.is_some_and(is_word_letter) {
-                // M437 (tab_alignment×tab_test ~48 / docxodus 86): keep hyphen
-                // with the preceding word ("Left-") so free-mesh peels Word's
-                // "Left-" unit instead of confetti ("Left"|"-"|"aligned").
-                key = next_index;
-                prev_t_char = Some('-');
-            } else if is_cjk(ch) || settings.word_separators.contains(&ch) {
+            } else if is_cjk(ch)
+                || settings.word_separators.contains(&ch)
+                || (word_mode && (is_word_punctuation(ch) || is_fullwidth(ch)))
+            {
                 next_index += 1;
                 key = next_index;
                 next_index += 1;
-                prev_t_char = Some(ch);
-            } else if word_mode {
-                // Letter↔digit boundary starts a new word (file_ | 137 | …).
-                // M437: letter after hyphen-glued word also starts a new word.
-                let break_boundary = matches!(
-                    prev_t_char,
-                    Some(p) if is_digit_char(p) != is_digit_char(ch)
-                        && (is_digit_char(p) || is_word_letter(p))
-                        && (is_digit_char(ch) || is_word_letter(ch))
-                ) || matches!(prev_t_char, Some('-') if is_word_letter(ch));
-                if break_boundary {
-                    next_index += 1;
-                }
-                key = next_index;
-                prev_t_char = Some(ch);
             } else {
                 key = next_index;
-                prev_t_char = Some(ch);
             }
         } else if is_word_break_element(&cname)
             || (word_mode && (cname == fld_char || cname == alternate_content))
@@ -164,10 +153,8 @@ pub fn get_comparison_unit_list(
             next_index += 1;
             key = next_index;
             next_index += 1;
-            prev_t_char = None;
         } else {
             key = next_index;
-            // non-t content (rPr, etc.) does not reset letter/digit class
         }
         keyed.push((key, atom.clone()));
     }

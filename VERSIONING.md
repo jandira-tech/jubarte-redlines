@@ -21,7 +21,8 @@ All products under `jubarte*` share **Semantic Versioning**
 | repo | artifact | version files | bump tool |
 |---|---|---|---|
 | **jubarte-redlines** (this repo) | crates.io crate + CLI `jubarte` | `Cargo.toml` `[package].version`, `CHANGELOG.md` | `scripts/release.sh x.y.z …` (calls `bump-version.mjs`) |
-| **jubarte-app** (`jubarte-app/` submodule) | Mac App Store / Tauri shell | `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `src/index.html`, `CHANGELOG.md` | `bun run bump x.y.z` |
+| **jubarte-redlines** npm CLI (`jubarte-wasm/cli/`) | npm package `jubarte-redlines` (the `npx jubarte-redlines` runner) | `jubarte-wasm/cli/package.json` | `scripts/release.sh` (publishes it with the engine version) |
+| **jubarte-app** (`jubarte-app/` — a plain tracked directory in this repo that also carries its own nested `.git`; there is no `.gitmodules`) | Mac App Store / Tauri shell | `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `src/index.html`, `CHANGELOG.md` | `bun run bump x.y.z` |
 | **jubarte-site** (`jubarte-app/jubarte-site/`) | marketing/site (optional) | `package.json` | manual / site deploy only |
 
 `jubarte-app` depends on the engine via:

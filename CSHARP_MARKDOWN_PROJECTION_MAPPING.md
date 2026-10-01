@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC -->
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 
+> **Status: LIVING — maintained as of 2026-10-01 (bd262981).** Facts below were verified against this commit; the next editor re-verifies before trusting. The study is pinned against `b493cb58` (2026-10-01); the section 4 questions are undecided — pending decisions, not commitments — and no `src/markdown/projection/` module exists yet (re-verified at bd262981).
+
 # C# Markdown Projection → Rust Mapping Study (Swarm Report)
 
 Two-phase subagent swarm study, run 2026-10-01 against commit `b493cb58`.

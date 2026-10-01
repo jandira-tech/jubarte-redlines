@@ -934,14 +934,28 @@ fn non_separator_prefix_sums(
 /// Keep the **first-found** candidate maximising `(content_score, len)`. Strict
 /// `>` replacement means ties never displace the incumbent — so the winner is the
 /// earliest one in the enumeration order (`i1` ascending, then `i2` ascending).
+///
+/// With `diagonal` (Word mode), a tie goes to the run nearer the diagonal
+/// (`|i1 - i2|` smaller), as Word pairs repeated text in place: of two equal
+/// `1,000 again.` sentences turned into `1,500 again.` and `2,000 again.`,
+/// Word changes `000` and `1` in place (tests/m_word_tokens.rs), where the
+/// first-found run paired the first sentence with the second.
 #[inline]
 fn consider_candidate(
     best: &mut Option<(usize, usize, usize, usize)>,
     cand: (usize, usize, usize, usize),
+    diagonal: bool,
 ) {
     let better = match best {
         None => true,
-        Some(b) => cand.0 > b.0 || (cand.0 == b.0 && cand.1 > b.1),
+        Some(b) => {
+            cand.0 > b.0
+                || (cand.0 == b.0
+                    && (cand.1 > b.1
+                        || (diagonal
+                            && cand.1 == b.1
+                            && cand.2.abs_diff(cand.3) < b.2.abs_diff(b.3))))
+        }
     };
     if better {
         *best = Some(cand);
@@ -962,6 +976,7 @@ fn longest_common_run_scan(
         (Some(d), Some(s)) => Some(non_separator_prefix_sums(d, cul1, s)),
         _ => None,
     };
+    let diagonal = settings.is_some_and(|s| s.merge_replaced_paragraphs);
     // best: (content_score, len, i1, i2)
     let mut best: Option<(usize, usize, usize, usize)> = None;
     for i1 in 0..cul1.len() {
@@ -970,7 +985,7 @@ fn longest_common_run_scan(
             if len > 0 {
                 let content =
                     common_run_content_score(dom, cul1, i1, len, settings, prefix.as_deref());
-                consider_candidate(&mut best, (content, len, i1, i2));
+                consider_candidate(&mut best, (content, len, i1, i2), diagonal);
             }
         }
     }
@@ -1010,6 +1025,7 @@ fn longest_common_run_indexed(
         index.entry(u.sha1_key()).or_default().push(i2);
     }
 
+    let diagonal = settings.is_some_and(|s| s.merge_replaced_paragraphs);
     // best: (content_score, len, i1, i2) — same tuple/tie-break as the scan.
     let mut best: Option<(usize, usize, usize, usize)> = None;
     for i1 in 0..cul1.len() {
@@ -1034,7 +1050,7 @@ fn longest_common_run_indexed(
             if len > 0 {
                 let content =
                     common_run_content_score(dom, cul1, i1, len, settings, prefix.as_deref());
-                consider_candidate(&mut best, (content, len, i1, i2));
+                consider_candidate(&mut best, (content, len, i1, i2), diagonal);
             }
         }
     }

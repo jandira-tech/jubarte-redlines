@@ -1,5 +1,12 @@
 # Agent Integration, Documentation and Evidence Implementation Plan
 
+> **Status (2026-10-01, bd262981): A1 done
+> (`skills/jubarte-documents/SKILL.md`), A2 done (`src/capabilities.rs`),
+> per the banner below; A3 (language API reference pages) and A4 (evals)
+> not started.** The deferred "Markdown/template authoring" row below
+> shipped anyway on unreleased main (`src/markdown/`, `docs/MARKDOWN.md`)
+> without the 5-request evidence that table demanded.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Give Codex and Claude a small, reliable way to choose and use Jubarte for supported document jobs, with evidence that the workflow succeeds.

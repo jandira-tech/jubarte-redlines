@@ -4,6 +4,8 @@ SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 SPDX-License-Identifier: AGPL-3.0-only
 -->
 
+> **Status: SNAPSHOT — frozen as of 2026-09-06 (sections 0-15 measured 2026-09-05, section 16 on 2026-09-06). Re-checked 2026-10-01 (bd262981).** This file is a dated record, not a live plan: do not append to it. Current truth lives in TODO.md (backlog) and CHANGELOG.md (shipped). Sections still binding: none — the converter has since been rewritten, so every code-line citation below is stale by construction.
+
 # Why jubarte scores last on docxide-pdf's 76 fixtures and first on the 398-fixture corpus
 
 Working report, 2026-09-05. Lives in `<jubarte-redlines>/planning/` with `plan.md`, `xml_parts_plan.md` and the regression sample; system locations are listed at the top of `plan.md`. Every number was measured in this session on this
@@ -11,6 +13,10 @@ machine (macOS, Microsoft Word installed, `mutool` from MuPDF). Scorer in both
 benchmarks: docxide-pdf's own metrics (ink-pixel Jaccard at 150 DPI with no spatial
 tolerance, SSIM with 8x8 windows and +/-8px vertical search, text-boundary line
 match). Companion: `plan.md`.
+
+Measurement numbers are no longer appended here: that duty moved to the release
+baselines (`tools/convert_baseline_76.tsv`, `tools/convert_baseline_398.tsv`);
+this file is closed for appending.
 
 ## 0. The answer in four lines
 

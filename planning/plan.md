@@ -4,12 +4,41 @@ SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 SPDX-License-Identifier: AGPL-3.0-only
 -->
 
+> **Status: HISTORICAL — program closed 2026-10-01 (re-checked at bd262981).** Kept as the record of what was decided and why; nothing here is a commitment. Settled outcomes are in CHANGELOG.md; open residue is in TODO.md.
+
 # Plan: close the 76-vs-398 divergence
 
 Companion to `report.md` (2026-09-05). All three documents and the regression sample live in `<jubarte-redlines>/planning/`. Ordered so that measurement exists before
 engine changes, then by Jaccard recovered per unit of work. Each step names the
 file to change, the measurement that proves it, the regression guard, and what
 it is expected to move. Status column reflects the end of this session.
+
+## Status at close (2026-10-01, verified at bd262981)
+
+The program ran; the body below is the record as written. Where each step
+ended, one evidence pointer per row (line numbers are as of bd262981 and will
+drift):
+
+| Step | Status | Evidence |
+|---|---|---|
+| 0a, 0b (re-measure docxide-pdf with fonts) | Done | numbers in `report.md` section 4; result JSONs live in the neurotic checkout |
+| 0c-0f (outward-facing corrections) | Open | edits to the neurotic README and PR #1 on arthrod/docxide-pdf, outside this repository; tracked in TODO.md section 4 |
+| 1 (76 inside jubarte's gate) | Done | `scripts/convert_sweep.py`; `tools/convert_baseline_76.tsv`, `tools/convert_baseline_398.tsv` |
+| 2 (fonts as data) | Done | `src/convert/font_table.rs` wired at `src/convert/mod.rs` ~475-530; `--font-report` in `src/bin/jubarte.rs`; Aptos-only theme gate removed (`src/convert/mod.rs` ~3601) |
+| 3 (space-before at page top) | Done | `at_page_top` rework, `src/convert/mod.rs` ~19597 |
+| 4 (line box from font metrics) | Done | `para_line_box` / `line_box_from_natural`, `src/convert/mod.rs` ~7797-7820 |
+| 5 (table left edge, row height) | Done | `compatibilityMode` (`src/convert/mod.rs` ~6077), `tbl_ind` (~1547) |
+| 6 (images) | Done | `a:srcRect` and `/SMask` in `src/convert/pdf.rs` (~1626, ~1563) |
+| 7 (missing features) | Partly | `pgBorders` parsed and painted (`src/convert/mod.rs` ~4413), footnotes rendered (`load_footnotes`, ~558), embedded fonts loaded (~477); shape/chart/text-box depth varies, residue sits in the `_to_improve_docx_to_pdf*` pools |
+| 8 (tuning-constant audit) | Done | its output is `TUNING_AUDIT.md` (repository root) |
+| 9 (fixture-side notes) | Done | case13 fast-gate skiplist and the case63/64 park are in force (`report.md` section 16) |
+| 10 (bottom-decile items) | Partly | merged cells laid out (`vMerge`, `src/convert/mod.rs` ~11353/~11718), A4 595.2x841.92 (`src/convert/pdf.rs` ~1931), `endnotePr` (~6756); anchored text-box wrap residue open in the `_to_improve_*` pools |
+| 11 (XML parts census) | Done | the census is `xml_parts_plan.md`; its plans 3.1, 3.2 and 3.3-checkpoint-1 executed (see the correction note there) |
+
+Open residue at close: steps 0c-0f (corrections in the external neurotic and
+docxide-pdf repositories, unverifiable from this checkout) and the move of
+`planning/sample50*` into `tools/` (the three files still live in `planning/`).
+Both are carried in the TODO.md section 4 backlog.
 
 ## Locations on this machine
 
@@ -247,6 +276,12 @@ overrides, footer block, A4, charts. `lastRenderedPageBreak` is explicitly *not*
 used as layout input.
 
 ## Expected trajectory (Jaccard mean, jubarte)
+
+Superseded (2026-10-01): this scoreboard is not maintained. Converter scores
+are ratcheted by the Step 1 baselines (`tools/convert_baseline_76.tsv`,
+`tools/convert_baseline_398.tsv`), and fidelity work moved to the 1,195-pair
+redline pool that CHANGELOG.md measures every comparer change against. The
+projections below are the 2026-09-05 estimates, kept as written.
 
 | After | 76 fixtures | 398 corpus |
 |---|---|---|

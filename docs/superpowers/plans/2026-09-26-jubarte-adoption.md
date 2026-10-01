@@ -1,5 +1,14 @@
 # Jubarte Adoption and Semantic APIs Implementation Plan
 
+> **Status (2026-10-01, bd262981): historical — the program was replanned
+> while executing it.** 0.10.0 shipped 2026-09-28 and 0.10.1 on 2026-09-30:
+> subplans 01, 02, 04 and 06 were implemented with corrections (see
+> [00-ASSESSMENT.md](2026-09-26-jubarte-adoption/00-ASSESSMENT.md)), 03 was
+> substituted by raw additive WASM exports plus the `jubarte-redlines` npm
+> CLI, and 05, 07 and 08 are mostly unstarted. Per-file statuses sit at the
+> top of each subplan; the open residue is collected in `TODO.md`. Do not
+> apply the reference patches.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make Jubarte an easy, dependable choice for Python developers, JavaScript developers, Codex, and Claude performing DOCX comparison, tracked editing, and PDF rendering, while preserving existing Word fidelity.

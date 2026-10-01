@@ -4,6 +4,8 @@ SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 SPDX-License-Identifier: AGPL-3.0-only
 -->
 
+> **Status: LIVING — maintained as of 2026-10-01 (bd262981).** Facts below were verified against this commit; the next editor re-verifies before trusting.
+
 # Plan: use the Open XML SDK schema data as an oracle (minimal hand-rolling)
 
 Status: **W1 and W2 shipped** (written 2026-07-13; updated 2026-09-26).
@@ -19,6 +21,9 @@ Status: **W1 and W2 shipped** (written 2026-07-13; updated 2026-09-26).
   `DocumentFormat.OpenXml`) is committed, and `tools/validity_baseline.tsv`
   is the ratchet baseline (first blessed 2026-09-05; see KNOWN_ISSUES §4
   for the key-format re-bless). Ring 2 in the README validity table.
+  Promoted into the release gate: VERSIONING.md's checklist requires Ring 2
+  (`scripts/redline-sweep.sh … --validate` → no NEW keys vs
+  `tools/validity_baseline.tsv`).
 - **W3 — deferred**, per plan: only if W2 shows CI missing regressions.
 - **W4 — standing rule**, unchanged.
 
@@ -124,15 +129,16 @@ redlines had OpenXmlValidator schema errors while Word's own redlines
 validate clean**; that sweep drove PR #75's fixes — but the tool was ad-hoc
 and never checked in. Recreate it durably:
 
-1. `tools/validate-cs/` — minimal console csproj on
+1. `tools/validate-docx/` — minimal console csproj on
    `DocumentFormat.OpenXml`, runs `OpenXmlValidator` (choose
    `FileFormatVersions` = Office2019 or Microsoft365; document the choice —
    it changes which extension elements are "valid") over a file or dir,
    prints one line per error (`file<TAB>part<TAB>path<TAB>description`),
    exit code = error count clamped.
-2. `tools/validate-cs.sh` wrapper modeled on `tools/gen-goldens-cs.sh`:
-   cd into the project dir so a `global.json` SDK pin applies (see pitfall
-   below), accept a corpus dir.
+2. Shipped without a separate wrapper script: `scripts/redline-sweep.sh
+   --validate` builds `tools/validate-docx` from inside the project dir
+   (cwd-local dotnet, per the SDK-pin pitfall below) and runs it over the
+   sweep output, diffing against the baseline.
 3. Wire an opt-in test/script that runs it over `tests/goldens/**/*.docx`
    plus freshly-produced outputs; assert zero NEW errors vs a checked-in
    baseline file (some corpora have pre-existing quirks, e.g. the known

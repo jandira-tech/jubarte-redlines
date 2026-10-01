@@ -1,7 +1,7 @@
 ---
 name: jubarte-documents
 description: "Use this skill whenever the user wants to read, edit, redline, comment on, compare, accept/reject, or render Word documents (.docx). Triggers: 'Word doc', '.docx', 'tracked changes', 'redline', 'compare these documents', 'accept all changes', 'render to PDF', 'what does this contract say', 'comment on clause', or a request to change specific clauses of a .docx as tracked changes. One engine (jubarte) does the reading, the editing, the clean copy, the PDF and the page images; no pandoc, LibreOffice or Poppler. Creating a brand-new .docx from scratch still uses the docx npm library (section 5). Do NOT use for PDFs, spreadsheets, Google Docs, or legacy .doc files."
-license: Proprietary. LICENSE.txt has complete terms
+license: AGPL-3.0-only
 ---
 
 # DOCX with jubarte: read, edit as tracked changes, verify

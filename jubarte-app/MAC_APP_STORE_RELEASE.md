@@ -10,13 +10,14 @@ Everything is automated by two scripts. To ship a new build:
 
 ```bash
 # 1. Bump the version — Apple rejects a re-used version number
-npm run bump          # bumps package.json + src-tauri/tauri.conf.json
+bun run bump <x.y.z>   # package.json, src-tauri/tauri.conf.json,
+                       # src-tauri/Cargo.toml, src/index.html — all four
 
 # 2. Build → sign → package → upload, one command
-npm run publish:mac   # ./scripts/publish-mac-app-store.sh
+bun run publish:mac   # ./scripts/publish-mac-app-store.sh
 
 # 3. Wait a few minutes for Apple to finish processing, then check
-npm run asc:status    # PROCESSING → VALID means it's ready to attach
+bun run asc:status    # PROCESSING → VALID means it's ready to attach
 ```
 
 `publish:mac` runs the full pipeline: compile Rust + the Swift StoreKit lib →
@@ -32,7 +33,7 @@ debugging.
 
 ## After the upload — finish in App Store Connect
 
-Once `npm run asc:status` shows the new build as **VALID**, open
+Once `bun run asc:status` shows the new build as **VALID**, open
 [App Store Connect](https://appstoreconnect.apple.com/apps/6790926615):
 
 1. **Attach the build** — macOS version under "Prepare for Submission" →
@@ -97,7 +98,7 @@ App Store Server Notifications → Production + Sandbox URLs both set to
 ## Step 1 — Build the signed .app
 
 ```bash
-cd /Users/arthrod/temp/T/ooxmlsdk/jubarte-app/src-tauri
+cd <repo>/jubarte-app/src-tauri
 cargo-tauri build --target aarch64-apple-darwin --bundles app
 ```
 
@@ -159,13 +160,16 @@ pkgutil --check-signature /tmp/jubarte-pkg-out/Jubarte.pkg
 
 ## Step 4 — Bump the version before every new submission
 
-Apple rejects re-uploading the same build/version number. Bump both:
+Apple rejects re-uploading the same build/version number. `bun run bump <x.y.z>`
+(`scripts/bump-version.mjs`) rewrites all four places the version is hard-coded,
+keeping them in sync:
 
-- `src-tauri/tauri.conf.json` → `"version"`
 - `package.json` → `"version"`
+- `src-tauri/tauri.conf.json` → `"version"`
+- `src-tauri/Cargo.toml` → `[package] version`
+- `src/index.html` → the app-bar `vX.Y.Z` label
 
-(there's already a `bun scripts/bump-version.mjs` helper — `npm run bump`
-— check it keeps both files in sync before relying on it blindly).
+(The script does not write the CHANGELOG — that entry is yours.)
 
 ## Step 5 — Upload to App Store Connect
 
