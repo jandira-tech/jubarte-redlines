@@ -41876,6 +41876,41 @@ fn an_autofit_column_widens_to_its_longest_word() {
 }
 
 #[test]
+fn a_dxa_autofit_table_widens_past_the_margin_to_its_longest_words() {
+    // Word 16 probes 2026-10-01 (a1, a5): an autofit table with a dxa
+    // tblW gives every column its longest word even when the words
+    // together overrun the measure; the table runs past the right margin.
+    // _to_improve ee7b597379's signature table (tcW 4321/720/4381/4381,
+    // zero cell margins) ends at 610pt in Word; scaling the tcW into the
+    // 471pt tblW broke "Environmental" by character and cost a page.
+    let cell = |w: u32, text: &str| {
+        format!(
+            "<w:tc><w:tcPr><w:tcW w:w=\"{w}\" w:type=\"dxa\"/></w:tcPr>\
+               <w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"
+        )
+    };
+    let lead = "_".repeat(33);
+    let tail = "_".repeat(36);
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"9422\" w:type=\"dxa\"/>\
+           <w:tblCellMar><w:left w:w=\"0\" w:type=\"dxa\"/><w:right w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"3945\"/><w:gridCol w:w=\"1535\"/><w:gridCol w:w=\"4304\"/><w:gridCol w:w=\"989\"/></w:tblGrid>\
+           <w:tr>{}{}{}{}</w:tr></w:tbl><w:sectPr/>",
+        cell(4321, &lead),
+        cell(720, "Environmental"),
+        cell(4381, &tail),
+        cell(4381, "Sciences")
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("overrun autofit table");
+    let (x_word, _) = pdf_glyph_text_xy(&pdf, "Environmental").expect("the word stays whole");
+    let (x_last, _) = pdf_glyph_text_xy(&pdf, "Sciences").expect("the last column paints");
+    assert!(
+        x_last - x_word > 250.0,
+        "the second and third columns hold their words: {x_word} -> {x_last}"
+    );
+}
+
+#[test]
 fn a_vml_shape_without_a_relative_sits_in_the_column() {
     // VML's absent mso-position-*-relative is `text`: e73ba1e0's header
     // logo group at margin-left 331.4pt, margin-top -12.5pt paints at
