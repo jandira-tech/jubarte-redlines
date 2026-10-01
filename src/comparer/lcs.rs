@@ -3529,6 +3529,32 @@ fn peel_story_final_groups<K: PartialEq>(
         }
         return Some((vec![mark_a], vec![mark_b]));
     }
+    // The revision ends on an empty paragraph after a table, the original is
+    // one run of words: the empty paragraph's mark pairs with the original's
+    // closing mark, and the original's last paragraph is deleted into it
+    // (Word 16, multi_section × nested_table_rowspan). Unpaired, the
+    // revision's closing paragraph was inserted and stripped as trailing
+    // matter, so the story ended on its table (math paragraphs ×
+    // nested_table_rowspan). The other way round Word keeps the original's
+    // empty paragraph live after the deleted table and the revised last
+    // paragraph on its inserted mark (nested_table_rowspan × numbered_list).
+    let lone_mark = |g: &(K, Vec<ComparisonUnit>)| {
+        g.1.len() == 1 && unit_is_single_atom_ppr(dom, &g.1[0]) && unit_closes_story(dom, &g.1[0])
+    };
+    // Nothing before the empty paragraph is of the run's kind: a title above
+    // the table would take the run's words instead.
+    if let ([run], Some(close)) = (lg.as_slice(), rg.last())
+        && rg.len() >= 2
+        && lone_mark(close)
+        && run.1.len() >= 2
+        && closes(run)
+        && bare_mark(run)
+        && rg[..rg.len() - 1].iter().all(|g| g.0 != run.0)
+    {
+        let mark_b = rg.pop()?.1;
+        let mark_a = lg[0].1.pop()?;
+        return Some((vec![mark_a], mark_b));
+    }
     if lg.len() == rg.len() || lg.len() < 2 || rg.len() < 2 {
         return None;
     }
@@ -5865,14 +5891,18 @@ fn pair_final_marks_past_deleted_tail(dom: &Dom, seqs: &mut Vec<CorrelatedSequen
 }
 
 /// A replaced tail the LCS left deleted-first, `[Equal …¶] [Deleted …¶]
-/// [Inserted …¶]` (a kept title over a rewritten body): Word inserts first
-/// and pairs the final marks as behind an inserted tail (Word 16 probes
-/// 2026-10-01, tests/fixtures/word_probes/final_marks).
+/// [Inserted …¶]` (a kept title over a rewritten body), or a whole story
+/// replaced, `[Deleted …¶] [Inserted …¶]`: Word inserts first and pairs the
+/// final marks as behind an inserted tail (Word 16 probes 2026-10-01,
+/// tests/fixtures/word_probes/final_marks; tests/m_whole_story_final_marks.rs).
 fn pair_final_marks_behind_replaced_tail(dom: &Dom, seqs: &mut Vec<CorrelatedSequence>) -> bool {
     let n = seqs.len();
-    if n < 3
+    // An insertion ahead of the deleted run placed it mid-revision on purpose
+    // (employment × lease: the original spliced in after "3. Rent").
+    if n < 2
         || seqs[n - 2].correlation_status != CorrelationStatus::Deleted
         || seqs[n - 1].correlation_status != CorrelationStatus::Inserted
+        || n > 2 && seqs[n - 3].correlation_status == CorrelationStatus::Inserted
     {
         return false;
     }
@@ -5886,7 +5916,8 @@ fn pair_final_marks_behind_replaced_tail(dom: &Dom, seqs: &mut Vec<CorrelatedSeq
 
 /// A replaced tail with the inserted paragraphs ahead of the deleted ones,
 /// `[Equal …¶] [Inserted …¶]+ [Deleted …¶]+` (bullet_list_bold ×
-/// bullet_list): Word still pairs the two final marks, so the last inserted
+/// bullet_list), or a whole story so replaced, `[Inserted …¶]+ [Deleted
+/// …¶]+`: Word still pairs the two final marks, so the last inserted
 /// paragraph joins the first deleted one under its deleted mark, and the
 /// original's last mark stands for the revised one. Left unpaired, that last
 /// mark stayed live and accepting the redline kept an empty paragraph the
@@ -5894,7 +5925,7 @@ fn pair_final_marks_behind_replaced_tail(dom: &Dom, seqs: &mut Vec<CorrelatedSeq
 fn pair_final_marks_behind_inserted_tail(dom: &Dom, seqs: &mut Vec<CorrelatedSequence>) -> bool {
     let n = seqs.len();
     let status = |i: usize| seqs[i].correlation_status;
-    if n < 3 || status(n - 1) != CorrelationStatus::Deleted {
+    if n < 2 || status(n - 1) != CorrelationStatus::Deleted {
         return false;
     }
     let Some(k) = (0..n)
@@ -5906,17 +5937,37 @@ fn pair_final_marks_behind_inserted_tail(dom: &Dom, seqs: &mut Vec<CorrelatedSeq
     if status(k) != CorrelationStatus::Inserted {
         return false;
     }
-    let Some(prev) = (0..k)
+    let ends_para = |v: &[ComparisonUnit]| ends_with_mark(dom, v);
+    // A whole story replaced has no kept paragraph before its inserted run.
+    let kept_before = (0..k)
         .rev()
         .find(|&i| status(i) != CorrelationStatus::Inserted)
-    else {
-        return false;
+        .is_none_or(|prev| {
+            status(prev) == CorrelationStatus::Equal
+                && ends_para(seqs[prev].com_units_2.as_deref().unwrap_or_default())
+        });
+    // The last inserted words join the first deleted paragraph; a deleted
+    // table there leaves them no paragraph to join.
+    let joins_paragraph = seqs[k + 1]
+        .com_units_1
+        .as_deref()
+        .and_then(<[ComparisonUnit]>::first)
+        .is_some_and(|u| {
+            as_group(u).is_none_or(|g| g.group_type == ComparisonUnitGroupType::Paragraph)
+        });
+    // Both marks close their stories; a paragraph closing a block content
+    // control is followed by the story's own closing paragraph.
+    let closes = |v: Option<&[ComparisonUnit]>| {
+        v.unwrap_or_default()
+            .last()
+            .is_some_and(|u| unit_closes_story(dom, u))
     };
-    let ends_para = |v: &[ComparisonUnit]| ends_with_mark(dom, v);
-    if status(prev) != CorrelationStatus::Equal
-        || !ends_para(seqs[prev].com_units_2.as_deref().unwrap_or_default())
+    if !kept_before
+        || !joins_paragraph
         || !ends_para(seqs[k].com_units_2.as_deref().unwrap_or_default())
         || !ends_para(seqs[n - 1].com_units_1.as_deref().unwrap_or_default())
+        || !closes(seqs[k].com_units_2.as_deref())
+        || !closes(seqs[n - 1].com_units_1.as_deref())
     {
         return false;
     }

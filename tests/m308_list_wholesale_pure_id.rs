@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! M308 — unrelated list wholesale (broken_list × multiple_nodes_in_list):
-//! Word pure-I all B list items then pure-D all A list items. M-CARRIER
+//! Word pure-I all B list items then pure-D all A list items. B closes on
+//! an empty paragraph that Word pairs with A's closing mark, so M-CARRIER
 //! must NOT fuse B's last item into a MIX with A's first list item
 //! (that drop scores ~52 vs Word's pure-I/D shape).
 //!
@@ -26,6 +27,15 @@ fn word_settings() -> WmlComparerSettings {
 }
 
 fn docx_list(items: &[(&str, u32)]) -> Vec<u8> {
+    docx_list_then(items, "")
+}
+
+/// `docx_list` closed by an empty plain paragraph, as Word saves a list.
+fn docx_list_closed(items: &[(&str, u32)]) -> Vec<u8> {
+    docx_list_then(items, "<w:p/>")
+}
+
+fn docx_list_then(items: &[(&str, u32)], close: &str) -> Vec<u8> {
     // items: (text, ilvl). All share numId=1.
     let mut body = String::new();
     for (text, ilvl) in items {
@@ -45,7 +55,7 @@ fn docx_list(items: &[(&str, u32)]) -> Vec<u8> {
     let doc = format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-  <w:body>{body}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body>
+  <w:body>{body}{close}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body>
 </w:document>"#
     );
     let numbering = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -158,7 +168,11 @@ fn unrelated_list_wholesale_is_pure_id_not_carrier_mix() {
         ("First shown item. Text", 0),
         ("Shown 2. Text", 0),
     ]);
-    let b = docx_list(&[("Onetestafter space", 0), ("TWO", 0)]);
+    // B ends on an empty paragraph, as the exhibit does: Word pairs it with
+    // A's closing mark. A revision ending on "TWO" itself joins "TWO" to A's
+    // first deleted item instead, as every Word redline of a whole story
+    // replaced does (1053 of them in corpus/word, 2026-10-01).
+    let b = docx_list_closed(&[("Onetestafter space", 0), ("TWO", 0)]);
     let out = compare_documents_with_settings(&a, &b, &word_settings()).expect("compare");
     let xml = document_xml(&out);
     let paras = body_paragraphs(&xml);

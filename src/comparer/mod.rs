@@ -866,11 +866,13 @@ pub fn compare_bodies_faithful_with_notes(
         // M393: coalesce collapses pure-I-all then pure-D-all for list pairs;
         // interleave Word cluster shape **before** merge free-meshes labels.
         finalize::interleave_list_cluster_after_coalesce(dom, root);
+        // A revised closing mark paired before finalize already joined the
+        // revised last words to the first deleted paragraph.
         finalize::merge_replaced_paragraphs_in(
             dom,
             root,
             &settings.author_for_revisions,
-            story_final_paired,
+            story_final_paired || revised_close_paired,
         );
         // M159: restore short pure-D before longer pure-I after merge reorder
         // (text_highlight×times Word MIX|DEL|INS|MIX).
@@ -973,8 +975,11 @@ pub fn compare_bodies_faithful_with_notes(
         // empty EQ. Not when the story-final marks are paired: Word then ends
         // on the revised final paragraph, empty (doc_with_spaces ×
         // doc_with_spacing, IDDE) or holding the original's deleted last
-        // paragraph (diff_after8 × doc_with_spacing, IDD).
-        if !story_final_paired {
+        // paragraph (diff_after8 × doc_with_spacing, IDD). Nor when the
+        // revised closing mark is paired: its paragraph's words were inserted
+        // ahead with the original's first deleted paragraph, and the bare
+        // empty paragraph left is the story's close.
+        if !story_final_paired && !revised_close_paired {
             finalize::strip_trailing_bare_empty_after_pure_i_dominant(dom, root);
         }
         // M469: head title MIX with SHORT ins title + LONG unrelated del →
