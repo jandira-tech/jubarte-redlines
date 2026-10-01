@@ -18490,14 +18490,16 @@ fn collect_hf_rev_runs(
     if dom.name_is(node, &W::instr_text()) || dom.name_is(node, &W::del_instr_text()) {
         let raw = element_text(dom, node);
         scan.instr.push_str(&raw);
-        let up = scan.instr.to_ascii_uppercase();
-        if up.contains("NUMPAGES") {
-            scan.kind = Some(FieldKind::NumPages);
-        } else if up.contains("NUMWORDS") {
-            scan.kind = Some(FieldKind::NumWords);
-        } else if up.contains("PAGE") {
-            scan.kind = Some(FieldKind::Page);
-        }
+        // The field's name is its first word: an INCLUDEPICTURE of
+        // ".../page1image1105008" or a PAGEREF is no PAGE (2566689f0f
+        // painted "111" over its header).
+        let name = field_first_token(&scan.instr).to_ascii_uppercase();
+        scan.kind = match name.as_str() {
+            "NUMPAGES" => Some(FieldKind::NumPages),
+            "NUMWORDS" => Some(FieldKind::NumWords),
+            "PAGE" => Some(FieldKind::Page),
+            _ => None,
+        };
         return;
     }
     if skip_non_text(dom, node) {
