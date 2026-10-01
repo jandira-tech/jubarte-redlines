@@ -7581,6 +7581,65 @@ fn vml_images_take_the_slot_of_their_own_shape() {
 }
 
 #[test]
+fn cell_text_runs_beside_a_square_float_at_the_cell_left() {
+    // 3cccdeb956's header cell: a square-wrapped logo at the cell's left,
+    // the address lines after it. Word sets them right of the logo, 9pt
+    // clear (VML's default distance, DrawingML's distR), and the line
+    // under the logo back at the cell's text left (probes cell/cell_dml).
+    let vml = "<w:pict><v:shape style=\"position:absolute;margin-left:0;margin-top:0;\
+        width:100pt;height:34pt;mso-wrap-style:square;\
+        mso-position-horizontal-relative:text;mso-position-vertical-relative:text\">\
+        <v:imagedata r:id=\"rIdImg\"/>\
+        <w10:wrap xmlns:w10=\"urn:schemas-microsoft-com:office:word\" type=\"square\"/>\
+        </v:shape></w:pict>";
+    let dml = "<w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" \
+        simplePos=\"0\" relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" \
+        allowOverlap=\"1\"><wp:simplePos x=\"0\" y=\"0\"/>\
+        <wp:positionH relativeFrom=\"column\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+        <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+        <wp:extent cx=\"1270000\" cy=\"431800\"/><wp:wrapSquare wrapText=\"bothSides\"/>\
+        <wp:docPr id=\"1\" name=\"p\"/><a:graphic><a:graphicData \
+        uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\"><pic:pic>\
+        <pic:nvPicPr><pic:cNvPr id=\"1\" name=\"p\"/><pic:cNvPicPr/></pic:nvPicPr>\
+        <pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill><pic:spPr><a:xfrm>\
+        <a:off x=\"0\" y=\"0\"/><a:ext cx=\"1270000\" cy=\"431800\"/></a:xfrm></pic:spPr>\
+        </pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing>";
+    for (kind, pic) in [("vml", vml), ("dml", dml)] {
+        let body = format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"6138\" w:type=\"dxa\"/></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"6138\"/></w:tblGrid><w:tr><w:tc>\
+             <w:tcPr><w:tcW w:w=\"6138\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r>{pic}</w:r><w:r><w:t>Beside1</w:t><w:br/><w:t>Beside2</w:t>\
+             <w:br/><w:t>Beside3</w:t><w:br/><w:t>Under4</w:t></w:r></w:p>\
+             </w:tc></w:tr></w:tbl>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+             <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        );
+        let pdf = docx_to_pdf(&drawing_docx(&body)).expect("convert cell float");
+        let (ix, iy) = image_cm_xy(&pdf, "100.00", "34.00");
+        let at = |word: &str| {
+            pdf_literal_td_xy(&pdf, word).unwrap_or_else(|| panic!("{kind}: {word} painted"))
+        };
+        for word in ["Beside1", "Beside2", "Beside3"] {
+            let (x, _) = at(word);
+            assert!(
+                (x - (ix + 109.0)).abs() < 0.5,
+                "{kind}: {word} 9pt right of the picture at {ix}: x={x}"
+            );
+        }
+        assert!(
+            at("Beside1").1 > iy,
+            "{kind}: the first line sits beside the picture, not under it"
+        );
+        let (ux, uy) = at("Under4");
+        assert!(
+            (ux - ix).abs() < 0.5 && uy < iy,
+            "{kind}: the line under the picture is back at the text left: {ux},{uy} vs {ix},{iy}"
+        );
+    }
+}
+
+#[test]
 fn a_vml_picture_with_a_negative_crop_leaves_its_box_blank() {
     // d54e7e99's header picture: cropbottom="-16693f" (-0.2547) draws the
     // image in the top 1/1.2547 of its 133pt box (Word: 106pt tall at the

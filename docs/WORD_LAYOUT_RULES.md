@@ -413,6 +413,17 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   paragraph. A `wrapNone` shape overlays the cell without growing it.
   - Part a 1f3856c4: the flowchart's eight arrows sit in the empty gap cells.
     We used to drop every shape and text box anchored in a cell.
+- **Text runs beside a square float at the cell's left.** Lines whose top
+  is above the float's bottom start its width plus its right distance in;
+  the rest return to the cell's text left. VML and DrawingML agree.
+  - 3cccdeb956's header logo: the address lines sit 9pt right of it. We
+    stacked them under the logo, which moved the body down a line.
+  - Probes 2026-10-01 in a cell without a styles part: Word measures the
+    offset from the text left but keeps the picture inside the cell's
+    edges. `margin-left:-4.75pt` paints at the cell's left edge, and
+    `margin-left:200pt` stops at the right edge with the text under it.
+    That clamp, and text on the left of a float at the cell's right, are
+    not reconstructed yet.
 - **Block arrows point where their preset says.** `downArrow`, `upArrow` and
   `leftArrow` are not rotated `rightArrow`s. The shaft is the middle half
   across the arrow and the head is min(w, h)/2 long.
@@ -535,11 +546,17 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   the outermost group's margin and relative frame place the result.
   b 069252c3's org chart was painted at page (0,0) from the child's own
   unitless box; Word paints it at (128.5, 284.9).
-- A VML shape's `<w10:wrap type=…>` child names its wrap when the style has
-  no `mso-wrap-style`: 069252c3's topAndBottom group pushes the next
-  paragraph to its band's bottom (Anchor 103.05 -> After 267.45, also with a
-  negative z-index). Word ignores it on a `v:line`: bc404781's wrapped form
-  rules move no text.
+- A VML shape's `<w10:wrap type=…>` child alone names its wrap:
+  069252c3's topAndBottom group pushes the next paragraph to its band's
+  bottom (Anchor 103.05 -> After 267.45, also with a negative z-index).
+  `mso-wrap-style` wraps the lines of the shape's own text box, not the
+  text around it. Word probes 2026-10-01 of 3cccdeb956's logo: with
+  `mso-wrap-style:square` and no `w10:wrap` the text runs over the logo;
+  with `mso-wrap-style:none` and `w10:wrap square` it wraps. Word ignores
+  the wrap on a `v:line`: bc404781's wrapped form rules move no text.
+- VML's wrap distance defaults to 9pt left and right and 0 above and
+  below (`mso-wrap-distance-*`). The same probes put the text 9.08pt clear
+  of the logo; an explicit `mso-wrap-distance-left:0` puts it flush.
 - An inline VML shape (`w:pict` with no position) is sized by its style's
   width/height, and a text box no taller than its paragraph's line sits in
   that line instead of adding a line and then its own height: live Word

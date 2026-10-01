@@ -8601,6 +8601,7 @@ fn cell_runs_line_box(fonts: &Fonts, runs: &[TextRun], style: &ParaStyle) -> (f3
 fn cell_para_height(fonts: &Fonts, para: &CellPara, wrap_w: f32, space_for_ul: bool) -> f32 {
     let text_h = cell_para_text_h(fonts, para, wrap_w, space_for_ul);
     let lead = cell_lead_picture(para);
+    let side = cell_side_float(fonts, para, wrap_w);
     let mut images_h = 0.0_f32;
     let mut below = 0.0_f32;
     for img in para
@@ -8613,7 +8614,7 @@ fn cell_para_height(fonts: &Fonts, para: &CellPara, wrap_w: f32, space_for_ul: b
             continue;
         }
         let h = cell_image_wh(img).1;
-        if cell_float_below(para, img, drop, text_h) {
+        if side.is_some() || cell_float_below(para, img, drop, text_h) {
             below = below.max(drop + h);
         } else {
             images_h += h + drop;
@@ -8628,16 +8629,92 @@ fn cell_para_text_h(fonts: &Fonts, para: &CellPara, wrap_w: f32, space_for_ul: b
         return picture_line_leading(fonts, para);
     }
     let line_box = cell_para_line_box(fonts, para).1;
-    let (first_w, rest_w) = cell_para_widths(fonts, para, wrap_w);
-    let (lines, _) = wrap_cell_runs(fonts, para, first_w, rest_w);
+    let ((lines, _), _) = cell_para_wrap(fonts, para, wrap_w, space_for_ul);
     let lines_h: f32 = lines
         .iter()
-        .map(|line| {
-            let (size, _, line_box) = cell_line_metrics(fonts, para, line);
-            line_box + ul_line_extra(line, size, space_for_ul)
-        })
+        .map(|line| cell_line_h(fonts, para, line, space_for_ul))
         .sum();
     lines_h.max(line_box) + cell_lead_rise(fonts, para)
+}
+
+fn cell_line_h(fonts: &Fonts, para: &CellPara, line: &[TextRun], space_for_ul: bool) -> f32 {
+    let (size, _, line_box) = cell_line_metrics(fonts, para, line);
+    line_box + ul_line_extra(line, size, space_for_ul)
+}
+
+/// A cell paragraph's lines and (how many of the first run beside a side
+/// float, how far in they start): Word narrows each line whose top is
+/// above the float's bottom and sets the rest at full width.
+fn cell_para_wrap(
+    fonts: &Fonts,
+    para: &CellPara,
+    wrap_w: f32,
+    space_for_ul: bool,
+) -> (LaidCellPara, (usize, f32)) {
+    let (first_w, rest_w) = cell_para_widths(fonts, para, wrap_w);
+    let Some((shift, bottom)) = cell_side_float(fonts, para, wrap_w) else {
+        return (
+            wrap_cell_runs(fonts, para, first_w, rest_w, (0, 0.0)),
+            (0, 0.0),
+        );
+    };
+    // The narrowed lines' heights decide how many there are; a couple of
+    // passes settle it.
+    let mut narrow = usize::MAX;
+    let mut laid = wrap_cell_runs(fonts, para, first_w, rest_w, (narrow, shift));
+    for _ in 0..3 {
+        let mut top = cell_lead_rise(fonts, para);
+        let beside = laid
+            .0
+            .iter()
+            .take_while(|line| {
+                let open = top < bottom - 0.01;
+                top += cell_line_h(fonts, para, line, space_for_ul);
+                open
+            })
+            .count();
+        if beside == narrow.min(laid.0.len()) {
+            break;
+        }
+        narrow = beside;
+        laid = wrap_cell_runs(fonts, para, first_w, rest_w, (narrow, shift));
+    }
+    let beside = narrow.min(laid.0.len());
+    (laid, (beside, shift))
+}
+
+/// A square-wrapped float at a cell's left whose first line it reaches:
+/// (how far in the text beside it starts, the float's bottom below the
+/// paragraph's text top). Word sets the text right of it, as in the body
+/// (3cccdeb956's header logo with the address lines 9pt clear; VML and
+/// DrawingML alike), where stacking it under the logo cost a line.
+fn cell_side_float(fonts: &Fonts, para: &CellPara, wrap_w: f32) -> Option<(f32, f32)> {
+    if cell_para_is_image_only(para) || cell_lead_picture(para).is_some() {
+        return None;
+    }
+    let [img] = para.images.as_slice() else {
+        return None;
+    };
+    let ImageSlot::Float {
+        align: Align::Left,
+        col_x,
+        para_y,
+        wrap_square: true,
+        dist_r,
+        dist_b,
+        ..
+    } = img.slot
+    else {
+        return None;
+    };
+    if img.behind || !cell_holds_image(img) {
+        return None;
+    }
+    let (dw, dh) = cell_image_wh(img);
+    let drop = para_y.unwrap_or(0.0).max(0.0);
+    let shift = (col_x.unwrap_or(0.0) + dw + dist_r).max(0.0);
+    (wrap_w - shift >= MIN_SIDE_FLOAT_ROOM_PT && drop < cell_para_line_box(fonts, para).1)
+        .then_some((shift, drop + dh + dist_b))
 }
 
 /// A floating cell picture that starts below its paragraph's text: Word
@@ -16028,20 +16105,23 @@ fn vml_shape_slot(dom: &Dom, shape: NodeId) -> Option<ImageSlot> {
         let h_page = h_rel == "page";
         let v_page = v_rel == "page";
         let v_para = matches!(v_rel.as_str(), "" | "text" | "paragraph" | "line");
-        // `<w10:wrap type=…>` inside the shape names the wrap when the
-        // style doesn't (069252c3's topAndBottom org-chart group). Word
-        // ignores it on a `v:line`: bc404781's wrapped form rules move no
-        // text.
-        let mut wrap = vml_style_token(style, "mso-wrap-style").to_ascii_lowercase();
-        if wrap.is_empty()
-            && !local_name_is(dom, shape, "line")
-            && let Some(ty) = (0..dom.child_count(shape))
+        // `<w10:wrap type=…>` inside the shape names the wrap (069252c3's
+        // topAndBottom org-chart group); without it the shape floats over
+        // the text. `mso-wrap-style` wraps the lines of the shape's own
+        // text box, not the text around it: Word wraps nothing around a
+        // `square` style without `w10:wrap`, and wraps around
+        // `w10:wrap square` under `mso-wrap-style:none`. Word ignores the
+        // wrap on a `v:line`: bc404781's wrapped form rules move no text.
+        let wrap = if local_name_is(dom, shape, "line") {
+            String::new()
+        } else {
+            (0..dom.child_count(shape))
                 .map(|i| dom.child_at(shape, i))
                 .find(|c| local_name_is(dom, *c, "wrap"))
                 .and_then(|w| attr_any(dom, w, "type"))
-        {
-            wrap = ty.to_ascii_lowercase();
-        }
+                .unwrap_or_default()
+                .to_ascii_lowercase()
+        };
         let v_frame = match v_rel.as_str() {
             "page" => RelFrame::Page,
             "margin" => RelFrame::Margin,
@@ -16068,8 +16148,10 @@ fn vml_shape_slot(dom: &Dom, shape: NodeId) -> Option<ImageSlot> {
             wrap_top_bottom: matches!(wrap.as_str(), "topandbottom" | "top-and-bottom"),
             wrap_polygon: matches!(wrap.as_str(), "tight" | "through"),
             poly_bottom: 1.0,
-            dist_l: vml_style_pt(style, "mso-wrap-distance-left").unwrap_or(0.0),
-            dist_r: vml_style_pt(style, "mso-wrap-distance-right").unwrap_or(0.0),
+            // VML's wrap distance defaults to 9pt at the sides and 0 above
+            // and below: 3cccdeb956's header logo keeps its text 9pt clear.
+            dist_l: vml_style_pt(style, "mso-wrap-distance-left").unwrap_or(9.0),
+            dist_r: vml_style_pt(style, "mso-wrap-distance-right").unwrap_or(9.0),
             dist_t: vml_style_pt(style, "mso-wrap-distance-top").unwrap_or(0.0),
             dist_b: vml_style_pt(style, "mso-wrap-distance-bottom").unwrap_or(0.0),
             h_rel: match h_rel.as_str() {
@@ -25913,12 +25995,14 @@ impl<'a> Layout<'a> {
                     let pad_r = cell.pad_r;
                     let wrap_w = cell_wrap_width(cell, w);
                     let mut para_lines: Vec<LaidCellPara> = Vec::new();
+                    let mut para_narrow = Vec::new();
                     let mut nlines = 0usize;
                     for para in &cell.paras {
-                        let (first_w, rest_w) = cell_para_widths(self.fonts, para, wrap_w);
-                        let (lines, breaks) = wrap_cell_runs(self.fonts, para, first_w, rest_w);
+                        let ((lines, breaks), narrow) =
+                            cell_para_wrap(self.fonts, para, wrap_w, self.space_for_ul);
                         nlines += lines.len().max(1);
                         para_lines.push((lines, breaks));
+                        para_narrow.push(narrow);
                     }
                     let one_line = nlines == 1;
                     let inset = cell.pad_t;
@@ -25976,6 +26060,7 @@ impl<'a> Layout<'a> {
                             self.emit_cell_box(box_, x + pad_l, inner, y_line, para.style.before);
                         }
                         let lead = cell_lead_picture(para);
+                        let narrow = para_narrow[pi];
                         let para_top = y_line;
                         let text_h = cell_para_text_h(self.fonts, para, wrap_w, self.space_for_ul);
                         let mut float_bottom = 0.0_f32;
@@ -26004,7 +26089,7 @@ impl<'a> Layout<'a> {
                                 Align::Left | Align::Justify => 0.0,
                             });
                             let ix = x + pad_l + extra;
-                            if room && cell_float_below(para, img, drop, text_h) {
+                            if room && (narrow.0 > 0 || cell_float_below(para, img, drop, text_h)) {
                                 self.push_image(img, ix, para_top - drop - dh, dw, dh);
                                 float_bottom = float_bottom.max(drop + dh);
                             } else if room {
@@ -26045,7 +26130,8 @@ impl<'a> Layout<'a> {
                                     para.style.indent_first
                                 } else {
                                     0.0
-                                };
+                                }
+                                + if li < narrow.0 { narrow.1 } else { 0.0 };
                             if !joined_below
                                 && let Some((color, width)) = line.iter().find_map(|r| r.rule)
                             {
@@ -26448,8 +26534,7 @@ impl<'a> Layout<'a> {
         left: f32,
         wrap_w: f32,
     ) -> Option<(CellPara, CellPara)> {
-        let (first_w, rest_w) = cell_para_widths(self.fonts, para, wrap_w);
-        let (lines, _) = wrap_cell_runs(self.fonts, para, first_w, rest_w);
+        let ((lines, _), _) = cell_para_wrap(self.fonts, para, wrap_w, self.space_for_ul);
         // The halves are wrapped again, so each keeps its w:br breaks.
         let rejoin = |range: std::ops::Range<usize>| rejoin_lines(&lines[range]);
         let mut used = para.style.before;
@@ -28238,6 +28323,7 @@ fn wrap_cell_runs(
     para: &CellPara,
     first_width: f32,
     width: f32,
+    narrow: (usize, f32),
 ) -> (Vec<Vec<TextRun>>, Vec<bool>) {
     wrap_runs_split(
         fonts,
@@ -28249,6 +28335,7 @@ fn wrap_cell_runs(
         LineFit {
             squeeze: para.squeeze,
             char_break: !para.vertical,
+            narrow,
         },
     )
 }
@@ -28325,6 +28412,9 @@ struct LineFit {
     /// A word wider than the line breaks by character even without tab
     /// stops (table cells; body lines always pass their tabs).
     char_break: bool,
+    /// The first `.0` lines are `.1` points narrower: they run beside a
+    /// cell float (`cell_side_float`).
+    narrow: (usize, f32),
 }
 
 /// Where a paragraph's lines start relative to the tab origin (the flow
@@ -28349,6 +28439,7 @@ fn wrap_runs_tabbed(
     let fit = LineFit {
         squeeze: tabs.map_or(Squeeze::NONE, |t| t.squeeze),
         char_break: false,
+        narrow: (0, 0.0),
     };
     wrap_runs_split(fonts, runs, first_width, width, list, tabs, fit)
 }
@@ -28407,6 +28498,10 @@ fn wrap_runs_split(
             start: t.start,
             squeeze: t.squeeze,
         });
+        let seg_fit = LineFit {
+            narrow: (fit.narrow.0.saturating_sub(lines.len()), fit.narrow.1),
+            ..fit
+        };
         let wrapped = wrap_runs_segment(
             fonts,
             seg,
@@ -28414,7 +28509,7 @@ fn wrap_runs_split(
             width,
             list && i == 0,
             seg_tabs.as_ref(),
-            fit,
+            seg_fit,
         );
         let more = i + 1 < segments.len();
         let n = wrapped.len();
@@ -28448,6 +28543,10 @@ fn wrap_runs_segment(
     let mut lines: Vec<Vec<TextRun>> = vec![Vec::new()];
     let mut x = 0.0;
     let mut line_i = 0usize;
+    let line_limit = |i: usize| {
+        (if i == 0 { first_width } else { width })
+            - if i < fit.narrow.0 { fit.narrow.1 } else { 0.0 }
+    };
     if list {
         let bullet = "• ";
         x = fonts.get(FaceId::CarlitoRegular).width_pt(bullet, 11.0);
@@ -28531,7 +28630,7 @@ fn wrap_runs_segment(
         let tab_unit = is_space && unit.iter().any(|(_, tok, _)| tok.contains('\t'));
         let tab_w = |t: &WrapTabs<'_>, line_i: usize, x: f32| -> (f32, bool) {
             let start = if line_i == 0 { t.first_start } else { t.start };
-            let right = start + if line_i == 0 { first_width } else { width };
+            let right = start + line_limit(line_i);
             let mut past = false;
             let mut first_tab = true;
             let mut pos = start + x;
@@ -28592,7 +28691,7 @@ fn wrap_runs_segment(
         {
             (w, tab_past) = tab_w(t, line_i, x);
         }
-        let limit = if line_i == 0 { first_width } else { width };
+        let limit = line_limit(line_i);
         // Word squeezes only while the overflow is at most a third of the
         // word and two spaces: shrinking may take half of what moving the
         // word would leave to stretch, its space included. Word 16 probes
@@ -28628,7 +28727,7 @@ fn wrap_runs_segment(
         // reaches the edge (001472bb). A
         // run that overshoots by a hair (002ed0b9's dotted fill-in lines,
         // one line in Word) is measurement noise, not a break.
-        let limit = if line_i == 0 { first_width } else { width };
+        let limit = line_limit(line_i);
         // Body lines and cells: a table column autofits its longest word
         // (0129b302's "19.720.000") where it has room, so only a word
         // wider than its laid-out cell breaks; CJK text already breaks per
@@ -28669,7 +28768,7 @@ fn wrap_runs_segment(
                 for ch in tok.chars() {
                     let piece = ch.to_string();
                     let cw = face.width_pt(&piece, size) * run.style.hscale();
-                    let limit = if line_i == 0 { first_width } else { width };
+                    let limit = line_limit(line_i);
                     // Closing punctuation stays with the character before
                     // it (2b479f55f8: "PEEP’s register," in a column with
                     // no room keeps "P’" and "r," on a line each).
@@ -33831,7 +33930,7 @@ mod drawing_tests {
         // relative to text is ImageSlot center, not page_x=0.
         let xml = r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
- xmlns:v="urn:schemas-microsoft-com:vml">
+ xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w10="urn:schemas-microsoft-com:office:word">
 <w:body><w:p>
 <w:r><w:t>Title</w:t></w:r>
 <w:r><w:pict>
@@ -33839,6 +33938,7 @@ mod drawing_tests {
   <v:textbox>
     <w:txbxContent><w:p><w:r><w:t>hello</w:t></w:r></w:p></w:txbxContent>
   </v:textbox>
+  <w10:wrap type="square"/>
   </v:shape>
 </w:pict></w:r>
 </w:p></w:body></w:document>"#;
@@ -33877,7 +33977,7 @@ mod drawing_tests {
                     page_x.is_none(),
                     "text-relative center is not page origin; page_x={page_x:?}"
                 );
-                assert!(wrap_square, "mso-wrap-style:square");
+                assert!(wrap_square, "w10:wrap type=square");
                 assert!(
                     para_y.is_some(),
                     "mso-position-vertical-relative:text; para_y={para_y:?}"
@@ -33885,6 +33985,63 @@ mod drawing_tests {
             }
             _ => panic!("expected float slot, got flow w={}", box_.w),
         }
+    }
+
+    /// The VML shape's wrap is its `w10:wrap`, never `mso-wrap-style`, and
+    /// its side distances default to 9pt (Word probes of 3cccdeb956's
+    /// header logo: no `w10:wrap` paints the text over the logo,
+    /// `mso-wrap-style:none` with `w10:wrap square` wraps 9pt clear).
+    #[test]
+    fn vml_wrap_comes_from_w10_wrap_with_9pt_sides() {
+        let slot = |shape_style: &str, wrap: &str| {
+            let xml = format!(
+                r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w10="urn:schemas-microsoft-com:office:word">
+<w:body><w:p><w:r><w:pict>
+  <v:shape style="position:absolute;margin-left:0;margin-top:0;width:100pt;height:50pt;{shape_style}">
+  <v:textbox><w:txbxContent><w:p><w:r><w:t>hello</w:t></w:r></w:p></w:txbxContent></v:textbox>
+  {wrap}
+  </v:shape>
+</w:pict></w:r></w:p></w:body></w:document>"#
+            );
+            let mut dom = Dom::new();
+            let doc = dom.parse_xdocument(&xml);
+            let root = dom.root(doc).expect("root");
+            let para = dom
+                .descendants(root, Some(&W::p()))
+                .into_iter()
+                .next()
+                .expect("p");
+            let boxes = collect_textboxes(
+                None,
+                &dom,
+                para,
+                &Defaults::word().run,
+                &ThemeFonts::default(),
+            );
+            match boxes.first().expect("vml txbx").slot {
+                ImageSlot::Float {
+                    wrap_square,
+                    dist_l,
+                    dist_r,
+                    dist_t,
+                    dist_b,
+                    ..
+                } => (wrap_square, [dist_l, dist_r, dist_t, dist_b]),
+                ImageSlot::Flow => panic!("expected a float"),
+            }
+        };
+        let (square, _) = slot("mso-wrap-style:square", "");
+        assert!(!square, "mso-wrap-style alone wraps no text");
+        let (square, dist) = slot("mso-wrap-style:none", r#"<w10:wrap type="square"/>"#);
+        assert!(square, "w10:wrap square wraps");
+        assert_eq!(dist, [9.0, 9.0, 0.0, 0.0], "VML's default distances");
+        let (_, dist) = slot(
+            "mso-wrap-distance-left:0;mso-wrap-distance-right:0",
+            r#"<w10:wrap type="square"/>"#,
+        );
+        assert_eq!(dist, [0.0, 0.0, 0.0, 0.0], "explicit distances stay");
     }
 
     #[test]
