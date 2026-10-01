@@ -1095,6 +1095,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_wrap_never_strands_a_change_marker() {
+        // The heading pair wrapped as `{+paragraph` / `+}style`: the break
+        // was the inserted space itself.
+        let line = "**This document [-shows-]{+demonstrates+} Heading 1 {+paragraph +}style[- with extra bold emphasis-].** {==see==}{>>note <<} end";
+        for columns in [20, 40, 56, 60, 72] {
+            let wrapped = wrap(line, columns);
+            assert_eq!(wrapped.replace('\n', " "), line, "{columns}");
+            for row in wrapped.lines() {
+                for close in ["+}", "-]", "==}", "<<}"] {
+                    assert!(!row.starts_with(close), "{columns}: {row:?} starts with {close}");
+                }
+                for open in ["{+", "[-", "{==", "{>>"] {
+                    assert!(!row.ends_with(open), "{columns}: {row:?} ends with {open}");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn escapes_only_unescaped_delimiters() {
         assert_eq!(escape("a [-b-] {+c+}"), "a \\[-b-\\] \\{+c+\\}");
         assert_eq!(escape("\\[-b"), "\\[-b");
