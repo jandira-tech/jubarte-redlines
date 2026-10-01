@@ -147,6 +147,14 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   - Probe: text bottom 43.0, picture 45.3–135.3, body 152.2.
   - jubarte used to put the picture first (redline 7429fdae's "RA ID" above
     its journal banner).
+- **A page-wide square float in a compat-15 header pushes the header line
+  under it**, acbac4d3. A header line overlapping a `wrapSquare` (not tight
+  or through) float that spans the text column drops below the float plus
+  its `distB`, and the body follows. Word 2010 and older modes leave the
+  line over the float.
+  - Word 16 probes u0–u4 (2026-10-01): the first body baseline is 125.3 in
+    mode 15 and 100.3 in the legacy modes, for the same header.
+  - 3936a8fe56's banner float now leaves its body where Word's starts.
 
 ## Fonts: macOS system fonts
 
@@ -218,6 +226,10 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
 
 ## Pages and keep-with-next
 
+- **`w:pgNumType w:start="0"` numbers the first page 0.** Word honours a
+  zero start (Word 16 probe 2026-10-01); jubarte used to clamp it to 1,
+  520ade18.
+
 - **Parity blank page (fb241e2).** With `w:evenAndOddHeaders`, a section that
   restarts page numbering on the same parity as the previous page's number
   gets a blank page first, without headers or footers, so odd numbers stay on
@@ -268,6 +280,12 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   empty text line above it, no gap below, and a multiple's extra under it
   from the paragraph's run style (probe: 1.5 lines leave the next line at
   209.52 for both).
+- **The run holding an inline shape sizes its line.** A paragraph whose
+  Calibri run holds only a 144x0.48pt `wps` rule takes that run's line,
+  with or without a trailing Arial 10 space: Word 16 probe_il (2026-10-01)
+  puts the next paragraph 23.76 / 38.40 / 55.44pt under the one above at
+  sz 20 / 44 / 72 (Calibri single lines). 3936a8fe56's rule above each
+  heading is 14.49pt at line 259, not the space's 12.41.
 
 ## Page colour
 
