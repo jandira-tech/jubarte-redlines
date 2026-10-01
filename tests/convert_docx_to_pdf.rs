@@ -2272,6 +2272,52 @@ fn all_lowercase_small_caps_line_keeps_its_authored_height() {
 }
 
 #[test]
+fn contextual_spacing_drops_only_the_flagged_paragraphs_share_of_the_gap() {
+    // Word 16 probe_cx (2026-10-01), two Normal paragraphs, compat 15:
+    // the gap is max(after, before) split into A's after and B's excess
+    // over it, and contextualSpacing drops only the flagged paragraph's
+    // share. A flagged (after 20 / 6) over a plain B (before 6 / 20)
+    // leaves 0 / 14; a plain A (after 20 / 6) over a flagged B leaves
+    // 20 / 6; both flagged 0; neither 20. 6ef1820785's flagged lines over
+    // plain empty paragraphs lost each empty paragraph's 2pt, and a row
+    // Word moves to page 4 stayed on page 3.
+    let settings = r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>"#;
+    let para = |text: &str, before: u32, after: u32, ctx: bool| {
+        let ctx = if ctx { "<w:contextualSpacing/>" } else { "" };
+        format!(
+            r#"<w:p><w:pPr><w:spacing w:before="{}" w:after="{}" w:line="240" w:lineRule="auto"/>{ctx}</w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#,
+            before * 20,
+            after * 20
+        )
+    };
+    let pitch = |a_after: u32, a_ctx: bool, b_before: u32, b_ctx: bool| {
+        let body = format!(
+            "{}{}<w:sectPr/>",
+            para("A", 0, a_after, a_ctx),
+            para("B", b_before, 0, b_ctx)
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, settings)).expect("ctx");
+        let ys = text_baselines(&pdf);
+        assert_eq!(ys.len(), 2, "A and B; ys={ys:?}");
+        ys[0] - ys[1]
+    };
+    let base = pitch(20, true, 6, true);
+    for (a_after, a_ctx, b_before, b_ctx, gap) in [
+        (20, true, 6, false, 0.0),
+        (6, true, 20, false, 14.0),
+        (20, false, 6, true, 20.0),
+        (6, false, 20, true, 6.0),
+        (20, false, 6, false, 20.0),
+    ] {
+        let got = pitch(a_after, a_ctx, b_before, b_ctx) - base;
+        assert!(
+            (got - gap).abs() < 0.3,
+            "A after {a_after} ctx {a_ctx}, B before {b_before} ctx {b_ctx}: gap {got}, Word {gap}"
+        );
+    }
+}
+
+#[test]
 fn the_run_holding_an_inline_shape_sizes_its_line() {
     // Word 16 probe 2026-10-01 (probe_il): an Arial 10 "TOP", then a
     // paragraph whose Calibri run holds only a 144x0.48pt inline wps rect
