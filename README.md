@@ -1,4 +1,4 @@
-> **See every page side by side: [jandira-tech.github.io/jubarte-redlines](https://jandira-tech.github.io/jubarte-redlines/)**  
+> **See every page side by side: [jandira-tech.github.io/neurotic_docx_bench](https://jandira-tech.github.io/neurotic_docx_bench/)**  
 > jubarte vs Microsoft Word, docxide-pdf, LibreOffice, PyMuPDF Pro, MiniPdf, rdocx and office2pdf on 808 documents, DOCX to PDF, scored per page.
 
 # jubarte-redlines — #1 DOCX → PDF & #1 DOCX-vs-DOCX Comparison (Redlines) Rust Tool
@@ -291,7 +291,7 @@ exported by **Microsoft Word** itself. Numbers below are the current **0.9.x**
 convert rows plus the latest **jubarte-rust** stamps (this engine's native
 benchmark lane); full tables, corpus provenance, and per-version history:
 [RESULTS.md](RESULTS.md). Every scored page, side by side with Word's and the
-other engines': [jandira-tech.github.io/jubarte-redlines](https://jandira-tech.github.io/jubarte-redlines/).
+other engines': [jandira-tech.github.io/neurotic_docx_bench](https://jandira-tech.github.io/neurotic_docx_bench/).
 
 ### docx→pdf — Jaccard vs Word's own export (0–1, higher is better)
 
@@ -459,7 +459,7 @@ Copyright (c) 2026 Jandira Technologies, LLC for its contributions.
 
 ## Find us
 
-[Engine comparison site](https://jandira-tech.github.io/jubarte-redlines/) ·
+[Engine comparison site](https://jandira-tech.github.io/neurotic_docx_bench/) ·
 [jandira.tech](https://www.jandira.tech) · [arthur.law](https://arthur.law) ·
 [Cicero](https://www.cicero.im) · [LinkedIn](https://linkedin.com/in/arthrod) ·
 `contact@arthur.law`
