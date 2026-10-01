@@ -340,3 +340,27 @@ fn built_in_twins_the_revision_lacks_keep_their_own_ids() {
     assert_eq!(caption("Caption").as_deref(), Some("Caption"));
     assert_eq!(caption("caption").as_deref(), Some("Caption1"));
 }
+
+/// A style id names one style, whatever its type. When the revision holds a
+/// style under an id the original gives a style of another type, Word keeps
+/// the original's and leaves the revision's out (420a528aa0 × 178804f5ce:
+/// the revision's character `DocID` beside the original's paragraph `DocID`;
+/// 59b0cdb4c5 × e33a1cf779: a table `TableGrid1` beside a paragraph one).
+/// Copying it wrote the id twice (49482a748b × 4951736f32: `Heading1`,
+/// `Header` and `Footer`), which the OOXML validator rejects.
+#[test]
+fn a_revision_style_under_a_taken_id_stays_out() {
+    let a = r#"<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="DocID"><w:name w:val="DocID"/><w:basedOn w:val="Normal"/><w:rPr><w:sz w:val="16"/></w:rPr></w:style>"#;
+    let b = r#"<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="character" w:customStyle="1" w:styleId="DocID"><w:name w:val="DocID"/><w:rPr><w:sz w:val="16"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="zDocID"><w:name w:val="zDocID"/></w:style>"#;
+    let out = compare_documents(
+        &docx(a, "Hello world."),
+        &docx(b, "Hello brave world."),
+        "Redline",
+    )
+    .expect("compare ok");
+    let all = styles(&styles_xml(&out));
+    let doc_ids: Vec<_> = all.iter().filter(|(_, id, _, _)| id == "DocID").collect();
+    assert_eq!(doc_ids.len(), 1, "{doc_ids:?}");
+    assert_eq!(doc_ids[0].0, "paragraph");
+    assert!(all.iter().any(|(_, _, name, _)| name == "zDocID"));
+}
