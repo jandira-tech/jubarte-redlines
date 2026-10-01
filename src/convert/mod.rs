@@ -10641,7 +10641,10 @@ fn table_block(
                 cell_paras.iter_mut().for_each(|p| p.vertical = true);
             }
             // 0129b302's auto-spaced "1.300.000" cell is 14pt apart, not 28.
-            fold_stacked_spacing(cell_paras.iter_mut().map(|p| &mut p.style).collect());
+            fold_stacked_spacing(
+                cell_paras.iter_mut().map(|p| &mut p.style).collect(),
+                &nested_at,
+            );
             let (colspan, vmerge) = cell_span(dom, cell);
             let last_col = grid_at + colspan.max(1) >= cols.len();
             let at = |b: TblBorders| {
@@ -13582,8 +13585,10 @@ fn txbx_lays_out_paragraphs(dom: &Dom, shape: NodeId, txbx: NodeId) -> bool {
 /// HTML auto spacing does not reach the container's edges: the first
 /// paragraph's auto before and the last one's auto after drop. Between two
 /// paragraphs only max(after, next before) stands, as in the body, so the
-/// next before keeps only its excess.
-fn fold_stacked_spacing(mut styles: Vec<&mut ParaStyle>) {
+/// next before keeps only its excess. `breaks` lists the indices a nested
+/// table sits in front of: the paragraphs around it are not neighbours, so
+/// they keep their after and before in full.
+fn fold_stacked_spacing(mut styles: Vec<&mut ParaStyle>, breaks: &[usize]) {
     if let Some(first) = styles.first_mut()
         && first.before_auto
     {
@@ -13594,7 +13599,7 @@ fn fold_stacked_spacing(mut styles: Vec<&mut ParaStyle>) {
     {
         last.after = 0.0;
     }
-    for i in 1..styles.len() {
+    for i in (1..styles.len()).filter(|i| !breaks.contains(i)) {
         let (head, rest) = styles.split_at_mut(i);
         let (prev, next) = (&mut *head[i - 1], &mut *rest[0]);
         // contextualSpacing drops the space between same-style paragraphs
@@ -13662,7 +13667,7 @@ fn txbx_paragraphs(
             (runs, style)
         })
         .collect::<Vec<_>>();
-    fold_stacked_spacing(paras.iter_mut().map(|(_, style)| style).collect());
+    fold_stacked_spacing(paras.iter_mut().map(|(_, style)| style).collect(), &[]);
     paras
 }
 

@@ -42073,6 +42073,35 @@ fn a_justified_line_with_spaces_after_its_tab_keeps_the_leader() {
 }
 
 #[test]
+fn contextual_spacing_does_not_reach_across_a_nested_table() {
+    // PR #247 review: a cell's paragraphs were folded as one stack, so two
+    // same-style contextual paragraphs on either side of a nested table
+    // lost their after/before spacing and the table touched the text.
+    // They are not consecutive: their spacing stays.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+          <w:style w:type=\"paragraph\" w:styleId=\"Item\"><w:name w:val=\"Item\"/>\
+            <w:pPr><w:spacing w:before=\"400\" w:after=\"400\"/>CTX</w:pPr></w:style>\
+        </w:styles>";
+    let body = "<w:tbl><w:tblGrid><w:gridCol w:w=\"6000\"/></w:tblGrid><w:tr><w:tc>\
+          <w:p><w:pPr><w:pStyle w:val=\"Item\"/></w:pPr><w:r><w:t>Above</w:t></w:r></w:p>\
+          <w:tbl><w:tblGrid><w:gridCol w:w=\"3000\"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Inner</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+          <w:p><w:pPr><w:pStyle w:val=\"Item\"/></w:pPr><w:r><w:t>Below</w:t></w:r></w:p>\
+        </w:tc></w:tr></w:tbl><w:p/><w:sectPr/>";
+    let below = |ctx: &str| {
+        let pdf =
+            docx_to_pdf(&docx_with_styles(body, &styles.replace("CTX", ctx))).expect("nested");
+        pdf_glyph_text_xy(&pdf, "Below").expect("Below painted").1
+    };
+    let (plain, contextual) = (below(""), below("<w:contextualSpacing/>"));
+    assert!(
+        (plain - contextual).abs() < 0.5,
+        "contextual spacing stops at the nested table: plain={plain} contextual={contextual}"
+    );
+}
+
+#[test]
 fn hangul_only_in_a_header_still_loads_the_korean_fallback() {
     // PR #247 review: the CJK fallbacks were loaded only when the body
     // held East Asian text, so Hangul in a header (or footer, or note)
