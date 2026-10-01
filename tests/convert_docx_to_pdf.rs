@@ -38336,6 +38336,60 @@ fn a_character_styles_superscript_raises_the_run() {
 }
 
 #[test]
+fn auto_spacing_inherits_per_attribute_down_the_style_chain() {
+    // te12998 (Word 16 probe asp0930): Normal says after=100
+    // afterAutospacing=1; Heading 2, based on it, sets only after=80.
+    // Word keeps the inherited auto 14pt (gap 27.84 = 13.8 line + 14), a
+    // direct after=0 keeps it too (27.60), and only afterAutospacing="0"
+    // brings back the style's 5pt (18.96). We let any w:after clear the
+    // flag, so every heading sat 4pt over its text.
+    let styles = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:sz w:val="24"/></w:rPr></w:rPrDefault><w:pPrDefault/></w:docDefaults>
+  <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/>
+    <w:pPr><w:spacing w:after="100" w:afterAutospacing="1"/></w:pPr></w:style>
+  <w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/>
+    <w:pPr><w:spacing w:before="0" w:after="80"/></w:pPr></w:style>
+</w:styles>"#;
+    let p =
+        |t: &str, ppr: &str| format!("<w:p><w:pPr>{ppr}</w:pPr><w:r><w:t>{t}</w:t></w:r></w:p>");
+    let body = [
+        p("AAheading", "<w:pStyle w:val=\"Heading2\"/>"),
+        p("BBnormal", ""),
+        p("CCdirectzero", "<w:spacing w:after=\"0\"/>"),
+        p("DDnormal", ""),
+        p("EEautooff", "<w:spacing w:afterAutospacing=\"0\"/>"),
+        p("FFnormal", ""),
+    ]
+    .concat()
+        + "<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&numbering_docx_with_styles(&body, None, Some(styles)))
+        .expect("convert auto spacing chain");
+    let y = |t: &str| {
+        pdf_literal_td_xy(&pdf, t)
+            .unwrap_or_else(|| panic!("{t} painted"))
+            .1
+    };
+    let line = y("BBnormal") - y("CCdirectzero");
+    assert!(
+        (y("AAheading") - y("BBnormal") - line).abs() < 0.5,
+        "the heading keeps Normal's auto after: heading gap {} vs {line}",
+        y("AAheading") - y("BBnormal")
+    );
+    assert!(
+        (y("CCdirectzero") - y("DDnormal") - line).abs() < 0.5,
+        "a direct after=0 keeps the auto after: {} vs {line}",
+        y("CCdirectzero") - y("DDnormal")
+    );
+    let off = y("EEautooff") - y("FFnormal");
+    assert!(
+        (line - off - 9.0).abs() < 0.5,
+        "afterAutospacing=0 gives back the style's 5pt (14 - 5 = 9 less): {off} vs {line}"
+    );
+}
+
+#[test]
 fn a_num_lvl_override_replaces_the_abstract_level() {
     // fixtures_500 014caa99: numId 2 overrides every level with its own
     // w:lvl ("PART %2", "%2.0%3", "%4."). We kept the abstract's generic

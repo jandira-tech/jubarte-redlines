@@ -787,6 +787,10 @@ struct ParaStyle {
     /// (a cell's outer auto space is dropped, 0129b302).
     before_auto: bool,
     after_auto: bool,
+    /// The last `w:before` / `w:after` a layer wrote. Auto spacing hides it,
+    /// and a later `w:*Autospacing="0"` brings it back (probe asp0930).
+    before_spec: f32,
+    after_spec: f32,
     /// `w:bidi`: a right-to-left paragraph. `para_base` mirrors its
     /// alignment and indents once every layer is applied.
     bidi: bool,
@@ -1298,6 +1302,8 @@ impl Defaults {
                 before: 0.0,
                 before_auto: false,
                 after_auto: false,
+                before_spec: 0.0,
+                after_spec: 10.0,
                 bidi: false,
                 widow_control: true,
                 snap_to_grid: true,
@@ -4134,23 +4140,37 @@ fn apply_ppr(dom: &Dom, ppr: NodeId, style: &mut ParaStyle) {
     }
     if let Some(sp) = first_named(dom, ppr, "spacing") {
         // ISO Strict (Strict01) writes `8pt` / `12.95pt`. Bare numbers are twips.
+        // Spacing merges per attribute (Word 16 probe asp0930): a w:after
+        // under an inherited afterAutospacing="1" is only the fallback, and
+        // only an explicit w:afterAutospacing turns auto on or off. HTML auto
+        // spacing (fixtures_500 00a46590) is 14pt.
         if let Some(after) = attr_any(dom, sp, "after").and_then(parse_len) {
-            style.after = after;
-            style.after_auto = false;
+            style.after_spec = after;
+            if !style.after_auto {
+                style.after = after;
+            }
         }
         if let Some(before) = attr_any(dom, sp, "before").and_then(parse_len) {
-            style.before = before;
-            style.before_auto = false;
+            style.before_spec = before;
+            if !style.before_auto {
+                style.before = before;
+            }
         }
-        // HTML auto spacing (fixtures_500 00a46590) replaces the twips with
-        // 14pt; Word keeps the w:before/w:after only as a fallback.
-        if is_auto_spacing(dom, sp, "beforeAutospacing") {
-            style.before = 14.0;
-            style.before_auto = true;
+        if attr_any(dom, sp, "beforeAutospacing").is_some() {
+            style.before_auto = is_auto_spacing(dom, sp, "beforeAutospacing");
+            style.before = if style.before_auto {
+                14.0
+            } else {
+                style.before_spec
+            };
         }
-        if is_auto_spacing(dom, sp, "afterAutospacing") {
-            style.after = 14.0;
-            style.after_auto = true;
+        if attr_any(dom, sp, "afterAutospacing").is_some() {
+            style.after_auto = is_auto_spacing(dom, sp, "afterAutospacing");
+            style.after = if style.after_auto {
+                14.0
+            } else {
+                style.after_spec
+            };
         }
         let rule = attr_any(dom, sp, "lineRule").unwrap_or("auto");
         if let Some(line) = attr_any(dom, sp, "line") {
@@ -18079,6 +18099,8 @@ fn first_para_align(dom: &Dom, root: NodeId) -> Align {
         before: 0.0,
         before_auto: false,
         after_auto: false,
+        before_spec: 0.0,
+        after_spec: 0.0,
         bidi: false,
         widow_control: true,
         snap_to_grid: true,

@@ -345,6 +345,18 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
     its list rows step 23.5 (20 + 1.8 + 1.8).
   - `w:beforeLines`/`w:afterLines` count hundredths of the docGrid pitch
     (12pt without a grid): 4640e71ddd steps 22.3 with its grid removed.
+- **Auto spacing inherits attribute by attribute**, e12998d969. Only an
+  explicit `w:beforeAutospacing`/`w:afterAutospacing` turns auto spacing
+  on or off. A plain `w:before`/`w:after` from a derived style or the
+  paragraph is kept as the fallback.
+  - Word 16 probe asp0930 (2026-10-01): Normal sets `after=100
+    afterAutospacing=1`.
+    - Heading 2 based on it sets `after=80` and keeps the 14pt: line
+      step 27.84.
+    - A direct `after=0` keeps it too: 27.60.
+    - `afterAutospacing="0"` alone brings back Normal's 5pt: 18.96.
+  - e12998d969's headings sat 4pt over their text: 41.0 → 78.8 (Aspose's
+    free converter 75.9).
 
 ## Footnotes cited in table cells
 
