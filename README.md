@@ -138,6 +138,14 @@ cargo install jubarte-redlines
 
 The installed binary is named `jubarte`.
 
+From the release after 0.10.1, the Python wheel and the npm package also
+run the CLI without an install, under the same command names:
+
+```sh
+uvx jubarte-redlines redline a.docx b.docx -o redline.docx
+npx jubarte-redlines redline a.docx b.docx -o redline.docx
+```
+
 For a source checkout, the repository also contains installation scripts that
 can install supplemental fonts used by the renderer:
 

@@ -150,6 +150,27 @@ def step(n: int) -> str:
     return text[start:min(ends) if ends else len(text)]
 
 
+class NpmCli(unittest.TestCase):
+    """`npx jubarte-redlines` ships beside jubarte-wasm, on its version."""
+
+    def test_the_cli_package_follows_the_engine_version(self) -> None:
+        s1 = step(1)
+        self.assertIn('(cd jubarte-wasm/cli && npm pkg set "version=$VER" "dependencies.jubarte-wasm=^$VER"', s1)
+        add = next(l for l in step(7).splitlines() if "jubarte-wasm/Cargo.lock jubarte-wasm/npm/package.json" in l)
+        self.assertIn("jubarte-wasm/cli/package.json", add)
+
+    def test_the_cli_is_dry_run_published_and_verified(self) -> None:
+        self.assertRegex(step(6), r"if npm_cli_has; then[^\n]*\n(?:[^\n]*\n)*?else\n[^\n]*\(cd jubarte-wasm/cli && npm publish --dry-run")
+        self.assertIn('check "npm        jubarte-redlines $VER" npm_cli_has', step(11))
+
+    def test_the_cli_publishes_after_the_wasm_it_depends_on(self) -> None:
+        s9 = step(9)
+        wasm = s9.index("(cd jubarte-wasm/npm && npm publish")
+        cli = s9.index("(cd jubarte-wasm/cli && npm publish")
+        self.assertLess(wasm, cli)
+        self.assertIn("if npm_cli_has; then", s9)
+
+
 class Lessons0101(unittest.TestCase):
     """What stopped or dirtied the v0.10.1 release, one guard each."""
 

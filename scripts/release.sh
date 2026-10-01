@@ -38,7 +38,8 @@
 #   1. preflight — tools, registry credentials, main branch, clean tree
 #   2. version sync — Cargo.toml and the README's Socket badge version
 #      (bump-version.mjs), jubarte-python/Cargo.toml,
-#      jubarte-wasm/npm/package.json, and all four Cargo.lock files
+#      jubarte-wasm/npm/package.json, jubarte-wasm/cli/package.json (the
+#      `npx jubarte-redlines` CLI), and all four Cargo.lock files
 #   3. changelog check — dated `## [x.y.z]` section + release-link footer,
 #      then the five summaries + the docs statement land in their channels
 #   4. gates — fmt, clippy -D warnings, test --all-features, convert-sweep
@@ -58,7 +59,8 @@
 #      builds the five CLI binaries + four PyPI wheels + sdist and creates
 #      the `jubarte vX.Y.Z` GitHub release itself
 #   9. publishes — crates.io (`cargo publish`, after proving the summary is
-#      inside the .crate), npm (`npm publish` on jubarte-wasm/npm), PyPI
+#      inside the .crate), npm (`npm publish` on jubarte-wasm/npm, then the
+#      jubarte-redlines CLI on jubarte-wasm/cli), PyPI
 #      (CI wheels + sdist via `uv publish`)
 #  10. verify — every registry answers with the new version AND its summary
 #
@@ -144,6 +146,7 @@ crates_has()  { curl -sf -A "jubarte-release (github.com/jandira-tech/jubarte-re
                   "https://crates.io/api/v1/crates/jubarte-redlines/$VER" >/dev/null; }
 pypi_has()    { curl -sf "https://pypi.org/pypi/jubarte-redlines/$VER/json" >/dev/null; }
 npm_has()     { [ "$(npm view "jubarte-wasm@$VER" version 2>/dev/null)" = "$VER" ]; }
+npm_cli_has() { [ "$(npm view "jubarte-redlines@$VER" version 2>/dev/null)" = "$VER" ]; }
 ghrel_has()   { gh release view "$TAG" >/dev/null 2>&1; }
 
 # =============================================================================
@@ -193,7 +196,9 @@ fi
 sed -i.bak "s/^version = \"$CUR\"$/version = \"$VER\"/" jubarte-python/Cargo.toml \
   && rm jubarte-python/Cargo.toml.bak
 (cd jubarte-wasm/npm && npm pkg set "version=$VER" >/dev/null)
-step "jubarte-python/Cargo.toml + jubarte-wasm/npm/package.json → $VER"
+# `npx jubarte-redlines` runs on the jubarte-wasm of its own release.
+(cd jubarte-wasm/cli && npm pkg set "version=$VER" "dependencies.jubarte-wasm=^$VER" >/dev/null)
+step "jubarte-python/Cargo.toml + jubarte-wasm/{npm,cli}/package.json → $VER"
 
 # The desktop app ships on the engine's version (tests/release_metadata.rs):
 # its package.json, Tauri config, crate manifest and app-bar label.
@@ -430,6 +435,11 @@ if npm_has; then
 else
   (cd jubarte-wasm/npm && npm publish --dry-run >/dev/null)
 fi
+if npm_cli_has; then
+  step "jubarte-redlines $VER already on npm — dry run skipped"
+else
+  (cd jubarte-wasm/cli && npm publish --dry-run >/dev/null)
+fi
 uvx maturin sdist --manifest-path jubarte-python/Cargo.toml --out target/release-check >/dev/null
 # The pypi summary must survive into the sdist or we stop here.
 sdist=$(ls target/release-check/*.tar.gz 2>/dev/null | head -1)
@@ -465,7 +475,7 @@ else
     git add Cargo.toml Cargo.lock CHANGELOG.md README.md VERSIONING.md \
       jubarte-python/Cargo.toml jubarte-python/Cargo.lock \
       jubarte-python/pyproject.toml \
-      jubarte-wasm/Cargo.lock jubarte-wasm/npm/package.json \
+      jubarte-wasm/Cargo.lock jubarte-wasm/npm/package.json jubarte-wasm/cli/package.json \
       jubarte-rust-inproc/Cargo.lock \
       jubarte-app/package.json jubarte-app/CHANGELOG.md jubarte-app/src/index.html \
       jubarte-app/src-tauri/Cargo.toml jubarte-app/src-tauri/Cargo.lock \
@@ -578,6 +588,22 @@ else
        already holds $VER is skipped."
   step "npm publish done"
 fi
+# The CLI depends on jubarte-wasm@^$VER, so it goes second. A one-time
+# password lasts about 30 s; a stale NPM_OTP fails here alone and the rerun
+# skips jubarte-wasm.
+if npm_cli_has; then
+  step "jubarte-redlines $VER already on npm — skipped"
+else
+  if [ -n "${NPM_OTP:-}" ]; then
+    publish_cli() { (cd jubarte-wasm/cli && npm publish --otp "$NPM_OTP"); }
+  else
+    publish_cli() { (cd jubarte-wasm/cli && npm publish); }
+  fi
+  publish_cli || die "npm publish of jubarte-redlines failed. With two-factor auth, run
+         (cd jubarte-wasm/cli && npm publish --otp <code>)
+       or rerun this same command with --skip-gates and a fresh NPM_OTP."
+  step "npm publish (jubarte-redlines CLI) done"
+fi
 
 # =============================================================================
 say "10. PyPI"
@@ -688,6 +714,7 @@ check() { if eval "$2"; then step "ok — $1"; else echo "  ✗ $1" >&2; ok=0; f
 sleep 20 # crates.io index lag
 check "crates.io  jubarte-redlines $VER" crates_has
 check "npm        jubarte-wasm $VER" npm_has
+check "npm        jubarte-redlines $VER" npm_cli_has
 check "npm        releaseNotes.$VER shipped" npm_note
 check "PyPI       jubarte-redlines $VER" pypi_has
 check "GitHub     release $TAG" ghrel_has

@@ -1,0 +1,44 @@
+{
+  "name": "jubarte-redlines",
+  "version": "0.10.1",
+  "description": "Command line for the jubarte DOCX redline engine (WebAssembly): `npx jubarte-redlines redline a.docx b.docx -o redline.docx` writes a tracked-changes document that opens cleanly in Microsoft Word; list, accept or reject changes, apply edit plans, render DOCX to PDF.",
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jandira-tech/jubarte-redlines.git",
+    "directory": "jubarte-wasm/cli"
+  },
+  "homepage": "https://github.com/jandira-tech/jubarte-redlines#readme",
+  "bugs": {
+    "url": "https://github.com/jandira-tech/jubarte-redlines/issues"
+  },
+  "keywords": [
+    "docx",
+    "redline",
+    "tracked-changes",
+    "track-changes",
+    "word",
+    "compare",
+    "diff",
+    "cli",
+    "docx-to-pdf"
+  ],
+  "type": "module",
+  "bin": {
+    "jubarte-redlines": "bin/jubarte-redlines.mjs"
+  },
+  "files": [
+    "bin/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.3"
+  },
+  "dependencies": {
+    "jubarte-wasm": "^0.10.1"
+  },
+  "scripts": {
+    "test": "node --test test/cli.test.mjs"
+  }
+}
