@@ -721,8 +721,8 @@ fn run(dom: &Dom, r: NodeId, styles: &StyleBook, tally: &mut Tally) {
         .into_iter()
         .map(|(k, f, n)| (k, f, Some(n)))
         .collect();
-    let mut overlay = |slots: &mut Vec<(&'static str, String, Option<String>)>,
-                       new: Vec<(&'static str, String, Option<String>)>| {
+    let overlay = |slots: &mut Vec<(&'static str, String, Option<String>)>,
+                   new: Vec<(&'static str, String, Option<String>)>| {
         for (k, f, n) in new {
             slots.retain(|(s, _, _)| *s != k);
             slots.push((k, f, n));

@@ -42051,6 +42051,48 @@ fn hangul_in_a_run_that_names_only_latin_faces_paints_in_the_hang_script_font() 
 }
 
 #[test]
+fn a_justified_line_with_spaces_after_its_tab_keeps_the_leader() {
+    // PR #247 review: a justified line whose text after its last tab has
+    // spaces took the word-by-word path, which sent the tab to paint_run:
+    // the next left stop, no leader. The tab now goes to its stop with
+    // its dot leader, and only the spaces after it stretch.
+    let words = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau";
+    let body = format!(
+        "<w:p><w:pPr><w:jc w:val=\"both\"/><w:tabs><w:tab w:val=\"left\" w:leader=\"dot\" w:pos=\"4320\"/></w:tabs></w:pPr>\
+         <w:r><w:t xml:space=\"preserve\">Item\t{words} {words}</w:t></w:r></w:p><w:sectPr/>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("justified tab");
+    let text = stream_glyph_text(&pdf_content_streams(&pdf)[0]);
+    assert!(text.contains("....."), "the dot leader is painted: {text}");
+    let (item_x, _) = pdf_glyph_text_xy(&pdf, "Item").expect("Item painted");
+    let (alpha_x, _) = pdf_glyph_text_xy(&pdf, "alpha").expect("alpha painted");
+    assert!(
+        (alpha_x - item_x - 216.0).abs() < 1.0,
+        "alpha starts at the 3in stop: item={item_x} alpha={alpha_x}"
+    );
+}
+
+#[test]
+fn hangul_only_in_a_header_still_loads_the_korean_fallback() {
+    // PR #247 review: the CJK fallbacks were loaded only when the body
+    // held East Asian text, so Hangul in a header (or footer, or note)
+    // under a face without Hangul lost its glyphs.
+    if !word_dfonts_available() {
+        return;
+    }
+    let pdf = docx_to_pdf(&header_part_docx(
+        "<w:p><w:r><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:eastAsia=\"Arial\"/></w:rPr>\
+         <w:t>발표</w:t></w:r></w:p>",
+    ))
+    .expect("hangul header");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("/MalgunGothic"),
+        "the header's Hangul paints in Malgun Gothic"
+    );
+}
+
+#[test]
 fn trailing_tabs_fill_a_centred_line_and_do_not_hang_like_spaces() {
     // cb4f8b4a43's Heading 1 (jc=center): "Date:" and 25 tabs, then text.
     // Word lays 14 tabs on the first line, to the 10080 stop of a 10224

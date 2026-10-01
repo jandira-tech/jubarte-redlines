@@ -481,12 +481,23 @@ fn with_pages<T>(
             run_faces.extend(latin_font_names(&text));
         }
     }
-    let has_cjk = xml.chars().any(takes_east_asian_face);
+    // Headers, footers, notes and comments paint too: their faces and
+    // their scripts count (PR #247 review: Hangul only in a header lost its
+    // glyphs without the Korean fallback).
+    let stories = story_parts_xml(&pkg, &main);
+    for text in &stories {
+        family_names.extend(rfont_names(text));
+        run_faces.extend(latin_font_names(text));
+    }
+    let any_text = |test: fn(char) -> bool| {
+        xml.chars().any(test) || stories.iter().any(|t| t.chars().any(test))
+    };
+    let has_cjk = any_text(takes_east_asian_face);
     font::add_installed_faces(&mut embedded, &table, &family_names, &run_faces, has_cjk);
     if has_cjk {
         font::add_cjk_fallbacks(&mut embedded);
     }
-    if xml.chars().any(is_thaana) {
+    if any_text(is_thaana) {
         font::add_thaana_fallback(&mut embedded);
     }
     let fonts = Fonts::for_document(&embedded);
@@ -17282,6 +17293,24 @@ fn para_shown_text(dom: &Dom, para: NodeId) -> String {
     out
 }
 
+/// The main document's other story parts (headers, footers, footnotes,
+/// endnotes, comments), found by relationship type.
+fn story_parts_xml(pkg: &PartFs, main: &str) -> Vec<String> {
+    let Some(rels) = pkg.read_rels_for(main) else {
+        return Vec::new();
+    };
+    rels.items
+        .iter()
+        .filter(|r| {
+            r.target_mode.as_deref() != Some("External")
+                && ["/header", "/footer", "/footnotes", "/endnotes", "/comments"]
+                    .iter()
+                    .any(|k| r.rel_type.ends_with(k))
+        })
+        .filter_map(|r| pkg.part_string(&pkg.resolve_rel_target(main, &r.target)))
+        .collect()
+}
+
 fn rel_target_path(pkg: &PartFs, source: &str, rid: &str) -> Option<String> {
     let rels = pkg.read_rels_for(source)?;
     let rel = rels.items.iter().find(|item| item.id == rid)?;
@@ -22230,7 +22259,7 @@ impl<'a> Layout<'a> {
         }
     }
 
-    fn paint_justified_line(&mut self, line: &[TextRun], mut x: f32, y: f32, leftover: f32) {
+    fn paint_justified_line(&mut self, line: &[TextRun], x: f32, y: f32, leftover: f32) {
         let gaps = inter_word_gaps(line);
         // Justifying stretches only the spaces after the last tab. With
         // none, the line is its tabs: they go to their stops with their
@@ -22244,9 +22273,54 @@ impl<'a> Layout<'a> {
         } else {
             0.0
         };
+        let Some(k) = line.iter().rposition(|r| r.text.contains('\t')) else {
+            self.paint_stretched(line, x, y, pad);
+            return;
+        };
+        // What comes before the last tab is a tabbed line (leaders, right,
+        // centre and decimal stops); the last tab goes to its stop and only
+        // the text after it stretches (PR #247 review: paint_run sent it to
+        // the next left stop without its leader).
+        let at = line[k].text.rfind('\t').unwrap_or_default();
+        let mut head: Vec<TextRun> = line[..k].to_vec();
+        if at > 0 {
+            head.push(line[k].with_text(&line[k].text[..at]));
+        }
+        let mut tail: Vec<TextRun> = Vec::new();
+        if at + 1 < line[k].text.len() {
+            tail.push(line[k].with_text(&line[k].text[at + 1..]));
+        }
+        tail.extend_from_slice(&line[k + 1..]);
+        let x = self.paint_line_with_tabs(&head, x, y);
+        let stop = next_tab_stop(
+            x - self.tab_shift,
+            self.flow_left(),
+            &self.tab_stops,
+            self.page.default_tab,
+        );
+        if stop.align == TabAlign::Left {
+            let x = self.advance_tab(x, y, 0.0, 0.0, &line[k].style);
+            self.paint_stretched(&tail, x, y, pad);
+        } else {
+            // A right, centre or decimal stop aligns the text after it at
+            // its natural width.
+            let (after_w, decimal_w) = match tail.split_first() {
+                Some((first, rest)) => (
+                    self.tab_suffix_width(&first.text, first, rest),
+                    self.decimal_prefix_width(&first.text, first, rest),
+                ),
+                None => (0.0, 0.0),
+            };
+            let x = self.advance_tab(x, y, after_w, decimal_w, &line[k].style);
+            self.paint_line_with_tabs(&tail, x, y);
+        }
+    }
+
+    /// Paint `line` word by word, each space before its last ink widened
+    /// by `pad`.
+    fn paint_stretched(&mut self, line: &[TextRun], mut x: f32, y: f32, pad: f32) {
         let joined: String = line.iter().map(|r| r.text.as_str()).collect();
         let last_ink = joined.rfind(|c: char| !c.is_whitespace());
-        let last_tab = joined.rfind('\t');
         let mut idx = 0usize;
         for run in line {
             let mut word = String::new();
@@ -22260,7 +22334,7 @@ impl<'a> Layout<'a> {
                         );
                     }
                     x = self.paint_run(&TextRun::new(" ", run.style.clone()), x, y);
-                    if last_ink.is_some_and(|end| idx < end) && last_tab.is_none_or(|t| idx > t) {
+                    if last_ink.is_some_and(|end| idx < end) {
                         // Word's underline and strike run through the
                         // stretched space, not only its natural width.
                         self.decorate_run(x, y, pad, &run.style);
@@ -26051,14 +26125,14 @@ impl<'a> Layout<'a> {
         let line_w: f32 = runs
             .iter()
             .map(|r| {
-                let f = self
-                    .fonts
-                    .resolve(&r.style.family, r.style.bold, r.style.italic);
                 // NUMPAGES is painted as @@N@@ then patched to the real
                 // count. Measuring the mark (~45pt) shoved I_am_sharing
                 // "Page 1 of 9" to x=470 vs Word 509. A tab in an aligned
                 // line is not a glyph.
                 let text = r.text.replace('\t', "");
+                // The face that paints it, script fallback included, as in
+                // the body (PR #247 review: a header's Hangul in Arial).
+                let f = ink_face(self.fonts, &r.style, &text);
                 let measure = chrome_measure_text(&text);
                 // w:spacing tracks every letter here too (013d00cf's
                 // "P a g e" footer label).
@@ -26090,9 +26164,7 @@ impl<'a> Layout<'a> {
                 x = self.paint_run(run, x, y);
                 continue;
             }
-            let fid = self
-                .fonts
-                .resolve(&run.style.family, run.style.bold, run.style.italic);
+            let fid = ink_face(self.fonts, &run.style, &run.text);
             let face = self.fonts.get(fid);
             let size = run.style.paint_size();
             // Same measure as line_w: @@N@@/@@P@@ are patched after paint,
