@@ -263,6 +263,17 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   PDF holds a plain 0x2D: most faces (Arial, Calibri, Aptos) have no
   U+2011 glyph. d06f02170c's "self-incrimination".
 
+## Contextual spacing
+
+- **contextualSpacing drops only the flagged paragraph's share of the
+  gap**, 0abf6bde. Two same-style paragraphs stand A's after plus B's
+  before past it apart (the larger of the two); a flagged A loses its
+  after, a flagged B its excess. Word 16 probe_cx (2026-10-01): flagged
+  after 6 over plain before 20 = 14, flagged after 20 over plain before 6
+  = 0, plain after 20 over flagged before 6 = 20, both flagged = 0. Body,
+  cells, text boxes and headers share the rule. 6ef1820785's flagged
+  lines over plain empty paragraphs kept 2pt each: 7 pages, as in Word.
+
 ## Breaks, typed labels and diagrams
 
 - **A `w:br` run sizes only a line it stands alone on.** "Top" then a 20pt
