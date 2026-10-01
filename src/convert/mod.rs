@@ -1396,6 +1396,9 @@ struct TextRun {
     /// own id on its `w:endnoteRef` (empty until the note fills it in).
     /// `number_endnote_refs` writes the label before layout.
     endnote_id: Option<String>,
+    /// `w:separator` in a separator note: Word's 144pt rule over the
+    /// notes, on a line of its own (Strict01 p13).
+    note_rule: bool,
     /// Footer/header paragraph `w:spacing/@w:after` carried on the
     /// `HF_LINE_BREAK` after that para (plan.md Step 10 G).
     para_gap: f32,
@@ -1454,6 +1457,7 @@ impl TextRun {
             footnote_id: None,
             note_ref: false,
             endnote_id: None,
+            note_rule: false,
             para_gap: 0.0,
             hf_para: None,
             ends_line: false,
@@ -6775,6 +6779,8 @@ fn note_is_structural(dom: &Dom, note: NodeId) -> bool {
 struct EndnoteBag {
     ndom: Dom,
     by_id: HashMap<String, NodeId>,
+    /// The `w:type="separator"` note, laid out over each run of notes.
+    separator: Option<NodeId>,
     pending: Vec<String>,
     seen: HashSet<String>,
 }
@@ -6784,6 +6790,7 @@ impl EndnoteBag {
         let mut bag = Self {
             ndom: Dom::new(),
             by_id: HashMap::new(),
+            separator: None,
             pending: Vec::new(),
             seen: HashSet::new(),
         };
@@ -6795,6 +6802,9 @@ impl EndnoteBag {
             return bag;
         };
         for note in bag.ndom.descendants(root, Some(&W::endnote())) {
+            if attr_any(&bag.ndom, note, "type") == Some("separator") {
+                bag.separator = Some(note);
+            }
             if note_is_structural(&bag.ndom, note) {
                 continue;
             }
@@ -6840,6 +6850,11 @@ impl EndnoteBag {
 
     fn emit(&mut self, ctx: &WalkCtx<'_>, numbering: &mut Numbering, blocks: &mut Vec<Block>) {
         let ids = std::mem::take(&mut self.pending);
+        if let Some(sep) = self.separator
+            && ids.iter().any(|id| self.by_id.contains_key(id))
+        {
+            push_endnote_blocks(ctx, &self.ndom, sep, numbering, blocks);
+        }
         for id in ids {
             let Some(&note) = self.by_id.get(&id) else {
                 continue;
@@ -12589,6 +12604,13 @@ fn collect_runs_rec(
             }
             if ctx.dom.name_is(child, &W::name("endnoteRef")) {
                 endnote_id = Some(String::new());
+            }
+            if ctx.dom.name_is(child, &W::name("separator")) {
+                let mut run = TextRun::new(String::new(), style);
+                run.strut = true;
+                run.note_rule = true;
+                runs.push(run);
+                return;
             }
         }
         if footnote_id.is_some() || note_ref || endnote_id.is_some() {
@@ -22361,6 +22383,18 @@ impl<'a> Layout<'a> {
     }
 
     fn paint_run(&mut self, run: &TextRun, x: f32, y: f32) -> f32 {
+        // Word's separator: 0.72pt thick, its foot 2.16pt over the
+        // baseline (Strict01 p13: rule 450.48, baseline 448.32).
+        if run.note_rule {
+            self.current().ops.push(Op::FillRect {
+                x,
+                y: y + 2.16,
+                w: FOOTNOTE_SEP_W,
+                h: 0.72,
+                color: [0.0, 0.0, 0.0],
+            });
+            return x + FOOTNOTE_SEP_W;
+        }
         if run.checkbox.is_none()
             && let Some(pieces) = script_pieces(&run.style, &run.text)
         {
