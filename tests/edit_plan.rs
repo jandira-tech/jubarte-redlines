@@ -429,6 +429,110 @@ fn delete_paragraph_vanishes_from_clean_and_is_tracked_in_redline() {
 }
 
 #[test]
+fn a_deleted_paragraph_carries_its_comment_in_the_redline_only() {
+    let source = docx(
+        &(para("(c) Third.")
+            + &para("(d) Onward Disclosure. You will not disclose.")
+            + &para("5. Confidentiality")),
+    );
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"id":"keep","kind":"comment","paragraph":{"index":0},"text":"Fine as is."},
+                {"id":"drop","kind":"delete_paragraph","paragraph":{"index":1},"comment":"Covered by section 5."}]"#,
+        ),
+    )
+    .unwrap();
+    assert_eq!(texts(&result.clean), ["(c) Third.", "5. Confidentiality"]);
+    let report = &result.report;
+    assert_eq!(report.comments_added, 2);
+    let ids: Vec<Option<u32>> = report.operations.iter().map(|o| o.comment_id).collect();
+    assert_eq!(ids, [Some(0), Some(1)]);
+    // The clean copy has no paragraph to hold the deletion's comment.
+    assert_eq!(summary(&result.clean).unwrap().comments, 1);
+    let comments = part_string(&result.clean, "word/comments.xml").unwrap();
+    assert!(!comments.contains("Covered by section 5."), "{comments}");
+    // The redline anchors it on the deleted text, under the plan's author.
+    assert_eq!(summary(&result.redline).unwrap().comments, 2);
+    let xml = part_string(&result.redline, "word/document.xml").unwrap();
+    let deleted = &xml[xml
+        .find(r#"<w:commentRangeStart w:id="1""#)
+        .expect("range start")
+        ..xml
+            .find(r#"<w:commentRangeEnd w:id="1""#)
+            .expect("range end")];
+    assert!(
+        deleted.contains("<w:delText>(d) Onward Disclosure. You will not disclose.</w:delText>"),
+        "{deleted}"
+    );
+    let comments = part_string(&result.redline, "word/comments.xml").unwrap();
+    let comment = &comments[comments.find(r#"w:id="1""#).expect("comment 1")..];
+    assert!(comment.contains("Covered by section 5."), "{comments}");
+    assert!(comment.contains(r#"w:author="Claude""#), "{comments}");
+    // Accepting gives the clean text; rejecting brings the paragraph back.
+    let accepted = accept_revisions(&result.redline).unwrap();
+    assert_eq!(texts(&accepted), texts(&result.clean));
+    let rejected = reject_revisions(&result.redline).unwrap();
+    assert_eq!(texts(&rejected), texts(&source));
+    assert_word_valid_package(&result.redline);
+    assert_word_valid_package(&result.clean);
+}
+
+#[test]
+fn a_deleted_paragraphs_comment_is_refused_when_its_twin_is_deleted_instead() {
+    // Paragraphs 2 and 3 read the same: the comparer keeps the commented
+    // one and deletes the other, so the comment would sit on text that stays.
+    let source = std::fs::read("tests/fixtures/redline/original.docx").unwrap();
+    assert_eq!(texts(&source)[2], texts(&source)[3]);
+    let error = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"id":"drop","kind":"delete_paragraph","paragraph":{"index":2},"comment":"Duplicate."}]"#,
+        ),
+    )
+    .unwrap_err();
+    assert_eq!(
+        (error.code.as_str(), error.operation.as_deref()),
+        ("UNSUPPORTED_STRUCTURE", Some("drop"))
+    );
+    assert!(error.message.contains("identical"), "{}", error.message);
+    let outcome = &error.outcomes[0];
+    assert_eq!(
+        (outcome.status.as_str(), outcome.code.as_deref()),
+        ("failed", Some("UNSUPPORTED_STRUCTURE"))
+    );
+    // Without the comment the same deletion goes through.
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"kind":"delete_paragraph","paragraph":{"index":2}}]"#,
+        ),
+    )
+    .unwrap();
+    assert_eq!(texts(&result.clean).len(), texts(&source).len() - 1);
+}
+
+#[test]
+fn a_deleted_paragraphs_comment_is_checked_like_any_comment() {
+    let source = docx(&(para("Keep.") + &para("Drop.")));
+    let error = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"id":"drop","kind":"delete_paragraph","paragraph":{"index":1},"comment":" "}]"#,
+        ),
+    )
+    .unwrap_err();
+    assert_eq!(
+        (error.code.as_str(), error.operation.as_deref()),
+        ("INVALID_EDIT", Some("drop"))
+    );
+}
+
+#[test]
 fn delete_paragraph_refuses_section_and_table_cell_last_paragraphs() {
     let with_section = format!(
         "{}<w:p><w:pPr><w:sectPr><w:type w:val=\"nextPage\"/></w:sectPr></w:pPr><w:r><w:t>sect</w:t></w:r></w:p>{}",
@@ -1676,4 +1780,137 @@ fn whole_is_a_replace_field() {
     .unwrap();
     assert!(good.to_json().contains(r#""whole": true"#));
     assert!(apply_plan(&source, &good).unwrap().report.ok);
+}
+
+#[test]
+fn rewrite_changes_only_the_words_that_differ() {
+    let source = docx(&format!(
+        "<w:p>{}{}{}</w:p>{}",
+        run("The ", false, false, None),
+        run("Buyer", true, false, None),
+        run(" shall pay within thirty days.", false, false, None),
+        para("Name:\tArthur"),
+    ));
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"id":"r","kind":"rewrite","paragraph":{"index":0},"text":"The Buyer shall pay the price within forty-five days."}]"#,
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        texts(&result.clean)[0],
+        "The Buyer shall pay the price within forty-five days."
+    );
+    // The bold word keeps its run and formatting; the report names the op.
+    let clean = paragraphs(&result.clean).unwrap();
+    let bold: Vec<(usize, usize)> = clean[0]
+        .runs
+        .iter()
+        .filter(|r| r.bold)
+        .map(|r| (r.start, r.end))
+        .collect();
+    assert_eq!(bold, [(4, 9)]);
+    let op = &result.report.operations[0];
+    assert_eq!((op.kind.as_str(), op.status.as_str()), ("rewrite", "ok"));
+    assert_eq!(
+        texts(&accept_revisions(&result.redline).unwrap()),
+        texts(&result.clean)
+    );
+    assert_eq!(
+        texts(&reject_revisions(&result.redline).unwrap()),
+        texts(&source)
+    );
+    assert_word_valid_package(&result.redline);
+
+    // A tab stays; the text may write it as a space.
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"kind":"rewrite","paragraph":{"index":1},"text":"Name: Arthur Souza"}]"#,
+        ),
+    )
+    .unwrap();
+    assert_eq!(texts(&result.clean)[1], "Name:\tArthur Souza");
+
+    // Unchanged text is no edit at all.
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"kind":"rewrite","paragraph":{"index":1},"text":"Name: Arthur"}]"#,
+        ),
+    )
+    .unwrap();
+    assert_eq!(texts(&result.clean), texts(&source));
+    assert_eq!(
+        result.report.revisions.inserted + result.report.revisions.deleted,
+        0
+    );
+}
+
+#[test]
+fn rewrite_refuses_what_replace_refuses() {
+    let body = r#"<w:p><w:hyperlink r:id="rId9"><w:r><w:t>arthur.law</w:t></w:r></w:hyperlink><w:r><w:t xml:space="preserve"> site</w:t></w:r></w:p><w:p/>"#;
+    let source = docx(body);
+    for ops in [
+        r#"[{"kind":"rewrite","paragraph":{"index":0},"text":"jubarte.law site"}]"#,
+        r#"[{"kind":"rewrite","paragraph":{"index":1},"text":"into an empty paragraph"}]"#,
+        r#"[{"kind":"rewrite","paragraph":{"index":0},"text":"bell\u0007"}]"#,
+    ] {
+        let err = apply_plan(&source, &plan(&source, ops)).unwrap_err();
+        assert!(
+            matches!(err.code.as_str(), "UNSUPPORTED_STRUCTURE" | "INVALID_EDIT"),
+            "{ops}: {err:?}"
+        );
+    }
+    // Text beside the link can change.
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"kind":"rewrite","paragraph":{"index":0},"text":"arthur.law website"}]"#,
+        ),
+    )
+    .unwrap();
+    assert_eq!(texts(&result.clean)[0], "arthur.law website");
+    let unknown = EditPlan::from_json(
+        r#"{"schema_version":1,"author":"a","operations":[{"kind":"rewrite","paragraph":{"index":0},"text":"x","find":"y"}]}"#,
+    );
+    assert!(unknown.is_err());
+}
+
+#[test]
+fn insert_paragraph_like_copies_another_paragraphs_properties() {
+    let numbered = r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>an item</w:t></w:r></w:p>"#;
+    let plain = r#"<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>centered</w:t></w:r></w:p>"#;
+    let source = docx(&format!("{plain}{numbered}"));
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"kind":"insert_paragraph","paragraph":{"index":1},"position":"after","like":{"index":0},"runs":[{"text":"after the list"}]}]"#,
+        ),
+    )
+    .unwrap();
+    let paragraphs = paragraphs(&result.clean).unwrap();
+    assert_eq!(paragraphs[2].text, "after the list");
+    assert!(
+        !paragraphs[2].numbered,
+        "properties come from `like`, not the anchor"
+    );
+    let xml = part_string(&result.clean, "word/document.xml").unwrap();
+    assert_eq!(xml.matches(r#"<w:jc w:val="center""#).count(), 2, "{xml}");
+    // A `like` that selects nothing fails the plan.
+    let err = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"kind":"insert_paragraph","paragraph":{"index":1},"like":{"index":9},"runs":[{"text":"x"}]}]"#,
+        ),
+    )
+    .unwrap_err();
+    assert!(err.message.starts_with("like:"), "{err:?}");
 }

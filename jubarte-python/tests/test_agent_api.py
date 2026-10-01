@@ -215,6 +215,13 @@ def test_format_and_merge_builders_serialize_the_wire_schema() -> None:
     }
     assert ops[3] == {"id": "join", "kind": "merge_paragraphs", "paragraph": {"index": 0}, "separator": " "}
     assert EditPlan(author="A").merge_paragraphs(1).operations[0] == {"kind": "merge_paragraphs", "paragraph": {"index": 1}}
+    assert EditPlan(author="A").rewrite(2, text="New text.", id="r").operations[0] == {
+        "id": "r",
+        "kind": "rewrite",
+        "paragraph": {"index": 2},
+        "text": "New text.",
+    }
+    assert EditPlan(author="A").insert_paragraph(3, runs=["x"], like=0).operations[0]["like"] == {"index": 0}
     with pytest.raises(ValueError):
         EditPlan(author="A").format_paragraph(0)
     with pytest.raises(ValueError):

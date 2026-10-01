@@ -33,6 +33,7 @@ an npm (WebAssembly) package.
 | **Accept / reject** every change, or only some by id, author or kind | `jubarte accept redline.docx -o out.docx --author Ann` |
 | **Edit with a plan**: get the clean copy, a redline with comments, and a report | `jubarte edit contract.docx --plan plan.json --out-dir review` |
 | **Read** the paragraphs with their ids, as Markdown or JSON | `jubarte text contract.docx` |
+| **Markdown**: CriticMarkup in as tracked changes, any two documents' changes out as a patch | `jubarte diff old.md new.md` |
 | **Triage** a package Word refuses | `jubarte debug file.docx` |
 
 ```sh
@@ -230,6 +231,13 @@ jubarte capabilities --json               # what this build can do
 jubarte debug out.docx                    # why Word might refuse a package
 jubarte debug diff a.docx b.docx          # what differs, element by element
 jubarte self-update --check
+
+jubarte convert draft.md                  # Markdown → draft.docx, CriticMarkup as tracked changes
+jubarte convert draft.md --reference-doc house.docx -o draft.docx
+jubarte diff old.md new.md                # the changes as a patch, like git diff
+jubarte diff old.md new.md --format critic   # the whole document as CriticMarkup (pandiff)
+jubarte diff old.md new.md -o changes.docx
+jubarte diff contract.docx edited.md -o redline.docx   # a Markdown edit as a Word redline
 ```
 
 A selective `accept`/`reject` resolves the changes that match every flag
@@ -240,6 +248,18 @@ modifies its source: it writes the clean copy, the redline and a report
 into a new directory, and a refused plan writes nothing and exits 3.
 [skills/jubarte-documents/SKILL.md](skills/jubarte-documents/SKILL.md) is
 the edit-plan guide written for agents.
+
+Either side of a comparison may be Markdown. `jubarte convert` reads
+CriticMarkup (`{++ ++}`, `{-- --}`, `{~~ ~> ~~}`, `{== ==}{>> <<}`) as Word
+tracked changes and comments, with pandoc's `--track-changes
+all|accept|reject` and `--reference-doc`; `--no-critic` reads it as text.
+`jubarte diff` prints the changes between any two documents as a patch
+(only the changed paragraphs, `[-old-]{+new+}`, each at its line or
+paragraph id; `--format critic` prints two Markdown documents as
+CriticMarkup), or writes a Word redline or PDF with `-o`. Against a Word
+document, a Markdown edit is applied to that document, so everything
+Markdown cannot hold (empty paragraphs, fields, formatting, section breaks)
+stays and only the edits show. [docs/MARKDOWN.md](docs/MARKDOWN.md) has the details.
 
 `jubarte convert` paints tracked changes in the conventional redline marks by
 default: deletions red and struck through, insertions blue with a double

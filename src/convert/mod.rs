@@ -9718,6 +9718,31 @@ fn core_dates() -> CoreDates {
     CORE_DATES.with(Cell::get)
 }
 
+/// Now, in UTC, as `YYYY-MM-DDTHH:MM:SSZ`: the date Word writes on a
+/// revision.
+pub fn utc_now_iso8601() -> String {
+    iso8601(utc_now())
+}
+
+fn iso8601(CivilDateTime { y, m, d, h, min, s }: CivilDateTime) -> String {
+    format!("{y:04}-{m:02}-{d:02}T{h:02}:{min:02}:{s:02}Z")
+}
+
+#[cfg(test)]
+mod iso8601_tests {
+    use super::*;
+
+    #[test]
+    fn a_unix_time_is_written_as_word_dates_revisions() {
+        assert_eq!(iso8601(civil_from_unix_secs(0)), "1970-01-01T00:00:00Z");
+        assert_eq!(
+            iso8601(civil_from_unix_secs(1_790_777_100)),
+            "2026-09-30T14:05:00Z"
+        );
+        assert_eq!(utc_now_iso8601().len(), 20);
+    }
+}
+
 fn utc_now() -> CivilDateTime {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)

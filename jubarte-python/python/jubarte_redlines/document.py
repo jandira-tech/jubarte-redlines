@@ -7,15 +7,19 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 from . import _native
 from .models import (
     Change,
     ChangeKind,
     CompareOptions,
+    Diff,
     EditOutcome,
     EditPlan,
     EditReport,
@@ -24,6 +28,7 @@ from .models import (
     Revision,
     Snapshot,
     _decode_changes,
+    _decode_diff,
     _decode_outcomes,
     _decode_render_report,
     _decode_report,
@@ -69,11 +74,13 @@ class EditPlanError(_native.JubarteError):
 
 @dataclass(frozen=True, slots=True)
 class EditResult:
-    """Clean copy, Word redline and per-operation report of one plan."""
+    """Clean copy, Word redline, per-operation report and the patch of one
+    plan: ``diff`` is what the redline tracks, by the plan's author and date."""
 
     clean: Document
     redline: Document
     report: EditReport
+    diff: Diff
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +93,8 @@ class Document:
     """
 
     _data: bytes = field(repr=False)
+    #: The file name it was read from (``Document.read``), used in patches.
+    name: str | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self._data, bytes):
@@ -102,7 +111,8 @@ class Document:
     @classmethod
     def read(cls, path: str | os.PathLike[str]) -> Document:
         """Read a local file; normal FileNotFoundError/PermissionError propagate."""
-        return cls.from_bytes(Path(path).read_bytes())
+        path = Path(path)
+        return cls(path.read_bytes(), path.name)
 
     def to_bytes(self) -> bytes:
         """Return the immutable DOCX snapshot."""
@@ -216,7 +226,31 @@ class Document:
         if not ok:
             raise EditPlanError._from_json(payload)
         assert clean is not None and redline is not None
-        return EditResult(Document.from_bytes(clean), Document.from_bytes(redline), _decode_report(payload))
+        report = _decode_report(payload)
+        diff = _decode_diff(
+            _native.redline_diff_json(
+                redline,
+                name=self.name or "document.docx",
+                author=report.author,
+                date=report.date,
+            )
+        )
+        return EditResult(Document.from_bytes(clean), Document.from_bytes(redline), report, diff)
+
+    def diff(
+        self,
+        other: Document | str,
+        *,
+        author: str | None = None,
+        date: str | None = None,
+        columns: int = 72,
+        format: Literal["patch", "critic"] = "patch",
+    ) -> Diff:
+        """The changes from this document to ``other`` (a ``Document`` or
+        Markdown text), as ``jubarte_redlines.diff`` gives them."""
+        if not isinstance(other, (Document, str)):
+            raise TypeError("other must be a Document or Markdown text")
+        return diff(self, other, author=author, date=date, columns=columns, format=format)
 
     def preview(self, plan: EditPlan | dict[str, object] | str) -> EditReport:
         """Resolve every operation and report, without producing documents."""
@@ -257,6 +291,74 @@ def _pdf_options(options: PdfOptions | None) -> PdfOptions:
     if not isinstance(options, PdfOptions):
         raise TypeError("options must be PdfOptions or None")
     return options
+
+
+def diff(
+    old: Document | bytes | str | os.PathLike[str],
+    new: Document | bytes | str | os.PathLike[str],
+    *,
+    author: str | None = None,
+    date: str | None = None,
+    columns: int = 72,
+    format: Literal["patch", "critic"] = "patch",
+) -> Diff:
+    """The changes from ``old`` to ``new``: the changed paragraphs, each at
+    its ``body:p:N`` id in a Word document or ``line:N`` in Markdown, with
+    ``[-old-]{+new+}`` changes and CriticMarkup comments.
+
+    Each side is a ``Document`` or Word ``bytes``, Markdown text (``str``),
+    or a path (``.md``/``.markdown`` read as Markdown, anything else as
+    Word). ``author`` and ``date`` own the changes, shown once in the
+    header [default: ``git config user.name``, else Redline; now].
+    ``columns`` wraps the lines (0 does not). ``format="critic"`` gives the
+    whole document as CriticMarkup instead, as ``jubarte diff --format
+    critic`` does.
+    """
+    if format not in ("patch", "critic"):
+        raise ValueError("format must be patch or critic")
+    if not isinstance(columns, int) or columns < 0:
+        raise ValueError("columns must be a nonnegative integer")
+    (old_side, old_name), (new_side, new_name) = _side(old, "old"), _side(new, "new")
+    return _decode_diff(
+        _native.diff_json(
+            old_side,
+            new_side,
+            old_name=old_name,
+            new_name=new_name,
+            author=author if author is not None else _default_author(),
+            date=date if date is not None else datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            columns=columns,
+            critic=format == "critic",
+        )
+    )
+
+
+def _side(side: object, default: str) -> tuple[bytes | str, str]:
+    """A diff side as the engine takes it (Word bytes or Markdown text), and its name."""
+    if isinstance(side, Document):
+        return side._data, side.name or f"{default}.docx"
+    if isinstance(side, bytes):
+        return side, f"{default}.docx"
+    if isinstance(side, str):
+        return side, f"{default}.md"
+    if isinstance(side, os.PathLike):
+        path = Path(side)
+        if path.suffix.lower() in (".md", ".markdown"):
+            return path.read_text(encoding="utf-8"), path.name
+        return path.read_bytes(), path.name
+    raise TypeError("each side must be a Document, bytes, Markdown text or a path")
+
+
+def _default_author() -> str:
+    """``git config user.name``, else Redline: as ``jubarte diff``."""
+    try:
+        out = subprocess.run(
+            ["git", "config", "user.name"], capture_output=True, text=True, check=False, timeout=5
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "Redline"
+    name = out.stdout.strip()
+    return name if out.returncode == 0 and name else "Redline"
 
 
 def capabilities() -> dict[str, object]:

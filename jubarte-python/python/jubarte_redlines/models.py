@@ -524,20 +524,30 @@ class EditPlan:
         *,
         runs: Sequence[Mapping[str, object] | str],
         position: Literal["before", "after"] = "after",
+        like: Selector | None = None,
         style: str | None = None,
         comment: str | None = None,
         id: str | None = None,
     ) -> EditPlan:
-        """Insert a new paragraph next to the anchor, copying its properties."""
+        """Insert a new paragraph next to the anchor, copying its properties,
+        or those of the ``like`` paragraph."""
         op: dict[str, object] = {"kind": "insert_paragraph", "paragraph": _selector(paragraph), "position": position, "runs": list(_run_specs(runs))}
+        if like is not None:
+            op["like"] = _selector(like)
         if style is not None:
             op["style"] = style
         return self._with(_with_optional(op, id=id, comment=comment))
 
-    def delete_paragraph(self, paragraph: Selector, *, id: str | None = None) -> EditPlan:
-        """Delete a whole paragraph, mark included."""
+    def delete_paragraph(
+        self, paragraph: Selector, *, comment: str | None = None, id: str | None = None
+    ) -> EditPlan:
+        """Delete a whole paragraph, mark included.
+
+        ``comment`` is anchored on the deleted text in the redline; the clean
+        copy has no paragraph to hold it.
+        """
         op: dict[str, object] = {"kind": "delete_paragraph", "paragraph": _selector(paragraph)}
-        return self._with(_with_optional(op, id=id))
+        return self._with(_with_optional(op, comment=comment, id=id))
 
     def format_paragraph(
         self,
@@ -575,6 +585,12 @@ class EditPlan:
         """Join the next paragraph onto this one; the redline deletes this paragraph's mark."""
         op: dict[str, object] = {"kind": "merge_paragraphs", "paragraph": _selector(paragraph)}
         return self._with(_with_optional(op, separator=separator, id=id))
+
+    def rewrite(self, paragraph: Selector, *, text: str, id: str | None = None) -> EditPlan:
+        """Make the paragraph read as ``text``: only the words that differ are
+        edited, so the rest keeps its runs and formatting."""
+        op: dict[str, object] = {"kind": "rewrite", "paragraph": _selector(paragraph), "text": text}
+        return self._with(_with_optional(op, id=id))
 
     def to_dict(self) -> dict[str, object]:
         """The wire form."""
@@ -762,4 +778,49 @@ def _decode_render_report(payload: str) -> RenderReport:
         page_count=data["page_count"],
         pages=tuple(PageText(**p) for p in data["pages"]),
         fonts=tuple(FontResolution(**f) for f in data["fonts"]),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class Hunk:
+    """One changed paragraph of a ``Diff``.
+
+    ``at`` is where it is: ``body:p:N`` (or a header's, footer's or note's
+    ``header1:p:N``, ``footnotes:p:N``...) in a Word document, as
+    ``Document.markdown`` and edit plans number paragraphs, or ``line:N`` in
+    Markdown; in the new version, or the old one when ``removed``. ``text``
+    is the paragraph with its changes, unwrapped.
+    """
+
+    at: str
+    removed: bool
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class Diff:
+    """The changes between two documents, as ``git diff --word-diff`` shows
+    them: only the changed paragraphs, each whole, with ``[-old-]{+new+}``
+    for the changes and CriticMarkup ``{==highlights==}`` and
+    ``{>>comments<<}``.
+
+    ``str(diff)`` is the text; in Jupyter it displays as a ``diff`` block.
+    ``hunks`` are the changed paragraphs (none for ``format="critic"``).
+    """
+
+    text: str
+    hunks: tuple[Hunk, ...] = ()
+
+    def __str__(self) -> str:
+        return self.text
+
+    def _repr_markdown_(self) -> str:
+        return f"```diff\n{self.text}```\n"
+
+
+def _decode_diff(diffed: tuple[str, str]) -> Diff:
+    text, hunks = diffed
+    return Diff(
+        text=text,
+        hunks=tuple(Hunk(at=h["at"], removed=h["removed"], text=h["text"]) for h in json.loads(hunks)),
     )

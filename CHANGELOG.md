@@ -105,6 +105,58 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   leaves follows `existing_revisions`. A change selected by both sides is
   refused with `REVISION_CONFLICT`, an id the document lacks with
   `UNKNOWN_CHANGE`; the report lists the resolved ids.
+- Markdown alongside Word ([docs/MARKDOWN.md](docs/MARKDOWN.md)):
+  - `jubarte convert draft.md` (`markdown::markdown_to_docx`) writes
+    CommonMark with GitHub's tables, strikethrough, task lists and footnotes
+    as `.docx`, PDF or PNG, pandoc style (`-f`/`-t`, `--reference-doc`,
+    `--resource-path`). CriticMarkup becomes Word tracked changes and
+    comments; `--track-changes all|accept|reject` (pandoc's flag) keeps,
+    accepts or rejects them, and `--no-critic` reads the delimiters as text.
+    A change can cross paragraph breaks; a block that is one change whole is
+    added or removed with its paragraph mark. On a `.docx`,
+    `--track-changes accept|reject` renders the accepted or rejected
+    document.
+  - `jubarte diff OLD NEW` prints the changes between any two documents,
+    Word or Markdown, as a patch in the style of git diff
+    (`markdown::patch_documents`). Only changed paragraphs are shown, each
+    whole, under `@@ [line:N] @@` for Markdown or `@@ [body:p:N] @@` (the id
+    `jubarte text` and edit plans use) for Word; `@@ -[body:p:N] @@` marks
+    a removed paragraph, located in the old version. Changes are `[-old-]{+new+}`, widened to whole words
+    and numbers; highlights and comments stay CriticMarkup. The owner is
+    named once, on the `+++` line (`--author`, else git's `user.name`, else
+    Redline; `--date`, else now); a change by someone else is followed by
+    `{>>Name (date)<<}`. Lines wrap at 72 columns (`--columns`, 0 for none).
+    `--format critic` prints two Markdown documents as CriticMarkup, pandiff
+    style (`markdown::diff_markdown`). With `-o` it writes a Word redline or
+    PDF of any two documents (`markdown::redline`) and still prints the
+    patch. The positional compare takes Markdown too. Without `-d`, a Word
+    redline carries the current date, so two runs differ.
+  - Word against Markdown: the Markdown's edits are applied to the Word
+    document (`markdown::apply_markdown`) and only they show in the
+    redline; empty paragraphs, fields, links, formatting and section breaks
+    stay. On a fixture with three edits, the redline has 4 revisions where
+    writing the Markdown to Word and comparing gave 434.
+  - `markdown::resolve_critic` accepts or rejects CriticMarkup in Markdown.
+  - `jubarte edit` writes the redline's patch as `patch.diff` beside the
+    other outputs and prints it; `-q` prints nothing. `jubarte capabilities`
+    lists `patch`.
+  - Python: `jubarte_redlines.diff(old, new)` and `Document.diff(other)`
+    take documents, bytes, Markdown text or paths and return a `Diff`
+    (`str()`, `.hunks`, Markdown display in notebooks); `EditResult.diff` is
+    an edit's patch. WASM: `diffDocuments(old, new, author, date)` and
+    `EditOutput.patch`.
+- Edit plans: `rewrite` gives a paragraph its new text and applies only the
+  words that differ, keeping runs, formatting, tabs and fields; and
+  `insert_paragraph` takes `like`, the paragraph whose properties the new
+  one copies instead of the anchor's. Both are in `jubarte capabilities`,
+  the Python plan builder and the agent skill.
+- Edit plans: `delete_paragraph` takes an optional `comment`, anchored on
+  the deleted text in the redline (the clean copy has no paragraph to hold
+  it) and shown on the removed paragraph's hunk in the patch. Python:
+  `EditPlan.delete_paragraph(..., comment=)`. When the comparer deletes an
+  identical neighbouring paragraph instead, the plan is refused
+  (`UNSUPPORTED_STRUCTURE`) rather than leave the comment on text that
+  stays.
 
 - `jubarte debug FILE -c text` prints each story part's paragraphs with
   `{+inserted+}` / `[-deleted-]` runs, the paragraph mark's revision state
@@ -116,6 +168,11 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- CriticMarkup: a closing delimiter or `~>` behind a backslash is text, as
+  an escaped opener already was, so `{++a \++} b++}` inserts `a \++} b`.
+  Reading Markdown full of openers without closers no longer takes time
+  quadratic in its length (120,000 unclosed openers took minutes; now
+  milliseconds).
 - Consecutive paragraphs in a text box are spaced by the larger of one's
   space after and the next one's space before, as in a table cell. The
   first paragraph's auto space before and the last one's auto space after

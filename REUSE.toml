@@ -33,6 +33,25 @@ precedence = "override"
 SPDX-FileCopyrightText = ["Microsoft Corporation", "2025-2026 John Scrudato IV"]
 SPDX-License-Identifier = "LicenseRef-Docxodus-MIT"
 
+[[annotations]]
+path = "LICENSES/LicenseRef-anymd-MIT.txt"
+precedence = "override"
+SPDX-FileCopyrightText = "2024-2026 SylphxAI"
+SPDX-License-Identifier = "LicenseRef-anymd-MIT"
+
+# Word to Markdown fixtures and scripts copied from anymd (see LICENSES.md).
+[[annotations]]
+path = "tests/fixtures/from-docx/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["2026 Jandira Technologies, LLC", "2024-2026 SylphxAI"]
+SPDX-License-Identifier = "AGPL-3.0-only"
+
+[[annotations]]
+path = "tests/fixtures/from-docx/equations.docx"
+precedence = "override"
+SPDX-FileCopyrightText = ["2026 Jandira Technologies, LLC", "Microsoft Corporation"]
+SPDX-License-Identifier = "AGPL-3.0-only"
+
 # Metric-compatible Calibri substitute used by LibreOffice (same files soffice embeds).
 [[annotations]]
 path = "assets/fonts/Carlito-*.ttf"
