@@ -22,8 +22,8 @@ All products under `jubarte*` share **Semantic Versioning**
 |---|---|---|---|
 | **jubarte-redlines** (this repo) | crates.io crate + CLI `jubarte` | `Cargo.toml` `[package].version`, `CHANGELOG.md` | `scripts/release.sh x.y.z …` (calls `bump-version.mjs`) |
 | **jubarte-redlines** npm CLI (`jubarte-wasm/cli/`) | npm package `jubarte-redlines` (the `npx jubarte-redlines` runner) | `jubarte-wasm/cli/package.json` | `scripts/release.sh` (publishes it with the engine version) |
-| **jubarte-app** (`jubarte-app/` — a plain tracked directory in this repo that also carries its own nested `.git`; there is no `.gitmodules`) | Mac App Store / Tauri shell | `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `src/index.html`, `CHANGELOG.md` | `bun run bump x.y.z` |
-| **jubarte-site** (`jubarte-app/jubarte-site/`) | marketing/site (optional) | `package.json` | manual / site deploy only |
+| **jubarte-app** (`jubarte-app/` — a plain tracked directory in this repo that also carries its own nested `.git`; there is no `.gitmodules`) | Mac App Store / Tauri shell | `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `src/index.html`, `CHANGELOG.md` | `scripts/release.sh` step 1 (the engine's version); step 12 (`scripts/release_downstream.sh`) commits them on `release/vx.y.z` in the app's repository; `release_downstream.sh x.y.z --app` uploads the App Store build |
+| **jubarte-site** (`jubarte-app/jubarte-site/`) | jubarte.pro (Cloudflare Worker) | `site/data/release.ts`, `package.json` (`jubarte-wasm`), `pnpm-workspace.yaml` | `scripts/release.sh` step 12: `jubarte-site/scripts/release.sh engine x.y.z` (download page, demo engine, deploy); benchmark figures follow with `release.sh bench x.y.z` after neurotic_docx_bench's `scripts/release_jubarte.py` |
 
 `jubarte-app` depends on the engine via:
 

@@ -231,5 +231,85 @@ class Lessons0101(unittest.TestCase):
         self.assertIn("core.longpaths", wf)
 
 
+
+DOWNSTREAM_SH = HERE / "release_downstream.sh"
+
+
+class Downstream(unittest.TestCase):
+    """Step 12: jubarte.pro, the jubarte-app commit, the App Store and the
+    benchmark. Each case runs a copy of release_downstream.sh in a throwaway
+    folder with --no-site, so nothing is deployed, pushed or uploaded."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="downstream_sh_"))
+        (self.tmp / "scripts").mkdir()
+        shutil.copy(DOWNSTREAM_SH, self.tmp / "scripts" / "release_downstream.sh")
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def run_downstream(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", str(self.tmp / "scripts" / "release_downstream.sh"), *args],
+            capture_output=True, text=True, timeout=60,
+        )
+
+    def app_repo(self, branch: str) -> Path:
+        app = self.tmp / "jubarte-app"
+        app.mkdir()
+        git = ["git", "-C", str(app)]
+        subprocess.run([*git, "init", "-q", "-b", branch], check=True)
+        (app / "package.json").write_text('{"version": "0.10.2"}\n')
+        return app
+
+    def test_needs_a_release_version(self) -> None:
+        for args in ((), ("0.10",), ("v0.10.2",), ("0.10.2", "--bogus")):
+            self.assertEqual(self.run_downstream(*args).returncode, 2, args)
+
+    def test_stops_without_an_app_folder(self) -> None:
+        r = self.run_downstream("0.10.2", "--no-site")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("no jubarte-app/", r.stderr)
+
+    def test_an_app_folder_that_is_no_checkout_is_left_alone(self) -> None:
+        (self.tmp / "jubarte-app").mkdir()
+        r = self.run_downstream("0.10.2", "--no-site")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("not its own checkout", r.stdout)
+
+    def test_an_app_off_main_is_listed_not_committed(self) -> None:
+        app = self.app_repo("feature")
+        r = self.run_downstream("0.10.2", "--no-site")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("not main", r.stdout)
+        self.assertIn("package.json", r.stdout)
+        log = subprocess.run(["git", "-C", str(app), "log"], capture_output=True, text=True)
+        self.assertNotEqual(log.returncode, 0, "no commit was made")
+
+    def test_prints_the_app_store_and_bench_commands_without_running_them(self) -> None:
+        (self.tmp / "jubarte-app").mkdir()
+        out = self.run_downstream("0.10.2", "--no-site").stdout
+        self.assertIn("not uploaded (pass --app)", out)
+        self.assertIn("asc-new-version.py 0.10.2 --apply", out)
+        self.assertIn("Submit for Review", out)
+        self.assertIn("scripts/release_jubarte.py 0.10.2", out)
+        self.assertIn("scripts/release.sh bench 0.10.2 --redline-tool jubarte-0.10.2", out)
+
+    def test_release_runs_it_after_verify(self) -> None:
+        s12 = RELEASE_SH.read_text().split('say "12. ', 1)[1]
+        self.assertIn('scripts/release_downstream.sh "$VER"', s12)
+        self.assertLess(
+            RELEASE_SH.read_text().index('say "11. Verify'),
+            RELEASE_SH.read_text().index('say "12. Downstream'),
+        )
+
+    def test_the_site_step_runs_the_site_release(self) -> None:
+        text = DOWNSTREAM_SH.read_text()
+        self.assertIn('"$SITE_DIR/scripts/release.sh" engine "$VER"', text)
+        # The upload is opt-in and review is never submitted from here.
+        self.assertIn('if [ "$APP" = 1 ]', text)
+        self.assertNotIn("--submit", text)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -63,6 +63,10 @@
 #      jubarte-redlines CLI on jubarte-wasm/cli), PyPI
 #      (CI wheels + sdist via `uv publish`)
 #  10. verify — every registry answers with the new version AND its summary
+#  11. downstream — scripts/release_downstream.sh: jubarte.pro moves to the
+#      release and is deployed, the app's release files are committed in the
+#      jubarte-app repository, and the Mac App Store and benchmark commands
+#      are printed (the App Store upload itself: release_downstream.sh --app)
 #
 # Idempotent: each publish checks the registry first and skips a version
 # that is already live, so a failed run can simply be re-run.
@@ -720,6 +724,15 @@ check "PyPI       jubarte-redlines $VER" pypi_has
 check "GitHub     release $TAG" ghrel_has
 check "GitHub     notes carry --github-summary" gh_note
 [ "$ok" = 1 ] || die "verification failed — check the lines marked ✗"
+
+# =============================================================================
+say "12. Downstream — jubarte.pro, jubarte-app, App Store, benchmark"
+# =============================================================================
+# After verify: the site reads the GitHub release's files and the npm package
+# that step 11 just proved live. A failure here leaves the release itself
+# intact; rerun scripts/release_downstream.sh $VER on its own.
+scripts/release_downstream.sh "$VER" \
+  || die "downstream failed — the release is out; rerun scripts/release_downstream.sh $VER"
 
 say "Released jubarte $VER"
 echo "  https://github.com/jandira-tech/jubarte-redlines/releases/tag/$TAG"
