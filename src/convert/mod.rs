@@ -7056,11 +7056,18 @@ fn walk_container(
             let (page_br, column_br) = (trailing == Some(false), trailing == Some(true));
             let block = parts.pop().expect("split keeps the paragraph");
             for (i, (part, column)) in parts.into_iter().zip(seps).enumerate() {
-                // Nothing before a paragraph's opening column break is no
-                // line: live Word ends the column at the paragraph above
-                // ("Alpha" then "<br column/>Col2": the next section opens
-                // one line under Alpha).
-                if !(column && i == 0 && block_is_blank(&part)) {
+                // Nothing before a paragraph's opening column or page break
+                // is no line: live Word ends the column at the paragraph
+                // above ("Alpha" then "<br column/>Col2": the next section
+                // opens one line under Alpha), and a page filled to its last
+                // line breaks once (probes lb0930 at compat 14 and 15:
+                // "<br page/>Heading" after 32 exact 20pt lines opens page 2;
+                // priority d9b54326f3's page 27 was left blank). One holding
+                // a bookmark stays, so PAGEREF keeps the page before the
+                // break (Word's page for that case is unprobed).
+                let bookmarked =
+                    matches!(&part, Block::Paragraph { bookmarks, .. } if !bookmarks.is_empty());
+                if !(i == 0 && block_is_blank(&part) && (column || !bookmarked)) {
                     blocks.push(part);
                 }
                 blocks.push(if column {
@@ -18523,6 +18530,9 @@ struct Layout<'a> {
     /// Word hangs paragraph-relative floats from above it (a before=20
     /// paragraph's offset-0 shape sits at the space's top, not the text's).
     para_space_above: f32,
+    /// The cursor under nothing but the space before that opened its page:
+    /// a break there would leave the page blank.
+    blank_below: Option<f32>,
     /// The part of the paragraph's space before folded into the previous
     /// paragraph's after: its excess over that after (Word: before=20
     /// under after=10 hangs the paragraph's floats 10pt above its text).
@@ -18735,6 +18745,38 @@ fn split_at_breaks(runs: &[TextRun]) -> Vec<Vec<TextRun>> {
         }
     }
     lines
+}
+
+/// Wrapped lines joined back into one run list for wrapping again: a line
+/// a w:br ended gives its break back as text, so the rewrap keeps it
+/// (a7e5b7872c's cell halves and f9b9dbd790's lines past a header logo ran
+/// together). The last line's break is dropped: whatever follows the range
+/// (a page end, a new band) stands for it.
+fn rejoin_lines(lines: &[Vec<TextRun>]) -> Vec<TextRun> {
+    let mut runs = Vec::new();
+    for (j, line) in lines.iter().enumerate() {
+        for (r, run) in line.iter().enumerate() {
+            if r + 1 == line.len() && run.ends_line && run.text.is_empty() {
+                if j + 1 < lines.len() {
+                    let mut br = run.with_text("\n");
+                    br.ends_line = false;
+                    runs.push(br);
+                }
+            } else {
+                runs.push(run.clone());
+            }
+        }
+    }
+    runs
+}
+
+/// Which lines a w:br ends (they carry `wrap_runs_split`'s empty marker
+/// last), so a rewrap keeps them unjustified.
+fn ended_by_breaks(lines: &[Vec<TextRun>]) -> Vec<bool> {
+    lines
+        .iter()
+        .map(|l| l.last().is_some_and(|r| r.ends_line && r.text.is_empty()))
+        .collect()
 }
 
 /// Baseline depth of an exact line: Word puts it 4/5 down the box.
@@ -18957,6 +18999,7 @@ impl<'a> Layout<'a> {
             para_top: y,
             para_before: 0.0,
             para_space_above: 0.0,
+            blank_below: None,
             para_fold_share: 0.0,
             pbdr_joins: (false, false),
             bookmark_pages: HashMap::new(),
@@ -19263,6 +19306,7 @@ impl<'a> Layout<'a> {
     }
 
     fn new_page(&mut self) {
+        self.blank_below = None;
         self.close_rev_bar();
         if self.pages.len() == 1 {
             self.center_first_page_body();
@@ -19334,6 +19378,16 @@ impl<'a> Layout<'a> {
     /// at a page top reached by overflow or a manual break, and only its
     /// excess over `top_credit` at one reached by pageBreakBefore or a
     /// section break.
+    /// Move down by the space before `page_top_before` keeps, noting a page
+    /// it opens as still blank.
+    fn space_before(&mut self, before: f32) {
+        let opens = (self.page.height - self.body_top - self.y).abs() < 0.5;
+        self.y -= self.page_top_before(before);
+        if opens {
+            self.blank_below = Some(self.y);
+        }
+    }
+
     fn page_top_before(&self, before: f32) -> f32 {
         if !self.at_page_top {
             before
@@ -19684,7 +19738,11 @@ impl<'a> Layout<'a> {
         // Nothing placed yet (cursor at the body top): breaking would only
         // leave a blank page before an object taller than the page
         // (fixtures_500 00f45b1b's one-row brochure). Word starts it here.
-        let untouched = (self.page.height - self.body_top - self.y).abs() < 0.5;
+        // Nor under nothing but the paragraph's own space before (priority
+        // 9f2c60b301: Word draws a 648pt inline cover box under Heading 1's
+        // 18pt before on page 1, past the bottom margin).
+        let untouched = (self.page.height - self.body_top - self.y).abs() < 0.5
+            || self.blank_below.is_some_and(|y| (y - self.y).abs() < 0.5);
         if self.y - need < floor && !untouched {
             if self.page.col_count > 1 && self.col_i + 1 < self.page.col_count {
                 self.column_break();
@@ -20477,7 +20535,7 @@ impl<'a> Layout<'a> {
             return (lines, n);
         }
         let mut out = lines[..n].to_vec();
-        let rest: Vec<TextRun> = lines[n..].iter().flatten().cloned().collect();
+        let rest = rejoin_lines(&lines[n..]);
         if rest.iter().any(|r| !r.text.trim().is_empty()) {
             out.extend(wrap_runs(self.fonts, &rest, full_width, full_width, false));
         }
@@ -20548,7 +20606,7 @@ impl<'a> Layout<'a> {
         let auto_at_top = self.at_page_top && style.before_auto;
         let above = self.y;
         if !auto_at_top {
-            self.y -= self.page_top_before(style.before);
+            self.space_before(style.before);
         }
         self.para_space_above = std::mem::take(&mut self.para_fold_share) + above - self.y;
         self.at_page_top = false;
@@ -20616,13 +20674,12 @@ impl<'a> Layout<'a> {
                 k += 1;
             }
             if k < lines.len() {
-                let rest: Vec<TextRun> = lines[k..].iter().flatten().cloned().collect();
+                let rest = rejoin_lines(&lines[k..]);
                 let beside = wrap_runs(self.fonts, &rest, width, width, false);
                 let (beside, n) = self.reflow_past_float(beside, style, full_width, inset_h - used);
                 lines.truncate(k);
                 lines.extend(beside);
-                ends_br.truncate(k);
-                ends_br.resize(lines.len(), false);
+                ends_br = ended_by_breaks(&lines);
                 narrow = k..k + n;
             } else {
                 narrow = 0..0;
@@ -20630,7 +20687,7 @@ impl<'a> Layout<'a> {
         } else if reflow {
             let (reflowed, n) = self.reflow_past_float(lines, style, full_width, inset_h);
             lines = reflowed;
-            ends_br = vec![false; lines.len()];
+            ends_br = ended_by_breaks(&lines);
             narrow = 0..n;
         }
         // The empty line after a trailing break holds only the paragraph
@@ -22347,6 +22404,27 @@ impl<'a> Layout<'a> {
             y
         };
         (x, y)
+    }
+
+    /// The floor a floating table's first page breaks at, its top at PDF
+    /// `top`. Before compat 15 a page-anchored one below the body top gets
+    /// one body height from its own top, past the bottom margin (Word 16
+    /// probes y2440_* 0930: 20pt rows from 122pt run to 770 on page 1, not
+    /// the 720 floor, and to 749 above a 21pt-taller footer band; priority
+    /// d9b54326f3's page 7). Compat 15 keeps the page's floor.
+    fn float_first_floor(&self, slot: ImageSlot, top: f32) -> f32 {
+        let page_float = matches!(
+            slot,
+            ImageSlot::Float {
+                page_y: Some(_),
+                ..
+            }
+        );
+        if self.compat_mode >= 15 || !page_float || self.nested_depth > 0 {
+            return self.body_floor;
+        }
+        let room = self.page.height - self.body_top - self.body_floor;
+        self.body_floor.min(top - room).max(0.0)
     }
 
     /// PDF top of a floating (tblpPr) table: `tblpY` from its vertAnchor
@@ -24777,7 +24855,8 @@ impl<'a> Layout<'a> {
         // table continues on page 2).
         let overflows = geom.float.is_some_and(|slot| {
             let th: f32 = row_h.iter().sum();
-            self.float_table_top(slot) - th < self.body_floor
+            let top = self.float_table_top(slot);
+            top - th < self.float_first_floor(slot, top)
         });
         let mut table_left = origin + shift + ind - pull;
         // A top-margin float's first page keeps the floor raised to one
@@ -24834,6 +24913,9 @@ impl<'a> Layout<'a> {
             if margin_float {
                 first_floor = Some((self.pages.len(), self.body_floor));
                 self.body_floor = self.body_floor.max(top - room);
+            } else if self.float_first_floor(slot, self.y) < self.body_floor {
+                first_floor = Some((self.pages.len(), self.body_floor));
+                self.body_floor = self.float_first_floor(slot, self.y);
             }
             // Every page of it keeps the float's column (a 360pt centred
             // table's border at 216 on pages 1-3), not the margin.
@@ -25608,30 +25690,9 @@ impl<'a> Layout<'a> {
         wrap_w: f32,
     ) -> Option<(CellPara, CellPara)> {
         let (first_w, rest_w) = cell_para_widths(self.fonts, para, wrap_w);
-        let (lines, ends_br) = wrap_cell_runs(self.fonts, para, first_w, rest_w);
-        // The halves are wrapped again, so a line a w:br ended gives its
-        // break back as text (a7e5b7872c's story parts ran together); the
-        // page end stands for the break closing the head.
-        let rejoin = |range: std::ops::Range<usize>| -> Vec<TextRun> {
-            let mut runs = Vec::new();
-            let end = range.end;
-            for j in range {
-                let line = &lines[j];
-                let n = line.len();
-                for (r, run) in line.iter().enumerate() {
-                    if ends_br[j] && r + 1 == n && run.ends_line && run.text.is_empty() {
-                        if j + 1 < end {
-                            let mut br = run.with_text("\n");
-                            br.ends_line = false;
-                            runs.push(br);
-                        }
-                    } else {
-                        runs.push(run.clone());
-                    }
-                }
-            }
-            runs
-        };
+        let (lines, _) = wrap_cell_runs(self.fonts, para, first_w, rest_w);
+        // The halves are wrapped again, so each keeps its w:br breaks.
+        let rejoin = |range: std::ops::Range<usize>| rejoin_lines(&lines[range]);
         let mut used = para.style.before;
         let mut n = 0;
         while n < lines.len() {
@@ -28066,7 +28127,7 @@ fn layout(
                             word.is_some_and(|w| pics + w > room)
                         };
                     if leads {
-                        lay.y -= lay.page_top_before(style.before);
+                        lay.space_before(style.before);
                         lay.at_page_top = false;
                         lay.suppress_space_before = false;
                         lay.emit_inline_pictures(&flow, &style, None, runs);
@@ -28133,7 +28194,7 @@ fn layout(
                         lay.para_top = anchor_top;
                     }
                 } else if !lay.at_page_top || !lay.suppress_space_before {
-                    lay.y -= lay.page_top_before(style.before);
+                    lay.space_before(style.before);
                     lay.at_page_top = false;
                     lay.suppress_space_before = false;
                 }

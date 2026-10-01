@@ -1547,6 +1547,81 @@ fn a_br_outside_a_run_still_breaks_the_line() {
 }
 
 #[test]
+fn a_br_before_the_text_of_its_run_breaks_the_line() {
+    // _to_improve f9b9dbd790 redline: each line of the product sheet is
+    // <w:r><w:br/><w:t>…</w:t></w:r>, in plain and inserted runs alike.
+    // Word starts each on its own line; we glued them ("vinduer.Praktisk")
+    // and ended on 9 pages to Word's 10.
+    let body = "<w:p><w:r><w:t>LeadPlain</w:t></w:r><w:r><w:br/><w:t>NextPlain</w:t></w:r></w:p>\
+                <w:p><w:ins w:id=\"1\" w:author=\"A\" w:date=\"2026-01-01T00:00:00Z\">\
+                <w:r><w:t>LeadIns</w:t></w:r><w:r><w:br/><w:t>NextIns</w:t></w:r></w:ins></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("br before text");
+    let y = |t: &str| {
+        pdf_glyph_text_xy(&pdf, t)
+            .unwrap_or_else(|| panic!("{t}"))
+            .1
+    };
+    assert!(
+        y("LeadPlain") - y("NextPlain") > 10.0,
+        "plain run: the br starts a new line"
+    );
+    assert!(
+        y("LeadIns") - y("NextIns") > 10.0,
+        "inserted run: the br starts a new line"
+    );
+}
+
+#[test]
+fn a_br_beside_a_square_float_still_breaks_the_line() {
+    // _to_improve f9b9dbd790 redline: the header's logos wrap square into
+    // the body, and the first paragraph is one w:p of <w:br/> lines.
+    // Word breaks at every br beside and below the logo; we glued them.
+    let float = blip(
+        "1270000",
+        "1270000",
+        "<wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:simplePos x=\"0\" y=\"0\"/>\
+           <wp:positionH relativeFrom=\"margin\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+           <wp:wrapSquare wrapText=\"bothSides\"/>",
+        "</wp:anchor>",
+    );
+    let right = float.replace(
+        "<wp:posOffset>0</wp:posOffset></wp:positionH>",
+        "<wp:posOffset>4572000</wp:posOffset></wp:positionH>",
+    );
+    let body = format!(
+        "<w:p><w:r>{float}</w:r><w:r>{right}</w:r><w:r><w:t>SqOne</w:t></w:r><w:r><w:br/><w:t>SqTwo</w:t></w:r>\
+         <w:r><w:br/></w:r><w:r><w:t>SqThree</w:t></w:r>{below}</w:p><w:sectPr/>",
+        below = (0..10)
+            .map(|i| format!("<w:r><w:br/><w:t>SqBelow{i}</w:t></w:r>"))
+            .collect::<String>()
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("br beside float");
+    let y = |t: &str| {
+        pdf_glyph_text_xy(&pdf, t)
+            .unwrap_or_else(|| panic!("{t}"))
+            .1
+    };
+    assert!(
+        y("SqOne") - y("SqTwo") > 10.0,
+        "the in-run br starts a new line"
+    );
+    assert!(
+        y("SqTwo") - y("SqThree") > 10.0,
+        "the br-only run starts a new line"
+    );
+    for i in 0..9 {
+        let (a, b) = (format!("SqBelow{i}"), format!("SqBelow{}", i + 1));
+        assert!(
+            y(&a) - y(&b) > 10.0,
+            "{b} starts its own line past the float"
+        );
+    }
+}
+
+#[test]
 fn a_newline_inside_w_t_is_a_space_not_a_break() {
     // fixtures_500 000312ea (PHPWord): the Heading1 text carries literal
     // newlines ("jeudi 27 avril 2017\nJeudi, 2ème …"). Word draws them as
@@ -5585,6 +5660,91 @@ fn a_keep_next_paragraph_ending_a_page_splits_or_moves_by_compat_mode() {
 }
 
 #[test]
+fn a_page_break_opening_a_paragraph_after_a_full_page_breaks_once() {
+    // Word 16 probes lb0930 (compat 14 and 15): after 32 exact 20pt lines
+    // "<br page/>Heading" opens page 2. jubarte gave the empty text before
+    // the break a line of its own, which moved down a page, and the break
+    // then left that page blank (priority d9b54326f3: 31 pages, Word 30).
+    let line = |k: usize| {
+        format!(
+            "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"400\" w:lineRule=\"exact\"/></w:pPr>\
+             <w:r><w:t>L{k:02}</w:t></w:r></w:p>"
+        )
+    };
+    let lines: String = (0..32).map(line).collect();
+    let body = format!(
+        "{lines}<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"400\" w:lineRule=\"exact\"/></w:pPr>\
+           <w:r><w:br w:type=\"page\"/></w:r><w:r><w:t>Heading</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>"
+    );
+    for mode in [14, 15] {
+        let settings = format!(
+            r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="{mode}"/></w:compat>"#
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, &settings)).expect("break");
+        assert_eq!(
+            page_with_text(&pdf, "L31"),
+            Some(0),
+            "mode {mode}: 32 lines fill page 1"
+        );
+        assert_eq!(
+            (page_with_text(&pdf, "Heading"), pdf_page_count(&pdf)),
+            (Some(1), 2),
+            "mode {mode}: the break opens page 2 once"
+        );
+    }
+}
+
+#[test]
+fn a_legacy_page_float_gets_one_body_height_below_its_top() {
+    // Word 16 probes y2440_* 0930 (31 exact 20pt rows, tblpY 122pt under a
+    // 72pt margin, page-anchored): compat 14 gives the table one body
+    // height from its own top, so all 31 rows stay on page 1 past the
+    // 720pt floor and the next paragraph flows above the table (priority
+    // d9b54326f3's page 7 row reaches 524.5pt under a 523pt floor);
+    // compat 15 stops at the floor (R28).
+    let rows: String = (0..31)
+        .map(|k| {
+            format!(
+                "<w:tr><w:trPr><w:trHeight w:val=\"400\" w:hRule=\"exact\"/></w:trPr><w:tc>\
+                 <w:tcPr><w:tcW w:w=\"9000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr>\
+                 <w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>R{k:02}</w:t></w:r></w:p></w:tc></w:tr>"
+            )
+        })
+        .collect();
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblpPr w:leftFromText=\"180\" w:rightFromText=\"180\" \
+           w:vertAnchor=\"page\" w:horzAnchor=\"margin\" w:tblpY=\"2440\"/>\
+           <w:tblW w:w=\"9000\" w:type=\"dxa\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"9000\"/></w:tblGrid>{rows}</w:tbl>\
+         <w:p><w:r><w:t>After</w:t></w:r></w:p><w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>"
+    );
+    let pages = |mode: u32| {
+        let settings = format!(
+            r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="{mode}"/></w:compat>"#
+        );
+        docx_to_pdf(&minimal_docx_with_settings(&body, &settings)).expect("page float")
+    };
+    let on = |pdf: &[u8], t: &str| page_with_text(pdf, t).expect(t);
+    let legacy = pages(14);
+    assert_eq!(
+        (on(&legacy, "R30"), on(&legacy, "After")),
+        (0, 0),
+        "compat 14 holds the whole table and the paragraph after it on page 1"
+    );
+    let modern = pages(15);
+    assert_eq!(
+        (on(&modern, "R28"), on(&modern, "R29")),
+        (0, 1),
+        "compat 15 breaks at the floor"
+    );
+}
+
+#[test]
 fn a_cant_split_row_taller_than_a_page_breaks_from_a_fresh_page() {
     // Word 16 probes cs_mid/cs_top_0930 (32 exact 20pt lines a page): a
     // cantSplit row of 40 lines moves off a page it started part-way
@@ -6721,6 +6881,38 @@ fn a_picture_paragraphs_mark_rpr_sets_its_extra_leading() {
     assert!(
         (drop - 6.9).abs() < 0.2,
         "the mark's half line at 1.5; drop={drop}"
+    );
+}
+
+#[test]
+fn a_page_tall_inline_picture_under_its_space_before_stays_on_the_first_page() {
+    // Priority 9f2c60b301 (Word 16): a 648pt inline cover box fills the
+    // body of a 1in-margin Letter page, in a Heading 1 with 18pt before at
+    // the document start. Word keeps the space (its title sits 19pt lower
+    // than with none) and draws the box on page 1, past the bottom margin;
+    // jubarte broke to page 2 and left page 1 blank (9 pages, Word 8).
+    let pic = blip(
+        "5943600",
+        "8229600",
+        "<wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">",
+        "</wp:inline>",
+    );
+    let docx = drawing_docx(&format!(
+        "<w:p><w:pPr><w:spacing w:before=\"360\"/></w:pPr><w:r>{pic}</w:r></w:p>\
+         <w:p><w:r><w:t>After</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    ));
+    let pdf = docx_to_pdf(&docx).expect("cover box");
+    assert_eq!(
+        pdf_page_count(&pdf),
+        2,
+        "the cover stays on page 1, After opens page 2"
+    );
+    let top = pdf_image_boxes(&pdf).first().expect("picture").1 + 648.0;
+    assert!(
+        (top - (720.0 - 18.0)).abs() < 1.5,
+        "its 18pt before is kept; top={top}"
     );
 }
 
@@ -26110,6 +26302,44 @@ fn do_not_expand_shift_return_skips_justify_on_soft_break() {
         bx - ax < 80.0,
         "doNotExpandShiftReturn must not justify the shift-return line; A={ax} B={bx} dx={}",
         bx - ax
+    );
+}
+
+#[test]
+fn do_not_expand_shift_return_holds_past_a_side_float() {
+    // The lines a paragraph rewraps past a side float keep their w:br
+    // ends, so doNotExpandShiftReturn still leaves those lines unstretched
+    // (the rewrap marked every line as unbroken and justified them).
+    let filler = "Lorem ipsum dolor sit amet consectetur adipiscing elit sed do. ".repeat(6);
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblpPr w:leftFromText=\"180\" w:rightFromText=\"180\" \
+           w:vertAnchor=\"text\" w:horzAnchor=\"margin\" w:tblpY=\"1\"/>\
+           <w:tblW w:w=\"2160\" w:type=\"dxa\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"2160\"/></w:tblGrid>\
+           <w:tr><w:trPr><w:trHeight w:val=\"720\" w:hRule=\"exact\"/></w:trPr>\
+           <w:tc><w:p><w:r><w:t>Box</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+         <w:p><w:pPr><w:jc w:val=\"both\"/>\
+           <w:spacing w:before=\"0\" w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+           <w:r><w:t xml:space=\"preserve\">{filler}</w:t></w:r>\
+           <w:r><w:br/><w:t xml:space=\"preserve\">DxShA DxShB</w:t></w:r>\
+           <w:r><w:br/><w:t>DxShEnd</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(
+        &body,
+        "<w:compat><w:doNotExpandShiftReturn/></w:compat>",
+    ))
+    .expect("side float shift return");
+    let x = |t: &str| {
+        pdf_glyph_text_xy(&pdf, t)
+            .unwrap_or_else(|| panic!("{t}"))
+            .0
+    };
+    assert!(
+        x("DxShB") - x("DxShA") < 80.0,
+        "the br-ended line past the float stays unstretched; gap {}",
+        x("DxShB") - x("DxShA")
     );
 }
 
