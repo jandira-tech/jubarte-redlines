@@ -24273,6 +24273,51 @@ fn even_page_number_start_opens_on_the_even_header() {
 }
 
 #[test]
+fn endnote_marks_number_in_reference_order_in_their_format() {
+    // _to_improve 9134397db6 / cf977017dd (file_77): "Ouch" + endnote 2
+    // + "." + endnote 3 under endnotePr lowerRoman. Word's PDF reads
+    // "Ouchi.ii" and puts "i" / "ii" before the notes. We painted the
+    // notes with neither mark, which shifted every line of the page.
+    let body = "<w:p><w:r><w:t>Ouch</w:t></w:r>\
+         <w:r><w:endnoteReference w:id=\"2\"/></w:r><w:r><w:t>.</w:t></w:r>\
+         <w:r><w:endnoteReference w:id=\"3\"/></w:r></w:p>\
+         <w:sectPr><w:endnotePr><w:numFmt w:val=\"lowerRoman\"/></w:endnotePr>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\"/></w:sectPr>";
+    let note = |id: u32, text: &str| {
+        format!(
+            "<w:endnote w:id=\"{id}\"><w:p><w:r><w:endnoteRef/></w:r>\
+             <w:r><w:t xml:space=\"preserve\"> {text}</w:t></w:r></w:p></w:endnote>"
+        )
+    };
+    let endnotes = format!(
+        "<?xml version=\"1.0\"?>\
+         <w:endnotes xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         <w:endnote w:id=\"0\" w:type=\"separator\"><w:p><w:r><w:separator/></w:r></w:p></w:endnote>\
+         <w:endnote w:id=\"1\" w:type=\"continuationSeparator\"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:endnote>\
+         {}{}</w:endnotes>",
+        note(2, "Tachyon."),
+        note(3, "Fin.")
+    );
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[("rIdE", "endnotes", "endnotes.xml")],
+        &[("word/endnotes.xml", endnotes)],
+    ))
+    .expect("endnotes");
+    let page = pdf_winansi_text(&pdf);
+    assert!(
+        page.contains("Ouchi.ii"),
+        "the references read i and ii; page={page}"
+    );
+    assert!(
+        page.contains("i Tachyon.") && page.contains("ii Fin."),
+        "each note opens on its own mark; page={page}"
+    );
+}
+
+#[test]
 fn a_page_number_start_of_zero_numbers_the_first_page_zero() {
     // _to_improve 3936a8fe56: pgNumType w:start="0" behind a title page;
     // Word's PDF numbers its third page 2 and its fourteenth 13. We
@@ -28589,11 +28634,11 @@ fn endnote_pr_sect_end_paints_notes_before_next_section() {
 }
 
 #[test]
-fn endnote_ref_in_note_body_stays_unpainted_after_mini_663() {
-    // Word Strict01 p13 paints w:endnoteRef as lowerRoman "i" in the
-    // note body. Mini 663–664 did that and ITT-neg'd NR mean −0.0002
-    // (8 Strict01-family drops −0.0012, 0 gains). Same extra-ink family
-    // as mini 487 in-body marker. KEEP-only forbids. Do not retry.
+fn endnote_ref_in_note_body_paints_its_mark() {
+    // Word paints w:endnoteRef as the note's lowerRoman mark: Strict01
+    // p13 reads "i This is an endnote." (Word 16, 2026-10-01). Mini 663
+    // had left it unpainted for an NR mean move of −0.0002; Word parity
+    // comes first (9134397db6 / cf977017dd scored 0 without the marks).
     let body = "<w:p><w:r><w:t>BodyLine</w:t></w:r>\
            <w:r><w:endnoteReference w:id=\"1\"/></w:r></w:p>\
          <w:sectPr><w:pgSz w:w=\"612pt\" w:h=\"792pt\"/></w:sectPr>";
@@ -28610,17 +28655,16 @@ fn endnote_ref_in_note_body_stays_unpainted_after_mini_663() {
         painted.contains("EndnoteBody"),
         "endnote body must still paint; painted={painted}"
     );
+    // The reference "i" after BodyLine, then the note's own "i".
     assert!(
-        !painted.contains("i EndnoteBody") && !painted.contains("iEndnoteBody"),
-        "mini 663 note-body endnoteRef ITT-neg; painted={painted}"
+        painted.starts_with("BodyLinei") && painted.trim_end().ends_with("i EndnoteBody"),
+        "the note opens on the mark its reference reads; painted={painted}"
     );
 }
 
 #[test]
-fn official_strict01_endnote_body_stays_without_note_ref_after_mini_663() {
-    // Word p13 is "i This is an endnote." Mini 663–664 note-body
-    // w:endnoteRef ITT-neg NR −0.0002 / 8 Strict01 drops. Mini 487
-    // in-body / mini 619 separator stay.
+fn official_strict01_endnote_body_opens_on_its_mark() {
+    // Word p13 is "i This is an endnote." (Word 16, 2026-10-01).
     let path = "tests/corpus/neurotic_docx_bench/grok_run/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
@@ -28631,8 +28675,8 @@ fn official_strict01_endnote_body_stays_without_note_ref_after_mini_663() {
         &painted[painted.len().saturating_sub(80)..]
     );
     assert!(
-        !painted.contains("i This is an endnote"),
-        "mini 663 note-body endnoteRef ITT-neg; painted tail {}",
+        painted.contains("i This is an endnote"),
+        "the note opens on its mark; painted tail {}",
         &painted[painted.len().saturating_sub(80)..]
     );
 }
@@ -28663,11 +28707,10 @@ fn endnote_separator_stays_unpainted_after_mini_619() {
 }
 
 #[test]
-fn endnote_reference_stays_unpainted_after_mini_487() {
-    // Word paints a superscript "1" at w:endnoteReference (Strict01 p13).
-    // mini 487 was Word-faithful but ITT-neg: NR 8 Strict01-family drops
-    // of −0.0003, 0 gains (mean rounded 0-delta vs KEEP 471). Quartz
-    // prefers no in-body marker. Endnote *body* still paints.
+fn endnote_reference_paints_its_lower_roman_mark() {
+    // Word paints w:endnoteReference as the note's mark, lowerRoman by
+    // default (Strict01, 9134397db6). Mini 487 had left it unpainted for
+    // an NR move of −0.0003; Word parity comes first.
     let body = "<w:p><w:r><w:t>SeeEnd.</w:t></w:r>\
            <w:r><w:rPr><w:vertAlign w:val=\"superscript\"/></w:rPr>\
              <w:endnoteReference w:id=\"1\"/></w:r></w:p>\
@@ -28686,8 +28729,8 @@ fn endnote_reference_stays_unpainted_after_mini_487() {
         "endnote body must paint; painted={painted}"
     );
     assert!(
-        !painted.contains('1'),
-        "mini 487 in-body endnote marker ITT-neg; painted={painted}"
+        painted.contains("SeeEnd.i") && !painted.contains('1'),
+        "the reference reads i, not 1; painted={painted}"
     );
 }
 
