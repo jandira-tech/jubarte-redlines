@@ -1,0 +1,62 @@
+[
+  {
+    "type": "Inserted",
+    "author": "Counsel",
+    "date": "2026-02-01T09:00:00Z",
+    "part": "word/document.xml",
+    "moveGroupId": null,
+    "isMoveSource": null,
+    "formatChange": null,
+    "text": "three (3"
+  },
+  {
+    "type": "Deleted",
+    "author": "Counsel",
+    "date": "2026-02-01T09:00:00Z",
+    "part": "word/document.xml",
+    "moveGroupId": null,
+    "isMoveSource": null,
+    "formatChange": null,
+    "text": "two (2"
+  },
+  {
+    "type": "Inserted",
+    "author": "Counsel",
+    "date": "2026-02-01T09:00:00Z",
+    "part": "word/document.xml",
+    "moveGroupId": null,
+    "isMoveSource": null,
+    "formatChange": null,
+    "text": ","
+  },
+  {
+    "type": "Deleted",
+    "author": "Counsel",
+    "date": "2026-02-01T09:00:00Z",
+    "part": "word/document.xml",
+    "moveGroupId": null,
+    "isMoveSource": null,
+    "formatChange": null,
+    "text": " or"
+  },
+  {
+    "type": "Inserted",
+    "author": "Counsel",
+    "date": "2026-02-01T09:00:00Z",
+    "part": "word/document.xml",
+    "moveGroupId": null,
+    "isMoveSource": null,
+    "formatChange": null,
+    "text": " or financial"
+  },
+  {
+    "type": "Inserted",
+    "author": "Counsel",
+    "date": "2026-02-01T09:00:00Z",
+    "part": "word/document.xml",
+    "moveGroupId": null,
+    "isMoveSource": null,
+    "formatChange": null,
+    "text": "The Receiving Party may not disclose Confidential Information to any third party without prior written consent.\n"
+  }
+]
