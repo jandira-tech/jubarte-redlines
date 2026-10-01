@@ -28209,7 +28209,28 @@ fn layout(
                 }
                 if style.keep_next && i >= lay.keep_chain_until {
                     let pitch = lay.page.grid_pitch;
-                    let own = para_first_line_pt(lay.fonts, runs, &style, pitch);
+                    // A paragraph of inline pictures alone is as tall as
+                    // they are, and lays out without emit_runs, which
+                    // would take the follow (Word 16 probe kn 1001: a
+                    // 250pt picture goes to the next page with its
+                    // follower; PR #247 review).
+                    let pictures = !runs.iter().any(|r| !r.text.trim().is_empty());
+                    let pic_h = if pictures {
+                        images
+                            .iter()
+                            .filter(|im| matches!(im.slot, ImageSlot::Flow))
+                            .map(|im| im.h)
+                            .chain(
+                                boxes
+                                    .iter()
+                                    .filter(|b| matches!(b.slot, ImageSlot::Flow))
+                                    .map(|b| b.h),
+                            )
+                            .fold(0.0_f32, f32::max)
+                    } else {
+                        0.0
+                    };
+                    let own = para_first_line_pt(lay.fonts, runs, &style, pitch).max(pic_h);
                     let lines = lay.para_line_count(runs, &style, *list);
                     let own_all = style.before + own * lines as f32 + style.after;
                     let (total, first, end) = lay.keep_next_chain_follow(blocks, i + 1);
@@ -28225,7 +28246,7 @@ fn layout(
                         lay.keep_chain_until = end;
                     } else {
                         let follow = if overlong { first } else { total };
-                        if lay.compat_mode >= 15 {
+                        if lay.compat_mode >= 15 && pic_h <= 0.0 {
                             lay.keep_next_follow = follow;
                         } else if let Some(need) =
                             lay.legacy_keep_chain_need(blocks, i, own_all, style.after)

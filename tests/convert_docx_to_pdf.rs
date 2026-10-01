@@ -14803,6 +14803,26 @@ fn a_page_anchored_picture_stays_when_a_body_top_float_pushes_the_text() {
     );
 }
 
+#[test]
+fn a_keep_next_picture_paragraph_goes_with_its_follower() {
+    // PR #247 review 4149916353, Word 16 probe kn (2026-10-01, compat 15):
+    // 19 exact 20pt lines leave 268pt; a keepNext paragraph holding only a
+    // 250pt inline picture fits, its 20pt follower does not. Word moves the
+    // picture to page 2 with "Follower"; we measured the paragraph as one
+    // text line and left the picture on page 1.
+    let pdf = docx_to_pdf(include_bytes!(
+        "fixtures/word_probes/keep_next_picture_kn_1001.docx"
+    ))
+    .expect("keepNext picture");
+    let streams = pdf_content_streams(&pdf);
+    assert_eq!(streams.len(), 2);
+    assert!(
+        !streams[0].contains(" Do") && streams[1].contains(" Do"),
+        "the picture starts page 2"
+    );
+    assert_eq!(page_with_text(&pdf, "Follower"), Some(1));
+}
+
 fn tall_unanchored_float_table(heads: &str) -> Vec<u8> {
     // Word probe fe (2026-09-30): 40 exact 20pt rows at tblpY -1185 (top
     // 12.75), no vertAnchor, on a Letter page with 72pt margins.
