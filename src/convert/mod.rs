@@ -680,6 +680,11 @@ struct RunStyle {
     /// than the line): before compatibility mode 15, under a Latin eastAsia
     /// font. See `mark_ideograph_words`.
     ideograph_words: bool,
+    /// `w:characterSpacingControl` compresses punctuation before
+    /// compatibility mode 15: a hyphen is then no line break, inside a run
+    /// or at its end (496e2984f7's "gastro-oesophageal" moves whole; Word
+    /// 16 probes, compat 12/14 and none; doNotCompress and compat 15 break).
+    punct_compress: bool,
 }
 
 /// Word Save-as-PDF snaps type size to integer ppem at 300 dpi
@@ -1232,6 +1237,8 @@ struct Defaults {
     /// text width plus the table's left and right cell margins, and a
     /// header tab left at the right margin stays on its line.
     legacy_compat: bool,
+    /// `settings_punct_squeeze`: cell lines narrow their spaces too.
+    punct_squeeze: bool,
     /// The default paragraph style's own w:spacing sets [after, before,
     /// line]: a table style's pPr does not override those in its cells.
     normal_spacing: [bool; 3],
@@ -1280,6 +1287,7 @@ impl Defaults {
                 kern_half: 0,
                 effect_skip: false,
                 ideograph_words: false,
+                punct_compress: false,
             },
             para: ParaStyle {
                 fmt_rev: false,
@@ -1354,6 +1362,7 @@ impl Defaults {
                 grid_char: 0.0,
             },
             legacy_compat: false,
+            punct_squeeze: false,
             normal_spacing: [false; 3],
             normal_run: (false, false),
         }
@@ -1647,6 +1656,8 @@ struct SectionChrome {
     mirror_margins: bool,
     /// `w:characterSpacingControl` (xml leftover, document-level).
     character_spacing: CharacterSpacing,
+    /// `settings_punct_squeeze`: every line may narrow its spaces.
+    punct_squeeze: bool,
     /// `w:compat/w:ulTrailSpace` (xml leftover).
     ul_trail_space: bool,
     /// `w:compat/w:spaceForUL` (xml leftover).
@@ -1692,9 +1703,9 @@ struct CellPara {
     /// In a btLr/tbRl cell: painted across, a word never breaks by
     /// character (1c99b5cd's "Theory Topics" column).
     vertical: bool,
-    /// The share of its spaces a justified line may give up to keep a
-    /// word, as body lines do (`WrapTabs::squeeze`; 0 below compat 15).
-    squeeze: f32,
+    /// How far a line's spaces may narrow to keep a word, as body lines
+    /// do (`WrapTabs::squeeze`).
+    squeeze: Squeeze,
 }
 
 #[derive(Clone)]
@@ -2868,6 +2879,9 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
     let theme = load_theme(pkg);
     let mut defaults = Defaults::word();
     defaults.legacy_compat = settings_compat_mode(pkg) < 15;
+    defaults.run.punct_compress = defaults.legacy_compat
+        && settings_character_spacing(pkg) != CharacterSpacing::DoNotCompress;
+    defaults.punct_squeeze = settings_punct_squeeze(pkg);
     defaults.para.sum_spacing = settings_flag(pkg, "doNotUseHTMLParagraphAutoSpacing");
     let mut raw: std::collections::HashMap<String, RawStyle> = std::collections::HashMap::new();
     let Some(xml) = pkg.part_string(&main_rel_part(pkg, "styles", "word/styles.xml")) else {
@@ -2943,6 +2957,14 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
     {
         if let Some(rpr) = first_named(&dom, dd, "rPr") {
             apply_rpr(&dom, rpr, &mut defaults.run, &theme);
+            // Word squeezes compressed punctuation only while the document
+            // default names no fonts (Word 16 probes 2026-10-01: Times New
+            // Roman on the runs squeezes; the same face, Arial or Calibri
+            // in docDefaults' w:rFonts does not, 3f5209785f's "Duke" and
+            // "vocational" among them; an empty docDefaults squeezes).
+            if first_named(&dom, rpr, "rFonts").is_some() {
+                defaults.punct_squeeze = false;
+            }
         }
         if let Some(ppr) = first_named(&dom, dd, "pPr") {
             apply_ppr(&dom, ppr, &mut defaults.para);
@@ -6294,6 +6316,39 @@ fn settings_mirror_margins(pkg: &PartFs) -> bool {
     settings_flag(pkg, "mirrorMargins")
 }
 
+/// Before compatibility mode 15, `compressPunctuation` lets every line
+/// narrow its spaces to keep its last word (`PUNCT_SQUEEZE`), unless the
+/// document balances single- and double-byte widths under an East Asian
+/// theme language: 496e2984f7 (balanceSingleByteDoubleByteWidth,
+/// themeFontLang zh-CN) leaves Word's lines unsqueezed. Word 16 probes
+/// (2026-10-01): zh-TW, ja-JP and ko-KR alike; en-US or either setting
+/// alone squeezes; run languages do not count. A document default that
+/// names fonts turns it off too (`load_stylesheet`).
+fn settings_punct_squeeze(pkg: &PartFs) -> bool {
+    pkg.part_string(&settings_part(pkg))
+        .is_some_and(|xml| settings_punct_squeeze_xml(&xml))
+}
+
+fn settings_punct_squeeze_xml(xml: &str) -> bool {
+    if settings_compat_mode_xml(xml) >= 15
+        || settings_character_spacing_xml(xml) == CharacterSpacing::DoNotCompress
+    {
+        return false;
+    }
+    let east_asian_theme = settings_dom_xml(xml).is_some_and(|s| {
+        let (dom, root) = (&s.0, s.1);
+        dom.descendants(root, Some(&W::name("themeFontLang")))
+            .into_iter()
+            .next()
+            .and_then(|n| attr_any(dom, n, "eastAsia"))
+            .is_some_and(|lang| {
+                let lang = lang.to_ascii_lowercase();
+                ["zh", "ja", "ko"].iter().any(|p| lang.starts_with(p))
+            })
+    });
+    !(east_asian_theme && settings_flag_xml(xml, "balanceSingleByteDoubleByteWidth"))
+}
+
 /// `w:compat/w:ulTrailSpace`: underline trailing spaces (ECMA-376 17.15.3.63).
 /// Omitted → off. Present (default on) paints the pad Word otherwise skips.
 fn settings_ul_trail_space(pkg: &PartFs) -> bool {
@@ -6347,6 +6402,36 @@ mod settings_tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn compressed_punctuation_squeezes_unless_balanced_east_asian() {
+        let csc = r#"<w:characterSpacingControl w:val="compressPunctuation"/>"#;
+        let bal = "<w:compat><w:balanceSingleByteDoubleByteWidth/></w:compat>";
+        let lang = |ea: &str| format!(r#"<w:themeFontLang w:val="en-US" w:eastAsia="{ea}"/>"#);
+        assert!(settings_punct_squeeze_xml(&settings(csc)));
+        assert!(settings_punct_squeeze_xml(&settings(&format!(
+            "{csc}{bal}"
+        ))));
+        assert!(settings_punct_squeeze_xml(&settings(&format!(
+            "{csc}{}",
+            lang("zh-CN")
+        ))));
+        assert!(settings_punct_squeeze_xml(&settings(&format!(
+            "{csc}{}{bal}",
+            lang("en-US")
+        ))));
+        for ea in ["zh-CN", "zh-TW", "ja-JP", "ko-KR"] {
+            let xml = settings(&format!("{csc}{}{bal}", lang(ea)));
+            assert!(!settings_punct_squeeze_xml(&xml), "{ea}");
+        }
+        let fifteen = r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>"#;
+        assert!(!settings_punct_squeeze_xml(&settings(&format!(
+            "{csc}{fifteen}"
+        ))));
+        assert!(!settings_punct_squeeze_xml(&settings(
+            r#"<w:characterSpacingControl w:val="doNotCompress"/>"#
+        )));
     }
 
     #[test]
@@ -7124,6 +7209,7 @@ fn section_chrome(
         footer_tables: footer.start.tables,
         mirror_margins: settings_mirror_margins(pkg),
         character_spacing: settings_character_spacing(pkg),
+        punct_squeeze: sheet.defaults.punct_squeeze,
         ul_trail_space: settings_ul_trail_space(pkg),
         space_for_ul: settings_space_for_ul(pkg),
         do_not_expand_shift_return: settings_do_not_expand_shift_return(pkg),
@@ -8214,7 +8300,19 @@ fn cell_content_extent(fonts: &Fonts, cell: &TableCell) -> (f32, f32) {
     for para in &cell.paras {
         let indent = para.style.indent_left.max(0.0) + para.style.indent_right.max(0.0);
         let mut line = 0.0_f32;
+        // The unit a run leaves open at its end: a word cut by a run
+        // boundary is one unit, as `wrap_runs_segment` glues it
+        // (6d73303ea5's "C" + "ontrols" header is 44.7pt, not 36). An
+        // inserted run against a deleted one stays apart: Word breaks
+        // 25897f5751's inserted "GDP" + deleted "Block" in its column
+        // rather than widen it.
+        let mut carry = 0.0_f32;
+        let mut marks: Option<(bool, bool)> = None;
         for run in &para.runs {
+            let mark = (run.style.strike, run.style.underline);
+            if marks.replace(mark).is_some_and(|prev| prev != mark) {
+                carry = 0.0;
+            }
             let face = fonts.get(ink_face(fonts, &run.style, &run.text));
             let size = run.style.layout_size();
             let width = |t: &str| face.width_pt(t, size) * run.style.hscale();
@@ -8222,22 +8320,45 @@ fn cell_content_extent(fonts: &Fonts, cell: &TableCell) -> (f32, f32) {
                 if i > 0 {
                     max = max.max(line + indent);
                     line = 0.0;
+                    carry = 0.0;
+                }
+                if piece.is_empty() {
+                    continue;
                 }
                 line += width(piece);
+                let opens =
+                    |c: Option<char>| c.is_some_and(|c| !is_wrap_space(c) && !is_cjk_break_char(c));
+                let mut glue = opens(piece.chars().next());
+                let mut last = 0.0_f32;
                 // The longest unit the line may not break inside: a URL
                 // wraps after its hyphens (6ac97492's calor.co.uk link),
                 // a word after a hyphen, as `wrap_runs_segment` does.
-                for word in piece.split_whitespace() {
+                for word in piece.split(is_wrap_space).filter(|w| !w.is_empty()) {
                     let url = url_wrap_pieces(word);
                     let units = if url.len() > 1 {
                         url
                     } else {
-                        hyphen_wrap_pieces(word, !run.style.ideograph_words)
+                        hyphen_wrap_pieces(
+                            word,
+                            !run.style.ideograph_words,
+                            !run.style.punct_compress,
+                        )
                     };
                     for unit in units {
-                        min = min.max(width(unit) + indent);
+                        last = width(unit)
+                            + if std::mem::take(&mut glue) {
+                                carry
+                            } else {
+                                0.0
+                            };
+                        min = min.max(last + indent);
                     }
                 }
+                carry = if opens(piece.chars().last()) && !breaks_after(run, piece) {
+                    last
+                } else {
+                    0.0
+                };
             }
         }
         max = max.max(line + indent);
@@ -8695,7 +8816,7 @@ fn cell_content_height(fonts: &Fonts, cell: &TableCell, col_w: &[f32], space_for
                 blank_bookmarks: Vec::new(),
                 continued: false,
                 vertical: false,
-                squeeze: 0.0,
+                squeeze: Squeeze::NONE,
             },
             wrap_w,
             space_for_ul,
@@ -10875,7 +10996,7 @@ fn table_block(
                     blank_bookmarks: std::mem::take(&mut blank_bookmarks),
                     continued: false,
                     vertical: false,
-                    squeeze: 0.0,
+                    squeeze: Squeeze::NONE,
                 });
             }
             if cell_paras.is_empty() && nested.is_empty() {
@@ -10901,7 +11022,7 @@ fn table_block(
                     blank_bookmarks: std::mem::take(&mut blank_bookmarks),
                     continued: false,
                     vertical: false,
-                    squeeze: 0.0,
+                    squeeze: Squeeze::NONE,
                 });
             } else if let Some(last) = cell_paras.last_mut() {
                 // Trailing empty paragraphs: their bookmarks still exist.
@@ -10917,6 +11038,10 @@ fn table_block(
                     if matches!(p.style.align, Align::Justify) {
                         p.squeeze = JUSTIFY_SQUEEZE;
                     }
+                }
+            } else if sheet.defaults.punct_squeeze {
+                for p in &mut cell_paras {
+                    p.squeeze = PUNCT_SQUEEZE;
                 }
             }
             // 0129b302's auto-spaced "1.300.000" cell is 14pt apart, not 28.
@@ -11665,7 +11790,7 @@ fn grid_skip_cell(span: usize, pref: PrefWidth, pad_l: f32, pad_r: f32) -> RawCe
             blank_bookmarks: Vec::new(),
             continued: false,
             vertical: false,
-            squeeze: 0.0,
+            squeeze: Squeeze::NONE,
         }],
         nested: Vec::new(),
         nested_at: Vec::new(),
@@ -11727,7 +11852,7 @@ fn deleted_cells_stamp(base: &RunStyle) -> RawCell {
             blank_bookmarks: Vec::new(),
             continued: false,
             vertical: false,
-            squeeze: 0.0,
+            squeeze: Squeeze::NONE,
         }],
         colspan: 1,
         vmerge: VMerge::None,
@@ -16853,6 +16978,7 @@ struct HfChrome {
     /// right on odd pages (live Word 2026-09-25).
     rev_bars_facing: bool,
     character_spacing: CharacterSpacing,
+    punct_squeeze: bool,
     /// `w:compat/w:ulTrailSpace` (xml leftover).
     ul_trail_space: bool,
     /// `w:compat/w:spaceForUL` (xml leftover).
@@ -16870,6 +16996,8 @@ fn first_section_hf(
 ) -> HfChrome {
     let Some(sect) = live_sect_prs(dom, body).into_iter().next() else {
         return HfChrome {
+            character_spacing: settings_character_spacing(pkg),
+            punct_squeeze: sheet.defaults.punct_squeeze,
             ul_trail_space: settings_ul_trail_space(pkg),
             space_for_ul: settings_space_for_ul(pkg),
             do_not_expand_shift_return: settings_do_not_expand_shift_return(pkg),
@@ -16907,6 +17035,7 @@ fn first_section_hf(
         mirror_margins: settings_mirror_margins(pkg),
         rev_bars_facing: settings_even_and_odd_headers(pkg),
         character_spacing: settings_character_spacing(pkg),
+        punct_squeeze: sheet.defaults.punct_squeeze,
         ul_trail_space: settings_ul_trail_space(pkg),
         space_for_ul: settings_space_for_ul(pkg),
         do_not_expand_shift_return: settings_do_not_expand_shift_return(pkg),
@@ -18400,7 +18529,7 @@ fn hf_wrap_tab_pieces(fonts: &Fonts, pieces: Vec<Vec<TextRun>>, width: f32) -> V
             default_tab,
             first_start,
             start: para.indent_left,
-            squeeze: 0.0,
+            squeeze: Squeeze::NONE,
         };
         let right = width - para.indent_right;
         if hf_tab_piece_end(fonts, &piece, &para, first_start) <= right + 0.5 {
@@ -18887,6 +19016,7 @@ struct Layout<'a> {
     /// right on odd pages (live Word 2026-09-25).
     rev_bars_facing: bool,
     character_spacing: CharacterSpacing,
+    punct_squeeze: bool,
     /// `w:compat/w:ulTrailSpace`: underline trailing spaces even in cells.
     ul_trail_space: bool,
     /// `w:compat/w:spaceForUL`: extra descent under underlined CJK.
@@ -19401,6 +19531,7 @@ impl<'a> Layout<'a> {
             mirror_margins: hf.mirror_margins,
             rev_bars_facing: hf.rev_bars_facing,
             character_spacing: hf.character_spacing,
+            punct_squeeze: hf.punct_squeeze,
             ul_trail_space: hf.ul_trail_space,
             space_for_ul: hf.space_for_ul,
             do_not_expand_shift_return: hf.do_not_expand_shift_return,
@@ -19463,6 +19594,7 @@ impl<'a> Layout<'a> {
         self.page = next.page;
         self.mirror_margins = next.mirror_margins;
         self.character_spacing = next.character_spacing;
+        self.punct_squeeze = next.punct_squeeze;
         self.ul_trail_space = next.ul_trail_space;
         self.space_for_ul = next.space_for_ul;
         self.do_not_expand_shift_return = next.do_not_expand_shift_return;
@@ -21343,8 +21475,9 @@ impl<'a> Layout<'a> {
             let fill = measure - (line_w - trail).max(0.0);
             // A justified line Word kept by squeezing its spaces paints them
             // narrower, even on the paragraph's last line (00044aa0).
-            let squeeze_line =
-                matches!(style.align, Align::Justify) && self.compat_mode >= 15 && fill < -0.05;
+            let squeeze_line = fill < -0.05
+                && (matches!(style.align, Align::Justify) && self.compat_mode >= 15
+                    || self.punct_squeeze && PUNCT_SQUEEZE.narrows_line(line));
             let justify_left = if squeeze_line { fill } else { fill.max(0.0) };
             let justify = squeeze_line
                 || (matches!(style.align, Align::Justify)
@@ -21738,8 +21871,10 @@ impl<'a> Layout<'a> {
         // the 96 compat-15 fixtures). Older modes break as before.
         let squeeze = if matches!(style.align, Align::Justify) && self.compat_mode >= 15 {
             JUSTIFY_SQUEEZE
+        } else if self.punct_squeeze {
+            PUNCT_SQUEEZE
         } else {
-            0.0
+            Squeeze::NONE
         };
         let tabs = |first_start: f32| WrapTabs {
             stops: &self.tab_stops,
@@ -26013,13 +26148,13 @@ impl<'a> Layout<'a> {
                             let leftover = inner - line_w - mark_gap;
                             // A squeezed line narrows its spaces, its last
                             // line too, as a body line does.
-                            let squeeze_line = para.squeeze > 0.0 && leftover < -0.05;
-                            if matches!(para.style.align, Align::Justify)
-                                && (squeeze_line
-                                    || (li + 1 < line_count || para.continued)
-                                        && !(self.do_not_expand_shift_return
-                                            && breaks.get(li).copied().unwrap_or(false))
-                                        && leftover > 0.5)
+                            let squeeze_line = para.squeeze.narrows_line(&line) && leftover < -0.05;
+                            if squeeze_line
+                                || matches!(para.style.align, Align::Justify)
+                                    && (li + 1 < line_count || para.continued)
+                                    && !(self.do_not_expand_shift_return
+                                        && breaks.get(li).copied().unwrap_or(false))
+                                    && leftover > 0.5
                             {
                                 let mut body = line.as_slice();
                                 if let Some(m) = mark {
@@ -27544,6 +27679,7 @@ fn default_run_style() -> RunStyle {
         kern_half: 0,
         effect_skip: false,
         ideograph_words: false,
+        punct_compress: false,
     }
 }
 
@@ -27632,9 +27768,22 @@ type LaidCellPara = (Vec<Vec<TextRun>>, Vec<bool>);
 /// One measured piece of a run inside a wrap unit: source run, text, width.
 type WrapPiece<'r> = (&'r TextRun, &'r str, f32);
 
+/// Whether a line may break right after `tok` of `run`: it ends on a
+/// hyphen that follows a letter or digit, as `hyphen_wrap_pieces` splits
+/// inside one. A run boundary there is a break too (b6dd0b6ae8: Word ends
+/// a line on "-Karaman-" and starts the next with the following run's
+/// "Kepenekci,").
+fn breaks_after(run: &TextRun, tok: &str) -> bool {
+    let mut end = tok.chars().rev();
+    !run.style.punct_compress
+        && end.next() == Some('-')
+        && end.next().is_some_and(char::is_alphanumeric)
+}
+
 /// Word's line may end after a hyphen-minus that follows a letter or digit
-/// and precedes more text: `sham-vaccinated` → `sham-` | `vaccinated`.
-fn hyphen_wrap_pieces(tok: &str, ideograph_breaks: bool) -> Vec<&str> {
+/// and precedes more text: `sham-vaccinated` → `sham-` | `vaccinated`,
+/// unless the hyphen holds (`RunStyle::punct_compress`).
+fn hyphen_wrap_pieces(tok: &str, ideograph_breaks: bool, hyphen_breaks: bool) -> Vec<&str> {
     let mut out = Vec::new();
     let mut start = 0;
     let mut prev: Option<char> = None;
@@ -27654,7 +27803,8 @@ fn hyphen_wrap_pieces(tok: &str, ideograph_breaks: bool) -> Vec<&str> {
             out.push(&tok[start..i]);
             start = i;
         }
-        if ch == '-' && prev.is_some_and(char::is_alphanumeric) && end < tok.len() {
+        if hyphen_breaks && ch == '-' && prev.is_some_and(char::is_alphanumeric) && end < tok.len()
+        {
             out.push(&tok[start..end]);
             start = end;
         }
@@ -28103,16 +28253,75 @@ fn wrap_cell_runs(
     )
 }
 
+/// How far a line's spaces may narrow to keep its last word.
+#[derive(Clone, Copy, Default)]
+struct Squeeze {
+    /// Share of the line's plain spaces the line may give up (0: none).
+    share: f32,
+    /// The overflow must also stay within a third of the word and two
+    /// spaces (`wrap_runs_segment`).
+    word_cap: bool,
+    /// Only the spaces of a face Word narrows count (`narrows`).
+    face_bound: bool,
+}
+
+impl Squeeze {
+    const NONE: Self = Self {
+        share: 0.0,
+        word_cap: false,
+        face_bound: false,
+    };
+
+    /// Whether a space set in `family` counts toward the squeeze.
+    fn narrows(self, family: &str) -> bool {
+        !self.face_bound || compressed_space_face(family)
+    }
+
+    /// Whether a line past its measure paints its spaces narrower: one of
+    /// its spaces must be one the squeeze counts.
+    fn narrows_line(self, line: &[TextRun]) -> bool {
+        self.share > 0.0
+            && line
+                .iter()
+                .any(|run| run.text.contains(' ') && self.narrows(&run.style.family))
+    }
+}
+
 /// Word 2013+ layout (compatibilityMode 15) keeps a justified line's last
 /// word by narrowing its spaces, up to a quarter of their width (00044aa0).
-const JUSTIFY_SQUEEZE: f32 = 0.25;
+const JUSTIFY_SQUEEZE: Squeeze = Squeeze {
+    share: 0.25,
+    word_cap: true,
+    face_bound: false,
+};
+
+/// Before compatibility mode 15, `compressPunctuation` lets a line of any
+/// alignment keep its last word on spaces up to a fifth narrower, however
+/// short the word (Word 16 probes, Times 12 compat 14: 19.97% fits, 20.3%
+/// moves the word; a 26.7pt word keeps a 17.2pt overflow).
+const PUNCT_SQUEEZE: Squeeze = Squeeze {
+    share: 0.2,
+    word_cap: false,
+    face_bound: true,
+};
+
+/// The faces whose spaces `compressPunctuation` narrows by a fifth. Word 16
+/// narrows by face, not by a rule we know (probes at 12pt, compat 14): Times
+/// New Roman 20%, Arial between 17.8 and 21.3%, Calibri not at all
+/// (3f5209785f's Calibri lines move "Duke" whole), Georgia between 5 and
+/// 10%, Courier New between 22 and 28%. Only the measured fifths squeeze.
+fn compressed_space_face(family: &str) -> bool {
+    ["Times New Roman", "Arial"]
+        .iter()
+        .any(|face| family.eq_ignore_ascii_case(face))
+}
 
 /// How a line makes room for its last word.
 #[derive(Clone, Copy, Default)]
 struct LineFit {
-    /// Fraction of the line's inter-word space a justified line may give
-    /// up to keep the word (`WrapTabs::squeeze`).
-    squeeze: f32,
+    /// How far the line's spaces may narrow to keep the word
+    /// (`WrapTabs::squeeze`).
+    squeeze: Squeeze,
     /// A word wider than the line breaks by character even without tab
     /// stops (table cells; body lines always pass their tabs).
     char_break: bool,
@@ -28125,9 +28334,8 @@ struct WrapTabs<'a> {
     default_tab: f32,
     first_start: f32,
     start: f32,
-    /// Fraction of a line's inter-word space a justified line may give up
-    /// to keep one more word (0 when the paragraph is not justified).
-    squeeze: f32,
+    /// How far a line's spaces may narrow to keep one more word.
+    squeeze: Squeeze,
 }
 
 fn wrap_runs_tabbed(
@@ -28139,7 +28347,7 @@ fn wrap_runs_tabbed(
     tabs: Option<&WrapTabs<'_>>,
 ) -> (Vec<Vec<TextRun>>, Vec<bool>) {
     let fit = LineFit {
-        squeeze: tabs.map_or(0.0, |t| t.squeeze),
+        squeeze: tabs.map_or(Squeeze::NONE, |t| t.squeeze),
         char_break: false,
     };
     wrap_runs_split(fonts, runs, first_width, width, list, tabs, fit)
@@ -28266,7 +28474,7 @@ fn wrap_runs_segment(
             let pieces: Vec<&str> = if url.len() > 1 {
                 url
             } else {
-                hyphen_wrap_pieces(tok, !run.style.ideograph_words)
+                hyphen_wrap_pieces(tok, !run.style.ideograph_words, !run.style.punct_compress)
             };
             let last = pieces.len().saturating_sub(1);
             for (i, tok) in pieces.into_iter().enumerate() {
@@ -28295,7 +28503,7 @@ fn wrap_runs_segment(
                 } else {
                     units.push((vec![(run, tok, w)], is_space));
                 }
-                open = !is_space && i == last;
+                open = !is_space && i == last && !breaks_after(run, tok);
             }
         }
     }
@@ -28392,9 +28600,9 @@ fn wrap_runs_segment(
         // "times" at 11pt keeps up to 9.7 of 9.86pt; d06f02170c's 11.07pt
         // moves it although a quarter of the spaces is 13.1pt.
         let overflow = x + w - limit;
-        let squeezed = fit.squeeze > 0.0
-            && overflow <= fit.squeeze * line_spaces
-            && overflow <= (w + 2.0 * space_w) / 3.0;
+        let squeezed = fit.squeeze.share > 0.0
+            && overflow <= fit.squeeze.share * line_spaces
+            && (!fit.squeeze.word_cap || overflow <= (w + 2.0 * space_w) / 3.0);
         let hang = hanging_punct_width(fonts, &unit);
         // A space hangs past the edge unless one space is wider than the
         // line: then each is a line of its own, as each character is
@@ -28492,7 +28700,13 @@ fn wrap_runs_segment(
             continue;
         }
         if is_space && unit.iter().all(|(_, tok, _)| !tok.contains('\t')) {
-            line_spaces += w;
+            // Compressed punctuation narrows only the spaces of some faces
+            // (`compressed_space_face`).
+            line_spaces += unit
+                .iter()
+                .filter(|(run, _, _)| fit.squeeze.narrows(&run.style.family))
+                .map(|(_, _, pw)| pw)
+                .sum::<f32>();
             space_w = w / chars.max(1) as f32;
         }
         x += w;
@@ -31871,6 +32085,37 @@ mod theme_slot_tests {
         let runs = [TextRun::new("aaaa sham-vaccinated", style)];
         let lines = wrap_texts(&runs, body_width("aaaa sham-") + 1.0);
         assert_eq!(lines, ["aaaa sham-", "vaccinated"]);
+    }
+
+    #[test]
+    fn a_run_ending_on_a_hyphen_may_end_the_line() {
+        // b6dd0b6ae8: "-Karaman-" closes a run and "Kepenekci," opens the
+        // next; Word ends the line on the hyphen, as inside one run.
+        let style = Defaults::word().run;
+        let runs = [
+            TextRun::new("aaaa sham-", style.clone()),
+            TextRun::new("vaccinated", style),
+        ];
+        let lines = wrap_texts(&runs, body_width("aaaa sham-") + 1.0);
+        assert_eq!(lines, ["aaaa sham-", "vaccinated"]);
+    }
+
+    #[test]
+    fn a_hyphen_holds_its_word_under_compressed_punctuation() {
+        // 496e2984f7 (compressPunctuation, no compatibility mode): Word
+        // moves "gastro-oesophageal" whole, in one run or cut after the
+        // hyphen.
+        let mut style = Defaults::word().run;
+        style.punct_compress = true;
+        let one = [TextRun::new("aaaa sham-vaccinated", style.clone())];
+        let cut = [
+            TextRun::new("aaaa sham-", style.clone()),
+            TextRun::new("vaccinated", style),
+        ];
+        for runs in [&one[..], &cut[..]] {
+            let lines = wrap_texts(runs, body_width("aaaa sham-") + 1.0);
+            assert_eq!(lines.last().map(String::as_str), Some("sham-vaccinated"));
+        }
     }
 
     #[test]

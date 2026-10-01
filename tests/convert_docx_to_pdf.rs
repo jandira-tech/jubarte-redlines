@@ -275,6 +275,47 @@ fn minimal_docx_with_settings(body: &str, settings: &str) -> Vec<u8> {
     zip.finish().unwrap().into_inner()
 }
 
+/// `minimal_docx_with_settings` with a styles part holding `styles`.
+fn docx_with_settings_and_styles(body: &str, settings: &str, styles: &str) -> Vec<u8> {
+    let base = minimal_docx_with_settings(body, settings);
+    let mut archive = zip::ZipArchive::new(Cursor::new(base)).unwrap();
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    let opts = SimpleFileOptions::default();
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).unwrap();
+        let name = file.name().to_string();
+        let mut data = String::new();
+        file.read_to_string(&mut data).unwrap();
+        let data = match name.as_str() {
+            "[Content_Types].xml" => data.replace(
+                "</Types>",
+                "<Override PartName=\"/word/styles.xml\" \
+                  ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml\"/></Types>",
+            ),
+            "word/_rels/document.xml.rels" => data.replace(
+                "</Relationships>",
+                "<Relationship Id=\"rIdStyles\" \
+                  Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" \
+                  Target=\"styles.xml\"/></Relationships>",
+            ),
+            _ => data,
+        };
+        zip.start_file(name, opts).unwrap();
+        zip.write_all(data.as_bytes()).unwrap();
+    }
+    zip.start_file("word/styles.xml", opts).unwrap();
+    zip.write_all(
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+             {styles}</w:styles>"
+        )
+        .as_bytes(),
+    )
+    .unwrap();
+    zip.finish().unwrap().into_inner()
+}
+
 /// Styles and fontTable at producer-chosen names, found only through the
 /// main part's relationships (OPC does not fix `word/styles.xml`).
 fn docx_with_renamed_parts(body: &str, styles: &str, font_table: &str) -> Vec<u8> {
@@ -2269,6 +2310,125 @@ fn all_lowercase_small_caps_line_keeps_its_authored_height() {
         (pitch - 13.8).abs() < 0.1,
         "Arial 12 line despite 9.6pt glyphs; pitch={pitch}"
     );
+}
+
+#[test]
+fn a_word_cut_by_a_run_boundary_widens_its_column_whole() {
+    // 6d73303ea5's header cell holds "C" + "ontrols": the autofit column
+    // measured each run's piece, found room for "ontrols" and wrapped
+    // the word. Word 16 probe g11 (2026-10-01): "Q" + eleven "u"s in a
+    // 75pt tcW column paint whole on one line.
+    let r = r#"<w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="22"/></w:rPr>"#;
+    let cell = |body: &str| {
+        format!(
+            r#"<w:tc><w:tcPr><w:tcW w:w="1500" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr>{body}</w:p></w:tc>"#
+        )
+    };
+    let body = format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="3000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1500"/><w:gridCol w:w="1800"/></w:tblGrid><w:tr>{}{}</w:tr></w:tbl><w:p/>{}"#,
+        cell(&format!("<w:r>{r}<w:t>A</w:t></w:r>")),
+        cell(&format!(
+            "<w:r>{r}<w:t>Q</w:t></w:r><w:r>{r}<w:t>uuuuuuuuuuZ</w:t></w:r>"
+        )),
+        letter_body_sect()
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("glued word");
+    let (_, q) = glyph_xy(&pdf, "Q");
+    let (_, z) = glyph_xy(&pdf, "Z");
+    assert!((q - z).abs() < 0.1, "Q at {q}, Z at {z}: the word broke");
+}
+
+#[test]
+fn compressed_punctuation_narrows_a_left_line_before_compat_15() {
+    // Word 16 probes (2026-10-01, Times 12 on a 468pt line): under
+    // compressPunctuation before compat 15 a left-aligned line keeps its
+    // last word on spaces up to a fifth narrower; doNotCompress and
+    // compat 15 move it down, and so does balanceSingleByteDoubleByteWidth
+    // under an East Asian theme language (496e2984f7). Here the word
+    // overflows by 12% of 27 spaces.
+    let r = r#"<w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="24"/></w:rPr>"#;
+    let text = format!("{}{}Z tail", "ab ".repeat(27), "i".repeat(25));
+    let body = format!(
+        r#"<w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r>{r}<w:t xml:space="preserve">{text}</w:t></w:r></w:p>{}"#,
+        letter_body_sect()
+    );
+    let lines = |mode: u8, spacing: &str, lang: &str, compat: &str| {
+        let settings = format!(
+            r#"<w:characterSpacingControl w:val="{spacing}"/>{lang}<w:compat>{compat}<w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="{mode}"/></w:compat>"#
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, &settings)).expect("squeeze");
+        let (_, a) = pdf_glyph_text_xy(&pdf, "ab").expect("first word");
+        let (zx, z) = pdf_glyph_text_xy(&pdf, "Z").expect("last word");
+        (a, z, zx)
+    };
+    let (a, z, zx) = lines(14, "compressPunctuation", "", "");
+    assert!((a - z).abs() < 0.1, "Z at {z} left line 1 at {a}");
+    assert!(zx + 7.33 <= 540.1, "Z at {zx} runs past the margin");
+    let zh = r#"<w:themeFontLang w:val="en-US" w:eastAsia="zh-CN"/>"#;
+    let bal = "<w:balanceSingleByteDoubleByteWidth/>";
+    for (mode, spacing, lang, compat) in [
+        (14, "doNotCompress", "", ""),
+        (15, "compressPunctuation", "", ""),
+        (14, "compressPunctuation", zh, bal),
+    ] {
+        let (a, z, _) = lines(mode, spacing, lang, compat);
+        assert!(
+            (a - z).abs() > 1.0,
+            "compat {mode} {spacing} {lang}{compat} kept Z on line 1"
+        );
+    }
+}
+
+#[test]
+fn compressed_punctuation_leaves_calibri_spaces_whole() {
+    // Word 16 probe e_calibri_cp (2026-10-01, Calibri 12, compat 14): the
+    // spaces compressPunctuation narrows depend on the face, a fifth in
+    // Times New Roman and Arial, none in Calibri. "tail" overflows by less
+    // than a fifth of the line's spaces and still moves down, as
+    // 3f5209785f's Calibri "Duke" does.
+    let r = r#"<w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="24"/></w:rPr>"#;
+    let text = format!("{}{} tail", "ab ".repeat(27), "i".repeat(24));
+    let body = format!(
+        r#"<w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r>{r}<w:t xml:space="preserve">{text}</w:t></w:r></w:p>{}"#,
+        letter_body_sect()
+    );
+    let settings = r#"<w:characterSpacingControl w:val="compressPunctuation"/><w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="14"/></w:compat>"#;
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, settings)).expect("calibri");
+    let (_, a) = pdf_glyph_text_xy(&pdf, "ab").expect("first word");
+    let (_, tail) = pdf_glyph_text_xy(&pdf, "tail").expect("last word");
+    assert!((a - tail).abs() > 1.0, "tail kept on line 1 at {tail}");
+}
+
+#[test]
+fn compressed_punctuation_squeezes_only_without_default_fonts() {
+    // Word 16 probes probe_dd (2026-10-01, Times New Roman 12 on the runs,
+    // compat 14): an empty docDefaults keeps the squeeze; a w:rFonts in
+    // docDefaults, of any face, leaves the spaces whole and moves the word
+    // (3f5209785f's Times New Roman body).
+    let r = r#"<w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="24"/></w:rPr>"#;
+    let text = format!("{}{}Z tail", "ab ".repeat(27), "i".repeat(25));
+    let body = format!(
+        r#"<w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r>{r}<w:t xml:space="preserve">{text}</w:t></w:r></w:p>{}"#,
+        letter_body_sect()
+    );
+    let settings = r#"<w:characterSpacingControl w:val="compressPunctuation"/><w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="14"/></w:compat>"#;
+    let normal = r#"<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>"#;
+    let moved = |defaults: &str| {
+        let styles = format!("{defaults}{normal}");
+        let pdf = docx_to_pdf(&docx_with_settings_and_styles(&body, settings, &styles))
+            .expect("defaults");
+        let (_, a) = pdf_glyph_text_xy(&pdf, "ab").expect("first word");
+        let (_, z) = pdf_glyph_text_xy(&pdf, "Z").expect("last word");
+        (a - z).abs() > 1.0
+    };
+    let sized = r#"<w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="24"/></w:rPr></w:rPrDefault></w:docDefaults>"#;
+    assert!(!moved(sized), "a docDefaults without fonts moved Z");
+    for face in ["Times New Roman", "Arial", "Calibri"] {
+        let named = format!(
+            r#"<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="{face}" w:hAnsi="{face}"/><w:sz w:val="24"/></w:rPr></w:rPrDefault></w:docDefaults>"#
+        );
+        assert!(moved(&named), "docDefaults {face} kept Z on line 1");
+    }
 }
 
 #[test]
