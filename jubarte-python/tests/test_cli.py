@@ -8,6 +8,8 @@ exit codes as the ``jubarte`` binary, driven in-process."""
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -34,6 +36,14 @@ def test_inspect_and_text(letter: Path, capsys: pytest.CaptureFixture[str]) -> N
     assert "paragraphs: 3" in out and "body:p:2" in out
     assert main(["text", str(letter)]) == 0
     assert capsys.readouterr().out.startswith("[body:p:0] Heading\n\n[body:p:1] The individual")
+
+
+def test_the_module_runs_as_a_program(letter: Path) -> None:
+    # The tests above call main() in-process; this runs the __main__ guard
+    # itself, the way `python -m jubarte_redlines` is used (PR #253).
+    run = subprocess.run([sys.executable, "-m", "jubarte_redlines", "text", str(letter)], capture_output=True, text=True)
+    assert run.returncode == 0, run.stderr
+    assert run.stdout.startswith("[body:p:0] Heading\n")
 
 
 def test_edit_writes_bundle_and_refuses_existing_dir(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
