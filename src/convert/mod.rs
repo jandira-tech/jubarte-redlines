@@ -7996,7 +7996,8 @@ fn unclamped_col_widths(
 /// Word's autofit widens a column narrower than its longest word to it,
 /// taking the room from columns wider than theirs (21349517's 29pt "ID"
 /// column holds "Sub001" whole). Only when the words together overrun
-/// the measure do the columns stay and the words break (08c53c4f).
+/// the measure of a pct or auto table do the columns stay and the words
+/// break (08c53c4f).
 fn autofit_to_words(
     fonts: &Fonts,
     widths: Vec<f32>,
@@ -8034,7 +8035,10 @@ fn autofit_to_words(
         .zip(&mins)
         .map(|(w, m)| (m - w).max(0.0))
         .sum();
-    if short < 0.5 || mins.iter().sum::<f32>() > avail + geom.pct_margins + 0.5 {
+    // A dxa table still gives every column its word and runs past the
+    // margin (Word 16 probes a1/a5 2026-10-01; ee7b597379 ends at 610pt).
+    let overrun = mins.iter().sum::<f32>() > avail + geom.pct_margins + 0.5;
+    if short < 0.5 || overrun && !matches!(geom.width, TblWidth::Dxa(_)) {
         return widths;
     }
     let spare: f32 = widths
