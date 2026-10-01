@@ -73,6 +73,14 @@ fn unicode_punctuation_and_signs_split_words() {
     probe("unicode_punctuation");
 }
 
+#[test]
+fn a_word_runs_while_its_character_class_holds() {
+    // 154 sentences `x{c}y` → `x{c}z` and runs like `−−−` → `−−≤`: math,
+    // arrows, CJK punctuation, super- and subscripts, number forms and the
+    // scripts Word splits from Latin (Thai, kana, Hangul, Georgian, …).
+    probe("classes");
+}
+
 /// The words of a one-paragraph body, spaces and the paragraph mark left out.
 fn words(text: &str, settings: &WmlComparerSettings) -> Vec<String> {
     let mut dom = Dom::new();
@@ -127,6 +135,21 @@ fn word_mode_words_follow_word() {
         ("a—b", vec!["a", "—", "b"]),
         ("a‘b", vec!["a", "‘", "b"]),
         ("नमस्ते", vec!["नमस्ते"]),
+        ("x−y", vec!["x", "−", "y"]),
+        ("a).", vec!["a", ")."]),
+        ("−−−", vec!["−−−"]),
+        ("a..b", vec!["a", "..", "b"]),
+        ("H₂O", vec!["H", "₂", "O"]),
+        ("x²y", vec!["x", "²", "y"]),
+        ("xªy", vec!["xªy"]),
+        ("xℓy", vec!["xℓy"]),
+        ("x™y", vec!["x", "™", "y"]),
+        ("xαy", vec!["xαy"]),
+        ("xกy", vec!["x", "ก", "y"]),
+        ("กขค", vec!["กขค"]),
+        ("アあい", vec!["ア", "あい"]),
+        ("x、y", vec!["x", "、", "y"]),
+        ("aⓐ.", vec!["a", "ⓐ", "."]),
     ] {
         assert_eq!(words(text, &word), expected, "{text}");
     }
