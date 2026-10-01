@@ -2272,18 +2272,42 @@ fn all_lowercase_small_caps_line_keeps_its_authored_height() {
 }
 
 #[test]
-fn a_line_break_run_sizes_the_line_it_ends() {
-    // fixtures_500 00accd5b: "FK Nebužely …" then a 13.5pt run holding
-    // <w:br/>; Word's first line is 13.5pt tall (the gap to the next line
-    // is 26.9pt), we sized it by the 10pt text alone (23.0).
-    let body = r#"<w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:t>Top</w:t></w:r><w:r><w:rPr><w:sz w:val="40"/></w:rPr><w:br/></w:r><w:r><w:t>Bottom</w:t></w:r></w:p><w:sectPr/>"#;
-    let pdf = docx_to_pdf(&minimal_docx_with_settings(body, "")).expect("br size");
-    let ys = text_baselines(&pdf);
-    let pitch = ys[0] - ys[1];
-    // Calibri 20 line 24.41 + Calibri 11 ascent 10.47 - Calibri 20 ascent 19.04.
+fn a_line_break_run_sizes_only_a_line_it_stands_alone_on() {
+    // Word 16 probe 2026-10-01 (probe_br): "Top" then a 20pt run holding
+    // <w:br/> keeps Top's 11pt line (pitch 13.44, the same as an 11pt
+    // break); a 20pt break alone on its own line sizes that empty line
+    // (Top to Bottom 37.92). fixtures_500 00accd5b's 13.5pt break is the
+    // second of two, alone on its line; e124592dd0's 36pt break after a
+    // 28pt title leaves Word's title line 28pt tall.
+    let run = |text: &str, sz: u32| {
+        format!(r#"<w:r><w:rPr><w:sz w:val="{sz}"/></w:rPr><w:t>{text}</w:t></w:r>"#)
+    };
+    let br = |sz: u32| format!(r#"<w:r><w:rPr><w:sz w:val="{sz}"/></w:rPr><w:br/></w:r>"#);
+    let pitch = |inner: String| {
+        let body = format!(
+            r#"<w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr>{inner}</w:p><w:sectPr/>"#
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("br size");
+        let ys = text_baselines(&pdf);
+        assert!(ys.len() >= 2, "two text lines; ys={ys:?}");
+        ys[0] - ys[1]
+    };
+    let plain = pitch(format!("{}{}{}", run("Top", 22), br(22), run("Bottom", 22)));
+    let big = pitch(format!("{}{}{}", run("Top", 22), br(40), run("Bottom", 22)));
     assert!(
-        (pitch - 15.84).abs() < 0.3,
-        "the break's 20pt run sizes line one; pitch={pitch} ys={ys:?}"
+        (big - plain).abs() < 0.05,
+        "a break after text does not size its line; big={big} plain={plain}"
+    );
+    let alone = pitch(format!(
+        "{}{}{}{}",
+        run("Top", 22),
+        br(22),
+        br(40),
+        run("Bottom", 22)
+    ));
+    assert!(
+        (alone - 37.92).abs() < 0.3,
+        "a break alone on its line sizes it; alone={alone}"
     );
 }
 

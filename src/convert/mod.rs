@@ -19823,18 +19823,23 @@ impl<'a> Layout<'a> {
     fn line_face_metrics(&self, line: &[TextRun], marker: Option<&TextRun>) -> (f32, f32) {
         // Whitespace-only runs do not size the line: a trailing Calibri
         // space (002919b3) or an Aptos tab between Times TOC text keeps
-        // Word's Times line.
+        // Word's Times line. Nor does the w:br ending a line of text
+        // (e124592dd0's 36pt break after a 28pt title, probe_br).
         let inked: Vec<&TextRun> = line
             .iter()
             .chain(marker)
-            .filter(|r| !r.text.trim().is_empty() || r.ends_line)
+            .filter(|r| !r.text.trim().is_empty())
             .collect();
-        // A whitespace-only line is sized next to its mark: the last run
-        // (000ed6bb's 12pt tab then 10pt tabs is a 10pt line in Word).
-        let runs: Vec<&TextRun> = if inked.is_empty() {
-            line.last().or(marker).into_iter().collect()
-        } else {
+        // A break alone on its line sizes it (00accd5b's second, 13.5pt
+        // break); a whitespace-only line is sized next to its mark: the
+        // last run (000ed6bb's 12pt tab then 10pt tabs is a 10pt line).
+        let breaks: Vec<&TextRun> = line.iter().filter(|r| r.ends_line).collect();
+        let runs: Vec<&TextRun> = if !inked.is_empty() {
             inked
+        } else if !breaks.is_empty() {
+            breaks
+        } else {
+            line.last().or(marker).into_iter().collect()
         };
         // Word's line is the taller of its tallest single line and the
         // tallest part above the baseline (list marker included) over the
