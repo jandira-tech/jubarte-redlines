@@ -550,3 +550,49 @@ fn t16_office_extension_namespaces_become_ignorable_on_the_part_root() {
     declare_extension_namespaces_ignorable(&mut dom, root);
     assert_eq!(dom.serialize_element(root), once);
 }
+
+#[test]
+fn t17_compatibility_prefixes_are_bound_where_they_are_named() {
+    use jubarte::comparer::finalize::bind_compatibility_prefixes;
+    const MC_URI: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+    const WPS_URI: &str = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape";
+    let xmlns = jubarte::xmllinq::XNamespace::xmlns();
+    let requires = jubarte::xmllinq::XNamespace::none().name("Requires");
+    let choice = |dom: &Dom, root: NodeId| {
+        dom.descendants(
+            root,
+            Some(&jubarte::xmllinq::XNamespace::get(MC_URI).name("Choice")),
+        )[0]
+    };
+    // A header that received B's shape: `wps` is bound only on the shape, and
+    // an unknown `foo` gates a second Choice.
+    let header = |root_extra: &str| {
+        format!(
+            "<w:hdr xmlns:w=\"{w}\" xmlns:mc=\"{MC_URI}\"{root_extra}><w:p><w:r>\
+             <mc:AlternateContent><mc:Choice Requires=\"wps\"><w:drawing>\
+             <wps:wsp xmlns:wps=\"{WPS_URI}\"/></w:drawing></mc:Choice>\
+             <mc:Choice Requires=\"foo\"/><mc:Fallback/></mc:AlternateContent>\
+             </w:r></w:p></w:hdr>",
+            w = W::URI
+        )
+    };
+
+    let mut dom = Dom::new();
+    let root = parse(&mut dom, &header(""));
+    bind_compatibility_prefixes(&mut dom, root);
+    // Bound on the root, as Word writes it; the unknown prefix is left alone.
+    assert_eq!(dom.attribute(root, &xmlns.name("wps")), Some(WPS_URI));
+    assert_eq!(dom.attribute(root, &xmlns.name("foo")), None);
+    assert_eq!(dom.attribute(choice(&dom, root), &requires), Some("wps"));
+    // Idempotent: a second pass changes nothing.
+    let once = dom.serialize_element(root);
+    bind_compatibility_prefixes(&mut dom, root);
+    assert_eq!(dom.serialize_element(root), once);
+
+    // A binding the part already has is in scope: it is never overwritten.
+    let mut dom = Dom::new();
+    let root = parse(&mut dom, &header(" xmlns:wps=\"urn:other\""));
+    bind_compatibility_prefixes(&mut dom, root);
+    assert_eq!(dom.attribute(root, &xmlns.name("wps")), Some("urn:other"));
+    assert_eq!(dom.attribute(choice(&dom, root), &xmlns.name("wps")), None);
+}

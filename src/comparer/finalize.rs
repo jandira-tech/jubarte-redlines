@@ -834,6 +834,41 @@ pub fn declare_extension_namespaces_ignorable(dom: &mut Dom, root: NodeId) {
     }
 }
 
+/// Binds every prefix an MC prefix list names (`mc:Choice/@Requires`,
+/// `mc:Ignorable`, `mc:ProcessContent`, …) where the list names it. Content
+/// grafted from the other document's part leaves that part's root
+/// declarations behind: a B header's connector under `<mc:Choice
+/// Requires="wps">` landed in A's header, whose root never bound `wps`, and
+/// the serializer declared it only on the shape inside the Choice. Word then
+/// offers to repair the file (redlines_en_500, baf3657261 vs 8e835e4a58). The
+/// binding goes on the part root, where Word writes it; a prefix the root
+/// already binds is in scope everywhere, so none is overwritten. A prefix
+/// with no conventional namespace is left alone.
+pub fn bind_compatibility_prefixes(dom: &mut Dom, root: NodeId) {
+    use crate::xmllinq::serialize::{is_namespace_prefix_list, well_known_namespace};
+    let xmlns = XNamespace::xmlns();
+    for el in dom.descendants_and_self(root, None) {
+        let lists: Vec<String> = dom
+            .attributes(el)
+            .into_iter()
+            .filter(|(name, _)| is_namespace_prefix_list(name))
+            .map(|(_, value)| value.to_string())
+            .collect();
+        for list in lists {
+            for token in list.split_whitespace() {
+                let prefix = token.split_once(':').map_or(token, |(prefix, _)| prefix);
+                if prefix.is_empty() || prefix == "xml" || prefix_in_scope(dom, el, prefix) {
+                    continue;
+                }
+                let Some(uri) = well_known_namespace(prefix) else {
+                    continue;
+                };
+                dom.set_attribute_value(root, &xmlns.name(prefix), Some(uri));
+            }
+        }
+    }
+}
+
 /// M4.F.7 — `RemovePowerToolsScratchMarkup` (CleanPartTransform, WmlComparer.cs:1165):
 /// strip every `pt:*` attribute across `root` and descendants.
 pub fn remove_powertools_scratch_markup(dom: &mut Dom, root: NodeId) {

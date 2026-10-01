@@ -7504,6 +7504,7 @@ fn compare_documents_impl(
                 // Last: every pass above may append properties out of order.
                 crate::comparer::finalize::enforce_part_schema_order(&mut vd, vr);
                 crate::comparer::finalize::declare_extension_namespaces_ignorable(&mut vd, vr);
+                crate::comparer::finalize::bind_compatibility_prefixes(&mut vd, vr);
                 out.set_part(&part, vd.serialize_element(vr).into_bytes());
             }
         }
