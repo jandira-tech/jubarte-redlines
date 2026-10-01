@@ -169,6 +169,46 @@ def ty(t) -> str:
     return f"?{kind}"
 
 
+def _generics(g: dict | None) -> tuple[str, str]:
+    """`<…>` parameters and the `where` clause: a bound that changes is a
+    source-breaking change, so it belongs in the signature. `impl Trait`
+    arguments (synthetic parameters) show in their argument instead."""
+    if not g:
+        return "", ""
+    params = []
+    for p in g.get("params", []):
+        kind, val = next(iter(p["kind"].items()))
+        name = p["name"]
+        if kind == "lifetime":
+            outlives = val.get("outlives") or []
+            params.append(name + (": " + " + ".join(outlives) if outlives else ""))
+        elif kind == "type":
+            if val.get("is_synthetic", val.get("synthetic")):
+                continue
+            bounds = val.get("bounds") or []
+            s = name + (": " + " + ".join(bound(b) for b in bounds) if bounds else "")
+            if val.get("default") is not None:
+                s += f" = {ty(val['default'])}"
+            params.append(s)
+        elif kind == "const":
+            s = f"const {name}: {ty(val.get('type'))}"
+            if val.get("default") is not None:
+                s += f" = {val['default']}"
+            params.append(s)
+    preds = []
+    for w in g.get("where_predicates", []):
+        kind, val = next(iter(w.items()))
+        if kind == "bound_predicate":
+            preds.append(f"{ty(val['type'])}: " + " + ".join(bound(b) for b in val.get("bounds", [])))
+        elif kind == "lifetime_predicate":
+            preds.append(f"{val['lifetime']}: " + " + ".join(val.get("outlives", [])))
+        elif kind == "eq_predicate":
+            rhs = val.get("rhs")
+            rhs = ty(rhs.get("type")) if isinstance(rhs, dict) and "type" in rhs else str(rhs)
+            preds.append(f"{ty(val['lhs'])} = {rhs}")
+    return (f"<{', '.join(params)}>" if params else ""), (" where " + ", ".join(preds) if preds else "")
+
+
 def _sig(fn: dict) -> str:
     sig = fn.get("sig", fn.get("decl", {}))
     ins = ", ".join(f"{n}: {ty(t)}" for n, t in sig.get("inputs", []))
@@ -185,7 +225,8 @@ def _sig(fn: dict) -> str:
         )
         if on
     )
-    return f"{flags}({ins}){out}"
+    params, where = _generics(fn.get("generics"))
+    return f"{flags}{params}({ins}){out}{where}"
 
 
 def _vis(vis) -> str:
