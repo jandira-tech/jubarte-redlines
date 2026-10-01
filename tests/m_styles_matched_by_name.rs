@@ -265,3 +265,48 @@ fn a_missing_paragraph_default_is_words_built_in_spacing() {
     }
     assert!(normal.contains("<w:pPrChange"), "{normal}");
 }
+
+/// Word pairs custom styles by their exact name. 355857f6ac carries
+/// `TableText` (TableText0, after 60) beside `Tabletext` (Tabletext1, no
+/// after), and Word's redlines keep such case twins apart (`Indent(A)` beside
+/// `Indent(a)`, `Definition` beside `definition`) while built-in names pair
+/// in any case (`normal` with `Normal`). Keyed in lowercase, the twins
+/// collided, and the spacing pass picked TableText0's revision counterpart
+/// off a hash map: one compare in six baked Tabletext1's inherited
+/// `w:after="0"` onto 29 inserted TableText0 cells. Each compare draws a
+/// fresh hash order: run it often.
+#[test]
+fn case_twin_styles_stay_apart() {
+    let a = r#"<w:docDefaults><w:pPrDefault><w:pPr><w:spacing w:after="200" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>"#;
+    let b = r#"<w:docDefaults><w:pPrDefault/></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:customStyle="1" w:styleId="tabletext"><w:name w:val="table text"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="40" w:after="40"/></w:pPr></w:style><w:style w:type="paragraph" w:customStyle="1" w:styleId="TableText0"><w:name w:val="TableText"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="60" w:after="60" w:line="240" w:lineRule="exact"/></w:pPr></w:style><w:style w:type="paragraph" w:customStyle="1" w:styleId="Tabletext1"><w:name w:val="Tabletext"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="60" w:line="240" w:lineRule="atLeast"/></w:pPr></w:style>"#;
+    let kept = "<w:p><w:r><w:t>Alpha beta.</w:t></w:r></w:p>";
+    let inserted = r#"<w:p><w:pPr><w:pStyle w:val="TableText0"/></w:pPr><w:r><w:t>Gamma delta.</w:t></w:r></w:p>"#;
+    let (a, b) = (
+        docx_body(a, kept),
+        docx_body(b, &format!("{kept}{inserted}")),
+    );
+    for _ in 0..24 {
+        let out = compare_documents(&a, &b, "Redline").expect("compare ok");
+        let all = styles(&styles_xml(&out));
+        let id_of = |name: &str| {
+            all.iter()
+                .find(|(t, _, n, _)| t == "paragraph" && n == name)
+                .map(|(_, id, _, _)| id.clone())
+                .unwrap_or_else(|| panic!("no {name} style"))
+        };
+        let (table_text, _) = (id_of("TableText"), id_of("Tabletext"));
+        let mut zip = zip::ZipArchive::new(Cursor::new(out)).unwrap();
+        let mut doc = String::new();
+        zip.by_name("word/document.xml")
+            .unwrap()
+            .read_to_string(&mut doc)
+            .unwrap();
+        let p = &doc[..doc.find("Gamma").expect("the inserted paragraph")];
+        let ppr = &p[p.rfind("<w:pPr>").unwrap()..];
+        assert!(
+            ppr.contains(&format!(r#"<w:pStyle w:val="{table_text}" />"#)),
+            "{ppr}"
+        );
+        assert!(!ppr.contains("<w:spacing"), "{ppr}");
+    }
+}

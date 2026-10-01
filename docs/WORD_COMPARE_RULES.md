@@ -82,3 +82,21 @@ test compares our changes with Word's.
 - **An original spliced into the middle of the revision keeps its
   place** (employment × lease: the original's text after "3. Rent").
   Only a deleted-first tail is turned insert-first.
+
+## Styles
+
+- **Built-in style names pair in any case, custom names only exactly**
+  (`src/builtin_styles.rs`; `tests/m_styles_matched_by_name.rs`
+  `case_twin_styles_stay_apart`). Across Word's own redlines in the bench
+  corpus, a revision's `normal`, `Caption` or `Footnote Reference` merged
+  with the original's `Normal`, `caption` or `footnote reference` (54 of
+  54), while `Subsection`, `Definition`, `Clause` and `Schedule Heading`
+  stayed beside `subsection`, `definition`, `clause` and `Schedule heading`
+  (6 of 6). One stylesheet holds such case twins too (`Indent(A)` beside
+  `Indent(a)`, 72 redlines). Built-in means one of the 376 latent-style
+  names Word 16 writes into every stylesheet.
+  - Keyed in lowercase, the twins collided: 45 corpus pairs wrote one style
+    id twice, and a hash-ordered pick baked the wrong twin's spacing onto
+    inserted paragraphs in one compare out of six (35266bcd04 ×
+    355857f6ac). Of 90 Word redlines whose sources hold twins, 23 now come
+    closer to Word's styles and none moves away.

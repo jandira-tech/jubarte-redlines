@@ -39,6 +39,8 @@
 
 /// Resource admission for untrusted DOCX input (ZIP and XML budgets).
 pub mod admission;
+/// Word's built-in style names.
+mod builtin_styles;
 /// Machine-readable manifest of what this build can do.
 pub mod capabilities;
 /// Tracked changes one at a time: list, accept or reject a selection.
