@@ -1673,6 +1673,9 @@ struct CellPara {
     /// In a btLr/tbRl cell: painted across, a word never breaks by
     /// character (1c99b5cd's "Theory Topics" column).
     vertical: bool,
+    /// The share of its spaces a justified line may give up to keep a
+    /// word, as body lines do (`WrapTabs::squeeze`; 0 below compat 15).
+    squeeze: f32,
 }
 
 #[derive(Clone)]
@@ -8535,6 +8538,7 @@ fn cell_content_height(fonts: &Fonts, cell: &TableCell, col_w: &[f32], space_for
                 blank_bookmarks: Vec::new(),
                 continued: false,
                 vertical: false,
+                squeeze: 0.0,
             },
             wrap_w,
             space_for_ul,
@@ -10714,6 +10718,7 @@ fn table_block(
                     blank_bookmarks: std::mem::take(&mut blank_bookmarks),
                     continued: false,
                     vertical: false,
+                    squeeze: 0.0,
                 });
             }
             if cell_paras.is_empty() && nested.is_empty() {
@@ -10739,6 +10744,7 @@ fn table_block(
                     blank_bookmarks: std::mem::take(&mut blank_bookmarks),
                     continued: false,
                     vertical: false,
+                    squeeze: 0.0,
                 });
             } else if let Some(last) = cell_paras.last_mut() {
                 // Trailing empty paragraphs: their bookmarks still exist.
@@ -10746,6 +10752,15 @@ fn table_block(
             }
             if cell_vertical(dom, cell) {
                 cell_paras.iter_mut().for_each(|p| p.vertical = true);
+            }
+            // A justified cell line squeezes like a body one: 2ad8d15e88's
+            // "… amacı ve önemi" keeps its last word on 2.5pt spaces.
+            if !sheet.defaults.legacy_compat {
+                for p in &mut cell_paras {
+                    if matches!(p.style.align, Align::Justify) {
+                        p.squeeze = JUSTIFY_SQUEEZE;
+                    }
+                }
             }
             // 0129b302's auto-spaced "1.300.000" cell is 14pt apart, not 28.
             fold_stacked_spacing(
@@ -11493,6 +11508,7 @@ fn grid_skip_cell(span: usize, pref: PrefWidth, pad_l: f32, pad_r: f32) -> RawCe
             blank_bookmarks: Vec::new(),
             continued: false,
             vertical: false,
+            squeeze: 0.0,
         }],
         nested: Vec::new(),
         nested_at: Vec::new(),
@@ -11554,6 +11570,7 @@ fn deleted_cells_stamp(base: &RunStyle) -> RawCell {
             blank_bookmarks: Vec::new(),
             continued: false,
             vertical: false,
+            squeeze: 0.0,
         }],
         colspan: 1,
         vmerge: VMerge::None,
@@ -21496,7 +21513,7 @@ impl<'a> Layout<'a> {
         // (00044aa0; the fraction that best reproduces Word's line breaks in
         // the 96 compat-15 fixtures). Older modes break as before.
         let squeeze = if matches!(style.align, Align::Justify) && self.compat_mode >= 15 {
-            0.25
+            JUSTIFY_SQUEEZE
         } else {
             0.0
         };
@@ -21827,7 +21844,15 @@ impl<'a> Layout<'a> {
             // at x=367–522). rest_w also subtracts w:right=720 so 9.02
             // wrapped an extra line and dropped 11.01 off p3.
             let remain = (stop.pos - indent - last_w).max(8.0);
-            let extra = wrap_runs_segment(self.fonts, &suffix, remain, rest_w, false, None, false);
+            let extra = wrap_runs_segment(
+                self.fonts,
+                &suffix,
+                remain,
+                rest_w,
+                false,
+                None,
+                LineFit::default(),
+            );
             if let Some(last) = lines.last_mut()
                 && let Some(first) = extra.first()
             {
@@ -25690,11 +25715,15 @@ impl<'a> Layout<'a> {
                                 (hang - mw).max(0.0)
                             });
                             let leftover = inner - line_w - mark_gap;
+                            // A squeezed line narrows its spaces, its last
+                            // line too, as a body line does.
+                            let squeeze_line = para.squeeze > 0.0 && leftover < -0.05;
                             if matches!(para.style.align, Align::Justify)
-                                && (li + 1 < line_count || para.continued)
-                                && !(self.do_not_expand_shift_return
-                                    && breaks.get(li).copied().unwrap_or(false))
-                                && leftover > 0.5
+                                && (squeeze_line
+                                    || (li + 1 < line_count || para.continued)
+                                        && !(self.do_not_expand_shift_return
+                                            && breaks.get(li).copied().unwrap_or(false))
+                                        && leftover > 0.5)
                             {
                                 let mut body = line.as_slice();
                                 if let Some(m) = mark {
@@ -27763,8 +27792,26 @@ fn wrap_cell_runs(
         width,
         false,
         None,
-        !para.vertical,
+        LineFit {
+            squeeze: para.squeeze,
+            char_break: !para.vertical,
+        },
     )
+}
+
+/// Word 2013+ layout (compatibilityMode 15) keeps a justified line's last
+/// word by narrowing its spaces, up to a quarter of their width (00044aa0).
+const JUSTIFY_SQUEEZE: f32 = 0.25;
+
+/// How a line makes room for its last word.
+#[derive(Clone, Copy, Default)]
+struct LineFit {
+    /// Fraction of the line's inter-word space a justified line may give
+    /// up to keep the word (`WrapTabs::squeeze`).
+    squeeze: f32,
+    /// A word wider than the line breaks by character even without tab
+    /// stops (table cells; body lines always pass their tabs).
+    char_break: bool,
 }
 
 /// Where a paragraph's lines start relative to the tab origin (the flow
@@ -27787,11 +27834,13 @@ fn wrap_runs_tabbed(
     list: bool,
     tabs: Option<&WrapTabs<'_>>,
 ) -> (Vec<Vec<TextRun>>, Vec<bool>) {
-    wrap_runs_split(fonts, runs, first_width, width, list, tabs, false)
+    let fit = LineFit {
+        squeeze: tabs.map_or(0.0, |t| t.squeeze),
+        char_break: false,
+    };
+    wrap_runs_split(fonts, runs, first_width, width, list, tabs, fit)
 }
 
-/// `char_break`: a word wider than the line breaks by character even
-/// without tab stops (table cells; body lines always pass their tabs).
 fn wrap_runs_split(
     fonts: &Fonts,
     runs: &[TextRun],
@@ -27799,7 +27848,7 @@ fn wrap_runs_split(
     width: f32,
     list: bool,
     tabs: Option<&WrapTabs<'_>>,
-    char_break: bool,
+    fit: LineFit,
 ) -> (Vec<Vec<TextRun>>, Vec<bool>) {
     let mut segments: Vec<Vec<TextRun>> = vec![Vec::new()];
     // The run holding each break, per ended segment.
@@ -27853,7 +27902,7 @@ fn wrap_runs_split(
             width,
             list && i == 0,
             seg_tabs.as_ref(),
-            char_break,
+            fit,
         );
         let more = i + 1 < segments.len();
         let n = wrapped.len();
@@ -27882,7 +27931,7 @@ fn wrap_runs_segment(
     width: f32,
     list: bool,
     tabs: Option<&WrapTabs<'_>>,
-    char_break: bool,
+    fit: LineFit,
 ) -> Vec<Vec<TextRun>> {
     let mut lines: Vec<Vec<TextRun>> = vec![Vec::new()];
     let mut x = 0.0;
@@ -28034,9 +28083,9 @@ fn wrap_runs_segment(
         // "times" at 11pt keeps up to 9.7 of 9.86pt; d06f02170c's 11.07pt
         // moves it although a quarter of the spaces is 13.1pt.
         let overflow = x + w - limit;
-        let squeezed = tabs.is_some_and(|t| {
-            overflow <= t.squeeze * line_spaces && overflow <= (w + 2.0 * space_w) / 3.0
-        });
+        let squeezed = fit.squeeze > 0.0
+            && overflow <= fit.squeeze * line_spaces
+            && overflow <= (w + 2.0 * space_w) / 3.0;
         let hang = hanging_punct_width(fonts, &unit);
         // A space hangs past the edge unless one space is wider than the
         // line: then each is a line of its own, as each character is
@@ -28073,7 +28122,7 @@ fn wrap_runs_segment(
         let ideograph_word = unit
             .iter()
             .any(|(run, tok, _)| run.style.ideograph_words && tok.chars().any(is_cjk));
-        if (tabs.is_some() || char_break || ideograph_word)
+        if (tabs.is_some() || fit.char_break || ideograph_word)
             && !cjk
             && !is_space
             && w > limit * 1.02
