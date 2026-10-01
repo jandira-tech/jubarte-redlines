@@ -1429,6 +1429,10 @@ struct TextRun {
     /// A FORMCHECKBOX legacy form field: an em space advanced like Word's
     /// box (1.15 x the box size) that paints the box, crossed when checked.
     checkbox: Option<bool>,
+    /// Empty run holding an inline shape: its font sizes the line the shape
+    /// stands on (Word 16 probe_il: 3936a8fe56's Calibri 11 rule run makes
+    /// a 14.49pt line beside an Arial 10 space).
+    strut: bool,
 }
 
 impl TextRun {
@@ -1456,6 +1460,7 @@ impl TextRun {
             hf_tab_wrap: false,
             hf_default_tab: 0.0,
             checkbox: None,
+            strut: false,
         }
     }
 
@@ -12519,6 +12524,12 @@ fn collect_runs_rec(
         {
             style.size = cs;
         }
+        if text.is_empty() && run_holds_inline_shape(ctx.dom, node) {
+            let mut run = TextRun::new(String::new(), style);
+            run.strut = true;
+            runs.push(run);
+            return;
+        }
         if !text.is_empty() {
             let pending_ids = std::mem::take(&mut ctx.pending);
             let pending = if pending_ids.is_empty() {
@@ -13822,6 +13833,21 @@ fn txbx_paragraphs(
 /// `bodyPr` insets (EMU) or VML `v:textbox/@inset`, defaulting to Word's.
 /// `wps:bodyPr wrap="none"` with `a:spAutoFit`: the box takes its text's
 /// width (Word's "resize shape to fit text" without wrapping).
+/// Whether `run` holds an inline DrawingML shape or group (not a picture,
+/// chart or diagram, which size their own line).
+fn run_holds_inline_shape(dom: &Dom, run: NodeId) -> bool {
+    descendants_local(dom, run, "inline")
+        .into_iter()
+        .any(|inline| {
+            descendants_local(dom, inline, "graphicData")
+                .first()
+                .and_then(|&data| attr_any(dom, data, "uri"))
+                .is_some_and(|uri| {
+                    uri.ends_with("/wordprocessingShape") || uri.ends_with("/wordprocessingGroup")
+                })
+        })
+}
+
 /// The `w:position` (pt) of the run holding `node`, 0 outside a run.
 fn run_raise_pt(dom: &Dom, node: NodeId) -> f32 {
     let mut at = Some(node);
@@ -19874,7 +19900,7 @@ impl<'a> Layout<'a> {
         let inked: Vec<&TextRun> = line
             .iter()
             .chain(marker)
-            .filter(|r| !r.text.trim().is_empty())
+            .filter(|r| !r.text.trim().is_empty() || r.strut)
             .collect();
         // A break alone on its line sizes it (00accd5b's second, 13.5pt
         // break); a whitespace-only line is sized next to its mark: the
@@ -27880,7 +27906,7 @@ fn wrap_runs_split(
     for run in runs {
         let mut parts = run.text.split('\n');
         if let Some(first) = parts.next()
-            && !first.is_empty()
+            && (!first.is_empty() || run.strut)
         {
             segments
                 .last_mut()
@@ -27975,6 +28001,11 @@ fn wrap_runs_segment(
     let mut units: Vec<(Vec<WrapPiece<'_>>, bool)> = Vec::new();
     let mut open = false;
     for run in runs {
+        if run.strut && run.text.is_empty() {
+            units.push((vec![(run, "", 0.0)], false));
+            open = false;
+            continue;
+        }
         let run_face = fonts.get(ink_face(fonts, &run.style, &run.text));
         for tok in ws_tokens(&run.text) {
             let url = url_wrap_pieces(tok);
@@ -28214,6 +28245,7 @@ fn wrap_runs_segment(
         for (run, tok, _) in unit {
             if let Some(last) = lines.last_mut().and_then(|line| line.last_mut())
                 && style_eq(&last.style, &run.style)
+                && !run.strut
                 // A field result stays its own run: a PAGE field's is
                 // repainted per page (d45aa3d5's "Page" + PAGE footer box).
                 && last.field == run.field
