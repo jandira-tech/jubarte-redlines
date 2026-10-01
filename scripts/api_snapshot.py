@@ -312,6 +312,12 @@ def flatten(doc: dict) -> list[str]:
     return sorted(lines)
 
 
+def write_gz(path: Path, data: bytes) -> None:
+    """Compress `data` to `path` with no timestamp in the gzip header."""
+    with open(path, "wb") as raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as gz:
+        gz.write(data)
+
+
 def main() -> None:
     label = sys.argv[1] if len(sys.argv) > 1 else crate_version()
     build_doc_json()
@@ -319,12 +325,7 @@ def main() -> None:
 
     out_dir = ROOT / "docs" / "api"
     out_dir.mkdir(parents=True, exist_ok=True)
-    # mtime=0 and no file name in the header: the same API gives the same
-    # bytes, so a resumed release does not dirty docs/api/.
-    with open(out_dir / f"jubarte-v{label}.json.gz", "wb") as raw, gzip.GzipFile(
-        filename="", mode="wb", fileobj=raw, mtime=0
-    ) as gz:
-        gz.write(DOC_JSON.read_bytes())
+    write_gz(out_dir / f"jubarte-v{label}.json.gz", DOC_JSON.read_bytes())
     (out_dir / f"jubarte-v{label}.api.txt").write_text(
         "\n".join(sorted(set(flatten(doc)))) + "\n"
     )

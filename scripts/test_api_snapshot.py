@@ -12,9 +12,12 @@ so its `.api.txt` line has to change with them (Codex review on #247).
 
 from __future__ import annotations
 
+import gzip
 import importlib.util
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("api_snapshot", HERE / "api_snapshot.py")
@@ -65,6 +68,20 @@ class Signatures(unittest.TestCase):
         fn = function([], [])
         fn["sig"]["inputs"] = [["x", {"primitive": "u8"}]]
         self.assertEqual(api._sig(fn), "(x: u8)")
+
+
+class Snapshot(unittest.TestCase):
+    def test_the_gzip_is_the_same_bytes_at_any_time(self) -> None:
+        # A resumed release rewrites the snapshot; a header timestamp would
+        # dirty docs/api and push another build commit (Codex on #247).
+        with tempfile.TemporaryDirectory() as tmp:
+            first, second = Path(tmp) / "a.json.gz", Path(tmp) / "b.json.gz"
+            with mock.patch.object(gzip.time, "time", return_value=1_000_000_000.0):
+                api.write_gz(first, b"{}")
+            with mock.patch.object(gzip.time, "time", return_value=2_000_000_000.0):
+                api.write_gz(second, b"{}")
+            self.assertEqual(first.read_bytes(), second.read_bytes())
+            self.assertEqual(gzip.decompress(first.read_bytes()), b"{}")
 
 
 if __name__ == "__main__":
