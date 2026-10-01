@@ -100,3 +100,14 @@ test compares our changes with Word's.
     inserted paragraphs in one compare out of six (35266bcd04 ×
     355857f6ac). Of 90 Word redlines whose sources hold twins, 23 now come
     closer to Word's styles and none moves away.
+
+## Open
+
+- **Comment ids of a revision that carries tracked changes.** Compare
+  accepts such inputs first, and Accept renumbers bookmarks and comments
+  from one counter as Word saves them. Word's redlines disagree on whether
+  Compare does the same: lots_of_comments × addition keeps the revision's
+  sparse 19 and 20 (`m35_comments` W1 fails on this), addition_redline ×
+  removal_v_addition comes out dense (0 1 3 4 10 11, which we match), and
+  addition_removal × addition_redline gives 64 and 65, which neither model
+  explains. Ids are invisible and valid either way; left as is.
