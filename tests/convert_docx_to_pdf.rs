@@ -38872,6 +38872,39 @@ fn a_typed_label_tab_lands_on_the_hanging_indent_not_a_later_right_stop() {
 }
 
 #[test]
+fn a_typed_label_right_aligns_on_its_own_stop_in_the_hanging_gutter() {
+    // English holdout c73c128db4 (Word 16 probe 2026-10-01, probe_rt):
+    // Defpara "<tab>(a)<tab>text" hangs 1616 twips with a right stop at
+    // 1332 and a left one at 1616. Word right-aligns "(a)" on 66.6pt,
+    // starts the text on 80.8pt and wraps it there; an italic run after it
+    // keeps the label in place. We hung "(a)" as a list marker, sent the
+    // text to the 108pt default stop, and the merged "<tab>(a)<tab>…" run
+    // right-aligned the label with the italic run's width too.
+    let ppr = r#"<w:pPr><w:tabs><w:tab w:val="right" w:pos="1332"/><w:tab w:val="left" w:pos="1616"/></w:tabs><w:ind w:left="1616" w:hanging="1616"/></w:pPr>"#;
+    let body = format!(
+        r#"<w:p><w:r><w:t>Plain</w:t></w:r></w:p><w:p>{ppr}<w:r><w:tab/><w:t>(a)</w:t></w:r><w:r><w:tab/><w:t xml:space="preserve">Sentence starts here </w:t></w:r><w:r><w:rPr><w:i/></w:rPr><w:t>Slanted</w:t></w:r></w:p><w:p>{ppr}<w:r><w:tab/><w:t>(b)</w:t></w:r><w:r><w:tab/><w:t>Long item text that runs on and on past the right margin of this page so it wraps WrapMark</w:t></w:r></w:p><w:sectPr/>"#
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("typed label");
+    let margin = pdf_literal_td_xy(&pdf, "Plain").expect("Plain").0;
+    let label = pdf_literal_td_xy(&pdf, "(a)").expect("(a)").0;
+    let text = pdf_literal_td_xy(&pdf, "Sentence").expect("Sentence").0;
+    let (wrapped, wrapped_y) = pdf_literal_td_xy(&pdf, "WrapMark").expect("WrapMark");
+    let long_y = pdf_literal_td_xy(&pdf, "Long").expect("Long").1;
+    assert!(
+        label > margin + 40.0 && label < margin + 66.6 - 5.0,
+        "(a) ends on the 66.6pt right stop; label={label} margin={margin}"
+    );
+    assert!(
+        (text - margin - 80.8).abs() < 0.3,
+        "the text starts on the 1616-twip stop; text={text}"
+    );
+    assert!(
+        wrapped_y < long_y - 1.0 && wrapped < margin + 400.0,
+        "the long item wraps inside the margin; WrapMark at {wrapped},{wrapped_y} Long y {long_y}"
+    );
+}
+
+#[test]
 fn latin_inside_east_asian_text_takes_the_ascii_face_and_a_quarter_em_gap() {
     if !word_dfonts_available() {
         eprintln!(
