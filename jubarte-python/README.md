@@ -27,7 +27,23 @@ pip install jubarte-redlines
 
 Prebuilt wheels are `abi3` (one wheel per platform, CPython ≥ 3.10).
 
-## Usage
+## Command line
+
+The wheel installs a `jubarte-redlines` command; `uvx` runs it without
+installing anything:
+
+```sh
+uvx jubarte-redlines redline original.docx modified.docx -o redline.docx --author Legal
+uvx jubarte-redlines changes redline.docx
+uvx jubarte-redlines accept redline.docx -o clean.docx
+uvx jubarte-redlines convert redline.docx --revisions word
+uvx jubarte-redlines --help
+```
+
+`redline` is an alias of `compare`; `python -m jubarte_redlines` runs the same
+commands. Inputs are `.docx`: save a Word 97-2003 `.doc` as `.docx` first.
+
+## Library
 
 ```python
 from pathlib import Path

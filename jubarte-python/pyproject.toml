@@ -33,6 +33,10 @@ classifiers = [
 # Version comes from Cargo.toml (single source of truth).
 dynamic = ["version"]
 
+# `uvx jubarte-redlines redline a.docx b.docx -o redline.docx`
+[project.scripts]
+jubarte-redlines = "jubarte_redlines.__main__:main"
+
 [project.urls]
 Homepage = "https://github.com/jandira-tech/jubarte-redlines"
 Repository = "https://github.com/jandira-tech/jubarte-redlines"

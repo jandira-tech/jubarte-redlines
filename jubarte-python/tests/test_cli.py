@@ -8,6 +8,7 @@ exit codes as the ``jubarte`` binary, driven in-process."""
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -44,6 +45,44 @@ def test_the_module_runs_as_a_program(letter: Path) -> None:
     run = subprocess.run([sys.executable, "-m", "jubarte_redlines", "text", str(letter)], capture_output=True, text=True)
     assert run.returncode == 0, run.stderr
     assert run.stdout.startswith("[body:p:0] Heading\n")
+
+
+def test_the_console_script_redlines_two_documents(tmp_path: Path) -> None:
+    # `uvx jubarte-redlines redline a.docx b.docx -o redline.docx`: the wheel
+    # installs a `jubarte-redlines` script beside the interpreter, and
+    # `redline` is `compare` under the name the task has.
+    script = shutil.which("jubarte-redlines", path=str(Path(sys.executable).parent))
+    assert script is not None, "the wheel installs no jubarte-redlines script"
+    a, b, out = tmp_path / "a.docx", tmp_path / "b.docx", tmp_path / "redline.docx"
+    a.write_bytes(docx(para("alpha beta")))
+    b.write_bytes(docx(para("alpha gamma")))
+    run = subprocess.run([script, "redline", str(a), str(b), "-o", str(out)], capture_output=True, text=True)
+    assert run.returncode == 0, run.stderr
+    assert out.read_bytes()[:2] == b"PK"
+    usage = subprocess.run([script, "--help"], capture_output=True, text=True)
+    assert usage.stdout.startswith("usage: jubarte-redlines "), usage.stdout
+
+
+def test_redline_is_compare(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    a, b = tmp_path / "a.docx", tmp_path / "b.docx"
+    a.write_bytes(docx(para("alpha beta")))
+    b.write_bytes(docx(para("alpha gamma")))
+    assert main(["redline", str(a), str(b)]) == 0
+    assert (tmp_path / "a_v_b.docx").is_file()
+    assert main(["revisions", str(tmp_path / "a_v_b.docx"), "--json"]) == 0
+    assert {json.loads(l)["type"] for l in capsys.readouterr().out.splitlines()[1:]} >= {"Inserted", "Deleted"}
+
+
+def test_a_legacy_doc_is_refused_with_a_save_as_hint(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # Word 97-2003 .doc and encrypted documents are OLE compound files; the
+    # engine alone said "invalid Zip archive".
+    a, doc, out = tmp_path / "a.docx", tmp_path / "b.doc", tmp_path / "r.docx"
+    a.write_bytes(docx(para("alpha")))
+    doc.write_bytes(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1".ljust(4096, b"\0"))
+    assert main(["redline", str(a), str(doc), "-o", str(out)]) == 1
+    err = capsys.readouterr().err
+    assert f"{doc} is a Word 97-2003 (.doc) or encrypted document" in err and "save it as .docx" in err
+    assert not out.exists()
 
 
 def test_edit_writes_bundle_and_refuses_existing_dir(letter: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

@@ -2,9 +2,11 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""``python -m jubarte_redlines``: the ``jubarte`` binary's commands over the
-installed wheel, with the same names, flags, output files and exit codes.
+"""``jubarte-redlines`` (or ``python -m jubarte_redlines``): the ``jubarte``
+binary's commands over the installed wheel, with the same names, flags, output
+files and exit codes. ``uvx jubarte-redlines`` runs it without installing.
 
+    uvx jubarte-redlines redline a.docx b.docx -o redline.docx
     python -m jubarte_redlines inspect letter.docx --json
     python -m jubarte_redlines text letter.docx
     python -m jubarte_redlines edit letter.docx --plan plan.json --out-dir review --pdf --png
@@ -41,11 +43,19 @@ class CliError(Exception):
     """A user-facing failure; the message is printed as ``error: ...``."""
 
 
+# The first bytes of an OLE compound file: a Word 97-2003 .doc, or a
+# password-encrypted document of any Word version.
+OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+
+
 def _read(path: Path) -> Document:
     try:
-        return Document.read(path)
+        doc = Document.read(path)
     except OSError as exc:
         raise CliError(f"reading {path}: {exc}") from exc
+    if doc.to_bytes().startswith(OLE_MAGIC):
+        raise CliError(f"{path} is a Word 97-2003 (.doc) or encrypted document; open it in Word and save it as .docx without a password")
+    return doc
 
 
 def _ensure_writable(path: Path, force: bool) -> None:
@@ -281,8 +291,16 @@ def _add_revision_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--revision-palette", metavar="SPEC", help="marks for --revisions custom, e.g. deleted=#AA0000:strike,...")
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="python -m jubarte_redlines", description="DOCX compare, tracked editing, inspection and rendering (the jubarte engine).")
+def _prog() -> str:
+    """The name the user typed: the console script's, or ``python -m …``."""
+    script = Path(sys.argv[0])
+    if script.name in ("__main__.py", "-m", "-c", ""):
+        return "python -m jubarte_redlines"
+    return script.stem if script.suffix.lower() == ".exe" else script.name
+
+
+def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=prog or _prog(), description="DOCX compare, tracked editing, inspection and rendering (the jubarte engine).")
     parser.add_argument("--version", action="version", version=f"jubarte-redlines {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -321,7 +339,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_revision_flags(p)
     p.set_defaults(func=cmd_convert)
 
-    p = sub.add_parser("compare", help="two documents into a Word tracked-changes document")
+    p = sub.add_parser("compare", aliases=["redline"], help="two documents into a Word tracked-changes document")
     p.add_argument("original", type=Path)
     p.add_argument("modified", type=Path)
     p.add_argument("-o", "--output", type=Path, help="[default: <original>_v_<modified>.docx]")

@@ -837,13 +837,13 @@ fn run_resolution(
     what: &str,
 ) -> Result<(), String> {
     ensure_writable(output, force)?;
-    let bytes = std::fs::read(file).map_err(|e| format!("reading {}: {e}", file.display()))?;
+    let bytes = read_document(file)?;
     let out = apply(&bytes, filter).map_err(|e| format!("{what} failed: {e}"))?;
     std::fs::write(output, &out).map_err(|e| format!("writing {}: {e}", output.display()))
 }
 
 fn run_changes(file: &Path, json: bool) -> Result<(), String> {
-    let bytes = std::fs::read(file).map_err(|e| format!("reading {}: {e}", file.display()))?;
+    let bytes = read_document(file)?;
     let changes = jubarte::changes::list_changes(&bytes).map_err(|e| e.to_string())?;
     for c in &changes {
         if json {
@@ -918,9 +918,7 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), String> {
     let dir = output.parent().map(Path::to_path_buf).unwrap_or_default();
     let bytes = match job.bytes {
         Some(bytes) => bytes.to_vec(),
-        None => {
-            std::fs::read(job.file).map_err(|e| format!("reading {}: {e}", job.file.display()))?
-        }
+        None => read_document(job.file)?,
     };
     let options = jubarte::convert::PdfOptions {
         compress: job.compress,
@@ -983,7 +981,7 @@ fn png_name(stem: &str, index: usize, count: usize) -> String {
 }
 
 fn run_inspect(file: &Path, json: bool) -> Result<(), String> {
-    let bytes = std::fs::read(file).map_err(|e| format!("reading {}: {e}", file.display()))?;
+    let bytes = read_document(file)?;
     if json {
         println!(
             "{}",
@@ -1037,7 +1035,7 @@ fn run_inspect(file: &Path, json: bool) -> Result<(), String> {
 }
 
 fn run_text(file: &Path) -> Result<(), String> {
-    let bytes = std::fs::read(file).map_err(|e| format!("reading {}: {e}", file.display()))?;
+    let bytes = read_document(file)?;
     print!(
         "{}",
         jubarte::inspect::markdown(&bytes).map_err(|e| e.to_string())?
@@ -1065,8 +1063,7 @@ const EXIT_PLAN_REFUSED: u8 = 3;
 
 fn run_edit(job: &EditJob<'_>) -> Result<(), (u8, String)> {
     let fail = |m: String| (1u8, m);
-    let source = std::fs::read(job.file)
-        .map_err(|e| fail(format!("reading {}: {e}", job.file.display())))?;
+    let source = read_document(job.file).map_err(fail)?;
     let plan_json = std::fs::read_to_string(job.plan)
         .map_err(|e| fail(format!("reading {}: {e}", job.plan.display())))?;
     let plan = jubarte::edit::EditPlan::from_json(&plan_json)
@@ -1251,7 +1248,7 @@ fn insert_before_summary(jsonl: &mut String, line: &str) {
 }
 
 fn run_revisions(file: &Path, json: bool) -> Result<(), String> {
-    let bytes = std::fs::read(file).map_err(|e| format!("reading {}: {e}", file.display()))?;
+    let bytes = read_document(file)?;
     let settings = jubarte::comparer::WmlComparerSettings::default();
     let revs = jubarte::document_comparer::get_revisions(&bytes, &settings)
         .map_err(|e| format!("get_revisions failed: {e:?}"))?;
@@ -1366,10 +1363,8 @@ fn comparer_settings(
 
 fn run(job: &Job) -> Result<(), String> {
     ensure_writable(&job.output, job.force)?;
-    let original = std::fs::read(&job.original)
-        .map_err(|e| format!("reading {}: {e}", job.original.display()))?;
-    let modified = std::fs::read(&job.modified)
-        .map_err(|e| format!("reading {}: {e}", job.modified.display()))?;
+    let original = read_document(&job.original)?;
+    let modified = read_document(&job.modified)?;
     let settings = comparer_settings(
         &job.author,
         &job.date,
@@ -1446,6 +1441,22 @@ impl<'p> Input<'p> {
             None => jubarte::markdown::Source::Docx(&self.bytes),
         }
     }
+}
+
+/// The first bytes of an OLE compound file: a Word 97-2003 `.doc`, or a
+/// password-encrypted document of any Word version.
+const OLE_MAGIC: &[u8] = b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1";
+
+/// Reads an input document, refusing the OLE files Word alone can open.
+fn read_document(path: &Path) -> Result<Vec<u8>, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
+    if bytes.starts_with(OLE_MAGIC) {
+        return Err(format!(
+            "{} is a Word 97-2003 (.doc) or encrypted document; open it in Word and save it as .docx without a password",
+            path.display()
+        ));
+    }
+    Ok(bytes)
 }
 
 /// Markdown bytes as text, without a byte order mark.
@@ -1550,9 +1561,7 @@ struct DiffJob<'a> {
 }
 
 fn run_diff(job: &DiffJob<'_>) -> Result<(), String> {
-    let read =
-        |path: &Path| std::fs::read(path).map_err(|e| format!("reading {}: {e}", path.display()));
-    let (old_bytes, new_bytes) = (read(job.old)?, read(job.new)?);
+    let (old_bytes, new_bytes) = (read_document(job.old)?, read_document(job.new)?);
     let old = Input::new(
         job.old,
         Format::of_input(job.from, job.old, &old_bytes),
@@ -1580,7 +1589,7 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), String> {
             Some(default_output(job.old, job.new).with_extension("pdf"))
         }
     };
-    let reference = job.reference.map(read).transpose()?;
+    let reference = job.reference.map(read_document).transpose()?;
     // Images of a Markdown side are read next to it (both sides share
     // --resource-path when given).
     let markdown_side = if old.markdown.is_some() {
@@ -1669,8 +1678,7 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), String> {
 
 /// `convert`, for every pair of formats it takes.
 fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), String> {
-    let bytes =
-        std::fs::read(job.file).map_err(|e| format!("reading {}: {e}", job.file.display()))?;
+    let bytes = read_document(job.file)?;
     let from = Format::of_input(markdown.from, job.file, &bytes);
     let to = markdown
         .to
@@ -1751,9 +1759,7 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
             let reference = markdown
                 .reference_doc
                 .as_deref()
-                .map(|path| {
-                    std::fs::read(path).map_err(|e| format!("reading {}: {e}", path.display()))
-                })
+                .map(read_document)
                 .transpose()?;
             let loader = image_loader(resource_dir(job.file, markdown.resource_path.as_deref()));
             let options = jubarte::markdown::DocxOptions {
@@ -2542,6 +2548,39 @@ mod tests {
         .expect_err("report over the input must be refused");
         assert!(err.contains("same file as the input"), "{err}");
         assert!(std::fs::read(&docx).expect("docx").starts_with(b"PK"));
+    }
+
+    #[test]
+    fn a_legacy_doc_is_refused_with_a_save_as_hint() {
+        // `.doc` (Word 97-2003) and password-encrypted documents are OLE
+        // compound files, not zips; without the hint compare called the file
+        // Markdown that is not UTF-8.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (docx, doc, out) = (
+            dir.path().join("a.docx"),
+            dir.path().join("b.doc"),
+            dir.path().join("r.docx"),
+        );
+        std::fs::write(&docx, tiny_docx_bytes("Calibri")).expect("docx");
+        let mut ole = b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1".to_vec();
+        ole.resize(4096, 0);
+        std::fs::write(&doc, ole).expect("doc");
+        let args = [
+            "jubarte",
+            docx.to_str().unwrap(),
+            doc.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+        ];
+        let err = run(&job_of(&args)).expect_err("a .doc must be refused");
+        assert!(
+            err.contains("b.doc is a Word 97-2003 (.doc) or encrypted document"),
+            "{err}"
+        );
+        assert!(err.contains("save it as .docx"), "{err}");
+        assert!(!out.exists());
+        let err = read_document(&doc).expect_err("every command reads through read_document");
+        assert!(err.contains("save it as .docx"), "{err}");
     }
 
     #[test]
