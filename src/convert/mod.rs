@@ -4352,7 +4352,9 @@ fn apply_sect_pr(dom: &Dom, sect: NodeId, fallback: &PageSetup) -> PageSetup {
         .is_some_and(|v| v == "center" || v == "both");
     if let Some(num) = first_named(dom, sect, "pgNumType") {
         if let Some(start) = attr_any(dom, num, "start").and_then(|s| s.parse::<u32>().ok()) {
-            page.page_num_start = Some(start.max(1));
+            // 0 is a start Word honours (3936a8fe56 numbers its title
+            // page 0 and its third page 2).
+            page.page_num_start = Some(start);
         }
         page.page_num_fmt = match attr_any(dom, num, "fmt").unwrap_or("") {
             "lowerRoman" => PageNumFmt::LowerRoman,
@@ -19276,7 +19278,7 @@ impl<'a> Layout<'a> {
         // Omitted pgNumType/@start continues PAGE (Word); only an explicit
         // start restarts. Defaulting to 1 retagged comments-lots p6–p9 as 1.
         if let Some(start) = next.page.page_num_start {
-            self.section_page = start.max(1);
+            self.section_page = start;
         }
         if self.page.ln_restart != 2 {
             self.ln_i = self.page.ln_start.max(1);

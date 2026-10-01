@@ -24110,6 +24110,38 @@ fn even_page_number_start_opens_on_the_even_header() {
 }
 
 #[test]
+fn a_page_number_start_of_zero_numbers_the_first_page_zero() {
+    // _to_improve 3936a8fe56: pgNumType w:start="0" behind a title page;
+    // Word's PDF numbers its third page 2 and its fourteenth 13. We
+    // clamped the start to 1 and printed every number one high.
+    let header = "<?xml version=\"1.0\"?>\
+        <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+        <w:p><w:r><w:t>Pg</w:t></w:r><w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+        <w:r><w:instrText xml:space=\"preserve\"> PAGE </w:instrText></w:r>\
+        <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r><w:r><w:t>9</w:t></w:r>\
+        <w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:p></w:hdr>"
+        .to_string();
+    let body = "<w:p><w:r><w:t>PageOneBody</w:t></w:r></w:p>\
+         <w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>\
+         <w:p><w:r><w:t>PageTwoBody</w:t></w:r></w:p>\
+         <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\"/><w:pgNumType w:start=\"0\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[("rIdH1", "header", "header1.xml")],
+        &[("word/header1.xml", header)],
+    ))
+    .expect("convert start=0");
+    let pages = pdf_content_streams(&pdf);
+    let p1 = pdf_winansi_text(pages[0].as_bytes());
+    let p2 = pdf_winansi_text(pages[1].as_bytes());
+    assert!(p1.contains("Pg0"), "page 1 is numbered 0; p1={p1}");
+    assert!(p2.contains("Pg1"), "page 2 is numbered 1; p2={p2}");
+}
+
+#[test]
 fn a_taller_even_header_pushes_the_even_page_body_down() {
     // #126: body top follows the parity header now in force.
     let tall = "<?xml version=\"1.0\"?>\
