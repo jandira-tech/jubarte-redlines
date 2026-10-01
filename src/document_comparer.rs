@@ -7550,6 +7550,9 @@ fn compare_documents_impl(
 }
 
 #[cfg(test)]
+mod based_style_record_tests;
+
+#[cfg(test)]
 mod tests {
     //! Word-validity regressions for synthesized revision records. Word treats
     //! a colliding `w:id` on two `w:*Change` records as the same revision and
