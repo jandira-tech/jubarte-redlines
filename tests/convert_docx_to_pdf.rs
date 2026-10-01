@@ -38616,6 +38616,37 @@ fn latin_inside_east_asian_text_takes_the_ascii_face_and_a_quarter_em_gap() {
 }
 
 #[test]
+fn hangul_takes_the_quarter_em_gap_and_auto_space_de_off_drops_it() {
+    if !word_dfonts_available() {
+        return;
+    }
+    // Word 16 probe hgap (2026-10-01): "가나다ABC가나다" in Malgun Gothic
+    // 12pt sets ABC 3pt off the Hangul on each side, as for ideographs
+    // (PR #247 review 4147143789); w:autoSpaceDE="0" drops both gaps, for
+    // Hangul and for ideographs alike (we kept the ideograph gap).
+    let q_x = |text: &str, off: bool| {
+        let ppr = if off {
+            "<w:pPr><w:autoSpaceDE w:val=\"0\"/></w:pPr>"
+        } else {
+            ""
+        };
+        let body = format!(
+            "<w:p>{ppr}<w:r><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:eastAsia=\"Malgun Gothic\"/>\
+             <w:sz w:val=\"24\"/></w:rPr><w:t>{text}</w:t></w:r></w:p><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("autospace");
+        pdf_glyph_text_xy(&pdf, "Q").expect("Q").0
+    };
+    for text in ["가Q가", "漢Q漢"] {
+        let (on, off) = (q_x(text, false), q_x(text, true));
+        assert!(
+            (on - off - 3.0).abs() < 0.3,
+            "{text}: a 3pt gap that autoSpaceDE=0 drops; on={on} off={off}"
+        );
+    }
+}
+
+#[test]
 fn a_footer_runs_letter_spacing_is_painted() {
     // fixtures_500 013d00cf: the footer's "Page" carries w:spacing 60
     // (3pt); Word spaces its letters as in the body. The chrome painter

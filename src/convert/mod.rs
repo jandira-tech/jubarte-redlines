@@ -657,6 +657,10 @@ struct RunStyle {
     /// The nearest `w:vanish` of the styles and defaults under the run:
     /// a paragraph style's hidden text hides its runs (PR #247 review).
     hidden: bool,
+    /// The paragraph's `w:autoSpaceDE` / `w:autoSpaceDN` turned off: no
+    /// quarter em between East Asian text and Latin letters / digits.
+    auto_space_de_off: bool,
+    auto_space_dn_off: bool,
     /// Size that sizes the line box when `size` is a rendering reduction
     /// (a small-caps piece keeps its run's authored size); 0 = `size`.
     box_size: f32,
@@ -795,6 +799,9 @@ struct ParaStyle {
     indent_right: f32,
     indent_first: f32,
     contextual: bool,
+    /// `w:autoSpaceDE` / `w:autoSpaceDN` set off (see `script_gap`).
+    auto_space_de_off: bool,
+    auto_space_dn_off: bool,
     /// The paragraph's numbering instance (`w:numId`), empty when unlisted:
     /// auto spacing drops between items of one list (00df97e7).
     list_num: String,
@@ -1260,6 +1267,8 @@ impl Defaults {
                 bold_set: false,
                 italic_set: false,
                 hidden: false,
+                auto_space_de_off: false,
+                auto_space_dn_off: false,
                 offset: 0.0,
                 vert: VertAlign::Baseline,
                 kern_half: 0,
@@ -1285,6 +1294,8 @@ impl Defaults {
                 indent_right: 0.0,
                 indent_first: 0.0,
                 contextual: false,
+                auto_space_de_off: false,
+                auto_space_dn_off: false,
                 list_num: String::new(),
                 style_id: String::new(),
                 style_name: String::new(),
@@ -4141,6 +4152,12 @@ fn apply_ppr(dom: &Dom, ppr: NodeId, style: &mut ParaStyle) {
     }
     if first_named(dom, ppr, "contextualSpacing").is_some() {
         style.contextual = !val_is_false(dom, first_named(dom, ppr, "contextualSpacing"));
+    }
+    if let Some(n) = first_named(dom, ppr, "autoSpaceDE") {
+        style.auto_space_de_off = val_is_false(dom, Some(n));
+    }
+    if let Some(n) = first_named(dom, ppr, "autoSpaceDN") {
+        style.auto_space_dn_off = val_is_false(dom, Some(n));
     }
     if first_named(dom, ppr, "tabs").is_some() {
         apply_tab_stops(&mut style.tab_stops, dom, ppr);
@@ -8984,6 +9001,8 @@ fn para_base(
         mirror_bidi(&mut pstyle);
     }
     pstyle.fmt_rev = para_formatting_changed(dom, para) || para_mark_revised(dom, para);
+    rstyle.auto_space_de_off = pstyle.auto_space_de_off;
+    rstyle.auto_space_dn_off = pstyle.auto_space_dn_off;
     (pstyle, rstyle)
 }
 
@@ -11908,23 +11927,25 @@ fn script_pieces<'t>(style: &RunStyle, text: &'t str) -> Option<Vec<&'t str>> {
 /// autoSpaceDE / autoSpaceDN: Word sets a quarter em between an East
 /// Asian piece and a Latin or digit one that touch (live Word: 3pt at
 /// 12pt around "5", "FM" and "abc" in "令和元年5月6日FM西東京abc放送").
+/// Hangul counts as East Asian, and either flag set off drops its gaps
+/// (Word 16 probe hgap 1001).
 fn script_gap(style: &RunStyle, before: &str, after: &str) -> f32 {
     let (Some(a), Some(b)) = (before.chars().last(), after.chars().next()) else {
         return 0.0;
     };
-    let class = |c: char| {
-        if is_cjk(c) {
-            Some(true)
-        } else if c.is_alphanumeric() {
-            Some(false)
-        } else {
-            None
-        }
+    let latin = match (takes_east_asian_face(a), takes_east_asian_face(b)) {
+        (true, false) => b,
+        (false, true) => a,
+        _ => return 0.0,
     };
-    match (class(a), class(b)) {
-        (Some(x), Some(y)) if x != y => style.layout_size() * 0.25,
-        _ => 0.0,
-    }
+    let off = if latin.is_numeric() {
+        style.auto_space_dn_off
+    } else if latin.is_alphanumeric() {
+        style.auto_space_de_off
+    } else {
+        true
+    };
+    if off { 0.0 } else { style.layout_size() * 0.25 }
 }
 
 fn split_hansi_runs(runs: Vec<TextRun>) -> Vec<TextRun> {
@@ -17550,6 +17571,8 @@ fn first_para_align(dom: &Dom, root: NodeId) -> Align {
         indent_right: 0.0,
         indent_first: 0.0,
         contextual: false,
+        auto_space_de_off: false,
+        auto_space_dn_off: false,
         list_num: String::new(),
         style_id: String::new(),
         style_name: String::new(),
@@ -27113,6 +27136,8 @@ fn default_run_style() -> RunStyle {
         bold_set: false,
         italic_set: false,
         hidden: false,
+        auto_space_de_off: false,
+        auto_space_dn_off: false,
         offset: 0.0,
         vert: VertAlign::Baseline,
         kern_half: 0,
