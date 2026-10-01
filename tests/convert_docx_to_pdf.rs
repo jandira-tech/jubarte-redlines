@@ -17395,7 +17395,7 @@ fn page_field_uses_sectpr_ideograph_digital() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "ideographDigital 一 is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -17421,7 +17421,9 @@ fn page_num_fmt_pdf(fmt: &str, start: u32, marker: &str) -> Vec<u8> {
 }
 
 /// Hex glyph operands of the CID text painted in the footer band (below
-/// the 72pt bottom margin): the PAGE label, not any other CID text.
+/// the 72pt bottom margin): the PAGE label, not any other CID text. A face
+/// painted only as CID keeps its plain name, so the hex operand, not a
+/// `…CID` font name, marks the run.
 fn footer_cid_glyph_runs(pdf: &[u8]) -> Vec<String> {
     let mut out = Vec::new();
     for stream in pdf_content_streams(pdf) {
@@ -17437,7 +17439,7 @@ fn footer_cid_glyph_runs(pdf: &[u8]) -> Vec<String> {
                 .collect();
             let Some(&y) = nums.first() else { continue };
             let font = op[cm + 8..].split_whitespace().next().unwrap_or("");
-            if y >= 72.0 || !font.ends_with("CID") {
+            if y >= 72.0 || font.is_empty() {
                 continue;
             }
             if let (Some(a), Some(b)) = (op.find('<'), op.find("> Tj")) {
@@ -17448,6 +17450,31 @@ fn footer_cid_glyph_runs(pdf: &[u8]) -> Vec<String> {
     out.sort();
     out.dedup();
     out
+}
+
+#[test]
+fn scripts_a_latin_face_lacks_paint_from_words_fallbacks() {
+    // Word 16 probes ench and scripts (2026-10-01): Calibri's Thai is
+    // Leelawadee UI, its Devanagari Mangal, its compatibility jamo Malgun
+    // Gothic and its ⒇① MS Gothic. We painted .notdef boxes for all four.
+    if !word_dfonts_available() {
+        return;
+    }
+    let rpr = "<w:rPr><w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\"/></w:rPr>";
+    for text in ["กขค", "अआइ", "ㄱㄴ", "⒇①"] {
+        let body = format!("<w:p><w:r>{rpr}<w:t>{text}</w:t></w:r></w:p><w:sectPr/>");
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect(text);
+        let streams = pdf_content_streams(&pdf).join("\n");
+        assert!(
+            streams.contains("> Tj") && !streams.contains("<0000"),
+            "{text} paints real glyphs: {streams}"
+        );
+    }
+}
+
+/// Whether a hex Identity-H operand holds glyph 0, .notdef.
+fn has_notdef(hex: &str) -> bool {
+    hex.as_bytes().chunks(4).any(|g| g == b"0000")
 }
 
 /// The PAGE label in the footer is one CID run of `glyphs` glyphs.
@@ -17464,6 +17491,13 @@ fn assert_footer_page_label_glyphs(fmt: &str, start: u32, glyphs: usize) {
         glyphs * 4,
         "{fmt} start={start}: {glyphs} glyph(s); runs={runs:?}"
     );
+    // Word paints every label in a face that has it (Word 16: ㈩ and ⒇ in
+    // MS Gothic, 百 in MS Mincho), never a .notdef box.
+    // Script faces come from Word's fonts; elsewhere the label may box.
+    assert!(
+        !word_dfonts_available() || !has_notdef(&runs[0]),
+        "{fmt} start={start}: no .notdef glyph; runs={runs:?}"
+    );
     let lits = pdf_winansi_literals(&pdf);
     assert!(
         !lits.iter().any(|s| s == &start.to_string() || s == "1"),
@@ -17478,7 +17512,10 @@ fn page_labels_bind_to_the_footer_with_the_formatted_glyph_count() {
     // (exact code points are pinned in page_num_fmt_labels; the writer
     // has no ToUnicode map to decode against).
     assert_footer_page_label_glyphs("ideographEnclosedCircle", 10, 1); // ㈩
-    assert_footer_page_label_glyphs("ideographEnclosedCircle", 11, 2); // 一一
+    // Past ㈩ Word writes plain decimal: no CID run (Word 16 footer, "11").
+    let eleven = page_num_fmt_pdf("ideographEnclosedCircle", 11, "PgGlyphX");
+    assert!(footer_cid_glyph_runs(&eleven).is_empty());
+    assert!(pdf_winansi_literals(&eleven).iter().any(|s| s == "11"));
     assert_footer_page_label_glyphs("japaneseCounting", 100, 1); // 百
     assert_footer_page_label_glyphs("japaneseCounting", 101, 2); // 百一
     assert_footer_page_label_glyphs("japaneseCounting", 1000, 1); // 千
@@ -17513,12 +17550,14 @@ fn assert_ideograph_page_is_cid_not_decimal(fmt: &str, marker: &str) {
         !lits.iter().any(|s| s == "1"),
         "{fmt} PAGE must not stay decimal 1; lits={lits:?}"
     );
-    let streams = pdf_content_streams(&pdf);
+    // Identity-H text is a hex operand; a face painted only as CID keeps
+    // its plain name, so the font name proves nothing. Before the label
+    // loaded its CJK face it painted .notdef in Calibri's CID entry, which
+    // passed a name check (Word 16 paints it in MS Gothic or Mincho).
+    let runs = footer_cid_glyph_runs(&pdf);
     assert!(
-        streams
-            .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
-        "{fmt} PAGE must take Identity-H; streams={streams:?}"
+        !runs.is_empty() && (!word_dfonts_available() || runs.iter().all(|r| !has_notdef(r))),
+        "{fmt} PAGE must take Identity-H with real glyphs; runs={runs:?}"
     );
 }
 
@@ -17567,7 +17606,7 @@ fn page_field_uses_sectpr_japanese_counting() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "japaneseCounting 十 is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -17598,7 +17637,7 @@ fn page_field_uses_sectpr_decimal_full_width() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "decimalFullWidth １０ is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -17648,7 +17687,7 @@ fn page_field_uses_sectpr_hebrew1() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "hebrew1 י is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -17696,7 +17735,7 @@ fn page_field_uses_sectpr_thai_numbers() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "thaiNumbers ๑๐ is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -17720,7 +17759,7 @@ fn page_field_uses_sectpr_thai_counting() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "thaiCounting สิบ is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -17738,7 +17777,7 @@ fn page_field_uses_sectpr_hindi_numbers() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "hindiNumbers १० is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -17768,7 +17807,7 @@ fn page_field_uses_sectpr_hindi_counting() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "hindiCounting दस is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -17786,7 +17825,7 @@ fn page_field_uses_sectpr_korean_counting() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "koreanCounting 십 is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -17804,7 +17843,7 @@ fn page_field_uses_sectpr_korean_digital() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "koreanDigital 일영 is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -17822,7 +17861,7 @@ fn page_field_uses_sectpr_korean_digital2() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "koreanDigital2 一零 is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -29940,6 +29979,42 @@ fn rev_bar_marks_revised_header_and_footer_lines() {
     assert!(
         (bot - 36.0).abs() < 1.0 && top > 45.0 && top < 60.0,
         "on w:footer: {footer:?}"
+    );
+}
+
+#[test]
+fn rev_bar_marks_leading_empty_header_and_footer_paragraphs() {
+    // PR #247 review: an empty revised paragraph over the part's text was
+    // painted by the leading-empty loop alone, which filled it but never
+    // barred it; trailing and all-empty paragraphs were barred.
+    let part = "<w:p><w:pPr><w:pPrChange w:id=\"3\" w:author=\"A\"><w:pPr><w:ind w:right=\"360\"/></w:pPr></w:pPrChange></w:pPr></w:p>\
+         <w:p><w:r><w:t>Kept chrome</w:t></w:r></w:p>";
+    for (name, docx) in [
+        ("header", header_part_docx(part)),
+        ("footer", footer_part_docx(part)),
+    ] {
+        let bars = pdf_page_bar_spans(&docx_to_pdf(&docx).expect(name));
+        assert_eq!(
+            bars[0].len(),
+            1,
+            "the {name}'s leading revised paragraph is barred: {bars:?}"
+        );
+    }
+}
+
+#[test]
+fn an_all_empty_footer_paints_its_paragraph_border() {
+    // PR #247 review: an empty first footer paragraph with a top border
+    // suppressed the part's fallback rule, but the all-empty path painted
+    // only fills and bars, so the rule vanished.
+    let part = "<w:p><w:pPr><w:pBdr><w:top w:val=\"single\" w:sz=\"8\" w:space=\"1\" w:color=\"000000\"/></w:pBdr></w:pPr></w:p>\
+         <w:p/>";
+    let pdf = docx_to_pdf(&footer_part_docx(part)).expect("footer");
+    let ys = pdf_horiz_rule_ys(&pdf);
+    // Over the two empty paragraphs stacked up from w:footer (36pt).
+    assert!(
+        matches!(ys[..], [y] if y > 60.0 && y < 100.0),
+        "the empty footer paragraph's top border paints once: {ys:?}"
     );
 }
 

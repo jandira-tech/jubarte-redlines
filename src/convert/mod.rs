@@ -492,13 +492,37 @@ fn with_pages<T>(
     let any_text = |test: fn(char) -> bool| {
         xml.chars().any(test) || stories.iter().any(|t| t.chars().any(test))
     };
-    let has_cjk = any_text(takes_east_asian_face);
+    // List and page numbers in an East Asian format paint characters the
+    // text never holds (a footer's ideographEnclosedCircle PAGE label).
+    let numbering = pkg.part_string("word/numbering.xml");
+    let writes = |test: fn(char) -> bool| {
+        any_text(test)
+            || [Some(xml.as_str()), numbering.as_deref()]
+                .into_iter()
+                .flatten()
+                .any(|part| number_formats_write(part, test))
+    };
+    let has_cjk = writes(takes_cjk_fallback);
     font::add_installed_faces(&mut embedded, &table, &family_names, &run_faces, has_cjk);
     if has_cjk {
         font::add_cjk_fallbacks(&mut embedded);
     }
     if any_text(is_thaana) {
         font::add_thaana_fallback(&mut embedded);
+    }
+    if writes(is_thai) {
+        font::add_script_fallback(
+            &mut embedded,
+            font::THAI_FALLBACK,
+            &["Leelawadee UI", "Thonburi"],
+        );
+    }
+    if writes(is_devanagari) {
+        font::add_script_fallback(
+            &mut embedded,
+            font::DEVANAGARI_FALLBACK,
+            &["Mangal", "Kohinoor Devanagari", "Devanagari MT"],
+        );
     }
     let fonts = Fonts::for_document(&embedded);
     font::with_font_table(table, || {
@@ -3676,6 +3700,28 @@ fn latin_font_names(xml: &str) -> Vec<String> {
     out
 }
 
+/// Whether a w:numFmt or w:pgNumType format in `xml` writes characters
+/// that pass `test` (`ideographDigital`'s 一, `thaiLetters`' ก): labels
+/// whose script the text itself never shows.
+fn number_formats_write(xml: &str, test: fn(char) -> bool) -> bool {
+    ["numFmt", "pgNumType"].iter().any(|tag| {
+        xml.match_indices(tag).any(|(at, _)| {
+            let attrs = &xml[at..];
+            let attrs = &attrs[..attrs.find('>').unwrap_or(attrs.len())];
+            attrs
+                .split(['"', '\''])
+                .skip(1)
+                .step_by(2)
+                .map(parse_num_fmt)
+                .any(|fmt| {
+                    [1, 10, 100]
+                        .into_iter()
+                        .any(|n| format_num(fmt, n).chars().any(test))
+                })
+        })
+    })
+}
+
 fn rfont_names(xml: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for key in [
@@ -3714,9 +3760,40 @@ fn script_glyph_fallback(fonts: &Fonts, bold: bool, text: &str) -> Option<FaceRe
     if text.chars().any(is_hangul) {
         return fonts.hangul_glyph_fallback(bold);
     }
+    if text.chars().any(is_thai) {
+        return fonts.script_fallback(font::THAI_FALLBACK, bold);
+    }
+    if text.chars().any(is_devanagari) {
+        return fonts.script_fallback(font::DEVANAGARI_FALLBACK, bold);
+    }
     fonts
         .cjk_glyph_fallback(bold)
-        .filter(|_| text.chars().any(is_cjk))
+        .filter(|_| text.chars().any(|c| is_cjk(c) || is_enclosed_alnum(c)))
+}
+
+/// ① to ⓿ and ⒇: a Latin face rarely has them, and Word paints them from
+/// its East Asian face (Word 16 probe ench 1001: Calibri's "A⒇①B" sets
+/// ⒇① in MS Gothic, as a footer's decimalEnclosedParen PAGE label).
+fn is_enclosed_alnum(c: char) -> bool {
+    matches!(c, '\u{2460}'..='\u{24FF}')
+}
+
+/// A character that paints from the CJK fallback when its face has none.
+fn takes_cjk_fallback(c: char) -> bool {
+    takes_east_asian_face(c) || is_enclosed_alnum(c)
+}
+
+fn is_thai(c: char) -> bool {
+    matches!(c, '\u{0E00}'..='\u{0E7F}')
+}
+
+fn is_devanagari(c: char) -> bool {
+    matches!(c, '\u{0900}'..='\u{097F}' | '\u{A8E0}'..='\u{A8FF}')
+}
+
+/// A character a script fallback paints when its face has none.
+fn takes_script_fallback(c: char) -> bool {
+    is_rtl_char(c) || takes_cjk_fallback(c) || is_thai(c) || is_devanagari(c)
 }
 
 /// Hebrew, Arabic, Syriac, Thaana, NKo and their presentation forms.
@@ -3746,9 +3823,14 @@ fn is_cjk(c: char) -> bool {
 /// Hangul syllables and jamo outside `is_cjk`'s blocks (the compatibility
 /// jamo U+3130..318F are inside it).
 fn is_hangul(c: char) -> bool {
+    // The compatibility jamo too: Word paints chosung's ㄱ in Malgun
+    // Gothic (Word 16 probe scripts 1001), and YaHei has none.
     matches!(
         c,
-        '\u{1100}'..='\u{11FF}' | '\u{A960}'..='\u{A97F}' | '\u{AC00}'..='\u{D7FF}'
+        '\u{1100}'..='\u{11FF}'
+            | '\u{3130}'..='\u{318F}'
+            | '\u{A960}'..='\u{A97F}'
+            | '\u{AC00}'..='\u{D7FF}'
     )
 }
 
@@ -5164,12 +5246,13 @@ fn cjk_counting(n: u32, legal: bool) -> String {
 }
 
 fn ideograph_enclosed_circle_label(n: u32) -> String {
-    // U+3220..=U+3229 are ㈠–㈩. After 10, ECMA allows unenclosed digits.
+    // U+3220..=U+3229 are ㈠–㈩. Past them Word writes plain decimal
+    // (Word 16, a list and a footer PAGE at 11: "11", not 一一).
     const ENCLOSED: [char; 10] = ['㈠', '㈡', '㈢', '㈣', '㈤', '㈥', '㈦', '㈧', '㈨', '㈩'];
     if (1..=10).contains(&n) {
         ENCLOSED[(n - 1) as usize].to_string()
     } else {
-        ideograph_digital_label(n)
+        n.to_string()
     }
 }
 
@@ -7758,9 +7841,7 @@ fn face_lacks_ink(face: &Face, text: &str) -> bool {
 /// .notdef-wide box it measures, whatever face paints it.
 fn ink_face(fonts: &Fonts, style: &RunStyle, text: &str) -> FaceRef {
     let fid = fonts.resolve(paint_family(style, text), style.bold, style.italic);
-    let script = text
-        .chars()
-        .any(|c| is_rtl_char(c) || takes_east_asian_face(c));
+    let script = text.chars().any(takes_script_fallback);
     if !script || !face_lacks_ink(fonts.get(fid), text) {
         return fid;
     }
@@ -26326,6 +26407,7 @@ impl<'a> Layout<'a> {
                 }
                 let h = hf_break_box(self.fonts, r);
                 self.hf_break_fill(&header, i, band, h);
+                self.hf_rev_bar(std::slice::from_ref(r), r.hf_para.as_deref(), band, h);
                 if let Some(p) = r.hf_para.as_deref() {
                     let prev = header[..i].iter().rev().find_map(|n| n.hf_para.as_deref());
                     let next = header[i + 1..].iter().find_map(|n| n.hf_para.as_deref());
@@ -26544,6 +26626,7 @@ impl<'a> Layout<'a> {
                     let h = hf_break_box(self.fonts, r);
                     bottom += r.para_gap;
                     self.hf_break_fill(&footer, i, bottom + h, h);
+                    self.hf_rev_bar(std::slice::from_ref(r), r.hf_para.as_deref(), bottom + h, h);
                     // Its borders paint too (probe fb_f4_0930: the empty
                     // opening paragraph's bottom rule, c73c128db4's footer4).
                     if let Some(p) = r.hf_para.as_deref() {
@@ -26616,6 +26699,13 @@ impl<'a> Layout<'a> {
                     let h = hf_break_box(self.fonts, r);
                     self.hf_break_fill(&footer, i, bottom + h, h);
                     self.hf_rev_bar(std::slice::from_ref(r), r.hf_para.as_deref(), bottom + h, h);
+                    // Their borders stand in for the part's fallback rule.
+                    if let Some(p) = r.hf_para.as_deref() {
+                        let next = footer[i + 1..].iter().find_map(|n| n.hf_para.as_deref());
+                        let prev = footer[..i].iter().rev().find_map(|n| n.hf_para.as_deref());
+                        self.hf_bottom_rule(p, next, bottom);
+                        self.hf_top_rule(prev, p, bottom + h);
+                    }
                     bottom += h + r.para_gap;
                 }
             }
@@ -30880,7 +30970,9 @@ mod page_num_fmt_labels {
     fn ideograph_enclosed_circle_is_parenthesized() {
         assert_eq!(ideograph_enclosed_circle_label(1), "㈠");
         assert_eq!(ideograph_enclosed_circle_label(2), "㈡");
-        assert_eq!(ideograph_enclosed_circle_label(11), "一一");
+        // Word 16 (probe lst 1001, and a footer PAGE): past ㈩ the label is
+        // plain decimal, "11.", not 一一.
+        assert_eq!(ideograph_enclosed_circle_label(11), "11");
     }
 
     #[test]
