@@ -25818,11 +25818,14 @@ impl<'a> Layout<'a> {
             return;
         }
         let page_room = self.page.height - self.body_top - self.body_floor;
-        // A keepLines paragraph keeps its row whole when a page can hold
-        // it (000aba38's Heading 2 label row moves to page 2).
+        // A cell opening on a keepNext paragraph keeps its row whole when
+        // a page can hold it (000aba38's Heading 2 label row moves to page
+        // 2). keepLines alone, or keepNext further down the cell, lets the
+        // row break between paragraphs (Word 16 probes k1-k6 2026-10-01;
+        // 2ad8d15e88's reference list ending in a keepLines blank).
         let keeps = row
             .iter()
-            .any(|c| c.paras.iter().any(|p| p.style.keep_lines));
+            .any(|c| c.paras.first().is_some_and(|p| p.style.keep_next));
         if keeps && rh <= page_room {
             return;
         }

@@ -5506,7 +5506,7 @@ fn a_merged_cells_content_grows_the_last_row_it_spans() {
 }
 
 #[test]
-fn a_row_with_a_keep_lines_paragraph_moves_whole() {
+fn a_row_opening_on_a_heading_moves_whole() {
     // fixtures_500 000aba38: a CV table row whose label cell is Heading 2
     // (keepNext + keepLines) does not fit under page 1's rows. Word moves
     // the whole row to page 2 (page 1 ends at 489pt); we split it.
@@ -15450,6 +15450,56 @@ fn word_2013_squeezes_at_most_a_third_of_the_word_and_two_spaces() {
     assert!(first_line_ends_in_times(175), "9pt over keeps the word");
     // 11.07pt over: moved, as in Word.
     assert!(!first_line_ends_in_times(216), "11pt over moves the word");
+}
+
+#[test]
+fn a_row_breaks_unless_a_cell_opens_on_a_keep_next_paragraph() {
+    // Word 16 probes k1-k6 2026-10-01: a row that does not fit breaks
+    // between its paragraphs when its cell holds keepLines (first or last
+    // paragraph) or keepNext on its last paragraph; it moves whole only
+    // when the cell opens on a keepNext paragraph (fixtures_500
+    // 000aba38). _to_improve 2ad8d15e88's reference list ends in a
+    // keepLines blank; we moved the row and ended a page long.
+    let first_page_has_head = |first: &str, last: &str| {
+        let mut rows = String::new();
+        for i in 0..30 {
+            rows.push_str(&format!(
+                "<w:tr><w:tc><w:p><w:r><w:t>Filler{i:02}</w:t></w:r></w:p></w:tc></w:tr>"
+            ));
+        }
+        let mut cell = format!("<w:p><w:pPr>{first}</w:pPr><w:r><w:t>KeepHead</w:t></w:r></w:p>");
+        for i in 0..30 {
+            cell.push_str(&format!("<w:p><w:r><w:t>Body{i:02}</w:t></w:r></w:p>"));
+        }
+        cell.push_str(&format!(
+            "<w:p><w:pPr>{last}</w:pPr><w:r><w:t>LastPara</w:t></w:r></w:p>"
+        ));
+        rows.push_str(&format!("<w:tr><w:tc>{cell}</w:tc></w:tr>"));
+        let body = format!(
+            "<w:tbl><w:tblGrid><w:gridCol w:w=\"9000\"/></w:tblGrid>{rows}</w:tbl><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("keep row");
+        let pages = pdf_content_streams(&pdf);
+        let first_page = stream_glyph_text(&pages[0]);
+        assert!(first_page.contains("Filler29"), "the fillers fit page 1");
+        first_page.contains("KeepHead")
+    };
+    assert!(
+        first_page_has_head("<w:keepLines/>", ""),
+        "keepLines first: breaks"
+    );
+    assert!(
+        first_page_has_head("", "<w:keepLines/>"),
+        "keepLines last: breaks"
+    );
+    assert!(
+        first_page_has_head("", "<w:keepNext/>"),
+        "keepNext last: breaks"
+    );
+    assert!(
+        !first_page_has_head("<w:keepNext/>", ""),
+        "keepNext first: whole"
+    );
 }
 
 #[test]
