@@ -119,6 +119,12 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   - a full-width picture takes the first line, and the text wraps under it;
   - a picture that fits opens the first line, and the text follows it or keeps
     its tab stop (6fd8f5e, d2aa5db).
+- **A no-break space is a letter to the wrap**, ea41e341. U+00A0, U+2007 and
+  U+202F never break a line, and one at a line's end takes room where a
+  plain space hangs past the edge.
+  - Word 16 probe d3a-d3c (2026-10-01): d328fa3674's cell "Množství
+    pneumatik v tunách" ending in U+00A0 wraps "tunách"; with a plain space
+    or none it fits.
 
 ## Redline markup
 
@@ -175,6 +181,14 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
 - **Within a collection, the face at its style's normal width and weight
   wins.** Futura's upright face is Medium (weight 500). Papyrus.ttc lists
   Condensed before Regular. For Helvetica Neue, the Regular beats the Thin.
+
+## Run fonts
+
+- **An `asciiTheme` slot names the ascii face even beside an explicit
+  `hAnsi`**, c3a0444d. With no `w:ascii`, `hAnsi` paints only the characters
+  past U+007F.
+  - 0fc80afa25: `asciiTheme="minorHAnsi" hAnsi="Arial"` paints its minutes
+    in the theme's Calibri; Word's PDF holds no Arial at all.
 
 ## Redline chrome
 
@@ -380,6 +394,14 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   - Live Word probe: Table Grid with 57-twip top and bottom margins steps Arial
     10 rows 17.76pt apart instead of 12.
   - Part a 1f3856c4.
+- **A compat-15 table sits by its rules' outer edge**, 1d415f4c. Left
+  aligned, its left rule's outer edge is on the margin and the grid half
+  that rule inside, for every row, ruled or not. Centred, the grid is
+  centred and the rules straddle it. Text starts its margin, or half its
+  own left rule when that is wider, past its grid line.
+  - Word 16 probes (2026-10-01): d3e's 1pt rule at 70.8..71.76 with text
+    at 76.3 in each row; r1-r8 paint the text at the same x for 0.5pt and
+    3pt rules, table or cell borders, fixed or autofit layout.
 
 ## Rows, groups and templates
 
@@ -461,6 +483,16 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
 
 ## Open, measured but not yet reconstructed
 
+- **Word re-runs autofit on open.** A Word-saved `tblGrid` is that result,
+  but a grid it did not compute is ignored: probe g12 (grid 1500/1800 over
+  tblW 3000) keeps the 150pt table and takes 2.9pt from column 1 for a
+  long word, while 6d73303ea5's saved 8752-twip grid over tblW 8138 paints
+  as saved, widening only the two "Controls" columns to the word.
+  jubarte keeps tblW in both.
+- **A package with no styles part seems to give table cells no margins.**
+  Probe g11 paints a cell's "A" at 72.5 on a 72pt margin, where jubarte,
+  using the 108-twip Normal Table default, paints it at 77.5. Not yet
+  probed apart from the glyph's side bearing.
 - **Photo inside a deleted text box:** it does not paint yet (d20125ec).
 - **Batch compares.** In `word_redline.py`'s default batch mode, "open produced
   2 new documents" happens about every other pair after a compare. Notes are in
