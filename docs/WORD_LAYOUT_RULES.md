@@ -133,6 +133,35 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   - is still a text box, not the picture it holds (4c0cf02);
   - still lays out paragraph by paragraph, one line per deleted paragraph,
     centred as styled (bb1600d).
+- **A list label follows its paragraph mark, not its text** (Word 16
+  probes lbl0930, lbl0930b, chg0930; 2026-10-01).
+  - An inserted mark (`pPr/rPr/w:ins`) inks and underlines the label
+    and its tab up to the text. A deleted mark inks and strikes them.
+    Bullets behave the same way.
+  - Inserted or deleted text under an unrevised mark leaves the label
+    black.
+  - A `w:pPrChange` that puts the paragraph into a list counts as an
+    insertion of the label. It is inked in the change author's colour.
+- **Word numbers a revised list twice.**
+  - The original count skips inserted marks. The revised count skips
+    deleted marks.
+  - A deleted mark shows its original number. An inserted mark shows
+    its revised number.
+  - Any other paragraph whose two numbers differ shows the old number
+    plain, then the new one inked and underlined. Its tab runs to the
+    next stop past the pair: "1." at 90, "2." at 99.84, the text at
+    144.
+  - The new number takes the next author colour after the document's
+    own authors (0B6A0B after msi's 394146).
+  - A paragraph a `w:pPrChange` numbered was in no original list, so
+    it shows no old number. en r 00f467c010 shows "2)", not "1)2)".
+  - Only `RevisionStyle::Word` paints the number pair. Our own marks
+    show only the revised number, or the original one for a deleted
+    mark.
+- **A tab's gap carries its run's underline and strike** (probe
+  tab0930). This includes a trailing tab: "Nund<tab>" is underlined
+  from 72 to 108. It also covers an inserted or deleted tab and the
+  tab after a list label.
 
 ## Headers and footers
 

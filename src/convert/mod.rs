@@ -4840,6 +4840,12 @@ struct Numbering {
     /// `w:lvl/w:pStyle` keyed by (abstractNumId, ilvl): the style the
     /// level belongs to.
     lvl_pstyle: HashMap<(String, u32), String>,
+    /// The original document's lists, forked at the first revised
+    /// paragraph mark: they skip inserted marks as these skip deleted ones.
+    orig: Option<Box<Numbering>>,
+    /// The original number of the paragraph just numbered, when it differs
+    /// from its revised one (Word shows "3.1.").
+    old_label: Option<String>,
 }
 
 impl Numbering {
@@ -4953,6 +4959,40 @@ impl Numbering {
         self.counters
             .insert((num_id.to_string(), resolved), cur.saturating_add(1));
         self.render(&abs, num_id, resolved, &lvl, cur)
+    }
+
+    /// Word numbers a revised list twice (probe lbl0930): the revised
+    /// document skips deleted paragraph marks, the original one inserted
+    /// marks. A deleted mark shows its original number, an inserted one its
+    /// revised number; any other paragraph its revised number, with the
+    /// original kept in `old_label` when the two differ.
+    fn next_revised(&mut self, num_id: &str, ilvl: u32, mark: RevMark) -> String {
+        self.old_label = None;
+        match mark {
+            RevMark::Del | RevMark::MoveFrom => self.original().next_marker(num_id, ilvl),
+            RevMark::Ins | RevMark::MoveTo => {
+                self.original();
+                self.next_marker(num_id, ilvl)
+            }
+            RevMark::None => {
+                let label = self.next_marker(num_id, ilvl);
+                if let Some(orig) = self.orig.as_deref_mut() {
+                    let old = orig.next_marker(num_id, ilvl);
+                    self.old_label = (old != label).then_some(old);
+                }
+                label
+            }
+        }
+    }
+
+    /// The original document's lists; until the first revised mark they
+    /// count as these do.
+    fn original(&mut self) -> &mut Numbering {
+        let orig = match self.orig.take() {
+            Some(orig) => orig,
+            None => Box::new(self.clone()),
+        };
+        self.orig.insert(orig)
     }
 
     fn last_used(&self, num_id: &str, ilvl: u32) -> Option<u32> {
@@ -9668,30 +9708,13 @@ fn paragraph_block(
             mark.list_marker = true;
             runs.insert(0, mark);
         }
-        // addition_removal p3: Word paints ListBullet • in #D13438 with
-        // the delText. The marker is synthesized from paragraph rstyle
-        // (black) before w:del is collected. Inherit color only — Word
-        // does not strike/underline the bullet (mini 423 ITT −0.003
-        // when strike was copied). Uniform del or ins body only.
-        let inherited = {
-            let ink: Vec<&TextRun> = runs
-                .iter()
-                .skip(1)
-                .filter(|r| !r.text.trim().is_empty())
-                .collect();
-            let all_del = !ink.is_empty() && ink.iter().all(|r| r.rev && r.style.strike);
-            let all_ins = !ink.is_empty()
-                && ink
-                    .iter()
-                    .all(|r| r.rev && r.style.underline && !r.style.strike);
-            (all_del || all_ins).then(|| ink[0].style.color)
-        };
-        if pic.is_none()
-            && let Some(color) = inherited
-        {
-            runs[0].style.color = color;
-            runs[0].style.color_auto = false;
-            runs[0].rev = true;
+        if pic.is_none() {
+            revise_list_label(
+                &mut runs,
+                label_rev(dom, para, sheet, &num_id, ilvl),
+                numbering.old_label.take(),
+                &mut ctx.authors.borrow_mut(),
+            );
         }
     }
     let mut images = collect_images(ctx.pkg, ctx.main, dom, para, &|drawing| {
@@ -10713,9 +10736,120 @@ fn list_marker(
             }
             (id, ilvl)
         }
-        _ => return (String::new(), String::new(), 0),
+        _ => {
+            // Numbering a tracked change took away still counts in the
+            // original lists.
+            if let Some(Some((id, ilvl))) = prior_list(dom, para, sheet) {
+                numbering.original().next_marker(&id, ilvl);
+            }
+            return (String::new(), String::new(), 0);
+        }
     };
-    (numbering.next_marker(&num_id, ilvl), num_id, ilvl)
+    let mut mark = para_mark_rev(dom, para).map_or(RevMark::None, |(mark, _)| mark);
+    // A tracked change that put the paragraph in this list: the original
+    // counts it in its old list, if any, and shows no old number (en r
+    // 00f467c010's "2)" was unnumbered before, Word draws no "1)2)").
+    if mark == RevMark::None
+        && let Some(prior) = prior_list(dom, para, sheet)
+        && prior.as_ref() != Some(&(num_id.clone(), ilvl))
+    {
+        if let Some((id, old_ilvl)) = prior {
+            numbering.original().next_marker(&id, old_ilvl);
+        }
+        mark = RevMark::Ins;
+    }
+    (numbering.next_revised(&num_id, ilvl, mark), num_id, ilvl)
+}
+
+/// The revision a list label carries: its paragraph mark's, else an
+/// insertion by the `w:pPrChange` that put the paragraph in this list (Word
+/// 16 probe chg0930: the "2." a change numbered is inked and underlined).
+fn label_rev<'a>(
+    dom: &'a Dom,
+    para: NodeId,
+    sheet: &StyleSheet,
+    num_id: &str,
+    ilvl: u32,
+) -> Option<(RevMark, &'a str)> {
+    para_mark_rev(dom, para).or_else(|| {
+        let prior = prior_list(dom, para, sheet)?;
+        if prior.is_some_and(|(id, old)| id == num_id && old == ilvl) {
+            return None;
+        }
+        let change = dom
+            .element(para, &W::p_pr())
+            .and_then(|ppr| dom.element(ppr, &W::p_pr_change()))?;
+        Some((RevMark::Ins, attr_any(dom, change, "author").unwrap_or("")))
+    })
+}
+
+/// The list a tracked formatting change (`w:pPrChange`) says the paragraph
+/// was in before: `None` without one, `Some(None)` when its old properties
+/// number nothing.
+fn prior_list(dom: &Dom, para: NodeId, sheet: &StyleSheet) -> Option<Option<(String, u32)>> {
+    let old = dom
+        .element(para, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::p_pr_change()))
+        .and_then(|change| dom.element(change, &W::p_pr()))?;
+    let direct = match num_pr(dom, old) {
+        (Some(id), ilvl) => Some((id, ilvl)),
+        (None, _) => first_named(dom, old, "pStyle")
+            .and_then(|ps| dom.attribute(ps, &W::val()))
+            .and_then(|sid| sheet.by_id.get(sid))
+            .and_then(|named| Some((named.num_id.clone()?, named.ilvl))),
+    };
+    Some(direct.filter(|(id, _)| id != "0"))
+}
+
+/// The revision on a paragraph's mark (`pPr/rPr`) and its author.
+fn para_mark_rev(dom: &Dom, para: NodeId) -> Option<(RevMark, &str)> {
+    let rpr = dom
+        .element(para, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))?;
+    dom.elements(rpr, None).into_iter().find_map(|c| {
+        let mark = rev_mark_of(dom, c)?;
+        Some((mark, attr_any(dom, c, "author").unwrap_or("")))
+    })
+}
+
+/// The author Word charges a list's renumbering to: the next ink after the
+/// document's own authors (probe lbl0930: msi's 394146, then 0B6A0B).
+const RENUMBER_AUTHOR: &str = "\u{1}renumbered";
+
+/// Word draws a list label with its paragraph mark's revision, not its
+/// text's (probe lbl0930): an inserted mark inks and underlines "3." and
+/// its tab over unrevised text, a deleted one strikes it, and inserted
+/// text under a plain mark leaves the label alone. A renumbered paragraph
+/// shows its old number plain, then the new one inked and underlined in
+/// the renumbering's own colour ("1.2."); only `RevisionStyle::Word`
+/// copies that, our own marks keep the revised number alone.
+fn revise_list_label(
+    runs: &mut Vec<TextRun>,
+    mark: Option<(RevMark, &str)>,
+    old: Option<String>,
+    authors: &mut AuthorColors,
+) {
+    let Some(label) = runs.first_mut().filter(|r| r.list_marker) else {
+        return;
+    };
+    if let Some((mark, author)) = mark {
+        apply_rev(&mut label.style, mark, authors.color(author));
+        label.rev = true;
+        return;
+    }
+    let Some(old) =
+        old.filter(|_| matches!(REVISIONS.with(std::cell::Cell::get), RevisionStyle::Word))
+    else {
+        return;
+    };
+    let plain = label.with_text(old.trim_end_matches(['\t', ' ']));
+    apply_rev(
+        &mut label.style,
+        RevMark::Ins,
+        authors.color(RENUMBER_AUTHOR),
+    );
+    label.rev = true;
+    runs.insert(0, plain);
 }
 
 fn table_style_id(dom: &Dom, table: NodeId) -> Option<&str> {
@@ -11088,6 +11222,12 @@ fn table_block(
                     let mut run = TextRun::new(mark, style);
                     run.list_marker = true;
                     runs.insert(0, run);
+                    revise_list_label(
+                        &mut runs,
+                        label_rev(dom, child, sheet, &num_id, ilvl),
+                        numbering.old_label.take(),
+                        authors,
+                    );
                 }
                 if empty_ink && let Some((color, width)) = cell_rule {
                     let mut rule = TextRun::new(" ", r.clone());
@@ -21665,6 +21805,8 @@ impl<'a> Layout<'a> {
             let x = self.flow_left() + indent + extra + first_extra;
             let baseline = self.y;
             let ops_start = self.current().ops.len();
+            let mut x = x;
+            let mut line = line;
             if line_i == 0
                 && let Some(mark) = marker
             {
@@ -21681,6 +21823,26 @@ impl<'a> Layout<'a> {
                     self.flow_left() + indent - hanging + extra
                 };
                 self.paint_run(mark, mx, baseline);
+                let mut end = mx + self.run_width_pt(mark, mark.text.trim_end());
+                let mut gap_style = &mark.style;
+                // A renumbered paragraph's new number follows its old one,
+                // then tabs on to the next stop (probe lbl0930: "1." at 90,
+                // "2." at 99.84, the text at 144).
+                if let Some((new, rest)) = line.split_first().filter(|(r, _)| r.list_marker) {
+                    let label = new.with_text(new.text.trim_end());
+                    end = self.paint_run(&label, end, baseline);
+                    gap_style = &new.style;
+                    if end >= x {
+                        x = self.advance_tab(end, baseline, 0.0, 0.0, &new.style);
+                        end = x;
+                    }
+                    line = rest;
+                }
+                // The label's tab carries its revision marks to the text
+                // (probe lbl0930: an inserted mark underlines 90 to 108).
+                if x > end {
+                    self.decorate_run(end, gap_style.paint_y(baseline), x - end, gap_style);
+                }
             }
             // Word puts the page's left margin on its 1/300in grid (85.05pt
             // paints at 84.96: 295 of fixtures_500's 300 off-grid margins)
@@ -22661,6 +22823,12 @@ impl<'a> Layout<'a> {
                     }
                 }
             }
+        }
+        // Word underlines and strikes a tab's gap with its run, a trailing
+        // tab too (Word 16 probe tab0930: "Dend<tab>" underlined to 216,
+        // inserted "Gins<tab>Hins" and a list label to its indent).
+        if dest > x {
+            self.decorate_run(x, style.paint_y(y), dest - x, style);
         }
         dest.max(x)
     }
@@ -26432,7 +26600,18 @@ impl<'a> Layout<'a> {
                                         .unwrap_or((run.text.as_str(), ""));
                                     let mark = run.with_text(head.trim_end());
                                     tx = self.paint_run(&mark, tx, ty);
-                                    tx = tx.max(x + pad_l + para.style.indent_left + extra);
+                                    let indent = x + pad_l + para.style.indent_left + extra;
+                                    if indent > tx {
+                                        // The label's tab carries its revision
+                                        // marks (probe lbl0930).
+                                        self.decorate_run(
+                                            tx,
+                                            run.style.paint_y(ty),
+                                            indent - tx,
+                                            &run.style,
+                                        );
+                                    }
+                                    tx = tx.max(indent);
                                     if !tail.is_empty() {
                                         tx = self.paint_run(&run.with_text(tail), tx, ty);
                                     }

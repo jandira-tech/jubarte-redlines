@@ -142,6 +142,23 @@ The other 3 of the 32 are not differences:
   widths. If it is ever copied, it belongs in Word mode only, with ours kept
   as the default.
 
+### 8. Renumbered list items (PDF)
+
+- **What happens.** Word numbers a revised list twice: once for the
+  original document and once for the revised one. When an item keeps its
+  paragraph mark but its two numbers differ, Word paints the old number
+  plain, then the new one inked and underlined in an author colour of its
+  own ("1.2.", "3.1."). The text then tabs on to the next stop. Word 16
+  probes lbl0930 and lbl0930b, 2026-10-01.
+- **What we do.** Only `--revisions word` copies the number pair. Our own
+  styles show one number: the revised one, or the original one for an
+  item whose mark is deleted. Both modes ink an inserted or deleted mark's
+  label as Word does.
+- **Which is better.** Ours to read. Word's pair does show where a list
+  renumbered, and it pushes the item's text one tab stop right. This is
+  Arthur's call; flipping the default is one condition in
+  `revise_list_label`.
+
 ## Accept All / Reject All: where Word's result is worse (not copied yet)
 
 `jubarte accept` / `jubarte reject` (and per-change accept/reject) follow

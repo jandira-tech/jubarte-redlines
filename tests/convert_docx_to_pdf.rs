@@ -858,6 +858,275 @@ fn numbered_list_revision_keeps_single_counter_after_mini_310() {
     );
 }
 
+/// A `%1.` decimal list (numId 1) and a Symbol bullet list (numId 2).
+const REVISED_LIST_NUMBERING: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+    <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+      <w:abstractNum w:abstractNumId=\"0\">\
+        <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"decimal\"/>\
+          <w:lvlText w:val=\"%1.\"/>\
+          <w:pPr><w:ind w:left=\"720\" w:hanging=\"270\"/></w:pPr></w:lvl>\
+      </w:abstractNum>\
+      <w:abstractNum w:abstractNumId=\"1\">\
+        <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"bullet\"/>\
+          <w:lvlText w:val=\"\u{F0B7}\"/>\
+          <w:pPr><w:ind w:left=\"720\" w:hanging=\"270\"/></w:pPr>\
+          <w:rPr><w:rFonts w:ascii=\"Symbol\" w:hAnsi=\"Symbol\" w:hint=\"default\"/></w:rPr></w:lvl>\
+      </w:abstractNum>\
+      <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+      <w:num w:numId=\"2\"><w:abstractNumId w:val=\"1\"/></w:num>\
+    </w:numbering>";
+
+/// A list paragraph whose mark (`pPr/rPr`) and text are each optionally
+/// wrapped in `ins` / `del` by one author.
+fn revised_list_para(num_id: u32, text: &str, mark: Option<&str>, body: Option<&str>) -> String {
+    let date = "w:author=\"msi\" w:date=\"2026-09-22T12:25:00Z\"";
+    let mark = mark.map_or(String::new(), |m| {
+        format!("<w:rPr><w:{m} w:id=\"1\" {date}/></w:rPr>")
+    });
+    let tag = if body == Some("del") { "delText" } else { "t" };
+    let run = format!("<w:r><w:{tag} xml:space=\"preserve\">{text}</w:{tag}></w:r>");
+    let run = body.map_or(run.clone(), |b| {
+        format!("<w:{b} w:id=\"2\" {date}>{run}</w:{b}>")
+    });
+    format!(
+        "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"{num_id}\"/></w:numPr>{mark}</w:pPr>{run}</w:p>"
+    )
+}
+
+const LETTER_SECT: &str = "<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+    <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+
+/// Whether the touching `boxes` (x, y, w, h) on one line cover `from..to`.
+fn rules_cover(boxes: &[(f32, f32, f32, f32)], from: f32, to: f32) -> bool {
+    boxes.iter().any(|&(x0, y0, _, _)| {
+        if (x0 - from).abs() > 0.5 {
+            return false;
+        }
+        let mut end = from;
+        let mut row: Vec<(f32, f32)> = boxes
+            .iter()
+            .filter(|b| (b.1 - y0).abs() < 0.1)
+            .map(|b| (b.0, b.0 + b.2))
+            .collect();
+        row.sort_by(|a, b| a.0.total_cmp(&b.0));
+        for (x, x2) in row {
+            if x <= end + 0.05 {
+                end = end.max(x2);
+            }
+        }
+        end >= to - 0.5
+    })
+}
+
+const BLACK: &str = "0.000 0.000 0.000";
+
+/// The fill of the glyph right before `needle` (its list label's last
+/// character: the "." of a number, a bullet's trailing space) and of
+/// `needle`'s own first glyph.
+fn label_and_text_fills(pdf: &[u8], needle: &str) -> (String, String) {
+    let (text, fills) = pdf_glyph_fills(pdf);
+    let at = text
+        .find(needle)
+        .unwrap_or_else(|| panic!("{needle} painted in {text:?}"));
+    let chars = text[..at].chars().count();
+    (fills[chars - 1].clone(), fills[chars].clone())
+}
+
+#[test]
+fn a_list_label_follows_its_paragraph_marks_insertion() {
+    // tb27bda (Word 16 probe lbl0930): Word draws a list label with the
+    // revision of its paragraph mark, not of its text. An inserted mark
+    // inks and underlines the label through its tab ("3." over an
+    // unrevised "Only the mark inserted"); inserted text under a plain
+    // mark leaves the label alone. A paragraph that was in the original
+    // but renumbers shows its old number, then the new one inked and
+    // underlined in another author's colour: "1.2.", "2.4.".
+    let body = [
+        revised_list_para(1, "Both mark and text inserted", Some("ins"), Some("ins")),
+        revised_list_para(1, "Only the text inserted", None, Some("ins")),
+        revised_list_para(1, "Only the mark inserted", Some("ins"), None),
+        revised_list_para(1, "Plain item", None, None),
+    ]
+    .concat()
+        + LETTER_SECT;
+    let docx = numbering_docx(&body, Some(REVISED_LIST_NUMBERING));
+    let pdf = docx_to_pdf(&docx).expect("convert inserted list marks");
+    let (text, _) = pdf_glyph_fills(&pdf);
+    for want in [
+        "1.Both mark",
+        "1.2.Only the text",
+        "3.Only the mark",
+        "2.4.Plain item",
+    ] {
+        assert!(text.contains(want), "{want} in Word's labels: {text:?}");
+    }
+    let red = "0.820 0.204 0.220";
+    let (label, item) = label_and_text_fills(&pdf, "Only the mark inserted");
+    assert_eq!((label.as_str(), item.as_str()), (red, BLACK));
+    let (label, _) = label_and_text_fills(&pdf, "Only the text inserted");
+    assert_eq!(
+        label, "0.000 0.471 0.831",
+        "the new number takes the next author's ink"
+    );
+    let streams = pdf_content_streams(&pdf).concat();
+    // The label hangs 13.5pt from 94.5; its tab reaches the text at 108.
+    let red_lines = pdf_fill_boxes_in(&streams, 0.820, 0.204, 0.220);
+    assert!(
+        rules_cover(&red_lines, 94.5, 108.0),
+        "the inserted mark underlines \"3.\" and its tab to 108: {red_lines:?}"
+    );
+    // The new number follows the old one past the indent, so its tab runs
+    // on to the next default stop.
+    let blue_lines = pdf_fill_boxes_in(&streams, 0.0, 0.471, 0.831);
+    let (new_x, _) = pdf_literal_td_xy(&pdf, "Only the text inserted").expect("item painted");
+    assert!((new_x - 144.0).abs() < 0.5, "text tabs on to 144: {new_x}");
+    assert!(
+        blue_lines.iter().any(|&(x, _, _, _)| x > 95.0 && x < 108.0)
+            && blue_lines
+                .iter()
+                .any(|&(x, _, w, _)| (x + w - 144.0).abs() < 0.5),
+        "the new number and its tab are underlined to 144: {blue_lines:?}"
+    );
+
+    // Our own marks keep one number, the revised document's.
+    let pdf = docx_to_pdf_with(&docx, PdfOptions::default()).expect("convert conventional");
+    let (text, _) = pdf_glyph_fills(&pdf);
+    for want in [
+        "1.Both mark",
+        "2.Only the text",
+        "3.Only the mark",
+        "4.Plain item",
+    ] {
+        assert!(text.contains(want), "{want} in our labels: {text:?}");
+    }
+    let (label, item) = label_and_text_fills(&pdf, "Only the mark inserted");
+    assert!(
+        label != BLACK && item == BLACK,
+        "label {label}, item {item}"
+    );
+}
+
+#[test]
+fn numbering_a_tracked_change_added_shows_no_old_number() {
+    // en r 00f467c010: "2)" got its numbering through a w:pPrChange whose
+    // old pPr numbers nothing, after an inserted "1)". It was in no list
+    // before, so Word shows only "2)"; counting it in the original list
+    // painted "1)2)".
+    let date = "w:author=\"msi\" w:date=\"2026-09-22T12:25:00Z\"";
+    let added = format!(
+        "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr>\
+           <w:pPrChange w:id=\"3\" {date}><w:pPr><w:ind w:firstLine=\"720\"/></w:pPr></w:pPrChange>\
+         </w:pPr><w:r><w:t>Numbered by the change</w:t></w:r></w:p>"
+    );
+    let body = revised_list_para(1, "Inserted first", Some("ins"), Some("ins"))
+        + &added
+        + &revised_list_para(1, "Plain third", None, None)
+        + LETTER_SECT;
+    let pdf = docx_to_pdf(&numbering_docx(&body, Some(REVISED_LIST_NUMBERING)))
+        .expect("convert pPrChange numbering");
+    let (text, _) = pdf_glyph_fills(&pdf);
+    for want in ["1.Inserted first", "2.Numbered by", "1.3.Plain third"] {
+        assert!(text.contains(want), "{want} in Word's labels: {text:?}");
+    }
+    // Word 16 probe chg0930: the number the change added is inked and
+    // underlined like an insertion, the text stays plain.
+    let (label, item) = label_and_text_fills(&pdf, "Numbered by the change");
+    assert_eq!(
+        (label.as_str(), item.as_str()),
+        ("0.820 0.204 0.220", BLACK)
+    );
+}
+
+#[test]
+fn a_list_label_follows_its_paragraph_marks_deletion() {
+    // Word 16 probe lbl0930b: a deleted mark inks and strikes its label
+    // and keeps the original number; the paragraphs after it show the
+    // original number, then the revised one ("3.1."). Bullets follow
+    // the mark the same way and never renumber.
+    let body = [
+        revised_list_para(1, "Deleted mark and text", Some("del"), Some("del")),
+        revised_list_para(1, "Deleted mark only", Some("del"), None),
+        revised_list_para(1, "Deleted text only", None, Some("del")),
+        revised_list_para(1, "Plain A", None, None),
+        revised_list_para(1, "Plain B", None, None),
+        revised_list_para(2, "Bullet ins mark", Some("ins"), Some("ins")),
+        revised_list_para(2, "Bullet ins text", None, Some("ins")),
+    ]
+    .concat()
+        + LETTER_SECT;
+    let docx = numbering_docx(&body, Some(REVISED_LIST_NUMBERING));
+    let pdf = docx_to_pdf(&docx).expect("convert deleted list marks");
+    let (text, _) = pdf_glyph_fills(&pdf);
+    for want in [
+        "1.Deleted mark and",
+        "2.Deleted mark only",
+        "3.1.Deleted text only",
+        "4.2.Plain A",
+        "5.3.Plain B",
+    ] {
+        assert!(text.contains(want), "{want} in Word's labels: {text:?}");
+    }
+    let red = "0.820 0.204 0.220";
+    let (label, item) = label_and_text_fills(&pdf, "Deleted mark only");
+    assert_eq!((label.as_str(), item.as_str()), (red, BLACK));
+    let (label, _) = label_and_text_fills(&pdf, "Bullet ins mark");
+    assert_eq!(label, red);
+    let (label, _) = label_and_text_fills(&pdf, "Bullet ins text");
+    assert_eq!(label, BLACK, "inserted text alone leaves the bullet black");
+    let streams = pdf_content_streams(&pdf).concat();
+    let red_lines = pdf_fill_boxes_in(&streams, 0.820, 0.204, 0.220);
+    let struck = red_lines
+        .iter()
+        .filter(|&&(x, _, _, _)| (x - 94.5).abs() < 0.5)
+        .count();
+    assert!(
+        struck >= 2 && rules_cover(&red_lines, 94.5, 108.0),
+        "both deleted marks strike their label and tab: {red_lines:?}"
+    );
+
+    let pdf = docx_to_pdf_with(&docx, PdfOptions::default()).expect("convert conventional");
+    let (text, _) = pdf_glyph_fills(&pdf);
+    for want in [
+        "1.Deleted mark and",
+        "2.Deleted mark only",
+        "1.Deleted text only",
+        "2.Plain A",
+        "3.Plain B",
+    ] {
+        assert!(text.contains(want), "{want} in our labels: {text:?}");
+    }
+}
+
+#[test]
+fn a_tabs_gap_carries_its_runs_underline_and_revision() {
+    // Word 16 probe tab0930: an underlined run's tab is underlined to its
+    // stop, a trailing one too ("Nund<tab>" 72 to 108), and an inserted or
+    // deleted tab carries the insertion underline or the strike across the
+    // gap ("Gins<tab>Hins" one rule). We left every tab gap bare.
+    let date = "w:author=\"msi\" w:date=\"2026-09-22T12:25:00Z\"";
+    let body = format!(
+        "<w:p><w:r><w:rPr><w:u w:val=\"single\"/></w:rPr><w:t>Nund</w:t></w:r>\
+           <w:r><w:rPr><w:u w:val=\"single\"/></w:rPr><w:tab/></w:r></w:p>\
+         <w:p><w:r><w:t xml:space=\"preserve\">Fplain </w:t></w:r>\
+           <w:ins w:id=\"1\" {date}><w:r><w:t>Gins</w:t></w:r><w:r><w:tab/></w:r>\
+           <w:r><w:t>Hins</w:t></w:r></w:ins></w:p>{LETTER_SECT}"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert underlined tabs");
+    let streams = pdf_content_streams(&pdf).concat();
+    let black = pdf_fill_boxes_in(&streams, 0.0, 0.0, 0.0);
+    assert!(
+        rules_cover(&black, 72.0, 108.0),
+        "the trailing underlined tab runs to its stop: {black:?}"
+    );
+    let (gins, _) = pdf_literal_td_xy(&pdf, "Gins").expect("Gins painted");
+    let (hins, _) = pdf_literal_td_xy(&pdf, "Hins").expect("Hins painted");
+    let red = pdf_fill_boxes_in(&streams, 0.820, 0.204, 0.220);
+    assert!(
+        rules_cover(&red, gins, hins + 10.0),
+        "the inserted tab is underlined from {gins} through {hins}: {red:?}"
+    );
+}
+
 #[test]
 fn a_levels_hansi_only_font_leaves_its_ascii_number_in_the_text_face() {
     // English part b 2386218b: an imported list level sets only
@@ -11102,11 +11371,18 @@ fn official_potpourri_two_digit_listnumber_still_hangs() {
         pairs >= 10,
         "Word 1.–10. hang at 72/90; fitz 10.Bake concat is theater; pairs={pairs}"
     );
+    // Word's own PDF numbers the third copy twice, original then revised
+    // (its inserted second copy took 6.–10.): "6.11.", "7.12.", "8.13.",
+    // and the deleted "10." alone. Word prints "9.13." after "8.13." for
+    // an unrevised item; we keep the count ("9.14.").
     let text = pdf_winansi_text(&pdf);
-    assert!(
-        !text.contains("6.11"),
-        "mini 310 All Markup 6.11 ITT-neg RL; text={text:?}"
-    );
+    for want in ["6.11.Preheat", "7.12.Whisk", "8.13.Sift"] {
+        assert!(
+            text.matches(want).count() == 1,
+            "{want} once; text={text:?}"
+        );
+    }
+    assert_eq!(text.matches("10.Bake").count(), 2, "copies two and three");
 }
 
 #[test]
@@ -32944,12 +33220,11 @@ fn settings_default_tab_stop_overrides_half_inch_grid() {
 }
 
 #[test]
-fn underlined_tab_stays_three_pt_tick_after_mini_447() {
-    // Word-faithful: file_22 / sd_2517 underline the tab *advance*
-    // (p103 288–522). Mini 445–448 painted that gap but ITT-neg:
-    // NR 59.4515/53.4527 (+0.0003, file_22/sd_2517 +0.010) vs KEEP
-    // 441–444 59.4512/53.4527; RL 55.5033/49.6304 (mean −0.0007,
-    // accepted sd_2517 redline −0.1095). Extra ink vs Quartz.
+fn an_underlined_tab_is_underlined_across_its_gap() {
+    // Word underlines the tab's advance (file_22 / sd_2517 p103 288–522;
+    // Word 16 probe tab0930 2026-10-01: "Bund<tab>Cund" one rule). Mini
+    // 445–448 painted it once and the old ITT scorer called it negative;
+    // the holdout and priority gates measure it neutral to positive now.
     let body = "<w:p><w:pPr><w:tabs>\
            <w:tab w:val=\"left\" w:pos=\"5760\"/>\
          </w:tabs></w:pPr>\
@@ -32964,8 +33239,8 @@ fn underlined_tab_stays_three_pt_tick_after_mini_447() {
         .filter(|(_, _, w, h)| *h > 0.0 && *h < 1.6 && *w > 40.0)
         .collect();
     assert!(
-        hair.is_empty(),
-        "mini 447 ITT-neg gap underline; keep the 3pt tick; hair={hair:?}"
+        hair.iter().any(|&(x, _, w, _)| x < 80.0 && x + w > 359.5),
+        "A's underline runs through the tab to the 288pt stop; hair={hair:?}"
     );
 }
 
@@ -33986,8 +34261,9 @@ fn shipped_docx_to_pdf_paints_ins_underline_and_del_strike() {
 #[test]
 fn del_list_bullet_marker_uses_del_ink() {
     // addition_removal p3: Word paints ListBullet • in #D13438 matching
-    // delText. The numbering glyph is inserted from paragraph rstyle
-    // (black) before collect_runs sees w:del.
+    // delText. The paragraph's mark is deleted with its text, and Word
+    // inks a label by its mark (probe lbl0930b: deleted text under a plain
+    // mark leaves the bullet black).
     let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
            <w:abstractNum w:abstractNumId=\"1\">\
@@ -33998,7 +34274,8 @@ fn del_list_bullet_marker_uses_del_ink() {
            </w:abstractNum>\
            <w:num w:numId=\"1\"><w:abstractNumId w:val=\"1\"/></w:num>\
          </w:numbering>";
-    let body = "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr>\
+    let body = "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr>\
+           <w:rPr><w:del w:id=\"1\" w:author=\"Pat\"/></w:rPr></w:pPr>\
          <w:del w:id=\"0\" w:author=\"Pat\"><w:r><w:delText>Parity</w:delText></w:r></w:del>\
          </w:p><w:sectPr/>";
     let pdf = docx_to_pdf(&numbering_docx(body, Some(numbering))).expect("convert del bullet");
