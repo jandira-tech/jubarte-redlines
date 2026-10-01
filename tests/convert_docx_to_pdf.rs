@@ -6279,6 +6279,12 @@ fn sample_footnote_parts() -> (String, String) {
 }
 
 fn diagram_docx(body: &str, data_xml: &str) -> Vec<u8> {
+    diagram_docx_parts(body, data_xml, None)
+}
+
+/// A diagram package; `drawing` is the cached `dsp:drawing` part Word
+/// paints the shapes from (linked from the document as diagramDrawing).
+fn diagram_docx_parts(body: &str, data_xml: &str, drawing: Option<&str>) -> Vec<u8> {
     let document = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
@@ -6308,6 +6314,9 @@ fn diagram_docx(body: &str, data_xml: &str) -> Vec<u8> {
         <Relationship Id=\"rIdDm\" \
           Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/diagramData\" \
           Target=\"diagrams/data1.xml\"/>\
+        <Relationship Id=\"rIdDd\" \
+          Type=\"http://schemas.microsoft.com/office/2007/relationships/diagramDrawing\" \
+          Target=\"diagrams/drawing1.xml\"/>\
         </Relationships>";
     let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
     let opts = SimpleFileOptions::default();
@@ -6322,6 +6331,10 @@ fn diagram_docx(body: &str, data_xml: &str) -> Vec<u8> {
     zip.write_all(doc_rels.as_bytes()).unwrap();
     zip.start_file("word/diagrams/data1.xml", opts).unwrap();
     zip.write_all(data_xml.as_bytes()).unwrap();
+    if let Some(drawing) = drawing {
+        zip.start_file("word/diagrams/drawing1.xml", opts).unwrap();
+        zip.write_all(drawing.as_bytes()).unwrap();
+    }
     zip.finish().unwrap().into_inner()
 }
 
@@ -9180,6 +9193,56 @@ fn diagram_data_labels_are_painted() {
         shows >= 2,
         "diagram data labels must paint (got {shows} Tj); tail {}",
         &text[text.len().saturating_sub(280)..]
+    );
+}
+
+#[test]
+fn a_diagram_only_paragraph_takes_the_room_of_a_picture_its_size() {
+    // _to_improve 25e6d4b508: a 492pt inline SmartArt alone in its
+    // paragraph fits page 10 in Word, as a picture its size does in
+    // jubarte; we laid the paragraph's empty text line above the diagram
+    // too, pushed it to page 11 and ended a page long.
+    let frame = |graphic: &str| {
+        format!(
+            "<w:p><w:r><w:t>LeadLine</w:t></w:r></w:p>\
+             <w:p><w:r><w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">\
+               <wp:extent cx=\"2540000\" cy=\"1270000\"/><wp:docPr id=\"1\" name=\"Object 1\"/>\
+               {graphic}</wp:inline></w:drawing></w:r></w:p>\
+             <w:p><w:r><w:t>AfterLine</w:t></w:r></w:p><w:sectPr/>"
+        )
+    };
+    let diagram = frame(
+        "<a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/diagram\">\
+           <dgm:relIds r:dm=\"rIdDm\"/></a:graphicData></a:graphic>",
+    );
+    let data = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <dgm:dataModel xmlns:dgm=\"http://schemas.openxmlformats.org/drawingml/2006/diagram\" \
+           xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"><dgm:ptList/></dgm:dataModel>";
+    let drawing = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <dsp:drawing xmlns:dsp=\"http://schemas.microsoft.com/office/drawing/2008/diagram\" \
+           xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"><dsp:spTree>\
+           <dsp:sp><dsp:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"2540000\" cy=\"1270000\"/></a:xfrm>\
+             <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>\
+             <a:solidFill><a:srgbClr val=\"4472C4\"/></a:solidFill></dsp:spPr></dsp:sp>\
+         </dsp:spTree></dsp:drawing>";
+    let picture = frame(
+        "<a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+           <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill></pic:pic>\
+         </a:graphicData></a:graphic>",
+    );
+    let after = |pdf: &[u8]| {
+        pdf_glyph_text_xy(pdf, "AfterLine")
+            .expect("AfterLine paints")
+            .1
+    };
+    let with_diagram =
+        docx_to_pdf(&diagram_docx_parts(&diagram, data, Some(drawing))).expect("diagram paragraph");
+    let with_picture = docx_to_pdf(&drawing_docx(&picture)).expect("picture paragraph");
+    assert!(
+        (after(&with_diagram) - after(&with_picture)).abs() < 1.0,
+        "the line after sits where it does under a picture its size; diagram {} picture {}",
+        after(&with_diagram),
+        after(&with_picture)
     );
 }
 
