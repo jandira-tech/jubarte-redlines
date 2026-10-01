@@ -9387,11 +9387,16 @@ fn paragraph_block(
         let mut mark = rstyle.clone();
         apply_rpr(dom, rpr, &mut mark, &sheet.theme);
         pstyle.mark_run = Some(std::rc::Rc::new(mark));
-    } else if !floats_only && runs.iter().all(|r| r.text.trim().is_empty()) {
+    } else if (!floats_only
+        || boxes
+            .iter()
+            .any(|b| matches!(b.slot, ImageSlot::Flow) && !b.diag_shapes.is_empty()))
+        && runs.iter().all(|r| r.text.trim().is_empty())
+    {
         // An inline picture's line takes its multiple's extra from the
         // paragraph's own run style even when the mark sets nothing
         // (docxide case78: 1.15 over Arial 11 adds 1.9pt under each
-        // picture).
+        // picture), and so does an inline SmartArt diagram's.
         pstyle.mark_run = Some(std::rc::Rc::new(rstyle.clone()));
     }
     // A paragraph of plain spaces is a line of its mark, like an empty one
@@ -23006,21 +23011,7 @@ impl<'a> Layout<'a> {
             _ => 0.0,
         };
         self.page_has_body = true;
-        // 00762acc's logo at line 360: Word adds (1.5 - 1) x the mark's
-        // single line under the picture, as in chrome picture paragraphs.
-        let extra = match mark {
-            Some(run)
-                if style.line_exact.is_none()
-                    && style.line_at_least.is_none()
-                    && style.line_mult > 1.0 =>
-            {
-                let face = self
-                    .fonts
-                    .get(self.fonts.resolve(&run.family, run.bold, run.italic));
-                (style.line_mult - 1.0) * face.single_line_pt(run.layout_size())
-            }
-            _ => 0.0,
-        };
+        let extra = self.picture_line_extra(style, mark);
         let left = self.page.margin_l + style.indent_left;
         let room = self.content_width() - style.indent_left - style.indent_right;
         let mut row: Vec<(&LaidImage, f32, f32)> = Vec::new();
@@ -23060,6 +23051,26 @@ impl<'a> Layout<'a> {
             row.push((img, dw, dh));
         }
         flush(self, &mut row);
+    }
+
+    /// What a multiple line spacing adds under an inline picture or
+    /// SmartArt diagram: 00762acc's logo at line 360 gets (1.5 - 1) x the
+    /// mark's single line, as in chrome picture paragraphs, and so does a
+    /// diagram its size (Word 16 probe 2026-10-01).
+    fn picture_line_extra(&self, style: &ParaStyle, mark: Option<&RunStyle>) -> f32 {
+        match mark {
+            Some(run)
+                if style.line_exact.is_none()
+                    && style.line_at_least.is_none()
+                    && style.line_mult > 1.0 =>
+            {
+                let face = self
+                    .fonts
+                    .get(self.fonts.resolve(&run.family, run.bold, run.italic));
+                (style.line_mult - 1.0) * face.single_line_pt(run.layout_size())
+            }
+            _ => 0.0,
+        }
     }
 
     /// Paint `img` for a paragraph styled `style`: an inline picture sits
@@ -24296,8 +24307,17 @@ impl<'a> Layout<'a> {
                 // Chart 1: Word ChartSpace PDF y≈291.8 / fitz 248.2.
                 // 4pt after the hole parked it at 288.9 / 251.1. KEEP
                 // 631 title y+dh-19 compensated that 3pt. Mini 623
-                // after=8 stays. Images keep 4pt (emit_image).
-                self.y -= if box_.reserve_only { 1.0 } else { 4.0 };
+                // after=8 stays. A SmartArt diagram ends on its line's
+                // baseline like a picture its size (Word 16 probe
+                // 2026-10-01: 25e6d4b508's diagram and a picture in its
+                // place leave the next line 531.84pt below the last).
+                self.y -= if box_.reserve_only {
+                    1.0
+                } else if box_.diag_shapes.is_empty() {
+                    4.0
+                } else {
+                    0.0
+                };
                 (pos.0, pos.1, sized_w, sized_h)
             }
             slot @ ImageSlot::Float { pct_x, pct_y, .. } if pct_x.is_some() || pct_y.is_some() => {
@@ -28687,6 +28707,12 @@ fn layout(
                     let fixed = matches!(box_.slot, ImageSlot::Float { .. })
                         && !float_is_text_anchored(box_.slot);
                     lay.pinned(fixed, |lay| lay.emit_textbox(box_, style.indent_left));
+                    if !has_ink
+                        && matches!(box_.slot, ImageSlot::Flow)
+                        && !box_.diag_shapes.is_empty()
+                    {
+                        lay.y -= lay.picture_line_extra(&style, mark);
+                    }
                     if box_.behind && lay.pages.len() == page {
                         let at = lay.behind_end.min(start);
                         let ops: Vec<Op> = lay.current().ops.drain(start..).collect();
