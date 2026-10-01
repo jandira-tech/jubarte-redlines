@@ -7938,6 +7938,21 @@ fn para_is_empty_toc_field(dom: &Dom, para: NodeId) -> bool {
         .any(|n| !element_text(dom, n).trim().is_empty())
 }
 
+/// Whether the table at `i` joins the one straight before it. Word joins
+/// only flow tables of one layout type: a fixed table after an autofit
+/// one keeps its own place (probe_adj j6, j9; 0bf5192ed0's alternating
+/// tables).
+fn table_joins_previous(blocks: &[Block], i: usize) -> bool {
+    let Some(Block::Table { geom, .. }) = blocks.get(i) else {
+        return false;
+    };
+    geom.float.is_none()
+        && i.checked_sub(1).is_some_and(|j| {
+            matches!(&blocks[j], Block::Table { geom: prev, .. }
+                if prev.float.is_none() && prev.fixed == geom.fixed)
+        })
+}
+
 /// Column widths as laid out: Word's autofit on the cells' content for a
 /// grid another tool wrote, else `table_col_widths`; never past Word's
 /// 22in limit (`clamp_to_word_max_width`).
@@ -18684,6 +18699,15 @@ struct Layout<'a> {
     /// fills its page (`Layout::tail_float_bars_page`): no other line may
     /// share the page its last line lands on.
     tail_bar: bool,
+    /// The last top-level flow table's left edge, and whether the table
+    /// being laid follows it with nothing between and the same layout
+    /// type: Word joins the two into one table whose rows start at the
+    /// first one's left edge (Word 16 probe_adj 2026-10-01).
+    last_table_left: f32,
+    join_table: bool,
+    /// The widest table the one being laid joins: the joined table is
+    /// aligned by it (probe_adj j14, j17).
+    join_run_width: f32,
     /// Blocks before this index belong to a keepNext chain taller than a
     /// page, which keeps no more once it has moved (probe kn8 0930).
     keep_chain_until: usize,
@@ -19218,6 +19242,9 @@ impl<'a> Layout<'a> {
             behind_end: 0,
             at_page_top: true,
             tail_bar: false,
+            last_table_left: 0.0,
+            join_table: false,
+            join_run_width: 0.0,
             keep_next_follow: 0.0,
             keep_chain_until: 0,
             rev_bar: None,
@@ -25181,6 +25208,25 @@ impl<'a> Layout<'a> {
         }
     }
 
+    /// The widest of the tables that join the one at `first` (0 when
+    /// none does): Word aligns the joined table by it (probe_adj j14).
+    fn joined_run_width(&self, blocks: &[Block], first: usize) -> f32 {
+        let avail = self.content_width();
+        (first + 1..blocks.len())
+            .take_while(|&j| table_joins_previous(blocks, j))
+            .filter_map(|j| match &blocks[j] {
+                Block::Table {
+                    cols, rows, geom, ..
+                } => Some(
+                    resolved_col_widths(self.fonts, cols, rows, geom, avail)
+                        .iter()
+                        .sum::<f32>(),
+                ),
+                _ => None,
+            })
+            .fold(0.0, f32::max)
+    }
+
     fn emit_table(
         &mut self,
         cols: &[f32],
@@ -25212,11 +25258,17 @@ impl<'a> Layout<'a> {
         let col_w = resolved_col_widths(self.fonts, cols, rows, geom, avail);
         let row_h = table_row_heights(self.fonts, rows, &col_w, geom, self.space_for_ul);
         let used: f32 = col_w.iter().sum();
+        // Tables joined to this one align as one, by the widest.
+        let aligned = if self.nested_depth == 0 {
+            used.max(std::mem::take(&mut self.join_run_width))
+        } else {
+            used
+        };
         // A centred table wider than the measure overhangs both sides
         // (00afb3e6's 534.75pt table starts at 38.6 in a 72..540 measure).
         let shift = match style.align {
-            Align::Center => (avail - used) / 2.0,
-            Align::Right => (avail - used).max(0.0),
+            Align::Center => (avail - aligned) / 2.0,
+            Align::Right => (avail - aligned).max(0.0),
             Align::Left | Align::Justify => 0.0,
         };
         // Word mode < 15: border at margin + tblInd - left cell mar so
@@ -25251,6 +25303,16 @@ impl<'a> Layout<'a> {
             top - th < self.float_first_floor(slot, top)
         });
         let mut table_left = origin + shift + ind - pull;
+        // A table straight after another is its continuation: its rows keep
+        // their own widths and start at the first one's left edge, whatever
+        // its own alignment (probe_adj j1/j3: 79.2 for a centred and a
+        // left-aligned second table).
+        if self.nested_depth == 0 && geom.float.is_none() {
+            if std::mem::take(&mut self.join_table) {
+                table_left = self.last_table_left;
+            }
+            self.last_table_left = table_left;
+        }
         // A top-margin float's first page keeps the floor raised to one
         // body height under its top; restored if the table never breaks.
         let mut first_floor: Option<(usize, f32)> = None;
@@ -28868,7 +28930,13 @@ fn layout(
                 style,
                 borders,
                 geom,
-            } => lay.emit_table(cols, rows, style, *borders, geom),
+            } => {
+                lay.join_table = table_joins_previous(blocks, i);
+                if !lay.join_table {
+                    lay.join_run_width = lay.joined_run_width(blocks, i);
+                }
+                lay.emit_table(cols, rows, style, *borders, geom);
+            }
             Block::PageBreak { next, manual } => {
                 lay.last_after = i
                     .checked_sub(1)

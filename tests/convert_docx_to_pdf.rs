@@ -2272,6 +2272,78 @@ fn all_lowercase_small_caps_line_keeps_its_authored_height() {
 }
 
 #[test]
+fn a_table_right_after_another_starts_at_its_left_edge() {
+    // Word 16 probe_adj (2026-10-01): two tables with no paragraph between
+    // are one table to Word. A centred 453pt table A, then a 441pt table B
+    // centred (j1) or left-aligned (j3): B's rows keep their own cell
+    // widths and start at A's left edge (79.2 both times); B alone is
+    // centred on its own width (85.4). Only tables of one layout type
+    // join (j6/j9). 628's adjacent autofit tables.
+    let borders = r#"<w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders>"#;
+    let table = |grid: &[u32], texts: &[&str], jc: bool| {
+        let cols: String = grid
+            .iter()
+            .map(|w| format!(r#"<w:gridCol w:w="{w}"/>"#))
+            .collect();
+        let cells: String = grid
+            .iter()
+            .zip(texts)
+            .map(|(w, t)| {
+                format!(
+                    r#"<w:tc><w:tcPr><w:tcW w:w="{w}" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>{t}</w:t></w:r></w:p></w:tc>"#
+                )
+            })
+            .collect();
+        let jc = if jc { r#"<w:jc w:val="center"/>"# } else { "" };
+        format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/>{jc}{borders}</w:tblPr><w:tblGrid>{cols}</w:tblGrid><w:tr>{cells}</w:tr></w:tbl>"#
+        )
+    };
+    let a = table(&[1866, 2872, 2330, 1994], &["A1", "A2", "A3", "A4"], true);
+    let left = |body: String, text: &str| {
+        let pdf = docx_to_pdf(&minimal_docx_body(&format!("{body}<w:p/><w:sectPr/>")))
+            .expect("adjacent tables");
+        pdf_glyph_text_xy(&pdf, text).expect("cell text").0
+    };
+    let a1 = left(a.clone(), "A1");
+    for jc in [true, false] {
+        let b = table(&[2745, 6068], &["B1", "B2"], jc);
+        let b1 = left(format!("{a}{b}"), "B1");
+        assert!(
+            (b1 - a1).abs() < 0.3,
+            "jc center {jc}: B starts at A's left edge; A1 {a1}, B1 {b1}"
+        );
+    }
+    // The joined table is placed by its widest part: the narrow B first,
+    // then the wide A, starts both at A's centred edge (j14, j17: 79.9
+    // with A centred or not; 29379c0's three tables at 70.8).
+    for jc in [true, false] {
+        let wide = table(&[1866, 2872, 2330, 1994], &["W1", "W2", "W3", "W4"], jc);
+        let b = table(&[2745, 6068], &["B1", "B2"], true);
+        let body = format!("{b}{wide}");
+        let (b1, w1) = (left(body.clone(), "B1"), left(body, "W1"));
+        assert!(
+            (b1 - a1).abs() < 0.3 && (w1 - a1).abs() < 0.3,
+            "jc center {jc}: narrow then wide start at the wide one's centred edge {a1}; B1 {b1}, W1 {w1}"
+        );
+    }
+    // Apart, B keeps its own centring; so does a fixed-layout B (j6:
+    // 86.2, not 79.9), as in 0bf5192ed0's alternating tables.
+    let b = table(&[2745, 6068], &["B1", "B2"], true);
+    let apart = left(format!("{a}<w:p/>{b}"), "B1");
+    assert!(
+        apart - a1 > 5.0,
+        "a paragraph between keeps the tables apart; A1 {a1}, B1 {apart}"
+    );
+    let fixed = b.replace("</w:tblPr>", r#"<w:tblLayout w:type="fixed"/></w:tblPr>"#);
+    let own = left(format!("{a}{fixed}"), "B1");
+    assert!(
+        (own - apart).abs() < 0.3,
+        "a fixed table after an autofit one keeps its own place; B1 {own}, apart {apart}"
+    );
+}
+
+#[test]
 fn contextual_spacing_drops_only_the_flagged_paragraphs_share_of_the_gap() {
     // Word 16 probe_cx (2026-10-01), two Normal paragraphs, compat 15:
     // the gap is max(after, before) split into A's after and B's excess
