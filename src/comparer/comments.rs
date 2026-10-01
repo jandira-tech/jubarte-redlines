@@ -1013,19 +1013,10 @@ fn namespace_declarations(dom: &Dom, root: NodeId) -> HashMap<String, String> {
         .collect()
 }
 
-fn is_namespace_qname_list(name: &XName) -> bool {
-    if name.namespace_name().is_empty() {
-        return name.local_name() == "Requires";
-    }
-    name.namespace_name() == MC::URI
-        && matches!(
-            name.local_name(),
-            "Ignorable"
-                | "PreserveAttributes"
-                | "PreserveElements"
-                | "ProcessContent"
-                | "MustUnderstand"
-        )
+/// The shared MC prefix-list test, for an element that may have no name.
+fn is_namespace_qname_list(element: Option<&XName>, name: &XName) -> bool {
+    element
+        .is_some_and(|element| crate::xmllinq::serialize::is_namespace_prefix_list(element, name))
 }
 
 fn qname_token_prefix(token: &str) -> &str {
@@ -1065,11 +1056,12 @@ fn preserve_cloned_namespace_context(
         {
             used_uris.insert(name.namespace_name().to_string());
         }
+        let element_name = dom.name(element);
         for (name, value) in dom.attributes(element) {
             if !dom.is_namespace_declaration(&name) && !name.namespace_name().is_empty() {
                 used_uris.insert(name.namespace_name().to_string());
             }
-            if is_namespace_qname_list(&name) {
+            if is_namespace_qname_list(element_name.as_ref(), &name) {
                 required_prefixes.extend(
                     value
                         .split_whitespace()
@@ -1141,8 +1133,9 @@ fn preserve_cloned_namespace_context(
 
     if !rewrites.is_empty() {
         for element in dom.descendants_and_self(clone, None) {
+            let element_name = dom.name(element);
             for (name, value) in dom.attributes(element) {
-                if !is_namespace_qname_list(&name) {
+                if !is_namespace_qname_list(element_name.as_ref(), &name) {
                     continue;
                 }
                 let rewritten = value

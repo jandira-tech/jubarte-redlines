@@ -57,7 +57,19 @@ pub fn check_word_valid_package(bytes: &[u8]) -> ValidityReport {
     check_deleted_text_has_deletion(&pkg, &mut report);
     check_bookmarks_outside_single_value_controls(&pkg, &mut report);
     check_comment_graph(&pkg, &mut report);
+    check_namespace_qname_contexts(&pkg, &mut report);
     report
+}
+
+/// Every prefix an MC prefix list names (`mc:Choice/@Requires`,
+/// `mc:Ignorable`, …) is bound where it is named, in every XML part: Word
+/// rejects a header whose `mc:Choice Requires="wps"` names an unbound `wps`.
+fn check_namespace_qname_contexts(pkg: &PartFs, report: &mut ValidityReport) {
+    for part in pkg.parts() {
+        if part.ends_with(".xml") {
+            check_namespace_qname_context(pkg, &part, report);
+        }
+    }
 }
 
 fn check_content_types_and_xml(pkg: &PartFs, report: &mut ValidityReport) {
@@ -556,11 +568,6 @@ fn check_comment_graph(pkg: &PartFs, report: &mut ValidityReport) {
     }
 
     check_comment_family_packaging(pkg, &main, report);
-    for (part, _, _) in COMMENT_FAMILY {
-        if pkg.part_bytes(part).is_some() {
-            check_namespace_qname_context(pkg, part, report);
-        }
-    }
 
     let aux_present = COMMENT_FAMILY[1..]
         .iter()
@@ -840,8 +847,16 @@ fn check_parent_cycles(parents: &HashMap<String, String>, report: &mut ValidityR
     }
 }
 
-fn is_namespace_qname_list(name: &jubarte::xmllinq::XName) -> bool {
-    (name.namespace_name().is_empty() && name.local_name() == "Requires")
+/// An unqualified `Requires` is a prefix list only on `mc:Choice`; on any
+/// other element (a custom XML part) it is application data.
+fn is_namespace_qname_list(
+    element: &jubarte::xmllinq::XName,
+    name: &jubarte::xmllinq::XName,
+) -> bool {
+    (name.namespace_name().is_empty()
+        && name.local_name() == "Requires"
+        && element.namespace_name() == MC::URI
+        && element.local_name() == "Choice")
         || (name.namespace_name() == MC::URI
             && matches!(
                 name.local_name(),
@@ -861,8 +876,11 @@ fn check_namespace_qname_context(pkg: &PartFs, part: &str, report: &mut Validity
     let doc = dom.parse_xdocument(&xml);
     let Some(root) = dom.root(doc) else { return };
     for element in dom.descendants_and_self(root, None) {
+        let Some(element_name) = dom.name(element) else {
+            continue;
+        };
         for (name, value) in dom.attributes(element) {
-            if !is_namespace_qname_list(&name) {
+            if !is_namespace_qname_list(&element_name, &name) {
                 continue;
             }
             for token in value.split_whitespace() {

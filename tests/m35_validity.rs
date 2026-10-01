@@ -550,3 +550,149 @@ fn t16_office_extension_namespaces_become_ignorable_on_the_part_root() {
     declare_extension_namespaces_ignorable(&mut dom, root);
     assert_eq!(dom.serialize_element(root), once);
 }
+
+#[test]
+fn t17_compatibility_prefixes_are_bound_where_they_are_named() {
+    use jubarte::comparer::finalize::bind_compatibility_prefixes;
+    const MC_URI: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+    const WPS_URI: &str = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape";
+    let xmlns = jubarte::xmllinq::XNamespace::xmlns();
+    let requires = jubarte::xmllinq::XNamespace::none().name("Requires");
+    let choice = |dom: &Dom, root: NodeId| {
+        dom.descendants(
+            root,
+            Some(&jubarte::xmllinq::XNamespace::get(MC_URI).name("Choice")),
+        )[0]
+    };
+    // A header that received B's shape: `wps` is bound only on the shape, and
+    // an unknown `foo` gates a second Choice.
+    let header = |root_extra: &str| {
+        format!(
+            "<w:hdr xmlns:w=\"{w}\" xmlns:mc=\"{MC_URI}\"{root_extra}><w:p><w:r>\
+             <mc:AlternateContent><mc:Choice Requires=\"wps\"><w:drawing>\
+             <wps:wsp xmlns:wps=\"{WPS_URI}\"/></w:drawing></mc:Choice>\
+             <mc:Choice Requires=\"foo\"/><mc:Fallback/></mc:AlternateContent>\
+             </w:r></w:p></w:hdr>",
+            w = W::URI
+        )
+    };
+
+    let mut dom = Dom::new();
+    let root = parse(&mut dom, &header(""));
+    bind_compatibility_prefixes(&mut dom, root);
+    // Bound on the root, as Word writes it; the unknown prefix is left alone.
+    assert_eq!(dom.attribute(root, &xmlns.name("wps")), Some(WPS_URI));
+    assert_eq!(dom.attribute(root, &xmlns.name("foo")), None);
+    assert_eq!(dom.attribute(choice(&dom, root), &requires), Some("wps"));
+    // Idempotent: a second pass changes nothing.
+    let once = dom.serialize_element(root);
+    bind_compatibility_prefixes(&mut dom, root);
+    assert_eq!(dom.serialize_element(root), once);
+
+    // A binding the part already has is in scope: it is never overwritten.
+    let mut dom = Dom::new();
+    let root = parse(&mut dom, &header(" xmlns:wps=\"urn:other\""));
+    bind_compatibility_prefixes(&mut dom, root);
+    assert_eq!(dom.attribute(root, &xmlns.name("wps")), Some("urn:other"));
+    assert_eq!(dom.attribute(choice(&dom, root), &xmlns.name("wps")), None);
+}
+
+/// Every prefix the MC lists name (whole tokens and QName prefixes) has a
+/// declaration in scope in `xml` once it is parsed again.
+fn unbound_prefix_list_tokens(xml: &str) -> Vec<String> {
+    const MC_URI: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+    let is_namespace_prefix_list =
+        |element: &jubarte::xmllinq::XName, name: &jubarte::xmllinq::XName| match name
+            .namespace_name()
+        {
+            "" => {
+                name.local_name() == "Requires"
+                    && element.namespace_name() == MC_URI
+                    && element.local_name() == "Choice"
+            }
+            // Every MC attribute (Ignorable, ProcessContent, …) is a prefix list.
+            ns => ns == MC_URI,
+        };
+    let mut dom = Dom::new();
+    let root = parse(&mut dom, xml);
+    let mut unbound = Vec::new();
+    for el in dom.descendants_and_self(root, None) {
+        let Some(element) = dom.name(el) else {
+            continue;
+        };
+        for (name, value) in dom.attributes(el) {
+            if !is_namespace_prefix_list(&element, &name) {
+                continue;
+            }
+            for token in value.split_whitespace() {
+                let prefix = token.split_once(':').map_or(token, |(prefix, _)| prefix);
+                let bound = dom.ancestors_and_self(el, None).iter().any(|&anc| {
+                    dom.attributes(anc)
+                        .iter()
+                        .any(|(n, _)| dom.is_namespace_declaration(n) && n.local_name() == prefix)
+                });
+                if !bound {
+                    unbound.push(token.to_string());
+                }
+            }
+        }
+    }
+    unbound
+}
+
+#[test]
+fn t18_aliased_prefixes_keep_their_declarations_through_serialization() {
+    use jubarte::comparer::finalize::bind_compatibility_prefixes;
+    const MC_URI: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+    const WPS_URI: &str = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape";
+    // The part binds the shape namespace as `s`; its lists name `s`, and the
+    // grafted Choice names `wps`, which the bind pass adds as a second prefix
+    // for the same namespace.
+    let header = |root_extra: &str| {
+        format!(
+            "<w:hdr xmlns:w=\"{w}\" xmlns:mc=\"{MC_URI}\" xmlns:s=\"{WPS_URI}\"{root_extra} \
+             mc:Ignorable=\"s\"><w:p mc:PreserveElements=\"s:wsp\" \
+             mc:ProcessContent=\"s:txbx\"><w:r><mc:AlternateContent>\
+             <mc:Choice Requires=\"wps\"><w:drawing><s:wsp/></w:drawing></mc:Choice>\
+             <mc:Fallback/></mc:AlternateContent></w:r></w:p></w:hdr>",
+            w = W::URI
+        )
+    };
+
+    let mut dom = Dom::new();
+    let root = parse(&mut dom, &header(""));
+    bind_compatibility_prefixes(&mut dom, root);
+    let xml = dom.serialize_element(root);
+    assert_eq!(
+        unbound_prefix_list_tokens(&xml),
+        Vec::<String>::new(),
+        "{xml}"
+    );
+
+    // The serializer alone: a part that already declares both prefixes keeps both.
+    let mut dom = Dom::new();
+    let root = parse(&mut dom, &header(&format!(" xmlns:wps=\"{WPS_URI}\"")));
+    let xml = dom.serialize_element(root);
+    assert!(xml.contains(&format!("xmlns:s=\"{WPS_URI}\"")), "{xml}");
+    assert!(xml.contains(&format!("xmlns:wps=\"{WPS_URI}\"")), "{xml}");
+    assert_eq!(
+        unbound_prefix_list_tokens(&xml),
+        Vec::<String>::new(),
+        "{xml}"
+    );
+}
+
+#[test]
+fn t19_requires_outside_mc_choice_is_application_data() {
+    use jubarte::comparer::finalize::bind_compatibility_prefixes;
+    // `v` is a well-known prefix, but here it is a custom part's own value:
+    // the bind pass leaves the part alone and the serializer keeps it verbatim.
+    let item = "<plugins xmlns=\"urn:example:plugins\" xmlns:ns=\"urn:x\">\
+                <dependency Requires=\"v ns\"/></plugins>";
+    let mut dom = Dom::new();
+    let root = parse(&mut dom, item);
+    bind_compatibility_prefixes(&mut dom, root);
+    let xmlns = jubarte::xmllinq::XNamespace::xmlns();
+    assert_eq!(dom.attribute(root, &xmlns.name("v")), None);
+    assert!(dom.serialize_element(root).contains("Requires=\"v ns\""));
+}
