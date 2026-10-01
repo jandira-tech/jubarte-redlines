@@ -3131,6 +3131,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_non_breaking_hyphen_reads_as_a_hyphen_with_or_without_shaping() {
+        // Word's PDFs carry 0x2D for w:noBreakHyphen; the /ToUnicode text
+        // says so too, whether or not the face shapes through rustybuzz.
+        let mut face = Face::load(FaceId::CarlitoRegular);
+        let text = format!("a{NO_BREAK_HYPHEN}b");
+        assert_eq!(face.glyph_texts(&text, false).concat(), "a-b");
+        face.buzz = None;
+        assert_eq!(face.glyph_texts(&text, false), ["a", "-", "b"]);
+        assert_eq!(face.glyph(NO_BREAK_HYPHEN), face.glyph('-'));
+    }
+
+    #[test]
     fn the_font_index_reads_recorded_files_until_a_folder_or_file_changes() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let fonts = tmp.path().join("fonts");
