@@ -22751,7 +22751,7 @@ impl<'a> Layout<'a> {
     /// by `pad`.
     fn paint_stretched(&mut self, line: &[TextRun], mut x: f32, y: f32, pad: f32) {
         let joined: String = line.iter().map(|r| r.text.as_str()).collect();
-        let last_ink = joined.rfind(|c: char| !c.is_whitespace());
+        let last_ink = joined.rfind(|c: char| !is_wrap_space(c));
         let mut idx = 0usize;
         for run in line {
             let mut word = String::new();
@@ -27747,12 +27747,20 @@ fn is_cjk_break_char(ch: char) -> bool {
         0x2E80..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF | 0xFF00..=0xFFEF | 0x20000..=0x2FFFF)
 }
 
+/// A space a line breaks at and hangs past its edge. A no-break space
+/// (U+00A0, figure U+2007, narrow U+202F) is a letter to the wrap: it
+/// joins its neighbours, and at a line's end it takes room (Word 16 probe
+/// d3a: d328fa3674's "tunách\u{a0}" wraps in its cell, "tunách " fits).
+fn is_wrap_space(c: char) -> bool {
+    c.is_whitespace() && !matches!(c, '\u{a0}' | '\u{2007}' | '\u{202f}')
+}
+
 fn ws_tokens(s: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut start = 0;
     let mut prev: Option<bool> = None;
     for (i, ch) in s.char_indices() {
-        let sp = ch.is_whitespace();
+        let sp = is_wrap_space(ch);
         if let Some(p) = prev
             && p != sp
         {
@@ -27812,7 +27820,7 @@ fn is_list_marker_text(text: &str, numbered: bool) -> bool {
 /// line's last tab alone (000eb113's "3.1.<tab>Настоящий …").
 fn inter_word_gaps(line: &[TextRun]) -> usize {
     let joined: String = line.iter().map(|r| r.text.as_str()).collect();
-    let body = joined.trim_end();
+    let body = joined.trim_end_matches(is_wrap_space);
     let after_tab = body.rfind('\t').map_or(body, |at| &body[at..]);
     after_tab.chars().filter(|&c| c == ' ').count()
 }
@@ -27842,7 +27850,7 @@ fn bidi_visual_line(line: &[TextRun]) -> Vec<TextRun> {
     for (ri, run) in line.iter().enumerate() {
         cs.extend(run.text.chars().map(|c| (c, ri)));
     }
-    while cs.last().is_some_and(|(c, _)| c.is_whitespace()) {
+    while cs.last().is_some_and(|&(c, _)| is_wrap_space(c)) {
         cs.pop();
     }
     let class = |(c, ri): (char, usize)| {
@@ -27978,7 +27986,7 @@ fn trailing_ws_pt(fonts: &Fonts, line: &[TextRun]) -> f32 {
         let paint = run.style.layout_size();
         let trimmed = run
             .text
-            .trim_end_matches(|c: char| c.is_whitespace() && c != '\t');
+            .trim_end_matches(|c: char| is_wrap_space(c) && c != '\t');
         if trimmed.len() < run.text.len() {
             extra += face.width_pt(&run.text[trimmed.len()..], paint);
         }
@@ -28261,7 +28269,7 @@ fn wrap_runs_segment(
                     face.width_pt_kern(tok, size, run.style.kerns_at(size)) * run.style.hscale()
                         + run.style.track * tok.chars().count() as f32
                 };
-                let is_space = tok.chars().all(char::is_whitespace);
+                let is_space = tok.chars().all(is_wrap_space);
                 let glue = open
                     && !is_space
                     && units.last().is_some_and(|(u, _)| {
@@ -31921,6 +31929,24 @@ mod theme_slot_tests {
             false,
         );
         assert_eq!(lines[0].len(), 2, "different cs faces stay separate runs");
+    }
+
+    #[test]
+    fn a_no_break_space_holds_its_room_and_its_word() {
+        // Word 16 probe d3a (d328fa3674): "tunách\u{a0}" ending a cell
+        // wraps where "tunách " fits, the plain space hanging past the
+        // edge; and the no-break space never opens a line.
+        let style = Defaults::word().run;
+        let width = body_width("aaaa bbbb") + 0.5;
+        let hung = [TextRun::new("aaaa bbbb ", style.clone())];
+        assert_eq!(wrap_texts(&hung, width), ["aaaa bbbb "]);
+        let held = [TextRun::new("aaaa bbbb\u{a0}", style.clone())];
+        assert_eq!(wrap_texts(&held, width), ["aaaa ", "bbbb\u{a0}"]);
+        let joined = [TextRun::new("aaaa bbbb\u{a0}cc", style)];
+        assert_eq!(
+            wrap_texts(&joined, body_width("aaaa bbbb ") + 0.5),
+            ["aaaa ", "bbbb\u{a0}cc"]
+        );
     }
 
     #[test]
