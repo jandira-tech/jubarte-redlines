@@ -1590,19 +1590,23 @@ fn restore_styles(
     changed
 }
 
+/// The key Word pairs two stylesheets' styles by: the type, and the name
+/// (the id when it has none). A built-in name matches in any case, a custom
+/// one only exactly: Word keeps `Indent(A)` beside `Indent(a)`.
 fn style_match_key(dom: &Dom, style: NodeId) -> Option<(String, String)> {
     let ty = dom
         .attribute(style, &W::name("type"))
         .unwrap_or("paragraph")
         .to_string();
-    let key = dom
+    let name = dom
         .element(style, &W::name("name"))
         .and_then(|n| dom.attribute(n, &W::val()))
-        .map(|v| v.to_ascii_lowercase())
-        .or_else(|| {
-            dom.attribute(style, &W::name("styleId"))
-                .map(|v| v.to_ascii_lowercase())
-        })?;
+        .or_else(|| dom.attribute(style, &W::name("styleId")))?;
+    let key = if crate::builtin_styles::is_built_in(name) {
+        name.to_ascii_lowercase()
+    } else {
+        name.to_string()
+    };
     Some((ty, key))
 }
 
@@ -6973,9 +6977,12 @@ fn compare_documents_impl(
                 // `Listaszerbekezds` and Table Grid `Rcsostblzat`).
                 let mut b_by_key: std::collections::HashMap<(String, String), String> =
                     std::collections::HashMap::new();
-                for (id, &s) in &b_idx {
-                    if let Some(k) = style_match_key(&sd, s) {
-                        b_by_key.entry(k).or_insert_with(|| id.clone());
+                for s in sd.elements(br, Some(&W::name("style"))) {
+                    if let (Some(k), Some(id)) = (
+                        style_match_key(&sd, s),
+                        sd.attribute(s, &W::name("styleId")),
+                    ) {
+                        b_by_key.entry(k).or_insert_with(|| id.to_string());
                     }
                 }
                 let b_id_for = |out_id: &str| -> Option<String> {
