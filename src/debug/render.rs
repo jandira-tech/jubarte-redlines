@@ -129,16 +129,19 @@ struct StyleInfo {
     vanish: Option<bool>,
     /// The style's own `w:framePr` attributes, `name=value`.
     frame: Vec<(String, String)>,
-    /// The faces the style's own `w:rFonts` asks for.
-    fonts: Option<Vec<String>>,
+    /// The face each slot of the style's own `w:rFonts` asks for.
+    fonts: Vec<(&'static str, String)>,
     /// Table-wide and conditional shading: `whole` (`tblPr`), `cell`
-    /// (`tcPr`), or the `tblStylePr` type.
-    table_shd: Vec<(String, String)>,
+    /// (`tcPr`), or the `tblStylePr` type; `None` for a nil `shd`, which
+    /// resets the base's.
+    table_shd: Vec<(String, Option<String>)>,
 }
 
 #[derive(Default)]
 struct StyleBook {
     by_id: HashMap<String, StyleInfo>,
+    /// What `docDefaults` paint: the layer under every style.
+    defaults: StyleInfo,
     /// `docDefaults` run fonts, `name=value` sorted.
     default_fonts: Option<String>,
     /// The `w:default="1"` paragraph style: an unstyled paragraph's.
@@ -151,6 +154,20 @@ impl StyleBook {
         for s in dom.elements(root, None) {
             match local(dom, s).as_str() {
                 "docDefaults" => {
+                    let rpr = descendant(dom, s, "rPrDefault").and_then(|d| child(dom, d, "rPr"));
+                    book.defaults = StyleInfo {
+                        name: "docDefaults".to_string(),
+                        para_shd: descendant(dom, s, "pPrDefault")
+                            .and_then(|d| child(dom, d, "pPr"))
+                            .and_then(|p| child(dom, p, "shd"))
+                            .map(|x| shd(dom, x)),
+                        color: rpr.and_then(|r| color(dom, r)),
+                        highlight: rpr.and_then(|r| highlight(dom, r)),
+                        run_shd: rpr.and_then(|r| run_shd(dom, r)),
+                        vanish: rpr
+                            .and_then(|r| child(dom, r, "vanish").map(|_| on(dom, r, "vanish"))),
+                        ..StyleInfo::default()
+                    };
                     book.default_fonts = descendant(dom, s, "rFonts").map(|f| {
                         let mut items: Vec<String> = dom
                             .attributes(f)
@@ -181,14 +198,15 @@ impl StyleBook {
                             .unwrap_or_default(),
                         fonts: rpr
                             .and_then(|r| child(dom, r, "rFonts"))
-                            .map(|f| font_faces(dom, f)),
+                            .map(|f| font_slots(dom, f))
+                            .unwrap_or_default(),
                         table_shd: Vec::new(),
                     };
                     let mut table = |label: String, holder: NodeId| {
                         for (pr, what) in [("tblPr", "whole"), ("tcPr", "cell")] {
                             if let Some(fill) = child(dom, holder, pr)
                                 .and_then(|p| child(dom, p, "shd"))
-                                .and_then(|x| shd(dom, x))
+                                .map(|x| shd(dom, x))
                             {
                                 let key = if label.is_empty() {
                                     what.to_string()
@@ -226,7 +244,8 @@ impl StyleBook {
     }
 
     /// `id`'s table shading down its `basedOn` chain: a base's conditions
-    /// stay unless the derived style sets the same one.
+    /// stay unless the derived style sets the same one; a nil `shd` resets
+    /// it.
     fn table_shd(&self, id: &str) -> Vec<(String, String)> {
         let mut chain = Vec::new();
         let mut id = id.to_string();
@@ -240,13 +259,41 @@ impl StyleBook {
             }
             id = s.based.clone();
         }
-        let mut out: Vec<(String, String)> = Vec::new();
+        let mut out: Vec<(String, Option<String>)> = Vec::new();
         for s in chain.into_iter().rev() {
             for (key, fill) in &s.table_shd {
                 match out.iter_mut().find(|(k, _)| k == key) {
-                    Some(slot) => slot.1 = fill.clone(),
+                    Some(slot) => slot.1.clone_from(fill),
                     None => out.push((key.clone(), fill.clone())),
                 }
+            }
+        }
+        out.into_iter()
+            .filter_map(|(k, fill)| Some((k, fill?)))
+            .collect()
+    }
+
+    /// The faces `id`'s `basedOn` chain asks for, slot by slot, each with
+    /// the name of the style that sets it (a derived style's slot over its
+    /// base's, as the converter overlays them).
+    fn font_slots(&self, id: &str) -> Vec<(&'static str, String, String)> {
+        let mut chain = Vec::new();
+        let mut cur = id.to_string();
+        for _ in 0..CHAIN {
+            let Some(s) = self.by_id.get(&cur) else {
+                break;
+            };
+            chain.push((s, self.name(&cur)));
+            if s.based.is_empty() {
+                break;
+            }
+            cur = s.based.clone();
+        }
+        let mut out: Vec<(&'static str, String, String)> = Vec::new();
+        for (s, name) in chain.into_iter().rev() {
+            for (slot, face) in &s.fonts {
+                out.retain(|(k, _, _)| k != slot);
+                out.push((slot, face.clone(), name.clone()));
             }
         }
         out
@@ -526,11 +573,15 @@ fn paragraph(dom: &Dom, p: NodeId, styles: &StyleBook, tally: &mut Tally, out: &
     match ppr.and_then(|x| child(dom, x, "shd")).map(|x| shd(dom, x)) {
         Some(Some(fill)) => tally.add(format!("para-shd {fill}"), &text),
         Some(None) => {}
-        None => {
-            if let Some((Some(fill), name)) = styles.find(&pstyle, |s| s.para_shd.clone()) {
-                tally.add(format!("para-shd {fill} via \"{name}\""), &text);
+        None => match styles.find(&pstyle, |s| s.para_shd.clone()) {
+            Some((Some(fill), name)) => tally.add(format!("para-shd {fill} via \"{name}\""), &text),
+            Some((None, _)) => {}
+            None => {
+                if let Some(Some(fill)) = &styles.defaults.para_shd {
+                    tally.add(format!("para-shd {fill} via \"docDefaults\""), &text);
+                }
             }
-        }
+        },
     }
     // The style chain's frame under the paragraph's own attributes, as
     // the converter merges them.
@@ -568,7 +619,8 @@ fn revision_order(dom: &Dom, n: NodeId, order: &mut Vec<char>) {
         let k = match local(dom, c).as_str() {
             "del" | "moveFrom" => 'D',
             "ins" | "moveTo" => 'I',
-            "r" | "fldSimple" => '-',
+            "fldSimple" => '-',
+            "r" if paints(dom, c) => '-',
             "hyperlink" | "smartTag" | "sdt" | "sdtContent" | "customXml" => {
                 revision_order(dom, c, order);
                 continue;
@@ -581,82 +633,137 @@ fn revision_order(dom: &Dom, n: NodeId, order: &mut Vec<char>) {
     }
 }
 
+/// A run that puts something on the page: text, a tab or break, a symbol,
+/// a field character or a drawing (anything but its properties, a
+/// rendered-page-break hint, an empty `w:t` or a comment reference).
+fn paints(dom: &Dom, r: NodeId) -> bool {
+    dom.elements(r, None)
+        .into_iter()
+        .any(|c| match local(dom, c).as_str() {
+            "rPr" | "lastRenderedPageBreak" | "commentReference" => false,
+            "t" | "delText" => dom
+                .nodes(c)
+                .into_iter()
+                .any(|t| !dom.text_value(t).unwrap_or_default().is_empty()),
+            _ => true,
+        })
+}
+
 /// A run's colour, highlight, shading, hidden state and requested font,
-/// direct or from its character or paragraph style.
+/// direct or from its character or paragraph style, over `docDefaults`.
+/// The leading `w:rPr` blocks apply in order, each its character style and
+/// then its own properties, as the converter folds them (an `rPr` after the
+/// run's content is ignored).
 fn run(dom: &Dom, r: NodeId, styles: &StyleBook, tally: &mut Tally) {
     let Some(para) = nearest(dom, r, "p") else {
         return;
     };
     let text = own_text(dom, r, para);
-    let rpr = child(dom, r, "rPr");
+    let rprs = crate::convert::leading_rprs(dom, r);
     let style_of = |pr: Option<NodeId>, name: &str| {
         pr.and_then(|x| child(dom, x, name))
             .map(|s| attr(dom, s, "val"))
             .unwrap_or_default()
     };
-    let rstyle = style_of(rpr, "rStyle");
     let pstyle = styles.para_style(style_of(child(dom, para, "pPr"), "pStyle"));
-    let inherited = |f: &dyn Fn(&StyleInfo) -> Option<Option<String>>| {
-        styles.find(&rstyle, f).or_else(|| styles.find(&pstyle, f))
-    };
-    // A direct reset (`Some(None)`) hides the style's value; so does the
-    // nearest style in the chain that resets it.
-    let mut add = |label: &str,
-                   direct: Option<Option<String>>,
-                   from_style: &dyn Fn(&StyleInfo) -> Option<Option<String>>| {
-        match direct {
-            Some(Some(v)) => tally.add(format!("{label} {v}"), &text),
-            Some(None) => {}
-            None => {
-                if let Some((Some(v), name)) = inherited(from_style) {
-                    tally.add(format!("{label} {v} via \"{name}\""), &text);
-                }
+    // The value that reaches the page and the style it comes through
+    // (`None` for direct formatting).
+    type Layer = Option<(String, Option<String>)>;
+    let fold = |get: &dyn Fn(NodeId) -> Option<Option<String>>,
+                from_style: &dyn Fn(&StyleInfo) -> Option<Option<String>>|
+     -> Layer {
+        let mut cur: Layer = match styles.find(&pstyle, from_style) {
+            Some((v, name)) => v.map(|v| (v, Some(name))),
+            None => from_style(&styles.defaults)
+                .flatten()
+                .map(|v| (v, Some(styles.defaults.name.clone()))),
+        };
+        for &rpr in &rprs {
+            let rstyle = style_of(Some(rpr), "rStyle");
+            if let Some((v, name)) = styles.find(&rstyle, from_style) {
+                cur = v.map(|v| (v, Some(name)));
+            }
+            if let Some(v) = get(rpr) {
+                cur = v.map(|v| (v, None));
             }
         }
+        cur
     };
-    add("color", rpr.and_then(|x| color(dom, x)), &|s| {
-        s.color.clone()
-    });
-    add("highlight", rpr.and_then(|x| highlight(dom, x)), &|s| {
-        s.highlight.clone()
-    });
-    add("run-shd", rpr.and_then(|x| run_shd(dom, x)), &|s| {
-        s.run_shd.clone()
-    });
-    // Hidden directly, else by the character style's chain (what the
-    // converter follows).
-    match rpr.and_then(|x| child(dom, x, "vanish")) {
-        Some(_) if rpr.is_some_and(|x| on(dom, x, "vanish")) => {
-            tally.add("vanish".to_string(), &text);
-        }
-        Some(_) => {}
-        None => {
-            if let Some((true, name)) = styles.find(&rstyle, |s| s.vanish) {
-                tally.add(format!("vanish via \"{name}\""), &text);
-            }
+    let mut add = |label: &str, layer: Layer| match layer {
+        Some((v, None)) => tally.add(format!("{label} {v}"), &text),
+        Some((v, Some(name))) => tally.add(format!("{label} {v} via \"{name}\""), &text),
+        None => {}
+    };
+    add("color", fold(&|x| color(dom, x), &|s| s.color.clone()));
+    add(
+        "highlight",
+        fold(&|x| highlight(dom, x), &|s| s.highlight.clone()),
+    );
+    add(
+        "run-shd",
+        fold(&|x| run_shd(dom, x), &|s| s.run_shd.clone()),
+    );
+    // Hidden the same way, a style's `vanish` standing in for a value.
+    let as_value = |v: bool| v.then(|| "vanish".to_string());
+    if let Some((_, via)) = fold(
+        &|x| child(dom, x, "vanish").map(|_| as_value(on(dom, x, "vanish"))),
+        &|s| s.vanish.map(as_value),
+    ) {
+        match via {
+            None => tally.add("vanish".to_string(), &text),
+            Some(name) => tally.add(format!("vanish via \"{name}\""), &text),
         }
     }
-    // The run's own fonts, else its character style's, else its
-    // paragraph style's.
-    if let Some(f) = rpr.and_then(|x| child(dom, x, "rFonts")) {
-        for face in font_faces(dom, f) {
-            tally.add(format!("rfonts \"{face}\""), "");
+    // Fonts slot by slot: the paragraph style's chain, then each block's
+    // character style and its own `w:rFonts`.
+    let mut slots: Vec<(&'static str, String, Option<String>)> = styles
+        .font_slots(&pstyle)
+        .into_iter()
+        .map(|(k, f, n)| (k, f, Some(n)))
+        .collect();
+    let mut overlay = |slots: &mut Vec<(&'static str, String, Option<String>)>,
+                       new: Vec<(&'static str, String, Option<String>)>| {
+        for (k, f, n) in new {
+            slots.retain(|(s, _, _)| *s != k);
+            slots.push((k, f, n));
         }
-    } else if let Some((faces, name)) = styles
-        .find(&rstyle, |s| s.fonts.clone())
-        .or_else(|| styles.find(&pstyle, |s| s.fonts.clone()))
-    {
-        for face in faces {
-            tally.add(format!("rfonts \"{face}\" via \"{name}\""), "");
+    };
+    for &rpr in &rprs {
+        let rstyle = style_of(Some(rpr), "rStyle");
+        if !rstyle.is_empty() {
+            let from = styles
+                .font_slots(&rstyle)
+                .into_iter()
+                .map(|(k, f, n)| (k, f, Some(n)))
+                .collect();
+            overlay(&mut slots, from);
         }
+        if let Some(f) = child(dom, rpr, "rFonts") {
+            let direct = font_slots(dom, f)
+                .into_iter()
+                .map(|(k, face)| (k, face, None))
+                .collect();
+            overlay(&mut slots, direct);
+        }
+    }
+    let mut seen: Vec<(String, Option<String>)> = Vec::new();
+    for (_, face, via) in slots {
+        if seen.iter().any(|(f, v)| *f == face && *v == via) {
+            continue;
+        }
+        match &via {
+            None => tally.add(format!("rfonts \"{face}\""), ""),
+            Some(name) => tally.add(format!("rfonts \"{face}\" via \"{name}\""), ""),
+        }
+        seen.push((face, via));
     }
 }
 
 /// Each slot's face in `w:rFonts` (a theme font where the slot names
 /// none): a run can paint Latin, East Asian and complex-script text in
 /// different faces.
-fn font_faces(dom: &Dom, f: NodeId) -> Vec<String> {
-    let mut faces: Vec<String> = Vec::new();
+fn font_slots(dom: &Dom, f: NodeId) -> Vec<(&'static str, String)> {
+    let mut faces: Vec<(&'static str, String)> = Vec::new();
     for (slot, theme) in [
         ("ascii", "asciiTheme"),
         ("hAnsi", "hAnsiTheme"),
@@ -671,9 +778,7 @@ fn font_faces(dom: &Dom, f: NodeId) -> Vec<String> {
         } else {
             continue;
         };
-        if !faces.contains(&face) {
-            faces.push(face);
-        }
+        faces.push((slot, face));
     }
     faces
 }
@@ -710,7 +815,38 @@ fn table(dom: &Dom, t: NodeId, n: usize, styles: &StyleBook) -> String {
             _ => Vec::new(),
         })
         .collect();
-    let cols = child(dom, t, "tblGrid").map_or(0, |g| kids(dom, g, "gridCol").len());
+    // The columns the converter lays out: the grid, or the widest row
+    // (its spans, grid before/after and, with a live `w:cellDel`, the
+    // "Deleted Cells" column Word's All Markup appends).
+    let grid = child(dom, t, "tblGrid").map_or(0, |g| kids(dom, g, "gridCol").len());
+    let widest = rows
+        .iter()
+        .map(|&row| {
+            let trpr = child(dom, row, "trPr");
+            let skip = |name: &str| {
+                trpr.and_then(|p| child(dom, p, name))
+                    .and_then(|g| attr(dom, g, "val").parse::<usize>().ok())
+                    .unwrap_or(0)
+            };
+            let cells = crate::convert::wrapped_children(dom, row, "tc");
+            let spans: usize = cells
+                .iter()
+                .map(|&tc| {
+                    child(dom, tc, "tcPr")
+                        .and_then(|p| child(dom, p, "gridSpan"))
+                        .and_then(|g| attr(dom, g, "val").parse::<usize>().ok())
+                        .unwrap_or(1)
+                        .max(1)
+                })
+                .sum();
+            let stamp = cells
+                .iter()
+                .any(|&tc| crate::convert::cell_is_deleted(dom, tc));
+            skip("gridBefore") + spans + skip("gridAfter") + usize::from(stamp)
+        })
+        .max()
+        .unwrap_or(0);
+    let cols = grid.max(widest);
     let mut s = format!("  table {n} {}x{cols}", rows.len());
     if nearest(dom, t, "tbl").is_some() {
         s.push_str(" nested");
@@ -756,13 +892,25 @@ fn table(dom: &Dom, t: NodeId, n: usize, styles: &StyleBook) -> String {
         let items: Vec<String> = cells.iter().map(|(f, k)| format!("{f}×{k}")).collect();
         s.push_str(&format!(" cells-shd[{}]", items.join(",")));
     }
-    let conds = styles.table_shd(&style);
+    // The conditions the table's look turns off paint nothing (the
+    // converter's own reading of `w:tblLook`).
+    let look = crate::convert::table_look(dom, t);
+    let conds: Vec<(String, String)> = styles
+        .table_shd(&style)
+        .into_iter()
+        .filter(|(k, _)| match k.as_str() {
+            "firstRow" => look.first_row,
+            "firstCol" => look.first_col,
+            "band1Horz" | "band2Horz" => !look.no_h_band,
+            _ => true,
+        })
+        .collect();
     if !conds.is_empty() {
         let items: Vec<String> = conds.iter().map(|(k, f)| format!("{k}={f}")).collect();
         s.push_str(&format!(" style-shd[{}]", items.join(",")));
     }
     if let Some(first) = rows.first() {
-        let texts: Vec<String> = kids(dom, *first, "tc")
+        let texts: Vec<String> = crate::convert::wrapped_children(dom, *first, "tc")
             .into_iter()
             .map(|tc| {
                 kids(dom, tc, "p")
