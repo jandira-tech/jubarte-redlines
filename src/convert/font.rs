@@ -950,27 +950,45 @@ impl<'a> Face<'a> {
         // official color_sim). Title `w:kern val=28` (potpourri 28pt)
         // is the exception: Word "Pot-Pourri" is 108.6 vs hmtx 111.0.
         // docDefaults/Normal kern=2 stays off.
-        let kern_bit = u32::from(kern);
-        let word_pdf = [
-            rustybuzz::Feature::new(rustybuzz::ttf_parser::Tag::from_bytes(b"liga"), 0, ..),
-            rustybuzz::Feature::new(rustybuzz::ttf_parser::Tag::from_bytes(b"clig"), 0, ..),
-            rustybuzz::Feature::new(rustybuzz::ttf_parser::Tag::from_bytes(b"dlig"), 0, ..),
-            rustybuzz::Feature::new(
-                rustybuzz::ttf_parser::Tag::from_bytes(b"kern"),
-                kern_bit,
-                ..,
-            ),
-        ];
         buf.guess_segment_properties();
         let key = (buf.direction(), buf.script(), buf.language(), kern);
         let cached = self.plans.lock().ok().and_then(|p| p.get(&key).cloned());
         let plan = cached.unwrap_or_else(|| {
+            let feature = |tag: &[u8; 4], value| {
+                rustybuzz::Feature::new(rustybuzz::ttf_parser::Tag::from_bytes(tag), value, ..)
+            };
+            let word_pdf = [
+                feature(b"liga", 0),
+                feature(b"clig", 0),
+                feature(b"dlig", 0),
+                feature(b"kern", u32::from(kern)),
+                feature(b"ccmp", 0),
+            ];
+            // Word paints a precomposed Latin, Greek or Cyrillic letter as
+            // its own glyph. Cambria's ccmp splits "ě" into e + a caron
+            // mark, which also leaves the shared "e" glyph unable to say
+            // "ě" in /ToUnicode (3509b16c7d's Czech; Word's PDF holds ě, č,
+            // ů whole). Complex scripts keep ccmp (the plan key holds the
+            // script).
+            let precomposed = [
+                rustybuzz::script::LATIN,
+                rustybuzz::script::GREEK,
+                rustybuzz::script::CYRILLIC,
+                rustybuzz::script::COMMON,
+                rustybuzz::script::INHERITED,
+            ]
+            .contains(&key.1);
+            let features = if precomposed {
+                &word_pdf[..]
+            } else {
+                &word_pdf[..4]
+            };
             let plan = Arc::new(rustybuzz::ShapePlan::new(
                 face,
                 key.0,
                 Some(key.1),
                 key.2.as_ref(),
-                &word_pdf,
+                features,
             ));
             if let Ok(mut plans) = self.plans.lock() {
                 plans.insert(key.clone(), Arc::clone(&plan));
@@ -4349,6 +4367,21 @@ mod tests {
             "Times 12 single line {}",
             times.single_line_pt(12.0)
         );
+    }
+
+    #[test]
+    fn a_precomposed_czech_letter_paints_as_its_own_glyph() {
+        // 3509b16c7d: Cambria's ccmp splits "ě" into e + a caron mark;
+        // Word's PDF draws ě, č, ů whole, and the shared "e" glyph could
+        // not carry "ě" in /ToUnicode.
+        if !Fonts::is_installed_family("Cambria") {
+            return;
+        }
+        let fonts = Fonts::new();
+        let cambria = fonts.get(fonts.resolve("Cambria", false, false));
+        for letter in ["ě", "č", "ů", "ž"] {
+            assert_eq!(cambria.glyph_texts(letter, false), [letter]);
+        }
     }
 
     #[test]
