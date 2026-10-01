@@ -25416,10 +25416,22 @@ impl<'a> Layout<'a> {
         } else {
             used
         };
+        // Word 15 places a table by its rules' outer edge: the grid sits
+        // half the first row's left rule inside it, every row's, bordered
+        // or not, and a centred table centres its rules with the grid
+        // (probe d3e: jc left, 1pt rule at 70.8..71.76, text 76.3 in each
+        // row; d3a: centred, rule 197.52..198.48 around the 197.85 grid).
+        let half_rule = if self.compat_mode >= 15 {
+            rows.first()
+                .and_then(|row| row.first())
+                .map_or(0.0, |cell| cell_left_rule(cell, borders) * 0.5)
+        } else {
+            0.0
+        };
         // A centred table wider than the measure overhangs both sides
         // (00afb3e6's 534.75pt table starts at 38.6 in a 72..540 measure).
         let shift = match style.align {
-            Align::Center => (avail - aligned) / 2.0,
+            Align::Center => (avail - aligned) / 2.0 - half_rule,
             Align::Right => (avail - aligned).max(0.0),
             Align::Left | Align::Justify => 0.0,
         };
@@ -25753,13 +25765,13 @@ impl<'a> Layout<'a> {
                         .map(|w| w.1)
                         .sum();
                     let bottom = y_top - h;
-                    // In compatibilityMode 15 the text starts past the
-                    // cell's left rule: max(margin + half the rule, the
-                    // rule) from the grid line (Word: 0.5pt rule, 0 margin
-                    // -> 0.48; 3pt -> 3.12; 3pt + 5pt margin -> 6.48).
-                    let left_rule = cell_left_rule(cell, borders);
-                    let pad_l = if self.compat_mode >= 15 && left_rule > 0.0 {
-                        (cell.pad_l + left_rule * 0.5).max(left_rule)
+                    // In compatibilityMode 15 the text starts its margin, or
+                    // half its own left rule when wider, past the grid line
+                    // (Word: 0.5pt rule, 0 margin -> 0.48; 3pt -> 3.12; 3pt
+                    // + 5pt margin -> 6.48; d3a's 1pt + 5pt in a centred
+                    // table -> 5.0 from the grid).
+                    let pad_l = if self.compat_mode >= 15 {
+                        half_rule + cell.pad_l.max(cell_left_rule(cell, borders) * 0.5)
                     } else {
                         cell.pad_l
                     };
