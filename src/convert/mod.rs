@@ -10635,6 +10635,14 @@ fn apply_list_level(
         .element(para, &W::p_pr())
         .and_then(|ppr| dom.element(ppr, &W::r_pr()))
     {
+        // The mark's character style too, as a run's (Word 16 probe
+        // rsty0930: tb27bda's Font Style12 sets the labels in Times).
+        if let Some(named) = first_named(dom, rpr, "rStyle")
+            .and_then(|n| dom.attribute(n, &W::val()))
+            .and_then(|sid| sheet.by_id.get(sid))
+        {
+            apply_named_char_style(&mut marker_style, named);
+        }
         apply_rpr(dom, rpr, &mut marker_style, &sheet.theme);
     }
     if let Some(lvl) = lvl {

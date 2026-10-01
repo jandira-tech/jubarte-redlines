@@ -1128,6 +1128,35 @@ fn a_tabs_gap_carries_its_runs_underline_and_revision() {
 }
 
 #[test]
+fn a_list_label_takes_its_marks_character_style() {
+    // tb27bda (Word 16 probe rsty0930): the paragraph mark's rPr names a
+    // character style (Font Style12: Times New Roman). Word paints the
+    // label in it: Courier New 16pt green "1." over plain Aptos text. We
+    // skipped the mark's rStyle and drew the number in the theme face.
+    let styles = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
+  <w:style w:type="character" w:styleId="Cour"><w:name w:val="Cour"/>
+    <w:rPr><w:rFonts w:ascii="Courier New" w:hAnsi="Courier New"/><w:color w:val="00B050"/><w:sz w:val="32"/></w:rPr></w:style>
+</w:styles>"#;
+    let body = "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr>\
+           <w:rPr><w:rStyle w:val=\"Cour\"/></w:rPr></w:pPr>\
+           <w:r><w:t>Plain text</w:t></w:r></w:p>"
+        .to_string()
+        + LETTER_SECT;
+    let pdf = docx_to_pdf(&numbering_docx_with_styles(
+        &body,
+        Some(REVISED_LIST_NUMBERING),
+        Some(styles),
+    ))
+    .expect("convert mark rStyle label");
+    let (label, item) = label_and_text_fills(&pdf, "Plain text");
+    assert_eq!((label.as_str(), item.as_str()), ("0.000 0.690 0.314", BLACK));
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(hay.contains("Courier"), "the label paints in Courier New");
+}
+
+#[test]
 fn a_levels_hansi_only_font_leaves_its_ascii_number_in_the_text_face() {
     // English part b 2386218b: an imported list level sets only
     // hAnsi="Arial Unicode MS". Word paints "1." (ASCII) in the ascii

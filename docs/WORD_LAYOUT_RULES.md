@@ -222,6 +222,12 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   - ece10bd712's note opens on a literal "1" in "footnote reference"
     (superscript), not a `w:footnoteRef`. Word paints it at 6.48pt,
     raised; we painted a 10pt digit on the baseline.
+- **A list label takes the character style its paragraph mark names**
+  (`pPr/rPr/w:rStyle`), then the level's `rPr`. Word 16 probe rsty0930
+  (2026-10-01): with a Courier New 16pt green style, Word paints that
+  "1." over plain Aptos text.
+  - tb27bda's "5.2." labels are Times through Font Style12. We drew them
+    in the theme's sans: 53.5 → 73.7 (Aspose 81.9).
 
 ## Redline chrome
 
