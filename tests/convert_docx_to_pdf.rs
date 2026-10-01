@@ -24467,6 +24467,71 @@ fn a_header_picture_too_wide_beside_a_square_float_starts_under_it() {
     );
 }
 
+#[test]
+fn a_page_wide_square_float_in_the_header_pushes_the_body_below_it() {
+    // _to_improve 3936a8fe56 (compat 15): the header's only paragraph
+    // anchors an 81pt banner at page y 9pt, square-wrapped across the
+    // page. The paragraph's line has no room beside it and drops below
+    // it, so the header ends 12.4pt under the banner (90.3pt top margin)
+    // and Word starts every body page at 102.5pt. Word 16 probes
+    // 2026-10-01: half the banner leaves the body at the margin; legacy
+    // modes leave the line over the float, the body only clearing the
+    // float (u0-u4, baseline 100.3 legacy vs 125.3 compat 15).
+    let body_top = |cy: u32, wrap: &str, compat15: bool| {
+        let header = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+               xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
+               xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" \
+               xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+             <w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"259\" w:lineRule=\"auto\"/></w:pPr>\
+             <w:r><w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" \
+               simplePos=\"0\" relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+               <wp:simplePos x=\"0\" y=\"0\"/>\
+               <wp:positionH relativeFrom=\"page\"><wp:posOffset>130175</wp:posOffset></wp:positionH>\
+               <wp:positionV relativeFrom=\"page\"><wp:posOffset>114300</wp:posOffset></wp:positionV>\
+               <wp:extent cx=\"7430389\" cy=\"{cy}\"/>{wrap}<wp:docPr id=\"1\" name=\"banner\"/>\
+               <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+               <wps:wsp><wps:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"7430389\" cy=\"{cy}\"/></a:xfrm>\
+               <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val=\"CCCCCC\"/></a:solidFill></wps:spPr>\
+               <wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:hdr>"
+        );
+        let body = "<w:p><w:r><w:t>BannerBodyX</w:t></w:r></w:p>\
+             <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+               <w:pgSz w:w=\"11906\" w:h=\"16838\"/>\
+               <w:pgMar w:top=\"1806\" w:right=\"845\" w:bottom=\"1127\" w:left=\"578\" \
+                 w:header=\"180\" w:footer=\"720\"/></w:sectPr>";
+        let settings = "<?xml version=\"1.0\"?>\
+             <w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+             <w:compat><w:compatSetting w:name=\"compatibilityMode\" \
+               w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat></w:settings>";
+        let mut rels = vec![("rIdH1", "header", "header1.xml")];
+        let mut parts = vec![("word/header1.xml", header)];
+        if compat15 {
+            rels.push(("rIdSet", "settings", "settings.xml"));
+            parts.push(("word/settings.xml", settings.to_string()));
+        }
+        let pdf = docx_to_pdf(&hf_docx(body, &rels, &parts)).expect("banner header");
+        let (_, baseline) = pdf_glyph_text_xy(&pdf, "BannerBodyX").expect("body text");
+        841.9 - baseline
+    };
+    let square = "<wp:wrapSquare wrapText=\"bothSides\"/>";
+    // 81pt from 9pt: the banner ends at 90pt, inside the 90.3pt margin.
+    let pushed = body_top(1_028_065, square, true);
+    let legacy = body_top(1_028_065, square, false);
+    assert!(
+        pushed > legacy + 10.0,
+        "compat 15 drops the header line under the banner: baseline {pushed} vs legacy {legacy}"
+    );
+    // 40.5pt ends at 49.5pt: the line under it still ends above 90pt.
+    let kept = body_top(514_032, square, true);
+    let over = body_top(1_028_065, "<wp:wrapNone/>", true);
+    assert!(
+        (kept - over).abs() < 0.5 && pushed > kept + 10.0,
+        "a short or unwrapped banner leaves the body at the margin: {kept} / {over} vs {pushed}"
+    );
+}
+
 fn header_image_docx() -> Vec<u8> {
     header_part_docx(&format!("<w:p>{HEADER_INLINE_DOT}</w:p>"))
 }

@@ -19334,11 +19334,19 @@ impl<'a> Layout<'a> {
             return;
         }
         let height = self.page.height;
+        let (left, right) = (
+            self.page.margin_l,
+            self.page.margin_l + self.content_width(),
+        );
         let mut spans: Vec<(f32, f32)> = Vec::new();
         let mut consider = |lay: &Self, slot: ImageSlot, w: f32, h: f32| {
             let ImageSlot::Float {
-                wrap_top_bottom: true,
+                wrap_square,
+                wrap_top_bottom,
+                wrap_polygon,
                 para_y: None,
+                dist_l,
+                dist_r,
                 dist_t,
                 dist_b,
                 ..
@@ -19346,7 +19354,17 @@ impl<'a> Layout<'a> {
             else {
                 return;
             };
-            let (_, fy) = lay.float_xy(w, h.max(1.0), slot);
+            let (fx, fy) = lay.float_xy(w, h.max(1.0), slot);
+            // Word 2013+ (compat 15) gives a header line no room beside a
+            // square float across the whole text column: 3936a8fe56's
+            // page-wide banner drops its empty paragraph under it, 12.4pt
+            // past the banner's foot. Legacy modes leave the line over
+            // the float (Word 16 probes 2026-10-01, u0-u4 in both modes).
+            let spans_column = fx - dist_l <= left + 0.5 && fx + w + dist_r >= right - 0.5;
+            let square = wrap_square && !wrap_polygon && spans_column && lay.compat_mode >= 15;
+            if !(wrap_top_bottom || square) {
+                return;
+            }
             spans.push((height - (fy + h + dist_t), height - (fy - dist_b)));
         };
         for img in self.header_images.iter().filter(|i| !i.chrome_flow) {
