@@ -649,3 +649,20 @@ fn probe_unresolved_choice_prefix_in_a_header_fails() {
         report.errors
     );
 }
+
+#[test]
+fn probe_application_requires_in_custom_xml_passes() {
+    // `Requires` is an MC prefix list only on `mc:Choice`; a custom XML
+    // part's own `Requires` attribute is application data.
+    let item = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<plugins xmlns="urn:example:plugins"><dependency Requires="plugin-a plugin-b"/></plugins>"#;
+    let doc = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p/></w:body></w:document>"#;
+    let bytes = zip_with_parts(&[("word/document.xml", doc), ("customXml/item1.xml", item)]);
+    let report = check_word_valid_package(&bytes);
+    assert!(
+        !report.errors.iter().any(|error| error.contains("plugin-")),
+        "application Requires read as an MC prefix list: {:?}",
+        report.errors
+    );
+}

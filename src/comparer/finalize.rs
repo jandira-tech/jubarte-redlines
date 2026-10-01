@@ -848,10 +848,13 @@ pub fn bind_compatibility_prefixes(dom: &mut Dom, root: NodeId) {
     use crate::xmllinq::serialize::{is_namespace_prefix_list, well_known_namespace};
     let xmlns = XNamespace::xmlns();
     for el in dom.descendants_and_self(root, None) {
+        let Some(element) = dom.name(el) else {
+            continue;
+        };
         let lists: Vec<String> = dom
             .attributes(el)
             .into_iter()
-            .filter(|(name, _)| is_namespace_prefix_list(name))
+            .filter(|(name, _)| is_namespace_prefix_list(&element, name))
             .map(|(_, value)| value.to_string())
             .collect();
         for list in lists {

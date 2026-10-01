@@ -345,12 +345,16 @@ impl<'a> Scope<'a> {
 }
 
 /// True for attributes whose value is a list of namespace prefixes that must be
-/// rewritten when prefixes are rebound in this scope.
-pub(crate) fn is_namespace_prefix_list(name: &XName) -> bool {
+/// rewritten when prefixes are rebound in this scope. An unqualified
+/// `Requires` is one only on `mc:Choice`; elsewhere (a custom XML part) it is
+/// application data.
+pub(crate) fn is_namespace_prefix_list(element: &XName, name: &XName) -> bool {
     let ns = name.namespace_name();
     let local = name.local_name();
     if ns.is_empty() {
-        return local == "Requires";
+        return local == "Requires"
+            && element.namespace_name() == MC_NAMESPACE
+            && element.local_name() == "Choice";
     }
     ns == MC_NAMESPACE
         && matches!(
@@ -542,11 +546,14 @@ fn write_attributes(
     real_attrs: &[(&XName, &str)],
     prefix_list_attrs: &[(&XName, &str)],
 ) {
-    // Namespace declarations first, sorted by prefix for determinism.
+    // Namespace declarations first, sorted by prefix for determinism. Every
+    // prefix the element binds is declared: two prefixes for one namespace
+    // (`s` and `wps`) both stay, since an MC QName list (`s:wsp`) names its
+    // prefix as written.
     {
-        let mut decls: Vec<(&String, &String)> = scope.local_uri_to_prefix.iter().collect();
-        decls.sort_by(|a, b| a.1.cmp(b.1));
-        for (uri, prefix) in decls {
+        let mut decls: Vec<(&String, &String)> = scope.local_prefix_to_uri.iter().collect();
+        decls.sort_by(|a, b| a.0.cmp(b.0));
+        for (prefix, uri) in decls {
             if prefix == "xml" || *uri == XML_NAMESPACE || prefix == "xmlns" {
                 continue;
             }
@@ -625,7 +632,7 @@ fn emit(dom: &Dom, e: NodeId, parent: &Scope, state: &mut State, out: &mut impl 
             continue;
         }
         scope.ensure_prefix(state, name.namespace_name());
-        if is_namespace_prefix_list(name) {
+        if is_namespace_prefix_list(&ename, name) {
             for token in value.split_whitespace() {
                 if let Some(uri) = scope.uri_for_prefix(token).map(|s| s.to_string()) {
                     scope.ensure_prefix(state, &uri);
@@ -693,7 +700,7 @@ fn emit_structure(dom: &Dom, e: NodeId, parent: &Scope, state: &mut State, out: 
             continue;
         }
         scope.ensure_prefix(state, name.namespace_name());
-        if is_namespace_prefix_list(name) {
+        if is_namespace_prefix_list(&ename, name) {
             for token in value.split_whitespace() {
                 if let Some(uri) = scope.uri_for_prefix(token).map(|s| s.to_string()) {
                     scope.ensure_prefix(state, &uri);

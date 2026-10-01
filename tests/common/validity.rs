@@ -847,8 +847,16 @@ fn check_parent_cycles(parents: &HashMap<String, String>, report: &mut ValidityR
     }
 }
 
-fn is_namespace_qname_list(name: &jubarte::xmllinq::XName) -> bool {
-    (name.namespace_name().is_empty() && name.local_name() == "Requires")
+/// An unqualified `Requires` is a prefix list only on `mc:Choice`; on any
+/// other element (a custom XML part) it is application data.
+fn is_namespace_qname_list(
+    element: &jubarte::xmllinq::XName,
+    name: &jubarte::xmllinq::XName,
+) -> bool {
+    (name.namespace_name().is_empty()
+        && name.local_name() == "Requires"
+        && element.namespace_name() == MC::URI
+        && element.local_name() == "Choice")
         || (name.namespace_name() == MC::URI
             && matches!(
                 name.local_name(),
@@ -868,8 +876,11 @@ fn check_namespace_qname_context(pkg: &PartFs, part: &str, report: &mut Validity
     let doc = dom.parse_xdocument(&xml);
     let Some(root) = dom.root(doc) else { return };
     for element in dom.descendants_and_self(root, None) {
+        let Some(element_name) = dom.name(element) else {
+            continue;
+        };
         for (name, value) in dom.attributes(element) {
-            if !is_namespace_qname_list(&name) {
+            if !is_namespace_qname_list(&element_name, &name) {
                 continue;
             }
             for token in value.split_whitespace() {
