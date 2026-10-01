@@ -155,6 +155,11 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   - Word 16 probes u0–u4 (2026-10-01): the first body baseline is 125.3 in
     mode 15 and 100.3 in the legacy modes, for the same header.
   - 3936a8fe56's banner float now leaves its body where Word's starts.
+- **A field is named by the first word of its instruction**, 8c003773. A
+  result-less `INCLUDEPICTURE ".../page1image1105008"` paints nothing,
+  and neither it nor a `PAGEREF` is a `PAGE` field. 2566689f0f's header
+  painted "111" from three such pictures, which shifted every line of
+  its page.
 
 ## Fonts: macOS system fonts
 
@@ -209,6 +214,20 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
     that wraps one underscore each. ee7b597379's tcW 4321/720/4381/4381
     become 3945/1535/4304/989, the four longest words, and the table
     ends at 610pt.
+- **Tables with nothing between them are one table**, f2fd0c8b. The second
+  table's rows keep their own cell widths and start at the joined table's
+  left edge, whatever their own `jc`. The joined table is aligned by its
+  widest part.
+  - Word 16 probe_adj (2026-10-01): a centred 453pt table then a 441pt one,
+    centred or left-aligned, start at 79.2 (j1/j3); the 441pt table alone
+    is centred at 85.4. The 441pt table first, then the 453pt one: both
+    start at the 453pt table's centred edge (j14, j17).
+  - A fixed-layout table after an autofit one keeps its own place (j6,
+    j9; 0bf5192ed0's alternating tables). Row `jc` and tracked table, row
+    or cell property changes play no part (j11-j13; 29379c0 bisect).
+  - Open: Word shares one grid across the joined rows (29379c0's first
+    rows take the third table's 2065/6997 columns, and one row is
+    centred on its own); jubarte keeps each table's own grid.
 
 ## VML lines, e8b5bc6
 
