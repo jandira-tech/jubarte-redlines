@@ -56,3 +56,29 @@ test compares our changes with Word's.
     paragraph count, and rejecting it the original's. Across 182 corpus
     pairs, 6 more pairs now hold this. 38 still break it in both builds;
     those are open.
+- **A whole story replaced pairs them too** (`tests/m_whole_story_final_marks.rs`).
+  With no paragraph kept, Word still joins the revision's last words to
+  the original's first deleted paragraph. In 1053 of Word's own redlines
+  in the bench corpus (no tables, the revision ending on text), the last
+  inserted paragraph never keeps an inserted mark. A revision that ends
+  on an empty paragraph pairs that paragraph instead, and its last words
+  keep their inserted mark (m308, m309).
+  - Over 2472 corpus pairs, 101 more now hold the paragraph-count check
+    and none breaks. Against 2198 of Word's own redlines, 57 come out
+    closer to Word's shape and none further from it.
+- **Tables bound the join.** If the original's first deleted block is a
+  table, the revision's last words have no paragraph to join, and Word
+  keeps their inserted mark.
+  - A revision that ends on an empty paragraph after a table pairs that
+    paragraph with the original's closing mark. The original's last
+    paragraph is deleted into it (multi_section × nested_table_rowspan).
+  - An original that ends that way keeps its empty paragraph live after
+    the deleted table (nested_table_rowspan × numbered_list). Accepting
+    Word's own redline then keeps that empty paragraph: this is Word's
+    behaviour, and we copy it.
+- **A paragraph that closes a block content control does not close the
+  story.** The story's own closing paragraph follows it, so that
+  paragraph's mark is not paired.
+- **An original spliced into the middle of the revision keeps its
+  place** (employment × lease: the original's text after "3. Rent").
+  Only a deleted-first tail is turned insert-first.

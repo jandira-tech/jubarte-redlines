@@ -5,7 +5,8 @@
 //! M309 — basic_list × sd_1707-style short next (title + list heading)
 //! vs long short-item list base. Unpacked Word oracle is pure-I all next
 //! then pure-D all base (seq IIDDDDDDDDD), not M-CARRIER MIX of heading
-//! with first base list item.
+//! with first base list item: next closes on an empty paragraph, paired
+//! with the base's closing mark.
 
 use std::io::{Cursor, Read, Write};
 
@@ -23,6 +24,10 @@ fn word_settings() -> WmlComparerSettings {
 }
 
 fn docx_from_paras(paras: &[(&str, Option<u32>)]) -> Vec<u8> {
+    docx_from_paras_then(paras, "")
+}
+
+fn docx_from_paras_then(paras: &[(&str, Option<u32>)], close: &str) -> Vec<u8> {
     // Option ilvl: None = no numPr
     let mut body = String::new();
     for (text, ilvl) in paras {
@@ -46,7 +51,7 @@ fn docx_from_paras(paras: &[(&str, Option<u32>)]) -> Vec<u8> {
     let doc = format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-  <w:body>{body}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body>
+  <w:body>{body}{close}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body>
 </w:document>"#
     );
     let numbering = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -160,10 +165,15 @@ fn basic_list_x_short_next_is_pure_id_not_carrier_mix() {
         ("With indend 1", Some(0)),
         ("last", Some(0)),
     ]);
-    let b = docx_from_paras(&[
-        ("Minimal tracked changes fixture (candidate)", None),
-        ("Heading. Body copy for repro", Some(0)),
-    ]);
+    // sd_1707 ends on an empty paragraph, which Word pairs with the base's
+    // closing mark; without it, Word joins the heading to "List item 1".
+    let b = docx_from_paras_then(
+        &[
+            ("Minimal tracked changes fixture (candidate)", None),
+            ("Heading. Body copy for repro", Some(0)),
+        ],
+        "<w:p/>",
+    );
     let out = compare_documents_with_settings(&a, &b, &word_settings()).expect("compare");
     let xml = document_xml(&out);
     let paras = body_paragraphs(&xml);
