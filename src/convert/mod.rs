@@ -10637,7 +10637,10 @@ fn apply_list_level(
                 .and_then(|sid| sheet.by_id.get(sid))
                 .map_or((false, false), |named| named.sets_ind)
         };
-        if lvl.left > 0.0 && !style_left && !direct_has(&["left", "start"]) {
+        // A negative level indent counts too: 66cfa52b0c's bullets at
+        // left=-131 sit 6.55pt into the margin in Word, not at the List
+        // Paragraph's 36pt.
+        if lvl.left != 0.0 && !style_left && !direct_has(&["left", "start"]) {
             pstyle.indent_left = lvl.left;
         }
         if lvl.hanging > 0.0 && !style_first && !direct_has(&["hanging", "firstLine"]) {
@@ -23618,6 +23621,31 @@ impl<'a> Layout<'a> {
         flush(self, &mut row);
     }
 
+    /// The lines a picture-only paragraph's breaks open under its
+    /// pictures: each is an empty line sized by the break that ends it, the
+    /// last by the paragraph mark (Word 16 probes 2026-10-01: a picture,
+    /// a TNR 12 break and a 7pt mark add a 7pt line; two breaks a 12pt line
+    /// and then the 7pt one). 66cfa52b0c's logo + break lost its 7pt line.
+    fn emit_picture_break_lines(&mut self, style: &ParaStyle, runs: &[TextRun]) {
+        let breaks: Vec<&RunStyle> = runs
+            .iter()
+            .flat_map(|r| std::iter::repeat_n(&r.style, r.text.matches('\n').count()))
+            .collect();
+        let mark = style.mark_run.as_deref().or_else(|| breaks.last().copied());
+        let pitch = para_grid_pitch(style, self.page.grid_pitch);
+        for i in 0..breaks.len() {
+            let Some(run) = breaks.get(i + 1).copied().or(mark) else {
+                return;
+            };
+            let face = self
+                .fonts
+                .get(self.fonts.resolve(&run.family, run.bold, run.italic));
+            let h = grid_line_box(face.single_line_pt(run.layout_size()), style, pitch);
+            self.ensure(h);
+            self.y -= h;
+        }
+    }
+
     /// What a multiple line spacing adds under an inline picture or
     /// SmartArt diagram: 00762acc's logo at line 360 gets (1.5 - 1) x the
     /// mark's single line, as in chrome picture paragraphs, and so does a
@@ -29345,6 +29373,9 @@ fn layout(
                     .then(|| runs.first().map(|r| &r.style).or(style.mark_run.as_deref()))
                     .flatten();
                 lay.emit_inline_pictures(&inline, &style, mark, runs);
+                if !has_ink && !inline.is_empty() {
+                    lay.emit_picture_break_lines(&style, runs);
+                }
                 for img in images
                     .iter()
                     .filter(|img| !matches!(img.slot, ImageSlot::Flow))

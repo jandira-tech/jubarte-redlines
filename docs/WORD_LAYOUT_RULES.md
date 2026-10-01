@@ -382,6 +382,15 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
 
   _to_improve e1c745d784's inserted logo and map each lost 2.4pt, so page
   1 held a line Word sets on page 2.
+- **A picture-only paragraph's breaks open lines under its pictures.**
+  Each is an empty line sized by the break that ends it; the last is
+  sized by the paragraph mark. Word 16 probes 2026-10-01, with a picture
+  in a TNR 12 run followed by a break:
+  - a 7pt mark adds a 7pt line (+8.16pt);
+  - 12pt and 40pt marks add their own lines;
+  - two breaks add a 12pt break line, then the 7pt mark line.
+
+  _to_improve 66cfa52b0c's logo + break + 7pt mark lost that line.
 - **A typed label its own tab places is tabbed text, not a hanging list
   marker.** English holdout c73c128db4's Defpara "⇥(a)⇥text" hangs 1616
   twips with a right stop at 1332 and a left one at 1616: Word right-aligns
@@ -501,6 +510,13 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   This holds when the paragraph's `numPr` is direct and it carries no direct
   `jc`.
   - Part a 8aea3634: its numbered Titre1 (heading 1, centred) items sit left.
+- **A negative numbering-level indent beats the paragraph style's.** Like a
+  positive one, it applies when the paragraph's `numPr` is direct and no
+  direct `w:ind` names it.
+  - _to_improve 66cfa52b0c: the level's left=-131 hanging=360 over List
+    Paragraph's 720 sets the text at 65.45 and the bullet at 47.5 in Word.
+    We kept 108, so the bullets wrapped narrower and page 1 overflowed.
+  - Open: an explicit level `left="0"` still reads as absent.
 - **A topAndBottom float can hang below its anchor paragraph.** Any later
   line that meets its band starts under it, not only the anchor paragraph's
   own lines.

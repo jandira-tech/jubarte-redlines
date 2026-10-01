@@ -38153,6 +38153,51 @@ fn an_underlined_picture_run_keeps_its_descent_under_the_picture() {
 }
 
 #[test]
+fn a_break_after_a_picture_opens_the_marks_line() {
+    // 66cfa52b0c's logo paragraph: picture, a w:br, and a 7pt mark. Word
+    // lays the break's empty line in the mark's size under the picture;
+    // with two breaks the middle line takes the break run's size (Word 16
+    // probes 2026-10-01: +8.16pt and +21.84pt over the picture alone).
+    let gap = |brs: &str, mark_sz: u32| {
+        let r = "<w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+                 <w:sz w:val=\"24\"/>";
+        let body = format!(
+            "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/>\
+             <w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+             <w:sz w:val=\"{mark_sz}\"/></w:rPr></w:pPr>\
+             <w:r><w:rPr>{r}</w:rPr><w:drawing><wp:inline distT=\"0\" distB=\"0\" \
+             distL=\"0\" distR=\"0\"><wp:extent cx=\"762000\" cy=\"381000\"/>\
+             <wp:docPr id=\"1\" name=\"p\"/><a:graphic><a:graphicData \
+             uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\"><pic:pic>\
+             <pic:nvPicPr><pic:cNvPr id=\"1\" name=\"p\"/><pic:cNvPicPr/></pic:nvPicPr>\
+             <pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill><pic:spPr><a:xfrm>\
+             <a:off x=\"0\" y=\"0\"/><a:ext cx=\"762000\" cy=\"381000\"/></a:xfrm></pic:spPr>\
+             </pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>\
+             <w:r><w:rPr>{r}</w:rPr>{brs}</w:r></w:p>\
+             <w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+             <w:r><w:rPr>{r}</w:rPr><w:t>After</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+             <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        );
+        let pdf = docx_to_pdf(&drawing_docx(&body)).expect("convert picture + break");
+        let (_, img_y) = image_cm_xy(&pdf, "60.00", "30.00");
+        let after = text_baselines(&pdf).into_iter().fold(f32::MIN, f32::max);
+        img_y - after
+    };
+    let alone = gap("", 14);
+    let one = gap("<w:br/>", 14) - alone;
+    assert!(
+        (one - 8.16).abs() < 0.3,
+        "one break: a 7pt mark line; +{one}"
+    );
+    let two = gap("<w:br/><w:br/>", 14) - alone;
+    assert!(
+        (two - 21.84).abs() < 0.4,
+        "two breaks: a 12pt break line, then the 7pt mark line; +{two}"
+    );
+}
+
+#[test]
 fn a_hanging_label_keeps_the_full_measure_for_its_text() {
     // fixtures_500 00b7801e: ind left=2880 hanging=2880, "Monday 7/22⇥"
     // in the gutter. The text after the tab has the whole 288pt measure;
@@ -38172,6 +38217,43 @@ fn a_hanging_label_keeps_the_full_measure_for_its_text() {
         ys.len(),
         1,
         "label and 228pt of text fit one line; ys={ys:?}"
+    );
+}
+
+#[test]
+fn a_negative_level_indent_beats_the_list_paragraph_style() {
+    // 66cfa52b0c: List Paragraph says left=720, the bullet level
+    // left=-131 hanging=360. Word sets the text 6.55pt into the left
+    // margin (65.45) and the bullet 18pt before it; we kept the style's
+    // 36pt, so every bullet wrapped narrower and page 1 overflowed.
+    let numbering = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:abstractNum w:abstractNumId="2">
+    <w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="o"/>
+      <w:lvlJc w:val="left"/><w:pPr><w:ind w:left="-131" w:hanging="360"/></w:pPr></w:lvl>
+  </w:abstractNum>
+  <w:num w:numId="17"><w:abstractNumId w:val="2"/></w:num>
+</w:numbering>"#;
+    let styles = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
+  <w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/>
+    <w:basedOn w:val="Normal"/><w:pPr><w:ind w:left="720"/></w:pPr></w:style>
+</w:styles>"#;
+    let body = "<w:p><w:pPr><w:pStyle w:val=\"ListParagraph\"/><w:numPr><w:ilvl w:val=\"0\"/>\
+         <w:numId w:val=\"17\"/></w:numPr></w:pPr><w:r><w:t>Attend</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&numbering_docx_with_styles(
+        body,
+        Some(numbering),
+        Some(styles),
+    ))
+    .expect("convert negative level indent");
+    let (x, _) = pdf_literal_td_xy(&pdf, "Attend").expect("Attend painted");
+    assert!(
+        (x - 65.45).abs() < 0.5,
+        "the level's left=-131 places the text at 65.45: x={x}"
     );
 }
 
