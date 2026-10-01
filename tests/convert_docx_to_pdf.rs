@@ -15453,6 +15453,34 @@ fn word_2013_squeezes_at_most_a_third_of_the_word_and_two_spaces() {
 }
 
 #[test]
+fn a_justified_cell_line_squeezes_like_a_body_line() {
+    // _to_improve 2ad8d15e88 (compat 15): Word keeps "önemi" on its
+    // justified cell line on 2.5pt Verdana spaces (2.8 at rest); we
+    // never squeezed in cells, wrapped it and ended a page long. The
+    // body's limits hold: d06f02170c's sentence keeps "times" 9pt over
+    // and moves it 11.07pt over (cells of 9401 and 9360 twips less the
+    // 108-twip cell margins).
+    let text = "All political power is vested in and derived from the people only, \
+                therefore, they have the right at all times to modify their form of \
+                government.";
+    let first_line_ends_in_times = |cell_twips: u32| {
+        let body = format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="{cell_twips}" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="{cell_twips}"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="{cell_twips}" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/><w:jc w:val="both"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="22"/></w:rPr><w:t>{text}</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#
+        );
+        let settings = r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>"#;
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, settings)).expect("cell squeeze");
+        let y = |t: &str| {
+            pdf_glyph_text_xy(&pdf, t)
+                .unwrap_or_else(|| panic!("{t}"))
+                .1
+        };
+        (y("All") - y("times")).abs() < 1.0
+    };
+    assert!(first_line_ends_in_times(9401), "9pt over keeps the word");
+    assert!(!first_line_ends_in_times(9360), "11pt over moves the word");
+}
+
+#[test]
 fn a_row_breaks_unless_a_cell_opens_on_a_keep_next_paragraph() {
     // Word 16 probes k1-k6 2026-10-01: a row that does not fit breaks
     // between its paragraphs when its cell holds keepLines (first or last
