@@ -21744,9 +21744,13 @@ impl<'a> Layout<'a> {
         // sentence ran off the page. Only a head of bare tabs is judged: a
         // TOC title before its leader (71df1fd9's "3.1.<tab>Engine Fuel.")
         // keeps the TOC path, whose first tab we do not yet place as Word.
+        // A lone typed label is judged too: c73c128db4's "<tab>(a)<tab>…"
+        // tabs on to its 1616-twip left stop and wraps there.
         let first_x = self.flow_left() + indent + if has_marker { 0.0 } else { style.indent_first };
         let head_end = first_x + self.tab_line_width(&prefix, first_x);
-        if prefix.iter().all(|r| r.text.trim().is_empty())
+        let head: String = prefix.iter().map(|r| r.text.as_str()).collect();
+        let label = head.trim();
+        if (label.is_empty() || !label.contains('\t') && is_list_marker_text(label, false))
             && head_end <= self.flow_left() + indent + width
         {
             let land = next_tab_stop(
@@ -22131,8 +22135,17 @@ impl<'a> Layout<'a> {
             let start = x;
             for (pi, part) in parts.iter().enumerate() {
                 if pi > 0 {
-                    let after_w = self.tab_suffix_width(part, run, &line[i + 1..]);
-                    let decimal_w = self.decimal_prefix_width(part, run, &line[i + 1..]);
+                    // The text a stop aligns ends at the next tab: one
+                    // later in this run stops it before the runs after
+                    // (c73c128db4's merged "<tab>(a)<tab>in the case "
+                    // then italic text right-aligned "(a)" with them).
+                    let later = if pi + 1 < parts.len() {
+                        &[][..]
+                    } else {
+                        &line[i + 1..]
+                    };
+                    let after_w = self.tab_suffix_width(part, run, later);
+                    let decimal_w = self.decimal_prefix_width(part, run, later);
                     x = self.advance_tab(x, y, after_w, decimal_w, &run.style);
                 }
                 if !part.is_empty() {
@@ -27422,6 +27435,11 @@ fn ws_tokens(s: &str) -> Vec<&str> {
 /// hanging gutter; the remaining runs wrap as the body at `w:ind/@w:left`.
 fn split_hanging_marker(runs: &[TextRun], hanging: bool) -> (Option<&TextRun>, &[TextRun]) {
     if !hanging || runs.is_empty() {
+        return (None, runs);
+    }
+    // A typed label its own tab places is tabbed text: c73c128db4's
+    // Defpara "<tab>(a)<tab>…" right-aligns "(a)" on its 1332-twip stop.
+    if !runs[0].list_marker && runs[0].text.starts_with('\t') {
         return (None, runs);
     }
     if !is_list_marker_text(&runs[0].text, runs[0].list_marker) {
