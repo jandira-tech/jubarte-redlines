@@ -1,5 +1,8 @@
 # NOTICE
 
+The comparison viewer moved to <https://jandira-tech.github.io/neurotic_docx_bench/>; these
+pages now redirect there. The notice below covers the site as it was, kept in this branch's history.
+
 This site is built on work from **docxide-pdf** by Sverre Johann Bjørke
 (<https://github.com/sverrejb/docxide-pdf>), licensed under the Apache License 2.0
 (<https://www.apache.org/licenses/LICENSE-2.0>):
