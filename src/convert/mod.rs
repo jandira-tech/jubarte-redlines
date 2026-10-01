@@ -28320,6 +28320,8 @@ fn layout(
                 // An inline text box (or canvas) is its paragraph's line too
                 // (docxide arizona; isla's Venn canvas spans Word's 297.6pt
                 // from "Example:" to "Vocabulary" only without the line).
+                // So is a SmartArt diagram, as a picture its size is
+                // (25e6d4b508's 492pt chevron list fits page 10 in Word).
                 let skip_hole_line = !has_ink
                     && boxes.iter().any(|b| {
                         matches!(b.slot, ImageSlot::Flow)
@@ -28327,7 +28329,8 @@ fn layout(
                             && (b.reserve_only
                                 || b.chart.is_some()
                                 || !b.paras.is_empty()
-                                || !b.group.is_empty())
+                                || !b.group.is_empty()
+                                || !b.diag_shapes.is_empty())
                     });
                 let skip_empty_line = skip_hole_line
                     || (!has_ink
