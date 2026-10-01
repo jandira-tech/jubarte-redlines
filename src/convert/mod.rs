@@ -23062,20 +23062,32 @@ impl<'a> Layout<'a> {
             let measure = (dw - li - ri - style.indent_left - style.indent_right).max(8.0);
             let lines = wrap_runs(self.fonts, runs, measure, measure, false);
             let mark = style.mark_run.as_deref();
-            let line_h = |line: &[TextRun]| {
-                let first = line.first().map(|r| &r.style).or(mark);
-                let size = line
-                    .iter()
-                    .map(|r| r.style.size)
-                    .fold(first.map_or(11.0, |st| st.size), f32::max);
-                let fid = first.map_or(FaceId::CarlitoRegular.into(), |st| {
+            let mark_h = || {
+                let size = mark.map_or(11.0, |st| st.size);
+                let fid = mark.map_or(FaceId::CarlitoRegular.into(), |st| {
                     self.fonts.resolve(&st.family, st.bold, st.italic)
                 });
                 para_line_box(self.fonts.get(fid), size, style)
             };
+            // A line of text is as tall as the painter makes it: its
+            // tallest face, a far-east face included, on the document
+            // grid (4640e71ddd's "附件1" box: one YaHei line on an 18pt
+            // grid takes two pitches, a 43.7pt box in Word).
+            let line_h = |line: &[TextRun]| {
+                if line.iter().all(|r| r.text.trim().is_empty()) {
+                    return mark_h();
+                }
+                let (natural, _) = self.line_face_metrics(line, None);
+                let grid = para_grid_pitch(style, self.page.grid_pitch);
+                if grid > 0.5 {
+                    grid_line_box(natural, style, grid)
+                } else {
+                    self.lifted_line_box(line, None, natural, style)
+                }
+            };
             h += style.before + style.after;
             h += if lines.is_empty() {
-                line_h(&[])
+                mark_h()
             } else {
                 lines.iter().map(|line| line_h(line)).sum()
             };
