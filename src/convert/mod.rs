@@ -801,6 +801,10 @@ struct ParaStyle {
     indent_right: f32,
     indent_first: f32,
     contextual: bool,
+    /// `w:compat/w:doNotUseHTMLParagraphAutoSpacing`: the space between
+    /// two paragraphs is the first's after plus the second's before, not
+    /// the larger of the two (`before_past`).
+    sum_spacing: bool,
     /// `w:autoSpaceDE` / `w:autoSpaceDN` set off (see `script_gap`).
     auto_space_de_off: bool,
     auto_space_dn_off: bool,
@@ -1296,6 +1300,7 @@ impl Defaults {
                 indent_right: 0.0,
                 indent_first: 0.0,
                 contextual: false,
+                sum_spacing: false,
                 auto_space_de_off: false,
                 auto_space_dn_off: false,
                 list_num: String::new(),
@@ -2863,6 +2868,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
     let theme = load_theme(pkg);
     let mut defaults = Defaults::word();
     defaults.legacy_compat = settings_compat_mode(pkg) < 15;
+    defaults.para.sum_spacing = settings_flag(pkg, "doNotUseHTMLParagraphAutoSpacing");
     let mut raw: std::collections::HashMap<String, RawStyle> = std::collections::HashMap::new();
     let Some(xml) = pkg.part_string(&main_rel_part(pkg, "styles", "word/styles.xml")) else {
         return StyleSheet {
@@ -7882,9 +7888,22 @@ fn contextual_gap(prev: &ParaStyle, next: &ParaStyle, after: f32, before: f32) -
     let own_before = if same_contextual_pair(next, prev) {
         0.0
     } else {
-        (before - after).max(0.0)
+        before_past(before, after, next.sum_spacing)
     };
     own_after + own_before
+}
+
+/// The share of a paragraph's `before` that adds under the `after` above
+/// it: its excess over that after, or all of it when the document turns
+/// HTML auto spacing off (Word 16 probe_sum 2026-10-01: exact 20pt lines
+/// with 6pt before and after step 26, and 32 under
+/// `doNotUseHTMLParagraphAutoSpacing`; 4640e71ddd's list rows 23.5).
+fn before_past(before: f32, after: f32, sum: bool) -> f32 {
+    if sum {
+        before
+    } else {
+        (before - after).max(0.0)
+    }
 }
 
 fn same_contextual_pair(left: &ParaStyle, right: &ParaStyle) -> bool {
@@ -13898,7 +13917,7 @@ fn fold_stacked_spacing(mut styles: Vec<&mut ParaStyle>, breaks: &[usize]) {
         next.before = if same_contextual_pair(next, prev) {
             0.0
         } else {
-            (next.before - after).max(0.0)
+            before_past(next.before, after, next.sum_spacing)
         };
     }
 }
@@ -17769,6 +17788,7 @@ fn first_para_align(dom: &Dom, root: NodeId) -> Align {
         indent_right: 0.0,
         indent_first: 0.0,
         contextual: false,
+        sum_spacing: false,
         auto_space_de_off: false,
         auto_space_dn_off: false,
         list_num: String::new(),
@@ -21873,8 +21893,9 @@ impl<'a> Layout<'a> {
                 break chunk;
             }
             let line = para_first_line_pt(self.fonts, runs, style, self.page.grid_pitch);
-            let whole =
-                style.before.max(prev_after) - prev_after + line * lines as f32 + style.after;
+            let whole = before_past(style.before, prev_after, style.sum_spacing)
+                + line * lines as f32
+                + style.after;
             if cum + whole > room {
                 break chunk;
             }
@@ -21883,11 +21904,11 @@ impl<'a> Layout<'a> {
             j += 1;
         };
         // The chunk's own before collapses with the space after above it.
-        let before = blocks
+        let (before, sum) = blocks
             .get(j)
             .and_then(block_para_style)
-            .map_or(0.0, |s| s.before);
-        let need = cum + chunk - before + (before.max(prev_after) - prev_after);
+            .map_or((0.0, false), |s| (s.before, s.sum_spacing));
+        let need = cum + chunk - before + before_past(before, prev_after, sum);
         (need > room).then_some(need)
     }
 
@@ -28536,7 +28557,8 @@ fn layout(
                 if i > 0
                     && let Some(prev) = block_para_style(&blocks[i - 1])
                 {
-                    lay.para_fold_share = (lay.para_before - prev.after).max(0.0);
+                    lay.para_fold_share =
+                        before_past(lay.para_before, prev.after, style.sum_spacing);
                     style.before = 0.0;
                 } else if i > 1
                     && matches!(blocks[i - 1], Block::ColumnBreak)
@@ -28547,7 +28569,7 @@ fn layout(
                     // only its excess (live Word: a before=24 break mark
                     // under an after=10 paragraph opens column two 14pt
                     // down).
-                    style.before = (style.before - prev.after).max(0.0);
+                    style.before = before_past(style.before, prev.after, style.sum_spacing);
                 }
                 if style.keep_next && i >= lay.keep_chain_until {
                     let pitch = lay.page.grid_pitch;

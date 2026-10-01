@@ -2390,6 +2390,45 @@ fn contextual_spacing_drops_only_the_flagged_paragraphs_share_of_the_gap() {
 }
 
 #[test]
+fn without_html_auto_spacing_paragraph_spacing_adds_up() {
+    // Word 16 probe_sum (2026-10-01), compat 15: exact 20pt lines with 6pt
+    // before and after step 26 (the larger of after and before), and 32
+    // (both) under w:doNotUseHTMLParagraphAutoSpacing, in the body and in
+    // a cell alike. 4640e71ddd sets the flag: its list rows step 23.5
+    // (20 + 1.8 + 1.8) where we stepped 21.8.
+    let para = |text: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:spacing w:before="120" w:after="120" w:line="400" w:lineRule="exact"/></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#
+        )
+    };
+    let paras = format!("{}{}", para("Aone"), para("Btwo"));
+    let cell = format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="5000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="5000" w:type="dxa"/></w:tcPr>{paras}</w:tc></w:tr></w:tbl><w:p/>"#
+    );
+    let compat = |flag: &str| {
+        format!(
+            r#"<w:compat>{flag}<w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>"#
+        )
+    };
+    for (flag, step) in [("", 26.0), ("<w:doNotUseHTMLParagraphAutoSpacing/>", 32.0)] {
+        for (place, body) in [("body", &paras), ("cell", &cell)] {
+            let pdf = docx_to_pdf(&minimal_docx_with_settings(
+                &format!("{body}<w:sectPr/>"),
+                &compat(flag),
+            ))
+            .expect("spacing");
+            let a = pdf_glyph_text_xy(&pdf, "Aone").expect("A").1;
+            let b = pdf_glyph_text_xy(&pdf, "Btwo").expect("B").1;
+            assert!(
+                (a - b - step).abs() < 0.3,
+                "{place} with {flag:?}: lines step {}, Word {step}",
+                a - b
+            );
+        }
+    }
+}
+
+#[test]
 fn the_run_holding_an_inline_shape_sizes_its_line() {
     // Word 16 probe 2026-10-01 (probe_il): an Arial 10 "TOP", then a
     // paragraph whose Calibri run holds only a 144x0.48pt inline wps rect
