@@ -38647,6 +38647,59 @@ fn hangul_takes_the_quarter_em_gap_and_auto_space_de_off_drops_it() {
 }
 
 #[test]
+fn a_character_style_toggles_its_paragraph_styles_bold_italic_strike_and_caps() {
+    // Word 16 probes xor and tog (2026-10-01): a character style's w:b,
+    // w:i, w:strike and w:caps toggle what the paragraph style set: both
+    // on paint plain. A basedOn chain is nearest-wins (CharB on CharA, both
+    // bold, stays bold) and direct w:b wins outright.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>\
+            <w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/></w:rPr></w:style>\
+          <w:style w:type=\"paragraph\" w:styleId=\"P\"><w:name w:val=\"P\"/><w:basedOn w:val=\"Normal\"/>\
+            <w:rPr><w:b/><w:i/><w:strike/><w:caps/></w:rPr></w:style>\
+          <w:style w:type=\"character\" w:styleId=\"A\"><w:name w:val=\"A\"/>\
+            <w:rPr><w:b/><w:i/><w:strike/><w:caps/></w:rPr></w:style>\
+          <w:style w:type=\"character\" w:styleId=\"B\"><w:name w:val=\"B\"/><w:basedOn w:val=\"A\"/>\
+            <w:rPr><w:b/></w:rPr></w:style>\
+        </w:styles>";
+    let render = |para: &str| {
+        let body = format!("{para}<w:sectPr/>");
+        let pdf = docx_to_pdf(&docx_with_styles(&body, styles)).expect("toggles");
+        // The faces' names: "Italic" alone also matches /ItalicAngle.
+        let hay = String::from_utf8_lossy(&pdf)
+            .split("/BaseFont /")
+            .skip(1)
+            .filter_map(|s| s.split_whitespace().next())
+            .collect::<Vec<_>>()
+            .join(" ");
+        (pdf, hay)
+    };
+    let (pdf, hay) = render(
+        "<w:p><w:pPr><w:pStyle w:val=\"P\"/></w:pPr><w:r><w:rPr><w:rStyle w:val=\"A\"/></w:rPr>\
+         <w:t>toggled off entirely here</w:t></w:r></w:p>",
+    );
+    assert!(
+        !hay.contains("Bold") && !hay.contains("Italic"),
+        "plain face: {hay}"
+    );
+    assert!(pdf_horiz_rule_ys(&pdf).is_empty(), "no strike");
+    assert!(
+        pdf_winansi_text(&pdf).contains("toggled"),
+        "lowercase: {}",
+        pdf_winansi_text(&pdf)
+    );
+    let (_, chain) =
+        render("<w:p><w:r><w:rPr><w:rStyle w:val=\"B\"/></w:rPr><w:t>chain</w:t></w:r></w:p>");
+    assert!(chain.contains("Bold"), "a basedOn chain is nearest-wins");
+    let (_, direct) = render(
+        "<w:p><w:pPr><w:pStyle w:val=\"P\"/></w:pPr><w:r><w:rPr><w:rStyle w:val=\"A\"/><w:b/></w:rPr>\
+         <w:t>direct</w:t></w:r></w:p>",
+    );
+    assert!(direct.contains("Bold"), "direct w:b wins");
+}
+
+#[test]
 fn a_footer_runs_letter_spacing_is_painted() {
     // fixtures_500 013d00cf: the footer's "Page" carries w:spacing 60
     // (3pt); Word spaces its letters as in the body. The chrome painter

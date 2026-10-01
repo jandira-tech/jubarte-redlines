@@ -12047,14 +12047,20 @@ fn apply_named_char_style(style: &mut RunStyle, named: &NamedStyle) {
     if run.underline_wave {
         style.underline_wave = true;
     }
+    // Bold, italic, strike and caps toggle what the paragraph style set:
+    // both on paint plain (Word 16 probes xor and tog 1001). Direct rPr,
+    // applied after, still sets them outright.
     if run.strike {
-        style.strike = true;
+        style.strike = !style.strike;
     }
     if run.bold {
-        style.bold = true;
+        style.bold = !style.bold;
     }
     if run.italic {
-        style.italic = true;
+        style.italic = !style.italic;
+    }
+    if run.caps {
+        style.caps = !style.caps;
     }
     if run.color != [0.0, 0.0, 0.0] {
         style.color = run.color;
