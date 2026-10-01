@@ -282,7 +282,7 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   PDF holds a plain 0x2D: most faces (Arial, Calibri, Aptos) have no
   U+2011 glyph. d06f02170c's "self-incrimination".
 
-## Contextual spacing
+## Paragraph spacing
 
 - **contextualSpacing drops only the flagged paragraph's share of the
   gap**, 0abf6bde. Two same-style paragraphs stand A's after plus B's
@@ -292,6 +292,30 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   = 0, plain after 20 over flagged before 6 = 20, both flagged = 0. Body,
   cells, text boxes and headers share the rule. 6ef1820785's flagged
   lines over plain empty paragraphs kept 2pt each: 7 pages, as in Word.
+- **Without HTML auto spacing the spacing adds up**, 6bb7f8b8. Under
+  `w:compat/w:doNotUseHTMLParagraphAutoSpacing` two paragraphs stand the
+  first's after plus the second's before apart, not the larger of the
+  two, in the body and in cells.
+  - Word 16 probe_sum (2026-10-01): exact 20pt lines with 6pt before and
+    after step 26 without the flag and 32 with it. 4640e71ddd sets it:
+    its list rows step 23.5 (20 + 1.8 + 1.8).
+  - `w:beforeLines`/`w:afterLines` count hundredths of the docGrid pitch
+    (12pt without a grid): 4640e71ddd steps 22.3 with its grid removed.
+
+## Endnotes
+
+- **Each endnote mark reads its note's place in reference order**,
+  9970aa9e, in the last section's `w:endnotePr` format (else the settings
+  part's), lowerRoman from 1 by default. The note opens on the same mark
+  (`w:endnoteRef`). Strict01 p13 reads "i This is an endnote."; 9134397db6
+  "Ouchi.ii".
+- **The separator note is a line of its own over the notes**, d7a8dcee.
+  Its paragraph lays out as usual and its `w:separator` draws a 144pt
+  black rule with its foot about 2.2pt over that line's baseline
+  (Strict01 p13: rule 450.48, note baseline 435.84). It opens every run
+  of notes, at docEnd or at a sectEnd section.
+  - Open: on a page the notes continue onto, Word draws the
+    `continuationSeparator` instead (9a1c0cc482 p3, 0.48pt there).
 
 ## Breaks, typed labels and diagrams
 
