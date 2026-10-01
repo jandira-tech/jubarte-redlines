@@ -310,3 +310,33 @@ fn case_twin_styles_stay_apart() {
         assert!(!ppr.contains("<w:spacing"), "{ppr}");
     }
 }
+
+/// One stylesheet can hold built-in twins: LibreOffice saved ab517eeffc
+/// with `Caption` (id Caption) beside `caption` (id Caption1). A revision
+/// without them leaves both as the original defines them; putting each back
+/// on the first style of its name wrote `caption` twice under one id, which
+/// Word reads as a broken stylesheet (ab517eeffc × ab859711f4).
+#[test]
+fn built_in_twins_the_revision_lacks_keep_their_own_ids() {
+    let twins = r#"<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Caption"><w:name w:val="Caption"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="120" w:after="120"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="Caption1"><w:name w:val="caption"/><w:basedOn w:val="Normal"/><w:rPr><w:i/></w:rPr></w:style>"#;
+    let plain = r#"<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>"#;
+    let out = compare_documents(
+        &docx(twins, "Hello world."),
+        &docx(plain, "Hello brave world."),
+        "Redline",
+    )
+    .expect("compare ok");
+    let all = styles(&styles_xml(&out));
+    let mut ids: Vec<&str> = all.iter().map(|(_, id, _, _)| id.as_str()).collect();
+    ids.sort_unstable();
+    let before = ids.len();
+    ids.dedup();
+    assert_eq!(ids.len(), before, "a style id written twice: {ids:?}");
+    let caption = |name: &str| {
+        all.iter()
+            .find(|(_, _, n, _)| n == name)
+            .map(|s| s.1.clone())
+    };
+    assert_eq!(caption("Caption").as_deref(), Some("Caption"));
+    assert_eq!(caption("caption").as_deref(), Some("Caption1"));
+}

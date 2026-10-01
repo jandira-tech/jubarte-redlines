@@ -1567,24 +1567,29 @@ fn styles_the_revision_lacks(
         .collect()
 }
 
-/// Put each saved style back in place of the one its key finds.
+/// Put each saved style back in place of the one its key finds. Twins of one
+/// key (a built-in name in two cases) go back in order, each on its own.
 fn restore_styles(
     dom: &mut Dom,
     styles_root: NodeId,
     saved: Vec<((String, String), NodeId)>,
 ) -> bool {
     let mut changed = false;
+    let mut restored = std::collections::HashSet::new();
     for (key, copy) in saved {
         let Some(live) = dom
             .elements(styles_root, Some(&W::name("style")))
             .into_iter()
-            .find(|&s| style_match_key(dom, s).as_ref() == Some(&key))
+            .find(|&s| !restored.contains(&s) && style_match_key(dom, s).as_ref() == Some(&key))
         else {
             continue;
         };
         if dom.serialize_element(live) != dom.serialize_element(copy) {
             dom.replace_with(live, &[copy]);
+            restored.insert(copy);
             changed = true;
+        } else {
+            restored.insert(live);
         }
     }
     changed
