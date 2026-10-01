@@ -931,15 +931,30 @@ fn non_separator_prefix_sums(
     prefix
 }
 
+/// Whether a window holds the words of one paragraph at most: words only, and
+/// no paragraph mark before its last word.
+fn within_one_paragraph(dom: &Dom, cul: &[ComparisonUnit]) -> bool {
+    let Some((_, before_last)) = cul.split_last() else {
+        return true;
+    };
+    cul.iter().all(|u| matches!(u, ComparisonUnit::Word(_)))
+        && !before_last.iter().any(|u| match u {
+            ComparisonUnit::Word(w) => w.contents.iter().any(|a| atom_is_ppr(dom, a)),
+            ComparisonUnit::Group(_) => true,
+        })
+}
+
 /// Keep the **first-found** candidate maximising `(content_score, len)`. Strict
 /// `>` replacement means ties never displace the incumbent — so the winner is the
 /// earliest one in the enumeration order (`i1` ascending, then `i2` ascending).
 ///
-/// With `diagonal` (Word mode), a tie goes to the run nearer the diagonal
-/// (`|i1 - i2|` smaller), as Word pairs repeated text in place: of two equal
-/// `1,000 again.` sentences turned into `1,500 again.` and `2,000 again.`,
-/// Word changes `000` and `1` in place (tests/m_word_tokens.rs), where the
-/// first-found run paired the first sentence with the second.
+/// With `diagonal` (Word mode, within one paragraph), a tie goes to the
+/// run nearer the diagonal (`|i1 - i2|` smaller), as Word pairs repeated text
+/// in place: of two equal `1,000 again.` sentences turned into `1,500 again.`
+/// and `2,000 again.`, Word changes `000` and `1` in place
+/// (tests/m_word_tokens.rs), where the first-found run paired the first
+/// sentence with the second. Windows across paragraphs keep first-found (the
+/// list and equal-count pairings of m393 and m45 depend on it).
 #[inline]
 fn consider_candidate(
     best: &mut Option<(usize, usize, usize, usize)>,
@@ -976,7 +991,8 @@ fn longest_common_run_scan(
         (Some(d), Some(s)) => Some(non_separator_prefix_sums(d, cul1, s)),
         _ => None,
     };
-    let diagonal = settings.is_some_and(|s| s.merge_replaced_paragraphs);
+    let diagonal = settings.is_some_and(|s| s.merge_replaced_paragraphs)
+        && dom.is_some_and(|d| within_one_paragraph(d, cul1) && within_one_paragraph(d, cul2));
     // best: (content_score, len, i1, i2)
     let mut best: Option<(usize, usize, usize, usize)> = None;
     for i1 in 0..cul1.len() {
@@ -1025,7 +1041,8 @@ fn longest_common_run_indexed(
         index.entry(u.sha1_key()).or_default().push(i2);
     }
 
-    let diagonal = settings.is_some_and(|s| s.merge_replaced_paragraphs);
+    let diagonal = settings.is_some_and(|s| s.merge_replaced_paragraphs)
+        && dom.is_some_and(|d| within_one_paragraph(d, cul1) && within_one_paragraph(d, cul2));
     // best: (content_score, len, i1, i2) — same tuple/tie-break as the scan.
     let mut best: Option<(usize, usize, usize, usize)> = None;
     for i1 in 0..cul1.len() {

@@ -60,7 +60,7 @@ the rows stay parked. Re-disposition needs that fresh sweep.
 | src/convert/mod.rs | 1959 | mini 414, mini 510 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. /// (mini 414/417 ITT-neg) or tIns/bIns (mini 510 ITT-neg: XML 3.6pt |
 | src/convert/mod.rs | 1960 | mini 647–650 | b | Document-specific mini site; remeasure 398+76. /// vs pad=4 dropped Strict01 family −0.049). Mini 647–650 |
 | src/convert/mod.rs | code removed | mini 639–642 | b | Document-specific mini site; remeasure 398+76. /// Mini 639–642: relativeFrom=margin (Text Box 2 40% of content |
-| src/convert/mod.rs | 3523 (gate removed) | mini 90 | b | Document-specific mini site; remeasure 398+76. // file_134, but applying it (mini 90) also retargeted file_2 / — the old Aptos-only gate is gone now that line boxes come from face metrics; the comment at 3522–3524 records the removal |
+| src/convert/mod.rs | 3523 | mini 90 | b | Document-specific mini site; remeasure 398+76; gate removed. // file_134, but applying it (mini 90) also retargeted file_2 / — the old Aptos-only gate is gone now that line boxes come from face metrics; the comment at 3522–3524 records the removal |
 | src/convert/mod.rs | code removed | mini 396 | b | Document-specific mini site; remeasure 398+76. // Cambria para gap is ~24.7 (line ~14.9 + after). Mini 396 on the — comment gone; the id survives only inside the 3523 note ("mini 90 / 396") |
 | src/convert/mod.rs | 3602 | // Aptos-only gate was a mini-set trade  | b | KEEP retired: Aptos-only minor-slot gate was a mini-set trade; do not restore. |
 | src/convert/mod.rs | 3980 | mini 350 | b | KEEP pending 398+76 remeasure; ITT-neg/wrong. // Not w14:shadow extra copy (mini 350 ITT-neg). |
