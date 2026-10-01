@@ -28585,8 +28585,8 @@ fn endnote_referenced_from_a_table_cell_is_painted() {
 #[test]
 fn endnote_pr_sect_end_paints_notes_before_next_section() {
     // plan.md Step 10 F: w:endnotePr/w:pos=sectEnd dumps notes at the
-    // section boundary, not after the whole body (docEnd). Separator
-    // and in-body markers stay unpainted (mini 619 / 487 KEEP).
+    // section boundary, not after the whole body (docEnd), under the
+    // separator's rule (Word Strict01, 2026-10-01).
     let body = "<w:p><w:r><w:t>SectOneX</w:t></w:r>\
            <w:r><w:endnoteReference w:id=\"1\"/></w:r></w:p>\
          <w:p><w:pPr><w:sectPr>\
@@ -28627,10 +28627,7 @@ fn endnote_pr_sect_end_paints_notes_before_next_section() {
         .into_iter()
         .filter(|(_, _, w, h)| (*w - 144.0).abs() < 2.0 && (*h - 0.72).abs() < 0.15)
         .collect();
-    assert!(
-        hair.is_empty(),
-        "mini 619 separator stays unpainted; hair={hair:?}"
-    );
+    assert_eq!(hair.len(), 1, "one separator over the notes; hair={hair:?}");
 }
 
 #[test]
@@ -28682,11 +28679,12 @@ fn official_strict01_endnote_body_opens_on_its_mark() {
 }
 
 #[test]
-fn endnote_separator_stays_unpainted_after_mini_619() {
-    // Word Strict01 p13 paints w:separator as a 144pt × 0.72pt black
-    // filled hairline above "This is an endnote." Mini 619–622 did that
-    // and ITT-neg'd NR mean −0.0018 (8 Strict01-family −0.013, 0 gains)
-    // while RL mean +0.0324. KEEP-only forbids the NR drop. Do not retry.
+fn endnote_separator_paints_its_rule_on_its_own_line() {
+    // Word Strict01 p13 (Word 16, 2026-10-01): the separator note's
+    // paragraph is a line of its own, and its w:separator a 144pt × 0.72pt
+    // black rule at the margin above "This is an endnote." Mini 619 had
+    // left both out for an NR mean move of −0.0018; Word parity comes
+    // first.
     let body = "<w:p><w:r><w:t>BodyLine</w:t></w:r>\
            <w:r><w:endnoteReference w:id=\"1\"/></w:r></w:p>\
          <w:sectPr><w:pgSz w:w=\"612pt\" w:h=\"792pt\"/></w:sectPr>";
@@ -28700,9 +28698,10 @@ fn endnote_separator_stays_unpainted_after_mini_619() {
             .into_iter()
             .filter(|(_, _, w, h)| (*w - 144.0).abs() < 2.0 && (*h - 0.72).abs() < 0.15)
             .collect();
+    let note = pdf_glyph_text_xy(&pdf, "This is an endnote.").expect("note");
     assert!(
-        hair.is_empty(),
-        "mini 619 endnote separator ITT-neg; hair={hair:?}"
+        hair.len() == 1 && (hair[0].0 - 72.0).abs() < 0.5 && hair[0].1 > note.1 + 10.0,
+        "one rule at the margin, a line above the note at {note:?}; hair={hair:?}"
     );
 }
 
@@ -28831,9 +28830,10 @@ fn official_strict01_long_video_para_starts_page_two() {
 }
 
 #[test]
-fn official_strict01_endnote_separator_stays_unpainted_after_mini_619() {
-    // Word p13 paints w:separator as 144×0.72 black. Mini 619–622 ITT-neg
-    // NR mean −0.0018 (8 Strict01-family drops, 0 gains). Do not retry.
+fn official_strict01_endnote_separator_paints_on_its_own_line() {
+    // Word p13 (Word 16, 2026-10-01): a 144×0.72 black rule at 72, 450.48
+    // and the note's baseline at 435.84, one 11pt Calibri line under the
+    // body's end. Without the separator line the note stood 13.6pt high.
     let path = "tests/corpus/neurotic_docx_bench/grok_run/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
@@ -28844,8 +28844,13 @@ fn official_strict01_endnote_separator_stays_unpainted_after_mini_619() {
         .filter(|(_, _, w, h)| (*w - 144.0).abs() < 2.0 && (*h - 0.72).abs() < 0.15)
         .collect();
     assert!(
-        hair.is_empty(),
-        "mini 619 endnote separator ITT-neg; hair={hair:?}"
+        hair.len() == 1 && (hair[0].0 - 72.0).abs() < 0.5 && (hair[0].1 - 450.48).abs() < 1.0,
+        "Word's separator rule; hair={hair:?}"
+    );
+    let note = pdf_glyph_text_xy(&pdf, "This is an endnote.").expect("note");
+    assert!(
+        (note.1 - 435.84).abs() < 1.0,
+        "the note's baseline sits where Word's does; note={note:?}"
     );
 }
 
