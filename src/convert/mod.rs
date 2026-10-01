@@ -10859,6 +10859,7 @@ fn table_block(
                 on(b.bottom, b.outer_width),
             ]
         });
+    let centred = matches!(tstyle.align, Align::Center);
     Block::Table {
         cols,
         rows,
@@ -10875,7 +10876,9 @@ fn table_block(
                 unstyled,
                 header_rows,
                 table_grid: table_style_id(dom, table) == Some("TableGrid"),
-                tbl_ind: table_ind(dom, table),
+                // A centred table is placed without its indent, so the
+                // 22in cap ignores it too (PR #247 review).
+                tbl_ind: if centred { 0.0 } else { table_ind(dom, table) },
                 mar_l: first_pad_l,
                 pref,
                 fixed,

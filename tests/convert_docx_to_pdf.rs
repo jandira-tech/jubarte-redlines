@@ -41890,6 +41890,38 @@ fn a_fixed_table_past_22_inches_squeezes_its_last_columns_to_the_limit() {
 }
 
 #[test]
+fn a_centred_table_past_22_inches_ignores_its_indent_in_the_cap() {
+    // PR #247 review: a centred table is placed without its tblInd, so the
+    // 22in cap must not subtract it either. A 7pt indent squeezed the
+    // table to 1577pt and moved its centred start 3.5pt right.
+    let table = |ind: u32| {
+        let cell = |text: &str| {
+            format!(
+                "<w:tc><w:tcPr><w:tcW w:w=\"20000\" w:type=\"dxa\"/></w:tcPr>\
+                 <w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"
+            )
+        };
+        format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:jc w:val=\"center\"/>\
+               <w:tblInd w:w=\"{ind}\" w:type=\"dxa\"/><w:tblLayout w:type=\"fixed\"/></w:tblPr>\
+               <w:tblGrid><w:gridCol w:w=\"20000\"/><w:gridCol w:w=\"20000\"/></w:tblGrid>\
+               <w:tr>{}{}</w:tr></w:tbl><w:p/><w:sectPr/>",
+            cell("Top"),
+            cell("Far")
+        )
+    };
+    let top_x = |ind: u32| {
+        let pdf = docx_to_pdf(&minimal_docx_body(&table(ind))).expect("centred table");
+        pdf_glyph_text_xy(&pdf, "Top").expect("Top paints").0
+    };
+    let (bare, indented) = (top_x(0), top_x(140));
+    assert!(
+        (bare - indented).abs() < 0.1,
+        "a centred table caps at 22in whatever its tblInd: x {bare} vs {indented}"
+    );
+}
+
+#[test]
 fn shaded_empty_header_and_footer_paragraphs_paint_their_bands() {
     // PR #247 review: Word paints an empty paragraph's shading across its
     // mark's line. Word, these parts (Arial 10, single, no spacing): the
