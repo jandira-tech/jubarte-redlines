@@ -29,7 +29,7 @@ use crate::namespaces::{A, M, MC, R, W, W14, W15, WNE, WP};
 use crate::opc::PartFs;
 use crate::xmllinq::{Dom, NodeId, XName, XNamespace};
 
-use font::{Face, FaceId, FaceRef, Fonts};
+use font::{Face, FaceId, FaceRef, Fonts, NO_BREAK_HYPHEN};
 
 pub use font::{FontReportEntry, FontStep, font_report_json};
 
@@ -12819,6 +12819,13 @@ fn collect_visible_marked(dom: &Dom, node: NodeId, out: &mut String, in_del: boo
     // 00abf747's footer ends in one, a line Word keeps).
     if !in_del && dom.name_is(node, &W::name("cr")) {
         out.push('\n');
+        return;
+    }
+    // A non-breaking hyphen is U+2011 to the line breaker, which never
+    // splits there; the face paints it as its hyphen (d06f02170c's
+    // "self-incrimination").
+    if !in_del && dom.name_is(node, &W::name("noBreakHyphen")) {
+        out.push(NO_BREAK_HYPHEN);
         return;
     }
     // An absolute-position tab moves like a tab; chrome paragraphs resolve
@@ -27889,6 +27896,8 @@ fn wrap_runs_segment(
         }
     }
     let mut line_spaces = 0.0_f32;
+    // One space of the last gap: the squeeze test weighs the moved word's room.
+    let mut space_w = 0.0_f32;
     // The text after each unit up to the next tab: a centre or right stop
     // sets it back by half or all of it, as at paint time. Measured from
     // the stop alone, 5fb9cedf's centred title overflowed and wrapped.
@@ -27972,7 +27981,16 @@ fn wrap_runs_segment(
             (w, tab_past) = tab_w(t, line_i, x);
         }
         let limit = if line_i == 0 { first_width } else { width };
-        let squeezed = tabs.is_some_and(|t| x + w - limit <= t.squeeze * line_spaces);
+        // Word squeezes only while the overflow is at most a third of the
+        // word and two spaces: shrinking may take half of what moving the
+        // word would leave to stretch, its space included. Word 16 probes
+        // (compat 15, Times 9 and 11, 8 to 39 spaces, 2 to 9 letter words):
+        // "times" at 11pt keeps up to 9.7 of 9.86pt; d06f02170c's 11.07pt
+        // moves it although a quarter of the spaces is 13.1pt.
+        let overflow = x + w - limit;
+        let squeezed = tabs.is_some_and(|t| {
+            overflow <= t.squeeze * line_spaces && overflow <= (w + 2.0 * space_w) / 3.0
+        });
         let hang = hanging_punct_width(fonts, &unit);
         // A space hangs past the edge unless one space is wider than the
         // line: then each is a line of its own, as each character is
@@ -28071,6 +28089,7 @@ fn wrap_runs_segment(
         }
         if is_space && unit.iter().all(|(_, tok, _)| !tok.contains('\t')) {
             line_spaces += w;
+            space_w = w / chars.max(1) as f32;
         }
         x += w;
         for (run, tok, _) in unit {

@@ -1528,6 +1528,40 @@ fn a_square_float_with_no_side_room_pushes_text_below_it() {
 }
 
 #[test]
+fn a_no_break_hyphen_paints_a_hyphen_and_never_breaks_the_line() {
+    // _to_improve d06f02170c: "self<w:noBreakHyphen/>incrimination" is
+    // "self-incrimination" in Word's PDF (a plain 0x2D, as most faces have
+    // no U+2011); we dropped the hyphen and the lines ran short.
+    let para = |filler: usize, hyphen: &str| {
+        format!(
+            "<w:p><w:r><w:t xml:space=\"preserve\">{}SelfPart</w:t>{hyphen}\
+             <w:t>IncrimPart</w:t></w:r></w:p><w:sectPr/>",
+            "word ".repeat(filler)
+        )
+    };
+    let y = |pdf: &[u8], t: &str| pdf_glyph_text_xy(pdf, t).unwrap_or_else(|| panic!("{t}")).1;
+    let one = docx_to_pdf(&minimal_docx_body(&para(0, "<w:noBreakHyphen/>"))).expect("hyphen");
+    assert!(
+        pdf_glyph_text_xy(&one, "SelfPart-IncrimPart").is_some(),
+        "the non-breaking hyphen paints as a hyphen"
+    );
+    // A filler where an ordinary hyphen breaks between the two parts.
+    let filler = (1..120)
+        .find(|&n| {
+            let pdf = docx_to_pdf(&minimal_docx_body(&para(n, "<w:t>-</w:t>"))).expect("hyphen");
+            (y(&pdf, "SelfPart") - y(&pdf, "IncrimPart")).abs() > 1.0
+        })
+        .expect("a hyphen break");
+    let kept = docx_to_pdf(&minimal_docx_body(&para(filler, "<w:noBreakHyphen/>")))
+        .expect("non-breaking hyphen");
+    assert_eq!(
+        y(&kept, "SelfPart"),
+        y(&kept, "IncrimPart"),
+        "a non-breaking hyphen keeps its word on one line"
+    );
+}
+
+#[test]
 fn a_br_outside_a_run_still_breaks_the_line() {
     // fixtures_500 0065a5f9 (PHPWord): <w:br/> sits directly in the w:p
     // between the title run and the URL hyperlink. Word breaks the line
@@ -15363,6 +15397,35 @@ fn kern_two_kerns_body_text_like_word() {
         kerned < plain - 2.0,
         "kern=2 tightens AV pairs at 11pt; plain={plain} kerned={kerned}"
     );
+}
+
+#[test]
+fn word_2013_squeezes_at_most_a_third_of_the_word_and_two_spaces() {
+    // _to_improve d06f02170c: "…at all times" (Times 11, 19 spaces) runs
+    // 11.07pt past a 457.2pt measure; a quarter of its spaces (13.1pt)
+    // would cover it, yet Word moves "times" down. Word 16 probes: the
+    // overflow may be at most (word + 2 spaces) / 3, here 9.86pt (9.7
+    // kept, 9.92 moved), besides the quarter of the spaces.
+    let text = "All political power is vested in and derived from the people only, \
+                therefore, they have the right at all times to modify their form of \
+                government.";
+    let first_line_ends_in_times = |right_twips: u32| {
+        let body = format!(
+            r#"<w:p><w:pPr><w:spacing w:after="0"/><w:ind w:right="{right_twips}"/><w:jc w:val="both"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="22"/></w:rPr><w:t>{text}</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#
+        );
+        let settings = r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>"#;
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, settings)).expect("squeeze");
+        let y = |t: &str| {
+            pdf_glyph_text_xy(&pdf, t)
+                .unwrap_or_else(|| panic!("{t}"))
+                .1
+        };
+        (y("All") - y("times")).abs() < 1.0
+    };
+    // 9.0pt over: kept by narrowing the spaces.
+    assert!(first_line_ends_in_times(175), "9pt over keeps the word");
+    // 11.07pt over: moved, as in Word.
+    assert!(!first_line_ends_in_times(216), "11pt over moves the word");
 }
 
 #[test]

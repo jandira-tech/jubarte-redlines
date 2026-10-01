@@ -1740,6 +1740,8 @@ fn stream_object(ops: &str, compress: bool) -> Vec<u8> {
 fn winansi_byte(ch: char) -> Option<u8> {
     match ch as u32 {
         0x20..=0x7E | 0xA0..=0xFF => Some(ch as u8),
+        // A non-breaking hyphen is a hyphen on the page, as in Word's PDFs.
+        0x2011 => Some(b'-'),
         0x0152 => Some(0x8C),
         0x0153 => Some(0x9C),
         0x0160 => Some(0x8A),
