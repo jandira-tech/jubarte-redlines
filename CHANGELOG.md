@@ -17,6 +17,12 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Added
 
+- `scripts/release.sh` step 12 runs `scripts/release_downstream.sh`: jubarte.pro
+  moves to the release (download page, demo engine) and is deployed, the
+  app's release files are committed on `release/vx.y.z` in the jubarte-app
+  repository with a pull request, and the Mac App Store and benchmark
+  commands are printed; `release_downstream.sh x.y.z --app` uploads the App
+  Store build (Submit for Review stays a person's click).
 - Markdown alongside Word ([docs/MARKDOWN.md](docs/MARKDOWN.md)):
   - `jubarte convert draft.md` (`markdown::markdown_to_docx`) writes
     CommonMark with GitHub's tables, strikethrough, task lists and footnotes

@@ -35,13 +35,14 @@
 #                 --no-wait     PyPI gets sdist+local wheel instead of CI wheels
 #
 # What it does, in order:
-#   1. preflight — tools, registry credentials, main branch, clean tree
-#   2. version sync — Cargo.toml and the README's Socket badge version
+#   0. preflight — tools, registry credentials, main branch, clean tree
+#   1. version sync — Cargo.toml and the README's Socket badge version
 #      (bump-version.mjs), jubarte-python/Cargo.toml,
 #      jubarte-wasm/npm/package.json, jubarte-wasm/cli/package.json (the
 #      `npx jubarte-redlines` CLI), and all four Cargo.lock files
-#   3. changelog check — dated `## [x.y.z]` section + release-link footer,
-#      then the five summaries + the docs statement land in their channels
+#   2. changelog check — dated `## [x.y.z]` section + release-link footer
+#   3. summaries — the five summaries + the docs statement land in their
+#      channels
 #   4. gates — fmt, clippy -D warnings, test --all-features, convert-sweep
 #      unit tests, REUSE lint (sequential cargo per AGENTS.md)
 #   5. api docs drift — REQUIRED review: `cargo doc --no-deps
@@ -55,14 +56,19 @@
 #   7. `chore(release): vX.Y.Z` commit, wasm npm rebuild (stamps the release
 #      commit into ENGINE_COMMIT.txt), npm smoke test, artifacts commit,
 #      annotated `vX.Y.Z` tag whose body is the github summary
-#   8. point of no return — type `vX.Y.Z` to confirm, then push; release.yml
+#      point of no return — type `vX.Y.Z` to confirm, then push; release.yml
 #      builds the five CLI binaries + four PyPI wheels + sdist and creates
 #      the `jubarte vX.Y.Z` GitHub release itself
-#   9. publishes — crates.io (`cargo publish`, after proving the summary is
-#      inside the .crate), npm (`npm publish` on jubarte-wasm/npm, then the
-#      jubarte-redlines CLI on jubarte-wasm/cli), PyPI
-#      (CI wheels + sdist via `uv publish`)
-#  10. verify — every registry answers with the new version AND its summary
+#   8. crates.io — `cargo publish`, after proving the summary is inside the
+#      .crate
+#   9. npm — `npm publish` on jubarte-wasm/npm, then the jubarte-redlines
+#      CLI on jubarte-wasm/cli
+#  10. PyPI — CI wheels + sdist via `uv publish`
+#  11. verify — every registry answers with the new version AND its summary
+#  12. downstream — scripts/release_downstream.sh: jubarte.pro moves to the
+#      release and is deployed, the app's release files are committed in the
+#      jubarte-app repository, and the Mac App Store and benchmark commands
+#      are printed (the App Store upload itself: release_downstream.sh --app)
 #
 # Idempotent: each publish checks the registry first and skips a version
 # that is already live, so a failed run can simply be re-run.
@@ -720,6 +726,15 @@ check "PyPI       jubarte-redlines $VER" pypi_has
 check "GitHub     release $TAG" ghrel_has
 check "GitHub     notes carry --github-summary" gh_note
 [ "$ok" = 1 ] || die "verification failed — check the lines marked ✗"
+
+# =============================================================================
+say "12. Downstream — jubarte.pro, jubarte-app, App Store, benchmark"
+# =============================================================================
+# After verify: the site reads the GitHub release's files and the npm package
+# that step 11 just proved live. A failure here leaves the release itself
+# intact; rerun scripts/release_downstream.sh $VER on its own.
+scripts/release_downstream.sh "$VER" \
+  || die "downstream failed — the release is out; rerun scripts/release_downstream.sh $VER"
 
 say "Released jubarte $VER"
 echo "  https://github.com/jandira-tech/jubarte-redlines/releases/tag/$TAG"
