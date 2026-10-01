@@ -19455,6 +19455,19 @@ impl<'a> Layout<'a> {
     /// float just painted from `start` goes under any earlier one on its
     /// page with a higher z, which move to paint after it (e83fa17a's
     /// photos over the white boxes anchored after them).
+    /// Runs `paint` inside `Op::Pin` brackets when `pin`: what it paints is
+    /// fixed to the page (`shift_flow_ops` leaves it).
+    fn pinned<T>(&mut self, pin: bool, paint: impl FnOnce(&mut Self) -> T) -> T {
+        if !pin {
+            return paint(self);
+        }
+        let page = self.pages.len();
+        self.current().ops.push(Op::Pin(true));
+        let out = paint(self);
+        self.pages[page - 1].ops.push(Op::Pin(false));
+        out
+    }
+
     fn stack_front_float(&mut self, page: usize, start: usize, z: u32) {
         if self.pages.len() != page || self.current().ops.len() <= start {
             return;
@@ -19560,9 +19573,7 @@ impl<'a> Layout<'a> {
             return;
         }
         let dy = -(avail - used) / 2.0;
-        for op in &mut self.pages[0].ops[start..] {
-            shift_op_y(op, dy);
-        }
+        shift_flow_ops(&mut self.pages[0].ops[start..], dy);
         for note in &mut self.pages[0].comments {
             note.y += dy;
         }
@@ -23054,7 +23065,9 @@ impl<'a> Layout<'a> {
             slot @ ImageSlot::Float { .. } => self.float_xy(dw, dh, slot),
         };
         let (page, start) = (self.pages.len(), self.current().ops.len());
-        self.push_image(img, x, y, dw, dh);
+        let fixed =
+            matches!(img.slot, ImageSlot::Float { .. }) && !float_is_text_anchored(img.slot);
+        self.pinned(fixed, |lay| lay.push_image(img, x, y, dw, dh));
         if !img.behind && matches!(img.slot, ImageSlot::Float { .. }) {
             self.stack_front_float(page, start, img.z);
         }
@@ -25230,11 +25243,10 @@ impl<'a> Layout<'a> {
                 && push > 0.0
                 && saved_y - push >= self.body_floor
             {
+                // Objects fixed to the page stay put (PR #247 review).
                 let start = self.chrome_end;
                 let page = self.current();
-                for op in &mut page.ops[start..] {
-                    shift_op_y(op, -push);
-                }
+                shift_flow_ops(&mut page.ops[start..], -push);
                 for note in &mut page.comments {
                     note.y -= push;
                 }
@@ -28606,7 +28618,9 @@ fn layout(
                     // label backdrops hid "QUI SOMMES NOUS ?").
                     let page = lay.pages.len();
                     let start = lay.current().ops.len();
-                    lay.emit_textbox(box_, style.indent_left);
+                    let fixed = matches!(box_.slot, ImageSlot::Float { .. })
+                        && !float_is_text_anchored(box_.slot);
+                    lay.pinned(fixed, |lay| lay.emit_textbox(box_, style.indent_left));
                     if box_.behind && lay.pages.len() == page {
                         let at = lay.behind_end.min(start);
                         let ops: Vec<Op> = lay.current().ops.drain(start..).collect();
@@ -30708,7 +30722,21 @@ fn shift_op_y(op: &mut Op, dy: f32) {
                 }
             }
         }
-        Op::Watermark { .. } => {}
+        Op::Watermark { .. } | Op::Pin(_) => {}
+    }
+}
+
+/// `shift_op_y` over the text flow's operations: those an `Op::Pin`
+/// brackets belong to objects fixed to the page and stay.
+fn shift_flow_ops(ops: &mut [Op], dy: f32) {
+    let mut pinned = 0_usize;
+    for op in ops {
+        match op {
+            Op::Pin(true) => pinned += 1,
+            Op::Pin(false) => pinned = pinned.saturating_sub(1),
+            _ if pinned == 0 => shift_op_y(op, dy),
+            _ => {}
+        }
     }
 }
 
@@ -30750,7 +30778,7 @@ fn shift_op_x(op: &mut Op, dx: f32) {
                 }
             }
         }
-        Op::Watermark { .. } => {}
+        Op::Watermark { .. } | Op::Pin(_) => {}
     }
 }
 
@@ -30805,7 +30833,7 @@ fn body_op_yrange(ops: &[Op]) -> Option<(f32, f32)> {
                     }
                 }
             }
-            Op::Watermark { .. } => {}
+            Op::Watermark { .. } | Op::Pin(_) => {}
         }
     }
     (min_y.is_finite() && max_y.is_finite()).then_some((min_y, max_y))

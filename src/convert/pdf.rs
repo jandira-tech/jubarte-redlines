@@ -117,6 +117,10 @@ pub(crate) enum Op {
         rotate_deg: f32,
         oval: bool,
     },
+    /// Brackets the operations of an object fixed to the page (`true`
+    /// opens, `false` closes): moves of the text flow leave them where
+    /// they are. Paints nothing.
+    Pin(bool),
     /// Behind-doc Word watermark (header SDT gallery=Watermarks).
     Watermark {
         face: FaceRef,
@@ -237,6 +241,7 @@ impl Op {
                 start.1 += dy;
                 segments.iter_mut().flatten().for_each(|p| p.1 += dy);
             }
+            Op::Pin(_) => {}
         }
     }
 
@@ -696,6 +701,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                         b = color[2],
                     );
                 }
+                Op::Pin(_) => {}
                 Op::Line {
                     x1,
                     y1,

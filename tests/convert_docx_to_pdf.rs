@@ -14764,6 +14764,45 @@ fn text_before_a_top_margin_float_table_on_its_page_flows_below_it() {
     );
 }
 
+#[test]
+fn a_page_anchored_picture_stays_when_a_body_top_float_pushes_the_text() {
+    // PR #247 review 4149916384: a full-width float table at the body top
+    // moves the text already on its page below it, and the loop moved
+    // every operation after the chrome, so a picture fixed 600pt down the
+    // page moved with the text. Its position is the page's, not the flow's.
+    let img = blip(
+        "635000",
+        "635000",
+        "<wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:positionH relativeFrom=\"page\"><wp:posOffset>3810000</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"page\"><wp:posOffset>7620000</wp:posOffset></wp:positionV>\
+           <wp:wrapNone/>",
+        "</wp:anchor>",
+    );
+    let table = r#"<w:tbl><w:tblPr><w:tblpPr w:leftFromText="180" w:rightFromText="180" w:horzAnchor="margin" w:tblpXSpec="center" w:tblpY="-1185"/><w:tblW w:w="11736" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="11736"/></w:tblGrid><w:tr><w:trPr><w:trHeight w:val="2000" w:hRule="exact"/></w:trPr><w:tc><w:tcPr><w:tcW w:w="11736" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>R00</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+    let pic_y = |with_table: bool| {
+        let body = format!(
+            "<w:p><w:r>{img}</w:r><w:r><w:t>Head0</w:t></w:r></w:p>{}<w:p><w:r><w:t>After</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+            if with_table { table } else { "" }
+        );
+        let pdf = docx_to_pdf(&drawing_docx(&body)).expect("page picture");
+        let head0 = pdf_glyph_text_xy(&pdf, "Head0").expect("Head0").1;
+        (pdf_image_boxes(&pdf)[0].1, head0)
+    };
+    let ((alone, head_alone), (pushed, head_pushed)) = (pic_y(false), pic_y(true));
+    assert!(
+        head_alone - head_pushed > 20.0,
+        "the text moves under the table"
+    );
+    assert!(
+        (alone - pushed).abs() < 0.1,
+        "the page-anchored picture keeps its place: {alone} vs {pushed}"
+    );
+}
+
 fn tall_unanchored_float_table(heads: &str) -> Vec<u8> {
     // Word probe fe (2026-09-30): 40 exact 20pt rows at tblpY -1185 (top
     // 12.75), no vertAnchor, on a Letter page with 72pt margins.
