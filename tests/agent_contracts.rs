@@ -16,10 +16,11 @@ fn every_advertised_edit_kind_accepts_its_wire_representation() {
         json!({"kind":"insert", "paragraph":{"index":0}, "before":"a", "text":"b"}),
         json!({"kind":"delete", "paragraph":{"index":0}, "find":"a"}),
         json!({"kind":"comment", "paragraph":{"index":0}, "text":"note"}),
-        json!({"kind":"insert_paragraph", "paragraph":{"index":0}, "runs":[{"text":"b"}]}),
+        json!({"kind":"insert_paragraph", "paragraph":{"index":0}, "runs":[{"text":"b"}], "like":{"index":1}}),
         json!({"kind":"delete_paragraph", "paragraph":{"index":0}}),
         json!({"kind":"format_paragraph", "paragraph":{"index":0}, "alignment":"center", "line_spacing":1.15, "space_after":6}),
         json!({"kind":"merge_paragraphs", "paragraph":{"index":0}, "separator":" "}),
+        json!({"kind":"rewrite", "paragraph":{"index":0}, "text":"new text"}),
     ];
     let manifest = capabilities("rust");
     let kinds: Vec<_> = operations
