@@ -33,7 +33,9 @@ use font::{Face, FaceId, FaceRef, Fonts};
 
 pub use font::{FontReportEntry, FontStep, font_report_json};
 
-#[cfg(test)]
+/// The bundled catalogue faces alone (metric twins of Word's: Carlito for
+/// Calibri, Liberation for Arial and Times). Chrome parts load before the
+/// document's own faces exist; their measures come from these.
 fn fonts() -> &'static Fonts<'static> {
     use std::sync::LazyLock;
     static FONTS: LazyLock<Fonts<'static>> = LazyLock::new(Fonts::new);
@@ -17960,6 +17962,7 @@ fn hf_pic_owns_line(dom: &Dom, para: NodeId, sheet: &StyleSheet, text_w: f32) ->
 /// text).
 fn hf_pic_trails_line(dom: &Dom, para: NodeId, sheet: &StyleSheet, text_w: f32) -> bool {
     let mut seen_text = false;
+    let mut text = String::new();
     let mut pics_w = 0.0_f32;
     let mut pics_h = 0.0_f32;
     for n in dom.descendants(para, None) {
@@ -17974,6 +17977,7 @@ fn hf_pic_trails_line(dom: &Dom, para: NodeId, sheet: &StyleSheet, text_w: f32) 
                 return false;
             }
             seen_text = true;
+            text.push_str(&element_text(dom, n));
         } else if seen_text
             && dom.name_is(n, &WP::name("inline"))
             && let Some(ext) = first_named_any(dom, n, "extent")
@@ -17989,7 +17993,13 @@ fn hf_pic_trails_line(dom: &Dom, para: NodeId, sheet: &StyleSheet, text_w: f32) 
     }
     let (pstyle, prun) = para_base(dom, para, sheet, None);
     let room = text_w - pstyle.indent_left - pstyle.indent_right - pstyle.indent_first;
-    room - pics_w < prun.size * 0.5
+    // The pictures follow the text's last line: what it leaves is the
+    // room (Word 16 probe hpic 1001: 394pt of text and a 200pt picture in
+    // 468pt set the picture on the next line; PR #247 review).
+    let face = fonts().get(fonts().resolve(&prun.family, prun.bold, prun.italic));
+    let text_end = face.width_pt(&text, prun.layout_size());
+    let last_line = if room > 0.0 { text_end % room } else { 0.0 };
+    room - last_line - pics_w < prun.size * 0.5
 }
 
 /// Table-cell paragraphs belong to the part's laid-out tables.

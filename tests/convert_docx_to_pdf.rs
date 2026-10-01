@@ -3498,6 +3498,37 @@ fn a_header_picture_past_the_measure_wraps_to_a_new_row() {
 }
 
 #[test]
+fn a_header_picture_after_text_that_cannot_share_its_line_wraps_under_it() {
+    // PR #247 review 4149916397: the trailing-picture test counted the
+    // pictures' width alone. Word 16 probe hpic (2026-10-01): 394pt of text
+    // and a 200pt picture in the 468pt measure do not share a line; the
+    // picture takes the next and the body starts 5.3pt lower than beside
+    // "Short".
+    let pic = "<w:r><w:drawing><wp:inline><wp:extent cx=\"2540000\" cy=\"635000\"/>\
+         <wp:docPr id=\"1\" name=\"Picture 1\"/><a:graphic><a:graphicData \
+         uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\"><pic:pic><pic:blipFill>\
+         <a:blip r:embed=\"rIdImg\"/></pic:blipFill></pic:pic></a:graphicData></a:graphic>\
+         </wp:inline></w:drawing></w:r>";
+    let body_y = |text: &str| {
+        let docx = header_part_docx_at(
+            &format!("<w:p><w:r><w:t xml:space=\"preserve\">{text}</w:t></w:r>{pic}</w:p>"),
+            0,
+        );
+        let pdf = docx_to_pdf(&docx).expect("header");
+        pdf_glyph_text_xy(&pdf, "HdrImgBodyX")
+            .expect("body paints")
+            .1
+    };
+    let short = body_y("Short");
+    let long = body_y(&"Header words that run on ".repeat(3));
+    // Word 5.3pt; we drop 8.4 (the extra line's descent, not yet Word's).
+    assert!(
+        (3.0..9.0).contains(&(short - long)),
+        "the picture drops under the long text; short {short} long {long}"
+    );
+}
+
+#[test]
 fn an_inline_vml_header_picture_takes_its_line_and_after() {
     // Redlines vs 001cc92b: the compared header is one paragraph holding
     // A's deleted inline VML banner (455 x 45.8pt) with Normal's 8pt after.
