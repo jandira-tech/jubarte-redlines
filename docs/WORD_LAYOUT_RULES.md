@@ -183,6 +183,24 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   of its height.
   - Example: redline a820a0da's label row stays on page 1 above a 690pt row
     that Word splits.
+- **A row moves whole only when a cell opens on a `keepNext` paragraph.**
+  `keepLines` on any paragraph, or `keepNext` further down the cell, still
+  lets a row that does not fit break between its paragraphs.
+  - Word 16 probes k1-k6 (compat 15 and legacy alike): keepLines on the
+    first or the last paragraph splits, keepNext on the last splits,
+    keepNext on the first moves the row (fixtures_500 000aba38).
+  - _to_improve 2ad8d15e88: its reference list ends in a keepLines blank;
+    moving the row made 3 pages to Word's 2.
+- **An autofit table with a dxa width gives every column its longest word,
+  even past the margin.** When the words together overrun the measure, each
+  column shrinks or grows to its word and the table runs off the right
+  margin. A pct or auto table stays at the measure and breaks the words
+  (08c53c4f).
+  - Word 16 probes a1-a7: two columns of 30 and 40 underscores make a
+    469.2pt dxa table in a 468pt measure, but a 467.5pt pct or auto table
+    that wraps one underscore each. ee7b597379's tcW 4321/720/4381/4381
+    become 3945/1535/4304/989, the four longest words, and the table
+    ends at 610pt.
 
 ## VML lines, e8b5bc6
 
@@ -227,6 +245,8 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   - _to_improve d06f02170c: 11.07pt over at "times" moves it (6 pages to
     Word's 7). LibreOffice's Word-interop shrink has only the quarter
     (`nMinimum = 75` in `sw/source/core/text/portxt.cxx`).
+  - Table cells squeeze too: 2ad8d15e88 keeps "… amacı ve önemi" on its
+    justified cell line, its Verdana spaces at 2.5pt from 2.8.
 - **`w:noBreakHyphen` paints a hyphen and never breaks the line.** Word's
   PDF holds a plain 0x2D: most faces (Arial, Calibri, Aptos) have no
   U+2011 glyph. d06f02170c's "self-incrimination".
