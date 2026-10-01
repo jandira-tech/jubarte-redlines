@@ -2272,6 +2272,55 @@ fn all_lowercase_small_caps_line_keeps_its_authored_height() {
 }
 
 #[test]
+fn a_table_sits_by_its_rules_outer_edge() {
+    // Word 16 probes d3a/d3e (d328fa3674, compat 15, 2026-10-01): a 1pt
+    // left rule on the first row only. Left-aligned, the rule's outer edge
+    // is at the margin and the grid half a rule in, so every row's text,
+    // bordered or not, starts 5.5pt in (76.3). Centred, the rules
+    // straddle the centred grid and the text starts at its 5pt margin
+    // (202.8 from a 197.85 grid). We shifted only the bordered cells,
+    // half a rule past their margin.
+    let settings = r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>"#;
+    let rule = r#"<w:tcBorders><w:top w:val="single" w:sz="8" w:space="0" w:color="000000"/><w:left w:val="single" w:sz="8" w:space="0" w:color="000000"/><w:right w:val="single" w:sz="8" w:space="0" w:color="000000"/></w:tcBorders>"#;
+    let mar = r#"<w:tcMar><w:top w:w="100" w:type="dxa"/><w:left w:w="100" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:right w:w="100" w:type="dxa"/></w:tcMar>"#;
+    let cell = |text: &str, ruled: bool| {
+        let rule = if ruled { rule } else { "" };
+        format!(
+            r#"<w:tc><w:tcPr>{rule}{mar}</w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"#
+        )
+    };
+    let xs = |jc: &str| {
+        let body = format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="3990" w:type="dxa"/>{jc}<w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid><w:gridCol w:w="840"/><w:gridCol w:w="3150"/></w:tblGrid><w:tr>{}{}</w:tr><w:tr>{}{}</w:tr></w:tbl><w:p/><w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1417" w:right="1417" w:bottom="1417" w:left="1417" w:header="708" w:footer="708"/></w:sectPr>"#,
+            cell("Q", true),
+            cell("R", true),
+            cell("V", false),
+            cell("W", false)
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, settings)).expect("rules");
+        ["Q", "R", "V", "W"].map(|g| glyph_xy(&pdf, g).0)
+    };
+    let margin = 1417.0 / 20.0;
+    let left = xs("");
+    for (got, want) in left.iter().zip([0.0, 42.0, 0.0, 42.0]) {
+        let want = margin + 0.5 + 5.0 + want;
+        assert!(
+            (got - want).abs() < 0.15,
+            "left-aligned {left:?}: want {want}"
+        );
+    }
+    let grid = margin + (11906.0 / 20.0 - 2.0 * margin - 199.5) / 2.0;
+    let centred = xs(r#"<w:jc w:val="center"/>"#);
+    for (got, want) in centred.iter().zip([0.0, 42.0, 0.0, 42.0]) {
+        let want = grid + 5.0 + want;
+        assert!(
+            (got - want).abs() < 0.15,
+            "centred {centred:?}: want {want}"
+        );
+    }
+}
+
+#[test]
 fn a_table_right_after_another_starts_at_its_left_edge() {
     // Word 16 probe_adj (2026-10-01): two tables with no paragraph between
     // are one table to Word. A centred 453pt table A, then a 441pt table B
