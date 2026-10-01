@@ -15817,6 +15817,48 @@ fn footer_xml_space_padding_is_painted_like_word() {
 }
 
 #[test]
+fn a_sections_property_change_record_does_not_name_its_header() {
+    // PR #247 review 4149916330: section 2 omits its header but its
+    // w:sectPrChange keeps the old sectPr, which named "Beta". The record
+    // is history: section 2 inherits section 1's "Alpha".
+    let hdr = |text: &str| {
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+               <w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:hdr>"
+        )
+    };
+    let page = "<w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" w:header=\"720\" w:footer=\"720\"/>";
+    let body = format!(
+        "<w:p><w:pPr><w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>{page}</w:sectPr></w:pPr>\
+           <w:r><w:t>One</w:t></w:r></w:p>\
+         <w:p><w:r><w:t>Two</w:t></w:r></w:p>\
+         <w:sectPr>{page}<w:sectPrChange w:id=\"9\" w:author=\"A\"><w:sectPr>\
+           <w:headerReference w:type=\"default\" r:id=\"rIdH2\"/></w:sectPr></w:sectPrChange></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&hf_docx(
+        &body,
+        &[
+            ("rIdH1", "header", "header1.xml"),
+            ("rIdH2", "header", "header2.xml"),
+        ],
+        &[
+            ("word/header1.xml", hdr("Alpha")),
+            ("word/header2.xml", hdr("Beta")),
+        ],
+    ))
+    .expect("two sections");
+    let streams = pdf_content_streams(&pdf);
+    assert_eq!(streams.len(), 2, "one page per section");
+    assert!(
+        streams[1].contains("(Alpha)") && !streams[1].contains("(Beta)"),
+        "section 2 shows Alpha, not the record's Beta: {}",
+        streams[1]
+    );
+}
+
+#[test]
 fn a_footer_holding_only_an_uncached_page_field_paints_the_number() {
     // fixtures_500 00c975b8: the footer's one run carries begin, PAGE,
     // separate and end with no cached result. The field run is empty

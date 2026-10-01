@@ -7058,7 +7058,7 @@ fn section_parity_hf(
 }
 
 fn sect_has_ref(dom: &Dom, sect: NodeId, local: &str) -> bool {
-    !dom.descendants(sect, Some(&W::name(local))).is_empty()
+    !dom.elements(sect, Some(&W::name(local))).is_empty()
 }
 
 fn walk_container(
@@ -16721,15 +16721,15 @@ struct PickedHf {
     odd: ChromePart,
 }
 
-/// A `w:headerReference` / `w:footerReference` (`local`) of `kind`
-/// directly on `sect`.
 /// The relationship id of `sect`'s `local` reference of type `want`; a
 /// type the section omits comes from the nearest earlier section that
 /// names it (ECMA-376 17.10.5: priority 2b479f55f8's third section names
 /// only a footer and still shows section 1's default header in Word).
+/// Only the section's own children count: a `w:sectPrChange` record's
+/// references are history (PR #247 review).
 fn inherited_ref_id(dom: &Dom, sect: NodeId, local: &str, want: &str) -> Option<String> {
     let own = |s: NodeId| {
-        dom.descendants(s, Some(&W::name(local)))
+        dom.elements(s, Some(&W::name(local)))
             .into_iter()
             .find(|&node| dom.attribute(node, &W::name("type")).unwrap_or("default") == want)
             .and_then(|node| attr_any(dom, node, "id"))
