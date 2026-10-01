@@ -12459,6 +12459,11 @@ fn apply_named_char_style(style: &mut RunStyle, named: &NamedStyle) {
         style.color = run.color;
         style.color_auto = false;
     }
+    // A superscript or subscript style raises its runs (ece10bd712's
+    // literal footnote number in "footnote reference").
+    if run.vert != VertAlign::Baseline {
+        style.vert = run.vert;
+    }
     // A size or face the character style itself sets does apply
     // (004b3b3d's PageNumber is 8pt Arial; the old mini 336 lock
     // predates fixtures_500).
@@ -26027,6 +26032,38 @@ impl<'a> Layout<'a> {
                 if pair <= page_room && self.y - pair < self.body_floor {
                     self.ensure(pair);
                 }
+            }
+            // A row's footnote references claim their notes on the page the
+            // row starts, and the row must clear the notes' raised floor
+            // (ece10bd712: Word sets the note under the row that cites it
+            // and moves the next row over; we dropped the note).
+            let row_notes: Vec<TextRun> = work[ri]
+                .0
+                .cells()
+                .iter()
+                .flat_map(|c| c.paras.iter().flat_map(|p| p.runs.iter()))
+                .filter(|r| r.footnote_id.is_some())
+                .cloned()
+                .collect();
+            let notes_h = self.added_footnote_h(&row_notes);
+            // The row moves on, before its notes are claimed, when none of
+            // it fits above their raised floor: a cantSplit row whole, any
+            // other row once no head of it fits. A row that does split here
+            // leaves the cut to the split below, which sees the raised floor.
+            if notes_h > 0.0 && !self.at_page_top {
+                let floor = self.chrome_floor() + self.footnote_block_h() + notes_h;
+                let moves = self.y - work[ri].1 < floor
+                    && (work[ri].2
+                        || self
+                            .split_row_cells(work[ri].0.cells(), self.y - floor, &col_w)
+                            .is_none());
+                if moves {
+                    self.new_page();
+                    self.drop_below_side_float(used);
+                }
+            }
+            if notes_h > 0.0 {
+                self.claim_line_footnotes(&row_notes);
             }
             // A cantSplit row taller than a whole page still breaks, from a
             // fresh page: Word 16 probes cs_*_0930 move a 40-line row off

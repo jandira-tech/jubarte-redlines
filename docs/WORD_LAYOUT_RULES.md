@@ -189,6 +189,10 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   past U+007F.
   - 0fc80afa25: `asciiTheme="minorHAnsi" hAnsi="Arial"` paints its minutes
     in the theme's Calibri; Word's PDF holds no Arial at all.
+- **A character style's `w:vertAlign` raises or lowers its runs.**
+  - ece10bd712's note opens on a literal "1" in "footnote reference"
+    (superscript), not a `w:footnoteRef`. Word paints it at 6.48pt,
+    raised; we painted a 10pt digit on the baseline.
 
 ## Redline chrome
 
@@ -341,6 +345,17 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
     its list rows step 23.5 (20 + 1.8 + 1.8).
   - `w:beforeLines`/`w:afterLines` count hundredths of the docGrid pitch
     (12pt without a grid): 4640e71ddd steps 22.3 with its grid removed.
+
+## Footnotes cited in table cells
+
+- **A note cited in a cell sits on the page of the row that cites it**,
+  ece10bd712. The row's notes raise the floor before the row is placed.
+  - A cantSplit row that no longer fits above that floor moves to the
+    next page whole, and claims its notes there.
+  - So does any other row with no head that fits above the floor.
+  - A row that splits takes its cut at the raised floor.
+  - Word: note and row both on page 1, "(9) Simulated" opens page 2.
+    We dropped the note and kept the row.
 
 ## Endnotes
 

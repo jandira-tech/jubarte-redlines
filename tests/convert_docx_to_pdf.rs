@@ -5275,6 +5275,58 @@ fn a_cell_paragraph_split_across_pages_keeps_its_line_breaks() {
 }
 
 #[test]
+fn a_row_whose_cell_cites_a_footnote_makes_room_for_it() {
+    // ece10bd712: the footnote is cited from a table cell. Word keeps the
+    // note on the citing row's page and moves the row on when the note
+    // will not fit under it; we left the floor where it was, so the row
+    // stayed on page 1 above the note's space and the note slid past it.
+    let mut rows = String::new();
+    for i in 0..40 {
+        rows.push_str(&format!(
+            "<w:tr><w:tc><w:p><w:r><w:t>Filler{i:02}</w:t></w:r></w:p></w:tc></w:tr>"
+        ));
+    }
+    rows.push_str(
+        "<w:tr><w:tc><w:p><w:r><w:t>CitingRow</w:t></w:r>\
+         <w:r><w:rPr><w:vertAlign w:val=\"superscript\"/></w:rPr>\
+           <w:footnoteReference w:id=\"1\"/></w:r></w:p></w:tc></w:tr>\
+         <w:tr><w:tc><w:p><w:r><w:t>AfterRow</w:t></w:r></w:p></w:tc></w:tr>",
+    );
+    let body = format!(
+        "<w:tbl><w:tblGrid><w:gridCol w:w=\"9000\"/></w:tblGrid>{rows}</w:tbl><w:p/>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    );
+    let lines: String = (0..12)
+        .map(|i| format!("<w:p><w:r><w:t>NoteLine{i:02}</w:t></w:r></w:p>"))
+        .collect();
+    let notes = format!(
+        "<w:footnote w:type=\"separator\" w:id=\"-1\"><w:p/></w:footnote>\
+         <w:footnote w:type=\"continuationSeparator\" w:id=\"0\"><w:p/></w:footnote>\
+         <w:footnote w:id=\"1\">{lines}</w:footnote>"
+    );
+    let pdf = docx_to_pdf(&footnotes_docx(&body, &notes)).expect("convert cell footnote");
+    let pages = pdf_content_streams(&pdf);
+    let page_of = |tag: &str| {
+        pages
+            .iter()
+            .position(|p| stream_glyph_text(p).contains(tag))
+            .unwrap_or_else(|| panic!("{tag} painted"))
+    };
+    assert_eq!(
+        page_of("CitingRow"),
+        page_of("NoteLine00"),
+        "the note paints on its citing row's page"
+    );
+    assert_eq!(
+        page_of("CitingRow"),
+        page_of("NoteLine11"),
+        "the whole note fits under the citing row"
+    );
+    assert!(page_of("CitingRow") > 0, "the row moves on to make room");
+}
+
+#[test]
 fn a_keep_next_row_stays_with_the_next_row() {
     // fixtures_500 000aba38: Heading 2 (keepNext) label rows. The first
     // fits under page 1's rows by itself, but not with the row after it;
@@ -38254,6 +38306,32 @@ fn a_negative_level_indent_beats_the_list_paragraph_style() {
     assert!(
         (x - 65.45).abs() < 0.5,
         "the level's left=-131 places the text at 65.45: x={x}"
+    );
+}
+
+#[test]
+fn a_character_styles_superscript_raises_the_run() {
+    // ece10bd712: the footnote's number is a literal "1" in the
+    // character style "footnote reference" (vertAlign superscript), not
+    // a w:footnoteRef. Word paints it small and raised; we dropped the
+    // style's vertAlign and painted a full-size digit on the baseline.
+    let styles = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
+  <w:style w:type="character" w:styleId="af2"><w:name w:val="footnote reference"/>
+    <w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style>
+</w:styles>"#;
+    let body = "<w:p><w:r><w:t>Base</w:t></w:r>\
+         <w:r><w:rPr><w:rStyle w:val=\"af2\"/></w:rPr><w:t>Up</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&numbering_docx_with_styles(body, None, Some(styles)))
+        .expect("convert superscript character style");
+    let (_, base) = pdf_literal_td_xy(&pdf, "Base").expect("Base painted");
+    let (_, up) = pdf_literal_td_xy(&pdf, "Up").expect("Up painted");
+    assert!(
+        up - base > 2.0,
+        "the style's superscript raises Up above Base: base={base} up={up}"
     );
 }
 
