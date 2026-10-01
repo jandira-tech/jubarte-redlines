@@ -2272,6 +2272,51 @@ fn all_lowercase_small_caps_line_keeps_its_authored_height() {
 }
 
 #[test]
+fn the_run_holding_an_inline_shape_sizes_its_line() {
+    // Word 16 probe 2026-10-01 (probe_il): an Arial 10 "TOP", then a
+    // paragraph whose Calibri run holds only a 144x0.48pt inline wps rect
+    // (3936a8fe56's rule above each heading), then "NEXT". The rect's run
+    // sizes the line, with or without a trailing Arial 10 space: TOP to
+    // NEXT is 23.76 at sz 20, 38.40 at sz 44 and 55.44 at sz 72 (Calibri
+    // single lines 12.2, 26.9 and 43.9). We sized it by the space alone.
+    let shape = r#"<w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="0" distR="0"><wp:extent cx="1829435" cy="6097"/><wp:docPr id="1" name="r"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:cNvSpPr/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1829435" cy="6097"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="434242"/></a:solidFill></wps:spPr><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing>"#;
+    let rpr = |font: &str, sz: u32| {
+        format!(
+            r#"<w:rPr><w:rFonts w:ascii="{font}" w:hAnsi="{font}"/><w:sz w:val="{sz}"/></w:rPr>"#
+        )
+    };
+    let ppr = r#"<w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr>"#;
+    let pitch = |sz: u32, space: bool| {
+        let tail = if space {
+            format!(
+                r#"<w:r>{}<w:t xml:space="preserve"> </w:t></w:r>"#,
+                rpr("Arial", 20)
+            )
+        } else {
+            String::new()
+        };
+        let body = format!(
+            r#"<w:p>{ppr}<w:r>{a}<w:t>TOP</w:t></w:r></w:p><w:p>{ppr}<w:r>{c}{shape}</w:r>{tail}</w:p><w:p>{ppr}<w:r>{a}<w:t>NEXT</w:t></w:r></w:p><w:sectPr/>"#,
+            a = rpr("Arial", 20),
+            c = rpr("Calibri", sz),
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("inline shape");
+        let ys = text_baselines(&pdf);
+        assert!(ys.len() >= 2, "TOP and NEXT; ys={ys:?}");
+        ys[0] - ys[ys.len() - 1]
+    };
+    for (sz, want) in [(20, 23.76), (44, 38.40), (72, 55.44)] {
+        for space in [true, false] {
+            let got = pitch(sz, space);
+            assert!(
+                (got - want).abs() < 0.5,
+                "sz {sz} space {space}: TOP to NEXT {got}, Word {want}"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_line_break_run_sizes_only_a_line_it_stands_alone_on() {
     // Word 16 probe 2026-10-01 (probe_br): "Top" then a 20pt run holding
     // <w:br/> keeps Top's 11pt line (pitch 13.44, the same as an 11pt
