@@ -2,9 +2,11 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""``python -m jubarte_redlines``: the ``jubarte`` binary's commands over the
-installed wheel, with the same names, flags, output files and exit codes.
+"""``jubarte-redlines`` (or ``python -m jubarte_redlines``): the ``jubarte``
+binary's commands over the installed wheel, with the same names, flags, output
+files and exit codes. ``uvx jubarte-redlines`` runs it without installing.
 
+    uvx jubarte-redlines redline a.docx b.docx -o redline.docx
     python -m jubarte_redlines inspect letter.docx --json
     python -m jubarte_redlines text letter.docx
     python -m jubarte_redlines edit letter.docx --plan plan.json --out-dir review --pdf --png
@@ -41,11 +43,19 @@ class CliError(Exception):
     """A user-facing failure; the message is printed as ``error: ...``."""
 
 
+# The first bytes of an OLE compound file: a Word 97-2003 .doc, or a
+# password-encrypted document of any Word version.
+OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+
+
 def _read(path: Path) -> Document:
     try:
-        return Document.read(path)
+        doc = Document.read(path)
     except OSError as exc:
         raise CliError(f"reading {path}: {exc}") from exc
+    if doc.to_bytes().startswith(OLE_MAGIC):
+        raise CliError(f"{path} is a Word 97-2003 (.doc) or encrypted document; open it in Word and save it as .docx without a password")
+    return doc
 
 
 def _ensure_writable(path: Path, force: bool) -> None:
@@ -140,7 +150,11 @@ def cmd_edit(args: argparse.Namespace) -> int:
         return EXIT_PLAN_REFUSED
     lines = result.report.to_jsonl().splitlines()
     summary = lines.pop()
-    outputs: list[tuple[str, bytes]] = [("clean.docx", result.clean.to_bytes()), ("redline.docx", result.redline.to_bytes())]
+    outputs: list[tuple[str, bytes]] = [
+        ("clean.docx", result.clean.to_bytes()),
+        ("redline.docx", result.redline.to_bytes()),
+        ("patch.diff", result.diff.text.encode("utf-8")),
+    ]
     if args.pdf or args.png:
         options = PdfOptions(compress=True, revisions=args.revisions, revision_palette=args.revision_palette)
         pages: dict[str, int] = {}
@@ -164,8 +178,11 @@ def cmd_edit(args: argparse.Namespace) -> int:
     lines.append(json.dumps({"ev": "save", "dir": str(out_dir), "outputs": saved}, ensure_ascii=False))
     lines.append(summary)
     _write(out_dir / "report.jsonl", "\n".join(lines) + "\n")
+    if args.quiet:
+        return EXIT_OK
     print(summary)
-    print(f"wrote {out_dir} ({len(outputs) + 1} files: clean.docx, redline.docx, report.jsonl{', …' if len(outputs) > 2 else ''})")
+    print(f"wrote {out_dir} ({len(outputs) + 1} files: clean.docx, redline.docx, patch.diff, report.jsonl{', …' if len(outputs) > 3 else ''})")
+    sys.stdout.write(result.diff.text)
     return EXIT_OK
 
 
@@ -274,8 +291,16 @@ def _add_revision_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--revision-palette", metavar="SPEC", help="marks for --revisions custom, e.g. deleted=#AA0000:strike,...")
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="python -m jubarte_redlines", description="DOCX compare, tracked editing, inspection and rendering (the jubarte engine).")
+def _prog() -> str:
+    """The name the user typed: the console script's, or ``python -m …``."""
+    script = Path(sys.argv[0])
+    if script.name in ("__main__.py", "-m", "-c", ""):
+        return "python -m jubarte_redlines"
+    return script.stem if script.suffix.lower() == ".exe" else script.name
+
+
+def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog=prog or _prog(), description="DOCX compare, tracked editing, inspection and rendering (the jubarte engine).")
     parser.add_argument("--version", action="version", version=f"jubarte-redlines {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -288,7 +313,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("file", type=Path)
     p.set_defaults(func=cmd_text)
 
-    p = sub.add_parser("edit", help="apply an edit plan: clean.docx, redline.docx, report.jsonl (+ PDF/PNG)")
+    p = sub.add_parser("edit", help="apply an edit plan: clean.docx, redline.docx, patch.diff, report.jsonl (+ PDF/PNG)")
     p.add_argument("file", type=Path)
     p.add_argument("--plan", type=Path, required=True, metavar="PLAN.json")
     p.add_argument("--out-dir", type=Path, required=True, metavar="DIR")
@@ -297,6 +322,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--pdf", action="store_true", help="also write redline.pdf and clean.pdf")
     p.add_argument("--png", action="store_true", help="also write redline-page-NN.png and clean-page-NN.png")
     p.add_argument("--dpi", type=float, default=96.0)
+    p.add_argument("-q", "--quiet", action="store_true", help="print nothing on success (patch.diff and report.jsonl are still written)")
     _add_revision_flags(p)
     p.set_defaults(func=cmd_edit)
 
@@ -313,7 +339,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_revision_flags(p)
     p.set_defaults(func=cmd_convert)
 
-    p = sub.add_parser("compare", help="two documents into a Word tracked-changes document")
+    p = sub.add_parser("compare", aliases=["redline"], help="two documents into a Word tracked-changes document")
     p.add_argument("original", type=Path)
     p.add_argument("modified", type=Path)
     p.add_argument("-o", "--output", type=Path, help="[default: <original>_v_<modified>.docx]")

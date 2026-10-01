@@ -331,6 +331,7 @@ fn capabilities_describe_the_built_binary() {
         "inspect_body",
         "markdown",
         "edit",
+        "patch",
     ] {
         assert_eq!(v["operations"][op], true, "{op}");
     }
@@ -388,4 +389,63 @@ fn invalid_png_dpi_leaves_no_partial_pdf_or_report() {
     assert!(!output.exists());
     assert!(!report.exists());
     assert!(!dir.path().join("result-page-01.png").exists());
+}
+
+#[test]
+fn edit_writes_and_prints_the_patch_of_the_redline_unless_quiet() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_fixture(dir.path());
+    let plan = r#"{"schema_version":1,"author":"Claude","date":"2026-09-25T12:00:00Z","operations":[
+        {"id":"pronoun","kind":"replace","paragraph":{"index":1},"find":"his or her","replacement":"an"},
+        {"id":"survival","kind":"insert","paragraph":{"starts_with":"Sections 1(g), "},"after":"1(g), ","text":"2(c), ","comment":"post-disclosure duty"}]}"#;
+    let plan_path = dir.path().join("plan.json");
+    std::fs::write(&plan_path, plan).unwrap();
+    let edit = |out: &str, quiet: bool| {
+        let out_dir = dir.path().join(out);
+        let mut args = vec![
+            "edit",
+            file.to_str().unwrap(),
+            "--plan",
+            plan_path.to_str().unwrap(),
+            "--out-dir",
+            out_dir.to_str().unwrap(),
+        ];
+        if quiet {
+            args.push("-q");
+        }
+        let (code, stdout, stderr) = run(&args);
+        assert_eq!(code, 0, "stdout={stdout}\nstderr={stderr}");
+        let patch = std::fs::read_to_string(out_dir.join("patch.diff")).unwrap();
+        (stdout, patch)
+    };
+    let (stdout, patch) = edit("review", false);
+    assert!(
+        patch.starts_with(
+            "--- a/letter.docx\n+++ b/letter.docx\tClaude\t2026-09-25T12:00:00Z\n@@ [body:p:1] @@\n"
+        ),
+        "{patch}"
+    );
+    assert!(patch.contains("[-his or her-]{+an+}"), "{patch}");
+    // The comparer aligns the insertion as "c), 2(" after the old "2(";
+    // the comment on it follows the change, never inside it.
+    let unwrapped = patch.replace('\n', " ");
+    assert!(
+        patch.contains("@@ [body:p:2] @@\n")
+            && unwrapped.contains("{>>Claude (2026-09-25T12:00:00Z): post-disclosure duty<<}")
+            && !unwrapped.contains("{+{>>"),
+        "{patch}"
+    );
+    let accepted: String = unwrapped
+        .replace(
+            "{>>Claude (2026-09-25T12:00:00Z): post-disclosure duty<<}",
+            "",
+        )
+        .replace(['{', '}', '+', '='], "");
+    assert!(accepted.contains("1(g), 2(c), 2(e), 3"), "{accepted}");
+    assert!(stdout.contains(&patch), "{stdout}");
+    assert!(stdout.contains("\"ev\":\"summary\""), "{stdout}");
+    // Quiet: the same files, nothing printed.
+    let (stdout, quiet_patch) = edit("quiet", true);
+    assert_eq!(stdout, "");
+    assert_eq!(quiet_patch, patch);
 }

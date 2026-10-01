@@ -96,6 +96,12 @@ try {
     .replace(
       /(badge\.socket\.dev\/cargo\/package\/jubarte-redlines\/)\d+\.\d+\.\d+/g,
       `$1${next}`,
+    )
+    // Library install pin: `version = "x.y"` (a caret requirement), so a
+    // patch leaves it and a minor moves it. It stayed "0.9" through 0.10.1.
+    .replace(
+      /(jubarte-redlines\s*=\s*\{\s*version\s*=\s*")\d+\.\d+(")/g,
+      `$1${next.split(".").slice(0, 2).join(".")}$2`,
     );
   if (readmeNext !== readme) writeFileSync(readmePath, readmeNext);
 } catch {

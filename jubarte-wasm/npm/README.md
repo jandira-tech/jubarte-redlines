@@ -78,8 +78,8 @@ import init, { compareDocuments } from "jubarte-wasm/web-slim"; // browser
 |---|---|---|
 | `jubarte-wasm` / `jubarte-wasm/node` | full, Node CJS | all functions |
 | `jubarte-wasm/web` | full, browser ESM | all functions |
-| `jubarte-wasm/slim` / `jubarte-wasm/node-slim` | slim, Node CJS | compare/accept/reject/list only |
-| `jubarte-wasm/web-slim` | slim, browser ESM | compare/accept/reject/list only |
+| `jubarte-wasm/slim` / `jubarte-wasm/node-slim` | slim, Node CJS | everything except `docxToPdf` / `pdfPageCount` (so also `inspectDocument`, `documentMarkdown`, `sourceSha256`, `applyEditPlan`, `previewEditPlan`, `editReportJsonl`, `capabilities`) |
+| `jubarte-wasm/web-slim` | slim, browser ESM | everything except `docxToPdf` / `pdfPageCount` (same export set as `node-slim`) |
 
 ## API
 
@@ -96,13 +96,13 @@ Document parameters and returns are `Uint8Array` holding complete `.docx`
 | `listChanges` | `(docx) → string` | Each tracked change as a JSON array string: `id` (`body:rev:12`), `kind`, `target`, `author`, `date`, `text`, `move_name`, `move_side`, `inside`. |
 | `acceptChanges` | `(docx, filterJson) → Uint8Array` | Accept the changes `filterJson` selects (`{"ids": [...], "authors": [...], "kinds": [...]}`: every list given must match; `{}` selects all, an empty list none) and keep the rest tracked. |
 | `rejectChanges` | `(docx, filterJson) → Uint8Array` | Reject the changes `filterJson` selects and keep the rest tracked. |
-| `docxToPdf` | `(docx) → Uint8Array` | Render a DOCX → PDF (Word-style layout). Fonts come from the embedded Carlito/Liberation set. *Full builds only.* |
+| `docxToPdf` | `(docx, compress?, revisions?, revision_palette?) → Uint8Array` | Render a DOCX → PDF (Word-style layout). `compress` (default `false`) deflates the PDF's streams; `revisions` (default `"conventional"`) paints tracked changes — `"conventional"`, `"word"`, or `"custom"` with `revision_palette` (`"deleted=#AA0000:strike,..."`). Fonts come from the embedded Carlito/Liberation set. *Full builds only.* |
 | `pdfPageCount` | `(pdf) → number` | Page count of a PDF (`0` if the bytes are not a readable PDF). *Full builds only.* |
 | `initPanicHook` | `() → void` | Route wasm panics to `console.error`. Safe to call multiple times. |
 | `inspectDocument` | `(docx) → string` | Inspection snapshot as JSON: `source_sha256`, `summary`, `paragraphs` with `body:p:N` ids, text, style, formatting spans and limitations, and `stories` (headers, footers, notes) with `header1:p:N`-style ids. |
 | `documentMarkdown` | `(docx) → string` | Body, then every header, footer and notes story, as Markdown with a `[body:p:N]` / `[header1:p:N]` id before every paragraph. |
 | `sourceSha256` | `(docx) → string` | SHA-256 of the bytes: the `source_sha256` guard an edit plan carries. |
-| `applyEditPlan` | `(docx, planJson) → EditOutput` | Apply an edit plan (`replace`, `insert`, `delete`, `comment`, `insert_paragraph`, `delete_paragraph`, `format_paragraph`, `merge_paragraphs`; `replace`/`insert` take an optional run `format`; `replace` takes `whole: true` for one deletion then one insertion). `ok`, `clean`, `redline`, and `json` (the report, or the refusal with `code` and every operation's outcome). |
+| `applyEditPlan` | `(docx, planJson) → EditOutput` | Apply an edit plan (`replace`, `insert`, `delete`, `comment`, `insert_paragraph`, `delete_paragraph`, `format_paragraph`, `merge_paragraphs`, `rewrite`; `replace`/`insert` take an optional run `format`; `replace` takes `whole: true` for one deletion then one insertion; `insert_paragraph` takes `like` to copy another paragraph's properties; `delete_paragraph` takes a `comment` on the deleted text). `ok`, `clean`, `redline`, and `json` (the report, or the refusal with `code` and every operation's outcome). |
 | `previewEditPlan` | `(docx, planJson) → EditOutput` | Resolve every operation without producing documents. |
 | `editReportJsonl` | `(reportJson) → string` | A report as JSON lines (`load`, one `op` per operation, `summary`). |
 | `capabilities` | `() → string` | What this build can do, as JSON (`runtime: "wasm"`, operations, edit kinds, input budgets). |

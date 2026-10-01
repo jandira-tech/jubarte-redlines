@@ -21,8 +21,10 @@
 //! const snapshot = JSON.parse(inspectDocument(bytes));  // ids, text, spans
 //! const text = documentMarkdown(bytes);                 // [body:p:N] ids
 //! const out = applyEditPlan(bytes, JSON.stringify(plan));
-//! if (out.ok) { out.clean; out.redline; JSON.parse(out.json) }  // report
+//! if (out.ok) { out.clean; out.redline; out.patch; JSON.parse(out.json) }  // report
 //! else { JSON.parse(out.json).code }                    // e.g. AMBIGUOUS_ANCHOR
+//! const { text, hunks } = JSON.parse(diffDocuments(      // the changes as a patch
+//!   oldDocx, new TextEncoder().encode(markdown), "Ana Lima", new Date().toISOString().slice(0, 19) + "Z"));
 //! ```
 //!
 //! # Build
@@ -207,6 +209,7 @@ pub struct EditOutput {
     ok: bool,
     clean: Option<Vec<u8>>,
     redline: Option<Vec<u8>>,
+    patch: Option<String>,
     json: String,
 }
 
@@ -232,6 +235,14 @@ impl EditOutput {
         self.redline.clone()
     }
 
+    /// The changes the redline tracks as a patch (see
+    /// [`diffDocuments`](diff_documents)), by the plan's author and date;
+    /// `undefined` on refusal and for previews.
+    #[wasm_bindgen(getter)]
+    pub fn patch(&self) -> Option<String> {
+        self.patch.clone()
+    }
+
     /// The report JSON when `ok`, else the error JSON (`code`, `operation`,
     /// `message`, `outcomes`).
     #[wasm_bindgen(getter)]
@@ -254,6 +265,19 @@ pub fn apply_edit_plan(docx: &[u8], plan_json: &str) -> Result<EditOutput, JsVal
         Ok(result) => EditOutput {
             ok: true,
             json: to_json(&result.report)?,
+            patch: Some(
+                jubarte::markdown::patch_redline(
+                    &result.redline,
+                    &patch_options(
+                        "document.docx",
+                        "document.docx",
+                        &result.report.author,
+                        &result.report.date,
+                    ),
+                )
+                .map_err(js_err)?
+                .to_string(),
+            ),
             clean: Some(result.clean),
             redline: Some(result.redline),
         },
@@ -261,6 +285,7 @@ pub fn apply_edit_plan(docx: &[u8], plan_json: &str) -> Result<EditOutput, JsVal
             ok: false,
             clean: None,
             redline: None,
+            patch: None,
             json: to_json(&error)?,
         },
     })
@@ -277,11 +302,89 @@ pub fn preview_edit_plan(docx: &[u8], plan_json: &str) -> Result<EditOutput, JsV
         ok: resolved.is_ok(),
         clean: None,
         redline: None,
+        patch: None,
         json: match resolved {
             Ok(report) => to_json(&report)?,
             Err(error) => to_json(&error)?,
         },
     })
+}
+
+fn patch_options(
+    old_name: &str,
+    new_name: &str,
+    author: &str,
+    date: &str,
+) -> jubarte::markdown::PatchOptions {
+    jubarte::markdown::PatchOptions {
+        old_name: old_name.to_string(),
+        new_name: new_name.to_string(),
+        owner: jubarte::markdown::Attribution {
+            author: author.to_string(),
+            date: date.to_string(),
+        },
+    }
+}
+
+/// A side of [`diffDocuments`](diff_documents): a Word package (it starts
+/// with a ZIP signature), else UTF-8 Markdown.
+fn side(bytes: &[u8]) -> Result<jubarte::markdown::Source<'_>, JsValue> {
+    if bytes.starts_with(b"PK\x03\x04") {
+        return Ok(jubarte::markdown::Source::Docx(bytes));
+    }
+    std::str::from_utf8(bytes)
+        .map(jubarte::markdown::Source::Markdown)
+        .map_err(|e| js_err(format!("a side is neither a .docx nor UTF-8 Markdown: {e}")))
+}
+
+/// The changes from `old` to `new` as a patch, JSON `{"text", "hunks":
+/// [{"at", "removed", "text"}]}`: only the changed paragraphs, each whole,
+/// with `[-old-]{+new+}` changes and CriticMarkup comments, at its
+/// `body:p:N` id in a Word document or `line:N` in Markdown.
+///
+/// Each side is a `.docx` package or UTF-8 Markdown
+/// (`new TextEncoder().encode(text)`). `author` and `date` (ISO 8601) own
+/// the changes; `columns` wraps the lines (72 by default, 0 does not);
+/// the names default to `old.docx`/`old.md` and `new.docx`/`new.md`.
+///
+/// Mirrors `jubarte::markdown::patch_documents`.
+#[wasm_bindgen(js_name = diffDocuments)]
+pub fn diff_documents(
+    old: &[u8],
+    new: &[u8],
+    author: &str,
+    date: &str,
+    columns: Option<u32>,
+    old_name: Option<String>,
+    new_name: Option<String>,
+) -> Result<String, JsValue> {
+    let (old, new) = (side(old)?, side(new)?);
+    let name = |given: Option<String>, source: &jubarte::markdown::Source<'_>, default: &str| {
+        given.unwrap_or_else(|| match source {
+            jubarte::markdown::Source::Docx(_) => format!("{default}.docx"),
+            jubarte::markdown::Source::Markdown(_) => format!("{default}.md"),
+        })
+    };
+    let options = patch_options(
+        &name(old_name, &old, "old"),
+        &name(new_name, &new, "new"),
+        author,
+        date,
+    );
+    let patch = jubarte::markdown::patch_documents(
+        old,
+        new,
+        &jubarte::markdown::RedlineOptions::default(),
+        &options,
+    )
+    .map_err(js_err)?;
+    let hunks: Vec<serde_json::Value> = patch
+        .hunks
+        .iter()
+        .map(|h| serde_json::json!({"at": h.at.to_string(), "removed": h.removed, "text": h.text}))
+        .collect();
+    let columns = columns.map_or(jubarte::markdown::DEFAULT_COLUMNS, |c| c as usize);
+    to_json(&serde_json::json!({"text": patch.render(columns), "hunks": hunks}))
 }
 
 /// The JSON-lines form of a report (`load`, one `op` per operation,
@@ -317,6 +420,82 @@ mod tests {
         assert_eq!(manifest["operations"]["edit"], true);
     }
 
+    const OLD: &str = "# Terms\n\nPayment is due in 30 days.\n\n- Delivery\n- Warranty\n";
+    const NEW: &str = "# Terms\n\nPayment is due in 45 days.\n\n- Delivery\n- Warranty\n";
+    const OWNER: (&str, &str) = ("Arthur Rodrigues", "2026-09-30T14:05:00Z");
+
+    fn word(markdown: &str) -> Vec<u8> {
+        jubarte::markdown::markdown_to_docx(markdown, &Default::default())
+            .unwrap()
+            .docx
+    }
+
+    fn diffed(old: &[u8], new: &[u8], columns: Option<u32>) -> serde_json::Value {
+        let json = diff_documents(old, new, OWNER.0, OWNER.1, columns, None, None).unwrap();
+        serde_json::from_str(&json).unwrap()
+    }
+
+    #[test]
+    fn markdown_sides_are_diffed_by_line_and_word_sides_by_paragraph_id() {
+        let out = diffed(OLD.as_bytes(), NEW.as_bytes(), None);
+        assert_eq!(
+            out["text"],
+            "--- a/old.md\n+++ b/new.md\tArthur Rodrigues\t2026-09-30T14:05:00Z\n\
+             @@ [line:3] @@\nPayment is due in [-30-]{+45+} days.\n"
+        );
+        assert_eq!(out["hunks"][0]["at"], "line:3");
+        assert_eq!(out["hunks"][0]["removed"], false);
+        let out = diffed(&word(OLD), NEW.as_bytes(), None);
+        let text = out["text"].as_str().unwrap();
+        assert!(text.starts_with("--- a/old.docx\n+++ b/new.md\t"), "{text}");
+        assert!(
+            text.contains("@@ [body:p:1] @@\nPayment is due in [-30-]{+45+} days.\n"),
+            "{text}"
+        );
+        let json = diff_documents(
+            &word(OLD),
+            &word(NEW),
+            OWNER.0,
+            OWNER.1,
+            None,
+            Some("contract.docx".into()),
+            Some("contract-v2.docx".into()),
+        )
+        .unwrap();
+        assert!(
+            json.contains("--- a/contract.docx\\n+++ b/contract-v2.docx\\t"),
+            "{json}"
+        );
+    }
+
+    #[test]
+    fn columns_wrap_the_patch_and_zero_does_not() {
+        let long = "word ".repeat(40);
+        let (old, new) = (format!("{long}old.\n"), format!("{long}new.\n"));
+        let body = |columns| {
+            let out = diffed(old.as_bytes(), new.as_bytes(), columns);
+            out["text"].as_str().unwrap().lines().skip(3).count()
+        };
+        assert!(body(None) > 1);
+        assert_eq!(body(None), body(Some(72)));
+        assert_eq!(body(Some(0)), 1);
+    }
+
+    #[test]
+    fn an_applied_plan_carries_the_patch_of_its_redline() {
+        let source = word(OLD);
+        let plan = r#"{"schema_version":1,"author":"Claude","date":"2026-09-25T12:00:00Z","operations":[
+            {"kind":"replace","paragraph":{"index":1},"find":"30","replacement":"45"}]}"#;
+        let out = apply_edit_plan(&source, plan).unwrap();
+        assert!(out.ok());
+        assert_eq!(
+            out.patch().unwrap(),
+            "--- a/document.docx\n+++ b/document.docx\tClaude\t2026-09-25T12:00:00Z\n\
+             @@ [body:p:1] @@\nPayment is due in [-30-]{+45+} days.\n"
+        );
+        assert!(preview_edit_plan(&source, plan).unwrap().patch().is_none());
+    }
+
     #[test]
     fn a_refused_plan_is_data_with_its_code() {
         let out = apply_edit_plan(
@@ -325,7 +504,7 @@ mod tests {
         )
         .unwrap();
         assert!(!out.ok());
-        assert!(out.clean().is_none() && out.redline().is_none());
+        assert!(out.clean().is_none() && out.redline().is_none() && out.patch().is_none());
         let error: serde_json::Value = serde_json::from_str(&out.json()).unwrap();
         assert_eq!(error["code"], "INVALID_PACKAGE");
         let preview = preview_edit_plan(b"x", "{").unwrap();

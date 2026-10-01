@@ -141,5 +141,95 @@ class RegistryProbes(unittest.TestCase):
         self.assertIn(".DS_Store", step8.split("cargo publish")[0])
 
 
+def step(n: int) -> str:
+    """Text of release.sh step `n`, up to the next numbered step."""
+    text = RELEASE_SH.read_text()
+    start = text.index(f'say "{n}. ')
+    nxt = [text.find(f'say "{n + 1}. ', start), text.find('say "POINT OF NO RETURN"', start)]
+    ends = [i for i in nxt if i > start]
+    return text[start:min(ends) if ends else len(text)]
+
+
+class NpmCli(unittest.TestCase):
+    """`npx jubarte-redlines` ships beside jubarte-wasm, on its version."""
+
+    def test_the_cli_package_follows_the_engine_version(self) -> None:
+        s1 = step(1)
+        self.assertIn('(cd jubarte-wasm/cli && npm pkg set "version=$VER" "dependencies.jubarte-wasm=^$VER"', s1)
+        add = next(l for l in step(7).splitlines() if "jubarte-wasm/Cargo.lock jubarte-wasm/npm/package.json" in l)
+        self.assertIn("jubarte-wasm/cli/package.json", add)
+
+    def test_the_cli_is_dry_run_published_and_verified(self) -> None:
+        self.assertRegex(step(6), r"if npm_cli_has; then[^\n]*\n(?:[^\n]*\n)*?else\n[^\n]*\(cd jubarte-wasm/cli && npm publish --dry-run")
+        self.assertIn('check "npm        jubarte-redlines $VER" npm_cli_has', step(11))
+
+    def test_the_cli_publishes_after_the_wasm_it_depends_on(self) -> None:
+        s9 = step(9)
+        wasm = s9.index("(cd jubarte-wasm/npm && npm publish")
+        cli = s9.index("(cd jubarte-wasm/cli && npm publish")
+        self.assertLess(wasm, cli)
+        self.assertIn("if npm_cli_has; then", s9)
+
+
+class Lessons0101(unittest.TestCase):
+    """What stopped or dirtied the v0.10.1 release, one guard each."""
+
+    def test_lockfiles_resolve_the_bumped_path_dependency(self) -> None:
+        # `cargo metadata --no-deps` resolves nothing, so the tagged commit
+        # kept jubarte-redlines 0.10.0 in three sub-workspace locks.
+        s1 = step(1)
+        self.assertNotIn("--no-deps", s1)
+        self.assertIn("cargo update --offline", s1)
+        for d in ("jubarte-wasm", "jubarte-rust-inproc", "jubarte-app/src-tauri"):
+            self.assertIn(d, s1)
+
+    def test_the_desktop_app_follows_the_engine_version(self) -> None:
+        # tests/release_metadata.rs failed on main: jubarte-app stayed 0.10.0.
+        s1 = step(1)
+        for f in (
+            "jubarte-app/package.json",
+            "jubarte-app/src-tauri/tauri.conf.json",
+            "jubarte-app/src-tauri/Cargo.toml",
+            "jubarte-app/src/index.html",
+        ):
+            self.assertIn(f, s1)
+        self.assertIn("jubarte-app/CHANGELOG.md", step(2))
+
+    def test_a_resume_keeps_the_wasm_build_it_already_committed(self) -> None:
+        # A resumed run rebuilt the package with a later ENGINE_COMMIT than
+        # the one npm already shipped.
+        s7 = step(7)
+        guard = s7.index("regenerate npm artifacts for v$VER")
+        self.assertLess(guard, s7.index("jubarte-wasm/build-npm.sh"))
+
+    def test_the_artifacts_commit_takes_the_wasm_lock(self) -> None:
+        s7 = step(7)
+        add = next(l for l in s7.splitlines() if "git add jubarte-wasm/npm" in l)
+        self.assertIn("jubarte-wasm/Cargo.lock", add)
+
+    def test_npm_publish_takes_a_one_time_password(self) -> None:
+        # npm answered EOTP to the non-interactive publish.
+        s9 = step(9)
+        self.assertIn("NPM_OTP", s9)
+        self.assertIn("--otp", s9)
+
+    def test_pypi_takes_the_workflow_wheels_when_no_release_exists(self) -> None:
+        # The Windows binary failed, release.yml skipped the GitHub release,
+        # and the wheels existed only as workflow artifacts.
+        self.assertIn("gh run download", step(10))
+
+    def test_a_skipped_github_release_is_created_from_the_artifacts(self) -> None:
+        self.assertIn("gh release create", step(10))
+
+    def test_the_api_snapshot_is_byte_stable(self) -> None:
+        # gzip stamped the write time, so every rerun dirtied docs/api/.
+        snap = (HERE / "api_snapshot.py").read_text()
+        self.assertIn("mtime=0", snap)
+
+    def test_windows_checks_out_long_paths(self) -> None:
+        wf = (HERE.parent / ".github/workflows/release.yml").read_text()
+        self.assertIn("core.longpaths", wf)
+
+
 if __name__ == "__main__":
     unittest.main()

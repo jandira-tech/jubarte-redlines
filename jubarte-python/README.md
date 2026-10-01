@@ -27,7 +27,36 @@ pip install jubarte-redlines
 
 Prebuilt wheels are `abi3` (one wheel per platform, CPython ≥ 3.10).
 
-## Usage
+## Command line
+
+The wheel installs a `jubarte-redlines` command; `uvx` runs it without
+installing anything:
+
+```sh
+uvx jubarte-redlines redline original.docx modified.docx -o redline.docx --author Legal
+uvx jubarte-redlines changes redline.docx
+uvx jubarte-redlines accept redline.docx -o clean.docx --kind formatting
+uvx jubarte-redlines reject redline.docx -o original-again.docx --id body:rev:12
+uvx jubarte-redlines convert redline.docx --revisions word
+uvx jubarte-redlines inspect contract.docx --json
+uvx jubarte-redlines text contract.docx
+uvx jubarte-redlines edit contract.docx --plan plan.json --out-dir review --pdf
+uvx jubarte-redlines capabilities --json
+uvx jubarte-redlines --help
+```
+
+`redline` is an alias of `compare`; `python -m jubarte_redlines` runs the same
+commands. `revisions` and `changes` list what a document tracks (`--json` for
+one object per line); `accept` and `reject` take repeatable `--id`, `--author`
+and `--kind` to resolve a selection and keep the rest tracked, or everything
+when none is given; `text` prints the Markdown with the `[body:p:N]` ids edit
+plans use, `inspect` the paragraph/package snapshot; `edit` applies an edit plan
+to `--out-dir` (clean copy, redline, `patch.diff`, `report.jsonl`, optional
+PDF/PNG pages); `capabilities` reports what the build can do. Exit codes: 0
+success, 1 error, 2 usage, 3 edit plan refused. Inputs are `.docx`: save a Word
+97-2003 `.doc` as `.docx` first.
+
+## Library
 
 ```python
 from pathlib import Path
@@ -62,6 +91,54 @@ Path("redline.pdf").write_bytes(docx_to_pdf(redline))
 revisions with a fixed epoch date by default so output is deterministic;
 pass an ISO-8601 `date` to override. Errors raise
 `jubarte_redlines.JubarteError`.
+
+`read()` returns a `Document` — an immutable snapshot, path I/O done once, no
+operation mutating it or writing files:
+
+```python
+from jubarte_redlines import read, EditPlan, diff
+
+doc = read("contract.docx")
+doc.markdown()    # body and every header/footer/notes story, [body:p:N] ids
+doc.inspect()     # Snapshot: summary + paragraphs (ids, style, spans, limitations)
+doc.sha256()      # the source_sha256 guard an edit plan carries
+doc.changes()     # each tracked change, with the id accept/reject and plans take
+doc.accept(ids=["body:rev:12"])   # or reject(...): resolve a selection,
+                                  # keep the rest tracked (no selection = all)
+result = doc.render(pdf=True, png_dpi=144)  # Rendered: pdf, pngs, page report
+```
+
+`doc.compare(other, author=...)` is `compare_documents`; `doc.to_pdf()` and
+`doc.to_png(dpi=...)` are the one-shot renderers.
+
+An `EditPlan` builds the tracked-changes transaction `doc.edit(plan)` applies —
+all-or-nothing: a refused plan raises `EditPlanError` (stable `code`, the
+failed operation, every operation's outcome) and produces nothing.
+`doc.preview(plan)` resolves and reports without applying:
+
+```python
+plan = (
+    EditPlan(author="Reviewer")
+    .for_document(doc)             # bind to this snapshot; STALE_SOURCE if it changed
+    .replace("body:p:3", find="30 days", replacement="45 days", format={"bold": True})
+    .comment("body:p:3", text="Check with the client", find="45 days")
+    .insert_paragraph("body:p:3", runs=["New sentence."], like="body:p:3")
+)
+out = doc.edit(plan)               # EditResult: clean, redline, report, diff
+```
+
+`replace`, `insert`, `delete` and `comment` edit run text; `insert_paragraph`,
+`delete_paragraph`, `format_paragraph`, `merge_paragraphs` and `rewrite` work on
+whole paragraphs; `resolving(accept={...}, reject={...})` settles existing
+tracked changes first. `plan.to_json()` is exactly what `edit --plan` reads.
+
+`diff(old, new)` (new on `main`, first in the release after 0.10.1) shows the
+changed paragraphs between two documents — or a document and Markdown text —
+as `[-old-]{+new+}` marks (`format="critic"` for CriticMarkup):
+
+```python
+print(diff(read("v1.docx"), read("v2.docx")))
+```
 
 ## Also available as
 

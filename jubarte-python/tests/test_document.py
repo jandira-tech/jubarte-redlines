@@ -83,6 +83,32 @@ def test_compare_round_trip_preserves_both_inputs_and_revision_metadata():
     assert new.to_bytes() == new_bytes
 
 
+@pytest.mark.integration
+def test_byte_api_round_trips_a_rewritten_and_an_inserted_paragraph():
+    # PR #253's NDA fixture run: several paragraphs, one word changed, one
+    # paragraph rewritten, one inserted. Accept-all reads as the modified
+    # text and reject-all as the original, through the byte functions.
+    from docx_fixture import docx, para
+
+    original = docx(
+        para("The term is two years.") + para("Confidential means technical data.") + para("Kept."),
+        header="Mutual NDA",
+    )
+    modified = docx(
+        para("The term is three years.")
+        + para("Confidential means technical, business and financial data.")
+        + para("No disclosure to third parties.")
+        + para("Kept."),
+        header="Mutual NDA",
+    )
+    redline = jubarte.compare_documents(original, modified, author="Counsel")
+    markdown = lambda data: jubarte.Document.from_bytes(data).markdown()  # noqa: E731
+    assert markdown(jubarte.accept_revisions(redline)) == markdown(modified)
+    assert markdown(jubarte.reject_revisions(redline)) == markdown(original)
+    revisions = jubarte.get_revisions(redline)
+    assert revisions and {row["author"] for row in revisions} == {"Counsel"}
+
+
 def test_compare_default_is_repeatable_and_keeps_legacy_fixed_date():
     old = jubarte.Document.from_bytes(make_document("The payment is due today."))
     new = jubarte.Document.from_bytes(make_document("The payment is due tomorrow."))

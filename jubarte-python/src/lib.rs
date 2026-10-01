@@ -221,6 +221,125 @@ fn render(
     ))
 }
 
+/// One side of a diff: a Word document's bytes, or Markdown text.
+#[derive(FromPyObject)]
+enum Side<'py> {
+    Word(Bound<'py, PyBytes>),
+    Markdown(String),
+}
+
+impl Side<'_> {
+    fn source(&self) -> jubarte::markdown::Source<'_> {
+        match self {
+            Side::Word(bytes) => jubarte::markdown::Source::Docx(bytes.as_bytes()),
+            Side::Markdown(text) => jubarte::markdown::Source::Markdown(text),
+        }
+    }
+}
+
+/// `diff_json`'s and `redline_diff_json`'s result: the text, and the hunks
+/// as JSON (`[{"at", "removed", "text"}]`, empty for CriticMarkup).
+type Diffed = (String, String);
+
+fn diffed(patch: &jubarte::markdown::Patch, columns: usize) -> PyResult<Diffed> {
+    let hunks: Vec<serde_json::Value> = patch
+        .hunks
+        .iter()
+        .map(|h| serde_json::json!({"at": h.at.to_string(), "removed": h.removed, "text": h.text}))
+        .collect();
+    Ok((patch.render(columns), serde_json::to_string(&hunks).map_err(err)?))
+}
+
+fn patch_options(
+    old_name: &str,
+    new_name: &str,
+    author: &str,
+    date: &str,
+) -> jubarte::markdown::PatchOptions {
+    jubarte::markdown::PatchOptions {
+        old_name: old_name.to_string(),
+        new_name: new_name.to_string(),
+        owner: jubarte::markdown::Attribution {
+            author: author.to_string(),
+            date: date.to_string(),
+        },
+    }
+}
+
+/// The changes from `old` to `new` (each Word bytes or Markdown text) →
+/// `(text, hunks_json)`: the patch of the changed paragraphs at `columns`
+/// (0: not wrapped), or with `critic=True` the whole document as
+/// CriticMarkup and no hunks. `author` and `date` own the changes; a Word
+/// side is compared as `compare_documents` does, with them.
+#[pyfunction]
+#[pyo3(signature = (old, new, *, old_name, new_name, author, date, columns = 72, critic = false))]
+#[allow(clippy::too_many_arguments)]
+fn diff_json(
+    py: Python<'_>,
+    old: Side<'_>,
+    new: Side<'_>,
+    old_name: &str,
+    new_name: &str,
+    author: &str,
+    date: &str,
+    columns: usize,
+    critic: bool,
+) -> PyResult<Diffed> {
+    let options = patch_options(old_name, new_name, author, date);
+    let (old, new) = (old.source(), new.source());
+    let settings = jubarte::comparer::WmlComparerSettings {
+        author_for_revisions: author.to_string(),
+        date_time_for_revisions: date.to_string(),
+        ..jubarte::comparer::WmlComparerSettings::default()
+    };
+    // Built on the detached thread: its image loader is not `Sync`.
+    let redline = || jubarte::markdown::RedlineOptions {
+        settings: settings.clone(),
+        ..jubarte::markdown::RedlineOptions::default()
+    };
+    if !critic {
+        let patch = py
+            .detach(|| jubarte::markdown::patch_documents(old, new, &redline(), &options))
+            .map_err(err)?;
+        return diffed(&patch, columns);
+    }
+    let text = py
+        .detach(|| match (old, new) {
+            (
+                jubarte::markdown::Source::Markdown(old),
+                jubarte::markdown::Source::Markdown(new),
+            ) => Ok(jubarte::markdown::diff_markdown(old, new)),
+            _ => jubarte::markdown::redline(old, new, &redline()).and_then(|docx| {
+                jubarte::markdown::docx_to_markdown(
+                    &docx,
+                    &jubarte::markdown::MarkdownOptions::default(),
+                )
+                .map(|read| read.markdown)
+            }),
+        })
+        .map_err(err)?;
+    Ok((text, "[]".to_string()))
+}
+
+/// The changes a Word redline tracks, as `diff_json`'s patch of the
+/// document named `name` → `(text, hunks_json)`.
+#[pyfunction]
+#[pyo3(signature = (docx, *, name, author, date, columns = 72))]
+fn redline_diff_json(
+    py: Python<'_>,
+    docx: &[u8],
+    name: &str,
+    author: &str,
+    date: &str,
+    columns: usize,
+) -> PyResult<Diffed> {
+    let options = patch_options(name, name, author, date);
+    let patch = py
+        .detach(|| jubarte::markdown::patch_redline(docx, &options))
+        .map_err(err)?;
+    diffed(&patch, columns)
+}
+
 /// SHA-256 (lowercase hex) of the bytes: the snapshot guard of edit plans.
 #[pyfunction]
 fn source_sha256(docx: &[u8]) -> String {
@@ -309,5 +428,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(preview_json, m)?)?;
     m.add_function(wrap_pyfunction!(report_jsonl, m)?)?;
     m.add_function(wrap_pyfunction!(capabilities_json, m)?)?;
+    m.add_function(wrap_pyfunction!(diff_json, m)?)?;
+    m.add_function(wrap_pyfunction!(redline_diff_json, m)?)?;
     Ok(())
 }

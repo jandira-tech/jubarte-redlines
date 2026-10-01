@@ -1,75 +1,34 @@
 # Jubarte (desktop)
 
-Proprietary desktop app for [jubarte](https://github.com/arthrod/jubarte-rs):
-drop two Word documents, get a tracked-changes redline that opens cleanly in
-Microsoft Word. This repository is **not** open source; the comparison engine
-it embeds (`jubarte`, AGPL-3.0) is.
+Proprietary desktop app for
+[jubarte-redlines](https://github.com/jandira-tech/jubarte-redlines): drop two
+Word documents, get a tracked-changes redline that opens cleanly in Microsoft
+Word. This repository is **not** open source; the comparison engine it embeds
+(crate `jubarte-redlines`, Rust path `jubarte::`, AGPL-3.0) is.
 
 | | |
 |---|---|
 | **Visibility** | Private (`arthrod/jubarte-app`) |
 | **License** | Proprietary — see [LICENSE](LICENSE) |
-| **Engine** | AGPL-3.0 `jubarte` via path dep (git submodule of `jubarte-rs`) |
+| **Engine** | AGPL-3.0 `jubarte-redlines` (`jubarte::`) via path dep on this checkout |
 | **MSRV** | 1.88 (edition 2024) |
 
-## Repository layout (submodule)
+## Repository layout
 
-This app is developed **as a git submodule** of the engine monorepo so the
-Cargo path dependency resolves:
-
-```text
-jubarte-rs/                      # github.com/arthrod/jubarte-rs
-├── Cargo.toml                   # engine crate root
-└── jubarte-app/                 # THIS repo (submodule)
-    ├── package.json
-    └── src-tauri/
-        └── Cargo.toml           # jubarte = { path = "../.." }
-```
-
-### Clone with the engine (preferred)
-
-```sh
-git clone --recurse-submodules https://github.com/arthrod/jubarte-rs.git
-cd jubarte-rs/jubarte-app
-bun install
-bun run dev
-```
-
-If you already cloned the engine without submodules:
-
-```sh
-cd jubarte-rs
-git submodule update --init --recursive
-```
-
-### Working only in this repo
-
-A bare clone of `jubarte-app` alone cannot build until the engine sits two
-directories above `src-tauri` (the path dependency). Either use the monorepo
-layout above, or temporarily point `jubarte` at a sibling checkout / crates.io
-release in `src-tauri/Cargo.toml`.
-
-### Updating the submodule pin in the engine
-
-From `jubarte-rs`, after landing commits here:
-
-```sh
-cd jubarte-app && git push origin HEAD
-cd ..
-git add jubarte-app
-git commit -m "chore(app): bump jubarte-app submodule"
-```
-
-To pull the branch tracked in `.gitmodules` (`main`):
-
-```sh
-git submodule update --remote jubarte-app
-```
+This app is a plain directory tracked in the engine monorepo —
+[jubarte-redlines](https://github.com/jandira-tech/jubarte-redlines), the
+canonical checkout — with its own nested `.git` (no `.gitmodules`, nothing to
+`--recurse-submodules`). The engine crate sits at the repo root and is consumed
+through the path dependency
+`jubarte = { package = "jubarte-redlines", path = "../..", default-features = false }`
+in `src-tauri/Cargo.toml`, so a checkout of the monorepo builds as-is.
 
 ## Features
 
 - Drag & drop (or click to browse) the original and modified `.docx`
-- One-click redline, written next to the original; the output name is editable
+- One-click redline, written into the app's own cache container — the App
+  Sandbox blocks writing next to the picked inputs — with **"Save a copy"** as
+  the export path to wherever you choose; the output name is editable
   (defaults to `<a>_v_<b>.docx`, deduped with ` (n)`)
 - **"Revisions by" defaults to the modified document's author** (`dc:creator`,
   falling back to `cp:lastModifiedBy`) — editable, so the tracked changes are
@@ -80,13 +39,32 @@ git submodule update --remote jubarte-app
 - Open in Word / Show in Finder / Save a copy
 - Finder "Open with… → Jubarte": select two `.docx` files and both slots fill
   (older file becomes the original), then the redline runs automatically
+- **Five free redlines per install, then an annual subscription** (StoreKit 2):
+  the quota is counted and enforced in Rust
+  ([`src-tauri/src/quota.rs`](src-tauri/src/quota.rs)), the paywall lives in
+  [`src/paywall.js`](src/paywall.js), and the entitlement is verified
+  server-side
+- **Mac App Store distribution**: `bun run publish:mac`
+  ([`scripts/publish-mac-app-store.sh`](scripts/publish-mac-app-store.sh))
+  builds, signs and uploads the `.pkg` in one command — see
+  [`MAC_APP_STORE_RELEASE.md`](MAC_APP_STORE_RELEASE.md)
+
+Three sibling packages live in this checkout beside the app:
+
+- [`redlines-site/`](redlines-site/) — the public web front end (Cloudflare
+  Worker): drop two `.docx` in a browser; five free redlines per visitor
+- [`verify-worker/`](verify-worker/) — the StoreKit receipt-verification
+  backend, the authoritative entitlement record the app checks
+- [`jubarte-site/`](jubarte-site/) — the `jubarte.pro` marketing Worker,
+  hosting the Terms and Privacy pages the paywall links to
 
 ## Stack
 
 Tauri 2 (Rust backend, static vanilla frontend — no bundler). The engine is a
-path dependency on the enclosing `jubarte-rs` checkout (`path = "../.."` from
-`src-tauri`). Switch `src-tauri/Cargo.toml` to the crates.io `jubarte`
-release once published.
+path dependency on the enclosing `jubarte-redlines` checkout (`path = "../.."`
+from `src-tauri`); the same crate is published to crates.io as
+`jubarte-redlines`, so a version pin is available if the monorepo layout ever
+gets in the way.
 
 Rust hygiene: `rustfmt.toml`, Clippy lints in `Cargo.toml`, `Cargo.lock`
 committed (binary), `publish = false`. CI lives in
@@ -94,7 +72,7 @@ committed (binary), `publish = false`. CI lives in
 
 ## Develop
 
-From `jubarte-rs/jubarte-app` (submodule layout):
+From `jubarte-app/` in the monorepo checkout:
 
 ```sh
 bun install
@@ -106,32 +84,38 @@ Before opening a PR:
 ```sh
 cd src-tauri
 cargo fmt --all -- --check
-cargo clippy --all-targets -- -D warnings
+cargo clippy --all-targets -- -D clippy::correctness
 cargo check --all-targets
 ```
+
+CI (`.github/workflows/ci.yml`) runs exactly that clippy invocation — the lint
+levels live in `[lints]` in `Cargo.toml`, where `correctness` is deny and the
+groups being cleaned up stay warnings — plus `cargo test --all-targets` and a
+line-coverage gate (≥ 80%) on the free-quota business logic.
 
 ## Build (signed)
 
 ```sh
-bun run build      # tauri build → .app + .dmg, both signed
+bun run build      # tauri build → the signed .app
 ```
 
 Signing uses the keychain identity configured in `src-tauri/tauri.conf.json`
-(`Developer ID Application: Jandira Technologies, LLC (NW99N2W6TA)`), with the
-hardened runtime enabled — a prerequisite for notarization. The bundles land in:
+(`Apple Distribution: Jandira Technologies, LLC (NW99N2W6TA)`), with the App
+Sandbox entitlements from `src-tauri/entitlements.plist`. The bundle target is
+`app` only — the Mac App Store needs a `.pkg`, not a `.dmg`, and that `.pkg` is
+built by [`scripts/publish-mac-app-store.sh`](scripts/publish-mac-app-store.sh)
+(see [`MAC_APP_STORE_RELEASE.md`](MAC_APP_STORE_RELEASE.md)). The bundle lands
+in `src-tauri/target/release/bundle/macos/Jubarte.app`.
 
-- `src-tauri/target/release/bundle/macos/Jubarte.app`
-- `src-tauri/target/release/bundle/dmg/Jubarte_<version>_aarch64.dmg`
+## Notarize (app + DMG) — direct distribution, kept for reference
 
-`tauri build` prints `Warn skipping app notarization, no APPLE_ID …` — that is
-expected. We do **not** hand credentials to Tauri; notarization is a manual step
-below using the `notarytool-cicero` keychain profile.
-
-## Notarize (app + DMG)
+The shipping path is the Mac App Store flow above. For a direct
+(Developer ID) distribution you would additionally notarize an `.app` + `.dmg`;
+this is the manual recipe from before the Store, kept for reference.
 
 Prerequisites (already set up on the build machine):
 
-- The Developer ID identity above is in the login keychain
+- The Developer ID identity used in `IDENTITY` below is in the login keychain
   (`security find-identity -v -p codesigning`).
 - A notarytool keychain profile named `notarytool-cicero` exists
   (`xcrun notarytool store-credentials notarytool-cicero --apple-id … --team-id NW99N2W6TA --password <app-specific-password>`).
@@ -142,7 +126,7 @@ Run from the bundle directory:
 cd src-tauri/target/release/bundle
 IDENTITY="Developer ID Application: Jandira Technologies, LLC (NW99N2W6TA)"
 APP="macos/Jubarte.app"
-DMG="dmg/Jubarte_0.1.0_aarch64.dmg"          # match the built version
+DMG="dmg/Jubarte_0.10.1_aarch64.dmg"          # match the built version
 
 # 1. Notarize the .app (zip → submit → staple).
 ditto -c -k --keepParent "$APP" Jubarte.zip
@@ -197,7 +181,7 @@ That rewrites all four:
 | File | Field |
 |---|---|
 | `package.json` | `"version"` |
-| `src-tauri/tauri.conf.json` | `"version"` (drives the bundle + DMG filename) |
+| `src-tauri/tauri.conf.json` | `"version"` (drives the bundle name) |
 | `src-tauri/Cargo.toml` | `[package] version` |
 | `src/index.html` | the app-bar `vX.Y.Z` label |
 
@@ -207,9 +191,10 @@ Release flow:
 
 1. `bun run bump <x.y.z>` — bump all four version strings.
 2. Add a dated section to [`CHANGELOG.md`](CHANGELOG.md) (Added / Changed / Fixed).
-3. `bun run build` — produces the signed `.app` (see *Build* above).
-4. Notarize and staple the app, then the DMG (see *Notarize* above). Update the
-   `DMG="dmg/Jubarte_<version>_aarch64.dmg"` line to the new version.
+3. `bun run publish:mac` — build, sign, package and upload the `.pkg` in one
+   command (see [`MAC_APP_STORE_RELEASE.md`](MAC_APP_STORE_RELEASE.md); Apple
+   rejects a re-used version number, hence step 1).
+4. Attach the build and submit for review in App Store Connect.
 5. Commit (`chore(release): vX.Y.Z`), tag `vX.Y.Z`, push.
 
 ## Icons & art
