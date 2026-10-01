@@ -3596,7 +3596,19 @@ fn apply_rfonts(dom: &Dom, fonts: NodeId, style: &mut RunStyle, theme: &ThemeFon
             .take()
             .filter(|h| !h.eq_ignore_ascii_case(a));
     }
-    let ascii = ascii_attr.or(hansi_attr);
+    // An asciiTheme slot names the ascii face itself; an explicit hAnsi
+    // next to it keeps to the characters past U+007F (0fc80afa25: slot
+    // minorHAnsi + hAnsi Arial, Word paints the Latin text in Calibri).
+    let slot_hansi = if ascii_attr.is_none() && ascii_slot.is_some() {
+        hansi_attr
+    } else {
+        None
+    };
+    let ascii = if slot_hansi.is_some() {
+        None
+    } else {
+        ascii_attr.or(hansi_attr)
+    };
     let slot = ascii_slot.or_else(|| attr_any(dom, fonts, "hAnsiTheme"));
     let display_cache = ascii.is_some_and(|name| name.to_ascii_lowercase().contains("display"));
     if let Some(ascii) = ascii
@@ -3626,8 +3638,12 @@ fn apply_rfonts(dom: &Dom, fonts: NodeId, style: &mut RunStyle, theme: &ThemeFon
         // line boxes). Those two will drop until the line-box PR; do not
         // restore this gate.
         style.family = face.to_string();
-    } else if let Some(ascii) = ascii {
+    } else if let Some(ascii) = ascii.or(slot_hansi) {
         style.family = ascii.to_string();
+    }
+    if let Some(hansi) = slot_hansi {
+        style.family_hansi =
+            (!hansi.eq_ignore_ascii_case(&style.family)).then(|| hansi.to_string());
     }
 }
 
@@ -31748,6 +31764,16 @@ mod theme_slot_tests {
             ),
             "Calibri"
         );
+    }
+
+    #[test]
+    fn hansi_next_to_an_ascii_slot_keeps_to_high_ansi() {
+        let style = style_from_rfonts(
+            r#"w:asciiTheme="minorHAnsi" w:hAnsi="Arial""#,
+            &theme_cambria_minor(),
+        );
+        assert_eq!(style.family, "Cambria");
+        assert_eq!(style.family_hansi.as_deref(), Some("Arial"));
     }
 
     fn theme_with_east_asia() -> ThemeFonts {
