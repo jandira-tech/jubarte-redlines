@@ -2548,6 +2548,24 @@ enum ImageKind {
         color: [f32; 3],
         width: f32,
     },
+    /// An inline VML `v:rect` that at most strokes (`vml_rect_image`): its
+    /// outline `pad` in from the laid box's top and sides and
+    /// `vml_rect_foot` up from its bottom; `width` 0 when unstroked. `run` is its run's style,
+    /// whose single line the rect's line keeps when taller.
+    VmlRect {
+        pad: f32,
+        color: [f32; 3],
+        width: f32,
+        run: Option<Box<RunStyle>>,
+    },
+}
+
+/// The room under an inline VML rect's outline in its laid box: 1pt, or
+/// half a thicker stroke, and none unstroked (Word 16 probes hr1001
+/// h1/h4/k5/k6 at 0.25pt and 0.75pt leave 1pt to the line's bottom, k1's
+/// 4pt stroke 2pt, k2's unstroked rect nothing).
+fn vml_rect_foot(pad: f32, width: f32) -> f32 {
+    if width > 0.0 { pad.max(1.0) } else { 0.0 }
 }
 
 fn twip(v: f32) -> f32 {
@@ -9718,7 +9736,7 @@ fn paragraph_block(
         }
     }
     let mut images = collect_images(ctx.pkg, ctx.main, dom, para, &|drawing| {
-        underlined_picture_run(dom, drawing, &rstyle, &sheet.theme, &sheet.by_id)
+        picture_run_style(dom, drawing, &rstyle, &sheet.theme, &sheet.by_id)
     });
     if let Some(kind) = pic {
         // The bullet's own v:shape extent; the run size only when absent.
@@ -15295,13 +15313,13 @@ fn inline_effect_pt(dom: &Dom, drawing: NodeId) -> [f32; 4] {
     [side("l"), side("t"), side("r"), side("b")]
 }
 
-/// The style of an inline picture's run when Word draws the run
-/// underlined, as `collect_runs_rec` resolves it: Word then keeps the
-/// run's descent under the picture (probes 2026-10-01: a 30pt picture in
+/// The style of the run holding an inline picture (`w:drawing` or
+/// `w:pict`), as `collect_runs_rec` resolves it. Word keeps an underlined
+/// run's descent under its picture (probes 2026-10-01: a 30pt picture in
 /// an underlined or inserted TNR 12 run puts the next baseline 2.64pt
 /// lower, in a 36pt run 7.68pt; deleted, plain or alone in the mark,
 /// nothing).
-fn underlined_picture_run(
+fn picture_run_style(
     dom: &Dom,
     drawing: NodeId,
     base: &RunStyle,
@@ -15334,7 +15352,7 @@ fn underlined_picture_run(
         })
         .unwrap_or(RevMark::None);
     apply_rev(&mut style, mark, [0.0; 3]);
-    style.underline.then_some(style)
+    Some(style)
 }
 
 fn collect_images(
@@ -15342,7 +15360,7 @@ fn collect_images(
     main: &str,
     dom: &Dom,
     para: NodeId,
-    under: &dyn Fn(NodeId) -> Option<RunStyle>,
+    run_style: &dyn Fn(NodeId) -> Option<RunStyle>,
 ) -> Vec<LaidImage> {
     let mut out = Vec::new();
     // Text nodes in document order: a drawing with none after it is a tail
@@ -15540,7 +15558,7 @@ fn collect_images(
                         lead_chars: lead_chars_before(dom, para, drawing),
                         after_text: trails_text(dom, para, drawing),
                         under: if matches!(slot, ImageSlot::Flow) {
-                            under(drawing)
+                            run_style(drawing).filter(|run| run.underline)
                         } else {
                             None
                         },
@@ -15692,6 +15710,11 @@ fn collect_images(
             }
             for line in descendants_local(dom, root, "line") {
                 if let Some(img) = vml_line_image(dom, line, root) {
+                    out.push(img);
+                }
+            }
+            for rect in descendants_local(dom, root, "rect") {
+                if let Some(img) = vml_rect_image(dom, para, root, rect, run_style(root)) {
                     out.push(img);
                 }
             }
@@ -15852,6 +15875,89 @@ fn vml_line_image(dom: &Dom, line: NodeId, root: NodeId) -> Option<LaidImage> {
         gap_before: 0.0,
         lead_chars: 0,
         after_text: false,
+        under: None,
+    })
+}
+
+/// An inline VML `v:rect` that at most strokes: no picture, no text, no
+/// `o:hr` rule and no fill. Word strokes its outline at its own width, past
+/// the margin if it runs there (t3c1e5d's 540pt "Horizontal Line" from 70.85
+/// to 610.85, VML's default black 0.75pt stroke). Its laid box is the rect
+/// with `vml_rect_foot` under it; a stroke of 2pt or more also pads it by
+/// half the stroke (Word 16 probe hr1001 k1: a 4pt stroke draws 2pt in).
+/// `run` is the style of the run holding `root`, its `w:pict`.
+fn vml_rect_image(
+    dom: &Dom,
+    para: NodeId,
+    root: NodeId,
+    rect: NodeId,
+    run: Option<RunStyle>,
+) -> Option<LaidImage> {
+    let off = |name: &str| attr_any(dom, rect, name).is_some_and(|v| v.starts_with('f'));
+    if o_attr(dom, rect, "hr") == Some("t")
+        || !off("filled")
+        || !descendants_local(dom, rect, "imagedata").is_empty()
+        || !descendants_local(dom, rect, "textbox").is_empty()
+    {
+        return None;
+    }
+    // Inline only: a positioned rect is a floating shape.
+    let style = attr_any(dom, rect, "style")?;
+    if vml_style_hidden(style)
+        || style
+            .to_ascii_lowercase()
+            .replace(' ', "")
+            .contains("position:absolute")
+    {
+        return None;
+    }
+    let w = vml_style_pt(style, "width")?;
+    let h = vml_style_pt(style, "height")?;
+    let color = attr_any(dom, rect, "strokecolor")
+        .and_then(vml_color)
+        .unwrap_or([0.0; 3]);
+    // An unstroked one paints nothing but keeps its box (probe hr1001 k2).
+    let width = if off("stroked") {
+        0.0
+    } else {
+        attr_any(dom, rect, "strokeweight")
+            .and_then(vml_len_pt)
+            .unwrap_or(0.75)
+    };
+    let pad = if width >= 2.0 { width / 2.0 } else { 0.0 };
+    Some(LaidImage {
+        w: w + 2.0 * pad,
+        h: h + pad + vml_rect_foot(pad, width),
+        kind: ImageKind::VmlRect {
+            pad,
+            color,
+            width,
+            run: run.map(Box::new),
+        },
+        slot: ImageSlot::Flow,
+        behind: false,
+        z: 0,
+        crop: None,
+        rotate_deg: 0.0,
+        oval: false,
+        chrome_align: Align::Left,
+        chrome_lead: false,
+        chrome_flow: false,
+        chrome_under_table: false,
+        inset: [0.0; 4],
+        chrome_leading: None,
+        chrome_tab_line: None,
+        chrome_text_under: None,
+        chrome_above: 0.0,
+        chrome_drop: 0.0,
+        chrome_drop_tab: None,
+        chrome_para: 0,
+        chrome_after: 0.0,
+        tail_anchor: false,
+        outline: None,
+        gap_before: 0.0,
+        lead_chars: lead_chars_before(dom, para, root),
+        after_text: trails_text(dom, para, root),
         under: None,
     })
 }
@@ -23718,6 +23824,20 @@ impl<'a> Layout<'a> {
                 width: *width,
                 color: *color,
             }),
+            ImageKind::VmlRect {
+                pad, color, width, ..
+            } if *width > 0.0 => {
+                let foot = vml_rect_foot(*pad, *width);
+                self.current().ops.push(Op::StrokeRect {
+                    x: x + pad,
+                    y: y + foot,
+                    w: dw - 2.0 * pad,
+                    h: dh - pad - foot,
+                    width: *width,
+                    color: *color,
+                });
+            }
+            ImageKind::VmlRect { .. } => {}
         }
         if let Some((color, width)) = img.outline {
             self.current().ops.push(Op::StrokeRect {
@@ -23785,7 +23905,24 @@ impl<'a> Layout<'a> {
             }
             let gaps: f32 = row.iter().skip(1).map(|r| r.0.gap_before).sum();
             let w: f32 = row.iter().map(|r| r.1).sum::<f32>() + gaps;
-            let h = row.iter().map(|r| r.2).fold(0.0_f32, f32::max);
+            // A VML rect's line is at least its run's single line, the
+            // rect at its bottom (probes hr1001 h1/h6/k5).
+            let rect_line = row
+                .iter()
+                .filter_map(|r| match &r.0.kind {
+                    ImageKind::VmlRect { run, .. } => run.as_deref().or(mark),
+                    _ => None,
+                })
+                .map(|run| {
+                    let face = lay.fonts.resolve(&run.family, run.bold, run.italic);
+                    lay.fonts.get(face).single_line_pt(run.layout_size())
+                })
+                .fold(0.0_f32, f32::max);
+            let h = row
+                .iter()
+                .map(|r| r.2)
+                .fold(0.0_f32, f32::max)
+                .max(rect_line);
             let under = row
                 .iter()
                 .filter_map(|r| r.0.under.as_ref())
@@ -24250,6 +24387,20 @@ impl<'a> Layout<'a> {
                 width: *width,
                 color: *color,
             }),
+            ImageKind::VmlRect {
+                pad, color, width, ..
+            } if *width > 0.0 => {
+                let foot = vml_rect_foot(*pad, *width);
+                self.current().ops.push(Op::StrokeRect {
+                    x: x + pad,
+                    y: y + foot,
+                    w: dw - 2.0 * pad,
+                    h: dh - pad - foot,
+                    width: *width,
+                    color: *color,
+                });
+            }
+            ImageKind::VmlRect { .. } => {}
         }
     }
 
@@ -29405,11 +29556,16 @@ fn layout(
                                 || !b.group.is_empty()
                                 || !b.diag_shapes.is_empty())
                     });
+                // A stroked VML rect of any height is its line too: Word
+                // sizes that line by the rect and its run, never the mark
+                // (probes hr1001 h1-h3: a TNR 12 mark, deleted or not,
+                // leaves a 1.1pt rule in a Verdana 10 run on a 12.15pt line).
                 let skip_empty_line = skip_hole_line
                     || (!has_ink
-                        && images
-                            .iter()
-                            .any(|im| matches!(im.slot, ImageSlot::Flow) && im.h > 8.0));
+                        && images.iter().any(|im| {
+                            matches!(im.slot, ImageSlot::Flow)
+                                && (im.h > 8.0 || matches!(im.kind, ImageKind::VmlRect { .. }))
+                        }));
                 // Word keeps the empty paragraph after a table as a line,
                 // Heading2 next or not (docxide case15; fixtures_500
                 // 00189bfa's " " line 16.5pt over heading 8).

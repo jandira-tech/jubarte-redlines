@@ -1151,9 +1151,124 @@ fn a_list_label_takes_its_marks_character_style() {
     ))
     .expect("convert mark rStyle label");
     let (label, item) = label_and_text_fills(&pdf, "Plain text");
-    assert_eq!((label.as_str(), item.as_str()), ("0.000 0.690 0.314", BLACK));
+    assert_eq!(
+        (label.as_str(), item.as_str()),
+        ("0.000 0.690 0.314", BLACK)
+    );
     let hay = String::from_utf8_lossy(&pdf);
     assert!(hay.contains("Courier"), "the label paints in Courier New");
+}
+
+#[test]
+fn an_inline_vml_rect_strokes_its_outline() {
+    // t3c1e5d's "Horizontal Line 1": an inline v:rect 540pt x 1.1pt,
+    // filled="f", stroked by VML's default (black 0.75pt) and no o:hr.
+    // Word strokes it at its full 540pt from the margin, past the right
+    // margin (Word PDF: 70.85 to 610.85); we painted nothing.
+    let body = "<w:p><w:r><w:t>Above</w:t></w:r></w:p>\
+         <w:p><w:r><w:pict xmlns:v=\"urn:schemas-microsoft-com:vml\" \
+           xmlns:w10=\"urn:schemas-microsoft-com:office:word\"><v:rect id=\"Horizontal Line 1\" \
+           style=\"width:540pt;height:1.1pt;visibility:visible;mso-position-horizontal-relative:char;mso-position-vertical-relative:line\" \
+           filled=\"f\"><w10:anchorlock/></v:rect></w:pict></w:r></w:p>\
+         <w:p><w:r><w:t>Below</w:t></w:r></w:p>"
+        .to_string()
+        + LETTER_SECT;
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert inline VML rect");
+    let streams = pdf_content_streams(&pdf).concat();
+    let boxes = pdf_stroke_boxes_in(&streams, 0.0, 0.0, 0.0);
+    assert!(
+        boxes.iter().any(|&(x, _, w, h)| (x - 72.0).abs() < 1.0
+            && (w - 540.0).abs() < 0.5
+            && (h - 1.1).abs() < 0.2),
+        "the rect strokes 540 x 1.1 from the margin: {boxes:?}"
+    );
+}
+
+/// A TNR 12 line, a paragraph holding one inline VML rect (style `rect`
+/// attributes, `w:pict` run in Verdana 10, mark TNR 12, then `tail`
+/// runs), and a TNR 12 line.
+fn vml_rect_between_lines(rect: &str, tail: &str) -> Vec<u8> {
+    let tnr = "<w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+               <w:sz w:val=\"24\"/></w:rPr>";
+    let verdana =
+        "<w:rPr><w:rFonts w:ascii=\"Verdana\" w:hAnsi=\"Verdana\"/><w:sz w:val=\"20\"/></w:rPr>";
+    let body = format!(
+        "<w:p><w:r>{tnr}<w:t>Above</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/>{tnr}</w:pPr>\
+           <w:r>{verdana}<w:pict xmlns:v=\"urn:schemas-microsoft-com:vml\"><v:rect id=\"Horizontal Line 1\" \
+           style=\"width:540pt;{rect};visibility:visible;mso-position-horizontal-relative:char;mso-position-vertical-relative:line\"/>\
+           </w:pict></w:r>{tail}</w:p>\
+         <w:p><w:r>{tnr}<w:t>Below</w:t></w:r></w:p>{LETTER_SECT}"
+    );
+    let settings = "<w:compat><w:compatSetting w:name=\"compatibilityMode\" \
+          w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat>";
+    let styles = "<w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>\
+          <w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr></w:style>";
+    docx_with_settings_and_styles(&body, settings, styles)
+}
+
+#[test]
+fn an_inline_vml_rects_line_is_its_runs_line_with_the_rect_at_its_foot() {
+    // t3c1e5d page 2: a 1.1pt "Horizontal Line" in a Verdana 10 run whose
+    // deleted mark is TNR 12. Word 16 (probes hr1001 h1-h3, any mark):
+    // the rule's line is the run's 12.15pt Verdana line, not the mark's,
+    // the rect 1pt above its bottom; "Below" sits 25.92pt under "Above"
+    // and the rule's bottom 14.01pt under it. We stacked the rect under
+    // a 13.8pt mark line (28.33pt) and dropped the rest of the page.
+    let pdf = docx_to_pdf(&vml_rect_between_lines("height:1.1pt\" filled=\"f", ""))
+        .expect("convert rule paragraph");
+    let ys: Vec<f32> = text_baselines(&pdf).iter().map(|y| 792.0 - y).collect();
+    assert_eq!(ys.len(), 2, "Above and Below: {ys:?}");
+    assert!(
+        (ys[1] - ys[0] - 25.92).abs() < 0.3,
+        "Word's 25.92pt: {ys:?}"
+    );
+    let streams = pdf_content_streams(&pdf).concat();
+    let boxes = pdf_stroke_boxes_in(&streams, 0.0, 0.0, 0.0);
+    let &(_, y, _, h) = boxes
+        .iter()
+        .find(|b| (b.2 - 540.0).abs() < 0.5)
+        .expect("the rule is stroked");
+    assert!((h - 1.1).abs() < 0.2, "1.1pt tall: {boxes:?}");
+    assert!(
+        ((792.0 - y) - ys[0] - 14.01).abs() < 0.3,
+        "the rule's bottom 14.01pt under Above's baseline: y={y} {ys:?}"
+    );
+    // A 20pt rect outgrows that line by its 1pt foot (h4: 34.80 apart).
+    let pdf = docx_to_pdf(&vml_rect_between_lines("height:20pt\" filled=\"f", ""))
+        .expect("convert tall rule paragraph");
+    let ys: Vec<f32> = text_baselines(&pdf).iter().map(|y| 792.0 - y).collect();
+    assert!(
+        (ys[1] - ys[0] - 34.80).abs() < 0.3,
+        "Word's 34.80pt: {ys:?}"
+    );
+}
+
+#[test]
+fn an_unstroked_inline_vml_rect_keeps_its_box_without_a_foot() {
+    // Word 16 probe hr1001 k2: an unstroked 540 x 20pt rect paints nothing
+    // but holds its 20pt line (no 1pt foot); the text after it wraps to
+    // the next line, 32.64pt under "Above". We dropped the rect.
+    let tail = "<w:r><w:rPr><w:rFonts w:ascii=\"Verdana\" w:hAnsi=\"Verdana\"/><w:sz w:val=\"20\"/></w:rPr>\
+                <w:t>Yq</w:t></w:r>";
+    let pdf = docx_to_pdf(&vml_rect_between_lines(
+        "height:20pt\" filled=\"f\" stroked=\"f",
+        tail,
+    ))
+    .expect("convert unstroked rect");
+    let ys: Vec<f32> = text_baselines(&pdf).iter().map(|y| 792.0 - y).collect();
+    assert_eq!(ys.len(), 3, "Above, Yq, Below: {ys:?}");
+    assert!(
+        (ys[1] - ys[0] - 32.64).abs() < 0.3,
+        "Word's 32.64pt: {ys:?}"
+    );
+    let streams = pdf_content_streams(&pdf).concat();
+    assert!(
+        pdf_stroke_boxes_in(&streams, 0.0, 0.0, 0.0)
+            .iter()
+            .all(|b| (b.2 - 540.0).abs() > 0.5),
+        "nothing stroked"
+    );
 }
 
 #[test]

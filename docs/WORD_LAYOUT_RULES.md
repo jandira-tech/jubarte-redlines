@@ -295,6 +295,21 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   name only the horizontal frame, and Word hangs them from their paragraph.
 - **Open:** a character-relative anchor (`mso-position-horizontal-relative:char`)
   starts at the anchor character's x. We still take it at the column edge.
+- **An inline `v:rect` with `filled="f"`** (an old "Horizontal Line" without
+  `o:hr`) is stroked at its own width, past the right margin when it is
+  wider. Probes hr1001 h1–h7 and k1–k6, compat 15:
+  - Its box is the rect plus a 1pt foot under it. A stroke of 2pt or more
+    pads the box by half the stroke on every side instead (4pt: the rect is
+    drawn 2pt in). An unstroked rect paints nothing and has no foot, but
+    keeps its box.
+  - Alone on its line, the line is the larger of the box and the single
+    line of the `w:pict` run's font, and the box sits at the line's bottom.
+    The paragraph mark plays no part: a TNR 12 mark, deleted or not, leaves
+    a 1.1pt rule in a Verdana 10 run on a 12.15pt line. t3c1e5d page 2
+    scored 64.5 → 86.5.
+  - **Open:** a rect in the middle of a text line shares that line in Word
+    (its outline 0.75pt above the baseline, text after it). We put it at the
+    line's end, or on its own line.
 
 ## Pages and keep-with-next
 
