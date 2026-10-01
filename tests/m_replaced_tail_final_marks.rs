@@ -10,7 +10,9 @@
 //! - `kept_title`, `kept_title3`: one kept title over 2 and 3 unrelated
 //!   paragraphs;
 //! - `kept_junk`: 40 unrelated paragraphs around one shared `(dolore)`
-//!   paragraph, which Word keeps as an anchor.
+//!   paragraph, which Word keeps as an anchor;
+//! - `table_end`: three paragraphs replaced by a nested table and the empty
+//!   paragraph after it, which pairs with the original's closing mark.
 //!
 //! The tail came out of the LCS deleted-first, and neither final-mark pass
 //! took that order: the first deleted paragraph's mark stayed live, and
@@ -39,7 +41,7 @@ fn changes(docx: &[u8]) -> Vec<String> {
 
 fn paragraphs(docx: &[u8]) -> usize {
     let xml = part_string(docx, "word/document.xml").expect("document part");
-    xml.matches("<w:p>").count() + xml.matches("<w:p ").count()
+    xml.matches("<w:p>").count() + xml.matches("<w:p ").count() + xml.matches("<w:p/>").count()
 }
 
 fn probe(name: &str) {
@@ -71,4 +73,9 @@ fn a_kept_title_over_a_longer_rewritten_tail_pairs_the_final_marks() {
 #[test]
 fn a_shared_paragraph_anchors_two_rewritten_halves() {
     probe("kept_junk");
+}
+
+#[test]
+fn a_revision_ending_after_a_table_pairs_its_empty_paragraph_like_word() {
+    probe("table_end");
 }
