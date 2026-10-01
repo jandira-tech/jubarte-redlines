@@ -1392,6 +1392,10 @@ struct TextRun {
     footnote_id: Option<String>,
     /// `w:footnoteRef` auto-mark inside `footnotes.xml`.
     note_ref: bool,
+    /// Endnote mark: the body `w:endnoteReference/@w:id`, or the note's
+    /// own id on its `w:endnoteRef` (empty until the note fills it in).
+    /// `number_endnote_refs` writes the label before layout.
+    endnote_id: Option<String>,
     /// Footer/header paragraph `w:spacing/@w:after` carried on the
     /// `HF_LINE_BREAK` after that para (plan.md Step 10 G).
     para_gap: f32,
@@ -1449,6 +1453,7 @@ impl TextRun {
             rule: None,
             footnote_id: None,
             note_ref: false,
+            endnote_id: None,
             para_gap: 0.0,
             hf_para: None,
             ends_line: false,
@@ -6651,6 +6656,7 @@ fn collect_blocks(
     let mut endnotes = EndnoteBag::load(pkg, main);
     walk_container(&ctx, dom, body, &mut numbering, &mut blocks, &mut endnotes);
     endnotes.emit_remaining(&ctx, &mut numbering, &mut blocks);
+    number_endnote_refs(&mut blocks, endnote_num_format(pkg, dom, &sects));
     blocks
 }
 
@@ -6860,6 +6866,7 @@ fn push_endnote_blocks(
     numbering: &mut Numbering,
     blocks: &mut Vec<Block>,
 ) {
+    let first = blocks.len();
     for i in 0..ndom.child_count(note) {
         let child = ndom.child_at(note, i);
         if ndom.name_is(child, &W::p()) {
@@ -6881,6 +6888,60 @@ fn push_endnote_blocks(
             }
         }
     }
+    // The note's own mark carries its id, so it reads as its reference.
+    let id = attr_any(ndom, note, "id").unwrap_or_default();
+    visit_runs_mut(&mut blocks[first..], |run| {
+        if run.endnote_id.as_deref() == Some("") {
+            run.endnote_id = Some(id.to_string());
+        }
+    });
+}
+
+/// Endnote numbering from the last section's `w:endnotePr`, else the
+/// settings part's: format and start. Word's default is i, ii, iii
+/// (9134397db6, cf977017dd).
+fn endnote_num_format(pkg: &PartFs, dom: &Dom, sects: &[NodeId]) -> (NumFmt, u32) {
+    let read = |dom: &Dom, pr: NodeId| {
+        let val = |name: &str| first_named(dom, pr, name).and_then(|n| attr_any(dom, n, "val"));
+        (
+            val("numFmt").map(parse_num_fmt),
+            val("numStart").and_then(|v| v.parse::<u32>().ok()),
+        )
+    };
+    let (mut fmt, mut start) = sects
+        .last()
+        .and_then(|&sect| first_named(dom, sect, "endnotePr"))
+        .map_or((None, None), |pr| read(dom, pr));
+    if (fmt.is_none() || start.is_none())
+        && let Some(settings) = settings_dom(pkg)
+    {
+        let (sdom, root) = (&settings.0, settings.1);
+        if let Some(pr) = sdom
+            .descendants(root, Some(&W::name("endnotePr")))
+            .into_iter()
+            .next()
+        {
+            let (f, n) = read(sdom, pr);
+            fmt = fmt.or(f);
+            start = start.or(n);
+        }
+    }
+    (fmt.unwrap_or(NumFmt::LowerRoman), start.unwrap_or(1))
+}
+
+/// Labels each endnote mark by its note's place in reference order.
+fn number_endnote_refs(blocks: &mut [Block], (fmt, start): (NumFmt, u32)) {
+    let mut labels: HashMap<String, String> = HashMap::new();
+    visit_runs_mut(blocks, |run| {
+        let Some(id) = run.endnote_id.as_deref().filter(|id| !id.is_empty()) else {
+            return;
+        };
+        let next = start + labels.len() as u32;
+        let label = labels
+            .entry(id.to_string())
+            .or_insert_with(|| format_num(fmt, next));
+        run.text.clone_from(label);
+    });
 }
 
 fn load_footnotes(
@@ -12514,6 +12575,7 @@ fn collect_runs_rec(
         }
         let mut footnote_id = None;
         let mut note_ref = false;
+        let mut endnote_id = None;
         for idx in 0..ctx.dom.child_count(node) {
             let child = ctx.dom.child_at(node, idx);
             if ctx.dom.name_is(child, &W::name("footnoteReference")) {
@@ -12522,8 +12584,14 @@ fn collect_runs_rec(
             if ctx.dom.name_is(child, &W::name("footnoteRef")) {
                 note_ref = true;
             }
+            if ctx.dom.name_is(child, &W::name("endnoteReference")) {
+                endnote_id = attr_any(ctx.dom, child, "id").map(str::to_string);
+            }
+            if ctx.dom.name_is(child, &W::name("endnoteRef")) {
+                endnote_id = Some(String::new());
+            }
         }
-        if footnote_id.is_some() || note_ref {
+        if footnote_id.is_some() || note_ref || endnote_id.is_some() {
             style.vert = VertAlign::Super;
             let pending_ids = std::mem::take(&mut ctx.pending);
             let pending = if pending_ids.is_empty() {
@@ -12536,6 +12604,7 @@ fn collect_runs_rec(
             run.comments = pending;
             run.footnote_id = footnote_id;
             run.note_ref = note_ref;
+            run.endnote_id = endnote_id;
             runs.push(run);
             return;
         }
