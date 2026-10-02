@@ -1224,9 +1224,20 @@ impl<'a> Fonts<'a> {
             .map(FaceRef::Embedded)
     }
 
-    /// The CJK fallback face for a glyph the resolved face lacks.
-    pub(crate) fn cjk_glyph_fallback(&self, bold: bool) -> Option<FaceRef> {
-        self.embedded_index(CJK_FALLBACK, bold, false)
+    /// The CJK face for a glyph the run's East Asian face lacks: MS Gothic
+    /// for Times New Roman, which `ea` falls back to when the run names
+    /// none, else MS Mincho, whatever the language (Word 16 probes jf and
+    /// 33g, 2026-10-02: Verdana, Arial, Calibri and absent faces are all
+    /// MS Mincho; zh-CN and ko-KR text too). YaHei only stands in when
+    /// those two are not installed.
+    pub(crate) fn cjk_glyph_fallback(&self, bold: bool, ea: Option<&str>) -> Option<FaceRef> {
+        let key = if ea.is_none_or(|f| fold_family(f) == "timesnewroman") {
+            CJK_FALLBACK_GOTHIC
+        } else {
+            CJK_FALLBACK_MINCHO
+        };
+        self.embedded_index(key, bold, false)
+            .or_else(|| self.embedded_index(CJK_FALLBACK, bold, false))
             .map(FaceRef::Embedded)
     }
 
@@ -2509,6 +2520,8 @@ pub(crate) const CJK_FALLBACK: &str = "@cjk";
 pub(crate) const CJK_FALLBACK_JA: &str = "@cjk-ja";
 pub(crate) const CJK_FALLBACK_KO: &str = "@cjk-ko";
 pub(crate) const CJK_FALLBACK_KO_SERIF: &str = "@cjk-ko-serif";
+pub(crate) const CJK_FALLBACK_GOTHIC: &str = "@cjk-gothic";
+pub(crate) const CJK_FALLBACK_MINCHO: &str = "@cjk-mincho";
 /// Embedded-map key of the Thaana fallback face.
 pub(crate) const THAANA_FALLBACK: &str = "@thaana";
 /// Embedded-map key of the Thai fallback face.
@@ -2881,7 +2894,8 @@ fn parse_font_index(text: &str) -> HashMap<String, IndexEntry> {
 }
 
 /// Loads Word's East Asian fallback faces (YaHei, Yu Gothic, Malgun
-/// Gothic, Batang) for a document that has East Asian text.
+/// Gothic, Batang, MS Gothic, MS Mincho) for a document that has East
+/// Asian text.
 pub(crate) fn add_cjk_fallbacks(embedded: &mut EmbeddedFonts) {
     for (key, family, stems) in [
         (CJK_FALLBACK, "Microsoft YaHei", &["msyh", "msyhbd"][..]),
@@ -2892,6 +2906,8 @@ pub(crate) fn add_cjk_fallbacks(embedded: &mut EmbeddedFonts) {
             &["malgun", "malgunbd"][..],
         ),
         (CJK_FALLBACK_KO_SERIF, "Batang", &["batang"][..]),
+        (CJK_FALLBACK_GOTHIC, "MS Gothic", &["msgothic"][..]),
+        (CJK_FALLBACK_MINCHO, "MS Mincho", &["msmincho"][..]),
     ] {
         for ((bold, italic), bytes) in cached_faces(key, || cjk_family_faces(family, stems)) {
             embedded.insert((key.to_string(), bold, italic), bytes);
