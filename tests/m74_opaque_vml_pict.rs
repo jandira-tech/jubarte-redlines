@@ -81,14 +81,14 @@ mod common;
 
 /// A paragraph with an embedded `w:object` (Word.Picture.8: a VML
 /// `v:shape` over `v:imagedata`) between two text paragraphs.
-fn object_docx(with_object: bool) -> Vec<u8> {
+fn object_docx(with_object: bool, after: &str) -> Vec<u8> {
     use common::docx::{Part, docx_with, para};
     let object = if with_object {
         r#"<w:p><w:r><w:object w:dxaOrig="3000" w:dyaOrig="600" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"><v:shape id="s1" style="width:150pt;height:30pt"><v:imagedata r:id="rIdX0" o:title=""/></v:shape></w:object></w:r></w:p>"#
     } else {
         ""
     };
-    let body = format!("{}{object}{}", para("Before"), para("After"));
+    let body = format!("{}{object}{}", para("Before"), para(after));
     docx_with(
         &body,
         &[Part {
@@ -120,7 +120,7 @@ fn object_xml(doc: &str) -> &str {
 /// revision mark, because only `w:pict` was re-emitted whole.
 #[test]
 fn an_inserted_or_deleted_vml_object_keeps_its_picture_and_mark() {
-    let (a, b) = (object_docx(false), object_docx(true));
+    let (a, b) = (object_docx(false, "After"), object_docx(true, "After"));
     for (old, new, mark) in [(&a, &b, "w:ins"), (&b, &a, "w:del")] {
         let out = compare_documents(old, new, "Arthur Souza Rodrigues").expect("compare ok");
         let doc = document_xml(&out);
@@ -138,4 +138,23 @@ fn an_inserted_or_deleted_vml_object_keeps_its_picture_and_mark() {
             "the object's run must sit under {mark}: {doc}"
         );
     }
+}
+
+/// Every unchanged `w:object` was emptied too: a redline of any document
+/// holding OLE pictures lost all of them, whatever changed elsewhere.
+#[test]
+fn an_unchanged_vml_object_keeps_its_picture() {
+    let old = object_docx(true, "After");
+    let new = object_docx(true, "After all");
+    let out = compare_documents(&old, &new, "Arthur Souza Rodrigues").expect("compare ok");
+    let doc = document_xml(&out);
+    let object = object_xml(&doc);
+    assert!(
+        object.contains("imagedata"),
+        "an unchanged w:object must keep its v:imagedata: {object}"
+    );
+    assert!(
+        doc.contains("<w:ins "),
+        "the text edit is still marked: {doc}"
+    );
 }
