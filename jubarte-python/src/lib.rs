@@ -329,7 +329,10 @@ fn diffed(patch: &jubarte::markdown::Patch, columns: usize) -> PyResult<Diffed> 
         .iter()
         .map(|h| serde_json::json!({"at": h.at.to_string(), "removed": h.removed, "text": h.text}))
         .collect();
-    Ok((patch.render(columns), serde_json::to_string(&hunks).map_err(err)?))
+    Ok((
+        patch.render(columns),
+        serde_json::to_string(&hunks).map_err(err)?,
+    ))
 }
 
 fn patch_options(
@@ -569,6 +572,71 @@ fn capabilities_json() -> String {
     jubarte::capabilities::capabilities_json("python")
 }
 
+/// Markdown (with CriticMarkup) → DOCX bytes, as `jubarte convert draft.md`.
+///
+/// `page` is `letter` or `a4` and applies when there is no `reference`
+/// (a `.docx` whose styles and page setup are taken). `track_changes` is
+/// `all`, `accept` or `reject`. `date` defaults to the engine's fixed epoch
+/// so the same Markdown writes the same bytes. Images are written as their
+/// alt text: this entry point reads no files. Each engine warning (such as
+/// a `page` overridden by the reference) is raised as a `UserWarning`.
+#[pyfunction]
+#[pyo3(signature = (
+    text,
+    *,
+    reference = None,
+    page = "letter",
+    author = "Redline",
+    date = None,
+    critic = true,
+    track_changes = "all",
+))]
+fn markdown_to_docx(
+    text: &str,
+    reference: Option<&[u8]>,
+    page: &str,
+    author: &str,
+    date: Option<&str>,
+    critic: bool,
+    track_changes: &str,
+) -> PyResult<Py<PyBytes>> {
+    let page = jubarte::markdown::PageSize::parse(page)
+        .ok_or_else(|| JubarteError::new_err(format!("page must be letter or a4, not {page:?}")))?;
+    let track_changes = jubarte::markdown::TrackChanges::parse(track_changes).ok_or_else(|| {
+        JubarteError::new_err(format!(
+            "track_changes must be all, accept or reject, not {track_changes:?}"
+        ))
+    })?;
+    // Seven parameters keep clippy's argument limit; the interpreter is
+    // reached through `attach`, which only borrows the caller's.
+    Python::attach(|py| {
+        let written = py
+            .detach(|| {
+                // Built here: `DocxOptions` can hold an image loader, which
+                // is not `Send`, so it cannot cross into the detached call.
+                let mut options = jubarte::markdown::DocxOptions {
+                    reference,
+                    critic,
+                    track_changes,
+                    author: author.to_string(),
+                    page,
+                    ..jubarte::markdown::DocxOptions::default()
+                };
+                if let Some(date) = date {
+                    options.date = date.to_string();
+                }
+                jubarte::markdown::markdown_to_docx(text, &options)
+            })
+            .map_err(err)?;
+        let category = py.get_type::<pyo3::exceptions::PyUserWarning>();
+        for warning in &written.warnings {
+            let message = std::ffi::CString::new(warning.as_str()).map_err(err)?;
+            PyErr::warn(py, &category, &message, 1)?;
+        }
+        Ok(PyBytes::new(py, &written.docx).unbind())
+    })
+}
+
 #[pymodule]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
@@ -598,5 +666,6 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(validate_json, m)?)?;
     m.add_function(wrap_pyfunction!(repair_json, m)?)?;
     m.add_function(wrap_pyfunction!(audit_tracked_json, m)?)?;
+    m.add_function(wrap_pyfunction!(markdown_to_docx, m)?)?;
     Ok(())
 }
