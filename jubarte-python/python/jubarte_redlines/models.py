@@ -764,6 +764,24 @@ class EditPlan:
         op: dict[str, object] = {"kind": "delete_comment", "comment_id": comment_id}
         return self._with(_with_optional(op, id=id))
 
+    def watermark(
+        self,
+        text: str,
+        *,
+        color: str = "C0C0C0",
+        diagonal: bool = True,
+        font: str = "Calibri",
+        id: str | None = None,
+    ) -> EditPlan:
+        """Write Word's own text watermark into every default header.
+
+        ``text`` is 1 to 64 plain characters, ``color`` six hex digits, and
+        ``diagonal=False`` lays it horizontal. One watermark per document; it
+        is header content, so the redline carries it without tracking it.
+        """
+        op: dict[str, object] = {"kind": "watermark", "text": text, "color": color, "diagonal": diagonal, "font": font}
+        return self._with(_with_optional(op, id=id))
+
     def to_dict(self) -> dict[str, object]:
         """The wire form."""
         wire: dict[str, object] = {"schema_version": 1, "author": self.author}

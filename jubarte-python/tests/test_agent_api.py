@@ -291,6 +291,33 @@ def test_header_story_is_inspected_and_edited_as_a_tracked_change() -> None:
         EditPlan(author="A").delete_paragraph({"story": "header1", "id": "header1:p:0"})
 
 
+def test_watermark_builder_writes_word_watermark_into_a_new_header() -> None:
+    import io
+    import zipfile
+
+    plan = EditPlan(author="A").watermark("DRAFT")
+    assert plan.operations[0] == {
+        "kind": "watermark",
+        "text": "DRAFT",
+        "color": "C0C0C0",
+        "diagonal": True,
+        "font": "Calibri",
+    }
+    flat = EditPlan(author="A").watermark("COPY", color="FF0000", diagonal=False, font="Arial", id="w")
+    assert flat.operations[0]["diagonal"] is False and flat.operations[0]["id"] == "w"
+    doc = Document.from_bytes(docx(para("Body text.")))
+    result = doc.edit(plan)
+    assert result.report.ok, result.report.operations
+    assert result.report.revisions.inserted == 0
+    for out in (result.clean, result.redline):
+        with zipfile.ZipFile(io.BytesIO(out.to_bytes())) as z:
+            header = z.read("word/header1.xml").decode()
+        assert 'string="DRAFT"' in header and "PowerPlusWaterMarkObject1" in header
+    with pytest.raises(EditPlanError) as e:
+        doc.edit(plan.watermark("AGAIN"))
+    assert (e.value.code, e.value.operation) == ("UNSUPPORTED_STRUCTURE", "op-2")
+
+
 def test_capabilities_manifest_reports_python_runtime() -> None:
     caps = jubarte.capabilities()
     assert caps["schema_version"] == 1
