@@ -57,6 +57,7 @@ pub mod debug;
 pub mod document_comparer;
 /// Guarded, uniquely anchored edits applied to a copy and redlined by compare.
 pub mod edit;
+pub mod fields;
 /// Read-only paragraph/package views and the Markdown projection for agents.
 pub mod inspect;
 /// Markdown to Word, with CriticMarkup as tracked changes and comments.

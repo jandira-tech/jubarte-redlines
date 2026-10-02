@@ -20,7 +20,7 @@ mod raster;
 mod word_subst;
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -436,11 +436,39 @@ pub fn docx_render_report(docx: &[u8], options: PdfOptions) -> Result<RenderRepo
     Ok(render(docx, options, RenderRequest::default())?.report)
 }
 
+/// What one layout pass learned about pages, for writing field results back
+/// into the package (`crate::fields`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct LayoutFacts {
+    /// Pages laid out (the `NUMPAGES` result).
+    pub(crate) page_count: usize,
+    /// Bookmark name to the page label a `PAGEREF` to it shows (the section's
+    /// number format and chapter prefix applied, so "iii" or "2-1").
+    pub(crate) bookmark_pages: BTreeMap<String, String>,
+}
+
+/// Lay `docx` out as the default convert does and report its page facts.
+pub(crate) fn layout_facts(docx: &[u8]) -> Result<LayoutFacts, ConvertError> {
+    let options = PdfOptions::default();
+    let previous = REVISIONS.with(|r| r.replace(options.revisions));
+    let result = with_layout(docx, |_, _, facts| facts.clone());
+    REVISIONS.with(|r| r.set(previous));
+    result
+}
+
 /// The shared layout pipeline: open, resolve fonts, lay out, then hand the
 /// pages to `emit`.
 fn with_pages<T>(
     docx: &[u8],
     emit: impl FnOnce(&Fonts, &[pdf::Page]) -> T,
+) -> Result<T, ConvertError> {
+    with_layout(docx, |fonts, pages, _| emit(fonts, pages))
+}
+
+/// [`with_pages`] that also hands `emit` the layout's page facts.
+fn with_layout<T>(
+    docx: &[u8],
+    emit: impl FnOnce(&Fonts, &[pdf::Page], &LayoutFacts) -> T,
 ) -> Result<T, ConvertError> {
     let normalized = crate::strict_translation::strict_to_transitional_docx(docx);
     let pkg =
@@ -558,8 +586,9 @@ fn with_pages<T>(
                 notes: load_footnotes(&pkg, &main, &sheet),
                 display,
             };
-            let pages = layout(&fonts, &page, &hf, &blocks, compat_mode, footnotes);
-            Ok(emit(&fonts, &pages))
+            let (pages, facts) =
+                layout_with_facts(&fonts, &page, &hf, &blocks, compat_mode, footnotes);
+            Ok(emit(&fonts, &pages, &facts))
         })
     })
 }
@@ -29449,6 +29478,7 @@ fn wrap_runs_segment(
     lines
 }
 
+#[cfg(test)]
 fn layout(
     fonts: &Fonts,
     page: &PageSetup,
@@ -29457,6 +29487,17 @@ fn layout(
     compat_mode: u8,
     footnotes: FootnoteCatalog,
 ) -> Vec<Page> {
+    layout_with_facts(fonts, page, hf, blocks, compat_mode, footnotes).0
+}
+
+fn layout_with_facts(
+    fonts: &Fonts,
+    page: &PageSetup,
+    hf: &HfChrome,
+    blocks: &[Block],
+    compat_mode: u8,
+    footnotes: FootnoteCatalog,
+) -> (Vec<Page>, LayoutFacts) {
     let mut lay = Layout::new(fonts, *page, hf.clone(), compat_mode);
     lay.footnotes = footnotes;
     lay.known_bookmarks = document_bookmark_names(blocks);
@@ -30074,7 +30115,13 @@ fn layout(
             p.ops.extend(ops);
         }
     }
-    lay.pages
+    let facts = LayoutFacts {
+        page_count: lay.pages.len(),
+        bookmark_pages: std::mem::take(&mut lay.bookmark_pages)
+            .into_iter()
+            .collect(),
+    };
+    (lay.pages, facts)
 }
 
 struct ConnectorCubic {
