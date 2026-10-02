@@ -4491,6 +4491,24 @@ fn a_float_carrying_paragraph_pushed_under_a_band_takes_its_floats_along() {
 }
 
 #[test]
+fn a_footer_text_box_below_the_margin_is_not_lifted() {
+    // The body's lift (Word 16 probes p49) is not the footer's: a footer
+    // paragraph already sits under the bottom margin, and its square box
+    // 10pt down stays there instead of rising to the paragraph's top.
+    let boxed = para_text_box(7, 10.0, 100.0, 20.0, "BoxText");
+    let pdf = docx_to_pdf(&footer_part_docx(&format!(
+        "<w:p><w:r><w:t>Foot</w:t></w:r><w:r>{boxed}</w:r></w:p>"
+    )))
+    .expect("footer box");
+    let (_, foot) = pdf_glyph_text_xy(&pdf, "Foot").expect("footer text paints");
+    let (_, boxed) = pdf_glyph_text_xy(&pdf, "BoxText").expect("box text paints");
+    assert!(
+        foot - boxed > 8.0,
+        "the box hangs 10pt down: Foot {foot}, box {boxed}"
+    );
+}
+
+#[test]
 fn a_page_sized_square_float_under_text_moves_its_paragraph_to_the_next_page() {
     // Word probe h1 and 3bfcb371e2 (30b6e87178): a 615x797 cover whose
     // anchor follows text on the page cannot leave its line room beside or

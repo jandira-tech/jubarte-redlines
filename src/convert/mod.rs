@@ -19901,6 +19901,9 @@ struct Layout<'a> {
     /// `tb_band` comes from tight/through floats only: a line meeting it
     /// steps down whole single lines instead of starting at its bottom.
     tb_step: bool,
+    /// Painting a header's or footer's boxes: they hang where they are
+    /// anchored, never lifted onto the body (`box_slot`).
+    in_chrome_boxes: bool,
     /// The last row of inline pictures: (page, pen x after it, its bottom,
     /// its height). An inline box in the same textless paragraph joins it.
     pic_row: Option<(usize, f32, f32, f32)>,
@@ -20398,6 +20401,7 @@ impl<'a> Layout<'a> {
             side_float: None,
             tb_band: None,
             tb_step: false,
+            in_chrome_boxes: false,
             pic_row: None,
             front_floats: Vec::new(),
             line_probe: LineProbe::default(),
@@ -24249,7 +24253,7 @@ impl<'a> Layout<'a> {
         else {
             return slot;
         };
-        if box_.frame || box_.vml || !(wrap_square || wrap_top_bottom) {
+        if self.in_chrome_boxes || box_.frame || box_.vml || !(wrap_square || wrap_top_bottom) {
             return slot;
         }
         let (_, dh) = self.sized_wh(slot, box_.w, self.box_h(box_), 1.0, 1.0);
@@ -28107,6 +28111,7 @@ impl<'a> Layout<'a> {
     fn emit_chrome_boxes(&mut self, boxes: &[LaidTextBox], top: f32) {
         let saved = (self.y, self.para_top, self.page_has_body);
         self.y = top;
+        self.in_chrome_boxes = true;
         for box_ in boxes {
             // Paragraph-relative offsets hang from the anchoring paragraph
             // (header boxes only: `top` is the header distance there).
@@ -28117,6 +28122,7 @@ impl<'a> Layout<'a> {
             };
             self.emit_textbox(box_, 0.0);
         }
+        self.in_chrome_boxes = false;
         (self.y, self.para_top, self.page_has_body) = saved;
     }
 
