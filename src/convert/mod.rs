@@ -1526,6 +1526,12 @@ struct TextRun {
     /// `REF bookmark` name. Cached `w:t` is a first-pass guess;
     /// missing names become Word's Error! Reference source not found.
     ref_name: Option<String>,
+    /// `STYLEREF` result: in a header or footer Word replaces it with the
+    /// body text in that style on its own page (`patch_stylerefs`).
+    styleref: Option<std::rc::Rc<StyleRef>>,
+    /// The run's character style (`w:rStyle` id), which a header
+    /// `STYLEREF` can name.
+    char_style: Option<std::rc::Rc<str>>,
     /// Plain `REF` copies bookmark text. `\r`/`\n`/`\w`/`\p` keep cache
     /// (sd_2517 numbered cross-refs).
     ref_copy_text: bool,
@@ -1592,6 +1598,8 @@ impl TextRun {
             style,
             pageref: None,
             ref_name: None,
+            styleref: None,
+            char_style: None,
             ref_copy_text: false,
             field: FieldKind::None,
             rev: false,
@@ -10739,6 +10747,52 @@ fn apply_field_results(
         .collect()
 }
 
+/// A `STYLEREF` field's target: the style it names (by name, any case,
+/// or by id; a bare digit is that heading level) and its `\l` switch.
+#[derive(Debug, PartialEq)]
+struct StyleRef {
+    id: String,
+    last: bool,
+}
+
+/// `STYLEREF "Name" [\l]`. Switches that reshape the result (`\n`,
+/// `\r`, `\w`, `\p`, `\s`) keep the cached text.
+fn styleref_target(instr: &str, styles: Option<&HashMap<String, NamedStyle>>) -> Option<StyleRef> {
+    let rest = instr.trim_start();
+    let (kind, rest) = rest.split_at(rest.find(char::is_whitespace)?);
+    if !kind.eq_ignore_ascii_case("STYLEREF") {
+        return None;
+    }
+    let rest = rest.trim_start();
+    let (arg, switches) = match rest.strip_prefix('"') {
+        Some(quoted) => quoted.split_at(quoted.find('"')?),
+        None => rest.split_at(rest.find(char::is_whitespace).unwrap_or(rest.len())),
+    };
+    let switches = switches.trim_start_matches('"');
+    let mut last = false;
+    for sw in switches.split_whitespace() {
+        match sw.to_ascii_lowercase().as_str() {
+            "\\l" => last = true,
+            "\\n" | "\\r" | "\\w" | "\\p" | "\\s" => return None,
+            _ => {}
+        }
+    }
+    let heading;
+    let name = if arg.len() == 1 && arg.as_bytes()[0].is_ascii_digit() && arg != "0" {
+        heading = format!("heading {arg}");
+        heading.as_str()
+    } else {
+        arg
+    };
+    let styles = styles?;
+    let id = styles
+        .iter()
+        .find(|(_, s)| s.para.style_name.eq_ignore_ascii_case(name))
+        .or_else(|| styles.iter().find(|(id, _)| id.eq_ignore_ascii_case(name)))
+        .map(|(id, _)| id.clone())?;
+    Some(StyleRef { id, last })
+}
+
 fn pageref_bookmark(instr: &str) -> Option<String> {
     let mut parts = instr.split_whitespace();
     let pageref = parts.next()?.eq_ignore_ascii_case("PAGEREF");
@@ -13207,6 +13261,7 @@ struct RunCollect<'a> {
     bound: HashSet<String>,
     pageref: Option<String>,
     ref_name: Option<String>,
+    styleref: Option<std::rc::Rc<StyleRef>>,
     field_instr: String,
     field_result: bool,
     field_emitted: bool,
@@ -13252,6 +13307,7 @@ fn collect_runs_in(
         bound: HashSet::new(),
         pageref: None,
         ref_name: None,
+        styleref: None,
         field_instr: String::new(),
         field_result: false,
         field_emitted: false,
@@ -13636,12 +13692,14 @@ fn collect_fld_simple(
     let instr = attr_any(ctx.dom, node, "instr").unwrap_or("").to_string();
     let saved_pageref = ctx.pageref.take();
     let saved_ref = ctx.ref_name.take();
+    let saved_styleref = ctx.styleref.take();
     let saved_instr = std::mem::take(&mut ctx.field_instr);
     let saved_result = ctx.field_result;
     let saved_emitted = ctx.field_emitted;
     ctx.field_instr.clone_from(&instr);
     ctx.pageref = pageref_bookmark(&instr);
     ctx.ref_name = ref_bookmark(&instr);
+    ctx.styleref = styleref_target(&instr, ctx.styles).map(std::rc::Rc::new);
     ctx.field_result = true;
     ctx.field_emitted = false;
     let before = runs.len();
@@ -13652,6 +13710,7 @@ fn collect_fld_simple(
     finish_field(ctx, runs);
     ctx.pageref = saved_pageref;
     ctx.ref_name = saved_ref;
+    ctx.styleref = saved_styleref;
     ctx.field_instr = saved_instr;
     ctx.field_result = saved_result;
     ctx.field_emitted = saved_emitted;
@@ -13703,17 +13762,22 @@ fn collect_runs_rec(
             "begin" => {
                 ctx.pageref = None;
                 ctx.ref_name = None;
+                ctx.styleref = None;
                 ctx.field_instr.clear();
                 ctx.field_result = false;
                 ctx.field_emitted = false;
                 ctx.dropdown = form_dropdown(ctx.dom, node);
                 ctx.in_dropdown = ctx.dropdown.is_some();
             }
-            "separate" => ctx.field_result = true,
+            "separate" => {
+                ctx.field_result = true;
+                ctx.styleref = styleref_target(&ctx.field_instr, ctx.styles).map(std::rc::Rc::new);
+            }
             "end" => {
                 finish_field(ctx, runs);
                 ctx.pageref = None;
                 ctx.ref_name = None;
+                ctx.styleref = None;
                 ctx.field_instr.clear();
                 ctx.field_result = false;
                 ctx.field_emitted = false;
@@ -13782,16 +13846,19 @@ fn collect_runs_rec(
         if ctx.math_vert != VertAlign::Baseline {
             style.vert = ctx.math_vert;
         }
+        let mut char_style: Option<std::rc::Rc<str>> = None;
         for &rpr in &rprs {
             if let Some(sid) =
                 first_named(ctx.dom, rpr, "rStyle").and_then(|n| ctx.dom.attribute(n, &W::val()))
                 && let Some(named) = ctx.styles.and_then(|s| s.get(sid))
-                && !(ctx.toc && sid.eq_ignore_ascii_case("hyperlink"))
             {
+                char_style = Some(std::rc::Rc::from(sid));
                 // Word Save-as-PDF paints TOC \h entries in the toc
                 // paragraph style (black). Applying Hyperlink 0000FF
                 // + underline wiped sd_2517 / file_22 contents pages.
-                apply_named_char_style(&mut style, named);
+                if !(ctx.toc && sid.eq_ignore_ascii_case("hyperlink")) {
+                    apply_named_char_style(&mut style, named);
+                }
             }
             apply_rpr(ctx.dom, rpr, &mut style, ctx.theme);
         }
@@ -13916,6 +13983,11 @@ fn collect_runs_rec(
                 None
             };
             let ref_copy_text = ref_name.is_some() && ref_copies_bookmark_text(&ctx.field_instr);
+            let styleref = if ctx.field_result {
+                ctx.styleref.clone()
+            } else {
+                None
+            };
             if ctx.field_result {
                 ctx.field_emitted = true;
             }
@@ -13934,6 +14006,8 @@ fn collect_runs_rec(
                     run.rev = rev;
                     run.pageref.clone_from(&pageref);
                     run.ref_name.clone_from(&ref_name);
+                    run.styleref.clone_from(&styleref);
+                    run.char_style.clone_from(&char_style);
                     run.ref_copy_text = ref_copy_text;
                     if numwords {
                         run.field = FieldKind::NumWords;
@@ -13951,6 +14025,8 @@ fn collect_runs_rec(
                 run.rev = rev;
                 run.pageref = pageref;
                 run.ref_name = ref_name;
+                run.styleref = styleref;
+                run.char_style = char_style;
                 run.ref_copy_text = ref_copy_text;
                 if numwords {
                     run.field = FieldKind::NumWords;
@@ -20132,6 +20208,8 @@ struct FieldScan {
     result: bool,
     emitted: bool,
     instr: String,
+    /// The field is a `STYLEREF` its page fills in (`patch_stylerefs`).
+    styleref: Option<std::rc::Rc<StyleRef>>,
 }
 
 /// A left-aligned `w:ptab`.
@@ -20179,10 +20257,22 @@ fn collect_hf_rev(
     mark: RevMark,
 ) {
     let start = runs.len();
-    collect_hf_rev_runs(dom, node, base, sheet, scan, runs, mark);
-    if mark != RevMark::None {
-        for run in &mut runs[start..] {
-            run.rev = true;
+    if dom.name_is(node, &W::fld_simple()) {
+        let outer = std::mem::take(scan);
+        let instr = attr_any(dom, node, "instr").unwrap_or("");
+        scan.result = true;
+        scan.styleref = styleref_target(instr, Some(&sheet.by_id)).map(std::rc::Rc::new);
+        for idx in 0..dom.child_count(node) {
+            collect_hf_rev(dom, dom.child_at(node, idx), base, sheet, scan, runs, mark);
+        }
+        *scan = outer;
+    } else {
+        collect_hf_rev_runs(dom, node, base, sheet, scan, runs, mark);
+    }
+    for run in &mut runs[start..] {
+        run.rev |= mark != RevMark::None;
+        if scan.result && run.styleref.is_none() {
+            run.styleref.clone_from(&scan.styleref);
         }
     }
 }
@@ -20219,7 +20309,11 @@ fn collect_hf_rev_runs(
     if dom.name_is(node, &W::fld_char()) {
         match attr_any(dom, node, "fldCharType").unwrap_or("") {
             "begin" => *scan = FieldScan::default(),
-            "separate" => scan.result = true,
+            "separate" => {
+                scan.result = true;
+                scan.styleref =
+                    styleref_target(&scan.instr, Some(&sheet.by_id)).map(std::rc::Rc::new);
+            }
             "end" => {
                 // I_am_sharing: separate then end with no cached w:t.
                 // Still emit PAGE/NUMPAGES so chrome can resolve them.
@@ -20493,6 +20587,8 @@ struct Layout<'a> {
     /// Painting a header's or footer's boxes: they hang where they are
     /// anchored, never lifted onto the body (`box_slot`).
     in_chrome_boxes: bool,
+    /// Painting the page's headers and footers (`chrome`).
+    in_chrome: bool,
     /// The last row of inline pictures: (page, pen x after it, its bottom,
     /// its height). An inline box in the same textless paragraph joins it.
     pic_row: Option<(usize, f32, f32, f32)>,
@@ -20541,6 +20637,13 @@ struct Layout<'a> {
     fill_join: Option<(usize, f32)>,
     bookmark_pages: HashMap<String, String>,
     pageref_ops: Vec<(usize, usize, String)>,
+    /// Header/footer `STYLEREF` results painted: (page, op, target).
+    styleref_ops: Vec<(usize, usize, std::rc::Rc<StyleRef>)>,
+    /// Body text by paragraph style, then by character style, in paint
+    /// order: what a header `STYLEREF` shows (`patch_stylerefs`).
+    style_hits: [Vec<StyleHit>; 2],
+    /// Serial of the body paragraph being painted.
+    para_serial: u32,
     /// Bookmark names present in the DOCX (before layout pages exist).
     /// Missing PAGEREF wraps Word's Error! string; live names patch later.
     known_bookmarks: HashSet<String>,
@@ -20975,6 +21078,7 @@ impl<'a> Layout<'a> {
             tb_band: None,
             tb_step: false,
             in_chrome_boxes: false,
+            in_chrome: false,
             pic_row: None,
             front_floats: Vec::new(),
             line_probe: LineProbe::default(),
@@ -20993,6 +21097,9 @@ impl<'a> Layout<'a> {
             fill_join: None,
             bookmark_pages: HashMap::new(),
             pageref_ops: Vec::new(),
+            styleref_ops: Vec::new(),
+            style_hits: [Vec::new(), Vec::new()],
+            para_serial: 0,
             known_bookmarks: HashSet::new(),
             bookmark_texts: HashMap::new(),
             word_count: 0,
@@ -22684,6 +22791,7 @@ impl<'a> Layout<'a> {
         let runs = rewritten.as_slice();
         self.note_chapter_heading(style);
         self.last_style_id.clone_from(&style.style_id);
+        self.para_serial += 1;
         self.page_has_body = true;
         self.tab_stops = self.landed_tab_stops(&style.tab_stops);
         // A hanging indent is an implicit left tab stop at the indent
@@ -24365,14 +24473,23 @@ impl<'a> Layout<'a> {
         } else {
             face.glyph_texts(&run.text, kern)
         };
-        if let Some(name) = run.pageref.as_deref() {
+        let chrome = self.in_chrome || run.hf_para.is_some();
+        let styleref = run.styleref.as_ref().filter(|_| chrome);
+        if !chrome && !run.list_marker {
+            self.note_style_hit(run);
+        }
+        if run.pageref.is_some() || styleref.is_some() {
             let glyphs: Vec<u16> = shaped.iter().map(|(g, _)| *g).collect();
             let page_i = self.pages.len().saturating_sub(1);
             let op_i = self.current().ops.len();
             self.current().ops.push(
                 Op::text(fid, size, x, y, glyphs, run.style.color, run.text.clone()).scaled(scale),
             );
-            self.pageref_ops.push((page_i, op_i, name.to_string()));
+            if let Some(name) = run.pageref.as_deref() {
+                self.pageref_ops.push((page_i, op_i, name.to_string()));
+            } else if let Some(target) = styleref {
+                self.styleref_ops.push((page_i, op_i, target.clone()));
+            }
         } else {
             let mut gx = x;
             for (i, (gid, _)) in shaped.iter().enumerate() {
@@ -28751,6 +28868,10 @@ impl<'a> Layout<'a> {
             // Same measure as line_w: @@N@@/@@P@@ are patched after paint,
             // so advancing by the mark shoved file_146 "7·" 42pt apart.
             let w = face.width_pt(chrome_measure_text(&run.text), run.style.layout_size());
+            if let Some(target) = run.styleref.as_ref() {
+                let at = (self.pages.len().saturating_sub(1), self.current().ops.len());
+                self.styleref_ops.push((at.0, at.1, target.clone()));
+            }
             self.current().ops.push(Op::text(
                 fid,
                 size,
@@ -28792,6 +28913,12 @@ impl<'a> Layout<'a> {
     }
 
     fn chrome(&mut self) {
+        self.in_chrome = true;
+        self.chrome_parts();
+        self.in_chrome = false;
+    }
+
+    fn chrome_parts(&mut self) {
         let page_no = self.pages.len();
         if let Some(mark) = self.watermark.clone() {
             let fid = self.fonts.resolve("Calibri", true, false);
@@ -29465,6 +29592,80 @@ impl<'a> Layout<'a> {
         }
     }
 
+    /// Records a painted body run under its paragraph style and its
+    /// character style. A paragraph is one hit however many runs and
+    /// pages it spans; a character style's hit is a stretch of adjacent
+    /// runs in it.
+    fn note_style_hit(&mut self, run: &TextRun) {
+        let page = self.pages.len().saturating_sub(1);
+        let serial = self.para_serial;
+        let keys = [
+            (!self.last_style_id.is_empty()).then(|| self.last_style_id.as_str().into()),
+            run.char_style.clone(),
+        ];
+        for (hits, key) in self.style_hits.iter_mut().zip(keys) {
+            match (hits.last_mut(), key) {
+                (Some(hit), Some(id)) if hit.serial == serial && hit.id == id && hit.open => {
+                    hit.text.push_str(&run.text);
+                    hit.pages.1 = page;
+                }
+                (last, key) => {
+                    if let Some(hit) = last {
+                        hit.open = false;
+                    }
+                    if let Some(id) = key {
+                        hits.push(StyleHit {
+                            id,
+                            serial,
+                            pages: (page, page),
+                            text: run.text.clone(),
+                            open: true,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    /// Word fills a header or footer `STYLEREF` from the body text in
+    /// that style: the first on its page (`\l`: the last), else the last
+    /// one before the page, else the first one after it (probe sref_p1,
+    /// 2026-10-02). A field split over several runs shows the whole text
+    /// in its first.
+    fn patch_stylerefs(&mut self) {
+        let mut done: Vec<(usize, *const StyleRef)> = Vec::new();
+        for (pi, oi, target) in &self.styleref_ops {
+            let first = !done.contains(&(*pi, std::rc::Rc::as_ptr(target)));
+            done.push((*pi, std::rc::Rc::as_ptr(target)));
+            let hits: Vec<&StyleHit> = self
+                .style_hits
+                .iter()
+                .flatten()
+                .filter(|h| *h.id == *target.id)
+                .collect();
+            let mut on_page = hits.iter().filter(|h| h.pages.0 <= *pi && *pi <= h.pages.1);
+            let found = if target.last {
+                on_page.next_back()
+            } else {
+                on_page.next()
+            }
+            .or_else(|| hits.iter().rfind(|h| h.pages.1 < *pi))
+            .or_else(|| hits.iter().find(|h| h.pages.0 > *pi));
+            let Some(hit) = found else {
+                continue;
+            };
+            let value = if first { hit.text.trim() } else { "" };
+            let fonts = self.fonts;
+            if let Some(Op::Text {
+                face, text, glyphs, ..
+            }) = self.pages.get_mut(*pi).and_then(|p| p.ops.get_mut(*oi))
+            {
+                *glyphs = fonts.get(*face).glyphs(value);
+                *text = value.to_string();
+            }
+        }
+    }
+
     fn patch_chap_page(&mut self) {
         if self.page.chap_style.is_none() {
             return;
@@ -29532,6 +29733,29 @@ impl<'a> Layout<'a> {
             })
             .collect()
     }
+}
+
+/// Two runs may merge into one painted run: the same character style
+/// and the same `STYLEREF` field (or none), so `patch_stylerefs` still
+/// finds both.
+fn same_style_refs(a: &TextRun, b: &TextRun) -> bool {
+    let same_field = match (&a.styleref, &b.styleref) {
+        (None, None) => true,
+        (Some(x), Some(y)) => std::rc::Rc::ptr_eq(x, y),
+        _ => false,
+    };
+    same_field && a.char_style == b.char_style
+}
+
+/// Body text in one style, for header `STYLEREF` (`Layout::note_style_hit`).
+struct StyleHit {
+    id: std::rc::Rc<str>,
+    serial: u32,
+    /// First and last page the text is painted on.
+    pages: (usize, usize),
+    text: String,
+    /// The last run painted belongs to this hit.
+    open: bool,
 }
 
 const NUMPAGES_MARK: &str = "@@N@@";
@@ -30643,6 +30867,7 @@ fn wrap_runs_segment(
                         && run.pageref.is_none()
                         && run.ref_name.is_none()
                         && run.footnote_id.is_none()
+                        && same_style_refs(last, run)
                     {
                         last.text.push(ch);
                     } else if let Some(line) = lines.last_mut() {
@@ -30676,6 +30901,7 @@ fn wrap_runs_segment(
                 && run.ref_name.is_none()
                 && last.footnote_id.is_none()
                 && run.footnote_id.is_none()
+                && same_style_refs(last, run)
             {
                 last.text.push_str(tok);
             } else if let Some(line) = lines.last_mut() {
@@ -31351,6 +31577,7 @@ fn layout_with_facts(
     lay.paint_page_footnotes();
     lay.patch_chap_page();
     lay.patch_pagerefs();
+    lay.patch_stylerefs();
     patch_numpages(fonts, &mut lay.pages);
     for (page, ops) in std::mem::take(&mut lay.front_border_ops) {
         if let Some(p) = lay.pages.get_mut(page) {

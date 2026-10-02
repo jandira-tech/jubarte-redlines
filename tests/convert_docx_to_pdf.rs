@@ -47442,3 +47442,94 @@ fn an_inserted_field_word_recomputes_paints_its_result_unmarked() {
         assert_eq!(result, label, "{text}: default marks ink the result");
     }
 }
+
+#[test]
+fn a_header_styleref_shows_the_styled_text_of_its_own_page() {
+    // Word 16 probe sref_p1 (2026-10-02), the rule behind 5a6c's running
+    // head ("s. 9" where we printed the header's cached "s. 1"): a header
+    // STYLEREF shows the first text in its style on the page (\l: the
+    // last); a page without one shows the last before it; a page before
+    // any shows the first after it. Paragraph and character styles alike.
+    let fld = |instr: &str| {
+        format!(
+            "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+             <w:r><w:instrText xml:space=\"preserve\"> {instr} </w:instrText></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r><w:r><w:t>zz</w:t></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>"
+        )
+    };
+    let t = |s: &str| format!("<w:r><w:t xml:space=\"preserve\">{s}</w:t></w:r>");
+    let header = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:p>\
+         {}{}{}{}{}{}{}{}{}</w:p></w:hdr>",
+        t("P["),
+        fld("STYLEREF \"Hd\""),
+        t("]C["),
+        fld("STYLEREF CharX"),
+        t("]L["),
+        fld("STYLEREF \"Hd\" \\l"),
+        t("]K["),
+        fld("STYLEREF CharX \\l"),
+        t("]"),
+    );
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+        <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+        <w:style w:type=\"paragraph\" w:styleId=\"Hd\"><w:name w:val=\"Hd\"/><w:basedOn w:val=\"Normal\"/></w:style>\
+        <w:style w:type=\"character\" w:styleId=\"CharX\"><w:name w:val=\"CharX\"/></w:style></w:styles>"
+        .to_string();
+    let hd = |s: &str| format!("<w:p><w:pPr><w:pStyle w:val=\"Hd\"/></w:pPr>{}</w:p>", t(s));
+    let plain = |s: &str| format!("<w:p>{}</w:p>", t(s));
+    let cx = |pre: &str, s: &str| {
+        format!(
+            "<w:p>{}<w:r><w:rPr><w:rStyle w:val=\"CharX\"/></w:rPr><w:t>{s}</w:t></w:r>{}</w:p>",
+            t(pre),
+            t(" after")
+        )
+    };
+    let brk = "<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>";
+    let body = format!(
+        "{}{brk}{}{}{}{}{brk}{}{brk}{}{}{}\
+         <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\"/></w:sectPr>",
+        plain("PageOne"),
+        hd("Alpha"),
+        cx("x ", "c1"),
+        hd("Beta"),
+        cx("y ", "c2"),
+        plain("PageThree"),
+        plain("PageFour"),
+        hd("Gamma"),
+        cx("z ", "c3"),
+    );
+    let pdf = docx_to_pdf(&hf_docx(
+        &body,
+        &[
+            ("rIdH1", "header", "header1.xml"),
+            ("rIdS", "styles", "styles.xml"),
+        ],
+        &[("word/header1.xml", header), ("word/styles.xml", styles)],
+    ))
+    .expect("convert styleref header");
+    let text: Vec<String> = pdf_content_streams(&pdf)
+        .iter()
+        .map(|s| pdf_winansi_text(s.as_bytes()))
+        .collect();
+    assert_eq!(text.len(), 4, "four pages: {text:?}");
+    for (i, (body, want)) in [
+        ("PageOne", "P[Alpha]C[c1]L[Alpha]K[c1]"),
+        ("Beta", "P[Alpha]C[c1]L[Beta]K[c2]"),
+        ("PageThree", "P[Beta]C[c2]L[Beta]K[c2]"),
+        ("PageFour", "P[Gamma]C[c3]L[Gamma]K[c3]"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let page = &text[i];
+        assert!(page.contains(body), "page {i} holds {body}: {page:?}");
+        assert!(page.contains(want), "page {i}: want {want}; {page:?}");
+    }
+}
