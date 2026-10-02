@@ -5856,16 +5856,19 @@ fn merge_custom_properties(out: &mut PartFs, pkg2: &PartFs) {
         .filter_map(|&p| dom.attribute(p, &pid)?.parse::<u32>().ok())
         .max()
         .unwrap_or(1);
-    let a_names: std::collections::HashSet<String> = a_props
+    // Property names match without regard to case: the original's
+    // "Actno" and the revision's "ActNo" are one property, and two of them
+    // make Word refuse the package (19eb128df9 vs 9666fa13fb).
+    let mut a_names: std::collections::HashSet<String> = a_props
         .iter()
-        .filter_map(|&p| dom.attribute(p, &name).map(str::to_string))
+        .filter_map(|&p| dom.attribute(p, &name).map(str::to_lowercase))
         .collect();
     let mut added = false;
     for bp in dom.elements(b_root, None) {
         let Some(n) = dom.attribute(bp, &name) else {
             continue;
         };
-        if a_names.contains(n) {
+        if !a_names.insert(n.to_lowercase()) {
             continue;
         }
         let clone = dom.clone_subtree(bp);

@@ -10211,7 +10211,7 @@ pub fn mark_fully_revised_rows(
         dom.set_attribute_value(rev, &W::id(), Some(&id_gen.to_string()));
         *id_gen += 1;
         dom.set_attribute_value(rev, &W::date(), Some(&settings.date_time_for_revisions));
-        dom.add(trpr, rev);
+        super::lcs_table::add_row_mark(dom, trpr, rev);
     }
 }
 
