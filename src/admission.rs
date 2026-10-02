@@ -2,6 +2,14 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
+// Untrusted bytes reach this module: an out-of-range index or an integer overflow
+// is an abort in the Python and WASM consumers, so both are refused here
+// (test fixtures are exempt).
+#![cfg_attr(
+    not(test),
+    deny(clippy::indexing_slicing, clippy::arithmetic_side_effects)
+)]
+
 //! Resource admission for untrusted DOCX input: bound the ZIP container
 //! before anything inflates it without limits.
 //!
@@ -252,7 +260,7 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
             continue;
         }
         let name = entry.name().to_string();
-        let remaining = limits.max_uncompressed_bytes - total;
+        let remaining = limits.max_uncompressed_bytes.saturating_sub(total);
         let cap = limits.max_part_bytes.min(remaining);
         let lower = name.to_ascii_lowercase();
         let is_xml = lower.ends_with(".xml") || lower.ends_with(".rels");
@@ -285,7 +293,7 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
                 format!("{name} inflates past {cap} bytes; {which}"),
             ));
         }
-        total += read;
+        total = total.saturating_add(read);
     }
 
     let main_part = main_part(&archive, &kept)?;
@@ -311,18 +319,25 @@ fn declared_entry_count(bytes: &[u8]) -> Result<u64, AdmissionError> {
     let floor = bytes.len().saturating_sub(22 + usize::from(u16::MAX));
     let at = (floor..=bytes.len().saturating_sub(22))
         .rev()
-        .find(|&i| bytes[i..].starts_with(&EOCD))
+        .find(|&i| bytes.get(i..).is_some_and(|tail| tail.starts_with(&EOCD)))
         .ok_or_else(|| invalid("no end-of-central-directory record"))?;
-    let total = u16::from_le_bytes([bytes[at + 10], bytes[at + 11]]);
+    let total = bytes
+        .get(at.saturating_add(10)..at.saturating_add(12))
+        .and_then(|field| <[u8; 2]>::try_from(field).ok())
+        .map(u16::from_le_bytes)
+        .ok_or_else(|| invalid("truncated end-of-central-directory record"))?;
     if total != u16::MAX {
         return Ok(u64::from(total));
     }
     let locator = at
         .checked_sub(20)
-        .filter(|&l| bytes[l..].starts_with(&LOCATOR))
+        .and_then(|l| bytes.get(l..at))
+        .filter(|locator| locator.starts_with(&LOCATOR))
         .ok_or_else(|| invalid("ZIP64 locator missing"))?;
-    let mut offset = [0u8; 8];
-    offset.copy_from_slice(&bytes[locator + 8..locator + 16]);
+    let offset = locator
+        .get(8..16)
+        .and_then(|field| <[u8; 8]>::try_from(field).ok())
+        .ok_or_else(|| invalid("ZIP64 locator truncated"))?;
     // The offset is attacker-controlled: on 64-bit every u64 fits a usize,
     // so the end of the record is computed checked and read through `get`.
     let record = usize::try_from(u64::from_le_bytes(offset))
@@ -331,8 +346,10 @@ fn declared_entry_count(bytes: &[u8]) -> Result<u64, AdmissionError> {
         .and_then(|(r, end)| bytes.get(r..end))
         .filter(|record| record.starts_with(&EOCD64))
         .ok_or_else(|| invalid("ZIP64 end record missing"))?;
-    let mut count = [0u8; 8];
-    count.copy_from_slice(&record[32..40]);
+    let count = record
+        .get(32..40)
+        .and_then(|field| <[u8; 8]>::try_from(field).ok())
+        .ok_or_else(|| invalid("ZIP64 end record truncated"))?;
     Ok(u64::from_le_bytes(count))
 }
 
@@ -390,17 +407,24 @@ fn check_xml_depth(name: &str, xml: &[u8], max_depth: usize) -> Result<(), Admis
         |why: String| AdmissionError::new(AdmissionErrorKind::InvalidXml, format!("{name}: {why}"));
     let text = part_text(xml);
     let mut reader = Reader::from_str(&text);
-    reader.config_mut().check_end_names = false;
+    reader.config_mut().check_end_names = true;
     let mut depth = 0usize;
     loop {
         match reader.read_event() {
             Ok(Event::Start(_)) => {
-                depth += 1;
+                depth = depth.saturating_add(1);
                 if depth > max_depth {
                     return Err(invalid(format!("XML nests deeper than {max_depth}")));
                 }
             }
-            Ok(Event::End(_)) => depth = depth.saturating_sub(1),
+            Ok(Event::End(_)) => {
+                depth = depth
+                    .checked_sub(1)
+                    .ok_or_else(|| invalid("end tag with no open element".to_string()))?;
+            }
+            Ok(Event::Eof) if depth > 0 => {
+                return Err(invalid(format!("{depth} element(s) left unclosed")));
+            }
             Ok(Event::Eof) => return Ok(()),
             Ok(_) => {}
             Err(e) => return Err(invalid(e.to_string())),
@@ -844,6 +868,24 @@ mod tests {
             kind(&broken, InputLimits::default()),
             AdmissionErrorKind::InvalidXml
         );
+    }
+
+    #[test]
+    fn mismatched_unclosed_and_stray_end_tags_are_refused() {
+        for (name, xml) in [
+            ("word/mismatch.xml", "<a></b>"),
+            ("word/unclosed.xml", "<a><b></b>"),
+            ("word/stray.xml", "<a></a></a>"),
+        ] {
+            let bytes = docx_with(&[(name, xml.as_bytes())]);
+            assert_eq!(
+                kind(&bytes, InputLimits::default()),
+                AdmissionErrorKind::InvalidXml,
+                "{xml}"
+            );
+        }
+        let fine = docx_with(&[("word/fine.xml", b"<a><b/><c></c></a>")]);
+        assert!(admit(&fine, InputLimits::default()).is_ok());
     }
 
     #[test]

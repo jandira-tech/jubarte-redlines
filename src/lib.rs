@@ -43,6 +43,7 @@
 //! [`comparer::WmlComparerSettings::powertools_faithful`] skips the
 //! mode-specific passes.
 //!
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 //! ## Provenance
 //!

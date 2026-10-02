@@ -2,6 +2,14 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
+// Untrusted bytes reach this module: an out-of-range index or an integer overflow
+// is an abort in the Python and WASM consumers, so both are refused here
+// (test fixtures are exempt).
+#![cfg_attr(
+    not(test),
+    deny(clippy::indexing_slicing, clippy::arithmetic_side_effects)
+)]
+
 //! ISO/IEC 29500 **Strict** → **Transitional** namespace normalization (M8).
 //!
 //! Microsoft Word can save a `.docx` in the ISO *Strict* schema, whose XML
@@ -573,7 +581,7 @@ pub fn strict_to_transitional_docx_within(bytes: &[u8], limits: InputLimits) -> 
         {
             return bytes.to_vec();
         }
-        total += buf.len() as u64;
+        total = total.saturating_add(buf.len() as u64);
 
         // Fast path: only text parts carrying the Strict marker can change.
         if name.ends_with(".rels") || name.ends_with(".xml") {

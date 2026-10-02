@@ -59,7 +59,7 @@ all-features = true
 # Workspace lint policy (plan A1). Groups at priority = -1; pedantic is NOT
 # enabled as a group — only individually chosen low-hit pedantic lints.
 [lints.rust]
-unsafe_code = "deny" # crate is 100% safe today; keep it that way
+unsafe_code = "deny" # the library and CLI forbid it outright; examples/mem_attribute.rs needs a counting allocator
 
 [lints.clippy]
 correctness = { level = "deny", priority = -1 }

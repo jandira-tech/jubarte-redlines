@@ -2,6 +2,14 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
+// Untrusted bytes reach this module: an out-of-range index or an integer overflow
+// is an abort in the Python and WASM consumers, so both are refused here
+// (test fixtures are exempt).
+#![cfg_attr(
+    not(test),
+    deny(clippy::indexing_slicing, clippy::arithmetic_side_effects)
+)]
+
 //! OPC (Open Packaging Conventions) layer — M1.5.
 //!
 //! SPIKE FINDINGS (rdocx-opc 0.1, verified 2026-06-27):
@@ -113,9 +121,7 @@ fn denorm(name: &str) -> String {
 /// private `rdocx_opc::package::part_name_to_rels_path`.
 fn part_name_to_rels_path(part_name: &str) -> String {
     let name = part_name.strip_prefix('/').unwrap_or(part_name);
-    if let Some(pos) = name.rfind('/') {
-        let dir = &name[..pos];
-        let file = &name[pos + 1..];
+    if let Some((dir, file)) = name.rsplit_once('/') {
         format!("{dir}/_rels/{file}.rels")
     } else {
         format!("_rels/{name}.rels")

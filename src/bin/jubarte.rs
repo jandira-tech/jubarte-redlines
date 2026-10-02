@@ -20,6 +20,8 @@
 //! flags, and validation are handled by clap (gated behind the default `cli`
 //! feature).
 
+#![forbid(unsafe_code)]
+
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 

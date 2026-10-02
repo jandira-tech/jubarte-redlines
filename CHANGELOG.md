@@ -362,6 +362,16 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   values and keep their names for now. `jubarte::util::fnv1a_128` is
   re-exported beside `fnv1a_64`.
 - `ComparisonLog` and `CompareContext` derive `Debug`.
+- Admission now checks end-tag names while it scans each XML part: a
+  mismatched, stray or unclosed element is `InvalidXml` instead of passing
+  the scan. All 819 `.docx`/`.docm`/`.dotx`
+  files in the repository still pass.
+- The library and the CLI `forbid(unsafe_code)` (examples keep the package
+  `deny`), and `admission`, `strict_translation` and `opc` deny
+  `clippy::indexing_slicing` and `clippy::arithmetic_side_effects` outside
+  tests. The ZIP end-of-central-directory scan, the ZIP64 record read and
+  the budget counters in those modules now use checked or saturating
+  arithmetic and `get`; behaviour is unchanged.
 
 ### Deprecated
 
