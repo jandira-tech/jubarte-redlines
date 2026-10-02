@@ -109,7 +109,7 @@ def build_block(module: object) -> str:
             renderer = render_function
         else:
             renderer = render_constant
-        parts += [""] + renderer(name, obj)
+        parts += ["", *renderer(name, obj)]
     return "\n".join(parts).strip("\n")
 
 

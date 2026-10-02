@@ -79,10 +79,10 @@ def discover_sections(text: str) -> list[str]:
         match = _NAME_LIST.match(line.strip())
         if not match:
             break
-        for name in match.group(1).split(","):
-            # clap auto-adds `help`, which is a meta-command and rejects --help.
-            if name.strip() != "help":
-                names.append(name.strip())
+        # clap auto-adds `help`, which is a meta-command and rejects --help.
+        names.extend(
+            name.strip() for name in match.group(1).split(",") if name.strip() != "help"
+        )
     return names
 
 
