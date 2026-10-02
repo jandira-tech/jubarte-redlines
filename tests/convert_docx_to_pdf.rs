@@ -18301,6 +18301,71 @@ fn a_footer_holding_only_an_uncached_page_field_paints_the_number() {
 }
 
 #[test]
+fn a_header_right_tab_past_the_margin_keeps_its_text_on_the_line() {
+    // Word's stock Header style sets center 4680 / right 9360 tabs; with
+    // margins wider than 1in the right stop stands past the right margin.
+    // Word 16 probes tabh th15/thl (2026-10-02, margins 1800/1620, TNR
+    // 12): "Hleft⇥Hmid⇥Hnumq" stays one line; compat 15 ends Hnumq on the
+    // margin (starts 495.00), legacy layout on the stop (starts 522.00).
+    // We wrapped Hnumq onto a second line in both.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\" w:cs=\"Times New Roman\"/>\
+            <w:sz w:val=\"24\"/></w:rPr></w:rPrDefault><w:pPrDefault/></w:docDefaults>\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style></w:styles>";
+    let header = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:p><w:pPr><w:tabs><w:tab w:val=\"center\" w:pos=\"4680\"/><w:tab w:val=\"right\" w:pos=\"9360\"/></w:tabs>\
+             <w:spacing w:after=\"0\"/></w:pPr>\
+             <w:r><w:t>Hleft</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t>Hmid</w:t></w:r>\
+             <w:r><w:tab/></w:r><w:r><w:t>Hnumq</w:t></w:r></w:p></w:hdr>";
+    let body = "<w:p><w:r><w:t>Body</w:t></w:r></w:p>\
+         <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1620\" w:bottom=\"1440\" w:left=\"1800\" \
+             w:header=\"720\" w:footer=\"720\"/></w:sectPr>";
+    let num = |compat: &str| {
+        let settings = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">{compat}</w:settings>"
+        );
+        let pdf = docx_to_pdf(&hf_docx(
+            body,
+            &[
+                ("rIdH1", "header", "header1.xml"),
+                ("rIdSt", "styles", "styles.xml"),
+                ("rIdSet", "settings", "settings.xml"),
+            ],
+            &[
+                ("word/header1.xml", header.to_string()),
+                ("word/styles.xml", styles.to_string()),
+                ("word/settings.xml", settings),
+            ],
+        ))
+        .expect("header right tab");
+        let left = pdf_glyph_text_xy(&pdf, "Hleft").expect("Hleft");
+        let num = pdf_glyph_text_xy(&pdf, "Hnumq").expect("Hnumq");
+        assert!(
+            (num.1 - left.1).abs() < 0.5,
+            "Hnumq stays on the Hleft line: {num:?} vs {left:?}"
+        );
+        num.0
+    };
+    let compat15 = num(
+        "<w:compat><w:compatSetting w:name=\"compatibilityMode\" w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat>",
+    );
+    assert!(
+        (compat15 - 495.0).abs() < 0.3,
+        "compat 15 ends Hnumq on the margin, starts {compat15}"
+    );
+    let legacy = num("");
+    assert!(
+        (legacy - 522.0).abs() < 0.3,
+        "legacy ends Hnumq on the stop, starts {legacy}"
+    );
+}
+
+#[test]
 fn a_right_framed_header_page_number_shares_the_next_line() {
     // fixtures_500 0014add1: the header's first paragraph is a frame
     // (framePr wrap=around, xAlign=right) holding PAGE; the next paragraph
@@ -34996,10 +35061,12 @@ fn iso_strict_tab_val_end_right_aligns_pageref() {
 }
 
 #[test]
-fn toc_dot_leader_stops_a_space_before_the_page_number() {
-    // sd_2517 / file_22 Sumrio 1-3: Word paints `...... 1-3` (a space
-    // before the PAGEREF). paint_tab_leader filled to dest-0.35em so
-    // the last dot sat on the number (`.....1-3`).
+fn toc_dot_leader_runs_to_the_last_grid_cell_before_the_page_number() {
+    // sd_2517 / file_22 Sumrio 1-3. Word 16 renders this very paragraph
+    // (probe sd tocsp, 2026-10-02) with its dots ending 0.37pt before
+    // "1-3": no space is kept, the leader only stops at the last whole
+    // dot cell of its page-wide grid. Its sd_2517 TOC line ends the dots
+    // at 504 with "1-3" at 506, for the same reason.
     let body = "<w:p><w:pPr>\
            <w:tabs>\
              <w:tab w:val=\"left\" w:pos=\"2520\"/>\
@@ -35035,16 +35102,24 @@ fn toc_dot_leader_stops_a_space_before_the_page_number() {
         last_dot.is_finite(),
         "leader dots on the PAGEREF line; dots={dots:?} num=({nx},{ny})"
     );
-    let gap = nx - last_dot;
+    let mut xs: Vec<f32> = dots
+        .iter()
+        .filter(|(_, y)| (y - ny).abs() < 1.0)
+        .map(|(x, _)| *x)
+        .collect();
+    xs.sort_by(f32::total_cmp);
+    // The leader's own pitch (the line's first "." is the one in "1.03").
+    let dw = xs[xs.len() - 1] - xs[xs.len() - 2];
+    let gap = nx - (last_dot + dw);
     assert!(
-        gap >= 5.5,
-        "Word leaves ~space+dot (~6pt left-edge) before 1-3, not ~1.35em jam; gap={gap} last_dot={last_dot} num_x={nx}"
+        (-0.01..dw).contains(&gap),
+        "the last dot cell ends by 1-3, less than a dot before it; gap={gap} dot={dw} last_dot={last_dot} num_x={nx}"
     );
 }
 
 #[test]
 fn official_sd_2517_toc_one_three_not_jammed_into_dots() {
-    // Word p2 `sed adipiscing… ...... 1-3`; ours jammed `.....1-3`.
+    // Word p2 `sed adipiscing… ...... 1-3`; ours once jammed `.....1-3`.
     let path = "tests/corpus/neurotic_docx_bench/grok_run/no_comments_pdf_was_generated_by_word/docx_source/sd_2517_localized_heading_styles.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert sd_2517");
     assert_eq!(pdf_page_count(&pdf), 107, "Word sd_2517 is 107pp");
@@ -35065,10 +35140,11 @@ fn official_sd_2517_toc_one_three_not_jammed_into_dots() {
         .filter(|(_, y)| (y - ny).abs() < 1.5)
         .map(|(x, _)| x)
         .fold(f32::NEG_INFINITY, f32::max);
-    let gap = nx - last_dot;
+    // Word 16's own PDF of this file (probe sd, 2026-10-02): the dots end
+    // at 504 on their 3pt grid and "1-3" starts at 506.
     assert!(
-        gap >= 5.5,
-        "official 1-3 must not sit on the last leader dot; gap={gap} last_dot={last_dot} num=({nx},{ny})"
+        (last_dot - 501.0).abs() < 0.1 && (nx - 506.0).abs() < 0.1,
+        "Word's last dot cell is 501..504 and 1-3 starts at 506; last_dot={last_dot} num=({nx},{ny})"
     );
 }
 
@@ -44387,6 +44463,98 @@ fn link_styles_takes_the_template_normal() {
     assert!(
         linked > 23.0,
         "linkStyles lays out with the template's 12pt / 278 / after 8, got {linked}"
+    );
+}
+
+#[test]
+fn dot_leaders_fill_whole_cells_of_a_page_wide_grid() {
+    // Word lays leader dots in cells as wide as one dot, counted from the
+    // page's left edge, not the margin: the first whole cell past the text
+    // up to the last that ends by the stop. Word 16 probes dots
+    // (2026-10-02, TNR 12, left margin 90.5pt, left dot tab at 5000):
+    // "A" ends 99.14 and its dots run 102 to 339; "Abc" ends 110.47 and
+    // its dots start at 111. Our 0.35-dot pad started them at 100.19 and
+    // stopped a space short of the stop. 12d245d664's TOC lines show the
+    // gap before the dots that this grid makes.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\" w:cs=\"Times New Roman\"/>\
+            <w:sz w:val=\"24\"/></w:rPr></w:rPrDefault><w:pPrDefault/></w:docDefaults>\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style></w:styles>";
+    let para = |text: &str| {
+        format!(
+            "<w:p><w:pPr><w:tabs><w:tab w:val=\"left\" w:leader=\"dot\" w:pos=\"5000\"/></w:tabs>\
+               <w:spacing w:after=\"0\"/></w:pPr>\
+               <w:r><w:t>{text}</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t>Numq</w:t></w:r></w:p>"
+        )
+    };
+    let body = format!(
+        "{}{}<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1810\"/></w:sectPr>",
+        para("A"),
+        para("Abc")
+    );
+    let pdf = docx_to_pdf(&hf_docx(
+        &body,
+        &[("rIdSt", "styles", "styles.xml")],
+        &[("word/styles.xml", styles.to_string())],
+    ))
+    .expect("dot leaders");
+    // Each leader's dots, first and last start: x drops back at a new one.
+    let mut runs: Vec<(f32, f32, usize)> = Vec::new();
+    for (x, _) in pdf_glyph_text_xys(&pdf, ".") {
+        match runs.last_mut() {
+            Some((_, last, n)) if x > *last => (*last, *n) = (x, *n + 1),
+            _ => runs.push((x, x, 1)),
+        }
+    }
+    let first_last = |i: usize| (runs[i].0, runs[i].1 + 3.0, runs[i].2);
+    assert_eq!(runs.len(), 2, "two leaders: {runs:?}");
+    let (a0, a1, an) = first_last(0);
+    assert!(
+        (a0 - 102.0).abs() < 0.05 && (a1 - 339.0).abs() < 0.05 && an == 79,
+        "A's dots fill 102..339: {a0}..{a1} ({an})"
+    );
+    let (b0, b1, bn) = first_last(1);
+    assert!(
+        (b0 - 111.0).abs() < 0.05 && (b1 - 339.0).abs() < 0.05 && bn == 76,
+        "Abc's dots fill 111..339: {b0}..{b1} ({bn})"
+    );
+}
+
+#[test]
+fn a_right_tab_past_the_right_margin_lands_on_it_in_compat_15() {
+    // 12d245d664's TOC styles put a right dot-leader tab at 9360 twips,
+    // 27pt past its right margin; Word ends the page numbers on the margin.
+    // Word 16 probes tab (2026-10-02, margins 1800/1620): compat 15 lands
+    // stops at 8820 (the margin), 9000 and 9360 all on 531pt; with no
+    // settings (legacy layout) 9360 stays at 558pt.
+    let body = |pos: u32| {
+        format!(
+            "<w:p><w:pPr><w:tabs><w:tab w:val=\"right\" w:leader=\"dot\" w:pos=\"{pos}\"/></w:tabs></w:pPr>\
+               <w:r><w:t>Entry</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t>Numq</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1000\" w:right=\"1620\" w:bottom=\"1000\" w:left=\"1800\"/></w:sectPr>"
+        )
+    };
+    let compat15 = "<w:compat><w:compatSetting w:name=\"compatibilityMode\" w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat>";
+    let num_x = |pos: u32, settings: &str| {
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body(pos), settings))
+            .expect("right tab past the margin");
+        pdf_glyph_text_xy(&pdf, "Numq").expect("Numq").0
+    };
+    let at_margin = num_x(8820, compat15);
+    for pos in [9000, 9360] {
+        let x = num_x(pos, compat15);
+        assert!(
+            (x - at_margin).abs() < 0.1,
+            "compat 15 lands a right tab at {pos} on the margin: {x} vs {at_margin}"
+        );
+    }
+    let legacy = num_x(9360, "");
+    assert!(
+        (legacy - at_margin - 27.0).abs() < 0.1,
+        "legacy layout keeps the stop 27pt past the margin: {legacy} vs {at_margin}"
     );
 }
 
