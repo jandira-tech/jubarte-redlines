@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "source_sha256": "ce7b498030d8574a9a7650b2eb4e6d8d5083456480d16c2bc8c399583bb37e5a",
+  "author": "Ann Counsel",
+  "date": "2026-10-02T09:00:00Z",
+  "operations": [
+    {
+      "id": "consent",
+      "kind": "comment",
+      "paragraph": "body:p:3",
+      "find": "prior written consent",
+      "text": "Should consent be deemed given after 10 business days of silence?"
+    },
+    {
+      "id": "section-4",
+      "kind": "comment",
+      "paragraph": "body:p:2",
+      "through": "body:p:4",
+      "text": "Section 4 as a whole conflicts with the onward-transfer terms of the DPA."
+    },
+    {
+      "id": "survival",
+      "kind": "comment",
+      "paragraph": "body:p:8",
+      "find": "survive termination",
+      "text": "Add 7(b) and 7(c)."
+    }
+  ]
+}

@@ -345,6 +345,23 @@ def cmd_changes(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_comments(args: argparse.Namespace) -> int:
+    comments = _read(args.file).comments(author=args.author, latest=args.latest)
+    for comment in comments:
+        row = {key: value for key, value in asdict(comment).items() if value is not None}
+        if args.json:
+            print(json.dumps(row, ensure_ascii=False))
+            continue
+        text = json.dumps(comment.text[:60], ensure_ascii=False)
+        anchor = json.dumps(comment.anchor_text[:40], ensure_ascii=False)
+        thread = f"\treply to {comment.parent}" if comment.parent is not None else ""
+        done = "\tresolved" if comment.done else ""
+        print(f"{comment.id}\t{comment.paragraph or '-'}\t{comment.author}\t{text}\ton {anchor}{thread}{done}")
+    if not args.json:
+        print(f"{len(comments)} comment(s)")
+    return EXIT_OK
+
+
 def _resolution(args: argparse.Namespace, accept: bool) -> int:
     doc = _read(args.file)
     _ensure_writable(args.output, args.force)
@@ -443,6 +460,13 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     p.add_argument("file", type=Path)
     p.add_argument("--json", action="store_true", help="one JSON object per line")
     p.set_defaults(func=cmd_changes)
+
+    p = sub.add_parser("comments", help="list every comment with its thread and the text it is anchored to")
+    p.add_argument("file", type=Path)
+    p.add_argument("--json", action="store_true", help="one JSON object per line")
+    p.add_argument("--author", metavar="NAME", help="only this author's comments")
+    p.add_argument("--latest", action="store_true", help="one comment per thread: the newest")
+    p.set_defaults(func=cmd_comments)
 
     for name, func, help_text in (("accept", cmd_accept, "accept tracked changes (all, or the ones selected)"), ("reject", cmd_reject, "reject tracked changes (all, or the ones selected)")):
         p = sub.add_parser(name, help=help_text)

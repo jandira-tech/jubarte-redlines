@@ -59,6 +59,7 @@ def get_revisions(docx: bytes) -> list[dict[str, Any]]:
 from .document import Document, EditPlanError, EditResult, capabilities, diff, diff_render, read
 from .models import (
     Change,
+    Comment,
     CompareOptions,
     Diff,
     EditOutcome,
@@ -92,6 +93,7 @@ __all__ += [
     "Hunk",
     "capabilities",
     "Change",
+    "Comment",
     "CompareOptions",
     "FormatChange",
     "PdfOptions",
