@@ -44163,6 +44163,146 @@ fn link_styles_takes_the_template_normal() {
 }
 
 #[test]
+fn table_style_indent_and_jc_reach_cells_their_style_leaves_unset() {
+    // 12d245d664's Table Grid carries pPr ind left=720 jc=both. Word 16
+    // probes tsp t1-t3 (2026-10-02, compat 14 and 15, with and without
+    // overrideTableStyleFontSizeAndJustification): an unstyled cell, an
+    // explicit Normal one and a "Default" one (no basedOn) all start 36pt
+    // in and justify; a direct ind left=0 or jc=left still wins.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/>\
+            <w:sz w:val=\"20\"/></w:rPr></w:rPrDefault><w:pPrDefault/></w:docDefaults>\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>\
+            <w:pPr><w:spacing w:after=\"160\" w:line=\"259\" w:lineRule=\"auto\"/></w:pPr></w:style>\
+          <w:style w:type=\"paragraph\" w:customStyle=\"1\" w:styleId=\"Default\"><w:name w:val=\"Default\"/></w:style>\
+          <w:style w:type=\"table\" w:styleId=\"TableGrid\"><w:name w:val=\"Table Grid\"/>\
+            <w:pPr><w:spacing w:after=\"120\"/><w:ind w:left=\"720\"/><w:jc w:val=\"both\"/></w:pPr>\
+            <w:tblPr><w:tblCellMar><w:left w:w=\"108\" w:type=\"dxa\"/><w:right w:w=\"108\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr></w:style>\
+        </w:styles>";
+    let long =
+        "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho";
+    let para = |tag: &str, ppr: &str| {
+        format!(
+            "<w:p><w:pPr>{ppr}</w:pPr><w:r><w:t xml:space=\"preserve\">{tag} {long}</w:t></w:r></w:p>"
+        )
+    };
+    let cell = |p: String| {
+        format!("<w:tc><w:tcPr><w:tcW w:w=\"4320\" w:type=\"dxa\"/></w:tcPr>{p}</w:tc>")
+    };
+    let row = |a: String| format!("<w:tr>{}</w:tr>", cell(a));
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblStyle w:val=\"TableGrid\"/><w:tblW w:w=\"0\" w:type=\"auto\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"4320\"/></w:tblGrid>{}{}{}{}{}</w:tbl><w:p/>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+        row(para("Q1", "")),
+        row(para("Q2", "<w:pStyle w:val=\"Normal\"/>")),
+        row(para("Q3", "<w:pStyle w:val=\"Default\"/>")),
+        row(para("Q4", "<w:ind w:left=\"0\"/>")),
+        row(para("Q5", "<w:jc w:val=\"left\"/>")),
+    );
+    let settings = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         <w:compat><w:compatSetting w:name=\"compatibilityMode\" w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat></w:settings>";
+    let pdf = docx_to_pdf(&hf_docx(
+        &body,
+        &[
+            ("rIdSt", "styles", "styles.xml"),
+            ("rIdSet", "settings", "settings.xml"),
+        ],
+        &[
+            ("word/styles.xml", styles.to_string()),
+            ("word/settings.xml", settings.to_string()),
+        ],
+    ))
+    .expect("table style ind");
+    let x = |needle: &str| pdf_glyph_text_xy(&pdf, needle).expect(needle).0;
+    // Cell text starts at 72 + 5.4 when nothing indents it.
+    let zero = x("Q4");
+    assert!(
+        (zero - 77.4).abs() < 0.5,
+        "direct ind left=0 wins, got {zero}"
+    );
+    for tag in ["Q1", "Q2", "Q3", "Q5"] {
+        let at = x(tag);
+        assert!(
+            (at - zero - 36.0).abs() < 0.5,
+            "{tag} takes the table style's ind left=720, at {at} vs {zero}"
+        );
+    }
+    // Same text, same width: "kappa" sits mid second line. Justified (Q1)
+    // it moves right of the jc=left copy (Q5).
+    let kappa = pdf_glyph_text_xys(&pdf, "kappa");
+    assert_eq!(kappa.len(), 5, "one kappa per cell");
+    assert!(
+        kappa[0].0 > kappa[4].0 + 1.0,
+        "the table style's jc=both justifies, kappa at {} vs {}",
+        kappa[0].0,
+        kappa[4].0
+    );
+}
+
+#[test]
+fn link_styles_leaves_unbased_styles_on_the_file_defaults() {
+    // 12d245d664 (en a 9b100bdc): the template replaces Normal only. A
+    // style with no basedOn ("Default") keeps the file's docDefaults:
+    // Word 16 probe lnk l1 (2026-10-02) sets it 10pt single on 11.52pt
+    // lines with and without linkStyles, while Normal steps 17.04.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/>\
+            <w:sz w:val=\"20\"/></w:rPr></w:rPrDefault><w:pPrDefault/></w:docDefaults>\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>\
+            <w:pPr><w:spacing w:after=\"160\" w:line=\"259\" w:lineRule=\"auto\"/></w:pPr>\
+            <w:rPr><w:sz w:val=\"22\"/></w:rPr></w:style>\
+          <w:style w:type=\"paragraph\" w:customStyle=\"1\" w:styleId=\"Default\"><w:name w:val=\"Default\"/>\
+            <w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/></w:rPr></w:style></w:styles>";
+    let para = |text: &str| {
+        format!(
+            "<w:p><w:pPr><w:pStyle w:val=\"Default\"/></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"
+        )
+    };
+    let body = format!(
+        "{}{}<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+        para("LineAq"),
+        para("LineBq")
+    );
+    let step = |link: &str| {
+        let settings = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">{link}</w:settings>"
+        );
+        let pdf = docx_to_pdf(&hf_docx(
+            &body,
+            &[
+                ("rIdSt", "styles", "styles.xml"),
+                ("rIdSet", "settings", "settings.xml"),
+            ],
+            &[
+                ("word/styles.xml", styles.to_string()),
+                ("word/settings.xml", settings),
+            ],
+        ))
+        .expect("linkStyles");
+        let a = pdf_glyph_text_xy(&pdf, "LineAq").expect("a").1;
+        let b = pdf_glyph_text_xy(&pdf, "LineBq").expect("b").1;
+        a - b
+    };
+    let own = step("");
+    let linked = step("<w:linkStyles/>");
+    assert!(
+        (own - 11.5).abs() < 0.1,
+        "Default runs 10pt single from the file's docDefaults, got {own}"
+    );
+    assert!(
+        (linked - own).abs() < 0.01,
+        "linkStyles leaves a style off Normal's chain alone, got {linked} vs {own}"
+    );
+}
+
+#[test]
 fn field_data_is_never_text() {
     // en a c690df8d: EndNote's ADDIN EN.CITE fields carry their citation
     // record base64-encoded in `w:fldChar/w:fldData`. Word never shows it;
