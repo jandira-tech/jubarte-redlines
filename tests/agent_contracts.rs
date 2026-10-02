@@ -73,6 +73,7 @@ fn capabilities_roundtrip_preserves_runtime_and_scope_limits() {
     assert!(manifest.limits.plain_text_runs);
     assert!(manifest.limits.refuses_opaque_ranges);
     assert!(!manifest.limits.reads_legacy_doc);
+    assert!(manifest.operations.edit_keeps_revisions);
 }
 
 #[test]

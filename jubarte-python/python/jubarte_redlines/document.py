@@ -221,6 +221,11 @@ class Document:
         Every operation is resolved against this snapshot before anything is
         changed; a refused plan produces no documents. Comments in the plan
         are anchored in the clean copy and carried through the redline.
+
+        With ``existing_revisions="keep"`` another party's tracked changes stay
+        tracked: the clean copy is this document with the plan's edits applied
+        and theirs still tracked, the redline adds the plan's edits as new
+        revisions beside theirs, and ``diff`` shows the plan's edits only.
         """
         ok, clean, redline, payload = _native.edit_json(self._data, plan_json(plan))
         if not ok:
@@ -233,6 +238,7 @@ class Document:
                 name=self.name or "document.docx",
                 author=report.author,
                 date=report.date,
+                own_only=report.existing_revisions == "keep",
             )
         )
         return EditResult(Document.from_bytes(clean), Document.from_bytes(redline), report, diff)

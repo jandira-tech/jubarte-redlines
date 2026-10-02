@@ -322,9 +322,10 @@ fn diff_json(
 }
 
 /// The changes a Word redline tracks, as `diff_json`'s patch of the
-/// document named `name` → `(text, hunks_json)`.
+/// document named `name` → `(text, hunks_json)`. `own_only` keeps only the
+/// changes by `author` on `date` (an edit plan under `keep`).
 #[pyfunction]
-#[pyo3(signature = (docx, *, name, author, date, columns = 72))]
+#[pyo3(signature = (docx, *, name, author, date, columns = 72, own_only = false))]
 fn redline_diff_json(
     py: Python<'_>,
     docx: &[u8],
@@ -332,10 +333,17 @@ fn redline_diff_json(
     author: &str,
     date: &str,
     columns: usize,
+    own_only: bool,
 ) -> PyResult<Diffed> {
     let options = patch_options(name, name, author, date);
     let patch = py
-        .detach(|| jubarte::markdown::patch_redline(docx, &options))
+        .detach(|| {
+            if own_only {
+                jubarte::markdown::patch_own_changes(docx, &options)
+            } else {
+                jubarte::markdown::patch_redline(docx, &options)
+            }
+        })
         .map_err(err)?;
     diffed(&patch, columns)
 }

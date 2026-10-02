@@ -1145,7 +1145,14 @@ fn run_edit(job: &EditJob<'_>) -> Result<(), (u8, String)> {
         || job.file.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
     );
-    let patch = jubarte::markdown::patch_redline(
+    // Under keep the redline also holds the other party's changes; the
+    // patch shows the plan's own.
+    let patch_of = if result.report.existing_revisions == jubarte::edit::ExistingRevisions::Keep {
+        jubarte::markdown::patch_own_changes
+    } else {
+        jubarte::markdown::patch_redline
+    };
+    let patch = patch_of(
         &result.redline,
         &jubarte::markdown::PatchOptions {
             old_name: name.clone(),

@@ -50,9 +50,14 @@ Gotchas:
   `sym`, `drawing`, `revision`) tell you which ranges an edit will refuse.
 - Text is exact: tabs stay `\t`, smart quotes stay `“ ”`, a Symbol-font
   bullet is U+FFFC. Copy anchors from the output, do not retype them.
-- If `summary.revisions > 0` the document already has tracked changes. An
-  edit plan refuses it unless you set `"existing_revisions": "accept"` (or
-  `"reject"`), which flattens first and reports `base_sha256`.
+- If `summary.revisions > 0` the document already has tracked changes.
+  `"existing_revisions": "keep"` leaves their changes tracked and adds
+  yours beside them (what Word does when you type on a received redline);
+  `"accept"` or `"reject"` flatten first and report `base_sha256`; the
+  default refuses. Under `keep` you cannot edit text inside their
+  insertions or deletions, nor delete, merge or reformat a paragraph whose
+  mark or properties they changed; resolve those changes first with
+  `resolve_revisions`.
 - To keep some of them, list them with `jubarte changes FILE --json` (one
   change per line: `id` such as `body:rev:12`, `kind`, `target`, `author`,
   `text`, `inside`) and resolve a selection, either directly
@@ -190,7 +195,10 @@ Gotchas:
   difference between renderer and Word as possible on dense documents.
 - `jubarte accept review/redline.docx -o check.docx` then `jubarte text
   check.docx` must equal `jubarte text review/clean.docx`. That is the
-  every-edit-is-tracked check; it replaces `validate.py --author`.
+  every-edit-is-tracked check; it replaces `validate.py --author`. Under
+  `keep`, accept only your own changes:
+  `jubarte accept review/redline.docx --author Claude -o check.docx`
+  (the author your plan names).
 
 ## 4. Compare, accept, reject
 

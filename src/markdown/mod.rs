@@ -44,7 +44,7 @@ pub use patch::{Patched, apply_markdown};
 pub use redline::{RedlineOptions, Source, redline};
 pub use unified::{
     Attribution, Change, Comment, DEFAULT_COLUMNS, Hunk, Locator, Patch, PatchOptions,
-    patch_critic, patch_documents, patch_markdown, patch_redline,
+    patch_critic, patch_documents, patch_markdown, patch_own_changes, patch_redline,
 };
 pub use write::markdown_to_docx;
 

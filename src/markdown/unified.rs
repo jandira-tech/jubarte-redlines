@@ -262,6 +262,33 @@ pub fn patch_redline(docx: &[u8], options: &PatchOptions) -> Result<Patch, Markd
     patch_word(docx, &old, &new, None, options)
 }
 
+/// [`patch_redline`] for the owner's own changes: every change by another
+/// author, or by the owner on another date, is accepted first, so it reads
+/// as unchanged text. An edit plan with `existing_revisions: "keep"` writes
+/// its patch this way, beside the other party's tracked changes.
+pub fn patch_own_changes(docx: &[u8], options: &PatchOptions) -> Result<Patch, MarkdownError> {
+    let changes = crate::changes::list_changes(docx)
+        .map_err(|error| MarkdownError::Docx(error.to_string()))?;
+    let others: Vec<String> = changes
+        .into_iter()
+        .filter(|c| {
+            c.author.as_deref() != Some(options.owner.author.as_str())
+                || c.date.as_deref() != Some(options.owner.date.as_str())
+        })
+        .map(|c| c.id)
+        .collect();
+    if others.is_empty() {
+        return patch_redline(docx, options);
+    }
+    let filter = crate::changes::ChangeFilter {
+        ids: Some(others),
+        ..crate::changes::ChangeFilter::default()
+    };
+    let own = crate::changes::accept_changes(docx, &filter)
+        .map_err(|error| MarkdownError::Package(error.to_string()))?;
+    patch_redline(&own, options)
+}
+
 /// The changes from `old` to `new` as a patch. Two Markdown documents give
 /// [`patch_markdown`]'s patch, at lines; otherwise the documents are
 /// compared as [`redline`] compares them and each hunk is at a `body:p:N`

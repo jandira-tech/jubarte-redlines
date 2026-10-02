@@ -45,3 +45,13 @@ oracle shape); not measured re-scores of implemented options.
 
 Arthur picks A / B / C (or a variant). Implementation follows the anti-overfitting
 protocol only after that pick is written here.
+
+---
+
+**Note (2026-10-02).** The edit API now has `existing_revisions: "keep"`:
+an edit plan applied to a document that already holds another party's
+tracked changes leaves them tracked and writes the plan's edits as new
+revisions beside them, by direct emission (no compare). This does not touch
+the compare contract this memo is about: compare still accepts both inputs'
+revisions first, `accept(redline) ≡ B` still holds, and the decision above
+is still open.

@@ -340,7 +340,10 @@ Selector = str | int | dict[str, str | int]
 """A paragraph id (``body:p:N``, ``header1:p:0``), a body index, or ``{"starts_with"|"contains"|"id"|"index": ...}``;
 ``index``/``starts_with``/``contains`` also take ``"story": "header1"`` (default: the body)."""
 
-ExistingRevisions = Literal["refuse", "accept", "reject"]
+ExistingRevisions = Literal["refuse", "accept", "reject", "keep"]
+"""What an edit plan does with tracked changes already in the source:
+``refuse`` (default), ``accept`` or ``reject`` them first, or ``keep`` them
+tracked and add the plan's edits as new revisions beside them."""
 
 
 def _selector(value: Selector) -> dict[str, str | int]:
@@ -419,8 +422,8 @@ class EditPlan:
     def __post_init__(self) -> None:
         if not isinstance(self.author, str) or not self.author.strip():
             raise ValueError("author must be a nonempty string")
-        if self.existing_revisions not in ("refuse", "accept", "reject"):
-            raise ValueError("existing_revisions must be refuse, accept or reject")
+        if self.existing_revisions not in ("refuse", "accept", "reject", "keep"):
+            raise ValueError("existing_revisions must be refuse, accept, reject or keep")
 
     def _with(self, op: dict[str, object]) -> EditPlan:
         return replace(self, operations=(*self.operations, op))

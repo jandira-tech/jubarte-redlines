@@ -30,6 +30,17 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   step with `Cargo.toml`.
 - Python: `Document.inspect_json()` returns the engine's inspect snapshot as
   JSON text.
+- Edit plans take `"existing_revisions": "keep"`: another party's tracked
+  changes stay tracked, byte for byte, and the plan's edits become new
+  revisions beside them by the plan's author and date (ids after the
+  highest in the package), emitted directly instead of through compare.
+  The clean copy has the plan's edits applied and theirs still tracked;
+  the report's revision counts and the patch (`patch.diff`, Python
+  `EditResult.diff`) cover the plan's own changes. Edits inside their
+  revisions, and deleting, merging or reformatting a paragraph whose mark
+  or properties they changed, are refused. New
+  `markdown::patch_own_changes`, capability
+  `operations.edit_keeps_revisions`, and Python `existing_revisions="keep"`.
 - `scripts/release.sh` step 12 runs `scripts/release_downstream.sh`: jubarte.pro
   moves to the release (download page, demo engine) and is deployed, the
   app's release files are committed on `release/vx.y.z` in the jubarte-app
