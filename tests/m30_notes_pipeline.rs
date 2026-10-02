@@ -501,3 +501,67 @@ fn synthesized_numbering_survives_an_abstract_num_id_at_i32_max() {
         "a w:num is still synthesized for the dangling id"
     );
 }
+
+/// An inserted reference whose after-side definition is missing, a deleted
+/// one whose before-side definition is missing, and an endnote reference with
+/// no endnotes part are each a typed error, one per status branch of the
+/// definition lookup.
+#[test]
+fn inserted_and_deleted_references_report_what_they_cannot_find() {
+    use jubarte::comparer::footnotes::RectifyError;
+    use jubarte::comparer::try_compare_bodies_faithful_with_notes;
+
+    let s = settings();
+    let with_ref = "<w:p><w:r><w:t>hello</w:t></w:r></w:p>\
+         <w:p><w:r><w:t>noted</w:t></w:r><w:r><w:footnoteReference w:id=\"7\"/></w:r></w:p>";
+    let without = "<w:p><w:r><w:t>hello</w:t></w:r></w:p>";
+
+    // Inserted: only the revised body carries the reference.
+    let mut dom = Dom::new();
+    let (r1, b1) = doc_body(&mut dom, without);
+    let (r2, b2) = doc_body(&mut dom, with_ref);
+    let fn_after = footnotes_root(&mut dom, &[("9999", "unrelated")]);
+    let fn_wr = separators_only_footnotes(&mut dom);
+    let mut ctx = NotesContext {
+        fn_after: Some(fn_after),
+        fn_with_revisions: Some(fn_wr),
+        ..Default::default()
+    };
+    let err = try_compare_bodies_faithful_with_notes(&mut dom, r1, r2, b1, b2, &s, Some(&mut ctx))
+        .expect_err("the inserted reference has no definition");
+    assert_eq!(err, RectifyError::MissingNoteDef { id: "7".into() });
+
+    // Deleted: only the original body carries the reference.
+    let mut dom = Dom::new();
+    let (r1, b1) = doc_body(&mut dom, with_ref);
+    let (r2, b2) = doc_body(&mut dom, without);
+    let fn_before = footnotes_root(&mut dom, &[("9999", "unrelated")]);
+    let fn_wr = separators_only_footnotes(&mut dom);
+    let mut ctx = NotesContext {
+        fn_before: Some(fn_before),
+        fn_with_revisions: Some(fn_wr),
+        ..Default::default()
+    };
+    let err = try_compare_bodies_faithful_with_notes(&mut dom, r1, r2, b1, b2, &s, Some(&mut ctx))
+        .expect_err("the deleted reference has no definition");
+    assert_eq!(err, RectifyError::MissingNoteDef { id: "7".into() });
+
+    // An endnote reference in a document with no endnotes part.
+    let mut dom = Dom::new();
+    let (r1, b1) = doc_body(
+        &mut dom,
+        "<w:p><w:r><w:t>x</w:t></w:r><w:r><w:endnoteReference w:id=\"3\"/></w:r></w:p>",
+    );
+    let (r2, b2) = doc_body(&mut dom, "<w:p><w:r><w:t>x</w:t></w:r></w:p>");
+    let mut ctx = NotesContext::default();
+    let err = try_compare_bodies_faithful_with_notes(&mut dom, r1, r2, b1, b2, &s, Some(&mut ctx))
+        .expect_err("no endnotes part");
+    assert_eq!(
+        err,
+        RectifyError::MissingSourcePart {
+            kind: "endnotes",
+            side: "before"
+        }
+    );
+    assert!(err.to_string().contains("endnotes part"), "{err}");
+}
