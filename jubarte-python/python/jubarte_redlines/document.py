@@ -173,6 +173,7 @@ class Document:
                 modified._data,
                 author=author,
                 date=options.native_date(),
+                input_limits=options.native_input_limits(),
             )
         )
 

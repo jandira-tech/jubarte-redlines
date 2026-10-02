@@ -6021,7 +6021,7 @@ pub fn get_revisions(
 ) -> Result<Vec<crate::comparer::WmlComparerRevision>, OpcError> {
     use crate::comparer::{preprocess, revisions};
 
-    admit_package(docx)?;
+    admit_input("input", docx, settings.input_limits)?;
     let pkg = PartFs::open(docx)?;
     let main = pkg
         .main_document_part()

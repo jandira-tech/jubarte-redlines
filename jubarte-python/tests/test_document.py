@@ -200,3 +200,30 @@ def test_compare_refuses_a_package_with_too_many_entries():
 def test_compare_still_accepts_a_well_formed_pair():
     redline = jubarte.compare_documents(make_document("hello"), make_document("hello there"))
     assert redline.startswith(b"PK")
+
+
+def test_input_limits_tighten_the_compare_budget():
+    small = {"max_entries": 2}
+    with pytest.raises(jubarte.JubarteError, match="INPUT_LIMIT"):
+        jubarte.compare_documents(make_document("a"), make_document("b"), input_limits=small)
+    with pytest.raises(jubarte.JubarteError, match="INPUT_LIMIT"):
+        jubarte.get_revisions_json(make_document("a"), input_limits=small)
+    roomy = {"max_entries": 100}
+    redline = jubarte.compare_documents(make_document("a"), make_document("b"), input_limits=roomy)
+    assert redline.startswith(b"PK")
+
+
+def test_input_limits_refuse_an_unknown_key():
+    with pytest.raises(jubarte.JubarteError, match="invalid input limits.*max_entrys"):
+        jubarte.compare_documents(
+            make_document("a"), make_document("b"), input_limits={"max_entrys": 2}
+        )
+
+
+def test_document_compare_honours_options_input_limits():
+    old, new = jubarte.Document.from_bytes(make_document("a")), jubarte.Document.from_bytes(
+        make_document("b")
+    )
+    options = jubarte.CompareOptions(input_limits={"max_entries": 2})
+    with pytest.raises(jubarte.JubarteError, match="INPUT_LIMIT"):
+        old.compare(new, author="Reviewer", options=options)

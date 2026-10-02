@@ -11,6 +11,7 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+from types import MappingProxyType
 from typing import Literal, TypedDict
 
 RevisionKind = Literal["Inserted", "Deleted", "Moved", "FormatChanged"]
@@ -26,8 +27,15 @@ class CompareOptions:
     """
 
     date: str | datetime | None = None
+    #: Admission budget overrides (``max_compressed_bytes``, ``max_entries``,
+    #: ``max_part_bytes``, ``max_uncompressed_bytes``, ``max_xml_depth``);
+    #: unset keys keep the engine's compare budget. The engine refuses
+    #: unknown keys when the comparison runs.
+    input_limits: Mapping[str, int] | None = field(default=None, hash=False)
 
     def __post_init__(self) -> None:
+        if self.input_limits is not None:
+            object.__setattr__(self, "input_limits", _input_limits(self.input_limits))
         if self.date is None:
             return
         if isinstance(self.date, datetime):
@@ -49,6 +57,25 @@ class CompareOptions:
         # __post_init__ turns every datetime into str.
         assert self.date is None or isinstance(self.date, str)
         return self.date
+
+    def native_input_limits(self) -> dict[str, int] | None:
+        """Return the overrides as the native ``input_limits`` dict."""
+        return None if self.input_limits is None else dict(self.input_limits)
+
+
+def _input_limits(value: object) -> Mapping[str, int]:
+    if not isinstance(value, Mapping):
+        raise TypeError("input_limits must be a mapping of str to int")
+    limits: dict[str, int] = {}
+    for key, limit in value.items():
+        if not isinstance(key, str):
+            raise TypeError("input_limits keys must be strings")
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            raise TypeError(f"input_limits[{key!r}] must be an int")
+        if limit < 0:
+            raise ValueError(f"input_limits[{key!r}] must not be negative")
+        limits[key] = limit
+    return MappingProxyType(limits)
 
 
 @dataclass(frozen=True, slots=True)

@@ -128,3 +128,18 @@ def test_revision_decoding_preserves_metadata_and_freezes_nested_properties():
 def test_native_schema_mismatch_is_not_silently_dropped():
     with pytest.raises(KeyError):
         _decode_revisions('[{"type":"Inserted"}]')
+
+
+def test_compare_options_input_limits_are_an_immutable_copy() -> None:
+    source = {"max_entries": 5}
+    options = CompareOptions(input_limits=source)
+    source["max_entries"] = 9
+    assert options.native_input_limits() == {"max_entries": 5}
+    assert CompareOptions().native_input_limits() is None
+    hash(options)
+
+
+@pytest.mark.parametrize("value", [{"max_entries": -1}, {"max_entries": True}, {1: 2}, [1]])
+def test_compare_options_input_limits_reject_bad_values(value: object) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        CompareOptions(input_limits=value)  # type: ignore[arg-type]

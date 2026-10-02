@@ -261,3 +261,48 @@ fn the_entry_points_still_open_a_well_formed_package() {
     jubarte::document_comparer::reject_revisions(ORIGINAL).expect("reject");
     jubarte::changes::list_changes(ORIGINAL).expect("list");
 }
+
+/// `get_revisions` takes settings, so it admits under the caller's budget
+/// rather than a fixed one.
+#[test]
+fn get_revisions_admits_under_the_settings_budget() {
+    let tight = WmlComparerSettings::default().with_input_limits(InputLimits {
+        max_entries: 2,
+        ..InputLimits::compare()
+    });
+    let err = jubarte::document_comparer::get_revisions(ORIGINAL, &tight).expect_err("refused");
+    assert!(err.to_string().contains("INPUT_LIMIT"), "{err}");
+    jubarte::document_comparer::get_revisions(ORIGINAL, &WmlComparerSettings::default())
+        .expect("the default budget admits the fixture");
+}
+
+/// The overrides the Python and WASM bindings accept: every key optional,
+/// the rest taken from the base budget, unknown keys refused.
+#[test]
+fn limit_overrides_replace_only_the_keys_given() {
+    use jubarte::admission::InputLimitOverrides;
+    let base = InputLimits::compare();
+    let none = InputLimitOverrides::from_json("{}").expect("empty object");
+    assert_eq!(none.apply(base), base);
+    let some = InputLimitOverrides::from_json(r#"{"max_entries": 7, "max_part_bytes": 1024}"#)
+        .expect("two keys");
+    assert_eq!(
+        some.apply(base),
+        InputLimits {
+            max_entries: 7,
+            max_part_bytes: 1024,
+            ..base
+        }
+    );
+    let typo = InputLimitOverrides::from_json(r#"{"max_entrys": 7}"#).expect_err("unknown key");
+    assert!(typo.contains("max_entrys"), "{typo}");
+    let negative =
+        InputLimitOverrides::from_json(r#"{"max_entries": -1}"#).expect_err("negative count");
+    assert!(negative.starts_with("invalid input limits"), "{negative}");
+}
+
+#[test]
+fn wml_document_exposes_its_input_bytes_read_only() {
+    let wml = WmlDocument::from_bytes(ORIGINAL).expect("open");
+    assert_eq!(wml.bytes(), ORIGINAL);
+}

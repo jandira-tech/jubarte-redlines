@@ -43,26 +43,49 @@ fn pdf_options(
     })
 }
 
+/// `WmlComparerSettings::default()` with `input_limits` (a dict such as
+/// `{"max_part_bytes": 67108864}`) laid over its compare budget. Unknown
+/// keys are refused.
+fn settings_with_limits(
+    input_limits: Option<std::collections::HashMap<String, u64>>,
+) -> PyResult<jubarte::comparer::WmlComparerSettings> {
+    let settings = jubarte::comparer::WmlComparerSettings::default();
+    let Some(limits) = input_limits else {
+        return Ok(settings);
+    };
+    let json = serde_json::to_string(&limits).map_err(err)?;
+    let overrides =
+        jubarte::admission::InputLimitOverrides::from_json(&json).map_err(JubarteError::new_err)?;
+    let base = settings.input_limits;
+    Ok(settings.with_input_limits(overrides.apply(base)))
+}
+
 /// Compare two DOCX packages (bytes) → redline DOCX bytes (`w:ins`/`w:del`).
 ///
 /// Mirrors `jubarte::document_comparer::compare_documents`; `date` (ISO-8601
 /// `w:date` stamp) defaults to the engine's fixed epoch for deterministic
-/// output.
+/// output. `input_limits` overrides the admission budget key by key
+/// (`max_compressed_bytes`, `max_entries`, `max_part_bytes`,
+/// `max_uncompressed_bytes`, `max_xml_depth`); a package past it raises
+/// `JubarteError` with `INPUT_LIMIT`.
 #[pyfunction]
-#[pyo3(signature = (original, modified, author = "jubarte", date = None))]
+#[pyo3(signature = (original, modified, author = "jubarte", date = None, *, input_limits = None))]
 fn compare_documents(
     py: Python<'_>,
     original: &[u8],
     modified: &[u8],
     author: &str,
     date: Option<&str>,
+    input_limits: Option<std::collections::HashMap<String, u64>>,
 ) -> PyResult<Py<PyBytes>> {
+    let settings = settings_with_limits(input_limits)?
+        .with_author(author)
+        .with_date(date.unwrap_or(jubarte::document_comparer::DEFAULT_DATE));
     let out = py
-        .detach(|| match date {
-            Some(d) => jubarte::document_comparer::compare_documents_with_options(
-                original, modified, author, d,
-            ),
-            None => jubarte::document_comparer::compare_documents(original, modified, author),
+        .detach(|| {
+            jubarte::document_comparer::compare_documents_with_settings(
+                original, modified, &settings,
+            )
         })
         .map_err(err)?;
     Ok(PyBytes::new(py, &out).unbind())
@@ -149,10 +172,16 @@ fn reject_changes(py: Python<'_>, docx: &[u8], filter_json: &str) -> PyResult<Py
 /// List the tracked revisions in a DOCX as a JSON array string — the same
 /// object shape as the CLI `jubarte revisions --json` lines
 /// (`type`/`author`/`date`/`part`/`moveGroupId`/`isMoveSource`/`formatChange`/`text`).
+/// `input_limits` as in `compare_documents`.
 #[pyfunction]
-fn get_revisions_json(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
+#[pyo3(signature = (docx, *, input_limits = None))]
+fn get_revisions_json(
+    py: Python<'_>,
+    docx: &[u8],
+    input_limits: Option<std::collections::HashMap<String, u64>>,
+) -> PyResult<String> {
+    let settings = settings_with_limits(input_limits)?;
     py.detach(|| {
-        let settings = jubarte::comparer::WmlComparerSettings::default();
         let revs = jubarte::document_comparer::get_revisions(docx, &settings)
             .map_err(|e| e.to_string())?;
         Ok(jubarte::document_comparer::revisions_to_json(&revs))

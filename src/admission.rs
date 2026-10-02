@@ -84,6 +84,53 @@ impl InputLimits {
     }
 }
 
+/// Field-by-field overrides of an [`InputLimits`] budget: the shape the
+/// Python and WASM bindings take as a JSON object. Every key is optional and
+/// keeps the base value when absent; an unknown key is refused, so a typo
+/// cannot silently leave a default in force.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InputLimitOverrides {
+    /// Replaces [`InputLimits::max_compressed_bytes`].
+    pub max_compressed_bytes: Option<u64>,
+    /// Replaces [`InputLimits::max_entries`].
+    pub max_entries: Option<usize>,
+    /// Replaces [`InputLimits::max_part_bytes`].
+    pub max_part_bytes: Option<u64>,
+    /// Replaces [`InputLimits::max_uncompressed_bytes`].
+    pub max_uncompressed_bytes: Option<u64>,
+    /// Replaces [`InputLimits::max_xml_depth`].
+    pub max_xml_depth: Option<usize>,
+}
+
+impl InputLimitOverrides {
+    /// Parse a JSON object such as `{"max_part_bytes": 67108864}`.
+    ///
+    /// # Errors
+    ///
+    /// `invalid input limits: ...` for malformed JSON, an unknown key, or a
+    /// value that is not a non-negative integer in range.
+    pub fn from_json(json: &str) -> Result<Self, String> {
+        serde_json::from_str(json).map_err(|e| format!("invalid input limits: {e}"))
+    }
+
+    /// `base` with every given key replaced.
+    #[must_use]
+    pub fn apply(self, base: InputLimits) -> InputLimits {
+        InputLimits {
+            max_compressed_bytes: self
+                .max_compressed_bytes
+                .unwrap_or(base.max_compressed_bytes),
+            max_entries: self.max_entries.unwrap_or(base.max_entries),
+            max_part_bytes: self.max_part_bytes.unwrap_or(base.max_part_bytes),
+            max_uncompressed_bytes: self
+                .max_uncompressed_bytes
+                .unwrap_or(base.max_uncompressed_bytes),
+            max_xml_depth: self.max_xml_depth.unwrap_or(base.max_xml_depth),
+        }
+    }
+}
+
 /// Why a package was refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AdmissionErrorKind {
