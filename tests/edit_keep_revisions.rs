@@ -464,3 +464,45 @@ fn the_cli_writes_my_patch_under_keep() {
         "theirs and mine are both tracked"
     );
 }
+
+#[test]
+fn whole_replacements_and_insertions_beside_their_changes() {
+    let source = source();
+    let out = apply_plan(&source, &keep(r#"[
+        {"kind":"replace","paragraph":"body:p:1","find":"law: Delaware","replacement":"law: New York","whole":true},
+        {"kind":"insert","paragraph":"body:p:0","before":" days","text":" business"}]"#)).unwrap();
+    assert_eq!(
+        texts(&out.clean),
+        [
+            "Payment within 45 business days.",
+            "Governing law: New York."
+        ]
+    );
+    let changes = invariants(&source, &out);
+    let mine: Vec<_> = changes
+        .iter()
+        .filter(|c| c.author.as_deref() == Some("Me"))
+        .map(|c| (c.kind, c.text.as_str()))
+        .collect();
+    assert_eq!(
+        mine,
+        [
+            (ChangeKind::Insertion, " business"),
+            (ChangeKind::Deletion, "law: Delaware"),
+            (ChangeKind::Insertion, "law: New York")
+        ],
+        "whole is one deletion then one insertion"
+    );
+}
+
+#[test]
+fn deleting_the_paragraph_before_a_table_keeps_the_invariants() {
+    let table = r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>Cell.</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+    let source = docx(&(OTHER.to_string() + &para("Before the table.") + table + &para("After.")));
+    let out = apply_plan(
+        &source,
+        &keep(r#"[{"kind":"delete_paragraph","paragraph":"body:p:1"}]"#),
+    )
+    .unwrap();
+    invariants(&source, &out);
+}
