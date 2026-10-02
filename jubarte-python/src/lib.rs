@@ -194,19 +194,27 @@ type EditOutcome = (bool, Option<Py<PyBytes>>, Option<Py<PyBytes>>, String);
 /// One layout pass → `(pdf_bytes | None, [png_bytes, ...], report_json)`.
 ///
 /// `report_json` is `{"page_count", "pages": [{"index", "text"}], "fonts": [...]}`.
+/// `pages` (zero-based) rasterizes only those pages, ascending and without
+/// repeats; the report still covers every page.
 #[pyfunction]
-#[pyo3(signature = (docx, pdf = true, png_dpi = None, compress = false, revisions = "conventional", revision_palette = None))]
+#[pyo3(signature = (docx, pdf = true, png_dpi = None, compress = false, revisions = "conventional", revision_palette = None, pages = None))]
 fn render(
-    py: Python<'_>,
-    docx: &[u8],
+    docx: &Bound<'_, PyBytes>,
     pdf: bool,
     png_dpi: Option<f32>,
     compress: bool,
     revisions: &str,
     revision_palette: Option<&str>,
+    pages: Option<Vec<usize>>,
 ) -> PyResult<Rendered> {
     let options = pdf_options(compress, revisions, revision_palette)?;
-    let request = jubarte::convert::RenderRequest { pdf, png_dpi };
+    let request = jubarte::convert::RenderRequest {
+        pdf,
+        png_dpi,
+        pages,
+    };
+    let py = docx.py();
+    let docx = docx.as_bytes();
     let rendered = py
         .detach(|| jubarte::convert::render(docx, options, request))
         .map_err(err)?;
@@ -218,6 +226,60 @@ fn render(
             .map(|png| PyBytes::new(py, png).unbind())
             .collect(),
         rendered.report.to_json(),
+    ))
+}
+
+/// `diff_render_json`'s result: the page diffs as JSON, both sides' PNG
+/// pages, one overlay (or `None`) per page diff, and both page reports as
+/// JSON.
+type RenderDiffOut = (
+    String,
+    Vec<Py<PyBytes>>,
+    Vec<Py<PyBytes>>,
+    Vec<Option<Py<PyBytes>>>,
+    String,
+    String,
+);
+
+/// Which pages of `a` and `b` differ, pixel for pixel, from one layout pass
+/// each at `dpi` → `(pages_json, a_pngs, b_pngs, overlays, a_report_json,
+/// b_report_json)`. `pages_json` is `[{"index", "changed_ratio", "bbox",
+/// "only_in"?}]`.
+#[pyfunction]
+#[pyo3(signature = (a, b, dpi = 100.0, overlay = true, revisions = "conventional", revision_palette = None))]
+fn diff_render_json(
+    py: Python<'_>,
+    a: &[u8],
+    b: &[u8],
+    dpi: f32,
+    overlay: bool,
+    revisions: &str,
+    revision_palette: Option<&str>,
+) -> PyResult<RenderDiffOut> {
+    let options = jubarte::convert::DiffOptions {
+        dpi,
+        pdf: pdf_options(false, revisions, revision_palette)?,
+        overlay,
+    };
+    let diff = py
+        .detach(|| jubarte::convert::diff_render(a, b, &options))
+        .map_err(err)?;
+    let pngs = |pages: &[Vec<u8>]| -> Vec<Py<PyBytes>> {
+        pages
+            .iter()
+            .map(|png| PyBytes::new(py, png).unbind())
+            .collect()
+    };
+    Ok((
+        serde_json::to_string(&diff.pages).map_err(err)?,
+        pngs(&diff.a),
+        pngs(&diff.b),
+        diff.overlays
+            .iter()
+            .map(|o| o.as_ref().map(|png| PyBytes::new(py, png).unbind()))
+            .collect(),
+        diff.a_report.to_json(),
+        diff.b_report.to_json(),
     ))
 }
 
@@ -421,6 +483,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(docx_to_pdf, m)?)?;
     m.add_function(wrap_pyfunction!(docx_to_png, m)?)?;
     m.add_function(wrap_pyfunction!(render, m)?)?;
+    m.add_function(wrap_pyfunction!(diff_render_json, m)?)?;
     m.add_function(wrap_pyfunction!(source_sha256, m)?)?;
     m.add_function(wrap_pyfunction!(inspect_json, m)?)?;
     m.add_function(wrap_pyfunction!(markdown, m)?)?;

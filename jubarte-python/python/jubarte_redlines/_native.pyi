@@ -38,7 +38,16 @@ def render(
     compress: bool = False,
     revisions: str = "conventional",
     revision_palette: str | None = None,
+    pages: list[int] | None = None,
 ) -> tuple[bytes | None, list[bytes], str]: ...
+def diff_render_json(
+    a: bytes,
+    b: bytes,
+    dpi: float = 100.0,
+    overlay: bool = True,
+    revisions: str = "conventional",
+    revision_palette: str | None = None,
+) -> tuple[str, list[bytes], list[bytes], list[bytes | None], str, str]: ...
 def source_sha256(docx: bytes) -> str: ...
 def inspect_json(docx: bytes) -> str: ...
 def markdown(docx: bytes) -> str: ...

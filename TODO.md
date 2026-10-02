@@ -245,3 +245,7 @@ that carry a change:
 - [ ] Report the kept pages in the JSON page report (`--report`).
 - [ ] A document with no changes writes no pages and says so; it is not an
   error.
+
+Builds on `RenderRequest.pages` (`convert --pages`, added with
+`diff-render`): the layout's revision marks pick the pages instead of a user
+list.

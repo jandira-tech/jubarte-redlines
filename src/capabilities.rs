@@ -66,6 +66,14 @@ pub struct Operations {
     /// plan carries its redline's.
     #[serde(default)]
     pub patch: bool,
+    /// Which pages of two documents differ, pixel for pixel, with overlays
+    /// of the changed region (`jubarte diff-render`).
+    #[serde(default)]
+    pub diff_render: bool,
+    /// Rasterize selected pages after one layout pass of the whole
+    /// document (`convert --pages`).
+    #[serde(default)]
+    pub page_ranges: bool,
 }
 
 /// Documented scope limits.
@@ -136,6 +144,8 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             markdown_to_docx: true,
             markdown_diff: true,
             patch: true,
+            diff_render: true,
+            page_ranges: true,
         },
         edit_plan_versions: vec![crate::inspect::SCHEMA_VERSION],
         edit_operations: [
@@ -185,6 +195,8 @@ mod tests {
         assert_eq!(json["runtime"], "cli");
         assert_eq!(json["operations"]["png"], true);
         assert_eq!(json["operations"]["selective_revisions"], true);
+        assert_eq!(json["operations"]["diff_render"], true);
+        assert_eq!(json["operations"]["page_ranges"], true);
         assert_eq!(json["limits"]["reads_legacy_doc"], false);
         assert_eq!(json["limits"]["input"]["max_entries"], 10_000);
         assert_eq!(json["limits"]["input"]["max_xml_depth"], 256);
