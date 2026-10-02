@@ -542,7 +542,9 @@ fn with_pages<T>(
         run_faces.extend(latin_font_names(text));
     }
     let any_text = |test: fn(char) -> bool| {
-        xml.chars().any(test) || stories.iter().any(|t| t.chars().any(test))
+        std::iter::once(&xml)
+            .chain(&stories)
+            .any(|t| t.chars().chain(char_refs(t)).any(test))
     };
     // List and page numbers in an East Asian format paint characters the
     // text never holds (a footer's ideographEnclosedCircle PAGE label).
@@ -555,6 +557,14 @@ fn with_pages<T>(
                 .any(|part| number_formats_write(part, test))
     };
     let has_cjk = writes(takes_cjk_fallback);
+    // Balanced spaces take a run's eastAsia face's width, Latin text or
+    // not (`balance_spaces`), so that face loads like a painted one.
+    if settings_flag(&pkg, "balanceSingleByteDoubleByteWidth") {
+        let styles = pkg.part_string("word/styles.xml");
+        for text in std::iter::once(&xml).chain(&stories).chain(styles.as_ref()) {
+            run_faces.extend(font_attr_names(text, &["w:eastAsia=\""]));
+        }
+    }
     font::add_installed_faces(&mut embedded, &table, &family_names, &run_faces, has_cjk);
     if has_cjk {
         font::add_cjk_fallbacks(&mut embedded);
@@ -601,6 +611,12 @@ fn with_pages<T>(
             let compat_mode = settings_compat_mode(&pkg);
             at_least_off_grid(&mut blocks, compat_mode);
             mark_ideograph_words(&mut blocks, &fonts, compat_mode);
+            if settings_flag(&pkg, "balanceSingleByteDoubleByteWidth")
+                && east_asian_layout(&pkg, &sheet, &fonts)
+            {
+                balance_spaces(&mut blocks, &fonts);
+            }
+            squeeze_bracket_pairs(&mut blocks);
             let display = number_footnote_refs(&mut blocks);
             resolve_cell_fields(&mut blocks);
             keep_opening_row_mark(&mut blocks);
@@ -735,6 +751,11 @@ struct RunStyle {
     /// or at its end (496e2984f7's "gastro-oesophageal" moves whole; Word
     /// 16 probes, compat 12/14 and none; doNotCompress and compat 15 break).
     punct_compress: bool,
+    /// Every character of this run advances this many points before `w:w`
+    /// scales it: a stretch of balanced spaces (`balance_spaces`) or a
+    /// bracket Word squeezes beside another (`squeeze_bracket_pairs`);
+    /// 0 = off.
+    fixed_advance: f32,
 }
 
 /// Word Save-as-PDF snaps type size to integer ppem at 300 dpi
@@ -1344,6 +1365,7 @@ impl Defaults {
                 effect_skip: false,
                 ideograph_words: false,
                 punct_compress: false,
+                fixed_advance: 0.0,
             },
             para: ParaStyle {
                 fmt_rev: false,
@@ -1712,8 +1734,6 @@ struct SectionChrome {
     footer_tables: Vec<ChromeTable>,
     /// `w:mirrorMargins` (xml leftover).
     mirror_margins: bool,
-    /// `w:characterSpacingControl` (xml leftover, document-level).
-    character_spacing: CharacterSpacing,
     /// `settings_punct_squeeze`: every line may narrow its spaces.
     punct_squeeze: bool,
     /// `w:compat/w:ulTrailSpace` (xml leftover).
@@ -3889,13 +3909,21 @@ fn theme_bidi_face(theme: &ThemeFonts, which: &str) -> Option<String> {
 /// Families that paint non-East-Asian text: run `w:ascii` / `w:hAnsi` /
 /// `w:cs` and the theme's `a:latin` faces (not its per-script list).
 fn latin_font_names(xml: &str) -> Vec<String> {
+    font_attr_names(
+        xml,
+        &[
+            "w:ascii=\"",
+            "w:hAnsi=\"",
+            "w:cs=\"",
+            "<a:latin typeface=\"",
+        ],
+    )
+}
+
+/// The distinct names `xml` gives after each attribute opener in `keys`.
+fn font_attr_names(xml: &str, keys: &[&str]) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    for key in [
-        "w:ascii=\"",
-        "w:hAnsi=\"",
-        "w:cs=\"",
-        "<a:latin typeface=\"",
-    ] {
+    for key in keys {
         let mut rest = xml;
         while let Some(at) = rest.find(key) {
             rest = &rest[at + key.len()..];
@@ -3931,6 +3959,19 @@ fn number_formats_write(xml: &str, test: fn(char) -> bool) -> bool {
                         .any(|n| format_num(fmt, n).chars().any(test))
                 })
         })
+    })
+}
+
+/// The characters an XML part names by numeric reference (`&#x3001;`,
+/// `&#12289;`), which `str::chars` sees only as ASCII.
+fn char_refs(xml: &str) -> impl Iterator<Item = char> + '_ {
+    xml.split("&#").skip(1).filter_map(|rest| {
+        let (num, _) = rest.split_once(';')?;
+        let code = match num.strip_prefix(['x', 'X']) {
+            Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+            None => num.parse().ok()?,
+        };
+        char::from_u32(code)
     })
 }
 
@@ -6382,6 +6423,230 @@ fn mark_ideograph_words(blocks: &mut [Block], fonts: &Fonts, compat_mode: u8) {
     }
 }
 
+/// `w:balanceSingleByteDoubleByteWidth` (Word 16 probes sp1–sp5, any
+/// compatibility mode): a space or no-break space next to another, across
+/// runs too, or between two East Asian characters advances the run's
+/// eastAsia face's average character width (MS Mincho 0.5em); a lone space
+/// between Latin letters keeps its own. A run with no eastAsia font, or an
+/// absent one, takes its Latin face's average (TNR 0.401em, Arial 0.441em).
+/// An absent name, or a Latin face other than the run's own (sp6: Arial
+/// over Times New Roman), falls back to an installed East Asian face the
+/// document runs at the same size anywhere, before or after it (sp5 e:
+/// 4.81pt at 12pt, 9.0pt at 18pt beside an 18pt MS Mincho run), a serif
+/// Latin face to a serif one (MS Mincho) and a sans one to a sans one (MS
+/// Gothic; sp9: Arial beside 16pt MS Mincho keeps its own 7.07pt); a run
+/// with no eastAsia font, or its ascii face there, never does (sp3 LN,
+/// sp6 V1).
+/// LibreOffice's tdf#88908 (`BalanceCjkSpaces`) also widens a lone space
+/// at a run's edge; Word's PDF of ee79137dd5 keeps those at Calibri's width.
+/// Each stretch becomes a run of its own carrying the width
+/// (`RunStyle::fixed_advance`).
+fn balance_spaces(blocks: &mut [Block], fonts: &Fonts) {
+    let mut loaded = Vec::new();
+    for_each_block_runs(blocks, &mut |runs| {
+        for run in runs.iter() {
+            let size = run.style.layout_size();
+            if let Some(face) = run
+                .style
+                .family_ea
+                .as_deref()
+                .filter(|f| fonts.family_is_east_asian(f))
+                .and_then(|f| fonts.east_asia_face(f))
+                && !loaded
+                    .iter()
+                    .any(|&(s, serif, _)| s == size && serif == face.serif)
+            {
+                loaded.push((size, face.serif, face.avg_char_width));
+            }
+        }
+    });
+    for_each_block_runs(blocks, &mut |runs| balance_run_spaces(runs, fonts, &loaded));
+}
+
+/// Whether Word runs its East Asian layout code, which balances spaces:
+/// `w:useFELayout`, or a default eastAsia face that is East Asian. Word 16
+/// probes sp7/sp8 (2026-10-02): docDefaults naming MS Mincho balance, a
+/// styles part with Times New Roman or no eastAsia face does not (6a0d's
+/// AASB standard keeps its double spaces at 2.38pt), and no styles part
+/// at all takes Word's own East Asian default and balances.
+fn east_asian_layout(pkg: &PartFs, sheet: &StyleSheet, fonts: &Fonts) -> bool {
+    settings_flag(pkg, "useFELayout")
+        || pkg
+            .part_string(&main_rel_part(pkg, "styles", "word/styles.xml"))
+            .is_none()
+        || sheet
+            .defaults
+            .run
+            .family_ea
+            .as_deref()
+            .is_some_and(|f| fonts.family_is_east_asian(f))
+}
+
+/// Calls `f` on each body paragraph's and table cell paragraph's runs,
+/// nested tables included.
+fn for_each_block_runs(blocks: &mut [Block], f: &mut dyn FnMut(&mut Vec<TextRun>)) {
+    for block in blocks {
+        match block {
+            Block::Paragraph { runs, .. } => f(runs),
+            Block::Table { rows, .. } => {
+                for cell in rows.iter_mut().flatten() {
+                    for para in &mut cell.paras {
+                        f(&mut para.runs);
+                    }
+                    for nested in &mut cell.nested {
+                        if let Some(block) = std::rc::Rc::get_mut(nested) {
+                            for_each_block_runs(std::slice::from_mut(block), f);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn balance_run_spaces(runs: &mut Vec<TextRun>, fonts: &Fonts, loaded: &[(f32, bool, f32)]) {
+    let is_space = |c: char| matches!(c, ' ' | '\u{a0}');
+    let flat: Vec<char> = runs.iter().flat_map(|r| r.text.chars()).collect();
+    let marks: Vec<bool> = (0..flat.len())
+        .map(|i| {
+            let prev = i.checked_sub(1).map(|j| flat[j]);
+            let next = flat.get(i + 1).copied();
+            is_space(flat[i])
+                && (prev.is_some_and(is_space)
+                    || next.is_some_and(is_space)
+                    || prev.is_some_and(is_cjk_break_char) && next.is_some_and(is_cjk_break_char))
+        })
+        .collect();
+    split_fixed_advances(runs, &marks, |run| {
+        let size = run.style.layout_size();
+        let latin = fonts.get(ink_face(fonts, &run.style, " "));
+        let em = match run.style.family_ea.as_deref() {
+            Some(family) if family.eq_ignore_ascii_case(&run.style.family) => None,
+            Some(family) => fonts
+                .family_is_east_asian(family)
+                .then(|| fonts.east_asia_avg_em(family))
+                .flatten()
+                .or_else(|| {
+                    loaded
+                        .iter()
+                        .find(|&&(s, serif, _)| s == size && serif == latin.serif)
+                        .map(|&(_, _, em)| em)
+                }),
+            None => None,
+        }
+        .unwrap_or(latin.avg_char_width);
+        size * em
+    });
+}
+
+/// Word 16 probes cp1–cp3 (2026-10-02, every compatibility mode and
+/// `w:characterSpacingControl`): a full-width closing bracket before
+/// another bracket, or an opening bracket before another opening one,
+/// advances half an em ("」「", "）」", "「「" are 6pt at 12pt), across runs
+/// too; a bracket beside 。、・！？ or a curly quote keeps its em.
+fn squeeze_bracket_pairs(blocks: &mut [Block]) {
+    for_each_block_runs(blocks, &mut |runs| {
+        let flat: Vec<char> = runs.iter().flat_map(|r| r.text.chars()).collect();
+        let marks: Vec<bool> = (0..flat.len())
+            .map(|i| {
+                let next = flat.get(i + 1).copied();
+                is_closing_bracket(flat[i])
+                    && next.is_some_and(|n| is_closing_bracket(n) || is_opening_bracket(n))
+                    || is_opening_bracket(flat[i]) && next.is_some_and(is_opening_bracket)
+            })
+            .collect();
+        split_fixed_advances(runs, &marks, |run| run.style.layout_size() * 0.5);
+    });
+}
+
+fn is_opening_bracket(c: char) -> bool {
+    matches!(
+        c,
+        '\u{FF08}'
+            | '\u{FF3B}'
+            | '\u{FF5B}'
+            | '\u{3008}'
+            | '\u{300A}'
+            | '\u{300C}'
+            | '\u{300E}'
+            | '\u{3010}'
+            | '\u{3014}'
+            | '\u{3016}'
+            | '\u{3018}'
+            | '\u{301A}'
+    )
+}
+
+fn is_closing_bracket(c: char) -> bool {
+    matches!(
+        c,
+        '\u{FF09}'
+            | '\u{FF3D}'
+            | '\u{FF5D}'
+            | '\u{3009}'
+            | '\u{300B}'
+            | '\u{300D}'
+            | '\u{300F}'
+            | '\u{3011}'
+            | '\u{3015}'
+            | '\u{3017}'
+            | '\u{3019}'
+            | '\u{301B}'
+    )
+}
+
+/// Splits each plain run of `runs` around the characters `marks` flags
+/// (indexed over the runs' joined text), giving each flagged stretch the
+/// fixed advance `width` measures for its run.
+fn split_fixed_advances(runs: &mut Vec<TextRun>, marks: &[bool], width: impl Fn(&TextRun) -> f32) {
+    if !marks.contains(&true) {
+        return;
+    }
+    let mut out = Vec::with_capacity(runs.len());
+    let mut at = 0;
+    for run in runs.drain(..) {
+        let n = run.text.chars().count();
+        let marks = &marks[at..at + n];
+        at += n;
+        let plain = run.field == FieldKind::None
+            && run.comments.is_empty()
+            && run.pageref.is_none()
+            && run.ref_name.is_none()
+            && run.rule.is_none()
+            && run.footnote_id.is_none()
+            && run.endnote_id.is_none()
+            && !run.note_ref
+            && !run.note_rule
+            && !run.ends_line
+            && !run.list_marker
+            && run.checkbox.is_none()
+            && !run.strut
+            && run.hf_para.is_none();
+        if !plain || !marks.contains(&true) {
+            out.push(run);
+            continue;
+        }
+        let fixed = width(&run);
+        let chars: Vec<char> = run.text.chars().collect();
+        let mut start = 0;
+        while start < chars.len() {
+            let mark = marks[start];
+            let end = (start..chars.len())
+                .find(|&k| marks[k] != mark)
+                .unwrap_or(chars.len());
+            let mut piece = run.clone();
+            piece.text = chars[start..end].iter().collect();
+            if mark {
+                piece.style.fixed_advance = fixed;
+            }
+            out.push(piece);
+            start = end;
+        }
+    }
+    *runs = out;
+}
+
 /// `w:linkStyles` with no `w:attachedTemplate`: Word refreshes the styles
 /// from Normal.dotm when it opens the file. A named template lives on the
 /// author's machine (a7110391's `C:\Users\...\NESO ... .dotx`, a4168b8a's
@@ -6729,35 +6994,6 @@ fn settings_character_spacing_xml(xml: &str) -> CharacterSpacing {
         Some("compressPunctuationAndJapaneseKana") => CharacterSpacing::CompressPunctuationAndKana,
         Some("compressPunctuation") => CharacterSpacing::CompressPunctuation,
         _ => CharacterSpacing::DoNotCompress,
-    }
-}
-
-/// Full-width CJK punctuation whose extra half-em Word trims under
-/// `compressPunctuation` / `compressPunctuationAndJapaneseKana`
-/// (ECMA-376 17.15.1.18; CSS `text-justify-trim`).
-fn is_fullwidth_punctuation(c: char) -> bool {
-    matches!(
-        c,
-        '\u{3000}'
-            | '\u{3001}'..='\u{3002}'
-            | '\u{3008}'..='\u{3011}'
-            | '\u{3014}'..='\u{301B}'
-            | '\u{30FB}'
-            | '\u{FF01}'..='\u{FF0F}'
-            | '\u{FF1A}'..='\u{FF20}'
-            | '\u{FF3B}'..='\u{FF40}'
-            | '\u{FF5B}'..='\u{FF5E}'
-    )
-}
-
-fn character_spacing_scale(mode: CharacterSpacing, ch: char) -> f32 {
-    match mode {
-        CharacterSpacing::CompressPunctuation | CharacterSpacing::CompressPunctuationAndKana
-            if is_fullwidth_punctuation(ch) =>
-        {
-            0.5
-        }
-        _ => 1.0,
     }
 }
 
@@ -7403,7 +7639,6 @@ fn section_chrome(
         header_tables: header.start.tables,
         footer_tables: footer.start.tables,
         mirror_margins: settings_mirror_margins(pkg),
-        character_spacing: settings_character_spacing(pkg),
         punct_squeeze: sheet.defaults.punct_squeeze,
         ul_trail_space: settings_ul_trail_space(pkg),
         space_for_ul: settings_space_for_ul(pkg),
@@ -11632,6 +11867,26 @@ fn table_block(
                 && let Some(last) = cell_paras.last_mut()
             {
                 drop_trailing_break(last);
+            }
+            // An empty last paragraph is that mark's own line: in any row
+            // it takes no height, the text above keeping its spacing after
+            // (Word 16 probe hm1: a first row too; e1cfa0591a's "Familial
+            // Aggregation" heading row is 22.6pt, one 11pt Calibri line and
+            // 8pt after).
+            if hide_mark
+                && nested.is_empty()
+                && cell_paras.len() > 1
+                && cell_paras.last().is_some_and(|p| {
+                    p.runs
+                        .iter()
+                        .all(|r| r.text.trim().is_empty() && r.field == FieldKind::None)
+                        && p.images.is_empty()
+                        && p.boxes.is_empty()
+                        && p.bookmarks.is_empty()
+                        && p.blank_bookmarks.is_empty()
+                })
+            {
+                cell_paras.pop();
             }
             cells.push(RawCell {
                 paras: cell_paras,
@@ -17797,7 +18052,6 @@ struct HfChrome {
     /// `w:evenAndOddHeaders`: change bars sit on the outside border,
     /// right on odd pages (live Word 2026-09-25).
     rev_bars_facing: bool,
-    character_spacing: CharacterSpacing,
     punct_squeeze: bool,
     /// `w:compat/w:ulTrailSpace` (xml leftover).
     ul_trail_space: bool,
@@ -17816,7 +18070,6 @@ fn first_section_hf(
 ) -> HfChrome {
     let Some(sect) = live_sect_prs(dom, body).into_iter().next() else {
         return HfChrome {
-            character_spacing: settings_character_spacing(pkg),
             punct_squeeze: sheet.defaults.punct_squeeze,
             ul_trail_space: settings_ul_trail_space(pkg),
             space_for_ul: settings_space_for_ul(pkg),
@@ -17854,7 +18107,6 @@ fn first_section_hf(
         footer_tables: footer.start.tables,
         mirror_margins: settings_mirror_margins(pkg),
         rev_bars_facing: settings_even_and_odd_headers(pkg),
-        character_spacing: settings_character_spacing(pkg),
         punct_squeeze: sheet.defaults.punct_squeeze,
         ul_trail_space: settings_ul_trail_space(pkg),
         space_for_ul: settings_space_for_ul(pkg),
@@ -19912,7 +20164,6 @@ struct Layout<'a> {
     /// `w:evenAndOddHeaders`: change bars sit on the outside border,
     /// right on odd pages (live Word 2026-09-25).
     rev_bars_facing: bool,
-    character_spacing: CharacterSpacing,
     punct_squeeze: bool,
     /// `w:compat/w:ulTrailSpace`: underline trailing spaces even in cells.
     ul_trail_space: bool,
@@ -20433,7 +20684,6 @@ impl<'a> Layout<'a> {
             footer_tables: hf.footer_tables,
             mirror_margins: hf.mirror_margins,
             rev_bars_facing: hf.rev_bars_facing,
-            character_spacing: hf.character_spacing,
             punct_squeeze: hf.punct_squeeze,
             ul_trail_space: hf.ul_trail_space,
             space_for_ul: hf.space_for_ul,
@@ -20498,7 +20748,6 @@ impl<'a> Layout<'a> {
         let (w, h) = (next.page.width, next.page.height);
         self.page = next.page;
         self.mirror_margins = next.mirror_margins;
-        self.character_spacing = next.character_spacing;
         self.punct_squeeze = next.punct_squeeze;
         self.ul_trail_space = next.ul_trail_space;
         self.space_for_ul = next.space_for_ul;
@@ -23381,6 +23630,21 @@ impl<'a> Layout<'a> {
         w
     }
 
+    /// `spaced_glyph_advances`, a balanced-space run's glyphs taking its
+    /// fixed width before the grid and character spacing adjust it
+    /// (a4ebc0e89c's MS Mincho spaces: 5.25pt at 10.5pt, less half the
+    /// grid's 1.05pt, are 4.72pt in Word's PDF).
+    fn run_glyph_advances(&self, run: &TextRun, text: &str, shaped: &[(u16, f32)]) -> Vec<f32> {
+        if run.style.fixed_advance > 0.0 {
+            let fixed: Vec<(u16, f32)> = shaped
+                .iter()
+                .map(|&(gid, _)| (gid, run.style.fixed_advance))
+                .collect();
+            return self.spaced_glyph_advances(text, &fixed);
+        }
+        self.spaced_glyph_advances(text, shaped)
+    }
+
     fn spaced_glyph_advances(&self, text: &str, shaped: &[(u16, f32)]) -> Vec<f32> {
         let mut chars: Vec<char> = text.chars().collect();
         if shapes_rtl(text) {
@@ -23391,15 +23655,10 @@ impl<'a> Layout<'a> {
             .iter()
             .enumerate()
             .map(|(i, (_, adv))| {
-                let sp = if paired {
-                    character_spacing_scale(self.character_spacing, chars[i])
-                } else {
-                    1.0
-                };
                 // A half-width character takes half the grid adjustment
                 // (0016d88a's spaces are 4.72pt beside 9.45pt CJK glyphs).
                 let half = paired && is_half_width(chars[i]);
-                *adv * sp + self.page.grid_char * if half { 0.5 } else { 1.0 }
+                *adv + self.page.grid_char * if half { 0.5 } else { 1.0 }
             })
             .collect()
     }
@@ -23434,7 +23693,7 @@ impl<'a> Layout<'a> {
         let size = run.style.layout_size();
         let kern = run.style.kerns_at(size);
         let shaped = face.shape_kern(text, size, kern);
-        let advs = self.spaced_glyph_advances(text, &shaped);
+        let advs = self.run_glyph_advances(run, text, &shaped);
         let w: f32 = advs.iter().sum::<f32>() * run.style.hscale()
             + run.style.track * shaped.len().saturating_sub(1) as f32;
         if w > 0.05 || text.chars().all(char::is_whitespace) {
@@ -23795,7 +24054,7 @@ impl<'a> Layout<'a> {
             shaped = face.shape_kern(&run.text, lsize, kern);
         }
         let scale = run.style.hscale();
-        let advs = self.spaced_glyph_advances(&run.text, &shaped);
+        let advs = self.run_glyph_advances(run, &run.text, &shaped);
         let w: f32 = advs.iter().map(|a| *a * scale).sum::<f32>()
             + run.style.track * shaped.len().saturating_sub(1) as f32;
         let w = self.clip_width(x, w);
@@ -29008,6 +29267,7 @@ fn default_run_style() -> RunStyle {
         effect_skip: false,
         ideograph_words: false,
         punct_compress: false,
+        fixed_advance: 0.0,
     }
 }
 
@@ -29058,6 +29318,7 @@ fn style_eq(a: &RunStyle, b: &RunStyle) -> bool {
         && a.color == b.color
         && a.highlight == b.highlight
         && (a.track - b.track).abs() < f32::EPSILON
+        && (a.fixed_advance - b.fixed_advance).abs() < f32::EPSILON
         && (a.scale - b.scale).abs() < f32::EPSILON
         && a.caps == b.caps
         && (a.offset - b.offset).abs() < f32::EPSILON
@@ -29834,8 +30095,13 @@ fn wrap_runs_segment(
                     let size = run.style.layout_size();
                     // w:spacing tracking widens every letter, as painted
                     // (00080142's +0.35pt Arial packed too many words).
-                    face.width_pt_kern(tok, size, run.style.kerns_at(size)) * run.style.hscale()
-                        + run.style.track * tok.chars().count() as f32
+                    if run.style.fixed_advance > 0.0 {
+                        (run.style.fixed_advance * run.style.hscale() + run.style.track)
+                            * tok.chars().count() as f32
+                    } else {
+                        face.width_pt_kern(tok, size, run.style.kerns_at(size)) * run.style.hscale()
+                            + run.style.track * tok.chars().count() as f32
+                    }
                 };
                 let is_space = tok.chars().all(is_wrap_space);
                 let glue = open
@@ -32880,39 +33146,6 @@ fn body_op_yrange(ops: &[Op]) -> Option<(f32, f32)> {
         }
     }
     (min_y.is_finite() && max_y.is_finite()).then_some((min_y, max_y))
-}
-
-#[cfg(test)]
-mod character_spacing_tests {
-    use super::{CharacterSpacing, character_spacing_scale, is_fullwidth_punctuation};
-
-    #[test]
-    fn fullwidth_punct_is_half_under_compress_modes() {
-        assert!(is_fullwidth_punctuation('、'));
-        assert!(is_fullwidth_punctuation('。'));
-        assert!(!is_fullwidth_punctuation('A'));
-        assert!(!is_fullwidth_punctuation('あ'));
-        assert_eq!(
-            character_spacing_scale(CharacterSpacing::DoNotCompress, '、'),
-            1.0
-        );
-        assert_eq!(
-            character_spacing_scale(CharacterSpacing::CompressPunctuation, '、'),
-            0.5
-        );
-        assert_eq!(
-            character_spacing_scale(CharacterSpacing::CompressPunctuation, 'A'),
-            1.0
-        );
-        assert_eq!(
-            character_spacing_scale(CharacterSpacing::CompressPunctuationAndKana, '、'),
-            0.5
-        );
-        assert_eq!(
-            character_spacing_scale(CharacterSpacing::CompressPunctuationAndKana, 'あ'),
-            1.0
-        );
-    }
 }
 
 #[cfg(test)]
