@@ -36,6 +36,11 @@ dynamic = ["version"]
 # `uvx jubarte-redlines redline a.docx b.docx -o redline.docx`
 [project.scripts]
 jubarte-redlines = "jubarte_redlines.__main__:main"
+# `uvx --from 'jubarte-redlines[mcp]' jubarte-mcp --root .`
+jubarte-mcp = "jubarte_redlines.mcp_server:main"
+
+[project.optional-dependencies]
+mcp = ["mcp>=2.2,<3"]
 
 [project.urls]
 Homepage = "https://github.com/jandira-tech/jubarte-redlines"
