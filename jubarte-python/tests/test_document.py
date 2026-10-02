@@ -175,3 +175,55 @@ def test_read_path_and_top_level_read(tmp_path):
     assert jubarte.read(str(source)).to_bytes() == data
     with pytest.raises(FileNotFoundError):
         jubarte.read(tmp_path / "missing.docx")
+
+
+def with_extra_entries(package: bytes, count: int) -> bytes:
+    out = BytesIO()
+    with ZipFile(BytesIO(package)) as source, ZipFile(out, "w") as target:
+        for item in source.infolist():
+            target.writestr(item, source.read(item.filename))
+        for index in range(count):
+            target.writestr(ZipInfo(f"word/media/p{index}.bin"), b"x")
+    return out.getvalue()
+
+
+def test_compare_refuses_a_package_with_too_many_entries():
+    # The entry count is read from the central directory before anything is
+    # inflated; the refusal is a catchable JubarteError, not an abort.
+    crowded = with_extra_entries(make_document("hello"), 10_010)
+    with pytest.raises(jubarte.JubarteError, match="INPUT_LIMIT"):
+        jubarte.compare_documents(make_document("hello"), crowded)
+    with pytest.raises(jubarte.JubarteError, match="INPUT_LIMIT"):
+        jubarte.compare_documents(crowded, make_document("hello"))
+
+
+def test_compare_still_accepts_a_well_formed_pair():
+    redline = jubarte.compare_documents(make_document("hello"), make_document("hello there"))
+    assert redline.startswith(b"PK")
+
+
+def test_input_limits_tighten_the_compare_budget():
+    small = {"max_entries": 2}
+    with pytest.raises(jubarte.JubarteError, match="INPUT_LIMIT"):
+        jubarte.compare_documents(make_document("a"), make_document("b"), input_limits=small)
+    with pytest.raises(jubarte.JubarteError, match="INPUT_LIMIT"):
+        jubarte.get_revisions_json(make_document("a"), input_limits=small)
+    roomy = {"max_entries": 100}
+    redline = jubarte.compare_documents(make_document("a"), make_document("b"), input_limits=roomy)
+    assert redline.startswith(b"PK")
+
+
+def test_input_limits_refuse_an_unknown_key():
+    with pytest.raises(jubarte.JubarteError, match="invalid input limits.*max_entrys"):
+        jubarte.compare_documents(
+            make_document("a"), make_document("b"), input_limits={"max_entrys": 2}
+        )
+
+
+def test_document_compare_honours_options_input_limits():
+    old, new = jubarte.Document.from_bytes(make_document("a")), jubarte.Document.from_bytes(
+        make_document("b")
+    )
+    options = jubarte.CompareOptions(input_limits={"max_entries": 2})
+    with pytest.raises(jubarte.JubarteError, match="INPUT_LIMIT"):
+        old.compare(new, author="Reviewer", options=options)

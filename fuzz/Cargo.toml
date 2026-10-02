@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+[package]
+name = "jubarte-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+jubarte-redlines = { path = "..", default-features = false }
+
+# A standalone package, like the bindings: the root `[workspace]` is empty.
+[workspace]
+
+[[bin]]
+name = "admit"
+path = "fuzz_targets/admit.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "strict_to_transitional"
+path = "fuzz_targets/strict_to_transitional.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "compare"
+path = "fuzz_targets/compare.rs"
+test = false
+doc = false
+bench = false

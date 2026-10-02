@@ -6,7 +6,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # jubarte-redlines (Python)
 
-Lossless DOCX **redline** engine: compare two Word documents into a
+Word-faithful DOCX **redline** engine: compare two Word documents into a
 tracked-changes document that opens cleanly in Microsoft Word; list, accept,
 or reject revisions; render DOCX to PDF.
 
@@ -91,6 +91,16 @@ Path("redline.pdf").write_bytes(docx_to_pdf(redline))
 revisions with a fixed epoch date by default so output is deterministic;
 pass an ISO-8601 `date` to override. Errors raise
 `jubarte_redlines.JubarteError`.
+
+Both inputs are admitted under a size budget before anything is inflated
+(512 MiB per file and per part, 2 GiB inflated, 10,000 entries, XML depth
+256). `input_limits` overrides it key by key, for example
+`compare_documents(a, b, input_limits={"max_uncompressed_bytes": 256 << 20})`;
+the keys are `max_compressed_bytes`, `max_entries`, `max_part_bytes`,
+`max_uncompressed_bytes` and `max_xml_depth`. A package past the budget
+raises `JubarteError` with `INPUT_LIMIT`, and an unknown key raises
+`invalid input limits`. `get_revisions_json` and
+`CompareOptions(input_limits=...)` take the same mapping.
 
 `read()` returns a `Document` — an immutable snapshot, path I/O done once, no
 operation mutating it or writing files:

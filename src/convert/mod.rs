@@ -521,6 +521,8 @@ fn with_layout<T>(
     docx: &[u8],
     emit: impl FnOnce(&Fonts, &[pdf::Page], &LayoutFacts) -> T,
 ) -> Result<T, ConvertError> {
+    crate::document_comparer::admit_package(docx)
+        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;
     let normalized = crate::strict_translation::strict_to_transitional_docx(docx);
     let pkg =
         PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!("{err:?}")))?;

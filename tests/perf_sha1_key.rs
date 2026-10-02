@@ -17,13 +17,13 @@
 
 use std::collections::HashSet;
 
-use jubarte::util::sha1::{sha1_fingerprint, sha1_hex};
+use jubarte::util::sha1::{fnv1a_64, sha1_hex};
 
 #[test]
 fn fingerprint_is_deterministic() {
-    assert_eq!(sha1_fingerprint("deadbeef"), sha1_fingerprint("deadbeef"));
+    assert_eq!(fnv1a_64("deadbeef"), fnv1a_64("deadbeef"));
     let h = sha1_hex("hello world");
-    assert_eq!(sha1_fingerprint(&h), sha1_fingerprint(&h));
+    assert_eq!(fnv1a_64(&h), fnv1a_64(&h));
 }
 
 /// Soundness: equal strings ⇒ equal keys, for a representative spread including
@@ -33,8 +33,8 @@ fn fingerprint_equal_hash_equal_key() {
     for s in ["", "a", "not-a-40-char-hash", &sha1_hex("x")] {
         let owned = s.to_string();
         assert_eq!(
-            sha1_fingerprint(s),
-            sha1_fingerprint(&owned),
+            fnv1a_64(s),
+            fnv1a_64(&owned),
             "equal strings must fingerprint equal (s = {s:?})"
         );
     }
@@ -46,7 +46,7 @@ fn fingerprint_equal_hash_equal_key() {
 #[test]
 fn fingerprint_discriminates_distinct_hashes() {
     let hashes: Vec<String> = (0..5000).map(|i| sha1_hex(&format!("unit-{i}"))).collect();
-    let keys: HashSet<u64> = hashes.iter().map(|h| sha1_fingerprint(h)).collect();
+    let keys: HashSet<u64> = hashes.iter().map(|h| fnv1a_64(h)).collect();
     assert_eq!(
         keys.len(),
         hashes.len(),

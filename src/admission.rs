@@ -2,6 +2,14 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
+// Untrusted bytes reach this module: an out-of-range index or an integer overflow
+// is an abort in the Python and WASM consumers, so both are refused here
+// (test fixtures are exempt).
+#![cfg_attr(
+    not(test),
+    deny(clippy::indexing_slicing, clippy::arithmetic_side_effects)
+)]
+
 //! Resource admission for untrusted DOCX input: bound the ZIP container
 //! before anything inflates it without limits.
 //!
@@ -15,7 +23,9 @@
 //!
 //! The agent-facing entry points ([`crate::inspect`], [`crate::edit`] and the
 //! bindings over them) admit with [`InputLimits::default`]. The redline
-//! comparer keeps its historical tolerance.
+//! comparer ([`crate::document_comparer`]) and [`crate::WmlDocument`] admit
+//! with the roomier [`InputLimits::compare`], which
+//! [`crate::comparer::WmlComparerSettings::input_limits`] overrides.
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashSet};
@@ -51,6 +61,72 @@ impl Default for InputLimits {
             max_part_bytes: 64 * MIB,
             max_uncompressed_bytes: 256 * MIB,
             max_xml_depth: 256,
+        }
+    }
+}
+
+impl InputLimits {
+    /// The redline comparer's budget: the same entry and depth caps as
+    /// [`Self::default`], with room for the embedded media legal corpora
+    /// carry (512 MiB per file and per part, 2 GiB inflated in all). Hosts
+    /// that know their documents set
+    /// [`crate::comparer::WmlComparerSettings::input_limits`] tighter.
+    #[must_use]
+    pub const fn compare() -> Self {
+        const MIB: u64 = 1024 * 1024;
+        Self {
+            max_compressed_bytes: 512 * MIB,
+            max_entries: 10_000,
+            max_part_bytes: 512 * MIB,
+            max_uncompressed_bytes: 2048 * MIB,
+            max_xml_depth: 256,
+        }
+    }
+}
+
+/// Field-by-field overrides of an [`InputLimits`] budget: the shape the
+/// Python and WASM bindings take as a JSON object. Every key is optional and
+/// keeps the base value when absent; an unknown key is refused, so a typo
+/// cannot silently leave a default in force.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InputLimitOverrides {
+    /// Replaces [`InputLimits::max_compressed_bytes`].
+    pub max_compressed_bytes: Option<u64>,
+    /// Replaces [`InputLimits::max_entries`].
+    pub max_entries: Option<usize>,
+    /// Replaces [`InputLimits::max_part_bytes`].
+    pub max_part_bytes: Option<u64>,
+    /// Replaces [`InputLimits::max_uncompressed_bytes`].
+    pub max_uncompressed_bytes: Option<u64>,
+    /// Replaces [`InputLimits::max_xml_depth`].
+    pub max_xml_depth: Option<usize>,
+}
+
+impl InputLimitOverrides {
+    /// Parse a JSON object such as `{"max_part_bytes": 67108864}`.
+    ///
+    /// # Errors
+    ///
+    /// `invalid input limits: ...` for malformed JSON, an unknown key, or a
+    /// value that is not a non-negative integer in range.
+    pub fn from_json(json: &str) -> Result<Self, String> {
+        serde_json::from_str(json).map_err(|e| format!("invalid input limits: {e}"))
+    }
+
+    /// `base` with every given key replaced.
+    #[must_use]
+    pub fn apply(self, base: InputLimits) -> InputLimits {
+        InputLimits {
+            max_compressed_bytes: self
+                .max_compressed_bytes
+                .unwrap_or(base.max_compressed_bytes),
+            max_entries: self.max_entries.unwrap_or(base.max_entries),
+            max_part_bytes: self.max_part_bytes.unwrap_or(base.max_part_bytes),
+            max_uncompressed_bytes: self
+                .max_uncompressed_bytes
+                .unwrap_or(base.max_uncompressed_bytes),
+            max_xml_depth: self.max_xml_depth.unwrap_or(base.max_xml_depth),
         }
     }
 }
@@ -231,11 +307,11 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
             continue;
         }
         let name = entry.name().to_string();
-        let remaining = limits.max_uncompressed_bytes - total;
+        let remaining = limits.max_uncompressed_bytes.saturating_sub(total);
         let cap = limits.max_part_bytes.min(remaining);
         let lower = name.to_ascii_lowercase();
         let is_xml = lower.ends_with(".xml") || lower.ends_with(".rels");
-        let mut limited = (&mut entry).take(cap + 1);
+        let mut limited = (&mut entry).take(cap.saturating_add(1));
         let read = if is_xml {
             let mut buf = Vec::new();
             limited
@@ -264,10 +340,24 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
                 format!("{name} inflates past {cap} bytes; {which}"),
             ));
         }
-        total += read;
+        total = total.saturating_add(read);
     }
 
     let main_part = main_part(&archive, &kept)?;
+    // The scan above is by extension; the main part is parsed whatever it is
+    // called, so one named otherwise is read once more for its depth.
+    let lower = main_part.to_ascii_lowercase();
+    if !(lower.ends_with(".xml") || lower.ends_with(".rels")) {
+        let mut entry = archive
+            .by_name(&main_part)
+            .map_err(|e| AdmissionError::new(K::InvalidPackage, format!("{main_part}: {e}")))?;
+        let mut buf = Vec::new();
+        (&mut entry)
+            .take(limits.max_part_bytes.saturating_add(1))
+            .read_to_end(&mut buf)
+            .map_err(|e| AdmissionError::new(K::InvalidPackage, format!("{main_part}: {e}")))?;
+        check_xml_depth(&main_part, &buf, limits.max_xml_depth)?;
+    }
     Ok(AdmittedPackage {
         entries: archive.len(),
         inflated_bytes: total,
@@ -290,24 +380,37 @@ fn declared_entry_count(bytes: &[u8]) -> Result<u64, AdmissionError> {
     let floor = bytes.len().saturating_sub(22 + usize::from(u16::MAX));
     let at = (floor..=bytes.len().saturating_sub(22))
         .rev()
-        .find(|&i| bytes[i..].starts_with(&EOCD))
+        .find(|&i| bytes.get(i..).is_some_and(|tail| tail.starts_with(&EOCD)))
         .ok_or_else(|| invalid("no end-of-central-directory record"))?;
-    let total = u16::from_le_bytes([bytes[at + 10], bytes[at + 11]]);
+    let total = bytes
+        .get(at.saturating_add(10)..at.saturating_add(12))
+        .and_then(|field| <[u8; 2]>::try_from(field).ok())
+        .map(u16::from_le_bytes)
+        .ok_or_else(|| invalid("truncated end-of-central-directory record"))?;
     if total != u16::MAX {
         return Ok(u64::from(total));
     }
     let locator = at
         .checked_sub(20)
-        .filter(|&l| bytes[l..].starts_with(&LOCATOR))
+        .and_then(|l| bytes.get(l..at))
+        .filter(|locator| locator.starts_with(&LOCATOR))
         .ok_or_else(|| invalid("ZIP64 locator missing"))?;
-    let mut offset = [0u8; 8];
-    offset.copy_from_slice(&bytes[locator + 8..locator + 16]);
+    let offset = locator
+        .get(8..16)
+        .and_then(|field| <[u8; 8]>::try_from(field).ok())
+        .ok_or_else(|| invalid("ZIP64 locator truncated"))?;
+    // The offset is attacker-controlled: on 64-bit every u64 fits a usize,
+    // so the end of the record is computed checked and read through `get`.
     let record = usize::try_from(u64::from_le_bytes(offset))
         .ok()
-        .filter(|&r| r + 40 <= bytes.len() && bytes[r..].starts_with(&EOCD64))
+        .and_then(|r| r.checked_add(40).map(|end| (r, end)))
+        .and_then(|(r, end)| bytes.get(r..end))
+        .filter(|record| record.starts_with(&EOCD64))
         .ok_or_else(|| invalid("ZIP64 end record missing"))?;
-    let mut count = [0u8; 8];
-    count.copy_from_slice(&bytes[record + 32..record + 40]);
+    let count = record
+        .get(32..40)
+        .and_then(|field| <[u8; 8]>::try_from(field).ok())
+        .ok_or_else(|| invalid("ZIP64 end record truncated"))?;
     Ok(u64::from_le_bytes(count))
 }
 
@@ -365,17 +468,24 @@ fn check_xml_depth(name: &str, xml: &[u8], max_depth: usize) -> Result<(), Admis
         |why: String| AdmissionError::new(AdmissionErrorKind::InvalidXml, format!("{name}: {why}"));
     let text = part_text(xml);
     let mut reader = Reader::from_str(&text);
-    reader.config_mut().check_end_names = false;
+    reader.config_mut().check_end_names = true;
     let mut depth = 0usize;
     loop {
         match reader.read_event() {
             Ok(Event::Start(_)) => {
-                depth += 1;
+                depth = depth.saturating_add(1);
                 if depth > max_depth {
                     return Err(invalid(format!("XML nests deeper than {max_depth}")));
                 }
             }
-            Ok(Event::End(_)) => depth = depth.saturating_sub(1),
+            Ok(Event::End(_)) => {
+                depth = depth
+                    .checked_sub(1)
+                    .ok_or_else(|| invalid("end tag with no open element".to_string()))?;
+            }
+            Ok(Event::Eof) if depth > 0 => {
+                return Err(invalid(format!("{depth} element(s) left unclosed")));
+            }
             Ok(Event::Eof) => return Ok(()),
             Ok(_) => {}
             Err(e) => return Err(invalid(e.to_string())),
@@ -789,6 +899,36 @@ mod tests {
     }
 
     #[test]
+    fn a_main_part_without_an_xml_extension_is_still_depth_checked() {
+        // The engine parses whatever part the relationships name as the main
+        // document, whatever its extension, so the nesting budget covers it.
+        let rels = RELS.replace("word/document.xml", "word/main.dat");
+        let types = TYPES.replace("/word/document.xml", "/word/main.dat");
+        let deep = format!("{}{}", "<a>".repeat(300), "</a>".repeat(300));
+        let bytes = zip_of(
+            &[
+                ("[Content_Types].xml", types.as_bytes()),
+                ("_rels/.rels", rels.as_bytes()),
+                ("word/main.dat", deep.as_bytes()),
+            ],
+            CompressionMethod::Deflated,
+        );
+        assert_eq!(
+            kind(&bytes, InputLimits::default()),
+            AdmissionErrorKind::InvalidXml
+        );
+        let shallow = zip_of(
+            &[
+                ("[Content_Types].xml", types.as_bytes()),
+                ("_rels/.rels", rels.as_bytes()),
+                ("word/main.dat", DOC.as_bytes()),
+            ],
+            CompressionMethod::Deflated,
+        );
+        assert!(admit(&shallow, InputLimits::default()).is_ok());
+    }
+
+    #[test]
     fn the_main_part_follows_the_relationship() {
         let rels = RELS.replace("word/document.xml", "/content/main.xml");
         let types = TYPES.replace("/word/document.xml", "/content/main.xml");
@@ -822,6 +962,24 @@ mod tests {
     }
 
     #[test]
+    fn mismatched_unclosed_and_stray_end_tags_are_refused() {
+        for (name, xml) in [
+            ("word/mismatch.xml", "<a></b>"),
+            ("word/unclosed.xml", "<a><b></b>"),
+            ("word/stray.xml", "<a></a></a>"),
+        ] {
+            let bytes = docx_with(&[(name, xml.as_bytes())]);
+            assert_eq!(
+                kind(&bytes, InputLimits::default()),
+                AdmissionErrorKind::InvalidXml,
+                "{xml}"
+            );
+        }
+        let fine = docx_with(&[("word/fine.xml", b"<a><b/><c></c></a>")]);
+        assert!(admit(&fine, InputLimits::default()).is_ok());
+    }
+
+    #[test]
     fn utf16_and_non_utf8_parts_are_scanned_not_refused() {
         // SharePoint writes customXml items as UTF-16 and Word opens them;
         // a stray Latin-1 byte decodes lossily, as the engine reads it.
@@ -847,6 +1005,118 @@ mod tests {
         assert_eq!(
             kind(&deep, InputLimits::default()),
             AdmissionErrorKind::InvalidXml
+        );
+    }
+
+    /// Replace the trailing end-of-central-directory record of `zip` by a
+    /// ZIP64 locator pointing at `record_offset`, an EOCD declaring 0xFFFF
+    /// entries, and `comment` as the archive comment.
+    fn with_zip64_tail(zip: &[u8], record_offset: u64, comment: &[u8]) -> Vec<u8> {
+        let eocd_at = zip.len() - 22;
+        assert_eq!(&zip[eocd_at..eocd_at + 4], &[0x50, 0x4b, 0x05, 0x06]);
+        let mut out = zip[..eocd_at].to_vec();
+        out.extend_from_slice(&[0x50, 0x4b, 0x06, 0x07]);
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&record_offset.to_le_bytes());
+        out.extend_from_slice(&1u32.to_le_bytes());
+        let mut eocd = zip[eocd_at..].to_vec();
+        eocd[8..10].copy_from_slice(&u16::MAX.to_le_bytes());
+        eocd[10..12].copy_from_slice(&u16::MAX.to_le_bytes());
+        eocd[20..22].copy_from_slice(&u16::try_from(comment.len()).unwrap().to_le_bytes());
+        out.extend_from_slice(&eocd);
+        out.extend_from_slice(comment);
+        out
+    }
+
+    /// A 56-byte ZIP64 end-of-central-directory record declaring `entries`.
+    fn eocd64(entries: u64) -> Vec<u8> {
+        let mut record = vec![0x50, 0x4b, 0x06, 0x06];
+        record.extend_from_slice(&44u64.to_le_bytes());
+        record.extend_from_slice(&[45, 0, 45, 0]);
+        record.extend_from_slice(&0u32.to_le_bytes());
+        record.extend_from_slice(&0u32.to_le_bytes());
+        record.extend_from_slice(&entries.to_le_bytes());
+        record.extend_from_slice(&entries.to_le_bytes());
+        record.extend_from_slice(&0u64.to_le_bytes());
+        record.extend_from_slice(&0u64.to_le_bytes());
+        assert_eq!(record.len(), 56);
+        record
+    }
+
+    #[test]
+    fn a_zip64_end_record_is_read_at_the_locator_offset() {
+        let docx = docx_with(&[]);
+        let record_at = docx.len() - 22;
+        let mut body = docx[..record_at].to_vec();
+        body.extend_from_slice(&eocd64(7));
+        body.extend_from_slice(&docx[record_at..]);
+        let bytes = with_zip64_tail(&body, record_at as u64, b"");
+        assert_eq!(declared_entry_count(&bytes).unwrap(), 7);
+    }
+
+    #[test]
+    fn a_zip64_locator_offset_past_the_end_is_refused_not_indexed() {
+        let docx = docx_with(&[]);
+        let past = with_zip64_tail(&docx, docx.len() as u64 + 1000, b"");
+        let err = declared_entry_count(&past).expect_err("offset past the end");
+        assert_eq!(err.kind, AdmissionErrorKind::InvalidPackage);
+        assert_eq!(
+            kind(&past, InputLimits::default()),
+            AdmissionErrorKind::InvalidPackage
+        );
+    }
+
+    #[test]
+    fn a_zip64_locator_offset_near_usize_max_does_not_overflow() {
+        let docx = docx_with(&[]);
+        for offset in [
+            u64::MAX,
+            u64::MAX - 20,
+            u64::MAX - 39,
+            usize::MAX as u64 - 39,
+        ] {
+            let huge = with_zip64_tail(&docx, offset, b"");
+            let err = declared_entry_count(&huge).expect_err("offset near usize::MAX");
+            assert_eq!(err.kind, AdmissionErrorKind::InvalidPackage);
+            assert_eq!(
+                kind(&huge, InputLimits::default()),
+                AdmissionErrorKind::InvalidPackage
+            );
+        }
+    }
+
+    #[test]
+    fn a_truncated_zip64_end_record_is_refused() {
+        let docx = docx_with(&[]);
+        // The record signature sits in the archive comment, 39 bytes before
+        // the end: a valid offset whose 40-byte record runs past the buffer.
+        let mut comment = vec![0x50, 0x4b, 0x06, 0x06];
+        comment.resize(39, 0);
+        let probe = with_zip64_tail(&docx, 0, &comment);
+        let record_at = (probe.len() - 39) as u64;
+        let truncated = with_zip64_tail(&docx, record_at, &comment);
+        assert_eq!(truncated.len(), probe.len());
+        assert_eq!(
+            &truncated[record_at as usize..record_at as usize + 4],
+            &[0x50, 0x4b, 0x06, 0x06]
+        );
+        let err = declared_entry_count(&truncated).expect_err("truncated record");
+        assert_eq!(err.kind, AdmissionErrorKind::InvalidPackage);
+    }
+
+    #[test]
+    fn unbounded_part_and_package_budgets_admit_a_docx() {
+        let bytes = docx_with(&[]);
+        let unbounded = InputLimits {
+            max_part_bytes: u64::MAX,
+            max_uncompressed_bytes: u64::MAX,
+            ..InputLimits::default()
+        };
+        let admitted = admit(&bytes, unbounded).unwrap();
+        assert_eq!(admitted.main_part, "word/document.xml");
+        assert_eq!(
+            admitted.inflated_bytes,
+            (TYPES.len() + RELS.len() + DOC.len()) as u64
         );
     }
 

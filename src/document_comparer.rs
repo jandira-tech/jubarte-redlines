@@ -4716,6 +4716,31 @@ fn invalid_content(msg: String) -> OpcError {
     OpcError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, msg))
 }
 
+/// Admit one compare input under `limits`. A refusal keeps the typed
+/// [`AdmissionError`](crate::admission::AdmissionError) as the error source
+/// (its `code()` is the stable `INPUT_LIMIT`/`UNSUPPORTED_PACKAGE`/… string)
+/// and names which document was refused.
+fn admit_input(
+    side: &str,
+    bytes: &[u8],
+    limits: crate::admission::InputLimits,
+) -> Result<(), OpcError> {
+    crate::admission::admit(bytes, limits)
+        .map(drop)
+        .map_err(|refusal| {
+            crate::opc::refused(crate::admission::AdmissionError {
+                kind: refusal.kind,
+                message: format!("{side} document: {}", refusal.message),
+            })
+        })
+}
+
+/// Admit a single package under the compare budget before a public entry
+/// point opens it: `PartFs::open` inflates every entry without a bound.
+pub(crate) fn admit_package(bytes: &[u8]) -> Result<(), OpcError> {
+    admit_input("input", bytes, crate::admission::InputLimits::compare())
+}
+
 /// The namespace declarations C# attaches to a freshly-created
 /// `w:footnotes`/`w:endnotes` root (`NamespaceAttributes`/
 /// `FreshNamespaceAttributes` :1580–:1602), verbatim.
@@ -4741,6 +4766,7 @@ const NOTES_ROOT_NAMESPACE_ATTRS: &str = concat!(
 /// A.11 — `RevisionProcessor.AcceptRevisions` byte facade: accept every
 /// tracked revision across main + headers/footers + notes + styles parts.
 pub fn accept_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
+    admit_package(docx)?;
     let mut pkg = PartFs::open(docx)?;
     crate::revision_processor::accept_revisions_package(&mut pkg);
     pkg.to_zip()
@@ -4757,6 +4783,7 @@ fn accept_source_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
 /// A.11 — `RevisionProcessor.RejectRevisions` byte facade: reject every
 /// tracked revision across main + headers/footers + notes + styles parts.
 pub fn reject_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
+    admit_package(docx)?;
     let mut pkg = PartFs::open(docx)?;
     crate::revision_processor::reject_revisions_package(&mut pkg);
     pkg.to_zip()
@@ -5994,6 +6021,7 @@ pub fn get_revisions(
 ) -> Result<Vec<crate::comparer::WmlComparerRevision>, OpcError> {
     use crate::comparer::{preprocess, revisions};
 
+    admit_input("input", docx, settings.input_limits)?;
     let pkg = PartFs::open(docx)?;
     let main = pkg
         .main_document_part()
@@ -6208,11 +6236,18 @@ fn compare_documents_impl(
     settings: &WmlComparerSettings,
     pre_process_original: bool,
 ) -> Result<Vec<u8>, OpcError> {
+    // Admit both packages before anything inflates them: the central
+    // directory's sizes are untrusted, and an unbounded inflate aborts the
+    // Python and WASM hosts rather than failing the call.
+    admit_input("original", original, settings.input_limits)?;
     // IDENTICAL-INPUT-01: same input bytes → empty redline is the (accepted)
     // original package. Avoids dual package prep, Dom parse, LCS, and produce.
     // Critical for self-compare fixtures (e.g. redline × self).
     if original == modified {
-        let mut owned = crate::strict_translation::strict_to_transitional_docx(original);
+        let mut owned = crate::strict_translation::strict_to_transitional_docx_within(
+            original,
+            settings.input_limits,
+        );
         if settings.merge_replaced_paragraphs && docx_has_tracked_changes(&owned) {
             owned = accept_source_revisions(&owned)?;
         }
@@ -6227,8 +6262,15 @@ fn compare_documents_impl(
     // PartFs::open sees them (mirrors the OpenXML SDK's pre-compare step).
     // Transitional packages round-trip byte-identical (zero-churn), so the
     // golden/parity paths are unaffected; only Strict inputs are rewritten.
-    let mut original_owned = crate::strict_translation::strict_to_transitional_docx(original);
-    let mut modified_owned = crate::strict_translation::strict_to_transitional_docx(modified);
+    admit_input("modified", modified, settings.input_limits)?;
+    let mut original_owned = crate::strict_translation::strict_to_transitional_docx_within(
+        original,
+        settings.input_limits,
+    );
+    let mut modified_owned = crate::strict_translation::strict_to_transitional_docx_within(
+        modified,
+        settings.input_limits,
+    );
 
     // Accept-before-diff flattens a revised insertion into live text, so a late
     // pass can no longer see where that insertion ended. Keep both main parts
@@ -6360,7 +6402,7 @@ fn compare_documents_impl(
             }
         }
     }
-    let result_root = crate::comparer::compare_bodies_faithful_with_notes(
+    let result_root = crate::comparer::try_compare_bodies_faithful_with_notes(
         &mut dom,
         root1,
         root2,
@@ -6368,7 +6410,8 @@ fn compare_documents_impl(
         body2,
         settings,
         Some(&mut notes_ctx),
-    );
+    )
+    .map_err(crate::opc::refused)?;
     for root in [root1, root2] {
         dom.set_attribute_value(root, &crate::namespaces::PT::default_line(), None);
         dom.set_attribute_value(

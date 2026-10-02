@@ -25,7 +25,9 @@ use serde::{Deserialize, Serialize};
 use crate::changes::{Change, ChangeError, ChangeFilter};
 
 use crate::comparer::{WmlComparerRevisionType, WmlComparerSettings};
-use crate::inspect::{Opened, Piece, Projection, SCHEMA_VERSION, project_paragraph, source_sha256};
+use crate::inspect::{
+    BODY_STORY, Opened, Piece, Projection, SCHEMA_VERSION, project_paragraph, source_sha256,
+};
 use crate::namespaces::W;
 use crate::xmllinq::{Dom, NodeId, XNamespace};
 
@@ -1664,7 +1666,7 @@ impl<'p> Transaction<'p> {
         };
         let base_sha256 = source_sha256(&base);
         let mut stories = vec![StoryPart {
-            id: "body".to_string(),
+            id: BODY_STORY.to_string(),
             part: opened.main.clone(),
             document: opened.document,
             root: opened.body,
@@ -3034,9 +3036,11 @@ impl<'p> Transaction<'p> {
                 Some((story, n)) => (story, Some(n)),
                 None => return not_found(format!("unknown paragraph id {id}")),
             },
-            Selector::Index { index, story } => (story.as_deref().unwrap_or("body"), Some(*index)),
+            Selector::Index { index, story } => {
+                (story.as_deref().unwrap_or(BODY_STORY), Some(*index))
+            }
             Selector::StartsWith { story, .. } | Selector::Contains { story, .. } => {
-                (story.as_deref().unwrap_or("body"), None)
+                (story.as_deref().unwrap_or(BODY_STORY), None)
             }
         };
         let Some(story_index) = self.stories.iter().position(|s| s.id == story) else {

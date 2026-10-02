@@ -6,7 +6,7 @@ use jubarte::markup_simplifier::{
     remove_rsid_transform, transform_element_to_single_character_runs,
 };
 use jubarte::namespaces::W;
-use jubarte::xmllinq::{Dom, XName, XNamespace};
+use jubarte::xmllinq::{Dom, NodeId, XName, XNamespace};
 
 fn w(local: &str) -> XName {
     XName::get(local, W::URI)
@@ -106,6 +106,99 @@ fn single_char_runs_idempotent() {
     let n2 = d.elements(twice, Some(&w("r"))).len();
     assert_eq!(n1, 5);
     assert_eq!(n1, n2);
+}
+
+/// A `w:r` root is outside the transform's contract (it explodes into zero,
+/// one or many runs, never a single root). The call must not panic, returns
+/// the element unchanged, and leaves the DOM as it was.
+fn assert_run_root_is_returned_unchanged(mut d: Dom, r: NodeId) {
+    let nodes_before = d.node_count();
+    let children_before = d.nodes(r);
+    let out = transform_element_to_single_character_runs(&mut d, r);
+    assert_eq!(out, r, "a w:r root is returned unchanged");
+    assert_eq!(d.node_count(), nodes_before, "no nodes were built");
+    assert_eq!(d.nodes(r), children_before, "the run keeps its children");
+}
+
+#[test]
+fn run_root_empty_is_returned_unchanged() {
+    let mut d = Dom::new();
+    let r = d.new_element(w("r"));
+    assert_run_root_is_returned_unchanged(d, r);
+}
+
+#[test]
+fn run_root_with_only_rpr_is_returned_unchanged() {
+    let mut d = Dom::new();
+    let r = d.new_element(w("r"));
+    let rpr = d.new_element(w("rPr"));
+    let b = d.new_element(w("b"));
+    d.add(rpr, b);
+    d.add(r, rpr);
+    assert_run_root_is_returned_unchanged(d, r);
+}
+
+#[test]
+fn run_root_with_an_empty_text_is_returned_unchanged() {
+    let mut d = Dom::new();
+    let r = d.new_element(w("r"));
+    let t = d.new_element(w("t"));
+    d.add(r, t);
+    assert_run_root_is_returned_unchanged(d, r);
+}
+
+#[test]
+fn run_root_with_two_characters_is_returned_unchanged() {
+    let mut d = Dom::new();
+    let r = d.new_element(w("r"));
+    let t = d.new_element(w("t"));
+    d.add_text(t, "ab");
+    d.add(r, t);
+    assert_run_root_is_returned_unchanged(d, r);
+}
+
+/// A non-element root (a text node) is returned as it is.
+#[test]
+fn text_root_is_returned_unchanged() {
+    let mut d = Dom::new();
+    let p = d.new_element(w("p"));
+    d.add_text(p, "x");
+    let text = d.nodes(p)[0];
+    assert_eq!(
+        transform_element_to_single_character_runs(&mut d, text),
+        text
+    );
+}
+
+/// Tab, carriage return and line feed are XML whitespace like the space: a
+/// one-character `w:t` holding one of them needs `xml:space="preserve"`, or a
+/// reader drops it as insignificant whitespace.
+#[test]
+fn single_char_runs_preserve_every_xml_whitespace_character() {
+    let text = "a\tb\rc\nd e";
+    let mut d = Dom::new();
+    let p = d.new_element(w("p"));
+    let r = d.new_element(w("r"));
+    let t = d.new_element(w("t"));
+    d.add_text(t, text);
+    d.add(r, t);
+    d.add(p, r);
+
+    let out = transform_element_to_single_character_runs(&mut d, p);
+    let xml_space = XNamespace::xml().name("space");
+    let seen: Vec<(String, bool)> = d
+        .elements(out, Some(&w("r")))
+        .iter()
+        .map(|&run| {
+            let t = d.elements(run, Some(&w("t")))[0];
+            (d.value(t), d.attribute(t, &xml_space) == Some("preserve"))
+        })
+        .collect();
+    let expected: Vec<(String, bool)> = text
+        .chars()
+        .map(|c| (c.to_string(), !c.is_alphanumeric()))
+        .collect();
+    assert_eq!(seen, expected);
 }
 
 /// RemoveRsid drops `<w:rsid>` elements and `w:rsid*` attributes everywhere.

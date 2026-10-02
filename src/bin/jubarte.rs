@@ -20,6 +20,8 @@
 //! flags, and validation are handled by clap (gated behind the default `cli`
 //! feature).
 
+#![forbid(unsafe_code)]
+
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -90,7 +92,7 @@ struct Cli {
         short = 'd',
         long,
         value_name = "ISO8601",
-        default_value = "1970-01-01T00:00:00Z"
+        default_value = jubarte::document_comparer::DEFAULT_DATE
     )]
     date: String,
 
@@ -865,7 +867,7 @@ struct MarkdownArgs {
         short = 'd',
         long,
         value_name = "ISO8601",
-        default_value = "1970-01-01T00:00:00Z"
+        default_value = jubarte::document_comparer::DEFAULT_DATE
     )]
     date: String,
     /// Markdown to Word: the page size when there is no --reference-doc

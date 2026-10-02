@@ -407,7 +407,7 @@ pub fn copy_missing_numbering(
             .into_iter()
             .any(|e| get_int_attribute(dom, e, &abstract_num_id) == Some(from_id));
         let target_id = if same_id_taken {
-            max_abstract_num_id += 1;
+            max_abstract_num_id = max_abstract_num_id.saturating_add(1);
             max_abstract_num_id
         } else {
             // retained ids must advance the watermark, or a later collision
@@ -438,7 +438,7 @@ pub fn copy_missing_numbering(
                         .into_iter()
                         .any(|b| get_int_attribute(dom, b, &num_pic_bullet_id) == Some(from_pic));
                     let id = if taken {
-                        max_pic_id += 1;
+                        max_pic_id = max_pic_id.saturating_add(1);
                         max_pic_id
                     } else {
                         max_pic_id = max_pic_id.max(from_pic);
@@ -478,7 +478,7 @@ pub fn copy_missing_numbering(
             if existing_ref == Some(mapped) {
                 continue; // same num with the same (mapped) reference
             }
-            max_num_id += 1;
+            max_num_id = max_num_id.saturating_add(1);
             let cloned = dom.clone_subtree(n);
             dom.set_attribute_value(cloned, &num_id_attr, Some(&max_num_id.to_string()));
             if let Some(e) = dom.element(cloned, &abstract_num_id) {
@@ -520,7 +520,7 @@ pub fn synthesize_dangling_numbering(dom: &mut Dom, numbering_root: NodeId, dang
         .into_iter()
         .filter_map(|e| get_int_attribute(dom, e, &W::name("abstractNumId")))
         .max()
-        .map_or(0, |m| m + 1);
+        .map_or(0, |m| m.saturating_add(1));
     let mut lvls = String::new();
     for ilvl in 0..9 {
         lvls.push_str(&format!(
@@ -559,7 +559,9 @@ pub fn synthesize_dangling_numbering(dom: &mut Dom, numbering_root: NodeId, dang
 /// callers can choose to fail-loud vs skip.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RectifyError {
-    /// A note definition id was not found in before ∪ after parts.
+    /// A note definition id was not found in the notes part it is looked up
+    /// in (before ∪ after when renumbering, the one part the reference's
+    /// status names when its definition is processed).
     MissingNoteDef {
         /// The missing note definition id.
         id: String,
@@ -569,6 +571,20 @@ pub enum RectifyError {
         /// `"footnotes"` or `"endnotes"`.
         kind: &'static str,
     },
+    /// A note reference needs a definition, but the document has no
+    /// footnotes/endnotes part on that side.
+    MissingSourcePart {
+        /// `"footnotes"` or `"endnotes"`.
+        kind: &'static str,
+        /// `"before"` or `"after"`.
+        side: &'static str,
+    },
+    /// A note reference carries a correlation status the definition
+    /// processing has no branch for (the oracle throws "Internal error").
+    UnsupportedReferenceStatus {
+        /// The status, as `Debug` prints it.
+        status: String,
+    },
 }
 
 impl std::fmt::Display for RectifyError {
@@ -577,7 +593,19 @@ impl std::fmt::Display for RectifyError {
             RectifyError::MissingNoteDef { id } => {
                 write!(
                     f,
-                    "Internal error: note definition id '{id}' not found in before ∪ after parts"
+                    "Internal error: note definition id '{id}' not found in the notes parts"
+                )
+            }
+            RectifyError::MissingSourcePart { kind, side } => {
+                write!(
+                    f,
+                    "Internal error: a note reference needs the {side} document's {kind} part, which is absent"
+                )
+            }
+            RectifyError::UnsupportedReferenceStatus { status } => {
+                write!(
+                    f,
+                    "Internal error: note reference with unsupported status {status}"
                 )
             }
             RectifyError::MissingTargetPart { kind } => {
@@ -977,6 +1005,60 @@ fn produce_note_redline(
         .find(|&d| dom.name(d).is_some_and(|n| n == fn_name || n == en_name))
 }
 
+/// The definitions one note reference needs, found in the notes parts.
+struct NoteDefs {
+    before: Option<NodeId>,
+    after: Option<NodeId>,
+}
+
+/// Look up the definitions a reference's status processes: Equal needs both,
+/// Inserted the after one, Deleted the before one. Pure lookups, so
+/// [`process_footnote_endnote`] runs this for every reference before it
+/// rewrites anything and a malformed layout leaves the DOM as it was.
+fn find_note_defs(
+    dom: &Dom,
+    notes: &super::NotesContext,
+    is_footnote: bool,
+    status: super::CorrelationStatus,
+    before_id: Option<&str>,
+    after_id: Option<&str>,
+) -> Result<NoteDefs, RectifyError> {
+    use super::CorrelationStatus as S;
+    let kind = if is_footnote { "footnotes" } else { "endnotes" };
+    let part = |root: Option<NodeId>, side: &'static str| {
+        root.ok_or(RectifyError::MissingSourcePart { kind, side })
+    };
+    let def = |root: NodeId, id: Option<&str>| {
+        note_def_by_id(dom, root, id).ok_or_else(|| RectifyError::MissingNoteDef {
+            id: id.unwrap_or_default().to_string(),
+        })
+    };
+    let (root_before, root_after) = if is_footnote {
+        (notes.fn_before, notes.fn_after)
+    } else {
+        (notes.en_before, notes.en_after)
+    };
+    match status {
+        S::Equal => Ok(NoteDefs {
+            before: Some(def(part(root_before, "before")?, before_id)?),
+            after: Some(def(part(root_after, "after")?, after_id)?),
+        }),
+        S::Inserted => Ok(NoteDefs {
+            before: None,
+            after: Some(def(part(root_after, "after")?, after_id)?),
+        }),
+        // The before-part lookup is keyed by the reference's own id, which
+        // for a Deleted atom is the before-document element (C# :3210).
+        S::Deleted => Ok(NoteDefs {
+            before: Some(def(part(root_before, "before")?, after_id)?),
+            after: None,
+        }),
+        other => Err(RectifyError::UnsupportedReferenceStatus {
+            status: format!("{other:?}"),
+        }),
+    }
+}
+
 /// B.2 — `ProcessFootnoteEndnote` (:2944): for every footnote/endnote
 /// reference atom in the correlated body, process its definition keyed by the
 /// REFERENCE's correlation status — Equal → nested mini-compare of the two
@@ -984,15 +1066,21 @@ fn produce_note_redline(
 /// content re-emitted all-Inserted; Deleted → before-definition content
 /// re-emitted all-Deleted (into the BEFORE definition). Definitions carry
 /// pt:Status-marked content after this; real `w:ins`/`w:del` arrive with the
-/// notes-part finalization (B.3). Any other status panics — C# throws
-/// "Internal error" (a real crash path for moved/format-changed references).
+/// notes-part finalization (B.3).
+///
+/// # Errors
+///
+/// The C# oracle throws here (a missing part or definition is a
+/// NullReferenceException, any other status "Internal error"); this returns
+/// the [`RectifyError`] instead. Every lookup is made before the first
+/// definition is rewritten, so on `Err` the notes parts are as they were.
 pub fn process_footnote_endnote(
     dom: &mut Dom,
     atoms: &[super::atoms::ComparisonUnitAtom],
     notes: &mut super::NotesContext,
     settings: &WmlComparerSettings,
     id_gen: &mut u32,
-) {
+) -> Result<(), RectifyError> {
     use super::CorrelationStatus;
     use super::atoms::CorrelatedSequence;
     use super::{atomize, lcs, lcs_table, preprocess, produce, units};
@@ -1014,38 +1102,44 @@ pub fn process_footnote_endnote(
         })
         .collect();
 
+    let ids = |dom: &Dom, content: NodeId, content_before: Option<NodeId>| {
+        (
+            content_before
+                .and_then(|e| dom.attribute(e, &W::id()))
+                .map(str::to_string),
+            dom.attribute(content, &W::id()).map(str::to_string),
+            dom.name(content).is_some_and(|n| n == fn_ref),
+        )
+    };
+    for &(content, content_before, status) in &candidates {
+        let (before_id, after_id, is_footnote) = ids(dom, content, content_before);
+        find_note_defs(
+            dom,
+            notes,
+            is_footnote,
+            status,
+            before_id.as_deref(),
+            after_id.as_deref(),
+        )?;
+    }
+
     for (content, content_before, status) in candidates {
-        let before_id = content_before
-            .and_then(|e| dom.attribute(e, &W::id()))
-            .map(str::to_string);
-        let after_id = dom.attribute(content, &W::id()).map(str::to_string);
-        let is_footnote = dom.name(content).is_some_and(|n| n == fn_ref);
+        let (before_id, after_id, is_footnote) = ids(dom, content, content_before);
+        // An earlier reference to the same definition may have replaced it.
+        let defs = find_note_defs(
+            dom,
+            notes,
+            is_footnote,
+            status,
+            before_id.as_deref(),
+            after_id.as_deref(),
+        )?;
 
         match status {
             CorrelationStatus::Equal => {
-                let (before_root, after_root) = if is_footnote {
-                    (
-                        notes
-                            .fn_before
-                            .expect("footnotes part missing in before document (C# NRE)"),
-                        notes
-                            .fn_after
-                            .expect("footnotes part missing in after document (C# NRE)"),
-                    )
-                } else {
-                    (
-                        notes
-                            .en_before
-                            .expect("endnotes part missing in before document (C# NRE)"),
-                        notes
-                            .en_after
-                            .expect("endnotes part missing in after document (C# NRE)"),
-                    )
+                let (Some(def_before), Some(def_after)) = (defs.before, defs.after) else {
+                    continue;
                 };
-                let def_before = note_def_by_id(dom, before_root, before_id.as_deref())
-                    .expect("before note definition not found (C# NRE in AddSha1Hash)");
-                let def_after = note_def_by_id(dom, after_root, after_id.as_deref())
-                    .expect("after note definition not found (C# NRE in AddSha1Hash)");
                 preprocess::add_sha1_hash_to_block_level_content(
                     dom,
                     def_before,
@@ -1071,22 +1165,16 @@ pub fn process_footnote_endnote(
                     let mut flat = produce::flatten_to_comparison_unit_atom_list(dom, &seqs);
                     let new_content =
                         produce_note_redline(dom, &mut flat, is_footnote, true, settings, id_gen)
-                            .expect("Internal error");
+                            .ok_or_else(|| RectifyError::MissingNoteDef {
+                            id: after_id.clone().unwrap_or_default(),
+                        })?;
                     replace_nodes(dom, def_after, new_content);
                 }
             }
             CorrelationStatus::Inserted => {
-                let after_root = if is_footnote {
-                    notes
-                        .fn_after
-                        .expect("footnotes part missing in after document (C# NRE)")
-                } else {
-                    notes
-                        .en_after
-                        .expect("endnotes part missing in after document (C# NRE)")
+                let Some(def_after) = defs.after else {
+                    continue;
                 };
-                let def_after = note_def_by_id(dom, after_root, after_id.as_deref())
-                    .expect("after note definition not found (C# NRE in AddSha1Hash)");
                 preprocess::add_sha1_hash_to_block_level_content(
                     dom,
                     def_after,
@@ -1114,17 +1202,9 @@ pub fn process_footnote_endnote(
                 // null — the part is only consulted for related-part (image)
                 // resolution, which our port services with the null resolver,
                 // so the null part is inert here.
-                let before_root = if is_footnote {
-                    notes
-                        .fn_before
-                        .expect("footnotes part missing in before document (C# NRE)")
-                } else {
-                    notes
-                        .en_before
-                        .expect("endnotes part missing in before document (C# NRE)")
+                let Some(def_before) = defs.before else {
+                    continue;
                 };
-                let def_before = note_def_by_id(dom, before_root, after_id.as_deref())
-                    .expect("before note definition not found (C# NRE in AddSha1Hash)");
                 preprocess::add_sha1_hash_to_block_level_content(
                     dom,
                     def_before,
@@ -1146,7 +1226,8 @@ pub fn process_footnote_endnote(
                     replace_nodes(dom, def_before, new_content);
                 }
             }
-            _ => panic!("Internal error"),
+            _ => {}
         }
     }
+    Ok(())
 }

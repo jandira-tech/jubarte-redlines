@@ -2024,7 +2024,7 @@ PR1’s correctness story is incomplete and its performance win is unmeasured.
 
 `ComparisonUnitWord` and `ComparisonUnitGroup` expose both `sha1_hash` and
 `sha1_key` as independently mutable public fields. The optimization is sound
-only while `sha1_key == sha1_fingerprint(sha1_hash)`. Testing the pure fingerprint
+only while `sha1_key == fnv1a_64(sha1_hash)`. Testing the pure fingerprint
 function does not enforce that stored invariant. The current production code has
 constructors plus one synchronized mutation in `rehash_words_by_text_content`,
 but external/manual construction can still make equal strings carry unequal

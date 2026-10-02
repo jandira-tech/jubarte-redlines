@@ -13,7 +13,7 @@ edition = "2024"
 rust-version = "1.88"
 authors = ["Jandira Technologies, LLC"]
 license = "AGPL-3.0-only"
-description = "Lossless DOCX redline engine — compare two Word documents into a tracked-changes document that opens cleanly in Microsoft Word; list, accept, or reject revisions"
+description = "Word-faithful DOCX redline engine — compare two Word documents into a tracked-changes document that opens cleanly in Microsoft Word; list, accept, or reject revisions"
 repository = "https://github.com/jandira-tech/jubarte-redlines"
 homepage = "https://github.com/jandira-tech/jubarte-redlines"
 documentation = "https://docs.rs/jubarte-redlines"
@@ -59,7 +59,7 @@ all-features = true
 # Workspace lint policy (plan A1). Groups at priority = -1; pedantic is NOT
 # enabled as a group — only individually chosen low-hit pedantic lints.
 [lints.rust]
-unsafe_code = "deny" # crate is 100% safe today; keep it that way
+unsafe_code = "deny" # the library and CLI forbid it outright; the allocation-counting examples and tests need it
 
 [lints.clippy]
 correctness = { level = "deny", priority = -1 }
@@ -97,6 +97,7 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate"] } # 
 sha1 = "0.11"
 ttf-parser = "0.25" # DOCX→PDF glyph metrics + TTF embed (Carlito / Liberation)
 rustybuzz = "0.20" # HarfBuzz-compatible shaping so advances match soffice
+unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] } # Mark / Symbol general categories for word tokens (`util::word_tokens`); already in the tree through rustybuzz
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff", "bmp", "gif"] } # raster images in the PDF writer
 flate2 = "1.1" # optional `/FlateDecode` on PDF streams (already in the tree via zip/png, but a transitive dep is not usable directly)
 quick-xml = "0.42" # checked XML admission (`xmllinq::parse::validate_xml`) before the permissive DOM parser

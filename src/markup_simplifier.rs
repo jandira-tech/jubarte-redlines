@@ -36,7 +36,9 @@ fn copy_attrs(dom: &mut Dom, src: NodeId, dst: NodeId) {
 
 /// Port of `SingleCharacterRunTransform(node)` — returns the transformed node(s).
 /// Non-elements pass through; a `w:r` explodes into one run per character (text)
-/// or per child element (non-text); other elements rebuild recursively.
+/// or per child element (non-text); other elements rebuild recursively. A
+/// one-character `w:t` that holds XML whitespace (space, tab, CR, LF) gets
+/// `xml:space="preserve"`.
 pub fn single_character_run_transform(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
     if !dom.is_element(node) {
         return vec![node];
@@ -64,7 +66,7 @@ pub fn single_character_run_transform(dom: &mut Dom, node: NodeId) -> Vec<NodeId
                 }
                 for c in s.chars() {
                     let t = dom.new_element(W::t());
-                    if c == ' ' {
+                    if matches!(c, ' ' | '\t' | '\r' | '\n') {
                         dom.set_attribute_value(t, &xml_space(), Some("preserve"));
                     }
                     dom.add_text(t, &c.to_string());
@@ -104,8 +106,19 @@ pub fn single_character_run_transform(dom: &mut Dom, node: NodeId) -> Vec<NodeId
 }
 
 /// `TransformElementToSingleCharacterRuns(element)` — returns the single rebuilt
-/// root (the input is assumed to be a non-`w:r` container, e.g. the body).
+/// root of a non-`w:r` container such as the body or a paragraph.
+///
+/// # Behaviour
+///
+/// A `w:r` explodes into zero, one or many runs, so it has no single rebuilt
+/// root. A `w:r` `element` is outside this function's contract: it is returned
+/// unchanged and the DOM is left as it was (use [`single_character_run_transform`]
+/// to explode a run into its runs). Every other element, and a non-element
+/// node, yields exactly one node.
 pub fn transform_element_to_single_character_runs(dom: &mut Dom, element: NodeId) -> NodeId {
+    if dom.is_element(element) && dom.name(element) == Some(W::r()) {
+        return element;
+    }
     let v = single_character_run_transform(dom, element);
     debug_assert_eq!(v.len(), 1, "root transform must yield exactly one node");
     v[0]
