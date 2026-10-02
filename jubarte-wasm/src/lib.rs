@@ -465,7 +465,8 @@ impl AppendOutput {
 
 /// Append B after A, carrying B's images, links, headers, styles, lists and
 /// notes. `optionsJson` is `{"section_break": "next_page" | "continuous" |
-/// "none", "keep_sections": bool}`, each optional.
+/// "none", "keep_sections": bool, "comments": "drop" | "carry"}`, each
+/// optional; B's comments are dropped (warned) unless `"carry"`.
 ///
 /// Mirrors `jubarte::append::append_documents`.
 #[wasm_bindgen(js_name = appendDocuments)]
@@ -758,6 +759,31 @@ mod tests {
         assert!(authors(&kept).iter().all(|a| a.as_deref() == Some("Jane")));
         let manifest: serde_json::Value = serde_json::from_str(&capabilities().unwrap()).unwrap();
         assert_eq!(manifest["operations"]["scrub"], true);
+    }
+
+    #[test]
+    fn append_documents_carries_comments_when_asked() {
+        let plan = jubarte::edit::EditPlan::from_json(
+            r#"{"schema_version":1,"author":"Ann","operations":[{"kind":"comment","paragraph":"body:p:0","text":"keep"}]}"#,
+        )
+        .unwrap();
+        let b = jubarte::edit::apply_plan(&word("B.\n"), &plan)
+            .unwrap()
+            .clean;
+        let a = word("A.\n");
+        let carried =
+            append_documents(&a, &b, Some(r#"{"comments":"carry"}"#.to_string())).unwrap();
+        assert_eq!(carried.warnings(), "[]");
+        let comments = jubarte::comments::list_comments(&carried.docx()).unwrap();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].text, "keep");
+        let dropped = append_documents(&a, &b, None).unwrap();
+        assert!(dropped.warnings().contains("COMMENTS_DROPPED"));
+        assert!(
+            jubarte::comments::list_comments(&dropped.docx())
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

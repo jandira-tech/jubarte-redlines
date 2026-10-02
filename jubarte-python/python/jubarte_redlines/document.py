@@ -98,6 +98,8 @@ class EditResult:
 
 SectionBreak = Literal["next_page", "continuous", "none"]
 _SECTION_BREAKS = ("next_page", "continuous", "none")
+AppendComments = Literal["drop", "carry"]
+_APPEND_COMMENTS = ("drop", "carry")
 
 
 @dataclass(frozen=True, slots=True)
@@ -431,6 +433,7 @@ class Document:
         *,
         section_break: SectionBreak = "next_page",
         keep_sections: bool = False,
+        comments: AppendComments = "drop",
     ) -> Appended:
         """Put ``other`` after this document, carrying its parts.
 
@@ -438,8 +441,11 @@ class Document:
         that do not collide; a style this document already has (same type and
         name) keeps this document's look. ``section_break="continuous"`` or
         ``"none"`` joins on the same page; ``keep_sections`` keeps ``other``'s
-        page setup, headers and footers as a section of its own. Comments are
-        not carried yet: they are dropped and reported in ``warnings``.
+        page setup, headers and footers as a section of its own. ``other``'s
+        comments are dropped and reported in ``warnings``; with
+        ``comments="carry"`` those its body anchors come along with their
+        threads and resolution (those in notes, headers and footers are still
+        dropped and reported).
         """
         if not isinstance(other, Document):
             raise TypeError("other must be a Document")
@@ -449,7 +455,13 @@ class Document:
             raise ValueError(f"section_break must be one of {', '.join(_SECTION_BREAKS)}")
         if not isinstance(keep_sections, bool):
             raise TypeError("keep_sections must be a bool")
-        options = json.dumps({"section_break": section_break, "keep_sections": keep_sections})
+        if not isinstance(comments, str):
+            raise TypeError("comments must be a string")
+        if comments not in _APPEND_COMMENTS:
+            raise ValueError(f"comments must be one of {', '.join(_APPEND_COMMENTS)}")
+        options = json.dumps(
+            {"section_break": section_break, "keep_sections": keep_sections, "comments": comments}
+        )
         data, warnings = _native.append_json(self._data, other._data, options)
         return Appended(Document.from_bytes(data), tuple(json.loads(warnings)))
 

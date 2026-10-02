@@ -157,9 +157,11 @@ print(diff(read("v1.docx"), read("v2.docx")))
 
 `doc.append(other)` (new on `main`) puts `other` after `doc` on a new page and
 returns `Appended(document, warnings)`: images, links, headers, styles, lists
-and notes come along; comments do not yet (`COMMENTS_DROPPED` in `warnings`).
-`section_break="continuous"` joins on the same page and `keep_sections=True`
-keeps `other`'s page setup, headers and footers.
+and notes come along. Comments are dropped (`COMMENTS_DROPPED` in `warnings`)
+unless `comments="carry"`, which brings the comments `other`'s body anchors
+with their threads and resolution. `section_break="continuous"` joins on the
+same page and `keep_sections=True` keeps `other`'s page setup, headers and
+footers.
 
 ## Also available as
 

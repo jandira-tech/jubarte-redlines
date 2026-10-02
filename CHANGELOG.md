@@ -338,8 +338,13 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   footers as a section of its own). Images, links, headers, styles, lists,
   footnotes and endnotes come along under ids that do not collide; a style
   whose type and name the first document already has takes its definition
-  there. Comments are not carried yet: they are removed and reported as
-  `COMMENTS_DROPPED`. `capabilities` lists `append`.
+  there. Comments are removed and reported as `COMMENTS_DROPPED` by
+  default; `--carry-comments` (`AppendOptions.comments = Carry`, Python
+  `comments="carry"`, WASM `{"comments":"carry"}`) carries the comments the
+  appended body anchors under fresh ids, whole (formatting, line breaks,
+  links, the styles they use), with their reply threads, resolution and
+  dates; comments anchored in notes, headers and footers are still dropped
+  and reported. `capabilities` lists `append`.
 - `inspect` lists the body's content controls under `controls` (id
   `body:sdt:N`, tag, alias, kind, text, paragraphs, lock, choices, checkbox
   state, placeholder flag); Rust `inspect::controls()` and Python
