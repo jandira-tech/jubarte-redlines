@@ -87,6 +87,10 @@ pub struct Operations {
     /// and notes (`jubarte append`).
     #[serde(default)]
     pub append: bool,
+    /// `inspect` lists the body's content controls and edit plans fill
+    /// them (`fill_control`).
+    #[serde(default)]
+    pub content_controls: bool,
 }
 
 /// Documented scope limits.
@@ -162,6 +166,7 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             comment_threads: true,
             edit_keeps_revisions: true,
             append: true,
+            content_controls: true,
         },
         edit_plan_versions: vec![crate::inspect::SCHEMA_VERSION],
         edit_operations: [
@@ -181,6 +186,7 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             "insert_table",
             "list",
             "watermark",
+            "fill_control",
         ]
         .iter()
         .map(|s| (*s).to_string())
@@ -211,7 +217,7 @@ mod tests {
         assert_eq!(c.engine_version, env!("CARGO_PKG_VERSION"));
         assert_eq!(c.runtime, "rust");
         assert_eq!(c.edit_plan_versions, [1]);
-        assert_eq!(c.edit_operations.len(), 16);
+        assert_eq!(c.edit_operations.len(), 17);
         assert!(c.edit_operations.iter().any(|kind| kind == "rewrite"));
         assert!(
             c.edit_operations
@@ -219,6 +225,11 @@ mod tests {
                 .any(|kind| kind == "delete_comment")
         );
         assert!(c.operations.comment_threads);
+        assert_eq!(
+            c.edit_operations.last().map(String::as_str),
+            Some("fill_control")
+        );
+        assert!(c.operations.content_controls);
         assert!(c.operations.markdown_to_docx && c.operations.markdown_diff);
         let json: serde_json::Value = serde_json::from_str(&capabilities_json("cli")).unwrap();
         assert_eq!(json["runtime"], "cli");
