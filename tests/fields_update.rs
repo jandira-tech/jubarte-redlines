@@ -89,7 +89,11 @@ fn toc_entries_and_numpages_come_from_the_layout() {
     // each entry links to it.
     assert_eq!(xml.matches("<w:bookmarkStart").count(), 2, "{xml}");
     assert_eq!(xml.matches("w:anchor=\"_Toc").count(), 2, "{xml}");
-    assert!(xml.contains("w:leader=\"dot\""), "{xml}");
+    // Word's own TOCs put the tab 10 twips inside the 9360-twip text width.
+    assert!(
+        xml.contains(r#"w:val="right" w:leader="dot" w:pos="9350""#),
+        "{xml}"
+    );
     assert!(xml.contains("w:pStyle w:val=\"TOC1\""), "{xml}");
     assert!(!xml.contains("updateFields"));
 }

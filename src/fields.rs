@@ -866,7 +866,10 @@ fn rebuild_tocs(story: &mut Story, style_names: &HashMap<String, String>) -> Toc
     if toc_fields.is_empty() {
         return tocs;
     }
-    let width = text_width(&story.dom, story.root);
+    // Word sets the entries' right tab 10 twips inside the text width
+    // (w:pos="9350" on a 9360-twip Letter text width in the corpus TOCs
+    // behavior__pageref_standalone_uppercase_h and sd_2447_toc_tab_alignment).
+    let width = text_width(&story.dom, story.root) - 10;
     let mut names = BookmarkNamer::new(&story.dom, story.root);
     for field in toc_fields {
         let code = parse_code(
