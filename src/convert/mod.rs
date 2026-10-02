@@ -11915,10 +11915,55 @@ fn table_float(dom: &Dom, table: NodeId) -> Option<ImageSlot> {
 }
 
 fn table_layout_fixed(dom: &Dom, table: NodeId) -> bool {
-    table_pr(dom, table)
-        .and_then(|pr| first_named(dom, pr, "tblLayout"))
-        .and_then(|n| attr_any(dom, n, "type"))
-        .is_some_and(|v| v.eq_ignore_ascii_case("fixed"))
+    let is_fixed = |layout: Option<NodeId>| {
+        layout
+            .and_then(|n| attr_any(dom, n, "type"))
+            .is_some_and(|v| v.eq_ignore_ascii_case("fixed"))
+    };
+    let Some(pr) = table_pr(dom, table) else {
+        return false;
+    };
+    let live = first_named(dom, pr, "tblLayout");
+    live.is_some_and(|n| is_fixed(Some(n)))
+        || live.is_none() && old_layout_still_fixed(dom, table, pr, is_fixed)
+}
+
+/// Word's mistake, copied under `RevisionStyle::Word` only: a table whose
+/// rows or cells carry a property change keeps the `tblLayout fixed` its
+/// `tblPrChange` recorded, and runs off the page at its tcW (333bfe069a's
+/// 1047pt table, Word probes 33e 2026-10-02). Without the row or cell
+/// change Word fits the table as its live autofit asks.
+fn old_layout_still_fixed(
+    dom: &Dom,
+    table: NodeId,
+    pr: NodeId,
+    is_fixed: impl Fn(Option<NodeId>) -> bool,
+) -> bool {
+    if !matches!(REVISIONS.with(std::cell::Cell::get), RevisionStyle::Word) {
+        return false;
+    }
+    let old = direct_named(dom, pr, "tblPrChange")
+        .and_then(|change| direct_named(dom, change, "tblPr"))
+        .and_then(|old| direct_named(dom, old, "tblLayout"));
+    if !is_fixed(old) {
+        return false;
+    }
+    // The table's own rows and cells, not a nested table's.
+    let own = |n: NodeId| {
+        let mut up = dom.parent(n);
+        while let Some(p) = up {
+            if local_name_is(dom, p, "tbl") {
+                return p == table;
+            }
+            up = dom.parent(p);
+        }
+        false
+    };
+    ["trPrChange", "tcPrChange"].iter().any(|name| {
+        dom.descendants(table, Some(&W::name(name)))
+            .into_iter()
+            .any(own)
+    })
 }
 
 /// A `tblCellMar`/`tcMar` side: the logical `w:start`/`w:end` before the

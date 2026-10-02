@@ -19904,6 +19904,83 @@ fn tblprchange_grid_is_not_the_live_grid() {
 }
 
 #[test]
+fn word_lays_out_a_row_revised_table_with_its_old_fixed_layout() {
+    // 333bfe069a (Word probes 33e, 2026-10-02): an autofit table whose
+    // tblPrChange keeps `tblLayout fixed` and whose rows or cells carry a
+    // property change is laid out fixed at its tcW, 1047pt centred off an
+    // A4 page (Word's rules at -226, -89, 214, 517 and 821). Without the
+    // row change, or without the old layout, Word fits it to the page.
+    let table = |row_change: &str, old_layout: &str| {
+        let borders: String = ["top", "left", "bottom", "right", "insideH", "insideV"]
+            .iter()
+            .map(|s| format!("<w:{s} w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"auto\"/>"))
+            .collect();
+        let cells: String = [2745, 6068, 6068, 6068]
+            .iter()
+            .map(|w| {
+                format!(
+                    "<w:tc><w:tcPr><w:tcW w:w=\"{w}\" w:type=\"dxa\"/></w:tcPr>\
+                     <w:p><w:r><w:t>X</w:t></w:r></w:p></w:tc>"
+                )
+            })
+            .collect();
+        format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:jc w:val=\"center\"/>\
+               <w:tblBorders>{borders}</w:tblBorders>\
+               <w:tblPrChange w:id=\"1\" w:author=\"A\" w:date=\"2026-01-01T00:00:00Z\">\
+                 <w:tblPr>{old_layout}</w:tblPr></w:tblPrChange></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"2563\"/><w:gridCol w:w=\"3280\"/>\
+               <w:gridCol w:w=\"1839\"/><w:gridCol w:w=\"1530\"/></w:tblGrid>\
+             <w:tr><w:trPr><w:jc w:val=\"center\"/>{row_change}</w:trPr>{cells}</w:tr></w:tbl>\
+             <w:p/>\
+             <w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/>\
+               <w:pgMar w:top=\"1417\" w:right=\"1417\" w:bottom=\"1417\" w:left=\"1417\"/></w:sectPr>"
+        )
+    };
+    let settings = r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="12"/></w:compat>"#;
+    let change = "<w:trPrChange w:id=\"2\" w:author=\"A\" w:date=\"2026-01-01T00:00:00Z\"><w:trPr/></w:trPrChange>";
+    let fixed = "<w:tblLayout w:type=\"fixed\"/>";
+    let span = |pdf: &[u8]| {
+        let xs = pdf_vertical_rule_xs(pdf);
+        let lo = xs.iter().copied().fold(f32::MAX, f32::min);
+        let hi = xs.iter().copied().fold(f32::MIN, f32::max);
+        (lo, hi)
+    };
+    let word = docx_to_pdf(&minimal_docx_with_settings(&table(change, fixed), settings))
+        .expect("row-revised table");
+    let (lo, hi) = span(&word);
+    assert!(
+        (lo + 226.3).abs() < 1.5 && (hi - 821.0).abs() < 1.5,
+        "Word mode lays the table out at its tcW, -226..821: {lo}..{hi}"
+    );
+    for (row_change, old_layout, why) in
+        [("", fixed, "no row change"), (change, "", "no old layout")]
+    {
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(
+            &table(row_change, old_layout),
+            settings,
+        ))
+        .expect("fitted table");
+        let (lo, hi) = span(&pdf);
+        assert!(
+            lo > 60.0 && hi < 540.0,
+            "{why}: the table fits the page, {lo}..{hi}"
+        );
+    }
+    // Text off the page is Word's mistake: our own marks keep the fitted table.
+    let ours = docx_to_pdf_with(
+        &minimal_docx_with_settings(&table(change, fixed), settings),
+        PdfOptions::default(),
+    )
+    .expect("conventional row-revised table");
+    let (lo, hi) = span(&ours);
+    assert!(
+        lo > 60.0 && hi < 540.0,
+        "conventional marks keep the table fitted, {lo}..{hi}"
+    );
+}
+
+#[test]
 fn official_addition_removal_capability_matrix_stays_four_columns() {
     // Word p3 is the 4-col capability matrix only. A tblPrChange 13-col
     // ghost grid wrapped the last header into a hairline column so
