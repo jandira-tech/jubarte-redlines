@@ -109,5 +109,8 @@ fn page_size_parses_its_cli_names() {
         serde_json::from_str::<PageSize>("\"a4\"").unwrap(),
         PageSize::A4
     );
-    assert_eq!(serde_json::to_string(&PageSize::Letter).unwrap(), "\"letter\"");
+    assert_eq!(
+        serde_json::to_string(&PageSize::Letter).unwrap(),
+        "\"letter\""
+    );
 }
