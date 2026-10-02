@@ -28070,8 +28070,19 @@ impl<'a> Layout<'a> {
         // The carried part opens under its own top rule, and the table's
         // last row still closes on the bottom rule (Word 16 probe sp
         // 2026-10-02: 3pt rules push the next row 2.88pt further down).
+        // An atLeast height holds again on the next page (probe trh: a
+        // 150pt row's two carried lines stand 150pt tall; 12d245d664's
+        // 175pt row keeps its height under the repeated header).
         let last_row = ri + 1 == work.len();
-        let tail_h = tail.iter().map(height).fold(0.0_f32, f32::max)
+        let pads = tail
+            .iter()
+            .map(|c| c.pad_t + c.pad_b)
+            .fold(0.0_f32, f32::max);
+        let tail_h = tail
+            .iter()
+            .map(height)
+            .fold(0.0_f32, f32::max)
+            .max(min + pads)
             + row_top_rule(row, geom, ri)
             + if last_row {
                 split_bottom_rule(row, geom)
@@ -28099,7 +28110,7 @@ impl<'a> Layout<'a> {
             false,
             0.0,
         );
-        work.insert(ri + 1, (RowSrc::Owned(tail), tail_h, false, 0.0));
+        work.insert(ri + 1, (RowSrc::Owned(tail), tail_h, false, min));
     }
 
     /// A row's cells cut where `room` points run out: the heads, the
@@ -28253,7 +28264,13 @@ impl<'a> Layout<'a> {
             used += h;
             n += 1;
         }
-        if n == 0 || n >= lines.len() {
+        // Every line fitting means only the spacing after overran the page:
+        // Word still cuts, before the last line (Word 16 probe aft
+        // 2026-10-02: five 20pt lines + 4pt after in 101.5pt split 3 + 2).
+        if n >= lines.len() {
+            n = lines.len().saturating_sub(1);
+        }
+        if n == 0 {
             return None;
         }
         // From compat 15 the cut keeps two lines on each side, as in the

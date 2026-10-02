@@ -7312,6 +7312,109 @@ fn a_page_anchored_table_above_the_flow_starts_the_next_page() {
 }
 
 #[test]
+fn a_cell_paragraph_whose_spacing_after_overruns_the_page_still_splits() {
+    // Word 16 probe aft 2026-10-02 (compat 15): five 20pt lines with 4pt
+    // after and 101.5pt left on the page: the lines fit, the spacing does
+    // not, and Word cuts the row 3 + 2 (widow control). We counted every
+    // line as fitting, found nothing to cut and moved the row whole
+    // (12d245d664 page 34 ran a page short of Word from there).
+    let line = |text: &str| format!("<w:r><w:t>{text}</w:t></w:r>");
+    let lines: String = (1..=5)
+        .map(|i| line(&format!("Line{i}")))
+        .collect::<Vec<_>>()
+        .join("<w:r><w:br/></w:r>");
+    let body = format!(
+        "<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"10930\" w:lineRule=\"exact\"/></w:pPr></w:p>\
+         <w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/><w:tblLayout w:type=\"fixed\"/>\
+           <w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"6000\"/></w:tblGrid>\
+           <w:tr><w:tc><w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"80\" w:line=\"400\" w:lineRule=\"exact\"/></w:pPr>{lines}</w:p>\
+           </w:tc></w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>"
+    );
+    let compat = "<w:compat><w:compatSetting w:name=\"compatibilityMode\" \
+                  w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat>";
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, compat)).expect("after overrun");
+    let pages: Vec<Option<usize>> = ["Line3", "Line4"]
+        .iter()
+        .map(|t| page_with_text(&pdf, t))
+        .collect();
+    assert_eq!(pages, [Some(0), Some(1)], "Word cuts the row after Line3");
+}
+
+#[test]
+fn an_empty_cell_paragraph_overrunning_the_page_end_does_not_panic() {
+    // The spacing-after cut steps back one line; an empty paragraph whose
+    // spacing alone overruns the page must not step below none.
+    let exact = |line: u32, after: u32| {
+        format!(
+            "<w:pPr><w:spacing w:before=\"0\" w:after=\"{after}\" w:line=\"{line}\" \
+             w:lineRule=\"exact\"/></w:pPr>"
+        )
+    };
+    let lines: String = (1..=32)
+        .map(|i| format!("<w:p>{}<w:r><w:t>Ln{i:02}</w:t></w:r></w:p>", exact(400, 0)))
+        .collect();
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/><w:tblLayout w:type=\"fixed\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"6000\"/></w:tblGrid>\
+           <w:tr><w:tc><w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/></w:tcPr>{lines}\
+             <w:p>{}</w:p><w:p>{}<w:r><w:t>Tail</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>",
+        exact(100, 400),
+        exact(400, 0)
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("empty paragraph at the page end");
+    assert_eq!(page_with_text(&pdf, "Tail"), Some(1));
+}
+
+#[test]
+fn an_at_least_row_height_holds_again_for_the_part_carried_over() {
+    // Word 16 probe trh 2026-10-02 (compat 15): a 150pt atLeast row of 34
+    // 20pt lines carries two lines to page 2, and that part still stands
+    // 150pt: the next row starts 150.5pt under it (117.4 without the
+    // height). 12d245d664's 175pt row kept its height under the repeated
+    // header; we shrank the carried part to its two lines.
+    let next_row_y = |tr_pr: &str| {
+        let exact = "<w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"400\" \
+                     w:lineRule=\"exact\"/></w:pPr>";
+        let lines: String = (1..=34)
+            .map(|i| format!("<w:p>{exact}<w:r><w:t>Ln{i:02}</w:t></w:r></w:p>"))
+            .collect();
+        let body = format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/><w:tblLayout w:type=\"fixed\"/>\
+               <w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr>\
+               <w:tblGrid><w:gridCol w:w=\"6000\"/></w:tblGrid>\
+               <w:tr>{tr_pr}<w:tc><w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/></w:tcPr>{lines}</w:tc></w:tr>\
+               <w:tr><w:tc><w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/></w:tcPr>\
+                 <w:p>{exact}<w:r><w:t>NextRow</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+                 w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("atLeast tail");
+        assert_eq!(
+            page_with_text(&pdf, "Ln34"),
+            Some(1),
+            "the row carries over"
+        );
+        let y = |needle: &str| pdf_glyph_text_xy(&pdf, needle).expect(needle).1;
+        y("Ln33") - y("NextRow")
+    };
+    let plain = next_row_y("");
+    let tall = next_row_y("<w:trPr><w:trHeight w:val=\"3000\"/></w:trPr>");
+    assert!(
+        (tall - 150.0).abs() < 1.0 && (plain - 40.0).abs() < 1.0,
+        "the carried part stands 150pt: {tall} (plain {plain})"
+    );
+}
+
+#[test]
 fn a_split_rows_tail_keeps_room_for_its_top_rule() {
     // Word 16 probe sp 2026-10-02: the part of a row carried to the next
     // page opens under its own top rule and still ends under its last line,
