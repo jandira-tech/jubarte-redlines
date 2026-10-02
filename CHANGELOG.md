@@ -402,6 +402,13 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   does not fit the buffer is `INVALID_PACKAGE`. Budgets of `u64::MAX` for
   `max_part_bytes` and `max_uncompressed_bytes` overflowed the per-part
   read cap (`cap + 1`); it saturates. Valid archives admit as before.
+- Comparing the same pair twice in one process gives identical bytes. An
+  image copied into the redline was named `word/media/P{n}.ext` from a
+  process-wide counter, so its part name and the relationship Target
+  pointing at it changed with every earlier compare (a server, a WASM
+  instance or parallel tests). It is now named from the SHA-256 of its
+  bytes (`word/media/P{sha256}.ext`), and identical images share one
+  part.
 
 ## [0.10.1] - 2026-09-30
 
