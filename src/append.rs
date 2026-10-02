@@ -873,6 +873,11 @@ fn carry_styles_and_numbering(
             part.and_then(|part| insert_lists(dest, &part, dom, &lists))
                 .unwrap_or_default()
         };
+        // The copies carry B's extension attributes (`w15`, `w16cid`); A's
+        // root must declare their prefixes and list them as ignorable.
+        if let (Some(b_root), Some(part)) = (b_numbering, related(dest, a_main, "/numbering")) {
+            merge_part_namespaces(dest, &part, dom, b_root)?;
+        }
     }
     let mut numbered_roots = roots.to_vec();
     numbered_roots.extend(copies.iter().copied());
@@ -885,6 +890,24 @@ fn carry_styles_and_numbering(
     }
     if let Some((doc, part)) = sheet {
         dest.set_part(&part, dom.serialize_document(doc).into_bytes());
+    }
+    Ok(())
+}
+
+/// Merge `from`'s namespace declarations and ignorable prefixes onto the
+/// root of `dest`'s `part`, which received markup copied from under `from`;
+/// the part is rewritten only when its root changed.
+fn merge_part_namespaces(
+    dest: &mut PartFs,
+    part: &str,
+    dom: &mut Dom,
+    from: NodeId,
+) -> Result<(), AppendError> {
+    let (doc, root) = parse("output", dom, dest, part)?;
+    let before = dom.attributes(root);
+    merge_namespace_declarations(dom, root, from);
+    if dom.attributes(root) != before {
+        dest.set_part(part, dom.serialize_document(doc).into_bytes());
     }
     Ok(())
 }
