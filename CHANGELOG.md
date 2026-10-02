@@ -356,6 +356,13 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   Reading Markdown full of openers without closers no longer takes time
   quadratic in its length (120,000 unclosed openers took minutes; now
   milliseconds).
+- Input admission (`admission::admit`) no longer panics on two integer
+  overflows. A ZIP64 locator whose record offset is near `usize::MAX`
+  overflowed the bounds check before the end record was read; the offset
+  is now checked and the record read through `get`, so any offset that
+  does not fit the buffer is `INVALID_PACKAGE`. Budgets of `u64::MAX` for
+  `max_part_bytes` and `max_uncompressed_bytes` overflowed the per-part
+  read cap (`cap + 1`); it saturates. Valid archives admit as before.
 
 ## [0.10.1] - 2026-09-30
 

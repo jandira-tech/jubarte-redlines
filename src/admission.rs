@@ -256,7 +256,7 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
         let cap = limits.max_part_bytes.min(remaining);
         let lower = name.to_ascii_lowercase();
         let is_xml = lower.ends_with(".xml") || lower.ends_with(".rels");
-        let mut limited = (&mut entry).take(cap + 1);
+        let mut limited = (&mut entry).take(cap.saturating_add(1));
         let read = if is_xml {
             let mut buf = Vec::new();
             limited
@@ -323,12 +323,16 @@ fn declared_entry_count(bytes: &[u8]) -> Result<u64, AdmissionError> {
         .ok_or_else(|| invalid("ZIP64 locator missing"))?;
     let mut offset = [0u8; 8];
     offset.copy_from_slice(&bytes[locator + 8..locator + 16]);
+    // The offset is attacker-controlled: on 64-bit every u64 fits a usize,
+    // so the end of the record is computed checked and read through `get`.
     let record = usize::try_from(u64::from_le_bytes(offset))
         .ok()
-        .filter(|&r| r + 40 <= bytes.len() && bytes[r..].starts_with(&EOCD64))
+        .and_then(|r| r.checked_add(40).map(|end| (r, end)))
+        .and_then(|(r, end)| bytes.get(r..end))
+        .filter(|record| record.starts_with(&EOCD64))
         .ok_or_else(|| invalid("ZIP64 end record missing"))?;
     let mut count = [0u8; 8];
-    count.copy_from_slice(&bytes[record + 32..record + 40]);
+    count.copy_from_slice(&record[32..40]);
     Ok(u64::from_le_bytes(count))
 }
 
@@ -868,6 +872,118 @@ mod tests {
         assert_eq!(
             kind(&deep, InputLimits::default()),
             AdmissionErrorKind::InvalidXml
+        );
+    }
+
+    /// Replace the trailing end-of-central-directory record of `zip` by a
+    /// ZIP64 locator pointing at `record_offset`, an EOCD declaring 0xFFFF
+    /// entries, and `comment` as the archive comment.
+    fn with_zip64_tail(zip: &[u8], record_offset: u64, comment: &[u8]) -> Vec<u8> {
+        let eocd_at = zip.len() - 22;
+        assert_eq!(&zip[eocd_at..eocd_at + 4], &[0x50, 0x4b, 0x05, 0x06]);
+        let mut out = zip[..eocd_at].to_vec();
+        out.extend_from_slice(&[0x50, 0x4b, 0x06, 0x07]);
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&record_offset.to_le_bytes());
+        out.extend_from_slice(&1u32.to_le_bytes());
+        let mut eocd = zip[eocd_at..].to_vec();
+        eocd[8..10].copy_from_slice(&u16::MAX.to_le_bytes());
+        eocd[10..12].copy_from_slice(&u16::MAX.to_le_bytes());
+        eocd[20..22].copy_from_slice(&u16::try_from(comment.len()).unwrap().to_le_bytes());
+        out.extend_from_slice(&eocd);
+        out.extend_from_slice(comment);
+        out
+    }
+
+    /// A 56-byte ZIP64 end-of-central-directory record declaring `entries`.
+    fn eocd64(entries: u64) -> Vec<u8> {
+        let mut record = vec![0x50, 0x4b, 0x06, 0x06];
+        record.extend_from_slice(&44u64.to_le_bytes());
+        record.extend_from_slice(&[45, 0, 45, 0]);
+        record.extend_from_slice(&0u32.to_le_bytes());
+        record.extend_from_slice(&0u32.to_le_bytes());
+        record.extend_from_slice(&entries.to_le_bytes());
+        record.extend_from_slice(&entries.to_le_bytes());
+        record.extend_from_slice(&0u64.to_le_bytes());
+        record.extend_from_slice(&0u64.to_le_bytes());
+        assert_eq!(record.len(), 56);
+        record
+    }
+
+    #[test]
+    fn a_zip64_end_record_is_read_at_the_locator_offset() {
+        let docx = docx_with(&[]);
+        let record_at = docx.len() - 22;
+        let mut body = docx[..record_at].to_vec();
+        body.extend_from_slice(&eocd64(7));
+        body.extend_from_slice(&docx[record_at..]);
+        let bytes = with_zip64_tail(&body, record_at as u64, b"");
+        assert_eq!(declared_entry_count(&bytes).unwrap(), 7);
+    }
+
+    #[test]
+    fn a_zip64_locator_offset_past_the_end_is_refused_not_indexed() {
+        let docx = docx_with(&[]);
+        let past = with_zip64_tail(&docx, docx.len() as u64 + 1000, b"");
+        let err = declared_entry_count(&past).expect_err("offset past the end");
+        assert_eq!(err.kind, AdmissionErrorKind::InvalidPackage);
+        assert_eq!(
+            kind(&past, InputLimits::default()),
+            AdmissionErrorKind::InvalidPackage
+        );
+    }
+
+    #[test]
+    fn a_zip64_locator_offset_near_usize_max_does_not_overflow() {
+        let docx = docx_with(&[]);
+        for offset in [
+            u64::MAX,
+            u64::MAX - 20,
+            u64::MAX - 39,
+            usize::MAX as u64 - 39,
+        ] {
+            let huge = with_zip64_tail(&docx, offset, b"");
+            let err = declared_entry_count(&huge).expect_err("offset near usize::MAX");
+            assert_eq!(err.kind, AdmissionErrorKind::InvalidPackage);
+            assert_eq!(
+                kind(&huge, InputLimits::default()),
+                AdmissionErrorKind::InvalidPackage
+            );
+        }
+    }
+
+    #[test]
+    fn a_truncated_zip64_end_record_is_refused() {
+        let docx = docx_with(&[]);
+        // The record signature sits in the archive comment, 39 bytes before
+        // the end: a valid offset whose 40-byte record runs past the buffer.
+        let mut comment = vec![0x50, 0x4b, 0x06, 0x06];
+        comment.resize(39, 0);
+        let probe = with_zip64_tail(&docx, 0, &comment);
+        let record_at = (probe.len() - 39) as u64;
+        let truncated = with_zip64_tail(&docx, record_at, &comment);
+        assert_eq!(truncated.len(), probe.len());
+        assert_eq!(
+            &truncated[record_at as usize..record_at as usize + 4],
+            &[0x50, 0x4b, 0x06, 0x06]
+        );
+        let err = declared_entry_count(&truncated).expect_err("truncated record");
+        assert_eq!(err.kind, AdmissionErrorKind::InvalidPackage);
+    }
+
+    #[test]
+    fn unbounded_part_and_package_budgets_admit_a_docx() {
+        let bytes = docx_with(&[]);
+        let unbounded = InputLimits {
+            max_part_bytes: u64::MAX,
+            max_uncompressed_bytes: u64::MAX,
+            ..InputLimits::default()
+        };
+        let admitted = admit(&bytes, unbounded).unwrap();
+        assert_eq!(admitted.main_part, "word/document.xml");
+        assert_eq!(
+            admitted.inflated_bytes,
+            (TYPES.len() + RELS.len() + DOC.len()) as u64
         );
     }
 
