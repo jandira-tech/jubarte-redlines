@@ -42,6 +42,32 @@ def test_insert_rejects_missing_or_conflicting_positions(location):
         EditPlan(author="Reviewer").insert(0, text="new", **location)
 
 
+def test_anchored_builders_carry_occurrence_only_when_given():
+    plan = (
+        EditPlan(author="Reviewer")
+        .replace(0, find="fee", replacement="cost", occurrence=2)
+        .insert(0, text="!", after="fee", occurrence=1)
+        .delete(0, find="fee", occurrence=3)
+        .comment(0, text="why?", find="fee", occurrence=2)
+        .delete(0, find="fum")
+    )
+    ops = plan.to_dict()["operations"]
+    assert [op.get("occurrence") for op in ops] == [2, 1, 3, 2, None]
+    assert "occurrence" not in ops[4]
+
+
+@pytest.mark.parametrize("bad", [0, -1])
+@pytest.mark.parametrize("build", [
+    lambda plan, n: plan.replace(0, find="a", replacement="b", occurrence=n),
+    lambda plan, n: plan.insert(0, text="b", after="a", occurrence=n),
+    lambda plan, n: plan.delete(0, find="a", occurrence=n),
+    lambda plan, n: plan.comment(0, text="b", find="a", occurrence=n),
+])
+def test_anchored_builders_reject_occurrence_below_one(build, bad):
+    with pytest.raises(ValueError, match="occurrence"):
+        build(EditPlan(author="Reviewer"), bad)
+
+
 @pytest.mark.parametrize("location", [{"before": ""}, {"after": ""}, {"position": "start"}, {"position": "end"}])
 def test_insert_keeps_explicit_location_for_engine_validation(location):
     op = EditPlan(author="Reviewer").insert(0, text="new", **location).to_dict()["operations"][0]

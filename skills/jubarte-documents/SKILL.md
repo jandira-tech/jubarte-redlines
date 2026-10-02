@@ -174,9 +174,9 @@ must match exactly one paragraph. Those three search the body unless they
 name a story: `{"story": "footer1", "contains": "Page"}`.
 
 Gotchas:
-- `find` must occur exactly once in that paragraph; overlapping occurrences
-  count (`"aa"` occurs twice in `"aaa"`). Widen the anchor instead of
-  guessing.
+- `find` must occur exactly once in that paragraph unless you give
+  `occurrence` (1-based); the refusal says how many times it occurs.
+  Overlapping occurrences count (`"aa"` occurs twice in `"aaa"`).
 - Inserted text takes the formatting of the run it lands in (`after` and
   `end` extend the preceding run; `before` and `start` join the following
   one). To insert bold or highlighted text, give the operation a `format`
