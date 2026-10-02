@@ -343,6 +343,11 @@ enum Command {
         /// The document (.docx) to read.
         #[arg(value_name = "FILE")]
         file: PathBuf,
+        /// Print the document as Markdown with its tracked changes as
+        /// CriticMarkup (all), or with every change accepted or rejected,
+        /// like `convert --to md`. The output then has no `[body:p:N]` ids.
+        #[arg(long, value_enum, value_name = "CHOICE")]
+        track_changes: Option<TrackChanges>,
     },
     /// Apply an edit plan: write the clean copy, the Word redline and a
     /// per-operation report (optionally PDF and PNG pages) into a new
@@ -826,6 +831,28 @@ struct MarkdownArgs {
         default_value = "1970-01-01T00:00:00Z"
     )]
     date: String,
+    /// Markdown to Word: the page size when there is no --reference-doc
+    /// (one-inch margins either way); a reference's page setup wins.
+    #[arg(long, value_enum, value_name = "SIZE", default_value_t = Page::Letter)]
+    page: Page,
+}
+
+/// `--page`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+enum Page {
+    /// US Letter, 8.5 by 11 inches.
+    Letter,
+    /// ISO A4, 210 by 297 mm.
+    A4,
+}
+
+impl From<Page> for jubarte::markdown::PageSize {
+    fn from(choice: Page) -> Self {
+        match choice {
+            Page::Letter => Self::Letter,
+            Page::A4 => Self::A4,
+        }
+    }
 }
 
 /// `jubarte convert --revisions`.
@@ -1372,12 +1399,24 @@ fn run_inspect_tables(file: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn run_text(file: &Path) -> Result<(), String> {
+fn run_text(file: &Path, track_changes: Option<TrackChanges>) -> Result<(), String> {
     let bytes = read_document(file)?;
-    print!(
-        "{}",
-        jubarte::inspect::markdown(&bytes).map_err(|e| e.to_string())?
-    );
+    let Some(choice) = track_changes else {
+        print!(
+            "{}",
+            jubarte::inspect::markdown(&bytes).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    };
+    let read = jubarte::markdown::docx_to_markdown(
+        &bytes,
+        &jubarte::markdown::MarkdownOptions {
+            track_changes: choice.into(),
+            extract_media: None,
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    print!("{}", read.markdown);
     Ok(())
 }
 
@@ -2137,7 +2176,7 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
                 author: markdown.author.clone(),
                 date: markdown.date.clone(),
                 images: Some(&loader),
-                page: jubarte::markdown::PageSize::default(),
+                page: markdown.page.into(),
             };
             let written = jubarte::markdown::markdown_to_docx(&text, &options)
                 .map_err(|e| format!("convert failed: {e}"))?;
@@ -2441,7 +2480,10 @@ fn main() -> ExitCode {
                 run_inspect(&file, json)
             });
         }
-        Some(Command::Text { file }) => return exit_code(run_text(&file)),
+        Some(Command::Text {
+            file,
+            track_changes,
+        }) => return exit_code(run_text(&file, track_changes)),
         Some(Command::Edit {
             file,
             plan,
