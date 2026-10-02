@@ -15,6 +15,15 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+### Changed
+
+- `--revisions conventional` (the default, `RevisionPalette::CONVENTIONAL`)
+  now paints Litera Compare's marks: an insertion or deletion is marked once
+  (blue underline, red strike) and a move twice, in green (double strike
+  where it left, double underline where it landed). Insertions were
+  double-underlined and moved-from text single-struck, so a landed move read
+  as an insertion except for its colour. `word` and `custom` are unchanged.
+
 ### Added
 
 - `jubarte-mcp`, an MCP server over stdio in the Python package

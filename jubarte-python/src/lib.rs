@@ -164,8 +164,9 @@ fn get_revisions_json(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
 ///
 /// `compress=True` deflates the PDF's streams (`/FlateDecode`), which is much
 /// smaller but no longer plain text. `revisions` paints tracked changes:
-/// `"conventional"` (red struck deletions, blue double-underlined insertions,
-/// green moves), `"word"` (Microsoft Word's markup) or `"custom"` with
+/// `"conventional"` (red struck deletions, blue underlined insertions, green
+/// moves double-struck and double-underlined), `"word"` (Microsoft Word's
+/// markup) or `"custom"` with
 /// `revision_palette="deleted=#AA0000:strike,..."`.
 #[pyfunction]
 #[pyo3(signature = (docx, compress = false, revisions = "conventional", revision_palette = None))]

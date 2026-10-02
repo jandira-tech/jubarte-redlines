@@ -226,7 +226,8 @@ enum Command {
         #[arg(long, value_name = "FILE")]
         font_report: Option<PathBuf>,
         /// How tracked changes are painted: `conventional` (deletions red
-        /// struck through, insertions blue double-underlined, moves green),
+        /// struck through, insertions blue underlined, moves green:
+        /// double-struck where they left, double-underlined where they landed),
         /// `word` (what Microsoft Word's Save as PDF paints), or `custom`
         /// (see --revision-palette).
         #[arg(long, value_enum, default_value_t = Revisions::Conventional)]
@@ -831,7 +832,7 @@ struct MarkdownArgs {
 /// `jubarte convert --revisions`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 enum Revisions {
-    /// Red strike, blue double underline, green moves.
+    /// Red strike, blue underline, green double marks for moves.
     Conventional,
     /// Microsoft Word's own markup.
     Word,
