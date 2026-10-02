@@ -47342,3 +47342,41 @@ fn a_table_inside_a_text_box_lays_out_as_a_table() {
         "the second row sits under the first, at the same left edge; top={top:?} band={band:?}"
     );
 }
+
+#[test]
+fn a_table_styles_first_row_turned_off_italic_and_bold_stay_off() {
+    // 5a6c's banner table style (Table-XY) gives its header row
+    // `<w:b/><w:i w:val="0"/>`: bold, upright. We read any w:i as on and
+    // painted the header italic.
+    let pdf_for = |rpr: &str| {
+        let styles = format!(
+            "<w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>\
+               <w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/></w:rPr></w:style>\
+             <w:style w:type=\"table\" w:styleId=\"Head\"><w:name w:val=\"Head\"/>\
+               <w:tblStylePr w:type=\"firstRow\"><w:rPr>{rpr}</w:rPr>\
+                 <w:tcPr><w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"D81E05\"/></w:tcPr></w:tblStylePr></w:style>"
+        );
+        let body = "<w:tbl><w:tblPr><w:tblStyle w:val=\"Head\"/><w:tblW w:w=\"4000\" w:type=\"dxa\"/>\
+               <w:tblLook w:val=\"0420\" w:firstRow=\"1\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>\
+             <w:tr><w:tc><w:p><w:r><w:t>HeadCell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+             <w:p/><w:sectPr/>";
+        let pdf = docx_to_pdf(&docx_with_settings_and_styles(body, "", &styles)).expect("convert");
+        // The faces' names only (every descriptor has an /ItalicAngle).
+        let hay = String::from_utf8_lossy(&pdf).into_owned();
+        hay.split("/BaseFont /")
+            .skip(1)
+            .filter_map(|s| s.split([' ', '/', '\n']).next())
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let on = pdf_for("<w:b/><w:i/>");
+    assert!(
+        on.contains("Italic") && on.contains("Bold"),
+        "control: b and i on"
+    );
+    let off = pdf_for("<w:b w:val=\"0\"/><w:i w:val=\"0\"/>");
+    assert!(
+        !off.contains("Italic") && !off.contains("Bold"),
+        "w:val=\"0\" turns the header's italic and bold off"
+    );
+}

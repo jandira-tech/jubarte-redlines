@@ -3559,8 +3559,9 @@ fn parse_tbl_style(dom: &Dom, style: NodeId, defaults: &Defaults, theme: &ThemeF
     for pr in dom.descendants(style, Some(&W::name("tblStylePr"))) {
         let kind = attr_any(dom, pr, "type").unwrap_or("");
         let fill = style_pr_fill(dom, pr);
-        let bold = first_named(dom, pr, "b").is_some();
-        let italic = first_named(dom, pr, "i").is_some();
+        // `<w:i w:val="0"/>` names italic off (5a6c's banner header).
+        let on = |name| first_named(dom, pr, name).is_some_and(|n| !val_is_false(dom, Some(n)));
+        let (bold, italic) = (on("b"), on("i"));
         match kind {
             "firstRow" => {
                 out.first_row_fill = fill;
