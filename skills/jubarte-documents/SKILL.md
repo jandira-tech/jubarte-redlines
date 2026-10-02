@@ -206,6 +206,18 @@ page's painted text, so you can say which page a clause starts on without
 opening anything. The `render` line in `report.jsonl` already lists page
 counts and page starts for both outputs when you passed `--pdf` or `--png`.
 
+```bash
+jubarte diff-render before.docx after.docx --out-dir diff
+jubarte convert file.docx --png --pages 3-5
+```
+
+`jubarte diff-render before.docx after.docx --out-dir diff` writes only the
+pages that changed with the change boxed, and `diff.json` with each page's
+`changed_ratio`; it exits 5 when any page differs and 0 when none does.
+`jubarte convert file.docx --png --pages 3-5` renders three pages from one
+layout pass. Python: `jubarte_redlines.diff_render(a, b, dpi=100)` and
+`Document.to_png(pages=[3, 4, 5])` (pages counted from 1).
+
 Gotchas:
 - Page count is the renderer's layout, not Word's; treat a one-page
   difference between renderer and Word as possible on dense documents.

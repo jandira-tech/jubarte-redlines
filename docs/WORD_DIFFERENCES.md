@@ -126,21 +126,25 @@ The other 3 of the 32 are not differences:
   every comment the body references.
 - **Which is better.** Ours; Word's version hides the comment.
 
-### 7. An autofit table Word widens past the page (PDF, not copied)
+### 7. An autofit table Word widens past the page (PDF)
 
-- **What happens.** In `tracking_without_comments/f94aeed5f5` (a redline),
-  the first table has a six-column grid, `tblW` auto, `jc=center`, and a
-  tracked change from an older fixed-layout grid. Word's Save as PDF lays it
-  out wider than the page, so its left columns print past the page's left
-  edge and their labels ("Dersin Kodu", …) can't be read. The document takes
-  4 pages.
-- **What we do.** Both modes keep the table's grid (453pt, inside the
-  margins). Every cell stays readable, but the long cells wrap, and the
-  document takes 6 pages.
+- **What happens.** In `tracking_without_comments/f94aeed5f5` and the
+  other 333bfe069a redlines, the first table has `tblW` auto,
+  `jc=center`, and a `tblPrChange` that keeps an older `tblLayout fixed`.
+  Its rows also carry `trPrChange` and its cells `tcPrChange`. Word's Save
+  as PDF lays the table out fixed at its cells' `tcW`, 1047pt wide on an
+  A4 page, so its left columns print past the page's left edge and their
+  labels ("Dersin Kodu", …) can't be read.
+- **The rule.** Word does this only when both hold: the old properties
+  say `tblLayout fixed`, and some row or cell of the table carries a
+  property change (even an empty `trPrChange`). With only the
+  `tblPrChange`, or without the old layout, Word fits the table to the
+  page. The page parts, styles and compatibility mode (12 or 15) do not
+  matter. Word 16 probes 33c, 33d and 33e, 2026-10-02.
+- **What we do.** Only `--revisions word` copies it
+  (`old_layout_still_fixed` in `src/convert/mod.rs`). Our own styles keep
+  the table's live autofit, inside the margins.
 - **Which is better.** Ours. Word's output loses text off the page.
-- **Status.** Not copied: `--revisions word` would need Word's autofit
-  widths. If it is ever copied, it belongs in Word mode only, with ours kept
-  as the default.
 
 ### 8. Renumbered list items (PDF)
 

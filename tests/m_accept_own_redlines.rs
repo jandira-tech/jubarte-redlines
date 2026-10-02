@@ -1517,6 +1517,33 @@ fn custom_properties_merge_with_the_original_winning() {
     assert_eq!(props.len(), 3, "{props:?}");
 }
 
+/// Custom property names match without regard to case: the original's
+/// "Actno" and the revision's "ActNo" are one property. Keeping both wrote
+/// a package the OOXML validator rejects (Sem_UniqueAttributeValue) and
+/// Word would not save as PDF (19eb128df9 vs 9666fa13fb).
+#[test]
+fn custom_properties_differing_only_in_case_stay_one() {
+    let base = with_custom_props(
+        &docx_with_sect(r#"<w:p><w:r><w:t>Old text</w:t></w:r></w:p>"#, &[], ""),
+        &[("Actno", "1")],
+    );
+    let next = with_custom_props(
+        &docx_with_sect(r#"<w:p><w:r><w:t>New text</w:t></w:r></w:p>"#, &[], ""),
+        &[("ActNo", "2"), ("Ref", "R-7")],
+    );
+    let redline = compare_documents(&base, &next, "Redline").unwrap();
+    assert_word_valid_package(&redline);
+    let props = custom_props(&redline);
+    assert_eq!(
+        props,
+        [
+            ("Actno".to_string(), "1".to_string()),
+            ("Ref".to_string(), "R-7".to_string())
+        ],
+        "the original's Actno wins, the revision's ActNo is the same property"
+    );
+}
+
 /// Every `w:t`/`w:delText` of `part` whose text starts or ends with
 /// whitespace but lacks `xml:space="preserve"` (Word trims those).
 fn unpreserved_texts(pkg: &[u8], part: &str) -> Vec<String> {

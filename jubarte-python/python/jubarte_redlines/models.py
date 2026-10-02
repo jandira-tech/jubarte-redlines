@@ -902,6 +902,60 @@ def _decode_render_report(payload: str) -> RenderReport:
 
 
 @dataclass(frozen=True, slots=True)
+class PageDiff:
+    """How one page differs between the two sides of ``diff_render``.
+
+    ``index`` is zero-based. ``changed_ratio`` is changed pixels over all
+    pixels (0.0 to 1.0; 1.0 when the page exists on one side only or the two
+    pages differ in size). ``bbox`` is ``(x0, y0, x1, y1)`` in pixels around
+    every changed pixel (``x1``/``y1`` exclusive), ``None`` when equal.
+    ``only_in`` is ``"a"`` or ``"b"`` for a page only one side has.
+    """
+
+    index: int
+    changed_ratio: float
+    bbox: tuple[int, int, int, int] | None
+    only_in: Literal["a", "b"] | None = None
+
+    @property
+    def differs(self) -> bool:
+        """Whether this page differs at all."""
+        return self.changed_ratio > 0.0 or self.only_in is not None
+
+
+@dataclass(frozen=True, slots=True)
+class RenderDiff:
+    """Output of ``diff_render``: one ``PageDiff`` per page of the longer
+    document, both sides' PNG pages, and per page diff ``b``'s page with the
+    change painted magenta and boxed (``None`` when the page is equal, on one
+    side only, a different size, or overlays were not asked for)."""
+
+    pages: tuple[PageDiff, ...]
+    a: tuple[bytes, ...]
+    b: tuple[bytes, ...]
+    overlays: tuple[bytes | None, ...]
+    a_report: RenderReport
+    b_report: RenderReport
+
+    @property
+    def differs(self) -> bool:
+        """Whether any page differs."""
+        return any(p.differs for p in self.pages)
+
+
+def _decode_page_diffs(payload: str) -> tuple[PageDiff, ...]:
+    return tuple(
+        PageDiff(
+            index=p["index"],
+            changed_ratio=float(p["changed_ratio"]),
+            bbox=None if p["bbox"] is None else (p["bbox"][0], p["bbox"][1], p["bbox"][2], p["bbox"][3]),
+            only_in=p.get("only_in"),
+        )
+        for p in json.loads(payload)
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class Hunk:
     """One changed paragraph of a ``Diff``.
 
