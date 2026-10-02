@@ -31,6 +31,7 @@ use crate::xmllinq::{Dom, NodeId, XNamespace};
 
 mod rewrite;
 mod structural;
+mod tracked;
 mod whole;
 
 /// A versioned, portable set of operations against one document snapshot.
@@ -108,6 +109,9 @@ pub enum ExistingRevisions {
     Accept,
     /// Reject them first; the plan then edits that rejected base.
     Reject,
+    /// Leave them tracked; the plan's edits become new revisions beside them
+    /// (direct emission; no compare).
+    Keep,
 }
 
 /// One operation. `id` defaults to `op-N` (1-based) in the report.
@@ -967,8 +971,12 @@ pub fn apply_plan_json(source: &[u8], plan_json: &str) -> Result<EditResult, Edi
 pub fn apply_plan(source: &[u8], plan: &EditPlan) -> Result<EditResult, EditError> {
     let mut tx = Transaction::start(source, plan)?;
     tx.resolve()?;
+    tracked::check(&tx)?;
     tx.apply()?;
     let (clean, marked) = tx.finish()?;
+    if plan.existing_revisions == ExistingRevisions::Keep {
+        return tracked::result(&tx, clean);
+    }
     let settings = WmlComparerSettings {
         author_for_revisions: plan.author.clone(),
         date_time_for_revisions: tx.date.clone(),
@@ -1021,6 +1029,7 @@ pub fn apply_plan(source: &[u8], plan: &EditPlan) -> Result<EditResult, EditErro
 pub fn preview_plan(source: &[u8], plan: &EditPlan) -> Result<EditReport, EditError> {
     let mut tx = Transaction::start(source, plan)?;
     tx.resolve()?;
+    tracked::check(&tx)?;
     let mut report = tx.report(true);
     report.paragraphs.to = report.paragraphs.from;
     Ok(report)
@@ -1303,12 +1312,12 @@ impl<'p> Transaction<'p> {
         let has_revisions =
             crate::inspect::revision_count(&probe.dom, probe.body) + story_revisions > 0;
         let (base, mut opened) = match (has_revisions, plan.existing_revisions) {
-            (false, _) => (source.to_vec(), probe),
+            (false, _) | (true, ExistingRevisions::Keep) => (source.to_vec(), probe),
             (true, ExistingRevisions::Refuse) => {
                 return Err(err(
                     "EXISTING_REVISIONS",
                     None,
-                    "the document already holds tracked changes; set existing_revisions to accept or reject",
+                    "the document already holds tracked changes; set existing_revisions to keep, accept or reject",
                 ));
             }
             (true, policy) => {

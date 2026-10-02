@@ -68,5 +68,5 @@ def diff_json(
     critic: bool = False,
 ) -> tuple[str, str]: ...
 def redline_diff_json(
-    docx: bytes, *, name: str, author: str, date: str, columns: int = 72
+    docx: bytes, *, name: str, author: str, date: str, columns: int = 72, own_only: bool = False
 ) -> tuple[str, str]: ...
