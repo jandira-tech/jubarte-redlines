@@ -1714,6 +1714,9 @@ struct CellPara {
     /// How far a line's spaces may narrow to keep a word, as body lines
     /// do (`WrapTabs::squeeze`).
     squeeze: Squeeze,
+    /// A space wider than the cell hangs after its character instead of
+    /// taking a line (`LineFit::hang_spaces`).
+    hang_spaces: bool,
 }
 
 #[derive(Clone)]
@@ -8329,8 +8332,28 @@ fn unclamped_col_widths(
     geom: &TableGeom,
     avail: f32,
 ) -> Vec<f32> {
+    // An autofit table whose saved grid outruns its room is laid out again
+    // inside it (Word probes b1, b2, b4 and b6, 2026-10-02: 500pt and
+    // 600pt grids in a 468pt measure; a9de4ed3f9's landscape register in
+    // its portrait section). A legacy table's room counts its cell
+    // margins: 000aba38's 488.9pt grid stays in 481.9 + 10.8.
+    let outruns = !geom.fixed
+        && matches!(geom.width, TblWidth::Grid)
+        && !geom.grid_padded
+        && cols.iter().sum::<f32>() > avail + geom.pct_margins + 0.5;
+    if outruns {
+        // A column without a tcW prefers its grid width, Word's last
+        // autofit (tblprchange_grid_is_not_the_live_grid's matrix).
+        let mut prefer = geom.clone();
+        for (pref, &col) in prefer.pref.iter_mut().zip(cols) {
+            if matches!(pref, PrefWidth::Auto) {
+                *pref = PrefWidth::Dxa(col);
+            }
+        }
+        return content_autofit_widths(fonts, cols.len(), rows, &prefer, avail, true);
+    }
     if geom.content_autofit {
-        return content_autofit_widths(fonts, cols.len(), rows, geom, avail);
+        return content_autofit_widths(fonts, cols.len(), rows, geom, avail, false);
     }
     let widths = table_col_widths(cols, geom, avail);
     // An autofit column is at least its longest word: Word widens a tcW
@@ -8500,13 +8523,17 @@ fn cell_content_extent(fonts: &Fonts, cell: &TableCell) -> (f32, f32) {
 /// widest paragraph (or its preferred tcW, if wider) at most; the room
 /// past the minimums goes to each column by its max - min. Live Word on
 /// 00046848: a 142pt-preferred label column beside an 800pt paragraph
-/// takes 91pt, wrapping "Kvalifikační úroveň:".
+/// takes 91pt, wrapping "Kvalifikační úroveň:". With `pref_caps`, a
+/// preferred width is the most a column takes, however long its text: the
+/// columns of a grid too wide for its room shrink between their longest
+/// words and their grid widths (a9de4ed3f9's register, Word probe b6).
 fn content_autofit_widths(
     fonts: &Fonts,
     n: usize,
     rows: &[Vec<TableCell>],
     geom: &TableGeom,
     avail: f32,
+    pref_caps: bool,
 ) -> Vec<f32> {
     let mut mins = vec![0.0_f32; n];
     let mut maxs = vec![0.0_f32; n];
@@ -8522,7 +8549,7 @@ fn content_autofit_widths(
     }
     for (j, max) in maxs.iter_mut().enumerate() {
         if let Some(PrefWidth::Dxa(w)) = geom.pref.get(j) {
-            *max = max.max(*w);
+            *max = if pref_caps { *w } else { max.max(*w) };
         }
         *max = max.max(mins[j]);
     }
@@ -8611,10 +8638,19 @@ fn table_col_widths(cols: &[f32], geom: &TableGeom, avail: f32) -> Vec<f32> {
     if geom.fixed && matches!(geom.width, TblWidth::Grid) {
         return base;
     }
+    let pct: Vec<Option<f32>> = (0..n)
+        .map(|i| match geom.pref.get(i) {
+            Some(PrefWidth::Pct(p)) if *p > 0.0 => Some(*p),
+            _ => None,
+        })
+        .collect();
     // pct cells that overrun the table keep their shares; the last
     // columns give up the excess (00587c73's 101.4%: Word's last column
     // is what is left, the first three are pct x the table).
-    let all_pct = (0..n).all(|i| matches!(geom.pref.get(i), Some(PrefWidth::Pct(p)) if *p > 0.0));
+    let all_pct = pct.iter().all(Option::is_some);
+    if geom.fixed && !all_pct && pct.iter().any(Option::is_some) {
+        return fixed_pct_widths(&base, &pct, target, 2.0 * geom.mar_l.max(0.0) + 1.0);
+    }
     if all_pct && total > target {
         let mut out = base;
         let mut excess = total - target;
@@ -8630,6 +8666,50 @@ fn table_col_widths(cols: &[f32], geom: &TableGeom, avail: f32) -> Vec<f32> {
     }
     let scale = if total > 0.0 { target / total } else { 1.0 };
     base.iter().map(|c| c * scale).collect()
+}
+
+/// A fixed table's columns when some are sized in pct (`pct`) and the
+/// others in dxa (`base`). The pct columns hold their share of `target`
+/// and the others split what is left in proportion (Word probes oBA and
+/// g01, 2026-10-02). When the pcts overrun it, the others keep `min_w`
+/// (their margins plus 1pt) and the pct columns take their share of the
+/// rest in turn, the last that fits what is left (m3p); a pct column left
+/// with less than `min_w` keeps it too (mall: a9de4ed3f9's register is
+/// 4 x 122.1 + 2 x 11.8, its 25% columns running off the page).
+fn fixed_pct_widths(base: &[f32], pct: &[Option<f32>], target: f32, min_w: f32) -> Vec<f32> {
+    let n = base.len();
+    let rest = target - pct.iter().flatten().map(|p| p * target).sum::<f32>();
+    let others: Vec<usize> = (0..n).filter(|&i| pct[i].is_none()).collect();
+    if rest >= min_w * others.len() as f32 {
+        let weight: f32 = others.iter().map(|&i| base[i]).sum();
+        return (0..n)
+            .map(|i| match pct[i] {
+                Some(p) => p * target,
+                None if weight > 0.0 => rest * base[i] / weight,
+                None => rest / others.len() as f32,
+            })
+            .collect();
+    }
+    let mut starved: Vec<bool> = pct.iter().map(Option::is_none).collect();
+    loop {
+        let room = (target - min_w * starved.iter().filter(|&&s| s).count() as f32).max(0.0);
+        let mut left = room;
+        let mut out = vec![min_w; n];
+        let mut settled = true;
+        for i in (0..n).filter(|&i| !starved[i]) {
+            if left < min_w {
+                starved[i] = true;
+                settled = false;
+                break;
+            }
+            let w = (pct[i].unwrap_or(0.0) * room).min(left);
+            out[i] = w;
+            left -= w;
+        }
+        if settled {
+            return out;
+        }
+    }
 }
 
 /// A cell paragraph's (size, face): its largest run, in the painting face
@@ -9024,6 +9104,7 @@ fn cell_content_height(fonts: &Fonts, cell: &TableCell, col_w: &[f32], space_for
                 continued: false,
                 vertical: false,
                 squeeze: Squeeze::NONE,
+                hang_spaces: false,
             },
             wrap_w,
             space_for_ul,
@@ -11335,6 +11416,7 @@ fn table_block(
                     continued: false,
                     vertical: false,
                     squeeze: Squeeze::NONE,
+                    hang_spaces: false,
                 });
             }
             if cell_paras.is_empty() && nested.is_empty() {
@@ -11361,6 +11443,7 @@ fn table_block(
                     continued: false,
                     vertical: false,
                     squeeze: Squeeze::NONE,
+                    hang_spaces: false,
                 });
             } else if let Some(last) = cell_paras.last_mut() {
                 // Trailing empty paragraphs: their bookmarks still exist.
@@ -11373,6 +11456,7 @@ fn table_block(
             // "… amacı ve önemi" keeps its last word on 2.5pt spaces.
             if !sheet.defaults.legacy_compat {
                 for p in &mut cell_paras {
+                    p.hang_spaces = true;
                     if matches!(p.style.align, Align::Justify) {
                         p.squeeze = JUSTIFY_SQUEEZE;
                     }
@@ -11507,9 +11591,15 @@ fn table_block(
     // A row sets all its cells at their largest top margin: 17c3e72c's
     // question text starts level with the tcMar-top "1." beside it, and
     // live Word sets an unmargined cell level with a tcMar-top neighbour.
+    // Its bottom margin too: 97ec0fecd2's two-line definition beside a
+    // tcMar-bottom label ends its row 5pt lower, as its one-line rows do.
     for row in &mut rows {
         let top = row.iter().map(|c| c.pad_t).fold(0.0_f32, f32::max);
-        row.iter_mut().for_each(|c| c.pad_t = top);
+        let bottom = row.iter().map(|c| c.pad_b).fold(0.0_f32, f32::max);
+        row.iter_mut().for_each(|c| {
+            c.pad_t = top;
+            c.pad_b = bottom;
+        });
     }
     // The spacing also stands between the table's edge and its first and
     // last rows (00046848's first row sits 5pt + its margin down in Word).
@@ -12072,9 +12162,14 @@ fn column_prefs(raw_rows: &[Vec<RawCell>], grid: &[f32], fixed: bool) -> Vec<Pre
             if span == 1
                 && let Some(slot) = pref.get_mut(col)
             {
+                // A pct cell in any row sets its column over the rows that
+                // size it in dxa (Word probes oAB/oBA, 2026-10-02).
                 match (*slot, cell.pref) {
                     (PrefWidth::Dxa(a), PrefWidth::Dxa(b)) if b > a => *slot = PrefWidth::Dxa(b),
                     (PrefWidth::Pct(a), PrefWidth::Pct(b)) if b > a => *slot = PrefWidth::Pct(b),
+                    (PrefWidth::Dxa(_) | PrefWidth::Auto, PrefWidth::Pct(b)) => {
+                        *slot = PrefWidth::Pct(b);
+                    }
                     _ => {}
                 }
             }
@@ -12128,6 +12223,7 @@ fn grid_skip_cell(span: usize, pref: PrefWidth, pad_l: f32, pad_r: f32) -> RawCe
             continued: false,
             vertical: false,
             squeeze: Squeeze::NONE,
+            hang_spaces: false,
         }],
         nested: Vec::new(),
         nested_at: Vec::new(),
@@ -12190,6 +12286,7 @@ fn deleted_cells_stamp(base: &RunStyle) -> RawCell {
             continued: false,
             vertical: false,
             squeeze: Squeeze::NONE,
+            hang_spaces: false,
         }],
         colspan: 1,
         vmerge: VMerge::None,
@@ -29123,6 +29220,7 @@ fn wrap_cell_runs(
         LineFit {
             squeeze: para.squeeze,
             char_break: !para.vertical,
+            hang_spaces: para.hang_spaces,
             narrow,
         },
     )
@@ -29200,6 +29298,10 @@ struct LineFit {
     /// A word wider than the line breaks by character even without tab
     /// stops (table cells; body lines always pass their tabs).
     char_break: bool,
+    /// A space wider than the line hangs after the character before it,
+    /// as every space does: compat-15 cells (Word probes c028 and n028,
+    /// 2026-10-02: a legacy cell gives each such space its own line).
+    hang_spaces: bool,
     /// The first `.0` lines are `.1` points narrower: they run beside a
     /// cell float (`cell_side_float`).
     narrow: (usize, f32),
@@ -29227,6 +29329,7 @@ fn wrap_runs_tabbed(
     let fit = LineFit {
         squeeze: tabs.map_or(Squeeze::NONE, |t| t.squeeze),
         char_break: false,
+        hang_spaces: false,
         narrow: (0, 0.0),
     };
     wrap_runs_split(fonts, runs, first_width, width, list, tabs, fit)
@@ -29493,13 +29596,15 @@ fn wrap_runs_segment(
         let hang = hanging_punct_width(fonts, &unit);
         // A space hangs past the edge unless one space is wider than the
         // line: then each is a line of its own, as each character is
-        // (2b479f55f8's 1.4pt column; Word stacks "r", " ", "c"). A run of
-        // fill-in spaces wider than its cell still hangs (file_146).
+        // (2b479f55f8's 1.4pt column; Word stacks "r", " ", "c"), except
+        // in a compat-15 cell (`LineFit::hang_spaces`). A run of fill-in
+        // spaces wider than its cell still hangs (file_146).
         let chars: usize = unit.iter().map(|(_, tok, _)| tok.chars().count()).sum();
+        let space_stacks = !fit.hang_spaces && w / chars.max(1) as f32 > limit;
         // A tab whose default stop is past the edge starts the next line
         // and resolves from its start (air_pollution_permit_form's six
         // dotted tabs are three lines in Word).
-        let breaks = !is_space || w / chars.max(1) as f32 > limit || tab_past;
+        let breaks = !is_space || space_stacks || tab_past;
         if breaks && x + w - hang > limit && x > 0.0 && !squeezed {
             lines.push(Vec::new());
             line_i += 1;
@@ -29558,9 +29663,11 @@ fn wrap_runs_segment(
                     let cw = face.width_pt(&piece, size) * run.style.hscale();
                     let limit = line_limit(line_i);
                     // Closing punctuation stays with the character before
-                    // it (2b479f55f8: "PEEP’s register," in a column with
-                    // no room keeps "P’" and "r," on a line each).
-                    let starts_line = !cjk_no_line_start(ch) && !matches!(ch, '’' | '”');
+                    // it, unless the mark alone is wider than the line:
+                    // a column narrower than a letter gives "’", ")", ","
+                    // a line each (Word probes p0-p8/l5, 2026-10-02).
+                    let starts_line =
+                        cw > limit || (!cjk_no_line_start(ch) && !matches!(ch, '’' | '”'));
                     if x + cw > limit && x > 0.0 && starts_line {
                         lines.push(Vec::new());
                         line_i += 1;
