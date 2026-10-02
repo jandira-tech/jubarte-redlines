@@ -2667,6 +2667,72 @@ fn a_justified_numbered_cell_paragraph_spreads_its_first_line_from_the_indent() 
 }
 
 #[test]
+fn a_right_or_centre_tab_ends_the_justified_part_of_a_line() {
+    // Word 16 probes c1tab and c1ctr (2026-10-01): "aa bb" then a tab to
+    // a right (or centre) stop at 216pt, "cc dd", and a line break. The
+    // text before the tab keeps its own spacing (bb at 85.7), and the
+    // tabbed text ends on the stop (cc at 262.3) or centres on it (275.2).
+    let x = |stop: &str, needle: &str| {
+        let body = format!(
+            "<w:p><w:pPr><w:tabs><w:tab w:val=\"{stop}\" w:pos=\"4320\"/></w:tabs>\
+               <w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/><w:jc w:val=\"both\"/></w:pPr>\
+               <w:r><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+               <w:sz w:val=\"24\"/></w:rPr><w:t xml:space=\"preserve\">aa bb</w:t><w:tab/>\
+               <w:t xml:space=\"preserve\">cc dd</w:t><w:br/><w:t>ee</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        );
+        let settings = "<w:compat><w:compatSetting w:name=\"compatibilityMode\" \
+            w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat>";
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, settings)).expect("tab line");
+        pdf_glyph_text_xy(&pdf, needle).expect(needle).0
+    };
+    for (stop, bb, cc) in [("right", 85.7, 262.3), ("center", 85.7, 275.2)] {
+        let (got_bb, got_cc) = (x(stop, "bb"), x(stop, "cc"));
+        assert!(
+            (got_bb - bb).abs() < 0.5 && (got_cc - cc).abs() < 0.5,
+            "{stop} stop: bb={got_bb} (Word {bb}), cc={got_cc} (Word {cc})"
+        );
+    }
+}
+
+#[test]
+fn a_justified_cell_line_ending_in_a_break_spreads_unless_told_not_to() {
+    // Word 16 probes c3br and c3brno (2026-10-01): "aa bb cc", a line
+    // break, "dd" in a justified 216pt cell, compat 15. The line before
+    // the break spreads to the cell's edge (bb 173.9, cc 271.8); with
+    // doNotExpandShiftReturn it keeps its spacing (bb 90.9, cc 105.9).
+    let x = |compat: &str, needle: &str| {
+        let body = "<w:tbl><w:tblPr><w:tblW w:w=\"4320\" w:type=\"dxa\"/><w:tblLayout w:type=\"fixed\"/>\
+               <w:tblCellMar><w:left w:w=\"108\" w:type=\"dxa\"/><w:right w:w=\"108\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"4320\"/></w:tblGrid>\
+             <w:tr><w:tc><w:tcPr><w:tcW w:w=\"4320\" w:type=\"dxa\"/></w:tcPr>\
+               <w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/><w:jc w:val=\"both\"/></w:pPr>\
+                 <w:r><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+                 <w:sz w:val=\"24\"/></w:rPr><w:t xml:space=\"preserve\">aa bb cc</w:t><w:br/><w:t>dd</w:t></w:r></w:p>\
+             </w:tc></w:tr></w:tbl><w:p/>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+        let settings = format!(
+            "<w:compat>{compat}<w:compatSetting w:name=\"compatibilityMode\" \
+             w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(body, &settings)).expect("break cell");
+        pdf_glyph_text_xy(&pdf, needle).expect(needle).0
+    };
+    for (compat, bb, cc) in [
+        ("", 173.9, 271.8),
+        ("<w:doNotExpandShiftReturn/>", 90.9, 105.9),
+    ] {
+        let (got_bb, got_cc) = (x(compat, "bb"), x(compat, "cc"));
+        assert!(
+            (got_bb - bb).abs() < 0.5 && (got_cc - cc).abs() < 0.5,
+            "{compat:?}: bb={got_bb} (Word {bb}), cc={got_cc} (Word {cc})"
+        );
+    }
+}
+
+#[test]
 fn direct_ind_left_keeps_the_numbering_level_hanging() {
     // fixtures_500 00194caa: `<w:ind w:left="426"/>` on a numbered
     // paragraph overrides only the left edge; Word keeps the level's
