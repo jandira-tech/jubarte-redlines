@@ -23,8 +23,9 @@
 //
 //   bun scripts/bump-version.mjs 0.2.0
 //
-// Touches: Cargo.toml ([package] version) and the README's version pins,
-// including the Socket badge (badge.socket.dev/cargo/package/jubarte-redlines/<version>).
+// Touches: Cargo.toml ([package] version), the README's version pins,
+// including the Socket badge (badge.socket.dev/cargo/package/jubarte-redlines/<version>),
+// and gemini-extension.json's version.
 // CHANGELOG.md is NOT auto-written — add the Keep-a-Changelog section
 // yourself, then let scripts/release.sh commit, tag and publish.
 // See VERSIONING.md.
@@ -106,6 +107,19 @@ try {
   if (readmeNext !== readme) writeFileSync(readmePath, readmeNext);
 } catch {
   /* no README or no pins */
+}
+
+// Gemini CLI extension manifest: its version is the release's.
+const geminiPath = join(root, "gemini-extension.json");
+try {
+  const gemini = readFileSync(geminiPath, "utf8");
+  const geminiNext = gemini.replace(
+    /("version"\s*:\s*")\d+\.\d+\.\d+(")/,
+    `$1${next}$2`,
+  );
+  if (geminiNext !== gemini) writeFileSync(geminiPath, geminiNext);
+} catch {
+  /* no manifest */
 }
 
 console.log(`bumped jubarte ${prev} → ${next}`);
