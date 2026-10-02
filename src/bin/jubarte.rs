@@ -578,6 +578,30 @@ enum Command {
         #[command(subcommand)]
         sub: FieldsCommand,
     },
+    /// Audit a .docx for accessibility, style and structure defects, each
+    /// finding located by paragraph id. Exits 0 when nothing fails, 2 on
+    /// any `error` finding (or any `warning` with --strict).
+    #[command(after_help = "Rules (code, set, severity):\n  \
+        HEADING_SKIP a11y warning, IMAGE_NO_DESCR a11y error,\n  \
+        TABLE_NO_HEADER_ROW a11y warning, MISSING_LANG a11y warning,\n  \
+        LITERAL_BULLET style warning, EMPTY_SPACER_PARAGRAPH style info,\n  \
+        DIRECT_FORMATTING_OVERRIDES_STYLE style info,\n  \
+        STALE_FIELD_CACHE structure warning, FONT_SUBSTITUTED structure info")]
+    Audit {
+        /// The document (.docx) to audit.
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Emit `{findings, rules, layout}` as JSON.
+        #[arg(long)]
+        json: bool,
+        /// Rule sets (a11y, style, structure) or rule codes, comma-separated
+        /// [default: every rule].
+        #[arg(long, value_name = "RULES", value_delimiter = ',')]
+        rules: Vec<String>,
+        /// Fail (exit 2) on warnings too, not only on errors.
+        #[arg(long)]
+        strict: bool,
+    },
 }
 
 /// `jubarte fields` subcommands.
@@ -1502,6 +1526,47 @@ fn run_inspect_tables(file: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// `jubarte audit`: print the findings; `Ok(true)` when one fails the run
+/// (an `error`, or a `warning` under `strict`).
+fn run_audit(file: &Path, json: bool, rules: &[String], strict: bool) -> Result<bool, String> {
+    let bytes = read_document(file)?;
+    let rules: Vec<&str> = rules.iter().map(String::as_str).collect();
+    let report = jubarte::audit::audit_report(&bytes, &rules).map_err(|e| e.to_string())?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?
+        );
+    } else {
+        for finding in &report.findings {
+            println!(
+                "{}\t{}\t{}\t{}",
+                finding.severity, finding.code, finding.location, finding.message
+            );
+        }
+        let count = |severity: &str| {
+            report
+                .findings
+                .iter()
+                .filter(|finding| finding.severity == severity)
+                .count()
+        };
+        println!(
+            "{} findings: {} error, {} warning, {} info ({} rules{})",
+            report.findings.len(),
+            count("error"),
+            count("warning"),
+            count("info"),
+            report.rules.len(),
+            if report.layout { ", with layout" } else { "" }
+        );
+    }
+    Ok(report
+        .findings
+        .iter()
+        .any(|finding| finding.severity == "error" || (strict && finding.severity == "warning")))
 }
 
 fn run_text(file: &Path, track_changes: Option<TrackChanges>) -> Result<(), String> {
@@ -2748,6 +2813,17 @@ fn main() -> ExitCode {
                     json,
                 },
         }) => return exit_code(run_fields_update(&file, &output, force, json)),
+        Some(Command::Audit {
+            file,
+            json,
+            rules,
+            strict,
+        }) => {
+            return match run_audit(&file, json, &rules, strict) {
+                Ok(true) => ExitCode::from(2),
+                result => exit_code(result.map(|_| ())),
+            };
+        }
         None => {}
     }
     let job = match cli.resolve() {

@@ -318,8 +318,8 @@ def build_server(*, root: Path) -> MCPServer:
         return _plain(engine(doc.comments))
 
     @mcp.tool(annotations=_READ)
-    def docx_audit(path: str, rules: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-        """Audit findings for path against rules (default: the engine's built-in rules)."""
+    def docx_audit(path: str, rules: list[str] | None = None) -> list[dict[str, Any]]:
+        """Accessibility, style and structure findings for path, each with its paragraph id; rules names rule sets (a11y, style, structure) or codes (default: every rule)."""
         doc = load(path)
         if not hasattr(Document, "audit"):
             raise missing("audit")

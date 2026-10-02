@@ -427,6 +427,25 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 - `util::sha1::sha1_fingerprint`, `util::sha1::sha1_fingerprint128` and
   `util::sha1_fingerprint` stay as deprecated aliases of the `fnv1a_*`
   names for one release and are then removed.
+- `jubarte audit FILE [--json] [--rules a11y,style,structure|CODE,...]
+  [--strict]` (`audit::audit`) reports accessibility, style and structure
+  findings, each with its rule set, severity and the paragraph id
+  (`body:p:N`, `footer1:p:N`) an edit plan targets, or a part name:
+  `HEADING_SKIP`, `IMAGE_NO_DESCR`, `TABLE_NO_HEADER_ROW`, `MISSING_LANG`,
+  `LITERAL_BULLET`, `EMPTY_SPACER_PARAGRAPH`,
+  `DIRECT_FORMATTING_OVERRIDES_STYLE`, `STALE_FIELD_CACHE` (an empty TOC,
+  or a `NUMPAGES` cache that differs from the laid-out page count) and
+  `FONT_SUBSTITUTED` (a font this machine draws with another face). It exits
+  0 when nothing fails, 2 on an `error` finding, and on a `warning` too with
+  `--strict`. The layout pass the last two rules need runs only when they
+  are selected and have something to check; `--json` reports `layout: true`
+  when it ran. Python `Document.audit(rules=None)` returns `AuditFinding`s,
+  WASM `auditDocument(docx, rules)` the JSON report, and `jubarte
+  capabilities` lists `operations.audit` and `audit_rules`. The slim WASM
+  build has no layout pass (`audit::audit_report_with` with none), so it
+  leaves `FONT_SUBSTITUTED` out and does not compare `NUMPAGES` caches with
+  a page count; that keeps the renderer out of it (6.12 MB against 6.06 MB
+  before; linking the layout pass made it 16.0 MB).
 
 ### Fixed
 

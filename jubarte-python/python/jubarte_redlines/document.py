@@ -17,6 +17,7 @@ from typing import Literal
 
 from . import _native
 from .models import (
+    AuditFinding,
     Change,
     Comment,
     ChangeKind,
@@ -33,6 +34,7 @@ from .models import (
     Repaired,
     Revision,
     Snapshot,
+    _decode_audit,
     _decode_changes,
     _decode_comments,
     _decode_diff,
@@ -424,6 +426,21 @@ class Document:
         options = json.dumps({"section_break": section_break, "keep_sections": keep_sections})
         data, warnings = _native.append_json(self._data, other._data, options)
         return Appended(Document.from_bytes(data), tuple(json.loads(warnings)))
+
+    def audit(self, rules: Sequence[str] | str | None = None) -> tuple[AuditFinding, ...]:
+        """Accessibility, style and structure findings, each located by
+        paragraph id. ``rules`` names rule sets (``a11y``, ``style``,
+        ``structure``) or codes, as a sequence or a comma-separated string;
+        ``None`` runs every rule. ``jubarte audit --help`` lists the codes."""
+        if rules is None:
+            selected = None
+        else:
+            if isinstance(rules, str):
+                rules = [rule for rule in rules.split(",") if rule.strip()]
+            if not all(isinstance(rule, str) for rule in rules):
+                raise TypeError("rules must be strings")
+            selected = [rule.strip() for rule in rules]
+        return _decode_audit(_native.audit_json(self._data, selected))
 
 
 def _zero_based(pages: Sequence[int]) -> list[int]:

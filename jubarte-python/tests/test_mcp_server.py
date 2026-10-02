@@ -375,13 +375,13 @@ def test_feature_tools_delegate_when_the_engine_has_them(tmp_path: Path, monkeyp
         tmp_path,
         ("docx_validate", {"path": "d.docx", "original": "o.docx", "author": "Z"}),
         ("docx_comments", {"path": "d.docx"}),
-        ("docx_audit", {"path": "d.docx", "rules": {"r": 1}}),
+        ("docx_audit", {"path": "d.docx", "rules": ["r"]}),
     )
     assert v.structured_content["result"] == [{"code": "OK"}, {"code": "AUDIT"}]
     assert seen["validate"] is True
     assert seen["audit"] == (True, "Z")
     assert c.structured_content["result"] == [{"id": "c1"}]
-    assert a.structured_content["result"] == [{"rules": {"r": 1}}]
+    assert a.structured_content["result"] == [{"rules": ["r"]}]
 
 
 # -- entry point -------------------------------------------------------------
@@ -523,3 +523,19 @@ def test_running_the_module_calls_main(tmp_path: Path, monkeypatch: pytest.Monke
     with pytest.raises(SystemExit) as exc:
         runpy.run_module("jubarte_redlines.mcp_server", run_name="__main__")
     assert exc.value.code == 2
+
+
+def test_docx_audit_runs_the_engine_with_rule_names(tmp_path: Path) -> None:
+    from docx_fixture import docx, para
+
+    (tmp_path / "d.docx").write_bytes(docx(para("• typed bullet")))
+    styled, unknown = call(
+        tmp_path,
+        ("docx_audit", {"path": "d.docx", "rules": ["style"]}),
+        ("docx_audit", {"path": "d.docx", "rules": ["NOPE"]}),
+    )
+    found = styled.structured_content["result"]
+    assert {"code": "LITERAL_BULLET", "rule_set": "style", "severity": "warning", "location": "body:p:0"}.items() <= next(
+        f for f in found if f["code"] == "LITERAL_BULLET"
+    ).items(), found
+    assert "NOPE" in error_text(unknown)
