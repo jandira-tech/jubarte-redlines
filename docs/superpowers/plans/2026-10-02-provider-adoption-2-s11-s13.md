@@ -535,6 +535,16 @@ has a one-command form.
 
 ### Task 3: S13, append documents
 
+> **Status (2026-10-02, `d24e2f6`): shipped in #285, with deviations listed
+> in that PR (`keep_sections` puts A's final `w:sectPr` at the join, since a
+> paragraph's `w:sectPr` ends its own section; `append_numbering` takes a
+> builder closure; no `validate()` call, because plan 1 Task 2 is not on
+> `main`). Not done: comments are dropped, no output has been opened in
+> Word, and the evidence below is unwritten. A validator sweep found one
+> defect (B's list attributes in a numbering part A did not have). The
+> follow-ups, with the sweep and a comment-carrying design, are `TODO.md`
+> §9.**
+
 **Files:**
 - Create: `src/append.rs`
 - Modify: `src/lib.rs`, `src/bin/jubarte.rs` (`Command::Append`), `src/capabilities.rs` (`operations.append`)
@@ -601,7 +611,7 @@ t.ends_with("/footer")`. Then:
    ids), then `validate()` (plan 1 Task 2) must be clean, else
    `AppendError::Invalid(findings)`.
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```rust
 // tests/append_documents.rs
@@ -669,27 +679,33 @@ fn b_comments_are_dropped_with_a_warning() {
 (`common::docx::replace_entry` is a 15-line helper to add to
 `tests/common/docx.rs`: rewrite one ZIP entry's bytes.)
 
-- [ ] **Step 2: Run, expect `could not find append in jubarte`.**
+- [x] **Step 2: Run, expect `could not find append in jubarte`.**
 
-- [ ] **Step 3: Implement** as designed; CLI `jubarte append A B [C...] -o
+- [x] **Step 3: Implement** as designed; CLI `jubarte append A B [C...] -o
 OUT [--section-break next-page|continuous|none] [--keep-sections]`
 (folds left: `append(append(A, B), C)`); Python `Document.append(other,
 *, section_break="next_page", keep_sections=False) -> Document` with
 warnings exposed on `Document.append_report` (or return a small
 `Appended` dataclass; pick the dataclass); WASM `appendDocuments`.
 
-- [ ] **Step 4: Pass**, then `cargo test --all-features` once.
+- [x] **Step 4: Pass**, then `cargo test --all-features` once.
 
-- [ ] **Step 5: Docs** (skill §4: "`jubarte append a.docx b.docx -o
+- [x] **Step 5: Docs** (skill §4: "`jubarte append a.docx b.docx -o
 ab.docx` puts B after A on a new page; images, links, styles, lists and
 notes come along; comments do not yet (warned)"); CHANGELOG.
 
-- [ ] **Step 6: Commit** `feat(append): append documents carrying relationships, styles, numbering and notes; validated output`.
+- [x] **Step 6: Commit** `feat(append): append documents carrying relationships, styles, numbering and notes; validated output`.
 
 **Evidence this task hands a provider:** `docs/adoption/append.md`: two
 real-looking documents (letter + exhibit with an image and a list), the
 python-docx body-copy recipe's result (dangling `rId`, duplicate `numId`)
 beside `jubarte append`'s, both run through `jubarte validate`.
+
+(2026-10-02: not written yet. A provider's reviewer will compare with
+docxcompose, which already maps styles, renumbers lists and copies images
+and footnotes, so the guide adds it as a third recipe; until `jubarte
+validate` is on `main`, the outputs go through `tools/validate-docx` and
+the Ring-1 checks. See `TODO.md` §9.)
 
 ---
 
