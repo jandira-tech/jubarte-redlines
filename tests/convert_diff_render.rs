@@ -7,7 +7,7 @@
 
 mod common;
 
-use common::docx::{docx, para};
+use common::docx::{docx, docx_with_sect_pr, para};
 use jubarte::convert::{DiffOptions, PdfOptions, diff_render};
 
 const PAGE_BREAK: &str = r#"<w:p><w:r><w:br w:type="page"/></w:r></w:p>"#;
@@ -85,6 +85,28 @@ fn a_page_present_on_one_side_is_reported_not_skipped() {
 
     let reversed = diff_render(&b, &a, &opts()).unwrap();
     assert_eq!(reversed.pages[1].only_in, Some("a"));
+}
+
+#[test]
+fn pages_of_different_sizes_count_as_wholly_changed() {
+    let letter = docx(&para("Same text."));
+    let a4 = docx_with_sect_pr(
+        &para("Same text."),
+        &[],
+        r#"<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>"#,
+    );
+    let d = diff_render(&letter, &a4, &opts()).unwrap();
+    assert_eq!(d.pages.len(), 1);
+    let p = &d.pages[0];
+    assert_eq!(p.changed_ratio, 1.0);
+    assert_eq!(p.only_in, None, "both sides have the page");
+    assert_eq!(
+        p.bbox,
+        Some([0, 0, 425, 585]),
+        "Letter 425 wide, A4 585 tall at 50 dpi"
+    );
+    assert!(d.overlays[0].is_none(), "no overlay across page sizes");
+    assert!(d.differs());
 }
 
 #[test]

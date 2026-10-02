@@ -214,3 +214,76 @@ fn draw_box(img: &mut RgbaImage, [x0, y0, x1, y1]: [u32; 4]) {
         img.put_pixel(right, y, MAGENTA);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+    use image::{ImageEncoder, Rgba, RgbaImage};
+
+    fn png(img: &RgbaImage, compression: CompressionType) -> Vec<u8> {
+        let mut out = Vec::new();
+        PngEncoder::new_with_quality(&mut out, compression, FilterType::Adaptive)
+            .write_image(
+                img,
+                img.width(),
+                img.height(),
+                image::ExtendedColorType::Rgba8,
+            )
+            .unwrap();
+        out
+    }
+
+    #[test]
+    fn the_same_pixels_in_different_png_bytes_are_unchanged() {
+        let mut img = RgbaImage::from_pixel(40, 30, Rgba([255, 255, 255, 255]));
+        img.put_pixel(7, 9, Rgba([0, 0, 0, 255]));
+        let (fast, best) = (
+            png(&img, CompressionType::Fast),
+            png(&img, CompressionType::Best),
+        );
+        assert_ne!(
+            fast, best,
+            "the two encodings must differ for this test to mean anything"
+        );
+        let (page, overlay) = super::compare(3, &fast, &best, true).unwrap();
+        assert_eq!(page.index, 3);
+        assert_eq!(page.changed_ratio, 0.0);
+        assert_eq!(page.bbox, None);
+        assert_eq!(overlay, None);
+    }
+
+    #[test]
+    fn one_changed_pixel_is_boxed_exactly() {
+        let white = RgbaImage::from_pixel(40, 30, Rgba([255, 255, 255, 255]));
+        let mut dot = white.clone();
+        dot.put_pixel(7, 9, Rgba([0, 0, 0, 255]));
+        let a = png(&white, CompressionType::Fast);
+        let b = png(&dot, CompressionType::Fast);
+        let (page, overlay) = super::compare(0, &a, &b, true).unwrap();
+        assert_eq!(page.bbox, Some([7, 9, 8, 10]), "x1 and y1 are exclusive");
+        assert_eq!(page.changed_ratio, 1.0 / 1200.0);
+        let overlay = image::load_from_memory(&overlay.unwrap())
+            .unwrap()
+            .to_rgba8();
+        assert_eq!(
+            *overlay.get_pixel(7, 9),
+            super::MAGENTA,
+            "the changed pixel"
+        );
+        assert_eq!(
+            *overlay.get_pixel(5, 7),
+            super::MAGENTA,
+            "the box corner, 2 px out"
+        );
+        assert_eq!(
+            *overlay.get_pixel(20, 20),
+            Rgba([255, 255, 255, 255]),
+            "untouched"
+        );
+        let garbage = super::compare(0, b"not a png", &b, true).unwrap_err();
+        assert!(
+            garbage.to_string().contains("decoding page PNG"),
+            "{garbage}"
+        );
+    }
+}
