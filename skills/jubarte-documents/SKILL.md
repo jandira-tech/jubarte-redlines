@@ -329,6 +329,10 @@ Gotchas:
   Claude` runs that check and the Word-validity check in one; it replaces
   `validate.py --original --author`. `--repair out.docx` fixes what it can
   and lists what it cannot.
+- `jubarte audit file.docx --json` lists heading skips, images without alt
+  text, tables without a header row, literal bullets, spacer paragraphs,
+  stale TOC and page-count caches, and substituted fonts; `--strict` makes
+  warnings fail. Each finding's `location` is the paragraph id to edit.
 
 ## 4. Compare, accept, reject
 
