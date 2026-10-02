@@ -82,9 +82,14 @@ def build_server(*, root: Path) -> MCPServer:
             raise ToolError(f"cannot read {path}: {e.strerror or e}") from e
 
     def fresh(path: Path, overwrite: bool) -> Path:
+        # An output may itself be a symlink (dangling ones report exists() False);
+        # resolve it so a write can never follow a link out of root.
+        target = path.resolve()
+        if not target.is_relative_to(root):
+            raise ToolError(f"{path} is outside root {root}")
         if path.exists() and not overwrite:
             raise ToolError(f"{path} exists; pass overwrite=true to replace it")
-        return path
+        return target
 
     def write(path: Path, data: bytes | str) -> str:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -98,6 +103,8 @@ def build_server(*, root: Path) -> MCPServer:
         """Run an engine call, turning its errors into messages the model sees."""
         try:
             return call()
+        except EditPlanError:
+            raise  # docx_edit reports it with its code and outcomes
         except (JubarteError, ValueError, TypeError, OSError) as e:
             raise ToolError(str(e)) from e
 
@@ -145,7 +152,7 @@ def build_server(*, root: Path) -> MCPServer:
         doc = load(path)
         out = contained(out_dir)
         try:
-            result = doc.edit(plan)
+            result = engine(lambda: doc.edit(plan))
         except EditPlanError as e:
             raise ToolError(
                 json.dumps(
@@ -157,8 +164,6 @@ def build_server(*, root: Path) -> MCPServer:
                     }
                 )
             ) from e
-        except (JubarteError, ValueError, TypeError) as e:
-            raise ToolError(str(e)) from e
         names = ["clean.docx", "redline.docx", "patch.diff", "report.json"]
         rendered = None
         if pdf or png_dpi:

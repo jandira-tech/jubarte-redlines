@@ -52,8 +52,11 @@ arguments from a model.
 - Every path argument is resolved against `--root` (default: the current
   directory) after following symlinks. A path outside it, including a symlink
   that points outside it, is refused with "outside root".
+- Every output file is resolved the same way before it is written, so an
+  output name that is a symlink out of the root, dangling or not, is refused.
 - No tool replaces an existing file unless `overwrite` is true. `docx_edit`
   and `docx_render` check every output before writing any.
+- DPI is bounded by the engine; an out-of-range value is an error.
 - Outputs (documents, PDFs, PNG pages) are written as files under the root
   and their paths returned, never their bytes.
 - Document text is returned only by the tools whose job is to return it

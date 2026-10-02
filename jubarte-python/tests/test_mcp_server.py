@@ -411,3 +411,73 @@ def test_stdio_smoke_initialize_and_list_tools(tmp_path: Path) -> None:
     listed = next(r for r in replies if r.get("id") == 2)
     assert {t["name"] for t in listed["result"]["tools"]} == TOOLS
     assert "Traceback" not in proc.stderr
+
+
+# -- hardening -----------------------------------------------------------------
+
+
+@pytest.mark.parametrize("overwrite", [False, True])
+def test_an_output_symlink_pointing_out_of_root_is_never_followed(tmp_path: Path, overwrite: bool) -> None:
+    root = tmp_path / "root"
+    (root / "out").mkdir(parents=True)
+    (root / "c.docx").write_bytes(make_document("The fee is ten."))
+    escaped = tmp_path / "escaped.docx"
+    # Dangling: exists() is False, so only a resolve check can catch it.
+    (root / "out" / "clean.docx").symlink_to(escaped)
+    (bad,) = call(
+        root,
+        ("docx_edit", {"path": "c.docx", "plan": PLAN, "out_dir": "out", "overwrite": overwrite}),
+    )
+    assert "outside root" in error_text(bad)
+    assert not escaped.exists()
+    assert not (root / "out" / "redline.docx").exists()
+
+
+def test_a_render_page_symlink_pointing_out_of_root_is_never_followed(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    (root / "r").mkdir(parents=True)
+    (root / "d.docx").write_bytes(make_document("x"))
+    escaped = tmp_path / "escaped.png"
+    (root / "r" / "page-01.png").symlink_to(escaped)
+    (bad,) = call(root, ("docx_render", {"path": "d.docx", "out_dir": "r", "dpi": 24}))
+    assert "outside root" in error_text(bad)
+    assert not escaped.exists()
+
+
+def test_an_out_of_range_dpi_is_refused_by_the_engine_with_its_message(tmp_path: Path) -> None:
+    (tmp_path / "d.docx").write_bytes(make_document("x"))
+    render, edit = call(
+        tmp_path,
+        ("docx_render", {"path": "d.docx", "out_dir": "r", "dpi": 100000}),
+        ("docx_edit", {"path": "d.docx", "plan": PLAN, "out_dir": "e", "png_dpi": 100000}),
+    )
+    assert "dpi" in error_text(render)
+    assert "dpi" in error_text(edit) or "ANCHOR" in error_text(edit)
+    assert not (tmp_path / "r").exists()
+
+
+def test_edit_of_a_corrupt_package_is_a_tool_error(tmp_path: Path) -> None:
+    (tmp_path / "junk.docx").write_bytes(b"not a zip")
+    (bad,) = call(tmp_path, ("docx_edit", {"path": "junk.docx", "plan": PLAN, "out_dir": "out"}))
+    assert "INVALID_PACKAGE" in error_text(bad)
+    assert not (tmp_path / "out").exists()
+
+
+def test_edit_can_render_pngs_without_a_pdf(tmp_path: Path) -> None:
+    (tmp_path / "c.docx").write_bytes(make_document("The fee is ten."))
+    (result,) = call(tmp_path, ("docx_edit", {"path": "c.docx", "plan": PLAN, "out_dir": "out", "png_dpi": 24}))
+    assert not result.is_error, result.content
+    assert result.structured_content["pages"]
+    assert "pdf" not in result.structured_content
+    assert not (tmp_path / "out" / "redline.pdf").exists()
+
+
+def test_running_the_module_calls_main(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import runpy
+
+    # Run it fresh, as `python -m` does, instead of over the imported copy.
+    monkeypatch.delitem(sys.modules, "jubarte_redlines.mcp_server")
+    monkeypatch.setattr(sys, "argv", ["jubarte-mcp", "--root", str(tmp_path / "missing")])
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_module("jubarte_redlines.mcp_server", run_name="__main__")
+    assert exc.value.code == 2
