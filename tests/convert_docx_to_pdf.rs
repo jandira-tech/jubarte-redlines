@@ -28797,16 +28797,11 @@ fn ul_trail_space_underlines_trailing_spaces_in_a_cell() {
 }
 
 #[test]
-fn space_for_ul_adds_descent_under_east_asian_underline() {
-    if !word_dfonts_available() {
-        eprintln!(
-            "skip: Word DFonts absent; space_for_ul_adds_descent_under_east_asian_underline measures Word's faces"
-        );
-        return;
-    }
-    // xml leftover: w:compat/w:spaceForUL (ECMA-376 17.15.3.40).
-    // Underlined East Asian runs get extra descent: max(3% of size,
-    // 40 twips = 2pt). Omitted leaves the line box unchanged.
+fn space_for_ul_adds_no_descent_under_east_asian_underline() {
+    // w:compat/w:spaceForUL (ECMA-376 17.15.3.40) moves nothing in Word 16:
+    // probes ul1 u1-u6 and v1-v4 (compat 11, 12, 14 and 15, with and
+    // without a line grid, auto and exact lines, body and cells) step
+    // underlined MS Gothic lines exactly as without the flag.
     let body = "<w:p>\
            <w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
            <w:r><w:rPr><w:u w:val=\"single\"/></w:rPr><w:t>漢字</w:t></w:r>\
@@ -28837,19 +28832,16 @@ fn space_for_ul_adds_descent_under_east_asian_underline() {
     };
     let off = gap("");
     let on = gap("<w:compat><w:spaceForUL/></w:compat>");
-    // cm translations are user-space points (the 0.24 scale is glyph
-    // space only), but baselines snap to Word's 1/300in grid: the 2pt
-    // floor lands 1.92 or 2.16 apart with the face's metrics (MS Gothic,
-    // the 漢字 fallback since Word probe jf, lands 1.92).
     assert!(
-        on - off >= 2.0 - 0.24 - 0.01,
-        "spaceForUL must add ≥2pt descent under underlined 漢字; off={off} on={on}"
+        (on - off).abs() < 0.01,
+        "spaceForUL adds no descent under underlined 漢字; off={off} on={on}"
     );
 }
 
 #[test]
-fn space_for_ul_adds_descent_under_underlined_cjk_footnote_lines() {
-    // #144 (adjudication): notes had the same plain line box.
+fn space_for_ul_adds_no_descent_to_underlined_cjk_footnote_lines() {
+    // Word 16 probe ul2 f1/f2: a footnote's underlined MS Gothic lines
+    // step 15.6 with or without w:spaceForUL.
     let body = "<w:p><w:r><w:t>Body</w:t></w:r>\
          <w:r><w:rPr><w:vertAlign w:val=\"superscript\"/></w:rPr>\
            <w:footnoteReference w:id=\"1\"/></w:r></w:p>\
@@ -28887,22 +28879,17 @@ fn space_for_ul_adds_descent_under_underlined_cjk_footnote_lines() {
     let off = gap("");
     let on = gap("<w:compat><w:spaceForUL/></w:compat>");
     assert!(
-        on - off >= 2.0 - 0.01,
-        "note line gets the descent; off={off} on={on}"
+        (on - off).abs() < 0.01,
+        "note line keeps its box; off={off} on={on}"
     );
 }
 
 #[test]
-fn space_for_ul_adds_descent_to_wrapped_lines_in_table_cells() {
-    if !word_dfonts_available() {
-        eprintln!(
-            "skip: Word DFonts absent; space_for_ul_adds_descent_to_wrapped_lines_in_table_cells measures Word's faces"
-        );
-        return;
-    }
-    // #144: cells measured and painted with the plain line box. A narrow
-    // cell wraps one underlined CJK paragraph onto two lines (J then Q
-    // start each line); the next paragraph K follows.
+fn space_for_ul_adds_no_descent_to_wrapped_lines_in_table_cells() {
+    // Word 16 probes ul1 (cells, every compat mode): w:spaceForUL leaves
+    // a cell's underlined CJK lines and its row height as they are. A
+    // narrow cell wraps one underlined CJK paragraph onto two lines (J
+    // then Q start each line); the next paragraph K follows.
     let ul = "<w:rPr><w:u w:val=\"single\"/></w:rPr>";
     let para = |t: &str| {
         format!(
@@ -28933,19 +28920,7 @@ fn space_for_ul_adds_descent_to_wrapped_lines_in_table_cells() {
         off[0] > off[1] + 1.0,
         "J and Q sit on separate wrapped lines; off={off:?}"
     );
-    let gap = |v: [f32; 4], a: usize, b: usize| v[a] - v[b];
-    assert!(
-        gap(on, 0, 1) - gap(off, 0, 1) >= 2.0 - 0.25,
-        "wrapped line gets the descent; off={off:?} on={on:?}"
-    );
-    assert!(
-        gap(on, 1, 2) - gap(off, 1, 2) >= 2.0 - 0.25,
-        "last line of the paragraph too; off={off:?} on={on:?}"
-    );
-    assert!(
-        gap(on, 0, 3) - gap(off, 0, 3) >= 3.0 * 2.0 - 0.01,
-        "row height grows by all three descents, pushing the next body line; off={off:?} on={on:?}"
-    );
+    assert_eq!(on, off, "spaceForUL moves no line or row");
 }
 
 #[test]
