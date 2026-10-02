@@ -8117,14 +8117,12 @@ fn frame_box(
         _ => None,
     };
     let x = tw("x").unwrap_or(0.0);
-    let y = match tw("y") {
-        Some(y) => y,
-        None => {
-            v_align?;
-            0.0
-        }
-    };
-    let by_align = tw("y").is_none();
+    let set_y = tw("y");
+    let by_align = set_y.is_none();
+    if by_align {
+        v_align?;
+    }
+    let y = set_y.unwrap_or(0.0);
     let mut laid = Vec::new();
     let mut outline: Option<([f32; 3], f32)> = None;
     for &p in paras {
