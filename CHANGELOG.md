@@ -266,9 +266,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   edit operations picks one hit of a repeated anchor; the Python builders
   take `occurrence=`. Without it, the `AMBIGUOUS_ANCHOR` refusal now says
   how many times the anchor occurs and the range to choose from.
-  `occurrence: 0` is an `INVALID_EDIT`. Rust code that builds these
-  `OperationKind` variants with struct literals must add
-  `occurrence: None`.
+  `occurrence: 0`, or `occurrence` with no anchor to pick from (`insert`
+  at a `position`, `comment` without `find`), is an `INVALID_EDIT`. Rust
+  code that builds these `OperationKind` variants with struct literals
+  must add `occurrence: None`.
 
 ### Fixed
 

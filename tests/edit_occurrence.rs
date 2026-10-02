@@ -126,3 +126,16 @@ fn occurrence_round_trips_through_the_plan_json() {
     assert!(json["operations"][1].get("occurrence").is_none());
     assert_eq!(EditPlan::from_json(&plan.to_json()).unwrap(), plan);
 }
+
+#[test]
+fn occurrence_without_an_anchor_is_an_invalid_edit() {
+    for op in [
+        r#"{"kind":"insert","paragraph":"body:p:0","position":"end","occurrence":2,"text":"!"}"#,
+        r#"{"kind":"comment","paragraph":"body:p:0","occurrence":2,"text":"?"}"#,
+        r#"{"kind":"comment","paragraph":"body:p:0","through":"body:p:0","occurrence":1,"text":"?"}"#,
+    ] {
+        let e = apply_plan(&source(), &plan(&format!("[{op}]"))).unwrap_err();
+        assert_eq!(e.code, "INVALID_EDIT", "{op}");
+        assert!(e.message.contains("occurrence"), "{op}: {}", e.message);
+    }
+}

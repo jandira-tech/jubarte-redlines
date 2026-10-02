@@ -1905,6 +1905,28 @@ impl<'p> Transaction<'p> {
             }
         };
         outcome.paragraph = Some(self.paragraph_id(para));
+        // `occurrence` picks a hit of an anchor; with no anchor it would be
+        // silently ignored.
+        let anchorless = matches!(
+            kind,
+            OperationKind::Insert {
+                after: None,
+                before: None,
+                occurrence: Some(_),
+                ..
+            } | OperationKind::Comment {
+                find: None,
+                occurrence: Some(_),
+                ..
+            }
+        );
+        if anchorless {
+            return Err(fail(
+                "INVALID_EDIT",
+                "occurrence needs an anchor: give find, after or before".into(),
+                outcome,
+            ));
+        }
         let comments = match kind {
             OperationKind::Replace { comment, .. }
             | OperationKind::Insert { comment, .. }
