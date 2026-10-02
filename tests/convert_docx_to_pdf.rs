@@ -46001,7 +46001,7 @@ fn font_index_default_location_persists_missing_family_across_processes() {
     let path = dir.path().join("font-index.tsv");
     let first = std::fs::read_to_string(&path).unwrap();
     assert!(first.starts_with(concat!(
-        "jubarte-font-index\t1\t",
+        "jubarte-font-index\t2\t",
         env!("CARGO_PKG_VERSION"),
         "\n"
     )));
@@ -46018,8 +46018,10 @@ fn font_index_custom_location_recovers_from_stale_or_torn_cache() {
     for contents in [
         "old-cache-version\n",
         "jubarte-font-index\t1\t0.0.0\n",
+        // Same release, older index rules (the Windows-folder pass is 2).
+        concat!("jubarte-font-index\t1\t", env!("CARGO_PKG_VERSION"), "\n"),
         concat!(
-            "jubarte-font-index\t1\t",
+            "jubarte-font-index\t2\t",
             env!("CARGO_PKG_VERSION"),
             "\ntruncated-row\n"
         ),
@@ -46030,7 +46032,7 @@ fn font_index_custom_location_recovers_from_stale_or_torn_cache() {
         convert_with_font_index(dir.path(), Some(path.as_os_str()));
         let recovered = std::fs::read_to_string(&path).unwrap();
         assert!(recovered.starts_with(concat!(
-            "jubarte-font-index\t1\t",
+            "jubarte-font-index\t2\t",
             env!("CARGO_PKG_VERSION"),
             "\n"
         )));
