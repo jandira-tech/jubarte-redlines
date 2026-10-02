@@ -9193,9 +9193,55 @@ fn cell_content_height(fonts: &Fonts, cell: &TableCell, col_w: &[f32], space_for
     let nested_h: f32 = cell
         .nested
         .iter()
-        .map(|b| nested_table_height(fonts, b, wrap_w, space_for_ul))
+        .enumerate()
+        .map(|(k, b)| {
+            let h = nested_table_height(fonts, b, wrap_w, space_for_ul);
+            let Some((dy, ..)) = nested_float_beside(cell, k) else {
+                return h;
+            };
+            // Only what hangs past the paragraphs run beside it.
+            let after = match b.as_ref() {
+                Block::Table { style, .. } => style.after,
+                _ => 0.0,
+            };
+            let beside: f32 = cell.paras[cell.nested_at[k]..]
+                .iter()
+                .map(|p| cell_para_height(fonts, p, wrap_w, space_for_ul))
+                .sum();
+            (dy + h - after - beside).max(0.0)
+        })
         .sum();
     cell.pad_t + paras_h + nested_h + cell.pad_b
+}
+
+/// A floating nested table (`tblpPr vertAnchor="text"`) that only empty
+/// paragraphs follow in its cell, two or more: its `tblpY` from the next
+/// paragraph's top and its frame's `(page_x, col_x)` offsets. Word runs
+/// those paragraphs from the anchor, beside or over the table, and hangs
+/// the table from there (ee79137dd5: five empty 15pt lines end the row
+/// 23pt under the table, the table 11.5pt above them, 38.3pt from the
+/// cell's edge).
+fn nested_float_beside(cell: &TableCell, k: usize) -> Option<(f32, Option<f32>, Option<f32>)> {
+    let at = *cell.nested_at.get(k)?;
+    if k + 1 != cell.nested.len() || at + 1 >= cell.paras.len() {
+        return None;
+    }
+    let Block::Table { geom, .. } = &**cell.nested.get(k)? else {
+        return None;
+    };
+    let slot @ ImageSlot::Float {
+        para_y: Some(dy),
+        page_x,
+        col_x,
+        ..
+    } = geom.float?
+    else {
+        return None;
+    };
+    let empty = cell.paras[at..].iter().all(|p| {
+        p.images.is_empty() && p.boxes.is_empty() && p.runs.iter().all(|r| r.text.trim().is_empty())
+    });
+    (float_is_text_anchored(slot) && empty).then_some((dy, page_x, col_x))
 }
 
 fn nested_table_height(fonts: &Fonts, block: &Block, avail: f32, space_for_ul: bool) -> f32 {
@@ -11627,11 +11673,11 @@ fn table_block(
             row_min.push(h);
             row_exact.push(exact);
             row_cant_split.push(
-                first_named(dom, row, "trPr")
+                direct_named(dom, row, "trPr")
                     .and_then(|pr| first_named(dom, pr, "cantSplit"))
                     .is_some_and(|n| !val_is_false(dom, Some(n))),
             );
-            let hdr = first_named(dom, row, "trPr")
+            let hdr = direct_named(dom, row, "trPr")
                 .and_then(|pr| first_named(dom, pr, "tblHeader"))
                 .is_some_and(|n| !val_is_false(dom, Some(n)));
             if still_header && hdr {
@@ -11832,8 +11878,11 @@ fn mirror_table(cols: &mut [f32], rows: &mut [Vec<TableCell>]) {
     }
 }
 
+/// The row's own `w:trPr` only: a row without one must not take a nested
+/// table's (an exact 20pt nested row held its outer row, nested table and
+/// all, to 20pt).
 fn row_height_spec(dom: &Dom, row: NodeId) -> (f32, bool) {
-    let Some(pr) = first_named(dom, row, "trPr") else {
+    let Some(pr) = direct_named(dom, row, "trPr") else {
         return (0.0, false);
     };
     let Some(th) = first_named(dom, pr, "trHeight") else {
@@ -12308,7 +12357,7 @@ pub(crate) fn cell_is_deleted(dom: &Dom, cell: NodeId) -> bool {
 /// A row's `w:gridBefore`/`w:gridAfter` (`side` "Before"/"After"): the
 /// grid columns it leaves empty and their `w:wBefore`/`w:wAfter`.
 fn row_grid_skip(dom: &Dom, row: NodeId, side: &str) -> Option<(usize, PrefWidth)> {
-    let pr = first_named(dom, row, "trPr")?;
+    let pr = direct_named(dom, row, "trPr")?;
     let span = direct_named(dom, pr, &format!("grid{side}"))
         .and_then(|n| attr_any(dom, n, "val"))
         .and_then(|v| v.parse::<usize>().ok())
@@ -27181,12 +27230,21 @@ impl<'a> Layout<'a> {
                     for (pi, (para, (lines, breaks))) in
                         cell.paras.iter().zip(para_lines).enumerate()
                     {
-                        for (nested, _) in cell
+                        for (k, nested) in cell
                             .nested
                             .iter()
-                            .zip(&cell.nested_at)
-                            .filter(|(_, at)| **at == pi)
+                            .enumerate()
+                            .filter(|(k, _)| cell.nested_at[*k] == pi)
                         {
+                            if let Some((dy, page_x, col_x)) = nested_float_beside(cell, k) {
+                                let left = match (page_x, col_x) {
+                                    (Some(px), _) => x + px,
+                                    (_, Some(cx)) => x + pad_l + cx,
+                                    _ => x + pad_l,
+                                };
+                                self.emit_nested_table(nested, left, y_line - dy, wrap_w);
+                                continue;
+                            }
                             let used = self.emit_nested_table(nested, x + pad_l, y_line, wrap_w);
                             y_line -= used;
                         }

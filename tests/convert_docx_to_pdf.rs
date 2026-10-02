@@ -4508,6 +4508,73 @@ fn a_footer_text_box_below_the_margin_is_not_lifted() {
     );
 }
 
+/// A one-cell table whose row has no `w:trPr`: `Head`, a nested table of
+/// four exact 20pt rows (floating as in ee79137dd5 when `float`: vertAnchor
+/// text, tblpY -11.5pt, horzAnchor page tblpX 38.3pt), five empty exact
+/// 15pt lines; `After` follows the table.
+fn nested_table_cell_docx(float: bool) -> Vec<u8> {
+    let exact = "<w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"300\" w:lineRule=\"exact\"/></w:pPr>";
+    let nested_rows: String = ["NestOne", "NestTwo", "NestThree", "NestFour"]
+        .iter()
+        .map(|t| {
+            format!(
+                "<w:tr><w:trPr><w:trHeight w:val=\"400\" w:hRule=\"exact\"/></w:trPr><w:tc><w:tcPr>\
+                 <w:tcW w:w=\"3000\" w:type=\"dxa\"/></w:tcPr><w:p>{exact}<w:r><w:t>{t}</w:t></w:r></w:p></w:tc></w:tr>"
+            )
+        })
+        .collect();
+    let tblp = if float {
+        "<w:tblpPr w:leftFromText=\"180\" w:rightFromText=\"180\" w:vertAnchor=\"text\" \
+         w:horzAnchor=\"page\" w:tblpX=\"766\" w:tblpY=\"-230\"/><w:tblOverlap w:val=\"never\"/>"
+    } else {
+        ""
+    };
+    let empty: String = (0..5).map(|_| format!("<w:p>{exact}</w:p>")).collect();
+    minimal_docx_body(&format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"8000\" w:type=\"dxa\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"8000\"/></w:tblGrid>\
+         <w:tr><w:tc><w:tcPr><w:tcW w:w=\"8000\" w:type=\"dxa\"/></w:tcPr><w:p>{exact}<w:r><w:t>Head</w:t></w:r></w:p>\
+         <w:tbl><w:tblPr>{tblp}<w:tblW w:w=\"3000\" w:type=\"dxa\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"3000\"/></w:tblGrid>\
+         {nested_rows}</w:tbl>{empty}</w:tc></w:tr></w:tbl><w:p>{exact}<w:r><w:t>After</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/><w:pgMar w:top=\"1440\" w:right=\"1440\" \
+         w:bottom=\"1440\" w:left=\"1440\" w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>"
+    ))
+}
+
+#[test]
+fn a_row_without_its_own_trpr_ignores_a_nested_rows_height() {
+    // The row's trPr was found among its descendants: with none of its
+    // own, the outer row took the nested table's exact 20pt and the next
+    // paragraph painted over the nested table.
+    let pdf = docx_to_pdf(&nested_table_cell_docx(false)).expect("nested rows");
+    let (_, four) = pdf_glyph_text_xy(&pdf, "NestFour").expect("nested text paints");
+    let (_, after) = pdf_glyph_text_xy(&pdf, "After").expect("After paints");
+    assert!(
+        after < four - 75.0,
+        "After under the table and its five lines: {after} vs {four}"
+    );
+}
+
+#[test]
+fn a_floating_nested_table_lets_the_empty_lines_after_it_run_beside_it() {
+    // ee79137dd5 (one page in Word, two for us): Word hangs the cell's
+    // floating table 11.5pt above the empty lines after it, 38.3pt from
+    // the cell's edge, and runs those lines beside it. The row ends 75pt
+    // under the anchor, not under the table plus 75pt.
+    let pdf = docx_to_pdf(&nested_table_cell_docx(true)).expect("nested float");
+    let (_, head) = pdf_glyph_text_xy(&pdf, "Head").expect("Head paints");
+    let (_, after) = pdf_glyph_text_xy(&pdf, "After").expect("After paints");
+    let (nest_x, nest) = pdf_glyph_text_xy(&pdf, "NestOne").expect("nested text paints");
+    assert!(
+        head - after < 100.0,
+        "the row is Head plus five lines: {head} -> {after}"
+    );
+    assert!(
+        head - nest < 8.0,
+        "the table hangs 11.5pt above the lines: {head} -> {nest}"
+    );
+    assert!(nest_x > 100.0, "38.3pt from the cell's edge: {nest_x}");
+}
+
 #[test]
 fn a_page_sized_square_float_under_text_moves_its_paragraph_to_the_next_page() {
     // Word probe h1 and 3bfcb371e2 (30b6e87178): a 615x797 cover whose
