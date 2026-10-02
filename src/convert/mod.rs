@@ -1880,6 +1880,10 @@ struct LaidImage {
     /// A header/footer picture whose paragraph follows one of the part's
     /// top-level tables: it paints under them (00319da4's logo).
     chrome_under_table: bool,
+    /// A header picture paragraph after all of the part's text lines: it
+    /// stands under their band, `chrome_above` past it (dcda3ae's note bar
+    /// under its bordered title).
+    chrome_under_text: bool,
     /// An inline picture's `wp:effectExtent` (left, top, right, bottom) in
     /// points: `w`/`h` include it, the picture paints inside it.
     inset: [f32; 4],
@@ -2560,6 +2564,10 @@ enum ImageKind {
         width: f32,
         run: Option<Box<RunStyle>>,
     },
+    /// An inline text box in a header or footer paragraph: it takes its
+    /// line like a picture its size and paints there (dcda3ae's note bar
+    /// under its header title).
+    TextBox(std::rc::Rc<LaidTextBox>),
 }
 
 /// The room under an inline VML rect's outline in its laid box: 1pt, or
@@ -2568,6 +2576,41 @@ enum ImageKind {
 /// 4pt stroke 2pt, k2's unstroked rect nothing).
 fn vml_rect_foot(pad: f32, width: f32) -> f32 {
     if width > 0.0 { pad.max(1.0) } else { 0.0 }
+}
+
+/// An inline text box as a flow picture its size, which paints the box.
+fn text_box_image(b: LaidTextBox, effect: [f32; 4]) -> LaidImage {
+    LaidImage {
+        w: b.w + effect[0] + effect[2],
+        h: b.h + effect[1] + effect[3],
+        kind: ImageKind::TextBox(std::rc::Rc::new(b)),
+        slot: ImageSlot::Flow,
+        behind: false,
+        z: 0,
+        crop: None,
+        rotate_deg: 0.0,
+        oval: false,
+        chrome_align: Align::Left,
+        chrome_lead: false,
+        chrome_flow: false,
+        chrome_under_table: false,
+        chrome_under_text: false,
+        inset: effect,
+        chrome_leading: None,
+        chrome_tab_line: None,
+        chrome_text_under: None,
+        chrome_above: 0.0,
+        chrome_drop: 0.0,
+        chrome_drop_tab: None,
+        chrome_para: 0,
+        chrome_after: 0.0,
+        tail_anchor: false,
+        outline: None,
+        gap_before: 0.0,
+        lead_chars: 0,
+        after_text: false,
+        under: None,
+    }
 }
 
 fn twip(v: f32) -> f32 {
@@ -9763,6 +9806,7 @@ fn paragraph_block(
                 chrome_lead: false,
                 chrome_flow: false,
                 chrome_under_table: false,
+                chrome_under_text: false,
                 inset: [0.0; 4],
                 chrome_leading: None,
                 chrome_tab_line: None,
@@ -15488,6 +15532,7 @@ fn collect_images(
                     chrome_lead: false,
                     chrome_flow: false,
                     chrome_under_table: false,
+                    chrome_under_text: false,
                     inset: [0.0; 4],
                     chrome_leading: None,
                     chrome_tab_line: None,
@@ -15545,6 +15590,7 @@ fn collect_images(
                     chrome_lead: false,
                     chrome_flow: false,
                     chrome_under_table: false,
+                    chrome_under_text: false,
                     inset: [0.0; 4],
                     chrome_leading: None,
                     chrome_tab_line: None,
@@ -15609,6 +15655,7 @@ fn collect_images(
                         chrome_lead: false,
                         chrome_flow: false,
                         chrome_under_table: false,
+                        chrome_under_text: false,
                         inset,
                         chrome_leading: None,
                         chrome_tab_line: None,
@@ -15644,6 +15691,7 @@ fn collect_images(
                         chrome_lead: false,
                         chrome_flow: false,
                         chrome_under_table: false,
+                        chrome_under_text: false,
                         inset: [0.0; 4],
                         chrome_leading: None,
                         chrome_tab_line: None,
@@ -15720,6 +15768,7 @@ fn collect_images(
                         chrome_lead: false,
                         chrome_flow: false,
                         chrome_under_table: false,
+                        chrome_under_text: false,
                         inset: [0.0; 4],
                         chrome_leading: None,
                         chrome_tab_line: None,
@@ -15757,6 +15806,7 @@ fn collect_images(
                     chrome_lead: false,
                     chrome_flow: false,
                     chrome_under_table: false,
+                    chrome_under_text: false,
                     inset: [0.0; 4],
                     chrome_leading: None,
                     chrome_tab_line: None,
@@ -15927,6 +15977,7 @@ fn vml_line_image(dom: &Dom, line: NodeId, root: NodeId) -> Option<LaidImage> {
         chrome_lead: false,
         chrome_flow: false,
         chrome_under_table: false,
+        chrome_under_text: false,
         inset: [0.0; 4],
         chrome_leading: None,
         chrome_tab_line: None,
@@ -16010,6 +16061,7 @@ fn vml_rect_image(
         chrome_lead: false,
         chrome_flow: false,
         chrome_under_table: false,
+        chrome_under_text: false,
         inset: [0.0; 4],
         chrome_leading: None,
         chrome_tab_line: None,
@@ -17929,26 +17981,50 @@ fn chrome_part_xml(
         let (pstyle, prun) = para_base(&part_dom, para, sheet, None);
         // Anchored text boxes of a top-level paragraph float over the page
         // like the body's (a watermark keeps its own path).
+        // An inline one stands on the paragraph's line like a picture.
+        let mut flow_boxes = Vec::new();
         if watermark.is_none() && top_level {
-            boxes.extend(
-                collect_textboxes_styled(
-                    Some((pkg, path)),
-                    &part_dom,
-                    para,
-                    &prun,
-                    &sheet.theme,
-                    Some(sheet),
-                    None,
-                )
+            let (flow, anchored): (Vec<_>, Vec<_>) = collect_textboxes_styled(
+                Some((pkg, path)),
+                &part_dom,
+                para,
+                &prun,
+                &sheet.theme,
+                Some(sheet),
+                None,
+            )
+            .into_iter()
+            .partition(|b| matches!(b.slot, ImageSlot::Flow));
+            boxes.extend(anchored.into_iter().map(|mut b| {
+                b.chrome_para_top = para_top;
+                b
+            }));
+            // Each stands in its drawing's wp:effectExtent (dcda3ae's
+            // note bar 0.75pt under its line top).
+            let effects: Vec<[f32; 4]> = part_dom
+                .descendants(para, Some(&WP::name("inline")))
                 .into_iter()
-                .filter(|b| !matches!(b.slot, ImageSlot::Flow))
-                .map(|mut b| {
-                    b.chrome_para_top = para_top;
-                    b
-                }),
-            );
+                .filter(|inl| {
+                    !descendants_local(&part_dom, *inl, "txbx").is_empty()
+                        && !part_dom.ancestors(*inl, None).iter().any(|a| {
+                            local_name_is(&part_dom, *a, "Fallback")
+                                || local_name_is(&part_dom, *a, "txbxContent")
+                        })
+                })
+                .map(|inl| inline_effect_pt(&part_dom, inl))
+                .collect();
+            // Only DrawingML inline boxes: an inline VML text box beside a
+            // logo takes no slot (0017dd5f's boxed page number).
+            if effects.len() == flow.len() {
+                flow_boxes = flow
+                    .into_iter()
+                    .zip(effects)
+                    .map(|(b, effect)| text_box_image(b, effect))
+                    .collect();
+            }
         }
         let this_top = para_top;
+        let last_text_after = last_after;
         if top_level {
             let size = part_dom
                 .descendants(para, Some(&W::name("sz")))
@@ -18039,6 +18115,22 @@ fn chrome_part_xml(
                             .ancestors(inl, Some(&W::name("txbxContent")))
                             .is_empty()
                     }));
+        // A picture paragraph with no text or bare line after it in the
+        // part stands under the whole text band.
+        let band_para = |p: NodeId| {
+            !hf_para_is_shape_text(&part_dom, p)
+                && !hf_para_in_table(&part_dom, root, p)
+                && (!para_shown_text(&part_dom, p).trim().is_empty()
+                    || hf_para_is_bare_line(&part_dom, root, p))
+        };
+        let under_text = !lead
+            && no_text
+            && top_level
+            && local.starts_with("header")
+            && !part_dom
+                .descendants(root, Some(&W::p()))
+                .into_iter()
+                .any(|p| p.0 > para.0 && band_para(p));
         if !hf_para_in_table(&part_dom, root, para) && !no_text {
             seen_text = true;
         }
@@ -18082,6 +18174,7 @@ fn chrome_part_xml(
         images.extend(
             collect_images(pkg, path, &part_dom, para, &|_| None)
                 .into_iter()
+                .chain(flow_boxes)
                 .filter(|img| !(table_owned && cell_holds_image(img)))
                 .map(|mut img| {
                     img.chrome_align = jc;
@@ -18090,6 +18183,13 @@ fn chrome_part_xml(
                     img.chrome_lead = lead && !trails;
                     if trails {
                         img.chrome_above = trail_top;
+                    } else if under_text {
+                        // A picture paragraph after the part's text stands on
+                        // its own line under it, its space before past the
+                        // last text paragraph's after (dcda3ae's note bar
+                        // under its header title).
+                        img.chrome_under_text = true;
+                        img.chrome_above = (pstyle.before - last_text_after).max(0.0);
                     }
                     img.chrome_under_table = under_table;
                     img.chrome_para = para_no;
@@ -18455,6 +18555,20 @@ fn first_para_align(dom: &Dom, root: NodeId) -> Align {
     style.align
 }
 
+/// How far a paragraph box's inner edges stand past its text on the left
+/// and right: each side rule's space, plus Word's 1.44pt outset on a
+/// four-edge box (`paint_pbdr`).
+fn pbdr_side_reach(style: &ParaStyle) -> (f32, f32) {
+    let four_edge = style.border_top.is_some()
+        && style.border_bottom.is_some()
+        && style.border_left.is_some()
+        && style.border_right.is_some();
+    let quartz = if four_edge { 1.44 } else { 0.0 };
+    let reach =
+        |edge: Option<([f32; 3], f32, f32)>| edge.map_or(0.0, |(_, _, space)| space + quartz);
+    (reach(style.border_left), reach(style.border_right))
+}
+
 /// Word groups consecutive paragraphs whose borders and indents match
 /// into one box.
 fn same_pbdr(a: &ParaStyle, b: &ParaStyle) -> bool {
@@ -18736,8 +18850,17 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet, text_w: f32) -> 
     runs
 }
 
-/// Width + space of a header/footer paragraph's top border, unless the
-/// paragraph above carries the same one (one box, one rule).
+/// A chrome paragraph box's inner edges: 1.44pt past the text area, and
+/// past each side rule's space (Word, 000ebd12's FSHNormL rule 83.5–511.7
+/// on 85.05/510.25 margins; dcda3ae's four-edge title box).
+fn hf_box_x(page: &PageSetup, para: &ParaStyle) -> (f32, f32) {
+    let space = |edge: Option<([f32; 3], f32, f32)>| edge.map_or(0.0, |(_, _, s)| s);
+    (
+        page.margin_l + para.indent_left - 1.44 - space(para.border_left),
+        page.width - page.margin_r - para.indent_right + 1.44 + space(para.border_right),
+    )
+}
+
 /// Bottom border space + width of a chrome paragraph that closes its
 /// border group (`next` does not share the edge): the rule stands between
 /// it and what follows (00ad6ec7's header rule 1pt under its last line).
@@ -18748,6 +18871,8 @@ fn hf_bottom_pad(para: &ParaStyle, next: Option<&ParaStyle>) -> f32 {
     }
 }
 
+/// Width + space of a header/footer paragraph's top border, unless the
+/// paragraph above carries the same one (one box, one rule).
 fn hf_border_pad(above: Option<&ParaStyle>, para: &ParaStyle) -> f32 {
     match para.border_top {
         Some(edge) if above.is_none_or(|a| a.border_top != Some(edge)) => edge.1 + edge.2,
@@ -19593,6 +19718,9 @@ struct Layout<'a> {
     /// This paragraph's pBdr joins the previous / next paragraph's box
     /// (Word groups identical borders; set by the block loop).
     pbdr_joins: (bool, bool),
+    /// Page and bottom of the last shaded line of a paragraph whose border
+    /// group goes on: the next one's fill reaches up to it.
+    fill_join: Option<(usize, f32)>,
     bookmark_pages: HashMap<String, String>,
     pageref_ops: Vec<(usize, usize, String)>,
     /// Bookmark names present in the DOCX (before layout pages exist).
@@ -20059,6 +20187,7 @@ impl<'a> Layout<'a> {
             blank_below: None,
             para_fold_share: 0.0,
             pbdr_joins: (false, false),
+            fill_join: None,
             bookmark_pages: HashMap::new(),
             pageref_ops: Vec::new(),
             known_bookmarks: HashSet::new(),
@@ -21916,14 +22045,37 @@ impl<'a> Layout<'a> {
                 box_top = self.y;
             }
             if let Some(fill) = style.fill {
-                let fx = self.flow_left() + style.indent_left;
-                let fw = (self.content_width() - style.indent_left - style.indent_right).max(1.0);
-                let fy = self.y - line_box;
+                let mut fx = self.flow_left() + style.indent_left;
+                let mut fx2 =
+                    fx + (self.content_width() - style.indent_left - style.indent_right).max(1.0);
+                let (mut top, mut fy) = (self.y, self.y - line_box);
+                // A bordered paragraph's shading fills its box to the rules'
+                // inner edges: the rule spaces and, inside a group, the
+                // spacing between its paragraphs (Word probe bx1: one teal
+                // band 37.20–558 behind a Heading1 pair, ours white between).
+                let (left, right) = pbdr_side_reach(style);
+                fx -= left;
+                fx2 += right;
+                if line_i == 0 {
+                    if let Some((_, y)) = self
+                        .fill_join
+                        .filter(|(page, _)| joined_above && *page == self.pages.len())
+                    {
+                        top = y;
+                    } else if let Some((_, _, space)) = bdr_top {
+                        top += space;
+                    }
+                }
+                if line_i + 1 == lines.len() {
+                    fy -= bdr_bottom.map_or(0.0, |(_, _, space)| space)
+                        + if joined_below { style.after } else { 0.0 };
+                    self.fill_join = joined_below.then_some((self.pages.len(), fy));
+                }
                 self.current().ops.push(Op::FillRect {
                     x: fx,
                     y: fy,
-                    w: fw,
-                    h: line_box,
+                    w: (fx2 - fx).max(1.0),
+                    h: top - fy,
                     color: fill,
                 });
             }
@@ -22166,8 +22318,9 @@ impl<'a> Layout<'a> {
         let Some((color, width, space)) = para.border_top else {
             return;
         };
-        let x1 = self.page.margin_l + para.indent_left - 1.44;
-        let x2 = self.page.width - self.page.margin_r - para.indent_right + 1.44;
+        let (x1, x2) = hf_box_x(&self.page, para);
+        let x1 = x1 - para.border_left.map_or(0.0, |(_, w, _)| w);
+        let x2 = x2 + para.border_right.map_or(0.0, |(_, w, _)| w);
         self.hairline_h(x1, text_top + space + width * 0.5, x2, width, color);
     }
 
@@ -22184,37 +22337,55 @@ impl<'a> Layout<'a> {
         top: f32,
         line_h: f32,
     ) {
-        let Some(color) = para.fill else {
-            return;
-        };
         let same = |other: Option<&ParaStyle>| other.is_some_and(|o| std::ptr::eq(o, para));
-        let outset = if para.border_left.is_some() || para.border_right.is_some() {
-            1.44
-        } else {
-            0.0
+        // The fill stops at the rules' inner edges, the side rules run to
+        // their outer ones (Word, dcda3ae's header title: band 37.20–558,
+        // rules 36.72–558.48 on 42.55/552.75 margins).
+        let reach = |edge: Option<([f32; 3], f32, f32)>, with_width: bool| {
+            edge.map_or(0.0, |(_, w, space)| {
+                space + if with_width { w } else { 0.0 }
+            })
         };
-        let reach =
-            |edge: Option<([f32; 3], f32, f32)>| edge.map_or(0.0, |(_, w, space)| space + w);
-        let up = if same(above) {
-            0.0
-        } else {
-            reach(para.border_top)
+        let up = |w| {
+            if same(above) {
+                0.0
+            } else {
+                reach(para.border_top, w)
+            }
         };
-        let down = if same(next) {
-            0.0
-        } else {
-            reach(para.border_bottom)
+        let down = |w| {
+            if same(next) {
+                0.0
+            } else {
+                reach(para.border_bottom, w)
+            }
         };
-        let x1 = self.page.margin_l + para.indent_left - outset;
-        let x2 = self.page.width - self.page.margin_r - para.indent_right + outset;
-        let y = top - line_h - down;
-        self.current().ops.push(Op::FillRect {
-            x: x1,
-            y,
-            w: (x2 - x1).max(1.0),
-            h: top + up - y,
-            color,
-        });
+        // Unruled sides keep the text area's edges.
+        let (x1, x2) = if para.border_left.is_some() || para.border_right.is_some() {
+            hf_box_x(&self.page, para)
+        } else {
+            (
+                self.page.margin_l + para.indent_left,
+                self.page.width - self.page.margin_r - para.indent_right,
+            )
+        };
+        if let Some(color) = para.fill {
+            let y = top - line_h - down(false);
+            self.current().ops.push(Op::FillRect {
+                x: x1,
+                y,
+                w: (x2 - x1).max(1.0),
+                h: top + up(false) - y,
+                color,
+            });
+        }
+        let (bot, top) = (top - line_h - down(true), top + up(true));
+        if let Some((color, width, _)) = para.border_left {
+            self.hairline_v(x1 - width * 0.5, bot, top, width, color);
+        }
+        if let Some((color, width, _)) = para.border_right {
+            self.hairline_v(x2 + width * 0.5, bot, top, width, color);
+        }
     }
 
     /// The shading band of the empty paragraph `runs[i]`, `h` down from
@@ -22237,8 +22408,9 @@ impl<'a> Layout<'a> {
         let Some((color, width, space)) = para.border_bottom else {
             return;
         };
-        let x1 = self.page.margin_l + para.indent_left - 1.44;
-        let x2 = self.page.width - self.page.margin_r - para.indent_right + 1.44;
+        let (x1, x2) = hf_box_x(&self.page, para);
+        let x1 = x1 - para.border_left.map_or(0.0, |(_, w, _)| w);
+        let x2 = x2 + para.border_right.map_or(0.0, |(_, w, _)| w);
         self.hairline_h(x1, line_bottom - space - width * 0.5, x2, width, color);
     }
 
@@ -23907,6 +24079,7 @@ impl<'a> Layout<'a> {
                 oval: img.oval,
             }),
             ImageKind::Reserve => {}
+            ImageKind::TextBox(b) => self.paint_box_at(b, x, y, dw, dh),
             ImageKind::Broken => self.current().ops.push(Op::StrokeRect {
                 x,
                 y,
@@ -24364,6 +24537,11 @@ impl<'a> Layout<'a> {
             let lift = if in_header {
                 row_top
                     + img.chrome_above
+                    + if img.chrome_under_text {
+                        chrome_line_pt(self.fonts, &self.header, self.content_width())
+                    } else {
+                        0.0
+                    }
                     + if img.chrome_under_table && matches!(img.slot, ImageSlot::Flow) {
                         tables_h
                     } else {
@@ -24470,6 +24648,7 @@ impl<'a> Layout<'a> {
                 oval: img.oval,
             }),
             ImageKind::Reserve => {}
+            ImageKind::TextBox(b) => self.paint_box_at(b, x, y, dw, dh),
             ImageKind::Broken => self.current().ops.push(Op::StrokeRect {
                 x,
                 y,

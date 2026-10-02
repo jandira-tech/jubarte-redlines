@@ -3841,11 +3841,54 @@ fn a_header_paragraphs_shading_paints_behind_its_text() {
     let pdf = docx_to_pdf(&header_part_docx(hdr)).expect("shaded header");
     let (_, y) = pdf_glyph_text_xy(&pdf, "Checklist").expect("the title paints");
     let bands = pdf_fill_rects(&pdf, 0.251, 0.510, 0.529);
+    // Word (dcda3ae's copy of this header, A4): the band runs 5.35pt past
+    // each margin, to the side rules' inner edges (1.44 + the 4pt space).
     assert!(
         bands
             .iter()
-            .any(|(w, h)| (460.0..480.0).contains(w) && (17.0..26.0).contains(h)),
-        "a text-area-wide band behind the title (baseline {y}); fills {bands:?}"
+            .any(|(w, h)| (478.0..479.5).contains(w) && (17.0..26.0).contains(h)),
+        "a band out to the side rules behind the title (baseline {y}); fills {bands:?}"
+    );
+    // The side rules paint too: Word's 0.48pt verticals the box's height.
+    assert_eq!(
+        bands
+            .iter()
+            .filter(|(w, h)| *w < 1.0 && (21.0..27.0).contains(h))
+            .count(),
+        2,
+        "a left and a right rule; fills {bands:?}"
+    );
+}
+
+#[test]
+fn a_header_text_box_after_the_title_stands_under_it() {
+    // dcda3ae: the header's second paragraph holds only an inline wps text
+    // box (the note bar). We dropped it, so the body rose 19pt. Word probe
+    // hb60e (header 18pt, Arial 10 "HdrTop" over a 60pt box with a 0.75pt
+    // effectExtent top): "Boxed" tops at 35.50, the body's "BodyX" at 96.46.
+    let r = r#"<w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:sz w:val="20"/></w:rPr>"#;
+    let para = |inner: &str| {
+        format!(r#"<w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r>{r}{inner}</w:r></w:p>"#)
+    };
+    let wps = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape";
+    let shape = format!(
+        r#"<w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="5080000" cy="762000"/><wp:effectExtent l="0" t="9525" r="0" b="0"/><wp:docPr id="1" name="Box 1"/><a:graphic><a:graphicData uri="{wps}"><wps:wsp xmlns:wps="{wps}"><wps:cNvSpPr/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="5080000" cy="762000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="F1D9A9"/></a:solidFill><a:ln><a:noFill/></a:ln></wps:spPr><wps:txbx><w:txbxContent>{}</w:txbxContent></wps:txbx><wps:bodyPr lIns="18000" tIns="18000" rIns="18000" bIns="18000" anchor="t"><a:noAutofit/></wps:bodyPr></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing>"#,
+        para("<w:t>Boxed note</w:t>")
+    );
+    let hdr = para("<w:t>HdrTop</w:t>") + &para(&shape);
+    let pdf = docx_to_pdf(&chrome_docx("header", &hdr, 360, &para("<w:t>BodyX</w:t>")))
+        .expect("boxed header");
+    let (_, hdr_y) = pdf_glyph_text_xy(&pdf, "HdrTop").expect("the title paints");
+    let (_, boxed) = pdf_glyph_text_xy(&pdf, "Boxed").expect("the box's text paints");
+    let (_, body) = pdf_glyph_text_xy(&pdf, "BodyX").expect("the body paints");
+    // Word's line tops, all Arial 10: HdrTop 20.14, Boxed 35.50, BodyX 96.46.
+    assert!(
+        (hdr_y - boxed - (35.50 - 20.14)).abs() < 0.4,
+        "the box stands under HdrTop: {hdr_y} - {boxed}, Word 15.36"
+    );
+    assert!(
+        (hdr_y - body - (96.46 - 20.14)).abs() < 0.6,
+        "the body starts under the box's line: {hdr_y} - {body}, Word 76.32"
     );
 }
 
@@ -3863,6 +3906,65 @@ fn a_footer_paragraphs_shading_paints_behind_its_text() {
             .iter()
             .any(|(w, h)| (460.0..480.0).contains(w) && (17.0..26.0).contains(h)),
         "a text-area-wide band behind the footer (baseline {y}); fills {bands:?}"
+    );
+}
+
+#[test]
+fn a_bordered_shaded_paragraph_fills_its_box() {
+    // Word probe bp: four-edge 408287 rules (spaces 1/4/1/4) with a 408287
+    // fill. Word fills the box to the rules' inner edges, 66.72–545.28 on
+    // 72/540 margins, the rule spaces included (96.00–116.40 round Solo's
+    // 19.4pt line), and a grouped pair as one band 146.88–197.76 with no
+    // gap between them. We filled only each text line, so the pair showed
+    // a white stripe through its teal box.
+    let bdr = r#"<w:pBdr><w:top w:val="single" w:sz="4" w:space="1" w:color="408287"/><w:left w:val="single" w:sz="4" w:space="4" w:color="408287"/><w:bottom w:val="single" w:sz="4" w:space="1" w:color="408287"/><w:right w:val="single" w:sz="4" w:space="4" w:color="408287"/></w:pBdr><w:shd w:val="clear" w:color="auto" w:fill="408287"/><w:spacing w:before="240" w:after="120" w:line="240" w:lineRule="auto"/>"#;
+    let boxed = |t: &str| {
+        format!(
+            r#"<w:p><w:pPr>{bdr}</w:pPr><w:r><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:b/><w:color w:val="FFFFFF"/><w:sz w:val="32"/></w:rPr><w:t>{t}</w:t></w:r></w:p>"#
+        )
+    };
+    let plain = |t: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:sz w:val="20"/></w:rPr><w:t>{t}</w:t></w:r></w:p>"#
+        )
+    };
+    let body = plain("Lead")
+        + &boxed("Solo")
+        + &plain("Mid")
+        + &boxed("PairA")
+        + &boxed("PairB")
+        + &plain("Tail");
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("bordered fills");
+    let hay = pdf_content_streams(&pdf).join("\n");
+    // The fills, not the 0.5pt rules: (bottom, top) from the page top.
+    let mut bands: Vec<(f32, f32, f32, f32)> = pdf_fill_boxes_in(&hay, 0.251, 0.510, 0.529)
+        .into_iter()
+        .filter(|(_, _, w, h)| *w > 400.0 && *h > 1.0)
+        .collect();
+    bands.sort_by(|a, b| b.1.total_cmp(&a.1));
+    for (x, _, w, _) in &bands {
+        assert!(
+            (x - 66.72).abs() < 0.4 && (x + w - 545.28).abs() < 0.4,
+            "fills reach the side rules; bands {bands:?}"
+        );
+    }
+    let (_, y, _, h) = bands[0];
+    assert!(
+        (h - 20.4).abs() < 0.3,
+        "Solo's band holds its rule spaces: {bands:?}"
+    );
+    // The pair: one unbroken band, as tall as Word's.
+    let pair = &bands[1..];
+    for w in pair.windows(2) {
+        assert!(
+            (w[0].1 - (w[1].1 + w[1].3)).abs() < 0.05,
+            "no gap inside the pair's band: {bands:?}"
+        );
+    }
+    let pair_h = pair[0].1 + pair[0].3 - pair[pair.len() - 1].1;
+    assert!(
+        (pair_h - (197.76 - 146.88)).abs() < 0.6,
+        "the pair's band is Word's 50.88pt: {pair_h} (Solo at {y}); {bands:?}"
     );
 }
 
