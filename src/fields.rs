@@ -126,6 +126,9 @@ pub fn update_fields(docx: &[u8]) -> Result<Updated, FieldError> {
         });
     }
 
+    for story in &mut stories {
+        story.changed |= split_mark_runs(&mut story.dom, story.root);
+    }
     let style_names = styles_part
         .as_deref()
         .and_then(|part| pkg.part_string(part))
@@ -351,6 +354,62 @@ fn collect_fields(dom: &Dom, root: NodeId) -> Vec<Field> {
             field
         })
         .collect()
+}
+
+/// Give every `w:fldChar` a run of its own, as Word writes fields: a run
+/// that also holds the code or result (generators write a whole field into
+/// one run) is split in place, each piece keeping the run's properties.
+/// Returns whether anything was split.
+fn split_mark_runs(dom: &mut Dom, root: NodeId) -> bool {
+    let runs: Vec<NodeId> = dom
+        .descendants(root, Some(&W::r()))
+        .into_iter()
+        .filter(|&run| {
+            let content: Vec<NodeId> = dom
+                .elements(run, None)
+                .into_iter()
+                .filter(|&c| !dom.name_is(c, &W::r_pr()))
+                .collect();
+            content.len() > 1 && content.iter().any(|&c| dom.name_is(c, &W::name("fldChar")))
+        })
+        .collect();
+    for &run in &runs {
+        let rpr = dom.element(run, &W::r_pr());
+        let attributes = dom.attributes(run);
+        let mut groups: Vec<Vec<NodeId>> = Vec::new();
+        let mut open = false;
+        for child in dom.elements(run, None) {
+            if Some(child) == rpr {
+                continue;
+            }
+            if dom.name_is(child, &W::name("fldChar")) {
+                groups.push(vec![child]);
+                open = false;
+            } else if open {
+                groups.last_mut().expect("open group").push(child);
+            } else {
+                groups.push(vec![child]);
+                open = true;
+            }
+        }
+        for group in groups {
+            let piece = dom.new_element(W::r());
+            for (name, value) in &attributes {
+                dom.set_attribute_value(piece, name, Some(value));
+            }
+            if let Some(rpr) = rpr {
+                let copy = dom.clone_subtree(rpr);
+                dom.add(piece, copy);
+            }
+            for child in group {
+                dom.remove(child);
+                dom.add(piece, child);
+            }
+            dom.add_before_self(run, piece);
+        }
+        dom.remove(run);
+    }
+    !runs.is_empty()
 }
 
 /// Deleted content and fallback copies take no part in field results.
@@ -714,6 +773,9 @@ fn write_result(dom: &mut Dom, field: &Field, text: &str) -> bool {
     ) else {
         return false;
     };
+    if from >= to {
+        return false;
+    }
     let between = &siblings[from + 1..to];
     let rpr = between
         .iter()
@@ -996,6 +1058,9 @@ fn write_toc(
     let (Some(begin_run), Some(end_run)) = (dom.parent(field.begin), dom.parent(field.end)) else {
         return false;
     };
+    if begin_run == end_run || field.separate.and_then(|s| dom.parent(s)) == Some(end_run) {
+        return false;
+    }
     let (Some(first), Some(last)) = (dom.parent(begin_run), dom.parent(end_run)) else {
         return false;
     };
@@ -1030,7 +1095,9 @@ fn write_toc(
         let siblings = dom.nodes(first);
         let from = siblings.iter().position(|&n| n == separate_run);
         let to = siblings.iter().position(|&n| n == end_run);
-        if let (Some(from), Some(to)) = (from, to) {
+        if let (Some(from), Some(to)) = (from, to)
+            && from < to
+        {
             for &node in &siblings[from + 1..to] {
                 dom.remove(node);
             }

@@ -302,3 +302,22 @@ fn a_package_it_cannot_read_is_an_error() {
     let err = update_fields(b"not a zip").unwrap_err();
     assert!(err.to_string().contains("DOCX"), "{err}");
 }
+
+#[test]
+fn field_marks_sharing_one_run_are_split_and_refreshed() {
+    // Generators (python-docx scripts, Google Docs exports) put a whole
+    // field in one run.
+    let body = String::new()
+        + r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/><w:instrText xml:space="preserve">TOC \o "1-3" \h \z \u</w:instrText><w:fldChar w:fldCharType="separate"/><w:fldChar w:fldCharType="end"/></w:r></w:p>"#
+        + &heading("Only")
+        + r#"<w:p><w:r><w:rPr><w:i/></w:rPr><w:fldChar w:fldCharType="begin"/><w:instrText> NUMPAGES </w:instrText><w:fldChar w:fldCharType="separate"/><w:t>9</w:t><w:fldChar w:fldCharType="end"/></w:r></w:p>"#;
+    let updated = update_fields(&docx(&body)).unwrap();
+    assert_word_valid_package(&updated.docx);
+    assert_eq!(texts(&updated.docx), ["Only\t1", "Only", "1"]);
+    let xml = part_string(&updated.docx, "word/document.xml").unwrap();
+    // Each split run keeps the original run's formatting.
+    assert!(
+        xml.contains(r#"<w:r><w:rPr><w:i /></w:rPr><w:instrText>"#),
+        "{xml}"
+    );
+}
