@@ -34784,6 +34784,60 @@ fn a_box_that_fits_its_text_holds_its_grid_line() {
 }
 
 #[test]
+fn a_box_that_fits_its_text_sizes_a_blank_line_by_its_mark() {
+    // Word 16 probes c5a-c5c (2026-10-01): a floating a:spAutoFit box
+    // around a Times 12 "QQ" line grows by 23.1pt for an empty paragraph
+    // under a Times 20 mark, and the same for one holding only 20pt
+    // spaces: a blank line is a line of its mark (22.98pt). We sized it
+    // as a factory Calibri 11 line (13.4pt).
+    let r12 = r#"<w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="24"/></w:rPr>"#;
+    let r20 = r#"<w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="40"/></w:rPr>"#;
+    let p0 = r#"<w:spacing w:after="0" w:line="240" w:lineRule="auto"/>"#;
+    let height = |blank: &str| {
+        let body = format!(
+            "<w:p><w:r><w:drawing><wp:anchor simplePos=\"0\" relativeHeight=\"1\" \
+              behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+              <wp:positionH relativeFrom=\"column\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+              <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+              <wp:extent cx=\"1828800\" cy=\"1828800\"/><wp:wrapNone/>\
+              <wp:docPr id=\"1\" name=\"Text Box 1\"/>\
+              <a:graphic><a:graphicData \
+                uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+                <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+                  <wps:cNvSpPr txBox=\"1\"/>\
+                  <wps:spPr><a:prstGeom prst=\"rect\"/>\
+                    <a:solidFill><a:srgbClr val=\"FF0000\"/></a:solidFill>\
+                    <a:ln><a:noFill/></a:ln></wps:spPr>\
+                  <wps:txbx><w:txbxContent>\
+                    <w:p><w:pPr>{p0}</w:pPr><w:r>{r12}<w:t>QQ</w:t></w:r></w:p>{blank}\
+                  </w:txbxContent></wps:txbx>\
+                  <wps:bodyPr wrap=\"square\" lIns=\"0\" tIns=\"0\" rIns=\"0\" bIns=\"0\">\
+                    <a:spAutoFit/></wps:bodyPr>\
+                </wps:wsp>\
+              </a:graphicData></a:graphic>\
+            </wp:anchor></w:drawing></w:r></w:p><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&drawing_docx(&body)).expect("fitted box");
+        let boxes = pdf_fill_boxes_in(&pdf_content_streams(&pdf)[0], 1.0, 0.0, 0.0);
+        assert_eq!(boxes.len(), 1, "one red box; boxes={boxes:?}");
+        boxes[0].3
+    };
+    let alone = height("");
+    for blank in [
+        format!("<w:p><w:pPr>{p0}{r20}</w:pPr></w:p>"),
+        format!(
+            "<w:p><w:pPr>{p0}{r20}</w:pPr><w:r>{r20}<w:t xml:space=\"preserve\">  </w:t></w:r></w:p>"
+        ),
+    ] {
+        let grown = height(&blank) - alone;
+        assert!(
+            (grown - 22.98).abs() < 0.3,
+            "a blank line under a Times 20 mark adds 22.98pt; grew {grown} ({blank})"
+        );
+    }
+}
+
+#[test]
 fn higher_relative_height_paints_after_lower_fill() {
     // Strict01 cover: white Rectangle 468 (z=251653632) must paint BEFORE
     // dark Rectangle 467 (z=251656704) so the abstract header stays visible.

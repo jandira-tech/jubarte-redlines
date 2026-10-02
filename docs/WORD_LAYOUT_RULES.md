@@ -647,6 +647,13 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
     background's Normal one. Part b f7143477's body starts at 63.6pt, below
     its 36pt top margin.
 
+## Text boxes
+
+- **A fitted box sizes a blank line by its mark.** An `a:spAutoFit` box
+  grows by a blank paragraph's mark line, empty or holding only spaces.
+  - Probes c5b/c5c 2026-10-01: a Times 20 mark adds 23.1pt (one 22.98pt
+    line). We added a factory Calibri 11 line (13.4pt).
+
 ## Open, measured but not yet reconstructed
 
 - **Word re-runs autofit on open.** A Word-saved `tblGrid` is that result,

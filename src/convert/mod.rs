@@ -14377,8 +14377,10 @@ fn txbx_paragraphs(
             let (mut style, run) = para_base(dom, p, sheet, None);
             let mut runs = collect_runs(dom, p, &run, theme);
             // An empty paragraph is a line of its mark (010300e3's 8pt
-            // blank between "Dear Ms. Smith:" and the letter).
-            if runs.is_empty() {
+            // blank between "Dear Ms. Smith:" and the letter), and so is
+            // one of only spaces: a fitted box grows by the mark's line
+            // (Word 16 probes c5b/c5c: 23.1pt under a Times 20 mark).
+            if runs.iter().all(|r| r.text.trim().is_empty()) {
                 let mut mark = run.clone();
                 if let Some(rpr) = dom
                     .element(p, &W::p_pr())
@@ -14386,7 +14388,10 @@ fn txbx_paragraphs(
                 {
                     apply_mark_rpr(dom, rpr, &mut mark, sheet);
                 }
-                runs.push(TextRun::new(" ", mark));
+                if runs.is_empty() {
+                    runs.push(TextRun::new(" ", mark.clone()));
+                }
+                style.mark_run = Some(std::rc::Rc::new(mark));
             }
             // A list paragraph in a box keeps its bullet and the level's
             // indent, as in the body (003329b5's "*" items in the
