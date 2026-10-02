@@ -459,10 +459,6 @@ pub fn append_documents(
     })
 }
 
-/// What this build can do, as JSON (`runtime: "wasm"`): PDF only in the full
-/// build, PNG never.
-///
-/// Mirrors `jubarte::capabilities::capabilities`.
 /// Word-validity findings beyond the schema as a JSON array (`code`,
 /// `part`, `path`, `message`, `word_fatal`, `repairable`); `[]` is a pass.
 ///
