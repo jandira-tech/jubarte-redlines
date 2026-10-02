@@ -44,12 +44,12 @@ entry point — flags and defaults cannot drift from the shipped code.
 ```text
 $ jubarte-redlines --help
 usage: jubarte-redlines [-h] [--version]
-                        {inspect,text,edit,convert,compare,redline,revisions,changes,accept,reject,capabilities} ...
+                        {inspect,text,edit,convert,compare,redline,revisions,changes,comments,accept,reject,diff-render,validate,capabilities} ...
 
 DOCX compare, tracked editing, inspection and rendering (the jubarte engine).
 
 positional arguments:
-  {inspect,text,edit,convert,compare,redline,revisions,changes,accept,reject,capabilities}
+  {inspect,text,edit,convert,compare,redline,revisions,changes,comments,accept,reject,diff-render,validate,capabilities}
     inspect             paragraph ids, formatting spans, limitations and
                         package facts
     text                Markdown with [body:p:N] ids, the coordinates an edit
@@ -57,13 +57,19 @@ positional arguments:
     edit                apply an edit plan: clean.docx, redline.docx,
                         patch.diff, report.jsonl (+ PDF/PNG)
     convert             DOCX to PDF and/or PNG pages, with an optional page
-                        report
+                        report; Markdown to DOCX
     compare (redline)   two documents into a Word tracked-changes document
     revisions           list tracked revisions
     changes             list each tracked change with the id accept/reject
                         --id and edit plans take
+    comments            list every comment with its thread and the text it is
+                        anchored to
     accept              accept tracked changes (all, or the ones selected)
     reject              reject tracked changes (all, or the ones selected)
+    diff-render         which pages of two documents look different; exit 5
+                        when any does
+    validate            Word-validity findings beyond the schema; exit 0
+                        clean, 2 findings, 1 unreadable
     capabilities        what this build can do
 
 options:
@@ -137,7 +143,10 @@ usage: jubarte-redlines convert [-h] [-o OUTPUT] [--force] [--pdf] [--png]
                                 [--dpi DPI] [--compress] [--font-report FILE]
                                 [--report FILE]
                                 [--revisions {conventional,word,custom}]
-                                [--revision-palette SPEC]
+                                [--revision-palette SPEC] [--pages SPEC]
+                                [--page {letter,a4}] [--reference-doc FILE]
+                                [--track-changes {all,accept,reject}]
+                                [--no-critic] [-a AUTHOR] [-d DATE]
                                 file
 
 positional arguments:
@@ -145,7 +154,8 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
-  -o, --output OUTPUT   PDF path [default: <stem>.pdf beside the input]
+  -o, --output OUTPUT   PDF path [default: <stem>.pdf beside the input;
+                        <stem>.docx for Markdown]
   --force
   --pdf                 write the PDF (default when --png is absent)
   --png                 rasterize pages to <stem>-page-NN.png
@@ -158,6 +168,16 @@ options:
   --revision-palette SPEC
                         marks for --revisions custom, e.g.
                         deleted=#AA0000:strike,...
+  --pages SPEC          rasterize only these pages, counted from 1: 3, 1-3,7
+                        (needs --png)
+  --page {letter,a4}    Markdown: page size without --reference-doc
+  --reference-doc FILE  Markdown: take styles and page setup from this .docx
+  --track-changes {all,accept,reject}
+                        Markdown: keep CriticMarkup as tracked changes, or
+                        accept or reject them
+  --no-critic           Markdown: read CriticMarkup delimiters as text
+  -a, --author AUTHOR   Markdown: author of the tracked changes and comments
+  -d, --date DATE       Markdown: their ISO-8601 date [default: fixed epoch]
 ```
 
 #### `jubarte-redlines compare`
@@ -228,6 +248,22 @@ options:
   --json      one JSON object per line
 ```
 
+#### `jubarte-redlines comments`
+
+```text
+$ jubarte-redlines comments --help
+usage: jubarte-redlines comments [-h] [--json] [--author NAME] [--latest] file
+
+positional arguments:
+  file
+
+options:
+  -h, --help     show this help message and exit
+  --json         one JSON object per line
+  --author NAME  only this author's comments
+  --latest       one comment per thread: the newest
+```
+
 #### `jubarte-redlines accept`
 
 ```text
@@ -270,6 +306,49 @@ options:
   --author NAME         only changes by this author; repeatable
   --kind {insertion,deletion,move,formatting}
                         only changes of this kind; repeatable
+```
+
+#### `jubarte-redlines diff-render`
+
+```text
+$ jubarte-redlines diff-render --help
+usage: jubarte-redlines diff-render [-h] [--dpi DPI] [--out-dir DIR] [--json]
+                                    [--no-overlay] [--force]
+                                    A B
+
+positional arguments:
+  A
+  B
+
+options:
+  -h, --help     show this help message and exit
+  --dpi DPI
+  --out-dir DIR  write a-/b-/diff-page-NN.png for changed pages and diff.json
+  --json         print diff.json instead of one line per changed page
+  --no-overlay   skip the diff-page-NN.png overlays
+  --force        overwrite files already in --out-dir
+```
+
+#### `jubarte-redlines validate`
+
+```text
+$ jubarte-redlines validate --help
+usage: jubarte-redlines validate [-h] [--json] [--repair FILE]
+                                 [--original FILE] [--author NAME] [--force]
+                                 file
+
+positional arguments:
+  file
+
+options:
+  -h, --help       show this help message and exit
+  --json           one JSON object per finding
+  --repair FILE    write the repaired package here; remaining findings still
+                   exit 2
+  --original FILE  audit tracked edits: every text change against ORIGINAL
+                   must be a revision by --author
+  --author NAME
+  --force          replace an existing --repair output
 ```
 
 #### `jubarte-redlines capabilities`
@@ -389,14 +468,17 @@ Accept every tracked revision (package-wide) → clean DOCX bytes.
 ### `compare_documents`
 
 ```python
-compare_documents(original, modified, author='jubarte', date=None)
+compare_documents(original, modified, author='jubarte', date=None, *, input_limits=None)
 ```
 
 Compare two DOCX packages (bytes) → redline DOCX bytes (`w:ins`/`w:del`).
 
 Mirrors `jubarte::document_comparer::compare_documents`; `date` (ISO-8601
 `w:date` stamp) defaults to the engine's fixed epoch for deterministic
-output.
+output. `input_limits` overrides the admission budget key by key
+(`max_compressed_bytes`, `max_entries`, `max_part_bytes`,
+`max_uncompressed_bytes`, `max_xml_depth`); a package past it raises
+`JubarteError` with `INPUT_LIMIT`.
 
 ### `docx_to_pdf`
 
@@ -408,8 +490,9 @@ Render a DOCX package (bytes) → PDF bytes (Word-style layout).
 
 `compress=True` deflates the PDF's streams (`/FlateDecode`), which is much
 smaller but no longer plain text. `revisions` paints tracked changes:
-`"conventional"` (red struck deletions, blue double-underlined insertions,
-green moves), `"word"` (Microsoft Word's markup) or `"custom"` with
+`"conventional"` (red struck deletions, blue underlined insertions, green
+moves double-struck and double-underlined), `"word"` (Microsoft Word's
+markup) or `"custom"` with
 `revision_palette="deleted=#AA0000:strike,..."`.
 
 ### `get_revisions`
@@ -427,12 +510,13 @@ Each item has the same shape as the CLI ``jubarte revisions --json`` lines
 ### `get_revisions_json`
 
 ```python
-get_revisions_json(docx)
+get_revisions_json(docx, *, input_limits=None)
 ```
 
 List the tracked revisions in a DOCX as a JSON array string — the same
 object shape as the CLI `jubarte revisions --json` lines
 (`type`/`author`/`date`/`part`/`moveGroupId`/`isMoveSource`/`formatChange`/`text`).
+`input_limits` as in `compare_documents`.
 
 ### `reject_revisions`
 
@@ -441,6 +525,20 @@ reject_revisions(docx)
 ```
 
 Reject every tracked revision (package-wide) → base DOCX bytes.
+
+### `Appended`
+
+```python
+Appended(
+    document: Document,
+    warnings: tuple[str, ...],
+)
+```
+
+``Document.append``'s result: the joined document and what was not carried.
+
+``warnings`` are ``CODE: message`` lines, such as
+``COMMENTS_DROPPED: 1 comment of B was not carried``.
 
 ### `Document`
 
@@ -488,6 +586,20 @@ With no selection every change is accepted (Accept All). ``ids``
 (from ``changes()``), ``authors`` and ``kinds`` select changes that
 match every list given; the others stay tracked.
 
+#### `Document.scrub`
+
+```python
+Document.scrub(self, *, author_alias: 'str | None' = 'Author', rsids: 'bool' = True, docprops: 'bool' = True, comments: 'bool' = True) -> 'Document'
+```
+
+Return a new document without who touched it.
+
+``author_alias`` names every author (tracked changes, comments,
+``people.xml``; ``None`` keeps the names), ``rsids`` drops the
+edit-session ids, ``docprops`` the creator, last editor, revision
+number, dates, manager, company and custom properties, and
+``comments`` every comment. Text and tracked changes stay.
+
 #### `Document.reject`
 
 ```python
@@ -504,6 +616,17 @@ Document.changes(self) -> 'tuple[Change, ...]'
 ```
 
 Every tracked change, each with the id ``accept`` / ``reject`` select by.
+
+#### `Document.comments`
+
+```python
+Document.comments(self, *, author: 'str | None' = None, latest: 'bool' = False) -> 'tuple[Comment, ...]'
+```
+
+Every comment with its thread and anchored text, in document part order.
+
+``author`` keeps one author's comments (exact match); ``latest`` keeps
+the newest comment of each thread.
 
 #### `Document.revisions`
 
@@ -557,6 +680,11 @@ Every operation is resolved against this snapshot before anything is
 changed; a refused plan produces no documents. Comments in the plan
 are anchored in the clean copy and carried through the redline.
 
+With ``existing_revisions="keep"`` another party's tracked changes stay
+tracked: the clean copy is this document with the plan's edits applied
+and theirs still tracked, the redline adds the plan's edits as new
+revisions beside theirs, and ``diff`` shows the plan's edits only.
+
 #### `Document.diff`
 
 ```python
@@ -574,21 +702,108 @@ Document.preview(self, plan: 'EditPlan | dict[str, object] | str') -> 'EditRepor
 
 Resolve every operation and report, without producing documents.
 
+#### `Document.update_fields`
+
+```python
+Document.update_fields(self) -> 'UpdatedFields'
+```
+
+Refresh ``PAGEREF``, ``REF``, ``NUMPAGES``, ``SEQ`` and ``TOC`` results.
+
+TOCs are rebuilt from the headings, then one layout pass gives the
+page numbers: jubarte's layout, not Word's. Field codes stay, so Word
+can update them again. This document is unchanged.
+
 #### `Document.to_png`
 
 ```python
-Document.to_png(self, *, dpi: 'float' = 96.0, options: 'PdfOptions | None' = None) -> 'tuple[bytes, ...]'
+Document.to_png(self, *, dpi: 'float' = 96.0, options: 'PdfOptions | None' = None, pages: 'Sequence[int] | None' = None) -> 'tuple[bytes, ...]'
 ```
 
 One PNG per page, straight from the layout (no PDF round trip).
 
+``pages`` (counted from 1, any order, repeats ignored) rasterizes only
+those pages, in ascending order, after one layout pass of the whole
+document.
+
 #### `Document.render`
 
 ```python
-Document.render(self, *, pdf: 'bool' = True, png_dpi: 'float | None' = None, options: 'PdfOptions | None' = None) -> 'Rendered'
+Document.render(self, *, pdf: 'bool' = True, png_dpi: 'float | None' = None, options: 'PdfOptions | None' = None, pages: 'Sequence[int] | None' = None) -> 'Rendered'
 ```
 
 One layout pass: optional PDF, optional PNG pages, and the page report.
+
+``pages`` (counted from 1) rasterizes only those pages; the report
+still covers every page. A page past the end raises ``JubarteError``.
+
+#### `Document.inspect_json`
+
+```python
+Document.inspect_json(self) -> 'str'
+```
+
+The engine's ``inspect`` snapshot as JSON text, unchanged (``inspect`` decodes it).
+
+#### `Document.validate`
+
+```python
+Document.validate(self) -> 'tuple[Finding, ...]'
+```
+
+Word-validity findings beyond the schema; an empty tuple is a pass.
+
+A package the engine cannot read at all raises ``JubarteError``.
+
+#### `Document.repair`
+
+```python
+Document.repair(self) -> 'Repaired'
+```
+
+A copy with every repairable finding fixed, plus what was fixed and what remains.
+
+#### `Document.audit_tracked`
+
+```python
+Document.audit_tracked(self, original: 'Document | bytes', *, author: 'str') -> 'tuple[Finding, ...]'
+```
+
+Every text change against ``original`` must be a revision by ``author``.
+
+Rejecting that author's changes must give ``original``'s text back;
+a paragraph that still differs is an ``UNTRACKED_EDIT`` finding and
+another author's change a ``FOREIGN_AUTHOR`` one. An empty tuple
+means every edit is tracked.
+
+#### `Document.append`
+
+```python
+Document.append(self, other: 'Document', *, section_break: 'SectionBreak' = 'next_page', keep_sections: 'bool' = False, comments: 'AppendComments' = 'drop') -> 'Appended'
+```
+
+Put ``other`` after this document, carrying its parts.
+
+Images, links, headers, styles, lists and notes come along under ids
+that do not collide; a style this document already has (same type and
+name) keeps this document's look. ``section_break="continuous"`` or
+``"none"`` joins on the same page; ``keep_sections`` keeps ``other``'s
+page setup, headers and footers as a section of its own. ``other``'s
+comments are dropped and reported in ``warnings``; with
+``comments="carry"`` those its body anchors come along with their
+threads and resolution (those in notes, headers and footers are still
+dropped and reported).
+
+#### `Document.audit`
+
+```python
+Document.audit(self, rules: 'Sequence[str] | str | None' = None) -> 'tuple[AuditFinding, ...]'
+```
+
+Accessibility, style and structure findings, each located by
+paragraph id. ``rules`` names rule sets (``a11y``, ``style``,
+``structure``) or codes, as a sequence or a comma-separated string;
+``None`` runs every rule. ``jubarte audit --help`` lists the codes.
 
 ### `read`
 
@@ -685,11 +900,41 @@ change applies to (``text``, ``paragraph_mark``, ``table_row``,
 ``inside`` names the change whose content holds this one: resolving that
 one so its content goes takes this one along.
 
+### `Comment`
+
+```python
+Comment(
+    id: int,
+    author: str,
+    initials: str | None,
+    date: str | None,
+    text: str,
+    parent: int | None,
+    done: bool,
+    paragraph: str | None,
+    anchor_text: str,
+    before: str,
+    after: str,
+)
+```
+
+One comment with its thread position and the text it is anchored to.
+
+    ``id`` is the comment's ``w:id``, which ``EditPlan.reply_comment``,
+    ``resolve_comment``, ``edit_comment`` and ``delete_comment`` take.
+    ``parent`` is the id of the comment it replies to (Word threads are one
+    level deep); ``done`` is set when the thread is resolved. ``paragraph``
+    is the paragraph id where the range starts (``body:p:12``);
+    ``anchor_text`` is the commented text, paragraphs joined by ``
+``, with
+    up to 80 characters ``before`` and ``after`` it.
+
 ### `CompareOptions`
 
 ```python
 CompareOptions(
     date: str | datetime | None = None,
+    input_limits: Mapping[str, int] | None = None,
 )
 ```
 
@@ -705,6 +950,14 @@ CompareOptions.native_date(self) -> 'str | None'
 ```
 
 Return the timestamp accepted by the existing native function.
+
+#### `CompareOptions.native_input_limits`
+
+```python
+CompareOptions.native_input_limits(self) -> 'dict[str, int] | None'
+```
+
+Return the overrides as the native ``input_limits`` dict.
 
 ### `FormatChange`
 
@@ -760,6 +1013,7 @@ EditPlan(
     source_sha256: str | None = None,
     operations: tuple[dict[str, object], ...] = (),
     resolve_revisions: dict[str, dict[str, list[str]]] | None = None,
+    update_fields: bool = False,
 )
 ```
 
@@ -793,37 +1047,55 @@ Bind to ``document`` (a ``Document`` or a snapshot's hash string).
 #### `EditPlan.replace`
 
 ```python
-EditPlan.replace(self, paragraph: 'Selector', *, find: 'str', replacement: 'str', format: 'Mapping[str, object] | None' = None, comment: 'str | None' = None, whole: 'bool' = False, id: 'str | None' = None) -> 'EditPlan'
+EditPlan.replace(self, paragraph: 'Selector', *, find: 'str', replacement: 'str', format: 'Mapping[str, object] | None' = None, comment: 'str | None' = None, whole: 'bool' = False, id: 'str | None' = None, occurrence: 'int | None' = None) -> 'EditPlan'
 ```
 
-Replace the unique occurrence of ``find``; ``format`` styles only the new text.
+Replace the unique occurrence of ``find``, or its ``occurrence``-th hit (1-based).
 
-``whole=True`` shows the change as all of ``find`` deleted, then all of
-``replacement`` inserted, instead of Word Compare's word-level diff.
+``format`` styles only the new text. ``whole=True`` shows the change as
+all of ``find`` deleted, then all of ``replacement`` inserted, instead
+of Word Compare's word-level diff.
 
 #### `EditPlan.insert`
 
 ```python
-EditPlan.insert(self, paragraph: 'Selector', *, text: 'str', after: 'str | None' = None, before: 'str | None' = None, position: "Literal['start', 'end'] | None" = None, format: 'Mapping[str, object] | None' = None, comment: 'str | None' = None, id: 'str | None' = None) -> 'EditPlan'
+EditPlan.insert(self, paragraph: 'Selector', *, text: 'str', after: 'str | None' = None, before: 'str | None' = None, position: "Literal['start', 'end'] | None" = None, format: 'Mapping[str, object] | None' = None, comment: 'str | None' = None, id: 'str | None' = None, occurrence: 'int | None' = None) -> 'EditPlan'
 ```
 
-Insert ``text`` after/before a unique anchor or at the paragraph edge; ``format`` styles it.
+Insert ``text`` after/before an anchor or at the paragraph edge; ``format`` styles it.
+
+The anchor must be unique unless ``occurrence`` (1-based) picks one hit.
 
 #### `EditPlan.delete`
 
 ```python
-EditPlan.delete(self, paragraph: 'Selector', *, find: 'str', id: 'str | None' = None) -> 'EditPlan'
+EditPlan.delete(self, paragraph: 'Selector', *, find: 'str', id: 'str | None' = None, occurrence: 'int | None' = None) -> 'EditPlan'
 ```
 
-Delete the unique occurrence of ``find``.
+Delete the unique occurrence of ``find``, or its ``occurrence``-th hit (1-based).
+
+#### `EditPlan.redact`
+
+```python
+EditPlan.redact(self, paragraph: 'Selector', *, find: 'str', id: 'str | None' = None, occurrence: 'int | None' = None) -> 'EditPlan'
+```
+
+Replace the unique occurrence of ``find`` (or its ``occurrence``-th hit) with one block per character.
+
+The redaction is no tracked change: the clean copy and the redline
+both show the blocks. The plan is refused with ``REDACTION_LEAK``
+when the text still occurs anywhere in either document (another
+paragraph, a comment, a header, the properties); the report never
+repeats it.
 
 #### `EditPlan.comment`
 
 ```python
-EditPlan.comment(self, paragraph: 'Selector', *, text: 'str', find: 'str | None' = None, id: 'str | None' = None) -> 'EditPlan'
+EditPlan.comment(self, paragraph: 'Selector', *, text: 'str', find: 'str | None' = None, through: 'Selector | None' = None, id: 'str | None' = None, occurrence: 'int | None' = None) -> 'EditPlan'
 ```
 
-Comment on the unique occurrence of ``find`` or on the whole paragraph.
+Comment on the unique occurrence of ``find`` (or its ``occurrence``-th hit) or on
+the whole paragraph; with ``through``, on every paragraph from ``paragraph`` to that one.
 
 #### `EditPlan.insert_paragraph`
 
@@ -873,6 +1145,161 @@ EditPlan.rewrite(self, paragraph: 'Selector', *, text: 'str', id: 'str | None' =
 Make the paragraph read as ``text``: only the words that differ are
 edited, so the rest keeps its runs and formatting.
 
+#### `EditPlan.insert_table`
+
+```python
+EditPlan.insert_table(self, paragraph: 'Selector', *, rows: 'Sequence[Sequence[str]]', position: "Literal['before', 'after']" = 'after', header_row: 'bool' = False, widths_dxa: 'Sequence[int] | None' = None, style: 'str | None' = None, id: 'str | None' = None) -> 'EditPlan'
+```
+
+Insert a table next to the anchor paragraph; the redline shows its
+rows inserted.
+
+``rows`` is the cell text row by row, every row the same length;
+``widths_dxa`` the column widths in twentieths of a point (the text
+width split evenly when omitted); ``style`` a table style id or name
+(``TableGrid``, added when the document lacks it, by default).
+
+#### `EditPlan.list_paragraphs`
+
+```python
+EditPlan.list_paragraphs(self, paragraphs: 'Sequence[Selector]', *, kind_of_list: "Literal['bullet', 'decimal', 'lower_letter']" = 'bullet', level: 'int' = 0, restart: 'bool' = True, id: 'str | None' = None) -> 'EditPlan'
+```
+
+Make the paragraphs a list (wire kind ``list``); the redline records
+each paragraph's old properties.
+
+``level`` is 0 (outermost) to 8. ``restart=False`` continues the list
+of the nearest numbered paragraph before the first one instead of
+starting a new one.
+
+#### `EditPlan.reply_comment`
+
+```python
+EditPlan.reply_comment(self, comment_id: 'int', *, text: 'str', id: 'str | None' = None) -> 'EditPlan'
+```
+
+Reply to comment ``comment_id`` (``Document.comments`` lists the ids),
+anchored on the same text; a reply to a reply joins the thread.
+
+#### `EditPlan.resolve_comment`
+
+```python
+EditPlan.resolve_comment(self, comment_id: 'int', *, done: 'bool' = True, id: 'str | None' = None) -> 'EditPlan'
+```
+
+Resolve comment ``comment_id`` and its replies; ``done=False`` reopens them.
+
+#### `EditPlan.edit_comment`
+
+```python
+EditPlan.edit_comment(self, comment_id: 'int', *, text: 'str', id: 'str | None' = None) -> 'EditPlan'
+```
+
+Replace the text of comment ``comment_id``; its author, date and thread stay.
+
+#### `EditPlan.delete_comment`
+
+```python
+EditPlan.delete_comment(self, comment_id: 'int', *, id: 'str | None' = None) -> 'EditPlan'
+```
+
+Remove comment ``comment_id`` with its replies and anchors.
+
+#### `EditPlan.watermark`
+
+```python
+EditPlan.watermark(self, text: 'str', *, color: 'str' = 'C0C0C0', diagonal: 'bool' = True, font: 'str' = 'Calibri', id: 'str | None' = None) -> 'EditPlan'
+```
+
+Write Word's own text watermark into every default header.
+
+``text`` is 1 to 64 plain characters, ``color`` six hex digits, and
+``diagonal=False`` lays it horizontal. One watermark per document; it
+is header content, so the redline carries it without tracking it.
+
+#### `EditPlan.fill_control`
+
+```python
+EditPlan.fill_control(self, control: 'ControlSelector', *, text: 'str | None' = None, choice: 'str | None' = None, checked: 'bool | None' = None, date: 'str | None' = None, id: 'str | None' = None) -> 'EditPlan'
+```
+
+Fill one content control with exactly one of ``text``, ``choice`` (a list
+item's value or display text), ``checked`` or ``date`` (``YYYY-MM-DD``).
+
+The control keeps its properties in the clean copy; the redline shows the
+fill as tracked text (the comparer unwraps controls in revised paragraphs,
+as Word Compare does).
+
+#### `EditPlan.format_run`
+
+```python
+EditPlan.format_run(self, paragraph: 'Selector', *, find: 'str', format: 'Mapping[str, object]', occurrence: 'int | None' = None, id: 'str | None' = None) -> 'EditPlan'
+```
+
+Change the run formatting of ``find`` (bold, italic, underline,
+highlight, font, size_pt, color, strike, caps) as a tracked property
+change. ``occurrence`` (1-based) picks one of several matches.
+
+#### `EditPlan.insert_footnote`
+
+```python
+EditPlan.insert_footnote(self, paragraph: 'Selector', *, after: 'str', text: 'str', occurrence: 'int | None' = None, id: 'str | None' = None) -> 'EditPlan'
+```
+
+Add a footnote holding ``text`` whose mark follows ``after`` in a
+body paragraph. ``occurrence`` (1-based) picks one of several matches.
+
+#### `EditPlan.insert_image`
+
+```python
+EditPlan.insert_image(self, paragraph: 'Selector', *, image: 'bytes', position: "Literal['before', 'after']" = 'after', content_type: 'str | None' = None, width_emu: 'int | None' = None, alt: 'str | None' = None, id: 'str | None' = None) -> 'EditPlan'
+```
+
+Insert a paragraph holding the picture ``image`` (PNG, JPEG, GIF,
+BMP or TIFF bytes) next to a body paragraph. ``width_emu`` sets the
+width (914400 per inch) and keeps the aspect ratio; by default the
+picture is its pixel size at 96 dpi, at most 6.5 inches wide.
+
+#### `EditPlan.page_setup`
+
+```python
+EditPlan.page_setup(self, *, section: "Literal['last', 'all']" = 'last', page: "Literal['letter', 'a4'] | Mapping[str, int] | None" = None, orientation: "Literal['portrait', 'landscape'] | None" = None, margins_dxa: 'Mapping[str, int] | None' = None, id: 'str | None' = None) -> 'EditPlan'
+```
+
+Set the page size, orientation and margins of the last section or
+of every section, as a tracked section change. ``page`` is ``"letter"``,
+``"a4"`` or ``{"width_dxa", "height_dxa"}``; ``margins_dxa`` takes any
+of top, right, bottom, left, header, footer, in twentieths of a point
+(1440 per inch).
+
+#### `EditPlan.insert_toc`
+
+```python
+EditPlan.insert_toc(self, paragraph: 'Selector', *, position: "Literal['before', 'after']" = 'after', levels: 'int' = 3, title: 'str | None' = None, id: 'str | None' = None) -> 'EditPlan'
+```
+
+Insert a table of contents (``TOC \o "1-levels" \h \z \u``) next to
+the anchor, after an optional ``TOCHeading`` title.
+
+Its entries and page numbers are written when the plan sets
+``update_fields=True``; page numbers come from jubarte's layout.
+
+#### `EditPlan.settings`
+
+```python
+EditPlan.settings(self, *, track_revisions: 'bool | None' = None, update_fields: 'bool | None' = None, protection: 'ProtectionEdit | None' = None, enforcement: 'bool' = True, id: 'str | None' = None) -> 'EditPlan'
+```
+
+Write document settings, in schema order, into both documents.
+
+``track_revisions`` turns Track Changes on or off, ``update_fields``
+asks Word to update fields on open (``w:updateFields``; the plan's own
+``update_fields`` writes jubarte's results instead), and ``protection`` restricts
+editing (``"readOnly"``, ``"comments"``, ``"trackedChanges"``,
+``"forms"``; ``"none"`` lifts it). The restriction has no password,
+so any user can turn it off in Word. A setting left as ``None``
+stays as it is; one ``settings`` per plan.
+
 #### `EditPlan.to_dict`
 
 ```python
@@ -897,7 +1324,7 @@ A plan was refused; nothing was written.
 ``code`` is the stable engine code (``STALE_SOURCE``, ``ANCHOR_NOT_FOUND``,
 ``AMBIGUOUS_ANCHOR``, ``OVERLAPPING_EDITS``, ``UNSUPPORTED_STRUCTURE``,
 ``EXISTING_REVISIONS``, ``REVISION_CONFLICT``, ``UNKNOWN_CHANGE``,
-``INVALID_PLAN``, ...), ``message`` the engine's
+``REDACTION_LEAK``, ``UNSUPPORTED``, ``INVALID_PLAN``, ...), ``message`` the engine's
 detail without the code, ``operation`` the id of the operation that
 failed, and ``outcomes`` every operation's status at that point, so the
 caller can see which anchors resolved.
@@ -951,6 +1378,7 @@ EditReport(
     comments_added: int,
     revisions: RevisionCounts,
     resolved_revisions: ResolvedRevisions = ResolvedRevisions(accepted=(), rejected=()),
+    fields: tuple[FieldUpdate, ...] = (),
     _json: str = '',
 )
 ```
@@ -1010,10 +1438,20 @@ Snapshot(
     summary: Summary,
     paragraphs: tuple[Paragraph, ...],
     stories: tuple[Story, ...] = (),
+    tables: tuple[Table, ...] = (),
+    controls: tuple[ContentControl, ...] = (),
 )
 ```
 
 What ``Document.inspect()`` returns; the coordinates an ``EditPlan`` uses.
+
+#### `Snapshot.control`
+
+```python
+Snapshot.control(self, id: 'str | None' = None, *, tag: 'str | None' = None, alias: 'str | None' = None) -> 'ContentControl'
+```
+
+The one control with this id (``body:sdt:N``), tag or alias; give exactly one.
 
 #### `Snapshot.paragraph`
 
@@ -1044,6 +1482,32 @@ Story(
 
 A header, footer or notes part an edit plan can address by ``story``.
 
+### `ContentControl`
+
+```python
+ContentControl(
+    id: str,
+    kind: str,
+    text: str,
+    paragraph_ids: tuple[str, ...],
+    locked: bool,
+    placeholder: bool,
+    tag: str | None = None,
+    alias: str | None = None,
+    choices: tuple[str, ...] = (),
+    checked: bool | None = None,
+)
+```
+
+A content control (``w:sdt``) in the body; ``EditPlan.fill_control`` fills it.
+
+``kind`` is ``text``, ``rich_text``, ``drop_down``, ``combo_box``, ``date``,
+``checkbox``, ``picture``, ``group``, ``repeating``, ``building_block``,
+``citation``, ``bibliography``, ``equation`` or ``unknown``. ``paragraph_ids``
+lists the paragraphs a block-level control spans, or the one holding a
+run-level control. ``choices`` are the list values of a drop-down or combo
+box; ``checked`` is a checkbox's state.
+
 ### `Summary`
 
 ```python
@@ -1065,6 +1529,34 @@ Summary(
 ```
 
 Package facts (XML facts, not rendered-page facts).
+
+### `Table`
+
+```python
+Table(
+    index: int,
+    rows: tuple[tuple[TableCell, ...], ...],
+    header_rows: int,
+    widths_dxa: tuple[int, ...],
+)
+```
+
+A body table as a grid; nested tables are separate entries.
+
+``rows`` holds the cells as the XML has them (a merged cell is one cell),
+``header_rows`` the leading rows that repeat as a header, ``widths_dxa``
+the grid column widths in twentieths of a point (0 when unreadable).
+
+### `TableCell`
+
+```python
+TableCell(
+    paragraph_ids: tuple[str, ...],
+    text: str,
+)
+```
+
+A table cell: the ids of its own paragraphs and their text joined with ``\n``.
 
 ### `Paragraph`
 
@@ -1144,10 +1636,165 @@ FontResolution(
     bold: bool,
     italic: bool,
     synthetic: bool,
+    substituted: bool = False,
 )
 ```
 
 One requested family/style and the physical face that painted it.
+
+``substituted`` is true when the requested family was drawn with a
+substitute (Word's substitution table, a bundled face of another family,
+a generic family or the last resort); a faked style alone is
+``synthetic``.
+
+### `diff_render`
+
+```python
+diff_render(a: 'Document | bytes | str | os.PathLike[str]', b: 'Document | bytes | str | os.PathLike[str]', *, dpi: 'float' = 100.0, overlay: 'bool' = True, options: 'PdfOptions | None' = None) -> 'RenderDiff'
+```
+
+Which pages of Word documents ``a`` and ``b`` differ, pixel for
+pixel, from one layout pass each at ``dpi``.
+
+Each side is a ``Document``, Word ``bytes``, or a path (``str`` or
+``os.PathLike``). ``overlay`` paints the changed pixels of each changed
+page magenta over ``b``'s page and boxes them. ``options`` sets the
+revision style both sides are painted with (``compress`` is ignored).
+
+### `RenderDiff`
+
+```python
+RenderDiff(
+    pages: tuple[PageDiff, ...],
+    a: tuple[bytes, ...],
+    b: tuple[bytes, ...],
+    overlays: tuple[bytes | None, ...],
+    a_report: RenderReport,
+    b_report: RenderReport,
+)
+```
+
+Output of ``diff_render``: one ``PageDiff`` per page of the longer
+document, both sides' PNG pages, and per page diff ``b``'s page with the
+change painted magenta and boxed (``None`` when the page is equal, on one
+side only, a different size, or overlays were not asked for).
+
+### `PageDiff`
+
+```python
+PageDiff(
+    index: int,
+    changed_ratio: float,
+    bbox: tuple[int, int, int, int] | None,
+    only_in: Literal['a', 'b'] | None = None,
+)
+```
+
+How one page differs between the two sides of ``diff_render``.
+
+``index`` is zero-based. ``changed_ratio`` is changed pixels over all
+pixels (0.0 to 1.0; 1.0 when the page exists on one side only or the two
+pages differ in size). ``bbox`` is ``(x0, y0, x1, y1)`` in pixels around
+every changed pixel (``x1``/``y1`` exclusive), ``None`` when equal.
+``only_in`` is ``"a"`` or ``"b"`` for a page only one side has.
+
+### `Finding`
+
+```python
+Finding(
+    code: str,
+    part: str,
+    path: str,
+    message: str,
+    word_fatal: bool,
+    repairable: bool,
+)
+```
+
+One thing wrong with a package, from ``Document.validate``.
+
+``code`` is stable (``TEXT_INSIDE_DELETION``, ``MC_UNBOUND_PREFIX``,
+``UNTRACKED_EDIT``, ...); ``part`` is the package part and ``path`` the
+element chain inside it (``w:body[0]/w:p[3]/w:r[2]``, empty for a
+package-level finding). ``word_fatal`` is true when Word refuses or
+repairs the file for it, ``repairable`` when ``Document.repair`` fixes
+it.
+
+### `Repaired`
+
+```python
+Repaired(
+    document: object,
+    repaired: tuple[Finding, ...],
+    remaining: tuple[Finding, ...],
+)
+```
+
+Output of ``Document.repair``: the repaired document, the findings it
+fixed and the ones it could not.
+
+### `FieldUpdate`
+
+```python
+FieldUpdate(
+    kind: str,
+    code: str,
+    paragraph: str,
+    old: str,
+    new: str,
+)
+```
+
+One field whose cached result was written from jubarte's layout.
+
+### `UpdatedFields`
+
+```python
+UpdatedFields(
+    document: Document,
+    fields: tuple[FieldUpdate, ...],
+    page_count: int,
+)
+```
+
+``Document.update_fields``: the refreshed copy and what was written.
+
+### `from_markdown`
+
+```python
+from_markdown(text: 'str', *, reference: 'Document | bytes | None' = None, page: "Literal['letter', 'a4']" = 'letter', author: 'str' = 'Redline', date: 'str | None' = None, critic: 'bool' = True, track_changes: "Literal['all', 'accept', 'reject']" = 'all') -> 'Document'
+```
+
+Write Markdown as a Word document, as ``jubarte convert draft.md``.
+
+CriticMarkup (``{++ ++}``, ``{-- --}``, ``{~~ ~> ~~}``, ``{>> <<}``)
+becomes tracked changes and comments by ``author`` at ``date`` (the
+engine's fixed epoch by default), unless ``critic`` is false.
+``track_changes`` keeps them (``all``) or writes the document with each
+accepted or rejected. ``reference`` lends its styles and page setup;
+without it ``page`` picks US Letter or A4, both with one-inch margins.
+Engine warnings, such as a ``page`` the reference overrides, are raised
+as ``UserWarning``. Images are written as their alt text.
+
+### `AuditFinding`
+
+```python
+AuditFinding(
+    code: str,
+    rule_set: str,
+    severity: str,
+    location: str,
+    message: str,
+)
+```
+
+One ``Document.audit`` finding.
+
+``code`` is the rule (``HEADING_SKIP``, ``IMAGE_NO_DESCR``...),
+``rule_set`` is ``a11y``, ``style`` or ``structure``, ``severity`` is
+``error``, ``warning`` or ``info``, and ``location`` is the paragraph id
+(``body:p:N``, ``footer1:p:N``...) an edit plan targets, or a part name
+for a document-wide finding.
 <!-- gen:python-api:end -->
 
 ## Development
