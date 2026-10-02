@@ -18,7 +18,7 @@ onto `ccr-17e4f046-849j1u` (PR #273). State per proposed change:
 | P5 | done | `capabilities.rs`, `inspect.rs` (`STORY_KINDS`), `edit.rs` |
 | P7 | merged into P1 (bounded Strict scan) | `strict_translation.rs` |
 | P8, P11, P12, P14, P24, P25 | done (docs, dedup, `fuzz/` crate) | see CHANGELOG; fuzz targets could not be built here (no cargo-fuzz or nightly), but the `fuzz smoke` CI job built and ran all three for 60 s each and passed on c47475d |
-| P9, P19 | done, old names kept as deprecated aliases | `util/sha1.rs`; the `0.10.2` in `#[deprecated(since)]` is an assumption |
+| P9, P19 | done, old names kept as deprecated aliases | `util/sha1.rs`; `#[deprecated(since = "0.10.2")]` kept by owner decision 3.A |
 | P10 | done | `util/words.rs`; adds `unicode-properties` as a direct dependency |
 | P13 | done, with one deviation | lib and CLI use `#![forbid(unsafe_code)]`; the package lint stays `deny` because the allocation-counting examples (`mem_attribute`, `mem_profile`, `alloc_attribute`) and tests (`perf_serialize_prefix_allocs`, `perf_atom_clone_allocs`) `#![allow(unsafe_code)]`. The two denies are `cfg_attr(not(test), ...)` on `admission`, `strict_translation`, `opc` |
 | P15 | done | `.github/workflows`, `dependabot.yml` |
@@ -27,8 +27,21 @@ onto `ccr-17e4f046-849j1u` (PR #273). State per proposed change:
 | P22 | half done | end-name checking is on and the whole repo corpus (819 packages) still passes; selecting parts by content type instead of extension was NOT done, because no engine path parses `.vml` parts as XML that I found (not exhaustively checked) |
 | Remaining `process_footnote_endnote` panics | done | `comparer/footnotes.rs`; breaking for exhaustive matches on `RectifyError` |
 | Python tests for the refusals | done: `jubarte-python/tests/test_document.py` passes, 17 tests, against a wheel built with `maturin develop` | `jubarte-python` |
-| P20 (signed self-update) | NOT DONE, needs an owner decision: it requires a signing key pair, a secret in the release workflow and signed release assets (`self_update` `signatures` feature). Requiring signatures before releases are signed would break `jubarte self-update` for every existing release | `src/update.rs`, `release.yml`, `docs/SELF_UPDATE.md` |
-| P6 (full settings redesign) | NOT DONE, needs an owner decision: making `WmlComparerSettings` fields private behind a builder breaks every struct-literal caller (about 30 test files, the CLI, `edit`, the three bindings) and downstream users, and removing the public `in_stamp_residual` hits the same literals. The narrow part (the `input_limits` field and its docs) is in | `comparer/mod.rs` |
+| P20 (signed self-update) | owner chose 1.B (staged zipsign signatures); implemented on its own branch `ccr-17e4f046-849j1u-signed-update`, separate PR. Inert until the owner commits a public key and sets `FIRST_SIGNED_RELEASE` (steps in that branch's `docs/SELF_UPDATE.md`) | `src/update.rs`, `release.yml`, `docs/SELF_UPDATE.md` |
+| P6 (settings) | owner chose 2.B for now: `CompareMode` + `WmlComparerSettings::new` + `with_*` builders, fields still public (non-breaking). 2.D (full redesign) is a TODO, below | `comparer/mod.rs`, `tests/compare_mode.rs` |
+| `#[deprecated(since)]` on `sha1_fingerprint*` | owner chose 3.A: keep `0.10.2` | `util/sha1.rs`, `util/mod.rs` |
+| Audit gaps (4.A) | done: Python and WASM take `input_limits` / `inputLimitsJson` on compare and get-revisions (`admission::InputLimitOverrides`); `get_revisions` honours `settings.input_limits`; P16 finished (`document_byte_array` private, `WmlDocument::bytes()`) | `admission.rs`, `jubarte-python`, `jubarte-wasm`, `wml_document.rs` |
+
+### TODO (owner-approved, not started)
+
+- [ ] **2.D, full `WmlComparerSettings` redesign**, for the 0.11.0 breaking
+  release: private fields behind the `CompareMode` builder that 2.B added,
+  `in_stamp_residual` moved out of the public struct into call-local state,
+  builders kept for the tunable scalars (author, date, detail threshold,
+  input limits). It breaks every struct-literal caller (about 30 test files,
+  the CLI, `edit`, the Python `diff` path and downstream users), so migrate
+  them to `WmlComparerSettings::new(..).with_*(..)` first, while the fields
+  are still public, which makes the final privatisation a small diff.
 
 Verification on the integrated tree (HEAD at the time of writing):
 `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`

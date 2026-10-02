@@ -89,10 +89,10 @@ Document parameters and returns are `Uint8Array` holding complete `.docx`
 
 | Function | Signature | Description |
 |---|---|---|
-| `compareDocuments` | `(original, modified, author) → Uint8Array` | Compare two DOCX files → redline DOCX with tracked changes attributed to `author`. |
+| `compareDocuments` | `(original, modified, author, inputLimitsJson?) → Uint8Array` | Compare two DOCX files → redline DOCX with tracked changes attributed to `author`. `inputLimitsJson` overrides the admission budget (see below). |
 | `acceptRevisions` | `(docx) → Uint8Array` | Accept every tracked revision → clean DOCX. |
 | `rejectRevisions` | `(docx) → Uint8Array` | Reject every tracked revision → base DOCX. |
-| `getRevisions` | `(docx) → string` | List tracked revisions as a JSON array string (`type` / `author` / `date` / `part` / `moveGroupId` / `isMoveSource` / `formatChange` / `text`). |
+| `getRevisions` | `(docx, inputLimitsJson?) → string` | List tracked revisions as a JSON array string (`type` / `author` / `date` / `part` / `moveGroupId` / `isMoveSource` / `formatChange` / `text`). |
 | `listChanges` | `(docx) → string` | Each tracked change as a JSON array string: `id` (`body:rev:12`), `kind`, `target`, `author`, `date`, `text`, `move_name`, `move_side`, `inside`. |
 | `acceptChanges` | `(docx, filterJson) → Uint8Array` | Accept the changes `filterJson` selects (`{"ids": [...], "authors": [...], "kinds": [...]}`: every list given must match; `{}` selects all, an empty list none) and keep the rest tracked. |
 | `rejectChanges` | `(docx, filterJson) → Uint8Array` | Reject the changes `filterJson` selects and keep the rest tracked. |
@@ -118,6 +118,18 @@ reports (64 MiB file, 10,000 entries, 64 MiB per inflated part, 256 MiB in
 total, XML nesting 256) or is not a Word package. The refusal codes are
 `INPUT_LIMIT`, `DUPLICATE_PART`, `UNSUPPORTED_PACKAGE`, `INVALID_PACKAGE`
 and `INVALID_XML`.
+
+`compareDocuments` and `getRevisions` admit under the roomier compare budget
+(512 MiB file and part, 2 GiB in total), which is more than a 32-bit WASM
+heap can hold, so a browser host should lower it. Pass `inputLimitsJson`,
+a JSON object whose keys (`max_compressed_bytes`, `max_entries`,
+`max_part_bytes`, `max_uncompressed_bytes`, `max_xml_depth`) each replace
+one budget; an unknown key throws `invalid input limits`:
+
+```js
+const limits = JSON.stringify({ max_compressed_bytes: 32 << 20, max_uncompressed_bytes: 128 << 20 });
+const redline = compareDocuments(original, modified, "Reviewer", limits);
+```
 
 ```js
 const { inspectDocument, applyEditPlan } = require("jubarte-wasm");

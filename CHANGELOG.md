@@ -25,6 +25,27 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   `FontResolution.substituted` with `RenderReport.substitutions` in
   Python. `jubarte convert --fail-on-substitution` lists each substitution
   on stderr and exits 4 after writing every output, for CI.
+- `comparer::CompareMode { Word, PowerTools }` and
+  `WmlComparerSettings::new(mode)`, with `with_author`, `with_date`,
+  `with_detail_threshold` and `with_input_limits` builders, so callers can
+  name a supported configuration instead of writing a struct literal. The
+  fields stay public; nothing existing breaks.
+- `admission::InputLimitOverrides`: key-by-key overrides of an
+  `InputLimits` budget parsed from JSON, unknown keys refused.
+- Python `compare_documents(..., input_limits=...)`,
+  `get_revisions_json(..., input_limits=...)` and
+  `CompareOptions(input_limits=...)`; WASM `compareDocuments(...,
+  inputLimitsJson)` and `getRevisions(..., inputLimitsJson)`. Hosts can now
+  lower the 512 MiB / 2 GiB compare budget, which a 32-bit WASM heap cannot
+  hold.
+- `WmlDocument::bytes()`, the bytes the document was opened from.
+
+- `fuzz/`: cargo-fuzz targets for `admission::admit`,
+  `strict_translation::strict_to_transitional_docx_within` and
+  `compare_documents_with_settings`, seeded from the repository's `.docx`
+  fixtures (`fuzz/seed.sh`), and a non-blocking CI job (`fuzz-smoke`) that
+  runs each for 60 seconds. See `fuzz/README.md`.
+
 - `jubarte-mcp`, an MCP server over stdio in the Python package
   (`pip install 'jubarte-redlines[mcp]'`): `docx_text`, `docx_inspect`,
   `docx_edit`, `docx_render`, `docx_compare`, `docx_changes`, `docx_accept`,
@@ -389,6 +410,11 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   that is also alphabetic (a Devanagari vowel sign) with nothing before it no
   longer starts a word. Flags, keycaps and tag sequences may still split.
 - The crate and PyPI descriptions and the Python and npm READMEs say "Word-faithful" instead of "Lossless".
+- **Breaking:** `WmlDocument::document_byte_array` is private; read it
+  with `WmlDocument::bytes()`.
+- `get_revisions` admits its input under `settings.input_limits` instead
+  of always using `InputLimits::compare()` (the default settings give the
+  same budget).
 
 ### Deprecated
 
