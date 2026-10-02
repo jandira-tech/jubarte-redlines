@@ -1306,7 +1306,7 @@ fn alignment(alignment: Alignment) -> Option<&'static str> {
 
 /// A picture Word can show, sized at 96 dots per inch and at most the text
 /// width.
-fn read_picture(bytes: Vec<u8>, alt: &str) -> Option<Picture> {
+pub(crate) fn read_picture(bytes: Vec<u8>, alt: &str) -> Option<Picture> {
     use image::ImageFormat;
     let reader = image::ImageReader::new(std::io::Cursor::new(&bytes))
         .with_guessed_format()

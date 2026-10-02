@@ -186,6 +186,36 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   identical neighbouring paragraph instead, the plan is refused
   (`UNSUPPORTED_STRUCTURE`) rather than leave the comment on text that
   stays.
+- Edit plans: `format_run` changes the run formatting of one occurrence of
+  existing text (`find`, optional 1-based `occurrence`); the redline records
+  the old formatting as `w:rPrChange`. Run `format` (here and on `replace`,
+  `insert`) adds `font`, `size_pt`, `color` (six hex digits or `auto`),
+  `strike` and `caps` to `bold`/`italic`/`underline`/`highlight`. Python:
+  `EditPlan.format_run(...)`.
+- Edit plans: `insert_footnote` adds a footnote whose reference mark follows
+  one occurrence of `after` in a body paragraph (optional 1-based
+  `occurrence`). The note is appended after the highest footnote id; the
+  footnotes part, with Word's separator notes, is created when the source
+  has none. `FootnoteText` and `FootnoteReference` are used when the styles
+  part defines them, direct superscript otherwise. Python:
+  `EditPlan.insert_footnote(...)`.
+- Edit plans: `insert_image` inserts a paragraph holding one inline picture
+  before or after a body paragraph (`position`). The plan carries the file
+  as `image_base64`; PNG, JPEG, GIF, BMP and TIFF are embedded, anything
+  else is refused with `UNSUPPORTED_IMAGE`, and a `content_type` that does
+  not match the bytes is `INVALID_EDIT`. `width_emu` sets the width and
+  keeps the aspect ratio; by default the picture is its pixel size at 96 dpi,
+  at most 6.5 inches wide. `alt` becomes the picture's description. Python:
+  `EditPlan.insert_image(..., image=bytes)`.
+- Edit plans: `page_setup` sets the page size (`letter`, `a4` or
+  `{"width_dxa", "height_dxa"}`), `orientation` and `margins_dxa` (any of
+  top, right, bottom, left, header, footer) of the last section or, with
+  `"section": "all"`, of every section. Unchanged values stay; a document
+  without a final section gets Word's default Letter page first. The
+  redline records the old geometry as `w:sectPrChange` on every changed
+  section: the comparer records the final one, and the edit adds the record
+  to mid-document sections. Margins that leave no text width or height are
+  refused. Python: `EditPlan.page_setup(...)`.
 - `uvx jubarte-redlines redline a.docx b.docx -o redline.docx` runs the CLI
   without an install: the Python wheel installs a `jubarte-redlines`
   console script, `redline` is an alias of `compare`, and usage names the

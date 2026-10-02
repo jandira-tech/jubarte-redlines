@@ -196,6 +196,10 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             "list",
             "watermark",
             "fill_control",
+            "format_run",
+            "insert_footnote",
+            "insert_image",
+            "page_setup",
         ]
         .iter()
         .map(|s| (*s).to_string())
@@ -229,7 +233,7 @@ mod tests {
         assert_eq!(c.engine_version, env!("CARGO_PKG_VERSION"));
         assert_eq!(c.runtime, "rust");
         assert_eq!(c.edit_plan_versions, [1]);
-        assert_eq!(c.edit_operations.len(), 17);
+        assert_eq!(c.edit_operations.len(), 21);
         assert!(c.edit_operations.iter().any(|kind| kind == "rewrite"));
         assert!(
             c.edit_operations
@@ -237,10 +241,7 @@ mod tests {
                 .any(|kind| kind == "delete_comment")
         );
         assert!(c.operations.comment_threads);
-        assert_eq!(
-            c.edit_operations.last().map(String::as_str),
-            Some("fill_control")
-        );
+        assert!(c.edit_operations.iter().any(|kind| kind == "fill_control"));
         assert!(c.operations.content_controls);
         assert!(c.operations.markdown_to_docx && c.operations.markdown_diff);
         let json: serde_json::Value = serde_json::from_str(&capabilities_json("cli")).unwrap();

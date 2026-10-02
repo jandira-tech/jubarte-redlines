@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -517,7 +518,12 @@ def _selector(value: Selector) -> dict[str, str | int]:
     )
 
 
-_FORMAT_FIELDS = frozenset({"bold", "italic", "underline", "highlight"})
+_FORMAT_FIELDS = frozenset(
+    {"bold", "italic", "underline", "highlight", "font", "size_pt", "color", "strike", "caps"}
+)
+
+
+_MARGIN_FIELDS = frozenset({"top", "right", "bottom", "left", "header", "footer"})
 
 
 def _format(value: Mapping[str, object]) -> dict[str, object]:
@@ -526,7 +532,7 @@ def _format(value: Mapping[str, object]) -> dict[str, object]:
     if unknown:
         raise ValueError(f"unknown format fields: {sorted(unknown)}")
     if not spec:
-        raise ValueError("format needs at least one of bold, italic, underline, highlight")
+        raise ValueError(f"format needs at least one of {', '.join(sorted(_FORMAT_FIELDS))}")
     return spec
 
 
@@ -872,6 +878,103 @@ class EditPlan:
         if id is not None:
             op = {"id": id, **op}
         return self._with(op)
+
+    def format_run(
+        self,
+        paragraph: Selector,
+        *,
+        find: str,
+        format: Mapping[str, object],
+        occurrence: int | None = None,
+        id: str | None = None,
+    ) -> EditPlan:
+        """Change the run formatting of ``find`` (bold, italic, underline,
+        highlight, font, size_pt, color, strike, caps) as a tracked property
+        change. ``occurrence`` (1-based) picks one of several matches."""
+        op: dict[str, object] = {"kind": "format_run", "paragraph": _selector(paragraph), "find": find, "format": _format(format)}
+        if occurrence is not None:
+            op["occurrence"] = occurrence
+        return self._with(_with_optional(op, id=id))
+
+    def insert_footnote(
+        self,
+        paragraph: Selector,
+        *,
+        after: str,
+        text: str,
+        occurrence: int | None = None,
+        id: str | None = None,
+    ) -> EditPlan:
+        """Add a footnote holding ``text`` whose mark follows ``after`` in a
+        body paragraph. ``occurrence`` (1-based) picks one of several matches."""
+        op: dict[str, object] = {"kind": "insert_footnote", "paragraph": _selector(paragraph), "after": after, "text": text}
+        if occurrence is not None:
+            op["occurrence"] = occurrence
+        return self._with(_with_optional(op, id=id))
+
+    def insert_image(
+        self,
+        paragraph: Selector,
+        *,
+        image: bytes,
+        position: Literal["before", "after"] = "after",
+        content_type: str | None = None,
+        width_emu: int | None = None,
+        alt: str | None = None,
+        id: str | None = None,
+    ) -> EditPlan:
+        """Insert a paragraph holding the picture ``image`` (PNG, JPEG, GIF,
+        BMP or TIFF bytes) next to a body paragraph. ``width_emu`` sets the
+        width (914400 per inch) and keeps the aspect ratio; by default the
+        picture is its pixel size at 96 dpi, at most 6.5 inches wide."""
+        if not image:
+            raise ValueError("image must hold the picture's bytes")
+        op: dict[str, object] = {
+            "kind": "insert_image",
+            "paragraph": _selector(paragraph),
+            "position": position,
+            "image_base64": base64.b64encode(bytes(image)).decode("ascii"),
+        }
+        if content_type is not None:
+            op["content_type"] = content_type
+        if width_emu is not None:
+            op["width_emu"] = width_emu
+        return self._with(_with_optional(op, alt=alt, id=id))
+
+    def page_setup(
+        self,
+        *,
+        section: Literal["last", "all"] = "last",
+        page: Literal["letter", "a4"] | Mapping[str, int] | None = None,
+        orientation: Literal["portrait", "landscape"] | None = None,
+        margins_dxa: Mapping[str, int] | None = None,
+        id: str | None = None,
+    ) -> EditPlan:
+        """Set the page size, orientation and margins of the last section or
+        of every section, as a tracked section change. ``page`` is ``"letter"``,
+        ``"a4"`` or ``{"width_dxa", "height_dxa"}``; ``margins_dxa`` takes any
+        of top, right, bottom, left, header, footer, in twentieths of a point
+        (1440 per inch)."""
+        op: dict[str, object] = {"kind": "page_setup", "section": section}
+        if page is not None:
+            if isinstance(page, Mapping):
+                if set(page) != {"width_dxa", "height_dxa"}:
+                    raise ValueError("a custom page needs exactly width_dxa and height_dxa")
+                op["page"] = dict(page)
+            else:
+                op["page"] = page
+        if orientation is not None:
+            op["orientation"] = orientation
+        if margins_dxa is not None:
+            unknown = set(margins_dxa) - _MARGIN_FIELDS
+            if unknown:
+                raise ValueError(f"unknown margins: {sorted(unknown)}")
+            if not margins_dxa:
+                raise ValueError("margins_dxa needs at least one margin")
+            op["margins_dxa"] = dict(margins_dxa)
+        if len(op) == 2:
+            raise ValueError("page_setup needs page, orientation or margins_dxa")
+        return self._with(_with_optional(op, id=id))
 
     def to_dict(self) -> dict[str, object]:
         """The wire form."""

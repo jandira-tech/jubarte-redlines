@@ -123,7 +123,7 @@ Writes `review/clean.docx` (edits applied, no tracked changes),
 `redline-page-NN.png`, `clean-page-NN.png`. Exit 0 means every operation
 matched exactly once. Exit 3 means the plan was refused: the report on stdout
 says which operation and why (`ANCHOR_NOT_FOUND`, `AMBIGUOUS_ANCHOR` with the
-match count, `OVERLAPPING_EDITS`, `UNSUPPORTED_STRUCTURE`, `STALE_SOURCE`,
+match count, `OVERLAPPING_EDITS`, `UNSUPPORTED_STRUCTURE`, `UNSUPPORTED_IMAGE`, `STALE_SOURCE`,
 `EXISTING_REVISIONS`, `REVISION_CONFLICT`, `UNKNOWN_CHANGE`,
 `UNKNOWN_COMMENT`, `COMMENT_NOT_IN_BODY`, `INVALID_PLAN`, `INVALID_EDIT`,
 `LOCKED_CONTROL`);
@@ -154,9 +154,19 @@ twentieths of a point (the text width split evenly when omitted), and
 `bullet|decimal|lower_letter`, `level` 0 to 8, `restart` true by default),
 `watermark` (`text`; optional `color` as six hex digits, `diagonal`,
 `font`; no paragraph: writes Word's own diagonal text watermark into every
-default header; one per document). `replace` and
-`insert` take an optional `format` (`bold`/`italic`/`underline`/`highlight`)
-that applies to the new text only. `replace` takes `"whole": true` to show
+default header; one per document), `format_run` (`find`
+plus `format`: restyles existing text as a tracked formatting change;
+`occurrence`, 1-based, picks one of several matches), `insert_footnote`
+(`after` plus the note's `text`; body paragraphs only; optional
+`occurrence`), `insert_image` (`image_base64` of a PNG, JPEG, GIF, BMP or
+TIFF file, `position` `before|after`, optional `content_type`, `width_emu`
+with 914400 per inch, `alt`; body paragraphs only), `page_setup` (no
+`paragraph`; `section` `last|all`, `page` `letter|a4|{"width_dxa",
+"height_dxa"}`, `orientation` `portrait|landscape`, `margins_dxa` with any
+of top, right, bottom, left, header, footer, 1440 per inch). `replace` and
+`insert` take an optional `format` (`bold`/`italic`/`underline`/`highlight`,
+`font`, `size_pt`, `color` as `FF0000` or `auto`, `strike`, `caps`) that
+applies to the new text only. `replace` takes `"whole": true` to show
 the change as the whole old text deleted, then the whole new text inserted.
 Paragraph selectors: `"body:p:N"` (or `"header1:p:0"`, `"footnotes:p:2"`),
 `{"index": N}`, `{"starts_with": "..."}`, `{"contains": "..."}`; the last two
