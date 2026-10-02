@@ -121,8 +121,9 @@ pub struct Limits {
     /// each entry of `inspect`'s `stories` (`header`, `footer`, `footnotes`,
     /// `endnotes`). A selector names a story by its id, the part's file stem
     /// (`header1:p:0`, `{"story": "footnotes", "index": 0}`), which
-    /// `inspect` lists for the document at hand. Comments and text boxes are
-    /// counted in `summary` but are not stories.
+    /// `inspect` lists for the document at hand. Comments are counted in
+    /// `summary` but are not stories; text boxes are not stories either, and
+    /// their owner paragraph carries the `text_box_omitted` limitation.
     pub stories: Vec<String>,
     /// Inserted run text is plain: no tabs or line breaks inside runs.
     pub plain_text_runs: bool,

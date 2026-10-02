@@ -20,7 +20,7 @@ use super::CorrelationStatus;
 use super::atoms::ComparisonUnitAtom;
 
 /// Passthrough hasher for `u64`-keyed maps whose keys are already well-mixed
-/// SHA-1 fingerprints (`ComparisonUnit::sha1_key`). Re-hashing a fingerprint
+/// FNV-1a fingerprints of SHA-1 hex digests (`ComparisonUnit::sha1_key`). Re-hashing a fingerprint
 /// with SipHash was ~10% of a large-doc compare (LCS index rebuilt per
 /// recursion node); identity-hashing the single `write_u64` removes it. Output
 /// is unchanged: the index is used only for point lookups, and bucket contents
@@ -850,9 +850,10 @@ fn extend_common_run(
 ) -> usize {
     let (mut t1, mut t2) = (i1, i2);
     let mut len = 0;
-    // 128-bit fingerprint compare == `sha1_key()==sha1_key() && sha1()==sha1()`
-    // (equal hashes always share the fingerprint; distinct hashes collide at
-    // ~2^-128), without the per-step 40-byte hex memcmp.
+    // The 128-bit FNV-1a fingerprint stands in for comparing the hash strings,
+    // and no string compare follows: equal hashes always share the
+    // fingerprint, and distinct 40-character hex digests are not expected to
+    // collide at 128 bits. It avoids the per-step 40-byte hex memcmp.
     while t1 < cul1.len() && t2 < cul2.len() && cul1[t1].sha1_key128() == cul2[t2].sha1_key128() {
         t1 += 1;
         t2 += 1;

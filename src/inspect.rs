@@ -7,7 +7,7 @@
 //! ids so the reader's coordinates are the editor's coordinates.
 //!
 //! Paragraph order is body XML order, table cells included; text boxes are
-//! separate stories and are omitted from the body (their owner paragraph is
+//! not stories and are omitted from the body (their owner paragraph is
 //! flagged). Text is the visible-run projection: `w:del` and `w:moveFrom`
 //! content is skipped, tabs stay `\t`, line breaks become `\n`, `w:sym`
 //! becomes U+FFFC. Constructs this projection cannot represent are reported per

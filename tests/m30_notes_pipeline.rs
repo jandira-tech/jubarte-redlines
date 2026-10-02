@@ -480,3 +480,24 @@ fn a_reference_with_no_notes_part_is_a_typed_error_not_a_panic() {
         }
     );
 }
+
+/// Numbering ids come from the document, so an `abstractNumId` at `i32::MAX`
+/// must not overflow the "next free id" arithmetic (a panic in debug builds,
+/// a wrapped id in release builds).
+#[test]
+fn synthesized_numbering_survives_an_abstract_num_id_at_i32_max() {
+    use jubarte::comparer::footnotes::synthesize_dangling_numbering;
+
+    let mut dom = Dom::new();
+    let xml = format!(
+        "<w:numbering xmlns:w=\"{}\"><w:abstractNum w:abstractNumId=\"2147483647\"/></w:numbering>",
+        W::URI
+    );
+    let d = dom.parse_xdocument(&xml);
+    let root = dom.root(d).unwrap();
+    synthesize_dangling_numbering(&mut dom, root, &["7".to_string()]);
+    assert!(
+        dom.serialize_element(root).contains("w:numId=\"7\""),
+        "a w:num is still synthesized for the dangling id"
+    );
+}

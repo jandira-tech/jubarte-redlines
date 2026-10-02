@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Lossless DOCX redline engine (jubarte-redlines).
+"""Word-faithful DOCX redline engine (jubarte-redlines).
 
 Compare two Word documents into a tracked-changes document that opens cleanly
 in Microsoft Word; list, accept, or reject revisions; render DOCX to PDF.

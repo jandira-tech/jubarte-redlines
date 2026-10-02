@@ -32,14 +32,17 @@
 //!
 //! ## Fidelity
 //!
-//! The redline is Word-valid, and every text and formatting difference is a
-//! revision, but the engine also normalizes some markup so the output opens
-//! cleanly and matches what Word's own Compare writes. Both inputs lose
-//! non-standard `w:`-namespace children of `w:sdtPr` and have
-//! `mc:AlternateContent` resolved to a single branch. In the default
-//! (Word-visual) mode, internal anchor `w:hyperlink` wrappers (no `r:id`) become
-//! runs styled as hyperlinks, and content controls inside wholly inserted or
-//! deleted paragraphs are unwrapped.
+//! The redline is Word-valid, and differences in text and formatting are
+//! revisions, but the engine also normalizes some markup so the output opens
+//! cleanly and matches what Word's own Compare writes. This list is the main
+//! cases, not every one. Both inputs lose non-standard `w:`-namespace children
+//! of `w:sdtPr` and have `mc:AlternateContent` resolved to a single branch.
+//! In the default (Word-visual) mode, the original's own tracked changes are
+//! flattened and compared like text, internal anchor `w:hyperlink` wrappers
+//! (no `r:id`) become runs styled as hyperlinks, content controls in any
+//! paragraph that carries a revision are unwrapped, some redundant default
+//! spacing is stripped, and a breaking and a non-breaking space compare equal
+//! ([`comparer::WmlComparerSettings::conflate_breaking_and_nonbreaking_spaces`]).
 //! [`comparer::WmlComparerSettings::powertools_faithful`] skips the
 //! mode-specific passes.
 //!

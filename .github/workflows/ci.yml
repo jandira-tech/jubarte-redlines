@@ -103,9 +103,11 @@ jobs:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # Downloads a prebuilt binary instead of `cargo install` (minutes → seconds).
-      # The `cargo-llvm-cov` tag is install-action's moving "latest cargo-llvm-cov"
-      # ref; the SHA is where it pointed when pinned.
+      # install-action picks the tool from the ref (`@cargo-llvm-cov`) or, as
+      # here with the ref pinned to a commit SHA, from the `tool` input.
       - uses: taiki-e/install-action@72f835688cb6c15903b796f704b01e652a2b8835 # cargo-llvm-cov tag, pinned 2026-10-01
+        with:
+          tool: cargo-llvm-cov
 
       - name: Generate coverage (lcov)
         # Source-based coverage via -Cinstrument-coverage. Doctests are excluded:
@@ -170,8 +172,11 @@ jobs:
       - run: cargo install cargo-fuzz --locked
       - run: ./fuzz/seed.sh
       - run: cargo fuzz run admit -- -max_total_time=60
-      - run: cargo fuzz run strict_to_transitional -- -max_total_time=60
-      - run: cargo fuzz run compare -- -max_total_time=60
+      # Run every target even if an earlier one found a crash.
+      - if: ${{ !cancelled() }}
+        run: cargo fuzz run strict_to_transitional -- -max_total_time=60
+      - if: ${{ !cancelled() }}
+        run: cargo fuzz run compare -- -max_total_time=60
 
   package:
     name: publish dry run

@@ -19,9 +19,9 @@
 //!
 //! - Unid values are not reproducible between two compares in one process, and
 //!   code must not compare them to constants or print them into output.
-//! - The output bytes are still reproducible, because every `pt:Unid` attribute
-//!   is stripped before the package is written
-//!   (`remove_powertools_scratch_markup`) and no unid is used to name anything
+//! - The output bytes are still reproducible, because the `pt:Unid` attributes
+//!   the comparer writes are stripped from the parts it produces before the
+//!   package is written (`remove_powertools_scratch_markup`) and no unid is used to name anything
 //!   that reaches the package. The same pair compared twice in one process, with
 //!   a fixed date, gives identical bytes (`tests/compare_is_reproducible.rs`).
 //!

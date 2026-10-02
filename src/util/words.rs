@@ -8,10 +8,13 @@ use unicode_properties::{GeneralCategoryGroup, UnicodeGeneralCategory};
 
 const ZERO_WIDTH_JOINER: char = '\u{200D}';
 
-/// A combining mark (Unicode category Mn, Mc or Me) or the zero width
-/// joiner: it continues the token of the character before it.
+/// A combining mark (Unicode category Mn, Mc or Me), an emoji skin tone
+/// modifier (U+1F3FB to U+1F3FF, a symbol that behaves like a mark) or the
+/// zero width joiner: it continues the token of the character before it.
 fn is_continuation(c: char) -> bool {
-    c == ZERO_WIDTH_JOINER || c.general_category_group() == GeneralCategoryGroup::Mark
+    c == ZERO_WIDTH_JOINER
+        || ('\u{1F3FB}'..='\u{1F3FF}').contains(&c)
+        || c.general_category_group() == GeneralCategoryGroup::Mark
 }
 
 /// A symbol (an emoji, `+`, `$`): a base that marks and joiners attach to.
@@ -39,7 +42,9 @@ enum Kind {
 /// Combining marks (categories Mn, Mc, Me) and the zero width joiner stay in
 /// the token of the letter, digit or symbol they follow, so decomposed text
 /// (`cafe` + U+0301) is one word like its composed form, and an emoji
-/// sequence joined by U+200D is one token. A joiner also links the letter,
+/// sequence joined by U+200D, with or without a skin tone modifier or
+/// variation selector, is one token. (Flags, keycaps and tag sequences are
+/// not covered and may split.) A joiner also links the letter,
 /// digit or symbol after it. A mark with no such base before it (after
 /// whitespace, punctuation or at the start of the text) does not join that
 /// whitespace or punctuation: a run of such marks is a token of its own, and
@@ -69,7 +74,7 @@ pub fn word_tokens(text: &str) -> Vec<&str> {
                 }
             };
             if continues {
-                let kind = if c.is_alphanumeric() {
+                let kind = if c.is_alphanumeric() && !is_continuation(c) {
                     Kind::Word
                 } else {
                     kind
@@ -81,10 +86,12 @@ pub fn word_tokens(text: &str) -> Vec<&str> {
             out.push(&text[start..at]);
             start = at;
         }
-        let kind = if c.is_alphanumeric() {
-            Kind::Word
-        } else if is_continuation(c) {
+        // Some marks are also alphabetic (Devanagari vowel signs): with no base
+        // before them they are still marks.
+        let kind = if is_continuation(c) {
             Kind::Orphan
+        } else if c.is_alphanumeric() {
+            Kind::Word
         } else if c.is_whitespace() {
             Kind::Space
         } else {
@@ -196,6 +203,24 @@ mod tests {
         assert_eq!(word_tokens("\u{2764}\u{fe0f}"), ["\u{2764}\u{fe0f}"]);
         // With no base it is a token of its own, like any other mark.
         assert_eq!(word_tokens("a \u{200d}"), ["a", " ", "\u{200d}"]);
+    }
+
+    #[test]
+    fn a_skin_tone_modifier_stays_in_its_emoji_sequence() {
+        for sequence in ["\u{1F469}\u{1F3FD}\u{200D}\u{1F4BB}", "\u{1F44D}\u{1F3FD}"] {
+            assert_eq!(word_tokens(sequence), [sequence]);
+        }
+        assert_eq!(
+            word_tokens("a \u{1F44D}\u{1F3FD} b"),
+            ["a", " ", "\u{1F44D}\u{1F3FD}", " ", "b"]
+        );
+    }
+
+    #[test]
+    fn an_alphabetic_mark_with_no_base_does_not_start_a_word() {
+        // U+093F is a Devanagari vowel sign: a mark that is also alphabetic.
+        assert_eq!(word_tokens("a \u{93F}b"), ["a", " ", "\u{93F}", "b"]);
+        assert_eq!(word_tokens("ab\u{93F}"), ["ab\u{93F}"]);
     }
 
     #[test]

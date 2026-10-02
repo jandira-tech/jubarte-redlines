@@ -213,3 +213,51 @@ fn wml_document_from_bytes_admits_its_input() {
         "the fixture still opens"
     );
 }
+
+/// Every public entry point that opens a package refuses it past the budget,
+/// not only the compare path: `PartFs::open` inflates each entry without a
+/// bound, and an allocation abort cannot be caught by the Python or WASM host.
+#[test]
+fn every_package_entry_point_refuses_a_crowd_of_entries() {
+    let crowded = package_with_entries(10_010);
+    let refused = |what: &str, text: String| {
+        assert!(text.contains("INPUT_LIMIT"), "{what}: {text}");
+    };
+    refused(
+        "accept_revisions",
+        jubarte::document_comparer::accept_revisions(&crowded)
+            .expect_err("refused")
+            .to_string(),
+    );
+    refused(
+        "reject_revisions",
+        jubarte::document_comparer::reject_revisions(&crowded)
+            .expect_err("refused")
+            .to_string(),
+    );
+    refused(
+        "get_revisions",
+        jubarte::document_comparer::get_revisions(&crowded, &WmlComparerSettings::default())
+            .expect_err("refused")
+            .to_string(),
+    );
+    refused(
+        "list_changes",
+        jubarte::changes::list_changes(&crowded)
+            .expect_err("refused")
+            .to_string(),
+    );
+    refused(
+        "docx_to_pdf",
+        jubarte::convert::docx_to_pdf(&crowded)
+            .expect_err("refused")
+            .to_string(),
+    );
+}
+
+#[test]
+fn the_entry_points_still_open_a_well_formed_package() {
+    jubarte::document_comparer::accept_revisions(ORIGINAL).expect("accept");
+    jubarte::document_comparer::reject_revisions(ORIGINAL).expect("reject");
+    jubarte::changes::list_changes(ORIGINAL).expect("list");
+}

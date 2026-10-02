@@ -311,11 +311,12 @@ impl ComparisonUnit {
             ComparisonUnit::Group(g) => g.sha1.hash(),
         }
     }
-    /// Cached `u64` fingerprint of [`Self::sha1`] — a cheap pre-filter for the
-    /// LCS hot path. Because it is a pure function of the hash string, equal
-    /// hashes always yield equal keys; the string remains the source of truth,
-    /// so `a.sha1_key() == b.sha1_key() && a.sha1() == b.sha1()` is exactly
-    /// `a.sha1() == b.sha1()` while skipping the string compare when keys differ.
+    /// Cached `u64` FNV-1a fingerprint of [`Self::sha1`] — a cheap pre-filter
+    /// for the LCS hot path. Because it is a pure function of the hash string,
+    /// equal hashes always yield equal keys, and differing keys prove the
+    /// hashes differ. Equal keys do not by themselves prove equal hashes; code
+    /// that needs certainty compares [`Self::sha1`] (the common-run match uses
+    /// the 128-bit key alone).
     pub fn sha1_key(&self) -> u64 {
         match self {
             ComparisonUnit::Word(w) => w.sha1.key(),

@@ -4735,6 +4735,12 @@ fn admit_input(
         })
 }
 
+/// Admit a single package under the compare budget before a public entry
+/// point opens it: `PartFs::open` inflates every entry without a bound.
+pub(crate) fn admit_package(bytes: &[u8]) -> Result<(), OpcError> {
+    admit_input("input", bytes, crate::admission::InputLimits::compare())
+}
+
 /// The namespace declarations C# attaches to a freshly-created
 /// `w:footnotes`/`w:endnotes` root (`NamespaceAttributes`/
 /// `FreshNamespaceAttributes` :1580–:1602), verbatim.
@@ -4760,6 +4766,7 @@ const NOTES_ROOT_NAMESPACE_ATTRS: &str = concat!(
 /// A.11 — `RevisionProcessor.AcceptRevisions` byte facade: accept every
 /// tracked revision across main + headers/footers + notes + styles parts.
 pub fn accept_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
+    admit_package(docx)?;
     let mut pkg = PartFs::open(docx)?;
     crate::revision_processor::accept_revisions_package(&mut pkg);
     pkg.to_zip()
@@ -4776,6 +4783,7 @@ fn accept_source_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
 /// A.11 — `RevisionProcessor.RejectRevisions` byte facade: reject every
 /// tracked revision across main + headers/footers + notes + styles parts.
 pub fn reject_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
+    admit_package(docx)?;
     let mut pkg = PartFs::open(docx)?;
     crate::revision_processor::reject_revisions_package(&mut pkg);
     pkg.to_zip()
@@ -6013,6 +6021,7 @@ pub fn get_revisions(
 ) -> Result<Vec<crate::comparer::WmlComparerRevision>, OpcError> {
     use crate::comparer::{preprocess, revisions};
 
+    admit_package(docx)?;
     let pkg = PartFs::open(docx)?;
     let main = pkg
         .main_document_part()

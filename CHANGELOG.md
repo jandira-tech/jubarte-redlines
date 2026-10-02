@@ -313,9 +313,11 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 ### Changed
 
 - Crate docs: the "Lossless" tagline is now "Word-faithful", and a Fidelity
-  section lists what the comparer normalizes (non-standard `w:sdtPr`
-  children, `mc:AlternateContent`, and in the default mode internal anchor
-  hyperlinks and content controls in wholly revised paragraphs).
+  section lists the main things the comparer normalizes (non-standard
+  `w:sdtPr` children, `mc:AlternateContent`, and in the default mode the
+  original's tracked changes, internal anchor hyperlinks, content controls in
+  any paragraph that carries a revision, redundant default spacing, and the
+  breaking versus non-breaking space distinction). It is not exhaustive.
 - Doc comments that described a SHA-1 string check behind the LCS common-run
   match now say what the code does: the 128-bit FNV-1a fingerprint of the
   hash string alone decides equality there. The macro-generated docs in
@@ -356,8 +358,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 - `util::sha1::sha1_fingerprint` and `sha1_fingerprint128` are renamed
   `fnv1a_64` and `fnv1a_128`: they compute 64- and 128-bit FNV-1a of the
   SHA-1 hex string, not SHA-1, and their docs now say so. Output is
-  unchanged. The 128-bit key alone decides comparison-unit equality in the
-  LCS, which the docs state instead of claiming a string check follows.
+  unchanged. The 128-bit key alone decides equality in the LCS common-run
+  match and the interior-run skip, which the docs state instead of claiming
+  a string check follows (other paths, such as prefix and suffix trimming,
+  still compare the hash strings).
   `ComparisonUnit::sha1_key` and `sha1_key128` return the same FNV-1a
   values and keep their names for now. `jubarte::util::fnv1a_128` is
   re-exported beside `fnv1a_64`.
@@ -372,6 +376,19 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   tests. The ZIP end-of-central-directory scan, the ZIP64 record read and
   the budget counters in those modules now use checked or saturating
   arithmetic and `get`; behaviour is unchanged.
+- `accept_revisions`, `reject_revisions`, `get_revisions`, `list_changes` (and
+  the accept/reject-changes functions) and the `convert` functions admit their
+  input under `InputLimits::compare()` before they inflate it, as the compare
+  path does; a package past the budget is an `Err` carrying `INPUT_LIMIT`
+  instead of an allocation abort. Admission also reads the main part once
+  more for nesting depth when its name is not `.xml` or `.rels`.
+- Copied media parts are named with a lowercase extension
+  (`word/media/P{sha256}.png`), since part names are case-insensitive, so the
+  same image under `.png` and `.PNG` is one part.
+- `word_tokens`: emoji skin tone modifiers stay in their sequence, and a mark
+  that is also alphabetic (a Devanagari vowel sign) with nothing before it no
+  longer starts a word. Flags, keycaps and tag sequences may still split.
+- The crate and PyPI descriptions and the Python and npm READMEs say "Word-faithful" instead of "Lossless".
 
 ### Deprecated
 
@@ -460,6 +477,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   `Result<(), RectifyError>`, and `RectifyError` gains `MissingSourcePart`
   and `UnsupportedReferenceStatus`, which is a breaking change for callers
   that match it exhaustively.
+- Numbering ids read from a document (`w:abstractNumId`, `w:numId`,
+  `w:numPicBulletId`) no longer overflow when one is `i32::MAX`; the "next
+  free id" arithmetic saturates (a panic in debug builds, a wrapped id in
+  release builds before).
 
 ## [0.10.1] - 2026-09-30
 

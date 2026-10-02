@@ -139,8 +139,8 @@ use crate::xmllinq::{Dom, NodeId};
 
 /// Package URI for a part being copied during dangling-rel reconcile.
 /// Markup parts keep their `word/…` path (with collision uniquify); binary
-/// media lands under `word/media/P{sha256}.ext`, named by the SHA-256 of its
-/// bytes. The name depends only on the media, never on how many compares ran
+/// media lands under `word/media/P{sha256}.ext` (extension lowercased, since
+/// part names are case-insensitive), named by the SHA-256 of its bytes. The name depends only on the media, never on how many compares ran
 /// before it in the process, so one pair compared twice gives identical bytes.
 /// Identical media copied twice share one part. A name already held by
 /// different bytes (a SHA-256 collision, or a source part that happens to
@@ -162,9 +162,9 @@ fn dest_uri_for_reconciled_part(dest: &PartFs, target_part: &str, bytes: &[u8]) 
         let mut n = 0usize;
         loop {
             let candidate = if n == 0 {
-                format!("word/media/P{digest}.{ext}")
+                format!("word/media/P{digest}.{ext_lc}")
             } else {
-                format!("word/media/P{digest}_{n}.{ext}")
+                format!("word/media/P{digest}_{n}.{ext_lc}")
             };
             match dest.part_bytes(&candidate) {
                 None => return candidate,
@@ -710,7 +710,19 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(
             first,
-            format!("word/media/P{}.PNG", crate::inspect::source_sha256(bytes))
+            format!("word/media/P{}.png", crate::inspect::source_sha256(bytes))
+        );
+    }
+
+    #[test]
+    fn extension_case_does_not_split_identical_media() {
+        // OPC part names are case-insensitive, so P{d}.png and P{d}.PNG would
+        // be one name; the generated name always carries a lowercase extension.
+        let dest = PartFs::open(PACKAGE).unwrap();
+        let bytes = b"image bytes";
+        assert_eq!(
+            dest_uri_for_reconciled_part(&dest, "word/media/image1.png", bytes),
+            dest_uri_for_reconciled_part(&dest, "word/media/image2.PNG", bytes)
         );
     }
 

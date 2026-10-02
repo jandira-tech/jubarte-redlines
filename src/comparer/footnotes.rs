@@ -407,7 +407,7 @@ pub fn copy_missing_numbering(
             .into_iter()
             .any(|e| get_int_attribute(dom, e, &abstract_num_id) == Some(from_id));
         let target_id = if same_id_taken {
-            max_abstract_num_id += 1;
+            max_abstract_num_id = max_abstract_num_id.saturating_add(1);
             max_abstract_num_id
         } else {
             // retained ids must advance the watermark, or a later collision
@@ -438,7 +438,7 @@ pub fn copy_missing_numbering(
                         .into_iter()
                         .any(|b| get_int_attribute(dom, b, &num_pic_bullet_id) == Some(from_pic));
                     let id = if taken {
-                        max_pic_id += 1;
+                        max_pic_id = max_pic_id.saturating_add(1);
                         max_pic_id
                     } else {
                         max_pic_id = max_pic_id.max(from_pic);
@@ -478,7 +478,7 @@ pub fn copy_missing_numbering(
             if existing_ref == Some(mapped) {
                 continue; // same num with the same (mapped) reference
             }
-            max_num_id += 1;
+            max_num_id = max_num_id.saturating_add(1);
             let cloned = dom.clone_subtree(n);
             dom.set_attribute_value(cloned, &num_id_attr, Some(&max_num_id.to_string()));
             if let Some(e) = dom.element(cloned, &abstract_num_id) {
@@ -520,7 +520,7 @@ pub fn synthesize_dangling_numbering(dom: &mut Dom, numbering_root: NodeId, dang
         .into_iter()
         .filter_map(|e| get_int_attribute(dom, e, &W::name("abstractNumId")))
         .max()
-        .map_or(0, |m| m + 1);
+        .map_or(0, |m| m.saturating_add(1));
     let mut lvls = String::new();
     for ilvl in 0..9 {
         lvls.push_str(&format!(

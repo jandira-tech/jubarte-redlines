@@ -297,6 +297,20 @@ pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, Admis
     }
 
     let main_part = main_part(&archive, &kept)?;
+    // The scan above is by extension; the main part is parsed whatever it is
+    // called, so one named otherwise is read once more for its depth.
+    let lower = main_part.to_ascii_lowercase();
+    if !(lower.ends_with(".xml") || lower.ends_with(".rels")) {
+        let mut entry = archive
+            .by_name(&main_part)
+            .map_err(|e| AdmissionError::new(K::InvalidPackage, format!("{main_part}: {e}")))?;
+        let mut buf = Vec::new();
+        (&mut entry)
+            .take(limits.max_part_bytes.saturating_add(1))
+            .read_to_end(&mut buf)
+            .map_err(|e| AdmissionError::new(K::InvalidPackage, format!("{main_part}: {e}")))?;
+        check_xml_depth(&main_part, &buf, limits.max_xml_depth)?;
+    }
     Ok(AdmittedPackage {
         entries: archive.len(),
         inflated_bytes: total,
@@ -835,6 +849,36 @@ mod tests {
             kind(&xlsx, InputLimits::default()),
             AdmissionErrorKind::UnsupportedPackage
         );
+    }
+
+    #[test]
+    fn a_main_part_without_an_xml_extension_is_still_depth_checked() {
+        // The engine parses whatever part the relationships name as the main
+        // document, whatever its extension, so the nesting budget covers it.
+        let rels = RELS.replace("word/document.xml", "word/main.dat");
+        let types = TYPES.replace("/word/document.xml", "/word/main.dat");
+        let deep = format!("{}{}", "<a>".repeat(300), "</a>".repeat(300));
+        let bytes = zip_of(
+            &[
+                ("[Content_Types].xml", types.as_bytes()),
+                ("_rels/.rels", rels.as_bytes()),
+                ("word/main.dat", deep.as_bytes()),
+            ],
+            CompressionMethod::Deflated,
+        );
+        assert_eq!(
+            kind(&bytes, InputLimits::default()),
+            AdmissionErrorKind::InvalidXml
+        );
+        let shallow = zip_of(
+            &[
+                ("[Content_Types].xml", types.as_bytes()),
+                ("_rels/.rels", rels.as_bytes()),
+                ("word/main.dat", DOC.as_bytes()),
+            ],
+            CompressionMethod::Deflated,
+        );
+        assert!(admit(&shallow, InputLimits::default()).is_ok());
     }
 
     #[test]

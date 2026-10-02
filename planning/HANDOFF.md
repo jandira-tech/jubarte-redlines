@@ -20,7 +20,7 @@ onto `ccr-17e4f046-849j1u` (PR #273). State per proposed change:
 | P8, P11, P12, P14, P24, P25 | done (docs, dedup, `fuzz/` crate) | see CHANGELOG; fuzz targets are NOT built or run here (no cargo-fuzz or nightly) |
 | P9, P19 | done, old names kept as deprecated aliases | `util/sha1.rs`; the `0.10.2` in `#[deprecated(since)]` is an assumption |
 | P10 | done | `util/words.rs`; adds `unicode-properties` as a direct dependency |
-| P13 | done, with one deviation | lib and CLI use `#![forbid(unsafe_code)]`; the package lint stays `deny` because `examples/mem_attribute.rs` has a counting allocator that needs `unsafe`. The two denies are `cfg_attr(not(test), ...)` on `admission`, `strict_translation`, `opc` |
+| P13 | done, with one deviation | lib and CLI use `#![forbid(unsafe_code)]`; the package lint stays `deny` because the allocation-counting examples (`mem_attribute`, `mem_profile`, `alloc_attribute`) and tests (`perf_serialize_prefix_allocs`, `perf_atom_clone_allocs`) `#![allow(unsafe_code)]`. The two denies are `cfg_attr(not(test), ...)` on `admission`, `strict_translation`, `opc` |
 | P15 | done | `.github/workflows`, `dependabot.yml` |
 | P17 | done | `comparer/parts.rs`, `tests/compare_is_reproducible.rs` |
 | P21, P23 | done | `markup_simplifier.rs`, `builtin_styles.rs` |
@@ -283,7 +283,7 @@ die with the container; the facts are reproduced here).
   compare budget is now separate and larger; consider surfacing it).
 
 ## 4. Agent P15 result (complete)
-Commit `199ac80` on `worktree-agent-a508280ef898fcf05`: all 26 `uses:` in
+Commit `199ac80` on `worktree-agent-a508280ef898fcf05`: all 29 `uses:` in
 `ci.yml` and 11 in `release.yml` pinned to 40-char SHAs with tag comments,
 every SHA fetched from api.github.com (table with source URLs is in the
 agent's commit message/CHANGELOG entry; cross-checked against

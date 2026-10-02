@@ -4,7 +4,7 @@ Word-mode **DOCX redline** engine, compiled to WebAssembly.
 
 This package is the WASM binding of
 [**jubarte-redlines**](https://github.com/jandira-tech/jubarte-redlines) — a
-lossless, Word-compatible tracked-changes engine written in Rust. It compares
+Word-faithful, Word-compatible tracked-changes engine written in Rust. It compares
 two `.docx` files and produces a redline `.docx` with native Word revisions
 (`w:ins` / `w:del`), the same output model Microsoft Word itself uses. It can
 also accept or reject all tracked revisions in a document, list them as
