@@ -39231,6 +39231,35 @@ fn a_spaces_only_paragraph_is_sized_by_its_mark() {
             "spaces {spaces} under mark {mark} sit like an empty mark-{mark} paragraph: {spaced} vs {empty}"
         );
     }
+    // Tabs too, deleted or not (Word 16 probes tab1001 t1/t2/t4/t7: an
+    // 11pt or 24pt tab over an 8pt mark is an 8pt line). t899ef4's deleted
+    // 11pt tab over a deleted 8pt mark stood 3.8pt too tall.
+    let del = "w:id=\"9\" w:author=\"a\" w:date=\"2026-09-22T12:19:00Z\"";
+    let empty = next_y(&format!("<w:p><w:pPr>{flat}{}</w:pPr></w:p>", tnr(16)));
+    for (name, middle) in [
+        (
+            "tab",
+            format!(
+                "<w:p><w:pPr>{flat}{}</w:pPr><w:r>{}<w:tab/></w:r></w:p>",
+                tnr(16),
+                tnr(48)
+            ),
+        ),
+        (
+            "deleted tab",
+            format!(
+                "<w:p><w:pPr>{flat}{}</w:pPr><w:del {del}><w:r>{}<w:tab/></w:r></w:del></w:p>",
+                tnr(16).replace("<w:rPr>", &format!("<w:rPr><w:del {del}/>")),
+                tnr(22)
+            ),
+        ),
+    ] {
+        let tabbed = next_y(&middle);
+        assert!(
+            (tabbed - empty).abs() < 0.3,
+            "a {name} alone sits like an empty mark-8 paragraph: {tabbed} vs {empty}"
+        );
+    }
 }
 
 #[test]

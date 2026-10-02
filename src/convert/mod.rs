@@ -9831,12 +9831,15 @@ fn paragraph_block(
     // 12pt spaces under a 28pt mark a 28pt one; 00195f87's 12pt spaces
     // under a 14pt mark stood 2.1pt short). An ideographic space counts
     // (live Word: a 48pt U+3000 under a 12pt mark is a 12pt line;
-    // 0041d394's 48pt one kept Word's poster on one page).
+    // 0041d394's 48pt one kept Word's poster on one page). So do tabs,
+    // deleted or not (Word 16 probes tab1001 t1/t2/t4/t7: an 11pt or 24pt
+    // tab alone over an 8pt mark is an 8pt line; t899ef4's deleted tab
+    // paragraph stood 3.8pt too tall).
     let spaces_only = !runs.is_empty()
         && runs.iter().all(|r| {
             !r.list_marker
                 && matches!(r.field, FieldKind::None)
-                && r.text.chars().all(|c| c == ' ' || c == '\u{3000}')
+                && r.text.chars().all(|c| matches!(c, ' ' | '\u{3000}' | '\t'))
         });
     if spaces_only && floats_only && boxes_float {
         let mut mark = rstyle.clone();

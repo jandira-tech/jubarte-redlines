@@ -119,6 +119,11 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   - a full-width picture takes the first line, and the text wraps under it;
   - a picture that fits opens the first line, and the text follows it or keeps
     its tab stop (6fd8f5e, d2aa5db).
+- **A paragraph of only tabs is a line of its mark**, like one of only
+  spaces. Word 16 probes tab1001: an 11pt or 24pt tab over an 8pt mark,
+  deleted or not, gives an 8pt line. A tab before text does not size the
+  line either. t899ef4's deleted tab paragraph stood 3.8pt too tall, and
+  the drift cost page 2 twenty points (63.4 → 83.4).
 - **A no-break space is a letter to the wrap**, ea41e341. U+00A0, U+2007 and
   U+202F never break a line, and one at a line's end takes room where a
   plain space hangs past the edge.
