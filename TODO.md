@@ -360,8 +360,14 @@ repeatable-sweep item below is what makes these numbers reproducible.
   (or a sibling script) with the same `--validate` ratchet against
   `tools/validity_baseline.tsv`, and the rule that a finding present in
   either input is not append's.
-- [ ] **Carry comments.** Today B's anchors are removed and
-  `COMMENTS_DROPPED` is warned. Design:
+- [ ] **Carry comments.** Opt-in carrying of body-anchored comments is open
+  in #318 (`--carry-comments`; drop stays the default). Still open after it:
+  comments anchored in B's footnotes and endnotes are dropped and warned,
+  because `validate` counts comment anchors in the main part only, `edit`
+  refuses them (`COMMENT_NOT_IN_BODY`), and no Word fixture has one. Ask
+  Word (the Word item above): if it keeps a note-anchored comment, widen
+  `validate`'s comment graph to every story and carry them. The design as
+  planned:
   - Build on `comments::CommentFamily` (`src/comments.rs`), not the
     comparer's `union_comments_xml`: that one treats an A comment and a B
     comment with the same id and text as one comment ("B's copy wins"),
