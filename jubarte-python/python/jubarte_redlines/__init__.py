@@ -69,6 +69,7 @@ from .document import (
     read,
 )
 from .models import (
+    AuditFinding,
     Change,
     Comment,
     CompareOptions,
@@ -145,3 +146,4 @@ __all__ += [
     "UpdatedFields",
 ]
 __all__ += ["from_markdown"]
+__all__ += ["AuditFinding"]
