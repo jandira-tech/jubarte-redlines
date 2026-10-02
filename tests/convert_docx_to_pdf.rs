@@ -19157,6 +19157,64 @@ fn scripts_a_latin_face_lacks_paint_from_words_fallbacks() {
     }
 }
 
+#[test]
+fn east_asian_text_its_face_lacks_paints_in_ms_gothic_or_ms_mincho() {
+    // Word 16 probes jf and 33g (2026-10-02): Japanese or Chinese text
+    // whose eastAsia face has no such glyphs paints in MS Gothic when that
+    // face is Times New Roman, the slot's default when none is named
+    // (617e392832's Normal), and in MS Mincho for any other face (Verdana,
+    // Arial, Calibri, an absent one), whatever the run's or the theme's
+    // language. Never YaHei, whose taller line ran 617e392832 a page long.
+    let dfonts = std::path::Path::new("/Applications/Microsoft Word.app/Contents/Resources/DFonts");
+    if !dfonts.join("msgothic.ttc").is_file() || !dfonts.join("msmincho.ttc").is_file() {
+        return;
+    }
+    let face = |ea: &str, lang: &str| {
+        let fonts = if ea.is_empty() {
+            "<w:rFonts w:ascii=\"Verdana\" w:hAnsi=\"Verdana\"/>".to_string()
+        } else {
+            format!("<w:rFonts w:ascii=\"Verdana\" w:hAnsi=\"Verdana\" w:eastAsia=\"{ea}\"/>")
+        };
+        let lang = if lang.is_empty() {
+            String::new()
+        } else {
+            format!("<w:lang w:eastAsia=\"{lang}\"/>")
+        };
+        let body = format!(
+            "<w:p><w:r><w:rPr>{fonts}<w:sz w:val=\"36\"/>{lang}</w:rPr>\
+             <w:t>日時：8月21日土曜日</w:t></w:r></w:p><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect(ea);
+        let hay = String::from_utf8_lossy(&pdf).into_owned();
+        let names: Vec<String> = hay
+            .split("/BaseFont /")
+            .skip(1)
+            .map(|s| {
+                s.split(|c: char| c.is_whitespace() || c == '/')
+                    .next()
+                    .unwrap_or("")
+                    .to_string()
+            })
+            .collect();
+        names
+    };
+    let has = |names: &[String], want: &str| names.iter().any(|n| n.ends_with(want));
+    for (ea, lang, want) in [
+        ("Times New Roman", "", "MS-Gothic"),
+        ("Times New Roman", "zh-CN", "MS-Gothic"),
+        ("", "", "MS-Gothic"),
+        ("Verdana", "", "MS-Mincho"),
+        ("Arial", "zh-CN", "MS-Mincho"),
+        ("Nonexistent Face", "ja-JP", "MS-Mincho"),
+    ] {
+        let names = face(ea, lang);
+        assert!(
+            has(&names, want) && !names.iter().any(|n| n.contains("YaHei")),
+            "eastAsia {ea:?} lang {lang:?} paints in {want}: {names:?}"
+        );
+    }
+}
+
 /// Whether a hex Identity-H operand holds glyph 0, .notdef.
 fn has_notdef(hex: &str) -> bool {
     hex.as_bytes().chunks(4).any(|g| g == b"0000")
@@ -28166,9 +28224,11 @@ fn space_for_ul_adds_descent_under_east_asian_underline() {
     let off = gap("");
     let on = gap("<w:compat><w:spaceForUL/></w:compat>");
     // cm translations are user-space points (the 0.24 scale is glyph
-    // space only), so the 2pt floor is compared directly.
+    // space only), but baselines snap to Word's 1/300in grid: the 2pt
+    // floor lands 1.92 or 2.16 apart with the face's metrics (MS Gothic,
+    // the 漢字 fallback since Word probe jf, lands 1.92).
     assert!(
-        on - off >= 2.0 - 0.01,
+        on - off >= 2.0 - 0.24 - 0.01,
         "spaceForUL must add ≥2pt descent under underlined 漢字; off={off} on={on}"
     );
 }

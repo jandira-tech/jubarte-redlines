@@ -3909,7 +3909,8 @@ fn is_thaana(c: char) -> bool {
 
 /// The face Word paints `text` in when its own face lacks the glyphs:
 /// Word's Thaana or CJK face for those scripts, else none (Arial).
-fn script_glyph_fallback(fonts: &Fonts, bold: bool, text: &str) -> Option<FaceRef> {
+fn script_glyph_fallback(fonts: &Fonts, style: &RunStyle, text: &str) -> Option<FaceRef> {
+    let bold = style.bold;
     if text.chars().any(is_thaana) {
         return fonts.thaana_glyph_fallback(bold);
     }
@@ -3923,13 +3924,15 @@ fn script_glyph_fallback(fonts: &Fonts, bold: bool, text: &str) -> Option<FaceRe
         return fonts.script_fallback(font::DEVANAGARI_FALLBACK, bold);
     }
     fonts
-        .cjk_glyph_fallback(bold)
+        .cjk_glyph_fallback(bold, style.family_ea.as_deref())
         .filter(|_| text.chars().any(|c| is_cjk(c) || is_enclosed_alnum(c)))
 }
 
 /// ① to ⓿ and ⒇: a Latin face rarely has them, and Word paints them from
-/// its East Asian face (Word 16 probe ench 1001: Calibri's "A⒇①B" sets
-/// ⒇① in MS Gothic, as a footer's decimalEnclosedParen PAGE label).
+/// its East Asian face (Word 16 probe ench 1001: Calibri's "A⒇①B", with
+/// no eastAsia face, sets ⒇① in MS Gothic, as a footer's
+/// decimalEnclosedParen PAGE label; probe 33g's eastAsia Calibri sets
+/// them in MS Mincho).
 fn is_enclosed_alnum(c: char) -> bool {
     matches!(c, '\u{2460}'..='\u{24FF}')
 }
@@ -8227,7 +8230,7 @@ fn ink_face(fonts: &Fonts, style: &RunStyle, text: &str) -> FaceRef {
     if !script || !face_lacks_ink(fonts.get(fid), text) {
         return fid;
     }
-    match script_glyph_fallback(fonts, style.bold, text) {
+    match script_glyph_fallback(fonts, style, text) {
         Some(cjk) => cjk,
         None if style.bold => FaceId::SansBold.into(),
         None => FaceId::SansRegular.into(),
@@ -21065,7 +21068,7 @@ impl<'a> Layout<'a> {
             // fallback (paint_run): 019f3137's "●" in an absent Noto Sans
             // Symbols is Arial in Word, not the 12.25pt stand-in.
             if face_lacks_ink(face, &run.text) {
-                face = match script_glyph_fallback(self.fonts, run.style.bold, &run.text) {
+                face = match script_glyph_fallback(self.fonts, &run.style, &run.text) {
                     Some(cjk) => self.fonts.get(cjk),
                     None => self.fonts.get(if run.style.bold {
                         FaceId::SansBold
@@ -23591,7 +23594,7 @@ impl<'a> Layout<'a> {
         if ink_missing {
             // East Asian text falls back to Word's CJK face, not Arial,
             // which has no Han glyphs (0025b0d3's text vanished).
-            fid = if let Some(cjk) = script_glyph_fallback(self.fonts, run.style.bold, &run.text) {
+            fid = if let Some(cjk) = script_glyph_fallback(self.fonts, &run.style, &run.text) {
                 cjk
             } else if run.style.bold {
                 FaceId::SansBold.into()
