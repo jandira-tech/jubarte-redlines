@@ -131,12 +131,6 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 - `capabilities().limits.stories` listed `body` only; `inspect` and `edit`
   address headers, footers, footnotes and endnotes too, and the manifest
   now says so (text boxes stay reported in `summary` but not editable).
-- `fuzz/`: cargo-fuzz targets for `admission::admit`,
-  `strict_translation::strict_to_transitional_docx_within` and
-  `compare_documents_with_settings`, seeded from the repository's `.docx`
-  fixtures (`fuzz/seed.sh`), and a non-blocking CI job (`fuzz-smoke`) that
-  runs each for 60 seconds. See `fuzz/README.md`.
-
 - `scripts/release.sh` step 12 runs `scripts/release_downstream.sh`: jubarte.pro
   moves to the release (download page, demo engine) and is deployed, the
   app's release files are committed on `release/vx.y.z` in the jubarte-app
@@ -432,14 +426,11 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   panics as before. (`process_footnote_endnote` still has `expect` calls on
   the same path.)
 
-- `jubarte capabilities` (`limits.stories`, also `jubarte_redlines.capabilities()`
-  and the WASM `capabilities()`) advertises every story kind an edit plan
-  addresses, `body`, `header`, `footer`, `footnotes` and `endnotes`, instead
-  of `body` alone, which 0.10.0's header, footer and note editing had left
-  stale. The list is the one `inspect` and `edit` resolve selectors against
-  (`inspect::STORY_KINDS`), checked by a round trip from the manifest through
-  `inspect` to `apply_plan`, so the two cannot drift again. A story is named
-  in a selector by its id, the part's file stem that `inspect` prints
+- `limits.stories` in the capability manifest is now built from the list
+  `inspect` and `edit` resolve selectors against (`inspect::STORY_KINDS`),
+  checked by a round trip from the manifest through `inspect` to
+  `apply_plan`, so the two cannot drift again. A story is named in a
+  selector by its id, the part's file stem that `inspect` prints
   (`header1:p:0`, `{"story": "footnotes", "index": 0}`). The module doc
   no longer claims the operations are derived from the compiled features:
   the library compiles every operation in, and only a wrapper build (WASM
