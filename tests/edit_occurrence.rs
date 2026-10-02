@@ -34,8 +34,7 @@ fn the_second_occurrence_is_replaced() {
 
 #[test]
 fn the_last_occurrence_is_deleted() {
-    let plan =
-        plan(r#"[{"kind":"delete","paragraph":"body:p:0","find":" fee","occurrence":2}]"#);
+    let plan = plan(r#"[{"kind":"delete","paragraph":"body:p:0","find":" fee","occurrence":2}]"#);
     let out = apply_plan(&source(), &plan).unwrap();
     assert_eq!(paragraphs(&out.clean).unwrap()[0].text, "fee fee");
     assert_eq!(out.report.operations[0].matches, 2);
