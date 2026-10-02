@@ -843,55 +843,36 @@ fn carry_styles_and_numbering(
                 abstracts.push(a);
             }
         }
-        let numbering = crate::markdown::package::append_numbering(
+        let lists = ListCopy {
+            b_abstracts: &b_abstracts,
+            b_nums: &b_nums,
+            style_map: &style_map,
+            abstracts: &abstracts,
+            nums: &nums,
+            used_nsids: &used_nsids,
+        };
+        let part_before = related(dest, a_main, "/numbering")
+            .and_then(|part| dest.part_bytes(&part).map(<[u8]>::to_vec));
+        let mut built = None;
+        let spliced = crate::markdown::package::append_numbering(
             dest,
             a_main,
             |first_abstract, first_num| {
-                let mut abstract_map = HashMap::new();
-                let mut used = used_nsids;
-                let mut abstracts_xml = String::new();
-                for (k, old) in abstracts.iter().enumerate() {
-                    let new = first_abstract + u32::try_from(k).unwrap_or(0);
-                    abstract_map.insert(old.clone(), new.to_string());
-                    let copy = dom.clone_subtree(b_abstracts[old]);
-                    dom.set_attribute_value(
-                        copy,
-                        &W::name("abstractNumId"),
-                        Some(&new.to_string()),
-                    );
-                    unique_nsid(dom, copy, &mut used);
-                    // Picture bullets stay with B's numbering part.
-                    for pic in dom.descendants(copy, Some(&W::name("lvlPicBulletId"))) {
-                        dom.remove(pic);
-                    }
-                    for (el, val) in w_vals(dom, copy, &["pStyle", "numStyleLink", "styleLink"]) {
-                        if let Some(new) = style_map.get(&val) {
-                            dom.set_attribute_value(el, &W::val(), Some(new));
-                        }
-                    }
-                    abstracts_xml.push_str(&dom.serialize_element(copy));
-                }
-                let mut nums_xml = String::new();
-                for (k, old) in nums.iter().enumerate() {
-                    let new = first_num + u32::try_from(k).unwrap_or(0);
-                    num_map.insert(old.clone(), new.to_string());
-                    let copy = dom.clone_subtree(b_nums[old]);
-                    dom.set_attribute_value(copy, &W::name("numId"), Some(&new.to_string()));
-                    for el in dom.elements(copy, Some(&W::name("abstractNumId"))) {
-                        let mapped = dom
-                            .attribute(el, &W::val())
-                            .and_then(|v| abstract_map.get(v))
-                            .cloned();
-                        dom.set_attribute_value(el, &W::val(), mapped.as_deref());
-                    }
-                    nums_xml.push_str(&dom.serialize_element(copy));
-                }
+                let (abstracts_xml, nums_xml, map) = lists.build(dom, first_abstract, first_num);
+                built = Some(map);
                 (abstracts_xml, nums_xml)
             },
         );
-        if numbering.is_none() {
-            num_map.clear();
-        }
+        let part = related(dest, a_main, "/numbering");
+        let part_after = part.as_deref().and_then(|part| dest.part_bytes(part));
+        num_map = if spliced.is_some() && part_after != part_before.as_deref() {
+            built.unwrap_or_default()
+        } else {
+            // The string splice needs `w:`-prefixed markup with a closing
+            // tag; any other numbering part takes the lists through the DOM.
+            part.and_then(|part| insert_lists(dest, &part, dom, &lists))
+                .unwrap_or_default()
+        };
     }
     let mut numbered_roots = roots.to_vec();
     numbered_roots.extend(copies.iter().copied());
@@ -906,6 +887,130 @@ fn carry_styles_and_numbering(
         dest.set_part(&part, dom.serialize_document(doc).into_bytes());
     }
     Ok(())
+}
+
+/// B's lists to copy, and what their copies need rewritten.
+struct ListCopy<'a> {
+    b_abstracts: &'a HashMap<String, NodeId>,
+    b_nums: &'a HashMap<String, NodeId>,
+    style_map: &'a HashMap<String, String>,
+    /// Abstract ids to copy, in order.
+    abstracts: &'a [String],
+    /// Num ids to copy, in order.
+    nums: &'a [String],
+    used_nsids: &'a HashSet<String>,
+}
+
+impl ListCopy<'_> {
+    /// The copies' markup numbered from `first_abstract` and `first_num`:
+    /// `(abstracts, nums, B num id -> new num id)`.
+    fn build(
+        &self,
+        dom: &mut Dom,
+        first_abstract: u32,
+        first_num: u32,
+    ) -> (String, String, HashMap<String, String>) {
+        let mut abstract_map = HashMap::new();
+        let mut used = self.used_nsids.clone();
+        let mut abstracts_xml = String::new();
+        for (k, old) in self.abstracts.iter().enumerate() {
+            let new = first_abstract + u32::try_from(k).unwrap_or(0);
+            abstract_map.insert(old.clone(), new.to_string());
+            let copy = dom.clone_subtree(self.b_abstracts[old]);
+            dom.set_attribute_value(copy, &W::name("abstractNumId"), Some(&new.to_string()));
+            unique_nsid(dom, copy, &mut used);
+            // Picture bullets stay with B's numbering part.
+            for pic in dom.descendants(copy, Some(&W::name("lvlPicBulletId"))) {
+                dom.remove(pic);
+            }
+            for (el, val) in w_vals(dom, copy, &["pStyle", "numStyleLink", "styleLink"]) {
+                if let Some(new) = self.style_map.get(&val) {
+                    dom.set_attribute_value(el, &W::val(), Some(new));
+                }
+            }
+            abstracts_xml.push_str(&dom.serialize_element(copy));
+        }
+        let mut num_map = HashMap::new();
+        let mut nums_xml = String::new();
+        for (k, old) in self.nums.iter().enumerate() {
+            let new = first_num + u32::try_from(k).unwrap_or(0);
+            num_map.insert(old.clone(), new.to_string());
+            let copy = dom.clone_subtree(self.b_nums[old]);
+            dom.set_attribute_value(copy, &W::name("numId"), Some(&new.to_string()));
+            for el in dom.elements(copy, Some(&W::name("abstractNumId"))) {
+                let mapped = dom
+                    .attribute(el, &W::val())
+                    .and_then(|v| abstract_map.get(v))
+                    .cloned();
+                dom.set_attribute_value(el, &W::val(), mapped.as_deref());
+            }
+            nums_xml.push_str(&dom.serialize_element(copy));
+        }
+        (abstracts_xml, nums_xml, num_map)
+    }
+}
+
+/// Add `lists` to the numbering `part` through the DOM, numbered past the
+/// part's own ids whatever its prefix, in schema order; returns the num map.
+fn insert_lists(
+    dest: &mut PartFs,
+    part: &str,
+    dom: &mut Dom,
+    lists: &ListCopy<'_>,
+) -> Option<HashMap<String, String>> {
+    let xml = dest.part_string(part)?;
+    let mut sheet = Dom::new();
+    let doc = sheet.parse_xdocument(&xml);
+    let root = sheet.root(doc)?;
+    let next = |sheet: &Dom, element: &str, attribute: &str| {
+        let highest = sheet
+            .elements(root, Some(&W::name(element)))
+            .into_iter()
+            .filter_map(|el| {
+                sheet
+                    .attribute(el, &W::name(attribute))?
+                    .parse::<i64>()
+                    .ok()
+            })
+            .max()
+            .unwrap_or(0)
+            .max(0);
+        u32::try_from(highest + 1).unwrap_or(1)
+    };
+    let first_abstract = next(&sheet, "abstractNum", "abstractNumId");
+    let first_num = next(&sheet, "num", "numId");
+    let (abstracts_xml, nums_xml, num_map) = lists.build(dom, first_abstract, first_num);
+    for fragment in [abstracts_xml, nums_xml] {
+        let wrapper = sheet.parse_xdocument(&format!("<fragment>{fragment}</fragment>"));
+        let Some(wrapper) = sheet.root(wrapper) else {
+            continue;
+        };
+        for child in sheet.elements(wrapper, None) {
+            sheet.remove(child);
+            add_in_numbering_order(&mut sheet, root, child);
+        }
+    }
+    dest.set_part(part, sheet.serialize_document(doc).into_bytes());
+    Some(num_map)
+}
+
+/// `w:numbering` lists picture bullets, then abstracts, then nums.
+fn add_in_numbering_order(dom: &mut Dom, numbering: NodeId, child: NodeId) {
+    let rank = |dom: &Dom, el: NodeId| match dom.name(el).as_ref().map(XName::local_name) {
+        Some("numPicBullet") => 0,
+        Some("abstractNum") => 1,
+        Some("num") => 2,
+        _ => 3,
+    };
+    let own = rank(dom, child);
+    let later = dom
+        .elements(numbering, None)
+        .into_iter()
+        .find(|&el| rank(dom, el) > own);
+    match later {
+        Some(el) => dom.add_before_self(el, child),
+        None => dom.add(numbering, child),
+    }
 }
 
 fn abstract_of(dom: &Dom, num: NodeId) -> Option<String> {

@@ -579,3 +579,54 @@ fn a_kept_section_s_tracked_change_takes_a_fresh_id() {
     let doc = part_string(&out.docx, "word/document.xml").unwrap();
     assert_eq!(doc.matches(r#"w:id="0""#).count(), 1, "{doc}");
 }
+
+#[test]
+fn a_numbering_part_the_splice_cannot_read_still_receives_b_s_list() {
+    let numbering = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/><w:lvlJc w:val="left"/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#;
+    let numbering_rel = format!("{R_NS}/numbering");
+    let numbering_ct =
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml";
+    let b = docx_with(
+        r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>b item</w:t></w:r></w:p>"#,
+        &[Part {
+            name: "word/numbering.xml",
+            content_type: numbering_ct,
+            rel_type: &numbering_rel,
+            xml: numbering,
+        }],
+    );
+    let w = common::docx::W_NS;
+    for a_sheet in [
+        // Self-closed: no `</w:numbering>` to splice before.
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering xmlns:w="{w}"/>"#
+        ),
+        // Another prefix: no `<w:num ` either.
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><n:numbering xmlns:n="{w}"><n:abstractNum n:abstractNumId="4"><n:lvl n:ilvl="0"><n:numFmt n:val="decimal"/></n:lvl></n:abstractNum><n:num n:numId="7"><n:abstractNumId n:val="4"/></n:num></n:numbering>"#
+        ),
+    ] {
+        let a = docx_with(
+            &para("A."),
+            &[Part {
+                name: "word/numbering.xml",
+                content_type: numbering_ct,
+                rel_type: &numbering_rel,
+                xml: &a_sheet,
+            }],
+        );
+        let out = append_documents(&a, &b, &continuous()).unwrap();
+        assert_word_valid_package(&out.docx);
+        let doc = part_string(&out.docx, "word/document.xml").unwrap();
+        let at = doc.find(r#"numId w:val=""#).unwrap() + r#"numId w:val=""#.len();
+        let id = &doc[at..at + doc[at..].find('"').unwrap()];
+        let sheet = part_string(&out.docx, "word/numbering.xml").unwrap();
+        assert!(
+            sheet.contains(&format!(r#"numId="{id}""#)),
+            "numId {id} names no w:num: {sheet}"
+        );
+        let abstract_at = sheet.rfind("abstractNum ").unwrap();
+        let num_at = sheet.rfind(":num ").unwrap();
+        assert!(abstract_at < num_at, "{sheet}");
+    }
+}
