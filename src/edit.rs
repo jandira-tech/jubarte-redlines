@@ -26,17 +26,12 @@ use crate::changes::{Change, ChangeError, ChangeFilter};
 
 use crate::comparer::{WmlComparerRevisionType, WmlComparerSettings};
 use crate::inspect::{Opened, Piece, Projection, SCHEMA_VERSION, project_paragraph, source_sha256};
-use crate::namespaces::{R, W};
+use crate::namespaces::W;
 use crate::xmllinq::{Dom, NodeId, XNamespace};
 
 mod rewrite;
 mod structural;
 mod whole;
-
-const COMMENTS_REL: &str =
-    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
-const COMMENTS_CT: &str =
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml";
 
 /// A versioned, portable set of operations against one document snapshot.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -189,6 +184,11 @@ pub enum OperationKind {
         find: Option<String>,
         /// Plain text to insert.
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Last paragraph of a range from the start of `paragraph` to the
+        /// end of this one (same story, not before `paragraph`); `find`
+        /// must be left out.
+        through: Option<Selector>,
     },
     /// Insert a new paragraph next to the anchor paragraph, copying its
     /// paragraph properties (never its section break or revision marks), or
@@ -267,6 +267,38 @@ pub enum OperationKind {
         /// Plain text placed between the two (for example `" "`).
         separator: Option<String>,
     },
+    /// Reply to comment `comment_id`, as the plan's author; the reply is
+    /// anchored on the same range. Word threads are one level deep, so a
+    /// reply to a reply joins the thread's first comment.
+    ReplyComment {
+        /// `w:id` of the comment replied to (`jubarte comments` lists them).
+        comment_id: u32,
+        /// Reply text; `\n` starts a new line.
+        text: String,
+    },
+    /// Resolve comment `comment_id` and its replies (`done: false` opens
+    /// them again).
+    ResolveComment {
+        /// `w:id` of the comment.
+        comment_id: u32,
+        #[serde(default = "resolve_done")]
+        /// Resolved (default) or open.
+        done: bool,
+    },
+    /// Replace the text of comment `comment_id`; its id, author, date and
+    /// thread stay.
+    EditComment {
+        /// `w:id` of the comment.
+        comment_id: u32,
+        /// New text; `\n` starts a new line.
+        text: String,
+    },
+    /// Remove comment `comment_id`, its replies, their range markers and
+    /// references.
+    DeleteComment {
+        /// `w:id` of the comment.
+        comment_id: u32,
+    },
     /// Insert a table next to the anchor paragraph. Each cell holds one
     /// paragraph in the anchor's paragraph style; the redline shows the
     /// rows inserted. Body paragraphs outside tables only.
@@ -308,6 +340,10 @@ pub enum OperationKind {
         /// numbered paragraph before the first one, in that list's format.
         restart: bool,
     },
+}
+
+fn resolve_done() -> bool {
+    true
 }
 
 fn default_true() -> bool {
@@ -876,7 +912,7 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
             "replace" => &["find", "replacement", "format", "comment", "whole"],
             "insert" => &["after", "before", "position", "text", "format", "comment"],
             "delete" => &["find"],
-            "comment" => &["find", "text"],
+            "comment" => &["find", "text", "through"],
             "insert_paragraph" => &["position", "runs", "like", "style", "comment"],
             "delete_paragraph" => &["comment"],
             "format_paragraph" => &[
@@ -888,6 +924,10 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
             ],
             "merge_paragraphs" => &["separator"],
             "rewrite" => &["text"],
+            "reply_comment" => &["comment_id", "text"],
+            "resolve_comment" => &["comment_id", "done"],
+            "edit_comment" => &["comment_id", "text"],
+            "delete_comment" => &["comment_id"],
             "insert_table" => &["position", "rows", "header_row", "widths_dxa", "style"],
             "list" if map.contains_key("paragraph") => {
                 return Err(err(
@@ -1123,6 +1163,42 @@ enum Resolved {
         /// That style's definition must be added to the styles part.
         add_style: bool,
     },
+    /// A comment from the start of `para` to the end of `last`.
+    CommentSpan {
+        para: usize,
+        last: usize,
+        /// Comment text.
+        text: String,
+    },
+    /// A reply to, resolution, edit or deletion of an existing comment.
+    Thread {
+        op: ThreadOp,
+        /// Stories whose markers the operation adds to or removes.
+        stories: Vec<usize>,
+        /// Paragraph holding the target comment's reference, when found.
+        anchor: Option<usize>,
+    },
+}
+
+/// What a thread operation does to an existing comment.
+#[derive(Clone, Debug)]
+enum ThreadOp {
+    Reply { parent: u32, text: String },
+    Resolve { id: u32, done: bool },
+    Edit { id: u32, text: String },
+    Delete { id: u32 },
+}
+
+impl ThreadOp {
+    /// The existing comment the operation acts on.
+    fn target(&self) -> u32 {
+        match self {
+            ThreadOp::Reply { parent: id, .. }
+            | ThreadOp::Resolve { id, .. }
+            | ThreadOp::Edit { id, .. }
+            | ThreadOp::Delete { id } => *id,
+        }
+    }
 }
 
 /// What resolving an operation gives: its resolved form and outcome, or the
@@ -1161,6 +1237,10 @@ struct Transaction<'p> {
     new_numbering: (Vec<String>, Vec<String>),
     /// Style definitions the edits need (`ListParagraph`).
     needed_styles: std::collections::BTreeSet<String>,
+    /// The source's comment part family; taken when the parts are written.
+    family: Option<crate::comments::CommentFamily>,
+    /// Comment replied to, by the reply's new id.
+    reply_parents: BTreeMap<u32, u32>,
 }
 
 /// The body, or a header, footer or notes part, parsed into the plan's DOM.
@@ -1296,6 +1376,8 @@ impl<'p> Transaction<'p> {
                 .to_uppercase()
         });
         let next_comment_id = existing_comment_ids(&opened).map_or(0, |max| u64::from(max) + 1);
+        let family = crate::comments::CommentFamily::load(&opened.pkg, &opened.main)
+            .map_err(|m| err("INVALID_DOCUMENT", None, m))?;
         Ok(Self {
             plan,
             source_sha256: source_hash,
@@ -1319,6 +1401,8 @@ impl<'p> Transaction<'p> {
             whole_marks: Vec::new(),
             new_numbering: (Vec::new(), Vec::new()),
             needed_styles: std::collections::BTreeSet::new(),
+            family: Some(family),
+            reply_parents: BTreeMap::new(),
         })
     }
 
@@ -1361,6 +1445,12 @@ impl<'p> Transaction<'p> {
                     restart,
                 } => self
                     .resolve_list(&id, paragraphs, *kind_of_list, *level, *restart)
+                    .map(|(resolved, outcome)| (vec![resolved], outcome)),
+                OperationKind::ReplyComment { .. }
+                | OperationKind::ResolveComment { .. }
+                | OperationKind::EditComment { .. }
+                | OperationKind::DeleteComment { .. } => self
+                    .resolve_thread(&id, &op.kind)
                     .map(|(resolved, outcome)| (vec![resolved], outcome)),
                 other => self
                     .resolve_one(&id, other)
@@ -1435,6 +1525,16 @@ impl<'p> Transaction<'p> {
                     outcome,
                 ));
             }
+            OperationKind::ReplyComment { .. }
+            | OperationKind::ResolveComment { .. }
+            | OperationKind::EditComment { .. }
+            | OperationKind::DeleteComment { .. } => {
+                return Err(fail(
+                    "INVALID_PLAN",
+                    "thread operations resolve through resolve_thread".into(),
+                    outcome,
+                ));
+            }
         };
         let para = match self.select(selector) {
             Ok(p) => p,
@@ -1453,8 +1553,8 @@ impl<'p> Transaction<'p> {
         };
         if comments && self.paragraph_story[para].0 != 0 {
             return Err(fail(
-                "UNSUPPORTED_STRUCTURE",
-                "comments are supported in the body only".into(),
+                "COMMENT_NOT_IN_BODY",
+                "comments are supported in the body only: Word cannot anchor one in a header, footer or note".into(),
                 outcome,
             ));
         }
@@ -1591,6 +1691,53 @@ impl<'p> Transaction<'p> {
                 ))
             }
             OperationKind::Comment {
+                find,
+                text: note,
+                through: Some(through),
+                ..
+            } => {
+                check_comment(note).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+                if find.is_some() {
+                    return Err(fail(
+                        "INVALID_EDIT",
+                        "find and through cannot be combined: through comments on whole paragraphs"
+                            .into(),
+                        outcome,
+                    ));
+                }
+                let last = match self.select(through) {
+                    Ok(p) => p,
+                    Err((code, msg, matches)) => {
+                        outcome.matches = matches;
+                        return Err(fail(&code, format!("through: {msg}"), outcome));
+                    }
+                };
+                if self.paragraph_story[last].0 != self.paragraph_story[para].0 || last < para {
+                    return Err(fail(
+                        "INVALID_EDIT",
+                        format!(
+                            "through ({}) must be in the same story as paragraph and not before it",
+                            self.paragraph_id(last)
+                        ),
+                        outcome,
+                    ));
+                }
+                outcome.matches = 1;
+                outcome.context = Some(format!(
+                    "{{#{} ... {}}}",
+                    self.paragraph_id(para),
+                    self.paragraph_id(last)
+                ));
+                Ok((
+                    Resolved::CommentSpan {
+                        para,
+                        last,
+                        text: note.clone(),
+                    },
+                    outcome,
+                ))
+            }
+            OperationKind::Comment {
                 find, text: note, ..
             } => {
                 check_comment(note).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
@@ -1662,9 +1809,14 @@ impl<'p> Transaction<'p> {
                 outcome.context = Some(format!("{{-¶ {}}}", excerpt(text, 60)));
                 Ok((Resolved::DeleteParagraph { para }, outcome))
             }
-            OperationKind::Rewrite { .. } | OperationKind::List { .. } => Err(fail(
+            OperationKind::Rewrite { .. }
+            | OperationKind::List { .. }
+            | OperationKind::ReplyComment { .. }
+            | OperationKind::ResolveComment { .. }
+            | OperationKind::EditComment { .. }
+            | OperationKind::DeleteComment { .. } => Err(fail(
                 "INVALID_PLAN",
-                "rewrite and list resolve on their own".into(),
+                "rewrite, list and thread operations resolve on their own paths".into(),
                 outcome,
             )),
             OperationKind::InsertParagraph {
@@ -1865,6 +2017,126 @@ impl<'p> Transaction<'p> {
     /// The paragraph `para` merges with: the next sibling paragraph, with only
     /// range markup (bookmarks, comment ranges, ...) between them. `para`'s
     /// properties are discarded, so it may not carry a section break.
+    /// `reply_comment`, `resolve_comment`, `edit_comment`, `delete_comment`:
+    /// the comment must exist (`UNKNOWN_COMMENT`); a reply needs the
+    /// comment's reference to anchor on.
+    fn resolve_thread(&self, id: &str, kind: &OperationKind) -> Resolution<Resolved> {
+        let mut outcome = EditOutcome {
+            id: id.to_string(),
+            kind: String::new(),
+            status: String::new(),
+            paragraph: None,
+            matches: 0,
+            context: None,
+            comment_id: None,
+            code: None,
+            message: None,
+        };
+        let fail = |code: &str, msg: String, outcome: EditOutcome| {
+            Box::new((err(code, Some(id), msg), outcome))
+        };
+        let op = match kind {
+            OperationKind::ReplyComment { comment_id, text } => ThreadOp::Reply {
+                parent: *comment_id,
+                text: text.clone(),
+            },
+            OperationKind::ResolveComment { comment_id, done } => ThreadOp::Resolve {
+                id: *comment_id,
+                done: *done,
+            },
+            OperationKind::EditComment { comment_id, text } => ThreadOp::Edit {
+                id: *comment_id,
+                text: text.clone(),
+            },
+            OperationKind::DeleteComment { comment_id } => ThreadOp::Delete { id: *comment_id },
+            _ => {
+                return Err(fail(
+                    "INVALID_PLAN",
+                    "not a thread operation".into(),
+                    outcome,
+                ));
+            }
+        };
+        let target = op.target();
+        let family = self.family.as_ref().expect("loaded in start");
+        if !family.contains(target) {
+            return Err(fail(
+                "UNKNOWN_COMMENT",
+                format!("no comment {target} in the document (jubarte comments lists them)"),
+                outcome,
+            ));
+        }
+        if let ThreadOp::Reply { text, .. } | ThreadOp::Edit { text, .. } = &op {
+            check_comment(text).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+        }
+        let ids = match &op {
+            ThreadOp::Delete { id } => family.with_replies(*id),
+            _ => vec![target],
+        };
+        let (stories, reference) = self.comment_markers(&ids, target);
+        let anchor = reference.and_then(|r| {
+            self.opened
+                .dom
+                .ancestors(r, Some(&W::p()))
+                .into_iter()
+                .find_map(|p| self.paragraph_nodes.iter().position(|&n| n == p))
+        });
+        if matches!(op, ThreadOp::Reply { .. }) && reference.is_none() {
+            return Err(fail(
+                "UNSUPPORTED_STRUCTURE",
+                format!("comment {target} has no reference in the document to anchor a reply on"),
+                outcome,
+            ));
+        }
+        outcome.matches = 1;
+        outcome.paragraph = anchor.map(|p| self.paragraph_id(p));
+        if !matches!(op, ThreadOp::Reply { .. }) {
+            outcome.comment_id = Some(target);
+        }
+        outcome.context = Some(format!("comment {target}"));
+        let stories = match op {
+            ThreadOp::Resolve { .. } | ThreadOp::Edit { .. } => Vec::new(),
+            _ => stories,
+        };
+        Ok((
+            Resolved::Thread {
+                op,
+                stories,
+                anchor,
+            },
+            outcome,
+        ))
+    }
+
+    /// Stories holding markers of the comments `ids`, and the reference
+    /// element of comment `target`.
+    fn comment_markers(&self, ids: &[u32], target: u32) -> (Vec<usize>, Option<NodeId>) {
+        let dom = &self.opened.dom;
+        let wanted: Vec<String> = ids.iter().map(u32::to_string).collect();
+        let target = target.to_string();
+        let mut stories = Vec::new();
+        let mut reference = None;
+        for (index, story) in self.stories.iter().enumerate() {
+            for local in ["commentRangeStart", "commentRangeEnd", "commentReference"] {
+                for marker in dom.descendants(story.root, Some(&W::name(local))) {
+                    let Some(value) = dom.attribute(marker, &W::id()) else {
+                        continue;
+                    };
+                    if !wanted.iter().any(|w| w == value) {
+                        continue;
+                    }
+                    if !stories.contains(&index) {
+                        stories.push(index);
+                    }
+                    if local == "commentReference" && value == target && reference.is_none() {
+                        reference = Some(marker);
+                    }
+                }
+            }
+        }
+        (stories, reference)
+    }
+
     /// `rewrite`: the smallest word-level edits that make the paragraph read
     /// as `new_text`, each checked as a `replace` or an `insert` is.
     fn resolve_rewrite(
@@ -2220,18 +2492,19 @@ impl<'p> Transaction<'p> {
     fn touched_stories(&self) -> std::collections::BTreeSet<usize> {
         self.resolved
             .iter()
-            .map(|(_, r)| match r {
+            .flat_map(|(_, r)| match r {
                 Resolved::Text { para, .. }
                 | Resolved::CommentRange { para, .. }
+                | Resolved::CommentSpan { para, .. }
                 | Resolved::DeleteParagraph { para }
                 | Resolved::FormatParagraph { para, .. }
-                | Resolved::MergeParagraphs { para, .. } => *para,
+                | Resolved::MergeParagraphs { para, .. } => vec![self.paragraph_story[*para].0],
                 Resolved::InsertParagraph { anchor, .. } | Resolved::InsertTable { anchor, .. } => {
-                    *anchor
+                    vec![self.paragraph_story[*anchor].0]
                 }
-                Resolved::List { paras, .. } => paras[0],
+                Resolved::List { paras, .. } => vec![self.paragraph_story[paras[0]].0],
+                Resolved::Thread { stories, .. } => stories.clone(),
             })
-            .map(|para| self.paragraph_story[para].0)
             .collect()
     }
 
@@ -2365,6 +2638,7 @@ impl<'p> Transaction<'p> {
         self.check_deletions_leave_valid_containers(&deleted)?;
         self.check_paragraph_ops(&deleted)?;
         self.check_comment_ids_fit()?;
+        self.check_thread_ops()?;
         let mut ranges: BTreeMap<usize, Vec<(usize, usize, usize)>> = BTreeMap::new();
         for (i, r) in &self.resolved {
             let (para, start, end) = match r {
@@ -2391,10 +2665,27 @@ impl<'p> Transaction<'p> {
                     }
                     continue;
                 }
+                Resolved::CommentSpan { para, last, .. } => {
+                    if (*para..=*last).any(|p| deleted.contains(&p)) {
+                        return Err(self.conflict(*i, "comments on a deleted paragraph"));
+                    }
+                    continue;
+                }
+                Resolved::Thread {
+                    op: ThreadOp::Reply { .. },
+                    anchor: Some(anchor),
+                    ..
+                } if deleted.contains(anchor) => {
+                    return Err(self.conflict(
+                        *i,
+                        "replies to a comment whose reference is in a deleted paragraph",
+                    ));
+                }
                 Resolved::DeleteParagraph { .. }
                 | Resolved::FormatParagraph { .. }
                 | Resolved::MergeParagraphs { .. }
-                | Resolved::List { .. } => continue,
+                | Resolved::List { .. }
+                | Resolved::Thread { .. } => continue,
             };
             if deleted.contains(&para) {
                 return Err(self.conflict(*i, "edits text of a deleted paragraph"));
@@ -2550,6 +2841,39 @@ impl<'p> Transaction<'p> {
         Ok(())
     }
 
+    /// Thread operations against each other: nothing may act on a comment
+    /// another operation deletes, and a comment is edited once.
+    fn check_thread_ops(&self) -> Result<(), EditError> {
+        let family = self.family.as_ref().expect("loaded in start");
+        let mut gone: Vec<(usize, Vec<u32>)> = Vec::new();
+        let mut edited: Vec<u32> = Vec::new();
+        for (i, r) in &self.resolved {
+            let Resolved::Thread { op, .. } = r else {
+                continue;
+            };
+            match op {
+                ThreadOp::Delete { id } => gone.push((*i, family.with_replies(*id))),
+                ThreadOp::Edit { id, .. } => {
+                    if edited.contains(id) {
+                        return Err(self.conflict(*i, "edits a comment another operation edits"));
+                    }
+                    edited.push(*id);
+                }
+                _ => {}
+            }
+        }
+        for (i, r) in &self.resolved {
+            let Resolved::Thread { op, .. } = r else {
+                continue;
+            };
+            let target = op.target();
+            if gone.iter().any(|(j, ids)| j != i && ids.contains(&target)) {
+                return Err(self.conflict(*i, "acts on a comment another operation deletes"));
+            }
+        }
+        Ok(())
+    }
+
     /// New comments take ids after the source's highest; refuse a plan whose
     /// comments would not fit in `w:id`'s 32 bits.
     fn check_comment_ids_fit(&self) -> Result<(), EditError> {
@@ -2560,7 +2884,8 @@ impl<'p> Transaction<'p> {
                 Resolved::Text { comment, .. } | Resolved::InsertParagraph { comment, .. } => {
                     comment.is_some()
                 }
-                Resolved::CommentRange { .. } => true,
+                Resolved::CommentRange { .. } | Resolved::CommentSpan { .. } => true,
+                Resolved::Thread { op, .. } => matches!(op, ThreadOp::Reply { .. }),
                 Resolved::DeleteParagraph { .. } => self.deletion_comment(*i).is_some(),
                 Resolved::FormatParagraph { .. }
                 | Resolved::MergeParagraphs { .. }
@@ -2600,14 +2925,20 @@ impl<'p> Transaction<'p> {
                     let text = match r {
                         Resolved::Text { comment, .. }
                         | Resolved::InsertParagraph { comment, .. } => comment.clone(),
-                        Resolved::CommentRange { text, .. } => Some(text.clone()),
+                        Resolved::CommentRange { text, .. }
+                        | Resolved::CommentSpan { text, .. } => Some(text.clone()),
+                        Resolved::Thread {
+                            op: ThreadOp::Reply { text, .. },
+                            ..
+                        } => Some(text.clone()),
                         Resolved::DeleteParagraph { .. } => {
                             self.deletion_comment(*i).map(str::to_string)
                         }
                         Resolved::FormatParagraph { .. }
                         | Resolved::MergeParagraphs { .. }
                         | Resolved::InsertTable { .. }
-                        | Resolved::List { .. } => None,
+                        | Resolved::List { .. }
+                        | Resolved::Thread { .. } => None,
                     };
                     text.map(|t| (*i, t))
                 })
@@ -2623,6 +2954,15 @@ impl<'p> Transaction<'p> {
             };
             ids.insert(i, id);
             self.outcomes[i].comment_id = Some(id);
+        }
+        for (i, r) in &self.resolved {
+            if let Resolved::Thread {
+                op: ThreadOp::Reply { parent, .. },
+                ..
+            } = r
+            {
+                self.reply_parents.insert(ids[i], *parent);
+            }
         }
         // 1. Text edits and their comments, paragraph by paragraph.
         let mut by_para: BTreeMap<usize, Vec<ScheduledEdit>> = BTreeMap::new();
@@ -2740,6 +3080,17 @@ impl<'p> Transaction<'p> {
             pending.sort_by_key(|&(s, _, i, _)| (s, i));
             for (start, end, i, _) in pending {
                 anchor_comment(&mut self.opened.dom, node, start, end, ids[&i]);
+            }
+        }
+        // 1b. Comments over several paragraphs, in their edited text.
+        for (i, r) in &self.resolved {
+            if let Resolved::CommentSpan { para, last, .. } = r {
+                anchor_span(
+                    &mut self.opened.dom,
+                    self.paragraph_nodes[*para],
+                    self.paragraph_nodes[*last],
+                    ids[i],
+                );
             }
         }
         // 2. Paragraph and table insertions (anchors are source paragraphs,
@@ -2897,7 +3248,29 @@ impl<'p> Transaction<'p> {
                 self.opened.dom.remove(self.paragraph_nodes[*para]);
             }
         }
-        // 6. A paragraph after each new table, and between it and a table
+        // 6. Reply markers beside their comment's; deleted comments' markers.
+        let roots: Vec<NodeId> = self.stories.iter().map(|s| s.root).collect();
+        for (i, r) in &self.resolved {
+            let Resolved::Thread { op, .. } = r else {
+                continue;
+            };
+            match op {
+                ThreadOp::Reply { parent, .. } => {
+                    place_reply_markers(&mut self.opened.dom, &roots, *parent, ids[i]);
+                }
+                ThreadOp::Delete { id } => {
+                    let family = self.family.as_ref().expect("loaded in start");
+                    let gone: Vec<String> = family
+                        .with_replies(*id)
+                        .iter()
+                        .map(u32::to_string)
+                        .collect();
+                    remove_comment_markers(&mut self.opened.dom, &roots, &gone);
+                }
+                ThreadOp::Resolve { .. } | ThreadOp::Edit { .. } => {}
+            }
+        }
+        // 7. A paragraph after each new table, and between it and a table
         // before it, once the deletions have settled its neighbours.
         for table in tables {
             structural::separate(&mut self.opened.dom, table);
@@ -2934,10 +3307,25 @@ impl<'p> Transaction<'p> {
     /// deleted paragraph's comment anchored on its whole text. The comparer
     /// carries the comment onto the deleted text of the redline.
     fn commented_base(&self) -> Result<std::borrow::Cow<'_, [u8]>, EditError> {
-        if self.deletion_comments.is_empty() {
+        // Edited and deleted comments are edited and deleted in the original
+        // too: the comparer carries the copy's comment parts only when they
+        // define every comment of the original unchanged.
+        let thread_ops: Vec<Operation> = self
+            .plan
+            .operations
+            .iter()
+            .filter(|op| {
+                matches!(
+                    op.kind,
+                    OperationKind::EditComment { .. } | OperationKind::DeleteComment { .. }
+                )
+            })
+            .cloned()
+            .collect();
+        if self.deletion_comments.is_empty() && thread_ops.is_empty() {
             return Ok(std::borrow::Cow::Borrowed(&self.base));
         }
-        let operations = self
+        let mut operations: Vec<Operation> = self
             .deletion_comments
             .iter()
             .map(|&(_, op)| {
@@ -2955,10 +3343,12 @@ impl<'p> Transaction<'p> {
                         paragraph: paragraph.clone(),
                         find: None,
                         text: text.clone(),
+                        through: None,
                     },
                 }
             })
             .collect();
+        operations.extend(thread_ops);
         let plan = EditPlan {
             schema_version: SCHEMA_VERSION,
             source_sha256: None,
@@ -2985,7 +3375,11 @@ impl<'p> Transaction<'p> {
     /// The clean copy, and the copy the comparer reads when `whole`
     /// replacements carry helper bookmarks (the clean copy never does).
     fn finish(&mut self) -> Result<(Vec<u8>, Option<Vec<u8>>), EditError> {
-        if !self.comments.is_empty() {
+        let threads = self
+            .resolved
+            .iter()
+            .any(|(_, r)| matches!(r, Resolved::Thread { .. }));
+        if !self.comments.is_empty() || threads {
             self.write_comments_part()?;
         }
         let mut styles: std::collections::BTreeSet<String> = self
@@ -3044,74 +3438,50 @@ impl<'p> Transaction<'p> {
         }
     }
 
+    /// Write the comment part family: the plan's new comments and replies,
+    /// then its edits, resolutions and deletions; every part consistent
+    /// (see [`crate::comments`]).
     fn write_comments_part(&mut self) -> Result<(), EditError> {
-        let existing = self.opened.related("comments").into_iter().next();
-        let part_name = existing
-            .clone()
-            .unwrap_or_else(|| "word/comments.xml".to_string());
-        let mut dom = Dom::new();
-        let (document, root) = match &existing {
-            Some(name) => {
-                let xml = self.opened.pkg.part_string(name).ok_or_else(|| {
-                    err(
-                        "INVALID_DOCUMENT",
-                        None,
-                        format!("missing comments part {name}"),
-                    )
-                })?;
-                let document = dom.parse_xdocument(&xml);
-                let root = dom
-                    .root(document)
-                    .ok_or_else(|| err("INVALID_DOCUMENT", None, "empty comments part"))?;
-                (document, root)
-            }
-            None => {
-                let document = dom.parse_xdocument(&format!(
-                    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:comments xmlns:w="{}" xmlns:r="{}"/>"#,
-                    W::URI,
-                    R::URI
-                ));
-                let root = dom.root(document).expect("root");
-                (document, root)
-            }
+        let main = self.opened.main.clone();
+        let mut family = match self.family.take() {
+            Some(family) => family,
+            None => crate::comments::CommentFamily::load(&self.opened.pkg, &main)
+                .map_err(|m| err("INVALID_DOCUMENT", None, m))?,
         };
         for (id, text) in &self.comments {
-            let comment = dom.new_element(W::name("comment"));
-            dom.set_attribute_value(comment, &W::id(), Some(&id.to_string()));
-            dom.set_attribute_value(comment, &W::author(), Some(&self.plan.author));
-            dom.set_attribute_value(comment, &W::date(), Some(&self.date));
-            dom.set_attribute_value(comment, &W::name("initials"), Some(&self.initials));
-            let p = dom.new_element(W::p());
-            let ref_run = dom.new_element(W::r());
-            let annotation = dom.new_element(W::name("annotationRef"));
-            dom.add(ref_run, annotation);
-            dom.add(p, ref_run);
-            for (i, line) in text.split('\n').enumerate() {
-                let run = dom.new_element(W::r());
-                if i > 0 {
-                    let br = dom.new_element(W::name("br"));
-                    dom.add(run, br);
-                }
-                let t = dom.new_element(W::t());
-                dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some("preserve"));
-                dom.add_text(t, line);
-                dom.add(run, t);
-                dom.add(p, run);
+            family.add(&crate::comments::NewComment {
+                id: *id,
+                author: &self.plan.author,
+                date: &self.date,
+                initials: &self.initials,
+                text,
+                parent: self.reply_parents.get(id).copied(),
+            });
+        }
+        let ops: Vec<&ThreadOp> = self
+            .resolved
+            .iter()
+            .filter_map(|(_, r)| match r {
+                Resolved::Thread { op, .. } => Some(op),
+                _ => None,
+            })
+            .collect();
+        for op in &ops {
+            if let ThreadOp::Edit { id, text } = op {
+                family.set_text(*id, text);
             }
-            dom.add(comment, p);
-            dom.add(root, comment);
         }
-        let xml = dom.serialize_document(document);
-        self.opened.pkg.set_part(&part_name, xml.into_bytes());
-        if existing.is_none() {
-            let main = self.opened.main.clone();
-            self.opened
-                .pkg
-                .add_document_relationship(&main, COMMENTS_REL, "comments.xml");
-            self.opened
-                .pkg
-                .add_content_type_override("/word/comments.xml", COMMENTS_CT);
+        for op in &ops {
+            if let ThreadOp::Resolve { id, done } = op {
+                family.set_done(*id, *done);
+            }
         }
+        for op in &ops {
+            if let ThreadOp::Delete { id } = op {
+                family.remove(*id);
+            }
+        }
+        family.store(&mut self.opened.pkg, &main);
         Ok(())
     }
 }
@@ -3186,6 +3556,10 @@ fn kind_name(kind: &OperationKind) -> &'static str {
         OperationKind::FormatParagraph { .. } => "format_paragraph",
         OperationKind::MergeParagraphs { .. } => "merge_paragraphs",
         OperationKind::Rewrite { .. } => "rewrite",
+        OperationKind::ReplyComment { .. } => "reply_comment",
+        OperationKind::ResolveComment { .. } => "resolve_comment",
+        OperationKind::EditComment { .. } => "edit_comment",
+        OperationKind::DeleteComment { .. } => "delete_comment",
         OperationKind::InsertTable { .. } => "insert_table",
         OperationKind::List { .. } => "list",
     }
@@ -3385,6 +3759,114 @@ fn anchor_comment(dom: &mut Dom, paragraph: NodeId, start: usize, end: usize, id
         dom.add(paragraph, range_start);
         dom.add(paragraph, range_end);
         dom.add(paragraph, reference_run);
+    }
+}
+
+fn comment_marker(dom: &mut Dom, local: &str, id: &str) -> NodeId {
+    let marker = dom.new_element(W::name(local));
+    dom.set_attribute_value(marker, &W::id(), Some(id));
+    marker
+}
+
+fn comment_reference_run(dom: &mut Dom, id: &str) -> NodeId {
+    let run = dom.new_element(W::r());
+    let reference = comment_marker(dom, "commentReference", id);
+    dom.add(run, reference);
+    run
+}
+
+/// Comment `id` from the start of paragraph `first` to the end of `last`:
+/// the start marker before `first`'s first run, the end marker and the
+/// reference run after `last`'s last run (appended to an empty paragraph).
+fn anchor_span(dom: &mut Dom, first: NodeId, last: NodeId, id: u32) {
+    let id = id.to_string();
+    let range_start = comment_marker(dom, "commentRangeStart", &id);
+    let range_end = comment_marker(dom, "commentRangeEnd", &id);
+    let reference_run = comment_reference_run(dom, &id);
+    let len = project_paragraph(dom, first).text.len();
+    let scratch = dom.new_element(W::name("commentRangeEnd"));
+    if len > 0 && wrap_range(dom, first, 0, len, range_start, scratch) {
+        dom.remove(scratch);
+    } else {
+        match dom.element(first, &W::p_pr()) {
+            Some(ppr) => dom.add_after_self(ppr, range_start),
+            None => dom.add_first(first, range_start),
+        }
+    }
+    let len = project_paragraph(dom, last).text.len();
+    let scratch = dom.new_element(W::name("commentRangeStart"));
+    if len > 0 && wrap_range(dom, last, 0, len, scratch, range_end) {
+        dom.remove(scratch);
+        dom.add_after_self(range_end, reference_run);
+    } else {
+        dom.add(last, range_end);
+        dom.add(last, reference_run);
+    }
+}
+
+/// Markers of reply `id` beside those of comment `parent`, as Word writes
+/// them: the start after the parent's start, the end after the parent's
+/// end, the reference run after the parent's reference run.
+fn place_reply_markers(dom: &mut Dom, roots: &[NodeId], parent: u32, id: u32) {
+    let parent = parent.to_string();
+    let id = id.to_string();
+    let find = |dom: &Dom, local: &str| {
+        roots.iter().find_map(|&root| {
+            dom.descendants(root, Some(&W::name(local)))
+                .into_iter()
+                .find(|&m| dom.attribute(m, &W::id()) == Some(parent.as_str()))
+        })
+    };
+    let (start, end, reference) = (
+        find(dom, "commentRangeStart"),
+        find(dom, "commentRangeEnd"),
+        find(dom, "commentReference"),
+    );
+    let Some(reference) = reference else {
+        return;
+    };
+    let parent_run = dom
+        .parent(reference)
+        .filter(|&r| dom.name_is(r, &W::r()))
+        .unwrap_or(reference);
+    let new_run = comment_reference_run(dom, &id);
+    dom.add_after_self(parent_run, new_run);
+    let new_end = comment_marker(dom, "commentRangeEnd", &id);
+    match end {
+        Some(end) => dom.add_after_self(end, new_end),
+        None => dom.add_before_self(new_run, new_end),
+    }
+    let new_start = comment_marker(dom, "commentRangeStart", &id);
+    match start {
+        Some(start) => dom.add_after_self(start, new_start),
+        None => dom.add_before_self(new_end, new_start),
+    }
+}
+
+/// Remove the range markers and references of the comments `ids`; a run
+/// left holding nothing but its properties goes too.
+fn remove_comment_markers(dom: &mut Dom, roots: &[NodeId], ids: &[String]) {
+    for &root in roots {
+        for local in ["commentRangeStart", "commentRangeEnd", "commentReference"] {
+            for marker in dom.descendants(root, Some(&W::name(local))) {
+                if !dom
+                    .attribute(marker, &W::id())
+                    .is_some_and(|v| ids.iter().any(|id| id == v))
+                {
+                    continue;
+                }
+                let run = dom.parent(marker).filter(|&r| dom.name_is(r, &W::r()));
+                dom.remove(marker);
+                if let Some(run) = run
+                    && dom
+                        .elements(run, None)
+                        .iter()
+                        .all(|&c| dom.name_is(c, &W::r_pr()))
+                {
+                    dom.remove(run);
+                }
+            }
+        }
     }
 }
 

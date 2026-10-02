@@ -240,6 +240,10 @@ enum Command {
         /// Formats and Markdown reading.
         #[command(flatten)]
         markdown: MarkdownArgs,
+        /// Rasterize only these pages, counted from 1: `3`, `1-3,7`. Layout
+        /// still runs over the whole document. Needs PNG output.
+        #[arg(long, value_name = "SPEC")]
+        pages: Option<String>,
     },
     /// Compare two documents, Word or Markdown: the changed paragraphs as a
     /// patch on stdout, each change `[-old-]{+new+}` in its paragraph, and
@@ -449,6 +453,57 @@ enum Command {
         /// text/xml/runs of two files: common lines shown around each change.
         #[arg(short = 'C', long, value_name = "N", default_value_t = 0)]
         context: usize,
+    },
+    /// Which pages of two .docx files look different: both are laid out and
+    /// rasterized at one resolution and compared pixel for pixel. Exits 0
+    /// when every page is the same, 5 when any page differs.
+    #[command(after_help = "EXAMPLES:\n  \
+        jubarte diff-render before.docx after.docx                  changed pages on stdout\n  \
+        jubarte diff-render before.docx after.docx --out-dir diff   PNGs of the changed pages and diff.json\n  \
+        jubarte diff-render a.docx b.docx --json                    the diff.json document on stdout\n\n\
+        With --out-dir, each page that differs is written as a-page-NN.png,\n\
+        b-page-NN.png and diff-page-NN.png (b's page with the changed pixels\n\
+        magenta and boxed); diff.json lists every page with its changed_ratio,\n\
+        bbox and, for a page only one side has, only_in.")]
+    DiffRender {
+        /// The document before.
+        #[arg(value_name = "A")]
+        a: PathBuf,
+        /// The document after.
+        #[arg(value_name = "B")]
+        b: PathBuf,
+        /// Raster resolution of both sides in dots per inch (1-1200).
+        #[arg(long, default_value_t = 100.0, value_name = "DPI")]
+        dpi: f32,
+        /// Write the changed pages' PNGs and diff.json here (created if
+        /// missing).
+        #[arg(long, value_name = "DIR")]
+        out_dir: Option<PathBuf>,
+        /// Print diff.json to stdout instead of one line per changed page.
+        #[arg(long)]
+        json: bool,
+        /// Skip the diff-page-NN.png overlays.
+        #[arg(long)]
+        no_overlay: bool,
+        /// Overwrite files already in --out-dir.
+        #[arg(long)]
+        force: bool,
+    },
+    /// List every comment with its thread (`parent`, `done`) and the text
+    /// it is anchored to, with its surroundings.
+    Comments {
+        /// The document (.docx).
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Emit one JSON object per line.
+        #[arg(long)]
+        json: bool,
+        /// Only this author's comments (exact match).
+        #[arg(long, value_name = "NAME")]
+        author: Option<String>,
+        /// One comment per thread: the newest.
+        #[arg(long)]
+        latest: bool,
     },
 }
 
@@ -877,6 +932,35 @@ fn run_changes(file: &Path, json: bool) -> Result<(), String> {
     Ok(())
 }
 
+fn run_comments(file: &Path, json: bool, author: Option<&str>, latest: bool) -> Result<(), String> {
+    let bytes = read_document(file)?;
+    let comments = jubarte::comments::list_comments(&bytes).map_err(|e| e.to_string())?;
+    let comments = jubarte::comments::select_comments(comments, author, latest);
+    for c in &comments {
+        if json {
+            println!("{}", serde_json::to_string(c).map_err(|e| e.to_string())?);
+            continue;
+        }
+        let text: String = c.text.chars().take(60).collect();
+        let anchor: String = c.anchor_text.chars().take(40).collect();
+        let thread = c
+            .parent
+            .map(|p| format!("\treply to {p}"))
+            .unwrap_or_default();
+        let done = if c.done { "\tresolved" } else { "" };
+        println!(
+            "{}\t{}\t{}\t{text:?}\ton {anchor:?}{thread}{done}",
+            c.id,
+            c.paragraph.as_deref().unwrap_or("-"),
+            c.author,
+        );
+    }
+    if !json {
+        println!("{} comment(s)", comments.len());
+    }
+    Ok(())
+}
+
 /// Which artifacts `convert` writes and where.
 struct ConvertJob<'a> {
     file: &'a Path,
@@ -891,6 +975,8 @@ struct ConvertJob<'a> {
     png: bool,
     dpi: f32,
     report: Option<&'a Path>,
+    /// Zero-based pages to rasterize; `None` for all.
+    pages: Option<&'a [usize]>,
 }
 
 fn run_convert(job: &ConvertJob<'_>) -> Result<(), String> {
@@ -899,6 +985,9 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), String> {
         .map(Path::to_path_buf)
         .unwrap_or_else(|| job.file.with_extension("pdf"));
     let want_pdf = job.pdf || !job.png;
+    if job.pages.is_some() && !job.png {
+        return Err("--pages selects PNG pages; add --png".into());
+    }
     for (side, what) in [(job.font_report, "--font-report"), (job.report, "--report")] {
         if let Some(side) = side {
             // Side files are written after the PDF (or the input is read
@@ -936,14 +1025,26 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), String> {
         jubarte::convert::RenderRequest {
             pdf: want_pdf,
             png_dpi: job.png.then_some(job.dpi),
+            pages: job.pages.map(<[usize]>::to_vec),
         },
     )
     .map_err(|e| format!("convert failed: {e}"))?;
     let pages = rendered.report.page_count;
+    // `render` returns the selected pages ascending and without repeats.
+    let indices: Vec<usize> = match job.pages {
+        Some(selected) => {
+            let mut selected = selected.to_vec();
+            selected.sort_unstable();
+            selected.dedup();
+            selected
+        }
+        None => (0..rendered.pngs.len()).collect(),
+    };
     // The page count is known only now; check every PNG path before the
     // first write so a refused page leaves no partial bundle.
-    let png_paths: Vec<PathBuf> = (0..rendered.pngs.len())
-        .map(|i| dir.join(png_name(&stem, i, rendered.pngs.len())))
+    let png_paths: Vec<PathBuf> = indices
+        .iter()
+        .map(|&i| dir.join(png_name(&stem, i, pages)))
         .collect();
     for path in &png_paths {
         ensure_writable(path, job.force)?;
@@ -981,6 +1082,143 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), String> {
 }
 
 /// `<stem>-page-NN.png`, zero-padded to the page count's width (at least 2).
+/// `--pages` as zero-based indices, ascending and without repeats: `1-3,7`
+/// is `[0, 1, 2, 6]`. Pages are counted from 1 on the command line.
+fn parse_pages(spec: &str) -> Result<Vec<usize>, String> {
+    let page = |text: &str| -> Result<usize, String> {
+        match text.trim().parse::<usize>() {
+            Ok(0) => Err(format!("--pages '{spec}': pages are counted from 1")),
+            Ok(n) => Ok(n - 1),
+            Err(_) => Err(format!(
+                "--pages '{spec}': '{}' is not a page number",
+                text.trim()
+            )),
+        }
+    };
+    let mut pages = Vec::new();
+    for item in spec.split(',') {
+        if item.trim().is_empty() {
+            return Err(format!("--pages '{spec}': empty item"));
+        }
+        match item.split_once('-') {
+            Some((first, last)) => {
+                let (first, last) = (page(first)?, page(last)?);
+                if first > last {
+                    return Err(format!(
+                        "--pages '{spec}': '{}' runs backwards",
+                        item.trim()
+                    ));
+                }
+                pages.extend(first..=last);
+            }
+            None => pages.push(page(item)?),
+        }
+    }
+    pages.sort_unstable();
+    pages.dedup();
+    Ok(pages)
+}
+
+/// What `diff-render` compares and where it writes.
+struct DiffRenderJob<'a> {
+    a: &'a Path,
+    b: &'a Path,
+    out_dir: Option<&'a Path>,
+    dpi: f32,
+    json: bool,
+    overlay: bool,
+    force: bool,
+}
+
+/// Compare two documents page by page; `Ok(true)` when any page differs.
+fn run_diff_render(job: &DiffRenderJob<'_>) -> Result<bool, String> {
+    let a = read_document(job.a)?;
+    let b = read_document(job.b)?;
+    let options = jubarte::convert::DiffOptions {
+        dpi: job.dpi,
+        overlay: job.overlay && job.out_dir.is_some(),
+        ..jubarte::convert::DiffOptions::default()
+    };
+    let diff = jubarte::convert::diff_render(&a, &b, &options)
+        .map_err(|e| format!("diff-render failed: {e}"))?;
+    let changed: Vec<&jubarte::convert::PageDiff> =
+        diff.pages.iter().filter(|p| p.differs()).collect();
+    /// `diff.json`. Serialized directly (not through `serde_json::Value`)
+    /// so the `f32` ratios print at their own precision.
+    #[derive(serde::Serialize)]
+    struct Summary<'a> {
+        a: String,
+        b: String,
+        dpi: f32,
+        a_pages: usize,
+        b_pages: usize,
+        changed: usize,
+        pages: &'a [jubarte::convert::PageDiff],
+    }
+    let summary = serde_json::to_string(&Summary {
+        a: job.a.display().to_string(),
+        b: job.b.display().to_string(),
+        dpi: job.dpi,
+        a_pages: diff.a_report.page_count,
+        b_pages: diff.b_report.page_count,
+        changed: changed.len(),
+        pages: &diff.pages,
+    })
+    .map_err(|e| format!("diff.json: {e}"))?;
+    if let Some(dir) = job.out_dir {
+        let count = diff.pages.len();
+        let mut files: Vec<(PathBuf, &[u8])> = Vec::new();
+        for page in &changed {
+            let i = page.index;
+            let sides = [
+                ("a", diff.a.get(i)),
+                ("b", diff.b.get(i)),
+                ("diff", diff.overlays[i].as_ref()),
+            ];
+            for (prefix, png) in sides {
+                if let Some(png) = png {
+                    files.push((dir.join(png_name(prefix, i, count)), png));
+                }
+            }
+        }
+        files.push((dir.join("diff.json"), summary.as_bytes()));
+        // Check every path before the first write so a refused file leaves
+        // no partial bundle.
+        for (path, _) in &files {
+            ensure_writable(path, job.force)?;
+        }
+        std::fs::create_dir_all(dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
+        for (path, bytes) in &files {
+            std::fs::write(path, bytes).map_err(|e| format!("writing {}: {e}", path.display()))?;
+        }
+    }
+    if job.json {
+        println!("{summary}");
+    } else {
+        for page in &changed {
+            match page.only_in {
+                Some(side) => println!("page {}: only in {side}", page.index + 1),
+                None => println!(
+                    "page {}: {:.2}% of pixels changed, box {:?}",
+                    page.index + 1,
+                    page.changed_ratio * 100.0,
+                    page.bbox.unwrap_or_default()
+                ),
+            }
+        }
+        println!(
+            "{} of {} page{} differ{}",
+            changed.len(),
+            diff.pages.len(),
+            if diff.pages.len() == 1 { "" } else { "s" },
+            job.out_dir
+                .map(|dir| format!(" (wrote {})", dir.display()))
+                .unwrap_or_default()
+        );
+    }
+    Ok(!changed.is_empty())
+}
+
 fn png_name(stem: &str, index: usize, count: usize) -> String {
     let width = count.to_string().len().max(2);
     format!("{stem}-page-{:0width$}.png", index + 1)
@@ -1147,11 +1385,12 @@ fn run_edit(job: &EditJob<'_>) -> Result<(), (u8, String)> {
     let request = jubarte::convert::RenderRequest {
         pdf: job.pdf,
         png_dpi: job.png.then_some(job.dpi),
+        pages: None,
     };
     let mut renders = Vec::new();
     if job.pdf || job.png {
         for (name, bytes) in [("redline", &result.redline), ("clean", &result.clean)] {
-            let rendered = jubarte::convert::render(bytes, options, request)
+            let rendered = jubarte::convert::render(bytes, options, request.clone())
                 .map_err(|e| fail(format!("rendering {name}: {e}")))?;
             renders.push((name, rendered));
         }
@@ -1716,6 +1955,7 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), String> {
             png: to == Format::Png,
             dpi: 96.0,
             report: None,
+            pages: None,
         }),
         (Format::Docx, None) => unreachable!("a Word output always has a path"),
     }
@@ -1733,6 +1973,9 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
             Format::Md => Format::Docx,
             _ => Format::Pdf,
         });
+    if job.pages.is_some() && to != Format::Png && !job.png {
+        return Err("--pages selects PNG pages; add --png".into());
+    }
     let pdf_job = |bytes: Option<&[u8]>, to: Format| {
         let mut rendered = ConvertJob { bytes, ..*job };
         if to == Format::Png && !job.png {
@@ -1946,6 +2189,14 @@ fn main() -> ExitCode {
         Some(Command::Changes { file, json }) => {
             return exit_code(run_changes(&file, json));
         }
+        Some(Command::Comments {
+            file,
+            json,
+            author,
+            latest,
+        }) => {
+            return exit_code(run_comments(&file, json, author.as_deref(), latest));
+        }
         Some(Command::Accept {
             file,
             output,
@@ -1989,9 +2240,14 @@ fn main() -> ExitCode {
             revisions,
             revision_palette,
             markdown,
+            pages: page_spec,
         }) => {
             let style = match revision_style(revisions, revision_palette.as_deref()) {
                 Ok(style) => style,
+                Err(e) => return exit_code(Err(e)),
+            };
+            let selected = match page_spec.as_deref().map(parse_pages).transpose() {
+                Ok(selected) => selected,
                 Err(e) => return exit_code(Err(e)),
             };
             let job = ConvertJob {
@@ -2006,6 +2262,7 @@ fn main() -> ExitCode {
                 png,
                 dpi,
                 report: report.as_deref(),
+                pages: selected.as_deref(),
             };
             return exit_code(run_convert_any(&job, &markdown));
         }
@@ -2128,6 +2385,33 @@ fn main() -> ExitCode {
                 limit,
             };
             return exit_code(run_debug_diff(&files, &opts));
+        }
+        Some(Command::DiffRender {
+            a,
+            b,
+            dpi,
+            out_dir,
+            json,
+            no_overlay,
+            force,
+        }) => {
+            return match run_diff_render(&DiffRenderJob {
+                a: &a,
+                b: &b,
+                out_dir: out_dir.as_deref(),
+                dpi,
+                json,
+                overlay: !no_overlay,
+                force,
+            }) {
+                Ok(false) => ExitCode::SUCCESS,
+                // Like `edit`'s 3: a CI step can gate on a visual change.
+                Ok(true) => ExitCode::from(5),
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    ExitCode::FAILURE
+                }
+            };
         }
         Some(Command::Debug {
             sub: None,
@@ -2553,6 +2837,13 @@ mod tests {
     }
 
     fn tiny_docx_bytes(family: &str) -> Vec<u8> {
+        body_docx_bytes(&format!(
+            r#"<w:p><w:r><w:rPr><w:rFonts w:ascii="{family}" w:hAnsi="{family}"/></w:rPr><w:t>HELLO</w:t></w:r></w:p>"#
+        ))
+    }
+
+    /// A Letter-size package whose body is `body` (WordprocessingML).
+    fn body_docx_bytes(body: &str) -> Vec<u8> {
         use std::io::{Cursor, Write};
         let mut buf = Vec::new();
         {
@@ -2570,7 +2861,7 @@ mod tests {
             .unwrap();
             z.start_file("word/document.xml", opt).unwrap();
             let doc = format!(
-                r#"<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:rPr><w:rFonts w:ascii="{family}" w:hAnsi="{family}"/></w:rPr><w:t>HELLO</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr></w:body></w:document>"#
+                r#"<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{body}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr></w:body></w:document>"#
             );
             z.write_all(doc.as_bytes()).unwrap();
             z.finish().unwrap();
@@ -2597,6 +2888,7 @@ mod tests {
             png: false,
             dpi: 96.0,
             report: None,
+            pages: None,
         })
         .expect_err("report over the PDF must be refused");
         assert!(err.contains("same file as the PDF output"), "{err}");
@@ -2613,6 +2905,7 @@ mod tests {
             png: false,
             dpi: 96.0,
             report: None,
+            pages: None,
         })
         .expect_err("report over the input must be refused");
         assert!(err.contains("same file as the input"), "{err}");
@@ -2671,6 +2964,7 @@ mod tests {
             png: false,
             dpi: 96.0,
             report: None,
+            pages: None,
         })
         .expect("convert");
         assert!(pdf.exists());
@@ -2759,5 +3053,274 @@ mod tests {
                     .starts_with("--revision-palette:")
             );
         }
+    }
+
+    const PAGE_BREAK: &str = r#"<w:p><w:r><w:br w:type="page"/></w:r></w:p>"#;
+
+    fn pages_docx(texts: &[&str]) -> Vec<u8> {
+        let body: Vec<String> = texts
+            .iter()
+            .map(|t| format!("<w:p><w:r><w:t>{t}</w:t></w:r></w:p>"))
+            .collect();
+        body_docx_bytes(&body.join(PAGE_BREAK))
+    }
+
+    fn file_names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .expect("read_dir")
+            .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn parse_pages_counts_from_one_and_sorts_without_repeats() {
+        assert_eq!(parse_pages("1-3,7"), Ok(vec![0, 1, 2, 6]));
+        assert_eq!(parse_pages("7, 2-3 ,2"), Ok(vec![1, 2, 6]));
+        assert_eq!(parse_pages("4"), Ok(vec![3]));
+        assert_eq!(parse_pages("5-5"), Ok(vec![4]));
+    }
+
+    #[test]
+    fn parse_pages_refuses_zero_empty_backwards_and_words() {
+        for (spec, why) in [
+            ("0", "counted from 1"),
+            ("2-0", "counted from 1"),
+            ("", "empty item"),
+            ("1,,2", "empty item"),
+            ("3-1", "runs backwards"),
+            ("two", "not a page number"),
+            ("1-x", "not a page number"),
+            ("-2", "not a page number"),
+        ] {
+            let err = parse_pages(spec).expect_err(spec);
+            assert!(err.contains(why), "{spec}: {err}");
+        }
+    }
+
+    #[test]
+    fn convert_and_diff_render_parse_their_page_flags() {
+        let cli = Cli::try_parse_from(["jubarte", "convert", "a.docx", "--png", "--pages", "2-3"])
+            .expect("parse");
+        let Some(Command::Convert { pages, png, .. }) = cli.command else {
+            panic!("expected convert");
+        };
+        assert_eq!(pages.as_deref(), Some("2-3"));
+        assert!(png);
+        let cli = Cli::try_parse_from([
+            "jubarte",
+            "diff-render",
+            "a.docx",
+            "b.docx",
+            "--dpi",
+            "72",
+            "--out-dir",
+            "d",
+            "--json",
+            "--no-overlay",
+            "--force",
+        ])
+        .expect("parse");
+        let Some(Command::DiffRender {
+            a,
+            b,
+            dpi,
+            out_dir,
+            json,
+            no_overlay,
+            force,
+        }) = cli.command
+        else {
+            panic!("expected diff-render");
+        };
+        assert_eq!(
+            (a.as_path(), b.as_path()),
+            (Path::new("a.docx"), Path::new("b.docx"))
+        );
+        assert_eq!(dpi, 72.0);
+        assert_eq!(out_dir.as_deref(), Some(Path::new("d")));
+        assert!(json && no_overlay && force);
+        let cli =
+            Cli::try_parse_from(["jubarte", "diff-render", "a.docx", "b.docx"]).expect("parse");
+        let Some(Command::DiffRender {
+            dpi,
+            out_dir,
+            json,
+            no_overlay,
+            force,
+            ..
+        }) = cli.command
+        else {
+            panic!("expected diff-render");
+        };
+        assert_eq!(dpi, 100.0);
+        assert!(out_dir.is_none() && !json && !no_overlay && !force);
+    }
+
+    fn convert_job<'a>(
+        file: &'a Path,
+        output: &'a Path,
+        pages: Option<&'a [usize]>,
+    ) -> ConvertJob<'a> {
+        ConvertJob {
+            file,
+            bytes: None,
+            output: Some(output),
+            force: false,
+            compress: false,
+            font_report: None,
+            revisions: RevisionStyle::Conventional,
+            pdf: false,
+            png: true,
+            dpi: 20.0,
+            report: None,
+            pages,
+        }
+    }
+
+    #[test]
+    fn convert_pages_writes_the_selected_pages_named_by_page_number() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let docx = dir.path().join("in.docx");
+        std::fs::write(&docx, pages_docx(&["A", "B", "C"])).expect("docx");
+        let out = dir.path().join("out.pdf");
+        run_convert(&convert_job(&docx, &out, Some(&[2, 0]))).expect("convert");
+        assert_eq!(
+            file_names(dir.path()),
+            ["in.docx", "out-page-01.png", "out-page-03.png"]
+        );
+        let page_three = std::fs::read(dir.path().join("out-page-03.png")).expect("png");
+        let all = jubarte::convert::docx_to_png(
+            &pages_docx(&["A", "B", "C"]),
+            jubarte::convert::PdfOptions::default(),
+            20.0,
+        )
+        .expect("png");
+        assert_eq!(
+            page_three, all[2],
+            "a selected page is the same bytes as in a full render"
+        );
+    }
+
+    #[test]
+    fn convert_pages_needs_png_and_an_existing_page() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let docx = dir.path().join("in.docx");
+        std::fs::write(&docx, pages_docx(&["A", "B", "C"])).expect("docx");
+        let out = dir.path().join("out.pdf");
+        let err = run_convert(&ConvertJob {
+            png: false,
+            ..convert_job(&docx, &out, Some(&[0]))
+        })
+        .expect_err("--pages without PNG output");
+        assert!(err.contains("--pages"), "{err}");
+        let err = run_convert(&convert_job(&docx, &out, Some(&[5]))).expect_err("page 6 of 3");
+        assert!(
+            err.contains("page 6 is out of range: the document has 3 pages"),
+            "{err}"
+        );
+        assert_eq!(file_names(dir.path()), ["in.docx"], "nothing written");
+    }
+
+    fn diff_job<'a>(a: &'a Path, b: &'a Path, out_dir: Option<&'a Path>) -> DiffRenderJob<'a> {
+        DiffRenderJob {
+            a,
+            b,
+            out_dir,
+            dpi: 20.0,
+            json: false,
+            overlay: true,
+            force: false,
+        }
+    }
+
+    #[test]
+    fn diff_render_writes_only_the_changed_pages_and_diff_json() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = dir.path().join("a.docx");
+        let b = dir.path().join("b.docx");
+        std::fs::write(&a, pages_docx(&["Page one.", "The fee is ten."])).expect("a");
+        std::fs::write(
+            &b,
+            pages_docx(&["Page one.", "The fee is twenty.", "Extra."]),
+        )
+        .expect("b");
+        let out = dir.path().join("diff");
+        assert_eq!(run_diff_render(&diff_job(&a, &b, Some(&out))), Ok(true));
+        assert_eq!(
+            file_names(&out),
+            [
+                "a-page-02.png",
+                "b-page-02.png",
+                "b-page-03.png",
+                "diff-page-02.png",
+                "diff.json"
+            ]
+        );
+        let json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(out.join("diff.json")).expect("json"))
+                .expect("parse");
+        assert_eq!(json["dpi"], 20.0);
+        assert_eq!(json["a_pages"], 2);
+        assert_eq!(json["b_pages"], 3);
+        assert_eq!(json["changed"], 2);
+        assert_eq!(json["pages"][0]["changed_ratio"], 0.0);
+        assert!(json["pages"][1]["changed_ratio"].as_f64().expect("ratio") > 0.0);
+        let raw = std::fs::read_to_string(out.join("diff.json")).expect("json");
+        let ratio = raw
+            .split("\"changed_ratio\":")
+            .nth(2)
+            .expect("page 2's ratio");
+        let ratio = &ratio[..ratio.find(',').expect("comma")];
+        let shortest = ratio.parse::<f32>().expect("f32").to_string();
+        assert_eq!(
+            ratio, shortest,
+            "an f32 printed at f32 precision, not widened"
+        );
+        assert_eq!(json["pages"][2]["only_in"], "b");
+
+        let err = run_diff_render(&diff_job(&a, &b, Some(&out))).expect_err("files exist");
+        assert!(err.contains("already exists"), "{err}");
+        let again = DiffRenderJob {
+            force: true,
+            overlay: false,
+            json: true,
+            ..diff_job(&a, &b, Some(&out))
+        };
+        assert_eq!(run_diff_render(&again), Ok(true));
+    }
+
+    #[test]
+    fn diff_render_of_equal_documents_writes_only_diff_json() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = dir.path().join("a.docx");
+        std::fs::write(&a, pages_docx(&["Same."])).expect("a");
+        let out = dir.path().join("diff");
+        assert_eq!(run_diff_render(&diff_job(&a, &a, Some(&out))), Ok(false));
+        assert_eq!(file_names(&out), ["diff.json"]);
+        assert_eq!(run_diff_render(&diff_job(&a, &a, None)), Ok(false));
+    }
+
+    #[test]
+    fn diff_render_without_an_overlay_writes_no_diff_png() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = dir.path().join("a.docx");
+        let b = dir.path().join("b.docx");
+        std::fs::write(&a, pages_docx(&["The fee is ten."])).expect("a");
+        std::fs::write(&b, pages_docx(&["The fee is twenty."])).expect("b");
+        let out = dir.path().join("diff");
+        let job = DiffRenderJob {
+            overlay: false,
+            ..diff_job(&a, &b, Some(&out))
+        };
+        assert_eq!(run_diff_render(&job), Ok(true));
+        assert_eq!(
+            file_names(&out),
+            ["a-page-01.png", "b-page-01.png", "diff.json"]
+        );
+        let missing = dir.path().join("missing.docx");
+        let err = run_diff_render(&diff_job(&missing, &b, None)).expect_err("no file");
+        assert!(err.contains("missing.docx"), "{err}");
     }
 }

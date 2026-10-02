@@ -203,24 +203,26 @@ the folio repo, not this one.
 
 ## 6. Comment workflow in `jubarte edit` and the APIs (NEXT VERSION — not 0.10.x)
 
-Status: OPEN. Requested 2026-09-29. Today an edit plan can only **add** a
-comment (the `Comment` op, plus the `comment` field on inserts and
-replacements), and Accept/Reject All drop comments with their anchors.
-Still to add, in the CLI edit plans and the Rust, Python and WASM APIs:
+Status: SHIPPED except the last item (`comments::list_comments`,
+`jubarte comments`, `reply_comment` / `resolve_comment` / `edit_comment` /
+`delete_comment` and `through` in edit plans; Python and WASM twins).
 
-- [ ] **Add** — keep the existing op; also add a comment to a range spanning
-  several paragraphs.
-- [ ] **Delete** a comment by id, together with its anchors, its
+- [x] **Add** — keep the existing op; also add a comment to a range spanning
+  several paragraphs (`comment` with `through`).
+- [x] **Delete** a comment by id, together with its anchors, its
   commentsExtended / commentsIds / commentsExtensible entries and its replies.
-- [ ] **Modify** a comment's text, keeping its id, author and thread.
-- [ ] **Reply** to a comment (a sub-comment: `w15:paraIdParent` in
+- [x] **Modify** a comment's text, keeping its id, author and thread.
+- [x] **Reply** to a comment (a sub-comment: `w15:paraIdParent` in
   commentsExtended, the way Word threads replies).
-- [ ] **List** comments: all of them, only the latest, or only those of one
+- [x] **List** comments: all of them, only the latest, or only those of one
   author name.
-- [ ] **See surroundings** — for a comment anchored to a few words, return
+- [x] **See surroundings** — for a comment anchored to a few words, return
   the anchored text plus the context around it (the enclosing paragraph and
-  its neighbours), so a reader can tell what the comment is about.
-- [ ] **Resolve** comments and sub-comments (`w15:done="1"`), and reopen them.
+  its neighbours), so a reader can tell what the comment is about. Shipped
+  as `anchor_text` with up to 80 characters `before` and `after` it, plus
+  the `paragraph` id; neighbouring paragraphs are read by that id
+  (`jubarte text`), not returned with the comment.
+- [x] **Resolve** comments and sub-comments (`w15:done="1"`), and reopen them.
 - [ ] **Remember which party cares a lot** — keep a per-party (author) record
   of which points that party presses hard on, so later edits and replies can
   take it into account.
@@ -245,3 +247,7 @@ that carry a change:
 - [ ] Report the kept pages in the JSON page report (`--report`).
 - [ ] A document with no changes writes no pages and says so; it is not an
   error.
+
+Builds on `RenderRequest.pages` (`convert --pages`, added with
+`diff-render`): the layout's revision marks pick the pages instead of a user
+list.
