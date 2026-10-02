@@ -335,3 +335,31 @@ def test_insert_image_encodes_bytes_and_builds_the_wire_operation():
 def test_insert_image_rejects_empty_bytes():
     with pytest.raises(ValueError):
         EditPlan(author="Reviewer").insert_image(0, image=b"")
+
+
+def test_page_setup_builds_the_wire_operation():
+    plan = EditPlan(author="Reviewer").page_setup(
+        section="all", page={"width_dxa": 12000, "height_dxa": 16000}, orientation="landscape", margins_dxa={"top": 720, "left": 1080}, id="pg"
+    )
+    assert plan.to_dict()["operations"] == [
+        {
+            "id": "pg",
+            "kind": "page_setup",
+            "section": "all",
+            "page": {"width_dxa": 12000, "height_dxa": 16000},
+            "orientation": "landscape",
+            "margins_dxa": {"top": 720, "left": 1080},
+        }
+    ]
+    assert EditPlan(author="Reviewer").page_setup(page="a4").to_dict()["operations"] == [
+        {"kind": "page_setup", "section": "last", "page": "a4"}
+    ]
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [{}, {"margins_dxa": {}}, {"margins_dxa": {"inside": 5}}, {"page": {"width_dxa": 1}}],
+)
+def test_page_setup_rejects_empty_or_malformed_fields(kwargs):
+    with pytest.raises(ValueError):
+        EditPlan(author="Reviewer").page_setup(**kwargs)

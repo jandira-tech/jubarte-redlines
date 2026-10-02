@@ -132,7 +132,8 @@ out = doc.edit(plan)               # EditResult: clean, redline, report, diff
 whole paragraphs; `insert_table(paragraph, rows=[[...], ...])` adds a table and
 `list_paragraphs([...], kind_of_list="decimal")` (wire kind `list`) numbers
 paragraphs; `insert_footnote` adds a footnote after an anchor;
-`insert_image` adds a picture paragraph;
+`insert_image` adds a picture paragraph; `page_setup` changes the page size,
+orientation and margins;
 `resolving(accept={...}, reject={...})` settles existing
 tracked changes first. `plan.to_json()` is exactly what `edit --plan` reads.
 

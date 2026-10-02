@@ -523,6 +523,9 @@ _FORMAT_FIELDS = frozenset(
 )
 
 
+_MARGIN_FIELDS = frozenset({"top", "right", "bottom", "left", "header", "footer"})
+
+
 def _format(value: Mapping[str, object]) -> dict[str, object]:
     spec = dict(value)
     unknown = set(spec) - _FORMAT_FIELDS
@@ -937,6 +940,41 @@ class EditPlan:
         if width_emu is not None:
             op["width_emu"] = width_emu
         return self._with(_with_optional(op, alt=alt, id=id))
+
+    def page_setup(
+        self,
+        *,
+        section: Literal["last", "all"] = "last",
+        page: Literal["letter", "a4"] | Mapping[str, int] | None = None,
+        orientation: Literal["portrait", "landscape"] | None = None,
+        margins_dxa: Mapping[str, int] | None = None,
+        id: str | None = None,
+    ) -> EditPlan:
+        """Set the page size, orientation and margins of the last section or
+        of every section, as a tracked section change. ``page`` is ``"letter"``,
+        ``"a4"`` or ``{"width_dxa", "height_dxa"}``; ``margins_dxa`` takes any
+        of top, right, bottom, left, header, footer, in twentieths of a point
+        (1440 per inch)."""
+        op: dict[str, object] = {"kind": "page_setup", "section": section}
+        if page is not None:
+            if isinstance(page, Mapping):
+                if set(page) != {"width_dxa", "height_dxa"}:
+                    raise ValueError("a custom page needs exactly width_dxa and height_dxa")
+                op["page"] = dict(page)
+            else:
+                op["page"] = page
+        if orientation is not None:
+            op["orientation"] = orientation
+        if margins_dxa is not None:
+            unknown = set(margins_dxa) - _MARGIN_FIELDS
+            if unknown:
+                raise ValueError(f"unknown margins: {sorted(unknown)}")
+            if not margins_dxa:
+                raise ValueError("margins_dxa needs at least one margin")
+            op["margins_dxa"] = dict(margins_dxa)
+        if len(op) == 2:
+            raise ValueError("page_setup needs page, orientation or margins_dxa")
+        return self._with(_with_optional(op, id=id))
 
     def to_dict(self) -> dict[str, object]:
         """The wire form."""

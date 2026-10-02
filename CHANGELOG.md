@@ -175,6 +175,15 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   keeps the aspect ratio; by default the picture is its pixel size at 96 dpi,
   at most 6.5 inches wide. `alt` becomes the picture's description. Python:
   `EditPlan.insert_image(..., image=bytes)`.
+- Edit plans: `page_setup` sets the page size (`letter`, `a4` or
+  `{"width_dxa", "height_dxa"}`), `orientation` and `margins_dxa` (any of
+  top, right, bottom, left, header, footer) of the last section or, with
+  `"section": "all"`, of every section. Unchanged values stay; a document
+  without a final section gets Word's default Letter page first. The
+  redline records the old geometry as `w:sectPrChange` on every changed
+  section: the comparer records the final one, and the edit adds the record
+  to mid-document sections. Margins that leave no text width or height are
+  refused. Python: `EditPlan.page_setup(...)`.
 - `uvx jubarte-redlines redline a.docx b.docx -o redline.docx` runs the CLI
   without an install: the Python wheel installs a `jubarte-redlines`
   console script, `redline` is an alias of `compare`, and usage names the

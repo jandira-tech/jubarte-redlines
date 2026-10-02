@@ -504,3 +504,17 @@ def test_edit_inserts_an_image_paragraph_through_the_native_engine() -> None:
     with pytest.raises(EditPlanError) as refused:
         doc.edit(EditPlan(author="Claude").for_document(doc).insert_image(0, image=b"not a picture"))
     assert refused.value.code == "UNSUPPORTED_IMAGE"
+
+
+def test_edit_sets_up_pages_through_the_native_engine() -> None:
+    doc = letter()
+    plan = EditPlan(author="Claude", date="2026-10-02T12:00:00Z").for_document(doc).page_setup(
+        page="a4", orientation="landscape", margins_dxa={"left": 1080, "right": 1080}
+    )
+    result = doc.edit(plan)
+    assert result.report.ok
+    assert [(o.kind, o.matches) for o in result.report.operations] == [("page_setup", 1)]
+    assert [p.text for p in result.clean.inspect().paragraphs] == [p.text for p in doc.inspect().paragraphs]
+    with pytest.raises(EditPlanError) as refused:
+        doc.edit(EditPlan(author="Claude").for_document(doc).page_setup(margins_dxa={"left": 7000, "right": 7000}))
+    assert refused.value.code == "INVALID_EDIT"

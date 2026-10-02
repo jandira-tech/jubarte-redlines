@@ -32,6 +32,7 @@ fn every_advertised_edit_kind_accepts_its_wire_representation() {
         json!({"kind":"format_run", "paragraph":{"index":0}, "find":"a", "occurrence":2, "format":{"bold":true, "font":"Arial", "size_pt":10.5, "color":"FF0000", "strike":false, "caps":true}}),
         json!({"kind":"insert_footnote", "paragraph":{"index":0}, "after":"a", "occurrence":1, "text":"note"}),
         json!({"kind":"insert_image", "paragraph":{"index":0}, "position":"before", "image_base64":"iVBORw0KGgo=", "content_type":"image/png", "width_emu":914400, "alt":"Logo"}),
+        json!({"kind":"page_setup", "section":"all", "page":{"width_dxa":12000, "height_dxa":16000}, "orientation":"landscape", "margins_dxa":{"top":-720, "left":1080}}),
     ];
     let manifest = capabilities("rust");
     let kinds: Vec<_> = operations

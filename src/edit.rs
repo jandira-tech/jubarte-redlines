@@ -34,12 +34,14 @@ mod images;
 mod notes;
 mod rewrite;
 mod runs;
+mod sections;
 mod structural;
 mod tracked;
 mod watermark;
 mod whole;
 
 pub use controls::ControlSelector;
+pub use sections::{CustomPage, Margins, Orientation, PageSize, Paper, SectionScope};
 
 /// A versioned, portable set of operations against one document snapshot.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -436,6 +438,27 @@ pub enum OperationKind {
         /// Alternative text (`wp:docPr descr`).
         alt: Option<String>,
     },
+    /// Set the page size, orientation and margins of the last section or of
+    /// every section; the redline records the old ones (`w:sectPrChange`).
+    /// At least one of `page`, `orientation`, `margins_dxa`.
+    PageSetup {
+        #[serde(default)]
+        /// `last` (default) or `all`.
+        section: SectionScope,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// `letter`, `a4`, or `{"width_dxa", "height_dxa"}`.
+        page: Option<PageSize>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// `portrait` or `landscape`.
+        orientation: Option<Orientation>,
+        #[serde(default, skip_serializing_if = "is_default_margins")]
+        /// Margins to change, in twentieths of a point.
+        margins_dxa: Margins,
+    },
+}
+
+fn is_default_margins(margins: &Margins) -> bool {
+    *margins == Margins::default()
 }
 
 fn resolve_done() -> bool {
@@ -1091,6 +1114,7 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
                 "width_emu",
                 "alt",
             ],
+            "page_setup" => &["section", "page", "orientation", "margins_dxa"],
             other => {
                 return Err(err(
                     "INVALID_PLAN",
@@ -1104,6 +1128,13 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
                 "INVALID_PLAN",
                 None,
                 format!("operations[{i}] (fill_control): selects a control, not a paragraph"),
+            ));
+        }
+        if kind == "page_setup" && map.contains_key("paragraph") {
+            return Err(err(
+                "INVALID_PLAN",
+                None,
+                format!("operations[{i}] (page_setup): sections take no paragraph"),
             ));
         }
         for key in map.keys() {
@@ -1144,6 +1175,13 @@ pub fn apply_plan(source: &[u8], plan: &EditPlan) -> Result<EditResult, EditErro
     let mut redline =
         crate::document_comparer::compare_documents_with_settings(&base, revised, &settings)
             .map_err(|e| err("COMPARE_FAILED", None, e.to_string()))?;
+    if tx
+        .resolved
+        .iter()
+        .any(|(_, r)| matches!(r, Resolved::PageSetup { .. }))
+    {
+        redline = sections::record_mid_changes(&redline, &base, &plan.author, &tx.date)?;
+    }
     if marked.is_some() {
         let (rewritten, fallbacks) = whole::rewrite(
             &redline,
@@ -1369,6 +1407,9 @@ enum Resolved {
         anchor: usize,
         side: Side,
         picture: crate::markdown::Picture,
+    },
+    PageSetup {
+        targets: sections::Targets,
     },
 }
 
@@ -1652,6 +1693,39 @@ impl<'p> Transaction<'p> {
                 } => self
                     .resolve_list(&id, paragraphs, *kind_of_list, *level, *restart)
                     .map(|(resolved, outcome)| (vec![resolved], outcome)),
+                OperationKind::PageSetup {
+                    section,
+                    page,
+                    orientation,
+                    margins_dxa,
+                } => {
+                    let mut outcome = EditOutcome {
+                        id: id.clone(),
+                        kind: String::new(),
+                        status: String::new(),
+                        paragraph: None,
+                        matches: 0,
+                        context: None,
+                        comment_id: None,
+                        code: None,
+                        message: None,
+                    };
+                    match self.resolve_page_setup(
+                        *section,
+                        *page,
+                        *orientation,
+                        *margins_dxa,
+                        &mut outcome,
+                    ) {
+                        Ok(targets) => {
+                            outcome.context = Some(format!("{{§ {} section(s)}}", targets.len()));
+                            Ok((vec![Resolved::PageSetup { targets }], outcome))
+                        }
+                        Err((code, message)) => {
+                            Err(Box::new((err(&code, Some(&id), message), outcome)))
+                        }
+                    }
+                }
                 OperationKind::ReplyComment { .. }
                 | OperationKind::ResolveComment { .. }
                 | OperationKind::EditComment { .. }
@@ -1758,6 +1832,13 @@ impl<'p> Transaction<'p> {
                 return Err(fail(
                     "INVALID_PLAN",
                     "list resolves through resolve_list".into(),
+                    outcome,
+                ));
+            }
+            OperationKind::PageSetup { .. } => {
+                return Err(fail(
+                    "INVALID_PLAN",
+                    "page_setup resolves through resolve_page_setup".into(),
                     outcome,
                 ));
             }
@@ -2152,9 +2233,10 @@ impl<'p> Transaction<'p> {
             | OperationKind::ReplyComment { .. }
             | OperationKind::ResolveComment { .. }
             | OperationKind::EditComment { .. }
-            | OperationKind::DeleteComment { .. } => Err(fail(
+            | OperationKind::DeleteComment { .. }
+            | OperationKind::PageSetup { .. } => Err(fail(
                 "INVALID_PLAN",
-                "rewrite, list and thread operations resolve on their own paths".into(),
+                "rewrite, list, page_setup and thread operations resolve on their own paths".into(),
                 outcome,
             )),
             OperationKind::Watermark { .. } => Err(fail(
@@ -2841,6 +2923,7 @@ impl<'p> Transaction<'p> {
         self.resolved
             .iter()
             .flat_map(|(_, r)| match r {
+                Resolved::PageSetup { .. } => Vec::new(),
                 Resolved::Text { para, .. }
                 | Resolved::CommentRange { para, .. }
                 | Resolved::CommentSpan { para, .. }
@@ -3051,6 +3134,7 @@ impl<'p> Transaction<'p> {
                 | Resolved::FormatParagraph { .. }
                 | Resolved::MergeParagraphs { .. }
                 | Resolved::List { .. }
+                | Resolved::PageSetup { .. }
                 | Resolved::Thread { .. }
                 | Resolved::FillControl { .. } => continue,
             };
@@ -3103,6 +3187,23 @@ impl<'p> Transaction<'p> {
                 .any(|&(s, e, _)| runs::format_overlaps_edit((*start, *end), (s, e)));
             if overlaps {
                 return Err(self.conflict(*i, "formats text another operation changes"));
+            }
+        }
+        // One page setup per section.
+        let setups: Vec<(usize, &sections::Targets)> = self
+            .resolved
+            .iter()
+            .filter_map(|(i, r)| match r {
+                Resolved::PageSetup { targets } => Some((*i, targets)),
+                _ => None,
+            })
+            .collect();
+        for (n, (i, targets)) in setups.iter().enumerate() {
+            if setups[..n]
+                .iter()
+                .any(|(_, earlier)| sections::targets_overlap(earlier, targets))
+            {
+                return Err(self.conflict(*i, "sets up a section another operation sets up"));
             }
         }
         // A reference mark needs its anchor's end to survive the text edits.
@@ -3295,7 +3396,8 @@ impl<'p> Transaction<'p> {
                 | Resolved::FillControl { .. }
                 | Resolved::FormatRun { .. }
                 | Resolved::InsertFootnote { .. }
-                | Resolved::InsertImage { .. } => false,
+                | Resolved::InsertImage { .. }
+                | Resolved::PageSetup { .. } => false,
             })
             .count() as u64;
         if needed > 0 && self.next_comment_id + needed - 1 > u64::from(u32::MAX) {
@@ -3346,6 +3448,7 @@ impl<'p> Transaction<'p> {
                         | Resolved::FormatRun { .. }
                         | Resolved::InsertFootnote { .. }
                         | Resolved::InsertImage { .. }
+                        | Resolved::PageSetup { .. }
                         | Resolved::Thread { .. }
                         | Resolved::FillControl { .. } => None,
                     };
@@ -3760,6 +3863,18 @@ impl<'p> Transaction<'p> {
         for table in tables {
             structural::separate(&mut self.opened.dom, table);
         }
+        // 8. Page setup.
+        let setups: Vec<sections::Targets> = self
+            .resolved
+            .iter()
+            .filter_map(|(_, r)| match r {
+                Resolved::PageSetup { targets } => Some(targets.clone()),
+                _ => None,
+            })
+            .collect();
+        for targets in &setups {
+            self.apply_page_setup(targets);
+        }
         Ok(())
     }
 
@@ -4064,6 +4179,7 @@ fn kind_name(kind: &OperationKind) -> &'static str {
         OperationKind::FormatRun { .. } => "format_run",
         OperationKind::InsertFootnote { .. } => "insert_footnote",
         OperationKind::InsertImage { .. } => "insert_image",
+        OperationKind::PageSetup { .. } => "page_setup",
     }
 }
 

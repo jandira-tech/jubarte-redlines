@@ -158,7 +158,10 @@ plus `format`: restyles existing text as a tracked formatting change;
 (`after` plus the note's `text`; body paragraphs only; optional
 `occurrence`), `insert_image` (`image_base64` of a PNG, JPEG, GIF, BMP or
 TIFF file, `position` `before|after`, optional `content_type`, `width_emu`
-with 914400 per inch, `alt`; body paragraphs only). `replace` and
+with 914400 per inch, `alt`; body paragraphs only), `page_setup` (no
+`paragraph`; `section` `last|all`, `page` `letter|a4|{"width_dxa",
+"height_dxa"}`, `orientation` `portrait|landscape`, `margins_dxa` with any
+of top, right, bottom, left, header, footer, 1440 per inch). `replace` and
 `insert` take an optional `format` (`bold`/`italic`/`underline`/`highlight`,
 `font`, `size_pt`, `color` as `FF0000` or `auto`, `strike`, `caps`) that
 applies to the new text only. `replace` takes `"whole": true` to show
