@@ -475,6 +475,8 @@ Selector = str | int | dict[str, str | int]
 ``index``/``starts_with``/``contains`` also take ``"story": "header1"`` (default: the body)."""
 
 ExistingRevisions = Literal["refuse", "accept", "reject", "keep"]
+ProtectionEdit = Literal["none", "readOnly", "comments", "trackedChanges", "forms"]
+_PROTECTIONS = ("none", "readOnly", "comments", "trackedChanges", "forms")
 """What an edit plan does with tracked changes already in the source:
 ``refuse`` (default), ``accept`` or ``reject`` them first, or ``keep`` them
 tracked and add the plan's edits as new revisions beside them."""
@@ -1022,6 +1024,43 @@ class EditPlan:
             raise ValueError("levels must be an int from 1 to 9")
         op: dict[str, object] = {"kind": "insert_toc", "paragraph": _selector(paragraph), "position": position, "levels": levels}
         return self._with(_with_optional(op, title=title, id=id))
+
+    def settings(
+        self,
+        *,
+        track_revisions: bool | None = None,
+        update_fields: bool | None = None,
+        protection: ProtectionEdit | None = None,
+        enforcement: bool = True,
+        id: str | None = None,
+    ) -> EditPlan:
+        """Write document settings, in schema order, into both documents.
+
+        ``track_revisions`` turns Track Changes on or off, ``update_fields``
+        asks Word to update fields on open (``w:updateFields``; the plan's own
+        ``update_fields`` writes jubarte's results instead), and ``protection`` restricts
+        editing (``"readOnly"``, ``"comments"``, ``"trackedChanges"``,
+        ``"forms"``; ``"none"`` lifts it). The restriction has no password,
+        so any user can turn it off in Word. A setting left as ``None``
+        stays as it is; one ``settings`` per plan.
+        """
+        for name, value in (("track_revisions", track_revisions), ("update_fields", update_fields)):
+            if value is not None and not isinstance(value, bool):
+                raise TypeError(f"{name} must be a bool or None")
+        if not isinstance(enforcement, bool):
+            raise TypeError("enforcement must be a bool")
+        if protection is not None and protection not in _PROTECTIONS:
+            raise ValueError(f"protection must be one of {', '.join(_PROTECTIONS)}")
+        if track_revisions is None and update_fields is None and protection is None:
+            raise ValueError("settings needs at least one of track_revisions, update_fields, protection")
+        op: dict[str, object] = {"kind": "settings"}
+        if track_revisions is not None:
+            op["track_revisions"] = track_revisions
+        if update_fields is not None:
+            op["update_fields"] = update_fields
+        if protection is not None:
+            op["protection"] = {"edit": protection, "enforcement": enforcement}
+        return self._with(_with_optional(op, id=id))
 
     def to_dict(self) -> dict[str, object]:
         """The wire form."""

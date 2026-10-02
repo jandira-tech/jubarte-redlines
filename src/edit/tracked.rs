@@ -146,6 +146,8 @@ fn redline(tx: &Transaction<'_>) -> Result<Vec<u8>, EditError> {
     t.resolved = tx.resolved.clone();
     // A watermark is header content, not a change: written as is.
     t.watermark = tx.watermark.clone();
+    // Settings are not revisions either.
+    t.settings = tx.settings.clone();
     // The comments of commented paragraph deletions are written here, on
     // the deleted text, instead of into a commented base for the comparer.
     let mut comments = tx.comments.clone();

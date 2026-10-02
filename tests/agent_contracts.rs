@@ -35,6 +35,7 @@ fn every_advertised_edit_kind_accepts_its_wire_representation() {
         json!({"kind":"page_setup", "section":"all", "page":{"width_dxa":12000, "height_dxa":16000}, "orientation":"landscape", "margins_dxa":{"top":-720, "left":1080}}),
         json!({"kind":"insert_toc", "paragraph":{"index":0}, "position":"before", "levels":2, "title":"Contents"}),
         json!({"kind":"redact", "paragraph":{"index":0}, "find":"a", "occurrence":2}),
+        json!({"kind":"settings", "track_revisions":true, "update_fields":true, "protection":{"edit":"trackedChanges", "enforcement":true}}),
     ];
     let manifest = capabilities("rust");
     let kinds: Vec<_> = operations

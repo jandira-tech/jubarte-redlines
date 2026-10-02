@@ -125,8 +125,8 @@ matched exactly once. Exit 3 means the plan was refused: the report on stdout
 says which operation and why (`ANCHOR_NOT_FOUND`, `AMBIGUOUS_ANCHOR` with the
 match count, `OVERLAPPING_EDITS`, `UNSUPPORTED_STRUCTURE`, `UNSUPPORTED_IMAGE`, `STALE_SOURCE`,
 `EXISTING_REVISIONS`, `REVISION_CONFLICT`, `UNKNOWN_CHANGE`,
-`UNKNOWN_COMMENT`, `COMMENT_NOT_IN_BODY`, `REDACTION_LEAK`, `INVALID_PLAN`,
-`INVALID_EDIT`, `LOCKED_CONTROL`);
+`UNKNOWN_COMMENT`, `COMMENT_NOT_IN_BODY`, `REDACTION_LEAK`, `UNSUPPORTED`,
+`INVALID_PLAN`, `INVALID_EDIT`, `LOCKED_CONTROL`);
 fix the plan and rerun. Use `--dry-run`
 to see the report without writing.
 
@@ -165,7 +165,11 @@ with 914400 per inch, `alt`; body paragraphs only), `page_setup` (no
 "height_dxa"}`, `orientation` `portrait|landscape`, `margins_dxa` with any
 of top, right, bottom, left, header, footer, 1440 per inch), `redact` (`find`: replaced with one block `█` per
 character in the clean copy and the redline alike, untracked; optional
-`occurrence`). `replace` and
+`occurrence`), `settings` (any of `track_revisions`, `update_fields` as
+booleans and `protection` `{"edit": "readOnly|comments|trackedChanges|forms|none",
+"enforcement": true}`; no paragraph; one per plan; this `update_fields`
+asks Word to recompute fields on open, the plan's top-level one writes
+jubarte's results now). `replace` and
 `insert` take an optional `format` (`bold`/`italic`/`underline`/`highlight`,
 `font`, `size_pt`, `color` as `FF0000` or `auto`, `strike`, `caps`) that
 applies to the new text only. `replace` takes `"whole": true` to show
@@ -226,6 +230,13 @@ Gotchas:
   message names the parts, never the text. Redact every copy in the same
   plan. A short `find` can also match an unrelated attribute value and be
   refused: the check fails closed.
+- `settings` writes `word/settings.xml` (created when missing) in schema
+  order, in the clean copy and the redline alike: settings are not
+  revisions. `false` removes `w:trackRevisions` or `w:updateFields`;
+  `"edit": "none"` removes the restriction. `protection` has no password
+  (`password` is refused with `UNSUPPORTED`): it is Word's "enforce
+  without password", which any user can turn off. Two `settings` in one
+  plan are `OVERLAPPING_EDITS`.
 - `merge_paragraphs` keeps the second paragraph's properties (what Word's
   accept of a deleted paragraph mark does); the redline deletes the first
   paragraph's mark and inserts only the separator, as Word Compare shows a

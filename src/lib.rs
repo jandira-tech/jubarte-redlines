@@ -78,6 +78,8 @@ pub mod perf;
 pub mod revision_processor;
 /// Remove authors, rsids, document properties and comments; find a text.
 pub mod scrub;
+/// Document settings an edit plan writes, in `CT_Settings` order.
+pub mod settings;
 /// ISO Strict → Transitional package normalization.
 pub mod strict_translation;
 /// Unique id helpers for revision markup.
