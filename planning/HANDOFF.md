@@ -17,7 +17,7 @@ onto `ccr-17e4f046-849j1u` (PR #273). State per proposed change:
 | P2, P3 | done | `admission.rs` (checked add, `get`, saturating cap) |
 | P5 | done | `capabilities.rs`, `inspect.rs` (`STORY_KINDS`), `edit.rs` |
 | P7 | merged into P1 (bounded Strict scan) | `strict_translation.rs` |
-| P8, P11, P12, P14, P24, P25 | done (docs, dedup, `fuzz/` crate) | see CHANGELOG; fuzz targets are NOT built or run here (no cargo-fuzz or nightly) |
+| P8, P11, P12, P14, P24, P25 | done (docs, dedup, `fuzz/` crate) | see CHANGELOG; fuzz targets could not be built here (no cargo-fuzz or nightly), but the `fuzz smoke` CI job built and ran all three for 60 s each and passed on c47475d |
 | P9, P19 | done, old names kept as deprecated aliases | `util/sha1.rs`; the `0.10.2` in `#[deprecated(since)]` is an assumption |
 | P10 | done | `util/words.rs`; adds `unicode-properties` as a direct dependency |
 | P13 | done, with one deviation | lib and CLI use `#![forbid(unsafe_code)]`; the package lint stays `deny` because the allocation-counting examples (`mem_attribute`, `mem_profile`, `alloc_attribute`) and tests (`perf_serialize_prefix_allocs`, `perf_atom_clone_allocs`) `#![allow(unsafe_code)]`. The two denies are `cfg_attr(not(test), ...)` on `admission`, `strict_translation`, `opc` |
@@ -388,3 +388,5 @@ worktrees are gone.
 - The safety-net check-in `trig_01XiQLjWdV3Wep6mWMTZEywP` fired at 07:01 and
   was not acted on because this session was already in handoff mode; it is
   one-shot and will not fire again. The PR remains subscribed.
+
+CI on c47475d (run 37014641709, attempt 2): every job green, including the MSRV (1.88) test job, clippy on the three bindings, coverage, the Python bindings and the fuzz smoke. The first attempt's `python bindings` failure was `test_stdio_smoke_initialize_and_list_tools` from `main`'s MCP work (a stdin-EOF race); it passed on re-run and 8 of 8 locally.
