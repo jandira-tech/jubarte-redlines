@@ -8,7 +8,8 @@
 //! `DocumentByteArray` and exposes the main document part (parsed into the arena
 //! DOM on demand). Backed by the M1.5 `PartFs` OPC layer.
 
-use crate::opc::{OpcError, PartFs};
+use crate::admission::{InputLimits, admit};
+use crate::opc::{OpcError, PartFs, refused};
 use crate::xmllinq::{Dom, NodeId};
 
 /// A WordprocessingML document (bytes + lazily-parsed main document part).
@@ -24,7 +25,15 @@ pub struct WmlDocument {
 
 impl WmlDocument {
     /// `new WmlDocument(bytes)`.
+    ///
+    /// # Errors
+    ///
+    /// The package is admitted under [`InputLimits::compare`] first (see
+    /// [`crate::admission`]); a refusal is an `OpcError::Io(InvalidData)`
+    /// carrying the [`AdmissionError`](crate::admission::AdmissionError) as
+    /// its source. Then whatever [`PartFs::open`] reports.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, OpcError> {
+        admit(bytes, InputLimits::compare()).map_err(refused)?;
         Ok(WmlDocument {
             document_byte_array: bytes.to_vec(),
             file_name: String::new(),

@@ -15,7 +15,9 @@
 //!
 //! The agent-facing entry points ([`crate::inspect`], [`crate::edit`] and the
 //! bindings over them) admit with [`InputLimits::default`]. The redline
-//! comparer keeps its historical tolerance.
+//! comparer ([`crate::document_comparer`]) and [`crate::WmlDocument`] admit
+//! with the roomier [`InputLimits::compare`], which
+//! [`crate::comparer::WmlComparerSettings::input_limits`] overrides.
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashSet};
@@ -50,6 +52,25 @@ impl Default for InputLimits {
             max_entries: 10_000,
             max_part_bytes: 64 * MIB,
             max_uncompressed_bytes: 256 * MIB,
+            max_xml_depth: 256,
+        }
+    }
+}
+
+impl InputLimits {
+    /// The redline comparer's budget: the same entry and depth caps as
+    /// [`Self::default`], with room for the embedded media legal corpora
+    /// carry (512 MiB per file and per part, 2 GiB inflated in all). Hosts
+    /// that know their documents set
+    /// [`crate::comparer::WmlComparerSettings::input_limits`] tighter.
+    #[must_use]
+    pub const fn compare() -> Self {
+        const MIB: u64 = 1024 * 1024;
+        Self {
+            max_compressed_bytes: 512 * MIB,
+            max_entries: 10_000,
+            max_part_bytes: 512 * MIB,
+            max_uncompressed_bytes: 2048 * MIB,
             max_xml_depth: 256,
         }
     }

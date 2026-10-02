@@ -29,6 +29,20 @@ use std::io::{Cursor, Write};
 
 use rdocx_opc::OpcPackage;
 pub use rdocx_opc::{OpcError, Relationship, Relationships};
+
+/// Input the engine refuses before or while reading it, as an `Err` the
+/// caller can handle rather than a panic, which would abort a WASM instance
+/// or the Python interpreter. `InvalidData` is std's kind for input that is
+/// well-formed but unacceptable; the typed `err` travels as the
+/// [`std::io::Error`] source, so `Display` carries its message and
+/// `io::Error::get_ref` lets a caller downcast it (for example to
+/// [`crate::admission::AdmissionError`] and read its stable code).
+pub(crate) fn refused<E>(err: E) -> OpcError
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    OpcError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, err))
+}
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 

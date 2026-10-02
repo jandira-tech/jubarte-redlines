@@ -366,3 +366,45 @@ fn b2c_deleted_reference_definition_all_deleted() {
         "reference-marker run guaranteed"
     );
 }
+
+/// A malformed notes layout (references present, no withRevisions part to
+/// write the renumbered definitions into) is a typed error from the fallible
+/// entry point, and the input DOM is left as it was. The infallible entry
+/// point used to turn this into a panic, which aborts the Python and WASM
+/// consumers; it now delegates to the fallible one.
+#[test]
+fn missing_with_revisions_part_is_a_typed_error_not_a_panic() {
+    use jubarte::comparer::footnotes::RectifyError;
+    use jubarte::comparer::try_compare_bodies_faithful_with_notes;
+
+    let s = settings();
+    let mut dom = Dom::new();
+    let (r1, b1) = doc_body(
+        &mut dom,
+        "<w:p><w:r><w:t>hello</w:t></w:r><w:r><w:footnoteReference w:id=\"1001\"/></w:r></w:p>",
+    );
+    let (r2, b2) = doc_body(
+        &mut dom,
+        "<w:p><w:r><w:t>hello there</w:t></w:r><w:r><w:footnoteReference w:id=\"2001\"/></w:r></w:p>",
+    );
+    let fn_before = footnotes_root(&mut dom, &[("1001", "shared original tail")]);
+    let fn_after = footnotes_root(&mut dom, &[("2001", "shared edited tail")]);
+    let mut ctx = NotesContext {
+        fn_before: Some(fn_before),
+        fn_after: Some(fn_after),
+        fn_with_revisions: None,
+        ..Default::default()
+    };
+    let err = try_compare_bodies_faithful_with_notes(&mut dom, r1, r2, b1, b2, &s, Some(&mut ctx))
+        .expect_err("no withRevisions part to renumber into");
+    assert_eq!(err, RectifyError::MissingTargetPart { kind: "footnotes" });
+    // Rectify plans before it mutates, so the before-side definition it
+    // would have renumbered is still where it was (B.2 stamps pt:* scratch
+    // attributes on it and redlines the after-side definition, both before
+    // rectify runs).
+    let def = def_by_id(&dom, fn_before, "1001");
+    assert!(
+        dom.serialize_element(def).contains("shared original tail"),
+        "a refused rectify leaves the before definition in place"
+    );
+}

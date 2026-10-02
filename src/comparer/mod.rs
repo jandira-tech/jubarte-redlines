@@ -26,6 +26,7 @@ pub mod tables;
 pub mod textbox;
 pub mod units;
 
+use crate::admission::InputLimits;
 use crate::xmllinq::{Dom, NodeId};
 
 pub use atoms::WmlComparerRevision;
@@ -123,6 +124,14 @@ pub struct NotesContext {
 /// B.1 — [`compare_bodies_faithful`] with a [`NotesContext`]: when `Some`,
 /// footnote/endnote definitions are processed per correlated reference (B.2);
 /// with `None` the behavior is identical to the plain entry point.
+///
+/// # Panics
+///
+/// When the notes layout cannot be rectified (a reference whose definition
+/// is in neither notes part, or references with no withRevisions part to
+/// write into). [`try_compare_bodies_faithful_with_notes`] returns that as a
+/// [`footnotes::RectifyError`] instead; the package-level comparer uses it so
+/// a malformed document is an `Err`, never an abort of the host.
 pub fn compare_bodies_faithful_with_notes(
     dom: &mut Dom,
     source_root1: NodeId,
@@ -132,6 +141,36 @@ pub fn compare_bodies_faithful_with_notes(
     settings: &WmlComparerSettings,
     notes: Option<&mut NotesContext>,
 ) -> NodeId {
+    try_compare_bodies_faithful_with_notes(
+        dom,
+        source_root1,
+        source_root2,
+        body1,
+        body2,
+        settings,
+        notes,
+    )
+    .unwrap_or_else(|e| panic!("{e}"))
+}
+
+/// [`compare_bodies_faithful_with_notes`] that reports a notes layout it
+/// cannot rectify instead of panicking.
+///
+/// # Errors
+///
+/// The [`footnotes::RectifyError`] from
+/// [`footnotes::rectify_footnote_endnote_ids`], which plans every lookup
+/// before touching the DOM, so on `Err` the notes parts are as they were.
+/// With `notes: None` this never fails.
+pub fn try_compare_bodies_faithful_with_notes(
+    dom: &mut Dom,
+    source_root1: NodeId,
+    source_root2: NodeId,
+    body1: NodeId,
+    body2: NodeId,
+    settings: &WmlComparerSettings,
+    notes: Option<&mut NotesContext>,
+) -> Result<NodeId, footnotes::RectifyError> {
     use crate::namespaces::W;
 
     // Save the original (body1) sectPr up front, keeping the page-geometry
@@ -714,8 +753,7 @@ pub fn compare_bodies_faithful_with_notes(
             },
             settings,
             &mut id,
-        )
-        .unwrap_or_else(|e| panic!("{e}"));
+        )?;
     }
     let root = finalize::conjoin_paragraph_marks(dom, root, settings);
     finalize::fix_up_revision_ids(dom, &[root]);
@@ -1099,7 +1137,7 @@ pub fn compare_bodies_faithful_with_notes(
     fixups::fix_up_doc_pr_ids(dom, root);
     fixups::fix_up_shape_ids(dom, root);
     fixups::fix_up_shape_type_ids(dom, root);
-    root
+    Ok(root)
 }
 
 use crate::comparison_log::ComparisonLog;
@@ -1203,9 +1241,20 @@ pub struct WmlComparerSettings {
     /// `powertools_faithful()` (all off); intermediate combinations are
     /// deliberately not expressible — they have no oracle.
     pub merge_replaced_paragraphs: bool,
-    /// True while resolving stamp-confetti RESIDUAL windows (nested calls
-    /// from `stamp_confetti_then_replace`): their glue-anchor physics are
-    /// corpus-tuned and the UNREL-GLUE void must not fire inside them.
+    /// Budget the two input packages are admitted under before anything
+    /// inflates them (see [`crate::admission`]). Defaults to
+    /// [`InputLimits::compare`]; a host that knows its documents are small
+    /// lowers it, one with larger embedded media raises it. A package past
+    /// the budget is an `Err` from `compare_documents*` whose message carries
+    /// the stable `INPUT_LIMIT` code.
+    pub input_limits: InputLimits,
+    /// Internal recursion state, not a tuning knob: true while resolving
+    /// stamp-confetti RESIDUAL windows (nested calls from
+    /// `stamp_confetti_then_replace`), whose glue-anchor physics are
+    /// corpus-tuned and where the UNREL-GLUE void must not fire. Leave it at
+    /// its default; it stays public only so struct-update literals keep
+    /// compiling.
+    #[doc(hidden)]
     pub in_stamp_residual: bool,
 }
 
@@ -1267,6 +1316,7 @@ impl Default for WmlComparerSettings {
             move_minimum_word_count: 6,
             merge_replaced_paragraphs: true,
             detect_format_changes: true,
+            input_limits: InputLimits::compare(),
             in_stamp_residual: false,
         }
     }

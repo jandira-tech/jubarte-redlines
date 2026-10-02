@@ -74,8 +74,12 @@ fn library_empty_package_missing_main_returns_err() {
 #[test]
 fn wml_document_missing_main_returns_err() {
     let pkg = empty_package_bytes();
-    let mut wml = WmlDocument::from_bytes(&pkg).expect("open shell");
-    let err = wml.main_document().expect_err("missing main → Err");
+    // Admission refuses the shell at open time (no main document part); a
+    // shell that did open would still have to fail at `main_document()`.
+    let err = match WmlDocument::from_bytes(&pkg) {
+        Err(err) => err,
+        Ok(mut wml) => wml.main_document().expect_err("missing main → Err"),
+    };
     let msg = format!("{err:?}");
     assert!(
         msg.contains("not found") || msg.contains("PartNotFound") || msg.contains("document"),
