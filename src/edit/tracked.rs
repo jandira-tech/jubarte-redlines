@@ -18,8 +18,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
     EditError, EditPlan, EditResult, ExistingRevisions, Resolved, RevisionCounts, ScheduledEdit,
-    Side, Transaction, anchor_comment, apply_run_format, attach_segment, build_paragraph,
-    format_paragraph, insert_ppr_child, new_position, set_text, split_run_at,
+    Side, ThreadOp, Transaction, anchor_comment, anchor_span, apply_run_format, attach_segment,
+    build_paragraph, format_paragraph, insert_ppr_child, new_position, place_reply_markers,
+    remove_comment_markers, set_text, split_run_at,
 };
 use crate::changes::{ChangeKind, list_changes};
 use crate::inspect::{Opened, Piece, project_paragraph};
@@ -151,7 +152,9 @@ fn redline(tx: &Transaction<'_>) -> Result<Vec<u8>, EditError> {
         next_id: first_free_id(&t.opened, &comments),
     };
     emit(&mut t, &comment_ids, &mut stamp);
+    thread_markers(&mut t, &comment_ids);
     t.comments = comments;
+    t.reply_parents = tx.reply_parents.clone();
     let (redline, _) = t.finish()?;
     Ok(redline)
 }
@@ -266,6 +269,15 @@ fn emit(t: &mut Transaction<'_>, comment_ids: &BTreeMap<usize, u32>, stamp: &mut
             if let Some(&id) = comment_ids.get(&i) {
                 anchor_comment(dom, node, start, end, id);
             }
+        }
+    }
+    // 1b. Comments over several paragraphs, in their edited text.
+    for (i, r) in &t.resolved {
+        if let Resolved::CommentSpan { para, last, .. } = r
+            && let Some(&id) = comment_ids.get(i)
+        {
+            let (first, last) = (t.paragraph_nodes[*para], t.paragraph_nodes[*last]);
+            anchor_span(&mut t.opened.dom, first, last, id);
         }
     }
     // 2. Paragraph insertions: every run inserted, and an inserted mark.
@@ -408,6 +420,36 @@ fn emit(t: &mut Transaction<'_>, comment_ids: &BTreeMap<usize, u32>, stamp: &mut
         };
         if let Some(carrier) = carrier {
             mark(dom, carrier, W::del(), stamp);
+        }
+    }
+}
+
+/// Reply markers beside their comment's, and deleted comments' markers
+/// removed, as `Transaction::apply` does last.
+fn thread_markers(t: &mut Transaction<'_>, comment_ids: &BTreeMap<usize, u32>) {
+    let roots: Vec<NodeId> = t.stories.iter().map(|s| s.root).collect();
+    for (i, r) in &t.resolved {
+        let Resolved::Thread { op, .. } = r else {
+            continue;
+        };
+        match op {
+            ThreadOp::Reply { parent, .. } => {
+                if let Some(&id) = comment_ids.get(i) {
+                    place_reply_markers(&mut t.opened.dom, &roots, *parent, id);
+                }
+            }
+            ThreadOp::Delete { id } => {
+                let gone: Vec<String> = t
+                    .family
+                    .as_ref()
+                    .map(|family| family.with_replies(*id))
+                    .unwrap_or_default()
+                    .iter()
+                    .map(u32::to_string)
+                    .collect();
+                remove_comment_markers(&mut t.opened.dom, &roots, &gone);
+            }
+            ThreadOp::Resolve { .. } | ThreadOp::Edit { .. } => {}
         }
     }
 }

@@ -98,6 +98,26 @@ fn list_changes_json(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
     .map_err(|e: String| JubarteError::new_err(e))
 }
 
+/// Every comment as a JSON array (the objects `jubarte comments --json`
+/// prints): thread (`parent`, `done`) and anchored text with its
+/// surroundings. `author` keeps one author's comments; `latest` keeps the
+/// newest comment of each thread.
+#[pyfunction]
+#[pyo3(signature = (docx, author = None, latest = false))]
+fn list_comments_json(
+    py: Python<'_>,
+    docx: &[u8],
+    author: Option<String>,
+    latest: bool,
+) -> PyResult<String> {
+    py.detach(|| {
+        let comments = jubarte::comments::list_comments(docx).map_err(|e| e.to_string())?;
+        let comments = jubarte::comments::select_comments(comments, author.as_deref(), latest);
+        serde_json::to_string(&comments).map_err(|e| e.to_string())
+    })
+    .map_err(|e: String| JubarteError::new_err(e))
+}
+
 fn change_filter(filter_json: &str) -> PyResult<jubarte::changes::ChangeFilter> {
     serde_json::from_str(filter_json)
         .map_err(|e| JubarteError::new_err(format!("invalid change filter: {e}")))
@@ -438,5 +458,6 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(capabilities_json, m)?)?;
     m.add_function(wrap_pyfunction!(diff_json, m)?)?;
     m.add_function(wrap_pyfunction!(redline_diff_json, m)?)?;
+    m.add_function(wrap_pyfunction!(list_comments_json, m)?)?;
     Ok(())
 }

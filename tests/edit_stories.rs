@@ -296,7 +296,7 @@ fn story_selectors_and_story_limits_are_checked() {
 
     // Word cannot anchor a comment in a header or footer.
     let comment = refuse(r#"[{"kind":"comment","paragraph":"header1:p:0","text":"why?"}]"#);
-    assert_eq!(comment.code, "UNSUPPORTED_STRUCTURE");
+    assert_eq!(comment.code, "COMMENT_NOT_IN_BODY");
     assert!(comment.message.contains("body"), "{}", comment.message);
 
     // A header keeps at least one paragraph.

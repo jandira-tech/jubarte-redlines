@@ -506,3 +506,60 @@ fn deleting_the_paragraph_before_a_table_keeps_the_invariants() {
     .unwrap();
     invariants(&source, &out);
 }
+
+#[test]
+fn thread_operations_and_spans_ride_the_redline_under_keep() {
+    use jubarte::comments::list_comments;
+    let source = source();
+    // Two comments by Ann on the tracked document, written with keep.
+    let first = apply_plan(
+        &source,
+        &EditPlan::from_json(
+            r#"{"schema_version":1,"author":"Ann","existing_revisions":"keep","operations":[
+        {"kind":"comment","paragraph":"body:p:1","find":"Governing","text":"Which law?"},
+        {"kind":"comment","paragraph":"body:p:1","find":"Delaware","text":"Drop this one"}]}"#,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let ids: Vec<u32> = list_comments(&first.clean)
+        .unwrap()
+        .iter()
+        .map(|c| c.id)
+        .collect();
+    assert_eq!(ids.len(), 2);
+    let plan = keep(&format!(
+        r#"[{{"kind":"reply_comment","comment_id":{a},"text":"New York"}},
+            {{"kind":"resolve_comment","comment_id":{a}}},
+            {{"kind":"delete_comment","comment_id":{b}}},
+            {{"kind":"comment","paragraph":"body:p:0","through":"body:p:1","text":"Both"}},
+            {{"kind":"replace","paragraph":"body:p:1","find":"Delaware","replacement":"New York"}}]"#,
+        a = ids[0],
+        b = ids[1]
+    ));
+    let out = apply_plan(&first.clean, &plan).unwrap();
+    invariants(&first.clean, &out);
+    for doc in [&out.clean, &out.redline] {
+        let comments = list_comments(doc).unwrap();
+        let texts: Vec<_> = comments
+            .iter()
+            .map(|c| (c.text.as_str(), c.parent.is_some(), c.done))
+            .collect();
+        assert_eq!(texts.len(), 3, "{texts:?}");
+        assert!(texts.contains(&("Which law?", false, true)), "{texts:?}");
+        assert!(texts.contains(&("New York", true, true)), "{texts:?}");
+        assert!(texts.contains(&("Both", false, false)), "{texts:?}");
+        let both = comments.iter().find(|c| c.text == "Both").unwrap();
+        assert!(
+            both.anchor_text.contains("Payment") && both.anchor_text.contains("Governing"),
+            "{:?}",
+            both.anchor_text
+        );
+    }
+    let red = part_string(&out.redline, "word/document.xml").unwrap();
+    assert!(
+        !red.contains(&format!(r#"w:id="{}" /><w:r><w:commentReference"#, ids[1]))
+            && !red.contains(&format!(r#"<w:commentReference w:id="{}""#, ids[1])),
+        "the deleted comment's markers are gone: {red}"
+    );
+}

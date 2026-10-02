@@ -1,0 +1,6 @@
+{"author":"Bob Vendor","base_sha256":"ac63d95ed49668b75ec54b10dcebbc38deb6b7f58274d9a98e7d0c518b3a4dc5","date":"2026-10-02T15:30:00Z","ev":"load","existing_revisions":"refuse","guarded":true,"paras":14,"sha256":"ac63d95ed49668b75ec54b10dcebbc38deb6b7f58274d9a98e7d0c518b3a4dc5"}
+{"at":"body:p:3","comment_id":3,"ctx":"comment 0","ev":"op","i":1,"id":"consent-reply","matches":1,"op":"reply_comment","status":"ok"}
+{"at":"body:p:4","comment_id":4,"ctx":"comment 1","ev":"op","i":2,"id":"section-4-reply","matches":1,"op":"reply_comment","status":"ok"}
+{"at":"body:p:8","comment_id":2,"ctx":"comment 2","ev":"op","i":3,"id":"survival-done","matches":1,"op":"resolve_comment","status":"ok"}
+{"dir":"replied","ev":"save","outputs":[{"bytes":5973,"f":"clean.docx","sha256":"fd25927e87da88282b7f26a49c4e687bace6935c09fda733304f1c8b7d2d10e8"},{"bytes":10703,"f":"redline.docx","sha256":"434e90ac89ce178a8fe0d5a8519d986b301f3e8f79ee05ebdb0a3e6e37c21722"},{"bytes":1063,"f":"patch.diff","sha256":"e8aca9a1c4ebb046ab875fe4018c463a5fb9b0c9a7dc636955a1c0bd2123f2db"}]}
+{"comments":{"added":2},"ev":"summary","ops":{"failed":0,"ok":3},"paras":{"d":0,"from":14,"to":14},"revs":{"deleted":0,"format_changed":0,"inserted":0,"moved":0,"total":0},"status":"ok"}
