@@ -376,6 +376,14 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   no longer claims the operations are derived from the compiled features:
   the library compiles every operation in, and only a wrapper build (WASM
   without `pdf`) turns one off.
+- `markup_simplifier::transform_element_to_single_character_runs` no longer
+  panics (debug builds) or silently keeps only the first run (release builds)
+  when its element is a `w:r`: an empty run, a run with only `w:rPr` or an
+  empty `w:t`, and a run of two or more characters each explode into zero or
+  several runs, not one root. A `w:r` is outside the function's contract and
+  is returned unchanged with the DOM untouched. The signature is unchanged.
+  Also, a one-character `w:t` holding a tab, CR or LF now carries
+  `xml:space="preserve"` like a space does.
 - A line ended by a `w:br` keeps its break when the paragraph reflows
   past a header or body float with square or tight wrapping. The lines
   below the float no longer run together, and a justified line that
