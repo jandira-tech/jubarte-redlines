@@ -1,0 +1,6 @@
+{"author":"Ann Counsel","base_sha256":"ce7b498030d8574a9a7650b2eb4e6d8d5083456480d16c2bc8c399583bb37e5a","date":"2026-10-02T09:00:00Z","ev":"load","existing_revisions":"refuse","guarded":true,"paras":14,"sha256":"ce7b498030d8574a9a7650b2eb4e6d8d5083456480d16c2bc8c399583bb37e5a"}
+{"at":"body:p:3","comment_id":0,"ctx":"rmation without our {#prior written consent}.","ev":"op","i":1,"id":"consent","matches":1,"op":"comment","status":"ok"}
+{"at":"body:p:2","comment_id":1,"ctx":"{#body:p:2 ... body:p:4}","ev":"op","i":2,"id":"section-4","matches":1,"op":"comment","status":"ok"}
+{"at":"body:p:8","comment_id":2,"ctx":"6, 8, 9, 10, and 11 {#survive termination} of this letter.","ev":"op","i":3,"id":"survival","matches":1,"op":"comment","status":"ok"}
+{"dir":"reviewed","ev":"save","outputs":[{"bytes":5735,"f":"clean.docx","sha256":"ac63d95ed49668b75ec54b10dcebbc38deb6b7f58274d9a98e7d0c518b3a4dc5"},{"bytes":10456,"f":"redline.docx","sha256":"ac051e95eb877d9fed010975620165b05b4957f0247fb7fe5ddb6b17798801b8"},{"bytes":888,"f":"patch.diff","sha256":"6d4231a4be259d7e35358a461740edd9b84bd2f9fb636ca8c1acd8a1c7a4d021"}]}
+{"comments":{"added":3},"ev":"summary","ops":{"failed":0,"ok":3},"paras":{"d":0,"from":14,"to":14},"revs":{"deleted":0,"format_changed":0,"inserted":0,"moved":0,"total":0},"status":"ok"}
