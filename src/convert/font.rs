@@ -2747,7 +2747,7 @@ fn font_index_path() -> Option<PathBuf> {
 
 /// Bump the `1` when the family search's matching rules change; the crate
 /// version drops the answers another release recorded.
-const FONT_INDEX_HEADER: &str = concat!("jubarte-font-index\t1\t", env!("CARGO_PKG_VERSION"));
+const FONT_INDEX_HEADER: &str = concat!("jubarte-font-index\t2\t", env!("CARGO_PKG_VERSION"));
 
 /// A modification time in nanoseconds, `None` for a missing path.
 fn mtime_of(path: &Path) -> Option<u128> {
@@ -3480,7 +3480,7 @@ mod tests {
         );
         let text = format_font_index(&entries);
         assert_eq!(parse_font_index(&text), entries);
-        assert!(parse_font_index(&text.replacen("\t1", "\t0", 1)).is_empty());
+        assert!(parse_font_index(&text.replacen("\t2\t", "\t0\t", 1)).is_empty());
     }
 
     #[test]
@@ -3499,6 +3499,10 @@ mod tests {
         let header = text.lines().next().unwrap();
         assert!(header.ends_with(&format!("\t{}", env!("CARGO_PKG_VERSION"))));
         assert!(parse_font_index(&text.replace(env!("CARGO_PKG_VERSION"), "0.0.0")).is_empty());
+        // Rules 2 (Windows folders, matched by internal name): an index
+        // the same release wrote under rules 1 never listed those folders.
+        assert!(header.starts_with("jubarte-font-index\t2\t"));
+        assert!(parse_font_index(&text.replacen("\t2\t", "\t1\t", 1)).is_empty());
     }
 
     #[test]
