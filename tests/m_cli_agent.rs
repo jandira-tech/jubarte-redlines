@@ -332,13 +332,18 @@ fn capabilities_describe_the_built_binary() {
         "markdown",
         "edit",
         "patch",
+        "validate",
+        "repair",
     ] {
         assert_eq!(v["operations"][op], true, "{op}");
     }
     assert_eq!(v["edit_plan_versions"], serde_json::json!([1]));
     let kinds = v["edit_operations"].as_array().unwrap();
     assert!(kinds.iter().any(|k| k == "insert_paragraph"));
-    assert_eq!(v["limits"]["stories"], serde_json::json!(["body"]));
+    assert_eq!(
+        v["limits"]["stories"],
+        serde_json::json!(["body", "header", "footer", "footnotes", "endnotes"])
+    );
 }
 
 #[test]
