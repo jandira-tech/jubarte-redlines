@@ -294,3 +294,31 @@ fn list_keys_are_checked() {
         assert_eq!(error.code, "INVALID_PLAN", "{ops}");
     }
 }
+
+#[test]
+fn a_localized_list_paragraph_style_is_used_by_name() {
+    let styles = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:default="1" w:styleId="Standard"><w:name w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Listenabsatz"><w:name w:val="List Paragraph"/><w:basedOn w:val="Standard"/><w:pPr><w:ind w:left="720"/></w:pPr></w:style></w:styles>"#;
+    let source = docx_with(
+        &(para("Intro.") + &para("Item.")),
+        &[Part {
+            name: "word/styles.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+            xml: styles,
+        }],
+    );
+    let out = apply_plan(
+        &source,
+        &plan(r#"[{"kind":"list","paragraphs":["body:p:1"]}]"#),
+    )
+    .unwrap();
+    assert_word_valid_package(&out.clean);
+    assert_word_valid_package(&out.redline);
+    let item = &paragraphs(&out.clean).unwrap()[1];
+    assert!(item.numbered);
+    assert_eq!(item.style.as_deref(), Some("Listenabsatz"));
+    let styles = part_string(&out.clean, "word/styles.xml").unwrap();
+    assert_eq!(styles.matches("List Paragraph").count(), 1, "{styles}");
+    assert!(!styles.contains(r#"w:styleId="ListParagraph""#), "{styles}");
+}

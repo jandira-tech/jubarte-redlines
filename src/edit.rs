@@ -1118,6 +1118,10 @@ enum Resolved {
         level: u32,
         /// The `w:numId` to continue, or a new list when `None`.
         join: Option<String>,
+        /// The document's "List Paragraph" style id, for unstyled items.
+        style: String,
+        /// That style's definition must be added to the styles part.
+        add_style: bool,
     },
 }
 
@@ -2026,6 +2030,20 @@ impl<'p> Transaction<'p> {
                 }
             }
         };
+        // The document's own "List Paragraph" (localized documents give it
+        // another id), else the engine's, added when used.
+        let styles = self.paragraph_styles();
+        let (style, add_style) = styles
+            .iter()
+            .find(|(id, _)| id == "ListParagraph")
+            .or_else(|| {
+                styles
+                    .iter()
+                    .find(|(_, name)| name.eq_ignore_ascii_case("List Paragraph"))
+            })
+            .map_or(("ListParagraph".to_string(), true), |(id, _)| {
+                (id.clone(), false)
+            });
         let how = match &join {
             Some(num_id) => format!("continues list {num_id}"),
             None => format!("list {}", kind.name()),
@@ -2041,6 +2059,8 @@ impl<'p> Transaction<'p> {
                 kind,
                 level,
                 join,
+                style,
+                add_style,
             },
             outcome,
         ))
@@ -2816,6 +2836,8 @@ impl<'p> Transaction<'p> {
                 kind,
                 level,
                 join,
+                style,
+                add_style,
             } = r
             else {
                 continue;
@@ -2835,13 +2857,15 @@ impl<'p> Transaction<'p> {
                 }
             };
             for &para in paras {
-                if structural::number_paragraph(
+                let styled = structural::number_paragraph(
                     &mut self.opened.dom,
                     self.paragraph_nodes[para],
                     *level,
                     &num_id,
-                ) {
-                    self.needed_styles.insert("ListParagraph".to_string());
+                    style,
+                );
+                if styled && *add_style {
+                    self.needed_styles.insert(style.clone());
                 }
             }
         }

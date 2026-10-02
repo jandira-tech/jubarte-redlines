@@ -430,9 +430,15 @@ pub(super) fn direct_num_id(dom: &Dom, paragraph: NodeId) -> Option<String> {
 }
 
 /// Number `paragraph` at `level` of list `num_id`, replacing any direct
-/// numbering; a paragraph without a style takes `ListParagraph`. True when
-/// it did.
-pub(super) fn number_paragraph(dom: &mut Dom, paragraph: NodeId, level: u32, num_id: &str) -> bool {
+/// numbering; a paragraph without a style takes `list_style`. True when it
+/// did.
+pub(super) fn number_paragraph(
+    dom: &mut Dom,
+    paragraph: NodeId,
+    level: u32,
+    num_id: &str,
+    list_style: &str,
+) -> bool {
     let ppr = match dom.element(paragraph, &W::p_pr()) {
         Some(ppr) => ppr,
         None => {
@@ -455,7 +461,7 @@ pub(super) fn number_paragraph(dom: &mut Dom, paragraph: NodeId, level: u32, num
         return false;
     }
     let style = dom.new_element(W::p_style());
-    dom.set_attribute_value(style, &W::val(), Some("ListParagraph"));
+    dom.set_attribute_value(style, &W::val(), Some(list_style));
     insert_ppr_child(dom, ppr, style);
     true
 }
