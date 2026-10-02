@@ -7312,6 +7312,161 @@ fn a_page_anchored_table_above_the_flow_starts_the_next_page() {
 }
 
 #[test]
+fn a_cell_paragraph_whose_spacing_after_overruns_the_page_still_splits() {
+    // Word 16 probe aft 2026-10-02 (compat 15): five 20pt lines with 4pt
+    // after and 101.5pt left on the page: the lines fit, the spacing does
+    // not, and Word cuts the row 3 + 2 (widow control). We counted every
+    // line as fitting, found nothing to cut and moved the row whole
+    // (12d245d664 page 34 ran a page short of Word from there).
+    let line = |text: &str| format!("<w:r><w:t>{text}</w:t></w:r>");
+    let lines: String = (1..=5)
+        .map(|i| line(&format!("Line{i}")))
+        .collect::<Vec<_>>()
+        .join("<w:r><w:br/></w:r>");
+    let body = format!(
+        "<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"10930\" w:lineRule=\"exact\"/></w:pPr></w:p>\
+         <w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/><w:tblLayout w:type=\"fixed\"/>\
+           <w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"6000\"/></w:tblGrid>\
+           <w:tr><w:tc><w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"80\" w:line=\"400\" w:lineRule=\"exact\"/></w:pPr>{lines}</w:p>\
+           </w:tc></w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>"
+    );
+    let compat = "<w:compat><w:compatSetting w:name=\"compatibilityMode\" \
+                  w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat>";
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, compat)).expect("after overrun");
+    let pages: Vec<Option<usize>> = ["Line3", "Line4"]
+        .iter()
+        .map(|t| page_with_text(&pdf, t))
+        .collect();
+    assert_eq!(pages, [Some(0), Some(1)], "Word cuts the row after Line3");
+}
+
+#[test]
+fn an_empty_cell_paragraph_overrunning_the_page_end_does_not_panic() {
+    // The spacing-after cut steps back one line; an empty paragraph whose
+    // spacing alone overruns the page must not step below none.
+    let exact = |line: u32, after: u32| {
+        format!(
+            "<w:pPr><w:spacing w:before=\"0\" w:after=\"{after}\" w:line=\"{line}\" \
+             w:lineRule=\"exact\"/></w:pPr>"
+        )
+    };
+    let lines: String = (1..=32)
+        .map(|i| format!("<w:p>{}<w:r><w:t>Ln{i:02}</w:t></w:r></w:p>", exact(400, 0)))
+        .collect();
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/><w:tblLayout w:type=\"fixed\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"6000\"/></w:tblGrid>\
+           <w:tr><w:tc><w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/></w:tcPr>{lines}\
+             <w:p>{}</w:p><w:p>{}<w:r><w:t>Tail</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>",
+        exact(100, 400),
+        exact(400, 0)
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("empty paragraph at the page end");
+    assert_eq!(page_with_text(&pdf, "Tail"), Some(1));
+}
+
+#[test]
+fn an_at_least_row_height_holds_again_for_the_part_carried_over() {
+    // Word 16 probe trh 2026-10-02 (compat 15): a 150pt atLeast row of 34
+    // 20pt lines carries two lines to page 2, and that part still stands
+    // 150pt: the next row starts 150.5pt under it (117.4 without the
+    // height). 12d245d664's 175pt row kept its height under the repeated
+    // header; we shrank the carried part to its two lines.
+    let next_row_y = |tr_pr: &str| {
+        let exact = "<w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"400\" \
+                     w:lineRule=\"exact\"/></w:pPr>";
+        let lines: String = (1..=34)
+            .map(|i| format!("<w:p>{exact}<w:r><w:t>Ln{i:02}</w:t></w:r></w:p>"))
+            .collect();
+        let body = format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/><w:tblLayout w:type=\"fixed\"/>\
+               <w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr>\
+               <w:tblGrid><w:gridCol w:w=\"6000\"/></w:tblGrid>\
+               <w:tr>{tr_pr}<w:tc><w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/></w:tcPr>{lines}</w:tc></w:tr>\
+               <w:tr><w:tc><w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/></w:tcPr>\
+                 <w:p>{exact}<w:r><w:t>NextRow</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+                 w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("atLeast tail");
+        assert_eq!(
+            page_with_text(&pdf, "Ln34"),
+            Some(1),
+            "the row carries over"
+        );
+        let y = |needle: &str| pdf_glyph_text_xy(&pdf, needle).expect(needle).1;
+        y("Ln33") - y("NextRow")
+    };
+    let plain = next_row_y("");
+    let tall = next_row_y("<w:trPr><w:trHeight w:val=\"3000\"/></w:trPr>");
+    assert!(
+        (tall - 150.0).abs() < 1.0 && (plain - 40.0).abs() < 1.0,
+        "the carried part stands 150pt: {tall} (plain {plain})"
+    );
+}
+
+#[test]
+fn a_split_rows_tail_keeps_room_for_its_top_rule() {
+    // Word 16 probe sp 2026-10-02: the part of a row carried to the next
+    // page opens under its own top rule and still ends under its last line,
+    // so the row after it starts a rule further down (3pt rules: the last
+    // carried line to the next row 19.92 against 17.04 unruled). The tail
+    // was sized without that rule and the next row rode up over it:
+    // 12d245d664's Scenario tables lost a point a page and gained a line.
+    let gap = |sz: u32| {
+        let exact = "<w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"400\" \
+                     w:lineRule=\"exact\"/></w:pPr>";
+        let lines: String = (1..=60)
+            .map(|i| format!("<w:p>{exact}<w:r><w:t>Ln{i:02}</w:t></w:r></w:p>"))
+            .collect();
+        let rules = if sz == 0 {
+            String::new()
+        } else {
+            ["top", "left", "bottom", "right", "insideH"]
+                .map(|side| {
+                    format!(
+                        "<w:{side} w:val=\"single\" w:sz=\"{sz}\" w:space=\"0\" w:color=\"auto\"/>"
+                    )
+                })
+                .concat()
+        };
+        let body = format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/>\
+               <w:tblLayout w:type=\"fixed\"/><w:tblBorders>{rules}</w:tblBorders></w:tblPr>\
+               <w:tblGrid><w:gridCol w:w=\"6000\"/></w:tblGrid>\
+               <w:tr><w:tc><w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/></w:tcPr>{lines}</w:tc></w:tr>\
+               <w:tr><w:tc><w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/></w:tcPr>\
+                 <w:p>{exact}<w:r><w:t>NextRow</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+             <w:p/><w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+                 w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("split row tail");
+        assert_eq!(
+            page_with_text(&pdf, "NextRow"),
+            Some(1),
+            "{sz}: the row splits once"
+        );
+        let y = |needle: &str| pdf_glyph_text_xy(&pdf, needle).expect(needle).1;
+        y("Ln60") - y("NextRow")
+    };
+    let (plain, ruled) = (gap(0), gap(24));
+    assert!(
+        (ruled - plain - 3.0).abs() < 0.3,
+        "a 3pt rule between the carried part and the next row: {plain} unruled, {ruled} ruled"
+    );
+}
+
+#[test]
 fn a_split_row_keeps_room_for_the_tables_bottom_rule_and_ends_under_its_text() {
     // Word 16 probes fs2/fs3 2026-10-02 (rows of one-line paragraphs swept
     // past the page end in 0.5pt steps): the part of a row cut at the page
@@ -44277,6 +44432,138 @@ fn table_style_indent_and_jc_reach_cells_their_style_leaves_unset() {
         kappa[0].0,
         kappa[4].0
     );
+}
+
+/// A three-column table (2000/1500/1500 of 5000, or the same in dxa) at
+/// tblInd 108 with 108-twip cell margins: each cell holds a left-aligned
+/// tag and a right-aligned "EndQ". `sz` is the eighth-point rule on every
+/// cell edge (0 for none).
+fn ruled_table_pdf(sz: u32, pct: bool, tc_mar: bool) -> Vec<u8> {
+    let borders = if sz == 0 {
+        String::new()
+    } else {
+        let edge = |e: &str| {
+            format!("<w:{e} w:val=\"single\" w:sz=\"{sz}\" w:space=\"0\" w:color=\"000000\"/>")
+        };
+        format!(
+            "<w:tcBorders>{}{}{}{}</w:tcBorders>",
+            edge("top"),
+            edge("left"),
+            edge("bottom"),
+            edge("right")
+        )
+    };
+    let (tbl_w, widths) = if pct {
+        (
+            "<w:tblW w:w=\"5361\" w:type=\"pct\"/>",
+            [("2000", "pct"), ("1500", "pct"), ("1500", "pct")],
+        )
+    } else {
+        (
+            "<w:tblW w:w=\"9264\" w:type=\"dxa\"/>",
+            [("3706", "dxa"), ("2779", "dxa"), ("2779", "dxa")],
+        )
+    };
+    let mar = if tc_mar {
+        "<w:tcMar><w:left w:w=\"108\" w:type=\"dxa\"/><w:right w:w=\"108\" w:type=\"dxa\"/></w:tcMar>"
+    } else {
+        ""
+    };
+    let cells: String = widths
+        .iter()
+        .enumerate()
+        .map(|(i, (w, t))| {
+            format!(
+                "<w:tc><w:tcPr><w:tcW w:w=\"{w}\" w:type=\"{t}\"/>{borders}{mar}</w:tcPr>\
+                 <w:p><w:r><w:t>C{i}</w:t></w:r></w:p>\
+                 <w:p><w:pPr><w:jc w:val=\"right\"/></w:pPr><w:r><w:t>EndQ{i}</w:t></w:r></w:p></w:tc>"
+            )
+        })
+        .collect();
+    let body = format!(
+        "<w:tbl><w:tblPr>{tbl_w}<w:tblInd w:w=\"108\" w:type=\"dxa\"/><w:tblLayout w:type=\"fixed\"/>\
+           <w:tblCellMar><w:left w:w=\"0\" w:type=\"dxa\"/><w:right w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"3706\"/><w:gridCol w:w=\"2779\"/><w:gridCol w:w=\"2779\"/></w:tblGrid>\
+         <w:tr>{cells}</w:tr></w:tbl><w:p/>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1000\" w:right=\"1800\" w:bottom=\"1000\" w:left=\"1800\"/></w:sectPr>"
+    );
+    let settings = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         <w:compat><w:compatSetting w:name=\"compatibilityMode\" w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat></w:settings>";
+    docx_to_pdf(&hf_docx(
+        &body,
+        &[("rIdSet", "settings", "settings.xml")],
+        &[("word/settings.xml", settings.to_string())],
+    ))
+    .expect("ruled table")
+}
+
+#[test]
+fn pct_table_columns_share_the_width_inside_half_the_outer_rules() {
+    // 12d245d664's 107% Scenario tables: Word keeps a pct table's outer
+    // edge at its pct width and lays the columns inside half of each outer
+    // rule (Word 16 probe pct3, 2026-10-02, 3pt rules against none: the
+    // second column's text +0.24, the third's -0.72, the last right edge
+    // -1.67). Unshrunk, the LLT column kept "of product desiccant" (107.4pt)
+    // on a line Word's 107.26pt column breaks.
+    let (plain, ruled) = (
+        ruled_table_pdf(0, true, true),
+        ruled_table_pdf(24, true, true),
+    );
+    let x = |pdf: &[u8], needle: &str| pdf_glyph_text_xy(pdf, needle).expect(needle).0;
+    let shift = |needle: &str| x(&ruled, needle) - x(&plain, needle);
+    for (needle, word) in [("C1", 0.24), ("C2", -0.72), ("EndQ2", -1.67)] {
+        let got = shift(needle);
+        assert!(
+            (got - word).abs() < 0.25,
+            "{needle} moves {got} under 3pt rules, Word {word}"
+        );
+    }
+}
+
+#[test]
+fn dxa_table_cells_keep_their_width_past_half_the_left_rule() {
+    // Word 16 probe pct3 d24 (2026-10-02): a dxa table's grid starts half
+    // its left rule in and every column keeps its full width, so the first
+    // cell's right-aligned text moves right with it (justified lines end at
+    // 276.75, not 275.3). We aligned and justified on a box short by the
+    // half rule.
+    let (plain, ruled) = (
+        ruled_table_pdf(0, false, true),
+        ruled_table_pdf(24, false, true),
+    );
+    let x = |pdf: &[u8], needle: &str| pdf_glyph_text_xy(pdf, needle).expect(needle).0;
+    for needle in ["EndQ0", "EndQ1"] {
+        let got = x(&ruled, needle) - x(&plain, needle);
+        assert!(
+            (got - 1.5).abs() < 0.25,
+            "{needle} moves {got} under a 3pt left rule, Word 1.45"
+        );
+    }
+}
+
+#[test]
+fn zero_margin_cells_keep_their_text_half_the_right_rule_in() {
+    // 12d245d664's Comment cells have no margins: Word keeps their text
+    // half each side rule in, right as left (Word 16 probe zm, 2026-10-02,
+    // 3pt rules against none: the first cell's line end -1.23, the last
+    // cell's -3.47). Measured to the rule, the cell fit "overdose because
+    // the" (118.1pt) on a line Word breaks. Word's rim also sits a tenth
+    // of the rule further in (its columns share 1.1 rules, not one): the
+    // last cell keeps that 0.3pt residual.
+    let (plain, ruled) = (
+        ruled_table_pdf(0, true, false),
+        ruled_table_pdf(24, true, false),
+    );
+    let x = |pdf: &[u8], needle: &str| pdf_glyph_text_xy(pdf, needle).expect(needle).0;
+    for (needle, word, tol) in [("EndQ0", -1.23, 0.25), ("EndQ2", -3.47, 0.6)] {
+        let got = x(&ruled, needle) - x(&plain, needle);
+        assert!(
+            (got - word).abs() < tol,
+            "{needle} moves {got} under 3pt rules, Word {word}"
+        );
+    }
 }
 
 #[test]
