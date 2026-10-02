@@ -188,6 +188,18 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   whose type and name the first document already has takes its definition
   there. Comments are not carried yet: they are removed and reported as
   `COMMENTS_DROPPED`. `capabilities` lists `append`.
+- `inspect` lists the body's content controls under `controls` (id
+  `body:sdt:N`, tag, alias, kind, text, paragraphs, lock, choices, checkbox
+  state, placeholder flag); Rust `inspect::controls()` and Python
+  `Snapshot.controls` / `ContentControl` read them.
+- Edit plans fill content controls: `fill_control` selects a control by id,
+  tag or alias and writes `text`, a list `choice`, a checkbox state
+  (`checked`) or a `date` in the control's format, keeping its properties.
+  Locked controls are refused with the new `LOCKED_CONTROL` code; choices
+  outside the list, value forms the control cannot take and impossible
+  dates are `INVALID_EDIT`. Python `EditPlan.fill_control`; capabilities
+  report `operations.content_controls` and `fill_control`. The redline
+  shows a fill as tracked text without the control (KNOWN_ISSUES.md #7).
 
 ### Fixed
 
