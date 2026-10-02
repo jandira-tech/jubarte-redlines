@@ -173,6 +173,18 @@ Gotchas:
   join. It refuses a paragraph that carries a section break or is not
   followed by a plain paragraph. Do not format, delete or insert after a
   paragraph you merge in the same plan (`OVERLAPPING_EDITS`).
+- `insert_toc` (`position` before or after, `levels` 1 to 9, default 3,
+  optional `title` styled `TOCHeading`) inserts a `TOC \o "1-N" \h \z \u`
+  field in the body. Pair it with `"update_fields": true` at the top of the
+  plan: the clean copy's TOC is then filled from the `Heading1`..`HeadingN`
+  paragraphs, and every `PAGEREF`, `REF`, `NUMPAGES` and `SEQ` result is
+  written, before the redline is compared; the report lists them under
+  `fields`. Without it the TOC stays empty until Word updates its fields.
+  On a document you are not editing, `jubarte fields update in.docx -o
+  out.docx --json` does the same. Page numbers are jubarte's layout, which
+  matches Word on most documents but is not Word
+  (`docs/WORD_DIFFERENCES.md` section 10 in the jubarte repository).
+  Field codes stay, so Word's Update Field still works.
 
 ## 3. Verify
 

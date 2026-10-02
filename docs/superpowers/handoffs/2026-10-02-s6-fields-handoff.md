@@ -6,6 +6,16 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # Handoff: Plan 1, Task 7 (S6, field and TOC refresh), branch `adopt/s6-fields`
 
+> **Status, later on 2026-10-02:** implemented on this branch in the commits
+> after this file (PR #275). The three review corrections are in the code:
+> a `PAGEREF` to a defined bookmark the layout did not page keeps its cached
+> result (only an undefined name gets "Error! Bookmark not defined."); `SEQ`
+> implements `\c`, `\n`, `\r N` and `\h`, and `\s` or a number format
+> stops that identifier's count, leaving its cached results; the coverage
+> floor is checked with `cargo llvm-cov`. Deviations from the design below:
+> `paragraph_pages` was not added (nothing in S6 reads it); field marks that
+> share a run are split first (a corpus TOC placeholder panicked otherwise).
+
 Written 2026-10-02 at the end of a session that was cut off before any code
 was written. Everything below was read from the tree at `b420d64` (main) or
 from the plan branch; nothing is from memory. No subagents were spawned, so

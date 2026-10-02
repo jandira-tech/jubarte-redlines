@@ -181,6 +181,52 @@ The other 3 of the 32 are not differences:
   validator-clean, and taken out for that reason.
 - **Status.** Not copied.
 
+### 10. Field results jubarte writes (`jubarte fields update`, `update_fields`)
+
+- **What happens.** Word's Update Field recomputes `PAGEREF`, `REF`,
+  `NUMPAGES`, `SEQ` and `TOC` results from Word's own pagination.
+- **What we do.** `jubarte fields update`, an edit plan's
+  `"update_fields": true`, Python `Document.update_fields()` and WASM
+  `updateFields` write those results from jubarte's layout, the one
+  `jubarte convert` paints with its default options. The page numbers are
+  ours, not Word's: they match Word wherever our pagination does, and are off
+  wherever it is (the PDF scores measure how often). The field codes stay,
+  so Word's Update Field in the saved file replaces our numbers with its
+  own.
+- **Evidence.** Three corpus documents carry a TOC whose result Word wrote
+  (2026-10-02, `fields update --json` against the cached result):
+  `behavior__pageref_standalone_uppercase_h_7701e07f` (7 entries) and
+  `behavior__sd_2447_toc_tab_alignment_8319c14c` (8 entries) match it
+  exactly, text and page numbers. In `strict01.docx` Word's cached TOC
+  lists 4 headings, all on page 1, where ours lists the 10 heading
+  paragraphs the body holds. Whether that cache is stale was not checked
+  in Word.
+- **Not written yet** (the cached result stays as it was):
+  - `PAGE`, which differs on every page;
+  - TOC switches other than `\o`, `\h`, `\u`, `\z`, `\w`, `\x` (`\t`,
+    `\b`, `\c`, `\f`, `\n`, `\p`, ...), and a TOC in a `w:fldSimple`;
+  - `PAGEREF \p`; `REF` with `\n`, `\r`, `\w`, `\p`, `\t`, `\d`, or a
+    bookmark that spans paragraphs; `SEQ \s` and every later field of that
+    identifier;
+  - number formats other than Arabic (`\* roman`, `\#`, `\@`);
+  - a `PAGEREF` to a bookmark outside any paragraph or in a header, which
+    the layout does not page. A `PAGEREF` to a bookmark the document lacks
+    gets Word's "Error! Bookmark not defined.", and a `REF` Word's "Error!
+    Reference source not found.".
+- **Other differences.**
+  - TOC entries carry the heading's text without its list number ("1.").
+  - The layout runs once, before the results are written, so a TOC long
+    enough to push the headings after it to a later page lists their
+    earlier pages. Word repaginates as it updates.
+  - Word's entries in `behavior__pageref_standalone_uppercase_h` mark every
+    run `w:noProof`, the tab and page-number runs `w:webHidden`, and the
+    text run with the `Hyperlink` character style. Ours carry none of
+    these. Both put the right tab with its dot leader on the entry
+    paragraph, 10 twips inside the text width.
+- **Which is better.** Word's, when a Word is at hand. Ours is for a file
+  that has to read right without one: a generated report, a TOC
+  placeholder, a PDF made headless.
+
 ## Accept All / Reject All: where Word's result is worse (not copied yet)
 
 `jubarte accept` / `jubarte reject` (and per-change accept/reject) follow
