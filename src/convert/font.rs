@@ -238,6 +238,27 @@ fn json_bool(v: bool) -> &'static str {
     if v { "true" } else { "false" }
 }
 
+/// A character Unicode lays out wide (East_Asian_Width W or F): CJK
+/// ideographs, kana, CJK punctuation, Hangul and the full-width forms.
+/// Every East Asian face draws them one em wide.
+fn east_asian_wide(c: char) -> bool {
+    matches!(
+        c,
+        '\u{1100}'..='\u{115F}'
+            | '\u{2E80}'..='\u{303E}'
+            | '\u{3041}'..='\u{33FF}'
+            | '\u{3400}'..='\u{4DBF}'
+            | '\u{4E00}'..='\u{9FFF}'
+            | '\u{A960}'..='\u{A97F}'
+            | '\u{AC00}'..='\u{D7A3}'
+            | '\u{F900}'..='\u{FAFF}'
+            | '\u{FE30}'..='\u{FE4F}'
+            | '\u{FF01}'..='\u{FF60}'
+            | '\u{FFE0}'..='\u{FFE6}'
+            | '\u{20000}'..='\u{3FFFD}'
+    )
+}
+
 /// Word Quartz Save-as-PDF writes a small `Tc` at 300dpi body sizes so
 /// linear hmtx does not sit ~1pt wide of the oracle (color_sim wipe).
 /// 11.04 → Tc≈-0.0015; 16.08 → Tc≈-0.0018. Other sizes keep hmtx.
@@ -878,9 +899,13 @@ impl<'a> Face<'a> {
     }
 
     pub(crate) fn advance_pt(&self, ch: char, size: f32) -> f32 {
-        let gid = self.glyph(ch) as usize;
-        let adv = self.widths.get(gid).copied().unwrap_or(0);
-        f32::from(adv) * size / self.upem + word_device_track(size)
+        let gid = self.glyph(ch);
+        let adv = if gid == 0 && east_asian_wide(ch) {
+            self.upem
+        } else {
+            f32::from(self.widths.get(usize::from(gid)).copied().unwrap_or(0))
+        };
+        adv * size / self.upem + word_device_track(size)
     }
 
     pub(crate) fn width_pt(&self, text: &str, size: f32) -> f32 {
@@ -1061,6 +1086,16 @@ impl<'a> Face<'a> {
                 .is_some_and(|(a, z)| a.2 < z.2)
         {
             glyphs.reverse();
+        }
+        // East Asian wide text the face lacks measures one em, as in every
+        // face Word falls back to for it: a Latin .notdef (0.75 em in
+        // Liberation Sans) packed CJK lines where Word wraps them.
+        let em = self.upem.round() as i32;
+        for glyph in glyphs.iter_mut().filter(|g| g.0 == 0) {
+            let ch = text.get(glyph.2 as usize..).and_then(|t| t.chars().next());
+            if ch.is_some_and(east_asian_wide) {
+                glyph.1 = em;
+            }
         }
         let units: ShapedUnits = glyphs.into();
         if let Ok(mut cache) = self.shaped.lock() {
@@ -3226,6 +3261,28 @@ mod tests {
         assert!(fonts.family_is_east_asian("標楷體"));
         assert!(fonts.family_is_east_asian("ＭＳ 明朝"));
         assert!(!fonts.family_is_east_asian("Prb Absent"));
+    }
+
+    #[test]
+    fn an_ideograph_a_face_lacks_still_measures_one_em() {
+        // Without Word's East Asian faces (Linux, Windows CI, WASM) CJK
+        // text shapes to the Latin face's .notdef, ~0.6 em: a cell that
+        // wraps "J漢字漢字漢字" + "Q漢字漢字漢字" in Word fitted both on
+        // one line. Every face Word falls back to draws them one em wide;
+        // half-width katakana stay narrow.
+        let mut face = Face::load(FaceId::SansRegular);
+        let em = 11.0 + word_device_track(11.0);
+        for text in ["漢字", "かな", "，。", "한글", "ＡＢ"] {
+            assert!(
+                face.shape(text, 11.0).iter().all(|(gid, _)| *gid == 0),
+                "{text}"
+            );
+            let w = face.width_pt(text, 11.0);
+            assert!((w - 2.0 * em).abs() < 0.01, "{text}: {w}");
+        }
+        assert!(face.width_pt("ｶﾅ", 11.0) < 2.0 * em - 1.0);
+        face.buzz = None;
+        assert!((face.width_pt("漢字", 11.0) - 2.0 * em).abs() < 0.01);
     }
 
     #[test]
