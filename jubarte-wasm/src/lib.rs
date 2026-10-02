@@ -619,6 +619,11 @@ pub fn capabilities() -> Result<String, JsValue> {
     manifest.operations.pdf = cfg!(feature = "pdf");
     manifest.operations.png = false;
     manifest.operations.fields = cfg!(feature = "pdf");
+    if !cfg!(feature = "pdf") {
+        manifest
+            .audit_rules
+            .retain(|code| code != "FONT_SUBSTITUTED");
+    }
     serde_json::to_string_pretty(&manifest).map_err(js_err)
 }
 
@@ -686,6 +691,27 @@ pub fn markdown_to_docx(
     reference: Option<Vec<u8>>,
 ) -> Result<Vec<u8>, JsValue> {
     markdown_docx(text, options_json, reference).map_err(js_err)
+}
+
+/// Audit findings as JSON `{findings, rules, layout}` (see `jubarte audit`).
+/// `rules` is a comma-separated list of rule sets (`a11y`, `style`,
+/// `structure`) or codes; omitted or empty runs every rule. The slim build
+/// has no layout pass: it leaves `FONT_SUBSTITUTED` out (naming it is an
+/// error) and does not compare `NUMPAGES` caches with a page count.
+#[wasm_bindgen(js_name = auditDocument)]
+pub fn audit_document(docx: &[u8], rules: Option<String>) -> Result<String, JsValue> {
+    let rules = rules.unwrap_or_default();
+    let rules: Vec<&str> = rules
+        .split(',')
+        .map(str::trim)
+        .filter(|rule| !rule.is_empty())
+        .collect();
+    #[cfg(feature = "pdf")]
+    let report = jubarte::audit::audit_report(docx, &rules);
+    #[cfg(not(feature = "pdf"))]
+    let report = jubarte::audit::audit_report_with(docx, &rules, None);
+    let report = report.map_err(js_err)?;
+    serde_json::to_string_pretty(&report).map_err(js_err)
 }
 
 #[cfg(test)]
@@ -782,6 +808,33 @@ mod tests {
                 .unwrap()
                 .contains("\"Inserted\"")
         );
+    }
+
+    #[test]
+    fn audit_document_locates_findings_and_selects_rules() {
+        let docx = word("• typed bullet\n");
+        let report: serde_json::Value =
+            serde_json::from_str(&audit_document(&docx, Some("style, a11y".into())).unwrap())
+                .unwrap();
+        assert_eq!(report["layout"], false);
+        let bullet = report["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["code"] == "LITERAL_BULLET")
+            .expect("a typed bullet is a finding");
+        assert_eq!(bullet["location"], "body:p:0");
+        assert_eq!(report["rules"].as_array().unwrap().len(), 7);
+        let all: serde_json::Value =
+            serde_json::from_str(&audit_document(&docx, None).unwrap()).unwrap();
+        let manifest: serde_json::Value = serde_json::from_str(&capabilities().unwrap()).unwrap();
+        assert_eq!(all["rules"], manifest["audit_rules"]);
+        let full = cfg!(feature = "pdf");
+        assert_eq!(
+            all["rules"].as_array().unwrap().len(),
+            if full { 9 } else { 8 }
+        );
+        assert_eq!(all["layout"], full);
     }
 
     const OLD: &str = "# Terms\n\nPayment is due in 30 days.\n\n- Delivery\n- Warranty\n";

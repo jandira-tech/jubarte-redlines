@@ -691,6 +691,21 @@ fn markdown_to_docx(
     })
 }
 
+/// `{findings, rules, layout}` from `jubarte::audit` as JSON; `rules`
+/// names rule sets or codes (`None`: every rule).
+#[pyfunction]
+#[pyo3(signature = (docx, rules=None))]
+fn audit_json(py: Python<'_>, docx: &[u8], rules: Option<Vec<String>>) -> PyResult<String> {
+    let rules = rules.unwrap_or_default();
+    let report = py
+        .detach(|| {
+            let rules: Vec<&str> = rules.iter().map(String::as_str).collect();
+            jubarte::audit::audit_report(docx, &rules)
+        })
+        .map_err(err)?;
+    serde_json::to_string(&report).map_err(err)
+}
+
 #[pymodule]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
@@ -723,5 +738,6 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(markdown_to_docx, m)?)?;
     m.add_function(wrap_pyfunction!(update_fields, m)?)?;
     m.add_function(wrap_pyfunction!(scrub_json, m)?)?;
+    m.add_function(wrap_pyfunction!(audit_json, m)?)?;
     Ok(())
 }

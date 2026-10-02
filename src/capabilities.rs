@@ -34,6 +34,9 @@ pub struct Capabilities {
     pub edit_operations: Vec<String>,
     /// Scope limits an agent must plan around.
     pub limits: Limits,
+    /// Rule codes `audit` checks ([`crate::audit::RULES`] order).
+    #[serde(default)]
+    pub audit_rules: Vec<String>,
 }
 
 /// Availability per operation.
@@ -116,6 +119,10 @@ pub struct Operations {
     /// (`jubarte scrub`); edit plans take `redact`.
     #[serde(default)]
     pub scrub: bool,
+    /// Accessibility, style and structure findings by paragraph id
+    /// (`jubarte audit`).
+    #[serde(default)]
+    pub audit: bool,
 }
 
 /// Documented scope limits.
@@ -201,6 +208,7 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             repair: true,
             fields: true,
             scrub: true,
+            audit: true,
         },
         edit_plan_versions: vec![crate::inspect::SCHEMA_VERSION],
         edit_operations: [
@@ -242,6 +250,10 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             reads_legacy_doc: false,
             input: crate::admission::InputLimits::default().into(),
         },
+        audit_rules: crate::audit::RULES
+            .iter()
+            .map(|rule| rule.0.to_string())
+            .collect(),
     }
 }
 

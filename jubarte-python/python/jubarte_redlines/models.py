@@ -1474,3 +1474,34 @@ def _decode_findings(rows: list[dict[str, object]]) -> tuple[Finding, ...]:
 
 def _decode_findings_json(payload: str) -> tuple[Finding, ...]:
     return _decode_findings(json.loads(payload))
+
+
+@dataclass(frozen=True, slots=True)
+class AuditFinding:
+    """One ``Document.audit`` finding.
+
+    ``code`` is the rule (``HEADING_SKIP``, ``IMAGE_NO_DESCR``...),
+    ``rule_set`` is ``a11y``, ``style`` or ``structure``, ``severity`` is
+    ``error``, ``warning`` or ``info``, and ``location`` is the paragraph id
+    (``body:p:N``, ``footer1:p:N``...) an edit plan targets, or a part name
+    for a document-wide finding.
+    """
+
+    code: str
+    rule_set: str
+    severity: str
+    location: str
+    message: str
+
+
+def _decode_audit(payload: str) -> tuple[AuditFinding, ...]:
+    return tuple(
+        AuditFinding(
+            code=f["code"],
+            rule_set=f["rule_set"],
+            severity=f["severity"],
+            location=f["location"],
+            message=f["message"],
+        )
+        for f in json.loads(payload)["findings"]
+    )
