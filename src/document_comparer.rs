@@ -114,14 +114,27 @@ fn part_rels_agree(
 /// `headerReference`/`footerReference` elements in the main document, resolved to
 /// part names via the document rels.
 fn header_footer_refs(pkg: &PartFs) -> Vec<(String, String, String)> {
+    header_footer_refs_by_section(pkg)
+        .1
+        .into_iter()
+        .map(|(_, kind, ty, part)| (kind, ty, part))
+        .collect()
+}
+
+/// A header/footer reference with the index of the section holding it.
+type SectionRef = (usize, String, String, String);
+
+/// A document's section count and [`header_footer_refs`], each tagged
+/// with the index of the section that references it.
+fn header_footer_refs_by_section(pkg: &PartFs) -> (usize, Vec<SectionRef>) {
     let main = pkg
         .main_document_part()
         .unwrap_or_else(|| "word/document.xml".to_string());
     let Some(xml) = pkg.part_string(&main) else {
-        return Vec::new();
+        return (0, Vec::new());
     };
     let Some(rels) = pkg.read_rels_for(&main) else {
-        return Vec::new();
+        return (0, Vec::new());
     };
     let id_to_target: std::collections::HashMap<&str, &str> = rels
         .items
@@ -131,8 +144,9 @@ fn header_footer_refs(pkg: &PartFs) -> Vec<(String, String, String)> {
     let mut d = Dom::new();
     let doc = d.parse_xdocument(&xml);
     let Some(root) = d.root(doc) else {
-        return Vec::new();
+        return (0, Vec::new());
     };
+    let sections = section_props(&d, root);
     let mut out = Vec::new();
     for (ref_name, kind) in [
         (W::name("headerReference"), "header"),
@@ -143,6 +157,10 @@ fn header_footer_refs(pkg: &PartFs) -> Vec<(String, String, String)> {
                 .attribute(r, &W::name("type"))
                 .unwrap_or("default")
                 .to_string();
+            let section = d
+                .parent(r)
+                .and_then(|s| sections.iter().position(|&x| x == s))
+                .unwrap_or(0);
             if let Some(rid) = d.attribute(r, &R::name("id"))
                 && let Some(&tgt) = id_to_target.get(rid)
             {
@@ -151,39 +169,92 @@ fn header_footer_refs(pkg: &PartFs) -> Vec<(String, String, String)> {
                 } else {
                     format!("word/{}", tgt.trim_start_matches('/'))
                 };
-                out.push((kind.to_string(), ty, part));
+                out.push((section, kind.to_string(), ty, part));
             }
         }
     }
-    out
+    (sections.len(), out)
 }
 
-/// The revised part a header/footer part is diffed against: the one the
-/// same section references for the same kind and type (the `at`-th such
-/// reference in each document), or none when A's part is unchanged in B.
-/// Keyed by kind and type alone, every section's default footer met the last
-/// section's ("Page 1 of 4" against "Page 4 of 4"), and an unchanged footer
-/// came out deleted and inserted again.
+/// A document's sections in order: each paragraph mark's `w:sectPr`, then
+/// the body's own. The `w:sectPr` in a `w:sectPrChange` is no section.
+fn section_props(dom: &Dom, root: NodeId) -> Vec<NodeId> {
+    dom.descendants(root, Some(&W::sect_pr()))
+        .into_iter()
+        .filter(|&s| {
+            dom.parent(s)
+                .is_some_and(|p| dom.name_is(p, &W::p_pr()) || dom.name_is(p, &W::body()))
+        })
+        .collect()
+}
+
+/// The revised section each original section became, read off the
+/// redline's section breaks: the section of a deleted break has none (Word
+/// leaves its headers as they were, probes hs1/hs3), an inserted break's is
+/// the revision's alone. None when the breaks do not account for both
+/// documents' sections.
+fn section_pairing(
+    redline_xml: &str,
+    sections_a: usize,
+    sections_b: usize,
+) -> Option<Vec<Option<usize>>> {
+    let mut d = Dom::new();
+    let doc = d.parse_xdocument(redline_xml);
+    let root = d.root(doc)?;
+    let marked = |s: NodeId, mark: &XName| {
+        d.parent(s)
+            .filter(|&p| d.name_is(p, &W::p_pr()))
+            .and_then(|p| d.element(p, &W::r_pr()))
+            .is_some_and(|r| d.element(r, mark).is_some())
+    };
+    let mut pairing = Vec::new();
+    let mut at_b = 0;
+    for s in section_props(&d, root) {
+        let deleted = marked(s, &W::del());
+        if !marked(s, &W::ins()) {
+            pairing.push((!deleted).then_some(at_b));
+        }
+        if !deleted {
+            at_b += 1;
+        }
+    }
+    (pairing.len() == sections_a && at_b == sections_b).then_some(pairing)
+}
+
+/// The revised part a header/footer part is diffed against, or none when
+/// A's part is unchanged in B. With the redline's `section` pairing, it is
+/// the one the paired revised section shows for the same kind and type
+/// (its own or the one it inherits); a part no surviving section shows has
+/// none. Without it, the `at`-th such reference in each
+/// document. Keyed by kind and type alone, every section's default footer
+/// met the last section's ("Page 1 of 4" against "Page 4 of 4"), and an
+/// unchanged footer came out deleted and inserted again.
 fn pair_header_footer(
     pkg1: &PartFs,
     pkg2: &PartFs,
-    refs_b: &[(String, String, String)],
+    refs_b: &[SectionRef],
     (kind, ty, part_a): (&str, &str, &str),
     at: usize,
+    section: Option<Option<usize>>,
 ) -> Option<String> {
-    let same_slot: Vec<&str> = refs_b
+    let same_slot: Vec<(usize, &str)> = refs_b
         .iter()
-        .filter(|(k, t, _)| k == kind && t == ty)
-        .map(|(_, _, p)| p.as_str())
+        .filter(|(_, k, t, _)| k == kind && t == ty)
+        .map(|(s, _, _, p)| (*s, p.as_str()))
         .collect();
     let bytes_a = pkg1.part_bytes(part_a);
-    if same_slot.iter().any(|&p| pkg2.part_bytes(p) == bytes_a) {
+    if same_slot
+        .iter()
+        .any(|&(_, p)| pkg2.part_bytes(p) == bytes_a)
+    {
         return None;
     }
-    same_slot
-        .get(at)
-        .or(same_slot.last())
-        .map(|p| p.to_string())
+    let paired = match section {
+        Some(Some(b)) => same_slot.iter().rev().find(|&&(s, _)| s <= b),
+        Some(None) => None,
+        None => same_slot.get(at).or(same_slot.last()),
+    };
+    paired.map(|&(_, p)| p.to_string())
 }
 
 /// Default pinned revision date when the caller doesn't specify one.
@@ -5856,16 +5927,19 @@ fn merge_custom_properties(out: &mut PartFs, pkg2: &PartFs) {
         .filter_map(|&p| dom.attribute(p, &pid)?.parse::<u32>().ok())
         .max()
         .unwrap_or(1);
-    let a_names: std::collections::HashSet<String> = a_props
+    // Property names match without regard to case: the original's
+    // "Actno" and the revision's "ActNo" are one property, and two of them
+    // make Word refuse the package (19eb128df9 vs 9666fa13fb).
+    let mut a_names: std::collections::HashSet<String> = a_props
         .iter()
-        .filter_map(|&p| dom.attribute(p, &name).map(str::to_string))
+        .filter_map(|&p| dom.attribute(p, &name).map(str::to_lowercase))
         .collect();
     let mut added = false;
     for bp in dom.elements(b_root, None) {
         let Some(n) = dom.attribute(bp, &name) else {
             continue;
         };
-        if a_names.contains(n) {
+        if !a_names.insert(n.to_lowercase()) {
             continue;
         }
         let clone = dom.clone_subtree(bp);
@@ -7291,18 +7365,38 @@ fn compare_documents_impl(
     // (original's) part. That part keeps A's rels, so a part whose B references
     // (a logo, a hyperlink) would resolve to something else there is skipped.
     {
-        let refs_b = header_footer_refs(&pkg2);
+        let (sections_a, refs_a) = header_footer_refs_by_section(&pkg1);
+        let (sections_b, refs_b) = header_footer_refs_by_section(&pkg2);
+        let pairing = out
+            .part_string(&main1)
+            .and_then(|x| section_pairing(&x, sections_a, sections_b));
+        let own_slots: std::collections::HashSet<(usize, String, String)> = refs_a
+            .iter()
+            .map(|(s, k, t, _)| (*s, k.clone(), t.clone()))
+            .collect();
         let mut ordinals: std::collections::HashMap<(String, String), usize> =
             std::collections::HashMap::new();
         let mut diffed = std::collections::HashSet::new();
-        for (kind, ty, part_a) in header_footer_refs(&pkg1) {
+        for (section_a, kind, ty, part_a) in refs_a {
             let ordinal = ordinals.entry((kind.clone(), ty.clone())).or_default();
             let at = *ordinal;
             *ordinal += 1;
             if !diffed.insert(part_a.clone()) {
                 continue;
             }
-            let Some(part_b) = pair_header_footer(&pkg1, &pkg2, &refs_b, (&kind, &ty, &part_a), at)
+            // The part also shows in the later sections that inherit it:
+            // the first whose break survives says what it became (Word
+            // probe hs5 diffs a deleted section's header that the last
+            // section inherits).
+            let section = pairing.as_ref().map(|p| {
+                (section_a..p.len())
+                    .take_while(|&s| {
+                        s == section_a || !own_slots.contains(&(s, kind.clone(), ty.clone()))
+                    })
+                    .find_map(|s| p[s])
+            });
+            let Some(part_b) =
+                pair_header_footer(&pkg1, &pkg2, &refs_b, (&kind, &ty, &part_a), at, section)
             else {
                 continue;
             };

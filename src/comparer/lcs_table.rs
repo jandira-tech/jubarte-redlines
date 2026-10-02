@@ -266,7 +266,51 @@ pub fn mark_rows_as_deleted_or_inserted(
             dom.set_attribute_value(rev, &W::id(), Some(&next_id.to_string()));
             *next_id += 1;
             dom.set_attribute_value(rev, &W::date(), Some(&settings.date_time_for_revisions));
-            dom.add(trpr, rev);
+            add_row_mark(dom, trpr, rev);
         }
+    }
+}
+
+/// Add a row's `w:ins` / `w:del` to its `w:trPr`: CT_TrPr keeps them ahead
+/// of a `w:trPrChange` (acce1b593c's header rows wrote the mark after it:
+/// the schema rejects that, and Word timed out saving the redline as PDF).
+pub(crate) fn add_row_mark(dom: &mut Dom, trpr: NodeId, rev: NodeId) {
+    match dom.element(trpr, &W::name("trPrChange")) {
+        Some(change) => dom.add_before_self(change, rev),
+        None => dom.add(trpr, rev),
+    }
+}
+
+#[cfg(test)]
+mod row_mark_tests {
+    use super::*;
+
+    fn child_names(dom: &Dom, n: NodeId) -> Vec<String> {
+        dom.elements(n, None)
+            .into_iter()
+            .filter_map(|c| dom.name(c).map(|x| x.local_name().to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn a_row_mark_goes_before_the_row_property_change() {
+        // acce1b593c vs 4e2d5a0b0c: header rows came out as
+        // jc, trPrChange, del, which the validator rejects.
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(
+            r#"<w:trPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:jc w:val="center"/><w:trPrChange w:id="1" w:author="A" w:date="1970-01-01T00:00:00Z"><w:trPr/></w:trPrChange></w:trPr>"#,
+        );
+        let trpr = dom.root(doc).expect("trPr");
+        let del = dom.new_element(W::del());
+        add_row_mark(&mut dom, trpr, del);
+        assert_eq!(child_names(&dom, trpr), ["jc", "del", "trPrChange"]);
+
+        let doc = dom.parse_xdocument(
+            r#"<w:trPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:jc w:val="center"/></w:trPr>"#,
+        );
+        let plain = dom.root(doc).expect("trPr");
+        let ins = dom.new_element(W::ins());
+        add_row_mark(&mut dom, plain, ins);
+        assert_eq!(child_names(&dom, plain), ["jc", "ins"]);
     }
 }

@@ -183,6 +183,52 @@ def _decode_changes(payload: str) -> tuple[Change, ...]:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class Comment:
+    """One comment with its thread position and the text it is anchored to.
+
+    ``id`` is the comment's ``w:id``, which ``EditPlan.reply_comment``,
+    ``resolve_comment``, ``edit_comment`` and ``delete_comment`` take.
+    ``parent`` is the id of the comment it replies to (Word threads are one
+    level deep); ``done`` is set when the thread is resolved. ``paragraph``
+    is the paragraph id where the range starts (``body:p:12``);
+    ``anchor_text`` is the commented text, paragraphs joined by ``\n``, with
+    up to 80 characters ``before`` and ``after`` it.
+    """
+
+    id: int
+    author: str
+    initials: str | None
+    date: str | None
+    text: str
+    parent: int | None
+    done: bool
+    paragraph: str | None
+    anchor_text: str
+    before: str
+    after: str
+
+
+def _decode_comments(payload: str) -> tuple[Comment, ...]:
+    rows: list[dict[str, object]] = json.loads(payload)
+    return tuple(
+        Comment(
+            id=row["id"],  # type: ignore[arg-type]
+            author=row["author"],  # type: ignore[arg-type]
+            initials=row.get("initials"),  # type: ignore[arg-type]
+            date=row.get("date"),  # type: ignore[arg-type]
+            text=row["text"],  # type: ignore[arg-type]
+            parent=row.get("parent"),  # type: ignore[arg-type]
+            done=row["done"],  # type: ignore[arg-type]
+            paragraph=row.get("paragraph"),  # type: ignore[arg-type]
+            anchor_text=row["anchor_text"],  # type: ignore[arg-type]
+            before=row["before"],  # type: ignore[arg-type]
+            after=row["after"],  # type: ignore[arg-type]
+        )
+        for row in rows
+    )
+
+
 def change_filter(
     ids: Sequence[str] | None = None,
     authors: Sequence[str] | None = None,
@@ -511,11 +557,22 @@ class EditPlan:
         op: dict[str, object] = {"kind": "delete", "paragraph": _selector(paragraph), "find": find}
         return self._with(_with_optional(op, id=id))
 
-    def comment(self, paragraph: Selector, *, text: str, find: str | None = None, id: str | None = None) -> EditPlan:
-        """Comment on the unique occurrence of ``find`` or on the whole paragraph."""
+    def comment(
+        self,
+        paragraph: Selector,
+        *,
+        text: str,
+        find: str | None = None,
+        through: Selector | None = None,
+        id: str | None = None,
+    ) -> EditPlan:
+        """Comment on the unique occurrence of ``find`` or on the whole paragraph;
+        with ``through``, on every paragraph from ``paragraph`` to that one."""
         op: dict[str, object] = {"kind": "comment", "paragraph": _selector(paragraph), "text": text}
         if find is not None:
             op["find"] = find
+        if through is not None:
+            op["through"] = _selector(through)
         return self._with(_with_optional(op, id=id))
 
     def insert_paragraph(
@@ -590,6 +647,27 @@ class EditPlan:
         """Make the paragraph read as ``text``: only the words that differ are
         edited, so the rest keeps its runs and formatting."""
         op: dict[str, object] = {"kind": "rewrite", "paragraph": _selector(paragraph), "text": text}
+        return self._with(_with_optional(op, id=id))
+
+    def reply_comment(self, comment_id: int, *, text: str, id: str | None = None) -> EditPlan:
+        """Reply to comment ``comment_id`` (``Document.comments`` lists the ids),
+        anchored on the same text; a reply to a reply joins the thread."""
+        op: dict[str, object] = {"kind": "reply_comment", "comment_id": comment_id, "text": text}
+        return self._with(_with_optional(op, id=id))
+
+    def resolve_comment(self, comment_id: int, *, done: bool = True, id: str | None = None) -> EditPlan:
+        """Resolve comment ``comment_id`` and its replies; ``done=False`` reopens them."""
+        op: dict[str, object] = {"kind": "resolve_comment", "comment_id": comment_id, "done": done}
+        return self._with(_with_optional(op, id=id))
+
+    def edit_comment(self, comment_id: int, *, text: str, id: str | None = None) -> EditPlan:
+        """Replace the text of comment ``comment_id``; its author, date and thread stay."""
+        op: dict[str, object] = {"kind": "edit_comment", "comment_id": comment_id, "text": text}
+        return self._with(_with_optional(op, id=id))
+
+    def delete_comment(self, comment_id: int, *, id: str | None = None) -> EditPlan:
+        """Remove comment ``comment_id`` with its replies and anchors."""
+        op: dict[str, object] = {"kind": "delete_comment", "comment_id": comment_id}
         return self._with(_with_optional(op, id=id))
 
     def to_dict(self) -> dict[str, object]:
@@ -778,6 +856,60 @@ def _decode_render_report(payload: str) -> RenderReport:
         page_count=data["page_count"],
         pages=tuple(PageText(**p) for p in data["pages"]),
         fonts=tuple(FontResolution(**f) for f in data["fonts"]),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class PageDiff:
+    """How one page differs between the two sides of ``diff_render``.
+
+    ``index`` is zero-based. ``changed_ratio`` is changed pixels over all
+    pixels (0.0 to 1.0; 1.0 when the page exists on one side only or the two
+    pages differ in size). ``bbox`` is ``(x0, y0, x1, y1)`` in pixels around
+    every changed pixel (``x1``/``y1`` exclusive), ``None`` when equal.
+    ``only_in`` is ``"a"`` or ``"b"`` for a page only one side has.
+    """
+
+    index: int
+    changed_ratio: float
+    bbox: tuple[int, int, int, int] | None
+    only_in: Literal["a", "b"] | None = None
+
+    @property
+    def differs(self) -> bool:
+        """Whether this page differs at all."""
+        return self.changed_ratio > 0.0 or self.only_in is not None
+
+
+@dataclass(frozen=True, slots=True)
+class RenderDiff:
+    """Output of ``diff_render``: one ``PageDiff`` per page of the longer
+    document, both sides' PNG pages, and per page diff ``b``'s page with the
+    change painted magenta and boxed (``None`` when the page is equal, on one
+    side only, a different size, or overlays were not asked for)."""
+
+    pages: tuple[PageDiff, ...]
+    a: tuple[bytes, ...]
+    b: tuple[bytes, ...]
+    overlays: tuple[bytes | None, ...]
+    a_report: RenderReport
+    b_report: RenderReport
+
+    @property
+    def differs(self) -> bool:
+        """Whether any page differs."""
+        return any(p.differs for p in self.pages)
+
+
+def _decode_page_diffs(payload: str) -> tuple[PageDiff, ...]:
+    return tuple(
+        PageDiff(
+            index=p["index"],
+            changed_ratio=float(p["changed_ratio"]),
+            bbox=None if p["bbox"] is None else (p["bbox"][0], p["bbox"][1], p["bbox"][2], p["bbox"][3]),
+            only_in=p.get("only_in"),
+        )
+        for p in json.loads(payload)
     )
 
 

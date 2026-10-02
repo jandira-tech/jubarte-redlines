@@ -17,6 +17,7 @@ from typing import Literal
 from . import _native
 from .models import (
     Change,
+    Comment,
     ChangeKind,
     CompareOptions,
     Diff,
@@ -24,12 +25,15 @@ from .models import (
     EditPlan,
     EditReport,
     PdfOptions,
+    RenderDiff,
     Rendered,
     Revision,
     Snapshot,
     _decode_changes,
+    _decode_comments,
     _decode_diff,
     _decode_outcomes,
+    _decode_page_diffs,
     _decode_render_report,
     _decode_report,
     _decode_revisions,
@@ -187,6 +191,14 @@ class Document:
         """Every tracked change, each with the id ``accept`` / ``reject`` select by."""
         return _decode_changes(_native.list_changes_json(self._data))
 
+    def comments(self, *, author: str | None = None, latest: bool = False) -> tuple[Comment, ...]:
+        """Every comment with its thread and anchored text, in document part order.
+
+        ``author`` keeps one author's comments (exact match); ``latest`` keeps
+        the newest comment of each thread.
+        """
+        return _decode_comments(_native.list_comments_json(self._data, author, latest))
+
     def revisions(self) -> tuple[Revision, ...]:
         """Return immutable metadata for the revisions listed by the engine."""
         return _decode_revisions(_native.get_revisions_json(self._data))
@@ -259,8 +271,17 @@ class Document:
             raise EditPlanError._from_json(payload)
         return _decode_report(payload)
 
-    def to_png(self, *, dpi: float = 96.0, options: PdfOptions | None = None) -> tuple[bytes, ...]:
-        """One PNG per page, straight from the layout (no PDF round trip)."""
+    def to_png(
+        self, *, dpi: float = 96.0, options: PdfOptions | None = None, pages: Sequence[int] | None = None
+    ) -> tuple[bytes, ...]:
+        """One PNG per page, straight from the layout (no PDF round trip).
+
+        ``pages`` (counted from 1, any order, repeats ignored) rasterizes only
+        those pages, in ascending order, after one layout pass of the whole
+        document.
+        """
+        if pages is not None:
+            return self.render(pdf=False, png_dpi=dpi, options=options, pages=pages).pngs
         options = _pdf_options(options)
         return tuple(
             _native.docx_to_png(
@@ -271,8 +292,19 @@ class Document:
             )
         )
 
-    def render(self, *, pdf: bool = True, png_dpi: float | None = None, options: PdfOptions | None = None) -> Rendered:
-        """One layout pass: optional PDF, optional PNG pages, and the page report."""
+    def render(
+        self,
+        *,
+        pdf: bool = True,
+        png_dpi: float | None = None,
+        options: PdfOptions | None = None,
+        pages: Sequence[int] | None = None,
+    ) -> Rendered:
+        """One layout pass: optional PDF, optional PNG pages, and the page report.
+
+        ``pages`` (counted from 1) rasterizes only those pages; the report
+        still covers every page. A page past the end raises ``JubarteError``.
+        """
         options = _pdf_options(options)
         pdf_bytes, pngs, report = _native.render(
             self._data,
@@ -281,8 +313,69 @@ class Document:
             compress=options.compress,
             revisions=options.revisions,
             revision_palette=options.revision_palette,
+            pages=None if pages is None else _zero_based(pages),
         )
         return Rendered(pdf=pdf_bytes, pngs=tuple(pngs), report=_decode_render_report(report))
+
+    def inspect_json(self) -> str:
+        """The engine's ``inspect`` snapshot as JSON text, unchanged (``inspect`` decodes it)."""
+        return _native.inspect_json(self._data)
+
+
+def _zero_based(pages: Sequence[int]) -> list[int]:
+    """Page numbers counted from 1 as the engine's zero-based indices."""
+    out = []
+    for page in pages:
+        if isinstance(page, bool) or not isinstance(page, int) or page < 1:
+            raise ValueError(f"pages are counted from 1; got {page!r}")
+        out.append(page - 1)
+    return out
+
+
+def diff_render(
+    a: Document | bytes | str | os.PathLike[str],
+    b: Document | bytes | str | os.PathLike[str],
+    *,
+    dpi: float = 100.0,
+    overlay: bool = True,
+    options: PdfOptions | None = None,
+) -> RenderDiff:
+    """Which pages of Word documents ``a`` and ``b`` differ, pixel for
+    pixel, from one layout pass each at ``dpi``.
+
+    Each side is a ``Document``, Word ``bytes``, or a path (``str`` or
+    ``os.PathLike``). ``overlay`` paints the changed pixels of each changed
+    page magenta over ``b``'s page and boxes them. ``options`` sets the
+    revision style both sides are painted with (``compress`` is ignored).
+    """
+    options = _pdf_options(options)
+    pages, a_pngs, b_pngs, overlays, a_report, b_report = _native.diff_render_json(
+        _word_bytes(a),
+        _word_bytes(b),
+        dpi=float(dpi),
+        overlay=overlay,
+        revisions=options.revisions,
+        revision_palette=options.revision_palette,
+    )
+    return RenderDiff(
+        pages=_decode_page_diffs(pages),
+        a=tuple(a_pngs),
+        b=tuple(b_pngs),
+        overlays=tuple(overlays),
+        a_report=_decode_render_report(a_report),
+        b_report=_decode_render_report(b_report),
+    )
+
+
+def _word_bytes(side: object) -> bytes:
+    """A ``diff_render`` side as Word bytes."""
+    if isinstance(side, Document):
+        return side._data
+    if isinstance(side, bytes):
+        return side
+    if isinstance(side, (str, os.PathLike)):
+        return Path(side).read_bytes()
+    raise TypeError("each side must be a Document, Word bytes or a path")
 
 
 def _pdf_options(options: PdfOptions | None) -> PdfOptions:
