@@ -13,6 +13,7 @@ and how to check every claim in your own sandbox without trusting us.
 | [anthropic-docx-skill.md](anthropic-docx-skill.md) | `anthropics/skills`, `skills/docx` |
 | [openai-doc-skill.md](openai-doc-skill.md) | OpenAI's curated `doc` skill |
 | [install-matrix.md](install-matrix.md) | What installs where today, and what is pending |
+| [mcp.md](mcp.md) | `jubarte-mcp`: the same engine as MCP tools for Claude Code, Codex and Gemini CLI |
 
 Runnable evidence:
 

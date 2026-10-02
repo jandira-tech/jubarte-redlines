@@ -19,7 +19,7 @@ spacer (or its variants) after the deleted item.
 
 from __future__ import annotations
 
-import sys
+import argparse
 import zipfile
 from pathlib import Path
 
@@ -149,18 +149,31 @@ def write(path: Path, body: str) -> None:
             zf.writestr(info, data.encode("utf-8"))
 
 
-if __name__ == "__main__":
-    if len(sys.argv) == 3 and sys.argv[1] == "--all":
-        out_dir = Path(sys.argv[2])
-        out_dir.mkdir(parents=True, exist_ok=True)
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "out",
+        nargs="?",
+        type=Path,
+        default=Path(__file__).with_name("redline.docx"),
+        help="where to write the base case (default: redline.docx here)",
+    )
+    parser.add_argument(
+        "--all",
+        metavar="DIR",
+        type=Path,
+        help="write every case to DIR/<name>.docx instead",
+    )
+    args = parser.parse_args(argv)
+    if args.all is not None:
+        args.all.mkdir(parents=True, exist_ok=True)
         for case, case_body in CASES.items():
-            write(out_dir / f"{case}.docx", case_body)
-            print(out_dir / f"{case}.docx")
+            write(args.all / f"{case}.docx", case_body)
+            print(args.all / f"{case}.docx")
     else:
-        out = (
-            Path(sys.argv[1])
-            if len(sys.argv) > 1
-            else Path(__file__).with_name("redline.docx")
-        )
-        write(out, CASES["base"])
-        print(out)
+        write(args.out, CASES["base"])
+        print(args.out)
+
+
+if __name__ == "__main__":
+    main()

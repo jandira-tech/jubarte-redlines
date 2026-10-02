@@ -28,7 +28,9 @@ Gaps a provider's sandbox may hit today:
   release.
 - **`uvx jubarte-redlines` needs the next release.** 0.10.1 has
   `python -m jubarte_redlines`; the `jubarte-redlines` console script is
-  on `main` (`[project.scripts]` in `jubarte-python/pyproject.toml`).
+  on `main` (`[project.scripts]` in `jubarte-python/pyproject.toml`), as
+  is `jubarte-mcp`, the MCP server behind the `mcp` extra
+  ([mcp.md](mcp.md)).
 
 ## Pending (S10, plan 1 Task 1, `adopt/s10-wheels`)
 

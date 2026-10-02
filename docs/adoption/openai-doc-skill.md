@@ -39,6 +39,7 @@ error, `2` usage error, `3` edit plan refused (nothing written).
 | python-docx tables, lists, run formatting, footnotes, images, page setup | structural plan operations | pending: S8, `adopt/s8-tables-lists` and `adopt/s8-runs-notes-images` |
 | Comparing two versions | `jubarte a.docx b.docx -o redline.docx --author "Name"` | released |
 | Accept or reject | `jubarte accept FILE -o OUT` / `reject`, all at once or per change (`--id`, `--author`, `--kind`) | released |
+| Calling it as tools instead of a command line | `uvx --from 'jubarte-redlines[mcp]' jubarte-mcp --root .` serves text, inspect, edit, render, compare, changes, accept and reject as MCP tools, every path confined to `--root`; see [mcp.md](mcp.md). | main |
 
 ## 3. What you lose, or keep
 

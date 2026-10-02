@@ -39,6 +39,7 @@ written).
 | `comment.py` + pasted markers | a `comment` operation (`find` + `text`), or a `comment` field on `replace`, `insert`, `insert_paragraph` and `delete_paragraph`; the engine places the anchors. Threads (reply, resolve, delete) and the four extended comment parts are planned. | released (add); pending: S2, `adopt/s2-comments` (threads) |
 | docx-js for prose | `jubarte convert draft.md -o draft.docx [--reference-doc house.docx]`, with CriticMarkup becoming tracked changes and comments. `--page letter` addresses the A4 default. | main (convert from Markdown); pending: S7, `adopt/s7-markdown` (`--page`) |
 | Repeated anchors | an `occurrence` field to pick the Nth match instead of a longer anchor. | pending: S1, `adopt/s1-s9-occurrence-fonts` |
+| Calling it as tools instead of a command line | `uvx --from 'jubarte-redlines[mcp]' jubarte-mcp --root .` serves text, inspect, edit, render, compare, changes, accept and reject as MCP tools, every path confined to `--root`; see [mcp.md](mcp.md). | main |
 
 ## 3. What you lose, or keep
 
