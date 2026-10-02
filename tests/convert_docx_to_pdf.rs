@@ -46189,3 +46189,48 @@ fn pdf_hex_glyph_xs(pdf: &[u8]) -> Vec<f32> {
     }
     xs
 }
+
+#[test]
+fn a_hide_mark_cells_empty_last_paragraph_takes_no_height() {
+    // Word 16 probe hm1 (2026-10-02, Calibri 11, 8pt after, line 1.08):
+    // under w:hideMark a cell's empty last paragraph is its end-of-cell
+    // mark and sizes nothing, in the first row too; the text above keeps
+    // its spacing after (rows 23pt apart). Without hideMark it is a line
+    // (45.4pt). e1cfa0591a's heading rows took 12 pages to 14 without it.
+    let cell = |text: &str, hide: bool| {
+        let hm = if hide { "<w:hideMark/>" } else { "" };
+        format!(
+            "<w:tr><w:tc><w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/>{hm}</w:tcPr>\
+             <w:p><w:r><w:t>{text}</w:t></w:r></w:p><w:p/></w:tc></w:tr>"
+        )
+    };
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"4000\" w:type=\"dxa\"/>\
+         <w:tblBorders><w:insideH w:val=\"single\" w:sz=\"4\"/></w:tblBorders></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>{}{}{}{}</w:tbl><w:p/>{}",
+        cell("RowZero", true),
+        cell("RowOne", true),
+        cell("RowTwo", false),
+        cell("RowThree", false),
+        letter_body_sect()
+    );
+    let styles = "<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\"/>\
+        <w:sz w:val=\"22\"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr>\
+        <w:spacing w:after=\"160\" w:line=\"259\" w:lineRule=\"auto\"/></w:pPr></w:pPrDefault></w:docDefaults>\
+        <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>";
+    let settings = "<w:compat><w:compatSetting w:name=\"compatibilityMode\" \
+        w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat>";
+    let pdf =
+        docx_to_pdf(&docx_with_settings_and_styles(&body, settings, styles)).expect("hideMark");
+    let y = |w: &str| pdf_glyph_text_xy(&pdf, w).expect(w).1;
+    let got = [
+        y("RowZero") - y("RowOne"),
+        y("RowOne") - y("RowTwo"),
+        y("RowTwo") - y("RowThree"),
+    ];
+    let word = [23.1, 23.0, 45.4];
+    assert!(
+        got.iter().zip(word).all(|(g, w)| (g - w).abs() < 0.6),
+        "rows apart at Word's {word:?}, got {got:?}"
+    );
+}

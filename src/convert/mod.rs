@@ -11853,6 +11853,26 @@ fn table_block(
             {
                 drop_trailing_break(last);
             }
+            // An empty last paragraph is that mark's own line: in any row
+            // it takes no height, the text above keeping its spacing after
+            // (Word 16 probe hm1: a first row too; e1cfa0591a's "Familial
+            // Aggregation" heading row is 22.6pt, one 11pt Calibri line and
+            // 8pt after).
+            if hide_mark
+                && nested.is_empty()
+                && cell_paras.len() > 1
+                && cell_paras.last().is_some_and(|p| {
+                    p.runs
+                        .iter()
+                        .all(|r| r.text.trim().is_empty() && r.field == FieldKind::None)
+                        && p.images.is_empty()
+                        && p.boxes.is_empty()
+                        && p.bookmarks.is_empty()
+                        && p.blank_bookmarks.is_empty()
+                })
+            {
+                cell_paras.pop();
+            }
             cells.push(RawCell {
                 paras: cell_paras,
                 nested,
