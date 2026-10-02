@@ -383,6 +383,15 @@ impl PartFs {
         rels.items.retain(|r| r.rel_type != rel_type);
     }
 
+    /// Remove every package-level relationship (`_rels/.rels`) of the given
+    /// type. The parts they target are left to the caller.
+    pub fn remove_package_relationships_by_type(&mut self, rel_type: &str) {
+        self.pkg
+            .package_rels
+            .items
+            .retain(|r| r.rel_type != rel_type);
+    }
+
     /// Remove the relationship `rel_id` of `source_part` and, unless another
     /// internal relationship still targets it, the part it names with that
     /// part's own relationships and content-type override. No-op for an

@@ -58,7 +58,7 @@ class EditPlanError(_native.JubarteError):
     ``code`` is the stable engine code (``STALE_SOURCE``, ``ANCHOR_NOT_FOUND``,
     ``AMBIGUOUS_ANCHOR``, ``OVERLAPPING_EDITS``, ``UNSUPPORTED_STRUCTURE``,
     ``EXISTING_REVISIONS``, ``REVISION_CONFLICT``, ``UNKNOWN_CHANGE``,
-    ``INVALID_PLAN``, ...), ``message`` the engine's
+    ``REDACTION_LEAK``, ``UNSUPPORTED``, ``INVALID_PLAN``, ...), ``message`` the engine's
     detail without the code, ``operation`` the id of the operation that
     failed, and ``outcomes`` every operation's status at that point, so the
     caller can see which anchors resolved.
@@ -197,6 +197,32 @@ class Document:
         return Document.from_bytes(
             _native.accept_changes(self._data, change_filter(ids, authors, kinds))
         )
+
+    def scrub(
+        self,
+        *,
+        author_alias: str | None = "Author",
+        rsids: bool = True,
+        docprops: bool = True,
+        comments: bool = True,
+    ) -> Document:
+        """Return a new document without who touched it.
+
+        ``author_alias`` names every author (tracked changes, comments,
+        ``people.xml``; ``None`` keeps the names), ``rsids`` drops the
+        edit-session ids, ``docprops`` the creator, last editor, revision
+        number, dates, manager, company and custom properties, and
+        ``comments`` every comment. Text and tracked changes stay.
+        """
+        if author_alias is not None and not isinstance(author_alias, str):
+            raise TypeError("author_alias must be a string or None")
+        for name, value in (("rsids", rsids), ("docprops", docprops), ("comments", comments)):
+            if not isinstance(value, bool):
+                raise TypeError(f"{name} must be a bool")
+        options = json.dumps(
+            {"author_alias": author_alias, "rsids": rsids, "docprops": docprops, "comments": comments}
+        )
+        return Document.from_bytes(_native.scrub_json(self._data, options))
 
     def reject(
         self,

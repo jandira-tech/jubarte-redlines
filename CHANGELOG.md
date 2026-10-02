@@ -146,6 +146,32 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   changes is an `UNTRACKED_EDIT` finding at its id, another author's change
   a `FOREIGN_AUTHOR` one. It replaces `validate.py --original --author`.
 - `capabilities` reports `operations.validate` and `operations.repair`.
+- `jubarte scrub` (`scrub::scrub`, Python `Document.scrub`, WASM
+  `scrubDocument`) removes who touched a document before it goes out: one
+  author alias for every tracked change, comment and `people.xml` person
+  (without presence information), no rsids, no creator, last editor,
+  revision number, dates, manager, company or custom properties, and no
+  comments. Each is optional (`ScrubOptions`); without a choice all four go
+  under the alias "Author". Text, tracked changes and revision dates stay.
+  Scrub refuses (`ScrubError::Invalid`) to write a package with a
+  `validate` finding the input did not have. Capability `operations.scrub`.
+- `redact` edit operation (`{"kind":"redact","paragraph":...,"find":"..."}`,
+  optional `occurrence`; Python `EditPlan.redact`) replaces the text with
+  one full block per character in the clean copy and the redline,
+  untracked. The plan is
+  refused with `REDACTION_LEAK` when the text still occurs in either output
+  (`scrub::leaks`: text, attribute values, a paragraph's joined run text,
+  raw bytes of binary parts); the refusal names the parts and never repeats
+  the text, nor does the report. Works under `existing_revisions: "keep"`.
+- `settings` edit operation (`{"kind":"settings","track_revisions":true,
+  "update_fields":true,"protection":{"edit":"trackedChanges"}}`; Python
+  `EditPlan.settings`) writes `w:trackRevisions`, `w:updateFields` and
+  `w:documentProtection` into `word/settings.xml`, created with its
+  relationship and content type when missing, in `CT_Settings` order
+  (`settings::SETTINGS_ORDER`, held to `tests/data/wml_main_schema.json` by
+  `tests/schema_consistency.rs`). The clean copy and the redline both carry
+  them. `false` and `"edit": "none"` remove; a `password` is refused with
+  `UNSUPPORTED` (Word's legacy hash is not written); one per plan.
 
 ### Fixed
 

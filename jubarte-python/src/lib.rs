@@ -608,6 +608,19 @@ fn update_fields(py: Python<'_>, docx: &[u8]) -> PyResult<(Py<PyBytes>, String)>
     Ok((PyBytes::new(py, &updated.docx).unbind(), report.to_string()))
 }
 
+/// Remove the identifying data `options_json` names (`{"author_alias":
+/// "Author", "rsids": true, "docprops": true, "comments": true}`; a field
+/// left out is off) → DOCX bytes.
+#[pyfunction]
+fn scrub_json(py: Python<'_>, docx: &[u8], options_json: &str) -> PyResult<Py<PyBytes>> {
+    let options: jubarte::scrub::ScrubOptions = serde_json::from_str(options_json)
+        .map_err(|e| JubarteError::new_err(format!("invalid scrub options: {e}")))?;
+    let out = py
+        .detach(|| jubarte::scrub::scrub(docx, &options))
+        .map_err(err)?;
+    Ok(PyBytes::new(py, &out).unbind())
+}
+
 /// What this build can do (`runtime: "python"`).
 #[pyfunction]
 fn capabilities_json() -> String {
@@ -725,6 +738,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(audit_tracked_json, m)?)?;
     m.add_function(wrap_pyfunction!(markdown_to_docx, m)?)?;
     m.add_function(wrap_pyfunction!(update_fields, m)?)?;
+    m.add_function(wrap_pyfunction!(scrub_json, m)?)?;
     m.add_function(wrap_pyfunction!(audit_json, m)?)?;
     Ok(())
 }

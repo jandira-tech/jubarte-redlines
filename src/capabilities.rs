@@ -115,6 +115,10 @@ pub struct Operations {
     /// `update_fields`).
     #[serde(default)]
     pub fields: bool,
+    /// Remove authors, rsids, document properties and comments
+    /// (`jubarte scrub`); edit plans take `redact`.
+    #[serde(default)]
+    pub scrub: bool,
     /// Accessibility, style and structure findings by paragraph id
     /// (`jubarte audit`).
     #[serde(default)]
@@ -203,6 +207,7 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             validate: true,
             repair: true,
             fields: true,
+            scrub: true,
             audit: true,
         },
         edit_plan_versions: vec![crate::inspect::SCHEMA_VERSION],
@@ -229,6 +234,8 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             "insert_image",
             "page_setup",
             "insert_toc",
+            "redact",
+            "settings",
         ]
         .iter()
         .map(|s| (*s).to_string())
@@ -266,12 +273,11 @@ mod tests {
         assert_eq!(c.engine_version, env!("CARGO_PKG_VERSION"));
         assert_eq!(c.runtime, "rust");
         assert_eq!(c.edit_plan_versions, [1]);
-        assert_eq!(c.edit_operations.len(), 22);
+        assert_eq!(c.edit_operations.len(), 24);
         assert!(c.operations.fields);
-        assert_eq!(
-            c.edit_operations.last().map(String::as_str),
-            Some("insert_toc")
-        );
+        for op in ["insert_toc", "redact", "settings"] {
+            assert!(c.edit_operations.iter().any(|o| o == op), "{op}");
+        }
         assert!(c.edit_operations.iter().any(|kind| kind == "rewrite"));
         assert!(
             c.edit_operations
@@ -290,6 +296,7 @@ mod tests {
         assert_eq!(json["operations"]["diff_render"], true);
         assert_eq!(json["operations"]["page_ranges"], true);
         assert_eq!(json["operations"]["edit_keeps_revisions"], true);
+        assert_eq!(json["operations"]["scrub"], true);
         assert_eq!(json["operations"]["append"], true);
         assert_eq!(json["limits"]["reads_legacy_doc"], false);
         assert_eq!(json["limits"]["input"]["max_entries"], 10_000);

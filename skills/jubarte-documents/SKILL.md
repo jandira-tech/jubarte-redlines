@@ -127,8 +127,8 @@ matched exactly once. Exit 3 means the plan was refused: the report on stdout
 says which operation and why (`ANCHOR_NOT_FOUND`, `AMBIGUOUS_ANCHOR` with the
 match count, `OVERLAPPING_EDITS`, `UNSUPPORTED_STRUCTURE`, `UNSUPPORTED_IMAGE`, `STALE_SOURCE`,
 `EXISTING_REVISIONS`, `REVISION_CONFLICT`, `UNKNOWN_CHANGE`,
-`UNKNOWN_COMMENT`, `COMMENT_NOT_IN_BODY`, `INVALID_PLAN`, `INVALID_EDIT`,
-`LOCKED_CONTROL`);
+`UNKNOWN_COMMENT`, `COMMENT_NOT_IN_BODY`, `REDACTION_LEAK`, `UNSUPPORTED`,
+`INVALID_PLAN`, `INVALID_EDIT`, `LOCKED_CONTROL`);
 fix the plan and rerun. Use `--dry-run`
 to see the report without writing.
 
@@ -165,7 +165,13 @@ TIFF file, `position` `before|after`, optional `content_type`, `width_emu`
 with 914400 per inch, `alt`; body paragraphs only), `page_setup` (no
 `paragraph`; `section` `last|all`, `page` `letter|a4|{"width_dxa",
 "height_dxa"}`, `orientation` `portrait|landscape`, `margins_dxa` with any
-of top, right, bottom, left, header, footer, 1440 per inch). `replace` and
+of top, right, bottom, left, header, footer, 1440 per inch), `redact` (`find`: replaced with one block `█` per
+character in the clean copy and the redline alike, untracked; optional
+`occurrence`), `settings` (any of `track_revisions`, `update_fields` as
+booleans and `protection` `{"edit": "readOnly|comments|trackedChanges|forms|none",
+"enforcement": true}`; no paragraph; one per plan; this `update_fields`
+asks Word to recompute fields on open, the plan's top-level one writes
+jubarte's results now). `replace` and
 `insert` take an optional `format` (`bold`/`italic`/`underline`/`highlight`,
 `font`, `size_pt`, `color` as `FF0000` or `auto`, `strike`, `caps`) that
 applies to the new text only. `replace` takes `"whole": true` to show
@@ -219,6 +225,20 @@ Gotchas:
   header gets one; a later section without its own inherits the previous
   header, as in Word. A document that already holds a watermark, or a
   second `watermark` in the plan, is refused (`UNSUPPORTED_STRUCTURE`).
+- `redact` removes the text from both documents and is no tracked change,
+  so the other side never sees what was there. The plan is refused with
+  `REDACTION_LEAK` when the text still occurs anywhere in either output (a
+  comment, another paragraph, a header, the document properties); the
+  message names the parts, never the text. Redact every copy in the same
+  plan. A short `find` can also match an unrelated attribute value and be
+  refused: the check fails closed.
+- `settings` writes `word/settings.xml` (created when missing) in schema
+  order, in the clean copy and the redline alike: settings are not
+  revisions. `false` removes `w:trackRevisions` or `w:updateFields`;
+  `"edit": "none"` removes the restriction. `protection` has no password
+  (`password` is refused with `UNSUPPORTED`): it is Word's "enforce
+  without password", which any user can turn off. Two `settings` in one
+  plan are `OVERLAPPING_EDITS`.
 - `merge_paragraphs` keeps the second paragraph's properties (what Word's
   accept of a deleted paragraph mark does); the redline deletes the first
   paragraph's mark and inserts only the separator, as Word Compare shows a
@@ -386,6 +406,18 @@ For prose, Markdown is shorter: `jubarte convert draft.md --reference-doc
 house.docx -o draft.docx` takes the house styles, and CriticMarkup in the
 Markdown (`{++added++}`, `{--removed--}`, `{==text==}{>>comment<<}`) becomes
 tracked changes and comments.
+
+## 6. Before sending a document out
+
+`jubarte scrub in.docx -o out.docx` removes who touched a document: every
+author (tracked changes, comments, `people.xml`) becomes "Author", rsids go, the document properties lose the creator, last editor,
+revision number, dates, manager, company and custom properties, and
+comments go. Text and tracked changes stay. `--author-alias NAME`,
+`--rsids`, `--docprops` and `--comments` select only those. Python:
+`Document.scrub(author_alias="Counsel", comments=False)`; WASM:
+`scrubDocument(docx, '{"author_alias":"Counsel","rsids":true}')`.
+Scrub refuses to write a package with a validity finding the input did not
+have. Text to hide inside the document is a plan's `redact` (§2).
 
 ## Dependencies
 

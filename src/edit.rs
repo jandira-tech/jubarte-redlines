@@ -494,6 +494,36 @@ pub enum OperationKind {
         /// Title paragraph above the TOC (`"Contents"`).
         title: Option<String>,
     },
+    /// Replace one occurrence of `find` with one full block
+    /// (U+2588) per character, untracked: the clean copy and the redline
+    /// both show the blocks and neither keeps the text. The plan is refused
+    /// with `REDACTION_LEAK` when the text still occurs anywhere in either
+    /// output, and the report never repeats it.
+    Redact {
+        /// Paragraph to redact in; must match exactly one.
+        paragraph: Selector,
+        /// Exact text to remove.
+        find: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Which occurrence of `find` (1-based) when it occurs more than once.
+        occurrence: Option<usize>,
+    },
+    /// Write document settings into `word/settings.xml` in schema order:
+    /// Track Changes, update fields on open, editing restrictions. Settings
+    /// are not revisions: the clean copy and the redline both carry them.
+    /// One per plan; a setting left out stays as it is.
+    Settings {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Turn Track Changes on (`w:trackRevisions`) or off.
+        track_revisions: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Ask Word to update fields on open (`w:updateFields`), or not. The
+        /// plan's own `update_fields` writes jubarte's results instead.
+        update_fields: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Restrict editing (`w:documentProtection`); `edit: none` lifts it.
+        protection: Option<crate::settings::Protection>,
+    },
 }
 
 fn default_toc_levels() -> u8 {
@@ -1177,6 +1207,17 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
             ],
             "page_setup" => &["section", "page", "orientation", "margins_dxa"],
             "insert_toc" => &["position", "levels", "title"],
+            "redact" => &["find", "occurrence"],
+            "settings" => {
+                if map.contains_key("paragraph") {
+                    return Err(err(
+                        "INVALID_PLAN",
+                        None,
+                        format!("operations[{i}] (settings): settings take no paragraph"),
+                    ));
+                }
+                &["track_revisions", "update_fields", "protection"]
+            }
             other => {
                 return Err(err(
                     "INVALID_PLAN",
@@ -1226,7 +1267,9 @@ pub fn apply_plan(source: &[u8], plan: &EditPlan) -> Result<EditResult, EditErro
     tx.apply()?;
     let (mut clean, mut marked) = tx.finish()?;
     if plan.existing_revisions == ExistingRevisions::Keep {
-        return tracked::result(&tx, clean);
+        let result = tracked::result(&tx, clean)?;
+        tx.check_redactions(&[&result.clean, &result.redline])?;
+        return Ok(result);
     }
     let mut fields = Vec::new();
     if plan.update_fields {
@@ -1284,6 +1327,12 @@ pub fn apply_plan(source: &[u8], plan: &EditPlan) -> Result<EditResult, EditErro
         error.outcomes[op].code = Some(error.code.clone());
         return Err(error);
     }
+    // Settings are not revisions: the redline takes them as they are.
+    if let Some(request) = &tx.settings {
+        redline = crate::settings::apply_settings_to_docx(&redline, request)
+            .map_err(|m| err("PACKAGE_WRITE", None, m))?;
+    }
+    tx.check_redactions(&[&clean, &redline])?;
     let mut report = tx.report(true);
     report.paragraphs.to = crate::inspect::paragraphs(&clean)
         .map(|p| p.len())
@@ -1584,6 +1633,8 @@ struct Transaction<'p> {
     control_records: Vec<crate::inspect::ContentControl>,
     /// The footnotes story when `insert_footnote` added notes to it.
     notes_story: Option<usize>,
+    /// The plan's settings, written into the settings part at finish.
+    settings: Option<crate::settings::SettingsRequest>,
 }
 
 /// The body, or a header, footer or notes part, parsed into the plan's DOM.
@@ -1752,6 +1803,7 @@ impl<'p> Transaction<'p> {
             controls,
             control_records,
             notes_story: None,
+            settings: None,
         })
     }
 
@@ -1862,6 +1914,21 @@ impl<'p> Transaction<'p> {
                         date: date.as_deref(),
                     },
                 ),
+                OperationKind::Settings {
+                    track_revisions,
+                    update_fields,
+                    protection,
+                } => {
+                    let request = crate::settings::SettingsRequest {
+                        track_revisions: *track_revisions,
+                        update_fields: *update_fields,
+                        protection: protection.clone(),
+                    };
+                    self.resolve_settings(&id, &request).map(|outcome| {
+                        self.settings = Some(request);
+                        (Vec::new(), outcome)
+                    })
+                }
                 other => self
                     .resolve_one(&id, other)
                     .map(|(resolved, outcome)| (vec![resolved], outcome)),
@@ -1931,7 +1998,8 @@ impl<'p> Transaction<'p> {
             | OperationKind::InsertToc { paragraph, .. }
             | OperationKind::FormatRun { paragraph, .. }
             | OperationKind::InsertFootnote { paragraph, .. }
-            | OperationKind::InsertImage { paragraph, .. } => paragraph,
+            | OperationKind::InsertImage { paragraph, .. }
+            | OperationKind::Redact { paragraph, .. } => paragraph,
             OperationKind::List { .. } => {
                 return Err(fail(
                     "INVALID_PLAN",
@@ -1967,6 +2035,13 @@ impl<'p> Transaction<'p> {
                 return Err(fail(
                     "INVALID_PLAN",
                     "fill_control resolves through resolve_fill_control".into(),
+                    outcome,
+                ));
+            }
+            OperationKind::Settings { .. } => {
+                return Err(fail(
+                    "INVALID_PLAN",
+                    "settings resolve through resolve_settings".into(),
                     outcome,
                 ));
             }
@@ -2052,6 +2127,29 @@ impl<'p> Transaction<'p> {
                         comment: comment.clone(),
                         attach_before: true,
                         format: format.clone(),
+                    },
+                    outcome,
+                ))
+            }
+            OperationKind::Redact {
+                find, occurrence, ..
+            } => {
+                // Refusals name the text by its place, never by itself.
+                let hide = |m: String| m.replace(&format!("{find:?}"), "the text to redact");
+                let (start, end) = self
+                    .find_range(projection, find, *occurrence, &mut outcome)
+                    .map_err(|(c, m)| fail(&c, hide(m), outcome.clone()))?;
+                let blocks = redaction(find);
+                outcome.context = Some(context(text, start, end, &format!("{{{blocks}}}")));
+                Ok((
+                    Resolved::Text {
+                        para,
+                        start,
+                        end,
+                        replacement: blocks,
+                        comment: None,
+                        attach_before: true,
+                        format: None,
                     },
                     outcome,
                 ))
@@ -2380,6 +2478,11 @@ impl<'p> Transaction<'p> {
             OperationKind::FillControl { .. } => Err(fail(
                 "INVALID_PLAN",
                 "fill_control resolves through resolve_fill_control".into(),
+                outcome,
+            )),
+            OperationKind::Settings { .. } => Err(fail(
+                "INVALID_PLAN",
+                "settings resolve through resolve_settings".into(),
                 outcome,
             )),
             OperationKind::InsertParagraph {
@@ -3617,6 +3720,84 @@ impl<'p> Transaction<'p> {
         Ok(())
     }
 
+    /// Check a `settings` operation: something to write, no password, and
+    /// one per plan.
+    fn resolve_settings(
+        &self,
+        id: &str,
+        request: &crate::settings::SettingsRequest,
+    ) -> Result<EditOutcome, Box<(EditError, EditOutcome)>> {
+        let mut outcome = EditOutcome {
+            id: id.to_string(),
+            kind: String::new(),
+            status: String::new(),
+            paragraph: None,
+            matches: 0,
+            context: None,
+            comment_id: None,
+            code: None,
+            message: None,
+        };
+        let fail = |code: &str, msg: &str, outcome: EditOutcome| {
+            Box::new((err(code, Some(id), msg), outcome))
+        };
+        if *request == crate::settings::SettingsRequest::default() {
+            return Err(fail(
+                "INVALID_EDIT",
+                "settings needs track_revisions, update_fields or protection",
+                outcome,
+            ));
+        }
+        if request
+            .protection
+            .as_ref()
+            .is_some_and(|p| p.password.is_some())
+        {
+            return Err(fail(
+                "UNSUPPORTED",
+                "a protection password is not written: Word's legacy hash needs w:cryptProviderType, w:cryptAlgorithmSid, a spin count and a salt; leave the password out to enforce the restriction without one",
+                outcome,
+            ));
+        }
+        if self.settings.is_some() {
+            return Err(fail(
+                "OVERLAPPING_EDITS",
+                "one settings operation per plan; put every setting in the first",
+                outcome,
+            ));
+        }
+        outcome.matches = 1;
+        outcome.context = Some(request.describe());
+        Ok(outcome)
+    }
+
+    /// Refuse the plan when the text of a redaction still occurs in one of
+    /// `outputs` (a comment on it, another paragraph, a header, the
+    /// document properties). The message names the parts, never the text.
+    fn check_redactions(&self, outputs: &[&[u8]]) -> Result<(), EditError> {
+        for (op, operation) in self.plan.operations.iter().enumerate() {
+            let OperationKind::Redact { find, .. } = &operation.kind else {
+                continue;
+            };
+            let parts: std::collections::BTreeSet<String> = outputs
+                .iter()
+                .flat_map(|doc| crate::scrub::leaks(doc, find))
+                .collect();
+            if parts.is_empty() {
+                continue;
+            }
+            let message = format!(
+                "the redacted text still occurs in {}; redact every copy in the same plan, or remove the comment or part that holds it",
+                parts.into_iter().collect::<Vec<_>>().join(", ")
+            );
+            let mut error = self.conflict(op, &message);
+            error.code = "REDACTION_LEAK".into();
+            error.outcomes[op].code = Some(error.code.clone());
+            return Err(error);
+        }
+        Ok(())
+    }
+
     fn conflict(&self, op_index: usize, message: &str) -> EditError {
         let id = self.outcomes[op_index].id.clone();
         let mut e = err("OVERLAPPING_EDITS", Some(&id), message);
@@ -4141,7 +4322,19 @@ impl<'p> Transaction<'p> {
             })
             .cloned()
             .collect();
-        if self.deletion_comments.is_empty() && thread_ops.is_empty() && self.watermark.is_none() {
+        // A redaction is no change either: the base loses the text too.
+        let redactions: Vec<Operation> = self
+            .plan
+            .operations
+            .iter()
+            .filter(|op| matches!(op.kind, OperationKind::Redact { .. }))
+            .cloned()
+            .collect();
+        if self.deletion_comments.is_empty()
+            && thread_ops.is_empty()
+            && self.watermark.is_none()
+            && redactions.is_empty()
+        {
             return Ok(std::borrow::Cow::Borrowed(&self.base));
         }
         let mut operations: Vec<Operation> = self
@@ -4178,6 +4371,7 @@ impl<'p> Transaction<'p> {
                 .filter(|op| matches!(op.kind, OperationKind::Watermark { .. }))
                 .cloned(),
         );
+        operations.extend(redactions);
         let plan = EditPlan {
             schema_version: SCHEMA_VERSION,
             source_sha256: None,
@@ -4239,6 +4433,10 @@ impl<'p> Transaction<'p> {
         written.insert(0);
         written.extend(self.apply_watermark()?);
         written.extend(self.notes_story);
+        if let Some(request) = &self.settings {
+            crate::settings::apply_settings(&mut self.opened.pkg, &main, request)
+                .map_err(|m| err("INVALID_DOCUMENT", None, m))?;
+        }
         let marked = if self.whole_marks.is_empty() {
             None
         } else {
@@ -4401,6 +4599,8 @@ fn kind_name(kind: &OperationKind) -> &'static str {
         OperationKind::InsertImage { .. } => "insert_image",
         OperationKind::PageSetup { .. } => "page_setup",
         OperationKind::InsertToc { .. } => "insert_toc",
+        OperationKind::Redact { .. } => "redact",
+        OperationKind::Settings { .. } => "settings",
     }
 }
 
@@ -4425,6 +4625,11 @@ fn check_comment(text: &str) -> Result<(), String> {
 }
 
 /// `before {mark} after` with up to 20 chars of context on either side.
+/// What a redaction leaves of `find`: one full block per character.
+fn redaction(find: &str) -> String {
+    "\u{2588}".repeat(find.chars().count())
+}
+
 fn context(text: &str, start: usize, end: usize, mark: &str) -> String {
     const WINDOW: usize = 20;
     let before: String = text[..start]

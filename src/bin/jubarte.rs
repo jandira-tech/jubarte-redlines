@@ -579,6 +579,27 @@ enum Command {
         #[command(subcommand)]
         sub: FieldsCommand,
     },
+    /// Remove who touched a document before it goes out: author names (as
+    /// one alias), rsids, the people and dates in the document properties,
+    /// and comments. Text and tracked changes stay. Without a flag, all
+    /// four go under the alias "Author"; with flags, only those given.
+    #[command(after_help = "EXAMPLES:\n  \
+        jubarte scrub redline.docx -o out.docx                     everything, alias Author\n  \
+        jubarte scrub redline.docx -o out.docx --author-alias Counsel --rsids\n  \
+        jubarte scrub redline.docx -o out.docx --comments          comments only")]
+    Scrub {
+        /// The document (.docx) to scrub.
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Output path.
+        #[arg(short = 'o', long, value_name = "FILE")]
+        output: PathBuf,
+        /// Overwrite the output file if it already exists.
+        #[arg(long)]
+        force: bool,
+        #[command(flatten)]
+        scrub: ScrubSelection,
+    },
     /// Audit a .docx for accessibility, style and structure defects, each
     /// finding located by paragraph id. Exits 0 when nothing fails, 2 on
     /// any `error` finding (or any `warning` with --strict).
@@ -629,6 +650,50 @@ enum FieldsCommand {
         #[arg(long)]
         json: bool,
     },
+}
+
+/// What `jubarte scrub` removes; everything when no flag is given.
+#[derive(clap::Args, Debug, Default, PartialEq)]
+struct ScrubSelection {
+    /// Name every author (revisions, comments, people.xml) takes.
+    #[arg(long, value_name = "NAME")]
+    author_alias: Option<String>,
+    /// Remove rsids, the edit-session ids that tie copies together.
+    #[arg(long)]
+    rsids: bool,
+    /// Remove creator, last editor, revision number, dates, manager,
+    /// company and custom properties.
+    #[arg(long)]
+    docprops: bool,
+    /// Remove every comment.
+    #[arg(long)]
+    comments: bool,
+}
+
+impl ScrubSelection {
+    fn options(&self) -> jubarte::scrub::ScrubOptions {
+        if *self == Self::default() {
+            return jubarte::scrub::ScrubOptions::default();
+        }
+        jubarte::scrub::ScrubOptions {
+            author_alias: self.author_alias.clone(),
+            rsids: self.rsids,
+            docprops: self.docprops,
+            comments: self.comments,
+        }
+    }
+}
+
+fn run_scrub(
+    file: &Path,
+    output: &Path,
+    force: bool,
+    options: &jubarte::scrub::ScrubOptions,
+) -> Result<(), String> {
+    ensure_writable(output, force)?;
+    let bytes = read_document(file)?;
+    let out = jubarte::scrub::scrub(&bytes, options).map_err(|e| format!("scrub failed: {e}"))?;
+    std::fs::write(output, &out).map_err(|e| format!("writing {}: {e}", output.display()))
 }
 
 /// `jubarte debug` subcommands.
@@ -2814,6 +2879,14 @@ fn main() -> ExitCode {
                     json,
                 },
         }) => return exit_code(run_fields_update(&file, &output, force, json)),
+        Some(Command::Scrub {
+            file,
+            output,
+            force,
+            scrub,
+        }) => {
+            return exit_code(run_scrub(&file, &output, force, &scrub.options()));
+        }
         Some(Command::Audit {
             file,
             json,
@@ -3244,6 +3317,43 @@ mod tests {
             }
             other => panic!("expected accept subcommand, got {other:?}"),
         }
+    }
+
+    /// `scrub` without a selection removes all four kinds, under the alias
+    /// `Author`; any flag narrows it to the ones given.
+    #[test]
+    fn scrub_flags_select_what_goes_and_none_selects_everything() {
+        let options = |args: &[&str]| {
+            let cli = Cli::try_parse_from(
+                ["jubarte", "scrub", "in.docx", "-o", "out.docx"]
+                    .iter()
+                    .chain(args),
+            )
+            .unwrap();
+            match cli.command {
+                Some(Command::Scrub { scrub, .. }) => scrub.options(),
+                other => panic!("expected scrub subcommand, got {other:?}"),
+            }
+        };
+        assert_eq!(options(&[]), jubarte::scrub::ScrubOptions::default());
+        assert_eq!(
+            options(&["--rsids", "--author-alias", "Counsel"]),
+            jubarte::scrub::ScrubOptions {
+                author_alias: Some("Counsel".into()),
+                rsids: true,
+                docprops: false,
+                comments: false,
+            }
+        );
+        assert_eq!(
+            options(&["--comments"]),
+            jubarte::scrub::ScrubOptions {
+                author_alias: None,
+                rsids: false,
+                docprops: false,
+                comments: true,
+            }
+        );
     }
 
     /// `reject <file> -o <out>` parses into `Command::Reject`; `force` defaults

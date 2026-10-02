@@ -34,6 +34,8 @@ fn every_advertised_edit_kind_accepts_its_wire_representation() {
         json!({"kind":"insert_image", "paragraph":{"index":0}, "position":"before", "image_base64":"iVBORw0KGgo=", "content_type":"image/png", "width_emu":914400, "alt":"Logo"}),
         json!({"kind":"page_setup", "section":"all", "page":{"width_dxa":12000, "height_dxa":16000}, "orientation":"landscape", "margins_dxa":{"top":-720, "left":1080}}),
         json!({"kind":"insert_toc", "paragraph":{"index":0}, "position":"before", "levels":2, "title":"Contents"}),
+        json!({"kind":"redact", "paragraph":{"index":0}, "find":"a", "occurrence":2}),
+        json!({"kind":"settings", "track_revisions":true, "update_fields":true, "protection":{"edit":"trackedChanges", "enforcement":true}}),
     ];
     let manifest = capabilities("rust");
     let kinds: Vec<_> = operations
@@ -91,6 +93,7 @@ fn capabilities_roundtrip_preserves_runtime_and_scope_limits() {
     assert!(manifest.limits.refuses_opaque_ranges);
     assert!(!manifest.limits.reads_legacy_doc);
     assert!(manifest.operations.edit_keeps_revisions);
+    assert!(manifest.operations.scrub);
 }
 
 #[test]

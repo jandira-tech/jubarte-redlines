@@ -18,10 +18,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::structural;
 use super::{
-    EditError, EditPlan, EditResult, ExistingRevisions, Resolved, RevisionCounts, ScheduledEdit,
-    Side, ThreadOp, Transaction, anchor_comment, anchor_span, apply_run_format, attach_segment,
-    build_paragraph, format_paragraph, insert_ppr_child, new_position, place_reply_markers,
-    remove_comment_markers, set_text, split_run_at, toc_paragraphs,
+    EditError, EditPlan, EditResult, ExistingRevisions, OperationKind, Resolved, RevisionCounts,
+    ScheduledEdit, Side, ThreadOp, Transaction, anchor_comment, anchor_span, apply_run_format,
+    apply_text_edit, attach_segment, build_paragraph, format_paragraph, insert_ppr_child,
+    new_position, place_reply_markers, remove_comment_markers, set_text, split_run_at,
+    toc_paragraphs,
 };
 use crate::changes::{ChangeKind, list_changes};
 use crate::inspect::{Opened, Piece, project_paragraph};
@@ -145,6 +146,8 @@ fn redline(tx: &Transaction<'_>) -> Result<Vec<u8>, EditError> {
     t.resolved = tx.resolved.clone();
     // A watermark is header content, not a change: written as is.
     t.watermark = tx.watermark.clone();
+    // Settings are not revisions either.
+    t.settings = tx.settings.clone();
     // The comments of commented paragraph deletions are written here, on
     // the deleted text, instead of into a commented base for the comparer.
     let mut comments = tx.comments.clone();
@@ -274,7 +277,24 @@ fn emit(
         // leaves the projection and an insertion joins it, exactly as the
         // plain edit changes the clean copy.
         for edit in edits.iter().rev() {
-            emit_text(dom, node, edit, stamp);
+            if matches!(
+                t.plan.operations[edit.op].kind,
+                OperationKind::Redact { .. }
+            ) {
+                // A redaction is no change: its blocks replace the text
+                // outright, as in the clean copy.
+                let projection = project_paragraph(dom, node);
+                apply_text_edit(
+                    dom,
+                    &projection,
+                    edit.start,
+                    edit.end,
+                    &edit.replacement,
+                    edit.attach_before,
+                );
+            } else {
+                emit_text(dom, node, edit, stamp);
+            }
         }
         let mut pending: Vec<(usize, usize, usize)> = Vec::new();
         for edit in &edits {
