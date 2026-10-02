@@ -30,6 +30,7 @@ use crate::namespaces::W;
 use crate::xmllinq::{Dom, NodeId, XNamespace};
 
 mod rewrite;
+mod structural;
 mod whole;
 
 /// A versioned, portable set of operations against one document snapshot.
@@ -298,10 +299,87 @@ pub enum OperationKind {
         /// `w:id` of the comment.
         comment_id: u32,
     },
+    /// Insert a table next to the anchor paragraph. Each cell holds one
+    /// paragraph in the anchor's paragraph style; the redline shows the
+    /// rows inserted. Body paragraphs outside tables only.
+    InsertTable {
+        /// Anchor paragraph; must match exactly one.
+        paragraph: Selector,
+        #[serde(default)]
+        /// Which side of the anchor paragraph.
+        position: Side,
+        /// Cell text, row by row; every row has the same number of cells.
+        rows: Vec<Vec<String>>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        /// Mark the first row as a header row that repeats on each page.
+        header_row: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Column widths in twentieths of a point; the text width split
+        /// evenly when omitted.
+        widths_dxa: Option<Vec<u32>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Table style, by id or name; `TableGrid` (added when the document
+        /// lacks it) when omitted.
+        style: Option<String>,
+    },
+    /// Make the paragraphs a list: each gets direct numbering at `level`,
+    /// and `ListParagraph` when it has no style. The redline records each
+    /// paragraph's old properties (`w:pPrChange`).
+    List {
+        /// Paragraphs to number, each selector matching exactly one; body
+        /// only.
+        paragraphs: Vec<Selector>,
+        #[serde(default)]
+        /// Bullets, decimal numbers or lowercase letters.
+        kind_of_list: ListKind,
+        #[serde(default)]
+        /// List level, 0 (outermost) to 8.
+        level: u32,
+        #[serde(default = "default_true")]
+        /// Start a new list (true), or continue the list of the nearest
+        /// numbered paragraph before the first one, in that list's format.
+        restart: bool,
+    },
 }
 
 fn resolve_done() -> bool {
     true
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// The numbering of a [`OperationKind::List`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ListKind {
+    #[default]
+    /// `•`, `◦`, `▪` by level.
+    Bullet,
+    /// `1.`, `2.`, ...
+    Decimal,
+    /// `a.`, `b.`, ...
+    LowerLetter,
+}
+
+impl ListKind {
+    fn format(self) -> crate::markdown::xml::ListFormat {
+        use crate::markdown::xml::ListFormat;
+        match self {
+            Self::Bullet => ListFormat::Bullet,
+            Self::Decimal => ListFormat::Decimal,
+            Self::LowerLetter => ListFormat::LowerLetter,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Bullet => "bullet",
+            Self::Decimal => "decimal",
+            Self::LowerLetter => "lower_letter",
+        }
+    }
 }
 
 /// Line spacing, stored as `w:line` (240 = single); JSON is the multiple.
@@ -850,6 +928,15 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
             "resolve_comment" => &["comment_id", "done"],
             "edit_comment" => &["comment_id", "text"],
             "delete_comment" => &["comment_id"],
+            "insert_table" => &["position", "rows", "header_row", "widths_dxa", "style"],
+            "list" if map.contains_key("paragraph") => {
+                return Err(err(
+                    "INVALID_PLAN",
+                    None,
+                    format!("operations[{i}] (list): takes paragraphs, not paragraph"),
+                ));
+            }
+            "list" => &["paragraphs", "kind_of_list", "level", "restart"],
             other => {
                 return Err(err(
                     "INVALID_PLAN",
@@ -1052,6 +1139,30 @@ enum Resolved {
         /// Comment text anchored to the changed text.
         comment: Option<String>,
     },
+    InsertTable {
+        anchor: usize,
+        side: Side,
+        rows: Vec<Vec<String>>,
+        header_row: bool,
+        /// One width per column, in twentieths of a point.
+        widths: Vec<u32>,
+        /// Resolved table style id.
+        style: String,
+        /// The style's definition must be added to the styles part.
+        add_style: bool,
+    },
+    List {
+        /// Paragraphs to number, in plan order.
+        paras: Vec<usize>,
+        kind: ListKind,
+        level: u32,
+        /// The `w:numId` to continue, or a new list when `None`.
+        join: Option<String>,
+        /// The document's "List Paragraph" style id, for unstyled items.
+        style: String,
+        /// That style's definition must be added to the styles part.
+        add_style: bool,
+    },
     /// A comment from the start of `para` to the end of `last`.
     CommentSpan {
         para: usize,
@@ -1122,6 +1233,10 @@ struct Transaction<'p> {
     comments_added: usize,
     /// Helper bookmarks around `whole` replacements, one per operation.
     whole_marks: Vec<whole::Mark>,
+    /// `w:abstractNum` and `w:num` elements new lists add.
+    new_numbering: (Vec<String>, Vec<String>),
+    /// Style definitions the edits need (`ListParagraph`).
+    needed_styles: std::collections::BTreeSet<String>,
     /// The source's comment part family; taken when the parts are written.
     family: Option<crate::comments::CommentFamily>,
     /// Comment replied to, by the reply's new id.
@@ -1284,6 +1399,8 @@ impl<'p> Transaction<'p> {
             next_comment_id,
             comments_added: 0,
             whole_marks: Vec::new(),
+            new_numbering: (Vec::new(), Vec::new()),
+            needed_styles: std::collections::BTreeSet::new(),
             family: Some(family),
             reply_parents: BTreeMap::new(),
         })
@@ -1321,6 +1438,14 @@ impl<'p> Transaction<'p> {
                 OperationKind::Rewrite { paragraph, text } => {
                     self.resolve_rewrite(&id, paragraph, text)
                 }
+                OperationKind::List {
+                    paragraphs,
+                    kind_of_list,
+                    level,
+                    restart,
+                } => self
+                    .resolve_list(&id, paragraphs, *kind_of_list, *level, *restart)
+                    .map(|(resolved, outcome)| (vec![resolved], outcome)),
                 OperationKind::ReplyComment { .. }
                 | OperationKind::ResolveComment { .. }
                 | OperationKind::EditComment { .. }
@@ -1391,7 +1516,15 @@ impl<'p> Transaction<'p> {
             | OperationKind::DeleteParagraph { paragraph, .. }
             | OperationKind::FormatParagraph { paragraph, .. }
             | OperationKind::MergeParagraphs { paragraph, .. }
-            | OperationKind::Rewrite { paragraph, .. } => paragraph,
+            | OperationKind::Rewrite { paragraph, .. }
+            | OperationKind::InsertTable { paragraph, .. } => paragraph,
+            OperationKind::List { .. } => {
+                return Err(fail(
+                    "INVALID_PLAN",
+                    "list resolves through resolve_list".into(),
+                    outcome,
+                ));
+            }
             OperationKind::ReplyComment { .. }
             | OperationKind::ResolveComment { .. }
             | OperationKind::EditComment { .. }
@@ -1677,12 +1810,13 @@ impl<'p> Transaction<'p> {
                 Ok((Resolved::DeleteParagraph { para }, outcome))
             }
             OperationKind::Rewrite { .. }
+            | OperationKind::List { .. }
             | OperationKind::ReplyComment { .. }
             | OperationKind::ResolveComment { .. }
             | OperationKind::EditComment { .. }
             | OperationKind::DeleteComment { .. } => Err(fail(
                 "INVALID_PLAN",
-                "rewrite and thread operations resolve on their own paths".into(),
+                "rewrite, list and thread operations resolve on their own paths".into(),
                 outcome,
             )),
             OperationKind::InsertParagraph {
@@ -1812,6 +1946,67 @@ impl<'p> Transaction<'p> {
                         para,
                         next,
                         separator,
+                    },
+                    outcome,
+                ))
+            }
+            OperationKind::InsertTable {
+                position,
+                rows,
+                header_row,
+                widths_dxa,
+                style,
+                ..
+            } => {
+                outcome.matches = 1;
+                if self.paragraph_story[para].0 != 0 {
+                    return Err(fail(
+                        "UNSUPPORTED_STRUCTURE",
+                        "insert_table is supported in the body only".into(),
+                        outcome,
+                    ));
+                }
+                let dom = &self.opened.dom;
+                if !dom
+                    .ancestors(self.paragraph_nodes[para], Some(&W::tc()))
+                    .is_empty()
+                {
+                    return Err(fail(
+                        "UNSUPPORTED_STRUCTURE",
+                        "the anchor paragraph is in a table cell; nested tables are not supported"
+                            .into(),
+                        outcome,
+                    ));
+                }
+                let columns = structural::check_rows(rows, widths_dxa.as_deref())
+                    .map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+                let widths = match widths_dxa {
+                    Some(widths) => widths.clone(),
+                    None => {
+                        let each = structural::text_width(dom, self.opened.body)
+                            / u32::try_from(columns).unwrap_or(1);
+                        vec![each; columns]
+                    }
+                };
+                let (style, add_style) = structural::resolve_table_style(
+                    &structural::table_styles(&self.opened),
+                    style.as_deref().unwrap_or("TableGrid"),
+                )
+                .map_err(|m| fail("UNKNOWN_STYLE", m, outcome.clone()))?;
+                outcome.context = Some(format!(
+                    "{{+table {}x{columns}}} {}",
+                    rows.len(),
+                    excerpt(&rows[0].join(" | "), 60)
+                ));
+                Ok((
+                    Resolved::InsertTable {
+                        anchor: para,
+                        side: *position,
+                        rows: rows.clone(),
+                        header_row: *header_row,
+                        widths,
+                        style,
+                        add_style,
                     },
                     outcome,
                 ))
@@ -2015,6 +2210,134 @@ impl<'p> Transaction<'p> {
         Ok((resolved, outcome))
     }
 
+    /// `list`: every selector matches one body paragraph, once; `restart:
+    /// false` finds the list to continue.
+    fn resolve_list(
+        &self,
+        id: &str,
+        selectors: &[Selector],
+        kind: ListKind,
+        level: u32,
+        restart: bool,
+    ) -> Resolution<Resolved> {
+        let mut outcome = EditOutcome {
+            id: id.to_string(),
+            kind: String::new(),
+            status: String::new(),
+            paragraph: None,
+            matches: 0,
+            context: None,
+            comment_id: None,
+            code: None,
+            message: None,
+        };
+        let fail = |code: &str, msg: String, outcome: EditOutcome| {
+            Box::new((err(code, Some(id), msg), outcome))
+        };
+        if selectors.is_empty() {
+            return Err(fail(
+                "INVALID_EDIT",
+                "paragraphs must select at least one paragraph".into(),
+                outcome,
+            ));
+        }
+        if level > 8 {
+            return Err(fail(
+                "INVALID_EDIT",
+                format!("level {level} is outside 0..=8"),
+                outcome,
+            ));
+        }
+        let mut paras: Vec<usize> = Vec::with_capacity(selectors.len());
+        for (i, selector) in selectors.iter().enumerate() {
+            let para = match self.select(selector) {
+                Ok(p) => p,
+                Err((code, msg, matches)) => {
+                    outcome.matches = matches;
+                    return Err(fail(&code, format!("paragraphs[{i}]: {msg}"), outcome));
+                }
+            };
+            if paras.contains(&para) {
+                return Err(fail(
+                    "INVALID_EDIT",
+                    format!("paragraphs[{i}] selects {} again", self.paragraph_id(para)),
+                    outcome,
+                ));
+            }
+            if self.paragraph_story[para].0 != 0 {
+                return Err(fail(
+                    "UNSUPPORTED_STRUCTURE",
+                    format!(
+                        "paragraphs[{i}]: list is supported in the body only, not {}",
+                        self.paragraph_id(para)
+                    ),
+                    outcome,
+                ));
+            }
+            paras.push(para);
+        }
+        outcome.matches = paras.len();
+        outcome.paragraph = Some(
+            paras
+                .iter()
+                .map(|&p| self.paragraph_id(p))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+        let join = if restart {
+            None
+        } else {
+            let first = paras.iter().copied().min().unwrap_or(0);
+            let found = (0..first)
+                .rev()
+                .find_map(|p| structural::direct_num_id(&self.opened.dom, self.paragraph_nodes[p]));
+            match found {
+                Some(num_id) => Some(num_id),
+                None => {
+                    return Err(fail(
+                        "UNSUPPORTED_STRUCTURE",
+                        "restart: false continues the list of a numbered paragraph before the first one, and there is none".into(),
+                        outcome,
+                    ));
+                }
+            }
+        };
+        // The document's own "List Paragraph" (localized documents give it
+        // another id), else the engine's, added when used.
+        let styles = self.paragraph_styles();
+        let (style, add_style) = styles
+            .iter()
+            .find(|(id, _)| id == "ListParagraph")
+            .or_else(|| {
+                styles
+                    .iter()
+                    .find(|(_, name)| name.eq_ignore_ascii_case("List Paragraph"))
+            })
+            .map_or(("ListParagraph".to_string(), true), |(id, _)| {
+                (id.clone(), false)
+            });
+        let how = match &join {
+            Some(num_id) => format!("continues list {num_id}"),
+            None => format!("list {}", kind.name()),
+        };
+        outcome.context = Some(format!(
+            "{{¶ {how} level {level}}} {} paragraph(s): {}",
+            paras.len(),
+            excerpt(&self.projections[paras[0]].text, 40)
+        ));
+        Ok((
+            Resolved::List {
+                paras,
+                kind,
+                level,
+                join,
+                style,
+                add_style,
+            },
+            outcome,
+        ))
+    }
+
     fn merge_partner(&self, para: usize) -> Result<usize, String> {
         let dom = &self.opened.dom;
         let node = self.paragraph_nodes[para];
@@ -2176,7 +2499,10 @@ impl<'p> Transaction<'p> {
                 | Resolved::DeleteParagraph { para }
                 | Resolved::FormatParagraph { para, .. }
                 | Resolved::MergeParagraphs { para, .. } => vec![self.paragraph_story[*para].0],
-                Resolved::InsertParagraph { anchor, .. } => vec![self.paragraph_story[*anchor].0],
+                Resolved::InsertParagraph { anchor, .. } | Resolved::InsertTable { anchor, .. } => {
+                    vec![self.paragraph_story[*anchor].0]
+                }
+                Resolved::List { paras, .. } => vec![self.paragraph_story[paras[0]].0],
                 Resolved::Thread { stories, .. } => stories.clone(),
             })
             .collect()
@@ -2333,6 +2659,12 @@ impl<'p> Transaction<'p> {
                     }
                     continue;
                 }
+                Resolved::InsertTable { anchor, .. } => {
+                    if deleted.contains(anchor) {
+                        return Err(self.conflict(*i, "anchors a new table on a deleted paragraph"));
+                    }
+                    continue;
+                }
                 Resolved::CommentSpan { para, last, .. } => {
                     if (*para..=*last).any(|p| deleted.contains(&p)) {
                         return Err(self.conflict(*i, "comments on a deleted paragraph"));
@@ -2352,6 +2684,7 @@ impl<'p> Transaction<'p> {
                 Resolved::DeleteParagraph { .. }
                 | Resolved::FormatParagraph { .. }
                 | Resolved::MergeParagraphs { .. }
+                | Resolved::List { .. }
                 | Resolved::Thread { .. } => continue,
             };
             if deleted.contains(&para) {
@@ -2438,7 +2771,34 @@ impl<'p> Transaction<'p> {
                 {
                     return Err(self.conflict(*i, "inserts a paragraph between two a merge joins"));
                 }
+                Resolved::InsertTable { anchor, side, .. }
+                    if (*side == Side::After && merge_heads.contains(anchor))
+                        || (*side == Side::Before && merge_tails.contains(anchor)) =>
+                {
+                    return Err(self.conflict(*i, "inserts a table between two a merge joins"));
+                }
                 _ => {}
+            }
+        }
+        let mut listed: Vec<usize> = Vec::new();
+        for (i, r) in &self.resolved {
+            let Resolved::List { paras, .. } = r else {
+                continue;
+            };
+            for para in paras {
+                let message = if deleted.contains(para) {
+                    "numbers a deleted paragraph"
+                } else if listed.contains(para) {
+                    "numbers a paragraph another list operation numbers"
+                } else if formatted.contains(para) {
+                    "numbers a paragraph another operation formats"
+                } else if merge_heads.contains(para) {
+                    "numbers a paragraph whose properties a merge discards"
+                } else {
+                    listed.push(*para);
+                    continue;
+                };
+                return Err(self.conflict(*i, message));
             }
         }
         Ok(())
@@ -2527,7 +2887,10 @@ impl<'p> Transaction<'p> {
                 Resolved::CommentRange { .. } | Resolved::CommentSpan { .. } => true,
                 Resolved::Thread { op, .. } => matches!(op, ThreadOp::Reply { .. }),
                 Resolved::DeleteParagraph { .. } => self.deletion_comment(*i).is_some(),
-                Resolved::FormatParagraph { .. } | Resolved::MergeParagraphs { .. } => false,
+                Resolved::FormatParagraph { .. }
+                | Resolved::MergeParagraphs { .. }
+                | Resolved::InsertTable { .. }
+                | Resolved::List { .. } => false,
             })
             .count() as u64;
         if needed > 0 && self.next_comment_id + needed - 1 > u64::from(u32::MAX) {
@@ -2573,6 +2936,8 @@ impl<'p> Transaction<'p> {
                         }
                         Resolved::FormatParagraph { .. }
                         | Resolved::MergeParagraphs { .. }
+                        | Resolved::InsertTable { .. }
+                        | Resolved::List { .. }
                         | Resolved::Thread { .. } => None,
                     };
                     text.map(|t| (*i, t))
@@ -2728,41 +3093,72 @@ impl<'p> Transaction<'p> {
                 );
             }
         }
-        // 2. Paragraph insertions (anchors are source paragraphs, untouched by 1).
+        // 2. Paragraph and table insertions (anchors are source paragraphs,
+        // untouched by 1).
         let inserts: Vec<(usize, Resolved)> = self
             .resolved
             .iter()
-            .filter(|(_, r)| matches!(r, Resolved::InsertParagraph { .. }))
+            .filter(|(_, r)| {
+                matches!(
+                    r,
+                    Resolved::InsertParagraph { .. } | Resolved::InsertTable { .. }
+                )
+            })
             .cloned()
             .collect();
+        let mut tables: Vec<NodeId> = Vec::new();
         // Several paragraphs after one anchor follow it in plan order: each
         // goes after the one inserted there before it.
         let mut last_after: BTreeMap<usize, NodeId> = BTreeMap::new();
         for (i, r) in inserts {
-            if let Resolved::InsertParagraph {
-                anchor,
-                side,
-                runs,
-                like,
-                style,
-                comment,
-            } = r
-            {
-                let anchor_node = self.paragraph_nodes[anchor];
-                let like_node = self.paragraph_nodes[like];
-                let new = build_paragraph(&mut self.opened.dom, like_node, &runs, style.as_deref());
-                match side {
-                    Side::After => {
-                        let prev = last_after.get(&anchor).copied().unwrap_or(anchor_node);
-                        self.opened.dom.add_after_self(prev, new);
-                        last_after.insert(anchor, new);
-                    }
-                    Side::Before => self.opened.dom.add_before_self(anchor_node, new),
+            let (anchor, side, new, commented) = match r {
+                Resolved::InsertParagraph {
+                    anchor,
+                    side,
+                    runs,
+                    like,
+                    style,
+                    comment,
+                } => {
+                    let like_node = self.paragraph_nodes[like];
+                    let new =
+                        build_paragraph(&mut self.opened.dom, like_node, &runs, style.as_deref());
+                    (anchor, side, new, comment.is_some())
                 }
-                if comment.is_some() {
-                    let projection = project_paragraph(&self.opened.dom, new);
-                    anchor_comment(&mut self.opened.dom, new, 0, projection.text.len(), ids[&i]);
+                Resolved::InsertTable {
+                    anchor,
+                    side,
+                    rows,
+                    header_row,
+                    widths,
+                    style,
+                    ..
+                } => {
+                    let new = structural::build_table(
+                        &mut self.opened.dom,
+                        self.paragraph_nodes[anchor],
+                        &rows,
+                        header_row,
+                        &widths,
+                        &style,
+                    );
+                    tables.push(new);
+                    (anchor, side, new, false)
                 }
+                _ => continue,
+            };
+            let anchor_node = self.paragraph_nodes[anchor];
+            match side {
+                Side::After => {
+                    let prev = last_after.get(&anchor).copied().unwrap_or(anchor_node);
+                    self.opened.dom.add_after_self(prev, new);
+                    last_after.insert(anchor, new);
+                }
+                Side::Before => self.opened.dom.add_before_self(anchor_node, new),
+            }
+            if commented {
+                let projection = project_paragraph(&self.opened.dom, new);
+                anchor_comment(&mut self.opened.dom, new, 0, projection.text.len(), ids[&i]);
             }
         }
         // 3. Paragraph formatting.
@@ -2781,6 +3177,47 @@ impl<'p> Transaction<'p> {
                     *alignment,
                     *spacing,
                 );
+            }
+        }
+        // 3b. Lists: new numbering instances take ids after the source's.
+        let (mut next_abstract, mut next_num) = structural::next_numbering_ids(&self.opened);
+        for (_, r) in &self.resolved {
+            let Resolved::List {
+                paras,
+                kind,
+                level,
+                join,
+                style,
+                add_style,
+            } = r
+            else {
+                continue;
+            };
+            let num_id = match join {
+                Some(num_id) => num_id.clone(),
+                None => {
+                    let (abstracts, nums) = &mut self.new_numbering;
+                    abstracts.push(crate::markdown::xml::abstract_num(
+                        next_abstract,
+                        kind.format(),
+                    ));
+                    nums.push(crate::markdown::xml::num(next_num, next_abstract, None));
+                    next_abstract += 1;
+                    next_num += 1;
+                    (next_num - 1).to_string()
+                }
+            };
+            for &para in paras {
+                let styled = structural::number_paragraph(
+                    &mut self.opened.dom,
+                    self.paragraph_nodes[para],
+                    *level,
+                    &num_id,
+                    style,
+                );
+                if styled && *add_style {
+                    self.needed_styles.insert(style.clone());
+                }
             }
         }
         // 4. Merges, first first, so a chain folds into its last paragraph.
@@ -2832,6 +3269,11 @@ impl<'p> Transaction<'p> {
                 }
                 ThreadOp::Resolve { .. } | ThreadOp::Edit { .. } => {}
             }
+        }
+        // 7. A paragraph after each new table, and between it and a table
+        // before it, once the deletions have settled its neighbours.
+        for table in tables {
+            structural::separate(&mut self.opened.dom, table);
         }
         Ok(())
     }
@@ -2939,6 +3381,27 @@ impl<'p> Transaction<'p> {
             .any(|(_, r)| matches!(r, Resolved::Thread { .. }));
         if !self.comments.is_empty() || threads {
             self.write_comments_part()?;
+        }
+        let mut styles: std::collections::BTreeSet<String> = self
+            .resolved
+            .iter()
+            .filter_map(|(_, r)| match r {
+                Resolved::InsertTable {
+                    style,
+                    add_style: true,
+                    ..
+                } => Some(style.clone()),
+                _ => None,
+            })
+            .collect();
+        styles.extend(self.needed_styles.iter().cloned());
+        let main = self.opened.main.clone();
+        if !styles.is_empty() {
+            structural::add_styles(&mut self.opened.pkg, &main, &styles);
+        }
+        let (abstracts, nums) = std::mem::take(&mut self.new_numbering);
+        if !nums.is_empty() {
+            structural::splice_numbering(&mut self.opened.pkg, &main, &abstracts, &nums);
         }
         // The body is always written; a story part only when an operation
         // edits it, so untouched parts keep their exact bytes.
@@ -3097,6 +3560,8 @@ fn kind_name(kind: &OperationKind) -> &'static str {
         OperationKind::ResolveComment { .. } => "resolve_comment",
         OperationKind::EditComment { .. } => "edit_comment",
         OperationKind::DeleteComment { .. } => "delete_comment",
+        OperationKind::InsertTable { .. } => "insert_table",
+        OperationKind::List { .. } => "list",
     }
 }
 

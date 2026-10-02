@@ -45,6 +45,10 @@ header, footer and notes part as its own story (`[header1:p:0] ...`,
 (`parent`, `done`) and the anchored text with its surroundings
 (`anchor_text`, `before`, `after`, `paragraph`); `--author NAME` keeps one
 author's, `--latest` the newest of each thread.
+`tables` reads each body table as a grid: `rows` of cells, each cell with
+its `paragraph_ids` and `text`, plus `header_rows` and `widths_dxa`. Edit a
+cell through its paragraph id. `jubarte inspect contract.docx --tables`
+prints the same grids.
 
 Gotchas:
 - Headers, footers, footnotes and endnotes are editable stories; text boxes
@@ -128,7 +132,14 @@ paragraph `like` selects), `delete_paragraph` (optional `comment`),
 `space_before`/`space_after` in points), `merge_paragraphs` (joins the next
 paragraph onto this one; optional `separator`, usually `" "`), `rewrite`
 (`text`: the paragraph's whole new text; only the words that differ are
-edited, so the rest keeps its runs and formatting). `replace` and
+edited, so the rest keeps its runs and formatting), `insert_table`
+(`rows`: cell text row by row, every row the same length; optional
+`position` `before|after`, `header_row`, `widths_dxa` per column in
+twentieths of a point (the text width split evenly when omitted), and
+`style`, a table style id or name, `TableGrid` by default), `list`
+(`paragraphs`: a list of selectors, not `paragraph`; `kind_of_list`
+`bullet|decimal|lower_letter`, `level` 0 to 8, `restart` true by default).
+`replace` and
 `insert` take an optional `format` (`bold`/`italic`/`underline`/`highlight`)
 that applies to the new text only. `replace` takes `"whole": true` to show
 the change as the whole old text deleted, then the whole new text inserted.
@@ -182,6 +193,20 @@ Gotchas:
   join. It refuses a paragraph that carries a section break or is not
   followed by a plain paragraph. Do not format, delete or insert after a
   paragraph you merge in the same plan (`OVERLAPPING_EDITS`).
+- `insert_table` anchors on a body paragraph outside any table (nested
+  tables are `UNSUPPORTED_STRUCTURE`). Cells take the anchor's paragraph
+  style and run formatting. A table that would end the body or touch
+  another table gets an empty paragraph beside it, as Word requires.
+  Ragged rows, or `widths_dxa` whose count differs from the columns, are
+  `INVALID_EDIT`; an unknown style is `UNKNOWN_STYLE`. `TableGrid` is
+  added to the styles when the document lacks it.
+- `list` numbers body paragraphs directly and gives `ListParagraph` to
+  those without a style. `restart: false` continues the list of the
+  nearest numbered paragraph before the first one, in that list's format,
+  and is refused (`UNSUPPORTED_STRUCTURE`) when there is none. Do not
+  delete, format or merge a paragraph you list in the same plan
+  (`OVERLAPPING_EDITS`). The redline marks each paragraph's properties as
+  changed, and also the `ListParagraph` definition when the plan added it.
 
 ## 3. Verify
 

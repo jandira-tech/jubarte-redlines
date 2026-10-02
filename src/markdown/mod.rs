@@ -32,12 +32,12 @@
 mod critic;
 mod diff;
 mod from_docx;
-mod package;
+pub(crate) mod package;
 mod patch;
 mod redline;
 mod unified;
 mod write;
-mod xml;
+pub(crate) mod xml;
 
 pub use diff::diff_markdown;
 pub use patch::{Patched, apply_markdown};

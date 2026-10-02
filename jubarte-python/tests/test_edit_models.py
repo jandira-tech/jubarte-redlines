@@ -9,7 +9,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from jubarte_redlines import EditPlan, EditPlanError
+from jubarte_redlines import EditPlan, EditPlanError, Table, TableCell
 from jubarte_redlines.models import (
     _decode_render_report,
     _decode_report,
@@ -185,3 +185,86 @@ def test_render_report_keeps_page_order_and_font_resolution_metadata():
     with pytest.raises(FrozenInstanceError):
         font.physical = "Other"
     assert _decode_render_report('{"page_count":0,"pages":[],"fonts":[]}').pages == ()
+
+
+def test_insert_table_builder_copies_rows_and_omits_defaults():
+    rows = [["Item", "Qty"], ["Bolt", "40"]]
+    built = EditPlan(author="A").insert_table(
+        "body:p:0", rows=rows, header_row=True, widths_dxa=[6000, 3360], style="TableGrid", id="t"
+    )
+    rows[0][0] = "changed"
+    rows.append(["x", "y"])
+    assert built.operations[0] == {
+        "id": "t",
+        "kind": "insert_table",
+        "paragraph": {"id": "body:p:0"},
+        "position": "after",
+        "rows": [["Item", "Qty"], ["Bolt", "40"]],
+        "header_row": True,
+        "widths_dxa": [6000, 3360],
+        "style": "TableGrid",
+    }
+    plain = EditPlan(author="A").insert_table(0, rows=[("a",)], position="before").operations[0]
+    assert plain == {"kind": "insert_table", "paragraph": {"index": 0}, "position": "before", "rows": [["a"]]}
+
+
+@pytest.mark.parametrize("rows", ["ab", ["ab"], [[1]], [[None]], [["a"], "b"]])
+def test_insert_table_builder_rejects_non_text_cells(rows):
+    with pytest.raises(TypeError):
+        EditPlan(author="A").insert_table(0, rows=rows)
+
+
+@pytest.mark.parametrize("widths", [[True], ["100"], [1.5]])
+def test_insert_table_builder_rejects_non_integer_widths(widths):
+    with pytest.raises(TypeError):
+        EditPlan(author="A").insert_table(0, rows=[["a"]], widths_dxa=widths)
+
+
+def test_list_paragraphs_builder_writes_the_list_kind():
+    selectors = ["body:p:1", {"contains": "Pears"}]
+    built = EditPlan(author="A").list_paragraphs(selectors, kind_of_list="lower_letter", level=1, restart=False, id="l")
+    selectors[1]["contains"] = "changed"
+    assert built.operations[0] == {
+        "id": "l",
+        "kind": "list",
+        "paragraphs": [{"id": "body:p:1"}, {"contains": "Pears"}],
+        "kind_of_list": "lower_letter",
+        "level": 1,
+        "restart": False,
+    }
+    assert EditPlan(author="A").list_paragraphs([0, 1]).operations[0] == {
+        "kind": "list",
+        "paragraphs": [{"index": 0}, {"index": 1}],
+    }
+
+
+@pytest.mark.parametrize("paragraphs", ["body:p:1", [True]])
+def test_list_paragraphs_builder_rejects_a_bare_selector(paragraphs):
+    with pytest.raises(TypeError):
+        EditPlan(author="A").list_paragraphs(paragraphs)
+
+
+def test_snapshot_without_tables_decodes_to_an_empty_tuple(snapshot):
+    assert snapshot.tables == ()
+
+
+def test_snapshot_tables_decode_to_immutable_grids():
+    summary = dict.fromkeys(("paragraphs", "tables", "fields", "sections", "comments", "revisions", "footnotes", "endnotes", "headers", "footers", "images"), 0)
+    summary.update(list_numbering=False, track_changes=False)
+    table = {
+        "index": 0,
+        "rows": [[{"paragraph_ids": ["body:p:1"], "text": "Item"}, {"paragraph_ids": [], "text": ""}]],
+        "header_rows": 1,
+        "widths_dxa": [6000, 3360],
+    }
+    snap = _decode_snapshot(json.dumps({"schema_version": 1, "source_sha256": "a" * 64, "summary": summary, "paragraphs": [], "tables": [table]}))
+    (decoded,) = snap.tables
+    assert decoded.index == 0
+    assert decoded.header_rows == 1
+    assert decoded.widths_dxa == (6000, 3360)
+    assert decoded.rows[0][0].paragraph_ids == ("body:p:1",)
+    assert decoded.rows[0][0].text == "Item"
+    assert decoded.rows[0][1] == TableCell(paragraph_ids=(), text="")
+    assert isinstance(decoded, Table)
+    with pytest.raises(FrozenInstanceError):
+        decoded.index = 1
