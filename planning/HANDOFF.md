@@ -315,3 +315,11 @@ were not run locally.
 - Crafting malformed ZIP bytes by hand in a test file triggered the safety
   classifier once; use the `zip` crate writer with small `InputLimits`
   instead, which is what `tests/input_admission.rs` does.
+
+## 9. Patch export
+The four agent branches were local to the container. Their commits are
+exported with `git format-patch b420d64..HEAD` into
+`planning/handoff-patches/<item>/`; apply with `git am` onto a branch based
+on `b420d64` (or on this branch, resolving CHANGELOG.md), then delete the
+directory once merged. The patches are the authoritative copy if the
+worktrees are gone.
