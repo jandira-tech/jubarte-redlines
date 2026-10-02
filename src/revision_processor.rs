@@ -3165,6 +3165,12 @@ pub fn accept_revisions_package(pkg: &mut crate::opc::PartFs) {
     resolve_package(pkg, Resolution::Accept, None);
 }
 
+/// [`accept_revisions_package`] without renumbering bookmarks and comments,
+/// for a document about to be compared: the redline keeps its comment ids.
+pub fn accept_revisions_package_keeping_ids(pkg: &mut crate::opc::PartFs) {
+    resolve(pkg, Resolution::Accept, None, false);
+}
+
 /// A.11 — `RejectRevisions` (:31) at package scope: per content part, the
 /// revert → reverse → rsid-strip → full-accept composition (the C# phases the
 /// same steps across all parts; parts are independent, so per-part composition
@@ -3189,6 +3195,15 @@ pub(crate) fn resolve_package(
     pkg: &mut crate::opc::PartFs,
     resolution: Resolution,
     freeze: Option<Freeze<'_>>,
+) {
+    resolve(pkg, resolution, freeze, true);
+}
+
+fn resolve(
+    pkg: &mut crate::opc::PartFs,
+    resolution: Resolution,
+    freeze: Option<Freeze<'_>>,
+    renumber: bool,
 ) {
     let parts = revision_bearing_parts(pkg);
     let levels = numbering_part(pkg)
@@ -3224,7 +3239,7 @@ pub(crate) fn resolve_package(
     let stories = story_parts(&parts);
     comments::prune_orphan_comments(pkg, &stories);
     notes::prune_orphan_notes(pkg, &stories);
-    if !kept {
+    if renumber && !kept {
         annotation_ids::renumber(pkg, &stories);
     }
     word_save::tidy(pkg, &stories);

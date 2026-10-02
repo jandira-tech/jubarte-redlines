@@ -159,6 +159,28 @@ The other 3 of the 32 are not differences:
   Arthur's call; flipping the default is one condition in
   `revise_list_label`.
 
+### 9. Annotation ids in a redline
+
+- **What happens.** Word saves its redline with every comment, bookmark
+  and revision numbered on one counter, 0, 1, …, in reading order. A note
+  counts at its reference, and a header or footer at its section's
+  reference. So a redline renumbers the comments of both documents.
+  Evidence (Word 16 Compare, 2026-10-01):
+  - docx_lots_of_comments × _addition: 180 annotations, in order, with
+    comments 0 1 3 4 19 20.
+  - _addition_redline × _removal_v_addition (no difference): comments
+    0 1 3 4 10 11 from source ids 2 3 9 10 294 295.
+  - Corpus redlines: file_195's header revision takes 1 at the first
+    section, and 0048ba31dd's footnote insertion 16 between the body's
+    15 and 17.
+- **What we do.** Comments keep the ids their documents gave them, in both
+  modes and whether or not a source carries tracked changes. Revisions
+  number around them, and bookmarks above them.
+- **Which is better.** Ours. Ids never reach the page, and `edit` reports
+  each comment by the id its redline holds. A reading-order pass was built,
+  validator-clean, and taken out for that reason.
+- **Status.** Not copied.
+
 ## Accept All / Reject All: where Word's result is worse (not copied yet)
 
 `jubarte accept` / `jubarte reject` (and per-change accept/reject) follow

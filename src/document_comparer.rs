@@ -4675,6 +4675,14 @@ pub fn accept_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
     pkg.to_zip()
 }
 
+/// [`accept_revisions`] keeping bookmark and comment ids: a redline names
+/// its comments by the ids the documents gave them, as `edit` reports them.
+fn accept_source_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
+    let mut pkg = PartFs::open(docx)?;
+    crate::revision_processor::accept_revisions_package_keeping_ids(&mut pkg);
+    pkg.to_zip()
+}
+
 /// A.11 — `RevisionProcessor.RejectRevisions` byte facade: reject every
 /// tracked revision across main + headers/footers + notes + styles parts.
 pub fn reject_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
@@ -6132,7 +6140,7 @@ fn compare_documents_impl(
     if original == modified {
         let mut owned = crate::strict_translation::strict_to_transitional_docx(original);
         if settings.merge_replaced_paragraphs && docx_has_tracked_changes(&owned) {
-            owned = accept_revisions(&owned)?;
+            owned = accept_source_revisions(&owned)?;
         }
         // IDENTICAL-INPUT still runs drawing/shape id fixups: source packages
         // may carry colliding wp:docPr/@id (strict01 corpus) that the full
@@ -6171,8 +6179,8 @@ fn compare_documents_impl(
     if settings.merge_replaced_paragraphs
         && (docx_has_tracked_changes(&original_owned) || docx_has_tracked_changes(&modified_owned))
     {
-        original_owned = accept_revisions(&original_owned)?;
-        modified_owned = accept_revisions(&modified_owned)?;
+        original_owned = accept_source_revisions(&original_owned)?;
+        modified_owned = accept_source_revisions(&modified_owned)?;
     }
 
     // After prep, packages may still be byte-identical (rare non-self paths).
