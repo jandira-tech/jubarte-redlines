@@ -26619,7 +26619,24 @@ impl<'a> Layout<'a> {
                 }
             );
             let untouched = (self.page.height - self.body_top - self.y).abs() < 0.5;
-            if margin_float && !untouched {
+            // A page-placed one above the text already on its page starts
+            // the next page too (Word probe ft: 58 rows at tblpY 131pt under
+            // twenty lines run from page 2 to 4).
+            // Only when that text has no room under the rows the page holds:
+            // ec4df76243's prose stays on page 1 under its table's first
+            // rows in Word.
+            let above = !float_is_text_anchored(slot) && {
+                let top = self.float_table_top(slot);
+                let mut end = top;
+                for h in &row_h {
+                    if end - h < self.body_floor {
+                        break;
+                    }
+                    end -= h;
+                }
+                top > self.y + 0.5 && top - self.y > end - self.body_floor
+            };
+            if (margin_float || above) && !untouched {
                 self.new_page();
             }
             // It starts where it floats (0011e415's first row at 219pt),
@@ -26725,13 +26742,25 @@ impl<'a> Layout<'a> {
             // 113.3 under a table filling 12.75..112.75).
             let body_top_y = self.page.height - self.body_top;
             let push = body_top_y - (top - th - dist_b);
-            if no_room
+            let pushes = no_room
                 && !float_is_text_anchored(slot)
                 && top >= body_top_y - 0.5
                 && saved_y < body_top_y - 0.5
                 && push > 0.0
-                && saved_y - push >= self.body_floor
+                && saved_y - push >= self.body_floor;
+            // One floating above text already on its page, with no room
+            // beside it, starts the next page there instead (Word probe
+            // ft: tblpY 131pt under twenty lines ending at 545).
+            if no_room
+                && !pushes
+                && !float_is_text_anchored(slot)
+                && top > saved_y + 0.5
+                && saved_y < body_top_y - 0.5
             {
+                self.new_page();
+                saved_y = self.y;
+            }
+            if pushes {
                 // Objects fixed to the page stay put (PR #247 review).
                 let start = self.chrome_end;
                 let page = self.current();

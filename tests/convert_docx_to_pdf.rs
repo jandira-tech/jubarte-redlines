@@ -6725,6 +6725,80 @@ fn a_split_row_breaks_its_paragraph_between_lines() {
 }
 
 #[test]
+fn a_page_anchored_table_above_the_flow_starts_the_next_page() {
+    // Word probe ft (2026-10-02): twenty body lines end at 545pt on an A4
+    // page; the table after them floats at tblpY 131pt, above where the
+    // flow stands. Word does not lay it over the text: it starts the next
+    // page at 131pt, "AfterTable" flowing over it at the top margin when
+    // the table fits (20 rows, 2 pages), and after its last row when it
+    // runs on (58 rows: rows 0-23 on page 2, 24-50 on page 3, the rest
+    // and AfterTable on page 4). 29379c07bf's lesson plan table, page 2.
+    let doc = |rows: usize| {
+        let body: String = (1..=20)
+            .map(|i| {
+                format!("<w:p><w:r><w:t>Body{i:02} lorem ipsum dolor sit amet</w:t></w:r></w:p>")
+            })
+            .collect();
+        let edge = |side: &str, val: &str, sz: u32| {
+            format!("<w:{side} w:val=\"{val}\" w:sz=\"{sz}\" w:space=\"0\" w:color=\"auto\"/>")
+        };
+        let borders = [
+            edge("top", "single", 18),
+            edge("left", "single", 18),
+            edge("bottom", "single", 18),
+            edge("right", "single", 18),
+            edge("insideH", "dotted", 4),
+            edge("insideV", "dotted", 4),
+        ]
+        .concat();
+        let rows: String = (0..rows)
+            .map(|i| {
+                format!(
+                    "<w:tr><w:tc><w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr>\
+                     <w:p><w:r><w:t>Row{i:02}</w:t></w:r></w:p></w:tc>\
+                     <w:tc><w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr><w:p/></w:tc></w:tr>"
+                )
+            })
+            .collect();
+        format!(
+            "{body}<w:tbl><w:tblPr><w:tblpPr w:leftFromText=\"180\" w:rightFromText=\"180\" \
+               w:vertAnchor=\"page\" w:horzAnchor=\"margin\" w:tblpY=\"2621\"/>\
+               <w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblBorders>{borders}</w:tblBorders></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"4000\"/><w:gridCol w:w=\"4000\"/></w:tblGrid>{rows}</w:tbl>\
+             <w:p><w:r><w:t>AfterTable</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/>\
+               <w:pgMar w:top=\"1417\" w:right=\"1701\" w:bottom=\"1417\" w:left=\"1701\" \
+                 w:header=\"0\" w:footer=\"37\" w:gutter=\"0\"/></w:sectPr>"
+        )
+    };
+    let settings = r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>"#;
+    // Word sets these styleless rows 25.5pt apart and we 15.5pt, so the
+    // long table's own page count is not asserted, only where it starts
+    // and that AfterTable follows its last row.
+    for (rows, pages_want) in [(20, Some(2)), (58, None)] {
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&doc(rows), settings)).expect("float");
+        let pages = pdf_content_streams(&pdf);
+        let page_of = |tag: &str| {
+            pages
+                .iter()
+                .position(|p| stream_glyph_text(p).contains(tag))
+                .unwrap_or_else(|| panic!("{tag} painted"))
+        };
+        if let Some(want) = pages_want {
+            assert_eq!(pages.len(), want, "{rows} rows: Word's page count");
+        }
+        assert_eq!(page_of("Body20"), 0, "{rows} rows: the body keeps page 1");
+        assert_eq!(page_of("Row00"), 1, "{rows} rows: the table starts page 2");
+        let last = page_of(&format!("Row{:02}", rows - 1));
+        assert_eq!(
+            page_of("AfterTable"),
+            last,
+            "{rows} rows: AfterTable follows the table"
+        );
+    }
+}
+
+#[test]
 fn a_split_row_keeps_room_for_the_tables_bottom_rule_and_ends_under_its_text() {
     // Word 16 probes fs2/fs3 2026-10-02 (rows of one-line paragraphs swept
     // past the page end in 0.5pt steps): the part of a row cut at the page
