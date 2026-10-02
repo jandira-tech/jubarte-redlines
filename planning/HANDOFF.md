@@ -27,8 +27,8 @@ onto `ccr-17e4f046-849j1u` (PR #273). State per proposed change:
 | P22 | half done | end-name checking is on and the whole repo corpus (819 packages) still passes; selecting parts by content type instead of extension was NOT done, because no engine path parses `.vml` parts as XML that I found (not exhaustively checked) |
 | Remaining `process_footnote_endnote` panics | done | `comparer/footnotes.rs`; breaking for exhaustive matches on `RectifyError` |
 | Python tests for the refusals | done: `jubarte-python/tests/test_document.py` passes, 17 tests, against a wheel built with `maturin develop` | `jubarte-python` |
-| P20 (signed self-update) | not started, orthogonal to the comparer | |
-| P6 (full settings redesign) | deferred | |
+| P20 (signed self-update) | NOT DONE, needs an owner decision: it requires a signing key pair, a secret in the release workflow and signed release assets (`self_update` `signatures` feature). Requiring signatures before releases are signed would break `jubarte self-update` for every existing release | `src/update.rs`, `release.yml`, `docs/SELF_UPDATE.md` |
+| P6 (full settings redesign) | NOT DONE, needs an owner decision: making `WmlComparerSettings` fields private behind a builder breaks every struct-literal caller (about 30 test files, the CLI, `edit`, the three bindings) and downstream users, and removing the public `in_stamp_residual` hits the same literals. The narrow part (the `input_limits` field and its docs) is in | `comparer/mod.rs` |
 
 Verification on the integrated tree (HEAD at the time of writing):
 `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`
