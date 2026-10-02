@@ -35,8 +35,12 @@ Verification on the integrated tree (HEAD at the time of writing):
 and the targeted suites (lib 874, input_admission 10, edit_plan 53,
 m30_notes_pipeline 8, m4h4_footnotes, edit_stories, agent_contracts,
 m_cli_agent, compare_is_reproducible, m2_markup_simplifier, m_cli_no_panic,
-sha1 tests) pass. I did not run the whole suite. CI on the PR is red only on
-the four `convert_docx_to_pdf` tests, which also fail on the base.
+sha1 tests) pass. After merging `origin/main` (5bcd864) into the branch, the full suite
+(`cargo test --no-fail-fast --all-features`) passed: 402 targets, 3963 tests,
+0 failed, and fmt and clippy `-D warnings` are clean. The four
+`convert_docx_to_pdf` failures seen earlier no longer occur on the merged tree.
+The PR had a merge conflict with `main` after 377b9bd, which is why no
+CI ran on pushes between 377b9bd and the merge commit.
 
 ## Earlier handoff (written when the session was cut off)
 
