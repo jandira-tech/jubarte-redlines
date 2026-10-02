@@ -2614,6 +2614,59 @@ fn character_spacing_widens_the_wrap_measure() {
 }
 
 #[test]
+fn a_justified_numbered_cell_paragraph_spreads_its_first_line_from_the_indent() {
+    // Word 16 probe c4num (2026-10-01): "1." hangs in a 216pt cell and
+    // thirty words justify on every line but the last; the first line's
+    // text starts at the indent (113.28, the other lines 113.3) and ends
+    // where they do (282.5). The marker shares the item's style, so the
+    // two arrive as one run "1.\tword …": we painted it whole, 5.4pt left
+    // of the indent and ragged.
+    let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:abstractNum w:abstractNumId=\"0\">\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"decimal\"/>\
+              <w:lvlText w:val=\"%1.\"/><w:lvlJc w:val=\"left\"/>\
+              <w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/></w:pPr>\
+              <w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+              <w:sz w:val=\"24\"/></w:rPr></w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+        </w:numbering>";
+    let words = vec!["word"; 30].join(" ");
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"4320\" w:type=\"dxa\"/><w:tblLayout w:type=\"fixed\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"4320\"/></w:tblGrid>\
+           <w:tr><w:tc><w:tcPr><w:tcW w:w=\"4320\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr>\
+               <w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/><w:jc w:val=\"both\"/></w:pPr>\
+               <w:r><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+               <w:sz w:val=\"24\"/></w:rPr><w:t>{words}</w:t></w:r></w:p>\
+           </w:tc></w:tr></w:tbl><w:p/><w:sectPr/>"
+    );
+    let pdf = docx_to_pdf(&numbering_docx(&body, Some(numbering))).expect("numbered cell");
+    let mut lines: Vec<(f32, f32, f32)> = Vec::new();
+    for (x, y) in pdf_glyph_text_xys(&pdf, "word") {
+        match lines.iter_mut().find(|(ly, _, _)| (ly - y).abs() < 1.0) {
+            Some(line) => {
+                line.1 = line.1.min(x);
+                line.2 = line.2.max(x);
+            }
+            None => lines.push((y, x, x)),
+        }
+    }
+    assert!(lines.len() >= 3, "the item wraps; lines={lines:?}");
+    let (first, second) = (lines[0], lines[1]);
+    assert!(
+        (first.1 - second.1).abs() < 0.3,
+        "line 1's text starts at the indent like line 2's; lines={lines:?}"
+    );
+    assert!(
+        (first.2 - second.2).abs() < 0.5,
+        "line 1 justifies to the cell's edge like line 2; lines={lines:?}"
+    );
+}
+
+#[test]
 fn direct_ind_left_keeps_the_numbering_level_hanging() {
     // fixtures_500 00194caa: `<w:ind w:left="426"/>` on a numbered
     // paragraph overrides only the left edge; Word keeps the level's

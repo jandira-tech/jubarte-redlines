@@ -348,6 +348,13 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
 
 ## Justified lines and hyphens
 
+- **A numbered cell paragraph justifies its first line from the indent.**
+  The label hangs, and the item text starts at the indent like the lines
+  below. It spreads to the same right edge, even when label and text share
+  a style and arrive as one run.
+  - Probe c4num 2026-10-01 (216pt cell, Times 12): line 1 runs 113.28 to
+    282.5 and the other lines 113.3 to 282.5. We painted the merged
+    "1.\tword …" run whole: 5.4pt left of the indent and ragged.
 - **A compat-15 justified line squeezes its spaces to keep a word, within
   two limits.** The overflow must be at most a quarter of the line's space
   width (e522f530, 00044aa0), and at most a third of the overflowing word

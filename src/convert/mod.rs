@@ -14458,6 +14458,27 @@ fn bodypr_fits_width(dom: &Dom, shape: NodeId) -> bool {
         })
 }
 
+/// A list marker merged with its item's text (one style: "1.\tword …")
+/// split after its tab, so the item starts at the indent and a justified
+/// first line spreads from there (Word 16 probe c4num, 2026-10-01).
+fn split_merged_marker(mut line: Vec<TextRun>) -> Vec<TextRun> {
+    let Some(first) = line.first().filter(|run| run.list_marker) else {
+        return line;
+    };
+    let Some(tab) = first
+        .text
+        .find('\t')
+        .filter(|&at| at + 1 < first.text.len())
+    else {
+        return line;
+    };
+    let mut item = first.with_text(&first.text[tab + 1..]);
+    item.list_marker = false;
+    line[0] = first.with_text(&first.text[..=tab]);
+    line.insert(1, item);
+    line
+}
+
 /// The text's insets inside its shape's outline: Word sets the text in
 /// by half a painted `a:ln` too, the inner half of a stroke that straddles
 /// the edge, so a fitted box grows by the whole width (Word 16 probes
@@ -26666,6 +26687,11 @@ impl<'a> Layout<'a> {
                             if li == 0 {
                                 y_line -= cell_lead_rise(self.fonts, para);
                             }
+                            let line = if li == 0 {
+                                split_merged_marker(line)
+                            } else {
+                                line
+                            };
                             let (size, face_id, line_box) =
                                 cell_line_metrics(self.fonts, para, &line);
                             let ascent = self.fonts.get(face_id).ascent_pt(size);
@@ -26769,17 +26795,18 @@ impl<'a> Layout<'a> {
                             let mark = line
                                 .first()
                                 .filter(|r| li == 0 && r.list_marker && hang > 0.0);
+                            // The marker's tab is no ink: the gap from its
+                            // label to the indent stands in for it.
                             let mark_gap = mark.map_or(0.0, |m| {
                                 let fid = self.fonts.resolve(
                                     &m.style.family,
                                     m.style.bold,
                                     m.style.italic,
                                 );
-                                let mw = self
-                                    .fonts
-                                    .get(fid)
-                                    .width_pt(m.text.trim_end(), m.style.layout_size());
-                                (hang - mw).max(0.0)
+                                let face = self.fonts.get(fid);
+                                let size = m.style.layout_size();
+                                let mw = face.width_pt(m.text.trim_end(), size);
+                                (hang - mw).max(0.0) - (face.width_pt(&m.text, size) - mw)
                             });
                             let leftover = inner - line_w - mark_gap;
                             // A squeezed line narrows its spaces, its last
