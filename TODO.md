@@ -333,12 +333,22 @@ repeatable-sweep item below is what makes these numbers reproducible.
 
 **Important (2026-10-02, merging #314, #318 and this PR):**
 
-- **`main` is red** on `convert_docx_to_pdf::space_for_ul_adds_no_descent_to_wrapped_lines_in_table_cells`
+- **Fixed: `main` was red** on `convert_docx_to_pdf::space_for_ul_adds_no_descent_to_wrapped_lines_in_table_cells`
   ("J and Q sit on separate wrapped lines; off=[709.44, 709.44, 682.56,
-  669.36]") on Linux, macOS, Windows and coverage. The test came in with
-  `1eb0c6c` (#310) and fails on `main` itself (`f816e4b`, run locally),
-  so every PR shows it. #314, #318 and this PR were merged on local gates
-  over it, at Arthur's request. It needs its own fix.
+  669.36]") on Linux, macOS, Windows and coverage. The cause was the
+  machine, not the test: `CJK_DIRS` lists only Word for Mac's folders, so
+  a runner without Word has no East Asian face, and the ideographs shaped
+  to Liberation Sans' `.notdef` (0.75 em), which fitted J and Q on one
+  line. It passes wherever Word for Mac is installed. Blanking `CJK_DIRS`
+  (with `JUBARTE_FONT_INDEX=off`) reproduces the CI numbers exactly. East
+  Asian wide text a face lacks now measures one em, as in every face Word
+  falls back to (`font::tests::an_ideograph_a_face_lacks_still_measures_one_em`).
+  This also fixes CJK line breaks in WASM and on Linux.
+- **Windows never finds Word's East Asian faces**: `CJK_DIRS` (and
+  `scan_family_faces`' folders) are macOS paths, though the stems
+  (`msgothic`, `msmincho`, `msyh`, `malgun`, `batang`, `yugothr`) are
+  Windows file names. Adding `C:\Windows\Fonts` is one line, but it needs a
+  Windows run to show which tests move with Windows' font versions.
 - **`python bindings` failed once** on #312 (`f80566e`):
   `test_mcp_server.py::test_stdio_smoke_initialize_and_list_tools` got no
   `tools/list` reply. It passes locally on `main` (`1ee4c38`) and on #318
