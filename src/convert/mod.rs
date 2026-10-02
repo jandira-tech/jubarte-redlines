@@ -1650,6 +1650,10 @@ enum Block {
     PageBreak {
         next: Option<Box<SectionChrome>>,
         manual: bool,
+        /// The space after of the blank paragraph that carried this
+        /// section break, which takes no line but still credits the next
+        /// page's space before.
+        mark_after: Option<f32>,
     },
     /// `w:br type=column` — next newspaper column on this page (xml leftover).
     ColumnBreak,
@@ -7774,6 +7778,7 @@ fn walk_container(
                 blocks.push(Block::PageBreak {
                     next: None,
                     manual: false,
+                    mark_after: None,
                 });
             }
             let page_br = para_has_page_break(dom, child);
@@ -7868,6 +7873,7 @@ fn walk_container(
                     Block::PageBreak {
                         next: None,
                         manual: true,
+                        mark_after: None,
                     }
                 });
             }
@@ -7906,6 +7912,13 @@ fn walk_container(
             // down; at the top of a later page it is none again).
             let sect_mark = sect_here.is_some_and(|s| !is_final_sect(ctx.sects, s))
                 && !(blocks.is_empty() && !page_br && !column_br);
+            // A blank mark dropped below still credits its space after to
+            // the next page (probe sb: a heading after a table and an
+            // after=8 mark opens 10pt down, not 18).
+            let mark_after = match &block {
+                Block::Paragraph { style, .. } if blank && sect_mark => Some(style.after),
+                _ => None,
+            };
             if !blank || (!page_br && !sect_br && !column_br && !sect_mark) {
                 blocks.push(block);
             } else if (column_br || (page_br && sect_here.is_none()))
@@ -7949,6 +7962,7 @@ fn walk_container(
                 blocks.push(Block::PageBreak {
                     next,
                     manual: page_br,
+                    mark_after,
                 });
             } else if column_br {
                 blocks.push(Block::ColumnBreak);
@@ -8010,6 +8024,7 @@ fn walk_container(
                 blocks.push(Block::PageBreak {
                     next: None,
                     manual: false,
+                    mark_after: None,
                 });
             }
             walk_container(ctx, dom, content, numbering, blocks, endnotes);
@@ -8021,6 +8036,7 @@ fn walk_container(
                 blocks.push(Block::PageBreak {
                     next,
                     manual: false,
+                    mark_after: None,
                 });
             }
         }
@@ -31192,11 +31208,16 @@ fn layout_with_facts(
                 }
                 lay.emit_table(cols, rows, style, *borders, geom);
             }
-            Block::PageBreak { next, manual } => {
-                lay.last_after = i
-                    .checked_sub(1)
-                    .and_then(|j| block_para_style(&blocks[j]))
-                    .map_or(0.0, |p| p.after);
+            Block::PageBreak {
+                next,
+                manual,
+                mark_after,
+            } => {
+                lay.last_after = mark_after.unwrap_or_else(|| {
+                    i.checked_sub(1)
+                        .and_then(|j| block_para_style(&blocks[j]))
+                        .map_or(0.0, |p| p.after)
+                });
                 lay.hard_page_break(next.as_deref(), *manual);
             }
             Block::ColumnBreak => lay.column_break(),

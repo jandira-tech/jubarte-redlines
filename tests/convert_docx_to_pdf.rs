@@ -20482,6 +20482,43 @@ fn heading_before_applies_after_section_break() {
 }
 
 #[test]
+fn a_section_mark_after_a_table_still_credits_its_space_after() {
+    // Word 16 probe sb 2026-10-02 (compat 15): a table, then the blank
+    // paragraph carrying a nextPage section break (after=8), then a 18pt
+    // before heading: Word opens the new page 18 - 8 = 10pt down, as it
+    // does after a text paragraph. We dropped the blank mark, credited the
+    // table's nothing and kept the whole 18pt (12d245d664 page 48).
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+        <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+        <w:sz w:val=\"24\"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr>\
+        <w:spacing w:after=\"160\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr></w:pPrDefault></w:docDefaults>\
+        <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+        </w:styles>";
+    let sect = "<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/><w:pgMar w:top=\"1440\" w:right=\"1440\" \
+                w:bottom=\"1440\" w:left=\"1440\" w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>";
+    let heading_y = |before_break: &str| {
+        let body = format!(
+            "{before_break}<w:p><w:pPr>{sect}</w:pPr></w:p>\
+             <w:p><w:pPr><w:spacing w:before=\"360\" w:after=\"0\"/></w:pPr><w:r><w:t>Heading</w:t></w:r></w:p>{sect}"
+        );
+        let pdf = docx_to_pdf(&docx_with_styles(&body, styles)).expect("section mark credit");
+        assert_eq!(page_with_text(&pdf, "Heading"), Some(1));
+        pdf_glyph_text_xy(&pdf, "Heading").expect("Heading").1
+    };
+    let after_text = heading_y("<w:p><w:r><w:t>Text</w:t></w:r></w:p>");
+    let after_table = heading_y(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"dxa\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"5000\"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w=\"5000\" w:type=\"dxa\"/></w:tcPr>\
+         <w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+    );
+    assert!(
+        (after_table - after_text).abs() < 0.1,
+        "the mark's 8pt after credits either way: table {after_table}, text {after_text}"
+    );
+}
+
+#[test]
 fn official_comments_lots_section_heading_keeps_full_before_after_mini_418() {
     // Landscape p6 Heading1 follows nextPage sectPr. Word glyph top is
     // 62.83 (PDF y≈536); full before=480 parked it at 70.80 (y≈528), a
