@@ -331,7 +331,8 @@ numbering, `w:numPr` out of order). 34 fixtures is a small sample and the
 validator is not Word; the scripts lived in an ephemeral container, so the
 repeatable-sweep item below is what makes these numbers reproducible.
 
-- [ ] **Numbering namespaces (validator defect).** When A has no numbering
+- [ ] **Numbering namespaces (validator defect).** Fix open in #314; with it
+  the sweep has 0 outputs with new validator findings. When A has no numbering
   part, `numbering_part` creates a bare `<w:numbering xmlns:w="...">` and
   B's lists keep only local declarations. `tools/validate-docx` then reports
   `Sch_UndeclaredAttribute` for `w15:restartNumberingAfterBreak` on
@@ -380,9 +381,10 @@ repeatable-sweep item below is what makes these numbers reproducible.
     `commentReference` (body and carried notes) instead of removing them.
     A comment whose anchors did not come along is not carried (no orphans,
     the comparer's rule 4).
-  - `AppendOptions.comments: carry | drop`, with `--drop-comments` on the
-    CLI; drop keeps today's warning. The default needs a decision: carry is
-    what a body-copy script cannot do, drop is today's behaviour.
+  - `AppendOptions.comments: drop | carry`, default `drop` (decided
+    2026-10-02): carrying is opt-in (`--carry-comments` on the CLI,
+    `comments="carry"` in Python, `{"comments":"carry"}` in WASM), and drop
+    keeps today's `COMMENTS_DROPPED` warning.
   - Oracle: the Ring-1 comment checks already in `tests/common/validity.rs`
     (comment graph, family packaging, extended/ids/extensible key sets,
     parent cycles), the validator, and `jubarte comments --json` on the
@@ -402,8 +404,16 @@ repeatable-sweep item below is what makes these numbers reproducible.
   `tools/validate-docx` and the Ring-1 checks until `jubarte validate`
   exists (next item).
 - [ ] **Call `validate()`** at the end of `append_documents`
-  (`AppendError::Invalid`) once `adopt/s3-validate` (plan 1, Task 2) is on
-  `main`.
+  (`AppendError::Invalid`): `validate()` is on `main` since #292
+  (`d49a420`). Decide what counts: only Word-fatal findings append caused,
+  since 16 of the 34 sweep inputs already carry findings of their own.
+- [ ] **Duplicate bookmark names.** `jubarte validate` on the fixed sweep
+  (#314) reports new `BOOKMARK_DUPLICATE_NAME` findings on 3 outputs, one
+  pair in all three modes (`exec_summary`, `matrix`, `chart`, `demo`,
+  `wide_matrix`, present in both inputs). `validate` classes `BOOKMARK_*`
+  as not Word-fatal. A cross-reference to such a name is ambiguous after
+  append; renaming B's copy (and its `REF`/`PAGEREF`/hyperlink `w:anchor`
+  users) is the likely fix, pending what Word does (the Word item above).
 - [ ] **Smaller gaps from #285**: styles and list ids used only inside a
   carried header or footer are not remapped; picture bullets lose the
   picture; `npx jubarte-redlines` has no `append`; `jubarte_wasm.d.ts` gains
