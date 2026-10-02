@@ -3324,11 +3324,7 @@ fn parse_tbl_style(dom: &Dom, style: NodeId, defaults: &Defaults, theme: &ThemeF
             let mar = dom
                 .element(style, &W::name("tblPr"))
                 .and_then(|pr| first_named(dom, pr, "tblCellMar"));
-            let edge = |name: &str| {
-                mar.and_then(|m| first_named(dom, m, name))
-                    .and_then(|n| attr_any(dom, n, "w"))
-                    .and_then(parse_len)
-            };
+            let edge = |name: &str| mar.and_then(|m| mar_side(dom, m, name));
             (edge("left"), edge("right"))
         },
         cell_mar_tb: {
@@ -11780,6 +11776,22 @@ fn table_layout_fixed(dom: &Dom, table: NodeId) -> bool {
         .is_some_and(|v| v.eq_ignore_ascii_case("fixed"))
 }
 
+/// A `tblCellMar`/`tcMar` side: the logical `w:start`/`w:end` before the
+/// legacy `w:left`/`w:right` (Word 16 probes s1-s5, 2026-10-01: start=288
+/// sets the text 14.4pt in and beats a left=72 beside it).
+fn mar_side(dom: &Dom, mar: NodeId, side: &str) -> Option<f32> {
+    let logical = match side {
+        "left" => "start",
+        "right" => "end",
+        other => other,
+    };
+    [logical, side].into_iter().find_map(|name| {
+        direct_named(dom, mar, name)
+            .and_then(|n| attr_any(dom, n, "w"))
+            .and_then(parse_len)
+    })
+}
+
 fn table_pad_h(dom: &Dom, table: NodeId, default: f32) -> (f32, f32) {
     // Word default cell mar is 108 twips L/R (meeting_agenda cluster).
     // tblCellMar overrides (sample_document code cells are 10 twips).
@@ -11789,19 +11801,14 @@ fn table_pad_h(dom: &Dom, table: NodeId, default: f32) -> (f32, f32) {
     let Some(mar) = first_named(dom, pr, "tblCellMar") else {
         return (default, default);
     };
-    let edge = |name: &str| {
-        first_named(dom, mar, name)
-            .and_then(|n| attr_any(dom, n, "w"))
-            .and_then(parse_len)
-    };
-    // Cicero tblCellMar is start/end=160. Mapping those to left/right
-    // (mini 221–224) dropped Cicero −0.027 ITT (2.6pt pad, >5px align).
-    // table_bookmark_end Test 8 is tblLayout=fixed + left=1080 / right=432.
-    // Mode<15 pull uses this same mar_l, so honouring tblCellMar keeps
-    // R1C1 on the body edge (x=90) while the inner box insets (xml 3.3).
+    // Cicero's tblCellMar is start/end=160: Word sets 70fd78a4f8's
+    // "Region" 8pt into its cell. table_bookmark_end Test 8 is
+    // tblLayout=fixed + left=1080 / right=432. Mode<15 pull uses this same
+    // mar_l, so honouring tblCellMar keeps R1C1 on the body edge (x=90)
+    // while the inner box insets (xml 3.3).
     (
-        edge("left").unwrap_or(default),
-        edge("right").unwrap_or(default),
+        mar_side(dom, mar, "left").unwrap_or(default),
+        mar_side(dom, mar, "right").unwrap_or(default),
     )
 }
 
@@ -11864,12 +11871,7 @@ fn row_cell_mar(dom: &Dom, row: NodeId, table: [f32; 4]) -> [f32; 4] {
     else {
         return table;
     };
-    let edge = |name: &str, fallback: f32| {
-        direct_named(dom, mar, name)
-            .and_then(|n| attr_any(dom, n, "w"))
-            .and_then(parse_len)
-            .unwrap_or(fallback)
-    };
+    let edge = |name: &str, fallback: f32| mar_side(dom, mar, name).unwrap_or(fallback);
     let [l, r, t, b] = table;
     [
         edge("left", l),
@@ -11888,12 +11890,7 @@ fn cell_pad_h(dom: &Dom, cell: NodeId, table_l: f32, table_r: f32) -> (f32, f32)
     let Some(mar) = direct_named(dom, pr, "tcMar") else {
         return (table_l, table_r);
     };
-    let edge = |name: &str, fallback: f32| {
-        first_named(dom, mar, name)
-            .and_then(|n| attr_any(dom, n, "w"))
-            .and_then(parse_len)
-            .unwrap_or(fallback)
-    };
+    let edge = |name: &str, fallback: f32| mar_side(dom, mar, name).unwrap_or(fallback);
     (edge("left", table_l), edge("right", table_r))
 }
 

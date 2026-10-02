@@ -581,6 +581,12 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
     82.80. meeting_agenda_table and meeting_agenda_table_2 set "Time" at
     72.48. With Normal Table present (v4-v8, w1-w7) the 108-twip pull
     holds.
+- **`w:start`/`w:end` are the cell's left and right margins.** They count
+  in `tblCellMar`, `tcMar` and `tblPrEx`, and `start` beats a `left` beside
+  it.
+  - Probes s1-s5 2026-10-01: `start`=288 sets the text 14.4pt in.
+    Cicero's start/end=160 tables (70fd78a4f8) sit 8pt in.
+
 ## Rows, groups and templates
 
 - **A row holding a nested table taller than the page splits between the

@@ -30466,6 +30466,34 @@ fn table_tr_height_at_least_is_max_of_content_and_spec() {
 }
 
 #[test]
+fn a_cell_margins_start_and_end_are_its_left_and_right() {
+    // Word 16 probes s1-s5 (2026-10-01, compat 14, no styles part): a
+    // tblCellMar or tcMar w:start of 288 twips sets the text 14.4pt past
+    // the left rule (86.4), and beats a w:left of 72 beside it. We read
+    // only w:left/w:right; Cicero's start/end=160 tables (70fd78a4f8) lost
+    // their 8pt margins.
+    let x = |table_mar: &str, cell_mar: &str| {
+        let body = format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="4320" w:type="dxa"/>{table_mar}</w:tblPr><w:tblGrid><w:gridCol w:w="4320"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="4320" w:type="dxa"/>{cell_mar}</w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r><w:t>QQ</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>{}"#,
+            letter_body_sect()
+        );
+        let settings = r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="14"/></w:compat>"#;
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, settings)).expect("start/end");
+        pdf_glyph_text_xy(&pdf, "QQ").expect("QQ").0
+    };
+    let start = r#"<w:tblCellMar><w:start w:w="288" w:type="dxa"/><w:end w:w="288" w:type="dxa"/></w:tblCellMar>"#;
+    let both = r#"<w:tblCellMar><w:left w:w="72" w:type="dxa"/><w:start w:w="288" w:type="dxa"/></w:tblCellMar>"#;
+    let cell = r#"<w:tcMar><w:start w:w="288" w:type="dxa"/></w:tcMar>"#;
+    for (table_mar, cell_mar) in [(start, ""), (both, ""), ("", cell)] {
+        let at = x(table_mar, cell_mar);
+        assert!(
+            (at - 86.4).abs() < 0.3,
+            "start=288 sets the text 14.4pt in; x={at} ({table_mar}{cell_mar})"
+        );
+    }
+}
+
+#[test]
 fn an_unstyled_tables_cells_pad_half_a_point_on_every_side() {
     // Word 16 probes p1/p3 (2026-10-01): with no styles part a bordered
     // two-column table (144pt columns) sets "QB" 0.48pt past its middle
@@ -30845,10 +30873,10 @@ fn cell_tcmar_left_overrides_tblcellmar() {
 }
 
 #[test]
-fn tblcellmar_start_end_stays_default_after_mini_marse() {
-    // Cicero: tblCellMar start/end=160. Mapping to left/right (mini
-    // 221–224) dropped Cicero −0.027 ITT. Keep the default margin, 0.5pt
-    // with no table style anywhere.
+fn tblcellmar_start_end_set_the_cell_margins() {
+    // Cicero: tblCellMar start/end. Word 16 runs this body with PadCell at
+    // 144.0, the 1440-twip start past an unpulled table (2026-10-01). We
+    // ignored start/end on an old Cicero score proxy and painted it at 72.
     let body = "<w:tbl><w:tblPr>\
            <w:tblW w:w=\"9360\" w:type=\"dxa\"/>\
            <w:tblCellMar>\
@@ -30866,8 +30894,8 @@ fn tblcellmar_start_end_stays_default_after_mini_marse() {
     assert!(!xs.is_empty(), "PadCell must paint; xs={xs:?}");
     let x = xs.iter().copied().fold(f32::INFINITY, f32::min);
     assert!(
-        (x - 72.5).abs() < 0.3,
-        "start/end stay ignored; the default margin keeps cell text by the body edge; x={x} xs={xs:?}"
+        (x - 144.0).abs() < 0.3,
+        "start=1440 sets the cell text 72pt in; x={x} xs={xs:?}"
     );
 }
 
