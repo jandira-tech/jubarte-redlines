@@ -21,7 +21,7 @@ neurotic_docx_bench `word_based` corpus, plus the 40-pair Word-redline guard
 |---|---|---|
 | `jubarte A B` | `--mode word` (default) | Word Compare's layout: word-level detail inside paragraphs, replaced paragraphs merged the way Word merges them, Word's alignment passes. |
 | `jubarte A B --mode powertools` | also `--powertools-faithful` | Open-Xml-PowerTools / Docxodus: coarse paragraph fallback (detail threshold 0.15), no Word alignment passes. |
-| `jubarte convert R.docx --revisions conventional` | default | Red strike, blue double underline, green moves; every revised run is marked. |
+| `jubarte convert R.docx --revisions conventional` | default | Litera Compare's marks: red strike, blue underline, and a move in green, double-struck where it left and double-underlined where it landed; every revised run is marked. |
 | `jubarte convert R.docx --revisions word` | | What Word's Save as PDF paints, Word's own mistakes included (below). |
 | `jubarte convert R.docx --revisions custom --revision-palette …` | | Your own marks. |
 

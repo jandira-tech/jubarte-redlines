@@ -4114,8 +4114,8 @@ fn a_header_lines_revisions_and_underline_paint_their_lines() {
     assert_eq!(hair(&ours, 1.0, 0.0, 0.0), 1, "the default deletion strike");
     assert_eq!(
         hair(&ours, 0.0, 0.0, 1.0),
-        3,
-        "the default double insertion underline and the w:u one"
+        2,
+        "the default insertion underline and the w:u one"
     );
 }
 
@@ -5044,9 +5044,10 @@ fn a_short_cover_anchored_at_a_paragraphs_end_keeps_its_lines_on_the_page() {
 
 #[test]
 fn conventional_revisions_are_red_blue_and_green() {
-    // Arthur's convention (the default): deletions red struck through,
-    // insertions blue double-underlined, moved text green (struck where it
-    // left, double-underlined where it landed). Word mode keeps Word's ink.
+    // Arthur's convention (the default), as Litera Compare sets Word's track
+    // changes: deletions red struck through, insertions blue underlined,
+    // moved text green (double-struck where it left, double-underlined where
+    // it landed). Word mode keeps Word's ink.
     let body = r#"<w:p><w:del w:id="1" w:author="A"><w:r><w:delText>Gone</w:delText></w:r></w:del><w:ins w:id="2" w:author="A"><w:r><w:t>Added</w:t></w:r></w:ins><w:moveFrom w:id="3" w:author="A"><w:r><w:t>Left</w:t></w:r></w:moveFrom><w:moveTo w:id="4" w:author="A"><w:r><w:t>Landed</w:t></w:r></w:moveTo></w:p><w:sectPr/>"#;
     let docx = minimal_docx_body(body);
     let conventional = jubarte::convert::docx_to_pdf(&docx).expect("conventional");
@@ -5063,11 +5064,46 @@ fn conventional_revisions_are_red_blue_and_green() {
         !word.contains("0.000 0.000 1.000 rg"),
         "Word mode keeps Word's ink"
     );
-    let conv_lines = hay.matches(" re f").count();
-    let word_lines = word.matches(" re f").count();
+    // Each mark sits where its kind says: the moved-from rules at the
+    // deletion's strike height, the moved-to rules at the insertion's
+    // underline height. Counting hairlines alone would pass a moved-from
+    // text double-underlined.
+    let streams = pdf_content_streams(&conventional).concat();
+    let rules = |r: f32, g: f32, b: f32| {
+        let mut v: Vec<_> = pdf_fill_boxes_in(&streams, r, g, b)
+            .into_iter()
+            .filter(|&(_, _, w, h)| w > 1.0 && h > 0.0 && h < 1.6)
+            .collect();
+        v.sort_by(|a, b| a.0.total_cmp(&b.0));
+        v
+    };
+    let (strike, underline, green) = (
+        rules(1.0, 0.0, 0.0),
+        rules(0.0, 0.0, 1.0),
+        rules(0.0, 0.502, 0.0),
+    );
+    assert_eq!(strike.len(), 1, "one strike for the deletion: {strike:?}");
+    assert_eq!(
+        underline.len(),
+        1,
+        "one underline for the insertion: {underline:?}"
+    );
+    assert_eq!(
+        green.len(),
+        4,
+        "two rules at each end of the move: {green:?}"
+    );
+    let (strike_y, underline_y) = (strike[0].1, underline[0].1);
+    let near_strike = |y: f32| (y - strike_y).abs() < (y - underline_y).abs();
+    // "Left" comes before "Landed" on the line.
+    let (from, to) = green.split_at(2);
     assert!(
-        conv_lines > word_lines,
-        "double underlines add hairlines; conventional {conv_lines} word {word_lines}"
+        from.iter().all(|r| near_strike(r.1)) && from[0].1 != from[1].1,
+        "moved-from text is double-struck: {from:?} strike {strike_y} underline {underline_y}"
+    );
+    assert!(
+        to.iter().all(|r| !near_strike(r.1)) && to[0].1 != to[1].1,
+        "moved-to text is double-underlined: {to:?} strike {strike_y} underline {underline_y}"
     );
 }
 

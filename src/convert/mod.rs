@@ -125,9 +125,11 @@ pub struct RevisionPalette {
 }
 
 impl RevisionPalette {
-    /// The legal-redline convention: deletions red and struck through,
-    /// insertions blue with a double underline, moved text green (struck
-    /// through where it left, double-underlined where it landed).
+    /// The legal-redline convention, as Litera Compare sets Word's track
+    /// changes: an insertion or deletion is marked once (blue underline, red
+    /// strike) and a move twice, in green (double strike where it left,
+    /// double underline where it landed), so a move never reads as an
+    /// insertion by its colour alone.
     pub const CONVENTIONAL: Self = Self {
         deleted: RevisionMark {
             color: [0xFF, 0x00, 0x00],
@@ -137,11 +139,11 @@ impl RevisionPalette {
         inserted: RevisionMark {
             color: [0x00, 0x00, 0xFF],
             strike: MarkLines::None,
-            underline: MarkLines::Double,
+            underline: MarkLines::Single,
         },
         moved_from: RevisionMark {
             color: [0x00, 0x80, 0x00],
-            strike: MarkLines::Single,
+            strike: MarkLines::Double,
             underline: MarkLines::None,
         },
         moved_to: RevisionMark {
