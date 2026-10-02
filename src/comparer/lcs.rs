@@ -938,9 +938,8 @@ fn within_one_paragraph(dom: &Dom, cul: &[ComparisonUnit]) -> bool {
         return true;
     };
     cul.iter().all(|u| matches!(u, ComparisonUnit::Word(_)))
-        && !before_last.iter().any(|u| match u {
-            ComparisonUnit::Word(w) => w.contents.iter().any(|a| atom_is_ppr(dom, a)),
-            ComparisonUnit::Group(_) => true,
+        && !before_last.iter().any(|u| {
+            matches!(u, ComparisonUnit::Word(w) if w.contents.iter().any(|a| atom_is_ppr(dom, a)))
         })
 }
 
