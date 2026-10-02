@@ -3104,7 +3104,8 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
             default_table: false,
         };
     };
-    let xml = if settings_link_styles(pkg) {
+    let linked = settings_link_styles(pkg);
+    let xml = if linked {
         link_template_styles(&xml)
     } else {
         xml
@@ -3391,7 +3392,9 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
         // paras with no pStyle. sd_2517 Normal is after=0; docDefaults is 200.
         defaults.para = named.para.clone();
         defaults.run = named.run.clone();
-        defaults.normal_run = (named.sets_size, named.sets_family);
+        // The template's Normal is empty: its 12pt is a docDefault, which
+        // a table style's size beats in cells (probe tsn c15l).
+        defaults.normal_run = (named.sets_size && !linked, named.sets_family);
         defaults.normal_ind_jc = (named.sets_ind.0, named.sets_jc);
     }
     // Below compatibilityMode 15 an unstyled cell takes the table style's
