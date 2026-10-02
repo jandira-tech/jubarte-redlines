@@ -71,6 +71,38 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   watermark, so the redline holds it untracked. One per document: a second
   one, or a header that already holds one, is refused with
   `UNSUPPORTED_STRUCTURE`.
+- `jubarte validate FILE` (`validate::validate`, Python `Document.validate`,
+  WASM `validateDocument`): Word-validity findings beyond the schema, as
+  data. Each finding carries a stable `code` (`TEXT_INSIDE_DELETION`,
+  `MC_UNBOUND_PREFIX`, `DANGLING_RELATIONSHIP`, ...), the part and element
+  path, whether Word refuses or repairs the file for it (`word_fatal`) and
+  whether `--repair` fixes it. The Ring-1 invariants the test suite gated
+  every produced package on (`tests/common/validity.rs`) now live in the
+  library, with the five `jubarte debug` triage checks
+  (`debug::findings`) behind them. Exit 0 clean, 2 findings, 1 unreadable;
+  `--json` prints one object per finding.
+- `jubarte validate FILE --repair OUT.docx` (`validate::repair`,
+  `Document.repair`, `repairDocument`) fixes the findings with a
+  deterministic fix (unbound `mc:Choice Requires` prefixes, `w:t` inside a
+  deletion, `w:delText` outside one or under a move source, bookmarks in
+  single-value content controls, dangling relationship attributes,
+  duplicate drawing and revision ids, paragraph ids outside Word's range,
+  table cells without a last paragraph, orphan comment anchors) and lists
+  what remains.
+- `jubarte validate EDITED --original ORIGINAL --author NAME`
+  (`validate::audit_tracked`, `Document.audit_tracked`, `auditTracked`):
+  every text change against the original must be a revision by that
+  author; a paragraph that still differs after rejecting the author's
+  changes is an `UNTRACKED_EDIT` finding at its id, another author's change
+  a `FOREIGN_AUTHOR` one. It replaces `validate.py --original --author`.
+- `capabilities` reports `operations.validate` and `operations.repair`.
+
+### Fixed
+
+- `capabilities().limits.stories` listed `body` only; `inspect` and `edit`
+  address headers, footers, footnotes and endnotes too, and the manifest
+  now says so (text boxes stay reported in `summary` but not editable).
+
 - `scripts/release.sh` step 12 runs `scripts/release_downstream.sh`: jubarte.pro
   moves to the release (download page, demo engine) and is deployed, the
   app's release files are committed on `release/vx.y.z` in the jubarte-app

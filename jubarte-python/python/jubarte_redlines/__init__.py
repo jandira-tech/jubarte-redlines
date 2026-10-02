@@ -75,6 +75,7 @@ from .models import (
     EditOutcome,
     EditPlan,
     EditReport,
+    Finding,
     FontResolution,
     FormatChange,
     Hunk,
@@ -86,6 +87,7 @@ from .models import (
     RenderDiff,
     Rendered,
     RenderReport,
+    Repaired,
     ResolvedRevisions,
     Revision,
     RevisionCounts,
@@ -134,4 +136,6 @@ __all__ += [
     "diff_render",
     "RenderDiff",
     "PageDiff",
+    "Finding",
+    "Repaired",
 ]
