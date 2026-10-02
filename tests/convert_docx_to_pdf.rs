@@ -35061,10 +35061,12 @@ fn iso_strict_tab_val_end_right_aligns_pageref() {
 }
 
 #[test]
-fn toc_dot_leader_stops_a_space_before_the_page_number() {
-    // sd_2517 / file_22 Sumrio 1-3: Word paints `...... 1-3` (a space
-    // before the PAGEREF). paint_tab_leader filled to dest-0.35em so
-    // the last dot sat on the number (`.....1-3`).
+fn toc_dot_leader_runs_to_the_last_grid_cell_before_the_page_number() {
+    // sd_2517 / file_22 Sumrio 1-3. Word 16 renders this very paragraph
+    // (probe sd tocsp, 2026-10-02) with its dots ending 0.37pt before
+    // "1-3": no space is kept, the leader only stops at the last whole
+    // dot cell of its page-wide grid. Its sd_2517 TOC line ends the dots
+    // at 504 with "1-3" at 506, for the same reason.
     let body = "<w:p><w:pPr>\
            <w:tabs>\
              <w:tab w:val=\"left\" w:pos=\"2520\"/>\
@@ -35100,16 +35102,24 @@ fn toc_dot_leader_stops_a_space_before_the_page_number() {
         last_dot.is_finite(),
         "leader dots on the PAGEREF line; dots={dots:?} num=({nx},{ny})"
     );
-    let gap = nx - last_dot;
+    let mut xs: Vec<f32> = dots
+        .iter()
+        .filter(|(_, y)| (y - ny).abs() < 1.0)
+        .map(|(x, _)| *x)
+        .collect();
+    xs.sort_by(f32::total_cmp);
+    // The leader's own pitch (the line's first "." is the one in "1.03").
+    let dw = xs[xs.len() - 1] - xs[xs.len() - 2];
+    let gap = nx - (last_dot + dw);
     assert!(
-        gap >= 5.5,
-        "Word leaves ~space+dot (~6pt left-edge) before 1-3, not ~1.35em jam; gap={gap} last_dot={last_dot} num_x={nx}"
+        (-0.01..dw).contains(&gap),
+        "the last dot cell ends by 1-3, less than a dot before it; gap={gap} dot={dw} last_dot={last_dot} num_x={nx}"
     );
 }
 
 #[test]
 fn official_sd_2517_toc_one_three_not_jammed_into_dots() {
-    // Word p2 `sed adipiscing… ...... 1-3`; ours jammed `.....1-3`.
+    // Word p2 `sed adipiscing… ...... 1-3`; ours once jammed `.....1-3`.
     let path = "tests/corpus/neurotic_docx_bench/grok_run/no_comments_pdf_was_generated_by_word/docx_source/sd_2517_localized_heading_styles.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert sd_2517");
     assert_eq!(pdf_page_count(&pdf), 107, "Word sd_2517 is 107pp");
@@ -35130,10 +35140,11 @@ fn official_sd_2517_toc_one_three_not_jammed_into_dots() {
         .filter(|(_, y)| (y - ny).abs() < 1.5)
         .map(|(x, _)| x)
         .fold(f32::NEG_INFINITY, f32::max);
-    let gap = nx - last_dot;
+    // Word 16's own PDF of this file (probe sd, 2026-10-02): the dots end
+    // at 504 on their 3pt grid and "1-3" starts at 506.
     assert!(
-        gap >= 5.5,
-        "official 1-3 must not sit on the last leader dot; gap={gap} last_dot={last_dot} num=({nx},{ny})"
+        (last_dot - 501.0).abs() < 0.1 && (nx - 506.0).abs() < 0.1,
+        "Word's last dot cell is 501..504 and 1-3 starts at 506; last_dot={last_dot} num=({nx},{ny})"
     );
 }
 
@@ -44452,6 +44463,62 @@ fn link_styles_takes_the_template_normal() {
     assert!(
         linked > 23.0,
         "linkStyles lays out with the template's 12pt / 278 / after 8, got {linked}"
+    );
+}
+
+#[test]
+fn dot_leaders_fill_whole_cells_of_a_page_wide_grid() {
+    // Word lays leader dots in cells as wide as one dot, counted from the
+    // page's left edge, not the margin: the first whole cell past the text
+    // up to the last that ends by the stop. Word 16 probes dots
+    // (2026-10-02, TNR 12, left margin 90.5pt, left dot tab at 5000):
+    // "A" ends 99.14 and its dots run 102 to 339; "Abc" ends 110.47 and
+    // its dots start at 111. Our 0.35-dot pad started them at 100.19 and
+    // stopped a space short of the stop. 12d245d664's TOC lines show the
+    // gap before the dots that this grid makes.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\" w:cs=\"Times New Roman\"/>\
+            <w:sz w:val=\"24\"/></w:rPr></w:rPrDefault><w:pPrDefault/></w:docDefaults>\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style></w:styles>";
+    let para = |text: &str| {
+        format!(
+            "<w:p><w:pPr><w:tabs><w:tab w:val=\"left\" w:leader=\"dot\" w:pos=\"5000\"/></w:tabs>\
+               <w:spacing w:after=\"0\"/></w:pPr>\
+               <w:r><w:t>{text}</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t>Numq</w:t></w:r></w:p>"
+        )
+    };
+    let body = format!(
+        "{}{}<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1810\"/></w:sectPr>",
+        para("A"),
+        para("Abc")
+    );
+    let pdf = docx_to_pdf(&hf_docx(
+        &body,
+        &[("rIdSt", "styles", "styles.xml")],
+        &[("word/styles.xml", styles.to_string())],
+    ))
+    .expect("dot leaders");
+    // Each leader's dots, first and last start: x drops back at a new one.
+    let mut runs: Vec<(f32, f32, usize)> = Vec::new();
+    for (x, _) in pdf_glyph_text_xys(&pdf, ".") {
+        match runs.last_mut() {
+            Some((_, last, n)) if x > *last => (*last, *n) = (x, *n + 1),
+            _ => runs.push((x, x, 1)),
+        }
+    }
+    let first_last = |i: usize| (runs[i].0, runs[i].1 + 3.0, runs[i].2);
+    assert_eq!(runs.len(), 2, "two leaders: {runs:?}");
+    let (a0, a1, an) = first_last(0);
+    assert!(
+        (a0 - 102.0).abs() < 0.05 && (a1 - 339.0).abs() < 0.05 && an == 79,
+        "A's dots fill 102..339: {a0}..{a1} ({an})"
+    );
+    let (b0, b1, bn) = first_last(1);
+    assert!(
+        (b0 - 111.0).abs() < 0.05 && (b1 - 339.0).abs() < 0.05 && bn == 76,
+        "Abc's dots fill 111..339: {b0}..{b1} ({bn})"
     );
 }
 

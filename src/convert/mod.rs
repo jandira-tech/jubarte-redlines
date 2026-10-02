@@ -23920,20 +23920,19 @@ impl<'a> Layout<'a> {
         if dw < 0.4 {
             return;
         }
-        let pad = dw * 0.35;
-        // Word TOC right-tab leaves a space before the PAGEREF
-        // (`...... 1-3`). Ending at dest-0.35em jammed sd_2517 1-3.
-        let trail = pad + face.width_pt(" ", size);
-        let span = x1 - x0 - pad - trail;
-        if span < dw {
+        // Word lays the marks in cells one mark wide, counted from the
+        // page's left edge: the first whole cell past the text up to the
+        // last that ends by the stop (Word 16 probes dots, 2026-10-02: TNR
+        // 12 after "A" ending 99.14 fills 102..339 before a 340.5 stop;
+        // 11pt cells of 2.75 start at 99 under a 90pt margin).
+        let first = (x0 / dw - 0.001).ceil();
+        let last = (x1 / dw + 0.001).floor();
+        if last <= first {
             return;
         }
-        let n = (span / dw).floor() as usize;
-        if n == 0 {
-            return;
-        }
+        let n = (last - first) as usize;
         let fill = TextRun::new(mark.repeat(n), style.clone());
-        self.paint_run(&fill, x0 + pad, y);
+        self.paint_run(&fill, first * dw, y);
     }
 
     fn decimal_prefix_width(&self, rest_of_run: &str, run: &TextRun, following: &[TextRun]) -> f32 {
