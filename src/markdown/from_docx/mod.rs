@@ -1195,11 +1195,11 @@ fn math_inner(element: &Element, depth: usize) -> String {
             text.replace('\u{2061}', "")
         }
         "f" => format!("\\frac{{{}}}{{{}}}", part("num"), part("den")),
-        "sSup" => format!("{}^{}", group(&part("e")), group(&part("sup"))),
-        "sSub" => format!("{}_{}", group(&part("e")), group(&part("sub"))),
+        "sSup" => format!("{}^{}", base(&part("e")), group(&part("sup"))),
+        "sSub" => format!("{}_{}", base(&part("e")), group(&part("sub"))),
         "sSubSup" => format!(
             "{}_{}^{}",
-            group(&part("e")),
+            base(&part("e")),
             group(&part("sub")),
             group(&part("sup"))
         ),
@@ -1239,14 +1239,7 @@ fn math_inner(element: &Element, depth: usize) -> String {
         }
         "func" => {
             let name = part("fName");
-            let known = [
-                "sin", "cos", "tan", "cot", "sec", "csc", "log", "ln", "exp", "lim", "max", "min",
-                "sinh", "cosh", "tanh", "arcsin", "arccos", "arctan", "det",
-            ];
-            let name = match known.iter().find(|k| name.trim() == **k) {
-                Some(k) => format!("\\{k}"),
-                None => name,
-            };
+            let name = math_function(&name).unwrap_or(name);
             format!("{name}{}", group_always(&part("e")))
         }
         "nary" => {
@@ -1295,8 +1288,8 @@ fn math_inner(element: &Element, depth: usize) -> String {
             };
             format!("\\{command}{{{}}}", part("e"))
         }
-        "limLow" => format!("{}_{}", group(&part("e")), group(&part("lim"))),
-        "limUpp" => format!("{}^{}", group(&part("e")), group(&part("lim"))),
+        "limLow" => format!("{}_{}", base(&part("e")), group(&part("lim"))),
+        "limUpp" => format!("{}^{}", base(&part("e")), group(&part("lim"))),
         "m" => {
             let rows: Vec<String> = element
                 .children_named("mr")
@@ -1331,6 +1324,24 @@ fn group(s: &str) -> String {
     } else {
         format!("{{{s}}}")
     }
+}
+
+/// The functions LaTeX sets upright with their own command.
+const MATH_FUNCTIONS: [&str; 19] = [
+    "sin", "cos", "tan", "cot", "sec", "csc", "log", "ln", "exp", "lim", "max", "min", "sinh",
+    "cosh", "tanh", "arcsin", "arccos", "arctan", "det",
+];
+
+/// `\sin` for "sin": Word nests a function name under scripts and limits
+/// inside `m:fName` (lim under `m:limLow`, sin² as `m:sSup`).
+fn math_function(name: &str) -> Option<String> {
+    let name = name.trim();
+    MATH_FUNCTIONS.contains(&name).then(|| format!("\\{name}"))
+}
+
+/// The base of a script or limit: a function's command, else a group.
+fn base(s: &str) -> String {
+    math_function(s).unwrap_or_else(|| group(s))
 }
 
 fn group_always(s: &str) -> String {
@@ -1498,6 +1509,128 @@ mod tests {
             md(&docx(&body, &[])),
             "|Name|Q1|Q2|\n|-|-|-|\n|wide\\|cell||x|\n|line1<br>line2|n1; n2||\n"
         );
+    }
+
+    #[test]
+    fn office_math_structures_become_latex() {
+        let mr = |t: &str| format!("<m:r><m:t>{t}</m:t></m:r>");
+        let e = |inner: &str| format!("<m:e>{inner}</m:e>");
+        let cases = [
+            // Word's equation editor nests lim and sin² inside m:fName.
+            (
+                format!(
+                    "<m:func><m:fName><m:limLow>{}<m:lim>{}</m:lim></m:limLow></m:fName>{}</m:func>",
+                    e(&mr("lim")),
+                    mr("n→∞"),
+                    e(&mr("a"))
+                ),
+                r"\lim_{n→∞}{a}",
+            ),
+            (
+                format!(
+                    "<m:func><m:fName><m:sSup>{}<m:sup>{}</m:sup></m:sSup></m:fName>{}</m:func>",
+                    e(&mr("sin")),
+                    mr("2"),
+                    e(&mr("x"))
+                ),
+                r"\sin^2{x}",
+            ),
+            (
+                format!(
+                    "<m:func><m:fName>{}</m:fName>{}</m:func>",
+                    mr("f"),
+                    e(&mr("(x)"))
+                ),
+                "f(x)",
+            ),
+            (
+                format!("<m:rad><m:deg/>{}</m:rad>", e(&mr("x"))),
+                r"\sqrt{x}",
+            ),
+            (
+                format!("<m:rad><m:deg>{}</m:deg>{}</m:rad>", mr("3"), e(&mr("x"))),
+                r"\sqrt[3]{x}",
+            ),
+            (
+                format!(
+                    r#"<m:nary><m:naryPr><m:chr m:val="∑"/></m:naryPr><m:sub>{}</m:sub><m:sup>{}</m:sup>{}</m:nary>"#,
+                    mr("i=1"),
+                    mr("n"),
+                    e(&mr("i"))
+                ),
+                r"\sum_{i=1}^n i",
+            ),
+            (
+                format!(
+                    "<m:nary><m:sub>{}</m:sub><m:sup>{}</m:sup>{}</m:nary>",
+                    mr("0"),
+                    mr("1"),
+                    e(&mr("x"))
+                ),
+                r"\int_0^1 x",
+            ),
+            (
+                format!(
+                    r#"<m:nary><m:naryPr><m:chr m:val="∭"/></m:naryPr><m:sub/><m:sup/>{}</m:nary>"#,
+                    e(&mr("f"))
+                ),
+                "∭ f",
+            ),
+            (
+                format!(
+                    r#"<m:acc><m:accPr><m:chr m:val="̃"/></m:accPr>{}</m:acc>"#,
+                    e(&mr("x"))
+                ),
+                r"\tilde{x}",
+            ),
+            (format!("<m:acc>{}</m:acc>", e(&mr("x"))), r"\hat{x}"),
+            (
+                format!(
+                    r#"<m:bar><m:barPr><m:pos m:val="top"/></m:barPr>{}</m:bar>"#,
+                    e(&mr("x"))
+                ),
+                r"\overline{x}",
+            ),
+            (format!("<m:bar>{}</m:bar>", e(&mr("x"))), r"\underline{x}"),
+            (
+                format!(
+                    "<m:m><m:mr>{}{}</m:mr><m:mr>{}{}</m:mr></m:m>",
+                    e(&mr("a")),
+                    e(&mr("b")),
+                    e(&mr("c")),
+                    e(&mr("d"))
+                ),
+                r"\begin{matrix}a & b \\ c & d\end{matrix}",
+            ),
+            (
+                format!("<m:eqArr>{}{}</m:eqArr>", e(&mr("x=1")), e(&mr("y=2"))),
+                r"\begin{aligned}x=1 \\ y=2\end{aligned}",
+            ),
+            (
+                format!(
+                    "<m:sSubSup>{}<m:sub>{}</m:sub><m:sup>{}</m:sup></m:sSubSup>",
+                    e(&mr("x")),
+                    mr("i"),
+                    mr("2")
+                ),
+                "x_i^2",
+            ),
+            (
+                format!(
+                    "<m:sPre><m:sub>{}</m:sub><m:sup>{}</m:sup>{}</m:sPre>",
+                    mr("a"),
+                    mr("b"),
+                    e(&mr("X"))
+                ),
+                "{}_a^bX",
+            ),
+        ];
+        for (omml, latex) in cases {
+            let body = format!(
+                r#"<w:p><m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">{omml}</m:oMath></w:p>"#
+            );
+            assert_eq!(md(&docx(&body, &[])), format!("${latex}$\n"), "{omml}");
+        }
     }
 
     #[test]
