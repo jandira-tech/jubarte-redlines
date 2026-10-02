@@ -146,6 +146,7 @@ print(diff(read("v1.docx"), read("v2.docx")))
 
 - **Rust crate**: [`jubarte-redlines`](https://crates.io/crates/jubarte-redlines) (this engine, plus a CLI)
 - **npm / WebAssembly**: [`jubarte-wasm`](https://www.npmjs.com/package/jubarte-wasm) (Node and browser builds)
+- **MCP server**: `pip install 'jubarte-redlines[mcp]'` then `jubarte-mcp --root .` ([setup for Claude Code, Codex and Gemini CLI](https://github.com/jandira-tech/jubarte-redlines/blob/main/docs/adoption/mcp.md))
 
 ## License
 

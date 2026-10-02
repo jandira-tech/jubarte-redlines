@@ -284,6 +284,20 @@ const {
 Browser builds are exported from `jubarte-wasm/web` and
 `jubarte-wasm/web-slim`.
 
+### MCP server
+
+`jubarte-mcp` exposes the engine as MCP tools (read, edit as tracked
+changes, render, compare, accept and reject) to coding agents. Every path
+stays under `--root`.
+
+| Host | Install |
+| --- | --- |
+| Claude Code | `claude mcp add --transport stdio jubarte --scope project -- uvx --from 'jubarte-redlines[mcp]' jubarte-mcp --root .` |
+| Codex | `codex mcp add jubarte -- uvx --from 'jubarte-redlines[mcp]' jubarte-mcp --root .` |
+| Gemini CLI | `gemini extensions install https://github.com/jandira-tech/jubarte-redlines` |
+
+Tools, security model and config files: [docs/adoption/mcp.md](docs/adoption/mcp.md).
+
 ## CLI reference
 
 ### Compare

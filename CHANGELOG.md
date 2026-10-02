@@ -17,6 +17,19 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Added
 
+- `jubarte-mcp`, an MCP server over stdio in the Python package
+  (`pip install 'jubarte-redlines[mcp]'`): `docx_text`, `docx_inspect`,
+  `docx_edit`, `docx_render`, `docx_compare`, `docx_changes`, `docx_accept`,
+  `docx_reject`, `docx_capabilities`, and `docx_validate`, `docx_comments`,
+  `docx_audit` (which report a missing engine feature until it lands). Every
+  path must resolve under `--root`, outputs are files, and nothing is
+  replaced without `overwrite`. Setup for Claude Code, Codex and Gemini CLI
+  in [docs/adoption/mcp.md](docs/adoption/mcp.md).
+- Gemini CLI extension: `gemini-extension.json` and `GEMINI.md` at the
+  repository root; `scripts/bump-version.mjs` keeps the manifest version in
+  step with `Cargo.toml`.
+- Python: `Document.inspect_json()` returns the engine's inspect snapshot as
+  JSON text.
 - `scripts/release.sh` step 12 runs `scripts/release_downstream.sh`: jubarte.pro
   moves to the release (download page, demo engine) and is deployed, the
   app's release files are committed on `release/vx.y.z` in the jubarte-app
