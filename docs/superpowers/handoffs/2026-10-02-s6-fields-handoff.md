@@ -11,8 +11,9 @@ SPDX-License-Identifier: AGPL-3.0-only
 > a `PAGEREF` to a defined bookmark the layout did not page keeps its cached
 > result (only an undefined name gets "Error! Bookmark not defined."); `SEQ`
 > implements `\c`, `\n`, `\r N` and `\h`, and `\s` or a number format
-> stops that identifier's count, leaving its cached results; the coverage
-> floor is checked with `cargo llvm-cov`. Deviations from the design below:
+> stops that identifier's count, leaving its cached results; the gates list
+> CI's `--fail-under-lines 80` check (run on `src/fields.rs` and its tests
+> only in this session, not on the full suite). Deviations from the design below:
 > `paragraph_pages` was not added (nothing in S6 reads it); field marks that
 > share a run are split first (a corpus TOC placeholder panicked otherwise).
 
@@ -245,7 +246,8 @@ cargo test --all-features --test edit_plan
 cargo test --all-features --test agent_contracts
 cargo run --bin jubarte -- --help >/dev/null
 uv tool run --from 'reuse[charset-normalizer]' reuse lint
-cargo llvm-cov --all-features --lcov --output-path target/lcov.info   # 80% line floor
+cargo llvm-cov --all-features --lcov --output-path target/lcov.info
+cargo llvm-cov report --summary-only --fail-under-lines 80             # CI's floor
 cd jubarte-python && uv run --with maturin maturin develop --release && \
   uv run --with pytest --with pytest-cov pytest -q --cov=jubarte_redlines --cov-branch --cov-report=term-missing
 ```
