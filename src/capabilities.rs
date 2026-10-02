@@ -149,6 +149,7 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             "merge_paragraphs",
             "rewrite",
             "insert_table",
+            "list",
         ]
         .iter()
         .map(|s| (*s).to_string())
@@ -179,7 +180,7 @@ mod tests {
         assert_eq!(c.engine_version, env!("CARGO_PKG_VERSION"));
         assert_eq!(c.runtime, "rust");
         assert_eq!(c.edit_plan_versions, [1]);
-        assert_eq!(c.edit_operations.len(), 10);
+        assert_eq!(c.edit_operations.len(), 11);
         assert!(c.edit_operations.iter().any(|kind| kind == "rewrite"));
         assert!(c.operations.markdown_to_docx && c.operations.markdown_diff);
         let json: serde_json::Value = serde_json::from_str(&capabilities_json("cli")).unwrap();

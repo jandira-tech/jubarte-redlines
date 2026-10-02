@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Structural edit operations: tables built in the clean copy, and the
-//! style definitions they name.
+//! Structural edit operations: tables and lists built in the clean copy,
+//! and the style and numbering definitions they name.
 
 use std::collections::BTreeSet;
 
@@ -13,7 +13,7 @@ use crate::namespaces::W;
 use crate::opc::PartFs;
 use crate::xmllinq::{Dom, NodeId};
 
-use super::{RunSpec, build_paragraph, check_text, is_range_markup};
+use super::{RunSpec, build_paragraph, check_text, insert_ppr_child, is_range_markup};
 
 /// Word's column limit.
 const MAX_COLUMNS: usize = 63;
@@ -337,6 +337,127 @@ fn with_definitions(source: &str, wanted: &BTreeSet<String>) -> Option<String> {
         changed = true;
     }
     changed.then(|| dom.serialize_document(document))
+}
+
+/// The numbering part's parsed tree: its document and root element.
+fn numbering_tree(dom: &mut Dom, xml: &str) -> Option<(NodeId, NodeId)> {
+    let document = dom.parse_xdocument(xml);
+    Some((document, dom.root(document)?))
+}
+
+/// One past the largest `w:abstractNumId` and `w:numId` in the document's
+/// numbering part (`(0, 1)` without one: `numId` 0 means "no list").
+pub(super) fn next_numbering_ids(opened: &Opened) -> (u32, u32) {
+    let xml = opened
+        .related("numbering")
+        .into_iter()
+        .next()
+        .and_then(|part| opened.pkg.part_string(&part));
+    let mut dom = Dom::new();
+    let Some((_, root)) = xml.and_then(|xml| numbering_tree(&mut dom, &xml)) else {
+        return (0, 1);
+    };
+    let next = |element: &str, attribute: &str, floor: u32| {
+        dom.elements(root, Some(&W::name(element)))
+            .into_iter()
+            .filter_map(|e| dom.attribute(e, &W::name(attribute))?.parse::<u32>().ok())
+            .max()
+            .map_or(floor, |max| max.saturating_add(1).max(floor))
+    };
+    (
+        next("abstractNum", "abstractNumId", 0),
+        next("num", "numId", 1),
+    )
+}
+
+/// Add `abstracts` (`w:abstractNum`) and `nums` (`w:num`) to the numbering
+/// part, making it when there is none, in schema order: every
+/// `w:abstractNum` before every `w:num`, and both before
+/// `w:numIdMacAtCleanup`.
+pub(super) fn splice_numbering(
+    pkg: &mut PartFs,
+    main: &str,
+    abstracts: &[String],
+    nums: &[String],
+) {
+    let part = package::numbering_part(pkg, main);
+    let Some(source) = pkg.part_string(&part) else {
+        return;
+    };
+    let mut dom = Dom::new();
+    let Some((document, root)) = numbering_tree(&mut dom, &source) else {
+        return;
+    };
+    let added = format!(
+        "<w:numbering xmlns:w=\"{}\">{}{}</w:numbering>",
+        W::URI,
+        abstracts.concat(),
+        nums.concat()
+    );
+    let Some((_, new_root)) = numbering_tree(&mut dom, &added) else {
+        return;
+    };
+    let first = |dom: &Dom, names: &[&str]| {
+        dom.elements(root, None).into_iter().find(|&e| {
+            dom.name(e)
+                .is_some_and(|n| n.namespace_name() == W::URI && names.contains(&n.local_name()))
+        })
+    };
+    for element in dom.elements(new_root, None) {
+        dom.remove(element);
+        let names: &[&str] = if dom.name_is(element, &W::name("abstractNum")) {
+            &["num", "numIdMacAtCleanup"]
+        } else {
+            &["numIdMacAtCleanup"]
+        };
+        match first(&dom, names) {
+            Some(before) => dom.add_before_self(before, element),
+            None => dom.add(root, element),
+        }
+    }
+    pkg.set_part(&part, dom.serialize_document(document).into_bytes());
+}
+
+/// The `w:numId` of `paragraph`'s direct numbering, unless it is 0 (none).
+pub(super) fn direct_num_id(dom: &Dom, paragraph: NodeId) -> Option<String> {
+    let num_pr = dom
+        .element(paragraph, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::num_pr()))?;
+    let id = dom
+        .element(num_pr, &W::name("numId"))
+        .and_then(|n| dom.attribute(n, &W::val()))?;
+    (id != "0").then(|| id.to_string())
+}
+
+/// Number `paragraph` at `level` of list `num_id`, replacing any direct
+/// numbering; a paragraph without a style takes `ListParagraph`. True when
+/// it did.
+pub(super) fn number_paragraph(dom: &mut Dom, paragraph: NodeId, level: u32, num_id: &str) -> bool {
+    let ppr = match dom.element(paragraph, &W::p_pr()) {
+        Some(ppr) => ppr,
+        None => {
+            let ppr = dom.new_element(W::p_pr());
+            dom.add_first(paragraph, ppr);
+            ppr
+        }
+    };
+    if let Some(old) = dom.element(ppr, &W::num_pr()) {
+        dom.remove(old);
+    }
+    let num_pr = dom.new_element(W::num_pr());
+    for (name, value) in [("ilvl", level.to_string()), ("numId", num_id.to_string())] {
+        let child = dom.new_element(W::name(name));
+        dom.set_attribute_value(child, &W::val(), Some(&value));
+        dom.add(num_pr, child);
+    }
+    insert_ppr_child(dom, ppr, num_pr);
+    if dom.element(ppr, &W::p_style()).is_some() {
+        return false;
+    }
+    let style = dom.new_element(W::p_style());
+    dom.set_attribute_value(style, &W::val(), Some("ListParagraph"));
+    insert_ppr_child(dom, ppr, style);
+    true
 }
 
 /// The engine's definition of style `id`, parsed into `dom` and detached.

@@ -620,6 +620,33 @@ class EditPlan:
             op["widths_dxa"] = list(widths_dxa)
         return self._with(_with_optional(op, style=style, id=id))
 
+    def list_paragraphs(
+        self,
+        paragraphs: Sequence[Selector],
+        *,
+        kind_of_list: Literal["bullet", "decimal", "lower_letter"] = "bullet",
+        level: int = 0,
+        restart: bool = True,
+        id: str | None = None,
+    ) -> EditPlan:
+        """Make the paragraphs a list (wire kind ``list``); the redline records
+        each paragraph's old properties.
+
+        ``level`` is 0 (outermost) to 8. ``restart=False`` continues the list
+        of the nearest numbered paragraph before the first one instead of
+        starting a new one.
+        """
+        if isinstance(paragraphs, (str, bytes, dict)):
+            raise TypeError("paragraphs must be a sequence of selectors")
+        op: dict[str, object] = {"kind": "list", "paragraphs": [_selector(p) for p in paragraphs]}
+        if kind_of_list != "bullet":
+            op["kind_of_list"] = kind_of_list
+        if level:
+            op["level"] = level
+        if not restart:
+            op["restart"] = False
+        return self._with(_with_optional(op, id=id))
+
     def to_dict(self) -> dict[str, object]:
         """The wire form."""
         wire: dict[str, object] = {"schema_version": 1, "author": self.author}

@@ -218,3 +218,27 @@ def test_insert_table_builder_rejects_non_text_cells(rows):
 def test_insert_table_builder_rejects_non_integer_widths(widths):
     with pytest.raises(TypeError):
         EditPlan(author="A").insert_table(0, rows=[["a"]], widths_dxa=widths)
+
+
+def test_list_paragraphs_builder_writes_the_list_kind():
+    selectors = ["body:p:1", {"contains": "Pears"}]
+    built = EditPlan(author="A").list_paragraphs(selectors, kind_of_list="lower_letter", level=1, restart=False, id="l")
+    selectors[1]["contains"] = "changed"
+    assert built.operations[0] == {
+        "id": "l",
+        "kind": "list",
+        "paragraphs": [{"id": "body:p:1"}, {"contains": "Pears"}],
+        "kind_of_list": "lower_letter",
+        "level": 1,
+        "restart": False,
+    }
+    assert EditPlan(author="A").list_paragraphs([0, 1]).operations[0] == {
+        "kind": "list",
+        "paragraphs": [{"index": 0}, {"index": 1}],
+    }
+
+
+@pytest.mark.parametrize("paragraphs", ["body:p:1", [True]])
+def test_list_paragraphs_builder_rejects_a_bare_selector(paragraphs):
+    with pytest.raises(TypeError):
+        EditPlan(author="A").list_paragraphs(paragraphs)

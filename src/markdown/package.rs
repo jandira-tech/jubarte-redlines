@@ -359,13 +359,9 @@ fn max_attribute(xml: &str, element: &str, name: &str) -> Option<i64> {
     best
 }
 
-/// Adds the document's lists to the numbering part, making one if needed;
-/// returns each list's `w:numId`.
-fn numbering(package: &mut PartFs, main: &str, document: &Document) -> Vec<u32> {
-    if document.lists.is_empty() {
-        return Vec::new();
-    }
-    let part = related(package, main, "/numbering").unwrap_or_else(|| {
+/// The numbering part `main` relates to, made empty when there is none.
+pub(crate) fn numbering_part(package: &mut PartFs, main: &str) -> String {
+    related(package, main, "/numbering").unwrap_or_else(|| {
         let part = sibling(main, "numbering.xml");
         package.add_document_relationship(
             main,
@@ -385,7 +381,16 @@ fn numbering(package: &mut PartFs, main: &str, document: &Document) -> Vec<u32> 
             .into_bytes(),
         );
         part
-    });
+    })
+}
+
+/// Adds the document's lists to the numbering part, making one if needed;
+/// returns each list's `w:numId`.
+fn numbering(package: &mut PartFs, main: &str, document: &Document) -> Vec<u32> {
+    if document.lists.is_empty() {
+        return Vec::new();
+    }
+    let part = numbering_part(package, main);
     let Some(existing) = package.part_string(&part) else {
         return Vec::new();
     };

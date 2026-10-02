@@ -299,6 +299,7 @@ def test_capabilities_manifest_reports_python_runtime() -> None:
     assert caps["operations"]["edit"] is True
     assert "insert_paragraph" in caps["edit_operations"]
     assert "insert_table" in caps["edit_operations"]
+    assert "list" in caps["edit_operations"]
 
 
 def test_plan_builder_validates_selectors_runs_and_options() -> None:
@@ -422,3 +423,15 @@ def test_insert_table_is_tracked_in_the_redline() -> None:
     with pytest.raises(EditPlanError) as refused:
         doc.edit(EditPlan(author="A").insert_table(0, rows=[["a", "b"], ["c"]]))
     assert refused.value.code == "INVALID_EDIT"
+
+
+def test_list_paragraphs_numbers_them_as_tracked_changes() -> None:
+    doc = letter()
+    plan = EditPlan(author="Claude", date="2026-10-02T12:00:00Z").for_document(doc).list_paragraphs([2, 3], kind_of_list="decimal")
+    result = doc.edit(plan)
+    assert result.report.ok, result.report.operations
+    assert result.report.operations[0].paragraph == "body:p:2, body:p:3"
+    paragraphs = result.clean.inspect().paragraphs
+    assert [(p.numbered, p.style) for p in paragraphs[2:]] == [(True, "ListParagraph"), (True, "ListParagraph")]
+    assert not any(p.numbered for p in result.redline.reject().inspect().paragraphs)
+    assert result.report.revisions.format_changed >= 2

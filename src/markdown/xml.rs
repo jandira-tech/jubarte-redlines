@@ -567,6 +567,56 @@ pub(super) fn comments_part(context: &Context<'_>, comments: &[Comment]) -> Stri
     out
 }
 
+/// The format of every level of a list definition.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ListFormat {
+    /// `•`, `◦`, `▪` by level.
+    Bullet,
+    /// `1.`, with the level's own counter.
+    Decimal,
+    /// `a.`, with the level's own counter.
+    LowerLetter,
+}
+
+/// A `w:abstractNum` with nine levels of `format`, each indented a
+/// further half inch.
+pub(crate) fn abstract_num(id: u32, format: ListFormat) -> String {
+    const GLYPHS: [&str; 3] = ["\u{2022}", "\u{25E6}", "\u{25AA}"];
+    let mut out = format!(
+        "<w:abstractNum w:abstractNumId=\"{id}\"><w:multiLevelType w:val=\"hybridMultilevel\"/>"
+    );
+    for level in 0..9u32 {
+        let (format, text) = match format {
+            ListFormat::Bullet => ("bullet", GLYPHS[level as usize % GLYPHS.len()].to_string()),
+            ListFormat::Decimal => ("decimal", format!("%{}.", level + 1)),
+            ListFormat::LowerLetter => ("lowerLetter", format!("%{}.", level + 1)),
+        };
+        let _ = write!(
+            out,
+            "<w:lvl w:ilvl=\"{level}\"><w:start w:val=\"1\"/><w:numFmt w:val=\"{format}\"/>\
+             <w:lvlText w:val=\"{text}\"/><w:lvlJc w:val=\"left\"/>\
+             <w:pPr><w:ind w:left=\"{}\" w:hanging=\"360\"/></w:pPr></w:lvl>",
+            720 * (level + 1)
+        );
+    }
+    out.push_str("</w:abstractNum>");
+    out
+}
+
+/// A `w:num` instance of `abstract_id`, optionally starting `level` at
+/// `start`.
+pub(crate) fn num(num_id: u32, abstract_id: u32, start: Option<(u32, u32)>) -> String {
+    let mut out = format!("<w:num w:numId=\"{num_id}\"><w:abstractNumId w:val=\"{abstract_id}\"/>");
+    if let Some((level, start)) = start {
+        let _ = write!(
+            out,
+            "<w:lvlOverride w:ilvl=\"{level}\"><w:startOverride w:val=\"{start}\"/></w:lvlOverride>"
+        );
+    }
+    out.push_str("</w:num>");
+    out
+}
+
 /// The `w:abstractNum` elements for bullets (`bullets`) and for decimal
 /// numbering (`decimal`), and one `w:num` per instance.
 pub(super) fn numbering(
@@ -575,48 +625,23 @@ pub(super) fn numbering(
     decimal: u32,
     first_num: u32,
 ) -> (String, String) {
-    const GLYPHS: [&str; 3] = ["\u{2022}", "\u{25E6}", "\u{25AA}"];
     let mut abstracts = String::new();
     for (id, ordered) in [(bullets, false), (decimal, true)] {
-        if !lists.iter().any(|list| list.ordered == ordered) {
-            continue;
-        }
-        let _ = write!(
-            abstracts,
-            "<w:abstractNum w:abstractNumId=\"{id}\"><w:multiLevelType w:val=\"hybridMultilevel\"/>"
-        );
-        for level in 0..9u32 {
-            let (format, text) = if ordered {
-                ("decimal", format!("%{}.", level + 1))
+        if lists.iter().any(|list| list.ordered == ordered) {
+            let format = if ordered {
+                ListFormat::Decimal
             } else {
-                ("bullet", GLYPHS[level as usize % GLYPHS.len()].to_string())
+                ListFormat::Bullet
             };
-            let _ = write!(
-                abstracts,
-                "<w:lvl w:ilvl=\"{level}\"><w:start w:val=\"1\"/><w:numFmt w:val=\"{format}\"/>\
-                 <w:lvlText w:val=\"{text}\"/><w:lvlJc w:val=\"left\"/>\
-                 <w:pPr><w:ind w:left=\"{}\" w:hanging=\"360\"/></w:pPr></w:lvl>",
-                720 * (level + 1)
-            );
+            abstracts.push_str(&abstract_num(id, format));
         }
-        abstracts.push_str("</w:abstractNum>");
     }
     let mut nums = String::new();
     for (index, list) in lists.iter().enumerate() {
-        let num = first_num + u32::try_from(index).unwrap_or(0);
+        let id = first_num + u32::try_from(index).unwrap_or(0);
         let abstract_id = if list.ordered { decimal } else { bullets };
-        let _ = write!(
-            nums,
-            "<w:num w:numId=\"{num}\"><w:abstractNumId w:val=\"{abstract_id}\"/>"
-        );
-        if list.ordered {
-            let _ = write!(
-                nums,
-                "<w:lvlOverride w:ilvl=\"{}\"><w:startOverride w:val=\"{}\"/></w:lvlOverride>",
-                list.level, list.start
-            );
-        }
-        nums.push_str("</w:num>");
+        let start = list.ordered.then_some((list.level, list.start));
+        nums.push_str(&num(id, abstract_id, start));
     }
     (abstracts, nums)
 }

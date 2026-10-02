@@ -470,6 +470,8 @@ Supported operation kinds include:
 - `merge_paragraphs`
 - `insert_table` (unreleased: a table next to a paragraph, tracked as
   inserted rows)
+- `list` (unreleased: paragraphs become a bulleted, numbered or lettered
+  list, tracked as property changes)
 
 Plans are atomic: stale sources, ambiguous anchors, overlapping edits or
 unsupported structures refuse the plan instead of making a guessed edit.
