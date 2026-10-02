@@ -47291,3 +47291,54 @@ fn a_hide_mark_cells_empty_last_paragraph_takes_no_height() {
         "rows apart at Word's {word:?}, got {got:?}"
     );
 }
+
+#[test]
+fn a_table_inside_a_text_box_lays_out_as_a_table() {
+    // 5a6c (en redline holdout): footer3's "End-Point Assessment Recording
+    // Forms" banner is a text box holding a two-row table, a red header row
+    // over a grey band. Word paints the cells, their fills and one row under
+    // the other; we flattened the cells into one run of text, unfilled.
+    let cell = |fill: &str, text: &str| {
+        format!(
+            "<w:tr><w:tc><w:tcPr><w:tcW w:w=\"5760\" w:type=\"dxa\"/>\
+               <w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"{fill}\"/></w:tcPr>\
+               <w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc></w:tr>"
+        )
+    };
+    let tbox = format!(
+        "<w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:positionH relativeFrom=\"column\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>914400</wp:posOffset></wp:positionV>\
+           <wp:extent cx=\"4114800\" cy=\"1371600\"/><wp:wrapNone/><wp:docPr id=\"9\" name=\"Box\"/>\
+           <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+             <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+               <wps:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:noFill/></wps:spPr>\
+               <wps:txbx><w:txbxContent><w:tbl><w:tblPr><w:tblW w:w=\"5760\" w:type=\"dxa\"/></w:tblPr>\
+                 <w:tblGrid><w:gridCol w:w=\"5760\"/></w:tblGrid>{}{}</w:tbl><w:p/></w:txbxContent></wps:txbx>\
+               <wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing>",
+        cell("D81E05", "BannerTop"),
+        cell("D9D9D9", "BannerBand")
+    );
+    let docx = drawing_docx(&format!(
+        "<w:p><w:r><w:t>Host</w:t></w:r><w:r>{tbox}</w:r></w:p><w:sectPr/>"
+    ));
+    let pdf = docx_to_pdf(&docx).expect("box table");
+    let hay = String::from_utf8_lossy(&pdf);
+    for (fill, rg) in [
+        ("D81E05", "0.847 0.118 0.020 rg"),
+        ("D9D9D9", "0.851 0.851 0.851 rg"),
+    ] {
+        assert!(
+            hay.match_indices(rg)
+                .any(|(i, _)| hay[i..].lines().next().is_some_and(|l| l.ends_with("re f"))),
+            "the cell's {fill} fill is painted"
+        );
+    }
+    let top = pdf_glyph_text_xy(&pdf, "BannerTop").expect("top row");
+    let band = pdf_glyph_text_xy(&pdf, "BannerBand").expect("band row");
+    assert!(
+        (top.0 - band.0).abs() < 0.5 && top.1 - band.1 > 10.0,
+        "the second row sits under the first, at the same left edge; top={top:?} band={band:?}"
+    );
+}

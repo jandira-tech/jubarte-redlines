@@ -2150,6 +2150,10 @@ struct LaidTextBox {
     /// like body paragraphs inside `insets` (010300e3's letter). Empty
     /// keeps the flat-run label path (charts, diagrams, linked boxes).
     paras: Vec<(Vec<TextRun>, ParaStyle)>,
+    /// The box's own tables, each after the number of `paras` before it:
+    /// laid out as tables, not flattened into the box's text (5a6c's
+    /// red-and-grey banner is a two-row table in a footer text box).
+    tables: Vec<(usize, std::rc::Rc<Block>)>,
     /// `bodyPr` lIns/tIns/rIns/bIns (VML `v:textbox/@inset`), points.
     insets: [f32; 4],
     /// `a:custGeom`: the shape's own paths (010300e3's icons).
@@ -8302,6 +8306,7 @@ fn frame_box(
         adj: Vec::new(),
         prst: String::new(),
         paras: laid,
+        tables: Vec::new(),
         // An unbordered frame's text starts on its x/y (e73ba1e0's date at
         // 455.04pt = x 9100tw); a border keeps its point of padding.
         insets: if outline.is_some() {
@@ -14346,11 +14351,11 @@ fn collect_textboxes_styled(
         let mut text_dy = txbx
             .map(|n| first_para_spacing_before(dom, n))
             .unwrap_or(0.0);
-        let paras = match (sheet, txbx) {
+        let (paras, tables) = match (sheet, txbx) {
             (Some(sheet), Some(n)) if txbx_lays_out_paragraphs(dom, shape, n) => {
-                txbx_paragraphs(dom, n, sheet, theme, numbering)
+                txbx_paragraphs(dom, n, sheet, theme, numbering, src)
             }
-            _ => Vec::new(),
+            _ => (Vec::new(), Vec::new()),
         };
         if runs.iter().all(|r| r.text.trim().is_empty()) {
             let (linked, dx, dy) = linked_txbx_content(src, dom, shape, base, theme);
@@ -14517,6 +14522,7 @@ fn collect_textboxes_styled(
                     adj: preset_adjustments(dom, shape),
                     prst: shape_prst(dom, shape),
                     paras: Vec::new(),
+                    tables: Vec::new(),
                     insets: TXBX_INSETS,
                     custom: custom.clone(),
                     group: Vec::new(),
@@ -14563,6 +14569,7 @@ fn collect_textboxes_styled(
                     adj: preset_adjustments(dom, shape),
                     prst: shape_prst(dom, shape),
                     paras: Vec::new(),
+                    tables: Vec::new(),
                     insets: TXBX_INSETS,
                     custom: custom.clone(),
                     group: Vec::new(),
@@ -14635,6 +14642,7 @@ fn collect_textboxes_styled(
             adj: preset_adjustments(dom, shape),
             prst: shape_prst(dom, shape),
             paras,
+            tables,
             insets: textbox_text_insets(dom, shape, theme),
             custom,
             group,
@@ -14698,6 +14706,7 @@ fn group_box(
         adj: Vec::new(),
         prst: String::new(),
         paras: Vec::new(),
+        tables: Vec::new(),
         insets: TXBX_INSETS,
         custom: None,
         group,
@@ -14962,7 +14971,8 @@ fn collect_group(
                 if let Some(sheet) = text.sheet
                     && txbx_lays_out_paragraphs(dom, child, txbx)
                 {
-                    shape.paras = txbx_paragraphs(dom, txbx, sheet, theme, None);
+                    (shape.paras, shape.tables) =
+                        txbx_paragraphs(dom, txbx, sheet, theme, None, None);
                 }
                 shape.insets = textbox_text_insets(dom, child, theme);
                 shape.text_anchor = shape_text_anchor(dom, child);
@@ -15092,7 +15102,6 @@ fn txbx_lays_out_paragraphs(dom: &Dom, shape: NodeId, txbx: NodeId) -> bool {
         .and_then(|b| attr_any(dom, *b, "vert"))
         .is_none_or(|v| v == "horz");
     horizontal
-        && dom.descendants(txbx, Some(&W::tbl())).is_empty()
         && dom
             .descendants(txbx, Some(&W::p()))
             .iter()
@@ -15145,17 +15154,50 @@ fn txbx_paragraphs(
     sheet: &StyleSheet,
     theme: &ThemeFonts,
     numbering: Option<&Numbering>,
-) -> Vec<(Vec<TextRun>, ParaStyle)> {
+    media: Option<(&PartFs, &str)>,
+) -> TxbxContent {
     // A box's lists number on their own copy of the document's lists.
     let mut numbering = numbering.cloned();
-    let mut paras = dom
+    // The box's own paragraphs: not a nested box's, nor a cell's of one of
+    // its tables, which lay out with their table.
+    let own: Vec<NodeId> = dom
         .descendants(txbx, Some(&W::p()))
         .into_iter()
-        .filter(|p| {
-            dom.ancestors(*p, Some(&W::txbx_content()))
-                .first()
-                .is_none_or(|a| *a == txbx)
+        .filter(|&p| {
+            let mut at = dom.parent(p);
+            while let Some(n) = at.filter(|&n| n != txbx) {
+                if dom.name_is(n, &W::tbl()) || dom.name_is(n, &W::txbx_content()) {
+                    return false;
+                }
+                at = dom.parent(n);
+            }
+            true
         })
+        .collect();
+    let mut tables = Vec::new();
+    let mut before = 0;
+    for child in dom.elements(txbx, None) {
+        if dom.name_is(child, &W::tbl()) {
+            let mut lists = numbering.clone().unwrap_or_default();
+            let block = table_block(
+                dom,
+                child,
+                sheet,
+                &mut lists,
+                &mut AuthorColors::default(),
+                &HashMap::new(),
+                media,
+            );
+            tables.push((before, std::rc::Rc::new(block)));
+        } else {
+            before += own
+                .iter()
+                .filter(|&&p| p == child || dom.ancestors(p, None).contains(&child))
+                .count();
+        }
+    }
+    let mut paras = own
+        .into_iter()
         .map(|p| {
             let (mut style, run) = para_base(dom, p, sheet, None);
             let mut runs = collect_runs(dom, p, &run, theme);
@@ -15193,9 +15235,16 @@ fn txbx_paragraphs(
             (runs, style)
         })
         .collect::<Vec<_>>();
-    fold_stacked_spacing(paras.iter_mut().map(|(_, style)| style).collect(), &[]);
-    paras
+    let breaks: Vec<usize> = tables.iter().map(|(at, _)| *at).collect();
+    fold_stacked_spacing(paras.iter_mut().map(|(_, style)| style).collect(), &breaks);
+    (paras, tables)
 }
+
+/// A text box's paragraphs and its tables (`LaidTextBox::tables`).
+type TxbxContent = (
+    Vec<(Vec<TextRun>, ParaStyle)>,
+    Vec<(usize, std::rc::Rc<Block>)>,
+);
 
 /// `bodyPr` insets (EMU) or VML `v:textbox/@inset`, defaulting to Word's.
 /// `wps:bodyPr wrap="none"` with `a:spAutoFit`: the box takes its text's
@@ -26449,7 +26498,7 @@ impl<'a> Layout<'a> {
             self.emit_diag_shapes(x, y, dh, &box_.diag_shapes);
             return;
         }
-        if !box_.paras.is_empty() {
+        if !box_.paras.is_empty() || !box_.tables.is_empty() {
             self.emit_textbox_paras(box_, x, y, dw, dh);
             return;
         }
@@ -26567,8 +26616,17 @@ impl<'a> Layout<'a> {
         let top = y + dh - ti;
         self.y = top;
         let start = self.current().ops.len();
-        for (runs, style) in &box_.paras {
+        // Each table stands before the paragraph it precedes, as in a cell.
+        let width = dw - li - ri;
+        let mut tables = box_.tables.iter().peekable();
+        for (i, (runs, style)) in box_.paras.iter().enumerate() {
+            while let Some((_, table)) = tables.next_if(|(at, _)| *at <= i) {
+                self.y -= self.emit_nested_table(table, x + li, self.y, width);
+            }
             self.emit_runs(runs, style, false, FloatWrap::default());
+        }
+        for (_, table) in tables {
+            self.y -= self.emit_nested_table(table, x + li, self.y, width);
         }
         let used = top - self.y;
         let room = dh - ti - bi;
