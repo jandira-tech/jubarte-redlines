@@ -40851,6 +40851,80 @@ fn latin_inside_east_asian_text_takes_the_ascii_face_and_a_quarter_em_gap() {
 }
 
 #[test]
+fn ascii_punctuation_and_spaces_between_ideographs_take_the_ascii_face() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; ascii_punctuation_and_spaces_between_ideographs_take_the_ascii_face measures Word's faces"
+        );
+        return;
+    }
+    // Word 16 probes a1-a7 (2026-10-01), Arial with an MS Mincho East
+    // Asian face at 12pt: every ASCII character between ideographs, "(",
+    // ",", "." and the space, paints in Arial, with a w:hint="eastAsia"
+    // or an East Asian language too. Curly quotes and dashes take Arial
+    // without one. We kept each with the ideograph before it, in MS
+    // Mincho, 2pt wider per bracket and 8pt per quote.
+    let x = |text: &str, rpr: &str, needle: &str| {
+        let body = format!(
+            "<w:p><w:r><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:eastAsia=\"MS Mincho\"{rpr}/>\
+             <w:sz w:val=\"24\"/></w:rPr><w:t xml:space=\"preserve\">{text}</w:t></w:r></w:p><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("ascii in East Asian text");
+        pdf_glyph_text_xy(&pdf, needle)
+            .unwrap_or_else(|| panic!("{needle} of {text} paints in Arial"))
+            .0
+    };
+    for (text, rpr, needle, word) in [
+        ("漢(漢)漢", "", ")", 100.0),
+        // Q after the closing quote: Word's next glyph sits at 103.99.
+        ("漢“漢”Q", "", "Q", 104.0),
+        ("漢(漢 漢,漢", " w:hint=\"eastAsia\"", ",", 115.33),
+    ] {
+        let got = x(text, rpr, needle);
+        assert!(
+            (got - word).abs() < 0.3,
+            "{needle} in {text}{rpr}: x={got}, Word {word}"
+        );
+    }
+}
+
+#[test]
+fn the_gap_after_latin_text_is_half_its_fonts_average_width() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; the_gap_after_latin_text_is_half_its_fonts_average_width measures Word's faces"
+        );
+        return;
+    }
+    // Word 16 probes g1-g7 (2026-10-01), "漢Q漢" at 12pt: Q sits a quarter
+    // em (3pt) after the first ideograph whatever the faces, but the
+    // ideograph after Q follows by half the Latin face's OS/2 average
+    // width: 2.65 in Arial (904/2048 em), 2.41 in Times New Roman
+    // (821/2048), with MS Mincho, MS Gothic or Yu Mincho alike. We used a
+    // quarter em on both sides. "漢Q漢A" puts an ASCII marker after the
+    // second ideograph.
+    let gap = |ascii: &str| {
+        let body = format!(
+            "<w:p><w:r><w:rPr><w:rFonts w:ascii=\"{ascii}\" w:hAnsi=\"{ascii}\" w:eastAsia=\"MS Mincho\"/>\
+             <w:sz w:val=\"24\"/></w:rPr><w:t>漢Q漢A</w:t></w:r></w:p><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("trailing gap");
+        let q = pdf_glyph_text_xy(&pdf, "Q").expect("Q").0;
+        let a = pdf_glyph_text_xy(&pdf, "A").expect("A").0;
+        (q, a)
+    };
+    for (ascii, q_adv, word_gap) in [("Arial", 9.336, 2.648), ("Times New Roman", 8.664, 2.405)] {
+        let (q, a) = gap(ascii);
+        // A follows the second ideograph by its own 3pt quarter em.
+        let got = a - 3.0 - 12.0 - (q + q_adv);
+        assert!(
+            (q - 87.0).abs() < 0.3 && (got - word_gap).abs() < 0.2,
+            "{ascii}: Q at {q} (Word 87.0), gap after Q {got} (Word {word_gap})"
+        );
+    }
+}
+
+#[test]
 fn hangul_takes_the_quarter_em_gap_and_auto_space_de_off_drops_it() {
     if !word_dfonts_available() {
         return;

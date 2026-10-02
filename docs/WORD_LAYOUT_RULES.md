@@ -238,6 +238,17 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   The mark's own `w:sz` still wins over the style. tb27bda's
   Font Style11 marks are 13.8pt Times lines, not 14.58pt Verdana 12:
   73.7 → 85.0.
+- **ASCII never takes the East Asian face.** Word 16 probes 2026-10-01: a
+  ")" , "," or space between ideographs paints in the run's ascii font, even
+  under `w:hint="eastAsia"` or a ja-JP `w:lang`. Curly quotes and the em
+  dash take `hAnsi` in a plain run and the East Asian face under the hint
+  or an East Asian `w:eastAsia` lang.
+  - Test: `ascii_punctuation_and_spaces_between_ideographs_take_the_ascii_face`.
+- **The autospace gap is not symmetric.** East Asian text followed by Latin
+  gets 0.25 em. Latin text followed by East Asian gets half the Latin
+  face's OS/2 `xAvgCharWidth`: at 12pt, Arial 2.648pt and Times New Roman
+  2.405pt.
+  - Test: `the_gap_after_latin_text_is_half_its_fonts_average_width`.
 
 ## Redline chrome
 

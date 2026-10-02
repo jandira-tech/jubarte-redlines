@@ -12485,56 +12485,64 @@ fn collect_runs_in(
 }
 
 /// Word picks a run's face per character: in a run with an East Asian
-/// face, ideographs take it and Latin letters and digits the ascii one
-/// (live Word: "令和元年5月6日FM" paints 5, 6, F, M in Century). The pieces
-/// of `text` at every script change, when it mixes them; spaces and
-/// punctuation stay with the piece before them.
+/// face, ideographs take it and everything else the ascii or hAnsi one
+/// (live Word: "令和元年5月6日FM" paints 5, 6, F, M in Century). ASCII
+/// never takes the East Asian face, whatever the hint or language: Word 16
+/// probes a1-a7 (2026-10-01) paint the "(", ",", "." and spaces of
+/// "漢(漢 漢,漢" in Arial beside MS Mincho ideographs. Quotes, dashes and
+/// other symbols join the ideographs only in an East Asian run (a6's “”
+/// and — are Arial without a hint). The pieces of `text` at every change,
+/// when it mixes them.
 fn script_pieces<'t>(style: &RunStyle, text: &'t str) -> Option<Vec<&'t str>> {
-    if style.family_ea.is_none()
-        || !text.chars().any(takes_east_asian_face)
-        || !text
-            .chars()
-            .any(|c| c.is_alphanumeric() && !takes_east_asian_face(c))
-    {
+    if style.family_ea.is_none() || !text.chars().any(takes_east_asian_face) {
+        return None;
+    }
+    let east_asian_run = is_east_asian_run(style);
+    let east_asian = |c: char| {
+        takes_east_asian_face(c) || (east_asian_run && !c.is_ascii() && !c.is_alphanumeric())
+    };
+    if text.chars().all(east_asian) {
         return None;
     }
     let mut out = Vec::new();
     let mut start = 0;
     let mut class: Option<bool> = None;
     for (i, c) in text.char_indices() {
-        let this = if takes_east_asian_face(c) {
-            Some(true)
-        } else if c.is_alphanumeric() {
-            Some(false)
-        } else {
-            None
-        };
-        if let (Some(now), Some(before)) = (this, class)
-            && now != before
-        {
+        let this = east_asian(c);
+        if class.is_some_and(|before| before != this) {
             out.push(&text[start..i]);
             start = i;
         }
-        if this.is_some() {
-            class = this;
-        }
+        class = Some(this);
     }
     out.push(&text[start..]);
     (out.len() > 1).then_some(out)
 }
 
-/// autoSpaceDE / autoSpaceDN: Word sets a quarter em between an East
-/// Asian piece and a Latin or digit one that touch (live Word: 3pt at
-/// 12pt around "5", "FM" and "abc" in "令和元年5月6日FM西東京abc放送").
-/// Hangul counts as East Asian, and either flag set off drops its gaps
-/// (Word 16 probe hgap 1001).
-fn script_gap(style: &RunStyle, before: &str, after: &str) -> f32 {
+/// A run Word reads as East Asian: an eastAsia hint, or a Chinese,
+/// Japanese or Korean East Asian language.
+fn is_east_asian_run(style: &RunStyle) -> bool {
+    style.hint == FontHint::EastAsia
+        || style
+            .lang_ea
+            .as_deref()
+            .is_some_and(|l| ["zh", "ja", "ko"].iter().any(|p| l.starts_with(p)))
+}
+
+/// autoSpaceDE / autoSpaceDN: Word sets a gap between an East Asian piece
+/// and a Latin or digit one that touch (live Word: about 3pt at 12pt
+/// around "5", "FM" and "abc" in "令和元年5月6日FM西東京abc放送"). Before
+/// the Latin piece it is a quarter em; after it, half the Latin face's
+/// average width, `latin_avg` in ems (Word 16 probes g1-g7, 2026-10-01:
+/// 2.65 after Arial, 2.41 after Times New Roman). Hangul counts as East
+/// Asian, and either flag set off drops its gaps (Word 16 probe hgap 1001).
+fn script_gap(style: &RunStyle, before: &str, after: &str, latin_avg: f32) -> f32 {
     let (Some(a), Some(b)) = (before.chars().last(), after.chars().next()) else {
         return 0.0;
     };
-    let latin = match (takes_east_asian_face(a), takes_east_asian_face(b)) {
-        (true, false) => b,
-        (false, true) => a,
+    let (latin, em) = match (takes_east_asian_face(a), takes_east_asian_face(b)) {
+        (true, false) => (b, 0.25),
+        (false, true) => (a, latin_avg / 2.0),
         _ => return 0.0,
     };
     let off = if latin.is_numeric() {
@@ -12544,7 +12552,7 @@ fn script_gap(style: &RunStyle, before: &str, after: &str) -> f32 {
     } else {
         true
     };
-    if off { 0.0 } else { style.layout_size() * 0.25 }
+    if off { 0.0 } else { style.layout_size() * em }
 }
 
 fn split_hansi_runs(runs: Vec<TextRun>) -> Vec<TextRun> {
@@ -12560,12 +12568,7 @@ fn split_hansi_runs(runs: Vec<TextRun>) -> Vec<TextRun> {
         // In an East Asian run (hint or language) Word gives quotes, dashes
         // and symbols to the East Asian face (002c5410's “…” in 仿宋);
         // only Latin letters past ASCII take hAnsi there.
-        let east_asian = run.style.hint == FontHint::EastAsia
-            || run
-                .style
-                .lang_ea
-                .as_deref()
-                .is_some_and(|l| ["zh", "ja", "ko"].iter().any(|p| l.starts_with(p)));
+        let east_asian = is_east_asian_run(&run.style);
         let high = |c: char| {
             !c.is_ascii()
                 && !is_cjk(c)
@@ -22883,6 +22886,16 @@ impl<'a> Layout<'a> {
             .collect()
     }
 
+    /// [`script_gap`] between two pieces of `run`, the Latin one's face
+    /// sizing the gap after it.
+    fn script_gap_pt(&self, run: &TextRun, before: &str, after: &str) -> f32 {
+        let latin_avg = self
+            .fonts
+            .get(ink_face(self.fonts, &run.style, before))
+            .avg_char_width;
+        script_gap(&run.style, before, after, latin_avg)
+    }
+
     fn run_width_pt(&self, run: &TextRun, text: &str) -> f32 {
         if text.is_empty() {
             return 0.0;
@@ -22890,7 +22903,7 @@ impl<'a> Layout<'a> {
         if let Some(pieces) = script_pieces(&run.style, text) {
             let gaps: f32 = pieces
                 .windows(2)
-                .map(|w| script_gap(&run.style, w[0], w[1]))
+                .map(|w| self.script_gap_pt(run, w[0], w[1]))
                 .sum();
             return pieces
                 .iter()
@@ -23124,7 +23137,7 @@ impl<'a> Layout<'a> {
             let mut x = x;
             for (i, piece) in pieces.iter().enumerate() {
                 if i > 0 {
-                    x += script_gap(&run.style, pieces[i - 1], piece);
+                    x += self.script_gap_pt(run, pieces[i - 1], piece);
                 }
                 x = self.paint_run(&run.with_text(*piece), x, y);
             }

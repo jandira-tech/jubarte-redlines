@@ -658,6 +658,8 @@ pub(crate) struct Face<'a> {
     paint_ascent: f32,
     /// An East Asian face (OS/2 code pages 932/936/949/950/1361).
     east_asian: bool,
+    /// OS/2 xAvgCharWidth over the em (half an em without one).
+    pub avg_char_width: f32,
     pub bbox: [i16; 4],
     pub widths: Vec<u16>,
     /// The cmap's Unicode subtables, asked per character: the first one
@@ -815,6 +817,7 @@ impl<'a> Face<'a> {
             line_descent,
             paint_ascent,
             east_asian: east_asian_line.is_some(),
+            avg_char_width: avg_char_width(&face).map_or(0.5, |w| w / upem),
             bbox: [bbox.x_min, bbox.y_min, bbox.x_max, bbox.y_max],
             widths,
             cmap,
@@ -3013,6 +3016,15 @@ fn cjk_code_pages(face: &ttf_parser::Face) -> bool {
         .and_then(|os2| os2.get(78..82))
         .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
         .is_some_and(|range| range & (0b1_1111 << 17) != 0)
+}
+
+/// OS/2 xAvgCharWidth in font units, when positive.
+fn avg_char_width(face: &ttf_parser::Face) -> Option<f32> {
+    face.raw_face()
+        .table(ttf_parser::Tag::from_bytes(b"OS/2"))
+        .and_then(|os2| os2.get(2..4))
+        .map(|b| f32::from(i16::from_be_bytes([b[0], b[1]])))
+        .filter(|&w| w > 0.0)
 }
 
 /// A name record's text: Unicode records as ttf-parser decodes them, and
