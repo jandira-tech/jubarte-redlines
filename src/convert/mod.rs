@@ -8021,9 +8021,18 @@ fn body_frame_key(dom: &Dom, para: NodeId, sheet: &StyleSheet) -> Option<String>
             && matches!(h_anchor.as_str(), "margin" | "text")
             && matches!(attr("wrap").as_str(), "around" | "")
             && (!attr("x").is_empty() || attr("xAlign").is_empty());
-        ((beside_text || on_page) && !attr("y").is_empty()).then(|| {
+        // Or set by yAlign on its page or margin, with no y (3ec631ca50's
+        // address block: yAlign="bottom", no vAnchor, ends on the bottom
+        // margin in Word).
+        let aligned = attr("y").is_empty()
+            && matches!(attr("yAlign").as_str(), "top" | "center" | "bottom")
+            && matches!(attr("vAnchor").as_str(), "" | "margin" | "page")
+            && matches!(h_anchor.as_str(), "" | "page" | "margin" | "text")
+            && matches!(attr("wrap").as_str(), "around" | "")
+            && (!attr("x").is_empty() || attr("xAlign").is_empty());
+        ((beside_text || on_page) && !attr("y").is_empty() || aligned).then(|| {
             [
-                "vAnchor", "hAnchor", "x", "y", "w", "h", "hRule", "hSpace", "vSpace",
+                "vAnchor", "hAnchor", "x", "y", "yAlign", "w", "h", "hRule", "hSpace", "vSpace",
             ]
             .iter()
             .map(|n| attr(n))
@@ -8100,7 +8109,22 @@ fn frame_box(
     };
     // No x puts the frame on its anchor's edge (the key admits that only
     // for a margin or column anchor).
-    let (x, y) = (tw("x").unwrap_or(0.0), tw("y")?);
+    // Or no y and a yAlign within its page or margin.
+    let v_align = match frame_attr(&fp, "yAlign") {
+        Some("top") => Some(Align::Left),
+        Some("center") => Some(Align::Center),
+        Some("bottom") => Some(Align::Right),
+        _ => None,
+    };
+    let x = tw("x").unwrap_or(0.0);
+    let y = match tw("y") {
+        Some(y) => y,
+        None => {
+            v_align?;
+            0.0
+        }
+    };
+    let by_align = tw("y").is_none();
     let mut laid = Vec::new();
     let mut outline: Option<([f32; 3], f32)> = None;
     for &p in paras {
@@ -8162,15 +8186,15 @@ fn frame_box(
         slot: ImageSlot::Float {
             align: Align::Left,
             page_x: h_page.then_some(x),
-            page_y: (!on_text).then_some(y),
+            page_y: (!on_text && !by_align).then_some(y),
             col_x: (!h_page).then_some(x),
             col_in_column: h_anchor == "text",
-            para_y: on_text.then_some(y),
+            para_y: (on_text && !by_align).then_some(y),
             pct_x: None,
             pct_y: None,
             pct_w: None,
             pct_h: None,
-            v_align: Align::Left,
+            v_align: v_align.filter(|_| by_align).unwrap_or(Align::Left),
             wrap_square: around,
             wrap_top_bottom: false,
             wrap_polygon: false,
@@ -8187,6 +8211,8 @@ fn frame_box(
             },
             v_rel: if on_text {
                 RelFrame::Paragraph
+            } else if by_align && frame_attr(&fp, "vAnchor") != Some("page") {
+                RelFrame::Margin
             } else {
                 RelFrame::Page
             },
@@ -27253,6 +27279,16 @@ impl<'a> Layout<'a> {
             } else {
                 used + dist
             };
+            // A table wholly beside the column, distances included, narrows
+            // no line (3ec631ca50's date block at x 448.6, right of a column
+            // ending at 425.2: Word's title runs the full measure).
+            let (dist_l, dist_r) = match slot {
+                ImageSlot::Float { dist_l, dist_r, .. } => (dist_l, dist_r),
+                ImageSlot::Flow => (0.0, 0.0),
+            };
+            let col_r = self.page.width - saved_mr;
+            let clear = fx + used + dist_r <= saved_ml + 0.5 || fx - dist_l >= col_r - 0.5;
+            let inset = if clear { 0.0 } else { inset };
             // With no room beside the table, lines above its tblpY top keep
             // their place (09d6d940's anchor paragraph and heading sit in
             // the 51pt over the table in Word).
@@ -27320,7 +27356,7 @@ impl<'a> Layout<'a> {
             } else {
                 top
             };
-            self.side_float = Some(SideFloat {
+            self.side_float = (!clear).then_some(SideFloat {
                 align,
                 inset,
                 top: band_top,

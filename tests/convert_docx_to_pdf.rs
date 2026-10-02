@@ -4737,6 +4737,58 @@ fn nested_tables_between_hidden_marks_split_their_row_across_pages() {
 }
 
 #[test]
+fn a_frame_set_by_y_align_bottom_ends_on_the_bottom_margin() {
+    // 3ec631ca50 (Word PDF): an address frame with yAlign="bottom", no y
+    // and no vAnchor ends its last 9pt exact line on the bottom margin,
+    // at the page's right (hAnchor page, x 448.55); the body text stays at
+    // the top. We laid the frame's lines into the flow.
+    let exact = "<w:spacing w:before=\"0\" w:after=\"0\" w:line=\"180\" w:lineRule=\"exact\"/>";
+    let frame: String = ["FrameOne", "FrameTwo", "FrameLast"]
+        .iter()
+        .map(|t| {
+            format!(
+                "<w:p><w:pPr><w:framePr w:w=\"2659\" w:wrap=\"around\" w:hAnchor=\"page\" w:x=\"8971\" \
+                 w:yAlign=\"bottom\" w:anchorLock=\"1\"/>{exact}</w:pPr><w:r><w:t>{t}</w:t></w:r></w:p>"
+            )
+        })
+        .collect();
+    let docx = minimal_docx_body(&format!(
+        "{frame}<w:p><w:r><w:t>BodyText</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/><w:pgMar w:top=\"3181\" w:right=\"3402\" \
+         w:bottom=\"816\" w:left=\"1361\" w:header=\"1021\" w:footer=\"816\" w:gutter=\"0\"/></w:sectPr>"
+    ));
+    let pdf = docx_to_pdf(&docx).expect("aligned frame");
+    let (x, last) = pdf_glyph_text_xy(&pdf, "FrameLast").expect("the frame paints");
+    let (_, body) = pdf_glyph_text_xy(&pdf, "BodyText").expect("the body paints");
+    // Last line box 9pt over the 40.8pt margin: baseline 7.2pt down it.
+    assert!(
+        (last - (40.8 + 9.0 - 7.2)).abs() < 1.0,
+        "the frame ends on the bottom margin: {last}"
+    );
+    assert!((x - 448.55).abs() < 0.5, "at the frame's page x: {x}");
+    assert!(body > 650.0, "the body keeps its place at the top: {body}");
+}
+
+#[test]
+fn a_floating_table_beside_the_column_narrows_no_line() {
+    // 3ec631ca50 (Word PDF): a page-placed date table at x 448.6 lies right
+    // of a column ending at 425.2, and the title beside it runs the full
+    // measure. We indented the text by the table's width.
+    let table = "<w:tbl><w:tblPr><w:tblpPr w:vertAnchor=\"page\" w:horzAnchor=\"page\" w:tblpX=\"8971\" \
+         w:tblpY=\"3244\"/><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblLayout w:type=\"fixed\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"2552\"/></w:tblGrid><w:tr><w:trPr><w:trHeight w:val=\"1701\"/></w:trPr><w:tc>\
+         <w:tcPr><w:tcW w:w=\"2552\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>DateBlock</w:t></w:r></w:p></w:tc></w:tr></w:tbl>";
+    let docx = minimal_docx_body(&format!(
+        "{table}<w:p><w:r><w:t>TitleLine</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/><w:pgMar w:top=\"3181\" w:right=\"3402\" \
+         w:bottom=\"816\" w:left=\"1361\" w:header=\"1021\" w:footer=\"816\" w:gutter=\"0\"/></w:sectPr>"
+    ));
+    let pdf = docx_to_pdf(&docx).expect("table beside the column");
+    let (x, _) = pdf_glyph_text_xy(&pdf, "TitleLine").expect("the title paints");
+    assert!((x - 68.05).abs() < 1.0, "the title at the left margin: {x}");
+}
+
+#[test]
 fn a_page_sized_square_float_under_text_moves_its_paragraph_to_the_next_page() {
     // Word probe h1 and 3bfcb371e2 (30b6e87178): a 615x797 cover whose
     // anchor follows text on the page cannot leave its line room beside or
