@@ -506,11 +506,13 @@ enum Command {
         latest: bool,
     },
     /// Append documents: B after A, then C after that, carrying images,
-    /// links, styles, lists and notes. Comments are not carried (warned).
+    /// links, styles, lists and notes. Comments are dropped (warned) unless
+    /// --carry-comments.
     #[command(after_help = "EXAMPLES:\n  \
         jubarte append a.docx b.docx -o ab.docx\n  \
         jubarte append cover.docx body.docx annex.docx -o all.docx --section-break continuous\n  \
-        jubarte append letter.docx exhibit.docx -o out.docx --keep-sections")]
+        jubarte append letter.docx exhibit.docx -o out.docx --keep-sections\n  \
+        jubarte append review_a.docx review_b.docx -o both.docx --carry-comments")]
     Append {
         /// The documents (.docx), in order.
         #[arg(value_name = "FILE", num_args = 2.., required = true)]
@@ -525,6 +527,11 @@ enum Command {
         /// headers, footers) as a section of its own.
         #[arg(long)]
         keep_sections: bool,
+        /// Carry the comments each appended document's body and notes
+        /// anchor, with their threads and resolution (those in headers and
+        /// footers are still dropped). Off, comments are dropped and warned.
+        #[arg(long)]
+        carry_comments: bool,
         /// Overwrite the output file if it already exists.
         #[arg(long)]
         force: bool,
@@ -2553,12 +2560,18 @@ fn main() -> ExitCode {
             output,
             section_break,
             keep_sections,
+            carry_comments,
             force,
             quiet,
         }) => {
             let options = jubarte::append::AppendOptions {
                 section_break: section_break.into(),
                 keep_sections,
+                comments: if carry_comments {
+                    jubarte::append::AppendComments::Carry
+                } else {
+                    jubarte::append::AppendComments::Drop
+                },
             };
             return exit_code(run_append(&files, &output, &options, force, quiet));
         }
@@ -2678,6 +2691,7 @@ mod tests {
             output,
             section_break,
             keep_sections,
+            carry_comments,
             force,
             quiet,
         }) = cli.command
@@ -2687,7 +2701,7 @@ mod tests {
         assert_eq!(files.len(), 2);
         assert_eq!(output, PathBuf::from("out.docx"));
         assert_eq!(section_break, SectionBreakArg::NextPage);
-        assert!(!keep_sections && !force && !quiet);
+        assert!(!keep_sections && !carry_comments && !force && !quiet);
         let cli = Cli::try_parse_from([
             "jubarte",
             "append",
@@ -2699,12 +2713,14 @@ mod tests {
             "--section-break",
             "none",
             "--keep-sections",
+            "--carry-comments",
         ])
         .unwrap();
         let Some(Command::Append {
             files,
             section_break,
             keep_sections,
+            carry_comments,
             ..
         }) = cli.command
         else {
@@ -2715,7 +2731,7 @@ mod tests {
             jubarte::append::SectionBreak::from(section_break),
             jubarte::append::SectionBreak::None
         );
-        assert!(keep_sections);
+        assert!(keep_sections && carry_comments);
         assert!(Cli::try_parse_from(["jubarte", "append", "a.docx", "-o", "o.docx"]).is_err());
         assert!(Cli::try_parse_from(["jubarte", "append", "a.docx", "b.docx"]).is_err());
     }

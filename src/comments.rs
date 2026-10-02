@@ -552,20 +552,7 @@ impl CommentFamily {
     /// Add a comment; a reply goes right after the last comment of its
     /// thread and hangs off the thread's first comment.
     pub(crate) fn add(&mut self, new: &NewComment<'_>) {
-        if self.parts[0].is_none() {
-            let doc = self.dom.parse_xdocument(&format!(
-                r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:comments xmlns:w="{}" xmlns:r="{}"/>"#,
-                W::URI,
-                crate::namespaces::R::URI
-            ));
-            let root = self.dom.root(doc).expect("root");
-            self.parts[0] = Some(Part {
-                name: FAMILY[0].0.to_string(),
-                doc,
-                root,
-            });
-        }
-        let root = self.parts[0].as_ref().map(|p| p.root).expect("comments");
+        let root = self.comments_root();
         let dom = &mut self.dom;
         let comment = dom.new_element(W::name("comment"));
         dom.set_attribute_value(comment, &W::id(), Some(&new.id.to_string()));
@@ -601,6 +588,98 @@ impl CommentFamily {
         if !self.added_authors.iter().any(|a| a == new.author) {
             self.added_authors.push(new.author.to_string());
         }
+    }
+
+    /// The root of `comments.xml`, created when the family has none.
+    fn comments_root(&mut self) -> NodeId {
+        if let Some(part) = &self.parts[0] {
+            return part.root;
+        }
+        let doc = self.dom.parse_xdocument(&format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:comments xmlns:w="{}" xmlns:r="{}"/>"#,
+            W::URI,
+            crate::namespaces::R::URI
+        ));
+        let root = self.dom.root(doc).expect("root");
+        self.parts[0] = Some(Part {
+            name: FAMILY[0].0.to_string(),
+            doc,
+            root,
+        });
+        root
+    }
+
+    /// The comments part's name: the one the main part relates to, or the
+    /// name [`Self::store`] gives a new one.
+    pub(crate) fn part_name(&self) -> String {
+        self.parts[0]
+            .as_ref()
+            .map_or_else(|| FAMILY[0].0.to_string(), |p| p.name.clone())
+    }
+
+    /// Comment `id`'s thread parent, resolution and UTC date
+    /// (`w16cex:dateUtc`), when `id` is defined.
+    pub(crate) fn thread_state(&self, id: u32) -> Option<(Option<u32>, bool, Option<String>)> {
+        let meta = self.meta.get(&id)?;
+        let date = meta
+            .cex_row
+            .and_then(|row| self.dom.attribute(row, &XName::get("dateUtc", CEX)))
+            .map(str::to_string);
+        Some((meta.parent, meta.done, date))
+    }
+
+    /// Add a comment copied whole from another package (its formatting,
+    /// line breaks and links stay): `xml` is its `w:comment` element with
+    /// the namespaces it uses declared on it. It takes id `id`, loses its
+    /// paragraphs' paraIds ([`Self::store`] stamps fresh ones, unique in the
+    /// package), and keeps `done` and `date_utc`; it replies to `parent`
+    /// when this family holds `parent`.
+    pub(crate) fn adopt(
+        &mut self,
+        xml: &str,
+        id: u32,
+        parent: Option<u32>,
+        done: bool,
+        date_utc: Option<&str>,
+    ) {
+        let root = self.comments_root();
+        let dom = &mut self.dom;
+        let wrapper = dom.parse_xdocument(&format!("<fragment>{xml}</fragment>"));
+        let Some(comment) = dom
+            .root(wrapper)
+            .and_then(|w| dom.elements(w, Some(&W::name("comment"))).first().copied())
+        else {
+            return;
+        };
+        dom.remove(comment);
+        dom.set_attribute_value(comment, &W::id(), Some(&id.to_string()));
+        for p in dom.descendants(comment, Some(&W::p())) {
+            dom.set_attribute_value(p, &W14::name("paraId"), None);
+            dom.set_attribute_value(p, &W14::name("textId"), None);
+        }
+        dom.add(root, comment);
+        let cex_row = date_utc.map(|date| {
+            let row = dom.new_element(XName::get("commentExtensible", CEX));
+            dom.set_attribute_value(row, &XName::get("dateUtc", CEX), Some(date));
+            row
+        });
+        if let Some(author) = dom.attribute(comment, &W::author()).map(str::to_string)
+            && !self.added_authors.contains(&author)
+        {
+            self.added_authors.push(author);
+        }
+        let parent = parent.filter(|p| self.meta.contains_key(p));
+        self.meta.insert(
+            id,
+            Meta {
+                node: comment,
+                parent,
+                done,
+                ext_row: None,
+                id_row: None,
+                cex_row,
+            },
+        );
     }
 
     /// Replace a comment's text. Its last paragraph stays (with its paraId,

@@ -328,13 +328,16 @@ changes as tracked changes. `jubarte edit` writes the edit's patch as
 `patch.diff` and prints it (`-q` prints nothing). See docs/MARKDOWN.md.
 
 `jubarte append a.docx b.docx -o ab.docx` puts B after A on a new page;
-images, links, styles, lists and notes come along; comments do not yet
-(warned as `COMMENTS_DROPPED`). More files fold left (`append a b c`);
-`--section-break continuous` joins on the same page and `--keep-sections`
-keeps B's page setup, headers and footers. A style A already has (same
-type and name) keeps A's look. Python: `Document.read("a.docx").append(
-Document.read("b.docx"))` returns `Appended(document, warnings)`; WASM:
-`appendDocuments(a, b, '{"section_break":"continuous"}')`.
+images, links, styles, lists and notes come along. Comments are dropped
+(warned as `COMMENTS_DROPPED`) unless `--carry-comments`, which brings the
+comments B's body anchors with their threads and resolution (those in
+notes, headers and footers are still dropped). More files fold left
+(`append a b c`); `--section-break continuous` joins on the same page and
+`--keep-sections` keeps B's page setup, headers and footers. A style A
+already has (same type and name) keeps A's look. Python:
+`Document.read("a.docx").append(Document.read("b.docx"))` returns
+`Appended(document, warnings)`; WASM: `appendDocuments(a, b,
+'{"section_break":"continuous","comments":"carry"}')`.
 
 ## 5. Create a new document (docx-js)
 

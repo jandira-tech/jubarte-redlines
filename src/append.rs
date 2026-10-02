@@ -9,8 +9,13 @@
 //! Append is not a merge. A's settings, theme, document defaults and styles
 //! win: a B style whose type and name A already has takes A's definition
 //! (built-in names pair in any case, custom names only exactly, as Word pairs
-//! them). B's comments are not carried yet; they are removed and reported as
-//! `COMMENTS_DROPPED`.
+//! them). B's comments are removed and reported as `COMMENTS_DROPPED`
+//! unless [`AppendOptions::comments`] is [`AppendComments::Carry`]; then the
+//! comments B's body anchors come along with fresh ids, their threads,
+//! resolution, links and styles. Comments anchored in B's notes, headers
+//! and footers are always dropped: `validate` checks comment anchors in the
+//! main part only, and whether Word keeps a comment anchored in a note has
+//! not been checked.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -18,6 +23,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::admission::{AdmissionError, InputLimits};
+use crate::comments::CommentFamily;
 use crate::comparer::parts::carry_part_relationships;
 use crate::namespaces::{MC, W, W14};
 use crate::opc::{OpcError, PartFs, relative_rel_target};
@@ -42,6 +48,19 @@ pub enum SectionBreak {
     None,
 }
 
+/// What happens to B's comments.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AppendComments {
+    /// Remove B's comment anchors and report `COMMENTS_DROPPED`.
+    #[default]
+    Drop,
+    /// Carry the comments B's body anchors into A's comment parts under
+    /// fresh ids; those anchored in B's notes, headers and footers are
+    /// still dropped and reported.
+    Carry,
+}
+
 /// How [`append_documents`] joins two documents.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -51,6 +70,8 @@ pub struct AppendOptions {
     /// Keep B's final section (page size, margins, headers, footers) as a
     /// section of its own; off, B's content takes A's last section.
     pub keep_sections: bool,
+    /// Drop B's comments (the default) or carry them.
+    pub comments: AppendComments,
 }
 
 /// The appended package and what could not be carried.
@@ -120,7 +141,7 @@ impl std::error::Error for AppendError {}
 /// section properties; B's relationships, the styles and lists its content
 /// uses, and its footnotes and endnotes are carried with fresh ids, and
 /// drawing ids are renumbered. B's comments are removed and reported in
-/// [`Appended::warnings`].
+/// [`Appended::warnings`], or carried with [`AppendComments::Carry`].
 ///
 /// # Errors
 ///
@@ -160,8 +181,12 @@ pub fn append_documents(
         .flatten()
         .map(|sect| dom.clone_subtree(sect));
 
+    let carry = options.comments == AppendComments::Carry;
     let mut warnings = Vec::new();
-    let mut comments = drop_comments(&mut dom, staged);
+    let mut comments = 0;
+    if !carry {
+        comments += drop_comments(&mut dom, staged);
+    }
     if let Some(sect) = b_final_sect {
         comments += drop_comments(&mut dom, sect);
     }
@@ -184,6 +209,19 @@ pub fn append_documents(
 
     let mut roots = vec![staged];
     roots.extend(notes.iter().map(|n| n.staged));
+    let mut a_comments = None;
+    let mut b_comments = None;
+    if carry {
+        let family = CommentFamily::load(&dest, &a_main).map_err(|e| invalid("A", e))?;
+        let (staged_comments, dropped) =
+            stage_comments(&src, &b_main, &mut dom, &family, a_root, staged)?;
+        comments += dropped;
+        a_comments = Some(family);
+        b_comments = staged_comments;
+    }
+    if let Some(carried) = &b_comments {
+        roots.push(carried.container);
+    }
     carry_styles_and_numbering(&mut dest, &a_main, &src, &b_main, &mut dom, &roots)?;
 
     carry_part_relationships(&mut dest, &a_main, &src, &b_main, &mut dom, staged);
@@ -207,10 +245,42 @@ pub fn append_documents(
             dom.serialize_document(note.dest_doc).into_bytes(),
         );
     }
+    if let (Some(carried), Some(family)) = (&b_comments, &a_comments) {
+        carry_part_relationships(
+            &mut dest,
+            &family.part_name(),
+            &src,
+            &carried.src_part,
+            &mut dom,
+            carried.container,
+        );
+    }
     comments += drop_comments_in_new_parts(&mut dest, &parts_before);
 
     join(&mut dom, a_body, a_sect, staged, b_final_sect, options);
     dest.set_part(&a_main, dom.serialize_document(a_doc).into_bytes());
+    if let (Some(carried), Some(mut family)) = (b_comments, a_comments) {
+        for comment in dom.elements(carried.container, Some(&W::name("comment"))) {
+            let Some(id) = dom
+                .attribute(comment, &W::id())
+                .and_then(|v| v.parse::<u32>().ok())
+            else {
+                continue;
+            };
+            let (parent, done, date) = carried.state.get(&id).cloned().unwrap_or_default();
+            family.adopt(
+                &dom.serialize_element(comment),
+                id,
+                parent,
+                done,
+                date.as_deref(),
+            );
+        }
+        family.store(&mut dest, &a_main);
+        if let Some(part) = related(&dest, &a_main, "/comments") {
+            merge_part_namespaces(&mut dest, &part, &mut dom, carried.b_root)?;
+        }
+    }
     if comments > 0 {
         let (noun, verb) = if comments == 1 {
             ("comment", "was")
@@ -331,20 +401,34 @@ fn merge_namespace_declarations(dom: &mut Dom, to: NodeId, from: NodeId) {
 /// only its properties goes too); returns how many distinct comments they
 /// named.
 fn drop_comments(dom: &mut Dom, root: NodeId) -> usize {
+    drop_comments_where(dom, root, |_| true)
+}
+
+/// The comment anchors and references under `root`.
+fn comment_anchors(dom: &Dom, root: NodeId) -> Vec<NodeId> {
+    dom.descendants(root, None)
+        .into_iter()
+        .filter(|&el| dom.name(el).is_some_and(|name| is_comment_anchor(&name)))
+        .collect()
+}
+
+fn is_comment_anchor(name: &XName) -> bool {
+    name.namespace_name() == W::URI
+        && matches!(
+            name.local_name(),
+            "commentRangeStart" | "commentRangeEnd" | "commentReference"
+        )
+}
+
+/// [`drop_comments`] for the anchors whose id `drop` accepts.
+fn drop_comments_where(dom: &mut Dom, root: NodeId, drop: impl Fn(&str) -> bool) -> usize {
     let mut ids = HashSet::new();
-    for el in dom.descendants(root, None) {
-        let Some(name) = dom.name(el) else {
-            continue;
-        };
-        if name.namespace_name() != W::URI
-            || !matches!(
-                name.local_name(),
-                "commentRangeStart" | "commentRangeEnd" | "commentReference"
-            )
-        {
+    for el in comment_anchors(dom, root) {
+        let id = dom.attribute(el, &W::id()).unwrap_or("").to_string();
+        if !drop(&id) {
             continue;
         }
-        ids.insert(dom.attribute(el, &W::id()).unwrap_or("").to_string());
+        ids.insert(id);
         let parent = dom.parent(el);
         dom.remove(el);
         if let Some(run) = parent.filter(|&p| dom.name_is(p, &W::r()))
@@ -359,8 +443,8 @@ fn drop_comments(dom: &mut Dom, root: NodeId) -> usize {
     ids.len()
 }
 
-/// Comments in header and footer parts copied by this append: their
-/// anchors name comments A does not have.
+/// Comments in header and footer parts copied by this append (parts not in
+/// `before`): their anchors name comments A does not have.
 fn drop_comments_in_new_parts(dest: &mut PartFs, before: &HashSet<String>) -> usize {
     let mut dropped = 0;
     for part in dest.parts() {
@@ -387,12 +471,16 @@ fn drop_comments_in_new_parts(dest: &mut PartFs, before: &HashSet<String>) -> us
 }
 
 /// Elements whose `w:id` is not an annotation id: notes and their
-/// references are renumbered with the notes themselves.
+/// references are renumbered with the notes themselves, comment anchors
+/// with the comments ([`stage_comments`]).
 const NOT_ANNOTATIONS: &[&str] = &[
     "footnoteReference",
     "endnoteReference",
     "footnote",
     "endnote",
+    "commentRangeStart",
+    "commentRangeEnd",
+    "commentReference",
 ];
 
 fn is_annotation(name: &XName) -> bool {
@@ -446,6 +534,97 @@ fn drop_colliding_paragraph_ids(dom: &mut Dom, existing: NodeId, staged: NodeId)
             dom.set_attribute_value(p, &W14::name("textId"), None);
         }
     }
+}
+
+/// B's comments that carried content anchors, under their new ids.
+struct StagedComments {
+    /// The copied `w:comment` elements, in B's order.
+    container: NodeId,
+    /// B's comments part, for relationships.
+    src_part: String,
+    /// The root of B's comments part, for namespace declarations.
+    b_root: NodeId,
+    /// New id -> (new parent id, resolved, `w16cex:dateUtc`).
+    state: HashMap<u32, (Option<u32>, bool, Option<String>)>,
+}
+
+/// Give the comments anchored under `staged` ids past every comment id of A
+/// (`family` and the anchors under `a_root`), rewrite the anchors, and stage
+/// copies of those comments. Anchors naming no comment of B are removed;
+/// returns the staged comments and how many distinct ids were removed.
+fn stage_comments(
+    src: &PartFs,
+    b_main: &str,
+    dom: &mut Dom,
+    family: &CommentFamily,
+    a_root: NodeId,
+    staged: NodeId,
+) -> Result<(Option<StagedComments>, usize), AppendError> {
+    let b_family = CommentFamily::load(src, b_main).map_err(|e| invalid("B", e))?;
+    let defined = |id: &str| id.parse::<u32>().is_ok_and(|id| b_family.contains(id));
+    let dropped = drop_comments_where(dom, staged, |id| !defined(id));
+    let anchors = comment_anchors(dom, staged);
+    let anchored: HashSet<u32> = anchors
+        .iter()
+        .filter_map(|&el| dom.attribute(el, &W::id())?.parse().ok())
+        .collect();
+    if anchored.is_empty() {
+        return Ok((None, dropped));
+    }
+    let highest = comment_anchors(dom, a_root)
+        .into_iter()
+        .filter_map(|el| dom.attribute(el, &W::id())?.parse::<u32>().ok())
+        .chain(family.order())
+        .max();
+    let mut next = highest.map_or(0, |h| h + 1);
+    let mut map: HashMap<u32, u32> = HashMap::new();
+    for id in b_family.order() {
+        if anchored.contains(&id) {
+            map.insert(id, next);
+            next += 1;
+        }
+    }
+    for el in anchors {
+        let new = dom
+            .attribute(el, &W::id())
+            .and_then(|v| v.parse::<u32>().ok())
+            .and_then(|id| map.get(&id));
+        if let Some(new) = new {
+            dom.set_attribute_value(el, &W::id(), Some(&new.to_string()));
+        }
+    }
+    let src_part =
+        related(src, b_main, "/comments").ok_or_else(|| invalid("B", "no comments part"))?;
+    let (_, b_root) = parse("B", dom, src, &src_part)?;
+    let container = dom.new_element(W::name("comments"));
+    for comment in dom.elements(b_root, Some(&W::name("comment"))) {
+        let Some(&new) = dom
+            .attribute(comment, &W::id())
+            .and_then(|v| v.parse::<u32>().ok())
+            .and_then(|id| map.get(&id))
+        else {
+            continue;
+        };
+        let copy = dom.clone_subtree(comment);
+        dom.set_attribute_value(copy, &W::id(), Some(&new.to_string()));
+        dom.add(container, copy);
+    }
+    let state = map
+        .iter()
+        .filter_map(|(&old, &new)| {
+            let (parent, done, date) = b_family.thread_state(old)?;
+            Some((new, (parent.and_then(|p| map.get(&p).copied()), done, date)))
+        })
+        .collect();
+    Ok((
+        Some(StagedComments {
+            container,
+            src_part,
+            b_root,
+            state,
+        }),
+        dropped,
+    ))
 }
 
 /// One kind of note: `(element, part file, relationship suffix, content type)`.

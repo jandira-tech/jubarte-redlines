@@ -58,6 +58,7 @@ fn continuous() -> AppendOptions {
     AppendOptions {
         section_break: SectionBreak::Continuous,
         keep_sections: false,
+        ..AppendOptions::default()
     }
 }
 
@@ -150,6 +151,7 @@ fn next_page_puts_a_page_break_between_and_continuous_does_not() {
         AppendOptions {
             section_break: SectionBreak::None,
             keep_sections: false,
+            ..AppendOptions::default()
         },
     ] {
         let out = append_documents(&a, &b, &options).unwrap();
@@ -323,6 +325,7 @@ fn keep_sections_gives_b_its_own_section_and_header() {
         &AppendOptions {
             section_break: SectionBreak::NextPage,
             keep_sections: true,
+            ..AppendOptions::default()
         },
     )
     .unwrap();
@@ -348,6 +351,7 @@ fn keep_sections_gives_b_its_own_section_and_header() {
         &AppendOptions {
             section_break: SectionBreak::Continuous,
             keep_sections: true,
+            ..AppendOptions::default()
         },
     )
     .unwrap();
@@ -521,6 +525,7 @@ fn a_carried_header_brings_its_own_image_and_loses_its_comments() {
         &AppendOptions {
             section_break: SectionBreak::NextPage,
             keep_sections: true,
+            ..AppendOptions::default()
         },
     )
     .unwrap();
@@ -572,6 +577,7 @@ fn a_kept_section_s_tracked_change_takes_a_fresh_id() {
         &AppendOptions {
             section_break: SectionBreak::NextPage,
             keep_sections: true,
+            ..AppendOptions::default()
         },
     )
     .unwrap();
