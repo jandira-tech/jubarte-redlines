@@ -154,17 +154,48 @@ pub struct FontReportEntry {
 }
 
 impl FontReportEntry {
-    /// One JSON object matching `{requested, step, physical, bold, italic, synthetic}`.
+    /// True when the requested family was not drawn with its own face (or
+    /// its `w:altName`): Word's substitution table, a bundled open fallback
+    /// for another family, a generic family, or the last resort. A bundled
+    /// face of the requested family itself (`Carlito` drawn with Carlito) is
+    /// not a substitution. A faked style (`synthetic`) alone is not one
+    /// either.
+    #[must_use]
+    pub fn substituted(&self) -> bool {
+        match self.step {
+            FontStep::Embedded | FontStep::Explicit | FontStep::AltName | FontStep::Theme => false,
+            FontStep::OpenFallback => !self.physical_is_requested_family(),
+            FontStep::WordSubstitution | FontStep::Generic | FontStep::Unknown => true,
+        }
+    }
+
+    /// The physical face's family (its PostScript name before any `-Style`
+    /// suffix) is the requested family, ignoring case, spaces and hyphens.
+    fn physical_is_requested_family(&self) -> bool {
+        let squash = |s: &str| {
+            s.chars()
+                .filter(|c| !matches!(c, ' ' | '-'))
+                .flat_map(char::to_lowercase)
+                .collect::<String>()
+        };
+        let family = self.physical.split('-').next().unwrap_or_default();
+        let requested = squash(family_token(&self.requested));
+        !requested.is_empty() && requested == squash(family)
+    }
+
+    /// One JSON object matching
+    /// `{requested, step, physical, bold, italic, synthetic, substituted}`.
     #[must_use]
     pub fn to_json(&self) -> String {
         format!(
-            "{{\"requested\":{},\"step\":{},\"physical\":{},\"bold\":{},\"italic\":{},\"synthetic\":{}}}",
+            "{{\"requested\":{},\"step\":{},\"physical\":{},\"bold\":{},\"italic\":{},\"synthetic\":{},\"substituted\":{}}}",
             json_string(&self.requested),
             json_string(self.step.as_str()),
             json_string(&self.physical),
             json_bool(self.bold),
             json_bool(self.italic),
             json_bool(self.synthetic),
+            json_bool(self.substituted()),
         )
     }
 }
@@ -736,13 +767,23 @@ impl<'a> Face<'a> {
         // 1361) 1.3 times its hhea ascent + descent, lineGap aside, the
         // extra split above and below the text. Live Word at 12pt: SimSun
         // and MS Mincho step 15.6, YaHei 20.7, Meiryo 23.3, Yu Gothic 17.0.
+        // A face from Word's own Office 365 font service takes its head box
+        // instead (Word 16 probes lg4–lg6 at 20pt: STFangsong 33.84 and
+        // STXihei 35.88, 1.3 times their 1.301 and 1.377 em boxes; DFonts'
+        // DengXian and Yu Mincho, boxes 1.207 and 1.655, keep hhea).
         let east_asian_line = cjk_code_pages(&face).then(|| {
-            let body = f32::from(face.ascender()) - f32::from(face.descender());
-            (body * 1.3, (body * 0.3) / 2.0)
+            let (top, bottom) = if office_365_face(&face) {
+                let bbox = face.global_bounding_box();
+                (f32::from(bbox.y_max), f32::from(bbox.y_min))
+            } else {
+                (f32::from(face.ascender()), f32::from(face.descender()))
+            };
+            let half = (top - bottom) * 0.3 / 2.0;
+            (top, bottom.abs(), half)
         });
-        if let Some((height, half)) = east_asian_line {
-            line_height = height;
-            line_descent += half;
+        if let Some((top, bottom, half)) = east_asian_line {
+            line_height = top + bottom + 2.0 * half;
+            line_descent = bottom + half;
         }
         // macOS Helvetica: Word's single line is 1.2 em, not its 1.0 em
         // hhea body, with the win descent below the baseline (English part
@@ -786,7 +827,7 @@ impl<'a> Face<'a> {
             paint_ascent
         };
         let paint_ascent = match east_asian_line {
-            Some((_, half)) => f32::from(face.ascender()) + half,
+            Some((top, _, half)) => top + half,
             None => paint_ascent,
         };
         let glyph_count = face.number_of_glyphs();
@@ -3016,6 +3057,17 @@ fn pick_ranked_faces<T>(mut found: Vec<(u8, (bool, bool), T)>) -> Vec<((bool, bo
 /// TrueType outlines is skipped: PDF FontFile2 cannot carry CFF.
 /// OS/2 `ulCodePageRange1` names a Japanese, Chinese or Korean code page
 /// (bits 17-21).
+/// A copy from Word's Office 365 font service: its name-table version
+/// says so ("Version 1.03;O365"). macOS's own SinoType faces and Word's
+/// bundled DFonts (but MingLiU-ExtB) carry none.
+fn office_365_face(face: &ttf_parser::Face) -> bool {
+    face.names()
+        .into_iter()
+        .filter(|n| n.name_id == ttf_parser::name_id::VERSION)
+        .filter_map(|n| n.to_string())
+        .any(|v| v.contains(";O365"))
+}
+
 fn cjk_code_pages(face: &ttf_parser::Face) -> bool {
     face.raw_face()
         .table(ttf_parser::Tag::from_bytes(b"OS/2"))
@@ -3305,6 +3357,36 @@ mod tests {
             (face.ascent_pt(12.0) - 12.11).abs() < 0.1,
             "{}",
             face.ascent_pt(12.0)
+        );
+    }
+
+    #[test]
+    fn an_office_365_east_asian_face_takes_its_box_for_the_line() {
+        // Word 16 probes lg4/lg5: 华文仿宋 (STFangsong from Word's cloud
+        // cache, version "1.03;O365", hhea 860/-260, head box 986/-315)
+        // steps 33.84 at 20pt (1.3 x the 1.301 em box, not 1.3 x the 1.12
+        // em hhea body) with its 10pt baseline 11.76 under the margin.
+        let Some(home) = std::env::var_os("HOME") else {
+            return;
+        };
+        let path = Path::new(&home).join(
+            "Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts/STFangsong/32515377567.ttf",
+        );
+        let Ok(bytes) = fs::read(&path) else {
+            return;
+        };
+        let bytes: &'static [u8] = Box::leak(bytes.into_boxed_slice());
+        let face =
+            Face::from_bytes(FaceId::SansRegular, bytes, "STFangsong".into()).expect("STFangsong");
+        assert!(
+            (face.single_line_pt(20.0) - 33.83).abs() < 0.05,
+            "{}",
+            face.single_line_pt(20.0)
+        );
+        assert!(
+            (face.ascent_pt(10.0) - 11.81).abs() < 0.1,
+            "{}",
+            face.ascent_pt(10.0)
         );
     }
 
@@ -4390,7 +4472,7 @@ mod tests {
         let json = font_report_json(std::slice::from_ref(&entry));
         assert_eq!(
             json,
-            r#"[{"requested":"Calibri \"body\"","step":"explicit","physical":"Calibri","bold":false,"italic":true,"synthetic":false}]"#
+            r#"[{"requested":"Calibri \"body\"","step":"explicit","physical":"Calibri","bold":false,"italic":true,"synthetic":false,"substituted":false}]"#
         );
     }
 

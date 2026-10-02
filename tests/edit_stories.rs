@@ -11,15 +11,22 @@ mod common;
 
 use common::docx::{Part, R_NS, W_NS, docx_with_sect, para, part_string};
 use common::validity::assert_word_valid_package;
+use jubarte::capabilities::capabilities;
 use jubarte::document_comparer::{accept_revisions, reject_revisions};
 use jubarte::edit::{EditPlan, apply_plan};
-use jubarte::inspect::{inspect_json, markdown, source_sha256};
+use jubarte::inspect::{inspect_json, markdown, source_sha256, stories};
 
 const HEADER: &str = "Confidential draft for discussion";
 const FOOTER: &str = "Acme Corp. Page footer";
 const NOTE: &str = "See the 2024 master agreement.";
+const ENDNOTE: &str = "Defined terms follow the master agreement.";
 
 fn letter() -> Vec<u8> {
+    letter_docx(false)
+}
+
+/// The letter: a header, a footer, footnotes and, on request, endnotes too.
+fn letter_docx(with_endnotes: bool) -> Vec<u8> {
     let header = format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr xmlns:w="{W_NS}"><w:p><w:r><w:t>{HEADER}</w:t></w:r></w:p></w:hdr>"#
     );
@@ -29,32 +36,53 @@ fn letter() -> Vec<u8> {
     let notes = format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:footnotes xmlns:w="{W_NS}"><w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote><w:footnote w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote><w:footnote w:id="1"><w:p><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:footnoteRef/></w:r><w:r><w:t xml:space="preserve"> {NOTE}</w:t></w:r></w:p></w:footnote></w:footnotes>"#
     );
-    let body = para("Body heading")
-        + r#"<w:p><w:r><w:t>The parties agree.</w:t></w:r><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:footnoteReference w:id="1"/></w:r></w:p>"#;
+    let endnotes = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:endnotes xmlns:w="{W_NS}"><w:endnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:endnote><w:endnote w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:endnote><w:endnote w:id="1"><w:p><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:endnoteRef/></w:r><w:r><w:t xml:space="preserve"> {ENDNOTE}</w:t></w:r></w:p></w:endnote></w:endnotes>"#
+    );
+    let mut body = para("Body heading")
+        + r#"<w:p><w:r><w:t>The parties agree.</w:t></w:r><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:footnoteReference w:id="1"/></w:r>"#;
+    if with_endnotes {
+        body += r#"<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:endnoteReference w:id="1"/></w:r>"#;
+    }
+    body += "</w:p>";
     let rel = |kind: &str| format!("{R_NS}/{kind}");
-    let (h, f, n) = (rel("header"), rel("footer"), rel("footnotes"));
+    let (h, f, n, e) = (
+        rel("header"),
+        rel("footer"),
+        rel("footnotes"),
+        rel("endnotes"),
+    );
+    let mut parts = vec![
+        Part {
+            name: "word/header1.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+            rel_type: &h,
+            xml: &header,
+        },
+        Part {
+            name: "word/footer1.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml",
+            rel_type: &f,
+            xml: &footer,
+        },
+        Part {
+            name: "word/footnotes.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
+            rel_type: &n,
+            xml: &notes,
+        },
+    ];
+    if with_endnotes {
+        parts.push(Part {
+            name: "word/endnotes.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml",
+            rel_type: &e,
+            xml: &endnotes,
+        });
+    }
     docx_with_sect(
         &body,
-        &[
-            Part {
-                name: "word/header1.xml",
-                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
-                rel_type: &h,
-                xml: &header,
-            },
-            Part {
-                name: "word/footer1.xml",
-                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml",
-                rel_type: &f,
-                xml: &footer,
-            },
-            Part {
-                name: "word/footnotes.xml",
-                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
-                rel_type: &n,
-                xml: &notes,
-            },
-        ],
+        &parts,
         r#"<w:headerReference w:type="default" r:id="rIdX0"/><w:footerReference w:type="default" r:id="rIdX1"/>"#,
     )
 }
@@ -329,4 +357,65 @@ fn story_selectors_and_story_limits_are_checked() {
         [HEADER, "Privileged"]
     );
     assert_word_valid_package(&added.redline);
+}
+
+/// The capability manifest's `limits.stories` and the stories `inspect`
+/// reports and `edit` addresses are one list: every kind the manifest names
+/// is a story of a document that has one, named by its id in a selector, and
+/// no story kind goes unadvertised.
+#[test]
+fn capabilities_advertise_exactly_the_story_kinds_edit_accepts() {
+    let advertised = capabilities("rust").limits.stories;
+    let source = letter_docx(true);
+    let found = stories(&source).unwrap();
+    let mut kinds = vec!["body".to_string()];
+    for story in &found {
+        if !kinds.contains(&story.kind) {
+            kinds.push(story.kind.clone());
+        }
+    }
+    assert_eq!(advertised, kinds);
+
+    // A selector names each advertised story by the id inspect printed.
+    let mut operations = vec![
+        r#"{"kind":"insert","paragraph":{"index":0},"position":"end","text":" (rev)"}"#.to_string(),
+    ];
+    for story in &found {
+        operations.push(format!(
+            r#"{{"kind":"insert","paragraph":"{}:p:0","position":"end","text":" (rev)"}}"#,
+            story.id
+        ));
+    }
+    let result = apply_plan(
+        &source,
+        &plan(&source, &format!("[{}]", operations.join(","))),
+    )
+    .unwrap();
+    assert!(result.report.ok, "{:?}", result.report.operations);
+    let at: Vec<_> = result
+        .report
+        .operations
+        .iter()
+        .map(|o| o.paragraph.clone().unwrap())
+        .collect();
+    assert_eq!(
+        at,
+        [
+            "body:p:0",
+            "header1:p:0",
+            "footer1:p:0",
+            "footnotes:p:0",
+            "endnotes:p:0"
+        ]
+    );
+    for story in &found {
+        let texts = part_texts(&result.clean, &story.part);
+        assert!(
+            texts.iter().any(|t| t.ends_with(" (rev)")),
+            "{}: {texts:?}",
+            story.part
+        );
+    }
+    assert_word_valid_package(&result.clean);
+    assert_word_valid_package(&result.redline);
 }

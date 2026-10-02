@@ -4,6 +4,12 @@
 
 name: CI
 
+# Third-party actions are pinned to commit SHAs; the trailing comment names
+# the release tag the SHA was resolved from so Dependabot (github-actions,
+# weekly) can bump both together. dtolnay/rust-toolchain is pinned to a
+# branch head (its `stable`/`master` branches are the published interface),
+# so the comment carries the branch and the pin date instead of a version.
+
 on:
   push:
     branches: [main]
@@ -22,15 +28,47 @@ jobs:
     name: fmt + clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+          # jubarte-wasm is linted for the target it ships on.
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # The bindings are not members of the root workspace (`[workspace]`
+          # in Cargo.toml is empty and each binding declares its own), so each
+          # has its own Cargo.lock and target/ to cache.
+          workspaces: |
+            .
+            jubarte-python
+            jubarte-wasm
+            jubarte-rust-inproc
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --all-features -- -D warnings
+
+      # `--workspace` would not reach the bindings (see the cache note), so
+      # each is linted from its own directory, which also makes cargo read
+      # jubarte-wasm/.cargo/config.toml (the wasm RUSTFLAGS recipe).
+      - name: clippy jubarte-rust-inproc
+        working-directory: jubarte-rust-inproc
+        run: cargo clippy --all-targets -- -D warnings
+      - name: clippy jubarte-python
+        # pyo3 (abi3, extension-module) only needs an interpreter to configure
+        # itself, and clippy links nothing, so ubuntu-latest's python3 is enough.
+        working-directory: jubarte-python
+        run: cargo clippy --all-targets -- -D warnings
+      - name: clippy jubarte-wasm (wasm32-unknown-unknown)
+        working-directory: jubarte-wasm
+        run: cargo clippy --all-features --target wasm32-unknown-unknown -- -D warnings
+      # TODO(ci): jubarte-app/src-tauri is not linted here. Tauri 2 on Linux
+      # needs system GTK/WebKit development packages (libwebkit2gtk-4.1-dev,
+      # libgtk-3-dev, …) before `cargo clippy` can even check the crate, and
+      # the app ships separately with its own fmt + clippy run on macOS
+      # (jubarte-app/.github/workflows/ci.yml). Add an apt step here only if
+      # that job stops covering it.
 
   test:
     name: test (${{ matrix.os }})
@@ -43,11 +81,11 @@ jobs:
       # tests/corpus keeps the bench's file names, some past Windows'
       # 260-character path limit.
       - run: git config --global core.longpaths true
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # Every failing test binary, not just the first.
       - run: cargo test --all-features --no-fail-fast
 
@@ -55,17 +93,21 @@ jobs:
     name: coverage
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
         with:
           # LLVM source-based coverage needs llvm-profdata/llvm-cov, which ship
           # in this component rather than the default toolchain.
           components: llvm-tools-preview
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # Downloads a prebuilt binary instead of `cargo install` (minutes → seconds).
-      - uses: taiki-e/install-action@cargo-llvm-cov
+      # install-action picks the tool from the ref (`@cargo-llvm-cov`) or, as
+      # here with the ref pinned to a commit SHA, from the `tool` input.
+      - uses: taiki-e/install-action@72f835688cb6c15903b796f704b01e652a2b8835 # cargo-llvm-cov tag, pinned 2026-10-01
+        with:
+          tool: cargo-llvm-cov
 
       - name: Generate coverage (lcov)
         # Source-based coverage via -Cinstrument-coverage. Doctests are excluded:
@@ -74,7 +116,7 @@ jobs:
         run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 
       - name: Upload to Codecov
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           files: lcov.info
           # Public repo, so uploads work tokenless — but tokenless is rate-limited
@@ -95,50 +137,82 @@ jobs:
     name: MSRV (1.88)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@master
+      # master branch: the toolchain comes from the input below, not the ref.
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master branch, pinned 2026-10-01
         with:
           toolchain: "1.88"
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo check --all-features
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # The whole suite, not `cargo check`: README.md promises MSRV *testing*,
+      # and dev-dependencies and test-only code are exactly what a compile
+      # check of the library skips. One Linux run on the declared
+      # `rust-version` (Cargo.toml) beside the three stable runs above.
+      - run: cargo test --all-features --no-fail-fast
+
+  fuzz-smoke:
+    name: fuzz smoke (60 s per target)
+    runs-on: ubuntu-latest
+    # Non-blocking until the targets have run clean for a while; a crash
+    # here is still a real finding (see fuzz/README.md).
+    continue-on-error: true
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # master branch: the toolchain comes from the input below, not the ref.
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master branch, pinned 2026-10-01
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: fuzz
+      - run: cargo install cargo-fuzz --locked
+      - run: ./fuzz/seed.sh
+      - run: cargo fuzz run admit -- -max_total_time=60
+      # Run every target even if an earlier one found a crash.
+      - if: ${{ !cancelled() }}
+        run: cargo fuzz run strict_to_transitional -- -max_total_time=60
+      - if: ${{ !cancelled() }}
+        run: cargo fuzz run compare -- -max_total_time=60
 
   package:
     name: publish dry run
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo publish --dry-run
 
   deny:
     name: cargo-deny + REUSE
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
       # Per-file SPDX licensing/provenance (REUSE.toml, LICENSES/).
-      - uses: fsfe/reuse-action@v6
+      - uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5 # v6.0.0
         if: ${{ !cancelled() }}
 
   python:
     name: python bindings
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: jubarte-python
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - name: build the extension and run pytest
         working-directory: jubarte-python
         run: |
@@ -149,13 +223,13 @@ jobs:
     name: convert-sweep unit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - run: python3 scripts/test_convert_sweep.py
       - run: python3 planning/test_sample50_check.py
       - run: python3 scripts/test_release_sh.py
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
       - run: python3 scripts/test_bump_version.py
       - run: python3 scripts/test_gemini_extension.py
       - run: python3 scripts/test_api_snapshot.py

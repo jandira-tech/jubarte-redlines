@@ -12,7 +12,7 @@ use super::critic::{self, Piece, Pieces, Token};
 use super::xml::{
     Comment, Content, Document, Item, Kind, Link, List, Note, Paragraph, Picture, Run, RunFormat,
 };
-use super::{DocxOptions, MarkdownError, TrackChanges, WrittenDocx, package};
+use super::{DocxOptions, MarkdownError, PageSize, TrackChanges, WrittenDocx, package};
 
 /// Writes Markdown as a `.docx`: CommonMark with GitHub's tables,
 /// strikethrough, task lists and footnotes, and CriticMarkup as tracked
@@ -33,7 +33,13 @@ pub fn markdown_to_docx(
     options: &DocxOptions<'_>,
 ) -> Result<WrittenDocx, MarkdownError> {
     let document = read(markdown, options);
-    let warnings = document.warnings.clone();
+    let mut warnings = document.warnings.clone();
+    if options.reference.is_some() && options.page != PageSize::default() {
+        warnings.push(format!(
+            "page size {} ignored: the reference document's page setup is used",
+            options.page.as_str()
+        ));
+    }
     let docx = package::assemble(&document, options)?;
     let docx = match options.track_changes {
         _ if !options.critic => docx,
@@ -1306,7 +1312,7 @@ fn alignment(alignment: Alignment) -> Option<&'static str> {
 
 /// A picture Word can show, sized at 96 dots per inch and at most the text
 /// width.
-fn read_picture(bytes: Vec<u8>, alt: &str) -> Option<Picture> {
+pub(crate) fn read_picture(bytes: Vec<u8>, alt: &str) -> Option<Picture> {
     use image::ImageFormat;
     let reader = image::ImageReader::new(std::io::Cursor::new(&bytes))
         .with_guessed_format()

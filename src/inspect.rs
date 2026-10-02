@@ -7,7 +7,7 @@
 //! ids so the reader's coordinates are the editor's coordinates.
 //!
 //! Paragraph order is body XML order, table cells included; text boxes are
-//! separate stories and are omitted from the body (their owner paragraph is
+//! not stories and are omitted from the body (their owner paragraph is
 //! flagged). Text is the visible-run projection: `w:del` and `w:moveFrom`
 //! content is skipped, tabs stay `\t`, line breaks become `\n`, `w:sym`
 //! becomes U+FFFC. Constructs this projection cannot represent are reported per
@@ -19,7 +19,7 @@ use std::fmt;
 
 use serde::Serialize;
 
-use crate::namespaces::{MC, W};
+use crate::namespaces::{MC, W, W14, W15};
 use crate::opc::PartFs;
 use crate::xmllinq::{Dom, NodeId, XName};
 
@@ -29,6 +29,18 @@ pub use tables::{Table, TableCell};
 
 /// Wire schema of [`inspect_json`] and of the edit plan that consumes it.
 pub const SCHEMA_VERSION: u32 = 1;
+
+/// The story every document has; its paragraph ids are `body:p:N`, and a
+/// selector without a `story` searches it.
+pub(crate) const BODY_STORY: &str = "body";
+
+/// Kinds of part an edit plan addresses as a story besides the body, in
+/// the order [`stories`] lists them. Each is the last segment of the part's
+/// relationship type; the story's id is the part's file stem (`header1`,
+/// `footer2`, `footnotes`, `endnotes`) and [`Story::kind`] is one of these.
+/// Comments and text boxes are not stories. `capabilities` advertises this
+/// list after `body`, so the manifest and the parser cannot drift.
+pub(crate) const STORY_KINDS: &[&str] = &["header", "footer", "footnotes", "endnotes"];
 
 /// One paragraph of the body or a story. `index` and `id` are valid for this
 /// exact snapshot.
@@ -122,6 +134,8 @@ pub struct Snapshot {
     pub stories: Vec<Story>,
     /// Body tables as grids of cells, nested tables included.
     pub tables: Vec<Table>,
+    /// Content controls (`w:sdt`) in the body, in document order.
+    pub controls: Vec<ContentControl>,
 }
 
 /// A header, footer or notes part an edit plan can address. Its paragraph
@@ -136,6 +150,41 @@ pub struct Story {
     pub part: String,
     /// The story's paragraphs; separator notes are left out.
     pub paragraphs: Vec<Paragraph>,
+}
+
+/// A content control (`w:sdt`) in the body, in document order. Controls
+/// inside text boxes are not listed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ContentControl {
+    /// `body:sdt:N`.
+    pub id: String,
+    /// `w:tag`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+    /// `w:alias`, the title Word shows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alias: Option<String>,
+    /// `text`, `rich_text`, `drop_down`, `combo_box`, `date`, `checkbox`,
+    /// `picture`, `group`, `repeating`, `building_block`, `citation`,
+    /// `bibliography`, `equation`, `unknown`. A control whose properties
+    /// name no type is `rich_text`, as in Word.
+    pub kind: String,
+    /// Visible text of the control's content; paragraphs joined by `\n`.
+    pub text: String,
+    /// Paragraphs the control spans (`body:p:N`); a run-level control lists
+    /// the paragraph that holds it.
+    pub paragraph_ids: Vec<String>,
+    /// `w:lock` is `contentLocked` or `sdtContentLocked`.
+    pub locked: bool,
+    /// Drop-down and combo-box choices (`w:listItem/@w:value`, or the
+    /// display text when an item has no value).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub choices: Vec<String>,
+    /// Checkbox state (`w14:checked`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checked: Option<bool>,
+    /// `w:showingPlcHdr` is set: the text is placeholder text.
+    pub placeholder: bool,
 }
 
 /// An invalid package or XML part.
@@ -191,6 +240,12 @@ pub fn stories(docx: &[u8]) -> Result<Vec<Story>, InspectError> {
     Opened::open(docx)?.stories()
 }
 
+/// Content controls (`w:sdt`) in the body, in document order.
+pub fn controls(docx: &[u8]) -> Result<Vec<ContentControl>, InspectError> {
+    let opened = Opened::open(docx)?;
+    Ok(collect_controls(&opened.dom, opened.body))
+}
+
 /// Paragraphs prefixed with their ids and direct formatting as Markdown
 /// marks: `[body:p:12 Heading1] (a) **Confidentiality.** You will ...`.
 /// Story paragraphs (`[header1:p:0] ...`) follow the body's.
@@ -211,7 +266,7 @@ pub fn tables(docx: &[u8]) -> Result<Vec<Table>, InspectError> {
 }
 
 /// The full snapshot as JSON (`schema_version`, `source_sha256`, `summary`,
-/// `paragraphs`, `stories`, `tables`).
+/// `paragraphs`, `stories`, `tables`, `controls`).
 pub fn inspect_json(docx: &[u8]) -> Result<String, InspectError> {
     let opened = Opened::open(docx)?;
     let snapshot = Snapshot {
@@ -221,6 +276,7 @@ pub fn inspect_json(docx: &[u8]) -> Result<String, InspectError> {
         paragraphs: body_paragraphs(&opened.dom, opened.body),
         stories: opened.stories()?,
         tables: tables::body_tables(&opened.dom, opened.body),
+        controls: collect_controls(&opened.dom, opened.body),
     };
     serde_json::to_string(&snapshot).map_err(|e| InspectError::Invalid(e.to_string()))
 }
@@ -419,7 +475,7 @@ impl Opened {
     /// is the part's file stem; `header2` sorts before `header10`.
     pub(crate) fn story_parts(&self) -> Vec<(String, &'static str, String)> {
         let mut out = Vec::new();
-        for kind in ["header", "footer", "footnotes", "endnotes"] {
+        for kind in STORY_KINDS.iter().copied() {
             let mut parts: Vec<String> = self.related(kind).into_iter().collect();
             parts.sort_by_key(|part| (part.len(), part.clone()));
             for part in parts {
@@ -541,6 +597,168 @@ pub(crate) fn body_paragraph_nodes(dom: &Dom, body: NodeId) -> Vec<NodeId> {
         .collect()
 }
 
+/// The body's content controls (`w:sdt` outside text boxes) in document
+/// order; index N is `body:sdt:N`.
+pub(crate) fn body_control_nodes(dom: &Dom, body: NodeId) -> Vec<NodeId> {
+    dom.descendants(body, Some(&W::sdt()))
+        .into_iter()
+        .filter(|&sdt| !has_ancestor(dom, sdt, &W::txbx_content()))
+        .collect()
+}
+
+/// One record per [`body_control_nodes`] entry.
+pub(crate) fn collect_controls(dom: &Dom, body: NodeId) -> Vec<ContentControl> {
+    let paragraphs = body_paragraph_nodes(dom, body);
+    let index: std::collections::HashMap<NodeId, usize> = paragraphs
+        .iter()
+        .enumerate()
+        .map(|(i, &p)| (p, i))
+        .collect();
+    body_control_nodes(dom, body)
+        .into_iter()
+        .enumerate()
+        .map(|(n, sdt)| control_record(dom, sdt, n, &index))
+        .collect()
+}
+
+fn control_record(
+    dom: &Dom,
+    sdt: NodeId,
+    n: usize,
+    index: &std::collections::HashMap<NodeId, usize>,
+) -> ContentControl {
+    let pr = dom.element(sdt, &W::sdt_pr());
+    let child = |name: &XName| pr.and_then(|pr| dom.element(pr, name));
+    let val = |name: &XName| {
+        child(name)
+            .and_then(|e| dom.attribute(e, &W::val()))
+            .map(str::to_string)
+    };
+    let kind = pr.map_or("rich_text", |pr| control_kind(dom, pr));
+    let list = child(&W::name("dropDownList")).or_else(|| child(&W::name("comboBox")));
+    let choices = list
+        .map(|list| {
+            dom.elements(list, Some(&W::name("listItem")))
+                .into_iter()
+                .filter_map(|item| {
+                    dom.attribute(item, &W::name("value"))
+                        .or_else(|| dom.attribute(item, &W::name("displayText")))
+                        .map(str::to_string)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let checked = child(&W14::name("checkbox")).map(|checkbox| {
+        dom.element(checkbox, &W14::name("checked"))
+            .and_then(|c| dom.attribute(c, &W14::name("val")))
+            .is_some_and(on_off)
+    });
+    let placeholder = child(&W::name("showingPlcHdr"))
+        .is_some_and(|e| dom.attribute(e, &W::val()).is_none_or(on_off));
+    let locked = matches!(
+        val(&W::name("lock")).as_deref(),
+        Some("contentLocked" | "sdtContentLocked")
+    );
+    let content = dom.element(sdt, &W::sdt_content());
+    let owner = dom.ancestors(sdt, Some(&W::p())).first().copied();
+    let (paragraph_ids, text) = match (owner, content) {
+        (Some(p), _) => {
+            let text = content.map_or_else(String::new, |c| project_container(dom, c).text);
+            (index.get(&p).map(|&i| vec![i]).unwrap_or_default(), text)
+        }
+        (None, Some(c)) => {
+            let inner: Vec<(usize, NodeId)> = dom
+                .descendants(c, Some(&W::p()))
+                .into_iter()
+                .filter_map(|p| index.get(&p).map(|&i| (i, p)))
+                .collect();
+            let text = inner
+                .iter()
+                .map(|&(_, p)| project_paragraph(dom, p).text)
+                .collect::<Vec<_>>()
+                .join("\n");
+            (inner.into_iter().map(|(i, _)| i).collect(), text)
+        }
+        (None, None) => (Vec::new(), String::new()),
+    };
+    ContentControl {
+        id: format!("body:sdt:{n}"),
+        tag: val(&W::name("tag")),
+        alias: val(&W::name("alias")),
+        kind: kind.to_string(),
+        text,
+        paragraph_ids: paragraph_ids
+            .into_iter()
+            .map(|i| format!("body:p:{i}"))
+            .collect(),
+        locked,
+        choices,
+        checked,
+        placeholder,
+    }
+}
+
+/// `1`, `true` and `on` are set; anything else is clear.
+fn on_off(value: &str) -> bool {
+    matches!(value, "1" | "true" | "on")
+}
+
+/// `w:sdtPr` children that are properties, not the control's type.
+const SDT_PROPERTIES: &[&str] = &[
+    "rPr",
+    "alias",
+    "tag",
+    "id",
+    "lock",
+    "placeholder",
+    "temporary",
+    "showingPlcHdr",
+    "dataBinding",
+    "label",
+    "tabIndex",
+];
+
+/// The control's type from its `w:sdtPr` (see [`ContentControl::kind`]).
+fn control_kind(dom: &Dom, pr: NodeId) -> &'static str {
+    for child in dom.elements(pr, None) {
+        let Some(name) = dom.name(child) else {
+            continue;
+        };
+        let (ns, local) = (name.namespace_name(), name.local_name());
+        let kind = if ns == W::URI {
+            match local {
+                "text" => "text",
+                "richText" => "rich_text",
+                "dropDownList" => "drop_down",
+                "comboBox" => "combo_box",
+                "date" => "date",
+                "picture" => "picture",
+                "group" => "group",
+                "docPartObj" | "docPartList" => "building_block",
+                "citation" => "citation",
+                "bibliography" => "bibliography",
+                "equation" => "equation",
+                local if SDT_PROPERTIES.contains(&local) => continue,
+                _ => "unknown",
+            }
+        } else if ns == W14::URI {
+            match local {
+                "checkbox" => "checkbox",
+                _ => continue,
+            }
+        } else if ns == W15::URI {
+            match local {
+                "repeatingSection" | "repeatingSectionItem" => "repeating",
+                _ => continue,
+            }
+        } else {
+            "unknown"
+        };
+        return kind;
+    }
+    "rich_text"
+}
+
 /// A header, footer or notes part's paragraphs, separator notes left out.
 pub(crate) fn story_paragraph_nodes(dom: &Dom, root: NodeId) -> Vec<NodeId> {
     body_paragraph_nodes(dom, root)
@@ -558,7 +776,7 @@ pub(crate) fn story_paragraph_nodes(dom: &Dom, root: NodeId) -> Vec<NodeId> {
 }
 
 fn body_paragraphs(dom: &Dom, body: NodeId) -> Vec<Paragraph> {
-    paragraphs_of(dom, body_paragraph_nodes(dom, body), "body")
+    paragraphs_of(dom, body_paragraph_nodes(dom, body), BODY_STORY)
 }
 
 fn paragraphs_of(dom: &Dom, nodes: Vec<NodeId>, story: &str) -> Vec<Paragraph> {
@@ -637,6 +855,24 @@ pub(crate) fn project_paragraph(dom: &Dom, paragraph: NodeId) -> Projection {
         dom,
         paragraph,
         true,
+        &mut fields,
+        &mut projection,
+        &mut formats,
+    );
+    projection.spans = merge_spans(&projection.text, formats);
+    projection
+}
+
+/// Project the inline content of any container (a run-level `w:sdtContent`)
+/// with the paragraph rules.
+pub(crate) fn project_container(dom: &Dom, container: NodeId) -> Projection {
+    let mut projection = Projection::default();
+    let mut formats: Vec<(usize, usize, Format)> = Vec::new();
+    let mut fields = 0;
+    walk_container(
+        dom,
+        container,
+        false,
         &mut fields,
         &mut projection,
         &mut formats,

@@ -88,3 +88,7 @@ Claude outputs/
 /_to_improve_*/
 # Scratch from the release API-docs review (the kept snapshot is docs/api/).
 /out/
+/fuzz/corpus/
+/fuzz/artifacts/
+/fuzz/target/
+/fuzz/Cargo.lock

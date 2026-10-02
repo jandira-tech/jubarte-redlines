@@ -48,6 +48,10 @@ pub use unified::{
 };
 pub use write::markdown_to_docx;
 
+pub(crate) use package::{ensure_footnotes_part, max_drawing_id};
+pub(crate) use write::read_picture;
+pub(crate) use xml::{Picture, drawing_xml};
+
 /// What happens to the tracked changes a document describes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum TrackChanges {
@@ -68,6 +72,40 @@ impl TrackChanges {
             "accept" => Some(Self::Accept),
             "reject" => Some(Self::Reject),
             _ => None,
+        }
+    }
+}
+
+/// The page a Markdown document is written on when no reference document
+/// gives one. Both sizes keep one-inch margins: Word's own A4 template uses
+/// 2 cm margins, but jubarte changes only the page size the user asks for.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum PageSize {
+    /// US Letter, 8.5 by 11 inches (the default, as Word's US template).
+    #[default]
+    Letter,
+    /// ISO A4, 210 by 297 mm.
+    A4,
+}
+
+impl PageSize {
+    /// `letter` or `a4`, the values of the CLI's `--page`.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "letter" => Some(Self::Letter),
+            "a4" => Some(Self::A4),
+            _ => None,
+        }
+    }
+
+    /// The name [`PageSize::parse`] reads.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Letter => "letter",
+            Self::A4 => "a4",
         }
     }
 }
@@ -99,7 +137,8 @@ pub type ImageLoader<'a> = &'a dyn Fn(&str) -> Option<Vec<u8>>;
 pub struct DocxOptions<'a> {
     /// A `.docx` whose styles, numbering, page setup, headers and footers
     /// the output takes, as pandoc's `--reference-doc`; its text is not
-    /// used. `None` uses built-in styles on a US Letter page.
+    /// used. `None` uses built-in styles on the page [`DocxOptions::page`]
+    /// names.
     pub reference: Option<&'a [u8]>,
     /// Read CriticMarkup as tracked changes and comments. Off, its
     /// delimiters are text.
@@ -114,6 +153,10 @@ pub struct DocxOptions<'a> {
     /// The bytes of each image the Markdown names. Without it, or when it
     /// returns `None`, an image is written as its alt text.
     pub images: Option<ImageLoader<'a>>,
+    /// The page size when there is no reference document. With a reference,
+    /// its page setup wins and a page other than the default is reported in
+    /// [`WrittenDocx::warnings`].
+    pub page: PageSize,
 }
 
 impl Default for DocxOptions<'_> {
@@ -123,8 +166,9 @@ impl Default for DocxOptions<'_> {
             critic: true,
             track_changes: TrackChanges::All,
             author: "Redline".to_string(),
-            date: "1970-01-01T00:00:00Z".to_string(),
+            date: crate::document_comparer::DEFAULT_DATE.to_string(),
             images: None,
+            page: PageSize::Letter,
         }
     }
 }
@@ -138,6 +182,7 @@ impl std::fmt::Debug for DocxOptions<'_> {
             .field("author", &self.author)
             .field("date", &self.date)
             .field("images", &self.images.is_some())
+            .field("page", &self.page)
             .finish()
     }
 }

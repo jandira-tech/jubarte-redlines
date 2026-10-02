@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Lossless DOCX redline engine (jubarte-redlines).
+"""Word-faithful DOCX redline engine (jubarte-redlines).
 
 Compare two Word documents into a tracked-changes document that opens cleanly
 in Microsoft Word; list, accept, or reject revisions; render DOCX to PDF.
@@ -56,15 +56,29 @@ def get_revisions(docx: bytes) -> list[dict[str, Any]]:
 
 
 # Additive ergonomic surface; low-level functions above keep their contracts.
-from .document import Document, EditPlanError, EditResult, capabilities, diff, diff_render, read
+from .document import (
+    Appended,
+    Document,
+    EditPlanError,
+    EditResult,
+    UpdatedFields,
+    capabilities,
+    diff,
+    diff_render,
+    from_markdown,
+    read,
+)
 from .models import (
     Change,
     Comment,
     CompareOptions,
+    ContentControl,
     Diff,
     EditOutcome,
     EditPlan,
     EditReport,
+    FieldUpdate,
+    Finding,
     FontResolution,
     FormatChange,
     Hunk,
@@ -76,6 +90,7 @@ from .models import (
     RenderDiff,
     Rendered,
     RenderReport,
+    Repaired,
     ResolvedRevisions,
     Revision,
     RevisionCounts,
@@ -88,6 +103,7 @@ from .models import (
 )
 
 __all__ += [
+    "Appended",
     "Document",
     "read",
     "diff",
@@ -110,6 +126,7 @@ __all__ += [
     "ParagraphDelta",
     "Snapshot",
     "Story",
+    "ContentControl",
     "Summary",
     "Table",
     "TableCell",
@@ -122,4 +139,9 @@ __all__ += [
     "diff_render",
     "RenderDiff",
     "PageDiff",
+    "Finding",
+    "Repaired",
+    "FieldUpdate",
+    "UpdatedFields",
 ]
+__all__ += ["from_markdown"]

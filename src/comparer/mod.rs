@@ -26,6 +26,7 @@ pub mod tables;
 pub mod textbox;
 pub mod units;
 
+use crate::admission::InputLimits;
 use crate::xmllinq::{Dom, NodeId};
 
 pub use atoms::WmlComparerRevision;
@@ -123,6 +124,14 @@ pub struct NotesContext {
 /// B.1 — [`compare_bodies_faithful`] with a [`NotesContext`]: when `Some`,
 /// footnote/endnote definitions are processed per correlated reference (B.2);
 /// with `None` the behavior is identical to the plain entry point.
+///
+/// # Panics
+///
+/// When the notes layout cannot be processed or rectified (a reference whose
+/// definition or notes part is missing, or references with no withRevisions
+/// part to write into). [`try_compare_bodies_faithful_with_notes`] returns that as a
+/// [`footnotes::RectifyError`] instead; the package-level comparer uses it so
+/// a malformed document is an `Err`, never an abort of the host.
 pub fn compare_bodies_faithful_with_notes(
     dom: &mut Dom,
     source_root1: NodeId,
@@ -132,10 +141,42 @@ pub fn compare_bodies_faithful_with_notes(
     settings: &WmlComparerSettings,
     notes: Option<&mut NotesContext>,
 ) -> NodeId {
+    try_compare_bodies_faithful_with_notes(
+        dom,
+        source_root1,
+        source_root2,
+        body1,
+        body2,
+        settings,
+        notes,
+    )
+    .unwrap_or_else(|e| panic!("{e}"))
+}
+
+/// [`compare_bodies_faithful_with_notes`] that reports a notes layout it
+/// cannot rectify instead of panicking.
+///
+/// # Errors
+///
+/// The [`footnotes::RectifyError`] from
+/// [`footnotes::process_footnote_endnote`] or
+/// [`footnotes::rectify_footnote_endnote_ids`]; each makes its lookups before
+/// it rewrites a definition, so a missing part or definition leaves the notes
+/// parts as they were.
+/// With `notes: None` this never fails.
+pub fn try_compare_bodies_faithful_with_notes(
+    dom: &mut Dom,
+    source_root1: NodeId,
+    source_root2: NodeId,
+    body1: NodeId,
+    body2: NodeId,
+    settings: &WmlComparerSettings,
+    notes: Option<&mut NotesContext>,
+) -> Result<NodeId, footnotes::RectifyError> {
     use crate::namespaces::W;
 
     // Save the original (body1) sectPr up front, keeping the page-geometry
-    // children (type/pgSz/pgMar/cols/titlePg) AND doc A's header/footer
+    // children (type/pgSz/pgMar/cols/titlePg/docGrid) AND doc A's header/footer
     // references. The refs are safe since B.4: the output package is based on
     // the (preprocessed) ORIGINAL, so its header/footer parts and rIds are
     // present — stripping them lost header/footer rendering entirely
@@ -653,9 +694,7 @@ pub fn compare_bodies_faithful_with_notes(
     // rebuild (real Word docs declare prefixes in source roots).
     let xmlns_ns = crate::xmllinq::XNamespace::xmlns();
     let w_xmlns = xmlns_ns.name("w");
-    let mc_ns = crate::xmllinq::XNamespace::get(
-        "http://schemas.openxmlformats.org/markup-compatibility/2006",
-    );
+    let mc_ns = crate::namespaces::MC::ns();
     let mc_ignorable = mc_ns.name("Ignorable");
     let mut ignorable: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for src in [source_root1, source_root2] {
@@ -694,7 +733,7 @@ pub fn compare_bodies_faithful_with_notes(
     // and Conjoin, consuming the same correlated atom list the body was
     // produced from.
     if let Some(notes) = notes {
-        footnotes::process_footnote_endnote(dom, &flat, notes, settings, &mut id);
+        footnotes::process_footnote_endnote(dom, &flat, notes, settings, &mut id)?;
         // B.3 — `RectifyFootnoteEndnoteIds` (C# :1880, immediately after
         // ProcessFootnoteEndnote): renumber the produced body's references
         // 1..n in document order and rebuild the withRevisions notes parts
@@ -714,8 +753,7 @@ pub fn compare_bodies_faithful_with_notes(
             },
             settings,
             &mut id,
-        )
-        .unwrap_or_else(|e| panic!("{e}"));
+        )?;
     }
     let root = finalize::conjoin_paragraph_marks(dom, root, settings);
     finalize::fix_up_revision_ids(dom, &[root]);
@@ -821,6 +859,8 @@ pub fn compare_bodies_faithful_with_notes(
             &mut id,
         );
         // M83a: drop B's trailing empty pure-ins before sectPr (file_23).
+        // This pre-merge run repeats after `merge_replaced_paragraphs_in` below
+        // (see the second block); so do the folds and strips that follow it.
         finalize::strip_trailing_empty_pure_ins(dom, root);
         // M341: fold whitespace pure-I into pure-D **before** M85a strip so
         // missing_sectpr×separator keeps pure-I "something" + MIX empty+del
@@ -945,11 +985,21 @@ pub fn compare_bodies_faithful_with_notes(
         );
         // M451: strip empty pPrChange on mid MIX with live jc (center_alignment_2).
         finalize::strip_empty_pprchange_on_mix_with_live_jc(dom, root);
+        // Second run of the two last-pure-del strips (the first is in the
+        // pre-merge block above): the pPr-only passes just above can leave a
+        // last pure-del whose mark carries only a pPr or a pPrChange, which
+        // the earlier run never saw.
         finalize::strip_last_pure_del_mark_only_ppr(dom, root);
         // M87b: last pure-del with pPrChange drops mark-only del (file_55).
         finalize::strip_last_pure_del_mark_when_pprchange(dom, root);
         finalize::end_para_classification_cache();
         // Structure-mutating peels (invalidate pure-del/mixed classification).
+        // The next four passes ran once before `merge_replaced_paragraphs_in`
+        // (pre-merge block). They run again here because the merge and the
+        // pPr-only passes above can rebuild the trailing empty pure-ins and the
+        // short title shapes they act on. The repeat is the pipeline's recorded
+        // order, kept as is for byte parity; it is not backed by a test that
+        // removes it, so do not move or drop it without the parity ladder.
         finalize::strip_trailing_empty_pure_ins(dom, root);
         // M341: fold before strip (see pre-merge order note above).
         if !revised_close_paired {
@@ -1073,16 +1123,16 @@ pub fn compare_bodies_faithful_with_notes(
         // redline whenever this corpus has the underlying table or mark.
         finalize::align_word_table_and_comment_chrome(dom, root);
     }
-    // Validity, not parity: a w:ins/w:del may not hold a w:hyperlink. Deleting a
-    // whole header/footer swallowed the source's hyperlink into the w:del and Word
-    // refused to open the result. Unconditional and last, so it catches the shape
-    // whichever pass above produced it, and before the renumber below fixes up the
-    // duplicate w:ids the split leaves behind.
     // Word marks a changed text box's words inside the one box; the diff
     // sees the box as one opaque run and deletes and inserts it whole.
     if settings.merge_replaced_paragraphs {
         textbox::diff_inside_replaced_text_boxes(dom, root, settings);
     }
+    // Validity, not parity: a w:ins/w:del may not hold a w:hyperlink. Deleting a
+    // whole header/footer swallowed the source's hyperlink into the w:del and Word
+    // refused to open the result. Unconditional and last, so it catches the shape
+    // whichever pass above produced it, and before the renumber below fixes up the
+    // duplicate w:ids the split leaves behind.
     finalize::hoist_hyperlinks_out_of_revisions(dom, root);
     // Same class: w:t/w:instrText under w:del must be delText/delInstrText, or Word
     // offers to repair the file. The schema validator cannot see this, so it has to
@@ -1099,7 +1149,7 @@ pub fn compare_bodies_faithful_with_notes(
     fixups::fix_up_doc_pr_ids(dom, root);
     fixups::fix_up_shape_ids(dom, root);
     fixups::fix_up_shape_type_ids(dom, root);
-    root
+    Ok(root)
 }
 
 use crate::comparison_log::ComparisonLog;
@@ -1160,7 +1210,25 @@ pub enum WmlComparerRevisionType {
 /// Default placeholder author (`WmlComparerSettings.DefaultAuthorForRevisions`).
 pub const DEFAULT_AUTHOR_FOR_REVISIONS: &str = "Open-Xml-PowerTools";
 
+/// The two supported comparer configurations. Each one is an oracle the
+/// output is tested against; the alignment gates between them are not
+/// meant to be mixed (see [`WmlComparerSettings::merge_replaced_paragraphs`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum CompareMode {
+    /// Word's own Compare: [`WmlComparerSettings::default`].
+    #[default]
+    Word,
+    /// Open-Xml-PowerTools `WmlComparer`:
+    /// [`WmlComparerSettings::powertools_faithful`].
+    PowerTools,
+}
+
 /// Port of `WmlComparerSettings` (defaults verified against WmlComparer.ts:415-457).
+///
+/// Build one with [`Self::new`] and the `with_*` methods, which change only
+/// the scalars that are safe to tune. The fields stay public for existing
+/// struct-update callers; setting the alignment gates by hand produces a
+/// configuration no oracle covers.
 #[derive(Clone, Debug)]
 pub struct WmlComparerSettings {
     /// `word_separators`.
@@ -1203,9 +1271,20 @@ pub struct WmlComparerSettings {
     /// `powertools_faithful()` (all off); intermediate combinations are
     /// deliberately not expressible — they have no oracle.
     pub merge_replaced_paragraphs: bool,
-    /// True while resolving stamp-confetti RESIDUAL windows (nested calls
-    /// from `stamp_confetti_then_replace`): their glue-anchor physics are
-    /// corpus-tuned and the UNREL-GLUE void must not fire inside them.
+    /// Budget the two input packages are admitted under before anything
+    /// inflates them (see [`crate::admission`]). Defaults to
+    /// [`InputLimits::compare`]; a host that knows its documents are small
+    /// lowers it, one with larger embedded media raises it. A package past
+    /// the budget is an `Err` from `compare_documents*` whose message carries
+    /// the stable `INPUT_LIMIT` code.
+    pub input_limits: InputLimits,
+    /// Internal recursion state, not a tuning knob: true while resolving
+    /// stamp-confetti RESIDUAL windows (nested calls from
+    /// `stamp_confetti_then_replace`), whose glue-anchor physics are
+    /// corpus-tuned and where the UNREL-GLUE void must not fire. Leave it at
+    /// its default; it stays public only so struct-update literals keep
+    /// compiling.
+    #[doc(hidden)]
     pub in_stamp_residual: bool,
 }
 
@@ -1215,6 +1294,43 @@ pub struct WmlComparerSettings {
 pub const DEFAULT_DETAIL_THRESHOLD: f64 = 0.02;
 
 impl WmlComparerSettings {
+    /// The preset for `mode`.
+    #[must_use]
+    pub fn new(mode: CompareMode) -> Self {
+        match mode {
+            CompareMode::Word => Self::default(),
+            CompareMode::PowerTools => Self::powertools_faithful(),
+        }
+    }
+
+    /// Set the `w:author` stamped on every revision.
+    #[must_use]
+    pub fn with_author(mut self, author: impl Into<String>) -> Self {
+        self.author_for_revisions = author.into();
+        self
+    }
+
+    /// Set the `w:date` stamped on every revision (ISO-8601).
+    #[must_use]
+    pub fn with_date(mut self, date: impl Into<String>) -> Self {
+        self.date_time_for_revisions = date.into();
+        self
+    }
+
+    /// Set [`Self::detail_threshold`].
+    #[must_use]
+    pub fn with_detail_threshold(mut self, threshold: f64) -> Self {
+        self.detail_threshold = threshold;
+        self
+    }
+
+    /// Set the budget the inputs are admitted under ([`Self::input_limits`]).
+    #[must_use]
+    pub fn with_input_limits(mut self, limits: InputLimits) -> Self {
+        self.input_limits = limits;
+        self
+    }
+
     /// The PowerTools-faithful preset: coarse paragraph fallback
     /// (detail_threshold 0.15, the C# LIBRARY default) and none of the
     /// Word-visual alignment passes. This is the configuration every
@@ -1237,7 +1353,7 @@ impl Default for WmlComparerSettings {
             word_separators: " -)(;,（），、、，；。：的".chars().collect(),
             author_for_revisions: DEFAULT_AUTHOR_FOR_REVISIONS.to_string(),
             // Caller should pin this for reproducible output (TS uses Date.now()).
-            date_time_for_revisions: "1970-01-01T00:00:00Z".to_string(),
+            date_time_for_revisions: crate::document_comparer::DEFAULT_DATE.to_string(),
             // DEFAULT = Word-visual alignment (Arthur, 2026-07-03): word-level
             // diffs like Word's own Compare, with a SMALL voiding threshold —
             // Word never word-matches across unrelated paragraphs. Corpus A/B
@@ -1267,14 +1383,12 @@ impl Default for WmlComparerSettings {
             move_minimum_word_count: 6,
             merge_replaced_paragraphs: true,
             detect_format_changes: true,
+            input_limits: InputLimits::compare(),
             in_stamp_residual: false,
         }
     }
 }
 
-/// `w:cols` that states only Word's defaults: one column, 720 twips
-/// between columns, equal widths, no children. Absent `w:cols` means the
-/// same section.
 /// Rewrite attributes into local-name order so two sections with the same
 /// properties compare equal. XML attributes are unordered; source documents
 /// do not agree on order.
@@ -1300,6 +1414,9 @@ fn canonicalize_attr_order(dom: &mut Dom, root: NodeId) {
     }
 }
 
+/// True for a `w:cols` that states only Word's defaults: one column, 720
+/// twips between columns, equal widths, no children. Absent `w:cols` means
+/// the same section.
 fn cols_is_word_default(dom: &Dom, cols: NodeId) -> bool {
     if !dom.elements(cols, None).is_empty() {
         return false;
@@ -1369,6 +1486,7 @@ fn word_default_sectpr(dom: &mut Dom, base: NodeId) -> NodeId {
 }
 
 /// Optional log holder used by the comparison pipeline.
+#[derive(Debug)]
 pub struct CompareContext {
     /// `settings`.
     pub settings: WmlComparerSettings,

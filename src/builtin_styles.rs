@@ -393,7 +393,11 @@ const BUILT_IN: [&str; 376] = [
 /// beside `subsection`, `Definition` beside `definition`: 6 of 6 kept apart).
 pub(crate) fn is_built_in(name: &str) -> bool {
     BUILT_IN
-        .binary_search(&name.to_ascii_lowercase().as_str())
+        .binary_search_by(|probe| {
+            probe
+                .bytes()
+                .cmp(name.bytes().map(|b| b.to_ascii_lowercase()))
+        })
         .is_ok()
 }
 
@@ -415,6 +419,73 @@ mod tests {
         }
         for name in ["Subsection", "Definition", "TableText", "Clause Char"] {
             assert!(!is_built_in(name), "{name}");
+        }
+    }
+
+    /// The allocation-free lookup answers exactly as the lowercase-then-search
+    /// definition it replaced did.
+    fn is_built_in_by_lowercasing(name: &str) -> bool {
+        BUILT_IN
+            .binary_search(&name.to_ascii_lowercase().as_str())
+            .is_ok()
+    }
+
+    fn title_case(name: &str) -> String {
+        let mut start = true;
+        name.chars()
+            .map(|c| {
+                let out = if start {
+                    c.to_ascii_uppercase()
+                } else {
+                    c.to_ascii_lowercase()
+                };
+                start = c == ' ';
+                out
+            })
+            .collect()
+    }
+
+    fn alternating_case(name: &str) -> String {
+        name.chars()
+            .enumerate()
+            .map(|(i, c)| {
+                if i % 2 == 0 {
+                    c.to_ascii_uppercase()
+                } else {
+                    c.to_ascii_lowercase()
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn is_built_in_matches_the_lowercasing_definition() {
+        for entry in BUILT_IN {
+            for name in [
+                entry.to_string(),
+                entry.to_ascii_uppercase(),
+                title_case(entry),
+                alternating_case(entry),
+            ] {
+                assert!(is_built_in(&name), "{name}");
+                assert_eq!(is_built_in(&name), is_built_in_by_lowercasing(&name));
+            }
+            let prefix = &entry[..entry.len() - 1];
+            let longer = format!("{entry}x");
+            let spaced = format!("{entry} ");
+            let non_ascii = format!("{entry}\u{e9}");
+            let folded = entry.replacen(|c: char| c.is_ascii_lowercase(), "\u{212a}", 1);
+            for name in [prefix, &longer, &spaced, &non_ascii, &folded] {
+                assert_eq!(
+                    is_built_in(name),
+                    is_built_in_by_lowercasing(name),
+                    "{name}"
+                );
+            }
+        }
+        for name in ["", " ", "\u{e9}", "\u{212a}eep", "NORMAL\u{0}"] {
+            assert!(!is_built_in(name), "{name}");
+            assert_eq!(is_built_in(name), is_built_in_by_lowercasing(name));
         }
     }
 }

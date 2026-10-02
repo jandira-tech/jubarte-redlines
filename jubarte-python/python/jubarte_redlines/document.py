@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from collections.abc import Sequence
@@ -24,14 +25,20 @@ from .models import (
     EditOutcome,
     EditPlan,
     EditReport,
+    FieldUpdate,
+    Finding,
     PdfOptions,
     RenderDiff,
     Rendered,
+    Repaired,
     Revision,
     Snapshot,
     _decode_changes,
     _decode_comments,
     _decode_diff,
+    _decode_field_updates,
+    _decode_findings,
+    _decode_findings_json,
     _decode_outcomes,
     _decode_page_diffs,
     _decode_render_report,
@@ -85,6 +92,22 @@ class EditResult:
     redline: Document
     report: EditReport
     diff: Diff
+
+
+SectionBreak = Literal["next_page", "continuous", "none"]
+_SECTION_BREAKS = ("next_page", "continuous", "none")
+
+
+@dataclass(frozen=True, slots=True)
+class Appended:
+    """``Document.append``'s result: the joined document and what was not carried.
+
+    ``warnings`` are ``CODE: message`` lines, such as
+    ``COMMENTS_DROPPED: 1 comment of B was not carried``.
+    """
+
+    document: Document
+    warnings: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,6 +173,7 @@ class Document:
                 modified._data,
                 author=author,
                 date=options.native_date(),
+                input_limits=options.native_input_limits(),
             )
         )
 
@@ -277,6 +301,21 @@ class Document:
             raise EditPlanError._from_json(payload)
         return _decode_report(payload)
 
+    def update_fields(self) -> UpdatedFields:
+        """Refresh ``PAGEREF``, ``REF``, ``NUMPAGES``, ``SEQ`` and ``TOC`` results.
+
+        TOCs are rebuilt from the headings, then one layout pass gives the
+        page numbers: jubarte's layout, not Word's. Field codes stay, so Word
+        can update them again. This document is unchanged.
+        """
+        data, payload = _native.update_fields(self._data)
+        report = json.loads(payload)
+        return UpdatedFields(
+            document=Document(data, self.name),
+            fields=_decode_field_updates(report["fields"]),
+            page_count=report["page_count"],
+        )
+
     def to_png(
         self, *, dpi: float = 96.0, options: PdfOptions | None = None, pages: Sequence[int] | None = None
     ) -> tuple[bytes, ...]:
@@ -326,6 +365,65 @@ class Document:
     def inspect_json(self) -> str:
         """The engine's ``inspect`` snapshot as JSON text, unchanged (``inspect`` decodes it)."""
         return _native.inspect_json(self._data)
+    # -- validity ------------------------------------------------------------
+
+    def validate(self) -> tuple[Finding, ...]:
+        """Word-validity findings beyond the schema; an empty tuple is a pass.
+
+        A package the engine cannot read at all raises ``JubarteError``.
+        """
+        return _decode_findings_json(_native.validate_json(self._data))
+
+    def repair(self) -> Repaired:
+        """A copy with every repairable finding fixed, plus what was fixed and what remains."""
+        data, payload = _native.repair_json(self._data)
+        import json
+
+        parts = json.loads(payload)
+        return Repaired(
+            document=Document(data, self.name),
+            repaired=_decode_findings(parts["repaired"]),
+            remaining=_decode_findings(parts["remaining"]),
+        )
+
+    def audit_tracked(self, original: Document | bytes, *, author: str) -> tuple[Finding, ...]:
+        """Every text change against ``original`` must be a revision by ``author``.
+
+        Rejecting that author's changes must give ``original``'s text back;
+        a paragraph that still differs is an ``UNTRACKED_EDIT`` finding and
+        another author's change a ``FOREIGN_AUTHOR`` one. An empty tuple
+        means every edit is tracked.
+        """
+        before = original.to_bytes() if isinstance(original, Document) else original
+        return _decode_findings_json(_native.audit_tracked_json(before, self._data, author))
+
+    def append(
+        self,
+        other: Document,
+        *,
+        section_break: SectionBreak = "next_page",
+        keep_sections: bool = False,
+    ) -> Appended:
+        """Put ``other`` after this document, carrying its parts.
+
+        Images, links, headers, styles, lists and notes come along under ids
+        that do not collide; a style this document already has (same type and
+        name) keeps this document's look. ``section_break="continuous"`` or
+        ``"none"`` joins on the same page; ``keep_sections`` keeps ``other``'s
+        page setup, headers and footers as a section of its own. Comments are
+        not carried yet: they are dropped and reported in ``warnings``.
+        """
+        if not isinstance(other, Document):
+            raise TypeError("other must be a Document")
+        if not isinstance(section_break, str):
+            raise TypeError("section_break must be a string")
+        if section_break not in _SECTION_BREAKS:
+            raise ValueError(f"section_break must be one of {', '.join(_SECTION_BREAKS)}")
+        if not isinstance(keep_sections, bool):
+            raise TypeError("keep_sections must be a bool")
+        options = json.dumps({"section_break": section_break, "keep_sections": keep_sections})
+        data, warnings = _native.append_json(self._data, other._data, options)
+        return Appended(Document.from_bytes(data), tuple(json.loads(warnings)))
 
 
 def _zero_based(pages: Sequence[int]) -> list[int]:
@@ -382,6 +480,15 @@ def _word_bytes(side: object) -> bytes:
     if isinstance(side, (str, os.PathLike)):
         return Path(side).read_bytes()
     raise TypeError("each side must be a Document, Word bytes or a path")
+
+
+@dataclass(frozen=True, slots=True)
+class UpdatedFields:
+    """``Document.update_fields``: the refreshed copy and what was written."""
+
+    document: Document
+    fields: tuple[FieldUpdate, ...]
+    page_count: int
 
 
 def _pdf_options(options: PdfOptions | None) -> PdfOptions:
@@ -470,3 +577,39 @@ def capabilities() -> dict[str, object]:
 def read(path: str | os.PathLike[str]) -> Document:
     """Load a local DOCX snapshot; equivalent to ``Document.read(path)``."""
     return Document.read(path)
+
+
+def from_markdown(
+    text: str,
+    *,
+    reference: Document | bytes | None = None,
+    page: Literal["letter", "a4"] = "letter",
+    author: str = "Redline",
+    date: str | None = None,
+    critic: bool = True,
+    track_changes: Literal["all", "accept", "reject"] = "all",
+) -> Document:
+    """Write Markdown as a Word document, as ``jubarte convert draft.md``.
+
+    CriticMarkup (``{++ ++}``, ``{-- --}``, ``{~~ ~> ~~}``, ``{>> <<}``)
+    becomes tracked changes and comments by ``author`` at ``date`` (the
+    engine's fixed epoch by default), unless ``critic`` is false.
+    ``track_changes`` keeps them (``all``) or writes the document with each
+    accepted or rejected. ``reference`` lends its styles and page setup;
+    without it ``page`` picks US Letter or A4, both with one-inch margins.
+    Engine warnings, such as a ``page`` the reference overrides, are raised
+    as ``UserWarning``. Images are written as their alt text.
+    """
+    if isinstance(reference, Document):
+        reference = reference.to_bytes()
+    return Document.from_bytes(
+        _native.markdown_to_docx(
+            text,
+            reference=reference,
+            page=page,
+            author=author,
+            date=date,
+            critic=critic,
+            track_changes=track_changes,
+        )
+    )

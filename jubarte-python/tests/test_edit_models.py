@@ -42,6 +42,32 @@ def test_insert_rejects_missing_or_conflicting_positions(location):
         EditPlan(author="Reviewer").insert(0, text="new", **location)
 
 
+def test_anchored_builders_carry_occurrence_only_when_given():
+    plan = (
+        EditPlan(author="Reviewer")
+        .replace(0, find="fee", replacement="cost", occurrence=2)
+        .insert(0, text="!", after="fee", occurrence=1)
+        .delete(0, find="fee", occurrence=3)
+        .comment(0, text="why?", find="fee", occurrence=2)
+        .delete(0, find="fum")
+    )
+    ops = plan.to_dict()["operations"]
+    assert [op.get("occurrence") for op in ops] == [2, 1, 3, 2, None]
+    assert "occurrence" not in ops[4]
+
+
+@pytest.mark.parametrize("bad", [0, -1])
+@pytest.mark.parametrize("build", [
+    lambda plan, n: plan.replace(0, find="a", replacement="b", occurrence=n),
+    lambda plan, n: plan.insert(0, text="b", after="a", occurrence=n),
+    lambda plan, n: plan.delete(0, find="a", occurrence=n),
+    lambda plan, n: plan.comment(0, text="b", find="a", occurrence=n),
+])
+def test_anchored_builders_reject_occurrence_below_one(build, bad):
+    with pytest.raises(ValueError, match="occurrence"):
+        build(EditPlan(author="Reviewer"), bad)
+
+
 @pytest.mark.parametrize("location", [{"before": ""}, {"after": ""}, {"position": "start"}, {"position": "end"}])
 def test_insert_keeps_explicit_location_for_engine_validation(location):
     op = EditPlan(author="Reviewer").insert(0, text="new", **location).to_dict()["operations"][0]
@@ -268,3 +294,112 @@ def test_snapshot_tables_decode_to_immutable_grids():
     assert isinstance(decoded, Table)
     with pytest.raises(FrozenInstanceError):
         decoded.index = 1
+
+
+def test_format_run_builds_the_wire_operation_with_extended_format_fields():
+    plan = EditPlan(author="Reviewer").format_run(
+        "body:p:0",
+        find="ten dollars",
+        format={"bold": True, "font": "Arial", "size_pt": 11, "color": "FF0000", "strike": False, "caps": True},
+        occurrence=2,
+        id="fmt",
+    )
+    assert plan.to_dict()["operations"] == [
+        {
+            "id": "fmt",
+            "kind": "format_run",
+            "paragraph": {"id": "body:p:0"},
+            "find": "ten dollars",
+            "format": {"bold": True, "font": "Arial", "size_pt": 11, "color": "FF0000", "strike": False, "caps": True},
+            "occurrence": 2,
+        }
+    ]
+    bare = EditPlan(author="Reviewer").format_run(0, find="x", format={"italic": True})
+    assert "occurrence" not in bare.to_dict()["operations"][0]
+
+
+@pytest.mark.parametrize("fmt", [{}, {"size": 12}])
+def test_format_run_rejects_empty_or_unknown_format(fmt):
+    with pytest.raises(ValueError):
+        EditPlan(author="Reviewer").format_run(0, find="x", format=fmt)
+
+
+def test_insert_footnote_builds_the_wire_operation():
+    plan = EditPlan(author="Reviewer").insert_footnote(1, after="agree", text="See the agreement.", occurrence=2, id="fn")
+    assert plan.to_dict()["operations"] == [
+        {"id": "fn", "kind": "insert_footnote", "paragraph": {"index": 1}, "after": "agree", "text": "See the agreement.", "occurrence": 2}
+    ]
+    bare = EditPlan(author="Reviewer").insert_footnote("body:p:0", after="x", text="y")
+    assert bare.to_dict()["operations"] == [
+        {"kind": "insert_footnote", "paragraph": {"id": "body:p:0"}, "after": "x", "text": "y"}
+    ]
+
+
+def test_insert_image_encodes_bytes_and_builds_the_wire_operation():
+    png = b"\x89PNG\r\n\x1a\n"
+    plan = EditPlan(author="Reviewer").insert_image(
+        0, image=png, position="before", content_type="image/png", width_emu=914400, alt="Logo", id="img"
+    )
+    assert plan.to_dict()["operations"] == [
+        {
+            "id": "img",
+            "kind": "insert_image",
+            "paragraph": {"index": 0},
+            "position": "before",
+            "image_base64": "iVBORw0KGgo=",
+            "content_type": "image/png",
+            "width_emu": 914400,
+            "alt": "Logo",
+        }
+    ]
+    bare = EditPlan(author="Reviewer").insert_image("body:p:2", image=png)
+    assert bare.to_dict()["operations"] == [
+        {"kind": "insert_image", "paragraph": {"id": "body:p:2"}, "position": "after", "image_base64": "iVBORw0KGgo="}
+    ]
+
+
+def test_insert_image_rejects_empty_bytes():
+    with pytest.raises(ValueError):
+        EditPlan(author="Reviewer").insert_image(0, image=b"")
+
+
+def test_page_setup_builds_the_wire_operation():
+    plan = EditPlan(author="Reviewer").page_setup(
+        section="all", page={"width_dxa": 12000, "height_dxa": 16000}, orientation="landscape", margins_dxa={"top": 720, "left": 1080}, id="pg"
+    )
+    assert plan.to_dict()["operations"] == [
+        {
+            "id": "pg",
+            "kind": "page_setup",
+            "section": "all",
+            "page": {"width_dxa": 12000, "height_dxa": 16000},
+            "orientation": "landscape",
+            "margins_dxa": {"top": 720, "left": 1080},
+        }
+    ]
+    assert EditPlan(author="Reviewer").page_setup(page="a4").to_dict()["operations"] == [
+        {"kind": "page_setup", "section": "last", "page": "a4"}
+    ]
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [{}, {"margins_dxa": {}}, {"margins_dxa": {"inside": 5}}, {"page": {"width_dxa": 1}}],
+)
+def test_page_setup_rejects_empty_or_malformed_fields(kwargs):
+    with pytest.raises(ValueError):
+        EditPlan(author="Reviewer").page_setup(**kwargs)
+
+
+def test_render_report_lists_substituted_fonts():
+    font = {"step": "explicit", "physical": "Face", "bold": False, "italic": False, "synthetic": False}
+    report = _decode_render_report(json.dumps({
+        "page_count": 1, "pages": [],
+        "fonts": [
+            {**font, "requested": "Kept", "substituted": False},
+            {**font, "requested": "Gone", "step": "open_fallback", "substituted": True},
+            {**font, "requested": "Older engine"},
+        ],
+    }))
+    assert [f.requested for f in report.substitutions] == ["Gone"]
+    assert report.fonts[2].substituted is False

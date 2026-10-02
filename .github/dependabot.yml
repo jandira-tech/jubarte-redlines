@@ -15,6 +15,14 @@ updates:
       - "/jubarte-app/src-tauri"
     schedule:
       interval: "weekly"
+    # Minor and patch bumps arrive as one pull request per directory per
+    # week; a major bump stays on its own so a breaking change is reviewed
+    # alone.
+    groups:
+      cargo-minor-patch:
+        update-types: ["minor", "patch"]
+  # Actions are pinned to commit SHAs with the release tag in a trailing
+  # comment (`uses: owner/repo@<sha> # vX.Y.Z`); Dependabot updates both.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

@@ -372,6 +372,7 @@ jubarte convert FILE.docx [OPTIONS]
 | `--font-report FILE` | Write font-resolution JSON |
 | `--report FILE` | Write page/render report |
 | `--force` | Replace existing output |
+| `--fail-on-substitution` | Exit 4 when a requested font was substituted |
 
 Examples:
 
@@ -408,6 +409,31 @@ hashes, runs and structural limitations.
 [body:p:12] **Confidentiality.** Recipient shall...
 [header1:p:0] ACME CORPORATION
 ```
+
+### Validate
+
+```sh
+jubarte validate contract.docx
+jubarte validate contract.docx --json
+jubarte validate contract.docx --repair fixed.docx
+jubarte validate review/redline.docx --original contract.docx --author Claude
+```
+
+`validate` lists what makes Word refuse or repair a file, beyond what an
+XSD sees: one line per finding (`code`, `part#path`, message, a `*` when
+it is Word-fatal), or one JSON object each with `--json`. Exit 0 is clean,
+2 has findings, 1 could not read the file. `--repair` writes a copy with
+every repairable finding fixed and lists what remains; `--original` with
+`--author` audits that every text change against the original is a
+revision by that author (`UNTRACKED_EDIT`, `FOREIGN_AUTHOR`).
+
+| Option | Purpose |
+|---|---|
+| `--json` | One JSON object per finding |
+| `--repair FILE` | Write the repaired package; remaining findings still exit 2 |
+| `--original FILE` | Audit tracked edits against this original (needs `--author`) |
+| `--author NAME` | The author every change must carry |
+| `--force` | Replace an existing `--repair` output |
 
 ### Apply an edit plan
 
@@ -487,6 +513,11 @@ Supported operation kinds include:
   inserted rows)
 - `list` (unreleased: paragraphs become a bulleted, numbered or lettered
   list, tracked as property changes)
+- `format_run` (unreleased: restyle one occurrence of existing text as a
+  tracked formatting change)
+- `insert_footnote` (unreleased: a footnote after an anchor)
+- `insert_image` (unreleased: a picture paragraph)
+- `page_setup` (unreleased: page size, orientation and margins)
 
 Plans are atomic: stale sources, ambiguous anchors, overlapping edits or
 unsupported structures refuse the plan instead of making a guessed edit.
@@ -675,10 +706,11 @@ an edit plan, generated report and rendered redline page.
 CI currently includes:
 
 - `cargo fmt --check`
-- Clippy with `-D warnings`
+- Clippy with `-D warnings` on the crate and on the Python, WASM
+  (`wasm32-unknown-unknown`) and in-process bench bindings
 - all-feature Rust tests on Linux, macOS and Windows
 - source-based code coverage with a line-coverage floor
-- MSRV testing on Rust 1.88
+- MSRV testing on Rust 1.88 (the all-feature test suite, on Linux)
 - `cargo publish --dry-run`
 - `cargo-deny`
 - REUSE/SPDX checks

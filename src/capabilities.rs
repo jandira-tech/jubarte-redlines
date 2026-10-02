@@ -2,9 +2,18 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! What this build can do, derived from the compiled feature set rather than
-//! from documentation. Agents read it before choosing an operation:
+//! What this build can do. Agents read it before choosing an operation:
 //! `jubarte capabilities --json`, `jubarte_redlines.capabilities()`.
+//!
+//! Every operation is compiled into the library unconditionally: the crate's
+//! features (`cli`, `fast-alloc`, `self-update`, `perf-profile`) gate the
+//! binary, its allocator, updating and profiling, not an operation, so there
+//! is no feature to derive `operations` from and each is reported `true`. A
+//! wrapper that compiles an operation out overrides that field in its own
+//! manifest, as jubarte-wasm does for `pdf` (its `pdf` feature) and `png`
+//! (never). The rest is read from the modules that implement it: the edit
+//! plan schema version and the story kinds come from `crate::inspect`, so
+//! the manifest cannot drift from the parser.
 
 use serde::{Deserialize, Serialize};
 
@@ -83,13 +92,38 @@ pub struct Operations {
     /// beside them.
     #[serde(default)]
     pub edit_keeps_revisions: bool,
+    /// One document after another, carrying images, links, styles, lists
+    /// and notes (`jubarte append`).
+    #[serde(default)]
+    pub append: bool,
+    /// `inspect` lists the body's content controls and edit plans fill
+    /// them (`fill_control`).
+    #[serde(default)]
+    pub content_controls: bool,
+    /// Word-validity findings beyond the schema (`jubarte validate`),
+    /// with the tracked-edit audit (`--original --author`).
+    #[serde(default)]
+    pub validate: bool,
+    /// The repairable findings fixed (`jubarte validate --repair`).
+    #[serde(default)]
+    pub repair: bool,
+    /// Refresh `PAGEREF`, `REF`, `NUMPAGES`, `SEQ` and `TOC` results from
+    /// jubarte's layout (`jubarte fields update`, an edit plan's
+    /// `update_fields`).
+    #[serde(default)]
+    pub fields: bool,
 }
 
 /// Documented scope limits.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Limits {
-    /// Stories `inspect` and `edit` address (`body` only: headers, footers,
-    /// notes and text boxes are reported in `summary` but not editable).
+    /// Story kinds `inspect` and `edit` address: `body`, then the `kind` of
+    /// each entry of `inspect`'s `stories` (`header`, `footer`, `footnotes`,
+    /// `endnotes`). A selector names a story by its id, the part's file stem
+    /// (`header1:p:0`, `{"story": "footnotes", "index": 0}`), which
+    /// `inspect` lists for the document at hand. Comments are counted in
+    /// `summary` but are not stories; text boxes are not stories either, and
+    /// their owner paragraph carries the `text_box_omitted` limitation.
     pub stories: Vec<String>,
     /// Inserted run text is plain: no tabs or line breaks inside runs.
     pub plain_text_runs: bool,
@@ -157,6 +191,11 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             page_ranges: true,
             comment_threads: true,
             edit_keeps_revisions: true,
+            append: true,
+            content_controls: true,
+            validate: true,
+            repair: true,
+            fields: true,
         },
         edit_plan_versions: vec![crate::inspect::SCHEMA_VERSION],
         edit_operations: [
@@ -175,12 +214,22 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             "delete_comment",
             "insert_table",
             "list",
+            "watermark",
+            "fill_control",
+            "format_run",
+            "insert_footnote",
+            "insert_image",
+            "page_setup",
+            "insert_toc",
         ]
         .iter()
         .map(|s| (*s).to_string())
         .collect(),
         limits: Limits {
-            stories: vec!["body".to_string()],
+            stories: std::iter::once(crate::inspect::BODY_STORY)
+                .chain(crate::inspect::STORY_KINDS.iter().copied())
+                .map(str::to_string)
+                .collect(),
             plain_text_runs: true,
             refuses_opaque_ranges: true,
             reads_legacy_doc: false,
@@ -205,7 +254,12 @@ mod tests {
         assert_eq!(c.engine_version, env!("CARGO_PKG_VERSION"));
         assert_eq!(c.runtime, "rust");
         assert_eq!(c.edit_plan_versions, [1]);
-        assert_eq!(c.edit_operations.len(), 15);
+        assert_eq!(c.edit_operations.len(), 22);
+        assert!(c.operations.fields);
+        assert_eq!(
+            c.edit_operations.last().map(String::as_str),
+            Some("insert_toc")
+        );
         assert!(c.edit_operations.iter().any(|kind| kind == "rewrite"));
         assert!(
             c.edit_operations
@@ -213,6 +267,8 @@ mod tests {
                 .any(|kind| kind == "delete_comment")
         );
         assert!(c.operations.comment_threads);
+        assert!(c.edit_operations.iter().any(|kind| kind == "fill_control"));
+        assert!(c.operations.content_controls);
         assert!(c.operations.markdown_to_docx && c.operations.markdown_diff);
         let json: serde_json::Value = serde_json::from_str(&capabilities_json("cli")).unwrap();
         assert_eq!(json["runtime"], "cli");
@@ -222,11 +278,16 @@ mod tests {
         assert_eq!(json["operations"]["diff_render"], true);
         assert_eq!(json["operations"]["page_ranges"], true);
         assert_eq!(json["operations"]["edit_keeps_revisions"], true);
+        assert_eq!(json["operations"]["append"], true);
         assert_eq!(json["limits"]["reads_legacy_doc"], false);
         assert_eq!(json["limits"]["input"]["max_entries"], 10_000);
         assert_eq!(json["limits"]["input"]["max_xml_depth"], 256);
         let back: Capabilities = serde_json::from_value(json).unwrap();
-        assert_eq!(back.limits.stories, ["body"]);
+        assert_eq!(
+            back.limits.stories,
+            ["body", "header", "footer", "footnotes", "endnotes"]
+        );
+        assert!(back.operations.validate && back.operations.repair);
         assert_eq!(back.limits.input.max_part_bytes, 64 * 1024 * 1024);
     }
 }
