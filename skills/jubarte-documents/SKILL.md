@@ -41,6 +41,10 @@ offsets, `limitations`) plus `summary` (tables, comments, revisions, headers,
 footnotes) and `source_sha256`. After the body, `jubarte text` prints each
 header, footer and notes part as its own story (`[header1:p:0] ...`,
 `[footnotes:p:0] ...`), and `inspect` lists them under `stories`.
+`jubarte comments FILE --json` lists every comment with its thread
+(`parent`, `done`) and the anchored text with its surroundings
+(`anchor_text`, `before`, `after`, `paragraph`); `--author NAME` keeps one
+author's, `--latest` the newest of each thread.
 
 Gotchas:
 - Headers, footers, footnotes and endnotes are editable stories; text boxes
@@ -105,13 +109,18 @@ Writes `review/clean.docx` (edits applied, no tracked changes),
 matched exactly once. Exit 3 means the plan was refused: the report on stdout
 says which operation and why (`ANCHOR_NOT_FOUND`, `AMBIGUOUS_ANCHOR` with the
 match count, `OVERLAPPING_EDITS`, `UNSUPPORTED_STRUCTURE`, `STALE_SOURCE`,
-`EXISTING_REVISIONS`, `REVISION_CONFLICT`, `UNKNOWN_CHANGE`, `INVALID_PLAN`);
+`EXISTING_REVISIONS`, `REVISION_CONFLICT`, `UNKNOWN_CHANGE`,
+`UNKNOWN_COMMENT`, `COMMENT_NOT_IN_BODY`, `INVALID_PLAN`);
 fix the plan and rerun. Use `--dry-run`
 to see the report without writing.
 
 Operation kinds: `replace`, `insert` (one of `after`, `before`,
 `position: start|end`), `delete`, `comment` (`find` optional: whole
-paragraph), `insert_paragraph` (`runs` with `bold`/`italic`/`underline`/
+paragraph; `through` instead of `find` covers every paragraph from
+`paragraph` to that one), `reply_comment` (`comment_id`, `text`),
+`resolve_comment` (`comment_id`, `done` default true; false reopens),
+`edit_comment` (`comment_id`, `text`), `delete_comment` (`comment_id`;
+replies and anchors go with it), `insert_paragraph` (`runs` with `bold`/`italic`/`underline`/
 `highlight`; copies the anchor's paragraph properties, or those of the
 paragraph `like` selects), `delete_paragraph` (optional `comment`),
 `format_paragraph` (any of `style` (id or name), `alignment`
