@@ -158,7 +158,12 @@ const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main
 fn get_revisions_missing_main_returns_err() {
     let settings = jubarte::comparer::WmlComparerSettings::default();
     let err = get_revisions(&empty_package_bytes(), &settings).expect_err("missing main → Err");
-    assert!(format!("{err}").contains("not found"), "{err}");
+    // Admission refuses a package with no main document part before the walk.
+    let text = format!("{err}");
+    assert!(
+        text.contains("UNSUPPORTED_PACKAGE") && text.contains("main document part"),
+        "{text}"
+    );
 }
 
 #[test]
