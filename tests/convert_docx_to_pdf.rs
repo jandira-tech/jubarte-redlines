@@ -2912,6 +2912,37 @@ fn compressed_punctuation_narrows_a_left_line_before_compat_15() {
 }
 
 #[test]
+fn compressed_punctuation_narrows_a_cell_line_before_compat_15() {
+    // Word 16 probes c14cp, c14dnc, c15cp (2026-10-01): the body line of
+    // the test above in a 468pt cell with no cell margins. Word keeps Z on
+    // the cell's first line under compressPunctuation at compat 14, and
+    // moves it under doNotCompress or compat 15, as in the body.
+    let r = r#"<w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="24"/></w:rPr>"#;
+    let text = format!("{}{}Z tail", "ab ".repeat(27), "i".repeat(25));
+    let body = format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="9360" w:type="dxa"/><w:tblLayout w:type="fixed"/><w:tblCellMar><w:left w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid><w:gridCol w:w="9360"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="9360" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r>{r}<w:t xml:space="preserve">{text}</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>{}"#,
+        letter_body_sect()
+    );
+    for (mode, spacing, kept) in [
+        (14, "compressPunctuation", true),
+        (14, "doNotCompress", false),
+        (15, "compressPunctuation", false),
+    ] {
+        let settings = format!(
+            r#"<w:characterSpacingControl w:val="{spacing}"/><w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="{mode}"/></w:compat>"#
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, &settings)).expect("cell squeeze");
+        let (_, a) = pdf_glyph_text_xy(&pdf, "ab").expect("first word");
+        let (_, z) = pdf_glyph_text_xy(&pdf, "Z").expect("last word");
+        assert_eq!(
+            (a - z).abs() < 0.1,
+            kept,
+            "compat {mode} {spacing}: Z at {z}, line 1 at {a}"
+        );
+    }
+}
+
+#[test]
 fn compressed_punctuation_leaves_calibri_spaces_whole() {
     // Word 16 probe e_calibri_cp (2026-10-01, Calibri 12, compat 14): the
     // spaces compressPunctuation narrows depend on the face, a fifth in
