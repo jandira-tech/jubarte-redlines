@@ -653,6 +653,15 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   grows by a blank paragraph's mark line, empty or holding only spaces.
   - Probes c5b/c5c 2026-10-01: a Times 20 mark adds 23.1pt (one 22.98pt
     line). We added a factory Calibri 11 line (13.4pt).
+- **An outline insets the text by half its width.** A painted `a:ln`
+  straddles the box edge. Its inner half adds to every `bodyPr` inset, so
+  the text moves in and a fitted box grows by the whole width.
+  - Probes c6/c7 2026-10-01, zero insets: a 4pt line moves "QQ" 1.9pt
+    right and down (2.1pt left when right-aligned) and fits the box 3.8pt
+    taller. A 1pt line gives 0.5 and 0.9. A fixed box insets its text the
+    same way and keeps its height.
+  - A theme `lnRef` outline does the same at the theme's width. We do not
+    paint those, so we do not inset for them yet.
 
 ## Open, measured but not yet reconstructed
 

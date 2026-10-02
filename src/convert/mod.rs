@@ -13854,7 +13854,7 @@ fn collect_textboxes_styled(
             adj: preset_adjustments(dom, shape),
             prst: shape_prst(dom, shape),
             paras,
-            insets: textbox_insets(dom, shape),
+            insets: textbox_text_insets(dom, shape, theme),
             custom,
             group,
             chrome_para_top: 0.0,
@@ -14181,7 +14181,7 @@ fn collect_group(
                 {
                     shape.paras = txbx_paragraphs(dom, txbx, sheet, theme, None);
                 }
-                shape.insets = textbox_insets(dom, child);
+                shape.insets = textbox_text_insets(dom, child, theme);
                 shape.text_anchor = shape_text_anchor(dom, child);
             }
             out.push(GroupChild {
@@ -14456,6 +14456,23 @@ fn bodypr_fits_width(dom: &Dom, shape: NodeId) -> bool {
             attr_any(dom, body, "wrap") == Some("none")
                 && !descendants_local(dom, body, "spAutoFit").is_empty()
         })
+}
+
+/// The text's insets inside its shape's outline: Word sets the text in
+/// by half a painted `a:ln` too, the inner half of a stroke that straddles
+/// the edge, so a fitted box grows by the whole width (Word 16 probes
+/// c6/c7, 2026-10-01: a 4pt line moves "QQ" 1.9pt in and fits its box
+/// 3.8pt taller, a 1pt line 0.5 and 0.9).
+fn textbox_text_insets(dom: &Dom, shape: NodeId, theme: &ThemeFonts) -> [f32; 4] {
+    let stroked = descendants_local(dom, shape, "ln")
+        .into_iter()
+        .any(|ln| !descendants_local(dom, ln, "solidFill").is_empty());
+    let half = if stroked {
+        shape_line_width(dom, shape, theme) / 2.0
+    } else {
+        0.0
+    };
+    textbox_insets(dom, shape).map(|inset| inset + half)
 }
 
 fn textbox_insets(dom: &Dom, shape: NodeId) -> [f32; 4] {

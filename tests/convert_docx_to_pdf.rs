@@ -34784,6 +34784,70 @@ fn a_box_that_fits_its_text_holds_its_grid_line() {
 }
 
 #[test]
+fn a_text_boxs_outline_insets_its_text_by_half_its_width() {
+    // Word 16 probes c6/c7 (2026-10-01, zero bodyPr insets): a 4pt a:ln
+    // sets "QQ" 1.9pt right and down of where an unstroked box puts it
+    // (2.1pt left when right-aligned), and an a:spAutoFit box grows 3.8pt;
+    // a 1pt line moves it 0.5 and grows it 0.9. The outline straddles the
+    // edge, and its inner half belongs to the inset.
+    let ln = |w: u32| {
+        if w == 0 {
+            "<a:ln><a:noFill/></a:ln>".to_string()
+        } else {
+            format!("<a:ln w=\"{w}\"><a:solidFill><a:srgbClr val=\"0000FF\"/></a:solidFill></a:ln>")
+        }
+    };
+    let probe = |w: u32, fit: bool| {
+        let fit = if fit { "<a:spAutoFit/>" } else { "" };
+        let body = format!(
+            "<w:p><w:r><w:drawing><wp:anchor simplePos=\"0\" relativeHeight=\"1\" \
+              behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+              <wp:positionH relativeFrom=\"column\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+              <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+              <wp:extent cx=\"1828800\" cy=\"254000\"/><wp:wrapNone/>\
+              <wp:docPr id=\"1\" name=\"Text Box 1\"/>\
+              <a:graphic><a:graphicData \
+                uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+                <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+                  <wps:cNvSpPr txBox=\"1\"/>\
+                  <wps:spPr><a:prstGeom prst=\"rect\"/>\
+                    <a:solidFill><a:srgbClr val=\"FF0000\"/></a:solidFill>{}</wps:spPr>\
+                  <wps:txbx><w:txbxContent><w:p><w:pPr>\
+                    <w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+                    <w:r><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+                    <w:sz w:val=\"24\"/></w:rPr><w:t>QQ</w:t></w:r></w:p></w:txbxContent></wps:txbx>\
+                  <wps:bodyPr wrap=\"square\" lIns=\"0\" tIns=\"0\" rIns=\"0\" bIns=\"0\">{fit}</wps:bodyPr>\
+                </wps:wsp>\
+              </a:graphicData></a:graphic>\
+            </wp:anchor></w:drawing></w:r></w:p><w:sectPr/>",
+            ln(w)
+        );
+        let pdf = docx_to_pdf(&drawing_docx(&body)).expect("outlined box");
+        let boxes = pdf_fill_boxes_in(&pdf_content_streams(&pdf)[0], 1.0, 0.0, 0.0);
+        assert_eq!(boxes.len(), 1, "one red box; boxes={boxes:?}");
+        (pdf_glyph_text_xy(&pdf, "QQ").expect("QQ"), boxes[0].3)
+    };
+    let ((x0, y0), h0) = probe(0, true);
+    for (w, half) in [(12700, 0.5), (50800, 2.0)] {
+        let ((x, y), h) = probe(w, true);
+        assert!(
+            (x - x0 - half).abs() < 0.3 && (y0 - y - half).abs() < 0.3,
+            "a {w} EMU outline moves the text {half}pt in: ({x0},{y0}) -> ({x},{y})"
+        );
+        assert!(
+            (h - h0 - 2.0 * half).abs() < 0.3,
+            "a fitted box grows by the {w} EMU outline: {h0} -> {h}"
+        );
+    }
+    let ((x0, _), _) = probe(0, false);
+    let ((x, _), h) = probe(50800, false);
+    assert!(
+        (x - x0 - 2.0).abs() < 0.3 && (h - 20.0).abs() < 0.3,
+        "a fixed box insets its text too and keeps its 20pt: x {x0} -> {x}, h {h}"
+    );
+}
+
+#[test]
 fn a_box_that_fits_its_text_sizes_a_blank_line_by_its_mark() {
     // Word 16 probes c5a-c5c (2026-10-01): a floating a:spAutoFit box
     // around a Times 12 "QQ" line grows by 23.1pt for an empty paragraph
