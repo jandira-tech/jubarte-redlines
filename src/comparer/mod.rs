@@ -174,7 +174,7 @@ pub fn try_compare_bodies_faithful_with_notes(
     use crate::namespaces::W;
 
     // Save the original (body1) sectPr up front, keeping the page-geometry
-    // children (type/pgSz/pgMar/cols/titlePg) AND doc A's header/footer
+    // children (type/pgSz/pgMar/cols/titlePg/docGrid) AND doc A's header/footer
     // references. The refs are safe since B.4: the output package is based on
     // the (preprocessed) ORIGINAL, so its header/footer parts and rIds are
     // present — stripping them lost header/footer rendering entirely
@@ -692,9 +692,7 @@ pub fn try_compare_bodies_faithful_with_notes(
     // rebuild (real Word docs declare prefixes in source roots).
     let xmlns_ns = crate::xmllinq::XNamespace::xmlns();
     let w_xmlns = xmlns_ns.name("w");
-    let mc_ns = crate::xmllinq::XNamespace::get(
-        "http://schemas.openxmlformats.org/markup-compatibility/2006",
-    );
+    let mc_ns = crate::namespaces::MC::ns();
     let mc_ignorable = mc_ns.name("Ignorable");
     let mut ignorable: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for src in [source_root1, source_root2] {
@@ -859,6 +857,8 @@ pub fn try_compare_bodies_faithful_with_notes(
             &mut id,
         );
         // M83a: drop B's trailing empty pure-ins before sectPr (file_23).
+        // This pre-merge run repeats after `merge_replaced_paragraphs_in` below
+        // (see the second block); so do the folds and strips that follow it.
         finalize::strip_trailing_empty_pure_ins(dom, root);
         // M341: fold whitespace pure-I into pure-D **before** M85a strip so
         // missing_sectpr×separator keeps pure-I "something" + MIX empty+del
@@ -983,11 +983,21 @@ pub fn try_compare_bodies_faithful_with_notes(
         );
         // M451: strip empty pPrChange on mid MIX with live jc (center_alignment_2).
         finalize::strip_empty_pprchange_on_mix_with_live_jc(dom, root);
+        // Second run of the two last-pure-del strips (the first is in the
+        // pre-merge block above): the pPr-only passes just above can leave a
+        // last pure-del whose mark carries only a pPr or a pPrChange, which
+        // the earlier run never saw.
         finalize::strip_last_pure_del_mark_only_ppr(dom, root);
         // M87b: last pure-del with pPrChange drops mark-only del (file_55).
         finalize::strip_last_pure_del_mark_when_pprchange(dom, root);
         finalize::end_para_classification_cache();
         // Structure-mutating peels (invalidate pure-del/mixed classification).
+        // The next four passes ran once before `merge_replaced_paragraphs_in`
+        // (pre-merge block). They run again here because the merge and the
+        // pPr-only passes above can rebuild the trailing empty pure-ins and the
+        // short title shapes they act on. The repeat is the pipeline's recorded
+        // order, kept as is for byte parity; it is not backed by a test that
+        // removes it, so do not move or drop it without the parity ladder.
         finalize::strip_trailing_empty_pure_ins(dom, root);
         // M341: fold before strip (see pre-merge order note above).
         if !revised_close_paired {
@@ -1111,16 +1121,16 @@ pub fn try_compare_bodies_faithful_with_notes(
         // redline whenever this corpus has the underlying table or mark.
         finalize::align_word_table_and_comment_chrome(dom, root);
     }
-    // Validity, not parity: a w:ins/w:del may not hold a w:hyperlink. Deleting a
-    // whole header/footer swallowed the source's hyperlink into the w:del and Word
-    // refused to open the result. Unconditional and last, so it catches the shape
-    // whichever pass above produced it, and before the renumber below fixes up the
-    // duplicate w:ids the split leaves behind.
     // Word marks a changed text box's words inside the one box; the diff
     // sees the box as one opaque run and deletes and inserts it whole.
     if settings.merge_replaced_paragraphs {
         textbox::diff_inside_replaced_text_boxes(dom, root, settings);
     }
+    // Validity, not parity: a w:ins/w:del may not hold a w:hyperlink. Deleting a
+    // whole header/footer swallowed the source's hyperlink into the w:del and Word
+    // refused to open the result. Unconditional and last, so it catches the shape
+    // whichever pass above produced it, and before the renumber below fixes up the
+    // duplicate w:ids the split leaves behind.
     finalize::hoist_hyperlinks_out_of_revisions(dom, root);
     // Same class: w:t/w:instrText under w:del must be delText/delInstrText, or Word
     // offers to repair the file. The schema validator cannot see this, so it has to
@@ -1286,7 +1296,7 @@ impl Default for WmlComparerSettings {
             word_separators: " -)(;,（），、、，；。：的".chars().collect(),
             author_for_revisions: DEFAULT_AUTHOR_FOR_REVISIONS.to_string(),
             // Caller should pin this for reproducible output (TS uses Date.now()).
-            date_time_for_revisions: "1970-01-01T00:00:00Z".to_string(),
+            date_time_for_revisions: crate::document_comparer::DEFAULT_DATE.to_string(),
             // DEFAULT = Word-visual alignment (Arthur, 2026-07-03): word-level
             // diffs like Word's own Compare, with a SMALL voiding threshold —
             // Word never word-matches across unrelated paragraphs. Corpus A/B
@@ -1322,9 +1332,6 @@ impl Default for WmlComparerSettings {
     }
 }
 
-/// `w:cols` that states only Word's defaults: one column, 720 twips
-/// between columns, equal widths, no children. Absent `w:cols` means the
-/// same section.
 /// Rewrite attributes into local-name order so two sections with the same
 /// properties compare equal. XML attributes are unordered; source documents
 /// do not agree on order.
@@ -1350,6 +1357,9 @@ fn canonicalize_attr_order(dom: &mut Dom, root: NodeId) {
     }
 }
 
+/// True for a `w:cols` that states only Word's defaults: one column, 720
+/// twips between columns, equal widths, no children. Absent `w:cols` means
+/// the same section.
 fn cols_is_word_default(dom: &Dom, cols: NodeId) -> bool {
     if !dom.elements(cols, None).is_empty() {
         return false;

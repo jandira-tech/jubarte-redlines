@@ -13,7 +13,7 @@ use crate::xmllinq::{XName, XNamespace};
 
 macro_rules! ns_struct {
     ($name:ident, $uri:literal) => {
-        /// Open XML namespace marker for `$uri`.
+        #[doc = concat!("Open XML namespace marker for `", $uri, "`.")]
         pub struct $name;
         impl $name {
             /// The namespace.
@@ -82,7 +82,7 @@ ns_struct!(WNE, "http://schemas.microsoft.com/office/word/2006/wordml");
 // does not re-enter the interning table for the same syntactic names.
 macro_rules! cached_xname {
     ($ns_uri:expr, $method:ident, $local:literal) => {
-        /// Cached `XName` for the local name `$local`.
+        #[doc = concat!("Cached `XName` for the local name `", $local, "`.")]
         pub fn $method() -> XName {
             static N: std::sync::OnceLock<XName> = std::sync::OnceLock::new();
             N.get_or_init(|| XName::get($local, $ns_uri)).clone()

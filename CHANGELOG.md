@@ -110,6 +110,11 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 - `capabilities().limits.stories` listed `body` only; `inspect` and `edit`
   address headers, footers, footnotes and endnotes too, and the manifest
   now says so (text boxes stay reported in `summary` but not editable).
+- `fuzz/`: cargo-fuzz targets for `admission::admit`,
+  `strict_translation::strict_to_transitional_docx_within` and
+  `compare_documents_with_settings`, seeded from the repository's `.docx`
+  fixtures (`fuzz/seed.sh`), and a non-blocking CI job (`fuzz-smoke`) that
+  runs each for 60 seconds. See `fuzz/README.md`.
 
 - `scripts/release.sh` step 12 runs `scripts/release_downstream.sh`: jubarte.pro
   moves to the release (download page, demo engine) and is deployed, the
@@ -306,6 +311,18 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   ([docs/WORD_DIFFERENCES.md](docs/WORD_DIFFERENCES.md) section 11).
 
 ### Changed
+
+- Crate docs: the "Lossless" tagline is now "Word-faithful", and a Fidelity
+  section lists what the comparer normalizes (non-standard `w:sdtPr`
+  children, `mc:AlternateContent`, and in the default mode internal anchor
+  hyperlinks and content controls in wholly revised paragraphs).
+- Doc comments that described a SHA-1 string check behind the LCS common-run
+  match now say what the code does: the 128-bit FNV-1a fingerprint of the
+  hash string alone decides equality there. The macro-generated docs in
+  `namespaces` show the actual URI and local name, `w:cols` and
+  `SECT_GEOMETRY` comments are corrected, and the repeated finalize passes in
+  the comparer say why they run twice. `DEFAULT_DATE` and `MC::ns()` replace
+  duplicated literals. No output change.
 
 - The redline comparer admits both inputs before it inflates anything
   (`compare_documents*`, `edit` plans that compare, `WmlDocument::from_bytes`).

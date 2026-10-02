@@ -226,8 +226,8 @@ impl Sha1Keyed {
     }
 
     /// A deliberately inconsistent `u64` key, standing in for a fingerprint
-    /// collision (distinct hashes sharing a key) that the string check must
-    /// still reject. Test builds only, so no caller can mint a stale key.
+    /// collision (distinct hashes sharing a key) that the 128-bit fingerprint
+    /// compare must still reject. Test builds only, so no caller can mint a stale key.
     #[cfg(test)]
     pub(crate) fn with_colliding_key(hash: String, key: u64) -> Self {
         Self {

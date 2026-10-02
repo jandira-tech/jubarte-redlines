@@ -4,7 +4,7 @@
 
 //! # jubarte
 //!
-//! Lossless DOCX redline engine: compare two Word documents and produce a
+//! Word-faithful DOCX redline engine: compare two Word documents and produce a
 //! tracked-changes (redline) `.docx` — the original document with every
 //! difference against the modified one expressed as Word revisions
 //! (insertions, deletions, moves, and format changes) — that opens cleanly
@@ -27,6 +27,19 @@
 //! redline, use [`document_comparer::get_revisions`]; to flatten one, use
 //! [`document_comparer::accept_revisions`] / [`document_comparer::reject_revisions`].
 //! Convert a document to PDF with [`convert::docx_to_pdf`].
+//!
+//! ## Fidelity
+//!
+//! The redline is Word-valid, and every text and formatting difference is a
+//! revision, but the engine also normalizes some markup so the output opens
+//! cleanly and matches what Word's own Compare writes. Both inputs lose
+//! non-standard `w:`-namespace children of `w:sdtPr` and have
+//! `mc:AlternateContent` resolved to a single branch. In the default
+//! (Word-visual) mode, internal anchor `w:hyperlink` wrappers (no `r:id`) become
+//! runs styled as hyperlinks, and content controls inside wholly inserted or
+//! deleted paragraphs are unwrapped.
+//! [`comparer::WmlComparerSettings::powertools_faithful`] skips the
+//! mode-specific passes.
 //!
 #![warn(missing_docs)]
 //! ## Provenance
