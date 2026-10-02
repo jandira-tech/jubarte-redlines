@@ -8021,9 +8021,18 @@ fn body_frame_key(dom: &Dom, para: NodeId, sheet: &StyleSheet) -> Option<String>
             && matches!(h_anchor.as_str(), "margin" | "text")
             && matches!(attr("wrap").as_str(), "around" | "")
             && (!attr("x").is_empty() || attr("xAlign").is_empty());
-        ((beside_text || on_page) && !attr("y").is_empty()).then(|| {
+        // Or set by yAlign on its page or margin, with no y (3ec631ca50's
+        // address block: yAlign="bottom", no vAnchor, ends on the bottom
+        // margin in Word).
+        let aligned = attr("y").is_empty()
+            && matches!(attr("yAlign").as_str(), "top" | "center" | "bottom")
+            && matches!(attr("vAnchor").as_str(), "" | "margin" | "page")
+            && matches!(h_anchor.as_str(), "" | "page" | "margin" | "text")
+            && matches!(attr("wrap").as_str(), "around" | "")
+            && (!attr("x").is_empty() || attr("xAlign").is_empty());
+        ((beside_text || on_page) && !attr("y").is_empty() || aligned).then(|| {
             [
-                "vAnchor", "hAnchor", "x", "y", "w", "h", "hRule", "hSpace", "vSpace",
+                "vAnchor", "hAnchor", "x", "y", "yAlign", "w", "h", "hRule", "hSpace", "vSpace",
             ]
             .iter()
             .map(|n| attr(n))
@@ -8100,7 +8109,20 @@ fn frame_box(
     };
     // No x puts the frame on its anchor's edge (the key admits that only
     // for a margin or column anchor).
-    let (x, y) = (tw("x").unwrap_or(0.0), tw("y")?);
+    // Or no y and a yAlign within its page or margin.
+    let v_align = match frame_attr(&fp, "yAlign") {
+        Some("top") => Some(Align::Left),
+        Some("center") => Some(Align::Center),
+        Some("bottom") => Some(Align::Right),
+        _ => None,
+    };
+    let x = tw("x").unwrap_or(0.0);
+    let set_y = tw("y");
+    let by_align = set_y.is_none();
+    if by_align {
+        v_align?;
+    }
+    let y = set_y.unwrap_or(0.0);
     let mut laid = Vec::new();
     let mut outline: Option<([f32; 3], f32)> = None;
     for &p in paras {
@@ -8162,15 +8184,15 @@ fn frame_box(
         slot: ImageSlot::Float {
             align: Align::Left,
             page_x: h_page.then_some(x),
-            page_y: (!on_text).then_some(y),
+            page_y: (!on_text && !by_align).then_some(y),
             col_x: (!h_page).then_some(x),
             col_in_column: h_anchor == "text",
-            para_y: on_text.then_some(y),
+            para_y: (on_text && !by_align).then_some(y),
             pct_x: None,
             pct_y: None,
             pct_w: None,
             pct_h: None,
-            v_align: Align::Left,
+            v_align: v_align.filter(|_| by_align).unwrap_or(Align::Left),
             wrap_square: around,
             wrap_top_bottom: false,
             wrap_polygon: false,
@@ -8187,6 +8209,8 @@ fn frame_box(
             },
             v_rel: if on_text {
                 RelFrame::Paragraph
+            } else if by_align && frame_attr(&fp, "vAnchor") != Some("page") {
+                RelFrame::Margin
             } else {
                 RelFrame::Page
             },
@@ -9425,27 +9449,41 @@ fn cell_content_height(fonts: &Fonts, cell: &TableCell, col_w: &[f32], space_for
             .map(|p| cell_para_height(fonts, p, wrap_w, space_for_ul))
             .sum()
     };
-    let nested_h: f32 = cell
-        .nested
-        .iter()
-        .enumerate()
-        .map(|(k, b)| {
-            let h = nested_table_height(fonts, b, wrap_w, space_for_ul);
-            let Some((dy, ..)) = nested_float_beside(cell, k) else {
-                return h;
-            };
-            // Only what hangs past the paragraphs run beside it.
-            let after = match b.as_ref() {
-                Block::Table { style, .. } => style.after,
-                _ => 0.0,
-            };
-            let beside: f32 = cell.paras[cell.nested_at[k]..]
-                .iter()
-                .map(|p| cell_para_height(fonts, p, wrap_w, space_for_ul))
-                .sum();
-            (dy + h - after - beside).max(0.0)
-        })
-        .sum();
+    let closing = cell.paras.len()
+        - usize::from(
+            cell.nested_at
+                .last()
+                .is_some_and(|&at| at + 1 == cell.paras.len())
+                && cell.paras.last().is_some_and(|p| {
+                    p.images.is_empty() && p.runs.iter().all(|r| r.text.trim().is_empty())
+                }),
+        );
+    // Floats side by side at one anchor: the deepest one's overhang.
+    let mut hung: Vec<(usize, f32)> = Vec::new();
+    let mut nested_h: f32 = 0.0;
+    for (k, b) in cell.nested.iter().enumerate() {
+        let h = nested_table_height(fonts, b, wrap_w, space_for_ul);
+        let Some((dy, ..)) = nested_float_beside(cell, k) else {
+            nested_h += h;
+            continue;
+        };
+        // Only what hangs past the paragraphs run beside it.
+        let after = match b.as_ref() {
+            Block::Table { style, .. } => style.after,
+            _ => 0.0,
+        };
+        let at = cell.nested_at[k];
+        let beside: f32 = cell.paras[at..closing.max(at)]
+            .iter()
+            .map(|p| cell_para_height(fonts, p, wrap_w, space_for_ul))
+            .sum();
+        let over = (dy + h - after - beside).max(0.0);
+        match hung.iter_mut().find(|(a, _)| *a == at) {
+            Some((_, o)) => *o = o.max(over),
+            None => hung.push((at, over)),
+        }
+    }
+    let nested_h = nested_h + hung.iter().map(|(_, o)| o).sum::<f32>();
     cell.pad_t + paras_h + nested_h + cell.pad_b
 }
 
@@ -9456,27 +9494,45 @@ fn cell_content_height(fonts: &Fonts, cell: &TableCell, col_w: &[f32], space_for
 /// the table from there (ee79137dd5: five empty 15pt lines end the row
 /// 23pt under the table, the table 11.5pt above them, 38.3pt from the
 /// cell's edge).
+///
+/// Two or more such tables in a row at one anchor sit side by side from
+/// it, over one closing paragraph or more (Word probe sbs1): 0e65c38964's logo and its
+/// `tblpXSpec="right"` date block share one top, the date block at the
+/// cell's right edge, and a missing `tblpY` is 0 (its `tblpYSpec="center"`
+/// moves nothing under `vertAnchor="text"`).
 fn nested_float_beside(cell: &TableCell, k: usize) -> Option<(f32, Option<f32>, Option<f32>)> {
     let at = *cell.nested_at.get(k)?;
-    if k + 1 != cell.nested.len() || at + 1 >= cell.paras.len() {
-        return None;
-    }
-    let Block::Table { geom, .. } = &**cell.nested.get(k)? else {
-        return None;
+    let text_float = |k: usize| {
+        let Block::Table { geom, .. } = &**cell.nested.get(k)? else {
+            return None;
+        };
+        let slot @ ImageSlot::Float {
+            para_y,
+            page_x,
+            col_x,
+            ..
+        } = geom.float?
+        else {
+            return None;
+        };
+        float_is_text_anchored(slot).then_some((para_y, page_x, col_x))
     };
-    let slot @ ImageSlot::Float {
-        para_y: Some(dy),
-        page_x,
-        col_x,
-        ..
-    } = geom.float?
-    else {
+    let (para_y, page_x, col_x) = text_float(k)?;
+    let run = (0..cell.nested.len())
+        .filter(|&j| cell.nested_at[j] == at)
+        .all(|j| text_float(j).is_some());
+    let siblings = cell.nested_at.iter().filter(|&&a| a == at).count();
+    let dy = if run && siblings > 1 && cell.nested_at.last() == Some(&at) {
+        para_y.unwrap_or(0.0)
+    } else if k + 1 == cell.nested.len() && at + 1 < cell.paras.len() {
+        para_y?
+    } else {
         return None;
     };
     let empty = cell.paras[at..].iter().all(|p| {
         p.images.is_empty() && p.boxes.is_empty() && p.runs.iter().all(|r| r.text.trim().is_empty())
     });
-    (float_is_text_anchored(slot) && empty).then_some((dy, page_x, col_x))
+    empty.then_some((dy, page_x, col_x))
 }
 
 fn nested_table_height(fonts: &Fonts, block: &Block, avail: f32, space_for_ul: bool) -> f32 {
@@ -11619,6 +11675,8 @@ fn table_block(
             let mut nested_at = Vec::new();
             let mut cell_align = Align::Left;
             let mut blank_bookmarks = Vec::new();
+            // The empty paragraphs whose mark is hidden: they take no line.
+            let mut hidden_at: Vec<usize> = Vec::new();
             // Document order, with w:sdt content unwrapped in place.
             let mut ordered = Vec::new();
             cell_children_in_order(dom, cell, &mut ordered);
@@ -11730,6 +11788,16 @@ fn table_block(
                 let empty_ink =
                     mark.is_empty() && runs.iter().all(|run| run.text.trim().is_empty());
                 let cell_rule = pstyle.border_bottom.map(|(c, w, _)| (c, w));
+                // An empty paragraph whose mark is hidden takes no line here
+                // either, as in the body (Word probe vh1: two of them around
+                // a hidden row between two nested tables add nothing; a cell
+                // left with nothing else keeps one line, v6).
+                let hidden_blank = empty_ink
+                    && cell_rule.is_none()
+                    && images.is_empty()
+                    && boxes.is_empty()
+                    && runs.iter().all(|run| run.field == FieldKind::None)
+                    && para_mark_hidden(dom, child, &sheet.by_id);
                 if empty_ink && cell_rule.is_none() && images.is_empty() {
                     let mut mark_style = r.clone();
                     if let Some(rpr) = dom
@@ -11759,7 +11827,7 @@ fn table_block(
                     rule.rule = Some((color, width));
                     runs.push(rule);
                 }
-                cell_paras.push(CellPara {
+                let para = CellPara {
                     runs,
                     images,
                     boxes,
@@ -11770,7 +11838,22 @@ fn table_block(
                     vertical: false,
                     squeeze: Squeeze::NONE,
                     hang_spaces: false,
-                });
+                };
+                if hidden_blank {
+                    hidden_at.push(cell_paras.len());
+                }
+                cell_paras.push(para);
+            }
+            // They stay, at no height, so nested tables keep their places
+            // between paragraphs (a row split cuts at those places); a cell
+            // left with nothing else keeps the first one's line.
+            let keep_one = nested.is_empty() && hidden_at.len() == cell_paras.len();
+            for &i in hidden_at.iter().skip(usize::from(keep_one)) {
+                let style = &mut cell_paras[i].style;
+                style.line_exact = Some(0.0);
+                style.line_at_least = None;
+                style.before = 0.0;
+                style.after = 0.0;
             }
             if cell_paras.is_empty() && nested.is_empty() {
                 let runs = collect_runs_in(
@@ -12387,8 +12470,9 @@ fn para_mark_hidden(dom: &Dom, para: NodeId, styles: &HashMap<String, NamedStyle
 
 /// A row Word does not lay out: marked `trPr/hidden` with nothing but
 /// hidden content (live Word: its borders and height go with it; without
-/// the marker a vanished row keeps a line). The empty cell-end paragraph
-/// after a nested table goes with the table (9617d33f's separators).
+/// the marker a vanished row keeps a line). A visible empty paragraph
+/// keeps the row: 9617d33f's separator rows hold a hidden nested row and
+/// one, and keep their 8.25pt of hideMark cell margins in Word.
 fn row_is_hidden(dom: &Dom, row: NodeId, styles: &HashMap<String, NamedStyle>) -> bool {
     // Every leading rPr in order, over the paragraph style, as the runs
     // themselves are collected (PR #247 review).
@@ -12404,18 +12488,7 @@ fn row_is_hidden(dom: &Dom, row: NodeId, styles: &HashMap<String, NamedStyle>) -
                         .map(|i| dom.child_at(r, i))
                         .all(|c| dom.name_is(c, &W::r_pr()) || !dom.is_element(c))
             });
-            let mark_hidden = para_mark_hidden(dom, p, styles);
-            let after_table = dom.parent(p).is_some_and(|parent| {
-                let kids: Vec<NodeId> = (0..dom.child_count(parent))
-                    .map(|i| dom.child_at(parent, i))
-                    .filter(|&c| dom.is_element(c))
-                    .collect();
-                kids.iter()
-                    .position(|&c| c == p)
-                    .and_then(|i| i.checked_sub(1))
-                    .is_some_and(|i| dom.name_is(kids[i], &W::tbl()))
-            });
-            runs_hidden && (mark_hidden || after_table)
+            runs_hidden && para_mark_hidden(dom, p, styles)
         })
 }
 
@@ -27204,6 +27277,16 @@ impl<'a> Layout<'a> {
             } else {
                 used + dist
             };
+            // A table wholly beside the column, distances included, narrows
+            // no line (3ec631ca50's date block at x 448.6, right of a column
+            // ending at 425.2: Word's title runs the full measure).
+            let (dist_l, dist_r) = match slot {
+                ImageSlot::Float { dist_l, dist_r, .. } => (dist_l, dist_r),
+                ImageSlot::Flow => (0.0, 0.0),
+            };
+            let col_r = self.page.width - saved_mr;
+            let clear = fx + used + dist_r <= saved_ml + 0.5 || fx - dist_l >= col_r - 0.5;
+            let inset = if clear { 0.0 } else { inset };
             // With no room beside the table, lines above its tblpY top keep
             // their place (09d6d940's anchor paragraph and heading sit in
             // the 51pt over the table in Word).
@@ -27271,7 +27354,7 @@ impl<'a> Layout<'a> {
             } else {
                 top
             };
-            self.side_float = Some(SideFloat {
+            self.side_float = (!clear).then_some(SideFloat {
                 align,
                 inset,
                 top: band_top,
@@ -27496,9 +27579,29 @@ impl<'a> Layout<'a> {
                             .filter(|(k, _)| cell.nested_at[*k] == pi)
                         {
                             if let Some((dy, page_x, col_x)) = nested_float_beside(cell, k) {
-                                let left = match (page_x, col_x) {
-                                    (Some(px), _) => x + px,
-                                    (_, Some(cx)) => x + pad_l + cx,
+                                let left = match (page_x, col_x, nested.as_ref()) {
+                                    (Some(px), ..) => x + px,
+                                    (_, Some(cx), _) => x + pad_l + cx,
+                                    (
+                                        ..,
+                                        Block::Table {
+                                            cols, rows, geom, ..
+                                        },
+                                    ) if matches!(
+                                        geom.float,
+                                        Some(ImageSlot::Float {
+                                            align: Align::Right,
+                                            ..
+                                        })
+                                    ) =>
+                                    {
+                                        let tw: f32 = resolved_col_widths(
+                                            self.fonts, cols, rows, geom, wrap_w,
+                                        )
+                                        .iter()
+                                        .sum();
+                                        x + pad_l + (wrap_w - tw).max(0.0)
+                                    }
                                     _ => x + pad_l,
                                 };
                                 self.emit_nested_table(nested, left, y_line - dy, wrap_w);
@@ -27576,8 +27679,14 @@ impl<'a> Layout<'a> {
                             };
                             let (size, face_id, line_box) =
                                 cell_line_metrics(self.fonts, para, &line);
-                            let ascent = self.fonts.get(face_id).ascent_pt(size);
-                            let ty = y_line - ascent;
+                            // An exact line sets its baseline as in the body
+                            // (Word probe sbs1: a 20pt exact cell line's text
+                            // sits where the body's does, not at its top).
+                            let ty = y_line
+                                - match para.style.line_exact {
+                                    Some(_) => exact_baseline(line_box),
+                                    None => self.fonts.get(face_id).ascent_pt(size),
+                                };
                             if ty < bottom {
                                 break;
                             }

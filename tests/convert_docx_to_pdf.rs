@@ -4576,6 +4576,219 @@ fn a_floating_nested_table_lets_the_empty_lines_after_it_run_beside_it() {
 }
 
 #[test]
+fn floating_tables_at_one_anchor_sit_side_by_side() {
+    // 0e65c38964 (Word PDF): a cell holds a logo table and a date table,
+    // both `vertAnchor="text"` without tblpY, then one empty paragraph.
+    // Word sets both at the anchor's top, the `tblpXSpec="right"` one at
+    // the cell's right edge (its `tblpYSpec="center"` moves nothing), and
+    // the row is as tall as the taller table, over one closing paragraph
+    // or two (Word probe sbs1). We stacked them. An exact cell line sets
+    // its text as the body's does: Head to LeftOne is one 20pt line.
+    let exact = "<w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"400\" w:lineRule=\"exact\"/></w:pPr>";
+    let float_tbl = |tblp: &str, words: &[&str]| {
+        let rows: String = words
+            .iter()
+            .map(|t| {
+                format!(
+                    "<w:tr><w:tc><w:tcPr><w:tcW w:w=\"3000\" w:type=\"dxa\"/></w:tcPr>\
+                     <w:p>{exact}<w:r><w:t>{t}</w:t></w:r></w:p></w:tc></w:tr>"
+                )
+            })
+            .collect();
+        format!(
+            "<w:tbl><w:tblPr><w:tblpPr {tblp}/><w:tblW w:w=\"3000\" w:type=\"dxa\"/></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"3000\"/></w:tblGrid>{rows}</w:tbl>"
+        )
+    };
+    let left = float_tbl(
+        "w:vertAnchor=\"text\"",
+        &["LeftOne", "LeftTwo", "LeftThree"],
+    );
+    let right = float_tbl(
+        "w:vertAnchor=\"text\" w:tblpXSpec=\"right\" w:tblpYSpec=\"center\"",
+        &["RightOne", "RightTwo"],
+    );
+    for closing in [1, 2] {
+        let empty = format!("<w:p>{exact}</w:p>").repeat(closing);
+        let docx = minimal_docx_body(&format!(
+            "<w:p>{exact}<w:r><w:t>Head</w:t></w:r></w:p>\
+         <w:tbl><w:tblPr><w:tblW w:w=\"8000\" w:type=\"dxa\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"8000\"/></w:tblGrid>\
+         <w:tr><w:tc><w:tcPr><w:tcW w:w=\"8000\" w:type=\"dxa\"/></w:tcPr>{left}{right}{empty}</w:tc></w:tr></w:tbl>\
+         <w:p>{exact}<w:r><w:t>After</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/><w:pgMar w:top=\"1440\" w:right=\"1440\" \
+         w:bottom=\"1440\" w:left=\"1440\" w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>"
+        ));
+        let pdf = docx_to_pdf(&docx).expect("side by side");
+        let (lx, ly) = pdf_glyph_text_xy(&pdf, "LeftOne").expect("left paints");
+        let (rx, ry) = pdf_glyph_text_xy(&pdf, "RightOne").expect("right paints");
+        let (_, after) = pdf_glyph_text_xy(&pdf, "After").expect("After paints");
+        let (_, head) = pdf_glyph_text_xy(&pdf, "Head").expect("Head paints");
+        assert!(
+            (head - ly - 20.0).abs() < 0.5,
+            "the cell's exact line sits as the body's: {head} -> {ly}"
+        );
+        assert!((ly - ry).abs() < 0.5, "one top: left {ly}, right {ry}");
+        assert!(
+            rx - lx > 240.0,
+            "the right table at the cell's right edge: {lx} -> {rx}"
+        );
+        assert!(
+            (ly - after - 60.0).abs() < 2.0,
+            "the row is the taller table's three 20pt rows: {ly} -> {after}"
+        );
+    }
+}
+
+#[test]
+fn an_empty_cell_paragraph_with_a_hidden_mark_takes_no_line() {
+    // Word probe vh1 (9617d33f's separators): in a cell, the empty
+    // paragraphs with a hidden mark around a hidden row between two nested
+    // tables add nothing, as in the body; BBBB sits one line under AAAA.
+    // A cell holding only such a paragraph keeps its one line (v6).
+    let sp = "<w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/>";
+    let p = |t: &str, vanish: bool| {
+        let rpr = if vanish {
+            "<w:rPr><w:vanish/></w:rPr>"
+        } else {
+            ""
+        };
+        let run = if t.is_empty() {
+            String::new()
+        } else {
+            format!("<w:r><w:t>{t}</w:t></w:r>")
+        };
+        format!("<w:p><w:pPr>{sp}{rpr}</w:pPr>{run}</w:p>")
+    };
+    let tbl = |inner: &str, tr: &str| {
+        format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"pct\"/></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"9000\"/></w:tblGrid><w:tr>{tr}<w:tc><w:tcPr>\
+             <w:tcW w:w=\"0\" w:type=\"auto\"/></w:tcPr>{inner}</w:tc></w:tr></w:tbl>"
+        )
+    };
+    let gap = |middle: &str| {
+        let cell = format!(
+            "{}{middle}{}{}",
+            tbl(&p("AAAA", false), ""),
+            tbl(&p("BBBB", false), ""),
+            p("", false)
+        );
+        let docx = minimal_docx_body(&format!(
+            "{}{}{}<w:sectPr/>",
+            p("Top", false),
+            tbl(&cell, ""),
+            p("Mark", false)
+        ));
+        let pdf = docx_to_pdf(&docx).expect("hidden marks");
+        let (_, a) = pdf_glyph_text_xy(&pdf, "AAAA").expect("AAAA paints");
+        let (_, b) = pdf_glyph_text_xy(&pdf, "BBBB").expect("BBBB paints");
+        a - b
+    };
+    let line = gap("");
+    let hidden_row = tbl(&p("", true), "<w:trPr><w:hidden/></w:trPr>");
+    let separators = format!("{}{hidden_row}{}", p("", true), p("", true));
+    assert!(
+        (gap(&separators) - line).abs() < 0.1,
+        "the separators add nothing: {} against {line}",
+        gap(&separators)
+    );
+    let lone = tbl(&p("", true), "");
+    let visible = tbl(&p("", false), "");
+    assert!(
+        (gap(&lone) - gap(&visible)).abs() < 0.1,
+        "a cell of one hidden mark keeps its line: {} against {}",
+        gap(&lone),
+        gap(&visible)
+    );
+}
+
+#[test]
+fn nested_tables_between_hidden_marks_split_their_row_across_pages() {
+    // 9617d33f's newsletter is one cell of nested story tables, each pair
+    // parted by an empty paragraph with a hidden mark. Those paragraphs
+    // take no line but keep the tables apart: dropped outright, the row
+    // could not split between the tables and lost everything after page 1.
+    let hidden = "<w:p><w:pPr><w:rPr><w:vanish/></w:rPr></w:pPr></w:p>";
+    let stories: String = (0..60)
+        .map(|i| {
+            format!(
+                "<w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"pct\"/></w:tblPr>\
+                 <w:tblGrid><w:gridCol w:w=\"9000\"/></w:tblGrid><w:tr><w:tc><w:tcPr>\
+                 <w:tcW w:w=\"0\" w:type=\"auto\"/></w:tcPr><w:p><w:r><w:t>Story{i}</w:t></w:r></w:p>\
+                 </w:tc></w:tr></w:tbl>{hidden}"
+            )
+        })
+        .collect();
+    let docx = minimal_docx_body(&format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"9000\" w:type=\"dxa\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"9000\"/></w:tblGrid>\
+         <w:tr><w:tc><w:tcPr><w:tcW w:w=\"9000\" w:type=\"dxa\"/></w:tcPr>{stories}<w:p/></w:tc></w:tr></w:tbl><w:sectPr/>"
+    ));
+    let pdf = docx_to_pdf(&docx).expect("stories");
+    assert!(
+        pdf_content_streams(&pdf).len() > 1,
+        "the stories run past one page"
+    );
+    for i in [0, 30, 59] {
+        assert!(
+            page_with_text(&pdf, &format!("Story{i}")).is_some(),
+            "Story{i} paints"
+        );
+    }
+}
+
+#[test]
+fn a_frame_set_by_y_align_bottom_ends_on_the_bottom_margin() {
+    // 3ec631ca50 (Word PDF): an address frame with yAlign="bottom", no y
+    // and no vAnchor ends its last 9pt exact line on the bottom margin,
+    // at the page's right (hAnchor page, x 448.55); the body text stays at
+    // the top. We laid the frame's lines into the flow.
+    let exact = "<w:spacing w:before=\"0\" w:after=\"0\" w:line=\"180\" w:lineRule=\"exact\"/>";
+    let frame: String = ["FrameOne", "FrameTwo", "FrameLast"]
+        .iter()
+        .map(|t| {
+            format!(
+                "<w:p><w:pPr><w:framePr w:w=\"2659\" w:wrap=\"around\" w:hAnchor=\"page\" w:x=\"8971\" \
+                 w:yAlign=\"bottom\" w:anchorLock=\"1\"/>{exact}</w:pPr><w:r><w:t>{t}</w:t></w:r></w:p>"
+            )
+        })
+        .collect();
+    let docx = minimal_docx_body(&format!(
+        "{frame}<w:p><w:r><w:t>BodyText</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/><w:pgMar w:top=\"3181\" w:right=\"3402\" \
+         w:bottom=\"816\" w:left=\"1361\" w:header=\"1021\" w:footer=\"816\" w:gutter=\"0\"/></w:sectPr>"
+    ));
+    let pdf = docx_to_pdf(&docx).expect("aligned frame");
+    let (x, last) = pdf_glyph_text_xy(&pdf, "FrameLast").expect("the frame paints");
+    let (_, body) = pdf_glyph_text_xy(&pdf, "BodyText").expect("the body paints");
+    // Last line box 9pt over the 40.8pt margin: baseline 7.2pt down it.
+    assert!(
+        (last - (40.8 + 9.0 - 7.2)).abs() < 1.0,
+        "the frame ends on the bottom margin: {last}"
+    );
+    assert!((x - 448.55).abs() < 0.5, "at the frame's page x: {x}");
+    assert!(body > 650.0, "the body keeps its place at the top: {body}");
+}
+
+#[test]
+fn a_floating_table_beside_the_column_narrows_no_line() {
+    // 3ec631ca50 (Word PDF): a page-placed date table at x 448.6 lies right
+    // of a column ending at 425.2, and the title beside it runs the full
+    // measure. We indented the text by the table's width.
+    let table = "<w:tbl><w:tblPr><w:tblpPr w:vertAnchor=\"page\" w:horzAnchor=\"page\" w:tblpX=\"8971\" \
+         w:tblpY=\"3244\"/><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblLayout w:type=\"fixed\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"2552\"/></w:tblGrid><w:tr><w:trPr><w:trHeight w:val=\"1701\"/></w:trPr><w:tc>\
+         <w:tcPr><w:tcW w:w=\"2552\" w:type=\"dxa\"/></w:tcPr><w:p><w:r><w:t>DateBlock</w:t></w:r></w:p></w:tc></w:tr></w:tbl>";
+    let docx = minimal_docx_body(&format!(
+        "{table}<w:p><w:r><w:t>TitleLine</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/><w:pgMar w:top=\"3181\" w:right=\"3402\" \
+         w:bottom=\"816\" w:left=\"1361\" w:header=\"1021\" w:footer=\"816\" w:gutter=\"0\"/></w:sectPr>"
+    ));
+    let pdf = docx_to_pdf(&docx).expect("table beside the column");
+    let (x, _) = pdf_glyph_text_xy(&pdf, "TitleLine").expect("the title paints");
+    assert!((x - 68.05).abs() < 1.0, "the title at the left margin: {x}");
+}
+
+#[test]
 fn a_page_sized_square_float_under_text_moves_its_paragraph_to_the_next_page() {
     // Word probe h1 and 3bfcb371e2 (30b6e87178): a 615x797 cover whose
     // anchor follows text on the page cannot leave its line room beside or
