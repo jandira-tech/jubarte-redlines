@@ -1727,6 +1727,10 @@ struct TableGeom {
     /// A legacy document's pct table width spans the text plus these
     /// (the table's left + right cell margins); 0 in compatibilityMode 15.
     pct_margins: f32,
+    /// compatibilityMode 15: half the first row's outer left and right
+    /// rules, which a pct table's columns give up so its rim stays at the
+    /// pct width (Word 16 probe pct3, 2026-10-02).
+    pct_rules: f32,
     /// An autofit table whose tblGrid another tool wrote (`gridCol`
     /// carries a `w:type`, which Word never writes): Word fits the columns
     /// to their content on open (PHPWord's 00046848 label column).
@@ -8967,7 +8971,7 @@ fn table_col_widths(cols: &[f32], geom: &TableGeom, avail: f32) -> Vec<f32> {
         // Checked in Word on 00587c73: a legacy 100% table is the text
         // width plus its cell margins (452.9pt on 441.9pt); mode 15 is the
         // text width.
-        TblWidth::Pct(p) => (avail + geom.pct_margins) * p,
+        TblWidth::Pct(p) => (avail + geom.pct_margins) * p - geom.pct_rules,
     }
     .max(0.0);
     // The same holds for pct: 005e8d94's 98.98% table keeps its grid
@@ -12227,11 +12231,23 @@ fn table_block(
             ]
         });
     let centred = matches!(tstyle.align, Align::Center);
+    let table_borders = direct_borders.or_else(|| tdef.and_then(|t| t.borders).map(mirror));
+    // Word 15 keeps a cell's text half its side rules in when they outgrow
+    // its margins, right as left, and wraps it there (probe zm: no margins,
+    // 3pt rules end the first cell's justified lines 1.23pt sooner and
+    // narrow them 4.35pt). The table's pull above keeps the bare margin.
+    if !sheet.defaults.legacy_compat {
+        let ncols = cols.len();
+        for cell in rows.iter_mut().flatten() {
+            cell.pad_l = cell.pad_l.max(cell_left_rule(cell, table_borders) * 0.5);
+            cell.pad_r = cell
+                .pad_r
+                .max(cell_right_rule(cell, table_borders, ncols) * 0.5);
+        }
+    }
     Block::Table {
-        cols,
-        rows,
         style: tstyle,
-        borders: direct_borders.or_else(|| tdef.and_then(|t| t.borders).map(mirror)),
+        borders: table_borders,
         geom: {
             Box::new(TableGeom {
                 row_min,
@@ -12268,12 +12284,28 @@ fn table_block(
                 } else {
                     0.0
                 },
+                pct_rules: if sheet.defaults.legacy_compat {
+                    0.0
+                } else {
+                    rows.first().map_or(0.0, |row| {
+                        let left = row
+                            .first()
+                            .map_or(0.0, |c| cell_left_rule(c, table_borders));
+                        let right = row
+                            .last()
+                            .map_or(0.0, |c| cell_right_rule(c, table_borders, cols.len()));
+                        (left + right) * 0.5
+                    })
+                },
                 content_autofit: !fixed
                     && matches!(table_pref_width(dom, table), TblWidth::Grid)
                     && foreign_grid,
                 cell_spacing: tbl_spacing,
             })
         },
+        // Moved last: the geometry above reads them.
+        cols,
+        rows,
     }
 }
 
@@ -17882,6 +17914,19 @@ fn inset_box(img: &LaidImage, x: f32, y: f32, dw: f32, dh: f32) -> (f32, f32, f3
 
 /// The width of the rule on a cell's left edge: its own left border, else
 /// the table's left (first column) or insideV rule; 0 when none paints.
+/// The width of a cell's right rule: its own `tcBorders`, else the
+/// table's right rim (last column) or inside rule.
+fn cell_right_rule(cell: &TableCell, borders: Option<TblBorders>, ncols: usize) -> f32 {
+    if let Some(cb) = cell.borders {
+        return cb.right.map_or(0.0, |(_, w)| w);
+    }
+    match borders {
+        Some(b) if cell.col + cell.colspan.max(1) >= ncols && b.right => b.outer_width.max(0.24),
+        Some(b) if cell.col + cell.colspan.max(1) < ncols && b.inside_v => b.width.max(0.24),
+        _ => 0.0,
+    }
+}
+
 fn cell_left_rule(cell: &TableCell, borders: Option<TblBorders>) -> f32 {
     if let Some(cb) = cell.borders {
         return cb.left.map_or(0.0, |(_, w)| w);
@@ -27538,6 +27583,15 @@ impl<'a> Layout<'a> {
                         cell.pad_l
                     };
                     let pad_r = cell.pad_r;
+                    // The grid sits half the table's left rule in: a
+                    // cell's text box moves with it and keeps its width
+                    // (Word 16 probe pct3 d24: a 3pt rule moves the first
+                    // cell's justified line end 1.45pt right).
+                    let grid_lead = if self.compat_mode >= 15 {
+                        half_rule
+                    } else {
+                        0.0
+                    };
                     let wrap_w = cell_wrap_width(cell, w);
                     let mut para_lines: Vec<LaidCellPara> = Vec::new();
                     let mut para_narrow = Vec::new();
@@ -27633,7 +27687,7 @@ impl<'a> Layout<'a> {
                         }
                         y_line -= para.style.before;
                         for box_ in &para.boxes {
-                            let inner = (w - pad_l - pad_r).max(0.0);
+                            let inner = (w + grid_lead - pad_l - pad_r).max(0.0);
                             self.emit_cell_box(box_, x + pad_l, inner, y_line, para.style.before);
                         }
                         let lead = cell_lead_picture(para);
@@ -27659,7 +27713,7 @@ impl<'a> Layout<'a> {
                             let (dw, dh) = cell_image_wh(img);
                             let (align, col_x, drop, room) =
                                 cell_image_place(img, para.style.align);
-                            let inner = (w - pad_l - pad_r).max(0.0);
+                            let inner = (w + grid_lead - pad_l - pad_r).max(0.0);
                             let extra = col_x.unwrap_or(match align {
                                 Align::Center => ((inner - dw) / 2.0).max(0.0),
                                 Align::Right => (inner - dw).max(0.0),
@@ -27732,7 +27786,7 @@ impl<'a> Layout<'a> {
                             if !joined_below
                                 && let Some((color, width)) = line.iter().find_map(|r| r.rule)
                             {
-                                let inner_w = (w - pad_l - pad_r).max(1.0);
+                                let inner_w = (w + grid_lead - pad_l - pad_r).max(1.0);
                                 self.current().ops.push(Op::FillRect {
                                     x: x + pad_l,
                                     y: ty,
@@ -27746,7 +27800,7 @@ impl<'a> Layout<'a> {
                                 continue;
                             }
                             if let Some(fill) = cell.fill {
-                                let inner_w = (w - pad_l - pad_r).max(1.0);
+                                let inner_w = (w + grid_lead - pad_l - pad_r).max(1.0);
                                 let (iy, ih) = if one_line && inset == 0.0 && cell.style_fill {
                                     (bottom, h)
                                 } else {
@@ -27793,7 +27847,8 @@ impl<'a> Layout<'a> {
                                 })
                                 .sum();
                             let inner =
-                                (w - pad_l - pad_r - ind_l - para.style.indent_right).max(0.0);
+                                (w + grid_lead - pad_l - pad_r - ind_l - para.style.indent_right)
+                                    .max(0.0);
                             // Each paragraph keeps its own jc (0005052e).
                             let extra = match para.style.align {
                                 Align::Center => ((inner - line_w) / 2.0).max(0.0),
@@ -27905,7 +27960,7 @@ impl<'a> Layout<'a> {
                             && !carried_rule
                             && let Some((color, width, space)) = para.style.border_bottom
                         {
-                            let inner_w = (w - pad_l - pad_r).max(1.0);
+                            let inner_w = (w + grid_lead - pad_l - pad_r).max(1.0);
                             self.hairline_h(
                                 x + pad_l,
                                 y_line - space,
@@ -28012,7 +28067,17 @@ impl<'a> Layout<'a> {
         if has_nested && !nested_broke && rh <= page_room * 1.05 {
             return;
         }
-        let tail_h = tail.iter().map(height).fold(0.0_f32, f32::max);
+        // The carried part opens under its own top rule, and the table's
+        // last row still closes on the bottom rule (Word 16 probe sp
+        // 2026-10-02: 3pt rules push the next row 2.88pt further down).
+        let last_row = ri + 1 == work.len();
+        let tail_h = tail.iter().map(height).fold(0.0_f32, f32::max)
+            + row_top_rule(row, geom, ri)
+            + if last_row {
+                split_bottom_rule(row, geom)
+            } else {
+                0.0
+            };
         // The head ends under its last line, not at the bottom margin
         // (Word 16 probes fb 2026-10-02: the cut part's rules stop at
         // 554.4 on a page whose body runs to 559.3). A cell with nothing
@@ -42934,6 +42999,7 @@ mod regression_tests {
             keep_at_margin: false,
             rtl: false,
             pct_margins: 0.0,
+            pct_rules: 0.0,
             content_autofit: false,
             cell_spacing: 0.0,
         }
