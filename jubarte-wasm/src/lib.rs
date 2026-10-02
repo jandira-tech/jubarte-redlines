@@ -25,6 +25,7 @@
 //! else { JSON.parse(out.json).code }                    // e.g. AMBIGUOUS_ANCHOR
 //! const { text, hunks } = JSON.parse(diffDocuments(      // the changes as a patch
 //!   oldDocx, new TextEncoder().encode(markdown), "Ana Lima", new Date().toISOString().slice(0, 19) + "Z"));
+//! const draft = markdownToDocx("Due in {~~30~>45~~} days.", JSON.stringify({ page: "a4" }));  // Word bytes
 //! ```
 //!
 //! # Build
@@ -532,6 +533,72 @@ pub fn capabilities() -> Result<String, JsValue> {
     serde_json::to_string_pretty(&manifest).map_err(js_err)
 }
 
+/// `markdownToDocx`'s options (JSON, every field optional).
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MarkdownDocxOptions {
+    #[serde(default)]
+    page: jubarte::markdown::PageSize,
+    author: Option<String>,
+    date: Option<String>,
+    critic: Option<bool>,
+    #[serde(alias = "trackChanges")]
+    track_changes: Option<String>,
+}
+
+/// Markdown with CriticMarkup → DOCX bytes; errors as text so native tests
+/// can reach them (a `JsValue` exists only on wasm).
+fn markdown_docx(
+    text: &str,
+    options_json: Option<String>,
+    reference: Option<Vec<u8>>,
+) -> Result<Vec<u8>, String> {
+    let options: MarkdownDocxOptions =
+        serde_json::from_str(options_json.as_deref().unwrap_or("{}")).map_err(|e| e.to_string())?;
+    let track_changes = match options.track_changes.as_deref() {
+        None => jubarte::markdown::TrackChanges::All,
+        Some(value) => jubarte::markdown::TrackChanges::parse(value)
+            .ok_or_else(|| format!("track_changes must be all, accept or reject, not {value:?}"))?,
+    };
+    let mut docx_options = jubarte::markdown::DocxOptions {
+        reference: reference.as_deref(),
+        track_changes,
+        page: options.page,
+        ..jubarte::markdown::DocxOptions::default()
+    };
+    if let Some(author) = options.author {
+        docx_options.author = author;
+    }
+    if let Some(date) = options.date {
+        docx_options.date = date;
+    }
+    if let Some(critic) = options.critic {
+        docx_options.critic = critic;
+    }
+    jubarte::markdown::markdown_to_docx(text, &docx_options)
+        .map(|written| written.docx)
+        .map_err(|e| e.to_string())
+}
+
+/// Markdown with CriticMarkup → DOCX bytes, as `jubarte convert draft.md`.
+///
+/// `optionsJson` (every field optional): `page` (`"letter"` default, or
+/// `"a4"`), `author` (`"Redline"`), `date` (fixed epoch, so the same Markdown
+/// writes the same bytes), `critic` (`true`: CriticMarkup becomes tracked
+/// changes and comments) and `track_changes` (or `trackChanges`: `"all"`,
+/// `"accept"`, `"reject"`). An unknown field is an error. `reference`, a
+/// `.docx`, lends its styles and page setup, and then `page` is ignored.
+/// Images are written as their alt text, and the engine's warnings are not
+/// returned.
+#[wasm_bindgen(js_name = markdownToDocx)]
+pub fn markdown_to_docx(
+    text: &str,
+    options_json: Option<String>,
+    reference: Option<Vec<u8>>,
+) -> Result<Vec<u8>, JsValue> {
+    markdown_docx(text, options_json, reference).map_err(js_err)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -688,5 +755,82 @@ mod tests {
         let preview = preview_edit_plan(b"x", "{").unwrap();
         assert!(!preview.ok());
         assert!(preview.json().contains("INVALID_PLAN"));
+    }
+
+    fn document_xml(docx: &[u8]) -> String {
+        jubarte::opc::PartFs::open(docx)
+            .unwrap()
+            .part_string("word/document.xml")
+            .unwrap()
+    }
+
+    fn page_width(docx: &[u8]) -> String {
+        let xml = document_xml(docx);
+        let at = xml.find("<w:pgSz ").unwrap();
+        let tag = &xml[at..at + xml[at..].find('>').unwrap()];
+        let width = tag.find("w:w=\"").unwrap() + 5;
+        tag[width..width + tag[width..].find('"').unwrap()].to_string()
+    }
+
+    #[test]
+    fn markdown_is_written_as_word_on_letter_or_a4() {
+        let letter = markdown_docx("# Terms\n\nBody.\n", None, None).unwrap();
+        assert_eq!(&letter[..2], b"PK");
+        assert_eq!(page_width(&letter), "12240");
+        let a4 = markdown_docx("Body.\n", Some(r#"{"page":"a4"}"#.into()), None).unwrap();
+        assert_eq!(page_width(&a4), "11906");
+        assert_eq!(
+            page_width(&markdown_docx("Body.\n", Some("{}".into()), None).unwrap()),
+            "12240"
+        );
+    }
+
+    #[test]
+    fn markdown_options_set_the_owner_and_resolve_the_changes() {
+        const DRAFT: &str = "Payment is due in {~~30~>45~~} days.\n";
+        let kept = markdown_docx(
+            DRAFT,
+            Some(r#"{"author":"Legal","date":"2026-10-02T00:00:00Z"}"#.into()),
+            None,
+        )
+        .unwrap();
+        let xml = document_xml(&kept);
+        assert!(xml.contains("w:author=\"Legal\""), "{xml}");
+        assert!(xml.contains("w:date=\"2026-10-02T00:00:00Z\""), "{xml}");
+
+        for (options, text) in [
+            (
+                r#"{"track_changes":"accept"}"#,
+                "Payment is due in 45 days.",
+            ),
+            (r#"{"trackChanges":"reject"}"#, "Payment is due in 30 days."),
+            (
+                r#"{"critic":false}"#,
+                "Payment is due in {~~30~>45~~} days.",
+            ),
+        ] {
+            let docx = markdown_docx(DRAFT, Some(options.into()), None).unwrap();
+            let paragraphs = jubarte::inspect::paragraphs(&docx).unwrap();
+            assert_eq!(paragraphs[0].text, text, "{options}");
+        }
+    }
+
+    #[test]
+    fn a_reference_lends_its_page_and_bad_options_are_refused() {
+        let reference =
+            markdown_docx("Template.\n", Some(r#"{"page":"a4"}"#.into()), None).unwrap();
+        let docx = markdown_docx("Body.\n", None, Some(reference)).unwrap();
+        assert_eq!(page_width(&docx), "11906");
+        for bad in [
+            r#"{"page":"legal"}"#,
+            r#"{"track_changes":"keep"}"#,
+            r#"{"pages":"a4"}"#,
+            "{",
+        ] {
+            assert!(
+                markdown_docx("Body.\n", Some(bad.into()), None).is_err(),
+                "{bad}"
+            );
+        }
     }
 }
