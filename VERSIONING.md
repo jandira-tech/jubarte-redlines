@@ -200,6 +200,11 @@ artifacts. Step 10 notices a finished run with no release and then:
 A missing binary cannot be added under the same tag once the fix lands on a
 later commit. Ship it with the next patch release.
 
+Archives are signed in release.yml's release job, so the archives this
+path publishes are unsigned. Once release signing is on
+(docs/SELF_UPDATE.md, "Signed releases"), signed-era binaries refuse them,
+and `jubarte self-update` skips that release until a signed one follows.
+
 ### Verify every registry
 
 `release.sh` step 11 does this. To check by hand:

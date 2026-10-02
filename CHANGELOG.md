@@ -17,6 +17,18 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Added
 
+- `jubarte self-update` can require a zipsign (ed25519) signature on the
+  release archive, checked against public keys built into the binary, so a
+  replaced archive is refused even when its `SHA256SUMS.txt` was replaced
+  too. Signing is staged: no key ships yet, and until the maintainers
+  commit one the updater checks `SHA256SUMS.txt` only, as before. Once a
+  key and a first signed release are set, that release and every later
+  one must be signed; a `--version` downgrade to an earlier, unsigned
+  release is checked by its SHA-256 alone. `release.yml` signs each
+  archive before writing `SHA256SUMS.txt` when the `ZIPSIGN_PRIVATE_KEY`
+  secret is set, and refuses to publish unsigned archives once a public
+  key is committed under `keys/`. Setup and key rotation:
+  [docs/SELF_UPDATE.md](docs/SELF_UPDATE.md#signed-releases).
 - The font report says whether each requested font was substituted: a
   `substituted` field in `convert --font-report` and `--report` (true for
   the `word_substitution`, `generic` and `unknown` steps, and for

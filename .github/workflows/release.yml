@@ -206,6 +206,66 @@ jobs:
           path: dist
           merge-multiple: true
 
+      # Signed archives (docs/SELF_UPDATE.md, "Signed releases"). Signing
+      # rewrites each archive, so it runs before Checksums; it also runs
+      # before the sdist step, so no third-party code of this job runs ahead
+      # of it, and the key reaches this step only. zipsign signs with the
+      # file name as its context, which is the asset name the updater checks.
+      # The secret holds one base64 private key per line (two while keys
+      # rotate). Without it the archives stay unsigned (checksum only) until
+      # a public key is committed under keys/; from then on every release
+      # must be signed, and a missing secret fails the release.
+      - name: Sign archives
+        env:
+          ZIPSIGN_PRIVATE_KEY: ${{ secrets.ZIPSIGN_PRIVATE_KEY }}
+          ZIPSIGN_VERSION: "0.2.1"
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          pubs=(keys/*.pub)
+          if [ -z "$ZIPSIGN_PRIVATE_KEY" ]; then
+            if [ "${#pubs[@]}" -gt 0 ]; then
+              echo "::error::keys/ holds a release public key but the ZIPSIGN_PRIVATE_KEY secret is not set; signed-era binaries would refuse this release"
+              exit 1
+            fi
+            echo "ZIPSIGN_PRIVATE_KEY is not set: the archives stay unsigned (checksum only)."
+            exit 0
+          fi
+          cargo install zipsign --locked --version "$ZIPSIGN_VERSION"
+          keydir="$(mktemp -d "$RUNNER_TEMP/zipsign.XXXXXX")"
+          trap 'rm -rf "$keydir"' EXIT
+          n=0
+          while IFS= read -r line || [ -n "$line" ]; do
+            line="${line//[$'\t\r ']/}"
+            [ -n "$line" ] || continue
+            n=$((n + 1))
+            printf '%s' "$line" | base64 -d > "$keydir/key$n"
+            if [ "$(wc -c < "$keydir/key$n")" -ne 64 ]; then
+              echo "::error::line $n of ZIPSIGN_PRIVATE_KEY is not one base64 zipsign private key (64 bytes)"
+              exit 1
+            fi
+          done <<< "$ZIPSIGN_PRIVATE_KEY"
+          keys=("$keydir"/key*)
+          archives=(dist/jubarte-*.tar.gz dist/jubarte-*.zip)
+          if [ "${#archives[@]}" -eq 0 ]; then
+            echo "::error::no release archives in dist/ to sign"
+            exit 1
+          fi
+          for a in "${archives[@]}"; do
+            case "$a" in
+              *.tar.gz) kind=tar ;;
+              *.zip) kind=zip ;;
+            esac
+            # In place, no --context: the context is the file name.
+            zipsign sign "$kind" "$a" "${keys[@]}"
+            # Every committed public key must accept every archive, so a
+            # secret that does not match keys/ stops the release here.
+            for pub in "${pubs[@]}"; do
+              zipsign verify "$kind" "$a" "$pub"
+            done
+            echo "signed ${a#dist/}"
+          done
+
       - name: PyPI sdist
         run: |
           set -euo pipefail
