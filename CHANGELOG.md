@@ -178,6 +178,16 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   `COMMENT_NOT_IN_BODY` (previously `UNSUPPORTED_STRUCTURE`) for a comment
   anchored in a header, footer or note. The capabilities manifest lists the
   four operations and `operations.comment_threads`.
+- `jubarte append a.docx b.docx [c.docx ...] -o out.docx`
+  (`append::append_documents`, Python `Document.append`, WASM
+  `appendDocuments`) puts each document after the previous one on a new
+  page (`--section-break continuous|none` joins them on the same page;
+  `--keep-sections` keeps each appended document's page setup, headers and
+  footers as a section of its own). Images, links, headers, styles, lists,
+  footnotes and endnotes come along under ids that do not collide; a style
+  whose type and name the first document already has takes its definition
+  there. Comments are not carried yet: they are removed and reported as
+  `COMMENTS_DROPPED`. `capabilities` lists `append`.
 
 ### Fixed
 

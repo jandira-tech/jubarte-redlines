@@ -491,6 +491,24 @@ fn report_jsonl(report_json: &str) -> PyResult<String> {
     Ok(report.to_jsonl())
 }
 
+/// Append B after A (`options_json` as `jubarte::append::AppendOptions`)
+/// → `(docx_bytes, warnings_json)`.
+#[pyfunction]
+fn append_json(
+    py: Python<'_>,
+    a: &[u8],
+    b: &[u8],
+    options_json: &str,
+) -> PyResult<(Py<PyBytes>, String)> {
+    let options: jubarte::append::AppendOptions = serde_json::from_str(options_json)
+        .map_err(|e| JubarteError::new_err(format!("invalid append options: {e}")))?;
+    let out = py
+        .detach(|| jubarte::append::append_documents(a, b, &options))
+        .map_err(err)?;
+    let warnings = serde_json::to_string(&out.warnings).map_err(err)?;
+    Ok((PyBytes::new(py, &out.docx).unbind(), warnings))
+}
+
 /// What this build can do (`runtime: "python"`).
 #[pyfunction]
 fn capabilities_json() -> String {
@@ -522,5 +540,6 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(diff_json, m)?)?;
     m.add_function(wrap_pyfunction!(redline_diff_json, m)?)?;
     m.add_function(wrap_pyfunction!(list_comments_json, m)?)?;
+    m.add_function(wrap_pyfunction!(append_json, m)?)?;
     Ok(())
 }

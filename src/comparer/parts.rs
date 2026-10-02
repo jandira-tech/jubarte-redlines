@@ -515,6 +515,105 @@ pub fn carry_relationship(
     ))
 }
 
+/// Carry every relationship the subtree `root` names (`r:id`, `r:embed`,
+/// `r:link`, ...) from `src_part` of `src` onto `dest_part` of `dest` through
+/// [`carry_relationship`], and rewrite each attribute to the carried id. A
+/// reference `src` cannot resolve loses its attribute. An XML part copied
+/// this way (a header, a chart) gets its own relationships carried too.
+pub fn carry_part_relationships(
+    dest: &mut PartFs,
+    dest_part: &str,
+    src: &PartFs,
+    src_part: &str,
+    dom: &mut Dom,
+    root: NodeId,
+) {
+    carry_subtree_relationships(dest, dest_part, src, src_part, dom, root, 0);
+}
+
+/// Nesting a carried part may reach: header to chart to embedding is three.
+const MAX_CARRY_DEPTH: usize = 8;
+
+fn carry_subtree_relationships(
+    dest: &mut PartFs,
+    dest_part: &str,
+    src: &PartFs,
+    src_part: &str,
+    dom: &mut Dom,
+    root: NodeId,
+    depth: usize,
+) {
+    let mut minted: std::collections::HashMap<String, Option<String>> =
+        std::collections::HashMap::new();
+    for el in dom.descendants_and_self(root, None) {
+        for (an, rid) in dom.attributes(el) {
+            if !S_RELATIONSHIP_ATTRIBUTE_NAMES.contains(&an) {
+                continue;
+            }
+            let suffix = dom
+                .name(el)
+                .and_then(|n| required_rel_type_suffix(n.local_name()));
+            let key = format!("{rid}\u{0}{}", suffix.unwrap_or(""));
+            let new_rid = match minted.get(&key) {
+                Some(id) => id.clone(),
+                None => {
+                    let carried = carry_with_own_relationships(
+                        dest, dest_part, src, src_part, &rid, suffix, depth,
+                    );
+                    minted.insert(key, carried.clone());
+                    carried
+                }
+            };
+            dom.set_attribute_value(el, &an, new_rid.as_deref());
+        }
+    }
+}
+
+/// [`carry_relationship`], then the same for the relationships of an XML
+/// part it newly copied.
+fn carry_with_own_relationships(
+    dest: &mut PartFs,
+    dest_part: &str,
+    src: &PartFs,
+    src_part: &str,
+    rid: &str,
+    suffix: Option<&str>,
+    depth: usize,
+) -> Option<String> {
+    let fits = |ty: &str| suffix.is_none_or(|s| ty.ends_with(s));
+    let before: std::collections::HashSet<String> = dest.parts().into_iter().collect();
+    let new_rid = carry_relationship(dest, dest_part, src, src_part, rid, fits)?;
+    let target = |pkg: &PartFs, part: &str, id: &str| {
+        let row = pkg.read_rels_for(part)?.items.iter().find(|r| r.id == id)?;
+        (row.target_mode.as_deref() != Some("External"))
+            .then(|| pkg.resolve_rel_target(part, &row.target))
+    };
+    if depth < MAX_CARRY_DEPTH
+        && let Some(new_part) = target(dest, dest_part, &new_rid)
+        && let Some(src_target) = target(src, src_part, rid)
+        && new_part.ends_with(".xml")
+        && !before.contains(&new_part)
+        && src.read_rels_for(&src_target).is_some()
+        && let Some(xml) = dest.part_string(&new_part)
+    {
+        let mut part_dom = Dom::new();
+        let doc = part_dom.parse_xdocument(&xml);
+        if let Some(part_root) = part_dom.root(doc) {
+            carry_subtree_relationships(
+                dest,
+                &new_part,
+                src,
+                &src_target,
+                &mut part_dom,
+                part_root,
+                depth + 1,
+            );
+            dest.set_part(&new_part, part_dom.serialize_document(doc).into_bytes());
+        }
+    }
+    Some(new_rid)
+}
+
 fn reconcile_one_part(dest: &mut PartFs, part: &str, a: &PartFs, b: &PartFs) {
     let Some(xml) = dest.part_string(part) else {
         return;

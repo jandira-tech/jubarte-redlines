@@ -505,6 +505,33 @@ enum Command {
         #[arg(long)]
         latest: bool,
     },
+    /// Append documents: B after A, then C after that, carrying images,
+    /// links, styles, lists and notes. Comments are not carried (warned).
+    #[command(after_help = "EXAMPLES:\n  \
+        jubarte append a.docx b.docx -o ab.docx\n  \
+        jubarte append cover.docx body.docx annex.docx -o all.docx --section-break continuous\n  \
+        jubarte append letter.docx exhibit.docx -o out.docx --keep-sections")]
+    Append {
+        /// The documents (.docx), in order.
+        #[arg(value_name = "FILE", num_args = 2.., required = true)]
+        files: Vec<PathBuf>,
+        /// Output path.
+        #[arg(short = 'o', long, value_name = "FILE")]
+        output: PathBuf,
+        /// What separates each document from the one before it.
+        #[arg(long, value_enum, default_value_t = SectionBreakArg::NextPage)]
+        section_break: SectionBreakArg,
+        /// Keep each appended document's final section (page size, margins,
+        /// headers, footers) as a section of its own.
+        #[arg(long)]
+        keep_sections: bool,
+        /// Overwrite the output file if it already exists.
+        #[arg(long)]
+        force: bool,
+        /// Print nothing on success.
+        #[arg(short, long)]
+        quiet: bool,
+    },
 }
 
 /// `jubarte debug` subcommands.
@@ -2432,6 +2459,20 @@ fn main() -> ExitCode {
         }) => {
             return exit_code(run_debug(&files, list, checks, part, grep, limit, context));
         }
+        Some(Command::Append {
+            files,
+            output,
+            section_break,
+            keep_sections,
+            force,
+            quiet,
+        }) => {
+            let options = jubarte::append::AppendOptions {
+                section_break: section_break.into(),
+                keep_sections,
+            };
+            return exit_code(run_append(&files, &output, &options, force, quiet));
+        }
         None => {}
     }
     let job = match cli.resolve() {
@@ -2443,6 +2484,56 @@ fn main() -> ExitCode {
         }
     };
     exit_code(run(&job))
+}
+
+/// `jubarte append --section-break`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+enum SectionBreakArg {
+    /// Each document starts on a new page.
+    NextPage,
+    /// Each document continues on the same page (a continuous section
+    /// break with --keep-sections).
+    Continuous,
+    /// Nothing between the documents (continuous with --keep-sections).
+    None,
+}
+
+impl From<SectionBreakArg> for jubarte::append::SectionBreak {
+    fn from(arg: SectionBreakArg) -> Self {
+        match arg {
+            SectionBreakArg::NextPage => Self::NextPage,
+            SectionBreakArg::Continuous => Self::Continuous,
+            SectionBreakArg::None => Self::None,
+        }
+    }
+}
+
+/// `jubarte append`: fold the documents left, `append(append(A, B), C)`.
+fn run_append(
+    files: &[PathBuf],
+    output: &Path,
+    options: &jubarte::append::AppendOptions,
+    force: bool,
+    quiet: bool,
+) -> Result<(), String> {
+    ensure_writable(output, force)?;
+    let mut paths = files.iter();
+    let first = paths.next().ok_or("append needs two documents")?;
+    let mut out = read_document(first)?;
+    for path in paths {
+        let next = read_document(path)?;
+        let appended = jubarte::append::append_documents(&out, &next, options)
+            .map_err(|e| format!("appending {}: {e}", path.display()))?;
+        for warning in &appended.warnings {
+            eprintln!("warning: {}: {warning}", path.display());
+        }
+        out = appended.docx;
+    }
+    std::fs::write(output, &out).map_err(|e| format!("writing {}: {e}", output.display()))?;
+    if !quiet {
+        println!("wrote {} ({} bytes)", output.display(), out.len());
+    }
+    Ok(())
 }
 
 #[cfg(feature = "self-update")]
@@ -2463,6 +2554,57 @@ fn run_self_update(_check: bool, _yes: bool, _version: Option<String>) -> Result
 mod tests {
     use super::*;
     use jubarte::convert::{MarkLines, RevisionStyle};
+
+    #[test]
+    fn append_parses_files_output_and_break() {
+        let cli = Cli::try_parse_from(["jubarte", "append", "a.docx", "b.docx", "-o", "out.docx"])
+            .unwrap();
+        let Some(Command::Append {
+            files,
+            output,
+            section_break,
+            keep_sections,
+            force,
+            quiet,
+        }) = cli.command
+        else {
+            panic!("not append");
+        };
+        assert_eq!(files.len(), 2);
+        assert_eq!(output, PathBuf::from("out.docx"));
+        assert_eq!(section_break, SectionBreakArg::NextPage);
+        assert!(!keep_sections && !force && !quiet);
+        let cli = Cli::try_parse_from([
+            "jubarte",
+            "append",
+            "a.docx",
+            "b.docx",
+            "c.docx",
+            "-o",
+            "o.docx",
+            "--section-break",
+            "none",
+            "--keep-sections",
+        ])
+        .unwrap();
+        let Some(Command::Append {
+            files,
+            section_break,
+            keep_sections,
+            ..
+        }) = cli.command
+        else {
+            panic!("not append");
+        };
+        assert_eq!(files.len(), 3);
+        assert_eq!(
+            jubarte::append::SectionBreak::from(section_break),
+            jubarte::append::SectionBreak::None
+        );
+        assert!(keep_sections);
+        assert!(Cli::try_parse_from(["jubarte", "append", "a.docx", "-o", "o.docx"]).is_err());
+        assert!(Cli::try_parse_from(["jubarte", "append", "a.docx", "b.docx"]).is_err());
+    }
 
     #[test]
     fn self_update_parses_check_yes_and_a_pinned_version() {

@@ -83,6 +83,10 @@ pub struct Operations {
     /// beside them.
     #[serde(default)]
     pub edit_keeps_revisions: bool,
+    /// One document after another, carrying images, links, styles, lists
+    /// and notes (`jubarte append`).
+    #[serde(default)]
+    pub append: bool,
 }
 
 /// Documented scope limits.
@@ -157,6 +161,7 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             page_ranges: true,
             comment_threads: true,
             edit_keeps_revisions: true,
+            append: true,
         },
         edit_plan_versions: vec![crate::inspect::SCHEMA_VERSION],
         edit_operations: [
@@ -223,6 +228,7 @@ mod tests {
         assert_eq!(json["operations"]["diff_render"], true);
         assert_eq!(json["operations"]["page_ranges"], true);
         assert_eq!(json["operations"]["edit_keeps_revisions"], true);
+        assert_eq!(json["operations"]["append"], true);
         assert_eq!(json["limits"]["reads_legacy_doc"], false);
         assert_eq!(json["limits"]["input"]["max_entries"], 10_000);
         assert_eq!(json["limits"]["input"]["max_xml_depth"], 256);

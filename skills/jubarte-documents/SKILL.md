@@ -278,6 +278,15 @@ documents as CriticMarkup (`{~~old~>new~~}`). `-o changes.docx` writes the
 changes as tracked changes. `jubarte edit` writes the edit's patch as
 `patch.diff` and prints it (`-q` prints nothing). See docs/MARKDOWN.md.
 
+`jubarte append a.docx b.docx -o ab.docx` puts B after A on a new page;
+images, links, styles, lists and notes come along; comments do not yet
+(warned as `COMMENTS_DROPPED`). More files fold left (`append a b c`);
+`--section-break continuous` joins on the same page and `--keep-sections`
+keeps B's page setup, headers and footers. A style A already has (same
+type and name) keeps A's look. Python: `Document.read("a.docx").append(
+Document.read("b.docx"))` returns `Appended(document, warnings)`; WASM:
+`appendDocuments(a, b, '{"section_break":"continuous"}')`.
+
 ## 5. Create a new document (docx-js)
 
 `docx` (npm) is preinstalled; write a script and `require('docx')`. Footguns:
