@@ -26722,7 +26722,7 @@ impl<'a> Layout<'a> {
             let mut saved_y = self.y;
             let saved_ml = self.page.margin_l;
             let saved_mr = self.page.margin_r;
-            let saved_top = self.at_page_top;
+            let mut saved_top = self.at_page_top;
             // A left float's text starts its distance past the drawn right
             // edge: the mode<15 pull moves the table left of fx (case46:
             // 246.6 + 7.2 = 253.8, as Word's 254.1).
@@ -26759,6 +26759,7 @@ impl<'a> Layout<'a> {
             {
                 self.new_page();
                 saved_y = self.y;
+                saved_top = self.at_page_top;
             }
             if pushes {
                 // Objects fixed to the page stay put (PR #247 review).
