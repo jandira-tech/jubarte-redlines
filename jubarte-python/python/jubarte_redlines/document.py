@@ -284,6 +284,10 @@ class Document:
         )
         return Rendered(pdf=pdf_bytes, pngs=tuple(pngs), report=_decode_render_report(report))
 
+    def inspect_json(self) -> str:
+        """The engine's ``inspect`` snapshot as JSON text, unchanged (``inspect`` decodes it)."""
+        return _native.inspect_json(self._data)
+
 
 def _pdf_options(options: PdfOptions | None) -> PdfOptions:
     if options is None:
