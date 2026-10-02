@@ -524,6 +524,10 @@ pub fn repair_document(docx: &[u8]) -> Result<RepairOutput, JsValue> {
     })
 }
 
+/// What this build can do, as JSON (`runtime: "wasm"`): PDF only in the full
+/// build, PNG never.
+///
+/// Mirrors `jubarte::capabilities::capabilities`.
 #[wasm_bindgen]
 pub fn capabilities() -> Result<String, JsValue> {
     let mut manifest = jubarte::capabilities::capabilities("wasm");

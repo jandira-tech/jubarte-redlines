@@ -251,11 +251,10 @@ fn a_paragraph_id_outside_words_range_is_masked_into_it() {
 fn a_cell_without_a_last_paragraph_gets_one() {
     let body = r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="100"/></w:tblGrid><w:tr><w:tc><w:tcPr/></w:tc></w:tr></w:tbl><w:p/>"#;
     let out = assert_repairs(body, "CELL_WITHOUT_PARAGRAPH");
-    let xml = part_string(&out, "word/document.xml").unwrap();
-    assert!(
-        xml.contains("<w:tcPr/><w:p/></w:tc>") || xml.contains("<w:tcPr/><w:p></w:p></w:tc>"),
-        "{xml}"
-    );
+    let xml = part_string(&out, "word/document.xml")
+        .unwrap()
+        .replace(" />", "/>");
+    assert!(xml.contains("<w:tcPr/><w:p/></w:tc>"), "{xml}");
 }
 
 #[test]

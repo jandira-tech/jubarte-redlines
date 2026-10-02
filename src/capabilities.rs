@@ -91,13 +91,20 @@ pub struct Operations {
     /// them (`fill_control`).
     #[serde(default)]
     pub content_controls: bool,
+    /// Word-validity findings beyond the schema (`jubarte validate`),
+    /// with the tracked-edit audit (`--original --author`).
+    #[serde(default)]
+    pub validate: bool,
+    /// The repairable findings fixed (`jubarte validate --repair`).
+    #[serde(default)]
+    pub repair: bool,
 }
 
 /// Documented scope limits.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Limits {
-    /// Stories `inspect` and `edit` address (`body` only: headers, footers,
-    /// notes and text boxes are reported in `summary` but not editable).
+    /// Stories `inspect` and `edit` address; text boxes are reported in
+    /// `summary` but not editable.
     pub stories: Vec<String>,
     /// Inserted run text is plain: no tabs or line breaks inside runs.
     pub plain_text_runs: bool,
@@ -167,6 +174,8 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             edit_keeps_revisions: true,
             append: true,
             content_controls: true,
+            validate: true,
+            repair: true,
         },
         edit_plan_versions: vec![crate::inspect::SCHEMA_VERSION],
         edit_operations: [
@@ -192,7 +201,10 @@ pub fn capabilities(runtime: &str) -> Capabilities {
         .map(|s| (*s).to_string())
         .collect(),
         limits: Limits {
-            stories: vec!["body".to_string()],
+            stories: ["body", "header", "footer", "footnotes", "endnotes"]
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect(),
             plain_text_runs: true,
             refuses_opaque_ranges: true,
             reads_legacy_doc: false,
@@ -244,7 +256,11 @@ mod tests {
         assert_eq!(json["limits"]["input"]["max_entries"], 10_000);
         assert_eq!(json["limits"]["input"]["max_xml_depth"], 256);
         let back: Capabilities = serde_json::from_value(json).unwrap();
-        assert_eq!(back.limits.stories, ["body"]);
+        assert_eq!(
+            back.limits.stories,
+            ["body", "header", "footer", "footnotes", "endnotes"]
+        );
+        assert!(back.operations.validate && back.operations.repair);
         assert_eq!(back.limits.input.max_part_bytes, 64 * 1024 * 1024);
     }
 }

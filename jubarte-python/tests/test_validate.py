@@ -47,7 +47,13 @@ def test_audit_tracked_names_an_untracked_edit_and_passes_a_tracked_one() -> Non
     assert "body:p:1" in findings[0].message
     tracked = original.compare(hand_edited, author="Reviewer")
     assert tracked.audit_tracked(original.to_bytes(), author="Reviewer") == ()
-    assert [f.code for f in tracked.audit_tracked(original, author="Someone Else")] == ["FOREIGN_AUTHOR"]
+    foreign = tracked.audit_tracked(original, author="Someone Else")
+    codes = {f.code for f in foreign}
+    assert "FOREIGN_AUTHOR" in codes, foreign
+    assert all("Reviewer" in f.message for f in foreign if f.code == "FOREIGN_AUTHOR"), foreign
+    # Reviewer's edit survives the rejection of Someone Else's changes, so the
+    # text still differs from the original.
+    assert "UNTRACKED_EDIT" in codes, foreign
 
 
 def test_validate_command_exit_codes_and_repair(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
