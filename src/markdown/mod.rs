@@ -32,7 +32,7 @@
 mod critic;
 mod diff;
 mod from_docx;
-mod package;
+pub(crate) mod package;
 mod patch;
 mod redline;
 mod unified;

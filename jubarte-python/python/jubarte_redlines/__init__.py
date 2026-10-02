@@ -56,7 +56,15 @@ def get_revisions(docx: bytes) -> list[dict[str, Any]]:
 
 
 # Additive ergonomic surface; low-level functions above keep their contracts.
-from .document import Document, EditPlanError, EditResult, capabilities, diff, read
+from .document import (
+    Appended,
+    Document,
+    EditPlanError,
+    EditResult,
+    capabilities,
+    diff,
+    read,
+)
 from .models import (
     Change,
     CompareOptions,
@@ -83,6 +91,7 @@ from .models import (
 )
 
 __all__ += [
+    "Appended",
     "Document",
     "read",
     "diff",

@@ -133,6 +133,24 @@ pub fn docx_with_sect_pr(body_xml: &str, extras: &[Part<'_>], sect_pr: &str) -> 
     zip.finish().unwrap().into_inner()
 }
 
+/// Rewrite one ZIP entry of `docx` with `bytes` (binary parts such as
+/// images, which [`docx_with`] can only write as text).
+pub fn replace_entry(docx: &[u8], name: &str, bytes: &[u8]) -> Vec<u8> {
+    let mut archive = zip::ZipArchive::new(Cursor::new(docx)).unwrap();
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    let opts = SimpleFileOptions::default();
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).unwrap();
+        let entry = file.name().to_string();
+        let mut data = Vec::new();
+        std::io::Read::read_to_end(&mut file, &mut data).unwrap();
+        zip.start_file(entry.as_str(), opts).unwrap();
+        zip.write_all(if entry == name { bytes } else { &data })
+            .unwrap();
+    }
+    zip.finish().unwrap().into_inner()
+}
+
 /// Read one part of a DOCX as a string.
 pub fn part_string(docx: &[u8], name: &str) -> Option<String> {
     let mut archive = zip::ZipArchive::new(Cursor::new(docx)).ok()?;

@@ -395,6 +395,52 @@ pub fn edit_report_jsonl(report_json: &str) -> Result<String, JsValue> {
     Ok(report.to_jsonl())
 }
 
+/// What [`appendDocuments`](append_documents) returns.
+#[wasm_bindgen]
+pub struct AppendOutput {
+    docx: Vec<u8>,
+    warnings: Vec<String>,
+}
+
+#[wasm_bindgen]
+impl AppendOutput {
+    /// The joined document.
+    #[wasm_bindgen(getter)]
+    pub fn docx(&self) -> Vec<u8> {
+        self.docx.clone()
+    }
+
+    /// What was not carried, as a JSON array of `CODE: message` strings
+    /// (`COMMENTS_DROPPED: ...`).
+    #[wasm_bindgen(getter)]
+    pub fn warnings(&self) -> String {
+        serde_json::to_string(&self.warnings).unwrap_or_else(|_| "[]".to_string())
+    }
+}
+
+/// Append B after A, carrying B's images, links, headers, styles, lists and
+/// notes. `optionsJson` is `{"section_break": "next_page" | "continuous" |
+/// "none", "keep_sections": bool}`, each optional.
+///
+/// Mirrors `jubarte::append::append_documents`.
+#[wasm_bindgen(js_name = appendDocuments)]
+pub fn append_documents(
+    a: &[u8],
+    b: &[u8],
+    options_json: Option<String>,
+) -> Result<AppendOutput, JsValue> {
+    let options: jubarte::append::AppendOptions = match options_json.as_deref() {
+        Some(json) if !json.trim().is_empty() => serde_json::from_str(json)
+            .map_err(|e| js_err(format!("invalid append options: {e}")))?,
+        _ => jubarte::append::AppendOptions::default(),
+    };
+    let out = jubarte::append::append_documents(a, b, &options).map_err(js_err)?;
+    Ok(AppendOutput {
+        docx: out.docx,
+        warnings: out.warnings,
+    })
+}
+
 /// What this build can do, as JSON (`runtime: "wasm"`): PDF only in the full
 /// build, PNG never.
 ///
@@ -410,6 +456,29 @@ pub fn capabilities() -> Result<String, JsValue> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn append_documents_puts_b_after_a_and_reads_options() {
+        let a = word("A first.\n");
+        let b = word("B second.\n");
+        let out = append_documents(&a, &b, None).unwrap();
+        assert_eq!(out.warnings(), "[]");
+        let text = jubarte::inspect::markdown(&out.docx()).unwrap();
+        assert!(
+            text.find("A first.").unwrap() < text.find("B second.").unwrap(),
+            "{text}"
+        );
+        let joined = append_documents(
+            &a,
+            &b,
+            Some(r#"{"section_break":"continuous"}"#.to_string()),
+        )
+        .unwrap();
+        let paragraphs = jubarte::inspect::paragraphs(&joined.docx()).unwrap();
+        assert!(paragraphs.iter().all(|p| !p.page_break));
+        let manifest: serde_json::Value = serde_json::from_str(&capabilities().unwrap()).unwrap();
+        assert_eq!(manifest["operations"]["append"], true);
+    }
 
     #[test]
     fn capabilities_report_the_wasm_runtime_without_png() {

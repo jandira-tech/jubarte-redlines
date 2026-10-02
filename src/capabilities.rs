@@ -66,6 +66,10 @@ pub struct Operations {
     /// plan carries its redline's.
     #[serde(default)]
     pub patch: bool,
+    /// One document after another, carrying images, links, styles, lists
+    /// and notes (`jubarte append`).
+    #[serde(default)]
+    pub append: bool,
 }
 
 /// Documented scope limits.
@@ -136,6 +140,7 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             markdown_to_docx: true,
             markdown_diff: true,
             patch: true,
+            append: true,
         },
         edit_plan_versions: vec![crate::inspect::SCHEMA_VERSION],
         edit_operations: [
@@ -185,6 +190,7 @@ mod tests {
         assert_eq!(json["runtime"], "cli");
         assert_eq!(json["operations"]["png"], true);
         assert_eq!(json["operations"]["selective_revisions"], true);
+        assert_eq!(json["operations"]["append"], true);
         assert_eq!(json["limits"]["reads_legacy_doc"], false);
         assert_eq!(json["limits"]["input"]["max_entries"], 10_000);
         assert_eq!(json["limits"]["input"]["max_xml_depth"], 256);

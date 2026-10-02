@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from collections.abc import Sequence
@@ -81,6 +82,22 @@ class EditResult:
     redline: Document
     report: EditReport
     diff: Diff
+
+
+SectionBreak = Literal["next_page", "continuous", "none"]
+_SECTION_BREAKS = ("next_page", "continuous", "none")
+
+
+@dataclass(frozen=True, slots=True)
+class Appended:
+    """``Document.append``'s result: the joined document and what was not carried.
+
+    ``warnings`` are ``CODE: message`` lines, such as
+    ``COMMENTS_DROPPED: 1 comment of B was not carried``.
+    """
+
+    document: Document
+    warnings: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,6 +304,34 @@ class Document:
     def inspect_json(self) -> str:
         """The engine's ``inspect`` snapshot as JSON text, unchanged (``inspect`` decodes it)."""
         return _native.inspect_json(self._data)
+
+    def append(
+        self,
+        other: Document,
+        *,
+        section_break: SectionBreak = "next_page",
+        keep_sections: bool = False,
+    ) -> Appended:
+        """Put ``other`` after this document, carrying its parts.
+
+        Images, links, headers, styles, lists and notes come along under ids
+        that do not collide; a style this document already has (same type and
+        name) keeps this document's look. ``section_break="continuous"`` or
+        ``"none"`` joins on the same page; ``keep_sections`` keeps ``other``'s
+        page setup, headers and footers as a section of its own. Comments are
+        not carried yet: they are dropped and reported in ``warnings``.
+        """
+        if not isinstance(other, Document):
+            raise TypeError("other must be a Document")
+        if not isinstance(section_break, str):
+            raise TypeError("section_break must be a string")
+        if section_break not in _SECTION_BREAKS:
+            raise ValueError(f"section_break must be one of {', '.join(_SECTION_BREAKS)}")
+        if not isinstance(keep_sections, bool):
+            raise TypeError("keep_sections must be a bool")
+        options = json.dumps({"section_break": section_break, "keep_sections": keep_sections})
+        data, warnings = _native.append_json(self._data, other._data, options)
+        return Appended(Document.from_bytes(data), tuple(json.loads(warnings)))
 
 
 def _pdf_options(options: PdfOptions | None) -> PdfOptions:
