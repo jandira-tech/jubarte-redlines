@@ -44391,6 +44391,67 @@ fn link_styles_takes_the_template_normal() {
 }
 
 #[test]
+fn link_styles_leaves_a_cell_the_table_style_size() {
+    // 12d245d664's diagram cells are Table Grid's 10pt in Word, not
+    // Normal's 12pt. Stock Normal.dotm's Normal is empty, so its 12pt is
+    // a docDefault, and a table style's size beats docDefaults. Word 16
+    // probes tsn (2026-10-02, compat 15, with and without
+    // overrideTableStyleFontSizeAndJustification): linkStyles over a file
+    // Normal of 11pt sets the cell at 10pt; a Normal with no size sets it
+    // at 10pt too; a Normal with its own 12pt keeps 12pt.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+            <w:sz w:val=\"24\"/></w:rPr></w:rPrDefault><w:pPrDefault/></w:docDefaults>\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>\
+            <w:pPr><w:spacing w:after=\"160\" w:line=\"278\" w:lineRule=\"auto\"/></w:pPr>\
+            <w:rPr><w:sz w:val=\"22\"/></w:rPr></w:style>\
+          <w:style w:type=\"table\" w:styleId=\"TableGrid\"><w:name w:val=\"Table Grid\"/>\
+            <w:pPr><w:spacing w:after=\"120\"/></w:pPr><w:rPr><w:sz w:val=\"20\"/></w:rPr></w:style></w:styles>";
+    let body = "<w:p><w:r><w:t>Pitchq Pitchq</w:t></w:r></w:p>\
+         <w:tbl><w:tblPr><w:tblStyle w:val=\"TableGrid\"/><w:tblW w:w=\"4000\" w:type=\"dxa\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>\
+           <w:tr><w:tc><w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r><w:t>Pitchq Pitchq</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+         <w:p/><w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    // The cell's word pitch over the body's: the ratio of their sizes.
+    let ratio = |link: &str| {
+        let settings = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">{link}\
+             <w:compat><w:compatSetting w:name=\"compatibilityMode\" w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat></w:settings>"
+        );
+        let pdf = docx_to_pdf(&hf_docx(
+            body,
+            &[
+                ("rIdSt", "styles", "styles.xml"),
+                ("rIdSet", "settings", "settings.xml"),
+            ],
+            &[
+                ("word/styles.xml", styles.to_string()),
+                ("word/settings.xml", settings),
+            ],
+        ))
+        .expect("linkStyles cell");
+        // Body first, then the cell: the same two words in each.
+        let xs = pdf_glyph_text_xys(&pdf, "Pitchq");
+        assert_eq!(xs.len(), 4, "{xs:?}");
+        (xs[3].0 - xs[2].0) / (xs[1].0 - xs[0].0)
+    };
+    let own = ratio("");
+    let linked = ratio("<w:linkStyles/>");
+    assert!(
+        (own - 1.0).abs() < 0.03,
+        "the file's own 11pt Normal holds in the cell, got {own}"
+    );
+    assert!(
+        (linked - 10.0 / 12.0).abs() < 0.03,
+        "under linkStyles the cell takes Table Grid's 10pt beside 12pt body text, got {linked}"
+    );
+}
+
+#[test]
 fn table_style_indent_and_jc_reach_cells_their_style_leaves_unset() {
     // 12d245d664's Table Grid carries pPr ind left=720 jc=both. Word 16
     // probes tsp t1-t3 (2026-10-02, compat 14 and 15, with and without
