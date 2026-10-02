@@ -1709,11 +1709,29 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
                 pdf_job(Some(&resolved), to)
             }
         },
-        (Format::Docx, Format::Md) => Err(
-            "Word to Markdown is not in this build yet; `jubarte text FILE` prints the body \
-             as Markdown with paragraph ids"
-                .to_string(),
-        ),
+        (Format::Docx, Format::Md) => {
+            let read = jubarte::markdown::docx_to_markdown(
+                &bytes,
+                &jubarte::markdown::MarkdownOptions {
+                    track_changes: markdown.track_changes.into(),
+                    extract_media: None,
+                },
+            )
+            .map_err(|e| format!("convert failed: {e}"))?;
+            match job.output {
+                Some(output) => {
+                    ensure_writable(output, job.force)?;
+                    std::fs::write(output, &read.markdown)
+                        .map_err(|e| format!("writing {}: {e}", output.display()))?;
+                    println!("wrote {} ({} bytes)", output.display(), read.markdown.len());
+                    Ok(())
+                }
+                None => {
+                    print!("{}", read.markdown);
+                    Ok(())
+                }
+            }
+        }
         (Format::Docx, Format::Docx) => {
             let resolve = match markdown.track_changes {
                 TrackChanges::Accept => jubarte::document_comparer::accept_revisions,

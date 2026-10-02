@@ -11,15 +11,19 @@ jubarte reads Markdown alongside Word documents:
 | Task | CLI | Library (`jubarte::markdown`) |
 | --- | --- | --- |
 | Markdown to Word, CriticMarkup as tracked changes | `jubarte convert draft.md` | `markdown_to_docx` |
+| Word to Markdown, tracked changes and comments as CriticMarkup | `jubarte convert FILE.docx -t md` | `docx_to_markdown` |
 | Accept or reject CriticMarkup in Markdown | `jubarte convert draft.md -t md --track-changes accept` | `resolve_critic` |
 | The changes between any two documents as a patch | `jubarte diff old new` | `patch_documents` |
 | Two Markdown documents as CriticMarkup (pandiff) | `jubarte diff old.md new.md --format critic` | `diff_markdown` |
 | Any two documents as a Word redline | `jubarte diff a b -o redline.docx`, `jubarte a b` | `redline` |
 | A Markdown edit applied to a Word document | `jubarte diff contract.docx edited.md -o redline.docx` | `apply_markdown` |
 
-`jubarte convert FILE.docx -t md` (Word to Markdown) is not in the CLI yet:
-`jubarte text FILE` prints the body as Markdown with paragraph ids, for edit
-plans, and `jubarte diff` prints a Word redline's changes as a patch.
+`jubarte convert FILE.docx -t md` prints the document as Markdown, with
+each tracked change and comment as CriticMarkup followed by its author and
+date (`-o FILE.md` writes it; `--track-changes accept` or `reject` writes
+the text after Word's Accept All or Reject All). Pictures become their alt
+text. `jubarte text FILE` prints the body with paragraph ids, for edit
+plans.
 
 ## Markdown to Word
 

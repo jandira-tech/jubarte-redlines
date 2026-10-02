@@ -215,15 +215,48 @@ fn convert_renders_markdown_to_pdf_with_the_changes_painted() {
 }
 
 #[test]
+fn convert_writes_word_back_as_critic_markup() {
+    let dir = tempfile::tempdir().unwrap();
+    seed(dir.path(), &[("draft.md", DRAFT)]);
+    ok(&jubarte(&["convert", "draft.md"], dir.path()));
+    let critic = "Payment is due in {~~30~>45~~}{>>Redline (1970-01-01T00:00:00Z)<<} days.\
+                  {>>Redline (1970-01-01T00:00:00Z): Agreed on the call.<<}\n";
+    assert_eq!(
+        ok(&jubarte(&["convert", "draft.docx", "-t", "md"], dir.path())),
+        critic
+    );
+    for (choice, text) in [("accept", "45"), ("reject", "30")] {
+        assert_eq!(
+            ok(&jubarte(
+                &[
+                    "convert",
+                    "draft.docx",
+                    "-t",
+                    "md",
+                    "--track-changes",
+                    choice
+                ],
+                dir.path()
+            )),
+            format!("Payment is due in {text} days.\n")
+        );
+    }
+    let stdout = ok(&jubarte(
+        &["convert", "draft.docx", "-o", "back.md"],
+        dir.path(),
+    ));
+    assert!(stdout.contains("wrote back.md"), "{stdout}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("back.md")).unwrap(),
+        critic
+    );
+}
+
+#[test]
 fn convert_refuses_what_it_cannot_do_yet() {
     let dir = tempfile::tempdir().unwrap();
     seed(dir.path(), &[("draft.md", DRAFT)]);
     ok(&jubarte(&["convert", "draft.md"], dir.path()));
-    let stderr = failed(&jubarte(&["convert", "draft.docx", "-t", "md"], dir.path()));
-    assert!(
-        stderr.contains("Word to Markdown is not in this build yet"),
-        "{stderr}"
-    );
     let stderr = failed(&jubarte(
         &["convert", "draft.docx", "-o", "again.docx"],
         dir.path(),
@@ -553,8 +586,11 @@ fn inputs_are_told_apart_by_extension_then_by_their_bytes() {
         dir.path(),
     ));
     std::fs::copy(dir.path().join("notes.docx"), dir.path().join("notes.bin")).unwrap();
-    let stderr = failed(&jubarte(&["convert", "notes.bin", "-t", "md"], dir.path()));
-    assert!(stderr.contains("Word to Markdown"), "{stderr}");
+    assert!(
+        ok(&jubarte(&["convert", "notes.bin", "-t", "md"], dir.path()))
+            .starts_with("Notes {++added++}"),
+        "a .bin holding a zip reads as Word"
+    );
     assert_eq!(
         ok(&jubarte(
             &["convert", "NOTES", "-t", "md", "--track-changes", "accept"],
