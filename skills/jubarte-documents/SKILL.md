@@ -125,7 +125,7 @@ matched exactly once. Exit 3 means the plan was refused: the report on stdout
 says which operation and why (`ANCHOR_NOT_FOUND`, `AMBIGUOUS_ANCHOR` with the
 match count, `OVERLAPPING_EDITS`, `UNSUPPORTED_STRUCTURE`, `UNSUPPORTED_IMAGE`, `STALE_SOURCE`,
 `EXISTING_REVISIONS`, `REVISION_CONFLICT`, `UNKNOWN_CHANGE`,
-`UNKNOWN_COMMENT`, `COMMENT_NOT_IN_BODY`, `INVALID_PLAN`, `INVALID_EDIT`,
+`UNKNOWN_COMMENT`, `COMMENT_NOT_IN_BODY`, `UNSUPPORTED`, `INVALID_PLAN`, `INVALID_EDIT`,
 `LOCKED_CONTROL`);
 fix the plan and rerun. Use `--dry-run`
 to see the report without writing.
@@ -163,7 +163,12 @@ TIFF file, `position` `before|after`, optional `content_type`, `width_emu`
 with 914400 per inch, `alt`; body paragraphs only), `page_setup` (no
 `paragraph`; `section` `last|all`, `page` `letter|a4|{"width_dxa",
 "height_dxa"}`, `orientation` `portrait|landscape`, `margins_dxa` with any
-of top, right, bottom, left, header, footer, 1440 per inch). `replace` and
+of top, right, bottom, left, header, footer, 1440 per inch), `settings` (no `paragraph`; any of
+`track_revisions`, `update_fields`, `protection: {"edit":
+"trackedChanges|readOnly|comments|forms|none", "enforcement": true}`;
+written into the clean copy and the redline alike, one per plan; a
+protection `password` is refused with `UNSUPPORTED`, and protection without
+one is Word's "enforce without password", which any user can turn off). `replace` and
 `insert` take an optional `format` (`bold`/`italic`/`underline`/`highlight`,
 `font`, `size_pt`, `color` as `FF0000` or `auto`, `strike`, `caps`) that
 applies to the new text only. `replace` takes `"whole": true` to show

@@ -987,6 +987,30 @@ class EditPlan:
             raise ValueError("page_setup needs page, orientation or margins_dxa")
         return self._with(_with_optional(op, id=id))
 
+    def settings(
+        self,
+        *,
+        track_revisions: bool | None = None,
+        update_fields: bool | None = None,
+        protection: dict[str, object] | None = None,
+        id: str | None = None,
+    ) -> EditPlan:
+        """Set ``w:trackRevisions``, ``w:updateFields`` and
+        ``w:documentProtection`` (``{"edit": "readOnly|comments|trackedChanges|forms|none",
+        "enforcement": True}``) in the clean copy and the redline; ``None``
+        leaves a setting alone, ``False`` removes it. One per plan."""
+        op: dict[str, object] = {"kind": "settings"}
+        for key, value in (
+            ("track_revisions", track_revisions),
+            ("update_fields", update_fields),
+            ("protection", protection),
+        ):
+            if value is not None:
+                op[key] = value
+        if len(op) == 1:
+            raise ValueError("settings needs track_revisions, update_fields or protection")
+        return self._with(_with_optional(op, id=id))
+
     def to_dict(self) -> dict[str, object]:
         """The wire form."""
         wire: dict[str, object] = {"schema_version": 1, "author": self.author}

@@ -294,6 +294,13 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   code that builds these `OperationKind` variants with struct literals
   must add `occurrence: None`.
 
+- The `settings` edit operation sets `trackRevisions`, `updateFields` and
+  `documentProtection` (`edit`, `enforcement`) in the clean copy and the
+  redline alike, each at its place in the `CT_Settings` sequence, creating
+  the settings part when the document has none; `false` removes a setting
+  and `edit: none` removes protection. A protection password is refused
+  (`UNSUPPORTED`). Python: `EditPlan.settings()`.
+
 ### Fixed
 
 - A line ended by a `w:br` keeps its break when the paragraph reflows

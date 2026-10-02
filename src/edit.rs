@@ -470,6 +470,22 @@ pub enum OperationKind {
         /// Margins to change, in twentieths of a point.
         margins_dxa: Margins,
     },
+    /// Set document settings in the clean copy and the redline alike (they
+    /// are not revisions): `track_revisions` and `update_fields` add the
+    /// element when true and remove it when false; `protection` writes
+    /// `w:documentProtection` (`edit: none` removes it). At most one per
+    /// plan; at least one field.
+    Settings {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// `w:trackRevisions`: Word tracks every later change.
+        track_revisions: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// `w:updateFields`: Word refreshes fields when it opens the file.
+        update_fields: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// `w:documentProtection`; a `password` is refused (`UNSUPPORTED`).
+        protection: Option<crate::settings::Protection>,
+    },
 }
 
 fn is_default_margins(margins: &Margins) -> bool {
@@ -1145,6 +1161,16 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
                 "alt",
             ],
             "page_setup" => &["section", "page", "orientation", "margins_dxa"],
+            "settings" => {
+                if map.contains_key("paragraph") {
+                    return Err(err(
+                        "INVALID_PLAN",
+                        None,
+                        format!("operations[{i}] (settings): settings take no paragraph"),
+                    ));
+                }
+                &["track_revisions", "update_fields", "protection"]
+            }
             other => {
                 return Err(err(
                     "INVALID_PLAN",
@@ -1238,6 +1264,7 @@ pub fn apply_plan(source: &[u8], plan: &EditPlan) -> Result<EditResult, EditErro
         error.outcomes[op].code = Some(error.code.clone());
         return Err(error);
     }
+    let (clean, redline) = apply_settings_ops(plan, clean, redline)?;
     let mut report = tx.report(true);
     report.paragraphs.to = crate::inspect::paragraphs(&clean)
         .map(|p| p.len())
@@ -1248,6 +1275,40 @@ pub fn apply_plan(source: &[u8], plan: &EditPlan) -> Result<EditResult, EditErro
         redline,
         report,
     })
+}
+
+/// Write the plan's `settings` operation (resolution allows one) into both
+/// outputs.
+fn apply_settings_ops(
+    plan: &EditPlan,
+    clean: Vec<u8>,
+    redline: Vec<u8>,
+) -> Result<(Vec<u8>, Vec<u8>), EditError> {
+    let Some(request) = plan.operations.iter().find_map(|op| match &op.kind {
+        OperationKind::Settings {
+            track_revisions,
+            update_fields,
+            protection,
+        } => Some(crate::settings::SettingsRequest {
+            track_revisions: *track_revisions,
+            update_fields: *update_fields,
+            protection: protection.clone(),
+        }),
+        _ => None,
+    }) else {
+        return Ok((clean, redline));
+    };
+    let set = |doc: Vec<u8>| -> Result<Vec<u8>, EditError> {
+        let mut pkg = crate::opc::PartFs::open(&doc)
+            .map_err(|e| err("INVALID_PACKAGE", None, e.to_string()))?;
+        let main = pkg
+            .main_document_part()
+            .unwrap_or_else(|| "word/document.xml".to_string());
+        crate::settings::apply_settings(&mut pkg, &main, &request);
+        pkg.to_zip()
+            .map_err(|e| err("INVALID_PACKAGE", None, e.to_string()))
+    };
+    Ok((set(clean)?, set(redline)?))
 }
 
 /// Resolve every operation without producing documents.
@@ -1756,6 +1817,19 @@ impl<'p> Transaction<'p> {
                         }
                     }
                 }
+                OperationKind::Settings {
+                    track_revisions,
+                    update_fields,
+                    protection,
+                } => self
+                    .resolve_settings(
+                        i,
+                        &id,
+                        *track_revisions,
+                        *update_fields,
+                        protection.as_ref(),
+                    )
+                    .map(|outcome| (Vec::new(), outcome)),
                 OperationKind::ReplyComment { .. }
                 | OperationKind::ResolveComment { .. }
                 | OperationKind::EditComment { .. }
@@ -1858,10 +1932,10 @@ impl<'p> Transaction<'p> {
             | OperationKind::FormatRun { paragraph, .. }
             | OperationKind::InsertFootnote { paragraph, .. }
             | OperationKind::InsertImage { paragraph, .. } => paragraph,
-            OperationKind::List { .. } => {
+            OperationKind::List { .. } | OperationKind::Settings { .. } => {
                 return Err(fail(
                     "INVALID_PLAN",
-                    "list resolves through resolve_list".into(),
+                    "list and settings resolve on their own".into(),
                     outcome,
                 ));
             }
@@ -2289,13 +2363,14 @@ impl<'p> Transaction<'p> {
             }
             OperationKind::Rewrite { .. }
             | OperationKind::List { .. }
+            | OperationKind::Settings { .. }
             | OperationKind::ReplyComment { .. }
             | OperationKind::ResolveComment { .. }
             | OperationKind::EditComment { .. }
             | OperationKind::DeleteComment { .. }
             | OperationKind::PageSetup { .. } => Err(fail(
                 "INVALID_PLAN",
-                "rewrite, list, page_setup and thread operations resolve on their own paths".into(),
+                "rewrite, list, page_setup, settings and thread operations resolve on their own paths".into(),
                 outcome,
             )),
             OperationKind::Watermark { .. } => Err(fail(
@@ -2701,6 +2776,80 @@ impl<'p> Transaction<'p> {
 
     /// `list`: every selector matches one body paragraph, once; `restart:
     /// false` finds the list to continue.
+    /// A `settings` operation edits no paragraph: it resolves to nothing and
+    /// [`apply_plan`] writes it into both outputs.
+    fn resolve_settings(
+        &self,
+        index: usize,
+        id: &str,
+        track_revisions: Option<bool>,
+        update_fields: Option<bool>,
+        protection: Option<&crate::settings::Protection>,
+    ) -> Result<EditOutcome, Box<(EditError, EditOutcome)>> {
+        let outcome = EditOutcome {
+            id: id.to_string(),
+            kind: String::new(),
+            status: String::new(),
+            paragraph: None,
+            matches: 0,
+            context: None,
+            comment_id: None,
+            code: None,
+            message: None,
+        };
+        let fail = |code: &str, msg: &str, outcome: EditOutcome| {
+            Box::new((err(code, Some(id), msg), outcome))
+        };
+        if self.plan.operations[..index]
+            .iter()
+            .any(|op| matches!(op.kind, OperationKind::Settings { .. }))
+        {
+            return Err(fail(
+                "OVERLAPPING_EDITS",
+                "one settings operation per plan; put every setting in it",
+                outcome,
+            ));
+        }
+        if track_revisions.is_none() && update_fields.is_none() && protection.is_none() {
+            return Err(fail(
+                "INVALID_EDIT",
+                "settings needs track_revisions, update_fields or protection",
+                outcome,
+            ));
+        }
+        if protection.is_some_and(|p| p.password.is_some()) {
+            return Err(fail(
+                "UNSUPPORTED",
+                "a protection password needs Word's legacy hash (cryptProviderType, cryptAlgorithmSid, spin count, salt), which jubarte does not write; protect without a password",
+                outcome,
+            ));
+        }
+        let mut parts = Vec::new();
+        if let Some(on) = track_revisions {
+            parts.push(format!("track_revisions={on}"));
+        }
+        if let Some(on) = update_fields {
+            parts.push(format!("update_fields={on}"));
+        }
+        if let Some(p) = protection {
+            let edit = serde_json::to_value(p.edit)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_string))
+                .unwrap_or_default();
+            let state = if p.enforcement {
+                "enforced"
+            } else {
+                "recorded"
+            };
+            parts.push(format!("protection={edit}/{state}"));
+        }
+        Ok(EditOutcome {
+            matches: 1,
+            context: Some(format!("{{settings {}}}", parts.join(" "))),
+            ..outcome
+        })
+    }
+
     fn resolve_list(
         &self,
         id: &str,
@@ -4258,6 +4407,7 @@ fn kind_name(kind: &OperationKind) -> &'static str {
         OperationKind::InsertFootnote { .. } => "insert_footnote",
         OperationKind::InsertImage { .. } => "insert_image",
         OperationKind::PageSetup { .. } => "page_setup",
+        OperationKind::Settings { .. } => "settings",
     }
 }
 

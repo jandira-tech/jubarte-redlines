@@ -321,3 +321,77 @@ fn order_tables_export_is_nonempty() {
         assert!(ranks.insert(*n, *r).is_none(), "duplicate pPr name {n}");
     }
 }
+
+/// Every `CT_Settings` child as `prefix:local`, depth first.
+fn settings_schema_order(schema: &Value) -> Vec<String> {
+    fn walk(p: &Value, out: &mut Vec<String>) {
+        if let Some(name) = p.get("Name").and_then(|n| n.as_str())
+            && p.get("Kind").is_none()
+        {
+            out.push(name.rsplit_once('/').map_or(name, |(_, r)| r).to_string());
+        }
+        for it in p
+            .get("Items")
+            .and_then(|i| i.as_array())
+            .into_iter()
+            .flatten()
+        {
+            walk(it, out);
+        }
+    }
+    let particle =
+        find_type_particle(schema, "w:CT_Settings/w:settings").expect("CT_Settings particle");
+    let mut out = Vec::new();
+    walk(particle, &mut out);
+    out
+}
+
+#[test]
+fn settings_order_is_the_schema_sequence() {
+    let raw = std::fs::read_to_string(schema_path()).unwrap();
+    let schema: Value = serde_json::from_str(&raw).unwrap();
+    let hand: Vec<String> = jubarte::settings::SETTINGS_ORDER
+        .iter()
+        .map(|(prefix, local)| format!("{prefix}:{local}"))
+        .collect();
+    assert_eq!(hand, settings_schema_order(&schema));
+}
+
+#[test]
+fn schema_oracle_bites_on_swapped_settings_order() {
+    let raw = std::fs::read_to_string(schema_path()).unwrap();
+    let schema: Value = serde_json::from_str(&raw).unwrap();
+    // Local names, without the second docId (w15), which the pairwise
+    // oracle would read as a cycle.
+    let schema_order: Vec<String> = settings_schema_order(&schema)
+        .iter()
+        .filter(|n| *n != "w15:docId")
+        .map(|n| {
+            n.rsplit_once(':')
+                .map_or(n.as_str(), |(_, l)| l)
+                .to_string()
+        })
+        .collect();
+    let mut hand: Vec<(&str, i32)> = jubarte::settings::SETTINGS_ORDER
+        .iter()
+        .filter(|(p, l)| !(*p == "w15" && *l == "docId"))
+        .enumerate()
+        .map(|(i, (_, l))| (*l, i as i32))
+        .collect();
+    assert_hand_agrees_with_schema("settings", &hand, &schema_order, &HashSet::new());
+    let a = hand
+        .iter()
+        .position(|(n, _)| *n == "trackRevisions")
+        .unwrap();
+    let b = hand
+        .iter()
+        .position(|(n, _)| *n == "documentProtection")
+        .unwrap();
+    let (ra, rb) = (hand[a].1, hand[b].1);
+    hand[a].1 = rb;
+    hand[b].1 = ra;
+    let swapped = std::panic::catch_unwind(|| {
+        assert_hand_agrees_with_schema("settings", &hand, &schema_order, &HashSet::new());
+    });
+    assert!(swapped.is_err(), "a swapped settings order must disagree");
+}

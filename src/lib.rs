@@ -75,6 +75,9 @@ pub mod opc;
 pub mod perf;
 /// Accept / reject tracked revisions across a package.
 pub mod revision_processor;
+/// Document settings an edit plan may set (`trackRevisions`, `updateFields`,
+/// `documentProtection`), written in `CT_Settings` order.
+pub mod settings;
 /// ISO Strict → Transitional package normalization.
 pub mod strict_translation;
 /// Unique id helpers for revision markup.
