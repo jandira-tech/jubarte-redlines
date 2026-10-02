@@ -27755,8 +27755,8 @@ fn mirror_margins_swap_left_and_right_on_even_pages() {
 }
 
 fn csc_punct_docx(val: Option<&str>) -> Vec<u8> {
-    // 24 ideographic commas (U+3001) then ASCII marker. Compressing
-    // full-width punctuation must pull EndCscX left vs doNotCompress.
+    // 24 ideographic commas (U+3001) then an ASCII marker whose x shows
+    // the commas' advance.
     let punct = "&#x3001;".repeat(24);
     let body = format!(
         "<w:p><w:r><w:t xml:space=\"preserve\">{punct}EndCscX</w:t></w:r></w:p>\
@@ -27779,10 +27779,13 @@ fn csc_run_end_x(pdf: &[u8]) -> f32 {
 }
 
 #[test]
-fn character_spacing_control_compresses_fullwidth_punctuation() {
-    // xml leftover: w:characterSpacingControl (ECMA-376 17.15.1.18).
-    // omitted / doNotCompress keep full advances; compressPunctuation
-    // (and compressPunctuationAndJapaneseKana) trim full-width punct.
+fn character_spacing_control_keeps_fullwidth_punctuation_whole() {
+    // Word 16 probes cp1/cp2 (2026-10-02, MS Mincho 12, compat 12/14/15):
+    // compressPunctuation and compressPunctuationAndJapaneseKana draw
+    // full-width punctuation at its full em on a left-aligned line, as
+    // doNotCompress does; only an adjacent closing-opening pair ("」「")
+    // narrows, in every mode. ECMA-376's half-width trim is not Word's
+    // (a4ebc0e89c's 、「」 are 9.45pt, the grid pitch, in Word's PDF).
     let compressed = docx_to_pdf(&csc_punct_docx(Some("compressPunctuation")))
         .expect("convert compressPunctuation");
     let plain = docx_to_pdf(&csc_punct_docx(Some("doNotCompress"))).expect("convert doNotCompress");
@@ -27801,26 +27804,22 @@ fn character_spacing_control_compresses_fullwidth_punctuation() {
             "{label} must paint the ASCII marker; text={text}"
         );
     }
-    let xc = csc_run_end_x(&compressed);
     let xd = csc_run_end_x(&plain);
-    let xo = csc_run_end_x(&omitted);
-    let xk = csc_run_end_x(&kana);
     assert!(
-        xc > 80.0 && xd > 80.0,
-        "11pt glyphs must paint past the left margin; xc={xc} xd={xd}"
+        xd > 80.0,
+        "11pt glyphs must paint past the left margin; xd={xd}"
     );
-    assert!(
-        xc < xd - 20.0,
-        "compressPunctuation must shorten full-width punctuation advance; xc={xc} xd={xd}"
-    );
-    assert!(
-        (xo - xd).abs() < 1.0,
-        "omitted characterSpacingControl is doNotCompress; xo={xo} xd={xd}"
-    );
-    assert!(
-        (xk - xc).abs() < 1.0,
-        "compressPunctuationAndJapaneseKana also compresses punctuation; xk={xk} xc={xc}"
-    );
+    for (pdf, label) in [
+        (&compressed, "compress"),
+        (&omitted, "omitted"),
+        (&kana, "kana"),
+    ] {
+        let x = csc_run_end_x(pdf);
+        assert!(
+            (x - xd).abs() < 0.5,
+            "{label} keeps the punctuation whole: x={x}, doNotCompress {xd}"
+        );
+    }
 }
 
 fn background_shape_docx(bg_color: Option<&str>, settings: &str) -> Vec<u8> {
@@ -46013,4 +46012,180 @@ fn a_rows_largest_bottom_margin_sets_every_cell() {
         (after_wrap - one_line).abs() < 0.3,
         "Bravo sits {after_wrap} under the wrapped line, Charlie {one_line} under Bravo"
     );
+}
+
+/// A 12pt Times New Roman paragraph whose run names `east_asia` (or no
+/// eastAsia font) at `half_points`.
+fn balanced_space_para(text: &str, east_asia: Option<&str>, half_points: u32) -> String {
+    let ea = east_asia.map_or(String::new(), |f| format!(" w:eastAsia=\"{f}\""));
+    format!(
+        "<w:p><w:r><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"{ea}/>\
+         <w:sz w:val=\"{half_points}\"/></w:rPr><w:t xml:space=\"preserve\">{text}</w:t></w:r></w:p>"
+    )
+}
+
+#[test]
+fn balanced_spaces_take_the_east_asia_faces_average_width() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; balanced_spaces_take_the_east_asia_faces_average_width measures Word's faces"
+        );
+        return;
+    }
+    // Word 16 probes sp1-sp5 (2026-10-02) under balanceSingleByteDoubleByteWidth:
+    // each of two spaces takes the eastAsia face's average width (MS Mincho
+    // 6pt at 12pt), a lone Latin space keeps TNR's 3pt, a run with no
+    // eastAsia font takes TNR's average (4.81pt), and an absent name takes
+    // it too (5.62pt at 14pt) unless the document runs MS Mincho at that
+    // size, even later on (9pt at 18pt).
+    let body = [
+        balanced_space_para("Aa  Bb Cc", Some("MS Mincho"), 24),
+        balanced_space_para("Gg  Hh", None, 24),
+        balanced_space_para("Jj  Kk", Some("PrbNoSuchFace"), 28),
+        balanced_space_para("Mm  Nn", Some("PrbNoSuchFace"), 36),
+        balanced_space_para("x  y", Some("MS Mincho"), 36),
+    ]
+    .concat()
+        + "<w:sectPr/>";
+    let flag = "<w:compat><w:balanceSingleByteDoubleByteWidth/>\
+        <w:compatSetting w:name=\"compatibilityMode\" w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat>";
+    let gaps = |settings: &str| -> Vec<f32> {
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, settings)).expect("balanced");
+        let x = |w: &str| pdf_glyph_text_xy(&pdf, w).expect(w).0;
+        vec![
+            x("Bb") - x("Aa"),
+            x("Cc") - x("Bb"),
+            x("Hh") - x("Gg"),
+            x("Kk") - x("Jj"),
+            x("Nn") - x("Mm"),
+        ]
+    };
+    let word = [26.0, 17.0, 24.28, 20.57, 48.0];
+    let got = gaps(flag);
+    assert!(
+        got.iter().zip(word).all(|(g, w)| (g - w).abs() < 0.1),
+        "balanced spaces at Word's {word:?}, got {got:?}"
+    );
+    // Without the flag every space keeps TNR's quarter em.
+    let plain = [20.0, 17.0, 20.66, 16.34, 39.0];
+    let got = gaps("<w:compat/>");
+    assert!(
+        got.iter().zip(plain).all(|(g, w)| (g - w).abs() < 0.1),
+        "plain spaces at {plain:?}, got {got:?}"
+    );
+    // sp8: a styles part whose defaults name no East Asian face turns
+    // Word's East Asian layout off, and the flag with it (6a0d50215e's
+    // AASB standard); w:useFELayout turns it back on (sp7 k5).
+    let styles = "<w:docDefaults><w:rPrDefault><w:rPr/></w:rPrDefault></w:docDefaults>";
+    let gap = |settings: &str| {
+        let pdf =
+            docx_to_pdf(&docx_with_settings_and_styles(&body, settings, styles)).expect("styled");
+        let x = |w: &str| pdf_glyph_text_xy(&pdf, w).expect(w).0;
+        x("Hh") - x("Gg")
+    };
+    let off = gap(flag);
+    assert!((off - 20.66).abs() < 0.1, "no East Asian layout, got {off}");
+    let fe = flag.replace("<w:compat>", "<w:compat><w:useFELayout/>");
+    let on = gap(&fe);
+    assert!((on - 24.28).abs() < 0.1, "useFELayout balances, got {on}");
+}
+
+#[test]
+fn an_absent_east_asia_face_borrows_only_its_own_kind() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; an_absent_east_asia_face_borrows_only_its_own_kind measures Word's faces"
+        );
+        return;
+    }
+    // Word 16 probe sp9 (2026-10-02, fresh session): an absent eastAsia
+    // name over Arial takes 16pt MS Mincho's 0.5em nowhere: its spaces keep
+    // Arial's average (7.07pt); over Times New Roman beside 14pt MS Gothic
+    // they keep TNR's (5.62pt); Arial beside 12pt MS Gothic takes 6pt.
+    let run = |t: &str, ascii: &str, ea: &str, sz: u32| {
+        format!(
+            "<w:p><w:r><w:rPr><w:rFonts w:ascii=\"{ascii}\" w:hAnsi=\"{ascii}\" w:eastAsia=\"{ea}\"/>\
+             <w:sz w:val=\"{sz}\"/></w:rPr><w:t xml:space=\"preserve\">{t}</w:t></w:r></w:p>"
+        )
+    };
+    let body = [
+        run("Aa  Bb", "Arial", "PrbAbsentFace", 32),
+        run("Cc  Dd", "Times New Roman", "PrbAbsentFace", 28),
+        run("Ee  Ff", "Arial", "PrbAbsentFace", 24),
+        run("x  y", "Times New Roman", "MS Mincho", 32),
+        run("x  y", "Arial", "MS Gothic", 28),
+        run("x  y", "Arial", "MS Gothic", 24),
+    ]
+    .concat()
+        + "<w:sectPr/>";
+    let settings = "<w:compat><w:balanceSingleByteDoubleByteWidth/>\
+        <w:compatSetting w:name=\"compatibilityMode\" w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat>";
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, settings)).expect("kinds");
+    let x = |w: &str| pdf_glyph_text_xy(&pdf, w).expect(w).0;
+    // Aa: Arial A .667 + a .556 at 16pt; Cc: TNR C .667 + c .444 at 14pt;
+    // Ee: Arial E .667 + e .556 at 12pt.
+    let got = [x("Bb") - x("Aa"), x("Dd") - x("Cc"), x("Ff") - x("Ee")];
+    let word = [19.57 + 2.0 * 7.07, 15.55 + 2.0 * 5.62, 14.68 + 2.0 * 6.0];
+    assert!(
+        got.iter().zip(word).all(|(g, w)| (g - w).abs() < 0.15),
+        "absent eastAsia spaces at Word's {word:?}, got {got:?}"
+    );
+}
+
+#[test]
+fn a_bracket_beside_another_bracket_takes_half_an_em() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; a_bracket_beside_another_bracket_takes_half_an_em measures Word's faces"
+        );
+        return;
+    }
+    // Word 16 probe cp3 (2026-10-02, MS Mincho 12, doNotCompress): a
+    // closing bracket before an opening or closing one, and an opening
+    // bracket before another opening one, advance 6pt; a bracket beside
+    // 。 keeps its 12pt. The pair spans two runs here, as in cp3's line C.
+    let run = |t: &str| {
+        format!(
+            "<w:r><w:rPr><w:rFonts w:eastAsia=\"MS Mincho\" w:hint=\"eastAsia\"/><w:sz w:val=\"24\"/></w:rPr><w:t>{t}</w:t></w:r>"
+        )
+    };
+    let body = format!(
+        "<w:p>{}{}</w:p><w:sectPr/>",
+        run("あ」"),
+        run("「い「「う））え」。お")
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("bracket pairs");
+    let xs = pdf_hex_glyph_xs(&pdf);
+    let gaps: Vec<f32> = xs.windows(2).map(|w| w[1] - w[0]).collect();
+    let word = [
+        12.0, 6.0, 12.0, 12.0, 6.0, 12.0, 12.0, 6.0, 12.0, 12.0, 12.0, 12.0,
+    ];
+    assert!(
+        gaps.len() == word.len() && gaps.iter().zip(word).all(|(g, w)| (g - w).abs() < 0.1),
+        "advances at Word's {word:?}, got {gaps:?}"
+    );
+}
+
+/// The x of each hex-coded glyph (`tx ty Td <..> Tj`), each text object's
+/// relative moves summed: the advances CJK text paints with.
+fn pdf_hex_glyph_xs(pdf: &[u8]) -> Vec<f32> {
+    let mut xs = Vec::new();
+    for stream in pdf_content_streams(pdf) {
+        let mut x = 0.0_f32;
+        for line in stream.lines() {
+            if line.contains("BT") {
+                x = 0.0;
+            }
+            let Some(td) = line.find(" Td <") else {
+                continue;
+            };
+            let mut nums = line[..td].split_whitespace().rev();
+            let _ty = nums.next();
+            if let Some(tx) = nums.next().and_then(|v| v.parse::<f32>().ok()) {
+                x += tx;
+                xs.push(x);
+            }
+        }
+    }
+    xs
 }

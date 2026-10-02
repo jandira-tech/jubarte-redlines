@@ -658,6 +658,9 @@ pub(crate) struct Face<'a> {
     paint_ascent: f32,
     /// An East Asian face (OS/2 code pages 932/936/949/950/1361).
     east_asian: bool,
+    /// OS/2 PANOSE says Latin text with serifs (MS Mincho, Times New
+    /// Roman), not sans (MS Gothic, Arial, Calibri).
+    pub serif: bool,
     /// OS/2 xAvgCharWidth over the em (half an em without one).
     pub avg_char_width: f32,
     pub bbox: [i16; 4],
@@ -817,6 +820,7 @@ impl<'a> Face<'a> {
             line_descent,
             paint_ascent,
             east_asian: east_asian_line.is_some(),
+            serif: panose_serif(&face),
             avg_char_width: avg_char_width(&face).map_or(0.5, |w| w / upem),
             bbox: [bbox.x_min, bbox.y_min, bbox.x_max, bbox.y_max],
             widths,
@@ -1286,6 +1290,32 @@ impl<'a> Fonts<'a> {
         let present =
             self.embedded_index(family, false, false).is_some() || catalogue_paints_family(family);
         present && !self.get(self.resolve(family, false, false)).east_asian
+    }
+
+    /// Whether `family` is an East Asian face: a CJK name, or a present
+    /// face whose cmap draws CJK. An absent ASCII name is not.
+    pub(crate) fn family_is_east_asian(&self, family: &str) -> bool {
+        if !family.is_ascii() || !cjk_file_stems(family).is_empty() {
+            return true;
+        }
+        let present =
+            self.embedded_index(family, false, false).is_some() || catalogue_paints_family(family);
+        present && self.get(self.resolve(family, false, false)).east_asian
+    }
+
+    /// An installed or embedded eastAsia face's average character width
+    /// as an em fraction (Word 16 probe sp2: MS Mincho and MS Gothic
+    /// 0.5em), the width a balanced space takes under
+    /// `w:balanceSingleByteDoubleByteWidth`; `None` for an absent name.
+    pub(crate) fn east_asia_avg_em(&self, family: &str) -> Option<f32> {
+        self.east_asia_face(family).map(|face| face.avg_char_width)
+    }
+
+    /// `family`'s face when installed or embedded.
+    pub(crate) fn east_asia_face(&self, family: &str) -> Option<&Face<'a>> {
+        let present =
+            self.embedded_index(family, false, false).is_some() || catalogue_paints_family(family);
+        present.then(|| self.get(self.resolve(family, false, false)))
     }
 
     pub(crate) fn get(&self, id: impl Into<FaceRef>) -> &Face<'a> {
@@ -2994,6 +3024,15 @@ fn cjk_code_pages(face: &ttf_parser::Face) -> bool {
 }
 
 /// OS/2 xAvgCharWidth in font units, when positive.
+/// PANOSE family type 2 (Latin text) with a serif style of 2 (cove)
+/// through 10 (triangle); 11-13 are the sans styles.
+fn panose_serif(face: &ttf_parser::Face) -> bool {
+    face.raw_face()
+        .table(ttf_parser::Tag::from_bytes(b"OS/2"))
+        .and_then(|os2| os2.get(32..34))
+        .is_some_and(|p| p[0] == 2 && (2..=10).contains(&p[1]))
+}
+
 fn avg_char_width(face: &ttf_parser::Face) -> Option<f32> {
     face.raw_face()
         .table(ttf_parser::Tag::from_bytes(b"OS/2"))
