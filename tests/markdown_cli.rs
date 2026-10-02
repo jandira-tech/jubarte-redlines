@@ -160,6 +160,21 @@ fn convert_accepts_rejects_or_ignores_the_markup() {
         )),
         "Payment is due in 30 days.\n"
     );
+    // Markdown to a Markdown file: refused over an existing one unless forced.
+    let args = ["convert", "draft.md", "-t", "md", "-o", "out.md"];
+    ok(&jubarte(
+        &[&args[..], &["--track-changes", "accept"]].concat(),
+        dir.path(),
+    ));
+    let out = || std::fs::read_to_string(dir.path().join("out.md")).unwrap();
+    assert_eq!(out(), "Payment is due in 45 days.\n");
+    let stderr = failed(&jubarte(&args, dir.path()));
+    assert!(stderr.contains("already exists"), "{stderr}");
+    ok(&jubarte(
+        &[&args[..], &["--no-critic", "--force"]].concat(),
+        dir.path(),
+    ));
+    assert_eq!(out(), DRAFT);
     // Word without tracked changes, and Word with the delimiters as text.
     ok(&jubarte(
         &[
@@ -563,6 +578,14 @@ fn inputs_are_told_apart_by_extension_then_by_their_bytes() {
     assert!(stderr.contains("must be UTF-8"), "{stderr}");
     let stderr = failed(&jubarte(&["convert", "plain.txt", "-f", "pdf"], dir.path()));
     assert!(stderr.contains("not inputs"), "{stderr}");
+    let stderr = failed(&jubarte(
+        &["diff", "plain.txt", "NOTES", "-f", "png"],
+        dir.path(),
+    ));
+    assert!(
+        stderr.contains("plain.txt: PDF and PNG are not inputs"),
+        "{stderr}"
+    );
 }
 
 #[test]

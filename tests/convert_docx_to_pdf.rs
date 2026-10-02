@@ -40956,6 +40956,46 @@ fn hangul_takes_the_quarter_em_gap_and_auto_space_de_off_drops_it() {
 }
 
 #[test]
+fn a_digit_takes_the_autospace_gaps_that_auto_space_dn_off_drops() {
+    if !word_dfonts_available() {
+        return;
+    }
+    // Word 16 probes dn1-dn3 (2026-10-01), Arial with MS Mincho at 12pt:
+    // "漢5漢" sets the digit at 87.00 and the next ideograph at 96.32 (a
+    // quarter em before it, half Arial's average width after it).
+    // w:autoSpaceDN="0" drops both gaps (84.00, 90.67) and leaves the gaps
+    // around a letter alone ("漢Q漢": Q at 87.00). The ideographs paint as
+    // CIDs, so a trailing "A" marks the second one: 12pt wide and a quarter
+    // em before A.
+    let xs = |text: &str, glyph: &str, dn_off: bool| {
+        let ppr = if dn_off {
+            "<w:pPr><w:autoSpaceDN w:val=\"0\"/></w:pPr>"
+        } else {
+            ""
+        };
+        let body = format!(
+            "<w:p>{ppr}<w:r><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:eastAsia=\"MS Mincho\"/>\
+             <w:sz w:val=\"24\"/></w:rPr><w:t>{text}A</w:t></w:r></w:p><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("digit autospace");
+        let glyph_x = pdf_glyph_text_xy(&pdf, glyph).expect("glyph").0;
+        let a = pdf_glyph_text_xy(&pdf, "A").expect("A").0;
+        (glyph_x, a - 12.0 - 3.0)
+    };
+    for (text, glyph, dn_off, word) in [
+        ("漢5漢", "5", false, (87.0, 96.32)),
+        ("漢5漢", "5", true, (84.0, 90.67)),
+        ("漢Q漢", "Q", true, (87.0, 98.98)),
+    ] {
+        let (x, next) = xs(text, glyph, dn_off);
+        assert!(
+            (x - word.0).abs() < 0.3 && (next - word.1).abs() < 0.3,
+            "{text} autoSpaceDN off={dn_off}: {glyph} at {x}, next ideograph at {next}; Word {word:?}"
+        );
+    }
+}
+
+#[test]
 fn a_character_style_toggles_its_paragraph_styles_bold_italic_strike_and_caps() {
     // Word 16 probes xor and tog (2026-10-01): a character style's w:b,
     // w:i, w:strike and w:caps toggle what the paragraph style set: both
