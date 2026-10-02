@@ -20598,13 +20598,30 @@ impl<'a> Layout<'a> {
             } else {
                 self.lifted_line_box(line, marker.filter(|_| line_i == 0), natural, style)
             };
-            if y - line_fit_need(natural, ascent, style, line_box) < self.body_floor {
+            let foot = if line_i + 1 == lines.len() {
+                self.bottom_border_foot(style)
+            } else {
+                0.0
+            };
+            if y - line_fit_need(natural, ascent, style, line_box) - foot < self.body_floor {
                 break;
             }
             y -= line_box;
             fit += 1;
         }
         (fit, y)
+    }
+
+    /// The space and width of the bottom border under a paragraph's last
+    /// line when the paragraph closes its border group: Word fits them
+    /// on the page with that line (Word 16 probes bd1001 b2/b3/b6: a line
+    /// with room for itself but not its border opens the next page;
+    /// fixtures 83ba58bf48's bordered "Z á p i s" heads page 2).
+    fn bottom_border_foot(&self, style: &ParaStyle) -> f32 {
+        style
+            .border_bottom
+            .filter(|_| !self.pbdr_joins.1)
+            .map_or(0.0, |(_, width, space)| space + width)
     }
 
     /// Word sizes a line by its tallest face: the single-line height and
@@ -21646,7 +21663,8 @@ impl<'a> Layout<'a> {
         let (joined_above, joined_below) = self.pbdr_joins;
         let bdr_top = style.border_top.filter(|_| !joined_above);
         let bdr_bottom = style.border_bottom.filter(|_| !joined_below);
-        let box_top = self.y;
+        let mut box_top = self.y;
+        let mut box_page = self.pages.len();
         if let Some((_, width, space)) = bdr_top {
             self.y -= space + width;
         }
@@ -21822,7 +21840,18 @@ impl<'a> Layout<'a> {
                 }
             }
             if !at_floor {
-                self.ensure(line_fit_need(natural, ascent, style, line_box));
+                let foot = if line_i + 1 == lines.len() {
+                    self.bottom_border_foot(style)
+                } else {
+                    0.0
+                };
+                self.ensure(line_fit_need(natural, ascent, style, line_box) + foot);
+            }
+            // Lines moved to a new page box their borders there (probe
+            // bd1001 b2: the rule under a moved line, not at the old y).
+            if self.pages.len() != box_page {
+                box_page = self.pages.len();
+                box_top = self.y;
             }
             if let Some(fill) = style.fill {
                 let fx = self.flow_left() + style.indent_left;

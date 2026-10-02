@@ -30003,6 +30003,47 @@ fn cell_sdt_content_keeps_its_place() {
     assert!(y("F") > y("S"), "sdt paragraph stays above the next one");
 }
 
+#[test]
+fn a_closing_bottom_border_must_fit_on_the_page_with_its_line() {
+    // Word 16 probes bd1001: 31 exact 20pt lines leave 28pt; an exact
+    // 27.5pt line fits alone (b4) but not with its 1pt + 0.75pt bottom
+    // border (b3), so Word opens page 2 with it and rules it there
+    // (100.56pt from the top). 83ba58bf48's bordered "Z á p i s" kept page
+    // 1 and pulled every later page a line short. Once moved, we also drew
+    // the rule at the line's old height.
+    let doc = |pbdr: &str| {
+        let line = |t: &str, h: u32, extra: &str| {
+            format!(
+                "<w:p><w:pPr>{extra}<w:spacing w:before=\"0\" w:after=\"0\" w:line=\"{h}\" \
+                 w:lineRule=\"exact\"/></w:pPr><w:r><w:t>{t}</w:t></w:r></w:p>"
+            )
+        };
+        let fill: String = (0..31).map(|_| line("Line", 400, "")).collect();
+        let body = fill + &line("Q", 550, pbdr) + &line("After", 400, "") + LETTER_SECT;
+        docx_to_pdf(&minimal_docx_body(&body)).expect("convert bordered page end")
+    };
+    let plain = doc("");
+    assert_eq!(page_of(&plain, "Q"), Some(0), "the line alone fits page 1");
+    let bordered = doc(
+        "<w:pBdr><w:bottom w:val=\"single\" w:sz=\"6\" w:space=\"1\" w:color=\"auto\"/></w:pBdr>",
+    );
+    assert_eq!(
+        page_of(&bordered, "Q"),
+        Some(1),
+        "with its border it opens page 2"
+    );
+    let pages = pdf_content_streams(&bordered);
+    assert!(
+        pdf_horiz_rule_ys(pages[0].as_bytes()).is_empty(),
+        "no rule left on page 1"
+    );
+    let rules = pdf_horiz_rule_ys(pages[1].as_bytes());
+    assert!(
+        rules.iter().any(|y| ((792.0 - y) - 100.9).abs() < 1.0),
+        "the rule sits under the moved line (Word 100.56-101.28): {rules:?}"
+    );
+}
+
 /// Page index holding `glyph` (text paints glyph by glyph: `(K) Tj`).
 fn page_of(pdf: &[u8], glyph: &str) -> Option<usize> {
     let needle = format!("({glyph}) Tj");

@@ -326,6 +326,14 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   restarts page numbering on the same parity as the previous page's number
   gets a blank page first, without headers or footers, so odd numbers stay on
   right-hand pages.
+- **A closing bottom border must fit with its line.** When a paragraph ends
+  its border group, Word fits its last line plus the border's space and
+  width above the body floor, or opens the next page with the line. Word 16
+  probes bd1001: 28pt left, an exact 27.5pt line fits alone, but not with a
+  1pt + 0.75pt border; a 26pt line fits with that border (27.75pt) but not
+  with a 4pt space. A border group split by the page break rules only under
+  its last paragraph, on the new page. 83ba58bf48's bordered "Z á p i s"
+  heads page 2 in Word.
 - **keepNext with an inline picture or box**, 146c6b6d. A `keepNext`
   paragraph moves to the next page with the following paragraph when that
   paragraph's first line holds an inline picture or text box that doesn't
