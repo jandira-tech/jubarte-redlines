@@ -617,6 +617,9 @@ fn with_pages<T>(
                 balance_spaces(&mut blocks, &fonts);
             }
             squeeze_bracket_pairs(&mut blocks);
+            if settings_flag(&pkg, "adjustLineHeightInTable") {
+                grid_table_cells(&mut blocks, page.grid_pitch);
+            }
             let display = number_footnote_refs(&mut blocks);
             resolve_cell_fields(&mut blocks);
             keep_opening_row_mark(&mut blocks);
@@ -870,6 +873,9 @@ struct ParaStyle {
     widow_control: bool,
     /// `w:snapToGrid`: off keeps the line off the docGrid linePitch.
     snap_to_grid: bool,
+    /// The docGrid linePitch a table cell's lines step on: its section's
+    /// under `w:adjustLineHeightInTable`, else 0 (`grid_table_cells`).
+    cell_grid: f32,
     line_mult: f32,
     /// `w:spacing w:lineRule="exact"` in points. Word uses this as the
     /// line box (sd_2517 Ttulo1 line=400 → 20pt), not size×(line/11).
@@ -1381,6 +1387,7 @@ impl Defaults {
                 bidi: false,
                 widow_control: true,
                 snap_to_grid: true,
+                cell_grid: 0.0,
                 line_mult: 276.0 / 240.0,
                 line_exact: None,
                 line_at_least: None,
@@ -1738,8 +1745,6 @@ struct SectionChrome {
     punct_squeeze: bool,
     /// `w:compat/w:ulTrailSpace` (xml leftover).
     ul_trail_space: bool,
-    /// `w:compat/w:spaceForUL` (xml leftover).
-    space_for_ul: bool,
     /// `w:compat/w:doNotExpandShiftReturn` (xml leftover).
     do_not_expand_shift_return: bool,
 }
@@ -6815,12 +6820,6 @@ fn settings_ul_trail_space(pkg: &PartFs) -> bool {
     settings_flag(pkg, "ulTrailSpace")
 }
 
-/// `w:compat/w:spaceForUL`: extra descent under underlined East Asian
-/// (ECMA-376 17.15.3.40). Omitted → off. Present adds max(3% of size, 2pt).
-fn settings_space_for_ul(pkg: &PartFs) -> bool {
-    settings_flag(pkg, "spaceForUL")
-}
-
 #[cfg(test)]
 mod settings_tests {
     use super::*;
@@ -6898,7 +6897,7 @@ mod settings_tests {
     fn compat_flags_are_read_inside_w_compat() {
         for local in [
             "ulTrailSpace",
-            "spaceForUL",
+            "adjustLineHeightInTable",
             "doNotExpandShiftReturn",
             "balanceSingleByteDoubleByteWidth",
         ] {
@@ -6959,19 +6958,10 @@ mod settings_tests {
     }
 }
 
-fn space_for_ul_extra(size: f32) -> f32 {
-    (size * 0.03).max(2.0)
-}
-
 /// `w:compat/w:doNotExpandShiftReturn` (ECMA-376 17.15.3.10).
 /// Present: a justified line ending at `w:br` is not expanded.
 fn settings_do_not_expand_shift_return(pkg: &PartFs) -> bool {
     settings_flag(pkg, "doNotExpandShiftReturn")
-}
-
-fn line_has_underlined_cjk(line: &[TextRun]) -> bool {
-    line.iter()
-        .any(|r| r.style.underline && r.text.chars().any(is_cjk))
 }
 
 /// `w:characterSpacingControl/@w:val` (ECMA-376 17.15.1.18).
@@ -7641,7 +7631,6 @@ fn section_chrome(
         mirror_margins: settings_mirror_margins(pkg),
         punct_squeeze: sheet.defaults.punct_squeeze,
         ul_trail_space: settings_ul_trail_space(pkg),
-        space_for_ul: settings_space_for_ul(pkg),
         do_not_expand_shift_return: settings_do_not_expand_shift_return(pkg),
     }
 }
@@ -9104,6 +9093,11 @@ fn cell_line_metrics(fonts: &Fonts, para: &CellPara, line: &[TextRun]) -> (f32, 
 
 fn cell_runs_line_box(fonts: &Fonts, runs: &[TextRun], style: &ParaStyle) -> (f32, f32) {
     let (size, face_id) = cell_runs_face(fonts, runs);
+    let grid = para_grid_pitch(style, style.cell_grid);
+    if grid > 0.5 {
+        let natural = fonts.get(face_id).single_line_pt(size.max(1.0));
+        return (size, grid_line_box(natural, style, grid));
+    }
     // A list marker only lifts the line, as in the body: the text keeps
     // its own part below the baseline (003416d6's TNR 12 numbers beside
     // Verdana 8 items step 12.9pt in Word, not TNR's 13.8).
@@ -9131,8 +9125,8 @@ fn cell_runs_line_box(fonts: &Fonts, runs: &[TextRun], style: &ParaStyle) -> (f3
     (size, para_line_box(fonts.get(face_id), size, style))
 }
 
-fn cell_para_height(fonts: &Fonts, para: &CellPara, wrap_w: f32, space_for_ul: bool) -> f32 {
-    let text_h = cell_para_text_h(fonts, para, wrap_w, space_for_ul);
+fn cell_para_height(fonts: &Fonts, para: &CellPara, wrap_w: f32) -> f32 {
+    let text_h = cell_para_text_h(fonts, para, wrap_w);
     let lead = cell_lead_picture(para);
     let side = cell_side_float(fonts, para, wrap_w);
     let mut images_h = 0.0_f32;
@@ -9157,33 +9151,27 @@ fn cell_para_height(fonts: &Fonts, para: &CellPara, wrap_w: f32, space_for_ul: b
 }
 
 /// A cell paragraph's text lines, without its pictures.
-fn cell_para_text_h(fonts: &Fonts, para: &CellPara, wrap_w: f32, space_for_ul: bool) -> f32 {
+fn cell_para_text_h(fonts: &Fonts, para: &CellPara, wrap_w: f32) -> f32 {
     if cell_para_is_image_only(para) {
         return picture_line_leading(fonts, para);
     }
     let line_box = cell_para_line_box(fonts, para).1;
-    let ((lines, _), _) = cell_para_wrap(fonts, para, wrap_w, space_for_ul);
+    let ((lines, _), _) = cell_para_wrap(fonts, para, wrap_w);
     let lines_h: f32 = lines
         .iter()
-        .map(|line| cell_line_h(fonts, para, line, space_for_ul))
+        .map(|line| cell_line_h(fonts, para, line))
         .sum();
     lines_h.max(line_box) + cell_lead_rise(fonts, para)
 }
 
-fn cell_line_h(fonts: &Fonts, para: &CellPara, line: &[TextRun], space_for_ul: bool) -> f32 {
-    let (size, _, line_box) = cell_line_metrics(fonts, para, line);
-    line_box + ul_line_extra(line, size, space_for_ul)
+fn cell_line_h(fonts: &Fonts, para: &CellPara, line: &[TextRun]) -> f32 {
+    cell_line_metrics(fonts, para, line).2
 }
 
 /// A cell paragraph's lines and (how many of the first run beside a side
 /// float, how far in they start): Word narrows each line whose top is
 /// above the float's bottom and sets the rest at full width.
-fn cell_para_wrap(
-    fonts: &Fonts,
-    para: &CellPara,
-    wrap_w: f32,
-    space_for_ul: bool,
-) -> (LaidCellPara, (usize, f32)) {
+fn cell_para_wrap(fonts: &Fonts, para: &CellPara, wrap_w: f32) -> (LaidCellPara, (usize, f32)) {
     let (first_w, rest_w) = cell_para_widths(fonts, para, wrap_w);
     let Some((shift, bottom)) = cell_side_float(fonts, para, wrap_w) else {
         return (
@@ -9202,7 +9190,7 @@ fn cell_para_wrap(
             .iter()
             .take_while(|line| {
                 let open = top < bottom - 0.01;
-                top += cell_line_h(fonts, para, line, space_for_ul);
+                top += cell_line_h(fonts, para, line);
                 open
             })
             .count();
@@ -9370,16 +9358,6 @@ fn cell_image_wh(img: &LaidImage) -> (f32, f32) {
     (img.w.max(1.0), img.h.max(1.0))
 }
 
-/// `w:spaceForUL` descent under an underlined East Asian line (cells and
-/// notes; `emit_runs` adds the same to body lines).
-fn ul_line_extra(line: &[TextRun], size: f32, space_for_ul: bool) -> f32 {
-    if space_for_ul && line_has_underlined_cjk(line) {
-        space_for_ul_extra(size)
-    } else {
-        0.0
-    }
-}
-
 /// Removes the break that ends a paragraph's text, with the paragraph's
 /// spacing after: the empty line it leaves holds only the end mark.
 fn drop_trailing_break(para: &mut CellPara) {
@@ -9397,7 +9375,7 @@ fn drop_trailing_break(para: &mut CellPara) {
     para.style.after = 0.0;
 }
 
-fn cell_content_height(fonts: &Fonts, cell: &TableCell, col_w: &[f32], space_for_ul: bool) -> f32 {
+fn cell_content_height(fonts: &Fonts, cell: &TableCell, col_w: &[f32]) -> f32 {
     // An empty w:hideMark cell's end-of-cell mark does not size the row.
     let empty = cell.nested.is_empty()
         && cell
@@ -9430,7 +9408,6 @@ fn cell_content_height(fonts: &Fonts, cell: &TableCell, col_w: &[f32], space_for
                 hang_spaces: false,
             },
             wrap_w,
-            space_for_ul,
         )
     } else {
         // The empty paragraph that closes a cell right after a nested
@@ -9446,7 +9423,7 @@ fn cell_content_height(fonts: &Fonts, cell: &TableCell, col_w: &[f32], space_for
         let counted = cell.paras.len() - usize::from(closing);
         cell.paras[..counted]
             .iter()
-            .map(|p| cell_para_height(fonts, p, wrap_w, space_for_ul))
+            .map(|p| cell_para_height(fonts, p, wrap_w))
             .sum()
     };
     let closing = cell.paras.len()
@@ -9462,7 +9439,7 @@ fn cell_content_height(fonts: &Fonts, cell: &TableCell, col_w: &[f32], space_for
     let mut hung: Vec<(usize, f32)> = Vec::new();
     let mut nested_h: f32 = 0.0;
     for (k, b) in cell.nested.iter().enumerate() {
-        let h = nested_table_height(fonts, b, wrap_w, space_for_ul);
+        let h = nested_table_height(fonts, b, wrap_w);
         let Some((dy, ..)) = nested_float_beside(cell, k) else {
             nested_h += h;
             continue;
@@ -9475,7 +9452,7 @@ fn cell_content_height(fonts: &Fonts, cell: &TableCell, col_w: &[f32], space_for
         let at = cell.nested_at[k];
         let beside: f32 = cell.paras[at..closing.max(at)]
             .iter()
-            .map(|p| cell_para_height(fonts, p, wrap_w, space_for_ul))
+            .map(|p| cell_para_height(fonts, p, wrap_w))
             .sum();
         let over = (dy + h - after - beside).max(0.0);
         match hung.iter_mut().find(|(a, _)| *a == at) {
@@ -9535,7 +9512,7 @@ fn nested_float_beside(cell: &TableCell, k: usize) -> Option<(f32, Option<f32>, 
     empty.then_some((dy, page_x, col_x))
 }
 
-fn nested_table_height(fonts: &Fonts, block: &Block, avail: f32, space_for_ul: bool) -> f32 {
+fn nested_table_height(fonts: &Fonts, block: &Block, avail: f32) -> f32 {
     let Block::Table {
         cols,
         rows,
@@ -9547,9 +9524,7 @@ fn nested_table_height(fonts: &Fonts, block: &Block, avail: f32, space_for_ul: b
         return 0.0;
     };
     let col_w = resolved_col_widths(fonts, cols, rows, geom, avail);
-    let rows_h: f32 = table_row_heights(fonts, rows, &col_w, geom, space_for_ul)
-        .iter()
-        .sum();
+    let rows_h: f32 = table_row_heights(fonts, rows, &col_w, geom).iter().sum();
     // No tail under it: the cell's next paragraph starts at its bottom
     // edge, as after a body table (1e9dea9; 0107980d's header in Word).
     rows_h + style.after
@@ -9640,12 +9615,11 @@ fn table_row_heights(
     rows: &[Vec<TableCell>],
     col_w: &[f32],
     geom: &TableGeom,
-    space_for_ul: bool,
 ) -> Vec<f32> {
     let mut h: Vec<f32> = rows
         .iter()
         .enumerate()
-        .map(|(ri, row)| table_row_height_pt(fonts, row, col_w, geom, ri, space_for_ul))
+        .map(|(ri, row)| table_row_height_pt(fonts, row, col_w, geom, ri))
         .collect();
     for (ri, row) in rows.iter().enumerate() {
         for cell in row.iter().filter(|c| c.rowspan > 1) {
@@ -9653,7 +9627,7 @@ fn table_row_heights(
             // The span's rows carry their rules; the merged content needs
             // them too (000bf661's merged logo row is Word's 81.6pt, the
             // content 80.8 plus the table's top rule).
-            let need = cell_content_height(fonts, cell, col_w, space_for_ul)
+            let need = cell_content_height(fonts, cell, col_w)
                 + row_top_rule(row, geom, ri)
                 + row_bottom_rule(&rows[last], geom, last);
             let have: f32 = h[ri..=last].iter().sum();
@@ -9674,7 +9648,6 @@ fn table_row_height_pt(
     col_w: &[f32],
     geom: &TableGeom,
     ri: usize,
-    space_for_ul: bool,
 ) -> f32 {
     let spec = geom.row_min.get(ri).copied().unwrap_or(0.0);
     let exact = geom.row_exact.get(ri).copied().unwrap_or(false);
@@ -9687,7 +9660,7 @@ fn table_row_height_pt(
     let content = row
         .iter()
         .filter(|cell| cell.rowspan <= 1)
-        .map(|cell| cell_content_height(fonts, cell, col_w, space_for_ul))
+        .map(|cell| cell_content_height(fonts, cell, col_w))
         .fold(0.0_f32, f32::max);
     // An atLeast minimum is the text area: the cells' top and bottom
     // margins stand outside it (00afb3e6's 300-twip rows with 2pt tcMar
@@ -9785,7 +9758,6 @@ fn keep_next_follow_pt(
     avail: f32,
     block: &Block,
     grid_pitch: f32,
-    space_for_ul: bool,
     para_lines: usize,
 ) -> f32 {
     match block {
@@ -9794,7 +9766,7 @@ fn keep_next_follow_pt(
         } => {
             let col_w = resolved_col_widths(fonts, cols, rows, geom, avail);
             rows.first()
-                .map(|row| table_row_height_pt(fonts, row, &col_w, geom, 0, space_for_ul))
+                .map(|row| table_row_height_pt(fonts, row, &col_w, geom, 0))
                 .unwrap_or(0.0)
         }
         Block::Paragraph {
@@ -10520,6 +10492,34 @@ fn keep_opening_row_mark(blocks: &mut [Block]) {
     {
         for cell in row.iter_mut().filter(|c| !c.grid_skip) {
             cell.hide_mark = false;
+        }
+    }
+}
+
+/// `w:adjustLineHeightInTable`: a table cell's lines step on its section's
+/// docGrid as the body's do (Word 16 probes lg2 h1–h4, compat 14 and 15:
+/// TNR 10 cell lines step 15.6 and a 20pt one 26.88; without the flag
+/// they keep their natural 11.5). `pitch` is the first section's; each
+/// next-page section brings its own.
+fn grid_table_cells(blocks: &mut [Block], mut pitch: f32) {
+    for block in blocks {
+        match block {
+            Block::PageBreak {
+                next: Some(next), ..
+            } => pitch = next.page.grid_pitch,
+            Block::Table { rows, .. } => {
+                for cell in rows.iter_mut().flatten() {
+                    for para in &mut cell.paras {
+                        para.style.cell_grid = pitch;
+                    }
+                    for nested in &mut cell.nested {
+                        if let Some(block) = std::rc::Rc::get_mut(nested) {
+                            grid_table_cells(std::slice::from_mut(block), pitch);
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -18128,8 +18128,6 @@ struct HfChrome {
     punct_squeeze: bool,
     /// `w:compat/w:ulTrailSpace` (xml leftover).
     ul_trail_space: bool,
-    /// `w:compat/w:spaceForUL` (xml leftover).
-    space_for_ul: bool,
     /// `w:compat/w:doNotExpandShiftReturn` (xml leftover).
     do_not_expand_shift_return: bool,
 }
@@ -18145,7 +18143,6 @@ fn first_section_hf(
         return HfChrome {
             punct_squeeze: sheet.defaults.punct_squeeze,
             ul_trail_space: settings_ul_trail_space(pkg),
-            space_for_ul: settings_space_for_ul(pkg),
             do_not_expand_shift_return: settings_do_not_expand_shift_return(pkg),
             ..Default::default()
         };
@@ -18182,7 +18179,6 @@ fn first_section_hf(
         rev_bars_facing: settings_even_and_odd_headers(pkg),
         punct_squeeze: sheet.defaults.punct_squeeze,
         ul_trail_space: settings_ul_trail_space(pkg),
-        space_for_ul: settings_space_for_ul(pkg),
         do_not_expand_shift_return: settings_do_not_expand_shift_return(pkg),
     }
 }
@@ -19124,6 +19120,7 @@ fn first_para_align(dom: &Dom, root: NodeId) -> Align {
         bidi: false,
         widow_control: true,
         snap_to_grid: true,
+        cell_grid: 0.0,
         line_mult: 1.0,
         line_exact: None,
         line_at_least: None,
@@ -20240,8 +20237,6 @@ struct Layout<'a> {
     punct_squeeze: bool,
     /// `w:compat/w:ulTrailSpace`: underline trailing spaces even in cells.
     ul_trail_space: bool,
-    /// `w:compat/w:spaceForUL`: extra descent under underlined CJK.
-    space_for_ul: bool,
     /// `w:compat/w:doNotExpandShiftReturn`: do not justify a `w:br` line.
     do_not_expand_shift_return: bool,
     /// Current newspaper column (0-based) when `page.col_count` > 1.
@@ -20435,39 +20430,27 @@ fn chrome_pic_top(fonts: &Fonts, img: &LaidImage) -> f32 {
 }
 
 /// Header/footer band: its stacked lines plus its laid-out tables.
-fn chrome_band(
-    fonts: &Fonts,
-    runs: &[TextRun],
-    tables: &[ChromeTable],
-    avail: f32,
-    space_for_ul: bool,
-) -> f32 {
+fn chrome_band(fonts: &Fonts, runs: &[TextRun], tables: &[ChromeTable], avail: f32) -> f32 {
     let lines = if runs.is_empty() {
         0.0
     } else {
         chrome_line_pt(fonts, runs, avail)
     };
-    lines + chrome_tables_h(fonts, tables, avail, space_for_ul, None)
+    lines + chrome_tables_h(fonts, tables, avail, None)
 }
 
 /// Height of the part's laid-out tables (`before`: only those before or
 /// after its text).
-fn chrome_tables_h(
-    fonts: &Fonts,
-    tables: &[ChromeTable],
-    avail: f32,
-    space_for_ul: bool,
-    before: Option<bool>,
-) -> f32 {
+fn chrome_tables_h(fonts: &Fonts, tables: &[ChromeTable], avail: f32, before: Option<bool>) -> f32 {
     tables
         .iter()
         .filter(|t| before.is_none_or(|b| t.before_text == b))
         .filter_map(|t| t.block.as_deref())
-        .map(|b| table_rows_height(fonts, b, avail, space_for_ul))
+        .map(|b| table_rows_height(fonts, b, avail))
         .sum()
 }
 
-fn table_rows_height(fonts: &Fonts, block: &Block, avail: f32, space_for_ul: bool) -> f32 {
+fn table_rows_height(fonts: &Fonts, block: &Block, avail: f32) -> f32 {
     let Block::Table {
         cols, rows, geom, ..
     } = block
@@ -20475,9 +20458,7 @@ fn table_rows_height(fonts: &Fonts, block: &Block, avail: f32, space_for_ul: boo
         return 0.0;
     };
     let col_w = resolved_col_widths(fonts, cols, rows, geom, avail);
-    table_row_heights(fonts, rows, &col_w, geom, space_for_ul)
-        .iter()
-        .sum()
+    table_row_heights(fonts, rows, &col_w, geom).iter().sum()
 }
 
 /// `(ascent, line box)` of one header/footer line from its own largest
@@ -20681,9 +20662,9 @@ impl<'a> Layout<'a> {
         let header = hf.header;
         let footer = hf.footer;
         let avail = page.width - page.margin_l - page.margin_r;
-        let header_band = chrome_band(fonts, &header, &hf.header_tables, avail, hf.space_for_ul)
+        let header_band = chrome_band(fonts, &header, &hf.header_tables, avail)
             + chrome_images_h(fonts, &hf.header_images);
-        let footer_band = chrome_band(fonts, &footer, &hf.footer_tables, avail, hf.space_for_ul)
+        let footer_band = chrome_band(fonts, &footer, &hf.footer_tables, avail)
             + chrome_images_h(fonts, &hf.footer_images);
         // Word starts the body at max(w:top, w:header + header line).
         // comments-lots: top=46.8 sits inside the 10.5pt header (36+~12),
@@ -20759,7 +20740,6 @@ impl<'a> Layout<'a> {
             rev_bars_facing: hf.rev_bars_facing,
             punct_squeeze: hf.punct_squeeze,
             ul_trail_space: hf.ul_trail_space,
-            space_for_ul: hf.space_for_ul,
             do_not_expand_shift_return: hf.do_not_expand_shift_return,
             col_i: 0,
             col_top: None,
@@ -20823,7 +20803,6 @@ impl<'a> Layout<'a> {
         self.mirror_margins = next.mirror_margins;
         self.punct_squeeze = next.punct_squeeze;
         self.ul_trail_space = next.ul_trail_space;
-        self.space_for_ul = next.space_for_ul;
         self.do_not_expand_shift_return = next.do_not_expand_shift_return;
         self.margin_l0 = next.page.margin_l;
         self.margin_r0 = next.page.margin_r;
@@ -20951,13 +20930,8 @@ impl<'a> Layout<'a> {
         if !pushed {
             return;
         }
-        let rest = chrome_tables_h(
-            self.fonts,
-            &self.header_tables,
-            width,
-            self.space_for_ul,
-            None,
-        ) + chrome_images_h(self.fonts, &self.header_images);
+        let rest = chrome_tables_h(self.fonts, &self.header_tables, width, None)
+            + chrome_images_h(self.fonts, &self.header_images);
         self.body_top = self.body_top.max(y + rest);
     }
 
@@ -20969,7 +20943,6 @@ impl<'a> Layout<'a> {
             &self.header,
             &self.header_tables,
             self.page.width - self.page.margin_l - self.page.margin_r,
-            self.space_for_ul,
         ) + chrome_images_h(self.fonts, &self.header_images);
         self.body_top = if header_band <= 0.0 || self.page.top_exact {
             self.page.margin_t
@@ -21730,7 +21703,6 @@ impl<'a> Layout<'a> {
             &self.footer,
             &self.footer_tables,
             self.page.width - self.page.margin_l - self.page.margin_r,
-            self.space_for_ul,
         ) + chrome_images_h(self.fonts, &self.footer_images);
         // An empty footer reserves nothing: 001c1554 (footer 708, bottom
         // 426, no footer part) fills to the 21.3pt margin.
@@ -21784,10 +21756,6 @@ impl<'a> Layout<'a> {
             let lines = wrap_runs(self.fonts, &para.runs, measure, measure, false);
             let line_box = para_line_box(self.fonts.get(fid), size, &para.style);
             h += line_box * lines.len().max(1) as f32;
-            h += lines
-                .iter()
-                .map(|line| ul_line_extra(line, size, self.space_for_ul))
-                .sum::<f32>();
             h += para.style.after;
         }
         h.max(10.0)
@@ -21886,8 +21854,7 @@ impl<'a> Layout<'a> {
                         .resolve(&r.style.family, r.style.bold, r.style.italic)
                 });
                 let metrics = self.fonts.get(fid);
-                let line_box = para_line_box(metrics, size, &para.style)
-                    + ul_line_extra(line, size, self.space_for_ul);
+                let line_box = para_line_box(metrics, size, &para.style);
                 let ascent = metrics.ascent_pt(size);
                 y -= ascent;
                 self.paint_line_with_tabs(line, self.flow_left() + indent, y);
@@ -22627,16 +22594,6 @@ impl<'a> Layout<'a> {
             } else {
                 indent
             };
-            // Layout uses the authored point size so line boxes stay on
-            // the Word heading/body grid. Tf/advances use paint_size()
-            // (300dpi snap: 16→16.08). Snapping the line box dropped
-            // heading_3_center 97→73.
-            let size = line
-                .iter()
-                .chain(marker.filter(|_| line_i == 0))
-                .map(|r| r.style.size)
-                .fold(0.0_f32, f32::max);
-            let size = if size > 0.0 { size } else { 11.0 };
             let (natural, ascent) = self.line_face_metrics(line, marker.filter(|_| line_i == 0));
             if style.empty_toc_field && line.iter().all(|r| r.text.trim().is_empty()) {
                 // Mini 504 collapse-to-zero ITT-neg. Do not use ascent
@@ -22648,16 +22605,10 @@ impl<'a> Layout<'a> {
                 continue;
             }
             let grid = para_grid_pitch(style, self.page.grid_pitch);
-            let ul_extra = if self.space_for_ul && line_has_underlined_cjk(line) {
-                space_for_ul_extra(size)
-            } else {
-                0.0
-            };
             let line_box = if grid > 0.5 {
-                grid_line_box(natural + ul_extra, style, grid)
+                grid_line_box(natural, style, grid)
             } else {
                 self.lifted_line_box(line, marker.filter(|_| line_i == 0), natural, style)
-                    + ul_extra
             };
             // On a docGrid the text sits centred in its snapped box: 00d2ca27's
             // TNR 12 double lines on a 15.6pt grid start 8.7pt down.
@@ -23361,7 +23312,6 @@ impl<'a> Layout<'a> {
                 self.content_width(),
                 b,
                 self.page.grid_pitch,
-                self.space_for_ul,
                 lines,
             );
             let (before, after) = block_para_style(b).map_or((0.0, 0.0), |s| (s.before, s.after));
@@ -23422,7 +23372,6 @@ impl<'a> Layout<'a> {
                 self.content_width(),
                 b,
                 self.page.grid_pitch,
-                self.space_for_ul,
                 lines,
             );
             let Block::Paragraph { runs, style, .. } = b else {
@@ -25186,7 +25135,6 @@ impl<'a> Layout<'a> {
                 &self.footer,
                 &self.footer_tables,
                 self.content_width(),
-                self.space_for_ul,
             ) + chrome_images_h(self.fonts, &self.footer_images)
         };
         // Moved out and back (not cloned): the vector owns image bytes and
@@ -25209,7 +25157,6 @@ impl<'a> Layout<'a> {
                 self.fonts,
                 &self.header_tables,
                 self.content_width(),
-                self.space_for_ul,
                 Some(true),
             )
         } else {
@@ -27077,7 +27024,7 @@ impl<'a> Layout<'a> {
         // tblW dxa/pct is the preferred width (table_bookmark_end Tests 3–5
         // use pct 50ths). Grid-only tables still never stretch.
         let col_w = resolved_col_widths(self.fonts, cols, rows, geom, avail);
-        let row_h = table_row_heights(self.fonts, rows, &col_w, geom, self.space_for_ul);
+        let row_h = table_row_heights(self.fonts, rows, &col_w, geom);
         let used: f32 = col_w.iter().sum();
         // Tables joined to this one align as one, by the widest.
         let aligned = if self.nested_depth == 0 {
@@ -27401,14 +27348,7 @@ impl<'a> Layout<'a> {
                     next.0
                         .cells()
                         .iter()
-                        .map(|c| {
-                            cell_content_height(
-                                self.fonts,
-                                &c.split_at(1).0,
-                                &col_w,
-                                self.space_for_ul,
-                            )
-                        })
+                        .map(|c| cell_content_height(self.fonts, &c.split_at(1).0, &col_w))
                         .fold(0.0_f32, f32::max)
                         .min(next.1)
                 };
@@ -27524,8 +27464,7 @@ impl<'a> Layout<'a> {
                     let mut para_narrow = Vec::new();
                     let mut nlines = 0usize;
                     for para in &cell.paras {
-                        let ((lines, breaks), narrow) =
-                            cell_para_wrap(self.fonts, para, wrap_w, self.space_for_ul);
+                        let ((lines, breaks), narrow) = cell_para_wrap(self.fonts, para, wrap_w);
                         nlines += lines.len().max(1);
                         para_lines.push((lines, breaks));
                         para_narrow.push(narrow);
@@ -27556,9 +27495,7 @@ impl<'a> Layout<'a> {
                     let mut y_line = y_top - rule - inset;
                     if cell.valign_center || cell.valign_bottom {
                         let content =
-                            cell_content_height(self.fonts, cell, &col_w, self.space_for_ul)
-                                - cell.pad_t
-                                - cell.pad_b;
+                            cell_content_height(self.fonts, cell, &col_w) - cell.pad_t - cell.pad_b;
                         // The row's height counts its top and bottom rules;
                         // the content box does not (live Word: a bottom
                         // cell's last line sits level with its neighbour's).
@@ -27618,7 +27555,7 @@ impl<'a> Layout<'a> {
                         let lead = cell_lead_picture(para);
                         let narrow = para_narrow[pi];
                         let para_top = y_line;
-                        let text_h = cell_para_text_h(self.fonts, para, wrap_w, self.space_for_ul);
+                        let text_h = cell_para_text_h(self.fonts, para, wrap_w);
                         let mut float_bottom = 0.0_f32;
                         // Word joins consecutive cell paragraphs that share a
                         // pBdr into one box and draws the bottom edge once, on
@@ -27682,10 +27619,19 @@ impl<'a> Layout<'a> {
                             // An exact line sets its baseline as in the body
                             // (Word probe sbs1: a 20pt exact cell line's text
                             // sits where the body's does, not at its top).
+                            // On a docGrid the text sits centred in its
+                            // snapped box, as in the body.
+                            let face = self.fonts.get(face_id);
+                            let grid_pad =
+                                if para_grid_pitch(&para.style, para.style.cell_grid) > 0.5 {
+                                    ((line_box - face.single_line_pt(size.max(1.0))) / 2.0).max(0.0)
+                                } else {
+                                    0.0
+                                };
                             let ty = y_line
                                 - match para.style.line_exact {
                                     Some(_) => exact_baseline(line_box),
-                                    None => self.fonts.get(face_id).ascent_pt(size),
+                                    None => face.ascent_pt(size) + grid_pad,
                                 };
                             if ty < bottom {
                                 break;
@@ -27711,7 +27657,6 @@ impl<'a> Layout<'a> {
                                     color,
                                 });
                             }
-                            let line_box = line_box + ul_line_extra(&line, size, self.space_for_ul);
                             if line.iter().all(|r| r.text.trim().is_empty()) {
                                 y_line -= line_box;
                                 continue;
@@ -27960,8 +27905,7 @@ impl<'a> Layout<'a> {
         if keeps && rh <= page_room {
             return;
         }
-        let height =
-            |cell: &TableCell| cell_content_height(self.fonts, cell, col_w, self.space_for_ul);
+        let height = |cell: &TableCell| cell_content_height(self.fonts, cell, col_w);
         // The cells hold what fits between the row's top rule and the
         // table's bottom rule, which the cut part closes with (Word 16
         // probes fs2 2026-10-02: a 3pt rule stops the part 3pt sooner).
@@ -28015,8 +27959,7 @@ impl<'a> Layout<'a> {
         if room < 1.0 || row.iter().any(|c| c.rowspan > 1) {
             return None;
         }
-        let height =
-            |cell: &TableCell| cell_content_height(self.fonts, cell, col_w, self.space_for_ul);
+        let height = |cell: &TableCell| cell_content_height(self.fonts, cell, col_w);
         let (mut head, mut tail) = (Vec::new(), Vec::new());
         let (mut any_head, mut any_tail) = (false, false);
         let mut starved = false;
@@ -28073,8 +28016,7 @@ impl<'a> Layout<'a> {
                 } = &*t.nested[ti]
                 {
                     let inner_w = resolved_col_widths(self.fonts, cols, inner, geom, wrap_w);
-                    let heights =
-                        table_row_heights(self.fonts, inner, &inner_w, geom, self.space_for_ul);
+                    let heights = table_row_heights(self.fonts, inner, &inner_w, geom);
                     let mut used = 0.0;
                     let mut m = 0;
                     while m < heights.len() && used + heights[m] <= left {
@@ -28143,14 +28085,13 @@ impl<'a> Layout<'a> {
         left: f32,
         wrap_w: f32,
     ) -> Option<(CellPara, CellPara)> {
-        let ((lines, _), _) = cell_para_wrap(self.fonts, para, wrap_w, self.space_for_ul);
+        let ((lines, _), _) = cell_para_wrap(self.fonts, para, wrap_w);
         // The halves are wrapped again, so each keeps its w:br breaks.
         let rejoin = |range: std::ops::Range<usize>| rejoin_lines(&lines[range]);
         let mut used = para.style.before;
         let mut n = 0;
         while n < lines.len() {
-            let (size, _, line_box) = cell_line_metrics(self.fonts, para, &lines[n]);
-            let h = line_box + ul_line_extra(&lines[n], size, self.space_for_ul);
+            let h = cell_line_metrics(self.fonts, para, &lines[n]).2;
             if used + h > left {
                 break;
             }
@@ -28589,20 +28530,13 @@ impl<'a> Layout<'a> {
                 &self.footer,
                 &self.footer_tables,
                 self.content_width(),
-                self.space_for_ul,
             ) + chrome_images_h(self.fonts, &self.footer_images);
             let top = self.page.footer.max(0.0) + band;
             self.emit_chrome_boxes(&footer_boxes, top);
         }
         self.emit_chrome_images(true, false);
         let avail = self.content_width();
-        let head_before = chrome_tables_h(
-            self.fonts,
-            &self.header_tables,
-            avail,
-            self.space_for_ul,
-            Some(true),
-        );
+        let head_before = chrome_tables_h(self.fonts, &self.header_tables, avail, Some(true));
         // Chrome tables paint through emit_table, which marks body ink.
         let had_body = self.page_has_body;
         if !self.header_tables.is_empty() {
@@ -28747,13 +28681,7 @@ impl<'a> Layout<'a> {
             }
         }
         self.emit_chrome_images(false, false);
-        let foot_after = chrome_tables_h(
-            self.fonts,
-            &self.footer_tables,
-            avail,
-            self.space_for_ul,
-            Some(false),
-        );
+        let foot_after = chrome_tables_h(self.fonts, &self.footer_tables, avail, Some(false));
         if !self.footer_tables.is_empty() {
             let tables = self.footer_tables.clone();
             let mut top = self.page.footer.max(0.0) + foot_after;
@@ -28786,7 +28714,7 @@ impl<'a> Layout<'a> {
                 .take_while(|r| r.text == HF_LINE_BREAK)
                 .map(|r| hf_break_box(self.fonts, r) + r.para_gap)
                 .sum();
-            let before = chrome_tables_h(self.fonts, &tables, avail, self.space_for_ul, Some(true));
+            let before = chrome_tables_h(self.fonts, &tables, avail, Some(true));
             let mut top =
                 self.page.footer.max(0.0) + foot_after + (text_h - above).max(0.0) + before;
             for table in tables.iter().filter(|t| t.before_text) {

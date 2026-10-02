@@ -25,14 +25,18 @@ from .models import (
     EditOutcome,
     EditPlan,
     EditReport,
+    Finding,
     PdfOptions,
     RenderDiff,
     Rendered,
+    Repaired,
     Revision,
     Snapshot,
     _decode_changes,
     _decode_comments,
     _decode_diff,
+    _decode_findings,
+    _decode_findings_json,
     _decode_outcomes,
     _decode_page_diffs,
     _decode_render_report,
@@ -343,6 +347,37 @@ class Document:
     def inspect_json(self) -> str:
         """The engine's ``inspect`` snapshot as JSON text, unchanged (``inspect`` decodes it)."""
         return _native.inspect_json(self._data)
+    # -- validity ------------------------------------------------------------
+
+    def validate(self) -> tuple[Finding, ...]:
+        """Word-validity findings beyond the schema; an empty tuple is a pass.
+
+        A package the engine cannot read at all raises ``JubarteError``.
+        """
+        return _decode_findings_json(_native.validate_json(self._data))
+
+    def repair(self) -> Repaired:
+        """A copy with every repairable finding fixed, plus what was fixed and what remains."""
+        data, payload = _native.repair_json(self._data)
+        import json
+
+        parts = json.loads(payload)
+        return Repaired(
+            document=Document(data, self.name),
+            repaired=_decode_findings(parts["repaired"]),
+            remaining=_decode_findings(parts["remaining"]),
+        )
+
+    def audit_tracked(self, original: Document | bytes, *, author: str) -> tuple[Finding, ...]:
+        """Every text change against ``original`` must be a revision by ``author``.
+
+        Rejecting that author's changes must give ``original``'s text back;
+        a paragraph that still differs is an ``UNTRACKED_EDIT`` finding and
+        another author's change a ``FOREIGN_AUTHOR`` one. An empty tuple
+        means every edit is tracked.
+        """
+        before = original.to_bytes() if isinstance(original, Document) else original
+        return _decode_findings_json(_native.audit_tracked_json(before, self._data, author))
 
     def append(
         self,

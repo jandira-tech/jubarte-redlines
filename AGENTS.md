@@ -154,8 +154,9 @@ the error is what you initially thought because we get this wrong routinely.
   files that hold them), e.g. A against our reject and Word's. Build
   clones and variants from its findings instead of ad-hoc scripts.
 - Word-validity rules the validator misses become Ring-1 invariants in
-  `tests/common/validity.rs`, with a broken probe in
-  `tests/m_validity_ring1.rs`.
+  `src/validate.rs` (`ring1`, which `jubarte validate`, Python and WASM all
+  report), with a broken probe in `tests/m_validity_ring1.rs`;
+  `tests/common/validity.rs` only wraps `ring1` for the test gate.
 
 ## Licensing and provenance
 

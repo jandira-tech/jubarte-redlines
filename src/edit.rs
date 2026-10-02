@@ -29,11 +29,14 @@ use crate::inspect::{Opened, Piece, Projection, SCHEMA_VERSION, project_paragrap
 use crate::namespaces::W;
 use crate::xmllinq::{Dom, NodeId, XNamespace};
 
+mod controls;
 mod rewrite;
 mod structural;
 mod tracked;
 mod watermark;
 mod whole;
+
+pub use controls::ControlSelector;
 
 /// A versioned, portable set of operations against one document snapshot.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -361,6 +364,27 @@ pub enum OperationKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         /// Font family (default `Calibri`).
         font: Option<String>,
+    },
+    /// Fill one content control (`w:sdt`) in the body with exactly one of
+    /// `text`, `choice`, `checked` or `date`. The control keeps its
+    /// properties; its content becomes the value.
+    FillControl {
+        /// The control: `"body:sdt:N"`, `{"id"}`, `{"tag"}` or `{"alias"}`;
+        /// must match exactly one.
+        control: ControlSelector,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Plain text, for text, rich-text and combo-box controls.
+        text: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// A list item's value or display text, for drop-down and combo-box
+        /// controls; the display text is written.
+        choice: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Checkbox state.
+        checked: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// `YYYY-MM-DD`, for date controls; written in the control's format.
+        date: Option<String>,
     },
 }
 
@@ -969,6 +993,7 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
                 }
                 &["text", "color", "diagonal", "font"]
             }
+            "fill_control" => &["control", "text", "choice", "checked", "date"],
             other => {
                 return Err(err(
                     "INVALID_PLAN",
@@ -977,6 +1002,13 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
                 ));
             }
         };
+        if kind == "fill_control" && map.contains_key("paragraph") {
+            return Err(err(
+                "INVALID_PLAN",
+                None,
+                format!("operations[{i}] (fill_control): selects a control, not a paragraph"),
+            ));
+        }
         for key in map.keys() {
             if !COMMON.contains(&key.as_str()) && !allowed.contains(&key.as_str()) {
                 return Err(err(
@@ -1215,6 +1247,15 @@ enum Resolved {
         /// Paragraph holding the target comment's reference, when found.
         anchor: Option<usize>,
     },
+    FillControl {
+        /// Index into `Transaction::controls`.
+        control: usize,
+        /// The paragraphs it spans (or the one holding it).
+        paragraphs: Vec<usize>,
+        /// The control holds paragraphs rather than runs.
+        block: bool,
+        value: controls::FillValue,
+    },
 }
 
 /// What a thread operation does to an existing comment.
@@ -1280,6 +1321,10 @@ struct Transaction<'p> {
     reply_parents: BTreeMap<u32, u32>,
     /// The plan's watermark, written into the default headers at finish.
     watermark: Option<watermark::Spec>,
+    /// The body's content controls, `body:sdt:N` order.
+    controls: Vec<NodeId>,
+    /// What `inspect` reports for each of `controls`.
+    control_records: Vec<crate::inspect::ContentControl>,
 }
 
 /// The body, or a header, footer or notes part, parsed into the plan's DOM.
@@ -1415,6 +1460,8 @@ impl<'p> Transaction<'p> {
                 .to_uppercase()
         });
         let next_comment_id = existing_comment_ids(&opened).map_or(0, |max| u64::from(max) + 1);
+        let controls = crate::inspect::body_control_nodes(&opened.dom, opened.body);
+        let control_records = crate::inspect::collect_controls(&opened.dom, opened.body);
         let family = crate::comments::CommentFamily::load(&opened.pkg, &opened.main)
             .map_err(|m| err("INVALID_DOCUMENT", None, m))?;
         Ok(Self {
@@ -1443,6 +1490,8 @@ impl<'p> Transaction<'p> {
             family: Some(family),
             reply_parents: BTreeMap::new(),
             watermark: None,
+            controls,
+            control_records,
         })
     }
 
@@ -1503,6 +1552,22 @@ impl<'p> Transaction<'p> {
                         self.watermark = Some(spec);
                         (Vec::new(), outcome)
                     }),
+                OperationKind::FillControl {
+                    control,
+                    text,
+                    choice,
+                    checked,
+                    date,
+                } => self.resolve_fill_control(
+                    &id,
+                    &controls::FillRequest {
+                        control,
+                        text: text.as_deref(),
+                        choice: choice.as_deref(),
+                        checked: *checked,
+                        date: date.as_deref(),
+                    },
+                ),
                 other => self
                     .resolve_one(&id, other)
                     .map(|(resolved, outcome)| (vec![resolved], outcome)),
@@ -1590,6 +1655,13 @@ impl<'p> Transaction<'p> {
                 return Err(fail(
                     "INVALID_PLAN",
                     "watermark resolves through resolve_watermark".into(),
+                    outcome,
+                ));
+            }
+            OperationKind::FillControl { .. } => {
+                return Err(fail(
+                    "INVALID_PLAN",
+                    "fill_control resolves through resolve_fill_control".into(),
                     outcome,
                 ));
             }
@@ -1880,6 +1952,11 @@ impl<'p> Transaction<'p> {
             OperationKind::Watermark { .. } => Err(fail(
                 "INVALID_PLAN",
                 "watermark resolves through resolve_watermark".into(),
+                outcome,
+            )),
+            OperationKind::FillControl { .. } => Err(fail(
+                "INVALID_PLAN",
+                "fill_control resolves through resolve_fill_control".into(),
                 outcome,
             )),
             OperationKind::InsertParagraph {
@@ -2567,6 +2644,7 @@ impl<'p> Transaction<'p> {
                 }
                 Resolved::List { paras, .. } => vec![self.paragraph_story[paras[0]].0],
                 Resolved::Thread { stories, .. } => stories.clone(),
+                Resolved::FillControl { .. } => vec![0],
             })
             .collect()
     }
@@ -2700,6 +2778,7 @@ impl<'p> Transaction<'p> {
         }
         self.check_deletions_leave_valid_containers(&deleted)?;
         self.check_paragraph_ops(&deleted)?;
+        self.check_control_conflicts(&deleted)?;
         self.check_comment_ids_fit()?;
         self.check_thread_ops()?;
         let mut ranges: BTreeMap<usize, Vec<(usize, usize, usize)>> = BTreeMap::new();
@@ -2748,7 +2827,8 @@ impl<'p> Transaction<'p> {
                 | Resolved::FormatParagraph { .. }
                 | Resolved::MergeParagraphs { .. }
                 | Resolved::List { .. }
-                | Resolved::Thread { .. } => continue,
+                | Resolved::Thread { .. }
+                | Resolved::FillControl { .. } => continue,
             };
             if deleted.contains(&para) {
                 return Err(self.conflict(*i, "edits text of a deleted paragraph"));
@@ -2953,7 +3033,8 @@ impl<'p> Transaction<'p> {
                 Resolved::FormatParagraph { .. }
                 | Resolved::MergeParagraphs { .. }
                 | Resolved::InsertTable { .. }
-                | Resolved::List { .. } => false,
+                | Resolved::List { .. }
+                | Resolved::FillControl { .. } => false,
             })
             .count() as u64;
         if needed > 0 && self.next_comment_id + needed - 1 > u64::from(u32::MAX) {
@@ -3001,7 +3082,8 @@ impl<'p> Transaction<'p> {
                         | Resolved::MergeParagraphs { .. }
                         | Resolved::InsertTable { .. }
                         | Resolved::List { .. }
-                        | Resolved::Thread { .. } => None,
+                        | Resolved::Thread { .. }
+                        | Resolved::FillControl { .. } => None,
                     };
                     text.map(|t| (*i, t))
                 })
@@ -3156,6 +3238,8 @@ impl<'p> Transaction<'p> {
                 );
             }
         }
+        // 1c. Content control fills (text edits never reach control content).
+        self.apply_fills();
         // 2. Paragraph and table insertions (anchors are source paragraphs,
         // untouched by 1).
         let inserts: Vec<(usize, Resolved)> = self
@@ -3637,6 +3721,7 @@ fn kind_name(kind: &OperationKind) -> &'static str {
         OperationKind::InsertTable { .. } => "insert_table",
         OperationKind::List { .. } => "list",
         OperationKind::Watermark { .. } => "watermark",
+        OperationKind::FillControl { .. } => "fill_control",
     }
 }
 

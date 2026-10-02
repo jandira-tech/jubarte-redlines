@@ -18,10 +18,12 @@ files and exit codes. ``uvx jubarte-redlines`` runs it without installing.
     python -m jubarte_redlines changes redline.docx --json
     python -m jubarte_redlines reject redline.docx -o out.docx --id body:rev:12
     python -m jubarte_redlines capabilities --json
+    python -m jubarte_redlines validate redline.docx --original a.docx --author Legal
 
 Exit codes: 0 success, 1 error (I/O, engine, existing output), 2 usage, 3 edit
 plan refused (its per-operation report is on stdout; nothing was written), 5
-``diff-render`` found a page that differs.
+``diff-render`` found a page that differs. ``validate`` exits 2 when it has
+findings.
 """
 
 from __future__ import annotations
@@ -41,6 +43,7 @@ EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_PLAN_REFUSED = 3
 EXIT_PAGES_DIFFER = 5
+EXIT_FINDINGS = 2
 
 
 class CliError(Exception):
@@ -380,6 +383,37 @@ def cmd_reject(args: argparse.Namespace) -> int:
     return _resolution(args, accept=False)
 
 
+def _print_findings(findings: Sequence[object], as_json: bool) -> None:
+    for finding in findings:
+        row = asdict(finding)  # type: ignore[call-overload]
+        if as_json:
+            print(json.dumps(row, ensure_ascii=False))
+            continue
+        star = "*" if row["word_fatal"] else " "
+        print(f"{star} {row['code']}\t{row['part']}#{row['path']}\t{row['message']}")
+
+
+def cmd_validate(args: argparse.Namespace) -> int:
+    doc = _read(args.file)
+    findings: list[object] = []
+    if args.repair is not None:
+        _ensure_writable(args.repair, args.force)
+        repaired = doc.repair()
+        _write(args.repair, repaired.document.to_bytes())
+        findings.extend(repaired.remaining)
+        if not args.json:
+            print(f"repaired {len(repaired.repaired)} finding(s) into {args.repair}")
+    else:
+        findings.extend(doc.validate())
+    if args.original is not None:
+        findings.extend(doc.audit_tracked(_read(args.original), author=args.author))
+    _print_findings(findings, args.json)
+    if not args.json:
+        fatal = sum(1 for f in findings if asdict(f)["word_fatal"])  # type: ignore[call-overload]
+        print(f"{len(findings)} finding(s), {fatal} Word-fatal" if findings else "no findings")
+    return EXIT_FINDINGS if findings else EXIT_OK
+
+
 def cmd_capabilities(_args: argparse.Namespace) -> int:
     print(json.dumps(capabilities(), indent=2))
     return EXIT_OK
@@ -487,6 +521,14 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     p.add_argument("--no-overlay", action="store_true", help="skip the diff-page-NN.png overlays")
     p.add_argument("--force", action="store_true", help="overwrite files already in --out-dir")
     p.set_defaults(func=cmd_diff_render)
+    p = sub.add_parser("validate", help="Word-validity findings beyond the schema; exit 0 clean, 2 findings, 1 unreadable")
+    p.add_argument("file", type=Path)
+    p.add_argument("--json", action="store_true", help="one JSON object per finding")
+    p.add_argument("--repair", type=Path, metavar="FILE", help="write the repaired package here; remaining findings still exit 2")
+    p.add_argument("--original", type=Path, metavar="FILE", help="audit tracked edits: every text change against ORIGINAL must be a revision by --author")
+    p.add_argument("--author", metavar="NAME")
+    p.add_argument("--force", action="store_true", help="replace an existing --repair output")
+    p.set_defaults(func=cmd_validate)
 
     p = sub.add_parser("capabilities", help="what this build can do")
     p.add_argument("--json", action="store_true", help="(the output is JSON either way)")
@@ -497,6 +539,9 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the CLI; returns the exit code (``SystemExit`` only for usage errors)."""
     args = build_parser().parse_args(argv)
+    if args.command == "validate" and (args.original is None) != (args.author is None):
+        print("error: --original and --author go together", file=sys.stderr)
+        return 2
     try:
         return int(args.func(args))
     except CliError as exc:

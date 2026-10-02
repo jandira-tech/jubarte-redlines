@@ -87,13 +87,24 @@ pub struct Operations {
     /// and notes (`jubarte append`).
     #[serde(default)]
     pub append: bool,
+    /// `inspect` lists the body's content controls and edit plans fill
+    /// them (`fill_control`).
+    #[serde(default)]
+    pub content_controls: bool,
+    /// Word-validity findings beyond the schema (`jubarte validate`),
+    /// with the tracked-edit audit (`--original --author`).
+    #[serde(default)]
+    pub validate: bool,
+    /// The repairable findings fixed (`jubarte validate --repair`).
+    #[serde(default)]
+    pub repair: bool,
 }
 
 /// Documented scope limits.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Limits {
-    /// Stories `inspect` and `edit` address (`body` only: headers, footers,
-    /// notes and text boxes are reported in `summary` but not editable).
+    /// Stories `inspect` and `edit` address; text boxes are reported in
+    /// `summary` but not editable.
     pub stories: Vec<String>,
     /// Inserted run text is plain: no tabs or line breaks inside runs.
     pub plain_text_runs: bool,
@@ -162,6 +173,9 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             comment_threads: true,
             edit_keeps_revisions: true,
             append: true,
+            content_controls: true,
+            validate: true,
+            repair: true,
         },
         edit_plan_versions: vec![crate::inspect::SCHEMA_VERSION],
         edit_operations: [
@@ -181,12 +195,16 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             "insert_table",
             "list",
             "watermark",
+            "fill_control",
         ]
         .iter()
         .map(|s| (*s).to_string())
         .collect(),
         limits: Limits {
-            stories: vec!["body".to_string()],
+            stories: ["body", "header", "footer", "footnotes", "endnotes"]
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect(),
             plain_text_runs: true,
             refuses_opaque_ranges: true,
             reads_legacy_doc: false,
@@ -211,7 +229,7 @@ mod tests {
         assert_eq!(c.engine_version, env!("CARGO_PKG_VERSION"));
         assert_eq!(c.runtime, "rust");
         assert_eq!(c.edit_plan_versions, [1]);
-        assert_eq!(c.edit_operations.len(), 16);
+        assert_eq!(c.edit_operations.len(), 17);
         assert!(c.edit_operations.iter().any(|kind| kind == "rewrite"));
         assert!(
             c.edit_operations
@@ -219,6 +237,11 @@ mod tests {
                 .any(|kind| kind == "delete_comment")
         );
         assert!(c.operations.comment_threads);
+        assert_eq!(
+            c.edit_operations.last().map(String::as_str),
+            Some("fill_control")
+        );
+        assert!(c.operations.content_controls);
         assert!(c.operations.markdown_to_docx && c.operations.markdown_diff);
         let json: serde_json::Value = serde_json::from_str(&capabilities_json("cli")).unwrap();
         assert_eq!(json["runtime"], "cli");
@@ -233,7 +256,11 @@ mod tests {
         assert_eq!(json["limits"]["input"]["max_entries"], 10_000);
         assert_eq!(json["limits"]["input"]["max_xml_depth"], 256);
         let back: Capabilities = serde_json::from_value(json).unwrap();
-        assert_eq!(back.limits.stories, ["body"]);
+        assert_eq!(
+            back.limits.stories,
+            ["body", "header", "footer", "footnotes", "endnotes"]
+        );
+        assert!(back.operations.validate && back.operations.repair);
         assert_eq!(back.limits.input.max_part_bytes, 64 * 1024 * 1024);
     }
 }
