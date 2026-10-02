@@ -26,7 +26,7 @@ onto `ccr-17e4f046-849j1u` (PR #273). State per proposed change:
 | P21, P23 | done | `markup_simplifier.rs`, `builtin_styles.rs` |
 | P22 | half done | end-name checking is on and the whole repo corpus (819 packages) still passes; selecting parts by content type instead of extension was NOT done, because no engine path parses `.vml` parts as XML that I found (not exhaustively checked) |
 | Remaining `process_footnote_endnote` panics | done | `comparer/footnotes.rs`; breaking for exhaustive matches on `RectifyError` |
-| Python tests for the refusals | written (`jubarte-python/tests/test_document.py`), NOT YET RUN when this was committed (a wheel build was still compiling) | `jubarte-python` |
+| Python tests for the refusals | done: `jubarte-python/tests/test_document.py` passes, 17 tests, against a wheel built with `maturin develop` | `jubarte-python` |
 | P20 (signed self-update) | not started, orthogonal to the comparer | |
 | P6 (full settings redesign) | deferred | |
 
