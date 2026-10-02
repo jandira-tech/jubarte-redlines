@@ -1292,10 +1292,11 @@ impl<'a> Fonts<'a> {
         present && !self.get(self.resolve(family, false, false)).east_asian
     }
 
-    /// Whether `family` is an East Asian face: a CJK name, or a present
-    /// face whose cmap draws CJK. An absent ASCII name is not.
+    /// Whether `family` is an East Asian face: a name written in CJK or
+    /// one we know as CJK, or a present face whose code pages are East
+    /// Asian. An absent Latin name, accented or not, is not.
     pub(crate) fn family_is_east_asian(&self, family: &str) -> bool {
-        if !family.is_ascii() || !cjk_file_stems(family).is_empty() {
+        if family.chars().any(super::is_cjk_break_char) || !cjk_file_stems(family).is_empty() {
             return true;
         }
         let present =
@@ -3163,6 +3164,17 @@ fn sanitize_pdf_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_accented_latin_name_is_not_an_east_asian_face() {
+        // PR #304 review: a non-ASCII Latin family is no East Asian face,
+        // while a CJK name stays one even when absent (ee79137dd5's 標楷體).
+        let fonts = Fonts::new();
+        assert!(!fonts.family_is_east_asian("Café Prb Absent"));
+        assert!(fonts.family_is_east_asian("標楷體"));
+        assert!(fonts.family_is_east_asian("ＭＳ 明朝"));
+        assert!(!fonts.family_is_east_asian("Prb Absent"));
+    }
 
     #[test]
     fn a_non_breaking_hyphen_reads_as_a_hyphen_with_or_without_shaping() {
