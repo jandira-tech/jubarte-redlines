@@ -386,7 +386,7 @@ fn check_relationship_integrity(pkg: &PartFs, out: &mut Vec<Finding>) {
             }
         }
         // Scan for r:id / r:embed / r:link attributes (namespace-agnostic local).
-        for attr in ["r:id=\"", " r:id=\"", "r:embed=\"", "r:link=\""] {
+        for attr in ["r:id=\"", "r:embed=\"", "r:link=\""] {
             let mut rest = xml.as_str();
             while let Some(i) = rest.find(attr) {
                 let after = &rest[i + attr.len()..];
@@ -538,6 +538,23 @@ fn collect_ids(
 
 /// `(attribute, value)` pairs of `w14:paraId` / `w14:textId` values at or
 /// above Word's `0x80000000` bound, in `xml`.
+/// Every `w14:paraId` / `w14:textId` value in a part, parsed.
+fn para_id_values(xml: &str) -> Vec<u32> {
+    let mut found = Vec::new();
+    for attr in ["w14:paraId=\"", "w14:textId=\""] {
+        let mut rest = xml;
+        while let Some(i) = rest.find(attr) {
+            let after = &rest[i + attr.len()..];
+            let Some(end) = after.find('"') else { break };
+            if let Ok(n) = u32::from_str_radix(&after[..end], 16) {
+                found.push(n);
+            }
+            rest = &after[end + 1..];
+        }
+    }
+    found
+}
+
 fn out_of_range_para_ids(xml: &str) -> Vec<(&'static str, String)> {
     let mut found = Vec::new();
     for attr in ["w14:paraId=\"", "w14:textId=\""] {
@@ -547,7 +564,7 @@ fn out_of_range_para_ids(xml: &str) -> Vec<(&'static str, String)> {
             let Some(end) = after.find('"') else { break };
             let val = &after[..end];
             if let Ok(n) = u32::from_str_radix(val, 16)
-                && n >= 0x8000_0000
+                && (n >= 0x8000_0000 || n == 0)
             {
                 found.push((attr, val.to_string()));
             }
@@ -567,7 +584,9 @@ fn check_para_text_id_bounds(pkg: &PartFs, out: &mut Vec<Finding>) {
                 "PARA_ID_OUT_OF_RANGE",
                 &name,
                 "",
-                format!("{attr} value '{val}' >= 0x80000000 in '{name}' (id-paraid-overflow)"),
+                format!(
+                    "{attr} value '{val}' outside Word's range 1..0x7FFFFFFF (>= 0x80000000 or zero) in '{name}' (id-paraid-overflow)"
+                ),
             ));
         }
     }
@@ -1451,20 +1470,46 @@ fn drop_bookmarks_in_single_value_controls(dom: &mut Dom, root: NodeId) {
     }
 }
 
+/// Elements whose `r:id` the schema requires: without the relationship the
+/// element itself has to go, not just the attribute.
+const REQUIRES_RELATIONSHIP: [&str; 7] = [
+    "headerReference",
+    "footerReference",
+    "altChunk",
+    "attachedTemplate",
+    "contentPart",
+    "movie",
+    "subDoc",
+];
+
 /// Relationship attributes (`r:id`, `r:embed`, `r:link`, …) naming no
 /// relationship of the part are dropped, which is what stops Word's
-/// "unreadable content" repair.
+/// "unreadable content" repair. An element the schema gives no meaning
+/// without its relationship (a header reference, an altChunk, …) is removed
+/// whole.
 fn drop_dangling_relationship_attributes(dom: &mut Dom, root: NodeId, ids: &HashSet<String>) {
     let mut doomed: Vec<(NodeId, XName)> = Vec::new();
+    let mut removed: Vec<NodeId> = Vec::new();
     for el in dom.descendants_and_self(root, None) {
         for (name, value) in dom.attributes(el) {
             if name.namespace_name() == R::URI && !value.is_empty() && !ids.contains(&value) {
-                doomed.push((el, name));
+                let required = name.local_name() == "id"
+                    && dom
+                        .name(el)
+                        .is_some_and(|n| REQUIRES_RELATIONSHIP.contains(&n.local_name()));
+                if required {
+                    removed.push(el);
+                } else {
+                    doomed.push((el, name));
+                }
             }
         }
     }
     for (el, name) in doomed {
         dom.set_attribute_value(el, &name, None);
+    }
+    for el in removed {
+        dom.remove(el);
     }
 }
 
@@ -1521,14 +1566,30 @@ fn renumber_duplicate_revision_ids(dom: &mut Dom, root: NodeId) {
 /// comment parts) follows.
 fn renumber_out_of_range_para_ids(pkg: &mut PartFs) {
     let parts = xml_parts(pkg);
+    let mut used: HashSet<u32> = HashSet::new();
+    for name in &parts {
+        let Some(xml) = pkg.part_string(name) else {
+            continue;
+        };
+        used.extend(para_id_values(&xml));
+    }
     let mut map: HashMap<String, String> = HashMap::new();
     for name in &parts {
         let Some(xml) = pkg.part_string(name) else {
             continue;
         };
         for (_, old) in out_of_range_para_ids(&xml) {
-            let n = u32::from_str_radix(&old, 16).unwrap_or(0) & 0x7FFF_FFFF;
-            map.entry(old).or_insert_with(|| format!("{n:08X}"));
+            if map.contains_key(&old) {
+                continue;
+            }
+            // The masked value first; if that is zero or taken, the next free
+            // id upwards, wrapping inside Word's range.
+            let mut n = u32::from_str_radix(&old, 16).unwrap_or(0) & 0x7FFF_FFFF;
+            while n == 0 || used.contains(&n) {
+                n = (n + 1) & 0x7FFF_FFFF;
+            }
+            used.insert(n);
+            map.insert(old, format!("{n:08X}"));
         }
     }
     if map.is_empty() {
@@ -1609,11 +1670,30 @@ fn drop_orphan_comment_anchors(dom: &mut Dom, root: NodeId, defined: &HashSet<St
 
 // ── Tracked-edit audit ────────────────────────────────────────────────────
 
+/// The body's paragraphs followed by every story's (`header1:p:0`, ...).
+fn all_paragraphs(docx: &[u8]) -> Result<Vec<crate::inspect::Paragraph>, ValidateError> {
+    let mut all = crate::inspect::paragraphs(docx)?;
+    for story in crate::inspect::stories(docx)? {
+        all.extend(story.paragraphs);
+    }
+    Ok(all)
+}
+
+/// The part a `{story}:...` id lives in: `body` is the main document, any
+/// other story is `word/{story}.xml` (`header1`, `footnotes`, ...).
+fn story_part(id: &str) -> String {
+    match id.split(':').next().unwrap_or("body") {
+        "body" | "" => "word/document.xml".to_string(),
+        story => format!("word/{story}.xml"),
+    }
+}
+
 /// `validate.py --original --author` without an XSD: every visible-text
 /// difference between `original` and `edited` must sit in a revision by
 /// `author`. Rejecting that author's changes must give back `original`'s
-/// body text; any residue is an `UNTRACKED_EDIT` finding at its paragraph
-/// id, and a change by anyone else is a `FOREIGN_AUTHOR` finding.
+/// text, body and stories alike; any residue is an `UNTRACKED_EDIT` finding
+/// at its paragraph id, and a change by anyone else is a `FOREIGN_AUTHOR`
+/// finding.
 ///
 /// # Errors
 ///
@@ -1631,7 +1711,7 @@ pub fn audit_tracked(
     {
         out.push(Finding::new(
             "FOREIGN_AUTHOR",
-            "word/document.xml",
+            &story_part(&c.id),
             "",
             format!(
                 "{} by {}",
@@ -1647,9 +1727,10 @@ pub fn audit_tracked(
         ..ChangeFilter::default()
     };
     let reverted = reject_changes(edited, &filter)?;
-    // Paragraph-by-paragraph text: the same projection `jubarte text` prints.
-    let before = crate::inspect::paragraphs(original)?;
-    let after = crate::inspect::paragraphs(&reverted)?;
+    // Paragraph-by-paragraph text: the same projection `jubarte text` prints,
+    // body first, then every header, footer and notes story.
+    let before = all_paragraphs(original)?;
+    let after = all_paragraphs(&reverted)?;
     if before.len() != after.len() {
         out.push(Finding::new(
             "UNTRACKED_EDIT",
@@ -1667,7 +1748,7 @@ pub fn audit_tracked(
         if b.text != a.text {
             out.push(Finding::new(
                 "UNTRACKED_EDIT",
-                "word/document.xml",
+                &story_part(&a.id),
                 a.id.clone(),
                 format!(
                     "{} differs after rejecting {author}'s changes: {:?} vs {:?}",

@@ -9,7 +9,8 @@
 //! Word offer repair (dangling rels, duplicate revision ids, orphan comment
 //! anchors, …). Intentional broken probes live in `tests/m_validity_ring1.rs`.
 
-use jubarte::validate::{Finding, validate};
+use jubarte::opc::PartFs;
+use jubarte::validate::{Finding, ring1};
 
 /// Failures collected by the Ring-1 checks: one message per finding.
 #[derive(Debug, Default)]
@@ -34,17 +35,22 @@ pub fn assert_word_valid_package(bytes: &[u8]) {
     );
 }
 
-/// Run all Ring-1 checks without panicking (for probe tests). A package
-/// `validate` cannot read at all is one error naming why.
+/// Run all Ring-1 checks without panicking (for probe tests). Only the
+/// Ring-1 invariants gate here (`validate::ring1`); the `jubarte debug`
+/// triage leads `validate()` adds on top are not Word-validity rules. A
+/// package that cannot be opened at all is one error naming why.
 pub fn check_word_valid_package(bytes: &[u8]) -> ValidityReport {
-    match validate(bytes) {
-        Ok(findings) => ValidityReport {
-            errors: findings
-                .iter()
-                .map(|f| format!("{} [{}#{}]", f.message, f.part, f.path))
-                .collect(),
-            findings,
-        },
+    match PartFs::open(bytes) {
+        Ok(pkg) => {
+            let findings = ring1(&pkg);
+            ValidityReport {
+                errors: findings
+                    .iter()
+                    .map(|f| format!("{} [{}#{}]", f.message, f.part, f.path))
+                    .collect(),
+                findings,
+            }
+        }
         Err(e) => ValidityReport {
             errors: vec![format!("not a readable package: {e}")],
             findings: Vec::new(),

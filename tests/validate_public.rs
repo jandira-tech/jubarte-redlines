@@ -7,7 +7,7 @@
 
 mod common;
 
-use common::docx::{docx, para, part_string};
+use common::docx::{Part, docx, docx_with_sect, para, part_string};
 use jubarte::document_comparer::compare_documents;
 use jubarte::inspect::markdown;
 use jubarte::validate::{audit_tracked, repair, validate};
@@ -237,7 +237,7 @@ fn a_duplicate_revision_id_is_renumbered_and_a_move_range_keeps_its_end() {
 
 #[test]
 fn a_paragraph_id_outside_words_range_is_masked_into_it() {
-    let body = r#"<w:p xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" w14:paraId="FFFFFFFF" w14:textId="7FFFFFFF"><w:r><w:t>x</w:t></w:r></w:p>"#;
+    let body = r#"<w:p xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" w14:paraId="FFFFFFFF" w14:textId="12345678"><w:r><w:t>x</w:t></w:r></w:p>"#;
     let out = assert_repairs(body, "PARA_ID_OUT_OF_RANGE");
     let xml = part_string(&out, "word/document.xml").unwrap();
     assert!(xml.contains(r#"w14:paraId="7FFFFFFF""#), "{xml}");
@@ -313,4 +313,108 @@ fn validate_error_displays_its_cause() {
     assert!(!err.to_string().is_empty());
     let err = audit_tracked(b"junk", b"junk", "A").unwrap_err();
     assert!(!err.to_string().is_empty());
+}
+
+#[test]
+fn a_dangling_relationship_is_reported_once() {
+    let body = r#"<w:p><w:hyperlink r:id="rId999"><w:r><w:t>x</w:t></w:r></w:hyperlink></w:p>"#;
+    let findings = validate(&docx(body)).unwrap();
+    assert_eq!(
+        findings
+            .iter()
+            .filter(|f| f.code == "DANGLING_RELATIONSHIP")
+            .count(),
+        1,
+        "{findings:?}"
+    );
+    let fixed = repair(&docx(body)).unwrap();
+    assert_eq!(codes(&fixed.repaired), ["DANGLING_RELATIONSHIP"]);
+}
+
+#[test]
+fn a_header_reference_without_its_relationship_is_removed_whole() {
+    let input = docx_with_sect(
+        &para("x"),
+        &[],
+        r#"<w:headerReference w:type="default" r:id="rId777"/>"#,
+    );
+    let findings = validate(&input).unwrap();
+    assert!(
+        findings.iter().any(|f| f.code == "DANGLING_RELATIONSHIP"),
+        "{findings:?}"
+    );
+    let fixed = repair(&input).unwrap();
+    let xml = part_string(&fixed.docx, "word/document.xml").unwrap();
+    assert!(!xml.contains("headerReference"), "{xml}");
+    assert!(fixed.remaining.is_empty(), "{:?}", fixed.remaining);
+}
+
+#[test]
+fn a_masked_paragraph_id_is_never_zero_nor_a_duplicate() {
+    let body = r#"<w:p xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" w14:paraId="80000000"><w:r><w:t>a</w:t></w:r></w:p><w:p xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" w14:paraId="00000001"><w:r><w:t>b</w:t></w:r></w:p><w:p xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" w14:paraId="80000001"><w:r><w:t>c</w:t></w:r></w:p><w:p xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" w14:paraId="00000000"><w:r><w:t>d</w:t></w:r></w:p>"#;
+    let findings = validate(&docx(body)).unwrap();
+    assert_eq!(
+        findings
+            .iter()
+            .filter(|f| f.code == "PARA_ID_OUT_OF_RANGE")
+            .count(),
+        3,
+        "{findings:?}"
+    );
+    let fixed = repair(&docx(body)).unwrap();
+    assert!(fixed.remaining.is_empty(), "{:?}", fixed.remaining);
+    let xml = part_string(&fixed.docx, "word/document.xml").unwrap();
+    let ids: Vec<&str> = xml
+        .match_indices("w14:paraId=\"")
+        .map(|(i, m)| &xml[i + m.len()..i + m.len() + 8])
+        .collect();
+    assert_eq!(ids.len(), 4, "{xml}");
+    let distinct: std::collections::HashSet<&str> = ids.iter().copied().collect();
+    assert_eq!(distinct.len(), 4, "{ids:?}");
+    assert!(!ids.contains(&"00000000"), "{ids:?}");
+    assert!(
+        ids.iter()
+            .all(|id| u32::from_str_radix(id, 16).unwrap() < 0x8000_0000),
+        "{ids:?}"
+    );
+}
+
+const HEADER_CT: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml";
+const HEADER_REL: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header";
+
+fn header_docx(header_text: &str) -> Vec<u8> {
+    let header = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>{header_text}</w:t></w:r></w:p></w:hdr>"#
+    );
+    docx_with_sect(
+        &para("Body stays."),
+        &[Part {
+            name: "word/header1.xml",
+            content_type: HEADER_CT,
+            rel_type: HEADER_REL,
+            xml: &header,
+        }],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    )
+}
+
+#[test]
+fn the_audit_sees_an_untracked_header_edit_and_names_its_part() {
+    let original = header_docx("Draft");
+    let edited = header_docx("Final");
+    assert!(validate(&edited).unwrap().is_empty());
+    let findings = audit_tracked(&original, &edited, "Legal").unwrap();
+    assert_eq!(codes(&findings), ["UNTRACKED_EDIT"], "{findings:?}");
+    assert_eq!(findings[0].part, "word/header1.xml");
+    assert!(
+        findings[0].path.starts_with("header1:p:"),
+        "{}",
+        findings[0].path
+    );
+    assert!(
+        audit_tracked(&original, &original, "Legal")
+            .unwrap()
+            .is_empty()
+    );
 }
