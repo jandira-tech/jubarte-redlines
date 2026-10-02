@@ -28,6 +28,32 @@ in it calls `VariantStrIter`.
 **Action:** re-check on each Tauri upgrade. Dismissing the alert as
 "tolerable risk" is the maintainer's call.
 
+### 7. `fill_control` redlines show the fill without its content control — **OPEN, Word parity**
+
+**Finding:** an edit plan's `fill_control` writes the value inside the
+control's `w:sdtContent` and keeps `w:sdtPr` in the clean copy. The redline
+is produced by comparing the source with that clean copy, and the comparer
+follows Word Compare: `unwrap_content_controls_in_pure_revisions`
+(`src/comparer/finalize.rs`, M390) drops the `w:sdt` wrapper and its
+properties in every paragraph that carries `w:ins` or `w:del`. A filled
+control's paragraph always does, so the redline shows the fill as plain
+tracked runs (`Name: <ins>Ada</ins><del>Click here</del>`) with no tag,
+alias or lock. Controls in unchanged paragraphs keep their wrapper.
+`tests/m25_sanitize_sdt_pr.rs` documents the same unwrap.
+
+**Effect:** the clean copy is the deliverable for form filling; the redline
+is still a valid Word redline of the text change.
+
+**Test:** `decision_redline_keeps_the_control_wrapper` in
+`tests/edit_fill_control.rs` asserts the desired redline and is
+`#[ignore]`d with this item's number. Run it with `cargo test --test
+edit_fill_control -- --ignored`.
+
+**Action:** a fix needs either a Word-mode-only exception to M390 for
+controls whose properties are unchanged, or re-wrapping the filled runs in
+the original `w:sdt` after compare. Either must first be checked against
+Word's own redline of a filled form.
+
 ## Settled
 
 Items 1–5 are the engine's settled history, one line each; the full story of

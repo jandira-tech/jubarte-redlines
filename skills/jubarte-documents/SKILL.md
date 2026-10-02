@@ -20,11 +20,13 @@ touch `word/document.xml`.
 | Page count / page text | `jubarte convert file.docx --png --report pages.json` |
 | Compare two versions | `jubarte a.docx b.docx -o redline.docx --author "Name"` (Python: `python -m jubarte_redlines compare a.docx b.docx -o redline.docx --author "Name"`) |
 | Clean copy of a redline | `jubarte accept redline.docx -o clean.docx` (or `reject`) |
+| Will Word open it, is every edit tracked | `jubarte validate redline.docx --original file.docx --author "Name"` (`--repair fixed.docx` fixes what it can) |
 | What can this build do | `jubarte capabilities --json` |
 
 Python: `import jubarte_redlines as jubarte; doc = jubarte.read("file.docx")`,
 then `doc.markdown()`, `doc.inspect()`, `doc.edit(plan)`, `doc.to_png()`,
-`doc.render()`, `doc.compare(other, author=...)`, `doc.accept()`.
+`doc.render()`, `doc.compare(other, author=...)`, `doc.accept()`,
+`doc.validate()`, `doc.repair()`, `doc.audit_tracked(original, author=...)`.
 
 ## 1. Read before you edit
 
@@ -49,6 +51,10 @@ author's, `--latest` the newest of each thread.
 its `paragraph_ids` and `text`, plus `header_rows` and `widths_dxa`. Edit a
 cell through its paragraph id. `jubarte inspect contract.docx --tables`
 prints the same grids.
+`inspect` also lists the body's content controls under `controls`: `id`
+(`body:sdt:N`), `tag`, `alias`, `kind` (`text`, `rich_text`, `drop_down`,
+`combo_box`, `date`, `checkbox`, `picture`, ...), `text`, `paragraph_ids`,
+`locked`, `choices` (list values), `checked` and `placeholder`.
 
 Gotchas:
 - Headers, footers, footnotes and endnotes are editable stories; text boxes
@@ -117,9 +123,10 @@ Writes `review/clean.docx` (edits applied, no tracked changes),
 `redline-page-NN.png`, `clean-page-NN.png`. Exit 0 means every operation
 matched exactly once. Exit 3 means the plan was refused: the report on stdout
 says which operation and why (`ANCHOR_NOT_FOUND`, `AMBIGUOUS_ANCHOR` with the
-match count, `OVERLAPPING_EDITS`, `UNSUPPORTED_STRUCTURE`, `STALE_SOURCE`,
+match count, `OVERLAPPING_EDITS`, `UNSUPPORTED_STRUCTURE`, `UNSUPPORTED_IMAGE`, `STALE_SOURCE`,
 `EXISTING_REVISIONS`, `REVISION_CONFLICT`, `UNKNOWN_CHANGE`,
-`UNKNOWN_COMMENT`, `COMMENT_NOT_IN_BODY`, `INVALID_PLAN`);
+`UNKNOWN_COMMENT`, `COMMENT_NOT_IN_BODY`, `INVALID_PLAN`, `INVALID_EDIT`,
+`LOCKED_CONTROL`);
 fix the plan and rerun. Use `--dry-run`
 to see the report without writing.
 
@@ -134,7 +141,8 @@ replies and anchors go with it), `insert_paragraph` (`runs` with `bold`/`italic`
 paragraph `like` selects), `delete_paragraph` (optional `comment`),
 `format_paragraph` (any of `style` (id or name), `alignment`
 `left|center|right|justify`, `line_spacing` as a multiple such as `1.15`,
-`space_before`/`space_after` in points), `merge_paragraphs` (joins the next
+`space_before`/`space_after` in points), `fill_control` (see below),
+`merge_paragraphs` (joins the next
 paragraph onto this one; optional `separator`, usually `" "`), `rewrite`
 (`text`: the paragraph's whole new text; only the words that differ are
 edited, so the rest keeps its runs and formatting), `insert_table`
@@ -146,9 +154,19 @@ twentieths of a point (the text width split evenly when omitted), and
 `bullet|decimal|lower_letter`, `level` 0 to 8, `restart` true by default),
 `watermark` (`text`; optional `color` as six hex digits, `diagonal`,
 `font`; no paragraph: writes Word's own diagonal text watermark into every
-default header; one per document). `replace` and
-`insert` take an optional `format` (`bold`/`italic`/`underline`/`highlight`)
-that applies to the new text only. `replace` takes `"whole": true` to show
+default header; one per document), `format_run` (`find`
+plus `format`: restyles existing text as a tracked formatting change;
+`occurrence`, 1-based, picks one of several matches), `insert_footnote`
+(`after` plus the note's `text`; body paragraphs only; optional
+`occurrence`), `insert_image` (`image_base64` of a PNG, JPEG, GIF, BMP or
+TIFF file, `position` `before|after`, optional `content_type`, `width_emu`
+with 914400 per inch, `alt`; body paragraphs only), `page_setup` (no
+`paragraph`; `section` `last|all`, `page` `letter|a4|{"width_dxa",
+"height_dxa"}`, `orientation` `portrait|landscape`, `margins_dxa` with any
+of top, right, bottom, left, header, footer, 1440 per inch). `replace` and
+`insert` take an optional `format` (`bold`/`italic`/`underline`/`highlight`,
+`font`, `size_pt`, `color` as `FF0000` or `auto`, `strike`, `caps`) that
+applies to the new text only. `replace` takes `"whole": true` to show
 the change as the whole old text deleted, then the whole new text inserted.
 Paragraph selectors: `"body:p:N"` (or `"header1:p:0"`, `"footnotes:p:2"`),
 `{"index": N}`, `{"starts_with": "..."}`, `{"contains": "..."}`; the last two
@@ -229,10 +247,47 @@ Gotchas:
   On a document you are not editing, `jubarte fields update in.docx -o
   out.docx --json` does the same. Page numbers are jubarte's layout, which
   matches Word on most documents but is not Word
-  (`docs/WORD_DIFFERENCES.md` section 10 in the jubarte repository).
+  (`docs/WORD_DIFFERENCES.md` section 11 in the jubarte repository).
   Field codes stay, so Word's Update Field still works.
   `update_fields` is refused (`INVALID_PLAN`) with `existing_revisions:
   "keep"`; `insert_toc` alone works there and is tracked as an insertion.
+
+Content controls (form fields) are filled with `fill_control`, which names a
+control instead of a paragraph and takes exactly one value:
+
+```json
+{"kind": "fill_control", "control": {"tag": "Name"}, "text": "Ada Lovelace"}
+{"kind": "fill_control", "control": {"alias": "Country"}, "choice": "Brazil"}
+{"kind": "fill_control", "control": "body:sdt:3", "checked": true}
+{"kind": "fill_control", "control": {"tag": "Signed"}, "date": "2026-10-02"}
+```
+
+- `control` is an id from `inspect`'s `controls` or `{"tag": ...}` /
+  `{"alias": ...}`; it must match one control (`ANCHOR_NOT_FOUND`,
+  `AMBIGUOUS_ANCHOR` with the ids).
+- `text` fills text, rich-text and combo-box controls; `choice` (a list
+  item's value or display text, the display text is written) fills
+  drop-downs and combo boxes; `checked` fills checkboxes with Word's glyph;
+  `date` (`YYYY-MM-DD`) fills date pickers in the control's own date format,
+  with English month and day names. Anything else is `INVALID_EDIT`, and a
+  choice outside the list names the allowed values.
+- The control keeps its tag, alias and lock; the placeholder flag goes, as
+  when a person types into it. A block-level control becomes one paragraph
+  with its first paragraph's properties.
+- `LOCKED_CONTROL`: the control's content is locked. `UNSUPPORTED_STRUCTURE`:
+  picture, group, repeating-section and building-block controls, controls
+  around table rows or cells, and controls holding a footnote, endnote or
+  comment reference. Bookmarks and comment ranges inside a control survive
+  the fill around the new text.
+- The clean copy is the filled form. In the redline the fill shows as tracked
+  text without the control around it: the comparer unwraps controls in
+  changed paragraphs, as Word Compare does (KNOWN_ISSUES.md #7).
+  Under `"existing_revisions": "keep"` a fill is refused
+  (`UNSUPPORTED_STRUCTURE`) until the tracked emitter writes fills; accept
+  or reject the existing revisions first.
+- Do not edit or delete a paragraph whose control you fill in the same plan
+  (`OVERLAPPING_EDITS`); text outside a run-level control in the same
+  paragraph can still be edited.
 
 ## 3. Verify
 
@@ -266,6 +321,10 @@ Gotchas:
   `keep`, accept only your own changes:
   `jubarte accept review/redline.docx --author Claude -o check.docx`
   (the author your plan names).
+  `jubarte validate review/redline.docx --original contract.docx --author
+  Claude` runs that check and the Word-validity check in one; it replaces
+  `validate.py --original --author`. `--repair out.docx` fixes what it can
+  and lists what it cannot.
 
 ## 4. Compare, accept, reject
 

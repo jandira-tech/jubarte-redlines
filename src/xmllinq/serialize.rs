@@ -164,7 +164,7 @@ const WELL_KNOWN_PREFIXES: [(&str, &str); 37] = [
 ];
 
 /// The conventional prefix for `ns`.
-fn well_known_prefix(ns: &str) -> Option<&'static str> {
+pub(crate) fn well_known_prefix(ns: &str) -> Option<&'static str> {
     WELL_KNOWN_PREFIXES
         .iter()
         .find(|(uri, _)| *uri == ns)

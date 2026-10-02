@@ -71,6 +71,38 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   watermark, so the redline holds it untracked. One per document: a second
   one, or a header that already holds one, is refused with
   `UNSUPPORTED_STRUCTURE`.
+- `jubarte validate FILE` (`validate::validate`, Python `Document.validate`,
+  WASM `validateDocument`): Word-validity findings beyond the schema, as
+  data. Each finding carries a stable `code` (`TEXT_INSIDE_DELETION`,
+  `MC_UNBOUND_PREFIX`, `DANGLING_RELATIONSHIP`, ...), the part and element
+  path, whether Word refuses or repairs the file for it (`word_fatal`) and
+  whether `--repair` fixes it. The Ring-1 invariants the test suite gated
+  every produced package on (`tests/common/validity.rs`) now live in the
+  library, with the five `jubarte debug` triage checks
+  (`debug::findings`) behind them. Exit 0 clean, 2 findings, 1 unreadable;
+  `--json` prints one object per finding.
+- `jubarte validate FILE --repair OUT.docx` (`validate::repair`,
+  `Document.repair`, `repairDocument`) fixes the findings with a
+  deterministic fix (unbound `mc:Choice Requires` prefixes, `w:t` inside a
+  deletion, `w:delText` outside one or under a move source, bookmarks in
+  single-value content controls, dangling relationship attributes,
+  duplicate drawing and revision ids, paragraph ids outside Word's range,
+  table cells without a last paragraph, orphan comment anchors) and lists
+  what remains.
+- `jubarte validate EDITED --original ORIGINAL --author NAME`
+  (`validate::audit_tracked`, `Document.audit_tracked`, `auditTracked`):
+  every text change against the original must be a revision by that
+  author; a paragraph that still differs after rejecting the author's
+  changes is an `UNTRACKED_EDIT` finding at its id, another author's change
+  a `FOREIGN_AUTHOR` one. It replaces `validate.py --original --author`.
+- `capabilities` reports `operations.validate` and `operations.repair`.
+
+### Fixed
+
+- `capabilities().limits.stories` listed `body` only; `inspect` and `edit`
+  address headers, footers, footnotes and endnotes too, and the manifest
+  now says so (text boxes stay reported in `summary` but not editable).
+
 - `scripts/release.sh` step 12 runs `scripts/release_downstream.sh`: jubarte.pro
   moves to the release (download page, demo engine) and is deployed, the
   app's release files are committed on `release/vx.y.z` in the jubarte-app
@@ -154,6 +186,36 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   identical neighbouring paragraph instead, the plan is refused
   (`UNSUPPORTED_STRUCTURE`) rather than leave the comment on text that
   stays.
+- Edit plans: `format_run` changes the run formatting of one occurrence of
+  existing text (`find`, optional 1-based `occurrence`); the redline records
+  the old formatting as `w:rPrChange`. Run `format` (here and on `replace`,
+  `insert`) adds `font`, `size_pt`, `color` (six hex digits or `auto`),
+  `strike` and `caps` to `bold`/`italic`/`underline`/`highlight`. Python:
+  `EditPlan.format_run(...)`.
+- Edit plans: `insert_footnote` adds a footnote whose reference mark follows
+  one occurrence of `after` in a body paragraph (optional 1-based
+  `occurrence`). The note is appended after the highest footnote id; the
+  footnotes part, with Word's separator notes, is created when the source
+  has none. `FootnoteText` and `FootnoteReference` are used when the styles
+  part defines them, direct superscript otherwise. Python:
+  `EditPlan.insert_footnote(...)`.
+- Edit plans: `insert_image` inserts a paragraph holding one inline picture
+  before or after a body paragraph (`position`). The plan carries the file
+  as `image_base64`; PNG, JPEG, GIF, BMP and TIFF are embedded, anything
+  else is refused with `UNSUPPORTED_IMAGE`, and a `content_type` that does
+  not match the bytes is `INVALID_EDIT`. `width_emu` sets the width and
+  keeps the aspect ratio; by default the picture is its pixel size at 96 dpi,
+  at most 6.5 inches wide. `alt` becomes the picture's description. Python:
+  `EditPlan.insert_image(..., image=bytes)`.
+- Edit plans: `page_setup` sets the page size (`letter`, `a4` or
+  `{"width_dxa", "height_dxa"}`), `orientation` and `margins_dxa` (any of
+  top, right, bottom, left, header, footer) of the last section or, with
+  `"section": "all"`, of every section. Unchanged values stay; a document
+  without a final section gets Word's default Letter page first. The
+  redline records the old geometry as `w:sectPrChange` on every changed
+  section: the comparer records the final one, and the edit adds the record
+  to mid-document sections. Margins that leave no text width or height are
+  refused. Python: `EditPlan.page_setup(...)`.
 - `uvx jubarte-redlines redline a.docx b.docx -o redline.docx` runs the CLI
   without an install: the Python wheel installs a `jubarte-redlines`
   console script, `redline` is an alias of `compare`, and usage names the
@@ -188,6 +250,18 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   whose type and name the first document already has takes its definition
   there. Comments are not carried yet: they are removed and reported as
   `COMMENTS_DROPPED`. `capabilities` lists `append`.
+- `inspect` lists the body's content controls under `controls` (id
+  `body:sdt:N`, tag, alias, kind, text, paragraphs, lock, choices, checkbox
+  state, placeholder flag); Rust `inspect::controls()` and Python
+  `Snapshot.controls` / `ContentControl` read them.
+- Edit plans fill content controls: `fill_control` selects a control by id,
+  tag or alias and writes `text`, a list `choice`, a checkbox state
+  (`checked`) or a `date` in the control's format, keeping its properties.
+  Locked controls are refused with the new `LOCKED_CONTROL` code; choices
+  outside the list, value forms the control cannot take and impossible
+  dates are `INVALID_EDIT`. Python `EditPlan.fill_control`; capabilities
+  report `operations.content_controls` and `fill_control`. The redline
+  shows a fill as tracked text without the control (KNOWN_ISSUES.md #7).
 - Field results from jubarte's layout: `jubarte fields update FILE -o OUT
   [--json]` (`fields::update_fields`, Python `Document.update_fields()`,
   WASM `updateFields` in the full build) rebuilds each body `TOC` from the
@@ -198,7 +272,7 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   plans gain `insert_toc` and `"update_fields": true` (Python
   `EditPlan.insert_toc`, `EditPlan(update_fields=True)`); `capabilities`
   reports `operations.fields`. Page numbers are jubarte's, not Word's
-  ([docs/WORD_DIFFERENCES.md](docs/WORD_DIFFERENCES.md) section 10).
+  ([docs/WORD_DIFFERENCES.md](docs/WORD_DIFFERENCES.md) section 11).
 
 ### Fixed
 

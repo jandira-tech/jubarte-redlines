@@ -512,6 +512,58 @@ fn append_json(
     Ok((PyBytes::new(py, &out.docx).unbind(), warnings))
 }
 
+/// Word-validity findings beyond the schema as a JSON array (`code`,
+/// `part`, `path`, `message`, `word_fatal`, `repairable`); `[]` is a pass.
+/// Mirrors `jubarte::validate::validate`; a package that cannot be read at
+/// all raises.
+#[pyfunction]
+fn validate_json(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
+    py.detach(|| {
+        let findings = jubarte::validate::validate(docx).map_err(|e| e.to_string())?;
+        serde_json::to_string(&findings).map_err(|e| e.to_string())
+    })
+    .map_err(|e: String| JubarteError::new_err(e))
+}
+
+/// `repair_json`'s result: the repaired package and `{"repaired": [...],
+/// "remaining": [...]}` as JSON.
+type RepairOutcome = (Py<PyBytes>, String);
+
+/// The package with every repairable finding fixed, and the findings it
+/// fixed and could not fix. Mirrors `jubarte::validate::repair`.
+#[pyfunction]
+fn repair_json(py: Python<'_>, docx: &[u8]) -> PyResult<RepairOutcome> {
+    let repaired = py.detach(|| jubarte::validate::repair(docx)).map_err(err)?;
+    let json = serde_json::json!({
+        "repaired": repaired.repaired,
+        "remaining": repaired.remaining,
+    });
+    Ok((
+        PyBytes::new(py, &repaired.docx).unbind(),
+        serde_json::to_string(&json).map_err(err)?,
+    ))
+}
+
+/// Every text change from `original` to `edited` must be a revision by
+/// `author`: the residue after rejecting that author's changes is an
+/// `UNTRACKED_EDIT` finding per paragraph, and another author's change a
+/// `FOREIGN_AUTHOR` one, as a JSON array. Mirrors
+/// `jubarte::validate::audit_tracked`.
+#[pyfunction]
+fn audit_tracked_json(
+    py: Python<'_>,
+    original: &[u8],
+    edited: &[u8],
+    author: &str,
+) -> PyResult<String> {
+    py.detach(|| {
+        let findings = jubarte::validate::audit_tracked(original, edited, author)
+            .map_err(|e| e.to_string())?;
+        serde_json::to_string(&findings).map_err(|e| e.to_string())
+    })
+    .map_err(|e: String| JubarteError::new_err(e))
+}
+
 /// Refresh field results from jubarte's layout → `(docx, json)`; `json` is
 /// `{"page_count", "fields": [...]}`.
 #[pyfunction]
@@ -558,6 +610,9 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(redline_diff_json, m)?)?;
     m.add_function(wrap_pyfunction!(list_comments_json, m)?)?;
     m.add_function(wrap_pyfunction!(append_json, m)?)?;
+    m.add_function(wrap_pyfunction!(validate_json, m)?)?;
+    m.add_function(wrap_pyfunction!(repair_json, m)?)?;
+    m.add_function(wrap_pyfunction!(audit_tracked_json, m)?)?;
     m.add_function(wrap_pyfunction!(update_fields, m)?)?;
     Ok(())
 }

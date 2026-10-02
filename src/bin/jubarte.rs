@@ -532,6 +532,34 @@ enum Command {
         #[arg(short, long)]
         quiet: bool,
     },
+    /// Word-validity findings beyond the schema: what makes Word refuse or
+    /// repair the file. Exit 0 clean, 2 findings, 1 unreadable.
+    #[command(after_help = "EXAMPLES:\n  \
+        jubarte validate contract.docx\n  \
+        jubarte validate contract.docx --json\n  \
+        jubarte validate contract.docx --repair fixed.docx\n  \
+        jubarte validate review/redline.docx --original contract.docx --author Claude")]
+    Validate {
+        /// The document (.docx).
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// One JSON object per finding.
+        #[arg(long)]
+        json: bool,
+        /// Write the repaired package here; remaining findings still exit 2.
+        #[arg(long, value_name = "FILE")]
+        repair: Option<PathBuf>,
+        /// Audit tracked edits: every text change against ORIGINAL must be a
+        /// revision by --author.
+        #[arg(long, value_name = "FILE", requires = "author")]
+        original: Option<PathBuf>,
+        /// The author every change must carry (with --original).
+        #[arg(long, value_name = "NAME", requires = "original")]
+        author: Option<String>,
+        /// Replace an existing --repair output.
+        #[arg(long)]
+        force: bool,
+    },
     /// Field results written back into the document from jubarte's layout.
     Fields {
         #[command(subcommand)]
@@ -2197,6 +2225,67 @@ fn run_debug(
     Ok(())
 }
 
+/// One `jubarte validate` run.
+struct ValidateJob<'a> {
+    file: &'a Path,
+    json: bool,
+    repair: Option<&'a Path>,
+    original: Option<&'a Path>,
+    author: Option<&'a str>,
+    force: bool,
+}
+
+/// `jubarte validate`: `Ok(true)` when nothing was found, `Ok(false)` when
+/// findings were printed, `Err` when a file could not be read or written.
+fn run_validate(job: &ValidateJob<'_>) -> Result<bool, String> {
+    use jubarte::validate::{Finding, audit_tracked, repair, validate};
+    let read = |p: &Path| std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()));
+    let docx = read(job.file)?;
+    let mut findings: Vec<Finding> = Vec::new();
+    match job.repair {
+        Some(out) => {
+            if out.exists() && !job.force {
+                return Err(format!(
+                    "output '{}' already exists (use --force to overwrite)",
+                    out.display()
+                ));
+            }
+            let fixed = repair(&docx).map_err(|e| e.to_string())?;
+            std::fs::write(out, &fixed.docx).map_err(|e| format!("{}: {e}", out.display()))?;
+            if !job.json {
+                println!(
+                    "repaired {} finding(s) into {}",
+                    fixed.repaired.len(),
+                    out.display()
+                );
+            }
+            findings.extend(fixed.remaining);
+        }
+        None => findings.extend(validate(&docx).map_err(|e| e.to_string())?),
+    }
+    if let (Some(original), Some(author)) = (job.original, job.author) {
+        let before = read(original)?;
+        findings.extend(audit_tracked(&before, &docx, author).map_err(|e| e.to_string())?);
+    }
+    for f in &findings {
+        if job.json {
+            println!("{}", serde_json::to_string(f).map_err(|e| e.to_string())?);
+        } else {
+            let star = if f.word_fatal { '*' } else { ' ' };
+            println!("{star} {}\t{}#{}\t{}", f.code, f.part, f.path, f.message);
+        }
+    }
+    if !job.json {
+        if findings.is_empty() {
+            println!("no findings");
+        } else {
+            let fatal = findings.iter().filter(|f| f.word_fatal).count();
+            println!("{} finding(s), {fatal} Word-fatal", findings.len());
+        }
+    }
+    Ok(findings.is_empty())
+}
+
 /// `jubarte debug diff`: each file labelled by its stem (by its folder too
 /// when stems repeat, by position when both do).
 fn run_debug_diff(
@@ -2503,6 +2592,31 @@ fn main() -> ExitCode {
                 keep_sections,
             };
             return exit_code(run_append(&files, &output, &options, force, quiet));
+        }
+        Some(Command::Validate {
+            file,
+            json,
+            repair,
+            original,
+            author,
+            force,
+        }) => {
+            let job = ValidateJob {
+                file: &file,
+                json,
+                repair: repair.as_deref(),
+                original: original.as_deref(),
+                author: author.as_deref(),
+                force,
+            };
+            return match run_validate(&job) {
+                Ok(true) => ExitCode::SUCCESS,
+                Ok(false) => ExitCode::from(2),
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    ExitCode::FAILURE
+                }
+            };
         }
         Some(Command::Fields {
             sub:

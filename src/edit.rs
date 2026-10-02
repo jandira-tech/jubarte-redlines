@@ -29,11 +29,19 @@ use crate::inspect::{Opened, Piece, Projection, SCHEMA_VERSION, project_paragrap
 use crate::namespaces::W;
 use crate::xmllinq::{Dom, NodeId, XNamespace};
 
+mod controls;
+mod images;
+mod notes;
 mod rewrite;
+mod runs;
+mod sections;
 mod structural;
 mod tracked;
 mod watermark;
 mod whole;
+
+pub use controls::ControlSelector;
+pub use sections::{CustomPage, Margins, Orientation, PageSize, Paper, SectionScope};
 
 /// A versioned, portable set of operations against one document snapshot.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -367,6 +375,91 @@ pub enum OperationKind {
         /// Font family (default `Calibri`).
         font: Option<String>,
     },
+    /// Fill one content control (`w:sdt`) in the body with exactly one of
+    /// `text`, `choice`, `checked` or `date`. The control keeps its
+    /// properties; its content becomes the value.
+    FillControl {
+        /// The control: `"body:sdt:N"`, `{"id"}`, `{"tag"}` or `{"alias"}`;
+        /// must match exactly one.
+        control: ControlSelector,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Plain text, for text, rich-text and combo-box controls.
+        text: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// A list item's value or display text, for drop-down and combo-box
+        /// controls; the display text is written.
+        choice: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Checkbox state.
+        checked: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// `YYYY-MM-DD`, for date controls; written in the control's format.
+        date: Option<String>,
+    },
+    /// Change the run formatting of one occurrence of existing text; the
+    /// redline records the old formatting (`w:rPrChange`).
+    FormatRun {
+        /// Paragraph to format; must match exactly one.
+        paragraph: Selector,
+        /// Exact text to format.
+        find: String,
+        /// Formatting to set; fields not given stay as they are.
+        format: RunFormat,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Which occurrence of `find` (1-based) when it occurs more than once.
+        occurrence: Option<usize>,
+    },
+    /// Insert a footnote whose reference mark follows one occurrence of
+    /// `after`; the note goes in the footnotes part, created when absent.
+    InsertFootnote {
+        /// Body paragraph to edit; must match exactly one.
+        paragraph: Selector,
+        /// The reference mark goes right after this anchor text.
+        after: String,
+        /// Plain text of the note.
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Which occurrence of `after` (1-based) when it occurs more than once.
+        occurrence: Option<usize>,
+    },
+    /// Insert a paragraph holding one inline picture next to the anchor
+    /// paragraph. PNG, JPEG, GIF, BMP or TIFF.
+    InsertImage {
+        /// Body paragraph the picture goes next to; must match exactly one.
+        paragraph: Selector,
+        #[serde(default)]
+        /// Which side of the anchor paragraph.
+        position: Side,
+        /// The picture file, base64-encoded.
+        image_base64: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// The picture's media type; checked against its bytes when given.
+        content_type: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Width in EMU (914400 per inch); the height keeps the aspect
+        /// ratio. Default: the pixel size at 96 dpi, at most 6.5 inches.
+        width_emu: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Alternative text (`wp:docPr descr`).
+        alt: Option<String>,
+    },
+    /// Set the page size, orientation and margins of the last section or of
+    /// every section; the redline records the old ones (`w:sectPrChange`).
+    /// At least one of `page`, `orientation`, `margins_dxa`.
+    PageSetup {
+        #[serde(default)]
+        /// `last` (default) or `all`.
+        section: SectionScope,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// `letter`, `a4`, or `{"width_dxa", "height_dxa"}`.
+        page: Option<PageSize>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// `portrait` or `landscape`.
+        orientation: Option<Orientation>,
+        #[serde(default, skip_serializing_if = "is_default_margins")]
+        /// Margins to change, in twentieths of a point.
+        margins_dxa: Margins,
+    },
     /// Insert a table of contents next to the anchor paragraph: a `TOC \o
     /// "1-{levels}" \h \z \u` field, after an optional title paragraph
     /// styled `TOCHeading`. Its entries are written when the plan sets
@@ -386,12 +479,16 @@ pub enum OperationKind {
     },
 }
 
-fn resolve_done() -> bool {
-    true
-}
-
 fn default_toc_levels() -> u8 {
     3
+}
+
+fn is_default_margins(margins: &Margins) -> bool {
+    *margins == Margins::default()
+}
+
+fn resolve_done() -> bool {
+    true
 }
 
 fn default_true() -> bool {
@@ -525,6 +622,43 @@ pub struct RunFormat {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Highlight color name (`yellow`, ...) or `none`.
     pub highlight: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Font name, set for every script (`w:rFonts`).
+    pub font: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Font size in points, rounded to half points.
+    pub size_pt: Option<HalfPoints>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Text colour as six hex digits (`FF0000`) or `auto`.
+    pub color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Set or clear single strikethrough.
+    pub strike: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Set or clear all caps.
+    pub caps: Option<bool>,
+}
+
+/// A font size stored in half points (`w:sz`); JSON is points.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HalfPoints(pub u32);
+
+impl Serialize for HalfPoints {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_f64(f64::from(self.0) / 2.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for HalfPoints {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let points = f64::deserialize(d)?;
+        if !points.is_finite() || !(0.0..=1638.0).contains(&points) {
+            return Err(serde::de::Error::custom(format!(
+                "size_pt {points} is outside 0..=1638"
+            )));
+        }
+        Ok(Self((points * 2.0).round() as u32))
+    }
 }
 
 /// Paragraph edge for an insertion without a text anchor.
@@ -616,6 +750,7 @@ impl RunSpec {
             italic: self.italic,
             underline: self.underline,
             highlight: self.highlight.clone(),
+            ..RunFormat::default()
         }
     }
 }
@@ -998,6 +1133,17 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
                 }
                 &["text", "color", "diagonal", "font"]
             }
+            "fill_control" => &["control", "text", "choice", "checked", "date"],
+            "format_run" => &["find", "format", "occurrence"],
+            "insert_footnote" => &["after", "text", "occurrence"],
+            "insert_image" => &[
+                "position",
+                "image_base64",
+                "content_type",
+                "width_emu",
+                "alt",
+            ],
+            "page_setup" => &["section", "page", "orientation", "margins_dxa"],
             "insert_toc" => &["position", "levels", "title"],
             other => {
                 return Err(err(
@@ -1007,6 +1153,20 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
                 ));
             }
         };
+        if kind == "fill_control" && map.contains_key("paragraph") {
+            return Err(err(
+                "INVALID_PLAN",
+                None,
+                format!("operations[{i}] (fill_control): selects a control, not a paragraph"),
+            ));
+        }
+        if kind == "page_setup" && map.contains_key("paragraph") {
+            return Err(err(
+                "INVALID_PLAN",
+                None,
+                format!("operations[{i}] (page_setup): sections take no paragraph"),
+            ));
+        }
         for key in map.keys() {
             if !COMMON.contains(&key.as_str()) && !allowed.contains(&key.as_str()) {
                 return Err(err(
@@ -1059,6 +1219,13 @@ pub fn apply_plan(source: &[u8], plan: &EditPlan) -> Result<EditResult, EditErro
     let mut redline =
         crate::document_comparer::compare_documents_with_settings(&base, revised, &settings)
             .map_err(|e| err("COMPARE_FAILED", None, e.to_string()))?;
+    if tx
+        .resolved
+        .iter()
+        .any(|(_, r)| matches!(r, Resolved::PageSetup { .. }))
+    {
+        redline = sections::record_mid_changes(&redline, &base, &plan.author, &tx.date)?;
+    }
     if marked.is_some() {
         let (rewritten, fallbacks) = whole::rewrite(
             &redline,
@@ -1278,6 +1445,35 @@ enum Resolved {
         /// Paragraph holding the target comment's reference, when found.
         anchor: Option<usize>,
     },
+    FillControl {
+        /// Index into `Transaction::controls`.
+        control: usize,
+        /// The paragraphs it spans (or the one holding it).
+        paragraphs: Vec<usize>,
+        /// The control holds paragraphs rather than runs.
+        block: bool,
+        value: controls::FillValue,
+    },
+    FormatRun {
+        para: usize,
+        start: usize,
+        end: usize,
+        format: RunFormat,
+    },
+    InsertFootnote {
+        para: usize,
+        /// Projection offset the reference mark follows.
+        at: usize,
+        text: String,
+    },
+    InsertImage {
+        anchor: usize,
+        side: Side,
+        picture: crate::markdown::Picture,
+    },
+    PageSetup {
+        targets: sections::Targets,
+    },
 }
 
 /// What a thread operation does to an existing comment.
@@ -1350,6 +1546,12 @@ struct Transaction<'p> {
     reply_parents: BTreeMap<u32, u32>,
     /// The plan's watermark, written into the default headers at finish.
     watermark: Option<watermark::Spec>,
+    /// The body's content controls, `body:sdt:N` order.
+    controls: Vec<NodeId>,
+    /// What `inspect` reports for each of `controls`.
+    control_records: Vec<crate::inspect::ContentControl>,
+    /// The footnotes story when `insert_footnote` added notes to it.
+    notes_story: Option<usize>,
 }
 
 /// The body, or a header, footer or notes part, parsed into the plan's DOM.
@@ -1485,6 +1687,8 @@ impl<'p> Transaction<'p> {
                 .to_uppercase()
         });
         let next_comment_id = existing_comment_ids(&opened).map_or(0, |max| u64::from(max) + 1);
+        let controls = crate::inspect::body_control_nodes(&opened.dom, opened.body);
+        let control_records = crate::inspect::collect_controls(&opened.dom, opened.body);
         let family = crate::comments::CommentFamily::load(&opened.pkg, &opened.main)
             .map_err(|m| err("INVALID_DOCUMENT", None, m))?;
         Ok(Self {
@@ -1513,6 +1717,9 @@ impl<'p> Transaction<'p> {
             family: Some(family),
             reply_parents: BTreeMap::new(),
             watermark: None,
+            controls,
+            control_records,
+            notes_story: None,
         })
     }
 
@@ -1557,6 +1764,39 @@ impl<'p> Transaction<'p> {
                 } => self
                     .resolve_list(&id, paragraphs, *kind_of_list, *level, *restart)
                     .map(|(resolved, outcome)| (vec![resolved], outcome)),
+                OperationKind::PageSetup {
+                    section,
+                    page,
+                    orientation,
+                    margins_dxa,
+                } => {
+                    let mut outcome = EditOutcome {
+                        id: id.clone(),
+                        kind: String::new(),
+                        status: String::new(),
+                        paragraph: None,
+                        matches: 0,
+                        context: None,
+                        comment_id: None,
+                        code: None,
+                        message: None,
+                    };
+                    match self.resolve_page_setup(
+                        *section,
+                        *page,
+                        *orientation,
+                        *margins_dxa,
+                        &mut outcome,
+                    ) {
+                        Ok(targets) => {
+                            outcome.context = Some(format!("{{§ {} section(s)}}", targets.len()));
+                            Ok((vec![Resolved::PageSetup { targets }], outcome))
+                        }
+                        Err((code, message)) => {
+                            Err(Box::new((err(&code, Some(&id), message), outcome)))
+                        }
+                    }
+                }
                 OperationKind::ReplyComment { .. }
                 | OperationKind::ResolveComment { .. }
                 | OperationKind::EditComment { .. }
@@ -1574,6 +1814,22 @@ impl<'p> Transaction<'p> {
                         self.watermark = Some(spec);
                         (Vec::new(), outcome)
                     }),
+                OperationKind::FillControl {
+                    control,
+                    text,
+                    choice,
+                    checked,
+                    date,
+                } => self.resolve_fill_control(
+                    &id,
+                    &controls::FillRequest {
+                        control,
+                        text: text.as_deref(),
+                        choice: choice.as_deref(),
+                        checked: *checked,
+                        date: date.as_deref(),
+                    },
+                ),
                 other => self
                     .resolve_one(&id, other)
                     .map(|(resolved, outcome)| (vec![resolved], outcome)),
@@ -1640,11 +1896,21 @@ impl<'p> Transaction<'p> {
             | OperationKind::MergeParagraphs { paragraph, .. }
             | OperationKind::Rewrite { paragraph, .. }
             | OperationKind::InsertTable { paragraph, .. }
-            | OperationKind::InsertToc { paragraph, .. } => paragraph,
+            | OperationKind::InsertToc { paragraph, .. }
+            | OperationKind::FormatRun { paragraph, .. }
+            | OperationKind::InsertFootnote { paragraph, .. }
+            | OperationKind::InsertImage { paragraph, .. } => paragraph,
             OperationKind::List { .. } => {
                 return Err(fail(
                     "INVALID_PLAN",
                     "list resolves through resolve_list".into(),
+                    outcome,
+                ));
+            }
+            OperationKind::PageSetup { .. } => {
+                return Err(fail(
+                    "INVALID_PLAN",
+                    "page_setup resolves through resolve_page_setup".into(),
                     outcome,
                 ));
             }
@@ -1662,6 +1928,13 @@ impl<'p> Transaction<'p> {
                 return Err(fail(
                     "INVALID_PLAN",
                     "watermark resolves through resolve_watermark".into(),
+                    outcome,
+                ));
+            }
+            OperationKind::FillControl { .. } => {
+                return Err(fail(
+                    "INVALID_PLAN",
+                    "fill_control resolves through resolve_fill_control".into(),
                     outcome,
                 ));
             }
@@ -1939,19 +2212,113 @@ impl<'p> Transaction<'p> {
                 outcome.context = Some(format!("{{-¶ {}}}", excerpt(text, 60)));
                 Ok((Resolved::DeleteParagraph { para }, outcome))
             }
+            OperationKind::FormatRun {
+                find,
+                format,
+                occurrence,
+                ..
+            } => {
+                let (start, end) = self
+                    .resolve_format_run(projection, find, *occurrence, format, &mut outcome)
+                    .map_err(|(c, m)| fail(&c, m, outcome.clone()))?;
+                outcome.context = Some(context(
+                    text,
+                    start,
+                    end,
+                    &format!("{{~{}}}", &text[start..end]),
+                ));
+                Ok((
+                    Resolved::FormatRun {
+                        para,
+                        start,
+                        end,
+                        format: format.clone(),
+                    },
+                    outcome,
+                ))
+            }
+            OperationKind::InsertFootnote {
+                after,
+                text: note,
+                occurrence,
+                ..
+            } => {
+                let at = self
+                    .resolve_footnote(para, projection, after, *occurrence, note, &mut outcome)
+                    .map_err(|(c, m)| fail(&c, m, outcome.clone()))?;
+                outcome.context = Some(context(
+                    text,
+                    at,
+                    at,
+                    &format!("{{^{}}}", excerpt(note, 40)),
+                ));
+                Ok((
+                    Resolved::InsertFootnote {
+                        para,
+                        at,
+                        text: note.clone(),
+                    },
+                    outcome,
+                ))
+            }
+            OperationKind::InsertImage {
+                position,
+                image_base64,
+                content_type,
+                width_emu,
+                alt,
+                ..
+            } => {
+                outcome.matches = 1;
+                if self.paragraph_story[para].0 != 0 {
+                    return Err(fail(
+                        "UNSUPPORTED_STRUCTURE",
+                        "pictures can be inserted in the body only".into(),
+                        outcome,
+                    ));
+                }
+                let picture = images::picture(
+                    image_base64,
+                    content_type.as_deref(),
+                    *width_emu,
+                    alt.as_deref().unwrap_or_default(),
+                )
+                .map_err(|(c, m)| fail(&c, m, outcome.clone()))?;
+                outcome.context = Some(format!(
+                    "{{+¶ picture {} {}x{} EMU}} {}",
+                    picture.content_type,
+                    picture.width,
+                    picture.height,
+                    excerpt(text, 40)
+                ));
+                Ok((
+                    Resolved::InsertImage {
+                        anchor: para,
+                        side: *position,
+                        picture,
+                    },
+                    outcome,
+                ))
+            }
             OperationKind::Rewrite { .. }
             | OperationKind::List { .. }
             | OperationKind::ReplyComment { .. }
             | OperationKind::ResolveComment { .. }
             | OperationKind::EditComment { .. }
-            | OperationKind::DeleteComment { .. } => Err(fail(
+            | OperationKind::DeleteComment { .. }
+            | OperationKind::PageSetup { .. } => Err(fail(
                 "INVALID_PLAN",
-                "rewrite, list and thread operations resolve on their own paths".into(),
+                "rewrite, list, page_setup and thread operations resolve on their own paths".into(),
                 outcome,
             )),
             OperationKind::Watermark { .. } => Err(fail(
                 "INVALID_PLAN",
                 "watermark resolves through resolve_watermark".into(),
+                outcome,
+            )),
+            OperationKind::FillControl { .. } => Err(fail(
+                "INVALID_PLAN",
+                "fill_control resolves through resolve_fill_control".into(),
                 outcome,
             )),
             OperationKind::InsertParagraph {
@@ -2682,17 +3049,23 @@ impl<'p> Transaction<'p> {
         self.resolved
             .iter()
             .flat_map(|(_, r)| match r {
+                Resolved::PageSetup { .. } => Vec::new(),
                 Resolved::Text { para, .. }
                 | Resolved::CommentRange { para, .. }
                 | Resolved::CommentSpan { para, .. }
                 | Resolved::DeleteParagraph { para }
                 | Resolved::FormatParagraph { para, .. }
-                | Resolved::MergeParagraphs { para, .. } => vec![self.paragraph_story[*para].0],
-                Resolved::InsertParagraph { anchor, .. } | Resolved::InsertTable { anchor, .. } => {
+                | Resolved::MergeParagraphs { para, .. }
+                | Resolved::FormatRun { para, .. }
+                | Resolved::InsertFootnote { para, .. } => vec![self.paragraph_story[*para].0],
+                Resolved::InsertParagraph { anchor, .. }
+                | Resolved::InsertTable { anchor, .. }
+                | Resolved::InsertImage { anchor, .. } => {
                     vec![self.paragraph_story[*anchor].0]
                 }
                 Resolved::List { paras, .. } => vec![self.paragraph_story[paras[0]].0],
                 Resolved::Thread { stories, .. } => stories.clone(),
+                Resolved::FillControl { .. } => vec![0],
             })
             .collect()
     }
@@ -2826,6 +3199,7 @@ impl<'p> Transaction<'p> {
         }
         self.check_deletions_leave_valid_containers(&deleted)?;
         self.check_paragraph_ops(&deleted)?;
+        self.check_control_conflicts(&deleted)?;
         self.check_comment_ids_fit()?;
         self.check_thread_ops()?;
         let mut ranges: BTreeMap<usize, Vec<(usize, usize, usize)>> = BTreeMap::new();
@@ -2840,7 +3214,7 @@ impl<'p> Transaction<'p> {
                     }
                     continue;
                 }
-                Resolved::InsertParagraph { anchor, .. } => {
+                Resolved::InsertParagraph { anchor, .. } | Resolved::InsertImage { anchor, .. } => {
                     if deleted.contains(anchor) {
                         return Err(
                             self.conflict(*i, "anchors a new paragraph on a deleted paragraph")
@@ -2851,6 +3225,18 @@ impl<'p> Transaction<'p> {
                 Resolved::InsertTable { anchor, .. } => {
                     if deleted.contains(anchor) {
                         return Err(self.conflict(*i, "anchors a new table on a deleted paragraph"));
+                    }
+                    continue;
+                }
+                Resolved::FormatRun { para, .. } => {
+                    if deleted.contains(para) {
+                        return Err(self.conflict(*i, "formats text of a deleted paragraph"));
+                    }
+                    continue;
+                }
+                Resolved::InsertFootnote { para, .. } => {
+                    if deleted.contains(para) {
+                        return Err(self.conflict(*i, "adds a footnote to a deleted paragraph"));
                     }
                     continue;
                 }
@@ -2874,7 +3260,9 @@ impl<'p> Transaction<'p> {
                 | Resolved::FormatParagraph { .. }
                 | Resolved::MergeParagraphs { .. }
                 | Resolved::List { .. }
-                | Resolved::Thread { .. } => continue,
+                | Resolved::PageSetup { .. }
+                | Resolved::Thread { .. }
+                | Resolved::FillControl { .. } => continue,
             };
             if deleted.contains(&para) {
                 return Err(self.conflict(*i, "edits text of a deleted paragraph"));
@@ -2908,6 +3296,56 @@ impl<'p> Transaction<'p> {
                 });
             if cuts {
                 return Err(self.conflict(*i, "comment range cuts through an edited range"));
+            }
+        }
+        // Formatting applies to source text: no text edit may change it.
+        for (i, r) in &self.resolved {
+            let Resolved::FormatRun {
+                para, start, end, ..
+            } = r
+            else {
+                continue;
+            };
+            let overlaps = ranges
+                .get(para)
+                .into_iter()
+                .flatten()
+                .any(|&(s, e, _)| runs::format_overlaps_edit((*start, *end), (s, e)));
+            if overlaps {
+                return Err(self.conflict(*i, "formats text another operation changes"));
+            }
+        }
+        // One page setup per section.
+        let setups: Vec<(usize, &sections::Targets)> = self
+            .resolved
+            .iter()
+            .filter_map(|(i, r)| match r {
+                Resolved::PageSetup { targets } => Some((*i, targets)),
+                _ => None,
+            })
+            .collect();
+        for (n, (i, targets)) in setups.iter().enumerate() {
+            if setups[..n]
+                .iter()
+                .any(|(_, earlier)| sections::targets_overlap(earlier, targets))
+            {
+                return Err(self.conflict(*i, "sets up a section another operation sets up"));
+            }
+        }
+        // A reference mark needs its anchor's end to survive the text edits.
+        for (i, r) in &self.resolved {
+            let Resolved::InsertFootnote { para, at, .. } = r else {
+                continue;
+            };
+            let inside = ranges
+                .get(para)
+                .into_iter()
+                .flatten()
+                .any(|&(s, e, _)| e > s && runs::format_overlaps_edit((*at, *at), (s, e)));
+            if inside {
+                return Err(
+                    self.conflict(*i, "puts a footnote inside text another operation changes")
+                );
             }
         }
         Ok(())
@@ -2955,6 +3393,7 @@ impl<'p> Transaction<'p> {
                     );
                 }
                 Resolved::InsertParagraph { anchor, side, .. }
+                | Resolved::InsertImage { anchor, side, .. }
                     if (*side == Side::After && merge_heads.contains(anchor))
                         || (*side == Side::Before && merge_tails.contains(anchor)) =>
                 {
@@ -3079,7 +3518,12 @@ impl<'p> Transaction<'p> {
                 Resolved::FormatParagraph { .. }
                 | Resolved::MergeParagraphs { .. }
                 | Resolved::InsertTable { .. }
-                | Resolved::List { .. } => false,
+                | Resolved::List { .. }
+                | Resolved::FillControl { .. }
+                | Resolved::FormatRun { .. }
+                | Resolved::InsertFootnote { .. }
+                | Resolved::InsertImage { .. }
+                | Resolved::PageSetup { .. } => false,
             })
             .count() as u64;
         if needed > 0 && self.next_comment_id + needed - 1 > u64::from(u32::MAX) {
@@ -3127,7 +3571,12 @@ impl<'p> Transaction<'p> {
                         | Resolved::MergeParagraphs { .. }
                         | Resolved::InsertTable { .. }
                         | Resolved::List { .. }
-                        | Resolved::Thread { .. } => None,
+                        | Resolved::FormatRun { .. }
+                        | Resolved::InsertFootnote { .. }
+                        | Resolved::InsertImage { .. }
+                        | Resolved::PageSetup { .. }
+                        | Resolved::Thread { .. }
+                        | Resolved::FillControl { .. } => None,
                     };
                     text.map(|t| (*i, t))
                 })
@@ -3157,6 +3606,37 @@ impl<'p> Transaction<'p> {
         let mut by_para: BTreeMap<usize, Vec<ScheduledEdit>> = BTreeMap::new();
         let mut comment_ranges: BTreeMap<usize, Vec<(usize, usize, usize, String)>> =
             BTreeMap::new();
+        let mut format_runs: BTreeMap<usize, Vec<(usize, usize, RunFormat)>> = BTreeMap::new();
+        let mut references: BTreeMap<usize, Vec<(usize, u32)>> = BTreeMap::new();
+        let reference_style = self
+            .style_defined("FootnoteReference")
+            .then_some("FootnoteReference");
+        let notes: Vec<(usize, usize, String)> = self
+            .resolved
+            .iter()
+            .filter_map(|(_, r)| match r {
+                Resolved::InsertFootnote { para, at, text } => Some((*para, *at, text.clone())),
+                _ => None,
+            })
+            .collect();
+        if !notes.is_empty() {
+            let story = self.footnotes_story()?;
+            self.notes_story = Some(story);
+            let root = self.stories[story].root;
+            let text_style = self.style_defined("FootnoteText").then_some("FootnoteText");
+            let mut id = notes::next_footnote_id(&self.opened.dom, root);
+            for (para, at, text) in notes {
+                notes::append_footnote(
+                    &mut self.opened.dom,
+                    root,
+                    id,
+                    &text,
+                    (text_style, reference_style),
+                );
+                references.entry(para).or_default().push((at, id));
+                id = id.saturating_add(1);
+            }
+        }
         for (i, r) in &self.resolved {
             match r {
                 Resolved::Text {
@@ -3187,12 +3667,25 @@ impl<'p> Transaction<'p> {
                         .or_default()
                         .push((*start, *end, *i, text.clone()));
                 }
+                Resolved::FormatRun {
+                    para,
+                    start,
+                    end,
+                    format,
+                } => {
+                    format_runs
+                        .entry(*para)
+                        .or_default()
+                        .push((*start, *end, format.clone()));
+                }
                 _ => {}
             }
         }
         let touched: Vec<usize> = by_para
             .keys()
             .chain(comment_ranges.keys())
+            .chain(format_runs.keys())
+            .chain(references.keys())
             .copied()
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
@@ -3225,6 +3718,23 @@ impl<'p> Transaction<'p> {
                         format,
                     );
                 }
+            }
+            // `format_run` ranges, in new coordinates and plan order.
+            for (start, end, format) in format_runs.remove(&para).unwrap_or_default() {
+                let s = new_position(&edits, start, true, None);
+                let e = new_position(&edits, end, false, None);
+                format_range(&mut self.opened.dom, node, s, e, &format);
+            }
+            // Footnote reference marks; reversed so marks sharing a point
+            // end up in plan order.
+            for (at, id) in references
+                .remove(&para)
+                .unwrap_or_default()
+                .into_iter()
+                .rev()
+            {
+                let at = new_position(&edits, at, true, None);
+                notes::insert_reference(&mut self.opened.dom, node, at, id, reference_style);
             }
             // Helper bookmarks around `whole` replacements. Comment ranges
             // placed below land inside them, on the inserted text.
@@ -3282,6 +3792,8 @@ impl<'p> Transaction<'p> {
                 );
             }
         }
+        // 1c. Content control fills (text edits never reach control content).
+        self.apply_fills();
         // 2. Paragraph and table insertions (anchors are source paragraphs,
         // untouched by 1).
         let inserts: Vec<(usize, Resolved)> = self
@@ -3290,12 +3802,16 @@ impl<'p> Transaction<'p> {
             .filter(|(_, r)| {
                 matches!(
                     r,
-                    Resolved::InsertParagraph { .. } | Resolved::InsertTable { .. }
+                    Resolved::InsertParagraph { .. }
+                        | Resolved::InsertTable { .. }
+                        | Resolved::InsertImage { .. }
                 )
             })
             .cloned()
             .collect();
         let mut tables: Vec<NodeId> = Vec::new();
+        let mut media_used = std::collections::HashSet::new();
+        let mut drawing_id = crate::markdown::max_drawing_id(&self.opened.pkg);
         // Several paragraphs after one anchor follow it in plan order: each
         // goes after the one inserted there before it.
         let mut last_after: BTreeMap<usize, NodeId> = BTreeMap::new();
@@ -3340,6 +3856,15 @@ impl<'p> Transaction<'p> {
                         &style,
                     );
                     tables.push(new);
+                    (anchor, side, vec![new], false)
+                }
+                Resolved::InsertImage {
+                    anchor,
+                    side,
+                    picture,
+                } => {
+                    drawing_id = drawing_id.saturating_add(1);
+                    let new = self.image_paragraph(&picture, &mut media_used, drawing_id);
                     (anchor, side, vec![new], false)
                 }
                 _ => continue,
@@ -3474,6 +3999,18 @@ impl<'p> Transaction<'p> {
         // before it, once the deletions have settled its neighbours.
         for table in tables {
             structural::separate(&mut self.opened.dom, table);
+        }
+        // 8. Page setup.
+        let setups: Vec<sections::Targets> = self
+            .resolved
+            .iter()
+            .filter_map(|(_, r)| match r {
+                Resolved::PageSetup { targets } => Some(targets.clone()),
+                _ => None,
+            })
+            .collect();
+        for targets in &setups {
+            self.apply_page_setup(targets);
         }
         Ok(())
     }
@@ -3619,6 +4156,7 @@ impl<'p> Transaction<'p> {
         let mut written = self.touched_stories();
         written.insert(0);
         written.extend(self.apply_watermark()?);
+        written.extend(self.notes_story);
         let marked = if self.whole_marks.is_empty() {
             None
         } else {
@@ -3775,6 +4313,11 @@ fn kind_name(kind: &OperationKind) -> &'static str {
         OperationKind::InsertTable { .. } => "insert_table",
         OperationKind::List { .. } => "list",
         OperationKind::Watermark { .. } => "watermark",
+        OperationKind::FillControl { .. } => "fill_control",
+        OperationKind::FormatRun { .. } => "format_run",
+        OperationKind::InsertFootnote { .. } => "insert_footnote",
+        OperationKind::InsertImage { .. } => "insert_image",
+        OperationKind::PageSetup { .. } => "page_setup",
         OperationKind::InsertToc { .. } => "insert_toc",
     }
 }
@@ -4502,6 +5045,36 @@ fn apply_run_format(dom: &mut Dom, rpr: NodeId, format: &RunFormat) {
             insert_rpr_child(dom, rpr, h);
         }
     }
+    toggle(dom, rpr, "strike", format.strike);
+    toggle(dom, rpr, "caps", format.caps);
+    if let Some(font) = &format.font {
+        if let Some(old) = dom.element(rpr, &W::name("rFonts")) {
+            dom.remove(old);
+        }
+        let fonts = dom.new_element(W::name("rFonts"));
+        for script in ["ascii", "hAnsi", "eastAsia", "cs"] {
+            dom.set_attribute_value(fonts, &W::name(script), Some(font));
+        }
+        insert_rpr_child(dom, rpr, fonts);
+    }
+    if let Some(color) = &format.color {
+        if let Some(old) = dom.element(rpr, &W::name("color")) {
+            dom.remove(old);
+        }
+        let el = dom.new_element(W::name("color"));
+        dom.set_attribute_value(el, &W::val(), Some(color));
+        insert_rpr_child(dom, rpr, el);
+    }
+    if let Some(HalfPoints(size)) = format.size_pt {
+        for local in ["sz", "szCs"] {
+            if let Some(old) = dom.element(rpr, &W::name(local)) {
+                dom.remove(old);
+            }
+            let el = dom.new_element(W::name(local));
+            dom.set_attribute_value(el, &W::val(), Some(&size.to_string()));
+            insert_rpr_child(dom, rpr, el);
+        }
+    }
 }
 
 /// `ST_HighlightColor`.
@@ -4533,6 +5106,31 @@ fn check_format(format: &RunFormat, text: &str) -> Result<(), String> {
         return Err(format!(
             "highlight {highlight:?} is not a Word highlight colour ({})",
             HIGHLIGHTS.join(", ")
+        ));
+    }
+    if let Some(font) = &format.font
+        && (font.trim().is_empty()
+            || font.chars().count() > 31
+            || font.chars().any(char::is_control))
+    {
+        return Err(format!(
+            "font {font:?} must be a nonempty name of at most 31 characters"
+        ));
+    }
+    if let Some(color) = &format.color
+        && color != "auto"
+        && !(color.len() == 6 && color.bytes().all(|b| b.is_ascii_hexdigit()))
+    {
+        return Err(format!(
+            "color {color:?} must be six hex digits (FF0000) or auto"
+        ));
+    }
+    if let Some(HalfPoints(size)) = format.size_pt
+        && !(2..=3276).contains(&size)
+    {
+        return Err(format!(
+            "size_pt {} is outside 1..=1638",
+            f64::from(size) / 2.0
         ));
     }
     if text.is_empty() && *format != RunFormat::default() {

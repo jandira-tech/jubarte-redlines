@@ -333,6 +333,20 @@ def test_tools_whose_engine_feature_is_absent_say_so(tmp_path: Path, tool: str, 
     assert f"lacks {feature}" in error_text(bad)
 
 
+def test_docx_validate_runs_the_engine_and_audits_against_the_original(tmp_path: Path) -> None:
+    write_pair(tmp_path)
+    clean, audited, half = call(
+        tmp_path,
+        ("docx_validate", {"path": "a.docx"}),
+        ("docx_validate", {"path": "b.docx", "original": "a.docx", "author": "Z"}),
+        ("docx_validate", {"path": "b.docx", "original": "a.docx"}),
+    )
+    assert clean.structured_content["result"] == []
+    codes = {f["code"] for f in audited.structured_content["result"]}
+    assert "UNTRACKED_EDIT" in codes, audited.structured_content
+    assert "author" in error_text(half)
+
+
 def test_feature_tools_still_contain_paths(tmp_path: Path) -> None:
     (bad,) = call(tmp_path, ("docx_validate", {"path": "/etc/hostname"}))
     assert "outside root" in error_text(bad)
@@ -344,11 +358,16 @@ def test_feature_tools_delegate_when_the_engine_has_them(tmp_path: Path, monkeyp
     (tmp_path / "o.docx").write_bytes(make_document("y"))
     seen: dict[str, Any] = {}
 
-    def validate(self: Document, original: Document | None = None, author: str | None = None) -> list[dict]:
-        seen["validate"] = (original is not None, author)
+    def validate(self: Document) -> list[dict]:
+        seen["validate"] = True
         return [{"code": "OK"}]
 
+    def audit_tracked(self: Document, original: Document, *, author: str) -> list[dict]:
+        seen["audit"] = (isinstance(original, Document), author)
+        return [{"code": "AUDIT"}]
+
     monkeypatch.setattr(Document, "validate", validate, raising=False)
+    monkeypatch.setattr(Document, "audit_tracked", audit_tracked, raising=False)
     monkeypatch.setattr(Document, "comments", lambda self: ({"id": "c1"},), raising=False)
     monkeypatch.setattr(Document, "audit", lambda self, rules=None: [{"rules": rules}], raising=False)
     v, c, a = call(
@@ -357,8 +376,9 @@ def test_feature_tools_delegate_when_the_engine_has_them(tmp_path: Path, monkeyp
         ("docx_comments", {"path": "d.docx"}),
         ("docx_audit", {"path": "d.docx", "rules": {"r": 1}}),
     )
-    assert v.structured_content["result"] == [{"code": "OK"}]
-    assert seen["validate"] == (True, "Z")
+    assert v.structured_content["result"] == [{"code": "OK"}, {"code": "AUDIT"}]
+    assert seen["validate"] is True
+    assert seen["audit"] == (True, "Z")
     assert c.structured_content["result"] == [{"id": "c1"}]
     assert a.structured_content["result"] == [{"rules": {"r": 1}}]
 
