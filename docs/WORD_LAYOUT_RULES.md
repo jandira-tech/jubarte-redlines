@@ -569,6 +569,18 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
     at 76.3 in each row; r1-r8 paint the text at the same x for 0.5pt and
     3pt rules, table or cell borders, fixed or autofit layout.
 
+- **A table with no default table style is not pulled and pads 0.5pt.**
+  Without a `w:default="1"` table style (no styles part, PHPWord, docx
+  editors), an unstyled table keeps its border on the margin in every
+  compat mode, and an unnamed cell margin is 0.5pt, not 108 twips, on
+  every side and inner column. A named `tblCellMar` still sets the pad
+  and is still not pulled.
+  - Word 16 probes 2026-10-01: n1-n6, p1-p4, v1-v3, w5. With no styles
+    part, compat 14 puts the rule on 71.76..72.24 and the text at 72.48;
+    compat 15 puts the text at 72.72; a 216-twip `tblCellMar` gives
+    82.80. meeting_agenda_table and meeting_agenda_table_2 set "Time" at
+    72.48. With Normal Table present (v4-v8, w1-w7) the 108-twip pull
+    holds.
 ## Rows, groups and templates
 
 - **A row holding a nested table taller than the page splits between the

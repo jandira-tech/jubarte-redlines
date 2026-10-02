@@ -1137,9 +1137,11 @@ struct StyleSheet {
     /// no styles part, or one that declares w:latentStyles. A styles part
     /// without them leaves an undefined heading as Normal (000312ea).
     latent: bool,
-    /// A docDefaults without pPrDefault (PHPWord's signature): Word keeps
-    /// an unindented, unstyled table's border at the margin (00f0e7f3).
-    bare_defaults: bool,
+    /// A table style marked `w:default="1"` exists. Without one (no styles
+    /// part, PHPWord's bare styles, docx editors) an unstyled table keeps
+    /// its border at the margin in every compat mode and pads its cells
+    /// 0.5pt (00f0e7f3; Word 16 probes n1-n6, v1-v3, w5, 2026-10-01).
+    default_table: bool,
 }
 
 #[derive(Clone)]
@@ -2919,7 +2921,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
             tables: HashMap::new(),
             theme,
             latent: true,
-            bare_defaults: false,
+            default_table: false,
         };
     };
     let xml = if settings_link_styles(pkg) {
@@ -2936,7 +2938,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
             tables: HashMap::new(),
             theme,
             latent: true,
-            bare_defaults: false,
+            default_table: false,
         };
     };
     // styles.xml is present. An empty pPrDefault + empty Normal (the
@@ -3239,13 +3241,20 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
         table.para.before = defaults.para.before;
         table.para.after = defaults.para.after;
     }
+    let default_table = dom
+        .descendants(root, Some(&W::name("style")))
+        .into_iter()
+        .any(|style| {
+            attr_any(&dom, style, "type") == Some("table")
+                && matches!(attr_any(&dom, style, "default"), Some("1" | "true" | "on"))
+        });
     StyleSheet {
         defaults,
         by_id,
         tables,
         theme,
         latent: xml.contains("latentStyles"),
-        bare_defaults,
+        default_table,
     }
 }
 
@@ -11039,7 +11048,11 @@ fn table_block(
             cols.push(w);
         }
     }
-    let (mut tbl_pad_l, mut tbl_pad_r) = table_pad_h(dom, table);
+    // With no table style anywhere Word pads a cell 0.5pt, not 108 twips
+    // (probes n1/n4: text 0.48pt past a hairline's half).
+    let styleless = !sheet.default_table && tdef.is_none();
+    let (mut tbl_pad_l, mut tbl_pad_r) =
+        table_pad_h(dom, table, if styleless { 0.5 } else { twip(108.0) });
     let direct_mar = table_pr(dom, table)
         .and_then(|pr| first_named(dom, pr, "tblCellMar"))
         .is_some();
@@ -11572,8 +11585,7 @@ fn table_block(
                 pref,
                 fixed,
                 float: table_float(dom, table),
-                keep_at_margin: sheet.bare_defaults
-                    && sheet.tables.is_empty()
+                keep_at_margin: styleless
                     && table_pr(dom, table)
                         .is_none_or(|pr| first_named(dom, pr, "tblInd").is_none()),
                 rules,
@@ -11768,10 +11780,9 @@ fn table_layout_fixed(dom: &Dom, table: NodeId) -> bool {
         .is_some_and(|v| v.eq_ignore_ascii_case("fixed"))
 }
 
-fn table_pad_h(dom: &Dom, table: NodeId) -> (f32, f32) {
+fn table_pad_h(dom: &Dom, table: NodeId, default: f32) -> (f32, f32) {
     // Word default cell mar is 108 twips L/R (meeting_agenda cluster).
     // tblCellMar overrides (sample_document code cells are 10 twips).
-    let default = twip(108.0);
     let Some(pr) = table_pr(dom, table) else {
         return (default, default);
     };
@@ -40383,7 +40394,7 @@ mod table_tests {
             tables: HashMap::new(),
             theme: ThemeFonts::default(),
             latent: true,
-            bare_defaults: false,
+            default_table: true,
         };
         let mut numbering = Numbering::default();
         match table_block(
@@ -40442,7 +40453,7 @@ mod table_tests {
             tables: HashMap::new(),
             theme: ThemeFonts::default(),
             latent: true,
-            bare_defaults: false,
+            default_table: true,
         };
         let mut numbering = Numbering::default();
         match table_block(
@@ -40488,7 +40499,7 @@ mod table_tests {
             tables: HashMap::new(),
             theme: ThemeFonts::default(),
             latent: true,
-            bare_defaults: false,
+            default_table: true,
         };
         let mut numbering = Numbering::default();
         match table_block(
@@ -40558,7 +40569,7 @@ mod table_tests {
             tables: HashMap::new(),
             theme: ThemeFonts::default(),
             latent: true,
-            bare_defaults: false,
+            default_table: true,
         };
         let mut numbering = Numbering::default();
         match table_block(
@@ -40665,7 +40676,7 @@ mod table_tests {
             tables: HashMap::new(),
             theme: ThemeFonts::default(),
             latent: true,
-            bare_defaults: false,
+            default_table: true,
         };
         let mut numbering = Numbering::default();
         match table_block(
@@ -40742,7 +40753,7 @@ mod table_tests {
             tables,
             theme: ThemeFonts::default(),
             latent: true,
-            bare_defaults: false,
+            default_table: true,
         }
     }
 

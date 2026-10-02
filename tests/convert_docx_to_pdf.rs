@@ -3691,7 +3691,10 @@ fn an_autofit_pct_table_keeps_the_grid_its_width_matches() {
     // fixtures_500 005e8d94: tblW 4949 pct (505pt of 510.2), grid
     // 1546/1263/1341/1958/1991/1991 twips summing to 504.5pt, tcW shares
     // 814/612/650/949/1008/966 within 7% of it. Live Word draws the grid;
-    // we laid the shares out (column two 4.9pt right).
+    // we laid the shares out (column two 4.9pt right). The cells keep
+    // 005e8d94's 108-twip margins; with no default table style Word 16
+    // runs this body with Cell0..Cell5 at 45.12/129.12/192.24/259.44/
+    // 357.36/461.28 (2026-10-01).
     let grid = [1546, 1263, 1341, 1958, 1991, 1991];
     let pct = [814, 612, 650, 949, 1008, 966];
     let cols: String = grid
@@ -3704,13 +3707,13 @@ fn an_autofit_pct_table_keeps_the_grid_its_width_matches() {
         .map(|(i, p)| format!(r#"<w:tc><w:tcPr><w:tcW w:w="{p}" w:type="pct"/></w:tcPr><w:p><w:r><w:t>Cell{i}</w:t></w:r></w:p></w:tc>"#))
         .collect();
     let body = format!(
-        r#"<w:tbl><w:tblPr><w:tblW w:w="4949" w:type="pct"/><w:jc w:val="center"/></w:tblPr><w:tblGrid>{cols}</w:tblGrid><w:tr>{cells}</w:tr></w:tbl><w:p/><w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="851" w:bottom="1134" w:left="851"/></w:sectPr>"#
+        r#"<w:tbl><w:tblPr><w:tblW w:w="4949" w:type="pct"/><w:jc w:val="center"/><w:tblCellMar><w:left w:w="108" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid>{cols}</w:tblGrid><w:tr>{cells}</w:tr></w:tbl><w:p/><w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="851" w:bottom="1134" w:left="851"/></w:sectPr>"#
     );
     let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("pct grid table");
     let (x, _) = pdf_glyph_text_xy(&pdf, "Cell1").expect("cell two paints");
     assert!(
-        (x - 128.1).abs() < 0.4,
-        "column two starts at the grid's 77.3pt; x={x}"
+        (x - 129.12).abs() < 0.3,
+        "column two starts where Word sets it; x={x}"
     );
 }
 
@@ -5853,10 +5856,11 @@ fn a_floating_table_taller_than_its_page_breaks_across_pages() {
 #[test]
 fn a_phpword_table_without_table_styles_is_not_pulled_into_the_margin() {
     // fixtures_500 00f0e7f3 / 00046848 (PHPWord, compatibilityMode 12):
-    // docDefaults without pPrDefault and no table style: Word keeps the
-    // table border at the margin (cell text 5.4pt in). 00587c73, whose
-    // styles define TableNormal, is pulled left by its cell margin as
-    // usual, and so is a styles part that carries a pPrDefault.
+    // no default table style, so Word keeps the table border at the
+    // margin and pads the cell 0.5pt, pPrDefault or not (Word 16 runs
+    // these bodies with the text at 72.48, probes 2026-10-01). 00587c73,
+    // whose styles define TableNormal, is pulled left by its 108-twip cell
+    // margin as usual (probe v4: 72.0).
     let styles = |defaults: &str, table_style: &str| {
         format!(
             "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
@@ -5871,7 +5875,8 @@ fn a_phpword_table_without_table_styles_is_not_pulled_into_the_margin() {
         <w:tblCellMar><w:left w:w=\"108\" w:type=\"dxa\"/><w:right w:w=\"108\" w:type=\"dxa\"/></w:tblCellMar>\
         </w:tblPr></w:style>";
     let x = |styles_xml: &str| {
-        let body = "<w:tbl><w:tblGrid><w:gridCol w:w=\"9360\"/></w:tblGrid>\
+        let body = "<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/></w:tblPr>\
+               <w:tblGrid><w:gridCol w:w=\"9360\"/></w:tblGrid>\
                <w:tr><w:tc><w:p><w:r><w:t>NoPull</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:sectPr/>";
         let pdf = docx_to_pdf(&docx_with_styles(body, styles_xml)).expect("pull");
         pdf_glyph_text_xy(&pdf, "NoPull").expect("cell text").0
@@ -5880,12 +5885,12 @@ fn a_phpword_table_without_table_styles_is_not_pulled_into_the_margin() {
     let styled = x(&styles("", normal_table));
     let with_ppr_default = x(&styles("<w:pPrDefault><w:pPr/></w:pPrDefault>", ""));
     assert!(
-        (plain - 77.4).abs() < 0.3,
-        "no table styles: not pulled; x={plain}"
+        (plain - 72.48).abs() < 0.3,
+        "no table styles: not pulled, 0.5pt in; x={plain}"
     );
     assert!(
-        (with_ppr_default - 72.0).abs() < 0.3,
-        "pPrDefault present: pulled; x={with_ppr_default}"
+        (with_ppr_default - 72.48).abs() < 0.3,
+        "pPrDefault present, still no table style: not pulled; x={with_ppr_default}"
     );
     assert!(
         (styled - 72.0).abs() < 0.3,
@@ -11961,9 +11966,9 @@ fn official_file_34_matches_word_two_pages() {
 
 #[test]
 fn table_cell_jc_center_centers_header_text() {
-    // file_34 / uipriority: header cells `w:jc center`. After the Word
-    // mode<15 edge pull (tblCellMar left=180 twips), Feature sits at
-    // ~116pt in a 150pt col. Unpulled it was 125.3; pad_l-only was 81.
+    // file_34 / uipriority: header cells `w:jc center`, tblCellMar
+    // left=180 twips. With no default table style nothing pulls the table
+    // left: Word 16 runs this body with Feature at 125.35 (2026-10-01).
     let body = "<w:tbl>\
          <w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/>\
            <w:tblCellMar>\
@@ -12006,11 +12011,9 @@ fn table_cell_jc_center_centers_header_text() {
         .min_by(|a, b| a.partial_cmp(b).unwrap());
     let feature_x = feature.or_else(|| xs.iter().copied().min_by(|a, b| a.partial_cmp(b).unwrap()));
     let feature_x = feature_x.expect("Feature F");
-    // mode<15 pulls by tblCellMar left=180 twips (9pt), so the centered
-    // header moves with the table: 125.3 − 9 ≈ 116.3.
     assert!(
-        (110.0..=122.0).contains(&feature_x),
-        "Word centers Feature in the pulled first col at ~116pt, not unpulled 125; x={feature_x} xs={xs:?}"
+        (feature_x - 125.35).abs() < 0.3,
+        "Word centers Feature in the unpulled first col at 125.35; x={feature_x} xs={xs:?}"
     );
 }
 
@@ -12747,10 +12750,12 @@ fn fixed_width_table_is_not_stretched_to_the_page() {
     let text = String::from_utf8_lossy(&pdf);
     let rules = pdf_vertical_rule_xs(&pdf);
     let right = rules.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-    // mode<15: border at margin − 108 twips, so 72 − 5.4 + 300 = 366.6.
+    // No default table style: the border stays on the margin, 72 + 300.
+    // Word 16 runs this body (no tcW, autofit) shrunk to its letters
+    // instead; re-running autofit is not reconstructed yet.
     assert!(
-        (365.5..=367.5).contains(&right),
-        "300pt table ends at 366.6 after Word cell-mar pull, not 372; rules={rules:?}"
+        (371.0..=373.0).contains(&right),
+        "300pt table ends at 372, not stretched; rules={rules:?}"
     );
     assert!(
         !text.contains("540.00"),
@@ -15003,13 +15008,14 @@ fn tblind_table_body() -> &'static str {
 
 #[test]
 fn tbl_ind_mode12_sits_at_indent_minus_cell_margin() {
-    // Word compat < 15: border at margin + tblInd - left cell mar (108 twips).
-    // 72 + 72 - 5.4 = 138.6.
+    // Word compat < 15: border at margin + tblInd - left cell margin. With
+    // no styles part that margin is 0.5pt: Word 16 draws this body's left
+    // rule at 143.28..143.76 and its text at 144.0 (2026-10-01).
     let pdf = docx_to_pdf(&minimal_docx_body(tblind_table_body())).expect("convert tblInd");
     let rules = pdf_vertical_rule_xs(&pdf);
     assert!(
-        rules.iter().any(|x| (137.5..=139.5).contains(x)),
-        "mode 12 tblInd 1440 twips must pull left by 108 twips; rules={rules:?}"
+        rules.iter().any(|x| (*x - 143.5).abs() < 0.3),
+        "mode 12 tblInd 1440 twips pulls left by the 0.5pt margin; rules={rules:?}"
     );
 }
 
@@ -15347,14 +15353,16 @@ fn a_legacy_pct_table_spans_the_text_and_its_cell_margins() {
     );
     let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert legacy pct table");
     let hay = String::from_utf8_lossy(&pdf);
-    // Text 468pt + 2 x 5.4pt = 478.8pt from 66.6: col one 60% = 287.28.
+    // Text 468pt + 2 x 5.4pt = 478.8pt: col one 60% = 287.28. With no
+    // default table style the border stays on the margin (Word 16 runs
+    // this body with Z at 364.80, probe 2026-10-01), not 5.4pt left of it.
     let z = [pdf_cm_tj_xy(&hay, "Z"), pdf_tj_xy(&hay, "Z")]
         .concat()
         .first()
         .map(|p| p.0)
         .expect("Z paints");
     assert!(
-        (z - (66.6 + 287.28 + 5.4)).abs() < 0.8,
+        (z - (72.0 + 287.28 + 5.4)).abs() < 0.8,
         "the second column starts 60% of (text + margins) in; Z at {z}"
     );
 }
@@ -16003,7 +16011,7 @@ fn a_tall_top_margin_float_table_after_text_starts_on_the_next_page() {
 
 fn indent_cell_table(width: u32, ppr: &str, text: &str) -> String {
     format!(
-        r#"<w:tbl><w:tblPr><w:tblW w:w="{width}" w:type="dxa"/><w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid><w:gridCol w:w="{width}"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="{width}" w:type="dxa"/></w:tcPr><w:p><w:pPr>{ppr}</w:pPr><w:r><w:t>{text}</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#
+        r#"<w:tbl><w:tblPr><w:tblW w:w="{width}" w:type="dxa"/><w:tblLayout w:type="fixed"/><w:tblCellMar><w:left w:w="108" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid><w:gridCol w:w="{width}"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="{width}" w:type="dxa"/></w:tcPr><w:p><w:pPr>{ppr}</w:pPr><w:r><w:t>{text}</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#
     )
 }
 
@@ -16460,7 +16468,7 @@ fn a_justified_cell_line_squeezes_like_a_body_line() {
                 government.";
     let first_line_ends_in_times = |cell_twips: u32| {
         let body = format!(
-            r#"<w:tbl><w:tblPr><w:tblW w:w="{cell_twips}" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="{cell_twips}"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="{cell_twips}" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/><w:jc w:val="both"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="22"/></w:rPr><w:t>{text}</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#
+            r#"<w:tbl><w:tblPr><w:tblW w:w="{cell_twips}" w:type="dxa"/><w:tblCellMar><w:left w:w="108" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid><w:gridCol w:w="{cell_twips}"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="{cell_twips}" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/><w:jc w:val="both"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="22"/></w:rPr><w:t>{text}</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#
         );
         let settings = r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>"#;
         let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, settings)).expect("cell squeeze");
@@ -16955,8 +16963,9 @@ fn official_table_bookmark_test_eight_ignores_fixed_tblcellmar_left() {
 fn fixed_layout_honours_tblcellmar_left_right() {
     // xml 3.3: table_pad_h must read tblCellMar on tblLayout=fixed.
     // A 2000-twip (100pt) cell with left=right=720 twips (36pt) insets
-    // the direct shd to 28pt, not the 108-twip default (89.2pt). Mode<15
-    // pull uses the same mar_l, so PadFix stays on the body edge.
+    // the direct shd to 28pt, not the 108-twip default (89.2pt). With no
+    // default table style nothing pulls the table left, so PadFix starts
+    // 36pt in (Word 16 runs this body with it at 108.00, 2026-10-01).
     let body = "<w:tbl><w:tblPr>\
            <w:tblLayout w:type=\"fixed\"/>\
            <w:tblCellMar>\
@@ -16987,8 +16996,8 @@ fn fixed_layout_honours_tblcellmar_left_right() {
     assert!(!xs.is_empty(), "PadFix must paint; xs={xs:?}");
     let x = xs.iter().copied().fold(f32::INFINITY, f32::min);
     assert!(
-        (x - 72.0).abs() < 2.0,
-        "mode<15 pull keeps cell text on the body edge; x={x} xs={xs:?}"
+        (x - 108.0).abs() < 0.3,
+        "an unstyled table is not pulled: text 36pt past the margin; x={x} xs={xs:?}"
     );
 }
 
@@ -19979,6 +19988,19 @@ fn docx_with_styles(body: &str, styles: &str) -> Vec<u8> {
     zip.write_all(rels.as_bytes()).unwrap();
     zip.start_file("word/document.xml", opts).unwrap();
     zip.write_all(document.as_bytes()).unwrap();
+    // Word reads a styles part only through its relationship.
+    zip.start_file("word/_rels/document.xml.rels", opts)
+        .unwrap();
+    zip.write_all(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+         <Relationship Id=\"rIdS\" \
+           Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" \
+           Target=\"styles.xml\"/>\
+         </Relationships>"
+            .as_bytes(),
+    )
+    .unwrap();
     zip.start_file("word/styles.xml", opts).unwrap();
     zip.write_all(styles.as_bytes()).unwrap();
     zip.finish().unwrap().into_inner()
@@ -27820,7 +27842,7 @@ fn space_for_ul_adds_descent_to_wrapped_lines_in_table_cells() {
     ));
     let next = para(&format!("<w:r>{ul}<w:t>K漢字</w:t></w:r>"));
     let body = format!(
-        "<w:tbl><w:tblPr><w:tblW w:w=\"1700\" w:type=\"dxa\"/></w:tblPr>\
+        "<w:tbl><w:tblPr><w:tblW w:w=\"1700\" w:type=\"dxa\"/><w:tblCellMar><w:left w:w=\"108\" w:type=\"dxa\"/><w:right w:w=\"108\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr>\
            <w:tblGrid><w:gridCol w:w=\"1700\"/></w:tblGrid>\
            <w:tr><w:tc>{wrapped}{next}</w:tc></w:tr></w:tbl>\
          <w:p><w:r><w:t>Z</w:t></w:r></w:p>\
@@ -30444,11 +30466,57 @@ fn table_tr_height_at_least_is_max_of_content_and_spec() {
 }
 
 #[test]
-fn table_default_cell_left_is_word_108_twips() {
-    // Median lock: meeting_agenda / q1_sales / employee_directory / …
-    // no tblStyle, no tblCellMar. Word default tcMar left is 108 twips
-    // (5.4pt). Mode < 15 pulls the table left by that mar so cell text
-    // lines up with body at the margin (plan xml 3.3 ckpt 1).
+fn an_unstyled_tables_cells_pad_half_a_point_on_every_side() {
+    // Word 16 probes p1/p3 (2026-10-01): with no styles part a bordered
+    // two-column table (144pt columns) sets "QB" 0.48pt past its middle
+    // rule and ends a right-aligned "RA" 0.52pt short of it, in compat 14
+    // (rules 72/216/360, no pull) and compat 15 (rules a quarter point in).
+    // We padded 108 twips and pulled the compat 14 table 5.4pt left.
+    let r = r#"<w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="24"/></w:rPr>"#;
+    let cell = |text: &str, jc: &str| {
+        format!(
+            r#"<w:tc><w:tcPr><w:tcW w:w="2880" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/>{jc}</w:pPr><w:r>{r}<w:t>{text}</w:t></w:r></w:p></w:tc>"#
+        )
+    };
+    let right = r#"<w:jc w:val="right"/>"#;
+    let body = format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="5760" w:type="dxa"/><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:left w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:right w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="000000"/></w:tblBorders><w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid><w:gridCol w:w="2880"/><w:gridCol w:w="2880"/></w:tblGrid><w:tr>{}{}</w:tr><w:tr>{}{}</w:tr></w:tbl><w:p/>{}"#,
+        cell("QA", ""),
+        cell("QB", ""),
+        cell("RA", right),
+        cell("RB", right),
+        letter_body_sect()
+    );
+    for (mode, rule) in [(14, 216.0), (15, 216.24)] {
+        let settings = format!(
+            r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="{mode}"/></w:compat>"#
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, &settings)).expect("unstyled");
+        let rules = pdf_vertical_rule_xs(&pdf);
+        assert!(
+            rules.iter().any(|x| (x - rule).abs() < 0.3),
+            "compat {mode}: the middle rule at {rule}; rules={rules:?}"
+        );
+        let qb = pdf_glyph_text_xy(&pdf, "QB").expect("QB").0;
+        assert!(
+            (qb - rule - 0.48).abs() < 0.3,
+            "compat {mode}: QB 0.48pt past the rule; x={qb}"
+        );
+        let qa = pdf_glyph_text_xy(&pdf, "QA").expect("QA").0;
+        assert!(
+            (qa - (rule - 144.0) - 0.48).abs() < 0.3,
+            "compat {mode}: QA 0.48pt past the left rule, not pulled; x={qa}"
+        );
+    }
+}
+
+#[test]
+fn a_table_without_a_default_style_keeps_its_border_on_the_margin() {
+    // meeting_agenda / q1_sales / employee_directory: no tblStyle, no
+    // tblCellMar and no default table style. Word 16 sets "Time" at 72.48
+    // in 90e2c33814 and e0c027b1ca and in this body, with the rules on
+    // 72/228/384/540 (2026-10-01): no pull, 0.5pt cell margins. We pulled
+    // the table 108 twips left as if Normal Table were there.
     let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
            <w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr>\
@@ -30507,8 +30575,8 @@ fn table_default_cell_left_is_word_108_twips() {
         .map(|(x, _)| *x)
         .fold(f32::INFINITY, f32::min);
     assert!(
-        (time_x - 72.0).abs() < 1.2,
-        "mode<15 pulls the table left by 108 twips so cell text aligns with body; Time x={time_x} xs={xs:?}"
+        (time_x - 72.48).abs() < 0.3,
+        "an unstyled table pads its cells 0.5pt from the margin; Time x={time_x} xs={xs:?}"
     );
     assert!(
         starts.iter().all(|x| (*x - 77.4).abs() > 1.0),
@@ -30516,8 +30584,8 @@ fn table_default_cell_left_is_word_108_twips() {
     );
     let rules = pdf_vertical_rule_xs(&pdf);
     assert!(
-        rules.iter().any(|x| (65.4..=67.8).contains(x)),
-        "mode<15 left border sits at margin − 108 twips (66.6); rules={rules:?}"
+        rules.iter().any(|x| (*x - 72.0).abs() < 0.3),
+        "the left border stays on the margin; rules={rules:?}"
     );
 }
 
@@ -30779,7 +30847,8 @@ fn cell_tcmar_left_overrides_tblcellmar() {
 #[test]
 fn tblcellmar_start_end_stays_default_after_mini_marse() {
     // Cicero: tblCellMar start/end=160. Mapping to left/right (mini
-    // 221–224) dropped Cicero −0.027 ITT. Keep default 108 twips.
+    // 221–224) dropped Cicero −0.027 ITT. Keep the default margin, 0.5pt
+    // with no table style anywhere.
     let body = "<w:tbl><w:tblPr>\
            <w:tblW w:w=\"9360\" w:type=\"dxa\"/>\
            <w:tblCellMar>\
@@ -30797,8 +30866,8 @@ fn tblcellmar_start_end_stays_default_after_mini_marse() {
     assert!(!xs.is_empty(), "PadCell must paint; xs={xs:?}");
     let x = xs.iter().copied().fold(f32::INFINITY, f32::min);
     assert!(
-        (x - 72.0).abs() < 1.2,
-        "start/end stay ignored; default 108 twips pulls cell text to the body edge; x={x} xs={xs:?}"
+        (x - 72.5).abs() < 0.3,
+        "start/end stay ignored; the default margin keeps cell text by the body edge; x={x} xs={xs:?}"
     );
 }
 
@@ -32210,13 +32279,13 @@ fn tblw_pct_sixty_stretches_narrow_grid() {
            <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert pct table");
     let xs = pdf_vertical_rule_xs(&pdf);
-    // 60% of 468 is 280.8; mode<15 right edge is 72 − 5.4 + 280.8 = 347.4.
-    // Known gap: Word itself runs this exact body (no styles part) 72.0-
-    // 353.76, because with nothing defining cell margins its are 0 (no
-    // pull); table_pad_h still defaults to 108 twips.
+    // 60% of 468 is 280.8 from the margin: with no styles part nothing
+    // pulls the table left. Word itself runs this exact body 72.0-353.76
+    // (rule edges); we end 0.7pt short of that.
     assert!(
-        xs.iter().any(|x| (346.0..=349.0).contains(x)),
-        "60% table right edge is 347.4 after Word cell-mar pull, not 352.8; xs={xs:?}"
+        xs.iter().any(|x| (*x - 72.0).abs() < 0.3)
+            && xs.iter().any(|x| (352.5..=354.0).contains(x)),
+        "60% table runs 72 to 352.8; xs={xs:?}"
     );
     assert!(
         xs.iter().all(|x| (*x - 272.0).abs() > 1.0),
@@ -43658,7 +43727,7 @@ fn a_cell_line_takes_the_height_of_its_own_runs() {
     // "call" and wraps 11pt deleted text under it; the small lines step
     // at their own 11pt height, not at the big word's.
     let body = "<w:tbl><w:tblPr><w:tblW w:w=\"2400\" w:type=\"dxa\"/>\
-        <w:tblLayout w:type=\"fixed\"/></w:tblPr>\
+        <w:tblLayout w:type=\"fixed\"/><w:tblCellMar><w:left w:w=\"108\" w:type=\"dxa\"/><w:right w:w=\"108\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr>\
         <w:tblGrid><w:gridCol w:w=\"2400\"/></w:tblGrid><w:tr><w:tc>\
         <w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr>\
         <w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
