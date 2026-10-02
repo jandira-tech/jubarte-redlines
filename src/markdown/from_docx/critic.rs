@@ -165,6 +165,11 @@ impl Critic {
         self.tokens.len()
     }
 
+    /// Drop the tokens pushed since [`Critic::len`] was `len`.
+    pub(crate) fn truncate(&mut self, len: usize) {
+        self.tokens.truncate(len);
+    }
+
     pub(crate) fn comment(&mut self, note: &str) {
         self.tokens
             .push(Token::Leaf(Leaf::Comment(note.to_string())));

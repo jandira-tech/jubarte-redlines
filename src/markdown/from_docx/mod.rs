@@ -892,8 +892,35 @@ impl Writer<'_> {
             .and_then(|r| r.toggle("i"))
             .or(style_italic)
             .unwrap_or(base.1);
+        // A raised or lowered run keeps its tags, which the Markdown
+        // reader takes back to w:vertAlign; a note reference is already
+        // `[^n]`.
+        let note = run
+            .elements()
+            .any(|c| matches!(c.local(), "footnoteReference" | "endnoteReference"));
+        let tags = match rpr
+            .and_then(|r| r.path(&["vertAlign"]))
+            .and_then(|v| v.attr("val"))
+            .filter(|_| !note)
+        {
+            Some("superscript") => Some(("<sup>", "</sup>")),
+            Some("subscript") => Some(("<sub>", "</sub>")),
+            _ => None,
+        };
+        let start = out.len();
+        if let Some((open, _)) = tags {
+            out.raw(open);
+        }
+        let opened = out.len();
         for child in run.elements() {
             self.run_child(child, link, (bold, italic), fields, out, extra);
+        }
+        if let Some((_, close)) = tags {
+            if out.len() == opened {
+                out.truncate(start);
+            } else {
+                out.raw(close);
+            }
         }
     }
 
@@ -1508,6 +1535,41 @@ mod tests {
         assert_eq!(
             md(&docx(&body, &[])),
             "|Name|Q1|Q2|\n|-|-|-|\n|wide\\|cell||x|\n|line1<br>line2|n1; n2||\n"
+        );
+    }
+
+    #[test]
+    fn subscript_and_superscript_runs_keep_their_tags_through_a_round_trip() {
+        let vert = |val: &str, text: &str| {
+            format!(r#"<w:r><w:rPr><w:vertAlign w:val="{val}"/></w:rPr><w:t>{text}</w:t></w:r>"#)
+        };
+        let runs = [
+            r("Water is H"),
+            vert("subscript", "2"),
+            r("O and area x"),
+            vert("superscript", "2"),
+            r("."),
+            vert("baseline", " Plain"),
+        ]
+        .concat();
+        let expected = "Water is H<sub>2</sub>O and area x<sup>2</sup>. Plain\n";
+        assert_eq!(md(&docx(&p("", &runs), &[])), expected);
+        // The Markdown reader takes the tags back to w:vertAlign.
+        let docx_again = crate::markdown::markdown_to_docx(expected, &Default::default())
+            .unwrap()
+            .docx;
+        assert_eq!(md(&docx_again), expected);
+        // A raised note reference is already `[^n]`.
+        let note = r#"<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:footnoteReference w:id="2"/></w:r>"#;
+        let footnotes = format!(
+            r#"<w:footnotes {W}><w:footnote w:id="2"><w:p><w:r><w:t>Note.</w:t></w:r></w:p></w:footnote></w:footnotes>"#
+        );
+        assert_eq!(
+            md(&docx(
+                &p("", &format!("{runs}{note}")),
+                &[("word/footnotes.xml", &footnotes)]
+            )),
+            "Water is H<sub>2</sub>O and area x<sup>2</sup>. Plain[^1]\n\n[^1]: Note.\n"
         );
     }
 
