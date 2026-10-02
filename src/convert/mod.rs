@@ -617,6 +617,9 @@ fn with_pages<T>(
                 balance_spaces(&mut blocks, &fonts);
             }
             squeeze_bracket_pairs(&mut blocks);
+            if settings_flag(&pkg, "adjustLineHeightInTable") {
+                grid_table_cells(&mut blocks, page.grid_pitch);
+            }
             let display = number_footnote_refs(&mut blocks);
             resolve_cell_fields(&mut blocks);
             keep_opening_row_mark(&mut blocks);
@@ -870,6 +873,9 @@ struct ParaStyle {
     widow_control: bool,
     /// `w:snapToGrid`: off keeps the line off the docGrid linePitch.
     snap_to_grid: bool,
+    /// The docGrid linePitch a table cell's lines step on: its section's
+    /// under `w:adjustLineHeightInTable`, else 0 (`grid_table_cells`).
+    cell_grid: f32,
     line_mult: f32,
     /// `w:spacing w:lineRule="exact"` in points. Word uses this as the
     /// line box (sd_2517 Ttulo1 line=400 → 20pt), not size×(line/11).
@@ -1381,6 +1387,7 @@ impl Defaults {
                 bidi: false,
                 widow_control: true,
                 snap_to_grid: true,
+                cell_grid: 0.0,
                 line_mult: 276.0 / 240.0,
                 line_exact: None,
                 line_at_least: None,
@@ -9104,6 +9111,11 @@ fn cell_line_metrics(fonts: &Fonts, para: &CellPara, line: &[TextRun]) -> (f32, 
 
 fn cell_runs_line_box(fonts: &Fonts, runs: &[TextRun], style: &ParaStyle) -> (f32, f32) {
     let (size, face_id) = cell_runs_face(fonts, runs);
+    let grid = para_grid_pitch(style, style.cell_grid);
+    if grid > 0.5 {
+        let natural = fonts.get(face_id).single_line_pt(size.max(1.0));
+        return (size, grid_line_box(natural, style, grid));
+    }
     // A list marker only lifts the line, as in the body: the text keeps
     // its own part below the baseline (003416d6's TNR 12 numbers beside
     // Verdana 8 items step 12.9pt in Word, not TNR's 13.8).
@@ -10520,6 +10532,34 @@ fn keep_opening_row_mark(blocks: &mut [Block]) {
     {
         for cell in row.iter_mut().filter(|c| !c.grid_skip) {
             cell.hide_mark = false;
+        }
+    }
+}
+
+/// `w:adjustLineHeightInTable`: a table cell's lines step on its section's
+/// docGrid as the body's do (Word 16 probes lg2 h1–h4, compat 14 and 15:
+/// TNR 10 cell lines step 15.6 and a 20pt one 26.88; without the flag
+/// they keep their natural 11.5). `pitch` is the first section's; each
+/// next-page section brings its own.
+fn grid_table_cells(blocks: &mut [Block], mut pitch: f32) {
+    for block in blocks {
+        match block {
+            Block::PageBreak {
+                next: Some(next), ..
+            } => pitch = next.page.grid_pitch,
+            Block::Table { rows, .. } => {
+                for cell in rows.iter_mut().flatten() {
+                    for para in &mut cell.paras {
+                        para.style.cell_grid = pitch;
+                    }
+                    for nested in &mut cell.nested {
+                        if let Some(block) = std::rc::Rc::get_mut(nested) {
+                            grid_table_cells(std::slice::from_mut(block), pitch);
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -19124,6 +19164,7 @@ fn first_para_align(dom: &Dom, root: NodeId) -> Align {
         bidi: false,
         widow_control: true,
         snap_to_grid: true,
+        cell_grid: 0.0,
         line_mult: 1.0,
         line_exact: None,
         line_at_least: None,
@@ -27682,10 +27723,19 @@ impl<'a> Layout<'a> {
                             // An exact line sets its baseline as in the body
                             // (Word probe sbs1: a 20pt exact cell line's text
                             // sits where the body's does, not at its top).
+                            // On a docGrid the text sits centred in its
+                            // snapped box, as in the body.
+                            let face = self.fonts.get(face_id);
+                            let grid_pad =
+                                if para_grid_pitch(&para.style, para.style.cell_grid) > 0.5 {
+                                    ((line_box - face.single_line_pt(size.max(1.0))) / 2.0).max(0.0)
+                                } else {
+                                    0.0
+                                };
                             let ty = y_line
                                 - match para.style.line_exact {
                                     Some(_) => exact_baseline(line_box),
-                                    None => self.fonts.get(face_id).ascent_pt(size),
+                                    None => face.ascent_pt(size) + grid_pad,
                                 };
                             if ty < bottom {
                                 break;

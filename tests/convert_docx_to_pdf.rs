@@ -28985,6 +28985,62 @@ fn sectpr_doc_grid_lines_snaps_line_box_to_pitch() {
     );
 }
 
+/// One cell of TNR 10pt lines ("Ja", "Jb", a 20pt "Jc", "Jd") on a 15.6pt
+/// line grid, `w:adjustLineHeightInTable` on or off.
+fn cell_grid_docx(adjust: bool) -> Vec<u8> {
+    let p = |t: &str, sz: u32| {
+        format!("<w:p><w:r><w:rPr><w:sz w:val=\"{sz}\"/></w:rPr><w:t>{t}</w:t></w:r></w:p>")
+    };
+    let cell = [p("Ja", 20), p("Jb", 20), p("Jc", 40), p("Jd", 20)].concat();
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"4000\" w:type=\"dxa\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid><w:tr><w:tc>\
+         <w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr>{cell}</w:tc></w:tr></w:tbl>\
+         <w:p/><w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
+         <w:docGrid w:type=\"lines\" w:linePitch=\"312\"/></w:sectPr>"
+    );
+    let flag = if adjust {
+        "<w:adjustLineHeightInTable/>"
+    } else {
+        ""
+    };
+    let settings = format!(
+        "<w:compat>{flag}<w:compatSetting w:name=\"compatibilityMode\" \
+         w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"14\"/></w:compat>"
+    );
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+        <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Times New Roman\" \
+        w:hAnsi=\"Times New Roman\"/><w:sz w:val=\"20\"/></w:rPr></w:rPrDefault>\
+        <w:pPrDefault><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/>\
+        </w:pPr></w:pPrDefault></w:docDefaults></w:styles>";
+    docx_with_settings_and_styles(&body, &settings, styles)
+}
+
+#[test]
+fn adjust_line_height_in_table_snaps_cell_lines_to_the_grid() {
+    // Word 16 probes lg2 h1–h4 (compat 14 and 15 alike): with
+    // w:adjustLineHeightInTable a cell's lines step on the docGrid as the
+    // body's do (15.6, 26.88, 19.92); without it they keep their natural
+    // boxes (11.52, 20.88, 13.68). c90997f73a's price table: 2 pages.
+    for (adjust, want) in [(true, [15.6, 26.88, 19.92]), (false, [11.52, 20.88, 13.68])] {
+        let pdf = docx_to_pdf(&cell_grid_docx(adjust)).expect("convert cell grid");
+        let ys = text_baselines(&pdf);
+        assert!(
+            ys.len() >= 4,
+            "adjust={adjust}: four cell lines, got {ys:?}"
+        );
+        let steps = [ys[0] - ys[1], ys[1] - ys[2], ys[2] - ys[3]];
+        for (got, want) in steps.iter().zip(want) {
+            assert!(
+                (got - want).abs() < 0.3,
+                "adjust={adjust}: cell steps {steps:?}, Word {want}"
+            );
+        }
+    }
+}
+
 #[test]
 fn do_not_expand_shift_return_skips_justify_on_soft_break() {
     // xml leftover: w:compat/w:doNotExpandShiftReturn (ECMA-376 17.15.3.10).
