@@ -185,3 +185,36 @@ def test_render_report_keeps_page_order_and_font_resolution_metadata():
     with pytest.raises(FrozenInstanceError):
         font.physical = "Other"
     assert _decode_render_report('{"page_count":0,"pages":[],"fonts":[]}').pages == ()
+
+
+def test_insert_table_builder_copies_rows_and_omits_defaults():
+    rows = [["Item", "Qty"], ["Bolt", "40"]]
+    built = EditPlan(author="A").insert_table(
+        "body:p:0", rows=rows, header_row=True, widths_dxa=[6000, 3360], style="TableGrid", id="t"
+    )
+    rows[0][0] = "changed"
+    rows.append(["x", "y"])
+    assert built.operations[0] == {
+        "id": "t",
+        "kind": "insert_table",
+        "paragraph": {"id": "body:p:0"},
+        "position": "after",
+        "rows": [["Item", "Qty"], ["Bolt", "40"]],
+        "header_row": True,
+        "widths_dxa": [6000, 3360],
+        "style": "TableGrid",
+    }
+    plain = EditPlan(author="A").insert_table(0, rows=[("a",)], position="before").operations[0]
+    assert plain == {"kind": "insert_table", "paragraph": {"index": 0}, "position": "before", "rows": [["a"]]}
+
+
+@pytest.mark.parametrize("rows", ["ab", ["ab"], [[1]], [[None]], [["a"], "b"]])
+def test_insert_table_builder_rejects_non_text_cells(rows):
+    with pytest.raises(TypeError):
+        EditPlan(author="A").insert_table(0, rows=rows)
+
+
+@pytest.mark.parametrize("widths", [[True], ["100"], [1.5]])
+def test_insert_table_builder_rejects_non_integer_widths(widths):
+    with pytest.raises(TypeError):
+        EditPlan(author="A").insert_table(0, rows=[["a"]], widths_dxa=widths)

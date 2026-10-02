@@ -119,7 +119,11 @@ paragraph `like` selects), `delete_paragraph` (optional `comment`),
 `space_before`/`space_after` in points), `merge_paragraphs` (joins the next
 paragraph onto this one; optional `separator`, usually `" "`), `rewrite`
 (`text`: the paragraph's whole new text; only the words that differ are
-edited, so the rest keeps its runs and formatting). `replace` and
+edited, so the rest keeps its runs and formatting), `insert_table`
+(`rows`: cell text row by row, every row the same length; optional
+`position` `before|after`, `header_row`, `widths_dxa` per column in
+twentieths of a point (the text width split evenly when omitted), and
+`style`, a table style id or name, `TableGrid` by default). `replace` and
 `insert` take an optional `format` (`bold`/`italic`/`underline`/`highlight`)
 that applies to the new text only. `replace` takes `"whole": true` to show
 the change as the whole old text deleted, then the whole new text inserted.
@@ -173,6 +177,13 @@ Gotchas:
   join. It refuses a paragraph that carries a section break or is not
   followed by a plain paragraph. Do not format, delete or insert after a
   paragraph you merge in the same plan (`OVERLAPPING_EDITS`).
+- `insert_table` anchors on a body paragraph outside any table (nested
+  tables are `UNSUPPORTED_STRUCTURE`). Cells take the anchor's paragraph
+  style and run formatting. A table that would end the body or touch
+  another table gets an empty paragraph beside it, as Word requires.
+  Ragged rows, or `widths_dxa` whose count differs from the columns, are
+  `INVALID_EDIT`; an unknown style is `UNKNOWN_STYLE`. `TableGrid` is
+  added to the styles when the document lacks it.
 
 ## 3. Verify
 

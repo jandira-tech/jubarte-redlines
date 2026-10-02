@@ -468,6 +468,8 @@ Supported operation kinds include:
 - `delete_paragraph`
 - `format_paragraph`
 - `merge_paragraphs`
+- `insert_table` (unreleased: a table next to a paragraph, tracked as
+  inserted rows)
 
 Plans are atomic: stale sources, ambiguous anchors, overlapping edits or
 unsupported structures refuse the plan instead of making a guessed edit.

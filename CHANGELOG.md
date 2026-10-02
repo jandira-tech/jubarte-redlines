@@ -68,6 +68,15 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   `insert_paragraph` takes `like`, the paragraph whose properties the new
   one copies instead of the anchor's. Both are in `jubarte capabilities`,
   the Python plan builder and the agent skill.
+- Edit plans: `insert_table` puts a table before or after a body
+  paragraph (`rows`, optional `header_row`, `widths_dxa` and `style`).
+  The table has a DXA `w:tblW` equal to the sum of the column widths, a
+  `w:gridCol` and a DXA `w:tcW` for every column, and `w:tblHeader` on the
+  first row when asked. Its cells take the anchor's paragraph style.
+  `TableGrid` is added to `styles.xml` when absent. The redline shows the
+  rows inserted. Ragged rows and mismatched widths are `INVALID_EDIT`, and
+  nested tables are `UNSUPPORTED_STRUCTURE`. In `jubarte capabilities`, the
+  Python builder (`EditPlan.insert_table`) and the agent skill.
 - Edit plans: `delete_paragraph` takes an optional `comment`, anchored on
   the deleted text in the redline (the clean copy has no paragraph to hold
   it) and shown on the removed paragraph's hunk in the patch. Python:

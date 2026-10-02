@@ -592,6 +592,34 @@ class EditPlan:
         op: dict[str, object] = {"kind": "rewrite", "paragraph": _selector(paragraph), "text": text}
         return self._with(_with_optional(op, id=id))
 
+    def insert_table(
+        self,
+        paragraph: Selector,
+        *,
+        rows: Sequence[Sequence[str]],
+        position: Literal["before", "after"] = "after",
+        header_row: bool = False,
+        widths_dxa: Sequence[int] | None = None,
+        style: str | None = None,
+        id: str | None = None,
+    ) -> EditPlan:
+        """Insert a table next to the anchor paragraph; the redline shows its
+        rows inserted.
+
+        ``rows`` is the cell text row by row, every row the same length;
+        ``widths_dxa`` the column widths in twentieths of a point (the text
+        width split evenly when omitted); ``style`` a table style id or name
+        (``TableGrid``, added when the document lacks it, by default).
+        """
+        op: dict[str, object] = {"kind": "insert_table", "paragraph": _selector(paragraph), "position": position, "rows": _table_rows(rows)}
+        if header_row:
+            op["header_row"] = True
+        if widths_dxa is not None:
+            if isinstance(widths_dxa, (str, bytes)) or not all(isinstance(w, int) and not isinstance(w, bool) for w in widths_dxa):
+                raise TypeError("widths_dxa must be a sequence of integers")
+            op["widths_dxa"] = list(widths_dxa)
+        return self._with(_with_optional(op, style=style, id=id))
+
     def to_dict(self) -> dict[str, object]:
         """The wire form."""
         wire: dict[str, object] = {"schema_version": 1, "author": self.author}
@@ -611,6 +639,18 @@ class EditPlan:
     def to_json(self) -> str:
         """The wire form as JSON (what ``jubarte edit --plan`` reads)."""
         return json.dumps(self.to_dict(), ensure_ascii=False, indent=2)
+
+
+def _table_rows(rows: Sequence[Sequence[str]]) -> list[list[str]]:
+    """A copy of ``rows``, each a sequence of cell strings; the engine checks the shape."""
+    if isinstance(rows, (str, bytes)):
+        raise TypeError("rows must be a sequence of rows, not a string")
+    out: list[list[str]] = []
+    for row in rows:
+        if isinstance(row, (str, bytes)) or not all(isinstance(cell, str) for cell in row):
+            raise TypeError("each row must be a sequence of cell strings")
+        out.append(list(row))
+    return out
 
 
 def _with_optional(op: dict[str, object], **extra: str | None) -> dict[str, object]:

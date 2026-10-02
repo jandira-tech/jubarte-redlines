@@ -622,7 +622,7 @@ pub(super) fn numbering(
 }
 
 /// The definition of a style this writer uses, for a document that lacks it.
-pub(super) fn style_definition(id: &str) -> Option<String> {
+pub(crate) fn style_definition(id: &str) -> Option<String> {
     const HEADINGS: [(&str, &str); 6] = [
         ("32", ""),
         ("28", ""),

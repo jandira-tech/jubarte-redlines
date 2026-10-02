@@ -74,27 +74,7 @@ pub(super) fn assemble(
     let (root, section) = frame(&source);
     prune(&mut package, &main);
 
-    let styles_part = related(&package, &main, "/styles").unwrap_or_else(|| {
-        let part = sibling(&main, "styles.xml");
-        package.add_document_relationship(
-            &main,
-            &format!("{RELS}/styles"),
-            &relative_rel_target(&main, &part),
-        );
-        package.add_content_type_override(
-            &format!("/{part}"),
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
-        );
-        package.set_part(
-            &part,
-            format!(
-                "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
-                 <w:styles xmlns:w=\"{W_NS}\"></w:styles>"
-            )
-            .into_bytes(),
-        );
-        part
-    });
+    let styles_part = styles_part(&mut package, &main);
     let mut wanted: BTreeSet<&str> = BASE_STYLES.into_iter().collect();
     wanted.extend(document.styles.iter().copied());
     if let Some(styles) = package.part_string(&styles_part) {
@@ -157,6 +137,31 @@ pub(super) fn assemble(
         package.add_content_type_override(&format!("/{main}"), MAIN_CT);
     }
     package.to_zip().map_err(err)
+}
+
+/// The styles part `main` relates to, made empty when there is none.
+pub(crate) fn styles_part(package: &mut PartFs, main: &str) -> String {
+    related(package, main, "/styles").unwrap_or_else(|| {
+        let part = sibling(main, "styles.xml");
+        package.add_document_relationship(
+            main,
+            &format!("{RELS}/styles"),
+            &relative_rel_target(main, &part),
+        );
+        package.add_content_type_override(
+            &format!("/{part}"),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+        );
+        package.set_part(
+            &part,
+            format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
+                 <w:styles xmlns:w=\"{W_NS}\"></w:styles>"
+            )
+            .into_bytes(),
+        );
+        part
+    })
 }
 
 /// The part next to `main` named `name` (`word/` + `name`).

@@ -298,6 +298,7 @@ def test_capabilities_manifest_reports_python_runtime() -> None:
     assert caps["engine_version"] == jubarte.__version__
     assert caps["operations"]["edit"] is True
     assert "insert_paragraph" in caps["edit_operations"]
+    assert "insert_table" in caps["edit_operations"]
 
 
 def test_plan_builder_validates_selectors_runs_and_options() -> None:
@@ -396,3 +397,28 @@ def test_a_plan_resolves_selected_changes_before_it_edits() -> None:
     assert refused.value.code == "REVISION_CONFLICT"
     with pytest.raises(ValueError):
         EditPlan(author="A").resolving(accept={"id": ["body:rev:1"]})
+
+
+def test_insert_table_is_tracked_in_the_redline() -> None:
+    doc = letter()
+    plan = (
+        EditPlan(author="Claude", date="2026-10-02T12:00:00Z")
+        .for_document(doc)
+        .insert_table(0, rows=[["Item", "Qty"], ["Bolt", "40"]], header_row=True, widths_dxa=[6000, 3360])
+    )
+    result = doc.edit(plan)
+    assert result.report.ok, result.report.operations
+    assert result.report.operations[0].kind == "insert_table"
+    paragraphs = result.clean.inspect().paragraphs
+    assert [(p.text, p.in_table) for p in paragraphs[1:5]] == [
+        ("Item", True),
+        ("Qty", True),
+        ("Bolt", True),
+        ("40", True),
+    ]
+    assert result.redline.inspect().summary.tables == 1
+    original = [p.text for p in doc.inspect().paragraphs]
+    assert [p.text for p in result.redline.reject().inspect().paragraphs] == original
+    with pytest.raises(EditPlanError) as refused:
+        doc.edit(EditPlan(author="A").insert_table(0, rows=[["a", "b"], ["c"]]))
+    assert refused.value.code == "INVALID_EDIT"

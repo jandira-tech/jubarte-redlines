@@ -21,6 +21,7 @@ fn every_advertised_edit_kind_accepts_its_wire_representation() {
         json!({"kind":"format_paragraph", "paragraph":{"index":0}, "alignment":"center", "line_spacing":1.15, "space_after":6}),
         json!({"kind":"merge_paragraphs", "paragraph":{"index":0}, "separator":" "}),
         json!({"kind":"rewrite", "paragraph":{"index":0}, "text":"new text"}),
+        json!({"kind":"insert_table", "paragraph":{"index":0}, "position":"before", "rows":[["a","b"],["c","d"]], "header_row":true, "widths_dxa":[4680,4680], "style":"TableGrid"}),
     ];
     let manifest = capabilities("rust");
     let kinds: Vec<_> = operations

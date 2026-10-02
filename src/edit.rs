@@ -30,6 +30,7 @@ use crate::namespaces::{R, W};
 use crate::xmllinq::{Dom, NodeId, XNamespace};
 
 mod rewrite;
+mod structural;
 mod whole;
 
 const COMMENTS_REL: &str =
@@ -265,6 +266,29 @@ pub enum OperationKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         /// Plain text placed between the two (for example `" "`).
         separator: Option<String>,
+    },
+    /// Insert a table next to the anchor paragraph. Each cell holds one
+    /// paragraph in the anchor's paragraph style; the redline shows the
+    /// rows inserted. Body paragraphs outside tables only.
+    InsertTable {
+        /// Anchor paragraph; must match exactly one.
+        paragraph: Selector,
+        #[serde(default)]
+        /// Which side of the anchor paragraph.
+        position: Side,
+        /// Cell text, row by row; every row has the same number of cells.
+        rows: Vec<Vec<String>>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        /// Mark the first row as a header row that repeats on each page.
+        header_row: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Column widths in twentieths of a point; the text width split
+        /// evenly when omitted.
+        widths_dxa: Option<Vec<u32>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Table style, by id or name; `TableGrid` (added when the document
+        /// lacks it) when omitted.
+        style: Option<String>,
     },
 }
 
@@ -810,6 +834,7 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
             ],
             "merge_paragraphs" => &["separator"],
             "rewrite" => &["text"],
+            "insert_table" => &["position", "rows", "header_row", "widths_dxa", "style"],
             other => {
                 return Err(err(
                     "INVALID_PLAN",
@@ -1011,6 +1036,18 @@ enum Resolved {
         style: Option<String>,
         /// Comment text anchored to the changed text.
         comment: Option<String>,
+    },
+    InsertTable {
+        anchor: usize,
+        side: Side,
+        rows: Vec<Vec<String>>,
+        header_row: bool,
+        /// One width per column, in twentieths of a point.
+        widths: Vec<u32>,
+        /// Resolved table style id.
+        style: String,
+        /// The style's definition must be added to the styles part.
+        add_style: bool,
     },
 }
 
@@ -1301,7 +1338,8 @@ impl<'p> Transaction<'p> {
             | OperationKind::DeleteParagraph { paragraph, .. }
             | OperationKind::FormatParagraph { paragraph, .. }
             | OperationKind::MergeParagraphs { paragraph, .. }
-            | OperationKind::Rewrite { paragraph, .. } => paragraph,
+            | OperationKind::Rewrite { paragraph, .. }
+            | OperationKind::InsertTable { paragraph, .. } => paragraph,
         };
         let para = match self.select(selector) {
             Ok(p) => p,
@@ -1665,6 +1703,67 @@ impl<'p> Transaction<'p> {
                     outcome,
                 ))
             }
+            OperationKind::InsertTable {
+                position,
+                rows,
+                header_row,
+                widths_dxa,
+                style,
+                ..
+            } => {
+                outcome.matches = 1;
+                if self.paragraph_story[para].0 != 0 {
+                    return Err(fail(
+                        "UNSUPPORTED_STRUCTURE",
+                        "insert_table is supported in the body only".into(),
+                        outcome,
+                    ));
+                }
+                let dom = &self.opened.dom;
+                if !dom
+                    .ancestors(self.paragraph_nodes[para], Some(&W::tc()))
+                    .is_empty()
+                {
+                    return Err(fail(
+                        "UNSUPPORTED_STRUCTURE",
+                        "the anchor paragraph is in a table cell; nested tables are not supported"
+                            .into(),
+                        outcome,
+                    ));
+                }
+                let columns = structural::check_rows(rows, widths_dxa.as_deref())
+                    .map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+                let widths = match widths_dxa {
+                    Some(widths) => widths.clone(),
+                    None => {
+                        let each = structural::text_width(dom, self.opened.body)
+                            / u32::try_from(columns).unwrap_or(1);
+                        vec![each; columns]
+                    }
+                };
+                let (style, add_style) = structural::resolve_table_style(
+                    &structural::table_styles(&self.opened),
+                    style.as_deref().unwrap_or("TableGrid"),
+                )
+                .map_err(|m| fail("UNKNOWN_STYLE", m, outcome.clone()))?;
+                outcome.context = Some(format!(
+                    "{{+table {}x{columns}}} {}",
+                    rows.len(),
+                    excerpt(&rows[0].join(" | "), 60)
+                ));
+                Ok((
+                    Resolved::InsertTable {
+                        anchor: para,
+                        side: *position,
+                        rows: rows.clone(),
+                        header_row: *header_row,
+                        widths,
+                        style,
+                        add_style,
+                    },
+                    outcome,
+                ))
+            }
         }
     }
 
@@ -1904,7 +2003,9 @@ impl<'p> Transaction<'p> {
                 | Resolved::DeleteParagraph { para }
                 | Resolved::FormatParagraph { para, .. }
                 | Resolved::MergeParagraphs { para, .. } => *para,
-                Resolved::InsertParagraph { anchor, .. } => *anchor,
+                Resolved::InsertParagraph { anchor, .. } | Resolved::InsertTable { anchor, .. } => {
+                    *anchor
+                }
             })
             .map(|para| self.paragraph_story[para].0)
             .collect()
@@ -2060,6 +2161,12 @@ impl<'p> Transaction<'p> {
                     }
                     continue;
                 }
+                Resolved::InsertTable { anchor, .. } => {
+                    if deleted.contains(anchor) {
+                        return Err(self.conflict(*i, "anchors a new table on a deleted paragraph"));
+                    }
+                    continue;
+                }
                 Resolved::DeleteParagraph { .. }
                 | Resolved::FormatParagraph { .. }
                 | Resolved::MergeParagraphs { .. } => continue,
@@ -2148,6 +2255,12 @@ impl<'p> Transaction<'p> {
                 {
                     return Err(self.conflict(*i, "inserts a paragraph between two a merge joins"));
                 }
+                Resolved::InsertTable { anchor, side, .. }
+                    if (*side == Side::After && merge_heads.contains(anchor))
+                        || (*side == Side::Before && merge_tails.contains(anchor)) =>
+                {
+                    return Err(self.conflict(*i, "inserts a table between two a merge joins"));
+                }
                 _ => {}
             }
         }
@@ -2203,7 +2316,9 @@ impl<'p> Transaction<'p> {
                 }
                 Resolved::CommentRange { .. } => true,
                 Resolved::DeleteParagraph { .. } => self.deletion_comment(*i).is_some(),
-                Resolved::FormatParagraph { .. } | Resolved::MergeParagraphs { .. } => false,
+                Resolved::FormatParagraph { .. }
+                | Resolved::MergeParagraphs { .. }
+                | Resolved::InsertTable { .. } => false,
             })
             .count() as u64;
         if needed > 0 && self.next_comment_id + needed - 1 > u64::from(u32::MAX) {
@@ -2242,7 +2357,9 @@ impl<'p> Transaction<'p> {
                         Resolved::DeleteParagraph { .. } => {
                             self.deletion_comment(*i).map(str::to_string)
                         }
-                        Resolved::FormatParagraph { .. } | Resolved::MergeParagraphs { .. } => None,
+                        Resolved::FormatParagraph { .. }
+                        | Resolved::MergeParagraphs { .. }
+                        | Resolved::InsertTable { .. } => None,
                     };
                     text.map(|t| (*i, t))
                 })
@@ -2377,41 +2494,72 @@ impl<'p> Transaction<'p> {
                 anchor_comment(&mut self.opened.dom, node, start, end, ids[&i]);
             }
         }
-        // 2. Paragraph insertions (anchors are source paragraphs, untouched by 1).
+        // 2. Paragraph and table insertions (anchors are source paragraphs,
+        // untouched by 1).
         let inserts: Vec<(usize, Resolved)> = self
             .resolved
             .iter()
-            .filter(|(_, r)| matches!(r, Resolved::InsertParagraph { .. }))
+            .filter(|(_, r)| {
+                matches!(
+                    r,
+                    Resolved::InsertParagraph { .. } | Resolved::InsertTable { .. }
+                )
+            })
             .cloned()
             .collect();
+        let mut tables: Vec<NodeId> = Vec::new();
         // Several paragraphs after one anchor follow it in plan order: each
         // goes after the one inserted there before it.
         let mut last_after: BTreeMap<usize, NodeId> = BTreeMap::new();
         for (i, r) in inserts {
-            if let Resolved::InsertParagraph {
-                anchor,
-                side,
-                runs,
-                like,
-                style,
-                comment,
-            } = r
-            {
-                let anchor_node = self.paragraph_nodes[anchor];
-                let like_node = self.paragraph_nodes[like];
-                let new = build_paragraph(&mut self.opened.dom, like_node, &runs, style.as_deref());
-                match side {
-                    Side::After => {
-                        let prev = last_after.get(&anchor).copied().unwrap_or(anchor_node);
-                        self.opened.dom.add_after_self(prev, new);
-                        last_after.insert(anchor, new);
-                    }
-                    Side::Before => self.opened.dom.add_before_self(anchor_node, new),
+            let (anchor, side, new, commented) = match r {
+                Resolved::InsertParagraph {
+                    anchor,
+                    side,
+                    runs,
+                    like,
+                    style,
+                    comment,
+                } => {
+                    let like_node = self.paragraph_nodes[like];
+                    let new =
+                        build_paragraph(&mut self.opened.dom, like_node, &runs, style.as_deref());
+                    (anchor, side, new, comment.is_some())
                 }
-                if comment.is_some() {
-                    let projection = project_paragraph(&self.opened.dom, new);
-                    anchor_comment(&mut self.opened.dom, new, 0, projection.text.len(), ids[&i]);
+                Resolved::InsertTable {
+                    anchor,
+                    side,
+                    rows,
+                    header_row,
+                    widths,
+                    style,
+                    ..
+                } => {
+                    let new = structural::build_table(
+                        &mut self.opened.dom,
+                        self.paragraph_nodes[anchor],
+                        &rows,
+                        header_row,
+                        &widths,
+                        &style,
+                    );
+                    tables.push(new);
+                    (anchor, side, new, false)
                 }
+                _ => continue,
+            };
+            let anchor_node = self.paragraph_nodes[anchor];
+            match side {
+                Side::After => {
+                    let prev = last_after.get(&anchor).copied().unwrap_or(anchor_node);
+                    self.opened.dom.add_after_self(prev, new);
+                    last_after.insert(anchor, new);
+                }
+                Side::Before => self.opened.dom.add_before_self(anchor_node, new),
+            }
+            if commented {
+                let projection = project_paragraph(&self.opened.dom, new);
+                anchor_comment(&mut self.opened.dom, new, 0, projection.text.len(), ids[&i]);
             }
         }
         // 3. Paragraph formatting.
@@ -2459,6 +2607,11 @@ impl<'p> Transaction<'p> {
             if let Resolved::DeleteParagraph { para } = r {
                 self.opened.dom.remove(self.paragraph_nodes[*para]);
             }
+        }
+        // 6. A paragraph after each new table, and between it and a table
+        // before it, once the deletions have settled its neighbours.
+        for table in tables {
+            structural::separate(&mut self.opened.dom, table);
         }
         Ok(())
     }
@@ -2545,6 +2698,22 @@ impl<'p> Transaction<'p> {
     fn finish(&mut self) -> Result<(Vec<u8>, Option<Vec<u8>>), EditError> {
         if !self.comments.is_empty() {
             self.write_comments_part()?;
+        }
+        let styles: std::collections::BTreeSet<String> = self
+            .resolved
+            .iter()
+            .filter_map(|(_, r)| match r {
+                Resolved::InsertTable {
+                    style,
+                    add_style: true,
+                    ..
+                } => Some(style.clone()),
+                _ => None,
+            })
+            .collect();
+        if !styles.is_empty() {
+            let main = self.opened.main.clone();
+            structural::add_styles(&mut self.opened.pkg, &main, &styles);
         }
         // The body is always written; a story part only when an operation
         // edits it, so untouched parts keep their exact bytes.
@@ -2723,6 +2892,7 @@ fn kind_name(kind: &OperationKind) -> &'static str {
         OperationKind::FormatParagraph { .. } => "format_paragraph",
         OperationKind::MergeParagraphs { .. } => "merge_paragraphs",
         OperationKind::Rewrite { .. } => "rewrite",
+        OperationKind::InsertTable { .. } => "insert_table",
     }
 }
 
