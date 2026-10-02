@@ -1465,6 +1465,24 @@ fn face_unicode_map(
     pages: &[Page],
 ) -> BTreeMap<u16, String> {
     let parsed = ttf_parser::Face::parse(face.bytes(), 0).ok();
+    // A symbol-encoded face (Windows cmap encoding 0) paints U+F0xx; its
+    // text reads back the way Word writes it (`symbol_font_text`).
+    let symbol_encoded = parsed
+        .as_ref()
+        .and_then(|p| p.tables().cmap)
+        .is_some_and(|cmap| {
+            cmap.subtables
+                .into_iter()
+                .any(|t| t.platform_id == ttf_parser::PlatformId::Windows && t.encoding_id == 0)
+        });
+    let symbol = face.pdf_name().starts_with("Symbol");
+    let read = |c: char| {
+        if symbol_encoded {
+            symbol_font_text(c, symbol)
+        } else {
+            c
+        }
+    };
     let mut map = BTreeMap::new();
     let mut zipped = BTreeMap::new();
     let mut painted = BTreeSet::new();
@@ -1481,17 +1499,19 @@ fn face_unicode_map(
                 painted.extend(glyphs.iter().copied());
                 for c in text.chars() {
                     if let Some(g) = parsed.as_ref().and_then(|p| p.glyph_index(c)) {
-                        map.entry(g.0).or_insert_with(|| c.to_string());
+                        map.entry(g.0).or_insert_with(|| read(c).to_string());
                     }
                 }
                 if glyphs.len() == text.chars().count() {
                     for (&g, c) in glyphs.iter().zip(text.chars()) {
-                        zipped.entry(g).or_insert_with(|| c.to_string());
+                        zipped.entry(g).or_insert_with(|| read(c).to_string());
                     }
                 } else if let [g] = glyphs[..]
                     && !text.is_empty()
                 {
-                    zipped.entry(g).or_insert_with(|| text.clone());
+                    zipped
+                        .entry(g)
+                        .or_insert_with(|| text.chars().map(read).collect());
                 }
             }
         }
@@ -1501,6 +1521,29 @@ fn face_unicode_map(
     }
     map.retain(|g, _| *g != 0 && painted.contains(g));
     map
+}
+
+/// The text Word's PDFs carry for a symbol-encoded face's U+F020..U+F0FF
+/// character: its low byte (Wingdings' F0A7 reads as §), except where the
+/// Symbol face's glyph has a Latin text of its own (Word 16 probe sym2,
+/// 2026-10-02, all 222 codes: 12d245d664's list bullets read as •).
+fn symbol_font_text(c: char, symbol: bool) -> char {
+    let code = u32::from(c);
+    if !(0xF020..=0xF0FF).contains(&code) {
+        return c;
+    }
+    let low = code - 0xF000;
+    let text = match low {
+        0x6D if symbol => 0xB5,
+        0xA4 if symbol => 0x2044,
+        0xA6 if symbol => 0x192,
+        0xB7 if symbol => 0x2022,
+        0xB8 if symbol => 0xF7,
+        0xBC if symbol => 0x2026,
+        0xD8 if symbol => 0xAC,
+        _ => low,
+    };
+    char::from_u32(text).unwrap_or(c)
 }
 
 /// A `/ToUnicode` CMap stream (PDF 32000-1 9.10.3) mapping 2-byte CIDs
@@ -1924,6 +1967,28 @@ fn stands_upright(c: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::uniquify;
+
+    /// Word 16 probes sym/sym2 (2026-10-02): a symbol-encoded face's
+    /// U+F0xx text reads back as its low byte; Symbol keeps seven
+    /// exceptions (6D µ, A4 ⁄, A6 ƒ, B7 •, B8 ÷, BC …, D8 ¬).
+    #[test]
+    fn symbol_font_text_reads_back_as_word_writes_it() {
+        let read =
+            |c: u32, symbol: bool| super::symbol_font_text(char::from_u32(c).unwrap(), symbol);
+        assert_eq!(read(0xF0B7, true), '\u{2022}');
+        assert_eq!(read(0xF0B8, true), '\u{F7}');
+        assert_eq!(read(0xF06D, true), '\u{B5}');
+        assert_eq!(read(0xF0A4, true), '\u{2044}');
+        assert_eq!(read(0xF0A6, true), '\u{192}');
+        assert_eq!(read(0xF0BC, true), '\u{2026}');
+        assert_eq!(read(0xF0D8, true), '\u{AC}');
+        assert_eq!(read(0xF061, true), 'a');
+        assert_eq!(read(0xF0B4, true), '\u{B4}');
+        assert_eq!(read(0xF0A7, false), '\u{A7}');
+        assert_eq!(read(0xF0B7, false), '\u{B7}');
+        assert_eq!(read(0x2022, true), '\u{2022}');
+        assert_eq!(read(0xF100, true), '\u{F100}');
+    }
 
     /// A tbRl page is laid out turned a quarter and turned back by the
     /// content stream's `cm`; its comment rectangles must turn with it.
