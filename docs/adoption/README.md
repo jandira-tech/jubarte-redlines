@@ -21,6 +21,7 @@ Runnable evidence:
 |---|---|
 | [`examples/agents/accept-spacer-paragraph/`](../../examples/agents/accept-spacer-paragraph/) | The accept case Anthropic's skill warns about, run through `jubarte accept` and LibreOffice side by side. On 2026-10-02 both gave the same result on every case; the README says so. |
 | [`examples/agents/acme-letter/`](../../examples/agents/acme-letter/) | A 170-line hand-written XML redline replaced by one twelve-operation edit plan. |
+| [`examples/agents/comment-thread/`](../../examples/agents/comment-thread/) | Ann comments, Bob replies to two comments and resolves the third: two bound edit plans, then `jubarte comments` reads the thread back. Outputs are byte-for-byte reproducible. |
 
 ## Status labels used on every page
 
@@ -55,7 +56,5 @@ merges:
 - `creation.md`: Markdown to `.docx` with `--page letter` (S7, `adopt/s7-markdown`).
 - `fields.md`: field and TOC refresh, with the caveat that page numbers are
   jubarte's layout (S6, `adopt/s6-fields`).
-- `python-docx.md`: python-docx calls mapped to edit-plan operations (S8,
-  `adopt/s8-*`).
-- `examples/agents/comment-thread/`: a reply thread built with plan
-  operations (S2, `adopt/s2-comments`).
+- `python-docx.md`: python-docx calls mapped to edit-plan operations (S8;
+  tables and lists are on main, the rest is pending).

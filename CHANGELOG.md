@@ -49,6 +49,28 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   longer `Copy`.
 - `capabilities` reports `operations.diff_render` and
   `operations.page_ranges`.
+- Edit plans take `"existing_revisions": "keep"`: another party's tracked
+  changes stay tracked, byte for byte, and the plan's edits become new
+  revisions beside them by the plan's author and date (ids after the
+  highest in the package), emitted directly instead of through compare.
+  The clean copy has the plan's edits applied and theirs still tracked;
+  the report's revision counts and the patch (`patch.diff`, Python
+  `EditResult.diff`) cover the plan's own changes. Edits inside their
+  revisions, and deleting, merging or reformatting a paragraph whose mark
+  or properties they changed, are refused. New tables are inserted rows,
+  list numbering and paragraph formatting are `w:pPrChange`, and comment
+  replies, resolutions and deletions carry into the redline. New
+  `markdown::patch_own_changes`, capability
+  `operations.edit_keeps_revisions`, and Python `existing_revisions="keep"`.
+- `watermark` edit operation (`{"kind":"watermark","text":"DRAFT"}`, with
+  optional `color`, `diagonal` and `font`; Python `EditPlan.watermark`)
+  writes Word's own VML text watermark, in its `Watermarks` content
+  control, into every default header. A first section without a default
+  header gets a new header part with its relationship, content-type
+  override and `w:headerReference`. The comparison base carries the same
+  watermark, so the redline holds it untracked. One per document: a second
+  one, or a header that already holds one, is refused with
+  `UNSUPPORTED_STRUCTURE`.
 - `scripts/release.sh` step 12 runs `scripts/release_downstream.sh`: jubarte.pro
   moves to the release (download page, demo engine) and is deployed, the
   app's release files are committed on `release/vx.y.z` in the jubarte-app
@@ -156,6 +178,16 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   `COMMENT_NOT_IN_BODY` (previously `UNSUPPORTED_STRUCTURE`) for a comment
   anchored in a header, footer or note. The capabilities manifest lists the
   four operations and `operations.comment_threads`.
+- `jubarte append a.docx b.docx [c.docx ...] -o out.docx`
+  (`append::append_documents`, Python `Document.append`, WASM
+  `appendDocuments`) puts each document after the previous one on a new
+  page (`--section-break continuous|none` joins them on the same page;
+  `--keep-sections` keeps each appended document's page setup, headers and
+  footers as a section of its own). Images, links, headers, styles, lists,
+  footnotes and endnotes come along under ids that do not collide; a style
+  whose type and name the first document already has takes its definition
+  there. Comments are not carried yet: they are removed and reported as
+  `COMMENTS_DROPPED`. `capabilities` lists `append`.
 - Field results from jubarte's layout: `jubarte fields update FILE -o OUT
   [--json]` (`fields::update_fields`, Python `Document.update_fields()`,
   WASM `updateFields` in the full build) rebuilds each body `TOC` from the

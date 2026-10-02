@@ -31,6 +31,8 @@ use crate::xmllinq::{Dom, NodeId, XNamespace};
 
 mod rewrite;
 mod structural;
+mod tracked;
+mod watermark;
 mod whole;
 
 /// A versioned, portable set of operations against one document snapshot.
@@ -113,6 +115,9 @@ pub enum ExistingRevisions {
     Accept,
     /// Reject them first; the plan then edits that rejected base.
     Reject,
+    /// Leave them tracked; the plan's edits become new revisions beside them
+    /// (direct emission; no compare).
+    Keep,
 }
 
 /// One operation. `id` defaults to `op-N` (1-based) in the report.
@@ -344,6 +349,23 @@ pub enum OperationKind {
         /// Start a new list (true), or continue the list of the nearest
         /// numbered paragraph before the first one, in that list's format.
         restart: bool,
+    },
+    /// Write Word's own text watermark (Insert > Watermark) into every
+    /// default header, creating a header where the first section has none.
+    /// One per document. It is header content, not a tracked change: the
+    /// clean copy and the redline both carry it.
+    Watermark {
+        /// The watermark text, plain, 1 to 64 characters.
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Fill colour, six hex digits (default `C0C0C0`).
+        color: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Diagonal at 315 degrees (default); `false` lays it horizontal.
+        diagonal: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Font family (default `Calibri`).
+        font: Option<String>,
     },
     /// Insert a table of contents next to the anchor paragraph: a `TOC \o
     /// "1-{levels}" \h \z \u` field, after an optional title paragraph
@@ -966,6 +988,16 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
                 ));
             }
             "list" => &["paragraphs", "kind_of_list", "level", "restart"],
+            "watermark" => {
+                if map.contains_key("paragraph") {
+                    return Err(err(
+                        "INVALID_PLAN",
+                        None,
+                        format!("operations[{i}] (watermark): a watermark takes no paragraph"),
+                    ));
+                }
+                &["text", "color", "diagonal", "font"]
+            }
             "insert_toc" => &["position", "levels", "title"],
             other => {
                 return Err(err(
@@ -995,10 +1027,15 @@ pub fn apply_plan_json(source: &[u8], plan_json: &str) -> Result<EditResult, Edi
 
 /// Resolve and apply the plan; compare source and copy into a redline.
 pub fn apply_plan(source: &[u8], plan: &EditPlan) -> Result<EditResult, EditError> {
+    check_update_fields(plan)?;
     let mut tx = Transaction::start(source, plan)?;
     tx.resolve()?;
+    tracked::check(&tx)?;
     tx.apply()?;
     let (mut clean, mut marked) = tx.finish()?;
+    if plan.existing_revisions == ExistingRevisions::Keep {
+        return tracked::result(&tx, clean);
+    }
     let mut fields = Vec::new();
     if plan.update_fields {
         let refresh = |bytes: &[u8]| {
@@ -1061,10 +1098,26 @@ pub fn apply_plan(source: &[u8], plan: &EditPlan) -> Result<EditResult, EditErro
     })
 }
 
+/// `update_fields` refreshes the clean copy the comparer reads. Under
+/// `existing_revisions: "keep"` the redline replays the edits instead, so a
+/// refreshed clean copy would no longer be the accepted redline.
+fn check_update_fields(plan: &EditPlan) -> Result<(), EditError> {
+    if plan.update_fields && plan.existing_revisions == ExistingRevisions::Keep {
+        return Err(err(
+            "INVALID_PLAN",
+            None,
+            "update_fields cannot be combined with existing_revisions \"keep\"; refresh the fields with `jubarte fields update` after accepting or rejecting the kept changes",
+        ));
+    }
+    Ok(())
+}
+
 /// Resolve every operation without producing documents.
 pub fn preview_plan(source: &[u8], plan: &EditPlan) -> Result<EditReport, EditError> {
+    check_update_fields(plan)?;
     let mut tx = Transaction::start(source, plan)?;
     tx.resolve()?;
+    tracked::check(&tx)?;
     let mut report = tx.report(true);
     report.paragraphs.to = report.paragraphs.from;
     Ok(report)
@@ -1295,6 +1348,8 @@ struct Transaction<'p> {
     family: Option<crate::comments::CommentFamily>,
     /// Comment replied to, by the reply's new id.
     reply_parents: BTreeMap<u32, u32>,
+    /// The plan's watermark, written into the default headers at finish.
+    watermark: Option<watermark::Spec>,
 }
 
 /// The body, or a header, footer or notes part, parsed into the plan's DOM.
@@ -1357,12 +1412,12 @@ impl<'p> Transaction<'p> {
         let has_revisions =
             crate::inspect::revision_count(&probe.dom, probe.body) + story_revisions > 0;
         let (base, mut opened) = match (has_revisions, plan.existing_revisions) {
-            (false, _) => (source.to_vec(), probe),
+            (false, _) | (true, ExistingRevisions::Keep) => (source.to_vec(), probe),
             (true, ExistingRevisions::Refuse) => {
                 return Err(err(
                     "EXISTING_REVISIONS",
                     None,
-                    "the document already holds tracked changes; set existing_revisions to accept or reject",
+                    "the document already holds tracked changes; set existing_revisions to keep, accept or reject",
                 ));
             }
             (true, policy) => {
@@ -1457,6 +1512,7 @@ impl<'p> Transaction<'p> {
             needed_styles: std::collections::BTreeSet::new(),
             family: Some(family),
             reply_parents: BTreeMap::new(),
+            watermark: None,
         })
     }
 
@@ -1507,6 +1563,17 @@ impl<'p> Transaction<'p> {
                 | OperationKind::DeleteComment { .. } => self
                     .resolve_thread(&id, &op.kind)
                     .map(|(resolved, outcome)| (vec![resolved], outcome)),
+                OperationKind::Watermark {
+                    text,
+                    color,
+                    diagonal,
+                    font,
+                } => self
+                    .resolve_watermark(&id, (text, color.as_deref(), *diagonal, font.as_deref()))
+                    .map(|(spec, outcome)| {
+                        self.watermark = Some(spec);
+                        (Vec::new(), outcome)
+                    }),
                 other => self
                     .resolve_one(&id, other)
                     .map(|(resolved, outcome)| (vec![resolved], outcome)),
@@ -1588,6 +1655,13 @@ impl<'p> Transaction<'p> {
                 return Err(fail(
                     "INVALID_PLAN",
                     "thread operations resolve through resolve_thread".into(),
+                    outcome,
+                ));
+            }
+            OperationKind::Watermark { .. } => {
+                return Err(fail(
+                    "INVALID_PLAN",
+                    "watermark resolves through resolve_watermark".into(),
                     outcome,
                 ));
             }
@@ -1873,6 +1947,11 @@ impl<'p> Transaction<'p> {
             | OperationKind::DeleteComment { .. } => Err(fail(
                 "INVALID_PLAN",
                 "rewrite, list and thread operations resolve on their own paths".into(),
+                outcome,
+            )),
+            OperationKind::Watermark { .. } => Err(fail(
+                "INVALID_PLAN",
+                "watermark resolves through resolve_watermark".into(),
                 outcome,
             )),
             OperationKind::InsertParagraph {
@@ -3426,7 +3505,8 @@ impl<'p> Transaction<'p> {
 
     /// The copy the comparer reads as the original: the base, with each
     /// deleted paragraph's comment anchored on its whole text. The comparer
-    /// carries the comment onto the deleted text of the redline.
+    /// carries the comment onto the deleted text of the redline. A plan's
+    /// watermark is written into this copy as well, so it stays untracked.
     fn commented_base(&self) -> Result<std::borrow::Cow<'_, [u8]>, EditError> {
         // Edited and deleted comments are edited and deleted in the original
         // too: the comparer carries the copy's comment parts only when they
@@ -3443,7 +3523,7 @@ impl<'p> Transaction<'p> {
             })
             .cloned()
             .collect();
-        if self.deletion_comments.is_empty() && thread_ops.is_empty() {
+        if self.deletion_comments.is_empty() && thread_ops.is_empty() && self.watermark.is_none() {
             return Ok(std::borrow::Cow::Borrowed(&self.base));
         }
         let mut operations: Vec<Operation> = self
@@ -3470,6 +3550,15 @@ impl<'p> Transaction<'p> {
             })
             .collect();
         operations.extend(thread_ops);
+        // A watermark is header content, not a change: the base carries it
+        // too, so the comparer leaves it untracked.
+        operations.extend(
+            self.plan
+                .operations
+                .iter()
+                .filter(|op| matches!(op.kind, OperationKind::Watermark { .. }))
+                .cloned(),
+        );
         let plan = EditPlan {
             schema_version: SCHEMA_VERSION,
             source_sha256: None,
@@ -3529,6 +3618,7 @@ impl<'p> Transaction<'p> {
         // edits it, so untouched parts keep their exact bytes.
         let mut written = self.touched_stories();
         written.insert(0);
+        written.extend(self.apply_watermark()?);
         let marked = if self.whole_marks.is_empty() {
             None
         } else {
@@ -3684,6 +3774,7 @@ fn kind_name(kind: &OperationKind) -> &'static str {
         OperationKind::DeleteComment { .. } => "delete_comment",
         OperationKind::InsertTable { .. } => "insert_table",
         OperationKind::List { .. } => "list",
+        OperationKind::Watermark { .. } => "watermark",
         OperationKind::InsertToc { .. } => "insert_toc",
     }
 }

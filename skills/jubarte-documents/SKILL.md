@@ -58,9 +58,14 @@ Gotchas:
   `sym`, `drawing`, `revision`) tell you which ranges an edit will refuse.
 - Text is exact: tabs stay `\t`, smart quotes stay `“ ”`, a Symbol-font
   bullet is U+FFFC. Copy anchors from the output, do not retype them.
-- If `summary.revisions > 0` the document already has tracked changes. An
-  edit plan refuses it unless you set `"existing_revisions": "accept"` (or
-  `"reject"`), which flattens first and reports `base_sha256`.
+- If `summary.revisions > 0` the document already has tracked changes.
+  `"existing_revisions": "keep"` leaves their changes tracked and adds
+  yours beside them (what Word does when you type on a received redline);
+  `"accept"` or `"reject"` flatten first and report `base_sha256`; the
+  default refuses. Under `keep` you cannot edit text inside their
+  insertions or deletions, nor delete, merge or reformat a paragraph whose
+  mark or properties they changed; resolve those changes first with
+  `resolve_revisions`.
 - To keep some of them, list them with `jubarte changes FILE --json` (one
   change per line: `id` such as `body:rev:12`, `kind`, `target`, `author`,
   `text`, `inside`) and resolve a selection, either directly
@@ -138,8 +143,10 @@ edited, so the rest keeps its runs and formatting), `insert_table`
 twentieths of a point (the text width split evenly when omitted), and
 `style`, a table style id or name, `TableGrid` by default), `list`
 (`paragraphs`: a list of selectors, not `paragraph`; `kind_of_list`
-`bullet|decimal|lower_letter`, `level` 0 to 8, `restart` true by default).
-`replace` and
+`bullet|decimal|lower_letter`, `level` 0 to 8, `restart` true by default),
+`watermark` (`text`; optional `color` as six hex digits, `diagonal`,
+`font`; no paragraph: writes Word's own diagonal text watermark into every
+default header; one per document). `replace` and
 `insert` take an optional `format` (`bold`/`italic`/`underline`/`highlight`)
 that applies to the new text only. `replace` takes `"whole": true` to show
 the change as the whole old text deleted, then the whole new text inserted.
@@ -187,6 +194,11 @@ Gotchas:
 - `format_paragraph` is a tracked property change: the redline keeps the
   old style, alignment and spacing for reject. An unknown style is refused
   with `UNKNOWN_STYLE` and the list of defined style ids.
+- `watermark` is header content, not a tracked change: the clean copy and
+  the redline both carry it untracked. A first section without a default
+  header gets one; a later section without its own inherits the previous
+  header, as in Word. A document that already holds a watermark, or a
+  second `watermark` in the plan, is refused (`UNSUPPORTED_STRUCTURE`).
 - `merge_paragraphs` keeps the second paragraph's properties (what Word's
   accept of a deleted paragraph mark does); the redline deletes the first
   paragraph's mark and inserts only the separator, as Word Compare shows a
@@ -219,6 +231,8 @@ Gotchas:
   matches Word on most documents but is not Word
   (`docs/WORD_DIFFERENCES.md` section 10 in the jubarte repository).
   Field codes stay, so Word's Update Field still works.
+  `update_fields` is refused (`INVALID_PLAN`) with `existing_revisions:
+  "keep"`; `insert_toc` alone works there and is tracked as an insertion.
 
 ## 3. Verify
 
@@ -248,7 +262,10 @@ Gotchas:
   difference between renderer and Word as possible on dense documents.
 - `jubarte accept review/redline.docx -o check.docx` then `jubarte text
   check.docx` must equal `jubarte text review/clean.docx`. That is the
-  every-edit-is-tracked check; it replaces `validate.py --author`.
+  every-edit-is-tracked check; it replaces `validate.py --author`. Under
+  `keep`, accept only your own changes:
+  `jubarte accept review/redline.docx --author Claude -o check.docx`
+  (the author your plan names).
 
 ## 4. Compare, accept, reject
 
@@ -274,6 +291,15 @@ diff: only the changed paragraphs, each at its `[line:N]` (Markdown) or
 documents as CriticMarkup (`{~~old~>new~~}`). `-o changes.docx` writes the
 changes as tracked changes. `jubarte edit` writes the edit's patch as
 `patch.diff` and prints it (`-q` prints nothing). See docs/MARKDOWN.md.
+
+`jubarte append a.docx b.docx -o ab.docx` puts B after A on a new page;
+images, links, styles, lists and notes come along; comments do not yet
+(warned as `COMMENTS_DROPPED`). More files fold left (`append a b c`);
+`--section-break continuous` joins on the same page and `--keep-sections`
+keeps B's page setup, headers and footers. A style A already has (same
+type and name) keeps A's look. Python: `Document.read("a.docx").append(
+Document.read("b.docx"))` returns `Appended(document, warnings)`; WASM:
+`appendDocuments(a, b, '{"section_break":"continuous"}')`.
 
 ## 5. Create a new document (docx-js)
 

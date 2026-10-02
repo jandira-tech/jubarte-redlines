@@ -185,7 +185,26 @@ The other 3 of the 32 are not differences:
   validator-clean, and taken out for that reason.
 - **Status.** Not copied.
 
-### 10. Field results jubarte writes (`jubarte fields update`, `update_fields`)
+### 10. Watermark shape size and colour
+
+- **What happens.** Word's Insert > Watermark sizes the text shape from
+  its own measurement of the text. On a portrait Letter page with the
+  default "CONFIDENTIAL" sample it writes `width:527.85pt;height:131.95pt`
+  and the default colour as `fillcolor="silver"` (a Word-saved header
+  quoted on Stack Overflow, question 70081174). Its numbers for A4 and
+  other page sizes were not measured for this change.
+- **What we do.** The `watermark` edit operation writes 527.85pt by
+  131.95pt on a portrait Letter page. On any other page it writes 0.9 of
+  the text width (page width less the left and right margins) at Word's
+  4:1 ratio, for example 406.17pt by 101.54pt on A4 with one-inch
+  margins. The colour is always written as `#RRGGBB`.
+- **Which is better.** Neither for the shape: `fitshape="t"` stretches the
+  text to the box either way, so only the box's size on the page differs.
+  `#C0C0C0` and `silver` are the same colour.
+- **Status.** Letter copied; other sizes approximate until measured
+  against Word.
+
+### 11. Field results jubarte writes (`jubarte fields update`, `update_fields`)
 
 - **What happens.** Word's Update Field recomputes `PAGEREF`, `REF`,
   `NUMPAGES`, `SEQ` and `TOC` results from Word's own pagination.

@@ -422,7 +422,10 @@ Selector = str | int | dict[str, str | int]
 """A paragraph id (``body:p:N``, ``header1:p:0``), a body index, or ``{"starts_with"|"contains"|"id"|"index": ...}``;
 ``index``/``starts_with``/``contains`` also take ``"story": "header1"`` (default: the body)."""
 
-ExistingRevisions = Literal["refuse", "accept", "reject"]
+ExistingRevisions = Literal["refuse", "accept", "reject", "keep"]
+"""What an edit plan does with tracked changes already in the source:
+``refuse`` (default), ``accept`` or ``reject`` them first, or ``keep`` them
+tracked and add the plan's edits as new revisions beside them."""
 
 
 def _selector(value: Selector) -> dict[str, str | int]:
@@ -504,8 +507,8 @@ class EditPlan:
             raise ValueError("author must be a nonempty string")
         if not isinstance(self.update_fields, bool):
             raise TypeError("update_fields must be a bool")
-        if self.existing_revisions not in ("refuse", "accept", "reject"):
-            raise ValueError("existing_revisions must be refuse, accept or reject")
+        if self.existing_revisions not in ("refuse", "accept", "reject", "keep"):
+            raise ValueError("existing_revisions must be refuse, accept, reject or keep")
 
     def _with(self, op: dict[str, object]) -> EditPlan:
         return replace(self, operations=(*self.operations, op))
@@ -762,6 +765,24 @@ class EditPlan:
     def delete_comment(self, comment_id: int, *, id: str | None = None) -> EditPlan:
         """Remove comment ``comment_id`` with its replies and anchors."""
         op: dict[str, object] = {"kind": "delete_comment", "comment_id": comment_id}
+        return self._with(_with_optional(op, id=id))
+
+    def watermark(
+        self,
+        text: str,
+        *,
+        color: str = "C0C0C0",
+        diagonal: bool = True,
+        font: str = "Calibri",
+        id: str | None = None,
+    ) -> EditPlan:
+        """Write Word's own text watermark into every default header.
+
+        ``text`` is 1 to 64 plain characters, ``color`` six hex digits, and
+        ``diagonal=False`` lays it horizontal. One watermark per document; it
+        is header content, so the redline carries it without tracking it.
+        """
+        op: dict[str, object] = {"kind": "watermark", "text": text, "color": color, "diagonal": diagonal, "font": font}
         return self._with(_with_optional(op, id=id))
 
     def insert_toc(

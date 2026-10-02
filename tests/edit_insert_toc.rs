@@ -169,3 +169,42 @@ fn preview_resolves_insert_toc() {
     assert_eq!(report.operations[0].status, "ok");
     assert!(report.fields.is_empty());
 }
+
+#[test]
+fn update_fields_with_kept_revisions_is_refused() {
+    // Under "keep" the redline replays the edits as tracked changes, so a
+    // refreshed clean copy would no longer be the accepted redline.
+    let source = source();
+    let json = format!(
+        r#"{{"schema_version":1,"source_sha256":"{}","author":"Claude","existing_revisions":"keep","update_fields":true,"operations":[{{"kind":"insert_toc","paragraph":{{"index":0}}}}]}}"#,
+        source_sha256(&source)
+    );
+    let plan = EditPlan::from_json(&json).unwrap();
+    let err = apply_plan(&source, &plan).unwrap_err();
+    assert_eq!(err.code, "INVALID_PLAN");
+    assert!(err.message.contains("update_fields"), "{}", err.message);
+    assert_eq!(
+        preview_plan(&source, &plan).unwrap_err().code,
+        "INVALID_PLAN"
+    );
+}
+
+#[test]
+fn insert_toc_with_kept_revisions_is_tracked() {
+    let source = source();
+    let json = format!(
+        r#"{{"schema_version":1,"source_sha256":"{}","author":"Claude","existing_revisions":"keep","operations":[{{"kind":"insert_toc","paragraph":{{"index":0}},"title":"Contents"}}]}}"#,
+        source_sha256(&source)
+    );
+    let result = apply_plan(&source, &EditPlan::from_json(&json).unwrap()).unwrap();
+    assert_word_valid_package(&result.clean);
+    assert_word_valid_package(&result.redline);
+    assert_eq!(texts(&result.clean)[..3], ["Cover", "Contents", ""]);
+    let redline = part_string(&result.redline, "word/document.xml").unwrap();
+    assert!(redline.contains(r#" TOC \o "1-3" \h \z \u "#), "{redline}");
+    assert!(redline.contains("<w:ins "), "{redline}");
+    assert_eq!(
+        texts(&accept_revisions(&result.redline).unwrap()),
+        texts(&result.clean)
+    );
+}

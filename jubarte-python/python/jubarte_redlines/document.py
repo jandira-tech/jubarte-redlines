@@ -90,6 +90,22 @@ class EditResult:
     diff: Diff
 
 
+SectionBreak = Literal["next_page", "continuous", "none"]
+_SECTION_BREAKS = ("next_page", "continuous", "none")
+
+
+@dataclass(frozen=True, slots=True)
+class Appended:
+    """``Document.append``'s result: the joined document and what was not carried.
+
+    ``warnings`` are ``CODE: message`` lines, such as
+    ``COMMENTS_DROPPED: 1 comment of B was not carried``.
+    """
+
+    document: Document
+    warnings: tuple[str, ...]
+
+
 @dataclass(frozen=True, slots=True)
 class Document:
     """An immutable DOCX byte snapshot.
@@ -236,6 +252,11 @@ class Document:
         Every operation is resolved against this snapshot before anything is
         changed; a refused plan produces no documents. Comments in the plan
         are anchored in the clean copy and carried through the redline.
+
+        With ``existing_revisions="keep"`` another party's tracked changes stay
+        tracked: the clean copy is this document with the plan's edits applied
+        and theirs still tracked, the redline adds the plan's edits as new
+        revisions beside theirs, and ``diff`` shows the plan's edits only.
         """
         ok, clean, redline, payload = _native.edit_json(self._data, plan_json(plan))
         if not ok:
@@ -248,6 +269,7 @@ class Document:
                 name=self.name or "document.docx",
                 author=report.author,
                 date=report.date,
+                own_only=report.existing_revisions == "keep",
             )
         )
         return EditResult(Document.from_bytes(clean), Document.from_bytes(redline), report, diff)
@@ -338,6 +360,34 @@ class Document:
     def inspect_json(self) -> str:
         """The engine's ``inspect`` snapshot as JSON text, unchanged (``inspect`` decodes it)."""
         return _native.inspect_json(self._data)
+
+    def append(
+        self,
+        other: Document,
+        *,
+        section_break: SectionBreak = "next_page",
+        keep_sections: bool = False,
+    ) -> Appended:
+        """Put ``other`` after this document, carrying its parts.
+
+        Images, links, headers, styles, lists and notes come along under ids
+        that do not collide; a style this document already has (same type and
+        name) keeps this document's look. ``section_break="continuous"`` or
+        ``"none"`` joins on the same page; ``keep_sections`` keeps ``other``'s
+        page setup, headers and footers as a section of its own. Comments are
+        not carried yet: they are dropped and reported in ``warnings``.
+        """
+        if not isinstance(other, Document):
+            raise TypeError("other must be a Document")
+        if not isinstance(section_break, str):
+            raise TypeError("section_break must be a string")
+        if section_break not in _SECTION_BREAKS:
+            raise ValueError(f"section_break must be one of {', '.join(_SECTION_BREAKS)}")
+        if not isinstance(keep_sections, bool):
+            raise TypeError("keep_sections must be a bool")
+        options = json.dumps({"section_break": section_break, "keep_sections": keep_sections})
+        data, warnings = _native.append_json(self._data, other._data, options)
+        return Appended(Document.from_bytes(data), tuple(json.loads(warnings)))
 
 
 def _zero_based(pages: Sequence[int]) -> list[int]:

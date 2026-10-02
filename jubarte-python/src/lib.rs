@@ -407,9 +407,10 @@ fn diff_json(
 }
 
 /// The changes a Word redline tracks, as `diff_json`'s patch of the
-/// document named `name` → `(text, hunks_json)`.
+/// document named `name` → `(text, hunks_json)`. `own_only` keeps only the
+/// changes by `author` on `date` (an edit plan under `keep`).
 #[pyfunction]
-#[pyo3(signature = (docx, *, name, author, date, columns = 72))]
+#[pyo3(signature = (docx, *, name, author, date, columns = 72, own_only = false))]
 fn redline_diff_json(
     py: Python<'_>,
     docx: &[u8],
@@ -417,10 +418,17 @@ fn redline_diff_json(
     author: &str,
     date: &str,
     columns: usize,
+    own_only: bool,
 ) -> PyResult<Diffed> {
     let options = patch_options(name, name, author, date);
     let patch = py
-        .detach(|| jubarte::markdown::patch_redline(docx, &options))
+        .detach(|| {
+            if own_only {
+                jubarte::markdown::patch_own_changes(docx, &options)
+            } else {
+                jubarte::markdown::patch_redline(docx, &options)
+            }
+        })
         .map_err(err)?;
     diffed(&patch, columns)
 }
@@ -486,6 +494,24 @@ fn report_jsonl(report_json: &str) -> PyResult<String> {
     Ok(report.to_jsonl())
 }
 
+/// Append B after A (`options_json` as `jubarte::append::AppendOptions`)
+/// → `(docx_bytes, warnings_json)`.
+#[pyfunction]
+fn append_json(
+    py: Python<'_>,
+    a: &[u8],
+    b: &[u8],
+    options_json: &str,
+) -> PyResult<(Py<PyBytes>, String)> {
+    let options: jubarte::append::AppendOptions = serde_json::from_str(options_json)
+        .map_err(|e| JubarteError::new_err(format!("invalid append options: {e}")))?;
+    let out = py
+        .detach(|| jubarte::append::append_documents(a, b, &options))
+        .map_err(err)?;
+    let warnings = serde_json::to_string(&out.warnings).map_err(err)?;
+    Ok((PyBytes::new(py, &out.docx).unbind(), warnings))
+}
+
 /// Refresh field results from jubarte's layout → `(docx, json)`; `json` is
 /// `{"page_count", "fields": [...]}`.
 #[pyfunction]
@@ -531,6 +557,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(diff_json, m)?)?;
     m.add_function(wrap_pyfunction!(redline_diff_json, m)?)?;
     m.add_function(wrap_pyfunction!(list_comments_json, m)?)?;
+    m.add_function(wrap_pyfunction!(append_json, m)?)?;
     m.add_function(wrap_pyfunction!(update_fields, m)?)?;
     Ok(())
 }

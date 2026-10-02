@@ -23,22 +23,14 @@ pub(crate) enum FontFamilyClass {
     Auto,
 }
 
-/// ECMA-376 `w:pitch`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Pitch {
-    Fixed,
-    Variable,
-    Default,
-}
-
 /// One `w:font` row, including embed rels (`w:embedRegular` etc.).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FontEntry {
     pub name: String,
     pub alt_name: Option<String>,
     pub family: FontFamilyClass,
-    pub pitch: Pitch,
-    pub panose: Option<[u8; 10]>,
+    /// `w:sig` usb0..usb3: the Unicode ranges the face claims.
+    pub usb: [u32; 4],
     pub charset: Option<String>,
     /// regular, bold, italic, bold-italic: `(r:id, w:fontKey)`.
     pub embedded: [Option<(String, String)>; 4],
@@ -48,20 +40,9 @@ pub(crate) struct FontEntry {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct FontTable {
     map: HashMap<String, FontEntry>,
-    /// The document's default Latin family (docDefaults, theme resolved):
-    /// Word paints an unknown family="auto" face in it.
-    default_family: Option<String>,
 }
 
 impl FontTable {
-    pub(crate) fn set_default_family(&mut self, family: &str) {
-        self.default_family = Some(family.to_string());
-    }
-
-    pub(crate) fn default_family(&self) -> Option<&str> {
-        self.default_family.as_deref()
-    }
-
     pub(crate) fn get(&self, name: &str) -> Option<&FontEntry> {
         self.map.get(name).or_else(|| {
             self.map
@@ -133,19 +114,19 @@ pub(crate) fn parse_font_table_xml(xml: &str) -> FontTable {
                 family: child_val("family")
                     .map(parse_family)
                     .unwrap_or(FontFamilyClass::Auto),
-                pitch: child_val("pitch")
-                    .map(parse_pitch)
-                    .unwrap_or(Pitch::Default),
-                panose: child_val("panose1").and_then(parse_panose),
+                usb: super::direct_named(&dom, font, "sig").map_or([0; 4], |sig| {
+                    ["usb0", "usb1", "usb2", "usb3"].map(|a| {
+                        attr_any(&dom, sig, a)
+                            .and_then(|v| u32::from_str_radix(v, 16).ok())
+                            .unwrap_or(0)
+                    })
+                }),
                 charset: child_val("charset").map(str::to_string),
                 embedded,
             },
         );
     }
-    FontTable {
-        map,
-        default_family: None,
-    }
+    FontTable { map }
 }
 
 fn parse_family(val: &str) -> FontFamilyClass {
@@ -157,26 +138,6 @@ fn parse_family(val: &str) -> FontFamilyClass {
         "decorative" => FontFamilyClass::Decorative,
         _ => FontFamilyClass::Auto,
     }
-}
-
-fn parse_pitch(val: &str) -> Pitch {
-    match val {
-        "fixed" => Pitch::Fixed,
-        "variable" => Pitch::Variable,
-        _ => Pitch::Default,
-    }
-}
-
-fn parse_panose(val: &str) -> Option<[u8; 10]> {
-    let hex: String = val.chars().filter(|c| c.is_ascii_hexdigit()).collect();
-    if hex.len() != 20 {
-        return None;
-    }
-    let mut out = [0u8; 10];
-    for (i, slot) in out.iter_mut().enumerate() {
-        *slot = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()?;
-    }
-    Some(out)
 }
 
 /// Embed style slots: regular, bold, italic, bold-italic.
@@ -272,6 +233,7 @@ mod tests {
     <w:pitch w:val="variable"/>
     <w:charset w:val="00"/>
     <w:panose1 w:val="02040503050405020304"/>
+    <w:sig w:usb0="00000403" w:usb1="0" w:usb2="00000100" w:usb3="zz"/>
     <w:embedRegular r:id="rId1" w:fontKey="{00000000-0000-0000-0000-000000000001}"/>
   </w:font>
   <w:font w:name="Courier New">
@@ -281,24 +243,20 @@ mod tests {
 </w:fonts>"#;
 
     #[test]
-    fn font_table_parses_altname_family_pitch() {
+    fn font_table_parses_altname_family_and_sig() {
         let table = parse_font_table_xml(TABLE);
         let entry = table.get("SomeRare").expect("SomeRare");
         assert_eq!(entry.alt_name.as_deref(), Some("Cambria"));
         assert_eq!(entry.family, FontFamilyClass::Roman);
-        assert_eq!(entry.pitch, Pitch::Variable);
         assert_eq!(entry.charset.as_deref(), Some("00"));
-        assert_eq!(
-            entry.panose,
-            Some([0x02, 0x04, 0x05, 0x03, 0x05, 0x04, 0x05, 0x02, 0x03, 0x04])
-        );
+        assert_eq!(entry.usb, [0x403, 0, 0x100, 0]);
         assert_eq!(
             entry.embedded[0].as_ref().map(|(id, _)| id.as_str()),
             Some("rId1")
         );
         let courier = table.get("Courier New").expect("Courier New");
         assert_eq!(courier.family, FontFamilyClass::Modern);
-        assert_eq!(courier.pitch, Pitch::Fixed);
+        assert_eq!(courier.usb, [0; 4]);
         assert!(courier.alt_name.is_none());
     }
 
@@ -355,8 +313,7 @@ mod tests {
         let entry = table.get("Malformed").expect("valid named row");
         assert!(table.alt_name("Malformed").is_none());
         assert_eq!(entry.family, FontFamilyClass::Auto);
-        assert_eq!(entry.pitch, Pitch::Default);
-        assert_eq!(entry.panose, None);
+        assert_eq!(entry.usb, [0; 4]);
         assert_eq!(entry.embedded, [None, None, None, None]);
     }
 
