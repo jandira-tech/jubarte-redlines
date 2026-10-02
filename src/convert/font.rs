@@ -2002,7 +2002,11 @@ fn scan_family_faces(family: &str, user: Option<&Path>) -> (SourcedFaces, Vec<Pa
     // (dir, whole folder is the family): Word's cloud-font cache keeps each
     // family in its own folder under numeric file names (Poppins/2397….ttf).
     let mut dirs: Vec<(PathBuf, bool)> = if latin {
-        DIRS.iter().map(|d| (PathBuf::from(d), false)).collect()
+        DIRS.iter()
+            .map(PathBuf::from)
+            .chain(windows_font_dirs())
+            .map(|d| (d, false))
+            .collect()
     } else {
         Vec::new()
     };
@@ -2445,24 +2449,53 @@ fn face_family_names(face: &ttf_parser::Face<'_>, id: u16) -> Vec<String> {
 fn cjk_family_faces(family: &str, stems: &[&str]) -> Vec<((bool, bool), Vec<u8>)> {
     let key = format!("east-asian\u{1f}{family}\u{1f}{}", stems.join(","));
     indexed_faces(&FONT_INDEX, &key, || {
-        let dirs = CJK_DIRS.iter().map(PathBuf::from).collect();
-        (scan_cjk_family_faces(family, stems), dirs)
+        (scan_cjk_family_faces(family, stems), cjk_dirs())
     })
 }
 
-/// The folders Word's East Asian faces live in.
+/// The folders Word for Mac keeps its East Asian faces in.
 const CJK_DIRS: &[&str] = &[
     "/Applications/Microsoft Word.app/Contents/Resources/DFonts",
     "/Library/Fonts/Microsoft",
     "/Library/Fonts",
 ];
 
+/// The folders Word's East Asian faces live in: Word for Mac's, then
+/// Windows' own (msgothic.ttc, msyh.ttc and malgun.ttf ship there).
+fn cjk_dirs() -> Vec<PathBuf> {
+    CJK_DIRS
+        .iter()
+        .map(PathBuf::from)
+        .chain(windows_font_dirs())
+        .collect()
+}
+
+/// Windows' font folders: the system's and the per-user one fonts
+/// installed without administrator rights land in. Empty elsewhere.
+fn windows_font_dirs() -> Vec<PathBuf> {
+    if cfg!(target_os = "windows") {
+        windows_font_dirs_from(|key| std::env::var_os(key))
+    } else {
+        Vec::new()
+    }
+}
+
+fn windows_font_dirs_from(env: impl Fn(&str) -> Option<std::ffi::OsString>) -> Vec<PathBuf> {
+    let set = |key: &str| env(key).filter(|v| !v.is_empty()).map(PathBuf::from);
+    let root = set("WINDIR")
+        .or_else(|| set("SystemRoot"))
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+    let mut dirs = vec![root.join("Fonts")];
+    dirs.extend(set("LOCALAPPDATA").map(|d| d.join("Microsoft").join("Windows").join("Fonts")));
+    dirs
+}
+
 /// `cjk_family_faces` read from disk.
 fn scan_cjk_family_faces(family: &str, stems: &[&str]) -> SourcedFaces {
     let want = fold_family(family);
     let mut files: Vec<(usize, PathBuf)> = Vec::new();
-    for dir in CJK_DIRS {
-        let Ok(entries) = fs::read_dir(dir) else {
+    for dir in cjk_dirs() {
+        let Ok(entries) = fs::read_dir(&dir) else {
             continue;
         };
         for path in entries.flatten().map(|e| e.path()) {
@@ -3261,6 +3294,50 @@ mod tests {
         assert!(fonts.family_is_east_asian("標楷體"));
         assert!(fonts.family_is_east_asian("ＭＳ 明朝"));
         assert!(!fonts.family_is_east_asian("Prb Absent"));
+    }
+
+    #[test]
+    fn windows_fonts_are_searched_in_the_system_and_user_folders() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |key: &str| {
+                pairs
+                    .iter()
+                    .find(|(k, _)| *k == key)
+                    .map(|(_, v)| std::ffi::OsString::from(v))
+            }
+        };
+        let user = |root: &str| {
+            PathBuf::from(root)
+                .join("Microsoft")
+                .join("Windows")
+                .join("Fonts")
+        };
+        assert_eq!(
+            windows_font_dirs_from(env(&[
+                ("WINDIR", r"D:\Win"),
+                ("LOCALAPPDATA", r"C:\Users\a\AppData\Local")
+            ])),
+            vec![
+                PathBuf::from(r"D:\Win").join("Fonts"),
+                user(r"C:\Users\a\AppData\Local")
+            ]
+        );
+        // SystemRoot stands in for WINDIR; an empty value counts as unset.
+        assert_eq!(
+            windows_font_dirs_from(env(&[("WINDIR", ""), ("SystemRoot", r"E:\W")])),
+            vec![PathBuf::from(r"E:\W").join("Fonts")]
+        );
+        assert_eq!(
+            windows_font_dirs_from(env(&[])),
+            vec![PathBuf::from(r"C:\Windows").join("Fonts")]
+        );
+        // The East Asian search reads them after Word for Mac's folders.
+        let dirs = cjk_dirs();
+        assert_eq!(
+            &dirs[..CJK_DIRS.len()],
+            CJK_DIRS.iter().map(PathBuf::from).collect::<Vec<_>>()
+        );
+        assert_eq!(dirs.len() > CJK_DIRS.len(), cfg!(target_os = "windows"));
     }
 
     #[test]

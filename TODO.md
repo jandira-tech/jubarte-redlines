@@ -344,11 +344,14 @@ repeatable-sweep item below is what makes these numbers reproducible.
   Asian wide text a face lacks now measures one em, as in every face Word
   falls back to (`font::tests::an_ideograph_a_face_lacks_still_measures_one_em`).
   This also fixes CJK line breaks in WASM and on Linux.
-- **Windows never finds Word's East Asian faces**: `CJK_DIRS` (and
-  `scan_family_faces`' folders) are macOS paths, though the stems
-  (`msgothic`, `msmincho`, `msyh`, `malgun`, `batang`, `yugothr`) are
-  Windows file names. Adding `C:\Windows\Fonts` is one line, but it needs a
-  Windows run to show which tests move with Windows' font versions.
+- **Windows font folders (in progress)**: `scan_family_faces` and the East
+  Asian search (`cjk_dirs`) now also read `%WINDIR%\Fonts` and
+  `%LOCALAPPDATA%\Microsoft\Windows\Fonts` on Windows, where Calibri,
+  Cambria, MS Gothic (`msgothic`), YaHei (`msyh`) and Malgun (`malgun`)
+  ship. Before, every installed-font folder was a macOS path, so Windows
+  painted Word's own fonts with open-source substitutes. Watch the Windows
+  CI job for tests that move with Windows' font versions. Linux's nested
+  `/usr/share/fonts` tree is still unsearched.
 - **`python bindings` failed once** on #312 (`f80566e`):
   `test_mcp_server.py::test_stdio_smoke_initialize_and_list_tools` got no
   `tools/list` reply. It passes locally on `main` (`1ee4c38`) and on #318
