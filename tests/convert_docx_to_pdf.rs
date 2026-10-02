@@ -3893,6 +3893,34 @@ fn a_header_text_box_after_the_title_stands_under_it() {
 }
 
 #[test]
+fn a_header_inline_vml_box_beside_a_drawingml_box_keeps_the_drawingml_one() {
+    // PR #272 review (CodeRabbit): an inline VML text box takes no slot
+    // (0017dd5f), but counting it among the paragraph's flow boxes made
+    // the pairing with DrawingML's effectExtents fail, and the DrawingML
+    // box beside it vanished with it.
+    let r = r#"<w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:sz w:val="20"/></w:rPr>"#;
+    let para = |inner: &str| {
+        format!(r#"<w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r>{r}{inner}</w:r></w:p>"#)
+    };
+    let wps = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape";
+    let drawing = format!(
+        r#"<w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="2540000" cy="762000"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="1" name="Box 1"/><a:graphic><a:graphicData uri="{wps}"><wps:wsp xmlns:wps="{wps}"><wps:cNvSpPr/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2540000" cy="762000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent>{}</w:txbxContent></wps:txbx><wps:bodyPr anchor="t"><a:noAutofit/></wps:bodyPr></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing>"#,
+        para("<w:t>Boxed note</w:t>")
+    );
+    let vml = format!(
+        r#"<w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml" id="vb" style="width:60pt;height:20pt"><v:textbox><w:txbxContent>{}</w:txbxContent></v:textbox></v:shape></w:pict>"#,
+        para("<w:t>VmlNote</w:t>")
+    );
+    let hdr = para(&format!("{drawing}</w:r><w:r>{r}{vml}"));
+    let pdf = docx_to_pdf(&chrome_docx("header", &hdr, 360, &para("<w:t>BodyX</w:t>")))
+        .expect("mixed header boxes");
+    assert!(
+        pdf_glyph_text_xy(&pdf, "Boxed").is_some(),
+        "the DrawingML box beside an inline VML box still paints"
+    );
+}
+
+#[test]
 fn a_footer_paragraphs_shading_paints_behind_its_text() {
     // PR #247 review: the footer loop drew its lines and rules but never
     // the paragraph's fill, so white footer text on a shaded band vanished

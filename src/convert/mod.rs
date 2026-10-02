@@ -2048,6 +2048,9 @@ struct LaidTextBox {
     /// A `w:framePr` frame: text wraps beside it only through a gap wider
     /// than an inch, else goes under it (live Word: 72pt under, 76 beside).
     frame: bool,
+    /// A VML `w:pict` shape: an inline one takes no slot in a header's
+    /// line, as DrawingML's do (0017dd5f's boxed page number).
+    vml: bool,
 }
 
 /// One shape of a group: its box as fractions of the group's box (x, y
@@ -7933,6 +7936,7 @@ fn frame_box(
         fit_height: auto_h,
         raise: 0.0,
         frame: true,
+        vml: false,
     })
 }
 
@@ -13803,9 +13807,10 @@ fn collect_textboxes_styled(
         }
         let empty = runs.iter().all(|r| r.text.trim().is_empty());
         let vml_slot = vml_absolute_slot(dom, shape);
+        let vml = dom.name_is(shape, &W::pict());
         // An inline VML shape is sized by its style, not the DrawingML
         // default box (069252c3's 21x9pt logo letters ran 200x120).
-        let vml_sized = dom.name_is(shape, &W::pict())
+        let vml_sized = vml
             && descendants_local(dom, shape, "shape").into_iter().any(|v| {
                 attr_any(dom, v, "style").is_some_and(|st| {
                     vml_style_pt(st, "width").is_some() && vml_style_pt(st, "height").is_some()
@@ -13957,6 +13962,7 @@ fn collect_textboxes_styled(
                     fit_height: false,
                     raise: run_raise_pt(dom, shape),
                     frame: false,
+                    vml,
                 });
                 continue;
             }
@@ -14002,6 +14008,7 @@ fn collect_textboxes_styled(
                     fit_height: false,
                     raise: run_raise_pt(dom, shape),
                     frame: false,
+                    vml,
                 });
                 continue;
             }
@@ -14075,6 +14082,7 @@ fn collect_textboxes_styled(
                 .is_some_and(|&body| !descendants_local(dom, body, "spAutoFit").is_empty()),
             raise: run_raise_pt(dom, shape),
             frame: false,
+            vml,
         });
     }
     // WrapNone accent fills on the same paragraph as an inline chart
@@ -14135,6 +14143,7 @@ fn group_box(
         fit_height: false,
         raise: 0.0,
         frame: false,
+        vml: false,
     }
 }
 
@@ -18151,6 +18160,10 @@ fn chrome_part_xml(
             )
             .into_iter()
             .partition(|b| matches!(b.slot, ImageSlot::Flow));
+            // Only DrawingML inline boxes: an inline VML text box beside a
+            // logo takes no slot (0017dd5f's boxed page number), and must
+            // not cost a DrawingML box beside it its pairing (PR #272).
+            let flow: Vec<_> = flow.into_iter().filter(|b| !b.vml).collect();
             boxes.extend(anchored.into_iter().map(|mut b| {
                 b.chrome_para_top = para_top;
                 b
@@ -18169,8 +18182,6 @@ fn chrome_part_xml(
                 })
                 .map(|inl| inline_effect_pt(&part_dom, inl))
                 .collect();
-            // Only DrawingML inline boxes: an inline VML text box beside a
-            // logo takes no slot (0017dd5f's boxed page number).
             if effects.len() == flow.len() {
                 flow_boxes = flow
                     .into_iter()
