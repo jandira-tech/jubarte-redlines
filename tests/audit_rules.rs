@@ -621,3 +621,19 @@ fn a_supplied_layout_pass_is_used_and_its_failure_reported() {
     assert!(err.to_string().contains("renderer unavailable"), "{err}");
     assert_eq!(calls, 1);
 }
+
+#[test]
+fn a_bundled_face_of_the_requested_family_is_not_a_substitution() {
+    // Carlito ships with the renderer: drawn with itself, it is not
+    // substituted, whatever resolve step found it.
+    let p = r#"<w:p><w:r><w:rPr><w:rFonts w:ascii="Carlito" w:hAnsi="Carlito"/></w:rPr><w:t>hello</w:t></w:r></w:p>"#;
+    let report = audit_report(&docx(p), &["FONT_SUBSTITUTED"]).unwrap();
+    assert!(report.layout);
+    assert!(
+        report
+            .findings
+            .iter()
+            .all(|f| !f.message.contains("\"Carlito\"")),
+        "{report:?}"
+    );
+}

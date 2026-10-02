@@ -25,7 +25,7 @@ use std::fmt;
 
 use serde::Serialize;
 
-use crate::convert::{FontStep, PdfOptions, RenderReport, RevisionStyle, docx_render_report};
+use crate::convert::{PdfOptions, RenderReport, RevisionStyle, docx_render_report};
 use crate::inspect::{
     InspectError, Opened, body_paragraph_nodes, parse_part, project_paragraph,
     story_paragraph_nodes,
@@ -179,7 +179,7 @@ pub fn audit_report_with(
                     .expect("select keeps FONT_SUBSTITUTED only with a layout pass");
                 let fonts = &lay_out(docx, pass, &mut laid_out)?.fonts;
                 let mut seen = BTreeSet::new();
-                for font in fonts.iter().filter(|font| substituted(font.step)) {
+                for font in fonts.iter().filter(|font| font.substituted()) {
                     if seen.insert(font.requested.clone()) {
                         findings.push(finding(
                             code,
@@ -249,14 +249,6 @@ fn lay_out<'a>(
         *slot = Some(pass(docx)?);
     }
     Ok(slot.as_ref().expect("layout report was just stored"))
-}
-
-/// A resolve step that drew another family than the one asked for.
-fn substituted(step: FontStep) -> bool {
-    matches!(
-        step,
-        FontStep::WordSubstitution | FontStep::OpenFallback | FontStep::Generic | FontStep::Unknown
-    )
 }
 
 fn finding(code: &str, location: String, message: String) -> AuditFinding {
