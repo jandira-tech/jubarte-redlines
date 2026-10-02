@@ -353,6 +353,21 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   README.md has said it does.
 - Matching a style name against Word's built-in styles no longer allocates
   a lowercase copy of the name on each lookup; the answer is unchanged.
+- `util::sha1::sha1_fingerprint` and `sha1_fingerprint128` are renamed
+  `fnv1a_64` and `fnv1a_128`: they compute 64- and 128-bit FNV-1a of the
+  SHA-1 hex string, not SHA-1, and their docs now say so. Output is
+  unchanged. The 128-bit key alone decides comparison-unit equality in the
+  LCS, which the docs state instead of claiming a string check follows.
+  `ComparisonUnit::sha1_key` and `sha1_key128` return the same FNV-1a
+  values and keep their names for now. `jubarte::util::fnv1a_128` is
+  re-exported beside `fnv1a_64`.
+- `ComparisonLog` and `CompareContext` derive `Debug`.
+
+### Deprecated
+
+- `util::sha1::sha1_fingerprint`, `util::sha1::sha1_fingerprint128` and
+  `util::sha1_fingerprint` stay as deprecated aliases of the `fnv1a_*`
+  names for one release and are then removed.
 
 ### Fixed
 

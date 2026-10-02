@@ -1429,6 +1429,7 @@ fn word_default_sectpr(dom: &mut Dom, base: NodeId) -> NodeId {
 }
 
 /// Optional log holder used by the comparison pipeline.
+#[derive(Debug)]
 pub struct CompareContext {
     /// `settings`.
     pub settings: WmlComparerSettings,

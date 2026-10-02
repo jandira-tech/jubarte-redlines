@@ -13,12 +13,14 @@
 //! ## Example
 //!
 //! ```no_run
-//! let original = std::fs::read("original.docx").unwrap();
-//! let modified = std::fs::read("modified.docx").unwrap();
-//! let redline =
-//!     jubarte::document_comparer::compare_documents(&original, &modified, "Reviewer")
-//!         .expect("compare");
-//! std::fs::write("original_v_modified.docx", &redline).unwrap();
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let original = std::fs::read("original.docx")?;
+//!     let modified = std::fs::read("modified.docx")?;
+//!     let redline =
+//!         jubarte::document_comparer::compare_documents(&original, &modified, "Reviewer")?;
+//!     std::fs::write("original_v_modified.docx", &redline)?;
+//!     Ok(())
+//! }
 //! ```
 //!
 //! For author/date/detail-threshold control, build a
@@ -110,11 +112,3 @@ pub mod xmllinq;
 
 /// [`WmlDocument`] re-export for the common library entry point.
 pub use wml_document::WmlDocument;
-
-#[cfg(test)]
-mod smoke {
-    #[test]
-    fn crate_builds() {
-        assert_eq!(2 + 2, 4);
-    }
-}
