@@ -233,6 +233,11 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   "1." over plain Aptos text.
   - tb27bda's "5.2." labels are Times through Font Style12. We drew them
     in the theme's sans: 53.5 → 73.7 (Aspose 81.9).
+- **So does an empty line's mark.** Word 16 probe ms1001: an empty
+  paragraph whose mark names a TNR 24 character style is a TNR 24 line.
+  The mark's own `w:sz` still wins over the style. tb27bda's
+  Font Style11 marks are 13.8pt Times lines, not 14.58pt Verdana 12:
+  73.7 → 85.0.
 
 ## Redline chrome
 

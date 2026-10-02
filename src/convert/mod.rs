@@ -9800,7 +9800,9 @@ fn paragraph_block(
         .element(para, &W::p_pr())
         .and_then(|ppr| dom.element(ppr, &W::r_pr()))
         .filter(|rpr| {
-            first_named(dom, *rpr, "sz").is_some() || first_named(dom, *rpr, "rFonts").is_some()
+            ["sz", "rFonts", "rStyle"]
+                .iter()
+                .any(|name| first_named(dom, *rpr, name).is_some())
         });
     // A floating picture takes no line space: its paragraph is still a
     // line of its mark (0004c94c's emblem paragraph is Arial 9, 10.35pt).
@@ -9812,7 +9814,7 @@ fn paragraph_block(
     let boxes_float = boxes.iter().all(|b| !matches!(b.slot, ImageSlot::Flow));
     if let Some(rpr) = mark_rpr {
         let mut mark = rstyle.clone();
-        apply_rpr(dom, rpr, &mut mark, &sheet.theme);
+        apply_mark_rpr(dom, rpr, &mut mark, sheet);
         pstyle.mark_run = Some(std::rc::Rc::new(mark));
     } else if (!floats_only
         || boxes
@@ -9847,7 +9849,7 @@ fn paragraph_block(
             .element(para, &W::p_pr())
             .and_then(|ppr| dom.element(ppr, &W::r_pr()))
         {
-            apply_rpr(dom, rpr, &mut mark, &sheet.theme);
+            apply_mark_rpr(dom, rpr, &mut mark, sheet);
         }
         for run in &mut runs {
             run.style.family.clone_from(&mark.family);
@@ -9859,7 +9861,7 @@ fn paragraph_block(
     if runs.is_empty() && floats_only && boxes_float {
         if let Some(rpr) = mark_rpr {
             let mut mark = rstyle.clone();
-            apply_rpr(dom, rpr, &mut mark, &sheet.theme);
+            apply_mark_rpr(dom, rpr, &mut mark, sheet);
             runs.push(TextRun::new(" ", mark));
         } else if pstyle.line_exact.is_some()
             || rstyle.size >= 14.0
@@ -10636,6 +10638,21 @@ fn num_pr(dom: &Dom, ppr: NodeId) -> (Option<String>, u32) {
     (num_id, ilvl)
 }
 
+/// Apply a paragraph mark's `w:rPr` to `style` as Word does a run's: its
+/// character style first, then its own properties (Word 16 probe
+/// rsty0930: tb27bda's Font Style12 sets the labels in Times; its Font
+/// Style11 marks make its empty lines Times lines, 13.8pt not Verdana's
+/// 14.58).
+fn apply_mark_rpr(dom: &Dom, rpr: NodeId, style: &mut RunStyle, sheet: &StyleSheet) {
+    if let Some(named) = first_named(dom, rpr, "rStyle")
+        .and_then(|n| dom.attribute(n, &W::val()))
+        .and_then(|sid| sheet.by_id.get(sid))
+    {
+        apply_named_char_style(style, named);
+    }
+    apply_rpr(dom, rpr, style, &sheet.theme);
+}
+
 /// A numbered paragraph's marker style — its mark's pPr/rPr, then the
 /// level's rPr — with the level's indent and tabs applied to `pstyle`.
 /// Body and cell paragraphs share it (00297360's cell "1." is 10pt and
@@ -10656,15 +10673,7 @@ fn apply_list_level(
         .element(para, &W::p_pr())
         .and_then(|ppr| dom.element(ppr, &W::r_pr()))
     {
-        // The mark's character style too, as a run's (Word 16 probe
-        // rsty0930: tb27bda's Font Style12 sets the labels in Times).
-        if let Some(named) = first_named(dom, rpr, "rStyle")
-            .and_then(|n| dom.attribute(n, &W::val()))
-            .and_then(|sid| sheet.by_id.get(sid))
-        {
-            apply_named_char_style(&mut marker_style, named);
-        }
-        apply_rpr(dom, rpr, &mut marker_style, &sheet.theme);
+        apply_mark_rpr(dom, rpr, &mut marker_style, sheet);
     }
     if let Some(lvl) = lvl {
         if !lvl.family.is_empty() {
@@ -11187,7 +11196,7 @@ fn table_block(
                     .element(child, &W::p_pr())
                     .and_then(|ppr| dom.element(ppr, &W::r_pr()))
                 {
-                    apply_rpr(dom, rpr, &mut mark, &sheet.theme);
+                    apply_mark_rpr(dom, rpr, &mut mark, sheet);
                 }
                 pstyle.mark_run = Some(std::rc::Rc::new(mark));
                 let (mark, num_id, ilvl) = list_marker(dom, child, sheet, numbering);
@@ -11240,7 +11249,7 @@ fn table_block(
                         .element(child, &W::p_pr())
                         .and_then(|ppr| dom.element(ppr, &W::r_pr()))
                     {
-                        apply_rpr(dom, rpr, &mut mark_style, &sheet.theme);
+                        apply_mark_rpr(dom, rpr, &mut mark_style, sheet);
                     }
                     runs = vec![TextRun::new(" ", mark_style)];
                 }
@@ -14375,7 +14384,7 @@ fn txbx_paragraphs(
                     .element(p, &W::p_pr())
                     .and_then(|ppr| dom.element(ppr, &W::r_pr()))
                 {
-                    apply_rpr(dom, rpr, &mut mark, theme);
+                    apply_mark_rpr(dom, rpr, &mut mark, sheet);
                 }
                 runs.push(TextRun::new(" ", mark));
             }
@@ -17627,7 +17636,7 @@ fn collect_hf_tables(
                     .element(p, &W::p_pr())
                     .and_then(|ppr| dom.element(ppr, &W::r_pr()))
                 {
-                    apply_rpr(dom, rpr, &mut mark, &sheet.theme);
+                    apply_mark_rpr(dom, rpr, &mut mark, sheet);
                 }
                 let mut run = TextRun::new(HF_LINE_BREAK, mark);
                 run.hf_para = Some(std::rc::Rc::new(pstyle));
@@ -18460,7 +18469,6 @@ fn hf_para_is_shape_text(dom: &Dom, para: NodeId) -> bool {
 }
 
 fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet, text_w: f32) -> Vec<TextRun> {
-    let theme = &sheet.theme;
     let header = dom.name_is(node, &W::name("hdr"));
     // One footer/header <w:p> is one painted line. Flattening sd_2517's
     // "Smith Family Trust" + PAGE into one run list produced Trust106.
@@ -18476,7 +18484,7 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet, text_w: f32) -> 
             .element(para, &W::p_pr())
             .and_then(|ppr| dom.element(ppr, &W::r_pr()))
         {
-            apply_rpr(dom, rpr, &mut mark, theme);
+            apply_mark_rpr(dom, rpr, &mut mark, sheet);
         }
         let mut br = TextRun::new(HF_LINE_BREAK, mark);
         br.para_gap = pstyle.before + pstyle.after;

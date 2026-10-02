@@ -39237,6 +39237,43 @@ fn a_right_to_left_paragraph_mirrors_its_alignment_and_indents() {
 }
 
 #[test]
+fn an_empty_lines_mark_takes_its_character_style() {
+    // tb27bda: empty paragraphs whose mark says only rStyle "Font Style11"
+    // (Times New Roman) under a Verdana Normal. Word 16 probe ms1001: a
+    // mark styled "Big" (TNR 24) makes a TNR 24 line, Above to Below
+    // 39.6pt (m1); the mark's own sz 8 still wins over it, 21.36pt (m3).
+    // We ignored the character style: 14.58pt Verdana 12 lines that
+    // drifted tb27bda's page 2 by 2.9pt.
+    let gap = |mark: &str| {
+        let body = format!(
+            "<w:p><w:r><w:t>Above</w:t></w:r></w:p><w:p><w:pPr><w:rPr>{mark}</w:rPr></w:pPr></w:p>\
+             <w:p><w:r><w:t>Below</w:t></w:r></w:p>{LETTER_SECT}"
+        );
+        let settings = "<w:compat><w:compatSetting w:name=\"compatibilityMode\" \
+              w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat>";
+        let styles = "<w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">\
+              <w:name w:val=\"Normal\"/><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+              <w:rPr><w:rFonts w:ascii=\"Verdana\" w:hAnsi=\"Verdana\"/><w:sz w:val=\"20\"/></w:rPr></w:style>\
+            <w:style w:type=\"character\" w:customStyle=\"1\" w:styleId=\"Big\"><w:name w:val=\"Big\"/>\
+              <w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/><w:sz w:val=\"48\"/></w:rPr></w:style>";
+        let pdf = docx_to_pdf(&docx_with_settings_and_styles(&body, settings, styles))
+            .expect("convert styled mark");
+        let ys: Vec<f32> = text_baselines(&pdf).iter().map(|y| 792.0 - y).collect();
+        ys[ys.len() - 1] - ys[0]
+    };
+    let styled = gap("<w:rStyle w:val=\"Big\"/>");
+    assert!(
+        (styled - 39.6).abs() < 0.3,
+        "a TNR 24 line (Word 39.6): {styled}"
+    );
+    let sized = gap("<w:rStyle w:val=\"Big\"/><w:sz w:val=\"16\"/>");
+    assert!(
+        (sized - 21.36).abs() < 0.3,
+        "its own sz wins (Word 21.36): {sized}"
+    );
+}
+
+#[test]
 fn a_spaces_only_paragraph_is_sized_by_its_mark() {
     // fixtures_500 00195f87: a paragraph of 12pt spaces under a 14pt mark
     // stood 2.1pt short. Checked in Word: a spaces-only paragraph's line
