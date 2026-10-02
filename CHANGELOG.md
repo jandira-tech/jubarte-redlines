@@ -705,8 +705,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   - The run holding an inline shape sizes its line (3936a8fe56: 15 pages
     to Word's 16).
   - An underlined or inserted inline picture keeps its run's descent
-    under the picture. A picture-only paragraph lays out its `w:br`
-    lines.
+    under the picture, DrawingML or VML (`w:pict`, or a `w:object` such as
+    an embedded Word.Picture.8). A picture-only paragraph lays out its
+    `w:br` lines. The control redline 5a6c9a5c went from 33 pages to
+    Word's 35.
   - A header picture after text wraps when the text's last line leaves
     no room for it.
 - Lines, spacing and breaks:
