@@ -305,8 +305,36 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   reports `operations.fields`. Page numbers are jubarte's, not Word's
   ([docs/WORD_DIFFERENCES.md](docs/WORD_DIFFERENCES.md) section 11).
 
+### Changed
+
+- The redline comparer admits both inputs before it inflates anything
+  (`compare_documents*`, `edit` plans that compare, `WmlDocument::from_bytes`).
+  A package past the budget is an `Err` whose message carries the stable
+  `INPUT_LIMIT` code (or `UNSUPPORTED_PACKAGE`, `INVALID_PACKAGE`, ...) and
+  names the side ("original document: ..."); the typed
+  `admission::AdmissionError` is the `io::Error` source of the returned
+  `OpcError::Io(InvalidData)`. The budget is the new
+  `admission::InputLimits::compare()` (512 MiB per file and part, 2 GiB
+  inflated, 10 000 entries, depth 256) and
+  `WmlComparerSettings::input_limits` overrides it. Admission is one extra
+  inflate pass over each input. The `inspect` and `edit` budget
+  (`InputLimits::default()`) is unchanged.
+- `strict_translation::strict_to_transitional_docx` no longer sizes an
+  allocation from the ZIP central directory's declared size or copies the
+  input first, and stops at the budget instead of inflating without limit;
+  `strict_to_transitional_docx_within` takes the budget explicitly. Over the
+  budget it returns the input unchanged, as it already did for an unreadable
+  archive.
+
 ### Fixed
 
+- A footnote or endnote layout the renumbering step cannot resolve is an
+  `Err` from `compare_documents*`, not a panic that aborts the Python
+  interpreter or the WASM instance.
+  `comparer::try_compare_bodies_faithful_with_notes` returns the
+  `RectifyError`; `compare_bodies_faithful_with_notes` keeps its signature and
+  panics as before. (`process_footnote_endnote` still has `expect` calls on
+  the same path.)
 - A line ended by a `w:br` keeps its break when the paragraph reflows
   past a header or body float with square or tight wrapping. The lines
   below the float no longer run together, and a justified line that
