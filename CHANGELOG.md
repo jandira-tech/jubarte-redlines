@@ -623,9 +623,7 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
     its space after still offsets the next page's opening space before,
     even after a table (12d245d664 page 48).
   - A page-anchored floating table whose offset lies above the text
-    already on its page starts the next page at that offset. Below
-    compatibility mode 15, a page-anchored float under the body top gets
-    one body height of rows on its first page.
+    already on its page starts the next page at that offset.
   - Objects fixed to the page stay put when a full-width float at the
     body top pushes the text down.
   - `pgNumType w:start="0"` numbers the first page 0. We clamped it to 1
@@ -731,11 +729,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   - `compressPunctuation` narrows spaces only where Word does: before
     mode 15, only while the default font names no face, and only Times
     New Roman and Arial spaces.
-  - Lines after a side float keep their `w:br` breaks
-    (f9b9dbd790 lost a page).
 - Lists and tabs:
   - From compatibility mode 15, a right tab past the right margin lands
-    on the margin. A header's text after such a tab stays on its line.
+    on the margin; legacy layout keeps the stop. In a header, the text
+    after such a tab stays on its line in every mode; we wrapped it.
   - Tab leaders fill whole cells, one mark wide, of a grid counted from
     the page's left edge, up to the last cell that ends by the stop.
   - A typed label such as `<tab>(a)<tab>` right-aligns on its own stop in
