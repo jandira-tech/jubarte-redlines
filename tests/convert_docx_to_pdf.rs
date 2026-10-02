@@ -27755,11 +27755,16 @@ fn mirror_margins_swap_left_and_right_on_even_pages() {
 }
 
 fn csc_punct_docx(val: Option<&str>) -> Vec<u8> {
-    // 24 ideographic commas (U+3001) then an ASCII marker whose x shows
-    // the commas' advance.
-    let punct = "&#x3001;".repeat(24);
+    csc_commas_docx(val, 24)
+}
+
+fn csc_commas_docx(val: Option<&str>, commas: usize) -> Vec<u8> {
+    // `commas` ideographic commas (U+3001) in 10pt MS Mincho, then an
+    // ASCII marker whose x shows the commas' advance.
+    let punct = "&#x3001;".repeat(commas);
     let body = format!(
-        "<w:p><w:r><w:t xml:space=\"preserve\">{punct}EndCscX</w:t></w:r></w:p>\
+        "<w:p><w:r><w:rPr><w:rFonts w:eastAsia=\"MS Mincho\" w:hint=\"eastAsia\"/><w:sz w:val=\"20\"/></w:rPr>\
+         <w:t xml:space=\"preserve\">{punct}</w:t></w:r><w:r><w:t xml:space=\"preserve\">EndCscX</w:t></w:r></w:p>\
          <w:sectPr>\
            <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
            <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/>\
@@ -27776,6 +27781,31 @@ fn csc_run_end_x(pdf: &[u8]) -> f32 {
     pdf_tf_xs(pdf, "11.04 Tf")
         .into_iter()
         .fold(0.0_f32, f32::max)
+}
+
+/// Word reads `&#x3001;` as the ideographic comma itself: a character
+/// reference loads and paints the same faces as the literal character.
+#[test]
+fn a_character_reference_paints_like_the_character_it_names() {
+    let pdf_fonts = |text: &str| {
+        let body = format!(
+            "<w:p><w:r><w:t xml:space=\"preserve\">{text}EndRefX</w:t></w:r></w:p><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect(text);
+        let hay = String::from_utf8_lossy(&pdf).into_owned();
+        let mut names: Vec<String> = hay
+            .split("/BaseFont /")
+            .skip(1)
+            .filter_map(|s| s.split(|c: char| c.is_whitespace() || c == '/').next())
+            .map(str::to_string)
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    };
+    let literal = pdf_fonts("日、時");
+    assert!(!literal.is_empty(), "the literal text loads a face");
+    assert_eq!(pdf_fonts("&#x65E5;&#x3001;&#26178;"), literal);
 }
 
 #[test]
@@ -27804,20 +27834,26 @@ fn character_spacing_control_keeps_fullwidth_punctuation_whole() {
             "{label} must paint the ASCII marker; text={text}"
         );
     }
-    let xd = csc_run_end_x(&plain);
-    assert!(
-        xd > 80.0,
-        "11pt glyphs must paint past the left margin; xd={xd}"
-    );
-    for (pdf, label) in [
-        (&compressed, "compress"),
-        (&omitted, "omitted"),
-        (&kana, "kana"),
+    // Independent of any mode's own result: 24 commas against 12 in the
+    // same mode differ by twelve full ems (10pt MS Mincho), whatever gap
+    // sits before the marker.
+    if !word_dfonts_available() {
+        eprintln!("skip: Word DFonts absent; the em check measures MS Mincho");
+        return;
+    }
+    for val in [
+        Some("compressPunctuation"),
+        Some("doNotCompress"),
+        None,
+        Some("compressPunctuationAndJapaneseKana"),
     ] {
-        let x = csc_run_end_x(pdf);
+        let x = |n: usize| {
+            csc_run_end_x(&docx_to_pdf(&csc_commas_docx(val, n)).expect("convert commas"))
+        };
+        let twelve = x(24) - x(12);
         assert!(
-            (x - xd).abs() < 0.5,
-            "{label} keeps the punctuation whole: x={x}, doNotCompress {xd}"
+            (twelve - 120.0).abs() < 0.5,
+            "{val:?} keeps the punctuation whole: 12 commas advance {twelve}pt"
         );
     }
 }

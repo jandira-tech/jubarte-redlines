@@ -542,7 +542,9 @@ fn with_pages<T>(
         run_faces.extend(latin_font_names(text));
     }
     let any_text = |test: fn(char) -> bool| {
-        xml.chars().any(test) || stories.iter().any(|t| t.chars().any(test))
+        std::iter::once(&xml)
+            .chain(&stories)
+            .any(|t| t.chars().chain(char_refs(t)).any(test))
     };
     // List and page numbers in an East Asian format paint characters the
     // text never holds (a footer's ideographEnclosedCircle PAGE label).
@@ -3957,6 +3959,19 @@ fn number_formats_write(xml: &str, test: fn(char) -> bool) -> bool {
                         .any(|n| format_num(fmt, n).chars().any(test))
                 })
         })
+    })
+}
+
+/// The characters an XML part names by numeric reference (`&#x3001;`,
+/// `&#12289;`), which `str::chars` sees only as ASCII.
+fn char_refs(xml: &str) -> impl Iterator<Item = char> + '_ {
+    xml.split("&#").skip(1).filter_map(|rest| {
+        let (num, _) = rest.split_once(';')?;
+        let code = match num.strip_prefix(['x', 'X']) {
+            Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+            None => num.parse().ok()?,
+        };
+        char::from_u32(code)
     })
 }
 
