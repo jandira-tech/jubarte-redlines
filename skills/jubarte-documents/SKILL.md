@@ -20,11 +20,13 @@ touch `word/document.xml`.
 | Page count / page text | `jubarte convert file.docx --png --report pages.json` |
 | Compare two versions | `jubarte a.docx b.docx -o redline.docx --author "Name"` (Python: `python -m jubarte_redlines compare a.docx b.docx -o redline.docx --author "Name"`) |
 | Clean copy of a redline | `jubarte accept redline.docx -o clean.docx` (or `reject`) |
+| Will Word open it, is every edit tracked | `jubarte validate redline.docx --original file.docx --author "Name"` (`--repair fixed.docx` fixes what it can) |
 | What can this build do | `jubarte capabilities --json` |
 
 Python: `import jubarte_redlines as jubarte; doc = jubarte.read("file.docx")`,
 then `doc.markdown()`, `doc.inspect()`, `doc.edit(plan)`, `doc.to_png()`,
-`doc.render()`, `doc.compare(other, author=...)`, `doc.accept()`.
+`doc.render()`, `doc.compare(other, author=...)`, `doc.accept()`,
+`doc.validate()`, `doc.repair()`, `doc.audit_tracked(original, author=...)`.
 
 ## 1. Read before you edit
 
@@ -295,6 +297,10 @@ Gotchas:
   `keep`, accept only your own changes:
   `jubarte accept review/redline.docx --author Claude -o check.docx`
   (the author your plan names).
+  `jubarte validate review/redline.docx --original contract.docx --author
+  Claude` runs that check and the Word-validity check in one; it replaces
+  `validate.py --original --author`. `--repair out.docx` fixes what it can
+  and lists what it cannot.
 
 ## 4. Compare, accept, reject
 

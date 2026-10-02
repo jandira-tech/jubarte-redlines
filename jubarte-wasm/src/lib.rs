@@ -459,6 +459,67 @@ pub fn append_documents(
     })
 }
 
+/// Word-validity findings beyond the schema as a JSON array (`code`,
+/// `part`, `path`, `message`, `word_fatal`, `repairable`); `[]` is a pass.
+///
+/// Mirrors `jubarte::validate::validate`.
+#[wasm_bindgen(js_name = validateDocument)]
+pub fn validate_document(docx: &[u8]) -> Result<String, JsValue> {
+    let findings = jubarte::validate::validate(docx).map_err(js_err)?;
+    serde_json::to_string(&findings).map_err(js_err)
+}
+
+/// Every text change from `original` to `edited` must be a revision by
+/// `author`; the findings (`UNTRACKED_EDIT`, `FOREIGN_AUTHOR`) as a JSON
+/// array.
+///
+/// Mirrors `jubarte::validate::audit_tracked`.
+#[wasm_bindgen(js_name = auditTracked)]
+pub fn audit_tracked(original: &[u8], edited: &[u8], author: &str) -> Result<String, JsValue> {
+    let findings = jubarte::validate::audit_tracked(original, edited, author).map_err(js_err)?;
+    serde_json::to_string(&findings).map_err(js_err)
+}
+
+/// Output of [`repairDocument`](repair_document).
+#[wasm_bindgen]
+pub struct RepairOutput {
+    docx: Vec<u8>,
+    json: String,
+}
+
+#[wasm_bindgen]
+impl RepairOutput {
+    /// The package with every repairable finding fixed.
+    #[wasm_bindgen(getter)]
+    pub fn docx(&self) -> Vec<u8> {
+        self.docx.clone()
+    }
+
+    /// `{"repaired": [...], "remaining": [...]}`: the findings fixed and the
+    /// ones the output still has.
+    #[wasm_bindgen(getter)]
+    pub fn json(&self) -> String {
+        self.json.clone()
+    }
+}
+
+/// The package with every repairable finding fixed, with the findings it
+/// fixed and could not fix in `json`.
+///
+/// Mirrors `jubarte::validate::repair`.
+#[wasm_bindgen(js_name = repairDocument)]
+pub fn repair_document(docx: &[u8]) -> Result<RepairOutput, JsValue> {
+    let repaired = jubarte::validate::repair(docx).map_err(js_err)?;
+    let json = serde_json::json!({
+        "repaired": repaired.repaired,
+        "remaining": repaired.remaining,
+    });
+    Ok(RepairOutput {
+        docx: repaired.docx,
+        json: serde_json::to_string(&json).map_err(js_err)?,
+    })
+}
+
 /// What this build can do, as JSON (`runtime: "wasm"`): PDF only in the full
 /// build, PNG never.
 ///

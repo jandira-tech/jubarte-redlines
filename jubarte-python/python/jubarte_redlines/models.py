@@ -1171,3 +1171,51 @@ def _decode_diff(diffed: tuple[str, str]) -> Diff:
         text=text,
         hunks=tuple(Hunk(at=h["at"], removed=h["removed"], text=h["text"]) for h in json.loads(hunks)),
     )
+
+
+@dataclass(frozen=True, slots=True)
+class Finding:
+    """One thing wrong with a package, from ``Document.validate``.
+
+    ``code`` is stable (``TEXT_INSIDE_DELETION``, ``MC_UNBOUND_PREFIX``,
+    ``UNTRACKED_EDIT``, ...); ``part`` is the package part and ``path`` the
+    element chain inside it (``w:body[0]/w:p[3]/w:r[2]``, empty for a
+    package-level finding). ``word_fatal`` is true when Word refuses or
+    repairs the file for it, ``repairable`` when ``Document.repair`` fixes
+    it.
+    """
+
+    code: str
+    part: str
+    path: str
+    message: str
+    word_fatal: bool
+    repairable: bool
+
+
+@dataclass(frozen=True, slots=True)
+class Repaired:
+    """Output of ``Document.repair``: the repaired document, the findings it
+    fixed and the ones it could not."""
+
+    document: object
+    repaired: tuple[Finding, ...]
+    remaining: tuple[Finding, ...]
+
+
+def _decode_findings(rows: list[dict[str, object]]) -> tuple[Finding, ...]:
+    return tuple(
+        Finding(
+            code=row["code"],  # type: ignore[arg-type]
+            part=row["part"],  # type: ignore[arg-type]
+            path=row["path"],  # type: ignore[arg-type]
+            message=row["message"],  # type: ignore[arg-type]
+            word_fatal=bool(row["word_fatal"]),
+            repairable=bool(row["repairable"]),
+        )
+        for row in rows
+    )
+
+
+def _decode_findings_json(payload: str) -> tuple[Finding, ...]:
+    return _decode_findings(json.loads(payload))

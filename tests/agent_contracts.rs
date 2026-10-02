@@ -77,7 +77,11 @@ fn capabilities_roundtrip_preserves_runtime_and_scope_limits() {
         assert_eq!(capabilities(runtime), decoded);
     }
     let manifest = capabilities("rust");
-    assert_eq!(manifest.limits.stories, ["body"]);
+    assert_eq!(
+        manifest.limits.stories,
+        ["body", "header", "footer", "footnotes", "endnotes"]
+    );
+    assert!(manifest.operations.validate && manifest.operations.repair);
     assert!(manifest.limits.plain_text_runs);
     assert!(manifest.limits.refuses_opaque_ranges);
     assert!(!manifest.limits.reads_legacy_doc);

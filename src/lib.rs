@@ -84,6 +84,9 @@ pub mod unid;
 pub mod update;
 /// Shared small utilities.
 pub mod util;
+/// Word-validity findings beyond the schema: validate, repair, and the
+/// tracked-edit audit.
+pub mod validate;
 /// `WmlDocument` — document bytes + lazily parsed main part.
 pub mod wml_document;
 /// Word's default theme part, for originals without one.
