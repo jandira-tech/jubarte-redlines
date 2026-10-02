@@ -136,7 +136,7 @@ required-features = ["cli"]
 criterion = "0.8"
 # Round-trip validation of produced .docx files in integration tests; only the
 # `parts` feature (= dep:zip) is built.
-ooxmlsdk = { version = "0.12", default-features = false, features = ["parts"] }
+ooxmlsdk = { version = "0.13", default-features = false, features = ["parts"] }
 tempfile = "3"
 # tests/self_update_signature.rs: sign a throwaway .tar.gz exactly as
 # `zipsign sign tar` does in release.yml, then check it with the updater's
