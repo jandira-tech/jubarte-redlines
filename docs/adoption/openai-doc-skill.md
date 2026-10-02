@@ -37,6 +37,7 @@ error, `2` usage error, `3` edit plan refused (nothing written).
 | "Did a font fall back?" | the font report already lists `requested`, `step`, `physical` per face; a `substituted` flag and `--fail-on-substitution` make it one check. | released (report); pending: S9, `adopt/s1-s9-occurrence-fonts` (flag) |
 | python-docx text extraction | `jubarte text file.docx` (Markdown with `[body:p:N]` ids, headers, footers and notes as their own stories) or `jubarte inspect file.docx --json` | released |
 | python-docx edits | `jubarte edit file.docx --plan plan.json --out-dir review --png`: Word tracked changes and comments, a clean copy, a per-operation report and the rendered pages in one call. | released |
+| Editing a document that already carries the other side's tracked changes | `"existing_revisions": "keep"` in the plan: their changes stay tracked under their name, and yours become new revisions beside them under the plan's `author`. Without the field, such a document is refused with `EXISTING_REVISIONS`; `accept` or `reject` flatten theirs first. | main |
 | python-docx tables and lists | `insert_table` (`rows`, `header_row`, `widths_dxa`, `style`) and `list` (bulleted, decimal or lower-letter, `level`, `restart`) plan operations, both tracked in the redline | main |
 | python-docx run formatting, footnotes, images, page setup | structural plan operations | pending: S8, `adopt/s8-runs-notes-images` |
 | Comparing two versions | `jubarte a.docx b.docx -o redline.docx --author "Name"` | released |
