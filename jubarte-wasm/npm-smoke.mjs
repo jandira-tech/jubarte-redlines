@@ -12,6 +12,7 @@
 import { readFileSync } from "node:fs";
 import { strict as assert } from "node:assert";
 import { createRequire } from "node:module";
+import { inflateRawSync } from "node:zlib";
 
 const require = createRequire(import.meta.url);
 // SMOKE_FULL / SMOKE_SLIM point at fresh wasm-pack output (pkg/, pkg-slim/)
@@ -74,6 +75,45 @@ for (const [name, mod] of [["full", full], ["slim", slim]]) {
   assert.equal(caps.operations.pdf, name === "full", `${name}: pdf capability matches the build`);
   assert.equal(caps.operations.png, false);
   assert.equal(caps.operations.fields, name === "full", `${name}: fields capability matches the build`);
+}
+
+// Markdown creation (both builds): markdownToDocx(text, optionsJson, reference).
+// A package part's text, read through the zip's central directory.
+function partText(docx, wanted) {
+  const buf = Buffer.from(docx);
+  const eocd = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  let at = buf.readUInt32LE(eocd + 16);
+  for (let i = 0; i < buf.readUInt16LE(eocd + 10); i++) {
+    const method = buf.readUInt16LE(at + 10);
+    const size = buf.readUInt32LE(at + 20);
+    const nameLength = buf.readUInt16LE(at + 28);
+    const next = at + 46 + nameLength + buf.readUInt16LE(at + 30) + buf.readUInt16LE(at + 32);
+    if (buf.toString("utf8", at + 46, at + 46 + nameLength) === wanted) {
+      const local = buf.readUInt32LE(at + 42);
+      const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
+      const data = buf.subarray(start, start + size);
+      return (method === 8 ? inflateRawSync(data) : data).toString("utf8");
+    }
+    at = next;
+  }
+  throw new Error(`no ${wanted}`);
+}
+const pageWidth = (docx) => /<w:pgSz w:w="(\d+)"/.exec(partText(docx, "word/document.xml"))[1];
+for (const [name, mod] of [["full", full], ["slim", slim]]) {
+  assert.equal(typeof mod.markdownToDocx, "function", `${name} build must export markdownToDocx`);
+  const draft = "# Terms\n\nPayment is due in {~~30~>45~~} days.\n";
+  const kept = mod.markdownToDocx(draft);
+  assert.equal(kept[0], 0x50, `${name}: markdownToDocx writes a zip`);
+  assert.match(mod.documentMarkdown(kept), /Payment is due in/, `${name}: the text is in the document`);
+  assert.ok(JSON.parse(mod.getRevisions(kept)).length > 0, `${name}: CriticMarkup becomes tracked changes`);
+  const accepted = mod.markdownToDocx(draft, JSON.stringify({ track_changes: "accept" }));
+  assert.match(mod.documentMarkdown(accepted), /due in 45 days/, `${name}: accepted`);
+  assert.equal(pageWidth(mod.markdownToDocx("Body.\n", "{}")), "12240", `${name}: US Letter by default`);
+  const a4 = mod.markdownToDocx("Body.\n", JSON.stringify({ page: "a4" }));
+  assert.equal(pageWidth(a4), "11906", `${name}: the a4 option writes an A4 page`);
+  assert.equal(JSON.parse(mod.inspectDocument(a4)).paragraphs[0].text, "Body.", `${name}: A4 body`);
+  assert.equal(pageWidth(mod.markdownToDocx("Body.\n", JSON.stringify({ page: "a4" }), a4)), "11906", `${name}: a reference lends its page`);
+  assert.throws(() => mod.markdownToDocx("Body.\n", JSON.stringify({ page: "legal" })), /legal/, `${name}: unknown page refused`);
 }
 
 // PDF surface: full-only.

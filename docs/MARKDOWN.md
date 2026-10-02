@@ -23,7 +23,8 @@ each tracked change and comment as CriticMarkup followed by its author and
 date (`-o FILE.md` writes it; `--track-changes accept` or `reject` writes
 the text after Word's Accept All or Reject All). Pictures become their alt
 text. `jubarte text FILE` prints the body with paragraph ids, for edit
-plans.
+plans; `jubarte text FILE --track-changes all|accept|reject` prints the
+same Markdown as `convert -t md` instead, without the ids.
 
 ## Markdown to Word
 
@@ -56,6 +57,28 @@ reference's styles, numbering, page setup, headers and footers, and none of
 its text. Styles the reference lacks are added with jubarte's definitions.
 A pandoc reference document works, since the style ids are Word's built-in
 ones plus pandoc's for code.
+
+Without a reference, `--page letter` (the default) or `--page a4` picks the
+page size; both keep one-inch margins, where Word's own A4 template uses
+2 cm. With a reference, its page setup wins and `--page a4` prints a
+warning.
+
+The same writer is in Python and JavaScript:
+
+```python
+import jubarte_redlines
+
+doc = jubarte_redlines.from_markdown("Due in {~~30~>45~~} days.", page="a4")
+doc.to_bytes()  # the .docx
+```
+
+```js
+const docx = markdownToDocx("Due in {~~30~>45~~} days.", JSON.stringify({ page: "a4" }));
+```
+
+`python -m jubarte_redlines convert draft.md` writes `draft.docx` with the
+same flags. Neither binding reads image files: pictures are written as
+their alt text.
 
 ## CriticMarkup
 

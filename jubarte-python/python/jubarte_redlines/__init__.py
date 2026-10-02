@@ -65,6 +65,7 @@ from .document import (
     capabilities,
     diff,
     diff_render,
+    from_markdown,
     read,
 )
 from .models import (
@@ -143,3 +144,4 @@ __all__ += [
     "FieldUpdate",
     "UpdatedFields",
 ]
+__all__ += ["from_markdown"]

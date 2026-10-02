@@ -17,6 +17,14 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Added
 
+- The font report says whether each requested font was substituted: a
+  `substituted` field in `convert --font-report` and `--report` (true for
+  the `word_substitution`, `generic` and `unknown` steps, and for
+  `open_fallback` unless the bundled face is the requested family itself),
+  `FontReportEntry::substituted()` in Rust, and
+  `FontResolution.substituted` with `RenderReport.substitutions` in
+  Python. `jubarte convert --fail-on-substitution` lists each substitution
+  on stderr and exits 4 after writing every output, for CI.
 - `jubarte-mcp`, an MCP server over stdio in the Python package
   (`pip install 'jubarte-redlines[mcp]'`): `docx_text`, `docx_inspect`,
   `docx_edit`, `docx_render`, `docx_compare`, `docx_changes`, `docx_accept`,
@@ -144,6 +152,21 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   - `jubarte edit` writes the redline's patch as `patch.diff` beside the
     other outputs and prints it; `-q` prints nothing. `jubarte capabilities`
     lists `patch`.
+  - `jubarte convert draft.md --page letter|a4` (`DocxOptions::page`,
+    `markdown::PageSize`) writes Markdown on US Letter (the default) or A4,
+    both with one-inch margins. A `--reference-doc`'s page setup wins, and
+    asking for A4 with one adds a warning.
+  - `jubarte text FILE --track-changes all|accept|reject` prints the
+    document as Markdown with its tracked changes as CriticMarkup, or with
+    every change accepted or rejected, as `convert -t md` does; the output
+    then has no `[body:p:N]` ids.
+  - Python: `jubarte_redlines.from_markdown(text, reference=, page=,
+    author=, date=, critic=, track_changes=)` returns a `Document`
+    (`_native.markdown_to_docx` returns the bytes; engine warnings are
+    raised as `UserWarning`), and `python -m jubarte_redlines convert
+    draft.md` writes `draft.docx`, or a PDF or PNG pages.
+  - WASM: `markdownToDocx(text, optionsJson, reference)` in the full and
+    slim builds.
   - Python: `jubarte_redlines.diff(old, new)` and `Document.diff(other)`
     take documents, bytes, Markdown text or paths and return a `Diff`
     (`str()`, `.hunks`, Markdown display in notebooks); `EditResult.diff` is
@@ -262,6 +285,14 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   dates are `INVALID_EDIT`. Python `EditPlan.fill_control`; capabilities
   report `operations.content_controls` and `fill_control`. The redline
   shows a fill as tracked text without the control (KNOWN_ISSUES.md #7).
+- `occurrence` (1-based) on the `replace`, `insert`, `delete` and `comment`
+  edit operations picks one hit of a repeated anchor; the Python builders
+  take `occurrence=`. Without it, the `AMBIGUOUS_ANCHOR` refusal now says
+  how many times the anchor occurs and the range to choose from.
+  `occurrence: 0`, or `occurrence` with no anchor to pick from (`insert`
+  at a `position`, `comment` without `find`), is an `INVALID_EDIT`. Rust
+  code that builds these `OperationKind` variants with struct literals
+  must add `occurrence: None`.
 - Field results from jubarte's layout: `jubarte fields update FILE -o OUT
   [--json]` (`fields::update_fields`, Python `Document.update_fields()`,
   WASM `updateFields` in the full build) rebuilds each body `TOC` from the

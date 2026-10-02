@@ -624,17 +624,20 @@ class EditPlan:
         comment: str | None = None,
         whole: bool = False,
         id: str | None = None,
+        occurrence: int | None = None,
     ) -> EditPlan:
-        """Replace the unique occurrence of ``find``; ``format`` styles only the new text.
+        """Replace the unique occurrence of ``find``, or its ``occurrence``-th hit (1-based).
 
-        ``whole=True`` shows the change as all of ``find`` deleted, then all of
-        ``replacement`` inserted, instead of Word Compare's word-level diff.
+        ``format`` styles only the new text. ``whole=True`` shows the change as
+        all of ``find`` deleted, then all of ``replacement`` inserted, instead
+        of Word Compare's word-level diff.
         """
         op: dict[str, object] = {"kind": "replace", "paragraph": _selector(paragraph), "find": find, "replacement": replacement}
         if format is not None:
             op["format"] = _format(format)
         if whole:
             op["whole"] = True
+        _set_occurrence(op, occurrence)
         return self._with(_with_optional(op, id=id, comment=comment))
 
     def insert(
@@ -648,8 +651,12 @@ class EditPlan:
         format: Mapping[str, object] | None = None,
         comment: str | None = None,
         id: str | None = None,
+        occurrence: int | None = None,
     ) -> EditPlan:
-        """Insert ``text`` after/before a unique anchor or at the paragraph edge; ``format`` styles it."""
+        """Insert ``text`` after/before an anchor or at the paragraph edge; ``format`` styles it.
+
+        The anchor must be unique unless ``occurrence`` (1-based) picks one hit.
+        """
         given = [k for k, v in (("after", after), ("before", before), ("position", position)) if v is not None]
         if len(given) != 1:
             raise ValueError("insert needs exactly one of after, before, position")
@@ -662,11 +669,13 @@ class EditPlan:
             op["position"] = position
         if format is not None:
             op["format"] = _format(format)
+        _set_occurrence(op, occurrence)
         return self._with(_with_optional(op, id=id, comment=comment))
 
-    def delete(self, paragraph: Selector, *, find: str, id: str | None = None) -> EditPlan:
-        """Delete the unique occurrence of ``find``."""
+    def delete(self, paragraph: Selector, *, find: str, id: str | None = None, occurrence: int | None = None) -> EditPlan:
+        """Delete the unique occurrence of ``find``, or its ``occurrence``-th hit (1-based)."""
         op: dict[str, object] = {"kind": "delete", "paragraph": _selector(paragraph), "find": find}
+        _set_occurrence(op, occurrence)
         return self._with(_with_optional(op, id=id))
 
     def comment(
@@ -677,14 +686,16 @@ class EditPlan:
         find: str | None = None,
         through: Selector | None = None,
         id: str | None = None,
+        occurrence: int | None = None,
     ) -> EditPlan:
-        """Comment on the unique occurrence of ``find`` or on the whole paragraph;
-        with ``through``, on every paragraph from ``paragraph`` to that one."""
+        """Comment on the unique occurrence of ``find`` (or its ``occurrence``-th hit) or on
+        the whole paragraph; with ``through``, on every paragraph from ``paragraph`` to that one."""
         op: dict[str, object] = {"kind": "comment", "paragraph": _selector(paragraph), "text": text}
         if find is not None:
             op["find"] = find
         if through is not None:
             op["through"] = _selector(through)
+        _set_occurrence(op, occurrence)
         return self._with(_with_optional(op, id=id))
 
     def insert_paragraph(
@@ -1034,6 +1045,14 @@ def _table_rows(rows: Sequence[Sequence[str]]) -> list[list[str]]:
     return out
 
 
+def _set_occurrence(op: dict[str, object], occurrence: int | None) -> None:
+    if occurrence is None:
+        return
+    if occurrence < 1:
+        raise ValueError("occurrence is 1-based; it must be 1 or more")
+    op["occurrence"] = occurrence
+
+
 def _with_optional(op: dict[str, object], **extra: str | None) -> dict[str, object]:
     for key, value in extra.items():
         if value is not None:
@@ -1174,7 +1193,13 @@ def _decode_field_updates(rows: Sequence[Mapping[str, str]]) -> tuple[FieldUpdat
 
 @dataclass(frozen=True, slots=True)
 class FontResolution:
-    """One requested family/style and the physical face that painted it."""
+    """One requested family/style and the physical face that painted it.
+
+    ``substituted`` is true when the requested family was drawn with a
+    substitute (Word's substitution table, a bundled face of another family,
+    a generic family or the last resort); a faked style alone is
+    ``synthetic``.
+    """
 
     requested: str
     step: str
@@ -1182,6 +1207,7 @@ class FontResolution:
     bold: bool
     italic: bool
     synthetic: bool
+    substituted: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -1199,6 +1225,11 @@ class RenderReport:
     page_count: int
     pages: tuple[PageText, ...]
     fonts: tuple[FontResolution, ...]
+
+    @property
+    def substitutions(self) -> tuple[FontResolution, ...]:
+        """The fonts drawn with a substitute for the requested family."""
+        return tuple(f for f in self.fonts if f.substituted)
 
 
 @dataclass(frozen=True, slots=True)
