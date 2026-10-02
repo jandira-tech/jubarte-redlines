@@ -16520,11 +16520,12 @@ fn collect_images(
                 if vml_washout(dom, im) {
                     kind = washed_out(kind);
                 }
+                let slot = vml_owner_slot(dom, im, root).unwrap_or(ImageSlot::Flow);
                 out.push(LaidImage {
                     w,
                     h,
                     kind,
-                    slot: vml_owner_slot(dom, im, root).unwrap_or(ImageSlot::Flow),
+                    slot,
                     behind: false,
                     z: 0,
                     crop: vml_crop(dom, im),
@@ -16549,7 +16550,14 @@ fn collect_images(
                     gap_before: 0.0,
                     lead_chars: 0,
                     after_text: false,
-                    under: None,
+                    // An inserted or underlined w:pict / w:object keeps its
+                    // run's descent under it, as a DrawingML picture does
+                    // (Word 16 probes vo, 2026-10-02).
+                    under: if matches!(slot, ImageSlot::Flow) {
+                        run_style(root).filter(|run| run.underline)
+                    } else {
+                        None
+                    },
                 });
             }
             for line in descendants_local(dom, root, "line") {

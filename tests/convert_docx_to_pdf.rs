@@ -40342,6 +40342,54 @@ fn an_underlined_picture_run_keeps_its_descent_under_the_picture() {
 }
 
 #[test]
+fn an_inserted_vml_picture_keeps_its_runs_descent_under_it() {
+    // 5a6c9a5c's redline: an inserted Word.Picture.8 object (a w:object
+    // whose preview is a v:imagedata) left the rest of page 2 2.2pt high
+    // in jubarte, so an inserted empty paragraph fitted above the footer
+    // where Word moves it to page 3. Word 16 probes vo (2026-10-02, TNR 10,
+    // a 150x30pt picture) put the next baseline 2.16pt lower when the
+    // w:pict or w:object run is inserted, as for a DrawingML picture.
+    let after = |shape: &str, ins: bool| {
+        let r = "<w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+                 <w:sz w:val=\"20\"/>";
+        let run = format!("<w:r><w:rPr>{r}</w:rPr>{shape}</w:r>");
+        let run = if ins {
+            format!(
+                "<w:ins w:id=\"1\" w:author=\"A\" w:date=\"2026-01-01T00:00:00Z\">{run}</w:ins>"
+            )
+        } else {
+            run
+        };
+        let body = format!(
+            "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+             {run}</w:p>\
+             <w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+             <w:r><w:rPr>{r}</w:rPr><w:t>After</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+             <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        );
+        let pdf = docx_to_pdf(&drawing_docx(&body)).expect("convert VML picture run");
+        text_baselines(&pdf).into_iter().fold(f32::MIN, f32::max)
+    };
+    let shape =
+        "<v:shape style=\"width:150pt;height:30pt\"><v:imagedata r:id=\"rIdImg\"/></v:shape>";
+    for (kind, owner) in [
+        ("w:pict", format!("<w:pict>{shape}</w:pict>")),
+        (
+            "w:object",
+            format!("<w:object w:dxaOrig=\"3000\" w:dyaOrig=\"600\">{shape}</w:object>"),
+        ),
+    ] {
+        // PDF y grows upward: the lower baseline has the smaller y.
+        let drop = after(&owner, false) - after(&owner, true);
+        assert!(
+            (drop - 2.16).abs() < 0.1,
+            "an inserted {kind} picture keeps its 10pt run's descent (2.16pt): {drop}"
+        );
+    }
+}
+
+#[test]
 fn a_break_after_a_picture_opens_the_marks_line() {
     // 66cfa52b0c's logo paragraph: picture, a w:br, and a 7pt mark. Word
     // lays the break's empty line in the mark's size under the picture;
