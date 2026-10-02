@@ -4,7 +4,41 @@ SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 SPDX-License-Identifier: AGPL-3.0-only
 -->
 
-# Handoff: review-response implementation (session ended by usage limit)
+# Handoff: review-response implementation
+
+## 0. Current status (supersedes sections 5 and 6 where they differ)
+
+The session resumed after the usage limit and the agent work was integrated
+onto `ccr-17e4f046-849j1u` (PR #273). State per proposed change:
+
+| Item | State | Where |
+| --- | --- | --- |
+| P1, P4, P16, P6 (narrow) | done | `admission.rs`, `comparer/mod.rs`, `document_comparer.rs`, `wml_document.rs`, `tests/input_admission.rs` |
+| P2, P3 | done | `admission.rs` (checked add, `get`, saturating cap) |
+| P5 | done | `capabilities.rs`, `inspect.rs` (`STORY_KINDS`), `edit.rs` |
+| P7 | merged into P1 (bounded Strict scan) | `strict_translation.rs` |
+| P8, P11, P12, P14, P24, P25 | done (docs, dedup, `fuzz/` crate) | see CHANGELOG; fuzz targets are NOT built or run here (no cargo-fuzz or nightly) |
+| P9, P19 | done, old names kept as deprecated aliases | `util/sha1.rs`; the `0.10.2` in `#[deprecated(since)]` is an assumption |
+| P10 | done | `util/words.rs`; adds `unicode-properties` as a direct dependency |
+| P13 | done, with one deviation | lib and CLI use `#![forbid(unsafe_code)]`; the package lint stays `deny` because `examples/mem_attribute.rs` has a counting allocator that needs `unsafe`. The two denies are `cfg_attr(not(test), ...)` on `admission`, `strict_translation`, `opc` |
+| P15 | done | `.github/workflows`, `dependabot.yml` |
+| P17 | done | `comparer/parts.rs`, `tests/compare_is_reproducible.rs` |
+| P21, P23 | done | `markup_simplifier.rs`, `builtin_styles.rs` |
+| P22 | half done | end-name checking is on and the whole repo corpus (819 packages) still passes; selecting parts by content type instead of extension was NOT done, because no engine path parses `.vml` parts as XML that I found (not exhaustively checked) |
+| Remaining `process_footnote_endnote` panics | done | `comparer/footnotes.rs`; breaking for exhaustive matches on `RectifyError` |
+| Python tests for the refusals | written (`jubarte-python/tests/test_document.py`), NOT YET RUN when this was committed (a wheel build was still compiling) | `jubarte-python` |
+| P20 (signed self-update) | not started, orthogonal to the comparer | |
+| P6 (full settings redesign) | deferred | |
+
+Verification on the integrated tree (HEAD at the time of writing):
+`cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`
+and the targeted suites (lib 874, input_admission 10, edit_plan 53,
+m30_notes_pipeline 8, m4h4_footnotes, edit_stories, agent_contracts,
+m_cli_agent, compare_is_reproducible, m2_markup_simplifier, m_cli_no_panic,
+sha1 tests) pass. I did not run the whole suite. CI on the PR is red only on
+the four `convert_docx_to_pdf` tests, which also fail on the base.
+
+## Earlier handoff (written when the session was cut off)
 
 Written 2026-10-02, branch `ccr-17e4f046-849j1u`, draft PR #273
 (https://github.com/jandira-tech/jubarte-redlines/pull/273). The session was

@@ -175,3 +175,28 @@ def test_read_path_and_top_level_read(tmp_path):
     assert jubarte.read(str(source)).to_bytes() == data
     with pytest.raises(FileNotFoundError):
         jubarte.read(tmp_path / "missing.docx")
+
+
+def with_extra_entries(package: bytes, count: int) -> bytes:
+    out = BytesIO()
+    with ZipFile(BytesIO(package)) as source, ZipFile(out, "w") as target:
+        for item in source.infolist():
+            target.writestr(item, source.read(item.filename))
+        for index in range(count):
+            target.writestr(ZipInfo(f"word/media/p{index}.bin"), b"x")
+    return out.getvalue()
+
+
+def test_compare_refuses_a_package_with_too_many_entries():
+    # The entry count is read from the central directory before anything is
+    # inflated; the refusal is a catchable JubarteError, not an abort.
+    crowded = with_extra_entries(make_document("hello"), 10_010)
+    with pytest.raises(jubarte.JubarteError, match="INPUT_LIMIT"):
+        jubarte.compare_documents(make_document("hello"), crowded)
+    with pytest.raises(jubarte.JubarteError, match="INPUT_LIMIT"):
+        jubarte.compare_documents(crowded, make_document("hello"))
+
+
+def test_compare_still_accepts_a_well_formed_pair():
+    redline = jubarte.compare_documents(make_document("hello"), make_document("hello there"))
+    assert redline.startswith(b"PK")

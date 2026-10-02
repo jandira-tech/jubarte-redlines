@@ -443,6 +443,7 @@ dependencies = [
  "similar",
  "tiny-skia",
  "ttf-parser",
+ "unicode-properties",
  "zip",
 ]
 
