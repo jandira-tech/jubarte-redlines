@@ -251,3 +251,56 @@ that carry a change:
 Builds on `RenderRequest.pages` (`convert --pages`, added with
 `diff-render`): the layout's revision marks pick the pages instead of a user
 list.
+
+## 8. `existing_revisions: "keep"` follow-ups (S19)
+
+Status: OPEN. Keep shipped in #287 (2026-10-02): `src/edit/tracked.rs`
+emits a plan's edits as new revisions beside another party's, for text
+edits, paragraph insertions, deletions and merges, `format_paragraph`,
+`insert_table`, `list`, comments and comment threads. What is left, most
+important first:
+
+- [ ] **Word evidence** (plan 4, Task 3): `examples/agents/review-on-review/`
+  with a two-party contract fixture carrying the counterparty's redline,
+  one plan with `keep`, the redline opened in Word showing both authors'
+  balloons (screenshot through `scripts/word_pdf.py`), `jubarte changes
+  --json` listing both authors, and the two invariant commands (`jubarte
+  accept --author Me` equals clean, `jubarte reject --author Me` equals the
+  source) with their `jubarte text` outputs.
+- [ ] **OOXML validator on keep redlines**: run `tools/validate-docx` on the
+  redlines `tests/edit_keep_revisions.rs` writes (text, marks, tables, lists,
+  threads). Only the Ring-1 checks have run so far; the session that built
+  keep had no .NET. Any rule the validator adds becomes a Ring-1 invariant.
+- [ ] **Check the mark choices against Word**: deleting the last paragraph
+  of a container deletes the mark of the paragraph before it, and so does
+  deleting the paragraph just before a table. Compare both with what Word
+  writes when you delete those paragraphs with Track Changes on.
+- [ ] **Reject leaves orphan comments**: a comment the plan anchors on its
+  own inserted text has its markers inside the `w:ins`, so rejecting the
+  plan's changes removes the markers and leaves the comment in
+  `comments.xml`. Decide whether reject should drop such comments, and add
+  a test either way.
+- [ ] **Relax the keep refusals where Word allows it**: deleting a paragraph
+  that holds another party's insertion (Word nests a `w:del` inside their
+  `w:ins`), merging into a paragraph whose mark they inserted, and
+  formatting a paragraph whose `w:pPrChange` is theirs. Each needs its own
+  emission and an accept/reject invariant test.
+- [ ] **Operations still to come**: `format_run` (plan 1, Task 8c) emits
+  `w:rPrChange`; `insert_image` and `insert_footnote` emit `w:ins` on their
+  runs; `settings`, `watermark` and `fill_control` (plan 3) apply to both
+  copies. Each new `Resolved` variant must be handled in
+  `tracked::emit` as well as in `Transaction::apply`.
+- [ ] **WASM**: the WASM edit's diff still uses `patch_redline`, so under
+  keep it lists the other party's changes too; use `patch_own_changes` as
+  the CLI and Python do. Also check the TypeScript types accept `"keep"`.
+- [ ] **MCP**: `docx_edit` passes the plan through, so keep already works;
+  mention `existing_revisions` (and `keep`) in its tool description.
+- [ ] **Coverage**: measure `src/edit/tracked.rs` with `cargo llvm-cov`
+  (not run yet) and raise it to the 90% line / 85% branch bar for
+  critical logic.
+- [ ] **CI fonts (not keep-specific)**: four `tests/convert_docx_to_pdf.rs`
+  tests (`a_list_label_takes_its_marks_character_style`,
+  `an_empty_lines_mark_takes_its_character_style`, and the two inline VML
+  rect tests) need Courier New and Times New Roman. They fail on the Linux
+  and Windows runners, and on `main` (`b420d64`) too; macOS passes. Install
+  the fonts in CI or make the tests use metric-compatible substitutes.
