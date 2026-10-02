@@ -121,7 +121,7 @@ Writes `review/clean.docx` (edits applied, no tracked changes),
 `redline-page-NN.png`, `clean-page-NN.png`. Exit 0 means every operation
 matched exactly once. Exit 3 means the plan was refused: the report on stdout
 says which operation and why (`ANCHOR_NOT_FOUND`, `AMBIGUOUS_ANCHOR` with the
-match count, `OVERLAPPING_EDITS`, `UNSUPPORTED_STRUCTURE`, `STALE_SOURCE`,
+match count, `OVERLAPPING_EDITS`, `UNSUPPORTED_STRUCTURE`, `UNSUPPORTED_IMAGE`, `STALE_SOURCE`,
 `EXISTING_REVISIONS`, `REVISION_CONFLICT`, `UNKNOWN_CHANGE`,
 `UNKNOWN_COMMENT`, `COMMENT_NOT_IN_BODY`, `INVALID_PLAN`, `INVALID_EDIT`,
 `LOCKED_CONTROL`);
@@ -156,7 +156,9 @@ default header; one per document), `format_run` (`find`
 plus `format`: restyles existing text as a tracked formatting change;
 `occurrence`, 1-based, picks one of several matches), `insert_footnote`
 (`after` plus the note's `text`; body paragraphs only; optional
-`occurrence`). `replace` and
+`occurrence`), `insert_image` (`image_base64` of a PNG, JPEG, GIF, BMP or
+TIFF file, `position` `before|after`, optional `content_type`, `width_emu`
+with 914400 per inch, `alt`; body paragraphs only). `replace` and
 `insert` take an optional `format` (`bold`/`italic`/`underline`/`highlight`,
 `font`, `size_pt`, `color` as `FF0000` or `auto`, `strike`, `caps`) that
 applies to the new text only. `replace` takes `"whole": true` to show

@@ -30,6 +30,7 @@ use crate::namespaces::W;
 use crate::xmllinq::{Dom, NodeId, XNamespace};
 
 mod controls;
+mod images;
 mod notes;
 mod rewrite;
 mod runs;
@@ -413,6 +414,27 @@ pub enum OperationKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         /// Which occurrence of `after` (1-based) when it occurs more than once.
         occurrence: Option<usize>,
+    },
+    /// Insert a paragraph holding one inline picture next to the anchor
+    /// paragraph. PNG, JPEG, GIF, BMP or TIFF.
+    InsertImage {
+        /// Body paragraph the picture goes next to; must match exactly one.
+        paragraph: Selector,
+        #[serde(default)]
+        /// Which side of the anchor paragraph.
+        position: Side,
+        /// The picture file, base64-encoded.
+        image_base64: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// The picture's media type; checked against its bytes when given.
+        content_type: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Width in EMU (914400 per inch); the height keeps the aspect
+        /// ratio. Default: the pixel size at 96 dpi, at most 6.5 inches.
+        width_emu: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Alternative text (`wp:docPr descr`).
+        alt: Option<String>,
     },
 }
 
@@ -1062,6 +1084,13 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
             "fill_control" => &["control", "text", "choice", "checked", "date"],
             "format_run" => &["find", "format", "occurrence"],
             "insert_footnote" => &["after", "text", "occurrence"],
+            "insert_image" => &[
+                "position",
+                "image_base64",
+                "content_type",
+                "width_emu",
+                "alt",
+            ],
             other => {
                 return Err(err(
                     "INVALID_PLAN",
@@ -1335,6 +1364,11 @@ enum Resolved {
         /// Projection offset the reference mark follows.
         at: usize,
         text: String,
+    },
+    InsertImage {
+        anchor: usize,
+        side: Side,
+        picture: crate::markdown::Picture,
     },
 }
 
@@ -1718,7 +1752,8 @@ impl<'p> Transaction<'p> {
             | OperationKind::Rewrite { paragraph, .. }
             | OperationKind::InsertTable { paragraph, .. }
             | OperationKind::FormatRun { paragraph, .. }
-            | OperationKind::InsertFootnote { paragraph, .. } => paragraph,
+            | OperationKind::InsertFootnote { paragraph, .. }
+            | OperationKind::InsertImage { paragraph, .. } => paragraph,
             OperationKind::List { .. } => {
                 return Err(fail(
                     "INVALID_PLAN",
@@ -2069,6 +2104,45 @@ impl<'p> Transaction<'p> {
                         para,
                         at,
                         text: note.clone(),
+                    },
+                    outcome,
+                ))
+            }
+            OperationKind::InsertImage {
+                position,
+                image_base64,
+                content_type,
+                width_emu,
+                alt,
+                ..
+            } => {
+                outcome.matches = 1;
+                if self.paragraph_story[para].0 != 0 {
+                    return Err(fail(
+                        "UNSUPPORTED_STRUCTURE",
+                        "pictures can be inserted in the body only".into(),
+                        outcome,
+                    ));
+                }
+                let picture = images::picture(
+                    image_base64,
+                    content_type.as_deref(),
+                    *width_emu,
+                    alt.as_deref().unwrap_or_default(),
+                )
+                .map_err(|(c, m)| fail(&c, m, outcome.clone()))?;
+                outcome.context = Some(format!(
+                    "{{+¶ picture {} {}x{} EMU}} {}",
+                    picture.content_type,
+                    picture.width,
+                    picture.height,
+                    excerpt(text, 40)
+                ));
+                Ok((
+                    Resolved::InsertImage {
+                        anchor: para,
+                        side: *position,
+                        picture,
                     },
                     outcome,
                 ))
@@ -2775,7 +2849,9 @@ impl<'p> Transaction<'p> {
                 | Resolved::MergeParagraphs { para, .. }
                 | Resolved::FormatRun { para, .. }
                 | Resolved::InsertFootnote { para, .. } => vec![self.paragraph_story[*para].0],
-                Resolved::InsertParagraph { anchor, .. } | Resolved::InsertTable { anchor, .. } => {
+                Resolved::InsertParagraph { anchor, .. }
+                | Resolved::InsertTable { anchor, .. }
+                | Resolved::InsertImage { anchor, .. } => {
                     vec![self.paragraph_story[*anchor].0]
                 }
                 Resolved::List { paras, .. } => vec![self.paragraph_story[paras[0]].0],
@@ -2929,7 +3005,7 @@ impl<'p> Transaction<'p> {
                     }
                     continue;
                 }
-                Resolved::InsertParagraph { anchor, .. } => {
+                Resolved::InsertParagraph { anchor, .. } | Resolved::InsertImage { anchor, .. } => {
                     if deleted.contains(anchor) {
                         return Err(
                             self.conflict(*i, "anchors a new paragraph on a deleted paragraph")
@@ -3090,6 +3166,7 @@ impl<'p> Transaction<'p> {
                     );
                 }
                 Resolved::InsertParagraph { anchor, side, .. }
+                | Resolved::InsertImage { anchor, side, .. }
                     if (*side == Side::After && merge_heads.contains(anchor))
                         || (*side == Side::Before && merge_tails.contains(anchor)) =>
                 {
@@ -3217,7 +3294,8 @@ impl<'p> Transaction<'p> {
                 | Resolved::List { .. }
                 | Resolved::FillControl { .. }
                 | Resolved::FormatRun { .. }
-                | Resolved::InsertFootnote { .. } => false,
+                | Resolved::InsertFootnote { .. }
+                | Resolved::InsertImage { .. } => false,
             })
             .count() as u64;
         if needed > 0 && self.next_comment_id + needed - 1 > u64::from(u32::MAX) {
@@ -3267,6 +3345,7 @@ impl<'p> Transaction<'p> {
                         | Resolved::List { .. }
                         | Resolved::FormatRun { .. }
                         | Resolved::InsertFootnote { .. }
+                        | Resolved::InsertImage { .. }
                         | Resolved::Thread { .. }
                         | Resolved::FillControl { .. } => None,
                     };
@@ -3494,12 +3573,16 @@ impl<'p> Transaction<'p> {
             .filter(|(_, r)| {
                 matches!(
                     r,
-                    Resolved::InsertParagraph { .. } | Resolved::InsertTable { .. }
+                    Resolved::InsertParagraph { .. }
+                        | Resolved::InsertTable { .. }
+                        | Resolved::InsertImage { .. }
                 )
             })
             .cloned()
             .collect();
         let mut tables: Vec<NodeId> = Vec::new();
+        let mut media_used = std::collections::HashSet::new();
+        let mut drawing_id = crate::markdown::max_drawing_id(&self.opened.pkg);
         // Several paragraphs after one anchor follow it in plan order: each
         // goes after the one inserted there before it.
         let mut last_after: BTreeMap<usize, NodeId> = BTreeMap::new();
@@ -3536,6 +3619,15 @@ impl<'p> Transaction<'p> {
                         &style,
                     );
                     tables.push(new);
+                    (anchor, side, new, false)
+                }
+                Resolved::InsertImage {
+                    anchor,
+                    side,
+                    picture,
+                } => {
+                    drawing_id = drawing_id.saturating_add(1);
+                    let new = self.image_paragraph(&picture, &mut media_used, drawing_id);
                     (anchor, side, new, false)
                 }
                 _ => continue,
@@ -3971,6 +4063,7 @@ fn kind_name(kind: &OperationKind) -> &'static str {
         OperationKind::FillControl { .. } => "fill_control",
         OperationKind::FormatRun { .. } => "format_run",
         OperationKind::InsertFootnote { .. } => "insert_footnote",
+        OperationKind::InsertImage { .. } => "insert_image",
     }
 }
 

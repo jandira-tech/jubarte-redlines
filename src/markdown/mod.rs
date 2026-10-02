@@ -48,7 +48,9 @@ pub use unified::{
 };
 pub use write::markdown_to_docx;
 
-pub(crate) use package::ensure_footnotes_part;
+pub(crate) use package::{ensure_footnotes_part, max_drawing_id};
+pub(crate) use write::read_picture;
+pub(crate) use xml::{Picture, drawing_xml};
 
 /// What happens to the tracked changes a document describes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]

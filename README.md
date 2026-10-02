@@ -490,6 +490,7 @@ Supported operation kinds include:
 - `format_run` (unreleased: restyle one occurrence of existing text as a
   tracked formatting change)
 - `insert_footnote` (unreleased: a footnote after an anchor)
+- `insert_image` (unreleased: a picture paragraph)
 
 Plans are atomic: stale sources, ambiguous anchors, overlapping edits or
 unsupported structures refuse the plan instead of making a guessed edit.

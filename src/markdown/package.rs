@@ -514,7 +514,7 @@ fn footnotes(package: &mut PartFs, main: &str, context: &mut Context<'_>, media:
 }
 
 /// The largest picture id (`wp:docPr`) the kept parts use.
-fn max_drawing_id(package: &PartFs) -> u32 {
+pub(crate) fn max_drawing_id(package: &PartFs) -> u32 {
     package
         .parts()
         .iter()

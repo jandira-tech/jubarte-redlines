@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -907,6 +908,35 @@ class EditPlan:
         if occurrence is not None:
             op["occurrence"] = occurrence
         return self._with(_with_optional(op, id=id))
+
+    def insert_image(
+        self,
+        paragraph: Selector,
+        *,
+        image: bytes,
+        position: Literal["before", "after"] = "after",
+        content_type: str | None = None,
+        width_emu: int | None = None,
+        alt: str | None = None,
+        id: str | None = None,
+    ) -> EditPlan:
+        """Insert a paragraph holding the picture ``image`` (PNG, JPEG, GIF,
+        BMP or TIFF bytes) next to a body paragraph. ``width_emu`` sets the
+        width (914400 per inch) and keeps the aspect ratio; by default the
+        picture is its pixel size at 96 dpi, at most 6.5 inches wide."""
+        if not image:
+            raise ValueError("image must hold the picture's bytes")
+        op: dict[str, object] = {
+            "kind": "insert_image",
+            "paragraph": _selector(paragraph),
+            "position": position,
+            "image_base64": base64.b64encode(bytes(image)).decode("ascii"),
+        }
+        if content_type is not None:
+            op["content_type"] = content_type
+        if width_emu is not None:
+            op["width_emu"] = width_emu
+        return self._with(_with_optional(op, alt=alt, id=id))
 
     def to_dict(self) -> dict[str, object]:
         """The wire form."""

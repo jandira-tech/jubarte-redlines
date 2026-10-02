@@ -167,6 +167,14 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   has none. `FootnoteText` and `FootnoteReference` are used when the styles
   part defines them, direct superscript otherwise. Python:
   `EditPlan.insert_footnote(...)`.
+- Edit plans: `insert_image` inserts a paragraph holding one inline picture
+  before or after a body paragraph (`position`). The plan carries the file
+  as `image_base64`; PNG, JPEG, GIF, BMP and TIFF are embedded, anything
+  else is refused with `UNSUPPORTED_IMAGE`, and a `content_type` that does
+  not match the bytes is `INVALID_EDIT`. `width_emu` sets the width and
+  keeps the aspect ratio; by default the picture is its pixel size at 96 dpi,
+  at most 6.5 inches wide. `alt` becomes the picture's description. Python:
+  `EditPlan.insert_image(..., image=bytes)`.
 - `uvx jubarte-redlines redline a.docx b.docx -o redline.docx` runs the CLI
   without an install: the Python wheel installs a `jubarte-redlines`
   console script, `redline` is an alias of `compare`, and usage names the

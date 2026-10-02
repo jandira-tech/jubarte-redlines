@@ -307,3 +307,31 @@ def test_insert_footnote_builds_the_wire_operation():
     assert bare.to_dict()["operations"] == [
         {"kind": "insert_footnote", "paragraph": {"id": "body:p:0"}, "after": "x", "text": "y"}
     ]
+
+
+def test_insert_image_encodes_bytes_and_builds_the_wire_operation():
+    png = b"\x89PNG\r\n\x1a\n"
+    plan = EditPlan(author="Reviewer").insert_image(
+        0, image=png, position="before", content_type="image/png", width_emu=914400, alt="Logo", id="img"
+    )
+    assert plan.to_dict()["operations"] == [
+        {
+            "id": "img",
+            "kind": "insert_image",
+            "paragraph": {"index": 0},
+            "position": "before",
+            "image_base64": "iVBORw0KGgo=",
+            "content_type": "image/png",
+            "width_emu": 914400,
+            "alt": "Logo",
+        }
+    ]
+    bare = EditPlan(author="Reviewer").insert_image("body:p:2", image=png)
+    assert bare.to_dict()["operations"] == [
+        {"kind": "insert_image", "paragraph": {"id": "body:p:2"}, "position": "after", "image_base64": "iVBORw0KGgo="}
+    ]
+
+
+def test_insert_image_rejects_empty_bytes():
+    with pytest.raises(ValueError):
+        EditPlan(author="Reviewer").insert_image(0, image=b"")

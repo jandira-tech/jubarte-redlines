@@ -476,3 +476,31 @@ def test_inspect_reads_tables_as_grids_whose_ids_take_edits() -> None:
     assert snap.paragraph(target).text == "40"
     edited = clean.edit(EditPlan(author="Claude").for_document(clean).replace(target, find="40", replacement="45")).clean
     assert edited.inspect().tables[0].rows[1][1].text == "45"
+
+
+def _png(width: int, height: int) -> bytes:
+    import struct
+    import zlib
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    rows = b"".join(b"\x00" + b"\xff\x00\x00" * width for _ in range(height))
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b"")
+
+
+def test_edit_inserts_an_image_paragraph_through_the_native_engine() -> None:
+    doc = letter()
+    before = doc.inspect().summary.images
+    plan = EditPlan(author="Claude", date="2026-10-02T12:00:00Z").for_document(doc).insert_image(
+        0, image=_png(8, 4), width_emu=914400, alt="Logo"
+    )
+    result = doc.edit(plan)
+    assert result.report.ok
+    assert [o.kind for o in result.report.operations] == ["insert_image"]
+    assert result.clean.inspect().summary.images == before + 1
+    assert result.redline.inspect().summary.images == before + 1
+    with pytest.raises(EditPlanError) as refused:
+        doc.edit(EditPlan(author="Claude").for_document(doc).insert_image(0, image=b"not a picture"))
+    assert refused.value.code == "UNSUPPORTED_IMAGE"
