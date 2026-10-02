@@ -4359,6 +4359,137 @@ fn a_square_float_past_the_page_foot_is_lifted_onto_the_page() {
     }
 }
 
+/// A square-wrapped DrawingML text box `off` pt under its paragraph,
+/// centred, `w` x `h` pt, holding `text`.
+fn para_text_box(id: u32, off: f32, w: f32, h: f32, text: &str) -> String {
+    let emu = |pt: f32| (pt * 12700.0) as i64;
+    format!(
+        "<w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" \
+           simplePos=\"0\" relativeHeight=\"{id}\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" \
+           allowOverlap=\"1\"><wp:simplePos x=\"0\" y=\"0\"/>\
+           <wp:positionH relativeFrom=\"margin\"><wp:align>center</wp:align></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>{}</wp:posOffset></wp:positionV>\
+           <wp:extent cx=\"{}\" cy=\"{}\"/><wp:wrapSquare wrapText=\"bothSides\"/>\
+           <wp:docPr id=\"{id}\" name=\"Box {id}\"/>\
+           <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+             <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+               <wps:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></wps:spPr>\
+               <wps:txbx><w:txbxContent><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:txbxContent></wps:txbx>\
+               <wps:bodyPr lIns=\"0\" tIns=\"0\" rIns=\"0\" bIns=\"0\"/></wps:wsp></a:graphicData></a:graphic>\
+         </wp:anchor></w:drawing>",
+        emu(off),
+        emu(w),
+        emu(h),
+    )
+}
+
+/// Letter, 1in margins, every paragraph one exact 20pt line: 16 `Fill`
+/// lines put the next paragraph's top at 392pt from the page top.
+fn exact_line_docx(paras: &[String]) -> Vec<u8> {
+    let p = |inner: &str| {
+        format!(
+            "<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"400\" \
+             w:lineRule=\"exact\"/></w:pPr>{inner}</w:p>"
+        )
+    };
+    let mut body: String = (0..16).map(|_| p("<w:r><w:t>Fill</w:t></w:r>")).collect();
+    for inner in paras {
+        body.push_str(&p(inner));
+    }
+    body.push_str(
+        "<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/><w:pgMar w:top=\"1440\" w:right=\"1440\" \
+         w:bottom=\"1440\" w:left=\"1440\" w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>",
+    );
+    drawing_docx(&body)
+}
+
+#[test]
+fn a_text_box_past_the_foot_is_lifted_and_the_lines_it_meets_move_on() {
+    // Word 16 probes p49 g/h/n: a full-width square text box 300pt under
+    // its anchor that would end past the bottom margin is lifted to end
+    // on it, and the lines after the anchor that meet it start the next
+    // page. We drew it off the page and kept those lines beside nothing.
+    let boxed = para_text_box(7, 300.0, 468.0, 260.0, "BoxText");
+    let docx = exact_line_docx(&[
+        format!("<w:r>{boxed}</w:r><w:r><w:t>Anchor</w:t></w:r>"),
+        "<w:r><w:t>Alpha</w:t></w:r>".into(),
+        "<w:r><w:t>Beta</w:t></w:r>".into(),
+        "<w:r><w:t>Gamma</w:t></w:r>".into(),
+    ]);
+    let pdf = docx_to_pdf(&docx).expect("lifted box");
+    for text in ["Anchor", "Alpha", "Beta", "BoxText"] {
+        assert_eq!(
+            page_with_text(&pdf, text),
+            Some(0),
+            "{text} stays on page one"
+        );
+    }
+    assert_eq!(
+        page_with_text(&pdf, "Gamma"),
+        Some(1),
+        "Gamma meets the box"
+    );
+    // The box spans 460..720 from the top: its text starts under y 332.
+    let (_, y) = pdf_glyph_text_xy(&pdf, "BoxText").expect("box text paints");
+    assert!((312.0..332.0).contains(&y), "box text at {y}");
+}
+
+#[test]
+fn a_lifted_text_box_rising_into_its_anchor_moves_the_paragraph_on() {
+    // Word 16 probes p49 a/d/i: lifted to the margin, a box that reaches
+    // its anchor's line (and its space after) takes the paragraph to the
+    // next page, a narrow box with room beside it too.
+    for w in [468.0, 200.0] {
+        let boxed = para_text_box(7, 300.0, w, 320.0, "BoxText");
+        let docx = exact_line_docx(&[
+            format!("<w:r>{boxed}</w:r><w:r><w:t>Anchor</w:t></w:r>"),
+            "<w:r><w:t>Alpha</w:t></w:r>".into(),
+        ]);
+        let pdf = docx_to_pdf(&docx).expect("anchor moves");
+        assert_eq!(page_with_text(&pdf, "Anchor"), Some(1), "width {w}");
+        assert_eq!(page_with_text(&pdf, "BoxText"), Some(1), "width {w}");
+        // From the top of page two: the box 300pt under the anchor's top.
+        let (_, y) = pdf_glyph_text_xy(&pdf, "BoxText").expect("box text paints");
+        assert!((380.0..420.0).contains(&y), "width {w}: box text at {y}");
+    }
+}
+
+#[test]
+fn a_box_one_paragraph_up_still_sends_a_later_line_under_it() {
+    // Word 16 probe p49d s4: the next paragraph's own hanging box used to
+    // replace the earlier one's band, so a line under both drew over the
+    // earlier box.
+    let first = para_text_box(7, 45.0, 468.0, 100.0, "BoxA");
+    let second = para_text_box(8, 100.0, 468.0, 50.0, "BoxB");
+    let docx = exact_line_docx(&[
+        format!("<w:r>{first}</w:r><w:r><w:t>One</w:t></w:r>"),
+        format!("<w:r>{second}</w:r><w:r><w:t>Two</w:t></w:r>"),
+        "<w:r><w:t>Three</w:t></w:r>".into(),
+    ]);
+    let pdf = docx_to_pdf(&docx).expect("two bands");
+    // BoxA spans 437..537 and BoxB 512..562 from the top.
+    let (_, y) = pdf_glyph_text_xy(&pdf, "Three").expect("Three paints");
+    assert!(y < 792.0 - 562.0, "Three sits under both boxes: {y}");
+}
+
+#[test]
+fn a_float_carrying_paragraph_pushed_under_a_band_takes_its_floats_along() {
+    // 49fe5bd42a: an empty anchor under an earlier paragraph's stacked
+    // boxes starts under them, and its own boxes hang from there. We kept
+    // them at the paragraph's old top, over the earlier boxes.
+    let first = para_text_box(7, 25.0, 468.0, 260.0, "BoxA");
+    let second = para_text_box(8, 1.0, 468.0, 20.0, "BoxB");
+    let docx = exact_line_docx(&[
+        format!("<w:r>{first}</w:r><w:r><w:t>One</w:t></w:r>"),
+        format!("<w:r>{second}</w:r><w:r><w:t>Two</w:t></w:r>"),
+    ]);
+    let pdf = docx_to_pdf(&docx).expect("re-anchored floats");
+    // BoxA spans 417..677 from the top.
+    let (_, y) = pdf_glyph_text_xy(&pdf, "BoxB").expect("BoxB paints");
+    assert!(y < 792.0 - 677.0, "BoxB hangs under BoxA: {y}");
+    assert_eq!(page_with_text(&pdf, "BoxB"), Some(0));
+}
+
 #[test]
 fn a_page_sized_square_float_under_text_moves_its_paragraph_to_the_next_page() {
     // Word probe h1 and 3bfcb371e2 (30b6e87178): a 615x797 cover whose

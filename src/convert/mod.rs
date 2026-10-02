@@ -2211,6 +2211,9 @@ enum ImageSlot {
         dist_t: f32,
         /// `wp:anchor/@distB` plus `effectExtent/@b`.
         dist_b: f32,
+        /// `effectExtent/@b` alone: a box lifted onto the page ends this
+        /// far above the bottom margin (Word 16 probes p49).
+        effect_b: f32,
         /// Horizontal `relativeFrom` (ST_RelFromH) for align-only anchors.
         h_rel: RelFrame,
         /// Vertical `relativeFrom` (ST_RelFromV): the frame of `v_align`
@@ -7941,6 +7944,7 @@ fn frame_box(
             dist_r: h_space,
             dist_t: v_space,
             dist_b: v_space,
+            effect_b: 0.0,
             h_rel: match h_anchor {
                 "margin" => RelFrame::Margin,
                 "text" => RelFrame::Column,
@@ -11956,6 +11960,7 @@ fn table_float(dom: &Dom, table: NodeId) -> Option<ImageSlot> {
         dist_r: dist("rightFromText"),
         dist_t: dist("topFromText"),
         dist_b: dist("bottomFromText"),
+        effect_b: 0.0,
         h_rel: match horz {
             "page" => RelFrame::Page,
             "margin" => RelFrame::Margin,
@@ -13939,6 +13944,7 @@ fn collect_textboxes_styled(
                     dist_r: 0.0,
                     dist_t: 0.0,
                     dist_b: 0.0,
+                    effect_b: 0.0,
                     h_rel: RelFrame::Column,
                     v_rel: RelFrame::Paragraph,
                     v_off: None,
@@ -16494,6 +16500,7 @@ fn drawing_slot(dom: &Dom, drawing: NodeId) -> ImageSlot {
         dist_r: emu_pt("distR") + effect_pt("r"),
         dist_t: emu_pt("distT") + effect_pt("t"),
         dist_b: emu_pt("distB") + effect_pt("b"),
+        effect_b: effect_pt("b"),
         // A missing positionH/V keeps the old margin frame.
         h_rel: if h_from.is_empty() {
             RelFrame::Margin
@@ -16835,6 +16842,7 @@ fn vml_shape_slot(dom: &Dom, shape: NodeId) -> Option<ImageSlot> {
             dist_r: vml_style_pt(style, "mso-wrap-distance-right").unwrap_or(9.0),
             dist_t: vml_style_pt(style, "mso-wrap-distance-top").unwrap_or(0.0),
             dist_b: vml_style_pt(style, "mso-wrap-distance-bottom").unwrap_or(0.0),
+            effect_b: 0.0,
             h_rel: match h_rel.as_str() {
                 "page" => RelFrame::Page,
                 "margin" => RelFrame::Margin,
@@ -18453,6 +18461,7 @@ fn chrome_part_xml(
                             dist_r: 0.0,
                             dist_t: 0.0,
                             dist_b: 0.0,
+                            effect_b: 0.0,
                             h_rel: RelFrame::Page,
                             v_rel: RelFrame::Page,
                             v_off: None,
@@ -21641,7 +21650,12 @@ impl<'a> Layout<'a> {
             consider(img.slot, img.w, img.h, false);
         }
         for box_ in boxes {
-            consider(box_.slot, self.box_w(box_), self.box_h(box_), box_.frame);
+            consider(
+                self.box_slot(box_),
+                self.box_w(box_),
+                self.box_h(box_),
+                box_.frame,
+            );
         }
         if let Some(sf) = self.side_float_holds_line() {
             first_hit = true;
@@ -21702,7 +21716,7 @@ impl<'a> Layout<'a> {
         let mut hangs: Option<(f32, f32)> = None;
         let left_edge = self.flow_left();
         let right_edge = left_edge + self.content_width();
-        let mut consider = |slot: ImageSlot, w: f32, h: f32, min_room: f32| {
+        let mut consider = |slot: ImageSlot, w: f32, h: f32, min_room: f32, drawn_box: bool| {
             let ImageSlot::Float {
                 wrap_top_bottom,
                 wrap_square,
@@ -21720,13 +21734,16 @@ impl<'a> Layout<'a> {
             // A square wrap with no room on either side (0007c30e's 660pt
             // letterhead) sends the text under it, as top-and-bottom does,
             // when the page has room under it (00003fff's full-page cover
-            // picture keeps its paragraph on the page).
+            // picture keeps its paragraph on the page). A drawn text box
+            // sends the text on even when it ends at the margin (Word 16
+            // probes p49 g/h/i: lifted to the margin, the lines it meets
+            // start the next page).
             let no_side_room = wrap_square && {
                 let (dw, dh) = self.sized_wh(slot, w, h, 1.0, 1.0);
                 let (fx, fy) = self.float_xy(dw, dh.max(1.0), slot);
                 fx - dist_l - left_edge < min_room
                     && right_edge - (fx + dw + dist_r) < min_room
-                    && fy - dist_b > self.body_floor
+                    && (drawn_box || fy - dist_b > self.body_floor)
             };
             if !wrap_top_bottom && !no_side_room {
                 return;
@@ -21734,8 +21751,10 @@ impl<'a> Layout<'a> {
             let (dw, dh) = self.sized_wh(slot, w, h, 1.0, 1.0);
             let (_, fy) = self.float_xy(dw, dh.max(1.0), slot);
             if !self.wrap_band_hits_line(slot, w, h) {
-                // Wholly under this line: it waits for a later one.
-                if wrap_top_bottom && fy + dh + dist_t < self.line_probe.top - self.line_probe.h {
+                // Wholly under this line: it waits for a later one, a
+                // square one with no side room too (Word 16 probe p49 b:
+                // the lines after a full-width box's anchor start under it).
+                if fy + dh + dist_t < self.line_probe.top - self.line_probe.h {
                     let band = (fy + dh + dist_t, fy - dist_b);
                     hangs = Some(hangs.map_or(band, |(t, b)| (t.max(band.0), b.min(band.1))));
                 }
@@ -21754,7 +21773,7 @@ impl<'a> Layout<'a> {
             });
         };
         for img in images {
-            consider(img.slot, img.w, img.h, MIN_SIDE_FLOAT_ROOM_PT);
+            consider(img.slot, img.w, img.h, MIN_SIDE_FLOAT_ROOM_PT, false);
         }
         for box_ in boxes {
             let min_room = if box_.frame {
@@ -21762,11 +21781,23 @@ impl<'a> Layout<'a> {
             } else {
                 MIN_SIDE_FLOAT_ROOM_PT
             };
-            consider(box_.slot, self.box_w(box_), self.box_h(box_), min_room);
+            consider(
+                self.box_slot(box_),
+                self.box_w(box_),
+                self.box_h(box_),
+                min_room,
+                !box_.frame && !box_.vml,
+            );
         }
-        if hangs.is_some() {
-            self.tb_band = hangs;
+        // Joins a band an earlier paragraph left that this line did not
+        // reach (Word 16 probe p49d s4: a box anchored one paragraph up
+        // still sends the line after this one on).
+        if let Some((t, b)) = hangs {
             self.tb_step = false;
+            self.tb_band = Some(
+                self.tb_band
+                    .map_or((t, b), |(t0, b0)| (t0.max(t), b0.min(b))),
+            );
         }
         if hit {
             // emit_runs applies the full space-before next (at_page_top is
@@ -21827,7 +21858,52 @@ impl<'a> Layout<'a> {
             || boxes
                 .iter()
                 .filter(|b| !b.frame)
-                .any(|b| bars(b.slot, self.box_w(b), self.box_h(b)))
+                .any(|b| bars(self.box_slot(b), self.box_w(b), self.box_h(b)))
+    }
+
+    /// Where an earlier paragraph's band (`tb_band`) sends the probed
+    /// line when it meets it, as `apply_top_bottom_wrap` would.
+    fn band_jump(&self) -> Option<f32> {
+        let (top, bottom) = self.tb_band?;
+        let line_top = self.line_probe.top;
+        (line_top > bottom + 0.01 && line_top - self.line_probe.h < top).then(|| {
+            if self.tb_step {
+                self.step_under(bottom)
+            } else {
+                bottom
+            }
+        })
+    }
+
+    /// A drawn text box lifted onto the page (`box_slot`) that rises into
+    /// its anchor paragraph's `need` pt (first line, plus the space after
+    /// when that is its only line): Word moves the paragraph to the next
+    /// page, side room or not (probes p49 a/d/i; h, ending 16pt lower,
+    /// keeps it).
+    fn lifted_box_meets_anchor(&self, boxes: &[LaidTextBox], before: f32, need: f32) -> bool {
+        let foot = self.para_top + self.para_space_above - before - need;
+        boxes.iter().filter(|b| !b.frame && !b.vml).any(|b| {
+            let slot = self.box_slot(b);
+            let (
+                ImageSlot::Float {
+                    para_y: Some(lifted),
+                    dist_t,
+                    ..
+                },
+                ImageSlot::Float {
+                    para_y: Some(own), ..
+                },
+            ) = (slot, b.slot)
+            else {
+                return false;
+            };
+            if lifted >= own {
+                return false;
+            }
+            let (dw, dh) = self.sized_wh(slot, self.box_w(b), self.box_h(b), 1.0, 1.0);
+            let (_, fy) = self.float_xy(dw, dh.max(1.0), slot);
+            fy + dh.max(1.0) + dist_t > foot
+        })
     }
 
     /// A float after all of a paragraph's text (`LaidImage::tail_anchor`)
@@ -21904,7 +21980,7 @@ impl<'a> Layout<'a> {
             consider(img.slot, img.w, img.h);
         }
         for box_ in boxes.iter().filter(|b| !b.frame) {
-            consider(box_.slot, self.box_w(box_), self.box_h(box_));
+            consider(self.box_slot(box_), self.box_w(box_), self.box_h(box_));
         }
         if let Some((top, bottom, step)) = band {
             self.tb_step = step && self.tb_band.is_none_or(|_| self.tb_step);
@@ -21942,7 +22018,7 @@ impl<'a> Layout<'a> {
             consider(img.slot, img.w, img.h);
         }
         for box_ in boxes {
-            consider(box_.slot, self.box_w(box_), self.box_h(box_));
+            consider(self.box_slot(box_), self.box_w(box_), self.box_h(box_));
         }
         // A floating table narrows only the lines beside it: lines past
         // its bottom return to the full measure (reflow_past_float).
@@ -24154,6 +24230,40 @@ impl<'a> Layout<'a> {
         }
     }
 
+    /// The slot a drawn text box is placed by. A wrapping box placed from
+    /// its paragraph that would run past the bottom margin is lifted until
+    /// it ends there (Word 16 probes p49: a 250pt box 300pt under its
+    /// anchor ends at the margin; a picture goes on to the page foot). A
+    /// lifted box that meets its anchor's line sends the paragraph on.
+    fn box_slot(&self, box_: &LaidTextBox) -> ImageSlot {
+        let slot = box_.slot;
+        let ImageSlot::Float {
+            para_y: Some(py),
+            page_y: None,
+            pct_y: None,
+            wrap_square,
+            wrap_top_bottom,
+            effect_b,
+            ..
+        } = slot
+        else {
+            return slot;
+        };
+        if box_.frame || box_.vml || !(wrap_square || wrap_top_bottom) {
+            return slot;
+        }
+        let (_, dh) = self.sized_wh(slot, box_.w, self.box_h(box_), 1.0, 1.0);
+        let lowest = self.para_top + self.para_space_above - dh - self.page.margin_b - effect_b;
+        if py <= lowest {
+            return slot;
+        }
+        let mut lifted = slot;
+        if let ImageSlot::Float { para_y, .. } = &mut lifted {
+            *para_y = Some(lowest.max(0.0));
+        }
+        lifted
+    }
+
     fn box_h(&self, box_: &LaidTextBox) -> f32 {
         if !box_.fit_height || box_.paras.is_empty() || matches!(box_.slot, ImageSlot::Flow) {
             return box_.h;
@@ -25744,8 +25854,9 @@ impl<'a> Layout<'a> {
         let sized = box_.reserve_only || box_.fill.is_some() || !box_.group.is_empty();
         let min_dim = if sized { 0.1 } else { 16.0 };
         let min_w = if sized { 0.1 } else { 24.0 };
-        let (sized_w, sized_h) = self.sized_wh(box_.slot, box_w, self.box_h(box_), min_w, min_dim);
-        let (x, y, dw, dh) = match box_.slot {
+        let placed = self.box_slot(box_);
+        let (sized_w, sized_h) = self.sized_wh(placed, box_w, self.box_h(box_), min_w, min_dim);
+        let (x, y, dw, dh) = match placed {
             ImageSlot::Flow => {
                 self.ensure(sized_h + 4.0);
                 self.y -= sized_h;
@@ -30159,10 +30270,31 @@ fn layout(
                     if (!images.is_empty() || !boxes.is_empty()) && !lay.at_page_top {
                         let first =
                             para_first_line_pt(lay.fonts, runs, &style, lay.page.grid_pitch);
+                        // An earlier paragraph's band that meets the first
+                        // line moves the paragraph, its floats too (49fe5bd42a's
+                        // empty anchor under four stacked boxes: re-anchored
+                        // there, its first box lifts onto its line and the
+                        // paragraph opens page 3).
+                        if lay.y - style.before - first >= lay.body_floor {
+                            lay.set_line_probe(runs, &style);
+                            if let Some(jump) = lay.band_jump() {
+                                lay.tb_band = None;
+                                lay.y = jump + lay.line_probe.before;
+                                lay.at_page_top = false;
+                                lay.suppress_space_before = false;
+                                lay.para_top = lay.y;
+                            }
+                        }
                         if lay.y - style.before - first < lay.body_floor {
                             lay.ensure(style.before + first);
                             lay.para_top = lay.y;
-                        } else if lay.square_float_bars_line(images, boxes, style.before, first) {
+                        } else if lay.square_float_bars_line(images, boxes, style.before, first)
+                            || !boxes.is_empty() && {
+                                let lines = lay.para_line_count(runs, &style, *list);
+                                let need = first + if lines <= 1 { style.after } else { 0.0 };
+                                lay.lifted_box_meets_anchor(boxes, style.before, need)
+                            }
+                        {
                             // The next column when there is one (PR #247
                             // review; Word probe c1 keeps the page).
                             lay.column_break();
