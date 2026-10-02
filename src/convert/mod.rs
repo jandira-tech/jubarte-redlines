@@ -523,8 +523,7 @@ fn with_pages<T>(
         .next()
         .ok_or(ConvertError::MissingDocument)?;
 
-    let mut table = font_table::load_font_table(&pkg);
-    table.set_default_family(&load_stylesheet(&pkg).defaults.run.family);
+    let table = font_table::load_font_table(&pkg);
     let mut embedded = font_table::load_embedded_fonts(&pkg, &table);
     let mut family_names = rfont_names(&xml);
     let mut run_faces = latin_font_names(&xml);

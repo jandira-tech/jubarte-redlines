@@ -1257,17 +1257,24 @@ impl<'a> Fonts<'a> {
         if let Some(&idx) = self.extra_index.get(&exact) {
             return Some(idx);
         }
-        if bold || italic {
+        // Then the regular face, then any face at all: Word paints Segoe
+        // Print, installed only as Bold, in that Bold (probe my5).
+        [
+            (false, false),
+            (bold, !italic),
+            (!bold, italic),
+            (!bold, !italic),
+        ]
+        .into_iter()
+        .find_map(|(bold, italic)| {
             self.extra_index
                 .get(&FaceKey {
-                    family: exact.family,
-                    bold: false,
-                    italic: false,
+                    family: exact.family.clone(),
+                    bold,
+                    italic,
                 })
                 .copied()
-        } else {
-            None
-        }
+        })
     }
 
     /// `family` is present and not an East Asian face: Calibri, not SimSun
@@ -1386,30 +1393,7 @@ impl<'a> Fonts<'a> {
             );
         }
         let mut visited = HashSet::new();
-        let (id, step, via_default) = self.resolve_walk(family, bold, italic, table, &mut visited);
-        // An unknown family="auto" face paints in the document default,
-        // which may itself be an embedded-only face (PR #167 review).
-        if let Some(default) = via_default
-            && let Some(idx) = self.embedded_index(family_token(default), bold, italic)
-        {
-            let face = FaceRef::Embedded(idx);
-            let exact = self.extra_index.contains_key(&FaceKey {
-                family: family_token(default).to_ascii_lowercase(),
-                bold,
-                italic,
-            });
-            return (
-                face,
-                FontReportEntry {
-                    requested: family.to_string(),
-                    step: FontStep::Embedded,
-                    physical: self.get(face).pdf_name().to_string(),
-                    bold,
-                    italic,
-                    synthetic: (bold || italic) && !exact,
-                },
-            );
-        }
+        let (id, step) = self.resolve_walk(family, bold, italic, table, &mut visited);
         let face = FaceRef::Catalogue(id);
         (
             face,
@@ -1426,8 +1410,8 @@ impl<'a> Fonts<'a> {
 
     /// Resolve `family` using Word's font table. Installed faces win;
     /// otherwise `w:altName`, then the Word-substitution evidence table,
-    /// then `w:family`/`w:pitch` generics. Unknown names use the evidence
-    /// table's Cambria row (plan Step 2d).
+    /// then the entry's generic. Unknown names use the evidence table's
+    /// Cambria row (plan Step 2d).
     #[cfg(test)]
     pub(crate) fn resolve_in(
         &self,
@@ -1448,27 +1432,23 @@ impl<'a> Fonts<'a> {
         table: &super::font_table::FontTable,
     ) -> (FaceId, FontStep) {
         let mut visited = HashSet::new();
-        let (id, step, _) = self.resolve_walk(family, bold, italic, table, &mut visited);
-        (id, step)
+        self.resolve_walk(family, bold, italic, table, &mut visited)
     }
 
     /// Follow `family` through the font table. Iterative: an altName chain
-    /// is bounded by the table's size, never by the call stack. The third
-    /// value is the document default an unknown family="auto" face fell
-    /// back to, if the walk took that hop.
-    fn resolve_walk<'t>(
+    /// is bounded by the table's size, never by the call stack.
+    fn resolve_walk(
         &self,
-        family: &'t str,
+        family: &str,
         bold: bool,
         italic: bool,
-        table: &'t super::font_table::FontTable,
+        table: &super::font_table::FontTable,
         visited: &mut HashSet<String>,
-    ) -> (FaceId, FontStep, Option<&'t str>) {
+    ) -> (FaceId, FontStep) {
         let mut current = family;
         let mut via_alt = false;
-        let mut via_default = None;
-        // The generic of a name the altName chain passed through: a chain
-        // that dead-ends (Myriad Pro → absent Segoe UI) keeps it.
+        // The generic of the first entry the altName chain passed through:
+        // a chain that dead-ends in an absent altName keeps it.
         let mut chain_generic = "";
         let (id, step) = loop {
             // Word splits rFonts on comma but does not CSS-unquote. Evidence
@@ -1497,16 +1477,13 @@ impl<'a> Fonts<'a> {
             // CSS-style list row (`"Foo", Bar, serif`) is keyed by the full
             // string, not by its first token.
             let whole = current.trim();
-            // The family/pitch generic stands behind an entry that describes
-            // its face (a panose past the family kind) or names an altName:
-            // 019d9ee6's Myriad Pro (swiss, altName Segoe UI) is Arial in
-            // Word, while 01177cdf's Museo Sans (0200…0, "modern", no
-            // altName) takes the document's default.
+            // Every entry stands for a generic, whatever its panose and
+            // pitch say (Word 16 probes my6/my7): roman is Cambria, any
+            // other family Calibri.
             if chain_generic.is_empty()
                 && let Some(entry) = table.get(primary)
-                && entry_describes(entry)
             {
-                chain_generic = super::word_subst::generic_physical(entry.family, entry.pitch);
+                chain_generic = super::word_subst::entry_generic(entry);
             }
             let alt = table
                 .alt_name(primary)
@@ -1528,54 +1505,12 @@ impl<'a> Fonts<'a> {
                     FontStep::Generic,
                 );
             }
-            // A missing Arabic or Hebrew face (charset B2 / B1) is Arial in
-            // Word, spaces and all: 00205272's absent "B Compset" draws
-            // Persian and 3.33pt spaces in Arial, not Cambria.
-            if let Some(entry) = table.get(primary)
-                && entry
-                    .charset
-                    .as_deref()
-                    .is_some_and(|c| c.eq_ignore_ascii_case("B2") || c.eq_ignore_ascii_case("B1"))
-            {
-                break (
-                    Self::face_from_physical("Arial", bold, italic),
-                    FontStep::Generic,
-                );
-            }
-            // An unknown face Word knows nothing about (family="auto", no
-            // panose) paints in the document's default font: 010300e3's
-            // Serenity and 00b5aa69's Shivaji01 are Calibri there.
-            if let Some(entry) = table.get(primary)
-                && !entry_describes(entry)
-            {
-                // A default that is itself missing leaves Word's own
-                // Calibri (01177cdf's theme Museo Sans).
-                match table.default_family() {
-                    Some(default)
-                        if via_default.is_none() && !default.eq_ignore_ascii_case(primary) =>
-                    {
-                        current = default;
-                        via_default = Some(default);
-                        continue;
-                    }
-                    _ => {
-                        break (
-                            Self::face_from_physical("Calibri", bold, italic),
-                            FontStep::Generic,
-                        );
-                    }
-                }
-            }
             break (
                 Self::face_from_physical(&super::word_subst::unknown_physical(), bold, italic),
                 FontStep::Unknown,
             );
         };
-        (
-            id,
-            if via_alt { FontStep::AltName } else { step },
-            via_default,
-        )
+        (id, if via_alt { FontStep::AltName } else { step })
     }
 
     /// `family` names an installed catalogue face directly (the report's
@@ -2946,7 +2881,12 @@ pub(crate) fn add_installed_faces(
         }
         // A family runs name but the table omits (015beda9 has no table
         // part; Word still draws its Segoe UI) loads like a table family.
-        let faces = cached_faces(name, || installed_family_faces(name));
+        let mut faces = cached_faces(name, || installed_family_faces(name));
+        if faces.is_empty()
+            && let Some(sub) = super::word_subst::word_name_substitute(name)
+        {
+            faces = cached_faces(sub, || installed_family_faces(sub));
+        }
         for ((bold, italic), bytes) in faces {
             embedded.insert((lower.clone(), bold, italic), bytes);
         }
@@ -2957,6 +2897,13 @@ pub(crate) fn add_installed_faces(
             continue;
         }
         let mut faces = cached_faces(&entry.name, || installed_family_faces(&entry.name));
+        // Word's own stand-in for a family it knows beats the altName:
+        // "Myriad Pro" with altName Arial is Segoe UI.
+        if faces.is_empty()
+            && let Some(sub) = super::word_subst::word_name_substitute(&entry.name)
+        {
+            faces = cached_faces(sub, || installed_family_faces(sub));
+        }
         // An absent family draws in its installed altName (b88ac900's
         // "BernhardFashion BT" → Gabriola in Word's PDF).
         if faces.is_empty()
@@ -2965,6 +2912,18 @@ pub(crate) fn add_installed_faces(
             && !catalogue_paints_family(alt)
         {
             faces = cached_faces(alt, || installed_family_faces(alt));
+        }
+        // Then the script its sig claims (Faruma's Thaana → MV Boli),
+        // unless the altName is a catalogue face Word draws instead.
+        if faces.is_empty()
+            && cjk_file_stems(&entry.name).is_empty()
+            && !entry
+                .alt_name
+                .as_deref()
+                .is_some_and(catalogue_paints_family)
+            && let Some(face) = super::word_subst::script_face(entry)
+        {
+            faces = cached_faces(face, || installed_family_faces(face));
         }
         // Runs may name the family by its altName ("MS Mincho" for the
         // table's "ＭＳ 明朝"); the same faces answer to both.
@@ -3160,16 +3119,6 @@ fn sanitize_pdf_name(name: &str) -> String {
             }
         })
         .collect()
-}
-
-/// A font-table entry Word substitutes by its generic: one with a panose
-/// that says something beyond its family kind (`0200…0` and all-zero say
-/// nothing) or with an altName.
-fn entry_describes(entry: &super::font_table::FontEntry) -> bool {
-    entry.alt_name.is_some()
-        || entry
-            .panose
-            .is_some_and(|p| p.iter().skip(1).any(|b| *b != 0))
 }
 
 #[cfg(test)]
@@ -3590,9 +3539,9 @@ mod tests {
     }
 
     #[test]
-    fn resolve_font_table_swiss_generic_is_arial() {
-        // The generic needs a panose that describes the face; a bare entry
-        // takes the default (a_bare_missing_entry_takes_the_default…).
+    fn a_missing_swiss_entry_is_calibri_not_arial() {
+        // Word 16 probe my7 (this exact entry, fresh session): Calibri. The
+        // swiss → Arial generic was an older Word build's.
         let table = super::super::font_table::parse_font_table_xml(
             r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
                  <w:font w:name="SomeSwiss"><w:panose1 w:val="020B0604020202020204"/><w:family w:val="swiss"/></w:font>
@@ -3601,12 +3550,14 @@ mod tests {
         let fonts = Fonts::new();
         assert_eq!(
             fonts.resolve_in("SomeSwiss", false, false, &table),
-            FaceId::SansRegular
+            FaceId::CarlitoRegular
         );
     }
 
     #[test]
-    fn resolve_font_table_roman_generic_is_times() {
+    fn a_missing_roman_entry_is_cambria_not_times() {
+        // Word 16 probes my6/my7: any roman entry (TNR, Georgia, zero or no
+        // panose, even fixed pitch) is Cambria.
         let table = super::super::font_table::parse_font_table_xml(
             r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
                  <w:font w:name="SomeRoman"><w:panose1 w:val="02020603050405020304"/><w:family w:val="roman"/></w:font>
@@ -3615,15 +3566,14 @@ mod tests {
         let fonts = Fonts::new();
         assert_eq!(
             fonts.resolve_in("SomeRoman", false, false, &table),
-            FaceId::SerifRegular
+            FaceId::CambriaRegular
         );
     }
 
     #[test]
-    fn resolve_font_table_fixed_pitch_is_courier() {
-        // A fixed-pitch entry that describes its face (a panose past the
-        // family kind) still falls to Courier; a bare one does not (see
-        // the next test, live Word 2026-09-25: Calibri).
+    fn a_missing_fixed_pitch_entry_is_calibri_not_courier() {
+        // Word 16 probe my7 (this exact entry, both orders): Calibri; pitch
+        // and panose play no part.
         let table = super::super::font_table::parse_font_table_xml(
             r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
                  <w:font w:name="SomeFixed"><w:panose1 w:val="02070309020205020404"/><w:pitch w:val="fixed"/></w:font>
@@ -3632,7 +3582,7 @@ mod tests {
         let fonts = Fonts::new();
         assert_eq!(
             fonts.resolve_in("SomeFixed", false, false, &table),
-            FaceId::MonoRegular
+            FaceId::CarlitoRegular
         );
     }
 
@@ -3656,20 +3606,21 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_entry_with_an_alt_name_keeps_its_generic() {
-        // fixtures_500 019d9ee6: Myriad Pro (swiss, panose all zero, altName
-        // an absent Segoe UI) is Arial in Word's PDF.
+    fn a_missing_entry_with_an_absent_alt_name_keeps_its_generic() {
+        // Word 16 probe my6: a swiss entry whose altName is absent is
+        // Calibri. (019d9ee6's Arial reference came from Word's cloud-font
+        // download race; today's Word draws its Myriad Pro in Segoe UI.)
         let table = super::super::font_table::parse_font_table_xml(
             r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-                 <w:font w:name="Myriad Pro"><w:altName w:val="Qwertzu Absent"/>
+                 <w:font w:name="Qwmyr Pro"><w:altName w:val="Qwertzu Absent"/>
                    <w:panose1 w:val="00000000000000000000"/><w:family w:val="swiss"/>
                    <w:notTrueType/><w:pitch w:val="variable"/></w:font>
                </w:fonts>"#,
         );
         let fonts = Fonts::new();
         assert_eq!(
-            fonts.resolve_in("Myriad Pro", false, false, &table),
-            FaceId::SansRegular
+            fonts.resolve_in("Qwmyr Pro", false, false, &table),
+            FaceId::CarlitoRegular
         );
     }
 
@@ -3738,6 +3689,64 @@ mod tests {
         let names = ["Helvetica Neue".to_string()];
         add_installed_faces(&mut embedded, &table, &names, &names, false);
         assert!(embedded.contains_key(&("helvetica neue".to_string(), false, false)));
+    }
+
+    #[test]
+    fn word_s_own_stand_in_for_an_absent_family_beats_its_alt_name() {
+        // Word 16 probe my3: "Myriad Pro" with altName Arial is Segoe UI.
+        if installed_family_faces("Segoe UI").is_empty() {
+            return;
+        }
+        let table = super::super::font_table::parse_font_table_xml(
+            r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                 <w:font w:name="Myriad Pro"><w:altName w:val="Arial"/><w:family w:val="auto"/></w:font>
+               </w:fonts>"#,
+        );
+        let mut embedded = EmbeddedFonts::new();
+        let names = ["Myriad Pro".to_string(), "Myriad Pro Light".to_string()];
+        add_installed_faces(&mut embedded, &table, &names, &names, false);
+        let fonts = Fonts::for_document(&embedded);
+        let physical = |family: &str| {
+            let (face, _) = fonts.classify_in(family, false, false, &table);
+            fonts.get(face).pdf_name().to_string()
+        };
+        assert!(physical("Myriad Pro").starts_with("SegoeUI"));
+        assert!(physical("Myriad Pro Light").starts_with("SegoeUI"));
+    }
+
+    #[test]
+    fn an_absent_face_claiming_thaana_draws_in_mv_boli() {
+        // 55fcbe9086: Word draws all of Faruma's runs, Latin ones too, in
+        // MV Boli; we drew Cambria and ran a page long.
+        if installed_family_faces("MV Boli").is_empty() {
+            return;
+        }
+        let table = super::super::font_table::parse_font_table_xml(
+            r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                 <w:font w:name="Qzaruma"><w:panose1 w:val="02000500030200090000"/><w:family w:val="auto"/>
+                   <w:sig w:usb0="00000003" w:usb1="00000000" w:usb2="00000100" w:usb3="00000000" w:csb0="00000001" w:csb1="00000000"/></w:font>
+               </w:fonts>"#,
+        );
+        let mut embedded = EmbeddedFonts::new();
+        let names = ["Qzaruma".to_string()];
+        add_installed_faces(&mut embedded, &table, &names, &names, false);
+        let fonts = Fonts::for_document(&embedded);
+        let (face, _) = fonts.classify_in("Qzaruma", false, false, &table);
+        assert!(fonts.get(face).pdf_name().starts_with("MVBoli"));
+    }
+
+    #[test]
+    fn a_family_installed_only_in_bold_paints_regular_text_in_that_bold() {
+        // Word 16 probe my5: Segoe Print and Segoe Script, installed only as
+        // Bold, draw their regular runs in Bold, not in Cambria.
+        let mut fonts = Fonts::new();
+        fonts.insert_embedded("Qx Print", true, false, FaceId::MonoBold.bytes());
+        let table = super::super::font_table::FontTable::default();
+        for (bold, italic) in [(false, false), (false, true), (true, false)] {
+            let (face, entry) = fonts.classify_in("Qx Print", bold, italic, &table);
+            assert_eq!(entry.step, FontStep::Embedded, "{bold} {italic}");
+            assert_eq!(fonts.get(face).pdf_name(), "LiberationMono-Bold");
+        }
     }
 
     #[test]
@@ -3959,10 +3968,9 @@ mod tests {
         };
         assert_eq!(physical("標楷體"), "MicrosoftYaHei");
         assert!(physical("HGP行書体").starts_with("YuGothic"));
-        assert_eq!(
-            physical("SomeLatin"),
-            "ArialMT",
-            "Latin families are untouched"
+        assert!(
+            physical("SomeLatin").starts_with("Calibri"),
+            "Latin families keep their own generic"
         );
     }
 
@@ -4015,9 +4023,9 @@ mod tests {
 
     #[test]
     fn resolve_dead_end_altname_keeps_the_original_generic() {
-        // fixtures_500 019d9ee6: Myriad Pro (swiss) → altName Segoe UI,
-        // which is neither installed nor in the table. Word paints Arial,
-        // the swiss generic, not the unknown-family Cambria.
+        // An altName that is neither installed nor in the table leaves the
+        // first entry's generic: Word 16 probe my6 paints a swiss entry with
+        // an absent altName in Calibri, not the unknown-family Cambria.
         let table = super::super::font_table::parse_font_table_xml(
             r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
                  <w:font w:name="SomeMyriad"><w:altName w:val="SomeSegoe"/><w:family w:val="swiss"/></w:font>
@@ -4026,7 +4034,7 @@ mod tests {
         let fonts = Fonts::new();
         assert_eq!(
             fonts.resolve_in("SomeMyriad", false, false, &table),
-            FaceId::SansRegular
+            FaceId::CarlitoRegular
         );
     }
 
@@ -4289,20 +4297,18 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_auto_family_takes_the_embedded_default_face() {
-        // PR #167 review: the family="auto" fallback resolved the document
-        // default through the catalogue only, so an embedded default face
-        // lost to Cambria.
+    fn an_unknown_auto_family_is_calibri_even_beside_an_embedded_default() {
+        // Word 16 probe my6: the document's default font plays no part; a
+        // bare family="auto" entry is Calibri in a styled and a bare doc.
         let mut fonts = Fonts::new();
         fonts.insert_embedded("Press Start 2P", false, false, FaceId::MonoRegular.bytes());
-        let mut table = super::super::font_table::parse_font_table_xml(
+        let table = super::super::font_table::parse_font_table_xml(
             "<w:fonts xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
              <w:font w:name=\"Serenity\"><w:family w:val=\"auto\"/></w:font></w:fonts>",
         );
-        table.set_default_family("Press Start 2P");
-        let (_, entry) = fonts.classify_in("Serenity", false, false, &table);
-        assert_eq!(entry.step, FontStep::Embedded);
-        assert_eq!(entry.physical, "LiberationMono");
+        let (face, entry) = fonts.classify_in("Serenity", false, false, &table);
+        assert_eq!(entry.step, FontStep::Generic);
+        assert_eq!(face, FaceRef::Catalogue(FaceId::CarlitoRegular));
     }
 
     #[test]
@@ -4656,11 +4662,10 @@ mod tests {
 
         #[test]
         fn a_missing_default_font_terminates_at_calibri_without_losing_style() {
-            let mut table = crate::convert::font_table::parse_font_table_xml(
+            let table = crate::convert::font_table::parse_font_table_xml(
                 r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
             <w:font w:name="PR168 Missing Face"/><w:font w:name="PR168 Missing Default"/></w:fonts>"#,
             );
-            table.set_default_family("PR168 Missing Default");
             assert_eq!(
                 Fonts::new().resolve_in("PR168 Missing Face", true, true, &table),
                 FaceId::CarlitoBoldItalic
