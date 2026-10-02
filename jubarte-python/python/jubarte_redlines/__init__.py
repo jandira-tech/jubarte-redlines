@@ -84,6 +84,8 @@ from .models import (
     Span,
     Story,
     Summary,
+    Table,
+    TableCell,
 )
 
 __all__ += [
@@ -110,6 +112,8 @@ __all__ += [
     "Snapshot",
     "Story",
     "Summary",
+    "Table",
+    "TableCell",
     "Paragraph",
     "Span",
     "Rendered",

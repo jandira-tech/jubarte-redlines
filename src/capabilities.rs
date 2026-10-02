@@ -173,6 +173,8 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             "resolve_comment",
             "edit_comment",
             "delete_comment",
+            "insert_table",
+            "list",
             "insert_toc",
         ]
         .iter()
@@ -204,7 +206,7 @@ mod tests {
         assert_eq!(c.engine_version, env!("CARGO_PKG_VERSION"));
         assert_eq!(c.runtime, "rust");
         assert_eq!(c.edit_plan_versions, [1]);
-        assert_eq!(c.edit_operations.len(), 14);
+        assert_eq!(c.edit_operations.len(), 16);
         assert!(c.operations.fields);
         assert_eq!(
             c.edit_operations.last().map(String::as_str),

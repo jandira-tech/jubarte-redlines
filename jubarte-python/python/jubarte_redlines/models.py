@@ -309,6 +309,29 @@ class Summary:
 
 
 @dataclass(frozen=True, slots=True)
+class TableCell:
+    """A table cell: the ids of its own paragraphs and their text joined with ``\\n``."""
+
+    paragraph_ids: tuple[str, ...]
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class Table:
+    """A body table as a grid; nested tables are separate entries.
+
+    ``rows`` holds the cells as the XML has them (a merged cell is one cell),
+    ``header_rows`` the leading rows that repeat as a header, ``widths_dxa``
+    the grid column widths in twentieths of a point (0 when unreadable).
+    """
+
+    index: int
+    rows: tuple[tuple[TableCell, ...], ...]
+    header_rows: int
+    widths_dxa: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class Snapshot:
     """What ``Document.inspect()`` returns; the coordinates an ``EditPlan`` uses."""
 
@@ -317,6 +340,7 @@ class Snapshot:
     summary: Summary
     paragraphs: tuple[Paragraph, ...]
     stories: tuple[Story, ...] = ()
+    tables: tuple[Table, ...] = ()
 
     def paragraph(self, id_or_index: str | int) -> Paragraph:
         """The paragraph with this id (``body:p:N``, ``header1:p:0``) or body index."""
@@ -374,6 +398,18 @@ def _decode_snapshot(payload: str) -> Snapshot:
                 paragraphs=tuple(_decode_paragraph(p) for p in s["paragraphs"]),
             )
             for s in data.get("stories", ())
+        ),
+        tables=tuple(
+            Table(
+                index=t["index"],
+                rows=tuple(
+                    tuple(TableCell(paragraph_ids=tuple(c["paragraph_ids"]), text=c["text"]) for c in row)
+                    for row in t["rows"]
+                ),
+                header_rows=t["header_rows"],
+                widths_dxa=tuple(t["widths_dxa"]),
+            )
+            for t in data.get("tables", ())
         ),
     )
 
@@ -652,6 +688,61 @@ class EditPlan:
         op: dict[str, object] = {"kind": "rewrite", "paragraph": _selector(paragraph), "text": text}
         return self._with(_with_optional(op, id=id))
 
+    def insert_table(
+        self,
+        paragraph: Selector,
+        *,
+        rows: Sequence[Sequence[str]],
+        position: Literal["before", "after"] = "after",
+        header_row: bool = False,
+        widths_dxa: Sequence[int] | None = None,
+        style: str | None = None,
+        id: str | None = None,
+    ) -> EditPlan:
+        """Insert a table next to the anchor paragraph; the redline shows its
+        rows inserted.
+
+        ``rows`` is the cell text row by row, every row the same length;
+        ``widths_dxa`` the column widths in twentieths of a point (the text
+        width split evenly when omitted); ``style`` a table style id or name
+        (``TableGrid``, added when the document lacks it, by default).
+        """
+        op: dict[str, object] = {"kind": "insert_table", "paragraph": _selector(paragraph), "position": position, "rows": _table_rows(rows)}
+        if header_row:
+            op["header_row"] = True
+        if widths_dxa is not None:
+            if isinstance(widths_dxa, (str, bytes)) or not all(isinstance(w, int) and not isinstance(w, bool) for w in widths_dxa):
+                raise TypeError("widths_dxa must be a sequence of integers")
+            op["widths_dxa"] = list(widths_dxa)
+        return self._with(_with_optional(op, style=style, id=id))
+
+    def list_paragraphs(
+        self,
+        paragraphs: Sequence[Selector],
+        *,
+        kind_of_list: Literal["bullet", "decimal", "lower_letter"] = "bullet",
+        level: int = 0,
+        restart: bool = True,
+        id: str | None = None,
+    ) -> EditPlan:
+        """Make the paragraphs a list (wire kind ``list``); the redline records
+        each paragraph's old properties.
+
+        ``level`` is 0 (outermost) to 8. ``restart=False`` continues the list
+        of the nearest numbered paragraph before the first one instead of
+        starting a new one.
+        """
+        if isinstance(paragraphs, (str, bytes, dict)):
+            raise TypeError("paragraphs must be a sequence of selectors")
+        op: dict[str, object] = {"kind": "list", "paragraphs": [_selector(p) for p in paragraphs]}
+        if kind_of_list != "bullet":
+            op["kind_of_list"] = kind_of_list
+        if level:
+            op["level"] = level
+        if not restart:
+            op["restart"] = False
+        return self._with(_with_optional(op, id=id))
+
     def reply_comment(self, comment_id: int, *, text: str, id: str | None = None) -> EditPlan:
         """Reply to comment ``comment_id`` (``Document.comments`` lists the ids),
         anchored on the same text; a reply to a reply joins the thread."""
@@ -714,6 +805,18 @@ class EditPlan:
     def to_json(self) -> str:
         """The wire form as JSON (what ``jubarte edit --plan`` reads)."""
         return json.dumps(self.to_dict(), ensure_ascii=False, indent=2)
+
+
+def _table_rows(rows: Sequence[Sequence[str]]) -> list[list[str]]:
+    """A copy of ``rows``, each a sequence of cell strings; the engine checks the shape."""
+    if isinstance(rows, (str, bytes)):
+        raise TypeError("rows must be a sequence of rows, not a string")
+    out: list[list[str]] = []
+    for row in rows:
+        if isinstance(row, (str, bytes)) or not all(isinstance(cell, str) for cell in row):
+            raise TypeError("each row must be a sequence of cell strings")
+        out.append(list(row))
+    return out
 
 
 def _with_optional(op: dict[str, object], **extra: str | None) -> dict[str, object]:
