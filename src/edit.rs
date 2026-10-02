@@ -156,6 +156,10 @@ pub enum OperationKind {
         /// Show the change as all of `find` deleted, then all of
         /// `replacement` inserted, instead of Word Compare's word-level diff.
         whole: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Which hit of a repeated anchor to use (1-based); required when
+        /// the anchor occurs more than once.
+        occurrence: Option<usize>,
     },
     /// Insert `text` after/before exactly one occurrence of an anchor, or at
     /// the paragraph's start/end. Exactly one of `after`, `before`,
@@ -180,6 +184,10 @@ pub enum OperationKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         /// Comment text anchored to the changed text.
         comment: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Which hit of a repeated anchor to use (1-based); required when
+        /// the anchor occurs more than once.
+        occurrence: Option<usize>,
     },
     /// Delete exactly one occurrence of `find`.
     Delete {
@@ -187,6 +195,10 @@ pub enum OperationKind {
         paragraph: Selector,
         /// Exact text to delete; must occur exactly once.
         find: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Which hit of a repeated anchor to use (1-based); required when
+        /// the anchor occurs more than once.
+        occurrence: Option<usize>,
     },
     /// Comment on exactly one occurrence of `find`, or on the whole paragraph.
     Comment {
@@ -202,6 +214,9 @@ pub enum OperationKind {
         /// end of this one (same story, not before `paragraph`); `find`
         /// must be left out.
         through: Option<Selector>,
+        /// Which hit of a repeated anchor to use (1-based); required when
+        /// the anchor occurs more than once.
+        occurrence: Option<usize>,
     },
     /// Insert a new paragraph next to the anchor paragraph, copying its
     /// paragraph properties (never its section break or revision marks), or
@@ -1066,10 +1081,25 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
         };
         let kind = map.get("kind").and_then(|k| k.as_str()).unwrap_or("");
         let allowed: &[&str] = match kind {
-            "replace" => &["find", "replacement", "format", "comment", "whole"],
-            "insert" => &["after", "before", "position", "text", "format", "comment"],
-            "delete" => &["find"],
-            "comment" => &["find", "text", "through"],
+            "replace" => &[
+                "find",
+                "replacement",
+                "format",
+                "comment",
+                "whole",
+                "occurrence",
+            ],
+            "insert" => &[
+                "after",
+                "before",
+                "position",
+                "text",
+                "format",
+                "comment",
+                "occurrence",
+            ],
+            "delete" => &["find", "occurrence"],
+            "comment" => &["find", "text", "through", "occurrence"],
             "insert_paragraph" => &["position", "runs", "like", "style", "comment"],
             "delete_paragraph" => &["comment"],
             "format_paragraph" => &[
@@ -1897,6 +1927,7 @@ impl<'p> Transaction<'p> {
                 replacement,
                 format,
                 comment,
+                occurrence,
                 ..
             } => {
                 check_text(replacement).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
@@ -1908,7 +1939,7 @@ impl<'p> Transaction<'p> {
                     check_comment(note).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
                 }
                 let (start, end) = self
-                    .find_range(projection, find, &mut outcome)
+                    .find_range(projection, find, *occurrence, &mut outcome)
                     .map_err(|(c, m)| fail(&c, m, outcome.clone()))?;
                 outcome.context = Some(context(
                     text,
@@ -1929,9 +1960,11 @@ impl<'p> Transaction<'p> {
                     outcome,
                 ))
             }
-            OperationKind::Delete { find, .. } => {
+            OperationKind::Delete {
+                find, occurrence, ..
+            } => {
                 let (start, end) = self
-                    .find_range(projection, find, &mut outcome)
+                    .find_range(projection, find, *occurrence, &mut outcome)
                     .map_err(|(c, m)| fail(&c, m, outcome.clone()))?;
                 outcome.context = Some(context(
                     text,
@@ -1959,6 +1992,7 @@ impl<'p> Transaction<'p> {
                 text: new,
                 format,
                 comment,
+                occurrence,
                 ..
             } => {
                 check_text(new).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
@@ -1979,13 +2013,13 @@ impl<'p> Transaction<'p> {
                 let (pos, attach_before) = match (after, before, position) {
                     (Some(after), None, None) => {
                         let (_, end) = self
-                            .find_range(projection, after, &mut outcome)
+                            .find_range(projection, after, *occurrence, &mut outcome)
                             .map_err(|(c, m)| fail(&c, m, outcome.clone()))?;
                         (end, true)
                     }
                     (None, Some(before), None) => {
                         let (start, _) = self
-                            .find_range(projection, before, &mut outcome)
+                            .find_range(projection, before, *occurrence, &mut outcome)
                             .map_err(|(c, m)| fail(&c, m, outcome.clone()))?;
                         (start, false)
                     }
@@ -2069,12 +2103,15 @@ impl<'p> Transaction<'p> {
                 ))
             }
             OperationKind::Comment {
-                find, text: note, ..
+                find,
+                text: note,
+                occurrence,
+                ..
             } => {
                 check_comment(note).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
                 let (start, end) = match find {
                     Some(find) => self
-                        .find_range(projection, find, &mut outcome)
+                        .find_range(projection, find, *occurrence, &mut outcome)
                         .map_err(|(c, m)| fail(&c, m, outcome.clone()))?,
                     None => {
                         outcome.matches = 1;
@@ -2967,12 +3004,14 @@ impl<'p> Transaction<'p> {
         (self.opened.body, "the body")
     }
 
-    /// The unique occurrence of `find` (overlapping occurrences count), checked
-    /// to lie within editable direct text.
+    /// The unique occurrence of `find`, or its `occurrence`-th hit (1-based)
+    /// when given (overlapping occurrences count), checked to lie within
+    /// editable direct text.
     fn find_range(
         &self,
         projection: &Projection,
         find: &str,
+        occurrence: Option<usize>,
         outcome: &mut EditOutcome,
     ) -> Result<(usize, usize), (String, String)> {
         if find.is_empty() {
@@ -2985,18 +3024,34 @@ impl<'p> Transaction<'p> {
             .filter(|&i| text[i..].starts_with(find))
             .collect();
         outcome.matches = hits.len();
-        let start = match hits.as_slice() {
-            [one] => *one,
-            [] => {
+        let start = match (hits.as_slice(), occurrence) {
+            ([], _) => {
                 return Err((
                     "ANCHOR_NOT_FOUND".into(),
                     format!("{find:?} does not occur in the paragraph"),
                 ));
             }
-            many => {
+            (_, Some(0)) => {
+                return Err(("INVALID_EDIT".into(), "occurrence is 1-based".into()));
+            }
+            ([one], None) => *one,
+            (many, None) => {
+                let n = many.len();
                 return Err((
                     "AMBIGUOUS_ANCHOR".into(),
-                    format!("{find:?} occurs {} times in the paragraph", many.len()),
+                    format!(
+                        "{find:?} occurs {n} times in the paragraph; set \"occurrence\" to 1..={n}"
+                    ),
+                ));
+            }
+            (many, Some(k)) if k <= many.len() => many[k - 1],
+            (many, Some(k)) => {
+                let n = many.len();
+                return Err((
+                    "AMBIGUOUS_ANCHOR".into(),
+                    format!(
+                        "{find:?} occurs {n} times in the paragraph; occurrence {k} is outside occurrence 1..={n}"
+                    ),
                 ));
             }
         };
@@ -3945,6 +4000,7 @@ impl<'p> Transaction<'p> {
                         find: None,
                         text: text.clone(),
                         through: None,
+                        occurrence: None,
                     },
                 }
             })

@@ -262,6 +262,13 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   dates are `INVALID_EDIT`. Python `EditPlan.fill_control`; capabilities
   report `operations.content_controls` and `fill_control`. The redline
   shows a fill as tracked text without the control (KNOWN_ISSUES.md #7).
+- `occurrence` (1-based) on the `replace`, `insert`, `delete` and `comment`
+  edit operations picks one hit of a repeated anchor; the Python builders
+  take `occurrence=`. Without it, the `AMBIGUOUS_ANCHOR` refusal now says
+  how many times the anchor occurs and the range to choose from.
+  `occurrence: 0` is an `INVALID_EDIT`. Rust code that builds these
+  `OperationKind` variants with struct literals must add
+  `occurrence: None`.
 
 ### Fixed
 
