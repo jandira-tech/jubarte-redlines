@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "source_sha256": "<sha256 of your form.docx, from `jubarte inspect --json`>",
+  "author": "Claude",
+  "date": "2026-10-02T12:00:00Z",
+  "operations": [
+    {"id": "name", "kind": "fill_control", "control": {"tag": "Name"}, "text": "Ada Lovelace"},
+    {"id": "country", "kind": "fill_control", "control": {"alias": "Country"}, "choice": "Brazil"},
+    {"id": "consent", "kind": "fill_control", "control": {"tag": "Consent"}, "checked": true},
+    {"id": "signed", "kind": "fill_control", "control": {"tag": "Signed"}, "date": "2026-10-02"},
+    {"id": "matter", "kind": "fill_control", "control": "body:sdt:4",
+     "text": "Review of a supplier agreement before renewal; counterparty Acme Ltd."}
+  ]
+}
