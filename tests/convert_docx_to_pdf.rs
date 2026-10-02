@@ -18301,6 +18301,71 @@ fn a_footer_holding_only_an_uncached_page_field_paints_the_number() {
 }
 
 #[test]
+fn a_header_right_tab_past_the_margin_keeps_its_text_on_the_line() {
+    // Word's stock Header style sets center 4680 / right 9360 tabs; with
+    // margins wider than 1in the right stop stands past the right margin.
+    // Word 16 probes tabh th15/thl (2026-10-02, margins 1800/1620, TNR
+    // 12): "Hleft⇥Hmid⇥Hnumq" stays one line; compat 15 ends Hnumq on the
+    // margin (starts 495.00), legacy layout on the stop (starts 522.00).
+    // We wrapped Hnumq onto a second line in both.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\" w:cs=\"Times New Roman\"/>\
+            <w:sz w:val=\"24\"/></w:rPr></w:rPrDefault><w:pPrDefault/></w:docDefaults>\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style></w:styles>";
+    let header = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:p><w:pPr><w:tabs><w:tab w:val=\"center\" w:pos=\"4680\"/><w:tab w:val=\"right\" w:pos=\"9360\"/></w:tabs>\
+             <w:spacing w:after=\"0\"/></w:pPr>\
+             <w:r><w:t>Hleft</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t>Hmid</w:t></w:r>\
+             <w:r><w:tab/></w:r><w:r><w:t>Hnumq</w:t></w:r></w:p></w:hdr>";
+    let body = "<w:p><w:r><w:t>Body</w:t></w:r></w:p>\
+         <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1620\" w:bottom=\"1440\" w:left=\"1800\" \
+             w:header=\"720\" w:footer=\"720\"/></w:sectPr>";
+    let num = |compat: &str| {
+        let settings = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">{compat}</w:settings>"
+        );
+        let pdf = docx_to_pdf(&hf_docx(
+            body,
+            &[
+                ("rIdH1", "header", "header1.xml"),
+                ("rIdSt", "styles", "styles.xml"),
+                ("rIdSet", "settings", "settings.xml"),
+            ],
+            &[
+                ("word/header1.xml", header.to_string()),
+                ("word/styles.xml", styles.to_string()),
+                ("word/settings.xml", settings),
+            ],
+        ))
+        .expect("header right tab");
+        let left = pdf_glyph_text_xy(&pdf, "Hleft").expect("Hleft");
+        let num = pdf_glyph_text_xy(&pdf, "Hnumq").expect("Hnumq");
+        assert!(
+            (num.1 - left.1).abs() < 0.5,
+            "Hnumq stays on the Hleft line: {num:?} vs {left:?}"
+        );
+        num.0
+    };
+    let compat15 = num(
+        "<w:compat><w:compatSetting w:name=\"compatibilityMode\" w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat>",
+    );
+    assert!(
+        (compat15 - 495.0).abs() < 0.3,
+        "compat 15 ends Hnumq on the margin, starts {compat15}"
+    );
+    let legacy = num("");
+    assert!(
+        (legacy - 522.0).abs() < 0.3,
+        "legacy ends Hnumq on the stop, starts {legacy}"
+    );
+}
+
+#[test]
 fn a_right_framed_header_page_number_shares_the_next_line() {
     // fixtures_500 0014add1: the header's first paragraph is a frame
     // (framePr wrap=around, xAlign=right) holding PAGE; the next paragraph
@@ -44387,6 +44452,42 @@ fn link_styles_takes_the_template_normal() {
     assert!(
         linked > 23.0,
         "linkStyles lays out with the template's 12pt / 278 / after 8, got {linked}"
+    );
+}
+
+#[test]
+fn a_right_tab_past_the_right_margin_lands_on_it_in_compat_15() {
+    // 12d245d664's TOC styles put a right dot-leader tab at 9360 twips,
+    // 27pt past its right margin; Word ends the page numbers on the margin.
+    // Word 16 probes tab (2026-10-02, margins 1800/1620): compat 15 lands
+    // stops at 8820 (the margin), 9000 and 9360 all on 531pt; with no
+    // settings (legacy layout) 9360 stays at 558pt.
+    let body = |pos: u32| {
+        format!(
+            "<w:p><w:pPr><w:tabs><w:tab w:val=\"right\" w:leader=\"dot\" w:pos=\"{pos}\"/></w:tabs></w:pPr>\
+               <w:r><w:t>Entry</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t>Numq</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1000\" w:right=\"1620\" w:bottom=\"1000\" w:left=\"1800\"/></w:sectPr>"
+        )
+    };
+    let compat15 = "<w:compat><w:compatSetting w:name=\"compatibilityMode\" w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat>";
+    let num_x = |pos: u32, settings: &str| {
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body(pos), settings))
+            .expect("right tab past the margin");
+        pdf_glyph_text_xy(&pdf, "Numq").expect("Numq").0
+    };
+    let at_margin = num_x(8820, compat15);
+    for pos in [9000, 9360] {
+        let x = num_x(pos, compat15);
+        assert!(
+            (x - at_margin).abs() < 0.1,
+            "compat 15 lands a right tab at {pos} on the margin: {x} vs {at_margin}"
+        );
+    }
+    let legacy = num_x(9360, "");
+    assert!(
+        (legacy - at_margin - 27.0).abs() < 0.1,
+        "legacy layout keeps the stop 27pt past the margin: {legacy} vs {at_margin}"
     );
 }
 

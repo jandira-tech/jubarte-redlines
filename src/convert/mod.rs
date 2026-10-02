@@ -19894,7 +19894,16 @@ fn hf_wrap_tab_pieces(fonts: &Fonts, pieces: Vec<Vec<TextRun>>, width: f32) -> V
             squeeze: Squeeze::NONE,
         };
         let right = width - para.indent_right;
-        if hf_tab_piece_end(fonts, &piece, &para, first_start) <= right + 0.5 {
+        // Text that ends on a right stop past the margin stays on its line
+        // (Word 16 probes tabh: compat 15 lands it on the margin, legacy
+        // layout on the stop; the stock Header style's 9360 right tab
+        // under margins wider than 1in).
+        let room = para
+            .tab_stops
+            .iter()
+            .filter(|t| t.align == TabAlign::Right)
+            .fold(right, |room, t| room.max(t.pos));
+        if hf_tab_piece_end(fonts, &piece, &para, first_start) <= room + 0.5 {
             out.push(piece);
             continue;
         }
@@ -21820,6 +21829,24 @@ impl<'a> Layout<'a> {
         });
     }
 
+    /// A paragraph's tab stops where this layout lands them: from
+    /// compatibilityMode 15 a right stop past the line's right edge lands
+    /// on it (Word 16 probes tab, 2026-10-02: 8820, 9000 and 9360 twips
+    /// all end on a 441pt-wide body's margin; legacy layout keeps 9360).
+    fn landed_tab_stops(&self, stops: &[TabStop]) -> Vec<TabStop> {
+        let right = self.content_width();
+        stops
+            .iter()
+            .map(|&stop| {
+                if self.compat_mode >= 15 && stop.align == TabAlign::Right && stop.pos > right {
+                    TabStop { pos: right, ..stop }
+                } else {
+                    stop
+                }
+            })
+            .collect()
+    }
+
     fn flow_left(&self) -> f32 {
         if self.page.col_count <= 1 {
             self.page.margin_l
@@ -22589,7 +22616,7 @@ impl<'a> Layout<'a> {
         self.note_chapter_heading(style);
         self.last_style_id.clone_from(&style.style_id);
         self.page_has_body = true;
-        self.tab_stops.clone_from(&style.tab_stops);
+        self.tab_stops = self.landed_tab_stops(&style.tab_stops);
         // A hanging indent is an implicit left tab stop at the indent
         // (00b7801e: "Monday 7/22<tab>" lands on the wrapped lines' edge).
         if style.indent_first < 0.0
@@ -23553,7 +23580,8 @@ impl<'a> Layout<'a> {
         let indent = style.indent_left + if list { 18.0 } else { 0.0 };
         let width = (self.content_width() - indent - style.indent_right).max(40.0);
         // Measured with the follower's own tab stops.
-        let stops = std::mem::replace(&mut self.tab_stops, style.tab_stops.clone());
+        let landed = self.landed_tab_stops(&style.tab_stops);
+        let stops = std::mem::replace(&mut self.tab_stops, landed);
         let n = self
             .wrap_para_runs(body, style, indent, marker.is_some(), width, list)
             .0
@@ -24966,7 +24994,8 @@ impl<'a> Layout<'a> {
                     left -= take.chars().count();
                     prefix.push(run.with_text(take));
                 }
-                let stops = std::mem::replace(&mut self.tab_stops, style.tab_stops.clone());
+                let landed = self.landed_tab_stops(&style.tab_stops);
+                let stops = std::mem::replace(&mut self.tab_stops, landed);
                 let x0 = self.page.margin_l + style.indent_left;
                 let w = self.tab_line_width(&prefix, x0);
                 self.tab_stops = stops;
@@ -28550,7 +28579,7 @@ impl<'a> Layout<'a> {
             && !para.as_deref().is_some_and(ptab);
         if tabbed && matches!(align, Align::Left | Align::Justify) || aligned_tabs {
             let width = self.content_width();
-            let stops = para
+            let stops: Vec<TabStop> = para
                 .as_ref()
                 .map(|p| {
                     p.tab_stops
@@ -28569,7 +28598,8 @@ impl<'a> Layout<'a> {
                 })
                 .unwrap_or_default();
             let indent = para.as_ref().map_or(0.0, |p| hf_line_indent(p, runs));
-            let saved = std::mem::replace(&mut self.tab_stops, stops);
+            let landed = self.landed_tab_stops(&stops);
+            let saved = std::mem::replace(&mut self.tab_stops, landed);
             let x0 = self.page.margin_l + indent;
             let shift = if aligned_tabs {
                 let room = width - indent - para.as_ref().map_or(0.0, |p| p.indent_right);
