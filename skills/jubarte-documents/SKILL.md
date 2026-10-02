@@ -424,4 +424,6 @@ have. Text to hide inside the document is a plan's `redact` (§2).
 `jubarte` (single binary) or `pip install jubarte-redlines` (`python -m
 jubarte_redlines`, same commands; compare is `compare A B` there) · `docx` (npm) for new documents. As MCP tools (Claude Code, Codex, Gemini CLI):
 `uvx --from 'jubarte-redlines[mcp]' jubarte-mcp --root .` (see `docs/adoption/mcp.md`). Legacy
-`.doc` is not read; ask for a `.docx`.
+`.doc` is refused with `LEGACY_DOC` (so is an encrypted document, which is
+the same OLE container); convert it with Word, or ask for a `.docx`. RTF is
+refused with `UNSUPPORTED_PACKAGE`.

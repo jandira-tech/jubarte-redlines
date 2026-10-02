@@ -141,7 +141,10 @@ pub struct Limits {
     /// Edits refuse ranges crossing fields, hyperlinks, content controls,
     /// revisions, tabs, breaks and symbols.
     pub refuses_opaque_ranges: bool,
-    /// Legacy `.doc` input is not read.
+    /// Legacy `.doc` input is not read: an OLE compound file (a Word
+    /// 97-2003 `.doc`, or an encrypted document of any Word version) is
+    /// refused with `LEGACY_DOC` on every entry point, and RTF with
+    /// `UNSUPPORTED_PACKAGE`.
     pub reads_legacy_doc: bool,
     /// Package budgets `inspect` and `edit` admit (larger input is refused
     /// with `INPUT_LIMIT`).

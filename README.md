@@ -759,7 +759,10 @@ Release assets can vary by tag. Check the
 [release page](https://github.com/jandira-tech/jubarte-redlines/releases)
 before scripting a binary download.
 
-Legacy binary `.doc` files are not supported; convert them to `.docx` first.
+Legacy binary `.doc` files are not supported: a `.doc`, or an encrypted
+document of any Word version, is refused with `LEGACY_DOC` and the hint to
+save it as `.docx` without a password, and RTF with `UNSUPPORTED_PACKAGE`.
+Convert them to `.docx` first.
 
 ## Troubleshooting
 
