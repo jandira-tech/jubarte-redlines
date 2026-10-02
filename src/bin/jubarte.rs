@@ -2137,6 +2137,7 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
                 author: markdown.author.clone(),
                 date: markdown.date.clone(),
                 images: Some(&loader),
+                page: jubarte::markdown::PageSize::default(),
             };
             let written = jubarte::markdown::markdown_to_docx(&text, &options)
                 .map_err(|e| format!("convert failed: {e}"))?;

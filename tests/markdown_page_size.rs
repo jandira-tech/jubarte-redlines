@@ -15,6 +15,12 @@ const LETTER: &str = r#"<w:pgSz w:w="12240" w:h="15840"/>"#;
 const A4: &str = r#"<w:pgSz w:w="11906" w:h="16838"/>"#;
 const ONE_INCH: &str = r#"<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>"#;
 
+/// `word/document.xml` with self-closing tags written `<a/>`: the writer
+/// re-serializes the section as `<a />`, and only the attributes matter here.
+fn compact(xml: &str) -> String {
+    xml.replace(" />", "/>")
+}
+
 fn document_xml(page: PageSize) -> (String, Vec<String>) {
     let written = markdown_to_docx(
         "# T\n\ntext\n",
@@ -26,7 +32,7 @@ fn document_xml(page: PageSize) -> (String, Vec<String>) {
     .unwrap();
     assert_word_valid_package(&written.docx);
     (
-        part_string(&written.docx, "word/document.xml").unwrap(),
+        compact(&part_string(&written.docx, "word/document.xml").unwrap()),
         written.warnings,
     )
 }
@@ -60,7 +66,7 @@ fn both_pages_keep_one_inch_margins() {
 #[test]
 fn a_reference_documents_section_wins_over_page_with_a_warning() {
     let reference = std::fs::read("tests/fixtures/redline-inpi/original-new.docx").unwrap();
-    let reference_xml = part_string(&reference, "word/document.xml").unwrap();
+    let reference_xml = compact(&part_string(&reference, "word/document.xml").unwrap());
     let reference_width = reference_xml
         .find("<w:pgSz ")
         .map(|at| &reference_xml[at..at + reference_xml[at..].find("/>").unwrap() + 2])
@@ -76,7 +82,7 @@ fn a_reference_documents_section_wins_over_page_with_a_warning() {
         },
     )
     .unwrap();
-    let xml = part_string(&written.docx, "word/document.xml").unwrap();
+    let xml = compact(&part_string(&written.docx, "word/document.xml").unwrap());
     assert!(xml.contains(reference_width), "{xml}");
     assert!(!xml.contains(A4), "{xml}");
     assert_eq!(
