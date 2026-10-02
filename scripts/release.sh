@@ -486,6 +486,7 @@ else
       jubarte-app/package.json jubarte-app/CHANGELOG.md jubarte-app/src/index.html \
       jubarte-app/src-tauri/Cargo.toml jubarte-app/src-tauri/Cargo.lock \
       jubarte-app/src-tauri/tauri.conf.json \
+      gemini-extension.json \
       docs/api
     git commit -m "chore(release): v$VER" -m "Docs: $DOCS_UPDATED"
   fi

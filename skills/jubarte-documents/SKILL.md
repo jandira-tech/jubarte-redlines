@@ -239,5 +239,6 @@ tracked changes and comments.
 ## Dependencies
 
 `jubarte` (single binary) or `pip install jubarte-redlines` (`python -m
-jubarte_redlines`, same commands; compare is `compare A B` there) · `docx` (npm) for new documents. Legacy
+jubarte_redlines`, same commands; compare is `compare A B` there) · `docx` (npm) for new documents. As MCP tools (Claude Code, Codex, Gemini CLI):
+`uvx --from 'jubarte-redlines[mcp]' jubarte-mcp --root .` (see `docs/adoption/mcp.md`). Legacy
 `.doc` is not read; ask for a `.docx`.

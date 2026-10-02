@@ -1,0 +1,12 @@
+{
+  "name": "jubarte-redlines",
+  "version": "0.10.1",
+  "description": "Read, edit as tracked changes, compare, accept/reject and render Word .docx files with one engine; no LibreOffice, pandoc or Poppler.",
+  "mcpServers": {
+    "jubarte": {
+      "command": "uvx",
+      "args": ["--from", "jubarte-redlines[mcp]", "jubarte-mcp", "--root", "${workspacePath}"]
+    }
+  },
+  "contextFileName": "GEMINI.md"
+}

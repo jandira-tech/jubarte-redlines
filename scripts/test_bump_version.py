@@ -63,5 +63,43 @@ class ReadmePins(unittest.TestCase):
         self.assertIn("jubarte-redlines/0.10.2", out)
 
 
+@unittest.skipUnless(shutil.which("bun"), "bun is not installed")
+class GeminiManifest(unittest.TestCase):
+    """gemini-extension.json carries the release version (Gemini CLI reads it)."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="bump_version_"))
+        (self.tmp / "scripts").mkdir()
+        shutil.copy(BUMP, self.tmp / "scripts" / "bump-version.mjs")
+        (self.tmp / "Cargo.toml").write_text(CARGO)
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def run_bump(self, version: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bun", str(self.tmp / "scripts" / "bump-version.mjs"), version],
+            capture_output=True, text=True, timeout=60,
+        )
+
+    def test_manifest_version_follows_the_bump(self) -> None:
+        manifest = self.tmp / "gemini-extension.json"
+        manifest.write_text(
+            '{\n  "name": "jubarte-redlines",\n  "version": "0.10.1",\n'
+            '  "mcpServers": {"jubarte": {"command": "uvx", "args": ["--from", "x"]}}\n}\n'
+        )
+        r = self.run_bump("0.11.0")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        text = manifest.read_text()
+        self.assertIn('"version": "0.11.0"', text)
+        self.assertIn('"name": "jubarte-redlines"', text)
+        self.assertTrue(text.endswith("}\n"))
+
+    def test_a_missing_manifest_is_tolerated(self) -> None:
+        r = self.run_bump("0.10.2")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse((self.tmp / "gemini-extension.json").exists())
+
+
 if __name__ == "__main__":
     unittest.main()
