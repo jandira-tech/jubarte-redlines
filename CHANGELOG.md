@@ -57,7 +57,9 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   the report's revision counts and the patch (`patch.diff`, Python
   `EditResult.diff`) cover the plan's own changes. Edits inside their
   revisions, and deleting, merging or reformatting a paragraph whose mark
-  or properties they changed, are refused. New
+  or properties they changed, are refused. New tables are inserted rows,
+  list numbering and paragraph formatting are `w:pPrChange`, and comment
+  replies, resolutions and deletions carry into the redline. New
   `markdown::patch_own_changes`, capability
   `operations.edit_keeps_revisions`, and Python `existing_revisions="keep"`.
 - `scripts/release.sh` step 12 runs `scripts/release_downstream.sh`: jubarte.pro
@@ -111,6 +113,31 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   `insert_paragraph` takes `like`, the paragraph whose properties the new
   one copies instead of the anchor's. Both are in `jubarte capabilities`,
   the Python plan builder and the agent skill.
+- Edit plans: `insert_table` puts a table before or after a body
+  paragraph (`rows`, optional `header_row`, `widths_dxa` and `style`).
+  The table has a DXA `w:tblW` equal to the sum of the column widths, a
+  `w:gridCol` and a DXA `w:tcW` for every column, and `w:tblHeader` on the
+  first row when asked. Its cells take the anchor's paragraph style.
+  `TableGrid` is added to `styles.xml` when absent. The redline shows the
+  rows inserted. Ragged rows and mismatched widths are `INVALID_EDIT`, and
+  nested tables are `UNSUPPORTED_STRUCTURE`. In `jubarte capabilities`, the
+  Python builder (`EditPlan.insert_table`) and the agent skill.
+- Edit plans: `list` makes body paragraphs a bulleted, decimal or
+  lower-letter list (`paragraphs`, `kind_of_list`, `level` 0 to 8,
+  `restart`). A new list adds one `w:abstractNum` (nine levels) and one
+  `w:num` to `numbering.xml`, which is created when absent. Every
+  `w:abstractNum` stays before every `w:num`, with ids after the
+  document's. Each paragraph gets direct `w:numPr`, and `ListParagraph`
+  when it has no style. The redline shows a `w:pPrChange` per paragraph.
+  `restart: false` continues the nearest preceding list. Python:
+  `EditPlan.list_paragraphs`.
+- `inspect` reads tables as grids: the snapshot (`jubarte inspect --json`,
+  `inspect::inspect_json`, WASM `inspectDocument`) gains `tables`. Each
+  body table, nested ones included, has `index`, `rows` of cells
+  (`paragraph_ids`, `text`), `header_rows` and `widths_dxa`. The ids feed
+  straight into an edit plan. Also available as `inspect::tables` and
+  `jubarte inspect FILE --tables`. Python: `Snapshot.tables` (`Table`,
+  `TableCell`).
 - Edit plans: `delete_paragraph` takes an optional `comment`, anchored on
   the deleted text in the redline (the clean copy has no paragraph to hold
   it) and shown on the removed paragraph's hunk in the patch. Python:

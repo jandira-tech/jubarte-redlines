@@ -395,6 +395,7 @@ jubarte convert redline.docx \
 
 ```sh
 jubarte inspect contract.docx --json
+jubarte inspect contract.docx --tables   # each table as a grid of `ids=text` cells
 jubarte text contract.docx
 ```
 
@@ -482,6 +483,10 @@ Supported operation kinds include:
 - `delete_paragraph`
 - `format_paragraph`
 - `merge_paragraphs`
+- `insert_table` (unreleased: a table next to a paragraph, tracked as
+  inserted rows)
+- `list` (unreleased: paragraphs become a bulleted, numbered or lettered
+  list, tracked as property changes)
 
 Plans are atomic: stale sources, ambiguous anchors, overlapping edits or
 unsupported structures refuse the plan instead of making a guessed edit.

@@ -320,6 +320,7 @@ fn keep_refuses_paragraph_changes_on_tracked_paragraphs() {
         r#"[{"kind":"delete_paragraph","paragraph":"body:p:0"}]"#,
         r#"[{"kind":"merge_paragraphs","paragraph":"body:p:1"}]"#,
         r#"[{"kind":"format_paragraph","paragraph":"body:p:2","alignment":"left"}]"#,
+        r#"[{"kind":"list","paragraphs":["body:p:2"]}]"#,
     ] {
         let e = apply_plan(&source, &keep(operations)).unwrap_err();
         assert_eq!(e.code, "UNSUPPORTED_STRUCTURE", "{operations}: {e:?}");
@@ -562,4 +563,44 @@ fn thread_operations_and_spans_ride_the_redline_under_keep() {
             && !red.contains(&format!(r#"<w:commentReference w:id="{}""#, ids[1])),
         "the deleted comment's markers are gone: {red}"
     );
+}
+
+#[test]
+fn tables_and_lists_are_tracked_under_keep() {
+    let source = docx(&(OTHER.to_string() + &para("Apples") + &para("Pears") + &para("End.")));
+    let out = apply_plan(&source, &keep(r#"[
+        {"kind":"insert_table","paragraph":"body:p:3","position":"before","rows":[["a","b"],["c","d"]],"header_row":true},
+        {"kind":"list","paragraphs":["body:p:1","body:p:2"]},
+        {"kind":"format_paragraph","paragraph":"body:p:3","alignment":"center"}]"#)).unwrap();
+    let changes = invariants(&source, &out);
+    let count = |kind: ChangeKind, target: &str| {
+        changes
+            .iter()
+            .filter(|c| c.author.as_deref() == Some("Me") && c.kind == kind && c.target == target)
+            .count()
+    };
+    assert_eq!(count(ChangeKind::Insertion, "table_row"), 2, "{changes:#?}");
+    assert_eq!(count(ChangeKind::Insertion, "text"), 4, "one per cell");
+    assert_eq!(
+        count(ChangeKind::Formatting, "properties"),
+        3,
+        "a pPrChange per numbered paragraph and one for the format"
+    );
+    let red = part_string(&out.redline, "word/document.xml").unwrap();
+    assert!(
+        red.contains("<w:numPr>") && red.contains("<w:tbl>"),
+        "{red}"
+    );
+    let rejected = reject_changes(&out.redline, &mine()).unwrap();
+    let rejected_xml = part_string(&rejected, "word/document.xml").unwrap();
+    assert!(
+        !rejected_xml.contains("<w:tbl>") && !rejected_xml.contains("<w:numPr>"),
+        "rejecting mine removes the table and the numbering: {rejected_xml}"
+    );
+    let accepted = part_string(
+        &accept_changes(&out.redline, &mine()).unwrap(),
+        "word/document.xml",
+    )
+    .unwrap();
+    assert!(accepted.contains("<w:tbl>") && accepted.contains("<w:numPr>"));
 }

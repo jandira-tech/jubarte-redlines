@@ -23,6 +23,10 @@ use crate::namespaces::{MC, W};
 use crate::opc::PartFs;
 use crate::xmllinq::{Dom, NodeId, XName};
 
+mod tables;
+
+pub use tables::{Table, TableCell};
+
 /// Wire schema of [`inspect_json`] and of the edit plan that consumes it.
 pub const SCHEMA_VERSION: u32 = 1;
 
@@ -116,6 +120,8 @@ pub struct Snapshot {
     pub paragraphs: Vec<Paragraph>,
     /// Header, footer and note stories, each with its own paragraphs.
     pub stories: Vec<Story>,
+    /// Body tables as grids of cells, nested tables included.
+    pub tables: Vec<Table>,
 }
 
 /// A header, footer or notes part an edit plan can address. Its paragraph
@@ -197,8 +203,15 @@ pub fn markdown(docx: &[u8]) -> Result<String, InspectError> {
     Ok(render_markdown(&all))
 }
 
+/// Body tables as grids: each cell's text and paragraph ids, the header
+/// rows and the grid widths.
+pub fn tables(docx: &[u8]) -> Result<Vec<Table>, InspectError> {
+    let opened = Opened::open(docx)?;
+    Ok(tables::body_tables(&opened.dom, opened.body))
+}
+
 /// The full snapshot as JSON (`schema_version`, `source_sha256`, `summary`,
-/// `paragraphs`).
+/// `paragraphs`, `stories`, `tables`).
 pub fn inspect_json(docx: &[u8]) -> Result<String, InspectError> {
     let opened = Opened::open(docx)?;
     let snapshot = Snapshot {
@@ -207,6 +220,7 @@ pub fn inspect_json(docx: &[u8]) -> Result<String, InspectError> {
         summary: opened.summary()?,
         paragraphs: body_paragraphs(&opened.dom, opened.body),
         stories: opened.stories()?,
+        tables: tables::body_tables(&opened.dom, opened.body),
     };
     serde_json::to_string(&snapshot).map_err(|e| InspectError::Invalid(e.to_string()))
 }

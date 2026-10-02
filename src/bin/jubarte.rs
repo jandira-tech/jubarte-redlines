@@ -327,9 +327,15 @@ enum Command {
         #[arg(value_name = "FILE")]
         file: PathBuf,
         /// Emit the snapshot as JSON (`schema_version`, `source_sha256`,
-        /// `summary`, `paragraphs`) instead of a human summary.
+        /// `summary`, `paragraphs`, `stories`, `tables`) instead of a human
+        /// summary.
         #[arg(long)]
         json: bool,
+        /// Print each body table as a grid instead of the paragraphs: a
+        /// `table N: ROWSxCOLS header_rows=H widths=W,...` line, then one
+        /// line per row of tab-separated `ids=text` cells.
+        #[arg(long, conflicts_with = "json")]
+        tables: bool,
     },
     /// Print the body as Markdown with a `[body:p:N]` id before every
     /// paragraph: the coordinates an edit plan uses.
@@ -1268,6 +1274,45 @@ fn run_inspect(file: &Path, json: bool) -> Result<(), String> {
             ""
         };
         println!("{}\t[{}]\t{preview}{more}", p.id, flags.join(","));
+    }
+    Ok(())
+}
+
+fn run_inspect_tables(file: &Path) -> Result<(), String> {
+    let bytes = read_document(file)?;
+    let tables = jubarte::inspect::tables(&bytes).map_err(|e| e.to_string())?;
+    if tables.is_empty() {
+        println!("no tables");
+    }
+    for table in &tables {
+        let columns = table.rows.iter().map(Vec::len).max().unwrap_or(0);
+        let widths: Vec<String> = table.widths_dxa.iter().map(u32::to_string).collect();
+        println!(
+            "table {}: {}x{columns} header_rows={} widths={}",
+            table.index,
+            table.rows.len(),
+            table.header_rows,
+            widths.join(",")
+        );
+        for row in &table.rows {
+            let cells: Vec<String> = row
+                .iter()
+                .map(|cell| {
+                    let ids = if cell.paragraph_ids.is_empty() {
+                        "-".to_string()
+                    } else {
+                        cell.paragraph_ids.join(",")
+                    };
+                    let text = cell
+                        .text
+                        .replace('\\', "\\\\")
+                        .replace('\n', "\\n")
+                        .replace('\t', "\\t");
+                    format!("{ids}={text}")
+                })
+                .collect();
+            println!("{}", cells.join("\t"));
+        }
     }
     Ok(())
 }
@@ -2272,7 +2317,13 @@ fn main() -> ExitCode {
                 patch: (format == PatchFormat::Patch).then_some(columns),
             }));
         }
-        Some(Command::Inspect { file, json }) => return exit_code(run_inspect(&file, json)),
+        Some(Command::Inspect { file, json, tables }) => {
+            return exit_code(if tables {
+                run_inspect_tables(&file)
+            } else {
+                run_inspect(&file, json)
+            });
+        }
         Some(Command::Text { file }) => return exit_code(run_text(&file)),
         Some(Command::Edit {
             file,

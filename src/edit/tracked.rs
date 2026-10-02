@@ -16,6 +16,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::structural;
 use super::{
     EditError, EditPlan, EditResult, ExistingRevisions, Resolved, RevisionCounts, ScheduledEdit,
     Side, ThreadOp, Transaction, anchor_comment, anchor_span, apply_run_format, attach_segment,
@@ -90,6 +91,17 @@ pub(super) fn check(tx: &Transaction<'_>) -> Result<(), EditError> {
                     "under keep, a paragraph whose formatting change is still tracked cannot be formatted again; resolve that change first with resolve_revisions",
                 )
             }
+            Resolved::List { paras, .. }
+                if paras.iter().any(|&para| {
+                    dom.element(tx.paragraph_nodes[para], &W::p_pr())
+                        .and_then(|ppr| dom.element(ppr, &W::p_pr_change()))
+                        .is_some()
+                }) =>
+            {
+                Some(
+                    "under keep, a paragraph whose formatting change is still tracked cannot be numbered; resolve that change first with resolve_revisions",
+                )
+            }
             _ => None,
         };
         if let Some(message) = message {
@@ -151,8 +163,13 @@ fn redline(tx: &Transaction<'_>) -> Result<Vec<u8>, EditError> {
         date: &tx.date,
         next_id: first_free_id(&t.opened, &comments),
     };
-    emit(&mut t, &comment_ids, &mut stamp);
+    let tables = emit(&mut t, &comment_ids, &mut stamp);
     thread_markers(&mut t, &comment_ids);
+    // 7. A paragraph after each new table, and between it and a table
+    // before it: inserted paragraphs here.
+    for table in tables {
+        separate_tracked(&mut t.opened.dom, table, &mut stamp);
+    }
     t.comments = comments;
     t.reply_parents = tx.reply_parents.clone();
     let (redline, _) = t.finish()?;
@@ -204,7 +221,12 @@ fn first_free_id(opened: &Opened, comments: &[(u32, String)]) -> u64 {
 }
 
 /// The steps of `Transaction::apply`, in its order, as tracked changes.
-fn emit(t: &mut Transaction<'_>, comment_ids: &BTreeMap<usize, u32>, stamp: &mut Stamp<'_>) {
+/// Returns the new tables, which get their separating paragraphs last.
+fn emit(
+    t: &mut Transaction<'_>,
+    comment_ids: &BTreeMap<usize, u32>,
+    stamp: &mut Stamp<'_>,
+) -> Vec<NodeId> {
     // 1. Text edits and their comments, paragraph by paragraph.
     let mut by_para: BTreeMap<usize, Vec<ScheduledEdit>> = BTreeMap::new();
     let mut comment_ranges: BTreeMap<usize, Vec<(usize, usize, usize)>> = BTreeMap::new();
@@ -280,49 +302,56 @@ fn emit(t: &mut Transaction<'_>, comment_ids: &BTreeMap<usize, u32>, stamp: &mut
             anchor_span(&mut t.opened.dom, first, last, id);
         }
     }
-    // 2. Paragraph insertions: every run inserted, and an inserted mark.
+    // 2. Paragraph and table insertions: every run, row and paragraph mark
+    // inserted.
     let mut last_after: BTreeMap<usize, NodeId> = BTreeMap::new();
+    let mut tables: Vec<NodeId> = Vec::new();
     for (i, r) in &t.resolved {
-        let Resolved::InsertParagraph {
-            anchor,
-            side,
-            runs,
-            like,
-            style,
-            comment,
-        } = r
-        else {
-            continue;
-        };
-        let anchor_node = t.paragraph_nodes[*anchor];
-        let like_node = t.paragraph_nodes[*like];
-        let dom = &mut t.opened.dom;
-        let new = build_paragraph(dom, like_node, runs, style.as_deref());
-        let content: Vec<NodeId> = dom
-            .elements(new, None)
-            .into_iter()
-            .filter(|&c| !dom.name_is(c, &W::p_pr()))
-            .collect();
-        if let Some(&first) = content.first() {
-            let ins = stamp.container(dom, W::ins());
-            dom.add_before_self(first, ins);
-            for c in content {
-                dom.remove(c);
-                dom.add(ins, c);
+        let (anchor, side, new, commented) = match r {
+            Resolved::InsertParagraph {
+                anchor,
+                side,
+                runs,
+                like,
+                style,
+                comment,
+            } => {
+                let like_node = t.paragraph_nodes[*like];
+                let dom = &mut t.opened.dom;
+                let new = build_paragraph(dom, like_node, runs, style.as_deref());
+                insert_paragraph_content(dom, new, stamp);
+                (*anchor, *side, new, comment.is_some())
             }
-        }
-        mark(dom, new, W::ins(), stamp);
+            Resolved::InsertTable {
+                anchor,
+                side,
+                rows,
+                header_row,
+                widths,
+                style,
+                ..
+            } => {
+                let anchor_node = t.paragraph_nodes[*anchor];
+                let dom = &mut t.opened.dom;
+                let new =
+                    structural::build_table(dom, anchor_node, rows, *header_row, widths, style);
+                insert_table_content(dom, new, stamp);
+                tables.push(new);
+                (*anchor, *side, new, false)
+            }
+            _ => continue,
+        };
+        let anchor_node = t.paragraph_nodes[anchor];
+        let dom = &mut t.opened.dom;
         match side {
             Side::After => {
-                let prev = last_after.get(anchor).copied().unwrap_or(anchor_node);
+                let prev = last_after.get(&anchor).copied().unwrap_or(anchor_node);
                 dom.add_after_self(prev, new);
-                last_after.insert(*anchor, new);
+                last_after.insert(anchor, new);
             }
             Side::Before => dom.add_before_self(anchor_node, new),
         }
-        if comment.is_some()
-            && let Some(&id) = comment_ids.get(i)
-        {
+        if commented && let Some(&id) = comment_ids.get(i) {
             let projection = project_paragraph(dom, new);
             anchor_comment(dom, new, 0, projection.text.len(), id);
         }
@@ -339,24 +368,49 @@ fn emit(t: &mut Transaction<'_>, comment_ids: &BTreeMap<usize, u32>, stamp: &mut
             continue;
         };
         let node = t.paragraph_nodes[*para];
-        let dom = &mut t.opened.dom;
-        let old = match dom.element(node, &W::p_pr()) {
-            Some(ppr) => dom.clone_subtree(ppr),
-            None => dom.new_element(W::p_pr()),
+        track_properties(&mut t.opened.dom, node, stamp, |dom| {
+            format_paragraph(dom, node, style.as_deref(), *alignment, *spacing);
+        });
+    }
+    // 3b. Lists, numbered as `Transaction::apply` numbers them, each
+    // paragraph's old properties in `w:pPrChange`.
+    let (mut next_abstract, mut next_num) = structural::next_numbering_ids(&t.opened);
+    for (_, r) in &t.resolved {
+        let Resolved::List {
+            paras,
+            kind,
+            level,
+            join,
+            style,
+            add_style,
+        } = r
+        else {
+            continue;
         };
-        for child in dom.elements(old, None) {
-            if dom.name_is(child, &W::r_pr())
-                || dom.name_is(child, &W::sect_pr())
-                || dom.name_is(child, &W::p_pr_change())
-            {
-                dom.remove(child);
+        let num_id = match join {
+            Some(num_id) => num_id.clone(),
+            None => {
+                let (abstracts, nums) = &mut t.new_numbering;
+                abstracts.push(crate::markdown::xml::abstract_num(
+                    next_abstract,
+                    kind.format(),
+                ));
+                nums.push(crate::markdown::xml::num(next_num, next_abstract, None));
+                next_abstract += 1;
+                next_num += 1;
+                (next_num - 1).to_string()
+            }
+        };
+        for &para in paras {
+            let node = t.paragraph_nodes[para];
+            let mut styled = false;
+            track_properties(&mut t.opened.dom, node, stamp, |dom| {
+                styled = structural::number_paragraph(dom, node, *level, &num_id, style);
+            });
+            if styled && *add_style {
+                t.needed_styles.insert(style.clone());
             }
         }
-        format_paragraph(dom, node, style.as_deref(), *alignment, *spacing);
-        let ppr = paragraph_properties(dom, node);
-        let change = stamp.container(dom, W::p_pr_change());
-        dom.add(change, old);
-        insert_ppr_child(dom, ppr, change);
     }
     // 4. Merges: the head's mark deleted, the separator inserted.
     let mut merges: Vec<(usize, String)> = t
@@ -421,6 +475,101 @@ fn emit(t: &mut Transaction<'_>, comment_ids: &BTreeMap<usize, u32>, stamp: &mut
         if let Some(carrier) = carrier {
             mark(dom, carrier, W::del(), stamp);
         }
+    }
+    tables
+}
+
+/// Wrap a new paragraph's content in one `w:ins` and mark it inserted.
+fn insert_paragraph_content(dom: &mut Dom, paragraph: NodeId, stamp: &mut Stamp<'_>) {
+    let content: Vec<NodeId> = dom
+        .elements(paragraph, None)
+        .into_iter()
+        .filter(|&c| !dom.name_is(c, &W::p_pr()))
+        .collect();
+    if let Some(&first) = content.first() {
+        let ins = stamp.container(dom, W::ins());
+        dom.add_before_self(first, ins);
+        for c in content {
+            dom.remove(c);
+            dom.add(ins, c);
+        }
+    }
+    mark(dom, paragraph, W::ins(), stamp);
+}
+
+/// Mark every row of a new table inserted (`w:trPr/w:ins`, after the row's
+/// other properties) and every cell paragraph's runs and mark inserted.
+fn insert_table_content(dom: &mut Dom, table: NodeId, stamp: &mut Stamp<'_>) {
+    for row in dom.elements(table, Some(&W::tr())) {
+        let properties = match dom.element(row, &W::name("trPr")) {
+            Some(properties) => properties,
+            None => {
+                let properties = dom.new_element(W::name("trPr"));
+                match dom.element(row, &W::name("tblPrEx")) {
+                    Some(exceptions) => dom.add_after_self(exceptions, properties),
+                    None => dom.add_first(row, properties),
+                }
+                properties
+            }
+        };
+        let ins = stamp.container(dom, W::ins());
+        dom.add(properties, ins);
+        for paragraph in dom.descendants(row, Some(&W::p())) {
+            insert_paragraph_content(dom, paragraph, stamp);
+        }
+    }
+}
+
+/// `structural::separate`, with each paragraph it adds marked inserted.
+fn separate_tracked(dom: &mut Dom, table: NodeId, stamp: &mut Stamp<'_>) {
+    let parent = dom.parent(table);
+    let before: Vec<NodeId> = parent
+        .map(|p| dom.elements(p, Some(&W::p())))
+        .unwrap_or_default();
+    structural::separate(dom, table);
+    if let Some(parent) = parent {
+        for paragraph in dom.elements(parent, Some(&W::p())) {
+            if !before.contains(&paragraph) {
+                mark(dom, paragraph, W::ins(), stamp);
+            }
+        }
+    }
+}
+
+/// Run `change` on `paragraph`'s properties and track it: a `w:pPrChange`
+/// holding the old `w:pPr`, unless the plan already tracked a change there
+/// (that one holds the original).
+fn track_properties(
+    dom: &mut Dom,
+    paragraph: NodeId,
+    stamp: &mut Stamp<'_>,
+    change: impl FnOnce(&mut Dom),
+) {
+    let tracked = dom
+        .element(paragraph, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::p_pr_change()))
+        .is_some();
+    let old = (!tracked).then(|| {
+        let old = match dom.element(paragraph, &W::p_pr()) {
+            Some(ppr) => dom.clone_subtree(ppr),
+            None => dom.new_element(W::p_pr()),
+        };
+        for child in dom.elements(old, None) {
+            if dom.name_is(child, &W::r_pr())
+                || dom.name_is(child, &W::sect_pr())
+                || dom.name_is(child, &W::p_pr_change())
+            {
+                dom.remove(child);
+            }
+        }
+        old
+    });
+    change(dom);
+    if let Some(old) = old {
+        let ppr = paragraph_properties(dom, paragraph);
+        let record = stamp.container(dom, W::p_pr_change());
+        dom.add(record, old);
+        insert_ppr_child(dom, ppr, record);
     }
 }
 

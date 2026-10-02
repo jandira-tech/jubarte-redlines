@@ -298,6 +298,8 @@ def test_capabilities_manifest_reports_python_runtime() -> None:
     assert caps["engine_version"] == jubarte.__version__
     assert caps["operations"]["edit"] is True
     assert "insert_paragraph" in caps["edit_operations"]
+    assert "insert_table" in caps["edit_operations"]
+    assert "list" in caps["edit_operations"]
 
 
 def test_plan_builder_validates_selectors_runs_and_options() -> None:
@@ -396,3 +398,54 @@ def test_a_plan_resolves_selected_changes_before_it_edits() -> None:
     assert refused.value.code == "REVISION_CONFLICT"
     with pytest.raises(ValueError):
         EditPlan(author="A").resolving(accept={"id": ["body:rev:1"]})
+
+
+def test_insert_table_is_tracked_in_the_redline() -> None:
+    doc = letter()
+    plan = (
+        EditPlan(author="Claude", date="2026-10-02T12:00:00Z")
+        .for_document(doc)
+        .insert_table(0, rows=[["Item", "Qty"], ["Bolt", "40"]], header_row=True, widths_dxa=[6000, 3360])
+    )
+    result = doc.edit(plan)
+    assert result.report.ok, result.report.operations
+    assert result.report.operations[0].kind == "insert_table"
+    paragraphs = result.clean.inspect().paragraphs
+    assert [(p.text, p.in_table) for p in paragraphs[1:5]] == [
+        ("Item", True),
+        ("Qty", True),
+        ("Bolt", True),
+        ("40", True),
+    ]
+    assert result.redline.inspect().summary.tables == 1
+    original = [p.text for p in doc.inspect().paragraphs]
+    assert [p.text for p in result.redline.reject().inspect().paragraphs] == original
+    with pytest.raises(EditPlanError) as refused:
+        doc.edit(EditPlan(author="A").insert_table(0, rows=[["a", "b"], ["c"]]))
+    assert refused.value.code == "INVALID_EDIT"
+
+
+def test_list_paragraphs_numbers_them_as_tracked_changes() -> None:
+    doc = letter()
+    plan = EditPlan(author="Claude", date="2026-10-02T12:00:00Z").for_document(doc).list_paragraphs([2, 3], kind_of_list="decimal")
+    result = doc.edit(plan)
+    assert result.report.ok, result.report.operations
+    assert result.report.operations[0].paragraph == "body:p:2, body:p:3"
+    paragraphs = result.clean.inspect().paragraphs
+    assert [(p.numbered, p.style) for p in paragraphs[2:]] == [(True, "ListParagraph"), (True, "ListParagraph")]
+    assert not any(p.numbered for p in result.redline.reject().inspect().paragraphs)
+    assert result.report.revisions.format_changed >= 2
+
+
+def test_inspect_reads_tables_as_grids_whose_ids_take_edits() -> None:
+    doc = letter()
+    table = EditPlan(author="Claude", date="2026-10-02T12:00:00Z").for_document(doc).insert_table(0, rows=[["Item", "Qty"], ["Bolt", "40"]], header_row=True)
+    clean = doc.edit(table).clean
+    snap = clean.inspect()
+    (grid,) = snap.tables
+    assert grid.header_rows == 1
+    assert [[cell.text for cell in row] for row in grid.rows] == [["Item", "Qty"], ["Bolt", "40"]]
+    target = grid.rows[1][1].paragraph_ids[0]
+    assert snap.paragraph(target).text == "40"
+    edited = clean.edit(EditPlan(author="Claude").for_document(clean).replace(target, find="40", replacement="45")).clean
+    assert edited.inspect().tables[0].rows[1][1].text == "45"
