@@ -1814,16 +1814,19 @@ impl TableCell {
 }
 
 /// A table row as laid out: the parsed row, or one part of it after a split.
+/// `Head` is the part left above a page end: it closes with the table's
+/// bottom rule, as the last row does.
 enum RowSrc<'r> {
     Orig(&'r [TableCell]),
     Owned(Vec<TableCell>),
+    Head(Vec<TableCell>),
 }
 
 impl RowSrc<'_> {
     fn cells(&self) -> &[TableCell] {
         match self {
             Self::Orig(row) => row,
-            Self::Owned(row) => row,
+            Self::Owned(row) | Self::Head(row) => row,
         }
     }
 }
@@ -9304,6 +9307,14 @@ fn row_bottom_rule(row: &[TableCell], geom: &TableGeom, ri: usize) -> f32 {
     if ri + 1 < geom.row_min.len() {
         return 0.0;
     }
+    split_bottom_rule(row, geom)
+}
+
+/// The rule under `row` where it closes the table, or where a page end
+/// cuts it: Word draws the table's bottom border there, not insideH, and
+/// keeps its room (Word 16 probes fs3 2026-10-02: a 3pt bottom rule under
+/// a 0.5pt insideH ends the cut part 3pt under its last line).
+fn split_bottom_rule(row: &[TableCell], geom: &TableGeom) -> f32 {
     row.iter()
         .map(|cell| {
             cell.borders
@@ -26781,10 +26792,12 @@ impl<'a> Layout<'a> {
             // leaves the cut to the split below, which sees the raised floor.
             if notes_h > 0.0 && !self.at_page_top {
                 let floor = self.chrome_floor() + self.footnote_block_h() + notes_h;
+                let cells = work[ri].0.cells();
+                let rules = row_top_rule(cells, geom, ri) + split_bottom_rule(cells, geom);
                 let moves = self.y - work[ri].1 < floor
                     && (work[ri].2
                         || self
-                            .split_row_cells(work[ri].0.cells(), self.y - floor, &col_w)
+                            .split_row_cells(cells, self.y - floor - rules, &col_w)
                             .is_none());
                 if moves {
                     self.new_page();
@@ -26802,12 +26815,12 @@ impl<'a> Layout<'a> {
             let too_tall = work[ri].2 && work[ri].1 > page_room + 0.5;
             let splittable = self.nested_depth == 0 && ri >= header_n && (!work[ri].2 || too_tall);
             if splittable && (self.at_page_top || !too_tall) {
-                self.split_work_row(&mut work, ri, &col_w);
+                self.split_work_row(&mut work, ri, &col_w, geom);
             }
             let pages_before = self.pages.len();
             if splittable && self.y - work[ri].1 < self.body_floor && !self.at_page_top {
                 self.ensure(work[ri].1);
-                self.split_work_row(&mut work, ri, &col_w);
+                self.split_work_row(&mut work, ri, &col_w, geom);
             }
             // A row none of which fits here opens the next page, where the
             // header rows repeat above it (00178ea9's page two).
@@ -26883,7 +26896,8 @@ impl<'a> Layout<'a> {
                             color: fill,
                         });
                     }
-                    let last_row = ri + cell.rowspan.max(1) >= work.len();
+                    let last_row = ri + cell.rowspan.max(1) >= work.len()
+                        || matches!(work[ri].0, RowSrc::Head(_));
                     let last_col = cell.col + cell.colspan >= col_w.len();
                     self.stroke_cell(
                         [x, bottom, w, h],
@@ -27205,6 +27219,11 @@ impl<'a> Layout<'a> {
                     self.paint_rev_bar(self.rev_bar_x(), self.y, y_top);
                 }
             }
+            // The rest of a row cut at the page end starts the next page,
+            // whatever room the cut part's last line left here.
+            if matches!(work[ri].0, RowSrc::Head(_)) {
+                self.y = self.y.min(self.body_floor);
+            }
             ri += 1;
         }
         if let Some((pages, floor)) = first_floor
@@ -27229,6 +27248,7 @@ impl<'a> Layout<'a> {
         work: &mut Vec<(RowSrc<'_>, f32, bool, f32)>,
         ri: usize,
         col_w: &[f32],
+        geom: &TableGeom,
     ) {
         let room = self.y - self.body_floor;
         let (row, rh, min) = (work[ri].0.cells(), work[ri].1, work[ri].3);
@@ -27262,7 +27282,12 @@ impl<'a> Layout<'a> {
         }
         let height =
             |cell: &TableCell| cell_content_height(self.fonts, cell, col_w, self.space_for_ul);
-        let Some((head, tail, nested_broke)) = self.split_row_cells(row, room, col_w) else {
+        // The cells hold what fits between the row's top rule and the
+        // table's bottom rule, which the cut part closes with (Word 16
+        // probes fs2 2026-10-02: a 3pt rule stops the part 3pt sooner).
+        let rules = row_top_rule(row, geom, ri) + split_bottom_rule(row, geom);
+        let Some((head, tail, nested_broke)) = self.split_row_cells(row, room - rules, col_w)
+        else {
             return;
         };
         // A nested table breaks between its rows (English part b c8d1d38a's
@@ -27274,8 +27299,27 @@ impl<'a> Layout<'a> {
             return;
         }
         let tail_h = tail.iter().map(height).fold(0.0_f32, f32::max);
-        // The head fills the page: its borders run to the bottom margin.
-        work[ri] = (RowSrc::Owned(head), room - 0.01, false, 0.0);
+        // The head ends under its last line, not at the bottom margin
+        // (Word 16 probes fb 2026-10-02: the cut part's rules stop at
+        // 554.4 on a page whose body runs to 559.3). A cell with nothing
+        // above the cut holds only its margins.
+        let head_h = head
+            .iter()
+            .map(|c| {
+                if c.paras.is_empty() && c.nested.is_empty() {
+                    c.pad_t + c.pad_b
+                } else {
+                    height(c)
+                }
+            })
+            .fold(0.0_f32, f32::max)
+            .max(min);
+        work[ri] = (
+            RowSrc::Head(head),
+            (head_h + rules).min(room - 0.01),
+            false,
+            0.0,
+        );
         work.insert(ri + 1, (RowSrc::Owned(tail), tail_h, false, 0.0));
     }
 

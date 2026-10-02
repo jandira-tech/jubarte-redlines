@@ -6697,6 +6697,87 @@ fn a_split_row_breaks_its_paragraph_between_lines() {
 }
 
 #[test]
+fn a_split_row_keeps_room_for_the_tables_bottom_rule_and_ends_under_its_text() {
+    // Word 16 probes fs2/fs3 2026-10-02 (rows of one-line paragraphs swept
+    // past the page end in 0.5pt steps): the part of a row cut at the page
+    // end keeps a line only while that line and the table's bottom rule
+    // (3pt here, not the 0.5pt insideH) fit above the body bottom; the
+    // part ends under its last line, with that rule, not at the margin.
+    // Priority 2b479f55f8: row 8 kept a line too many on page 22, so its
+    // cantSplit row 9 fitted on page 23, which Word leaves blank.
+    let docx = |borders: &str, spacer_tw: u32| {
+        let exact = "<w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"400\" \
+                     w:lineRule=\"exact\"/></w:pPr>";
+        let lines: String = (1..=40)
+            .map(|i| format!("<w:p>{exact}<w:r><w:t>Ln{i:02}</w:t></w:r></w:p>"))
+            .collect();
+        let body = format!(
+            "<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"{spacer_tw}\" \
+               w:lineRule=\"exact\"/></w:pPr></w:p>\
+             <w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/>\
+               <w:tblLayout w:type=\"fixed\"/><w:tblBorders>{borders}</w:tblBorders></w:tblPr>\
+               <w:tblGrid><w:gridCol w:w=\"6000\"/></w:tblGrid>\
+               <w:tr><w:tc><w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/></w:tcPr>{lines}</w:tc></w:tr>\
+               <w:tr><w:tc><w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/></w:tcPr>\
+                 <w:p>{exact}<w:r><w:t>NextRow</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+             <w:p/><w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+                 w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>"
+        );
+        docx_to_pdf(&minimal_docx_body(&body)).expect("split row rule")
+    };
+    let rule = |side: &str, sz: u32| {
+        format!("<w:{side} w:val=\"single\" w:sz=\"{sz}\" w:space=\"0\" w:color=\"auto\"/>")
+    };
+    let ruled = [
+        rule("top", 24),
+        rule("left", 24),
+        rule("bottom", 24),
+        rule("right", 24),
+        rule("insideH", 4),
+    ]
+    .concat();
+    // A 4pt spacer and the 3pt top rule end line 32 at 719pt, 1pt above
+    // the 720pt body bottom: its 3pt bottom rule would not fit.
+    let pdf = docx(&ruled, 80);
+    assert_eq!(
+        (page_with_text(&pdf, "Ln31"), page_with_text(&pdf, "Ln32")),
+        (Some(0), Some(1)),
+        "the bottom rule needs the room line 32 would take"
+    );
+    // The part on page 1 ends with the table's 3pt rule under line 31:
+    // 72 + 4 + 3 + 31 * 20 = 699pt down, so the rule spans 699-702.
+    let first = &pdf_content_streams(&pdf)[0];
+    let rules: Vec<(f32, f32)> = first
+        .lines()
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split_whitespace().collect();
+            let at = f.iter().position(|t| *t == "re")?;
+            if at < 4 || f.get(at + 1) != Some(&"f") {
+                return None;
+            }
+            let y: f32 = f[at - 3].parse().ok()?;
+            let h: f32 = f[at - 1].parse().ok()?;
+            Some((y, h))
+        })
+        .filter(|&(_, h)| (h - 3.0).abs() < 0.05)
+        .collect();
+    assert!(
+        rules
+            .iter()
+            .any(|&(y, _)| (y - (792.0 - 702.0)).abs() < 0.3),
+        "a 3pt bottom rule under line 31 at y=90; 3pt rules {rules:?}"
+    );
+    // Without rules the same line, ending at 719pt, stays on page 1.
+    let bare = docx("", 140);
+    assert_eq!(
+        page_with_text(&bare, "Ln32"),
+        Some(0),
+        "with no rule line 32 fits"
+    );
+}
+
+#[test]
 fn a_row_split_keeps_widow_control_from_compat_15() {
     // Word 16 probes k15_*/k14_* 0930 (32 exact 20pt lines a page): from
     // compat 15 a cell paragraph cut by a row split keeps two lines on
