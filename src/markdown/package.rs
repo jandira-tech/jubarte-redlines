@@ -760,6 +760,25 @@ mod tests {
     }
 
     #[test]
+    fn a_main_part_without_a_usable_root_or_section_falls_back_to_the_page() {
+        // No document element, an unterminated one, and an empty one: the
+        // default root and the page's section.
+        for source in ["<x/>", "<w:document", "<w:document/>"] {
+            for page in [PageSize::Letter, PageSize::A4] {
+                let (root, section) = frame(source, page);
+                assert!(root.starts_with("<w:document xmlns:w="), "{source}: {root}");
+                assert_eq!(section, default_section(page), "{source} {page:?}");
+            }
+        }
+        // A document element whose body has no final section.
+        let (_, section) = frame(
+            "<w:document><w:body><w:p/></w:body></w:document>",
+            PageSize::A4,
+        );
+        assert_eq!(section, A4_SECTION);
+    }
+
+    #[test]
     fn the_text_width_is_the_page_less_its_margins() {
         assert_eq!(text_width(LETTER_SECTION), 9360);
         assert_eq!(text_width(A4_SECTION), 9026);
