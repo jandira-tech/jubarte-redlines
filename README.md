@@ -372,6 +372,7 @@ jubarte convert FILE.docx [OPTIONS]
 | `--font-report FILE` | Write font-resolution JSON |
 | `--report FILE` | Write page/render report |
 | `--force` | Replace existing output |
+| `--fail-on-substitution` | Exit 4 when a requested font was substituted |
 
 Examples:
 

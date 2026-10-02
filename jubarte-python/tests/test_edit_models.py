@@ -389,3 +389,17 @@ def test_page_setup_builds_the_wire_operation():
 def test_page_setup_rejects_empty_or_malformed_fields(kwargs):
     with pytest.raises(ValueError):
         EditPlan(author="Reviewer").page_setup(**kwargs)
+
+
+def test_render_report_lists_substituted_fonts():
+    font = {"step": "explicit", "physical": "Face", "bold": False, "italic": False, "synthetic": False}
+    report = _decode_render_report(json.dumps({
+        "page_count": 1, "pages": [],
+        "fonts": [
+            {**font, "requested": "Kept", "substituted": False},
+            {**font, "requested": "Gone", "step": "open_fallback", "substituted": True},
+            {**font, "requested": "Older engine"},
+        ],
+    }))
+    assert [f.requested for f in report.substitutions] == ["Gone"]
+    assert report.fonts[2].substituted is False
