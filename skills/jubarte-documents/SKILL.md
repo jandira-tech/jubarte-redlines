@@ -143,8 +143,10 @@ edited, so the rest keeps its runs and formatting), `insert_table`
 twentieths of a point (the text width split evenly when omitted), and
 `style`, a table style id or name, `TableGrid` by default), `list`
 (`paragraphs`: a list of selectors, not `paragraph`; `kind_of_list`
-`bullet|decimal|lower_letter`, `level` 0 to 8, `restart` true by default).
-`replace` and
+`bullet|decimal|lower_letter`, `level` 0 to 8, `restart` true by default),
+`watermark` (`text`; optional `color` as six hex digits, `diagonal`,
+`font`; no paragraph: writes Word's own diagonal text watermark into every
+default header; one per document). `replace` and
 `insert` take an optional `format` (`bold`/`italic`/`underline`/`highlight`)
 that applies to the new text only. `replace` takes `"whole": true` to show
 the change as the whole old text deleted, then the whole new text inserted.
@@ -192,6 +194,11 @@ Gotchas:
 - `format_paragraph` is a tracked property change: the redline keeps the
   old style, alignment and spacing for reject. An unknown style is refused
   with `UNKNOWN_STYLE` and the list of defined style ids.
+- `watermark` is header content, not a tracked change: the clean copy and
+  the redline both carry it untracked. A first section without a default
+  header gets one; a later section without its own inherits the previous
+  header, as in Word. A document that already holds a watermark, or a
+  second `watermark` in the plan, is refused (`UNSUPPORTED_STRUCTURE`).
 - `merge_paragraphs` keeps the second paragraph's properties (what Word's
   accept of a deleted paragraph mark does); the redline deletes the first
   paragraph's mark and inserts only the separator, as Word Compare shows a

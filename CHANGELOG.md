@@ -62,6 +62,15 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   replies, resolutions and deletions carry into the redline. New
   `markdown::patch_own_changes`, capability
   `operations.edit_keeps_revisions`, and Python `existing_revisions="keep"`.
+- `watermark` edit operation (`{"kind":"watermark","text":"DRAFT"}`, with
+  optional `color`, `diagonal` and `font`; Python `EditPlan.watermark`)
+  writes Word's own VML text watermark, in its `Watermarks` content
+  control, into every default header. A first section without a default
+  header gets a new header part with its relationship, content-type
+  override and `w:headerReference`. The comparison base carries the same
+  watermark, so the redline holds it untracked. One per document: a second
+  one, or a header that already holds one, is refused with
+  `UNSUPPORTED_STRUCTURE`.
 - `scripts/release.sh` step 12 runs `scripts/release_downstream.sh`: jubarte.pro
   moves to the release (download page, demo engine) and is deployed, the
   app's release files are committed on `release/vx.y.z` in the jubarte-app

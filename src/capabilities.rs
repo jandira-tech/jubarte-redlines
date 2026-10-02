@@ -175,6 +175,7 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             "delete_comment",
             "insert_table",
             "list",
+            "watermark",
         ]
         .iter()
         .map(|s| (*s).to_string())
@@ -205,7 +206,7 @@ mod tests {
         assert_eq!(c.engine_version, env!("CARGO_PKG_VERSION"));
         assert_eq!(c.runtime, "rust");
         assert_eq!(c.edit_plan_versions, [1]);
-        assert_eq!(c.edit_operations.len(), 15);
+        assert_eq!(c.edit_operations.len(), 16);
         assert!(c.edit_operations.iter().any(|kind| kind == "rewrite"));
         assert!(
             c.edit_operations
