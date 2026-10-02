@@ -193,6 +193,13 @@ def test_png_pages_and_render_report_come_from_one_layout() -> None:
         Document.from_bytes(b"nope").to_png()
 
 
+def test_render_report_flags_a_missing_font_as_substituted() -> None:
+    body = '<w:p><w:r><w:rPr><w:rFonts w:ascii="NoSuchFont" w:hAnsi="NoSuchFont"/></w:rPr><w:t>hello</w:t></w:r></w:p>'
+    report = Document.from_bytes(docx(body)).render(pdf=False).report
+    assert "NoSuchFont" in [f.requested for f in report.substitutions]
+    assert all(isinstance(f.substituted, bool) for f in report.fonts)
+
+
 def test_format_and_merge_builders_serialize_the_wire_schema() -> None:
     plan = (
         EditPlan(author="A")

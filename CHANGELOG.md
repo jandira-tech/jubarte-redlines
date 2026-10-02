@@ -17,6 +17,14 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Added
 
+- The font report says whether each requested font was substituted: a
+  `substituted` field in `convert --font-report` and `--report` (true for
+  the `word_substitution`, `generic` and `unknown` steps, and for
+  `open_fallback` unless the bundled face is the requested family itself),
+  `FontReportEntry::substituted()` in Rust, and
+  `FontResolution.substituted` with `RenderReport.substitutions` in
+  Python. `jubarte convert --fail-on-substitution` lists each substitution
+  on stderr and exits 4 after writing every output, for CI.
 - `jubarte-mcp`, an MCP server over stdio in the Python package
   (`pip install 'jubarte-redlines[mcp]'`): `docx_text`, `docx_inspect`,
   `docx_edit`, `docx_render`, `docx_compare`, `docx_changes`, `docx_accept`,

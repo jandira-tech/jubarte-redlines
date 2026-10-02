@@ -301,6 +301,8 @@ layout pass. Python: `jubarte_redlines.diff_render(a, b, dpi=100)` and
 Gotchas:
 - Page count is the renderer's layout, not Word's; treat a one-page
   difference between renderer and Word as possible on dense documents.
+- `--report` lists every font and whether it was substituted;
+  `--fail-on-substitution` turns that into exit 4 for CI.
 - `jubarte accept review/redline.docx -o check.docx` then `jubarte text
   check.docx` must equal `jubarte text review/clean.docx`. That is the
   every-edit-is-tracked check; it replaces `validate.py --author`. Under

@@ -1151,7 +1151,13 @@ def _decode_report(payload: str) -> EditReport:
 
 @dataclass(frozen=True, slots=True)
 class FontResolution:
-    """One requested family/style and the physical face that painted it."""
+    """One requested family/style and the physical face that painted it.
+
+    ``substituted`` is true when the requested family was drawn with a
+    substitute (Word's substitution table, a bundled face of another family,
+    a generic family or the last resort); a faked style alone is
+    ``synthetic``.
+    """
 
     requested: str
     step: str
@@ -1159,6 +1165,7 @@ class FontResolution:
     bold: bool
     italic: bool
     synthetic: bool
+    substituted: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -1176,6 +1183,11 @@ class RenderReport:
     page_count: int
     pages: tuple[PageText, ...]
     fonts: tuple[FontResolution, ...]
+
+    @property
+    def substitutions(self) -> tuple[FontResolution, ...]:
+        """The fonts drawn with a substitute for the requested family."""
+        return tuple(f for f in self.fonts if f.substituted)
 
 
 @dataclass(frozen=True, slots=True)

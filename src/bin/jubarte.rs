@@ -222,7 +222,8 @@ enum Command {
         #[arg(long)]
         compress: bool,
         /// Write a JSON font-resolution report (`[{requested, step, physical,
-        /// bold, italic, synthetic}, …]`) for this document (plan Step 2f).
+        /// bold, italic, synthetic, substituted}, …]`) for this document
+        /// (plan Step 2f).
         #[arg(long, value_name = "FILE")]
         font_report: Option<PathBuf>,
         /// How tracked changes are painted: `conventional` (deletions red
@@ -244,6 +245,11 @@ enum Command {
         /// still runs over the whole document. Needs PNG output.
         #[arg(long, value_name = "SPEC")]
         pages: Option<String>,
+        /// Exit 4 when a requested font was substituted (listed on stderr
+        /// and in --report). Every output is still written. Exit status:
+        /// 0 ok, 1 error, 4 a requested font was substituted.
+        #[arg(long)]
+        fail_on_substitution: bool,
     },
     /// Compare two documents, Word or Markdown: the changed paragraphs as a
     /// patch on stdout, each change `[-old-]{+new+}` in its paragraph, and
@@ -1059,9 +1065,46 @@ struct ConvertJob<'a> {
     report: Option<&'a Path>,
     /// Zero-based pages to rasterize; `None` for all.
     pages: Option<&'a [usize]>,
+    /// Exit [`EXIT_FONT_SUBSTITUTED`] when a requested font was substituted.
+    fail_on_substitution: bool,
 }
 
-fn run_convert(job: &ConvertJob<'_>) -> Result<(), String> {
+/// `convert --fail-on-substitution`: the outputs were written, but a
+/// requested font was drawn with a substitute.
+const EXIT_FONT_SUBSTITUTED: u8 = 4;
+
+/// Why `convert` failed, and the exit status that says so.
+#[derive(Debug)]
+struct ConvertFailure {
+    code: u8,
+    message: String,
+}
+
+impl From<String> for ConvertFailure {
+    fn from(message: String) -> Self {
+        Self { code: 1, message }
+    }
+}
+
+impl From<&str> for ConvertFailure {
+    fn from(message: &str) -> Self {
+        message.to_string().into()
+    }
+}
+
+/// The exit status of a `convert` run: 1 for an error, or its own code.
+fn convert_exit_code(r: Result<(), ConvertFailure>) -> ExitCode {
+    match r {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(ConvertFailure { code: 1, message }) => exit_code(Err(message)),
+        Err(ConvertFailure { code, message }) => {
+            eprintln!("error: {message}");
+            ExitCode::from(code)
+        }
+    }
+}
+
+fn run_convert(job: &ConvertJob<'_>) -> Result<(), ConvertFailure> {
     let output = job
         .output
         .map(Path::to_path_buf)
@@ -1079,7 +1122,8 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), String> {
                     return Err(format!(
                         "{what} '{}' is the same file as the {name}",
                         side.display()
-                    ));
+                    )
+                    .into());
                 }
             }
             ensure_writable(side, job.force)?;
@@ -1159,6 +1203,34 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), String> {
     if let Some(report) = job.report {
         std::fs::write(report, rendered.report.to_json())
             .map_err(|e| format!("writing {}: {e}", report.display()))?;
+    }
+    if job.fail_on_substitution {
+        let substituted: Vec<_> = rendered
+            .report
+            .fonts
+            .iter()
+            .filter(|f| f.substituted())
+            .collect();
+        if !substituted.is_empty() {
+            for f in &substituted {
+                eprintln!(
+                    "substituted: {} -> {} ({})",
+                    f.requested, f.physical, f.step
+                );
+            }
+            return Err(ConvertFailure {
+                code: EXIT_FONT_SUBSTITUTED,
+                message: format!(
+                    "{} requested font{} substituted (--fail-on-substitution)",
+                    substituted.len(),
+                    if substituted.len() == 1 {
+                        " was"
+                    } else {
+                        "s were"
+                    }
+                ),
+            });
+        }
     }
     Ok(())
 }
@@ -2057,13 +2129,15 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), String> {
             dpi: 96.0,
             report: None,
             pages: None,
-        }),
+            fail_on_substitution: false,
+        })
+        .map_err(|f| f.message),
         (Format::Docx, None) => unreachable!("a Word output always has a path"),
     }
 }
 
 /// `convert`, for every pair of formats it takes.
-fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), String> {
+fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), ConvertFailure> {
     let bytes = read_document(job.file)?;
     let from = Format::of_input(markdown.from, job.file, &bytes);
     let to = markdown
@@ -2129,7 +2203,8 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
                     return Err(format!(
                         "{} is already Word: give --track-changes accept or reject, or another --to",
                         job.file.display()
-                    ));
+                    )
+                    .into());
                 }
             };
             let output = job
@@ -2153,7 +2228,7 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
                 Some(output) => {
                     ensure_writable(output, job.force)?;
                     std::fs::write(output, &out)
-                        .map_err(|e| format!("writing {}: {e}", output.display()))
+                        .map_err(|e| format!("writing {}: {e}", output.display()).into())
                 }
                 None => {
                     print!("{out}");
@@ -2195,10 +2270,9 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
             println!("wrote {} ({} bytes)", output.display(), written.docx.len());
             Ok(())
         }
-        (Format::Pdf | Format::Png, _) => Err(format!(
-            "{}: PDF and PNG are not inputs",
-            job.file.display()
-        )),
+        (Format::Pdf | Format::Png, _) => {
+            Err(format!("{}: PDF and PNG are not inputs", job.file.display()).into())
+        }
     }
 }
 
@@ -2404,6 +2478,7 @@ fn main() -> ExitCode {
             revision_palette,
             markdown,
             pages: page_spec,
+            fail_on_substitution,
         }) => {
             let style = match revision_style(revisions, revision_palette.as_deref()) {
                 Ok(style) => style,
@@ -2426,8 +2501,9 @@ fn main() -> ExitCode {
                 dpi,
                 report: report.as_deref(),
                 pages: selected.as_deref(),
+                fail_on_substitution,
             };
-            return exit_code(run_convert_any(&job, &markdown));
+            return convert_exit_code(run_convert_any(&job, &markdown));
         }
         Some(Command::Diff {
             old,
@@ -3103,6 +3179,24 @@ mod tests {
     }
 
     #[test]
+    fn convert_takes_fail_on_substitution_and_defaults_it_off() {
+        let flag = |args: &[&str]| match Cli::try_parse_from(args).unwrap().command {
+            Some(Command::Convert {
+                fail_on_substitution,
+                ..
+            }) => fail_on_substitution,
+            other => panic!("expected convert, got {other:?}"),
+        };
+        assert!(flag(&[
+            "jubarte",
+            "convert",
+            "in.docx",
+            "--fail-on-substitution"
+        ]));
+        assert!(!flag(&["jubarte", "convert", "in.docx"]));
+    }
+
+    #[test]
     fn convert_subcommand_parses_font_report() {
         let cli = Cli::try_parse_from([
             "jubarte",
@@ -3195,9 +3289,14 @@ mod tests {
             dpi: 96.0,
             report: None,
             pages: None,
+            fail_on_substitution: false,
         })
         .expect_err("report over the PDF must be refused");
-        assert!(err.contains("same file as the PDF output"), "{err}");
+        assert!(
+            err.message.contains("same file as the PDF output"),
+            "{}",
+            err.message
+        );
         assert!(!pdf.exists(), "nothing is written when the paths collide");
         let err = run_convert(&ConvertJob {
             file: &docx,
@@ -3212,9 +3311,14 @@ mod tests {
             dpi: 96.0,
             report: None,
             pages: None,
+            fail_on_substitution: false,
         })
         .expect_err("report over the input must be refused");
-        assert!(err.contains("same file as the input"), "{err}");
+        assert!(
+            err.message.contains("same file as the input"),
+            "{}",
+            err.message
+        );
         assert!(std::fs::read(&docx).expect("docx").starts_with(b"PK"));
     }
 
@@ -3252,6 +3356,44 @@ mod tests {
     }
 
     #[test]
+    fn fail_on_substitution_is_exit_4_after_the_outputs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let docx = dir.path().join("in.docx");
+        let pdf = dir.path().join("out.pdf");
+        let report = dir.path().join("fonts.json");
+        std::fs::write(&docx, tiny_docx_bytes("DefinitelyNotAFont")).expect("docx");
+        let err = run_convert(&ConvertJob {
+            file: &docx,
+            bytes: None,
+            output: Some(&pdf),
+            force: false,
+            compress: false,
+            font_report: Some(&report),
+            revisions: RevisionStyle::Word,
+            pdf: false,
+            png: false,
+            dpi: 96.0,
+            report: None,
+            pages: None,
+            fail_on_substitution: true,
+        })
+        .expect_err("a substituted font fails the run");
+        assert_eq!(err.code, EXIT_FONT_SUBSTITUTED);
+        assert!(
+            err.message.contains("--fail-on-substitution"),
+            "{}",
+            err.message
+        );
+        assert!(pdf.exists() && report.exists(), "outputs are written first");
+    }
+
+    #[test]
+    fn a_plain_convert_error_keeps_exit_1() {
+        let failure = ConvertFailure::from("boom");
+        assert_eq!((failure.code, failure.message.as_str()), (1, "boom"));
+    }
+
+    #[test]
     fn convert_font_report_writes_json() {
         let dir = tempfile::tempdir().expect("tempdir");
         let docx = dir.path().join("in.docx");
@@ -3271,6 +3413,7 @@ mod tests {
             dpi: 96.0,
             report: None,
             pages: None,
+            fail_on_substitution: false,
         })
         .expect("convert");
         assert!(pdf.exists());
@@ -3482,6 +3625,7 @@ mod tests {
             dpi: 20.0,
             report: None,
             pages,
+            fail_on_substitution: false,
         }
     }
 
@@ -3520,11 +3664,13 @@ mod tests {
             ..convert_job(&docx, &out, Some(&[0]))
         })
         .expect_err("--pages without PNG output");
-        assert!(err.contains("--pages"), "{err}");
+        assert!(err.message.contains("--pages"), "{}", err.message);
         let err = run_convert(&convert_job(&docx, &out, Some(&[5]))).expect_err("page 6 of 3");
         assert!(
-            err.contains("page 6 is out of range: the document has 3 pages"),
-            "{err}"
+            err.message
+                .contains("page 6 is out of range: the document has 3 pages"),
+            "{}",
+            err.message
         );
         assert_eq!(file_names(dir.path()), ["in.docx"], "nothing written");
     }

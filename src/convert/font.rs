@@ -154,17 +154,48 @@ pub struct FontReportEntry {
 }
 
 impl FontReportEntry {
-    /// One JSON object matching `{requested, step, physical, bold, italic, synthetic}`.
+    /// True when the requested family was not drawn with its own face (or
+    /// its `w:altName`): Word's substitution table, a bundled open fallback
+    /// for another family, a generic family, or the last resort. A bundled
+    /// face of the requested family itself (`Carlito` drawn with Carlito) is
+    /// not a substitution. A faked style (`synthetic`) alone is not one
+    /// either.
+    #[must_use]
+    pub fn substituted(&self) -> bool {
+        match self.step {
+            FontStep::Embedded | FontStep::Explicit | FontStep::AltName | FontStep::Theme => false,
+            FontStep::OpenFallback => !self.physical_is_requested_family(),
+            FontStep::WordSubstitution | FontStep::Generic | FontStep::Unknown => true,
+        }
+    }
+
+    /// The physical face's family (its PostScript name before any `-Style`
+    /// suffix) is the requested family, ignoring case, spaces and hyphens.
+    fn physical_is_requested_family(&self) -> bool {
+        let squash = |s: &str| {
+            s.chars()
+                .filter(|c| !matches!(c, ' ' | '-'))
+                .flat_map(char::to_lowercase)
+                .collect::<String>()
+        };
+        let family = self.physical.split('-').next().unwrap_or_default();
+        let requested = squash(family_token(&self.requested));
+        !requested.is_empty() && requested == squash(family)
+    }
+
+    /// One JSON object matching
+    /// `{requested, step, physical, bold, italic, synthetic, substituted}`.
     #[must_use]
     pub fn to_json(&self) -> String {
         format!(
-            "{{\"requested\":{},\"step\":{},\"physical\":{},\"bold\":{},\"italic\":{},\"synthetic\":{}}}",
+            "{{\"requested\":{},\"step\":{},\"physical\":{},\"bold\":{},\"italic\":{},\"synthetic\":{},\"substituted\":{}}}",
             json_string(&self.requested),
             json_string(self.step.as_str()),
             json_string(&self.physical),
             json_bool(self.bold),
             json_bool(self.italic),
             json_bool(self.synthetic),
+            json_bool(self.substituted()),
         )
     }
 }
@@ -4441,7 +4472,7 @@ mod tests {
         let json = font_report_json(std::slice::from_ref(&entry));
         assert_eq!(
             json,
-            r#"[{"requested":"Calibri \"body\"","step":"explicit","physical":"Calibri","bold":false,"italic":true,"synthetic":false}]"#
+            r#"[{"requested":"Calibri \"body\"","step":"explicit","physical":"Calibri","bold":false,"italic":true,"synthetic":false,"substituted":false}]"#
         );
     }
 
