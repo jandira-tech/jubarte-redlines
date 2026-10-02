@@ -73,6 +73,7 @@ for (const [name, mod] of [["full", full], ["slim", slim]]) {
   assert.equal(caps.runtime, "wasm");
   assert.equal(caps.operations.pdf, name === "full", `${name}: pdf capability matches the build`);
   assert.equal(caps.operations.png, false);
+  assert.equal(caps.operations.fields, name === "full", `${name}: fields capability matches the build`);
 }
 
 // PDF surface: full-only.
@@ -80,6 +81,11 @@ assert.equal(typeof full.docxToPdf, "function", "full build exports docxToPdf");
 assert.equal(typeof full.pdfPageCount, "function", "full build exports pdfPageCount");
 assert.equal(typeof slim.docxToPdf, "undefined", "slim build must NOT export docxToPdf");
 assert.equal(typeof slim.pdfPageCount, "undefined", "slim build must NOT export pdfPageCount");
+assert.equal(typeof slim.updateFields, "undefined", "slim build must NOT export updateFields");
+
+const refreshed = full.updateFields(original);
+assert.equal(refreshed.docx[0], 0x50, "updateFields returns a zip");
+assert.ok(JSON.parse(refreshed.json).page_count > 0, "updateFields reports the page count");
 
 const pdf = full.docxToPdf(full.compareDocuments(original, modified, "smoke"));
 assert.equal(Buffer.from(pdf.slice(0, 5)).toString(), "%PDF-", "docxToPdf emits a PDF");
