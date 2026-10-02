@@ -92,3 +92,164 @@ fn header_content_change_is_redlined() {
         "deleted (old) header text must be present: {hdr}"
     );
 }
+
+/// A document of `paras`, each closing a section with default header
+/// `heads[h - 1]` when it carries `Some(h)` (an empty text gives an empty
+/// paragraph); the body's own section shows the last of `heads`.
+fn doc_with_sections(paras: &[(&str, Option<usize>)], heads: &[&str]) -> Vec<u8> {
+    doc_with_sections_ending(paras, heads, Some(heads.len()))
+}
+
+/// [`doc_with_sections`] whose body section shows header `body_head`, or
+/// none of its own.
+fn doc_with_sections_ending(
+    paras: &[(&str, Option<usize>)],
+    heads: &[&str],
+    body_head: Option<usize>,
+) -> Vec<u8> {
+    let sect = |h: Option<usize>| {
+        let head = h
+            .map(|h| format!("<w:headerReference w:type=\"default\" r:id=\"rIdH{h}\"/>"))
+            .unwrap_or_default();
+        format!("<w:sectPr>{head}<w:pgSz w:w=\"12240\" w:h=\"15840\"/></w:sectPr>")
+    };
+    let mut body = String::new();
+    for (text, brk) in paras {
+        let ppr = brk
+            .map(|h| format!("<w:pPr>{}</w:pPr>", sect(Some(h))))
+            .unwrap_or_default();
+        let run = if text.is_empty() {
+            String::new()
+        } else {
+            format!("<w:r><w:t>{text}</w:t></w:r>")
+        };
+        body.push_str(&format!("<w:p>{ppr}{run}</w:p>"));
+    }
+    body.push_str(&sect(body_head));
+    let doc = format!(
+        "<w:document xmlns:w=\"{W_NS}\" xmlns:r=\"{REL_NS}\"><w:body>{body}</w:body></w:document>"
+    );
+    let ids: Vec<String> = (1..=heads.len()).map(|i| format!("rIdH{i}")).collect();
+    let targets: Vec<String> = (1..=heads.len())
+        .map(|i| format!("header{i}.xml"))
+        .collect();
+    let names: Vec<String> = (1..=heads.len())
+        .map(|i| format!("word/header{i}.xml"))
+        .collect();
+    let parts: Vec<String> = heads
+        .iter()
+        .map(|h| format!("<w:hdr xmlns:w=\"{W_NS}\"><w:p><w:r><w:t>{h}</w:t></w:r></w:p></w:hdr>"))
+        .collect();
+    let ty = format!("{REL_NS}/header");
+    let rels: Vec<(&str, &str, &str)> = ids
+        .iter()
+        .zip(&targets)
+        .map(|(i, t)| (i.as_str(), ty.as_str(), t.as_str()))
+        .collect();
+    let extra: Vec<(&str, &str)> = names
+        .iter()
+        .zip(&parts)
+        .map(|(n, p)| (n.as_str(), p.as_str()))
+        .collect();
+    build_docx(&doc, &rels, &extra)
+}
+
+#[test]
+fn a_section_whose_break_is_deleted_keeps_its_header() {
+    // 7e4c9416aa's shape (Word probe hs1): the revision drops the first
+    // section break, an empty paragraph of its own, so its one header
+    // answers the last section's. The
+    // first section has no counterpart and its header stays as it was;
+    // giving it the revision's header too put a PAGE field Word could not
+    // export into a section the break deletion merges away.
+    let a = doc_with_sections(
+        &[
+            ("Alpha body one.", None),
+            ("", Some(1)),
+            ("Alpha body two.", None),
+        ],
+        &["First head", "Second head"],
+    );
+    let b = doc_with_sections(
+        &[("Alpha body one.", None), ("Alpha body two.", None)],
+        &["Bravo head"],
+    );
+    let out = compare_documents(&a, &b, "Test").expect("compare ok");
+    let first = read_part(&out, "word/header1.xml");
+    assert!(
+        !first.contains("<w:ins") && !first.contains("<w:del") && first.contains("First head"),
+        "the first section's header stays unmarked: {first}"
+    );
+    let last = read_part(&out, "word/header2.xml");
+    assert!(
+        last.contains("<w:ins") && last.contains("Bravo") && last.contains("<w:del"),
+        "the last section's header takes the revision's: {last}"
+    );
+}
+
+#[test]
+fn sections_pair_through_the_breaks_that_survive() {
+    // Word probe hs3: three sections against two, the middle break gone.
+    // The first and last sections answer the revision's two; the middle
+    // one keeps its header unmarked.
+    let a = doc_with_sections(
+        &[
+            ("Alpha body one.", Some(1)),
+            ("Alpha body two.", None),
+            ("", Some(2)),
+            ("Alpha body three.", None),
+        ],
+        &["First head", "Second head", "Third head"],
+    );
+    let b = doc_with_sections(
+        &[
+            ("Alpha body one.", Some(1)),
+            ("Alpha body two.", None),
+            ("Alpha body three.", None),
+        ],
+        &["Bravo one", "Bravo last"],
+    );
+    let out = compare_documents(&a, &b, "Test").expect("compare ok");
+    let h = |n: usize| read_part(&out, &format!("word/header{n}.xml"));
+    assert!(
+        h(1).contains("Bravo one") && h(1).contains("<w:del"),
+        "{}",
+        h(1)
+    );
+    assert!(
+        !h(2).contains("<w:ins") && !h(2).contains("<w:del") && h(2).contains("Second head"),
+        "{}",
+        h(2)
+    );
+    assert!(
+        h(3).contains("Bravo last") && h(3).contains("<w:del"),
+        "{}",
+        h(3)
+    );
+}
+
+#[test]
+fn a_deleted_sections_header_the_last_section_inherits_is_diffed() {
+    // Word probe hs5: the first section's break goes, and the last section,
+    // which has no header of its own, showed the first one's. Word diffs
+    // that header against the revision's.
+    let a = doc_with_sections_ending(
+        &[
+            ("Alpha body one.", None),
+            ("", Some(1)),
+            ("Alpha body two.", None),
+        ],
+        &["First head"],
+        None,
+    );
+    let b = doc_with_sections(
+        &[("Alpha body one.", None), ("Alpha body two.", None)],
+        &["Bravo head"],
+    );
+    let out = compare_documents(&a, &b, "Test").expect("compare ok");
+    let head = read_part(&out, "word/header1.xml");
+    assert!(
+        head.contains("<w:ins") && head.contains("Bravo") && head.contains("<w:del"),
+        "{head}"
+    );
+}

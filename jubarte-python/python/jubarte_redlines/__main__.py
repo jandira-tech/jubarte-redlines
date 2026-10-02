@@ -11,6 +11,8 @@ files and exit codes. ``uvx jubarte-redlines`` runs it without installing.
     python -m jubarte_redlines text letter.docx
     python -m jubarte_redlines edit letter.docx --plan plan.json --out-dir review --pdf --png
     python -m jubarte_redlines convert letter.docx --png --dpi 150 --report pages.json
+    python -m jubarte_redlines convert letter.docx --png --pages 3-5
+    python -m jubarte_redlines diff-render before.docx after.docx --out-dir diff
     python -m jubarte_redlines compare a.docx b.docx -o redline.docx --author Legal
     python -m jubarte_redlines accept redline.docx -o clean.docx
     python -m jubarte_redlines changes redline.docx --json
@@ -18,7 +20,8 @@ files and exit codes. ``uvx jubarte-redlines`` runs it without installing.
     python -m jubarte_redlines capabilities --json
 
 Exit codes: 0 success, 1 error (I/O, engine, existing output), 2 usage, 3 edit
-plan refused (its per-operation report is on stdout; nothing was written).
+plan refused (its per-operation report is on stdout; nothing was written), 5
+``diff-render`` found a page that differs.
 """
 
 from __future__ import annotations
@@ -31,12 +34,13 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from . import __version__, capabilities
-from .document import Document, EditPlanError
+from .document import Document, EditPlanError, diff_render
 from .models import PdfOptions
 
 EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_PLAN_REFUSED = 3
+EXIT_PAGES_DIFFER = 5
 
 
 class CliError(Exception):
@@ -87,6 +91,33 @@ def _pdf_options(args: argparse.Namespace) -> PdfOptions:
 def _png_name(stem: str, index: int, count: int) -> str:
     width = max(2, len(str(count)))
     return f"{stem}-page-{index + 1:0{width}d}.png"
+
+
+def _parse_pages(spec: str) -> list[int]:
+    """``--pages`` as page numbers counted from 1, ascending and without
+    repeats: ``1-3,7`` is ``[1, 2, 3, 7]``."""
+
+    def page(text: str) -> int:
+        text = text.strip()
+        if not (text.isascii() and text.isdigit()):
+            raise CliError(f"--pages '{spec}': '{text}' is not a page number")
+        if int(text) == 0:
+            raise CliError(f"--pages '{spec}': pages are counted from 1")
+        return int(text)
+
+    pages: set[int] = set()
+    for item in spec.split(","):
+        if not item.strip():
+            raise CliError(f"--pages '{spec}': empty item")
+        first, dash, last = item.partition("-")
+        if not dash:
+            pages.add(page(item))
+            continue
+        lo, hi = page(first), page(last)
+        if lo > hi:
+            raise CliError(f"--pages '{spec}': '{item.strip()}' runs backwards")
+        pages.update(range(lo, hi + 1))
+    return sorted(pages)
 
 
 # -- commands -----------------------------------------------------------------
@@ -195,13 +226,17 @@ def cmd_convert(args: argparse.Namespace) -> int:
             if side.resolve() in (output.resolve(), args.file.resolve()):
                 raise CliError(f"{what} '{side}' is the same file as the PDF output or the input")
             _ensure_writable(side, args.force)
+    selected = None if args.pages is None else _parse_pages(args.pages)
+    if selected is not None and not args.png:
+        raise CliError("--pages selects PNG pages; add --png")
     if want_pdf:
         _ensure_writable(output, args.force)
-    rendered = doc.render(pdf=want_pdf, png_dpi=args.dpi if args.png else None, options=_pdf_options(args))
+    rendered = doc.render(pdf=want_pdf, png_dpi=args.dpi if args.png else None, options=_pdf_options(args), pages=selected)
     pages = rendered.report.page_count
     # The page count is known only now; check every PNG path before the first
     # write so a refused page leaves no partial bundle.
-    png_paths = [output.parent / _png_name(output.stem, i, len(rendered.pngs)) for i in range(len(rendered.pngs))]
+    indices = range(len(rendered.pngs)) if selected is None else [p - 1 for p in selected]
+    png_paths = [output.parent / _png_name(output.stem, i, pages) for i in indices]
     for path in png_paths:
         _ensure_writable(path, args.force)
     if rendered.pdf is not None:
@@ -217,6 +252,56 @@ def cmd_convert(args: argparse.Namespace) -> int:
         report = {"page_count": pages, "pages": [asdict(p) for p in rendered.report.pages], "fonts": [asdict(f) for f in rendered.report.fonts]}
         _write(args.report, json.dumps(report, ensure_ascii=False))
     return EXIT_OK
+
+
+def cmd_diff_render(args: argparse.Namespace) -> int:
+    a, b = _read(args.a), _read(args.b)
+    diff = diff_render(a, b, dpi=args.dpi, overlay=not args.no_overlay and args.out_dir is not None)
+    changed = [p for p in diff.pages if p.differs]
+    summary = json.dumps(
+        {
+            "a": str(args.a),
+            "b": str(args.b),
+            "dpi": args.dpi,
+            "a_pages": diff.a_report.page_count,
+            "b_pages": diff.b_report.page_count,
+            "changed": len(changed),
+            "pages": [{k: v for k, v in asdict(p).items() if k != "only_in" or v is not None} for p in diff.pages],
+        }
+    )
+    if args.out_dir is not None:
+        out: Path = args.out_dir
+        count = len(diff.pages)
+        files: list[tuple[Path, bytes | str]] = []
+        for page in changed:
+            i = page.index
+            for prefix, png in (
+                ("a", diff.a[i] if i < len(diff.a) else None),
+                ("b", diff.b[i] if i < len(diff.b) else None),
+                ("diff", diff.overlays[i]),
+            ):
+                if png is not None:
+                    files.append((out / _png_name(prefix, i, count), png))
+        files.append((out / "diff.json", summary))
+        # Check every path before the first write so a refused file leaves no
+        # partial bundle.
+        for path, _ in files:
+            _ensure_writable(path, args.force)
+        out.mkdir(parents=True, exist_ok=True)
+        for path, data in files:
+            _write(path, data)
+    if args.json:
+        print(summary)
+    else:
+        for page in changed:
+            if page.only_in is not None:
+                print(f"page {page.index + 1}: only in {page.only_in}")
+            else:
+                print(f"page {page.index + 1}: {page.changed_ratio * 100:.2f}% of pixels changed, box {list(page.bbox or (0, 0, 0, 0))}")
+        total = len(diff.pages)
+        wrote = f" (wrote {args.out_dir})" if args.out_dir is not None else ""
+        print(f"{len(changed)} of {total} page{'' if total == 1 else 's'} differ{wrote}")
+    return EXIT_PAGES_DIFFER if changed else EXIT_OK
 
 
 def cmd_compare(args: argparse.Namespace) -> int:
@@ -354,6 +439,7 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     p.add_argument("--font-report", type=Path, metavar="FILE", help="JSON font-resolution report")
     p.add_argument("--report", type=Path, metavar="FILE", help="JSON page report ({page_count, pages, fonts})")
     _add_revision_flags(p)
+    p.add_argument("--pages", metavar="SPEC", help="rasterize only these pages, counted from 1: 3, 1-3,7 (needs --png)")
     p.set_defaults(func=cmd_convert)
 
     p = sub.add_parser("compare", aliases=["redline"], help="two documents into a Word tracked-changes document")
@@ -391,6 +477,16 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
         p.add_argument("--author", action="append", metavar="NAME", help="only changes by this author; repeatable")
         p.add_argument("--kind", action="append", choices=["insertion", "deletion", "move", "formatting"], help="only changes of this kind; repeatable")
         p.set_defaults(func=func)
+
+    p = sub.add_parser("diff-render", help="which pages of two documents look different; exit 5 when any does")
+    p.add_argument("a", type=Path, metavar="A")
+    p.add_argument("b", type=Path, metavar="B")
+    p.add_argument("--dpi", type=float, default=100.0)
+    p.add_argument("--out-dir", type=Path, metavar="DIR", help="write a-/b-/diff-page-NN.png for changed pages and diff.json")
+    p.add_argument("--json", action="store_true", help="print diff.json instead of one line per changed page")
+    p.add_argument("--no-overlay", action="store_true", help="skip the diff-page-NN.png overlays")
+    p.add_argument("--force", action="store_true", help="overwrite files already in --out-dir")
+    p.set_defaults(func=cmd_diff_render)
 
     p = sub.add_parser("capabilities", help="what this build can do")
     p.add_argument("--json", action="store_true", help="(the output is JSON either way)")

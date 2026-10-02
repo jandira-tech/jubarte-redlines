@@ -67,6 +67,7 @@ fn one_render_pass_can_produce_pdf_pngs_and_report_together() {
         RenderRequest {
             pdf: true,
             png_dpi: Some(24.0),
+            pages: None,
         },
     )
     .unwrap();
@@ -81,6 +82,7 @@ fn one_render_pass_can_produce_pdf_pngs_and_report_together() {
         RenderRequest {
             pdf: false,
             png_dpi: None,
+            pages: None,
         },
     )
     .unwrap();
@@ -123,6 +125,7 @@ fn a_page_over_the_pixel_budget_is_an_error_not_a_missing_png() {
         RenderRequest {
             pdf: false,
             png_dpi: Some(1200.0),
+            pages: None,
         },
     )
     .expect_err("an unpaintable page must fail the request");
@@ -138,6 +141,7 @@ fn fractional_dpi_rounds_dimensions_up_and_png_contains_painted_text() {
         RenderRequest {
             pdf: false,
             png_dpi: Some(24.5),
+            pages: None,
         },
     )
     .unwrap();
@@ -168,6 +172,7 @@ fn report_is_independent_of_requested_output_formats() {
         RenderRequest {
             pdf: false,
             png_dpi: None,
+            pages: None,
         },
     )
     .unwrap();
@@ -177,6 +182,7 @@ fn report_is_independent_of_requested_output_formats() {
         RenderRequest {
             pdf: false,
             png_dpi: Some(12.0),
+            pages: None,
         },
     )
     .unwrap();
@@ -186,6 +192,7 @@ fn report_is_independent_of_requested_output_formats() {
         RenderRequest {
             pdf: true,
             png_dpi: None,
+            pages: None,
         },
     )
     .unwrap();

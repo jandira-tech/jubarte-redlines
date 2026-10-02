@@ -30,6 +30,25 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   step with `Cargo.toml`.
 - Python: `Document.inspect_json()` returns the engine's inspect snapshot as
   JSON text.
+- `jubarte diff-render A B` (`convert::diff_render`) lays out and rasterizes
+  both documents at one resolution (`--dpi`, default 100) and compares the
+  pages pixel for pixel: each page's `changed_ratio`, the box around the
+  changed pixels, and `only_in` for a page one side lacks. `--out-dir` writes
+  `a-page-NN.png`, `b-page-NN.png` and `diff-page-NN.png` (b's page with the
+  change painted magenta and boxed; `--no-overlay` skips it) for the pages
+  that differ, and `diff.json`; `--json` prints it. Exits 0 when no page
+  differs and 5 when one does, so a CI step can gate on it. Python:
+  `jubarte_redlines.diff_render(a, b, dpi=)` returns a `RenderDiff` of
+  `PageDiff`s, and `python -m jubarte_redlines diff-render` matches the
+  binary.
+- `jubarte convert FILE --png --pages 1-3,7` rasterizes only those pages
+  (counted from 1) after one layout pass of the whole document; the page
+  report still covers every page. `RenderRequest.pages` (zero-based) in
+  Rust, `Document.to_png(pages=)` and `Document.render(pages=)` in Python. A
+  page past the end is `ConvertError::PageOutOfRange`. `RenderRequest` is no
+  longer `Copy`.
+- `capabilities` reports `operations.diff_render` and
+  `operations.page_ranges`.
 - Edit plans take `"existing_revisions": "keep"`: another party's tracked
   changes stay tracked, byte for byte, and the plan's edits become new
   revisions beside them by the plan's author and date (ids after the
