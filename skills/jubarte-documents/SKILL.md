@@ -41,6 +41,10 @@ offsets, `limitations`) plus `summary` (tables, comments, revisions, headers,
 footnotes) and `source_sha256`. After the body, `jubarte text` prints each
 header, footer and notes part as its own story (`[header1:p:0] ...`,
 `[footnotes:p:0] ...`), and `inspect` lists them under `stories`.
+`tables` reads each body table as a grid: `rows` of cells, each cell with
+its `paragraph_ids` and `text`, plus `header_rows` and `widths_dxa`. Edit a
+cell through its paragraph id. `jubarte inspect contract.docx --tables`
+prints the same grids.
 
 Gotchas:
 - Headers, footers, footnotes and endnotes are editable stories; text boxes

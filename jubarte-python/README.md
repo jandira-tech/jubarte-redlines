@@ -100,7 +100,7 @@ from jubarte_redlines import read, EditPlan, diff
 
 doc = read("contract.docx")
 doc.markdown()    # body and every header/footer/notes story, [body:p:N] ids
-doc.inspect()     # Snapshot: summary + paragraphs (ids, style, spans, limitations)
+doc.inspect()     # Snapshot: summary + paragraphs (ids, style, spans, limitations) + tables
 doc.sha256()      # the source_sha256 guard an edit plan carries
 doc.changes()     # each tracked change, with the id accept/reject and plans take
 doc.accept(ids=["body:rev:12"])   # or reject(...): resolve a selection,

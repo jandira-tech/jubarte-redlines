@@ -9,7 +9,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from jubarte_redlines import EditPlan, EditPlanError
+from jubarte_redlines import EditPlan, EditPlanError, Table, TableCell
 from jubarte_redlines.models import (
     _decode_render_report,
     _decode_report,
@@ -242,3 +242,29 @@ def test_list_paragraphs_builder_writes_the_list_kind():
 def test_list_paragraphs_builder_rejects_a_bare_selector(paragraphs):
     with pytest.raises(TypeError):
         EditPlan(author="A").list_paragraphs(paragraphs)
+
+
+def test_snapshot_without_tables_decodes_to_an_empty_tuple(snapshot):
+    assert snapshot.tables == ()
+
+
+def test_snapshot_tables_decode_to_immutable_grids():
+    summary = dict.fromkeys(("paragraphs", "tables", "fields", "sections", "comments", "revisions", "footnotes", "endnotes", "headers", "footers", "images"), 0)
+    summary.update(list_numbering=False, track_changes=False)
+    table = {
+        "index": 0,
+        "rows": [[{"paragraph_ids": ["body:p:1"], "text": "Item"}, {"paragraph_ids": [], "text": ""}]],
+        "header_rows": 1,
+        "widths_dxa": [6000, 3360],
+    }
+    snap = _decode_snapshot(json.dumps({"schema_version": 1, "source_sha256": "a" * 64, "summary": summary, "paragraphs": [], "tables": [table]}))
+    (decoded,) = snap.tables
+    assert decoded.index == 0
+    assert decoded.header_rows == 1
+    assert decoded.widths_dxa == (6000, 3360)
+    assert decoded.rows[0][0].paragraph_ids == ("body:p:1",)
+    assert decoded.rows[0][0].text == "Item"
+    assert decoded.rows[0][1] == TableCell(paragraph_ids=(), text="")
+    assert isinstance(decoded, Table)
+    with pytest.raises(FrozenInstanceError):
+        decoded.index = 1

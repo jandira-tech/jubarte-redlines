@@ -263,6 +263,29 @@ class Summary:
 
 
 @dataclass(frozen=True, slots=True)
+class TableCell:
+    """A table cell: the ids of its own paragraphs and their text joined with ``\\n``."""
+
+    paragraph_ids: tuple[str, ...]
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class Table:
+    """A body table as a grid; nested tables are separate entries.
+
+    ``rows`` holds the cells as the XML has them (a merged cell is one cell),
+    ``header_rows`` the leading rows that repeat as a header, ``widths_dxa``
+    the grid column widths in twentieths of a point (0 when unreadable).
+    """
+
+    index: int
+    rows: tuple[tuple[TableCell, ...], ...]
+    header_rows: int
+    widths_dxa: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class Snapshot:
     """What ``Document.inspect()`` returns; the coordinates an ``EditPlan`` uses."""
 
@@ -271,6 +294,7 @@ class Snapshot:
     summary: Summary
     paragraphs: tuple[Paragraph, ...]
     stories: tuple[Story, ...] = ()
+    tables: tuple[Table, ...] = ()
 
     def paragraph(self, id_or_index: str | int) -> Paragraph:
         """The paragraph with this id (``body:p:N``, ``header1:p:0``) or body index."""
@@ -328,6 +352,18 @@ def _decode_snapshot(payload: str) -> Snapshot:
                 paragraphs=tuple(_decode_paragraph(p) for p in s["paragraphs"]),
             )
             for s in data.get("stories", ())
+        ),
+        tables=tuple(
+            Table(
+                index=t["index"],
+                rows=tuple(
+                    tuple(TableCell(paragraph_ids=tuple(c["paragraph_ids"]), text=c["text"]) for c in row)
+                    for row in t["rows"]
+                ),
+                header_rows=t["header_rows"],
+                widths_dxa=tuple(t["widths_dxa"]),
+            )
+            for t in data.get("tables", ())
         ),
     )
 

@@ -395,6 +395,7 @@ jubarte convert redline.docx \
 
 ```sh
 jubarte inspect contract.docx --json
+jubarte inspect contract.docx --tables   # each table as a grid of `ids=text` cells
 jubarte text contract.docx
 ```
 

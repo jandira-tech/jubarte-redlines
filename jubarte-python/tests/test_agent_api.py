@@ -435,3 +435,17 @@ def test_list_paragraphs_numbers_them_as_tracked_changes() -> None:
     assert [(p.numbered, p.style) for p in paragraphs[2:]] == [(True, "ListParagraph"), (True, "ListParagraph")]
     assert not any(p.numbered for p in result.redline.reject().inspect().paragraphs)
     assert result.report.revisions.format_changed >= 2
+
+
+def test_inspect_reads_tables_as_grids_whose_ids_take_edits() -> None:
+    doc = letter()
+    table = EditPlan(author="Claude", date="2026-10-02T12:00:00Z").for_document(doc).insert_table(0, rows=[["Item", "Qty"], ["Bolt", "40"]], header_row=True)
+    clean = doc.edit(table).clean
+    snap = clean.inspect()
+    (grid,) = snap.tables
+    assert grid.header_rows == 1
+    assert [[cell.text for cell in row] for row in grid.rows] == [["Item", "Qty"], ["Bolt", "40"]]
+    target = grid.rows[1][1].paragraph_ids[0]
+    assert snap.paragraph(target).text == "40"
+    edited = clean.edit(EditPlan(author="Claude").for_document(clean).replace(target, find="40", replacement="45")).clean
+    assert edited.inspect().tables[0].rows[1][1].text == "45"

@@ -99,6 +99,13 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   when it has no style. The redline shows a `w:pPrChange` per paragraph.
   `restart: false` continues the nearest preceding list. Python:
   `EditPlan.list_paragraphs`.
+- `inspect` reads tables as grids: the snapshot (`jubarte inspect --json`,
+  `inspect::inspect_json`, WASM `inspectDocument`) gains `tables`. Each
+  body table, nested ones included, has `index`, `rows` of cells
+  (`paragraph_ids`, `text`), `header_rows` and `widths_dxa`. The ids feed
+  straight into an edit plan. Also available as `inspect::tables` and
+  `jubarte inspect FILE --tables`. Python: `Snapshot.tables` (`Table`,
+  `TableCell`).
 - Edit plans: `delete_paragraph` takes an optional `comment`, anchored on
   the deleted text in the redline (the clean copy has no paragraph to hold
   it) and shown on the removed paragraph's hunk in the patch. Python:
