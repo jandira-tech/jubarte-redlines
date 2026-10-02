@@ -325,6 +325,15 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   `strict_to_transitional_docx_within` takes the budget explicitly. Over the
   budget it returns the input unchanged, as it already did for an unreadable
   archive.
+- CI: every third-party GitHub Action in `ci.yml` and `release.yml` is
+  pinned to a commit SHA, with the release tag it resolves to as a trailing
+  comment so Dependabot can bump both; Dependabot groups Cargo minor and
+  patch bumps into one weekly pull request. Clippy with `-D warnings` now
+  also runs on jubarte-rust-inproc, jubarte-python and jubarte-wasm (for
+  `wasm32-unknown-unknown`), standalone packages the root workspace does
+  not cover; jubarte-app/src-tauri keeps its own CI. The MSRV job runs the
+  all-feature test suite on Rust 1.88 instead of `cargo check`, as
+  README.md has said it does.
 
 ### Fixed
 

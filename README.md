@@ -706,10 +706,11 @@ an edit plan, generated report and rendered redline page.
 CI currently includes:
 
 - `cargo fmt --check`
-- Clippy with `-D warnings`
+- Clippy with `-D warnings` on the crate and on the Python, WASM
+  (`wasm32-unknown-unknown`) and in-process bench bindings
 - all-feature Rust tests on Linux, macOS and Windows
 - source-based code coverage with a line-coverage floor
-- MSRV testing on Rust 1.88
+- MSRV testing on Rust 1.88 (the all-feature test suite, on Linux)
 - `cargo publish --dry-run`
 - `cargo-deny`
 - REUSE/SPDX checks
