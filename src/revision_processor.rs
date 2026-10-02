@@ -2272,6 +2272,7 @@ fn remove_rows_left_empty_by_move_from_inner(dom: &mut Dom, node: NodeId) -> Opt
             return None;
         }
     }
+    let had_rows = name == W::tbl() && dom.element(node, &W::tr()).is_some();
     let ne = dom.new_element(name);
     for (an, av) in dom.attributes(node) {
         dom.set_attribute_value(ne, &an, Some(&av));
@@ -2280,6 +2281,12 @@ fn remove_rows_left_empty_by_move_from_inner(dom: &mut Dom, node: NodeId) -> Opt
         if let Some(tc) = remove_rows_left_empty_by_move_from_inner(dom, c) {
             dom.add(ne, tc);
         }
+    }
+    // A table this pass emptied of rows goes with them: the earlier pass
+    // emptied the cells of a table whose rows were all deleted, and a
+    // rowless `w:tbl` is no table Word writes.
+    if had_rows && dom.element(ne, &W::tr()).is_none() {
+        return None;
     }
     Some(ne)
 }
