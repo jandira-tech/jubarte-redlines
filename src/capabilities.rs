@@ -66,6 +66,10 @@ pub struct Operations {
     /// plan carries its redline's.
     #[serde(default)]
     pub patch: bool,
+    /// Comment threads: `jubarte comments` lists them, and edit plans reply
+    /// to, resolve, edit and delete comments.
+    #[serde(default)]
+    pub comment_threads: bool,
     /// Refresh `PAGEREF`, `REF`, `NUMPAGES`, `SEQ` and `TOC` results from
     /// jubarte's layout (`jubarte fields update`, an edit plan's
     /// `update_fields`).
@@ -141,6 +145,7 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             markdown_to_docx: true,
             markdown_diff: true,
             patch: true,
+            comment_threads: true,
             fields: true,
         },
         edit_plan_versions: vec![crate::inspect::SCHEMA_VERSION],
@@ -154,6 +159,10 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             "format_paragraph",
             "merge_paragraphs",
             "rewrite",
+            "reply_comment",
+            "resolve_comment",
+            "edit_comment",
+            "delete_comment",
             "insert_toc",
         ]
         .iter()
@@ -185,17 +194,24 @@ mod tests {
         assert_eq!(c.engine_version, env!("CARGO_PKG_VERSION"));
         assert_eq!(c.runtime, "rust");
         assert_eq!(c.edit_plan_versions, [1]);
-        assert_eq!(c.edit_operations.len(), 10);
+        assert_eq!(c.edit_operations.len(), 14);
         assert!(c.operations.fields);
         assert_eq!(
             c.edit_operations.last().map(String::as_str),
             Some("insert_toc")
         );
         assert!(c.edit_operations.iter().any(|kind| kind == "rewrite"));
+        assert!(
+            c.edit_operations
+                .iter()
+                .any(|kind| kind == "delete_comment")
+        );
+        assert!(c.operations.comment_threads);
         assert!(c.operations.markdown_to_docx && c.operations.markdown_diff);
         let json: serde_json::Value = serde_json::from_str(&capabilities_json("cli")).unwrap();
         assert_eq!(json["runtime"], "cli");
         assert_eq!(json["operations"]["png"], true);
+        assert_eq!(json["operations"]["comment_threads"], true);
         assert_eq!(json["operations"]["selective_revisions"], true);
         assert_eq!(json["limits"]["reads_legacy_doc"], false);
         assert_eq!(json["limits"]["input"]["max_entries"], 10_000);

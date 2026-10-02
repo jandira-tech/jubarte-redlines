@@ -183,6 +183,52 @@ def _decode_changes(payload: str) -> tuple[Change, ...]:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class Comment:
+    """One comment with its thread position and the text it is anchored to.
+
+    ``id`` is the comment's ``w:id``, which ``EditPlan.reply_comment``,
+    ``resolve_comment``, ``edit_comment`` and ``delete_comment`` take.
+    ``parent`` is the id of the comment it replies to (Word threads are one
+    level deep); ``done`` is set when the thread is resolved. ``paragraph``
+    is the paragraph id where the range starts (``body:p:12``);
+    ``anchor_text`` is the commented text, paragraphs joined by ``\n``, with
+    up to 80 characters ``before`` and ``after`` it.
+    """
+
+    id: int
+    author: str
+    initials: str | None
+    date: str | None
+    text: str
+    parent: int | None
+    done: bool
+    paragraph: str | None
+    anchor_text: str
+    before: str
+    after: str
+
+
+def _decode_comments(payload: str) -> tuple[Comment, ...]:
+    rows: list[dict[str, object]] = json.loads(payload)
+    return tuple(
+        Comment(
+            id=row["id"],  # type: ignore[arg-type]
+            author=row["author"],  # type: ignore[arg-type]
+            initials=row.get("initials"),  # type: ignore[arg-type]
+            date=row.get("date"),  # type: ignore[arg-type]
+            text=row["text"],  # type: ignore[arg-type]
+            parent=row.get("parent"),  # type: ignore[arg-type]
+            done=row["done"],  # type: ignore[arg-type]
+            paragraph=row.get("paragraph"),  # type: ignore[arg-type]
+            anchor_text=row["anchor_text"],  # type: ignore[arg-type]
+            before=row["before"],  # type: ignore[arg-type]
+            after=row["after"],  # type: ignore[arg-type]
+        )
+        for row in rows
+    )
+
+
 def change_filter(
     ids: Sequence[str] | None = None,
     authors: Sequence[str] | None = None,
@@ -514,11 +560,22 @@ class EditPlan:
         op: dict[str, object] = {"kind": "delete", "paragraph": _selector(paragraph), "find": find}
         return self._with(_with_optional(op, id=id))
 
-    def comment(self, paragraph: Selector, *, text: str, find: str | None = None, id: str | None = None) -> EditPlan:
-        """Comment on the unique occurrence of ``find`` or on the whole paragraph."""
+    def comment(
+        self,
+        paragraph: Selector,
+        *,
+        text: str,
+        find: str | None = None,
+        through: Selector | None = None,
+        id: str | None = None,
+    ) -> EditPlan:
+        """Comment on the unique occurrence of ``find`` or on the whole paragraph;
+        with ``through``, on every paragraph from ``paragraph`` to that one."""
         op: dict[str, object] = {"kind": "comment", "paragraph": _selector(paragraph), "text": text}
         if find is not None:
             op["find"] = find
+        if through is not None:
+            op["through"] = _selector(through)
         return self._with(_with_optional(op, id=id))
 
     def insert_paragraph(
@@ -593,6 +650,27 @@ class EditPlan:
         """Make the paragraph read as ``text``: only the words that differ are
         edited, so the rest keeps its runs and formatting."""
         op: dict[str, object] = {"kind": "rewrite", "paragraph": _selector(paragraph), "text": text}
+        return self._with(_with_optional(op, id=id))
+
+    def reply_comment(self, comment_id: int, *, text: str, id: str | None = None) -> EditPlan:
+        """Reply to comment ``comment_id`` (``Document.comments`` lists the ids),
+        anchored on the same text; a reply to a reply joins the thread."""
+        op: dict[str, object] = {"kind": "reply_comment", "comment_id": comment_id, "text": text}
+        return self._with(_with_optional(op, id=id))
+
+    def resolve_comment(self, comment_id: int, *, done: bool = True, id: str | None = None) -> EditPlan:
+        """Resolve comment ``comment_id`` and its replies; ``done=False`` reopens them."""
+        op: dict[str, object] = {"kind": "resolve_comment", "comment_id": comment_id, "done": done}
+        return self._with(_with_optional(op, id=id))
+
+    def edit_comment(self, comment_id: int, *, text: str, id: str | None = None) -> EditPlan:
+        """Replace the text of comment ``comment_id``; its author, date and thread stay."""
+        op: dict[str, object] = {"kind": "edit_comment", "comment_id": comment_id, "text": text}
+        return self._with(_with_optional(op, id=id))
+
+    def delete_comment(self, comment_id: int, *, id: str | None = None) -> EditPlan:
+        """Remove comment ``comment_id`` with its replies and anchors."""
+        op: dict[str, object] = {"kind": "delete_comment", "comment_id": comment_id}
         return self._with(_with_optional(op, id=id))
 
     def insert_toc(

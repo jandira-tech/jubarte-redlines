@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "source_sha256": "ac63d95ed49668b75ec54b10dcebbc38deb6b7f58274d9a98e7d0c518b3a4dc5",
+  "author": "Bob Vendor",
+  "date": "2026-10-02T15:30:00Z",
+  "operations": [
+    {
+      "id": "consent-reply",
+      "kind": "reply_comment",
+      "comment_id": 0,
+      "text": "Agreed: deemed consent after 10 business days."
+    },
+    {
+      "id": "section-4-reply",
+      "kind": "reply_comment",
+      "comment_id": 1,
+      "text": "The DPA controls; we will add a precedence clause."
+    },
+    {
+      "id": "survival-done",
+      "kind": "resolve_comment",
+      "comment_id": 2
+    }
+  ]
+}

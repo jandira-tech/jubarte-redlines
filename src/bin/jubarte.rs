@@ -444,6 +444,22 @@ enum Command {
         #[arg(short = 'C', long, value_name = "N", default_value_t = 0)]
         context: usize,
     },
+    /// List every comment with its thread (`parent`, `done`) and the text
+    /// it is anchored to, with its surroundings.
+    Comments {
+        /// The document (.docx).
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Emit one JSON object per line.
+        #[arg(long)]
+        json: bool,
+        /// Only this author's comments (exact match).
+        #[arg(long, value_name = "NAME")]
+        author: Option<String>,
+        /// One comment per thread: the newest.
+        #[arg(long)]
+        latest: bool,
+    },
     /// Field results written back into the document from jubarte's layout.
     Fields {
         #[command(subcommand)]
@@ -898,6 +914,35 @@ fn run_changes(file: &Path, json: bool) -> Result<(), String> {
     }
     if !json {
         println!("{} change(s)", changes.len());
+    }
+    Ok(())
+}
+
+fn run_comments(file: &Path, json: bool, author: Option<&str>, latest: bool) -> Result<(), String> {
+    let bytes = read_document(file)?;
+    let comments = jubarte::comments::list_comments(&bytes).map_err(|e| e.to_string())?;
+    let comments = jubarte::comments::select_comments(comments, author, latest);
+    for c in &comments {
+        if json {
+            println!("{}", serde_json::to_string(c).map_err(|e| e.to_string())?);
+            continue;
+        }
+        let text: String = c.text.chars().take(60).collect();
+        let anchor: String = c.anchor_text.chars().take(40).collect();
+        let thread = c
+            .parent
+            .map(|p| format!("\treply to {p}"))
+            .unwrap_or_default();
+        let done = if c.done { "\tresolved" } else { "" };
+        println!(
+            "{}\t{}\t{}\t{text:?}\ton {anchor:?}{thread}{done}",
+            c.id,
+            c.paragraph.as_deref().unwrap_or("-"),
+            c.author,
+        );
+    }
+    if !json {
+        println!("{} comment(s)", comments.len());
     }
     Ok(())
 }
@@ -1931,6 +1976,14 @@ fn main() -> ExitCode {
         }
         Some(Command::Changes { file, json }) => {
             return exit_code(run_changes(&file, json));
+        }
+        Some(Command::Comments {
+            file,
+            json,
+            author,
+            latest,
+        }) => {
+            return exit_code(run_comments(&file, json, author.as_deref(), latest));
         }
         Some(Command::Accept {
             file,

@@ -95,6 +95,24 @@ pub fn list_changes(docx: &[u8]) -> Result<String, JsValue> {
     serde_json::to_string(&changes).map_err(js_err)
 }
 
+/// List every comment as a JSON array string (the objects `jubarte comments
+/// --json` prints: `id`, `author`, `initials`, `date`, `text`, `parent`,
+/// `done`, `paragraph`, `anchor_text`, `before`, `after`). `author` keeps
+/// one author's comments; `latest` keeps the newest comment of each thread.
+///
+/// Mirrors `jubarte::comments::list_comments` and `select_comments`.
+#[wasm_bindgen(js_name = listComments)]
+pub fn list_comments(
+    docx: &[u8],
+    author: Option<String>,
+    latest: Option<bool>,
+) -> Result<String, JsValue> {
+    let comments = jubarte::comments::list_comments(docx).map_err(js_err)?;
+    let comments =
+        jubarte::comments::select_comments(comments, author.as_deref(), latest.unwrap_or(false));
+    serde_json::to_string(&comments).map_err(js_err)
+}
+
 fn change_filter(filter_json: &str) -> Result<jubarte::changes::ChangeFilter, JsValue> {
     serde_json::from_str(filter_json).map_err(|e| js_err(format!("invalid change filter: {e}")))
 }
@@ -551,6 +569,36 @@ mod tests {
              @@ [body:p:1] @@\nPayment is due in [-30-]{+45+} days.\n"
         );
         assert!(preview_edit_plan(&source, plan).unwrap().patch().is_none());
+    }
+
+    #[test]
+    fn comments_list_threads_as_a_json_array_and_filter() {
+        let source = word(OLD);
+        let first = jubarte::edit::apply_plan_json(
+            &source,
+            r#"{"schema_version":1,"author":"Ann","operations":[
+            {"kind":"comment","paragraph":{"index":1},"find":"30","text":"Too short"}]}"#,
+        )
+        .unwrap();
+        let second = jubarte::edit::apply_plan_json(
+            &first.clean,
+            r#"{"schema_version":1,"author":"Bob","operations":[
+            {"kind":"reply_comment","comment_id":0,"text":"Agreed"}]}"#,
+        )
+        .unwrap();
+        let all: serde_json::Value =
+            serde_json::from_str(&list_comments(&second.clean, None, None).unwrap()).unwrap();
+        assert_eq!(all.as_array().unwrap().len(), 2);
+        assert_eq!(all[0]["anchor_text"], "30");
+        assert_eq!(all[1]["parent"], 0);
+        let bob: serde_json::Value =
+            serde_json::from_str(&list_comments(&second.clean, Some("Bob".into()), None).unwrap())
+                .unwrap();
+        assert_eq!(bob.as_array().unwrap().len(), 1);
+        let latest: serde_json::Value =
+            serde_json::from_str(&list_comments(&second.clean, None, Some(true)).unwrap()).unwrap();
+        assert_eq!(latest[0]["text"], "Agreed");
+        assert_eq!(list_comments(&source, None, None).unwrap(), "[]");
     }
 
     #[test]

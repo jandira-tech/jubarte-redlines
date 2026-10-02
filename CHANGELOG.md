@@ -17,6 +17,19 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Added
 
+- `jubarte-mcp`, an MCP server over stdio in the Python package
+  (`pip install 'jubarte-redlines[mcp]'`): `docx_text`, `docx_inspect`,
+  `docx_edit`, `docx_render`, `docx_compare`, `docx_changes`, `docx_accept`,
+  `docx_reject`, `docx_capabilities`, and `docx_validate`, `docx_comments`,
+  `docx_audit` (which report a missing engine feature until it lands). Every
+  path must resolve under `--root`, outputs are files, and nothing is
+  replaced without `overwrite`. Setup for Claude Code, Codex and Gemini CLI
+  in [docs/adoption/mcp.md](docs/adoption/mcp.md).
+- Gemini CLI extension: `gemini-extension.json` and `GEMINI.md` at the
+  repository root; `scripts/bump-version.mjs` keeps the manifest version in
+  step with `Cargo.toml`.
+- Python: `Document.inspect_json()` returns the engine's inspect snapshot as
+  JSON text.
 - `scripts/release.sh` step 12 runs `scripts/release_downstream.sh`: jubarte.pro
   moves to the release (download page, demo engine) and is deployed, the
   app's release files are committed on `release/vx.y.z` in the jubarte-app
@@ -85,6 +98,20 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   a bin over the jubarte-wasm API with the commands, flags, messages and
   exit codes of `uvx jubarte-redlines`. On main after 0.10.1; ships with
   the next release.
+- Comment threads (`comments::list_comments`): `jubarte comments FILE
+  [--json] [--author NAME] [--latest]`, Python `Document.comments()` and
+  WASM `listComments` list every comment with its thread (`parent`,
+  `done`), the text it is anchored to and 80 characters on either side.
+  Edit plans reply to (`reply_comment`), resolve or reopen
+  (`resolve_comment`), reword (`edit_comment`) and delete
+  (`delete_comment`, with its replies and anchors) existing comments, and
+  `comment` takes `through` to cover several paragraphs. Whenever an edit
+  writes comments, every comment paragraph gets a `w14:paraId` and
+  `commentsExtended.xml`, `commentsIds.xml` and `commentsExtensible.xml`
+  hold one row per comment. New refusals: `UNKNOWN_COMMENT`, and
+  `COMMENT_NOT_IN_BODY` (previously `UNSUPPORTED_STRUCTURE`) for a comment
+  anchored in a header, footer or note. The capabilities manifest lists the
+  four operations and `operations.comment_threads`.
 - Field results from jubarte's layout: `jubarte fields update FILE -o OUT
   [--json]` (`fields::update_fields`, Python `Document.update_fields()`,
   WASM `updateFields` in the full build) rebuilds each body `TOC` from the

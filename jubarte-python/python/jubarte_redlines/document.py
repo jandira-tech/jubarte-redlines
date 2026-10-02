@@ -18,6 +18,7 @@ from typing import Literal
 from . import _native
 from .models import (
     Change,
+    Comment,
     ChangeKind,
     CompareOptions,
     Diff,
@@ -30,6 +31,7 @@ from .models import (
     Revision,
     Snapshot,
     _decode_changes,
+    _decode_comments,
     _decode_diff,
     _decode_field_updates,
     _decode_outcomes,
@@ -190,6 +192,14 @@ class Document:
         """Every tracked change, each with the id ``accept`` / ``reject`` select by."""
         return _decode_changes(_native.list_changes_json(self._data))
 
+    def comments(self, *, author: str | None = None, latest: bool = False) -> tuple[Comment, ...]:
+        """Every comment with its thread and anchored text, in document part order.
+
+        ``author`` keeps one author's comments (exact match); ``latest`` keeps
+        the newest comment of each thread.
+        """
+        return _decode_comments(_native.list_comments_json(self._data, author, latest))
+
     def revisions(self) -> tuple[Revision, ...]:
         """Return immutable metadata for the revisions listed by the engine."""
         return _decode_revisions(_native.get_revisions_json(self._data))
@@ -301,6 +311,10 @@ class Document:
             revision_palette=options.revision_palette,
         )
         return Rendered(pdf=pdf_bytes, pngs=tuple(pngs), report=_decode_render_report(report))
+
+    def inspect_json(self) -> str:
+        """The engine's ``inspect`` snapshot as JSON text, unchanged (``inspect`` decodes it)."""
+        return _native.inspect_json(self._data)
 
 
 @dataclass(frozen=True, slots=True)
