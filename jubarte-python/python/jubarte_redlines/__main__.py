@@ -99,7 +99,7 @@ def _parse_pages(spec: str) -> list[int]:
 
     def page(text: str) -> int:
         text = text.strip()
-        if not text.isdigit():
+        if not (text.isascii() and text.isdigit()):
             raise CliError(f"--pages '{spec}': '{text}' is not a page number")
         if int(text) == 0:
             raise CliError(f"--pages '{spec}': pages are counted from 1")
