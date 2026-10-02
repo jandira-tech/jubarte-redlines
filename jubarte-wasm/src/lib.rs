@@ -521,8 +521,52 @@ pub fn repair_document(docx: &[u8]) -> Result<RepairOutput, JsValue> {
     })
 }
 
-/// What this build can do, as JSON (`runtime: "wasm"`): PDF only in the full
-/// build, PNG never.
+/// What [`updateFields`](update_fields) returns.
+#[cfg(feature = "pdf")]
+#[wasm_bindgen]
+pub struct FieldsOutput {
+    docx: Vec<u8>,
+    json: String,
+}
+
+#[cfg(feature = "pdf")]
+#[wasm_bindgen]
+impl FieldsOutput {
+    /// The document with refreshed field results.
+    #[wasm_bindgen(getter)]
+    pub fn docx(&self) -> Vec<u8> {
+        self.docx.clone()
+    }
+
+    /// `{"page_count", "fields": [{"kind", "code", "paragraph", "old", "new"}]}`.
+    #[wasm_bindgen(getter)]
+    pub fn json(&self) -> String {
+        self.json.clone()
+    }
+}
+
+/// Refresh the cached results of `PAGEREF`, `REF`, `NUMPAGES`, `SEQ` and
+/// `TOC` fields from jubarte's layout (page numbers are jubarte's, not
+/// Word's). Full build only: it needs the layout the PDF export links.
+///
+/// Mirrors `jubarte::fields::update_fields`.
+#[cfg(feature = "pdf")]
+#[wasm_bindgen(js_name = updateFields)]
+pub fn update_fields(docx: &[u8]) -> Result<FieldsOutput, JsValue> {
+    let updated = jubarte::fields::update_fields(docx).map_err(js_err)?;
+    let json = serde_json::json!({
+        "page_count": updated.page_count,
+        "fields": updated.fields,
+    })
+    .to_string();
+    Ok(FieldsOutput {
+        docx: updated.docx,
+        json,
+    })
+}
+
+/// What this build can do, as JSON (`runtime: "wasm"`): PDF and field
+/// refresh only in the full build, PNG never.
 ///
 /// Mirrors `jubarte::capabilities::capabilities`.
 #[wasm_bindgen]
@@ -530,6 +574,7 @@ pub fn capabilities() -> Result<String, JsValue> {
     let mut manifest = jubarte::capabilities::capabilities("wasm");
     manifest.operations.pdf = cfg!(feature = "pdf");
     manifest.operations.png = false;
+    manifest.operations.fields = cfg!(feature = "pdf");
     serde_json::to_string_pretty(&manifest).map_err(js_err)
 }
 
@@ -633,6 +678,18 @@ mod tests {
         assert_eq!(manifest["operations"]["png"], false);
         assert_eq!(manifest["operations"]["pdf"], cfg!(feature = "pdf"));
         assert_eq!(manifest["operations"]["edit"], true);
+        assert_eq!(manifest["operations"]["fields"], cfg!(feature = "pdf"));
+    }
+
+    #[cfg(feature = "pdf")]
+    #[test]
+    fn update_fields_writes_numpages_and_reports_it() {
+        let source = word("One\n\nTwo\n");
+        let out = update_fields(&source).unwrap();
+        let report: serde_json::Value = serde_json::from_str(&out.json()).unwrap();
+        assert_eq!(report["page_count"], 1);
+        assert_eq!(report["fields"], serde_json::json!([]));
+        assert!(!out.docx().is_empty());
     }
 
     const OLD: &str = "# Terms\n\nPayment is due in 30 days.\n\n- Delivery\n- Warranty\n";

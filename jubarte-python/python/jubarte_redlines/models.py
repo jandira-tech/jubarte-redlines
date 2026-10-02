@@ -570,10 +570,13 @@ class EditPlan:
     source_sha256: str | None = None
     operations: tuple[dict[str, object], ...] = ()
     resolve_revisions: dict[str, dict[str, list[str]]] | None = None
+    update_fields: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.author, str) or not self.author.strip():
             raise ValueError("author must be a nonempty string")
+        if not isinstance(self.update_fields, bool):
+            raise TypeError("update_fields must be a bool")
         if self.existing_revisions not in ("refuse", "accept", "reject", "keep"):
             raise ValueError("existing_revisions must be refuse, accept, reject or keep")
 
@@ -987,6 +990,26 @@ class EditPlan:
             raise ValueError("page_setup needs page, orientation or margins_dxa")
         return self._with(_with_optional(op, id=id))
 
+    def insert_toc(
+        self,
+        paragraph: Selector,
+        *,
+        position: Literal["before", "after"] = "after",
+        levels: int = 3,
+        title: str | None = None,
+        id: str | None = None,
+    ) -> EditPlan:
+        """Insert a table of contents (``TOC \\o "1-levels" \\h \\z \\u``) next to
+        the anchor, after an optional ``TOCHeading`` title.
+
+        Its entries and page numbers are written when the plan sets
+        ``update_fields=True``; page numbers come from jubarte's layout.
+        """
+        if isinstance(levels, bool) or not isinstance(levels, int) or not 1 <= levels <= 9:
+            raise ValueError("levels must be an int from 1 to 9")
+        op: dict[str, object] = {"kind": "insert_toc", "paragraph": _selector(paragraph), "position": position, "levels": levels}
+        return self._with(_with_optional(op, title=title, id=id))
+
     def to_dict(self) -> dict[str, object]:
         """The wire form."""
         wire: dict[str, object] = {"schema_version": 1, "author": self.author}
@@ -1001,6 +1024,8 @@ class EditPlan:
         if self.existing_revisions != "refuse":
             wire["existing_revisions"] = self.existing_revisions
         wire["operations"] = [dict(op) for op in self.operations]
+        if self.update_fields:
+            wire["update_fields"] = True
         return wire
 
     def to_json(self) -> str:
@@ -1108,6 +1133,7 @@ class EditReport:
     comments_added: int
     revisions: RevisionCounts
     resolved_revisions: ResolvedRevisions = ResolvedRevisions()
+    fields: tuple[FieldUpdate, ...] = ()
     _json: str = field(repr=False, compare=False, default="")
 
     def to_jsonl(self) -> str:
@@ -1140,8 +1166,24 @@ def _decode_report(payload: str) -> EditReport:
             accepted=tuple(data.get("resolved_revisions", {}).get("accepted", ())),
             rejected=tuple(data.get("resolved_revisions", {}).get("rejected", ())),
         ),
+        fields=_decode_field_updates(data.get("fields", ())),
         _json=payload,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class FieldUpdate:
+    """One field whose cached result was written from jubarte's layout."""
+
+    kind: str
+    code: str
+    paragraph: str
+    old: str
+    new: str
+
+
+def _decode_field_updates(rows: Sequence[Mapping[str, str]]) -> tuple[FieldUpdate, ...]:
+    return tuple(FieldUpdate(**row) for row in rows)
 
 
 # ---------------------------------------------------------------------------

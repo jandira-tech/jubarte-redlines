@@ -21,7 +21,7 @@ use super::{
     EditError, EditPlan, EditResult, ExistingRevisions, Resolved, RevisionCounts, ScheduledEdit,
     Side, ThreadOp, Transaction, anchor_comment, anchor_span, apply_run_format, attach_segment,
     build_paragraph, format_paragraph, insert_ppr_child, new_position, place_reply_markers,
-    remove_comment_markers, set_text, split_run_at,
+    remove_comment_markers, set_text, split_run_at, toc_paragraphs,
 };
 use crate::changes::{ChangeKind, list_changes};
 use crate::inspect::{Opened, Piece, project_paragraph};
@@ -309,7 +309,7 @@ fn emit(
     let mut last_after: BTreeMap<usize, NodeId> = BTreeMap::new();
     let mut tables: Vec<NodeId> = Vec::new();
     for (i, r) in &t.resolved {
-        let (anchor, side, new, commented) = match r {
+        let (anchor, side, news, commented) = match r {
             Resolved::InsertParagraph {
                 anchor,
                 side,
@@ -317,12 +317,18 @@ fn emit(
                 like,
                 style,
                 comment,
+                toc,
             } => {
                 let like_node = t.paragraph_nodes[*like];
                 let dom = &mut t.opened.dom;
-                let new = build_paragraph(dom, like_node, runs, style.as_deref());
-                insert_paragraph_content(dom, new, stamp);
-                (*anchor, *side, new, comment.is_some())
+                let news = match toc {
+                    Some(toc) => toc_paragraphs(dom, toc),
+                    None => vec![build_paragraph(dom, like_node, runs, style.as_deref())],
+                };
+                for &new in &news {
+                    insert_paragraph_content(dom, new, stamp);
+                }
+                (*anchor, *side, news, comment.is_some())
             }
             Resolved::InsertTable {
                 anchor,
@@ -339,20 +345,23 @@ fn emit(
                     structural::build_table(dom, anchor_node, rows, *header_row, widths, style);
                 insert_table_content(dom, new, stamp);
                 tables.push(new);
-                (*anchor, *side, new, false)
+                (*anchor, *side, vec![new], false)
             }
             _ => continue,
         };
         let anchor_node = t.paragraph_nodes[anchor];
         let dom = &mut t.opened.dom;
-        match side {
-            Side::After => {
-                let prev = last_after.get(&anchor).copied().unwrap_or(anchor_node);
-                dom.add_after_self(prev, new);
-                last_after.insert(anchor, new);
+        for &new in &news {
+            match side {
+                Side::After => {
+                    let prev = last_after.get(&anchor).copied().unwrap_or(anchor_node);
+                    dom.add_after_self(prev, new);
+                    last_after.insert(anchor, new);
+                }
+                Side::Before => dom.add_before_self(anchor_node, new),
             }
-            Side::Before => dom.add_before_self(anchor_node, new),
         }
+        let new = news[news.len() - 1];
         if commented && let Some(&id) = comment_ids.get(i) {
             let projection = project_paragraph(dom, new);
             anchor_comment(dom, new, 0, projection.text.len(), id);

@@ -237,6 +237,20 @@ Gotchas:
   delete, format or merge a paragraph you list in the same plan
   (`OVERLAPPING_EDITS`). The redline marks each paragraph's properties as
   changed, and also the `ListParagraph` definition when the plan added it.
+- `insert_toc` (`position` before or after, `levels` 1 to 9, default 3,
+  optional `title` styled `TOCHeading`) inserts a `TOC \o "1-N" \h \z \u`
+  field in the body. Pair it with `"update_fields": true` at the top of the
+  plan: the clean copy's TOC is then filled from the `Heading1`..`HeadingN`
+  paragraphs, and every `PAGEREF`, `REF`, `NUMPAGES` and `SEQ` result is
+  written, before the redline is compared; the report lists them under
+  `fields`. Without it the TOC stays empty until Word updates its fields.
+  On a document you are not editing, `jubarte fields update in.docx -o
+  out.docx --json` does the same. Page numbers are jubarte's layout, which
+  matches Word on most documents but is not Word
+  (`docs/WORD_DIFFERENCES.md` section 11 in the jubarte repository).
+  Field codes stay, so Word's Update Field still works.
+  `update_fields` is refused (`INVALID_PLAN`) with `existing_revisions:
+  "keep"`; `insert_toc` alone works there and is tracked as an insertion.
 
 Content controls (form fields) are filled with `fill_control`, which names a
 control instead of a paragraph and takes exactly one value:

@@ -149,6 +149,7 @@ pub fn apply_markdown(docx: &[u8], markdown: &str) -> Result<Patched, MarkdownEr
             existing_revisions: ExistingRevisions::Accept,
             resolve_revisions: None,
             operations,
+            update_fields: false,
         };
         match apply_plan(docx, &plan) {
             Ok(result) => {

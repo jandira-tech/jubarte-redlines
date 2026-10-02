@@ -571,6 +571,37 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Field results written back into the document from jubarte's layout.
+    Fields {
+        #[command(subcommand)]
+        sub: FieldsCommand,
+    },
+}
+
+/// `jubarte fields` subcommands.
+#[derive(clap::Subcommand, Debug)]
+enum FieldsCommand {
+    /// Refresh the cached results of PAGEREF, REF, NUMPAGES, SEQ and TOC
+    /// fields from jubarte's layout; TOCs are rebuilt from the headings.
+    /// Field codes stay, so Word can update them again. Page numbers are
+    /// jubarte's layout, not Word's (docs/WORD_DIFFERENCES.md).
+    #[command(after_help = "EXAMPLES:\n  \
+        jubarte fields update in.docx -o out.docx          one line per field written\n  \
+        jubarte fields update in.docx -o out.docx --json   {\"page_count\", \"fields\": [...]}")]
+    Update {
+        /// The document (.docx).
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Output path.
+        #[arg(short = 'o', long, value_name = "FILE")]
+        output: PathBuf,
+        /// Overwrite the output file if it already exists.
+        #[arg(long)]
+        force: bool,
+        /// Print the fields written as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// `jubarte debug` subcommands.
@@ -2706,6 +2737,15 @@ fn main() -> ExitCode {
                 }
             };
         }
+        Some(Command::Fields {
+            sub:
+                FieldsCommand::Update {
+                    file,
+                    output,
+                    force,
+                    json,
+                },
+        }) => return exit_code(run_fields_update(&file, &output, force, json)),
         None => {}
     }
     let job = match cli.resolve() {
@@ -2781,6 +2821,35 @@ fn run_self_update(check: bool, yes: bool, version: Option<String>) -> Result<()
 #[cfg(not(feature = "self-update"))]
 fn run_self_update(_check: bool, _yes: bool, _version: Option<String>) -> Result<(), String> {
     Err("this jubarte was built without the self-update feature; update it the way it was installed".into())
+}
+
+/// `jubarte fields update`: refresh, write, then list what was written.
+fn run_fields_update(file: &Path, output: &Path, force: bool, json: bool) -> Result<(), String> {
+    ensure_writable(output, force)?;
+    let bytes = read_document(file)?;
+    let updated = jubarte::fields::update_fields(&bytes).map_err(|e| e.to_string())?;
+    std::fs::write(output, &updated.docx)
+        .map_err(|e| format!("writing {}: {e}", output.display()))?;
+    if json {
+        let report = serde_json::json!({
+            "page_count": updated.page_count,
+            "fields": updated.fields,
+        });
+        println!("{report}");
+        return Ok(());
+    }
+    for field in &updated.fields {
+        println!(
+            "{}\t{}\t{:?} -> {:?}",
+            field.paragraph, field.kind, field.old, field.new
+        );
+    }
+    eprintln!(
+        "{} field(s) written; {} page(s)",
+        updated.fields.len(),
+        updated.page_count
+    );
+    Ok(())
 }
 
 #[cfg(test)]
@@ -3774,5 +3843,50 @@ mod tests {
         let missing = dir.path().join("missing.docx");
         let err = run_diff_render(&diff_job(&missing, &b, None)).expect_err("no file");
         assert!(err.contains("missing.docx"), "{err}");
+    }
+
+    #[test]
+    fn fields_update_parses_its_output_and_flags() {
+        let cli = Cli::try_parse_from([
+            "jubarte", "fields", "update", "in.docx", "-o", "out.docx", "--force", "--json",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(Command::Fields {
+                sub:
+                    FieldsCommand::Update {
+                        file,
+                        output,
+                        force,
+                        json,
+                    },
+            }) => {
+                assert_eq!(file, PathBuf::from("in.docx"));
+                assert_eq!(output, PathBuf::from("out.docx"));
+                assert!(force && json);
+            }
+            other => panic!("expected fields update, got {other:?}"),
+        }
+        assert!(Cli::try_parse_from(["jubarte", "fields", "update", "in.docx"]).is_err());
+    }
+
+    #[test]
+    fn fields_update_writes_the_refreshed_package_and_refuses_to_clobber() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let input = dir.path().join("in.docx");
+        let output = dir.path().join("out.docx");
+        std::fs::write(&input, tiny_docx_bytes("Calibri")).expect("docx");
+        run_fields_update(&input, &output, false, true).expect("update");
+        let written = std::fs::read(&output).expect("output");
+        assert_eq!(
+            jubarte::inspect::paragraphs(&written).unwrap()[0].text,
+            "HELLO"
+        );
+        let err = run_fields_update(&input, &output, false, false).unwrap_err();
+        assert!(err.contains("--force"), "{err}");
+        run_fields_update(&input, &output, true, false).expect("forced");
+        let err =
+            run_fields_update(&dir.path().join("missing.docx"), &output, true, false).unwrap_err();
+        assert!(!err.is_empty());
     }
 }

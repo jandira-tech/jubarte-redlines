@@ -61,6 +61,7 @@ from .document import (
     Document,
     EditPlanError,
     EditResult,
+    UpdatedFields,
     capabilities,
     diff,
     diff_render,
@@ -76,6 +77,7 @@ from .models import (
     EditOutcome,
     EditPlan,
     EditReport,
+    FieldUpdate,
     Finding,
     FontResolution,
     FormatChange,
@@ -139,5 +141,7 @@ __all__ += [
     "PageDiff",
     "Finding",
     "Repaired",
+    "FieldUpdate",
+    "UpdatedFields",
 ]
 __all__ += ["from_markdown"]

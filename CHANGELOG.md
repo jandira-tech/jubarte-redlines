@@ -293,6 +293,17 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   at a `position`, `comment` without `find`), is an `INVALID_EDIT`. Rust
   code that builds these `OperationKind` variants with struct literals
   must add `occurrence: None`.
+- Field results from jubarte's layout: `jubarte fields update FILE -o OUT
+  [--json]` (`fields::update_fields`, Python `Document.update_fields()`,
+  WASM `updateFields` in the full build) rebuilds each body `TOC` from the
+  `Heading1`..`Heading9` paragraphs, with `_Toc` bookmarks, hyperlinks and
+  dot-leader page numbers, and writes `PAGEREF`, `REF`, `NUMPAGES` and
+  `SEQ` results in the body, headers, footers and notes. Field codes stay;
+  a field whose switches it does not implement keeps its cached result. Edit
+  plans gain `insert_toc` and `"update_fields": true` (Python
+  `EditPlan.insert_toc`, `EditPlan(update_fields=True)`); `capabilities`
+  reports `operations.fields`. Page numbers are jubarte's, not Word's
+  ([docs/WORD_DIFFERENCES.md](docs/WORD_DIFFERENCES.md) section 11).
 
 ### Fixed
 

@@ -533,9 +533,7 @@ type RepairOutcome = (Py<PyBytes>, String);
 /// fixed and could not fix. Mirrors `jubarte::validate::repair`.
 #[pyfunction]
 fn repair_json(py: Python<'_>, docx: &[u8]) -> PyResult<RepairOutcome> {
-    let repaired = py
-        .detach(|| jubarte::validate::repair(docx))
-        .map_err(err)?;
+    let repaired = py.detach(|| jubarte::validate::repair(docx)).map_err(err)?;
     let json = serde_json::json!({
         "repaired": repaired.repaired,
         "remaining": repaired.remaining,
@@ -564,6 +562,20 @@ fn audit_tracked_json(
         serde_json::to_string(&findings).map_err(|e| e.to_string())
     })
     .map_err(|e: String| JubarteError::new_err(e))
+}
+
+/// Refresh field results from jubarte's layout → `(docx, json)`; `json` is
+/// `{"page_count", "fields": [...]}`.
+#[pyfunction]
+fn update_fields(py: Python<'_>, docx: &[u8]) -> PyResult<(Py<PyBytes>, String)> {
+    let updated = py
+        .detach(|| jubarte::fields::update_fields(docx))
+        .map_err(err)?;
+    let report = serde_json::json!({
+        "page_count": updated.page_count,
+        "fields": updated.fields,
+    });
+    Ok((PyBytes::new(py, &updated.docx).unbind(), report.to_string()))
 }
 
 /// What this build can do (`runtime: "python"`).
@@ -667,5 +679,6 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(repair_json, m)?)?;
     m.add_function(wrap_pyfunction!(audit_tracked_json, m)?)?;
     m.add_function(wrap_pyfunction!(markdown_to_docx, m)?)?;
+    m.add_function(wrap_pyfunction!(update_fields, m)?)?;
     Ok(())
 }

@@ -71,6 +71,11 @@ pub struct EditPlan {
     pub existing_revisions: ExistingRevisions,
     /// Operations in report order.
     pub operations: Vec<Operation>,
+    /// Refresh `PAGEREF`, `REF`, `NUMPAGES`, `SEQ` and `TOC` results in the
+    /// edited copy from jubarte's layout ([`crate::fields::update_fields`])
+    /// before the redline is compared.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub update_fields: bool,
 }
 
 /// The tracked changes a plan accepts and rejects before it edits, as
@@ -470,6 +475,27 @@ pub enum OperationKind {
         /// Margins to change, in twentieths of a point.
         margins_dxa: Margins,
     },
+    /// Insert a table of contents next to the anchor paragraph: a `TOC \o
+    /// "1-{levels}" \h \z \u` field, after an optional title paragraph
+    /// styled `TOCHeading`. Its entries are written when the plan sets
+    /// `update_fields`; otherwise the field is empty until Word updates it.
+    InsertToc {
+        /// Paragraph to insert next to; must match exactly one, in the body.
+        paragraph: Selector,
+        #[serde(default)]
+        /// Which side of the anchor paragraph.
+        position: Side,
+        #[serde(default = "default_toc_levels")]
+        /// Heading levels listed, 1 to 9 (default 3).
+        levels: u8,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Title paragraph above the TOC (`"Contents"`).
+        title: Option<String>,
+    },
+}
+
+fn default_toc_levels() -> u8 {
+    3
 }
 
 fn is_default_margins(margins: &Margins) -> bool {
@@ -831,6 +857,9 @@ pub struct EditReport {
     pub comments_added: usize,
     /// Zero until the redline exists (a preview never compares).
     pub revisions: RevisionCounts,
+    /// Fields whose results `update_fields` wrote into the clean copy.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<crate::fields::FieldUpdate>,
 }
 
 impl EditReport {
@@ -1145,6 +1174,7 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
                 "alt",
             ],
             "page_setup" => &["section", "page", "orientation", "margins_dxa"],
+            "insert_toc" => &["position", "levels", "title"],
             other => {
                 return Err(err(
                     "INVALID_PLAN",
@@ -1187,13 +1217,27 @@ pub fn apply_plan_json(source: &[u8], plan_json: &str) -> Result<EditResult, Edi
 
 /// Resolve and apply the plan; compare source and copy into a redline.
 pub fn apply_plan(source: &[u8], plan: &EditPlan) -> Result<EditResult, EditError> {
+    check_update_fields(plan)?;
     let mut tx = Transaction::start(source, plan)?;
     tx.resolve()?;
     tracked::check(&tx)?;
     tx.apply()?;
-    let (clean, marked) = tx.finish()?;
+    let (mut clean, mut marked) = tx.finish()?;
     if plan.existing_revisions == ExistingRevisions::Keep {
         return tracked::result(&tx, clean);
+    }
+    let mut fields = Vec::new();
+    if plan.update_fields {
+        let refresh = |bytes: &[u8]| {
+            crate::fields::update_fields(bytes)
+                .map_err(|e| err("FIELDS_FAILED", None, e.to_string()))
+        };
+        let updated = refresh(&clean)?;
+        clean = updated.docx;
+        fields = updated.fields;
+        if let Some(bytes) = &marked {
+            marked = Some(refresh(bytes)?.docx);
+        }
     }
     let settings = WmlComparerSettings {
         author_for_revisions: plan.author.clone(),
@@ -1243,6 +1287,7 @@ pub fn apply_plan(source: &[u8], plan: &EditPlan) -> Result<EditResult, EditErro
         .map(|p| p.len())
         .unwrap_or(report.paragraphs.from);
     report.revisions = revision_counts(&redline, &settings);
+    report.fields = fields;
     Ok(EditResult {
         clean,
         redline,
@@ -1250,8 +1295,23 @@ pub fn apply_plan(source: &[u8], plan: &EditPlan) -> Result<EditResult, EditErro
     })
 }
 
+/// `update_fields` refreshes the clean copy the comparer reads. Under
+/// `existing_revisions: "keep"` the redline replays the edits instead, so a
+/// refreshed clean copy would no longer be the accepted redline.
+fn check_update_fields(plan: &EditPlan) -> Result<(), EditError> {
+    if plan.update_fields && plan.existing_revisions == ExistingRevisions::Keep {
+        return Err(err(
+            "INVALID_PLAN",
+            None,
+            "update_fields cannot be combined with existing_revisions \"keep\"; refresh the fields with `jubarte fields update` after accepting or rejecting the kept changes",
+        ));
+    }
+    Ok(())
+}
+
 /// Resolve every operation without producing documents.
 pub fn preview_plan(source: &[u8], plan: &EditPlan) -> Result<EditReport, EditError> {
+    check_update_fields(plan)?;
     let mut tx = Transaction::start(source, plan)?;
     tx.resolve()?;
     tracked::check(&tx)?;
@@ -1372,6 +1432,9 @@ enum Resolved {
         style: Option<String>,
         /// Comment text anchored to the changed text.
         comment: Option<String>,
+        /// `insert_toc`: the paragraphs are the TOC field (and its title),
+        /// not `runs`.
+        toc: Option<TocSpec>,
     },
     InsertTable {
         anchor: usize,
@@ -1462,6 +1525,13 @@ impl ThreadOp {
             | ThreadOp::Delete { id } => *id,
         }
     }
+}
+
+/// A resolved `insert_toc`.
+#[derive(Clone, Debug)]
+struct TocSpec {
+    levels: u8,
+    title: Option<String>,
 }
 
 /// What resolving an operation gives: its resolved form and outcome, or the
@@ -1701,6 +1771,7 @@ impl<'p> Transaction<'p> {
             operations: self.outcomes.clone(),
             comments_added: self.comments_added,
             revisions: RevisionCounts::default(),
+            fields: Vec::new(),
         }
     }
 
@@ -1855,6 +1926,7 @@ impl<'p> Transaction<'p> {
             | OperationKind::MergeParagraphs { paragraph, .. }
             | OperationKind::Rewrite { paragraph, .. }
             | OperationKind::InsertTable { paragraph, .. }
+            | OperationKind::InsertToc { paragraph, .. }
             | OperationKind::FormatRun { paragraph, .. }
             | OperationKind::InsertFootnote { paragraph, .. }
             | OperationKind::InsertImage { paragraph, .. } => paragraph,
@@ -2351,6 +2423,7 @@ impl<'p> Transaction<'p> {
                         like,
                         style,
                         comment: comment.clone(),
+                        toc: None,
                     },
                     outcome,
                 ))
@@ -2496,6 +2569,59 @@ impl<'p> Transaction<'p> {
                         widths,
                         style,
                         add_style,
+                    },
+                    outcome,
+                ))
+            }
+            OperationKind::InsertToc {
+                position,
+                levels,
+                title,
+                ..
+            } => {
+                outcome.matches = 1;
+                if self.paragraph_story[para].0 != 0 {
+                    return Err(fail(
+                        "UNSUPPORTED_STRUCTURE",
+                        "a table of contents goes in the body".into(),
+                        outcome,
+                    ));
+                }
+                if !(1..=9).contains(levels) {
+                    return Err(fail(
+                        "INVALID_EDIT",
+                        format!("levels {levels} is outside 1..=9"),
+                        outcome,
+                    ));
+                }
+                if let Some(title) = title {
+                    if title.is_empty() {
+                        return Err(fail(
+                            "INVALID_EDIT",
+                            "title must carry text".into(),
+                            outcome,
+                        ));
+                    }
+                    check_text(title).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+                }
+                outcome.context = Some(format!("{{+TOC 1-{levels}}}"));
+                if !self.plan.update_fields {
+                    outcome.message = Some(
+                        "the TOC has no entries until its fields are updated: set \"update_fields\": true, or update fields in Word".into(),
+                    );
+                }
+                Ok((
+                    Resolved::InsertParagraph {
+                        anchor: para,
+                        side: *position,
+                        runs: Vec::new(),
+                        like: para,
+                        style: None,
+                        comment: None,
+                        toc: Some(TocSpec {
+                            levels: *levels,
+                            title: title.clone(),
+                        }),
                     },
                     outcome,
                 ))
@@ -3767,7 +3893,7 @@ impl<'p> Transaction<'p> {
         // goes after the one inserted there before it.
         let mut last_after: BTreeMap<usize, NodeId> = BTreeMap::new();
         for (i, r) in inserts {
-            let (anchor, side, new, commented) = match r {
+            let (anchor, side, news, commented) = match r {
                 Resolved::InsertParagraph {
                     anchor,
                     side,
@@ -3775,11 +3901,19 @@ impl<'p> Transaction<'p> {
                     like,
                     style,
                     comment,
+                    toc,
                 } => {
                     let like_node = self.paragraph_nodes[like];
-                    let new =
-                        build_paragraph(&mut self.opened.dom, like_node, &runs, style.as_deref());
-                    (anchor, side, new, comment.is_some())
+                    let news = match &toc {
+                        Some(toc) => toc_paragraphs(&mut self.opened.dom, toc),
+                        None => vec![build_paragraph(
+                            &mut self.opened.dom,
+                            like_node,
+                            &runs,
+                            style.as_deref(),
+                        )],
+                    };
+                    (anchor, side, news, comment.is_some())
                 }
                 Resolved::InsertTable {
                     anchor,
@@ -3799,7 +3933,7 @@ impl<'p> Transaction<'p> {
                         &style,
                     );
                     tables.push(new);
-                    (anchor, side, new, false)
+                    (anchor, side, vec![new], false)
                 }
                 Resolved::InsertImage {
                     anchor,
@@ -3808,19 +3942,22 @@ impl<'p> Transaction<'p> {
                 } => {
                     drawing_id = drawing_id.saturating_add(1);
                     let new = self.image_paragraph(&picture, &mut media_used, drawing_id);
-                    (anchor, side, new, false)
+                    (anchor, side, vec![new], false)
                 }
                 _ => continue,
             };
             let anchor_node = self.paragraph_nodes[anchor];
-            match side {
-                Side::After => {
-                    let prev = last_after.get(&anchor).copied().unwrap_or(anchor_node);
-                    self.opened.dom.add_after_self(prev, new);
-                    last_after.insert(anchor, new);
+            for &new in &news {
+                match side {
+                    Side::After => {
+                        let prev = last_after.get(&anchor).copied().unwrap_or(anchor_node);
+                        self.opened.dom.add_after_self(prev, new);
+                        last_after.insert(anchor, new);
+                    }
+                    Side::Before => self.opened.dom.add_before_self(anchor_node, new),
                 }
-                Side::Before => self.opened.dom.add_before_self(anchor_node, new),
             }
+            let new = news[news.len() - 1];
             if commented {
                 let projection = project_paragraph(&self.opened.dom, new);
                 anchor_comment(&mut self.opened.dom, new, 0, projection.text.len(), ids[&i]);
@@ -4046,6 +4183,7 @@ impl<'p> Transaction<'p> {
             resolve_revisions: None,
             existing_revisions: ExistingRevisions::default(),
             operations,
+            update_fields: false,
         };
         let mut tx = Transaction::start(&self.base, &plan)?;
         tx.preset_comment_ids = self
@@ -4258,6 +4396,7 @@ fn kind_name(kind: &OperationKind) -> &'static str {
         OperationKind::InsertFootnote { .. } => "insert_footnote",
         OperationKind::InsertImage { .. } => "insert_image",
         OperationKind::PageSetup { .. } => "page_setup",
+        OperationKind::InsertToc { .. } => "insert_toc",
     }
 }
 
@@ -4835,6 +4974,49 @@ fn merge_into(dom: &mut Dom, head: NodeId, next: NodeId, separator: &str) {
         }
     }
     dom.remove(head);
+}
+
+/// `insert_toc`'s paragraphs: the optional `TOCHeading` title, then a
+/// paragraph holding an empty `TOC` field.
+fn toc_paragraphs(dom: &mut Dom, toc: &TocSpec) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    if let Some(title) = &toc.title {
+        let p = dom.new_element(W::p());
+        let ppr = dom.new_element(W::p_pr());
+        let style = dom.new_element(W::p_style());
+        dom.set_attribute_value(style, &W::val(), Some("TOCHeading"));
+        dom.add(ppr, style);
+        dom.add(p, ppr);
+        let run = dom.new_element(W::r());
+        let t = dom.new_element(W::t());
+        dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some("preserve"));
+        dom.add_text(t, title);
+        dom.add(run, t);
+        dom.add(p, run);
+        out.push(p);
+    }
+    let p = dom.new_element(W::p());
+    let mark = |dom: &mut Dom, p: NodeId, kind: &str| {
+        let run = dom.new_element(W::r());
+        let fld = dom.new_element(W::name("fldChar"));
+        dom.set_attribute_value(fld, &W::name("fldCharType"), Some(kind));
+        dom.add(run, fld);
+        dom.add(p, run);
+    };
+    mark(dom, p, "begin");
+    let run = dom.new_element(W::r());
+    let instr = dom.new_element(W::name("instrText"));
+    dom.set_attribute_value(instr, &XNamespace::xml().name("space"), Some("preserve"));
+    dom.add_text(
+        instr,
+        &format!(" TOC \\o \"1-{}\" \\h \\z \\u ", toc.levels),
+    );
+    dom.add(run, instr);
+    dom.add(p, run);
+    mark(dom, p, "separate");
+    mark(dom, p, "end");
+    out.push(p);
+    out
 }
 
 /// A new paragraph modeled on `anchor`: its `pPr` minus section break and
