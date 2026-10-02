@@ -351,6 +351,8 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   not cover; jubarte-app/src-tauri keeps its own CI. The MSRV job runs the
   all-feature test suite on Rust 1.88 instead of `cargo check`, as
   README.md has said it does.
+- Matching a style name against Word's built-in styles no longer allocates
+  a lowercase copy of the name on each lookup; the answer is unchanged.
 
 ### Fixed
 
