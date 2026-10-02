@@ -143,9 +143,13 @@ jobs:
           path: dist/
           if-no-files-found: error
 
-  # PyPI abi3 wheels for the platforms README advertises. The release job
-  # attaches them to the GitHub release; scripts/release.sh re-uploads the
-  # same files to PyPI, so wheels are built once, on clean CI machines.
+  # PyPI abi3 wheels, one per row of README "Supported environments": the
+  # release job attaches them to the GitHub release; scripts/release.sh
+  # re-uploads the same files to PyPI after scripts/check_release_artifacts.py
+  # confirms all seven are there, so wheels are built once, on clean CI
+  # machines. Linux builds run in the pypa manylinux_2_28 containers (glibc
+  # 2.28: RHEL 8, Debian 10, Ubuntu 20.04) and the rust-cross musl
+  # containers; macOS and Windows build on the host.
   wheels:
     name: wheel ${{ matrix.artifact }}
     needs: version
@@ -157,27 +161,66 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64
+            manylinux: 2_28
             artifact: manylinux-x86_64
           - os: ubuntu-24.04-arm
             target: aarch64
+            manylinux: 2_28
             artifact: manylinux-aarch64
+          - os: ubuntu-latest
+            target: x86_64
+            manylinux: musllinux_1_2
+            artifact: musllinux-x86_64
+          - os: ubuntu-24.04-arm
+            target: aarch64
+            manylinux: musllinux_1_2
+            artifact: musllinux-aarch64
           - os: macos-15-intel
             target: x86_64
             artifact: macos-x86_64
           - os: macos-latest
             target: aarch64
             artifact: macos-aarch64
+          - os: windows-latest
+            target: x64
+            artifact: windows-x86_64
     runs-on: ${{ matrix.os }}
     steps:
+      # Git for Windows stops at MAX_PATH (260) without core.longpaths (see
+      # the binaries job and tests/repo_paths_fit_windows.rs).
+      - if: runner.os == 'Windows'
+        run: git config --global core.longpaths true
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # --locked: a wheel built from a drifted jubarte-python/Cargo.lock is a
+      # build failure, not a silently different wheel. --compatibility pypi:
+      # maturin's pre-upload check of the platform tag.
       - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist
+          manylinux: ${{ matrix.manylinux || 'auto' }}
+          args: --release --locked --out dist --compatibility pypi
           working-directory: jubarte-python
           sccache: "true"
+      # Install the wheel that was just built and run the engine once: the
+      # artifact that ships is the one that imports, not a rebuilt one. The
+      # glibc wheels are tried on the host; the musl wheels in Alpine.
+      - if: runner.os != 'Linux' || matrix.manylinux == '2_28'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - if: runner.os != 'Linux' || matrix.manylinux == '2_28'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --no-index --find-links jubarte-python/dist jubarte-redlines
+          python -c "import jubarte_redlines as j; print(j.capabilities()['engine_version'])"
+      - if: matrix.manylinux == 'musllinux_1_2'
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD/jubarte-python/dist:/dist:ro" python:3.12-alpine \
+            sh -ec 'pip install --no-index --find-links /dist jubarte-redlines && python -c "import jubarte_redlines as j; print(j.capabilities()[\"engine_version\"])"'
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: wheel-${{ needs.version.outputs.version }}-${{ matrix.artifact }}

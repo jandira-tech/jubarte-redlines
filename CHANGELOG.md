@@ -172,6 +172,12 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   `tests/schema_consistency.rs`). The clean copy and the redline both carry
   them. `false` and `"edit": "none"` remove; a `password` is refused with
   `UNSUPPORTED` (Word's legacy hash is not written); one per plan.
+- Python wheels for Windows x86_64 and musl Linux (Alpine) x86_64/arm64; the
+  glibc floor of the Linux wheels drops from 2.34 to 2.28 (RHEL 8, Debian
+  10, Ubuntu 20.04). `scripts/check_release_artifacts.py` refuses to publish
+  a wheel set that misses an advertised platform, and `scripts/release.sh`
+  runs it before `uv publish`.
+
 
 ### Fixed
 

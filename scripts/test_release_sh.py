@@ -330,5 +330,33 @@ class Header(unittest.TestCase):
         printed = list(dict.fromkeys(int(n) for n in re.findall(r'say "(\d+)\. ', text)))
         self.assertEqual(listed, printed)
 
+
+
+class WheelSetGate(unittest.TestCase):
+    """Step 10 refuses to publish CI wheels that miss an advertised platform:
+    scripts/check_release_artifacts.py runs on the downloaded wheel set
+    before `uv publish`, and a failure is fatal (`die`), not a warning."""
+
+    def step10(self) -> str:
+        text = RELEASE_SH.read_text()
+        start = text.index('say "10. PyPI"')
+        return text[start:text.index('say "11.', start)]
+
+    def test_check_runs_before_uv_publish(self) -> None:
+        step = self.step10()
+        check = step.index("scripts/check_release_artifacts.py")
+        self.assertLess(check, step.index("uv publish --token"))
+
+    def test_check_failure_is_fatal(self) -> None:
+        self.assertRegex(
+            self.step10(),
+            r'python3 scripts/check_release_artifacts.py dist/pypi --version "\$VER"[^\n]*\n?[^\n]*\|\| die ',
+        )
+
+    def test_check_is_a_tested_script(self) -> None:
+        self.assertTrue((HERE / "check_release_artifacts.py").is_file())
+        self.assertTrue((HERE / "test_check_release_artifacts.py").is_file())
+
+
 if __name__ == "__main__":
     unittest.main()
