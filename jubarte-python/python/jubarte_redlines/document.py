@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from collections.abc import Sequence
@@ -23,12 +24,14 @@ from .models import (
     EditOutcome,
     EditPlan,
     EditReport,
+    FieldUpdate,
     PdfOptions,
     Rendered,
     Revision,
     Snapshot,
     _decode_changes,
     _decode_diff,
+    _decode_field_updates,
     _decode_outcomes,
     _decode_render_report,
     _decode_report,
@@ -259,6 +262,21 @@ class Document:
             raise EditPlanError._from_json(payload)
         return _decode_report(payload)
 
+    def update_fields(self) -> UpdatedFields:
+        """Refresh ``PAGEREF``, ``REF``, ``NUMPAGES``, ``SEQ`` and ``TOC`` results.
+
+        TOCs are rebuilt from the headings, then one layout pass gives the
+        page numbers: jubarte's layout, not Word's. Field codes stay, so Word
+        can update them again. This document is unchanged.
+        """
+        data, payload = _native.update_fields(self._data)
+        report = json.loads(payload)
+        return UpdatedFields(
+            document=Document(data, self.name),
+            fields=_decode_field_updates(report["fields"]),
+            page_count=report["page_count"],
+        )
+
     def to_png(self, *, dpi: float = 96.0, options: PdfOptions | None = None) -> tuple[bytes, ...]:
         """One PNG per page, straight from the layout (no PDF round trip)."""
         options = _pdf_options(options)
@@ -283,6 +301,15 @@ class Document:
             revision_palette=options.revision_palette,
         )
         return Rendered(pdf=pdf_bytes, pngs=tuple(pngs), report=_decode_render_report(report))
+
+
+@dataclass(frozen=True, slots=True)
+class UpdatedFields:
+    """``Document.update_fields``: the refreshed copy and what was written."""
+
+    document: Document
+    fields: tuple[FieldUpdate, ...]
+    page_count: int
 
 
 def _pdf_options(options: PdfOptions | None) -> PdfOptions:

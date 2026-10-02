@@ -247,7 +247,10 @@ fn diffed(patch: &jubarte::markdown::Patch, columns: usize) -> PyResult<Diffed> 
         .iter()
         .map(|h| serde_json::json!({"at": h.at.to_string(), "removed": h.removed, "text": h.text}))
         .collect();
-    Ok((patch.render(columns), serde_json::to_string(&hunks).map_err(err)?))
+    Ok((
+        patch.render(columns),
+        serde_json::to_string(&hunks).map_err(err)?,
+    ))
 }
 
 fn patch_options(
@@ -401,6 +404,20 @@ fn report_jsonl(report_json: &str) -> PyResult<String> {
     Ok(report.to_jsonl())
 }
 
+/// Refresh field results from jubarte's layout → `(docx, json)`; `json` is
+/// `{"page_count", "fields": [...]}`.
+#[pyfunction]
+fn update_fields(py: Python<'_>, docx: &[u8]) -> PyResult<(Py<PyBytes>, String)> {
+    let updated = py
+        .detach(|| jubarte::fields::update_fields(docx))
+        .map_err(err)?;
+    let report = serde_json::json!({
+        "page_count": updated.page_count,
+        "fields": updated.fields,
+    });
+    Ok((PyBytes::new(py, &updated.docx).unbind(), report.to_string()))
+}
+
 /// What this build can do (`runtime: "python"`).
 #[pyfunction]
 fn capabilities_json() -> String {
@@ -430,5 +447,6 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(capabilities_json, m)?)?;
     m.add_function(wrap_pyfunction!(diff_json, m)?)?;
     m.add_function(wrap_pyfunction!(redline_diff_json, m)?)?;
+    m.add_function(wrap_pyfunction!(update_fields, m)?)?;
     Ok(())
 }
