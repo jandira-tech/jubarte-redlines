@@ -1342,10 +1342,13 @@ dependencies = [
  "sha1",
  "sha2 0.11.0",
  "similar",
+ "tar",
  "tempfile",
  "tiny-skia",
  "ttf-parser",
+ "unicode-properties",
  "zip",
+ "zipsign-api",
 ]
 
 [[package]]

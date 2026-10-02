@@ -6,6 +6,10 @@
 # `jubarte` CLI for the five desktop targets and attaches the archives to a
 # GitHub release named `jubarte vX.Y.Z`, with the matching CHANGELOG.md
 # section as the release notes.
+#
+# Third-party actions are pinned to commit SHAs with the resolved release tag
+# as a trailing comment (Dependabot bumps both); see ci.yml for the
+# dtolnay/rust-toolchain branch-pin convention.
 name: Release
 
 on:
@@ -30,7 +34,7 @@ jobs:
     outputs:
       version: ${{ steps.check.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - id: check
@@ -75,13 +79,13 @@ jobs:
       # tests/repo_paths_fit_windows.rs keeps tracked paths short as well.
       - if: runner.os == 'Windows'
         run: git config --global core.longpaths true
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
         with:
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo build --release --locked --bin jubarte --target ${{ matrix.target }}
 
       - name: Stage archive (unix)
@@ -133,7 +137,7 @@ jobs:
           "@ | Set-Content "$stage/fonts/NOTICE.txt"
           Compress-Archive -Path $stage -DestinationPath "dist/$stage.zip"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: jubarte-${{ needs.version.outputs.version }}-${{ matrix.artifact }}
           path: dist/
@@ -165,16 +169,16 @@ jobs:
             artifact: macos-aarch64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: PyO3/maturin-action@v1
+      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           target: ${{ matrix.target }}
           args: --release --out dist
           working-directory: jubarte-python
           sccache: "true"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: wheel-${{ needs.version.outputs.version }}-${{ matrix.artifact }}
           path: jubarte-python/dist/
@@ -187,20 +191,80 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0 # previous tag → "Full Changelog" compare link
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: jubarte-*
           path: dist
           merge-multiple: true
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: wheel-*
           path: dist
           merge-multiple: true
+
+      # Signed archives (docs/SELF_UPDATE.md, "Signed releases"). Signing
+      # rewrites each archive, so it runs before Checksums; it also runs
+      # before the sdist step, so no third-party code of this job runs ahead
+      # of it, and the key reaches this step only. zipsign signs with the
+      # file name as its context, which is the asset name the updater checks.
+      # The secret holds one base64 private key per line (two while keys
+      # rotate). Without it the archives stay unsigned (checksum only) until
+      # a public key is committed under keys/; from then on every release
+      # must be signed, and a missing secret fails the release.
+      - name: Sign archives
+        env:
+          ZIPSIGN_PRIVATE_KEY: ${{ secrets.ZIPSIGN_PRIVATE_KEY }}
+          ZIPSIGN_VERSION: "0.2.1"
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          pubs=(keys/*.pub)
+          if [ -z "$ZIPSIGN_PRIVATE_KEY" ]; then
+            if [ "${#pubs[@]}" -gt 0 ]; then
+              echo "::error::keys/ holds a release public key but the ZIPSIGN_PRIVATE_KEY secret is not set; signed-era binaries would refuse this release"
+              exit 1
+            fi
+            echo "ZIPSIGN_PRIVATE_KEY is not set: the archives stay unsigned (checksum only)."
+            exit 0
+          fi
+          cargo install zipsign --locked --version "$ZIPSIGN_VERSION"
+          keydir="$(mktemp -d "$RUNNER_TEMP/zipsign.XXXXXX")"
+          trap 'rm -rf "$keydir"' EXIT
+          n=0
+          while IFS= read -r line || [ -n "$line" ]; do
+            line="${line//[$'\t\r ']/}"
+            [ -n "$line" ] || continue
+            n=$((n + 1))
+            printf '%s' "$line" | base64 -d > "$keydir/key$n"
+            if [ "$(wc -c < "$keydir/key$n")" -ne 64 ]; then
+              echo "::error::line $n of ZIPSIGN_PRIVATE_KEY is not one base64 zipsign private key (64 bytes)"
+              exit 1
+            fi
+          done <<< "$ZIPSIGN_PRIVATE_KEY"
+          keys=("$keydir"/key*)
+          archives=(dist/jubarte-*.tar.gz dist/jubarte-*.zip)
+          if [ "${#archives[@]}" -eq 0 ]; then
+            echo "::error::no release archives in dist/ to sign"
+            exit 1
+          fi
+          for a in "${archives[@]}"; do
+            case "$a" in
+              *.tar.gz) kind=tar ;;
+              *.zip) kind=zip ;;
+            esac
+            # In place, no --context: the context is the file name.
+            zipsign sign "$kind" "$a" "${keys[@]}"
+            # Every committed public key must accept every archive, so a
+            # secret that does not match keys/ stops the release here.
+            for pub in "${pubs[@]}"; do
+              zipsign verify "$kind" "$a" "$pub"
+            done
+            echo "signed ${a#dist/}"
+          done
 
       - name: PyPI sdist
         run: |

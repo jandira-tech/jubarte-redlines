@@ -226,6 +226,8 @@ fn resolve(
 }
 
 fn open(docx: &[u8]) -> Result<PartFs, ChangeError> {
+    crate::document_comparer::admit_package(docx)
+        .map_err(|e| ChangeError::Package(e.to_string()))?;
     PartFs::open(docx).map_err(|e| ChangeError::Package(e.to_string()))
 }
 

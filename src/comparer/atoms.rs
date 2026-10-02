@@ -7,8 +7,7 @@
 use std::sync::Arc;
 
 use crate::util::sha1::{
-    hex_decode_20, hex_encode_20, sha1_digest, sha1_fingerprint, sha1_fingerprint128,
-    sha1_hex_of_digest_hexes,
+    fnv1a_64, fnv1a_128, hex_decode_20, hex_encode_20, sha1_digest, sha1_hex_of_digest_hexes,
 };
 use crate::xmllinq::NodeId;
 
@@ -199,8 +198,8 @@ impl Sha1Keyed {
     /// Wraps `hash`, deriving both keys from it.
     pub fn new(hash: String) -> Self {
         Self {
-            key: sha1_fingerprint(&hash),
-            key128: sha1_fingerprint128(&hash),
+            key: fnv1a_64(&hash),
+            key128: fnv1a_128(&hash),
             hash,
         }
     }
@@ -226,8 +225,8 @@ impl Sha1Keyed {
     }
 
     /// A deliberately inconsistent `u64` key, standing in for a fingerprint
-    /// collision (distinct hashes sharing a key) that the string check must
-    /// still reject. Test builds only, so no caller can mint a stale key.
+    /// collision (distinct hashes sharing a key) that the 128-bit fingerprint
+    /// compare must still reject. Test builds only, so no caller can mint a stale key.
     #[cfg(test)]
     pub(crate) fn with_colliding_key(hash: String, key: u64) -> Self {
         Self {
@@ -312,11 +311,12 @@ impl ComparisonUnit {
             ComparisonUnit::Group(g) => g.sha1.hash(),
         }
     }
-    /// Cached `u64` fingerprint of [`Self::sha1`] — a cheap pre-filter for the
-    /// LCS hot path. Because it is a pure function of the hash string, equal
-    /// hashes always yield equal keys; the string remains the source of truth,
-    /// so `a.sha1_key() == b.sha1_key() && a.sha1() == b.sha1()` is exactly
-    /// `a.sha1() == b.sha1()` while skipping the string compare when keys differ.
+    /// Cached `u64` FNV-1a fingerprint of [`Self::sha1`] — a cheap pre-filter
+    /// for the LCS hot path. Because it is a pure function of the hash string,
+    /// equal hashes always yield equal keys, and differing keys prove the
+    /// hashes differ. Equal keys do not by themselves prove equal hashes; code
+    /// that needs certainty compares [`Self::sha1`] (the common-run match uses
+    /// the 128-bit key alone).
     pub fn sha1_key(&self) -> u64 {
         match self {
             ComparisonUnit::Word(w) => w.sha1.key(),
@@ -509,14 +509,14 @@ pub struct WmlComparerRevision {
 #[cfg(test)]
 mod sha1_keyed_tests {
     use super::Sha1Keyed;
-    use crate::util::sha1::{sha1_fingerprint, sha1_fingerprint128};
+    use crate::util::sha1::{fnv1a_64, fnv1a_128};
 
     #[test]
     fn new_derives_both_keys_from_the_hash() {
         let k = Sha1Keyed::new("deadbeef".into());
         assert_eq!(k.hash(), "deadbeef");
-        assert_eq!(k.key(), sha1_fingerprint("deadbeef"));
-        assert_eq!(k.key128(), sha1_fingerprint128("deadbeef"));
+        assert_eq!(k.key(), fnv1a_64("deadbeef"));
+        assert_eq!(k.key128(), fnv1a_128("deadbeef"));
     }
 
     #[test]
@@ -524,15 +524,15 @@ mod sha1_keyed_tests {
         let mut k = Sha1Keyed::new("deadbeef".into());
         k.set_hash("cafebabe".into());
         assert_eq!(k.hash(), "cafebabe");
-        assert_eq!(k.key(), sha1_fingerprint("cafebabe"));
-        assert_eq!(k.key128(), sha1_fingerprint128("cafebabe"));
+        assert_eq!(k.key(), fnv1a_64("cafebabe"));
+        assert_eq!(k.key128(), fnv1a_128("cafebabe"));
     }
 
     #[test]
     fn a_colliding_key_changes_only_the_u64_key() {
-        let wrong = sha1_fingerprint("deadbeef").wrapping_add(1);
+        let wrong = fnv1a_64("deadbeef").wrapping_add(1);
         let k = Sha1Keyed::with_colliding_key("deadbeef".into(), wrong);
         assert_eq!(k.key(), wrong);
-        assert_eq!(k.key128(), sha1_fingerprint128("deadbeef"));
+        assert_eq!(k.key128(), fnv1a_128("deadbeef"));
     }
 }

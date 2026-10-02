@@ -521,6 +521,8 @@ fn with_layout<T>(
     docx: &[u8],
     emit: impl FnOnce(&Fonts, &[pdf::Page], &LayoutFacts) -> T,
 ) -> Result<T, ConvertError> {
+    crate::document_comparer::admit_package(docx)
+        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;
     let normalized = crate::strict_translation::strict_to_transitional_docx(docx);
     let pkg =
         PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!("{err:?}")))?;
@@ -1154,6 +1156,8 @@ struct NamedStyle {
     /// (019d92d9 Bulleted 270/270 over 360/360; 0005cabe Lista1 left=426
     /// alone keeps the level's hanging 360).
     sets_ind: (bool, bool),
+    /// The style chain itself sets `w:jc`.
+    sets_jc: bool,
     /// The style chain itself sets spacing after / before / line. What it
     /// leaves unset comes from docDefaults (or Normal, when the chain runs
     /// through it) and gives way to a table style's pPr in a cell.
@@ -1259,6 +1263,9 @@ struct TblStyle {
     /// The table style's own pPr sets before/after; otherwise cells keep
     /// the default paragraph style's (010902b5's ListTable3: 6pt each).
     sets_space: bool,
+    /// The table style's own pPr sets `w:ind` left / `w:jc`: they reach
+    /// every cell paragraph whose style chain leaves them unset.
+    sets_ind_jc: (bool, bool),
     /// Below compatibility mode 15, the run size an unstyled cell paragraph
     /// takes: the table style's own `w:sz`, else docDefaults', never
     /// Normal's (00004116). `None` in mode 15, where Normal's wins.
@@ -1357,6 +1364,9 @@ struct Defaults {
     /// The default paragraph style's own chain sets (size, font): a table
     /// style's run size / font then yields to it in unstyled cells.
     normal_run: (bool, bool),
+    /// The default paragraph style's chain sets (ind left, jc): a table
+    /// style's own then yields to it in unstyled cells.
+    normal_ind_jc: (bool, bool),
 }
 
 impl Defaults {
@@ -1481,6 +1491,7 @@ impl Defaults {
             punct_squeeze: false,
             normal_spacing: [false; 3],
             normal_run: (false, false),
+            normal_ind_jc: (false, false),
         }
     }
 }
@@ -3257,6 +3268,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
             hit
         };
         let sets_size = chain_sets("sz", false);
+        let sets_jc = chain_sets("jc", true);
         let hidden = {
             let mut cur = Some(id.as_str());
             let mut on = None;
@@ -3340,6 +3352,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
                 sets_size,
                 sets_family,
                 sets_ind,
+                sets_jc,
                 sets_spacing,
                 not_para: style_not_para,
                 frame,
@@ -3369,6 +3382,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
         defaults.para = named.para.clone();
         defaults.run = named.run.clone();
         defaults.normal_run = (named.sets_size, named.sets_family);
+        defaults.normal_ind_jc = (named.sets_ind.0, named.sets_jc);
     }
     // Below compatibilityMode 15 an unstyled cell takes the table style's
     // size (its own w:sz, else docDefaults', else the OOXML 10pt) unless
@@ -3472,10 +3486,23 @@ fn parse_tbl_style(dom: &Dom, style: NodeId, defaults: &Defaults, theme: &ThemeF
             run.family
         })
         .filter(|f| !f.is_empty());
+    let sets_ind_jc = dom
+        .element(style, &W::p_pr())
+        .map_or((false, false), |ppr| {
+            (
+                first_named(dom, ppr, "ind").is_some_and(|ind| {
+                    attr_any(dom, ind, "left")
+                        .or_else(|| attr_any(dom, ind, "start"))
+                        .is_some()
+                }),
+                first_named(dom, ppr, "jc").is_some(),
+            )
+        });
     let mut out = TblStyle {
         para,
         sets_line,
         sets_space,
+        sets_ind_jc,
         run_size,
         own_size: run_size,
         run_family,
@@ -6699,57 +6726,54 @@ fn settings_link_styles(pkg: &PartFs) -> bool {
     })
 }
 
-/// The stock Normal.dotm's docDefaults: theme minor font, 12pt, kern 1pt,
-/// after=160, line=278.
-const TEMPLATE_DOC_DEFAULTS: &str = "<w:docDefaults><w:rPrDefault><w:rPr>\
-    <w:rFonts w:asciiTheme=\"minorHAnsi\" w:eastAsiaTheme=\"minorHAnsi\" w:hAnsiTheme=\"minorHAnsi\" w:cstheme=\"minorBidi\"/>\
+/// The stock Normal.dotm's Normal as Word resolves it over the template's
+/// docDefaults: theme minor font, 12pt, kern 1pt, after=160, line=278.
+const TEMPLATE_NORMAL: &str = "<w:name w:val=\"Normal\"/><w:qFormat/>\
+    <w:pPr><w:spacing w:after=\"160\" w:line=\"278\" w:lineRule=\"auto\"/></w:pPr>\
+    <w:rPr><w:rFonts w:asciiTheme=\"minorHAnsi\" w:eastAsiaTheme=\"minorHAnsi\" w:hAnsiTheme=\"minorHAnsi\" w:cstheme=\"minorBidi\"/>\
     <w:kern w:val=\"2\"/><w:sz w:val=\"24\"/><w:szCs w:val=\"24\"/>\
-    <w:lang w:val=\"en-US\" w:eastAsia=\"en-US\" w:bidi=\"ar-SA\"/></w:rPr></w:rPrDefault>\
-    <w:pPrDefault><w:pPr><w:spacing w:after=\"160\" w:line=\"278\" w:lineRule=\"auto\"/></w:pPr>\
-    </w:pPrDefault></w:docDefaults>";
+    <w:lang w:val=\"en-US\" w:eastAsia=\"en-US\" w:bidi=\"ar-SA\"/></w:rPr>";
 
 /// styles.xml as Word sees it after `w:linkStyles` pulled in the stock
 /// Normal.dotm (en a 9b100bdc: 12pt on 16pt lines, not the file's 11pt on
-/// 259): its docDefaults, and an empty default paragraph style. The
-/// template's other styles (Default Paragraph Font, Normal Table, No List)
-/// are Word's built-in ones already.
+/// 259). Only the default paragraph style is replaced: a style off its
+/// chain (12d245d664's "Default", no basedOn) keeps the file's own
+/// docDefaults (Word 16 probe lnk l1, 2026-10-02: 10pt single either
+/// way). The template's other styles (Default Paragraph Font, Normal
+/// Table, No List) are Word's built-in ones already.
 fn link_template_styles(xml: &str) -> String {
     let mut out = xml.to_string();
-    if let Some(start) = out.find("<w:docDefaults") {
-        let end = if out[start..].starts_with("<w:docDefaults/>") {
-            Some(start + "<w:docDefaults/>".len())
-        } else {
-            out[start..]
-                .find("</w:docDefaults>")
-                .map(|e| start + e + "</w:docDefaults>".len())
-        };
-        if let Some(end) = end {
-            out.replace_range(start..end, TEMPLATE_DOC_DEFAULTS);
-        }
-    } else if let Some(open) = out.find("<w:styles")
-        && let Some(gt) = out[open..].find('>')
-    {
-        out.insert_str(open + gt + 1, TEMPLATE_DOC_DEFAULTS);
-    }
     let mut from = 0;
     while let Some(at) = out[from..].find("<w:style ").map(|i| from + i) {
         let Some(tag_end) = out[at..].find('>').map(|i| at + i) else {
             break;
         };
-        let tag = &out[at..=tag_end];
+        let tag = out[at..=tag_end].to_string();
         let normal = tag.contains("w:type=\"paragraph\"") && tag.contains("w:default=\"1\"");
-        let Some(end) = out[at..]
-            .find("</w:style>")
-            .map(|i| at + i + "</w:style>".len())
-        else {
+        let end = if tag.ends_with("/>") {
+            Some(tag_end + 1)
+        } else {
+            out[at..]
+                .find("</w:style>")
+                .map(|i| at + i + "</w:style>".len())
+        };
+        let Some(end) = end else {
             break;
         };
-        if normal && !tag.ends_with("/>") {
-            let empty = format!("{tag}<w:name w:val=\"Normal\"/><w:qFormat/></w:style>");
-            out.replace_range(at..end, &empty);
-            break;
+        if normal {
+            let open = tag.trim_end_matches("/>").trim_end_matches('>');
+            out.replace_range(at..end, &format!("{open}>{TEMPLATE_NORMAL}</w:style>"));
+            return out;
         }
         from = end;
+    }
+    if let Some(close) = out.rfind("</w:styles>") {
+        out.insert_str(
+            close,
+            &format!(
+                "<w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">{TEMPLATE_NORMAL}</w:style>"
+            ),
+        );
     }
     out
 }
@@ -9894,11 +9918,29 @@ fn keep_table_spacing_unset_by_style(
     }
 }
 
+/// The table style's own `w:ind` left and `w:jc` reach a cell paragraph
+/// whose style chain sets neither (Word 16 probes tsp t1-t3, 2026-10-02:
+/// 12d245d664's Table Grid ind left=720 jc=both indents and justifies
+/// unstyled, Normal and basedOn-less "Default" cells alike, in compat 14
+/// and 15, with or without overrideTableStyleFontSizeAndJustification).
+/// Direct pPr, applied later, still wins.
+fn take_table_ind_jc(pstyle: &mut ParaStyle, table: &TableParaSpacing, style_sets: (bool, bool)) {
+    let (table_ind, table_jc) = table.sets_ind_jc;
+    if table_ind && !style_sets.0 {
+        pstyle.indent_left = table.para.indent_left;
+    }
+    if table_jc && !style_sets.1 {
+        pstyle.align = table.para.align;
+    }
+}
+
 /// A cell's table-style paragraph properties, and whether the table style
 /// itself sets its spacing / line (else they stand in for Normal's).
 struct TableParaSpacing<'a> {
     para: &'a ParaStyle,
     sets: [bool; 2],
+    /// The table style sets its own ind left / jc (`TblStyle::sets_ind_jc`).
+    sets_ind_jc: (bool, bool),
 }
 
 fn para_base(
@@ -9932,6 +9974,10 @@ fn para_base(
             pstyle.line_at_least = t.line_at_least;
         }
     }
+    if let Some(t) = table_spacing {
+        let (own_ind, own_jc) = sheet.defaults.normal_ind_jc;
+        take_table_ind_jc(&mut pstyle, t, (own_ind, own_jc));
+    }
     if let Some(ppr) = dom.element(para, &W::p_pr())
         && let Some(ps) = first_named(dom, ppr, "pStyle")
         && let Some(sid) = dom.attribute(ps, &W::val())
@@ -9945,6 +9991,7 @@ fn para_base(
             rstyle = named.run.clone();
             if let Some(t) = table_spacing {
                 keep_table_spacing_unset_by_style(&mut pstyle, t, named.sets_spacing);
+                take_table_ind_jc(&mut pstyle, t, (named.sets_ind.0, named.sets_jc));
             }
         } else {
             // Word still applies latent built-in heading spacing when the
@@ -11726,6 +11773,7 @@ fn table_block(
                     sets: tdef
                         .as_ref()
                         .map_or([false; 2], |t| [t.sets_space, t.sets_line]),
+                    sets_ind_jc: tdef.as_ref().map_or((false, false), |t| t.sets_ind_jc),
                 };
                 let (mut pstyle, mut r) = para_base(dom, child, sheet, Some(&table_spacing));
                 // An explicit table style's size beats the default paragraph
@@ -27509,6 +27557,11 @@ impl<'a> Layout<'a> {
                             color: fill,
                         });
                     }
+                    // Word paints a cell's shading under its rules: the
+                    // per-line fills below go in here, before the strokes,
+                    // so they never cover the row's top rule (12d245d664's
+                    // header rows lost theirs at screen resolutions).
+                    let mut under_rules = (self.pages.len(), self.current().ops.len());
                     let last_row = ri + cell.rowspan.max(1) >= work.len()
                         || matches!(work[ri].0, RowSrc::Head(_));
                     let last_col = cell.col + cell.colspan >= col_w.len();
@@ -27697,13 +27750,19 @@ impl<'a> Layout<'a> {
                                 } else {
                                     (y_line - line_box, line_box)
                                 };
-                                self.current().ops.push(Op::FillRect {
+                                let op = Op::FillRect {
                                     x: x + pad_l,
                                     y: iy,
                                     w: inner_w,
                                     h: ih,
                                     color: fill,
-                                });
+                                };
+                                if under_rules.0 == self.pages.len() {
+                                    self.current().ops.insert(under_rules.1, op);
+                                    under_rules.1 += 1;
+                                } else {
+                                    self.current().ops.push(op);
+                                }
                             }
                             // Aligned on its ink: the space a wrapped line
                             // broke after does not count (0005052e "Sıra ").
@@ -41708,6 +41767,7 @@ mod table_tests {
                 para,
                 sets_line: true,
                 sets_space: true,
+                sets_ind_jc: (false, false),
                 run_size: None,
                 own_size: None,
                 run_family: None,

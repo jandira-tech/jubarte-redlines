@@ -10,7 +10,7 @@
 //! accessors the engine actually uses.
 
 use jubarte::comparer::atoms::{ComparisonUnit, ComparisonUnitAtom, ComparisonUnitWord, Sha1Keyed};
-use jubarte::util::sha1::{sha1_fingerprint, sha1_fingerprint128};
+use jubarte::util::sha1::{fnv1a_64, fnv1a_128};
 use jubarte::xmllinq::NodeId;
 
 fn atom(tag: &str) -> ComparisonUnitAtom {
@@ -33,8 +33,8 @@ fn hashes() -> Vec<String> {
 
 fn assert_keys_follow(k: &Sha1Keyed, h: &str) {
     assert_eq!(k.hash(), h, "hash must round-trip verbatim");
-    assert_eq!(k.key(), sha1_fingerprint(h), "u64 key of {h:?}");
-    assert_eq!(k.key128(), sha1_fingerprint128(h), "128-bit key of {h:?}");
+    assert_eq!(k.key(), fnv1a_64(h), "u64 key of {h:?}");
+    assert_eq!(k.key128(), fnv1a_128(h), "128-bit key of {h:?}");
 }
 
 #[test]
@@ -56,7 +56,7 @@ fn words_hand_the_lcs_consistent_keys() {
         assert_keys_follow(&word.sha1, &hash);
         let unit = ComparisonUnit::Word(word);
         assert_eq!(unit.sha1(), hash);
-        assert_eq!(unit.sha1_key(), sha1_fingerprint(&hash), "{n} atoms");
-        assert_eq!(unit.sha1_key128(), sha1_fingerprint128(&hash), "{n} atoms");
+        assert_eq!(unit.sha1_key(), fnv1a_64(&hash), "{n} atoms");
+        assert_eq!(unit.sha1_key128(), fnv1a_128(&hash), "{n} atoms");
     }
 }

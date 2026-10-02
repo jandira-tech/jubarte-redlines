@@ -166,7 +166,7 @@ impl Default for DocxOptions<'_> {
             critic: true,
             track_changes: TrackChanges::All,
             author: "Redline".to_string(),
-            date: "1970-01-01T00:00:00Z".to_string(),
+            date: crate::document_comparer::DEFAULT_DATE.to_string(),
             images: None,
             page: PageSize::Letter,
         }

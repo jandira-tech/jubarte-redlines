@@ -20,7 +20,7 @@ use super::CorrelationStatus;
 use super::atoms::ComparisonUnitAtom;
 
 /// Passthrough hasher for `u64`-keyed maps whose keys are already well-mixed
-/// SHA-1 fingerprints (`ComparisonUnit::sha1_key`). Re-hashing a fingerprint
+/// FNV-1a fingerprints of SHA-1 hex digests (`ComparisonUnit::sha1_key`). Re-hashing a fingerprint
 /// with SipHash was ~10% of a large-doc compare (LCS index rebuilt per
 /// recursion node); identity-hashing the single `write_u64` removes it. Output
 /// is unchanged: the index is used only for point lookups, and bucket contents
@@ -833,11 +833,14 @@ fn longest_common_run_with_dom(
 
 /// Extend a contiguous common run starting at `(i1, i2)`, returning its length.
 ///
-/// Fast pre-filter: the cached u64 keys reject the (dominant) unequal case with a
-/// single int compare; the `sha1()` string stays the source of truth, so this is
-/// exactly `sha1() == sha1()` (equal hashes always share a key), just cheaper. A
-/// u64 collision (same key, different string) stops the run at the string check,
-/// so it is *never* mistaken for a match. See [`ComparisonUnit::sha1_key`].
+/// Equality is decided by the cached 128-bit FNV-1a fingerprint of the `sha1()`
+/// hex string ([`ComparisonUnit::sha1_key128`]), one int compare per step; the
+/// hex string itself is not compared. Equal hashes always share a fingerprint, so
+/// no true match is missed. A distinct pair is taken for equal only on a 128-bit
+/// FNV-1a collision between two SHA-1 hex strings (the inputs are digests, so a
+/// caller cannot choose the bytes being hashed). A collision of the 64-bit
+/// [`ComparisonUnit::sha1_key`] alone is harmless: the 128-bit values differ and
+/// the run stops there.
 #[inline]
 fn extend_common_run(
     cul1: &[ComparisonUnit],
@@ -847,9 +850,10 @@ fn extend_common_run(
 ) -> usize {
     let (mut t1, mut t2) = (i1, i2);
     let mut len = 0;
-    // 128-bit fingerprint compare == `sha1_key()==sha1_key() && sha1()==sha1()`
-    // (equal hashes always share the fingerprint; distinct hashes collide at
-    // ~2^-128), without the per-step 40-byte hex memcmp.
+    // The 128-bit FNV-1a fingerprint stands in for comparing the hash strings,
+    // and no string compare follows: equal hashes always share the
+    // fingerprint, and distinct 40-character hex digests are not expected to
+    // collide at 128 bits. It avoids the per-step 40-byte hex memcmp.
     while t1 < cul1.len() && t2 < cul2.len() && cul1[t1].sha1_key128() == cul2[t2].sha1_key128() {
         t1 += 1;
         t2 += 1;
@@ -1017,8 +1021,9 @@ fn longest_common_run_scan(
 /// scan would reach for that `i1`. The candidate sequence — and therefore the
 /// first-found winner — is identical to [`longest_common_run_scan`]; the scan
 /// merely also visits the (never-winning) `len == 0` pairs in between. Proven by
-/// `indexed_matches_scan`. Collisions land in a bucket but yield `len == 0` (the
-/// string check in [`extend_common_run`]), exactly as the scan skips them.
+/// `indexed_matches_scan`. A 64-bit key collision lands in a bucket but yields
+/// `len == 0` (the 128-bit compare in [`extend_common_run`] differs), exactly as
+/// the scan skips it.
 fn longest_common_run_indexed(
     dom: Option<&Dom>,
     cul1: &[ComparisonUnit],
@@ -1056,9 +1061,9 @@ fn longest_common_run_indexed(
             // requires a *strict* improvement — the longer super-run always
             // wins or ties). So (i1, i2) can never become `best`; skipping it is
             // output-identical and removes the O(run_len^2) re-extension of long
-            // shared passages. The full sha1() check (not just the u64 key)
-            // mirrors extend_common_run, so a u64 key collision at the
-            // predecessor never triggers a wrongful skip.
+            // shared passages. The 128-bit fingerprint compare mirrors
+            // extend_common_run, so a 64-bit key collision at the predecessor
+            // never triggers a wrongful skip.
             if i1 > 0 && i2 > 0 && cul1[i1 - 1].sha1_key128() == cul2[i2 - 1].sha1_key128() {
                 continue;
             }
@@ -9691,8 +9696,8 @@ mod indexed_lcr_tests {
 
     /// A word with an EXPLICIT (hash, key) pair — used to simulate a u64
     /// fingerprint collision (distinct hash strings sharing a key). Real FNV-1a
-    /// keys make this astronomically rare, but the string check must still reject
-    /// it identically in both paths.
+    /// keys make this astronomically rare, but the 128-bit compare must still
+    /// reject it identically in both paths.
     fn mk_word_key(hash: &str, key: u64) -> ComparisonUnit {
         ComparisonUnit::Word(ComparisonUnitWord {
             correlation_status: CorrelationStatus::Nil,
@@ -9768,8 +9773,8 @@ mod indexed_lcr_tests {
     }
 
     /// A forced u64-key collision (distinct hashes, shared key) must NOT be read
-    /// as a match by the bucket probe: the string check keeps the indexed output
-    /// identical to the scan, which relies on the same string check.
+    /// as a match by the bucket probe: the differing 128-bit fingerprints keep the
+    /// indexed output identical to the scan, which relies on the same compare.
     #[test]
     fn indexed_handles_key_collision() {
         let k = 0xDEAD_BEEF_u64;

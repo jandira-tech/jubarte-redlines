@@ -56,16 +56,41 @@ fn js_err(e: impl std::fmt::Display) -> JsValue {
     JsValue::from_str(&format!("jubarte-wasm: {e}"))
 }
 
+/// `WmlComparerSettings::default()` with `input_limits_json` (a JSON object
+/// such as `{"max_part_bytes": 67108864}`) laid over its compare budget.
+fn settings_with_limits(
+    input_limits_json: Option<&str>,
+) -> Result<jubarte::comparer::WmlComparerSettings, String> {
+    let settings = jubarte::comparer::WmlComparerSettings::default();
+    let Some(json) = input_limits_json else {
+        return Ok(settings);
+    };
+    let overrides = jubarte::admission::InputLimitOverrides::from_json(json)?;
+    let base = settings.input_limits;
+    Ok(settings.with_input_limits(overrides.apply(base)))
+}
+
 /// Compare two DOCX packages (bytes) → redline DOCX bytes (`w:ins`/`w:del`).
 ///
 /// Mirrors `jubarte::document_comparer::compare_documents`.
+/// `inputLimitsJson` (optional) overrides the admission budget key by key:
+/// `{"max_compressed_bytes", "max_entries", "max_part_bytes",
+/// "max_uncompressed_bytes", "max_xml_depth"}`. A package past the budget
+/// throws with `INPUT_LIMIT`; an unknown key throws `invalid input limits`.
+/// The default budget allows 2 GiB inflated, more than a 32-bit WASM heap
+/// holds, so browser hosts should lower it.
 #[wasm_bindgen(js_name = compareDocuments)]
 pub fn compare_documents(
     original: &[u8],
     modified: &[u8],
     author: &str,
+    input_limits_json: Option<String>,
 ) -> Result<Vec<u8>, JsValue> {
-    jubarte::document_comparer::compare_documents(original, modified, author).map_err(js_err)
+    let settings = settings_with_limits(input_limits_json.as_deref())
+        .map_err(js_err)?
+        .with_author(author);
+    jubarte::document_comparer::compare_documents_with_settings(original, modified, &settings)
+        .map_err(js_err)
 }
 
 /// Accept every tracked revision (package-wide) → clean DOCX bytes.
@@ -143,10 +168,11 @@ pub fn reject_changes(docx: &[u8], filter_json: &str) -> Result<Vec<u8>, JsValue
 /// (`type`/`author`/`date`/`part`/`moveGroupId`/`isMoveSource`/`formatChange`/`text`).
 ///
 /// Mirrors `jubarte::document_comparer::get_revisions` with default settings,
-/// serialized by the shared `revisions_to_json`.
+/// serialized by the shared `revisions_to_json`. `inputLimitsJson` as in
+/// `compareDocuments`.
 #[wasm_bindgen(js_name = getRevisions)]
-pub fn get_revisions(docx: &[u8]) -> Result<String, JsValue> {
-    let settings = jubarte::comparer::WmlComparerSettings::default();
+pub fn get_revisions(docx: &[u8], input_limits_json: Option<String>) -> Result<String, JsValue> {
+    let settings = settings_with_limits(input_limits_json.as_deref()).map_err(js_err)?;
     let revs = jubarte::document_comparer::get_revisions(docx, &settings).map_err(js_err)?;
     Ok(jubarte::document_comparer::revisions_to_json(&revs))
 }
@@ -727,6 +753,35 @@ mod tests {
         assert_eq!(report["page_count"], 1);
         assert_eq!(report["fields"], serde_json::json!([]));
         assert!(!out.docx().is_empty());
+    }
+
+    #[test]
+    fn input_limits_json_overrides_the_compare_budget_key_by_key() {
+        let base = jubarte::admission::InputLimits::compare();
+        assert_eq!(settings_with_limits(None).unwrap().input_limits, base);
+        let tight = settings_with_limits(Some(r#"{"max_entries": 2}"#)).unwrap();
+        assert_eq!(
+            tight.input_limits,
+            jubarte::admission::InputLimits {
+                max_entries: 2,
+                ..base
+            }
+        );
+        let typo = settings_with_limits(Some(r#"{"max_entrys": 2}"#)).unwrap_err();
+        assert!(typo.starts_with("invalid input limits"), "{typo}");
+        // `js_err` needs a JS host, so only the accepted path runs natively.
+        let redline = compare_documents(
+            &word(OLD),
+            &word(NEW),
+            "A",
+            Some(r#"{"max_entries": 100}"#.into()),
+        )
+        .unwrap();
+        assert!(
+            get_revisions(&redline, None)
+                .unwrap()
+                .contains("\"Inserted\"")
+        );
     }
 
     const OLD: &str = "# Terms\n\nPayment is due in 30 days.\n\n- Delivery\n- Warranty\n";

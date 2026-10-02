@@ -1,0 +1,402 @@
+From 36a617e2c7209c716372c65fa355c585cdc62c07 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 2 Oct 2026 07:14:04 +0000
+Subject: [PATCH] wip: agent work interrupted by session limit; not validated
+ (fmt/clippy/tests not confirmed)
+
+---
+ CHANGELOG.md                      |  12 +++
+ skills/jubarte-documents/SKILL.md |   3 +-
+ src/capabilities.rs               |  31 +++++--
+ src/edit.rs                       |  12 ++-
+ src/inspect.rs                    |  16 +++-
+ tests/agent_contracts.rs          |   5 +-
+ tests/edit_stories.rs             | 137 ++++++++++++++++++++++++------
+ tests/m_cli_agent.rs              |   5 +-
+ 8 files changed, 182 insertions(+), 39 deletions(-)
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 16a7df2..c74bb3e 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -88,6 +88,18 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
+ 
+ ### Fixed
+ 
++- `jubarte capabilities` (`limits.stories`, also `jubarte_redlines.capabilities()`
++  and the WASM `capabilities()`) advertises every story kind an edit plan
++  addresses, `body`, `header`, `footer`, `footnotes` and `endnotes`, instead
++  of `body` alone, which 0.10.0's header, footer and note editing had left
++  stale. The list is the one `inspect` and `edit` resolve selectors against
++  (`inspect::STORY_KINDS`), checked by a round trip from the manifest through
++  `inspect` to `apply_plan`, so the two cannot drift again. A story is named
++  in a selector by its id, the part's file stem that `inspect` prints
++  (`header1:p:0`, `{"story": "footnotes", "index": 0}`). The module doc
++  no longer claims the operations are derived from the compiled features:
++  the library compiles every operation in, and only a wrapper build (WASM
++  without `pdf`) turns one off.
+ - A line ended by a `w:br` keeps its break when the paragraph reflows
+   past a header or body float with square or tight wrapping. The lines
+   below the float no longer run together, and a justified line that
+diff --git a/skills/jubarte-documents/SKILL.md b/skills/jubarte-documents/SKILL.md
+index f3f9815..22f42ce 100644
+--- a/skills/jubarte-documents/SKILL.md
++++ b/skills/jubarte-documents/SKILL.md
+@@ -43,7 +43,8 @@ header, footer and notes part as its own story (`[header1:p:0] ...`,
+ `[footnotes:p:0] ...`), and `inspect` lists them under `stories`.
+ 
+ Gotchas:
+-- Headers, footers, footnotes and endnotes are editable stories; text boxes
++- Headers, footers, footnotes and endnotes are editable stories (the kinds
++  `jubarte capabilities --json` lists under `limits.stories`); text boxes
+   are counted in `summary` but not printed and not editable. Comments can
+   only be anchored in the body (Word cannot anchor one in a header).
+ - `limitations` on a paragraph (`field`, `hyperlink`, `content_control`,
+diff --git a/src/capabilities.rs b/src/capabilities.rs
+index 3f219a2..d082a52 100644
+--- a/src/capabilities.rs
++++ b/src/capabilities.rs
+@@ -2,9 +2,18 @@
+ //
+ // SPDX-License-Identifier: AGPL-3.0-only
+ 
+-//! What this build can do, derived from the compiled feature set rather than
+-//! from documentation. Agents read it before choosing an operation:
++//! What this build can do. Agents read it before choosing an operation:
+ //! `jubarte capabilities --json`, `jubarte_redlines.capabilities()`.
++//!
++//! Every operation is compiled into the library unconditionally: the crate's
++//! features (`cli`, `fast-alloc`, `self-update`, `perf-profile`) gate the
++//! binary, its allocator, updating and profiling, not an operation, so there
++//! is no feature to derive `operations` from and each is reported `true`. A
++//! wrapper that compiles an operation out overrides that field in its own
++//! manifest, as jubarte-wasm does for `pdf` (its `pdf` feature) and `png`
++//! (never). The rest is read from the modules that implement it: the edit
++//! plan schema version and the story kinds come from `crate::inspect`, so
++//! the manifest cannot drift from the parser.
+ 
+ use serde::{Deserialize, Serialize};
+ 
+@@ -71,8 +80,12 @@ pub struct Operations {
+ /// Documented scope limits.
+ #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+ pub struct Limits {
+-    /// Stories `inspect` and `edit` address (`body` only: headers, footers,
+-    /// notes and text boxes are reported in `summary` but not editable).
++    /// Story kinds `inspect` and `edit` address: `body`, then the `kind` of
++    /// each entry of `inspect`'s `stories` (`header`, `footer`, `footnotes`,
++    /// `endnotes`). A selector names a story by its id, the part's file stem
++    /// (`header1:p:0`, `{"story": "footnotes", "index": 0}`), which
++    /// `inspect` lists for the document at hand. Comments and text boxes are
++    /// counted in `summary` but are not stories.
+     pub stories: Vec<String>,
+     /// Inserted run text is plain: no tabs or line breaks inside runs.
+     pub plain_text_runs: bool,
+@@ -153,7 +166,10 @@ pub fn capabilities(runtime: &str) -> Capabilities {
+         .map(|s| (*s).to_string())
+         .collect(),
+         limits: Limits {
+-            stories: vec!["body".to_string()],
++            stories: std::iter::once(crate::inspect::BODY_STORY)
++                .chain(crate::inspect::STORY_KINDS.iter().copied())
++                .map(str::to_string)
++                .collect(),
+             plain_text_runs: true,
+             refuses_opaque_ranges: true,
+             reads_legacy_doc: false,
+@@ -189,7 +205,10 @@ mod tests {
+         assert_eq!(json["limits"]["input"]["max_entries"], 10_000);
+         assert_eq!(json["limits"]["input"]["max_xml_depth"], 256);
+         let back: Capabilities = serde_json::from_value(json).unwrap();
+-        assert_eq!(back.limits.stories, ["body"]);
++        assert_eq!(
++            back.limits.stories,
++            ["body", "header", "footer", "footnotes", "endnotes"]
++        );
+         assert_eq!(back.limits.input.max_part_bytes, 64 * 1024 * 1024);
+     }
+ }
+diff --git a/src/edit.rs b/src/edit.rs
+index 224a2c4..3f41925 100644
+--- a/src/edit.rs
++++ b/src/edit.rs
+@@ -25,7 +25,9 @@ use serde::{Deserialize, Serialize};
+ use crate::changes::{Change, ChangeError, ChangeFilter};
+ 
+ use crate::comparer::{WmlComparerRevisionType, WmlComparerSettings};
+-use crate::inspect::{Opened, Piece, Projection, SCHEMA_VERSION, project_paragraph, source_sha256};
++use crate::inspect::{
++    BODY_STORY, Opened, Piece, Projection, SCHEMA_VERSION, project_paragraph, source_sha256,
++};
+ use crate::namespaces::{R, W};
+ use crate::xmllinq::{Dom, NodeId, XNamespace};
+ 
+@@ -1128,7 +1130,7 @@ impl<'p> Transaction<'p> {
+         };
+         let base_sha256 = source_sha256(&base);
+         let mut stories = vec![StoryPart {
+-            id: "body".to_string(),
++            id: BODY_STORY.to_string(),
+             part: opened.main.clone(),
+             document: opened.document,
+             root: opened.body,
+@@ -1825,9 +1827,11 @@ impl<'p> Transaction<'p> {
+                 Some((story, n)) => (story, Some(n)),
+                 None => return not_found(format!("unknown paragraph id {id}")),
+             },
+-            Selector::Index { index, story } => (story.as_deref().unwrap_or("body"), Some(*index)),
++            Selector::Index { index, story } => {
++                (story.as_deref().unwrap_or(BODY_STORY), Some(*index))
++            }
+             Selector::StartsWith { story, .. } | Selector::Contains { story, .. } => {
+-                (story.as_deref().unwrap_or("body"), None)
++                (story.as_deref().unwrap_or(BODY_STORY), None)
+             }
+         };
+         let Some(story_index) = self.stories.iter().position(|s| s.id == story) else {
+diff --git a/src/inspect.rs b/src/inspect.rs
+index 6d2d5be..79a0ef3 100644
+--- a/src/inspect.rs
++++ b/src/inspect.rs
+@@ -26,6 +26,18 @@ use crate::xmllinq::{Dom, NodeId, XName};
+ /// Wire schema of [`inspect_json`] and of the edit plan that consumes it.
+ pub const SCHEMA_VERSION: u32 = 1;
+ 
++/// The story every document has; its paragraph ids are `body:p:N`, and a
++/// selector without a `story` searches it.
++pub(crate) const BODY_STORY: &str = "body";
++
++/// Kinds of part an edit plan addresses as a story besides the body, in
++/// the order [`stories`] lists them. Each is the last segment of the part's
++/// relationship type; the story's id is the part's file stem (`header1`,
++/// `footer2`, `footnotes`, `endnotes`) and [`Story::kind`] is one of these.
++/// Comments and text boxes are not stories. `capabilities` advertises this
++/// list after `body`, so the manifest and the parser cannot drift.
++pub(crate) const STORY_KINDS: &[&str] = &["header", "footer", "footnotes", "endnotes"];
++
+ /// One paragraph of the body or a story. `index` and `id` are valid for this
+ /// exact snapshot.
+ #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+@@ -405,7 +417,7 @@ impl Opened {
+     /// is the part's file stem; `header2` sorts before `header10`.
+     pub(crate) fn story_parts(&self) -> Vec<(String, &'static str, String)> {
+         let mut out = Vec::new();
+-        for kind in ["header", "footer", "footnotes", "endnotes"] {
++        for kind in STORY_KINDS.iter().copied() {
+             let mut parts: Vec<String> = self.related(kind).into_iter().collect();
+             parts.sort_by_key(|part| (part.len(), part.clone()));
+             for part in parts {
+@@ -544,7 +556,7 @@ pub(crate) fn story_paragraph_nodes(dom: &Dom, root: NodeId) -> Vec<NodeId> {
+ }
+ 
+ fn body_paragraphs(dom: &Dom, body: NodeId) -> Vec<Paragraph> {
+-    paragraphs_of(dom, body_paragraph_nodes(dom, body), "body")
++    paragraphs_of(dom, body_paragraph_nodes(dom, body), BODY_STORY)
+ }
+ 
+ fn paragraphs_of(dom: &Dom, nodes: Vec<NodeId>, story: &str) -> Vec<Paragraph> {
+diff --git a/tests/agent_contracts.rs b/tests/agent_contracts.rs
+index 2fe0772..f0ce14b 100644
+--- a/tests/agent_contracts.rs
++++ b/tests/agent_contracts.rs
+@@ -69,7 +69,10 @@ fn capabilities_roundtrip_preserves_runtime_and_scope_limits() {
+         assert_eq!(capabilities(runtime), decoded);
+     }
+     let manifest = capabilities("rust");
+-    assert_eq!(manifest.limits.stories, ["body"]);
++    assert_eq!(
++        manifest.limits.stories,
++        ["body", "header", "footer", "footnotes", "endnotes"]
++    );
+     assert!(manifest.limits.plain_text_runs);
+     assert!(manifest.limits.refuses_opaque_ranges);
+     assert!(!manifest.limits.reads_legacy_doc);
+diff --git a/tests/edit_stories.rs b/tests/edit_stories.rs
+index c389e86..5191588 100644
+--- a/tests/edit_stories.rs
++++ b/tests/edit_stories.rs
+@@ -11,15 +11,22 @@ mod common;
+ 
+ use common::docx::{Part, R_NS, W_NS, docx_with_sect, para, part_string};
+ use common::validity::assert_word_valid_package;
++use jubarte::capabilities::capabilities;
+ use jubarte::document_comparer::{accept_revisions, reject_revisions};
+ use jubarte::edit::{EditPlan, apply_plan};
+-use jubarte::inspect::{inspect_json, markdown, source_sha256};
++use jubarte::inspect::{inspect_json, markdown, source_sha256, stories};
+ 
+ const HEADER: &str = "Confidential draft for discussion";
+ const FOOTER: &str = "Acme Corp. Page footer";
+ const NOTE: &str = "See the 2024 master agreement.";
++const ENDNOTE: &str = "Defined terms follow the master agreement.";
+ 
+ fn letter() -> Vec<u8> {
++    letter_docx(false)
++}
++
++/// The letter: a header, a footer, footnotes and, on request, endnotes too.
++fn letter_docx(with_endnotes: bool) -> Vec<u8> {
+     let header = format!(
+         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr xmlns:w="{W_NS}"><w:p><w:r><w:t>{HEADER}</w:t></w:r></w:p></w:hdr>"#
+     );
+@@ -29,32 +36,53 @@ fn letter() -> Vec<u8> {
+     let notes = format!(
+         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:footnotes xmlns:w="{W_NS}"><w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote><w:footnote w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote><w:footnote w:id="1"><w:p><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:footnoteRef/></w:r><w:r><w:t xml:space="preserve"> {NOTE}</w:t></w:r></w:p></w:footnote></w:footnotes>"#
+     );
+-    let body = para("Body heading")
+-        + r#"<w:p><w:r><w:t>The parties agree.</w:t></w:r><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:footnoteReference w:id="1"/></w:r></w:p>"#;
++    let endnotes = format!(
++        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:endnotes xmlns:w="{W_NS}"><w:endnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:endnote><w:endnote w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:endnote><w:endnote w:id="1"><w:p><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:endnoteRef/></w:r><w:r><w:t xml:space="preserve"> {ENDNOTE}</w:t></w:r></w:p></w:endnote></w:endnotes>"#
++    );
++    let mut body = para("Body heading")
++        + r#"<w:p><w:r><w:t>The parties agree.</w:t></w:r><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:footnoteReference w:id="1"/></w:r>"#;
++    if with_endnotes {
++        body += r#"<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:endnoteReference w:id="1"/></w:r>"#;
++    }
++    body += "</w:p>";
+     let rel = |kind: &str| format!("{R_NS}/{kind}");
+-    let (h, f, n) = (rel("header"), rel("footer"), rel("footnotes"));
++    let (h, f, n, e) = (
++        rel("header"),
++        rel("footer"),
++        rel("footnotes"),
++        rel("endnotes"),
++    );
++    let mut parts = vec![
++        Part {
++            name: "word/header1.xml",
++            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
++            rel_type: &h,
++            xml: &header,
++        },
++        Part {
++            name: "word/footer1.xml",
++            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml",
++            rel_type: &f,
++            xml: &footer,
++        },
++        Part {
++            name: "word/footnotes.xml",
++            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
++            rel_type: &n,
++            xml: &notes,
++        },
++    ];
++    if with_endnotes {
++        parts.push(Part {
++            name: "word/endnotes.xml",
++            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml",
++            rel_type: &e,
++            xml: &endnotes,
++        });
++    }
+     docx_with_sect(
+         &body,
+-        &[
+-            Part {
+-                name: "word/header1.xml",
+-                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+-                rel_type: &h,
+-                xml: &header,
+-            },
+-            Part {
+-                name: "word/footer1.xml",
+-                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml",
+-                rel_type: &f,
+-                xml: &footer,
+-            },
+-            Part {
+-                name: "word/footnotes.xml",
+-                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
+-                rel_type: &n,
+-                xml: &notes,
+-            },
+-        ],
++        &parts,
+         r#"<w:headerReference w:type="default" r:id="rIdX0"/><w:footerReference w:type="default" r:id="rIdX1"/>"#,
+     )
+ }
+@@ -330,3 +358,64 @@ fn story_selectors_and_story_limits_are_checked() {
+     );
+     assert_word_valid_package(&added.redline);
+ }
++
++/// The capability manifest's `limits.stories` and the stories `inspect`
++/// reports and `edit` addresses are one list: every kind the manifest names
++/// is a story of a document that has one, named by its id in a selector, and
++/// no story kind goes unadvertised.
++#[test]
++fn capabilities_advertise_exactly_the_story_kinds_edit_accepts() {
++    let advertised = capabilities("rust").limits.stories;
++    let source = letter_docx(true);
++    let found = stories(&source).unwrap();
++    let mut kinds = vec!["body".to_string()];
++    for story in &found {
++        if !kinds.contains(&story.kind) {
++            kinds.push(story.kind.clone());
++        }
++    }
++    assert_eq!(advertised, kinds);
++
++    // A selector names each advertised story by the id inspect printed.
++    let mut operations = vec![
++        r#"{"kind":"insert","paragraph":{"index":0},"position":"end","text":" (rev)"}"#.to_string(),
++    ];
++    for story in &found {
++        operations.push(format!(
++            r#"{{"kind":"insert","paragraph":"{}:p:0","position":"end","text":" (rev)"}}"#,
++            story.id
++        ));
++    }
++    let result = apply_plan(
++        &source,
++        &plan(&source, &format!("[{}]", operations.join(","))),
++    )
++    .unwrap();
++    assert!(result.report.ok, "{:?}", result.report.operations);
++    let at: Vec<_> = result
++        .report
++        .operations
++        .iter()
++        .map(|o| o.paragraph.clone().unwrap())
++        .collect();
++    assert_eq!(
++        at,
++        [
++            "body:p:0",
++            "header1:p:0",
++            "footer1:p:0",
++            "footnotes:p:0",
++            "endnotes:p:0"
++        ]
++    );
++    for story in &found {
++        let texts = part_texts(&result.clean, &story.part);
++        assert!(
++            texts.iter().any(|t| t.ends_with(" (rev)")),
++            "{}: {texts:?}",
++            story.part
++        );
++    }
++    assert_word_valid_package(&result.clean);
++    assert_word_valid_package(&result.redline);
++}
+diff --git a/tests/m_cli_agent.rs b/tests/m_cli_agent.rs
+index c22ed1d..bfe2181 100644
+--- a/tests/m_cli_agent.rs
++++ b/tests/m_cli_agent.rs
+@@ -338,7 +338,10 @@ fn capabilities_describe_the_built_binary() {
+     assert_eq!(v["edit_plan_versions"], serde_json::json!([1]));
+     let kinds = v["edit_operations"].as_array().unwrap();
+     assert!(kinds.iter().any(|k| k == "insert_paragraph"));
+-    assert_eq!(v["limits"]["stories"], serde_json::json!(["body"]));
++    assert_eq!(
++        v["limits"]["stories"],
++        serde_json::json!(["body", "header", "footer", "footnotes", "endnotes"])
++    );
+ }
+ 
+ #[test]
+-- 
+2.43.0
+

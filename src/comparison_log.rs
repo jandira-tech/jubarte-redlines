@@ -25,7 +25,7 @@ pub struct ComparisonLogEntry {
 }
 
 /// Accumulates log entries during a comparison run.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct ComparisonLog {
     /// `entries`.
     pub entries: Vec<ComparisonLogEntry>,

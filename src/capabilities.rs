@@ -2,9 +2,18 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! What this build can do, derived from the compiled feature set rather than
-//! from documentation. Agents read it before choosing an operation:
+//! What this build can do. Agents read it before choosing an operation:
 //! `jubarte capabilities --json`, `jubarte_redlines.capabilities()`.
+//!
+//! Every operation is compiled into the library unconditionally: the crate's
+//! features (`cli`, `fast-alloc`, `self-update`, `perf-profile`) gate the
+//! binary, its allocator, updating and profiling, not an operation, so there
+//! is no feature to derive `operations` from and each is reported `true`. A
+//! wrapper that compiles an operation out overrides that field in its own
+//! manifest, as jubarte-wasm does for `pdf` (its `pdf` feature) and `png`
+//! (never). The rest is read from the modules that implement it: the edit
+//! plan schema version and the story kinds come from `crate::inspect`, so
+//! the manifest cannot drift from the parser.
 
 use serde::{Deserialize, Serialize};
 
@@ -112,8 +121,13 @@ pub struct Operations {
 /// Documented scope limits.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Limits {
-    /// Stories `inspect` and `edit` address; text boxes are reported in
-    /// `summary` but not editable.
+    /// Story kinds `inspect` and `edit` address: `body`, then the `kind` of
+    /// each entry of `inspect`'s `stories` (`header`, `footer`, `footnotes`,
+    /// `endnotes`). A selector names a story by its id, the part's file stem
+    /// (`header1:p:0`, `{"story": "footnotes", "index": 0}`), which
+    /// `inspect` lists for the document at hand. Comments are counted in
+    /// `summary` but are not stories; text boxes are not stories either, and
+    /// their owner paragraph carries the `text_box_omitted` limitation.
     pub stories: Vec<String>,
     /// Inserted run text is plain: no tabs or line breaks inside runs.
     pub plain_text_runs: bool,
@@ -219,9 +233,9 @@ pub fn capabilities(runtime: &str) -> Capabilities {
         .map(|s| (*s).to_string())
         .collect(),
         limits: Limits {
-            stories: ["body", "header", "footer", "footnotes", "endnotes"]
-                .iter()
-                .map(|s| (*s).to_string())
+            stories: std::iter::once(crate::inspect::BODY_STORY)
+                .chain(crate::inspect::STORY_KINDS.iter().copied())
+                .map(str::to_string)
                 .collect(),
             plain_text_runs: true,
             refuses_opaque_ranges: true,

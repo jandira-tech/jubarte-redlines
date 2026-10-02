@@ -2389,7 +2389,7 @@ pub fn free_mesh_shared_title_token_in_mix(dom: &mut Dom, root: NodeId) {
         // Author/date from first ins.
         let (author, date, id) = {
             let mut a = "Redline".to_string();
-            let mut d = "1970-01-01T00:00:00Z".to_string();
+            let mut d = crate::document_comparer::DEFAULT_DATE.to_string();
             let mut id = "0".to_string();
             if let Some(&ins) = ins_nodes.first() {
                 if let Some(v) = dom.attribute(ins, &W::author()) {
@@ -11714,7 +11714,7 @@ pub fn free_mesh_wholesale_body_mix(dom: &mut Dom, root: NodeId) {
         }
         let (author, date) = {
             let mut a = "Redline".to_string();
-            let mut d = "1970-01-01T00:00:00Z".to_string();
+            let mut d = crate::document_comparer::DEFAULT_DATE.to_string();
             if let Some(v) = dom.attribute(ins, &W::author()) {
                 a = v.to_string();
             }
@@ -12147,7 +12147,7 @@ pub fn free_mesh_bookended_ins_del(dom: &mut Dom, root: NodeId) {
         }
         let (author, date) = {
             let mut a = "Redline".to_string();
-            let mut d = "1970-01-01T00:00:00Z".to_string();
+            let mut d = crate::document_comparer::DEFAULT_DATE.to_string();
             if let Some(v) = dom.attribute(ins, &W::author()) {
                 a = v.to_string();
             }
@@ -12403,7 +12403,7 @@ pub fn peel_trailing_for_word_onto_next_mix(dom: &mut Dom, root: NodeId) {
 
         let (author, date) = {
             let mut a = "Redline".to_string();
-            let mut d = "1970-01-01T00:00:00Z".to_string();
+            let mut d = crate::document_comparer::DEFAULT_DATE.to_string();
             if let Some(v) = dom.attribute(ins, &W::author()) {
                 a = v.to_string();
             }

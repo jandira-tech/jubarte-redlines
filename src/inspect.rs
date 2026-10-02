@@ -7,7 +7,7 @@
 //! ids so the reader's coordinates are the editor's coordinates.
 //!
 //! Paragraph order is body XML order, table cells included; text boxes are
-//! separate stories and are omitted from the body (their owner paragraph is
+//! not stories and are omitted from the body (their owner paragraph is
 //! flagged). Text is the visible-run projection: `w:del` and `w:moveFrom`
 //! content is skipped, tabs stay `\t`, line breaks become `\n`, `w:sym`
 //! becomes U+FFFC. Constructs this projection cannot represent are reported per
@@ -29,6 +29,18 @@ pub use tables::{Table, TableCell};
 
 /// Wire schema of [`inspect_json`] and of the edit plan that consumes it.
 pub const SCHEMA_VERSION: u32 = 1;
+
+/// The story every document has; its paragraph ids are `body:p:N`, and a
+/// selector without a `story` searches it.
+pub(crate) const BODY_STORY: &str = "body";
+
+/// Kinds of part an edit plan addresses as a story besides the body, in
+/// the order [`stories`] lists them. Each is the last segment of the part's
+/// relationship type; the story's id is the part's file stem (`header1`,
+/// `footer2`, `footnotes`, `endnotes`) and [`Story::kind`] is one of these.
+/// Comments and text boxes are not stories. `capabilities` advertises this
+/// list after `body`, so the manifest and the parser cannot drift.
+pub(crate) const STORY_KINDS: &[&str] = &["header", "footer", "footnotes", "endnotes"];
 
 /// One paragraph of the body or a story. `index` and `id` are valid for this
 /// exact snapshot.
@@ -463,7 +475,7 @@ impl Opened {
     /// is the part's file stem; `header2` sorts before `header10`.
     pub(crate) fn story_parts(&self) -> Vec<(String, &'static str, String)> {
         let mut out = Vec::new();
-        for kind in ["header", "footer", "footnotes", "endnotes"] {
+        for kind in STORY_KINDS.iter().copied() {
             let mut parts: Vec<String> = self.related(kind).into_iter().collect();
             parts.sort_by_key(|part| (part.len(), part.clone()));
             for part in parts {
@@ -764,7 +776,7 @@ pub(crate) fn story_paragraph_nodes(dom: &Dom, root: NodeId) -> Vec<NodeId> {
 }
 
 fn body_paragraphs(dom: &Dom, body: NodeId) -> Vec<Paragraph> {
-    paragraphs_of(dom, body_paragraph_nodes(dom, body), "body")
+    paragraphs_of(dom, body_paragraph_nodes(dom, body), BODY_STORY)
 }
 
 fn paragraphs_of(dom: &Dom, nodes: Vec<NodeId>, story: &str) -> Vec<Paragraph> {
