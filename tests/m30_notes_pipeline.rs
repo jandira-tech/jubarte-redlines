@@ -408,3 +408,75 @@ fn missing_with_revisions_part_is_a_typed_error_not_a_panic() {
         "a refused rectify leaves the before definition in place"
     );
 }
+
+/// A reference whose definition is missing from the notes part is a typed
+/// error from the fallible entry point, raised before any definition is
+/// rewritten, not a panic (the oracle's NullReferenceException).
+#[test]
+fn a_reference_with_no_definition_is_a_typed_error_not_a_panic() {
+    use jubarte::comparer::footnotes::RectifyError;
+    use jubarte::comparer::try_compare_bodies_faithful_with_notes;
+
+    let s = settings();
+    let mut dom = Dom::new();
+    let (r1, b1) = doc_body(
+        &mut dom,
+        "<w:p><w:r><w:t>hello</w:t></w:r><w:r><w:footnoteReference w:id=\"1001\"/></w:r></w:p>",
+    );
+    let (r2, b2) = doc_body(
+        &mut dom,
+        "<w:p><w:r><w:t>hello</w:t></w:r><w:r><w:footnoteReference w:id=\"2001\"/></w:r></w:p>",
+    );
+    let fn_before = footnotes_root(&mut dom, &[("1001", "kept original tail")]);
+    let fn_after = footnotes_root(&mut dom, &[("9999", "an unrelated definition")]);
+    let fn_wr = separators_only_footnotes(&mut dom);
+    let mut ctx = NotesContext {
+        fn_before: Some(fn_before),
+        fn_after: Some(fn_after),
+        fn_with_revisions: Some(fn_wr),
+        ..Default::default()
+    };
+    let err = try_compare_bodies_faithful_with_notes(&mut dom, r1, r2, b1, b2, &s, Some(&mut ctx))
+        .expect_err("2001 has no definition in the after part");
+    assert_eq!(err, RectifyError::MissingNoteDef { id: "2001".into() });
+    let def = def_by_id(&dom, fn_before, "1001");
+    assert!(
+        !dom.serialize_element(def).contains("pt:Status"),
+        "nothing is rewritten before the lookups all succeed"
+    );
+}
+
+/// The same for a reference in a document that has no notes part at all.
+#[test]
+fn a_reference_with_no_notes_part_is_a_typed_error_not_a_panic() {
+    use jubarte::comparer::footnotes::RectifyError;
+    use jubarte::comparer::try_compare_bodies_faithful_with_notes;
+
+    let s = settings();
+    let mut dom = Dom::new();
+    let (r1, b1) = doc_body(
+        &mut dom,
+        "<w:p><w:r><w:t>hello</w:t></w:r><w:r><w:footnoteReference w:id=\"1001\"/></w:r></w:p>",
+    );
+    let (r2, b2) = doc_body(
+        &mut dom,
+        "<w:p><w:r><w:t>hello</w:t></w:r><w:r><w:footnoteReference w:id=\"2001\"/></w:r></w:p>",
+    );
+    let fn_before = footnotes_root(&mut dom, &[("1001", "kept original tail")]);
+    let fn_wr = separators_only_footnotes(&mut dom);
+    let mut ctx = NotesContext {
+        fn_before: Some(fn_before),
+        fn_after: None,
+        fn_with_revisions: Some(fn_wr),
+        ..Default::default()
+    };
+    let err = try_compare_bodies_faithful_with_notes(&mut dom, r1, r2, b1, b2, &s, Some(&mut ctx))
+        .expect_err("the after document has no footnotes part");
+    assert_eq!(
+        err,
+        RectifyError::MissingSourcePart {
+            kind: "footnotes",
+            side: "after"
+        }
+    );
+}

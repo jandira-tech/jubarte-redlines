@@ -452,6 +452,14 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   the change. A mark with nothing to attach to is a token of its own. Adds
   the `unicode-properties` dependency (already in the tree through
   `rustybuzz`).
+- A footnote or endnote reference whose definition, or whose whole notes
+  part, is missing no longer panics in `process_footnote_endnote`; the
+  comparer returns a typed `Err` (`RectifyError::MissingNoteDef` or
+  `MissingSourcePart`), and every lookup is made before a definition is
+  rewritten. `process_footnote_endnote` now returns
+  `Result<(), RectifyError>`, and `RectifyError` gains `MissingSourcePart`
+  and `UnsupportedReferenceStatus`, which is a breaking change for callers
+  that match it exhaustively.
 
 ## [0.10.1] - 2026-09-30
 

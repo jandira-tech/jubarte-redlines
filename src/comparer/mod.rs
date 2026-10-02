@@ -127,9 +127,9 @@ pub struct NotesContext {
 ///
 /// # Panics
 ///
-/// When the notes layout cannot be rectified (a reference whose definition
-/// is in neither notes part, or references with no withRevisions part to
-/// write into). [`try_compare_bodies_faithful_with_notes`] returns that as a
+/// When the notes layout cannot be processed or rectified (a reference whose
+/// definition or notes part is missing, or references with no withRevisions
+/// part to write into). [`try_compare_bodies_faithful_with_notes`] returns that as a
 /// [`footnotes::RectifyError`] instead; the package-level comparer uses it so
 /// a malformed document is an `Err`, never an abort of the host.
 pub fn compare_bodies_faithful_with_notes(
@@ -159,8 +159,10 @@ pub fn compare_bodies_faithful_with_notes(
 /// # Errors
 ///
 /// The [`footnotes::RectifyError`] from
-/// [`footnotes::rectify_footnote_endnote_ids`], which plans every lookup
-/// before touching the DOM, so on `Err` the notes parts are as they were.
+/// [`footnotes::process_footnote_endnote`] or
+/// [`footnotes::rectify_footnote_endnote_ids`]; each makes its lookups before
+/// it rewrites a definition, so a missing part or definition leaves the notes
+/// parts as they were.
 /// With `notes: None` this never fails.
 pub fn try_compare_bodies_faithful_with_notes(
     dom: &mut Dom,
@@ -731,7 +733,7 @@ pub fn try_compare_bodies_faithful_with_notes(
     // and Conjoin, consuming the same correlated atom list the body was
     // produced from.
     if let Some(notes) = notes {
-        footnotes::process_footnote_endnote(dom, &flat, notes, settings, &mut id);
+        footnotes::process_footnote_endnote(dom, &flat, notes, settings, &mut id)?;
         // B.3 — `RectifyFootnoteEndnoteIds` (C# :1880, immediately after
         // ProcessFootnoteEndnote): renumber the produced body's references
         // 1..n in document order and rebuild the withRevisions notes parts
