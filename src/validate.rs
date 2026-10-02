@@ -1312,13 +1312,23 @@ fn namespace_in_scope<'a>(dom: &'a Dom, element: NodeId, prefix: &str) -> Option
 /// attributes dropped, duplicate drawing and revision ids renumbered,
 /// paragraph ids brought into Word's range, cells given a last paragraph,
 /// orphan comment anchors dropped. The result is validated again to fill
-/// `remaining`.
+/// `remaining`. A package with no repairable finding comes back as its
+/// own bytes.
 ///
 /// # Errors
 ///
 /// As [`validate`], plus a package that cannot be written back.
 pub fn repair(docx: &[u8]) -> Result<Repaired, ValidateError> {
     let findings = validate(docx)?;
+    // Nothing to repair: hand the bytes back untouched rather than a
+    // rewritten zip, so "nothing changed" is visible as equal bytes.
+    if !findings.iter().any(|f| f.repairable) {
+        return Ok(Repaired {
+            docx: docx.to_vec(),
+            repaired: Vec::new(),
+            remaining: findings,
+        });
+    }
     let has = |code: &str| findings.iter().any(|f| f.code == code);
     let parts_with = |codes: &[&str]| -> Vec<String> {
         let mut parts: Vec<String> = findings

@@ -418,3 +418,13 @@ fn the_audit_sees_an_untracked_header_edit_and_names_its_part() {
             .is_empty()
     );
 }
+
+#[test]
+fn a_package_with_nothing_to_repair_comes_back_byte_for_byte() {
+    // Nothing repairable: repair writes nothing, so a caller can compare
+    // bytes to know nothing changed.
+    let clean = docx(&para("nothing wrong"));
+    let fixed = repair(&clean).unwrap();
+    assert!(fixed.repaired.is_empty() && fixed.remaining.is_empty());
+    assert_eq!(fixed.docx, clean);
+}
