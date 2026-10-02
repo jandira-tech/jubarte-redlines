@@ -304,3 +304,141 @@ important first:
   rect tests) need Courier New and Times New Roman. They fail on the Linux
   and Windows runners, and on `main` (`b420d64`) too; macOS passes. Install
   the fonts in CI or make the tests use metric-compatible substitutes.
+
+## 9. Append (S13) follow-ups
+
+Status: OPEN. Append shipped in #285 (2026-10-02, `d24e2f6`): `src/append.rs`,
+`jubarte append`, Python `Document.append`, WASM `appendDocuments`. A
+validator sweep the same day found one defect (first item). The OOXML
+validator runs in the cloud container: `apt-get install dotnet-sdk-8.0`
+(Ubuntu archive) and NuGet are reachable, so "no .NET here" is no longer a
+reason to skip it.
+
+The sweep: 34 Word-authored fixtures (`corpus/word/clean`, the first 8 of
+`corpus/word/with_comments_tracking`, the first 10 of
+`corpus/word_based/docx_source`), each appended to the next (and the last to
+the first), in three modes (default, `--section-break continuous`,
+`--keep-sections`), every input and output run through
+`tools/validate-docx`. A finding counts as new only when neither input has
+the same rule and description. All 102 appends succeeded; 9 outputs (3
+pairs, all three modes) had new findings, all of them the numbering defect
+below. For comparison, docxcompose 2.2.0 on the same 34 pairs: 2 raised
+`NotImplementedError` (B has a `w:numPr` but no numbering part; python-docx
+`NumberingPart.new()`), and 11 of the 32 outputs had new findings
+(comment anchors with no `w:comment`, duplicate revision `w:id`s,
+`w16du:dateUtc` and `w14` attributes undeclared, `w16cid:durableId` in
+numbering, `w:numPr` out of order). 34 fixtures is a small sample and the
+validator is not Word; the scripts lived in an ephemeral container, so the
+repeatable-sweep item below is what makes these numbers reproducible.
+
+**Important (2026-10-02, merging #314, #318 and this PR):**
+
+- **`main` is red** on `convert_docx_to_pdf::space_for_ul_adds_no_descent_to_wrapped_lines_in_table_cells`
+  ("J and Q sit on separate wrapped lines; off=[709.44, 709.44, 682.56,
+  669.36]") on Linux, macOS, Windows and coverage. The test came in with
+  `1eb0c6c` (#310) and fails on `main` itself (`f816e4b`, run locally),
+  so every PR shows it. #314, #318 and this PR were merged on local gates
+  over it, at Arthur's request. It needs its own fix.
+- **`python bindings` failed once** on #312 (`f80566e`):
+  `test_mcp_server.py::test_stdio_smoke_initialize_and_list_tools` got no
+  `tools/list` reply. It passes locally on `main` (`1ee4c38`) and on #318
+  with `mcp` installed; not re-run in CI before the merge. Watch it.
+- **Local Python runs need the `mcp` extra**: without it
+  `tests/test_mcp_server.py` is skipped silently (`importorskip`).
+- **Carry mode drops comments anchored in notes**; whether Word keeps them
+  is the open question in the comments item below.
+- **Nothing from append has been opened in Word yet.**
+
+- [x] **Numbering namespaces (validator defect).** Fixed in #314; with it
+  the sweep has 0 outputs with new validator findings. When A has no numbering
+  part, `numbering_part` creates a bare `<w:numbering xmlns:w="...">` and
+  B's lists keep only local declarations. `tools/validate-docx` then reports
+  `Sch_UndeclaredAttribute` for `w15:restartNumberingAfterBreak` on
+  `w:abstractNum` and `w16cid:durableId` on `w:num`. Checked on clones: with
+  `w15` and `w16cid` declared on the root the findings stay; with both also
+  listed in `mc:Ignorable` they go. The document, notes and styles roots
+  already go through `merge_namespace_declarations` (`src/append.rs`, at the
+  body, in `carry_notes` and in the styles pass); the numbering splice
+  (`markdown::package::append_numbering`) and its DOM fallback
+  (`insert_lists`) do not. Fix: merge B's numbering root into A's after the
+  lists land, on both paths. Red test first: A without numbering, B whose
+  numbering root declares `w15` and `w16cid` in `mc:Ignorable` and whose
+  lists carry those attributes; the output root must list both. CI does not
+  run the validator, so also decide whether this becomes a Ring-1 check
+  (a Word extension-namespace attribute whose prefix the part root does not
+  list in `mc:Ignorable`).
+- [ ] **Open the output in Word.** No append output has been opened in Word.
+  On the Mac, run `scripts/word_pdf.py` on one output per mode for a dozen
+  sweep pairs, the comment-tracking ones included, each alone under a fresh
+  name first (AGENTS.md); any repair prompt goes through the AGENTS.md
+  protocol. Two questions only Word answers: whether it renames or drops a
+  duplicate bookmark name (B's `_GoBack`), and whether `keep_sections` with
+  `SectionBreak::None` lays out the same as `Continuous`.
+- [ ] **Repeatable sweep.** Add an append mode to `scripts/redline-sweep.sh`
+  (or a sibling script) with the same `--validate` ratchet against
+  `tools/validity_baseline.tsv`, and the rule that a finding present in
+  either input is not append's.
+- [ ] **Carry comments.** Opt-in carrying of body-anchored comments shipped
+  in #318 (`--carry-comments`; drop stays the default). Still open after it:
+  comments anchored in B's footnotes and endnotes are dropped and warned,
+  because `validate` counts comment anchors in the main part only, `edit`
+  refuses them (`COMMENT_NOT_IN_BODY`), and no Word fixture has one. Ask
+  Word (the Word item above): if it keeps a note-anchored comment, widen
+  `validate`'s comment graph to every story and carry them. The design as
+  planned:
+  - Build on `comments::CommentFamily` (`src/comments.rs`), not the
+    comparer's `union_comments_xml`: that one treats an A comment and a B
+    comment with the same id and text as one comment ("B's copy wins"),
+    right for two versions of one document, wrong for two documents (two
+    "OK" comments by one author are two comments).
+  - A new `CommentFamily::adopt(&mut self, from: &CommentFamily, ids)`
+    returning the old-to-new id map: clone each `w:comment` whole
+    (`add` takes plain text, so it would lose formatting, line breaks and
+    links), give it the next id past A's, remap `w15:paraIdParent`, keep
+    `w15:done` and the `w16cex:dateUtc`, reallocate a colliding
+    `w16cid:durableId`. `store` already stamps paraIds clear of the
+    package's used ones and writes `people.xml`; copy B's `w15:person`
+    (with its `w15:presenceInfo`) for authors A lacks.
+  - Carry relationships inside comment content (hyperlinks, images) with
+    `carry_part_relationships` from B's comments part to A's.
+  - Rewrite the ids on B's `commentRangeStart`, `commentRangeEnd` and
+    `commentReference` (body and carried notes) instead of removing them.
+    A comment whose anchors did not come along is not carried (no orphans,
+    the comparer's rule 4).
+  - `AppendOptions.comments: drop | carry`, default `drop` (decided
+    2026-10-02): carrying is opt-in (`--carry-comments` on the CLI,
+    `comments="carry"` in Python, `{"comments":"carry"}` in WASM), and drop
+    keeps today's `COMMENTS_DROPPED` warning.
+  - Oracle: the Ring-1 comment checks already in `tests/common/validity.rs`
+    (comment graph, family packaging, extended/ids/extensible key sets,
+    parent cycles), the validator, and `jubarte comments --json` on the
+    output listing A's then B's comments with threads and resolution
+    intact. Tests: a resolved thread in B against A comments using the same
+    ids and paraIds; a comment with a hyperlink; a comment inside a
+    footnote; B with `people.xml` and A without.
+- [ ] **Adoption guide `docs/adoption/append.md`.** The plan's evidence
+  compares `jubarte append` with a python-docx body copy only. Add
+  docxcompose (MIT, the library a provider's reviewer will name): it maps
+  styles, renumbers lists with fresh nsids, copies images, footnotes and
+  bookmarks, and uses A's headers and footers; its own comments say sections
+  are "not correctly solved yet". One letter + exhibit pair (image, list,
+  footnote, comment, landscape exhibit), the three recipes side by side,
+  each output's validator findings and Word result, a feature table citing
+  sources, what jubarte does not do, and the exact commands. Use
+  `tools/validate-docx` and the Ring-1 checks until `jubarte validate`
+  exists (next item).
+- [ ] **Call `validate()`** at the end of `append_documents`
+  (`AppendError::Invalid`): `validate()` is on `main` since #292
+  (`d49a420`). Decide what counts: only Word-fatal findings append caused,
+  since 16 of the 34 sweep inputs already carry findings of their own.
+- [ ] **Duplicate bookmark names.** `jubarte validate` on the fixed sweep
+  (#314) reports new `BOOKMARK_DUPLICATE_NAME` findings on 3 outputs, one
+  pair in all three modes (`exec_summary`, `matrix`, `chart`, `demo`,
+  `wide_matrix`, present in both inputs). `validate` classes `BOOKMARK_*`
+  as not Word-fatal. A cross-reference to such a name is ambiguous after
+  append; renaming B's copy (and its `REF`/`PAGEREF`/hyperlink `w:anchor`
+  users) is the likely fix, pending what Word does (the Word item above).
+- [ ] **Smaller gaps from #285**: styles and list ids used only inside a
+  carried header or footer are not remapped; picture bullets lose the
+  picture; `npx jubarte-redlines` has no `append`; `jubarte_wasm.d.ts` gains
+  `appendDocuments` only at the next `build-npm.sh`.
