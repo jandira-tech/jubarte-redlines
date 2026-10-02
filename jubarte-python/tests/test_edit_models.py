@@ -268,3 +268,31 @@ def test_snapshot_tables_decode_to_immutable_grids():
     assert isinstance(decoded, Table)
     with pytest.raises(FrozenInstanceError):
         decoded.index = 1
+
+
+def test_format_run_builds_the_wire_operation_with_extended_format_fields():
+    plan = EditPlan(author="Reviewer").format_run(
+        "body:p:0",
+        find="ten dollars",
+        format={"bold": True, "font": "Arial", "size_pt": 11, "color": "FF0000", "strike": False, "caps": True},
+        occurrence=2,
+        id="fmt",
+    )
+    assert plan.to_dict()["operations"] == [
+        {
+            "id": "fmt",
+            "kind": "format_run",
+            "paragraph": {"id": "body:p:0"},
+            "find": "ten dollars",
+            "format": {"bold": True, "font": "Arial", "size_pt": 11, "color": "FF0000", "strike": False, "caps": True},
+            "occurrence": 2,
+        }
+    ]
+    bare = EditPlan(author="Reviewer").format_run(0, find="x", format={"italic": True})
+    assert "occurrence" not in bare.to_dict()["operations"][0]
+
+
+@pytest.mark.parametrize("fmt", [{}, {"size": 12}])
+def test_format_run_rejects_empty_or_unknown_format(fmt):
+    with pytest.raises(ValueError):
+        EditPlan(author="Reviewer").format_run(0, find="x", format=fmt)

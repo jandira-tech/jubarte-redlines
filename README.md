@@ -487,6 +487,8 @@ Supported operation kinds include:
   inserted rows)
 - `list` (unreleased: paragraphs become a bulleted, numbered or lettered
   list, tracked as property changes)
+- `format_run` (unreleased: restyle one occurrence of existing text as a
+  tracked formatting change)
 
 Plans are atomic: stale sources, ambiguous anchors, overlapping edits or
 unsupported structures refuse the plan instead of making a guessed edit.

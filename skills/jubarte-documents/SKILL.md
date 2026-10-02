@@ -152,9 +152,12 @@ twentieths of a point (the text width split evenly when omitted), and
 `bullet|decimal|lower_letter`, `level` 0 to 8, `restart` true by default),
 `watermark` (`text`; optional `color` as six hex digits, `diagonal`,
 `font`; no paragraph: writes Word's own diagonal text watermark into every
-default header; one per document). `replace` and
-`insert` take an optional `format` (`bold`/`italic`/`underline`/`highlight`)
-that applies to the new text only. `replace` takes `"whole": true` to show
+default header; one per document), `format_run` (`find`
+plus `format`: restyles existing text as a tracked formatting change;
+`occurrence`, 1-based, picks one of several matches). `replace` and
+`insert` take an optional `format` (`bold`/`italic`/`underline`/`highlight`,
+`font`, `size_pt`, `color` as `FF0000` or `auto`, `strike`, `caps`) that
+applies to the new text only. `replace` takes `"whole": true` to show
 the change as the whole old text deleted, then the whole new text inserted.
 Paragraph selectors: `"body:p:N"` (or `"header1:p:0"`, `"footnotes:p:2"`),
 `{"index": N}`, `{"starts_with": "..."}`, `{"contains": "..."}`; the last two

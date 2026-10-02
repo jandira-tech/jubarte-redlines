@@ -127,7 +127,7 @@ plan = (
 out = doc.edit(plan)               # EditResult: clean, redline, report, diff
 ```
 
-`replace`, `insert`, `delete` and `comment` edit run text; `insert_paragraph`,
+`replace`, `insert`, `delete`, `comment` and `format_run` edit run text; `insert_paragraph`,
 `delete_paragraph`, `format_paragraph`, `merge_paragraphs` and `rewrite` work on
 whole paragraphs; `insert_table(paragraph, rows=[[...], ...])` adds a table and
 `list_paragraphs([...], kind_of_list="decimal")` (wire kind `list`) numbers

@@ -29,6 +29,7 @@ fn every_advertised_edit_kind_accepts_its_wire_representation() {
         json!({"kind":"list", "paragraphs":[{"index":0}, "body:p:1"], "kind_of_list":"lower_letter", "level":1, "restart":false}),
         json!({"kind":"watermark", "text":"DRAFT", "color":"C0C0C0", "diagonal":true, "font":"Calibri"}),
         json!({"kind":"fill_control", "control":{"tag":"Name"}, "text":"Ada"}),
+        json!({"kind":"format_run", "paragraph":{"index":0}, "find":"a", "occurrence":2, "format":{"bold":true, "font":"Arial", "size_pt":10.5, "color":"FF0000", "strike":false, "caps":true}}),
     ];
     let manifest = capabilities("rust");
     let kinds: Vec<_> = operations

@@ -31,6 +31,7 @@ use crate::xmllinq::{Dom, NodeId, XNamespace};
 
 mod controls;
 mod rewrite;
+mod runs;
 mod structural;
 mod tracked;
 mod watermark;
@@ -386,6 +387,19 @@ pub enum OperationKind {
         /// `YYYY-MM-DD`, for date controls; written in the control's format.
         date: Option<String>,
     },
+    /// Change the run formatting of one occurrence of existing text; the
+    /// redline records the old formatting (`w:rPrChange`).
+    FormatRun {
+        /// Paragraph to format; must match exactly one.
+        paragraph: Selector,
+        /// Exact text to format.
+        find: String,
+        /// Formatting to set; fields not given stay as they are.
+        format: RunFormat,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Which occurrence of `find` (1-based) when it occurs more than once.
+        occurrence: Option<usize>,
+    },
 }
 
 fn resolve_done() -> bool {
@@ -523,6 +537,43 @@ pub struct RunFormat {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Highlight color name (`yellow`, ...) or `none`.
     pub highlight: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Font name, set for every script (`w:rFonts`).
+    pub font: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Font size in points, rounded to half points.
+    pub size_pt: Option<HalfPoints>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Text colour as six hex digits (`FF0000`) or `auto`.
+    pub color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Set or clear single strikethrough.
+    pub strike: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Set or clear all caps.
+    pub caps: Option<bool>,
+}
+
+/// A font size stored in half points (`w:sz`); JSON is points.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HalfPoints(pub u32);
+
+impl Serialize for HalfPoints {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_f64(f64::from(self.0) / 2.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for HalfPoints {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let points = f64::deserialize(d)?;
+        if !points.is_finite() || !(0.0..=1638.0).contains(&points) {
+            return Err(serde::de::Error::custom(format!(
+                "size_pt {points} is outside 0..=1638"
+            )));
+        }
+        Ok(Self((points * 2.0).round() as u32))
+    }
 }
 
 /// Paragraph edge for an insertion without a text anchor.
@@ -614,6 +665,7 @@ impl RunSpec {
             italic: self.italic,
             underline: self.underline,
             highlight: self.highlight.clone(),
+            ..RunFormat::default()
         }
     }
 }
@@ -994,6 +1046,7 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
                 &["text", "color", "diagonal", "font"]
             }
             "fill_control" => &["control", "text", "choice", "checked", "date"],
+            "format_run" => &["find", "format", "occurrence"],
             other => {
                 return Err(err(
                     "INVALID_PLAN",
@@ -1255,6 +1308,12 @@ enum Resolved {
         /// The control holds paragraphs rather than runs.
         block: bool,
         value: controls::FillValue,
+    },
+    FormatRun {
+        para: usize,
+        start: usize,
+        end: usize,
+        format: RunFormat,
     },
 }
 
@@ -1633,7 +1692,8 @@ impl<'p> Transaction<'p> {
             | OperationKind::FormatParagraph { paragraph, .. }
             | OperationKind::MergeParagraphs { paragraph, .. }
             | OperationKind::Rewrite { paragraph, .. }
-            | OperationKind::InsertTable { paragraph, .. } => paragraph,
+            | OperationKind::InsertTable { paragraph, .. }
+            | OperationKind::FormatRun { paragraph, .. } => paragraph,
             OperationKind::List { .. } => {
                 return Err(fail(
                     "INVALID_PLAN",
@@ -1938,6 +1998,31 @@ impl<'p> Transaction<'p> {
                 }
                 outcome.context = Some(format!("{{-¶ {}}}", excerpt(text, 60)));
                 Ok((Resolved::DeleteParagraph { para }, outcome))
+            }
+            OperationKind::FormatRun {
+                find,
+                format,
+                occurrence,
+                ..
+            } => {
+                let (start, end) = self
+                    .resolve_format_run(projection, find, *occurrence, format, &mut outcome)
+                    .map_err(|(c, m)| fail(&c, m, outcome.clone()))?;
+                outcome.context = Some(context(
+                    text,
+                    start,
+                    end,
+                    &format!("{{~{}}}", &text[start..end]),
+                ));
+                Ok((
+                    Resolved::FormatRun {
+                        para,
+                        start,
+                        end,
+                        format: format.clone(),
+                    },
+                    outcome,
+                ))
             }
             OperationKind::Rewrite { .. }
             | OperationKind::List { .. }
@@ -2638,7 +2723,8 @@ impl<'p> Transaction<'p> {
                 | Resolved::CommentSpan { para, .. }
                 | Resolved::DeleteParagraph { para }
                 | Resolved::FormatParagraph { para, .. }
-                | Resolved::MergeParagraphs { para, .. } => vec![self.paragraph_story[*para].0],
+                | Resolved::MergeParagraphs { para, .. }
+                | Resolved::FormatRun { para, .. } => vec![self.paragraph_story[*para].0],
                 Resolved::InsertParagraph { anchor, .. } | Resolved::InsertTable { anchor, .. } => {
                     vec![self.paragraph_story[*anchor].0]
                 }
@@ -2807,6 +2893,12 @@ impl<'p> Transaction<'p> {
                     }
                     continue;
                 }
+                Resolved::FormatRun { para, .. } => {
+                    if deleted.contains(para) {
+                        return Err(self.conflict(*i, "formats text of a deleted paragraph"));
+                    }
+                    continue;
+                }
                 Resolved::CommentSpan { para, last, .. } => {
                     if (*para..=*last).any(|p| deleted.contains(&p)) {
                         return Err(self.conflict(*i, "comments on a deleted paragraph"));
@@ -2862,6 +2954,23 @@ impl<'p> Transaction<'p> {
                 });
             if cuts {
                 return Err(self.conflict(*i, "comment range cuts through an edited range"));
+            }
+        }
+        // Formatting applies to source text: no text edit may change it.
+        for (i, r) in &self.resolved {
+            let Resolved::FormatRun {
+                para, start, end, ..
+            } = r
+            else {
+                continue;
+            };
+            let overlaps = ranges
+                .get(para)
+                .into_iter()
+                .flatten()
+                .any(|&(s, e, _)| runs::format_overlaps_edit((*start, *end), (s, e)));
+            if overlaps {
+                return Err(self.conflict(*i, "formats text another operation changes"));
             }
         }
         Ok(())
@@ -3034,7 +3143,8 @@ impl<'p> Transaction<'p> {
                 | Resolved::MergeParagraphs { .. }
                 | Resolved::InsertTable { .. }
                 | Resolved::List { .. }
-                | Resolved::FillControl { .. } => false,
+                | Resolved::FillControl { .. }
+                | Resolved::FormatRun { .. } => false,
             })
             .count() as u64;
         if needed > 0 && self.next_comment_id + needed - 1 > u64::from(u32::MAX) {
@@ -3082,6 +3192,7 @@ impl<'p> Transaction<'p> {
                         | Resolved::MergeParagraphs { .. }
                         | Resolved::InsertTable { .. }
                         | Resolved::List { .. }
+                        | Resolved::FormatRun { .. }
                         | Resolved::Thread { .. }
                         | Resolved::FillControl { .. } => None,
                     };
@@ -3113,6 +3224,7 @@ impl<'p> Transaction<'p> {
         let mut by_para: BTreeMap<usize, Vec<ScheduledEdit>> = BTreeMap::new();
         let mut comment_ranges: BTreeMap<usize, Vec<(usize, usize, usize, String)>> =
             BTreeMap::new();
+        let mut format_runs: BTreeMap<usize, Vec<(usize, usize, RunFormat)>> = BTreeMap::new();
         for (i, r) in &self.resolved {
             match r {
                 Resolved::Text {
@@ -3143,12 +3255,24 @@ impl<'p> Transaction<'p> {
                         .or_default()
                         .push((*start, *end, *i, text.clone()));
                 }
+                Resolved::FormatRun {
+                    para,
+                    start,
+                    end,
+                    format,
+                } => {
+                    format_runs
+                        .entry(*para)
+                        .or_default()
+                        .push((*start, *end, format.clone()));
+                }
                 _ => {}
             }
         }
         let touched: Vec<usize> = by_para
             .keys()
             .chain(comment_ranges.keys())
+            .chain(format_runs.keys())
             .copied()
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
@@ -3181,6 +3305,12 @@ impl<'p> Transaction<'p> {
                         format,
                     );
                 }
+            }
+            // `format_run` ranges, in new coordinates and plan order.
+            for (start, end, format) in format_runs.remove(&para).unwrap_or_default() {
+                let s = new_position(&edits, start, true, None);
+                let e = new_position(&edits, end, false, None);
+                format_range(&mut self.opened.dom, node, s, e, &format);
             }
             // Helper bookmarks around `whole` replacements. Comment ranges
             // placed below land inside them, on the inserted text.
@@ -3722,6 +3852,7 @@ fn kind_name(kind: &OperationKind) -> &'static str {
         OperationKind::List { .. } => "list",
         OperationKind::Watermark { .. } => "watermark",
         OperationKind::FillControl { .. } => "fill_control",
+        OperationKind::FormatRun { .. } => "format_run",
     }
 }
 
@@ -4405,6 +4536,36 @@ fn apply_run_format(dom: &mut Dom, rpr: NodeId, format: &RunFormat) {
             insert_rpr_child(dom, rpr, h);
         }
     }
+    toggle(dom, rpr, "strike", format.strike);
+    toggle(dom, rpr, "caps", format.caps);
+    if let Some(font) = &format.font {
+        if let Some(old) = dom.element(rpr, &W::name("rFonts")) {
+            dom.remove(old);
+        }
+        let fonts = dom.new_element(W::name("rFonts"));
+        for script in ["ascii", "hAnsi", "eastAsia", "cs"] {
+            dom.set_attribute_value(fonts, &W::name(script), Some(font));
+        }
+        insert_rpr_child(dom, rpr, fonts);
+    }
+    if let Some(color) = &format.color {
+        if let Some(old) = dom.element(rpr, &W::name("color")) {
+            dom.remove(old);
+        }
+        let el = dom.new_element(W::name("color"));
+        dom.set_attribute_value(el, &W::val(), Some(color));
+        insert_rpr_child(dom, rpr, el);
+    }
+    if let Some(HalfPoints(size)) = format.size_pt {
+        for local in ["sz", "szCs"] {
+            if let Some(old) = dom.element(rpr, &W::name(local)) {
+                dom.remove(old);
+            }
+            let el = dom.new_element(W::name(local));
+            dom.set_attribute_value(el, &W::val(), Some(&size.to_string()));
+            insert_rpr_child(dom, rpr, el);
+        }
+    }
 }
 
 /// `ST_HighlightColor`.
@@ -4436,6 +4597,31 @@ fn check_format(format: &RunFormat, text: &str) -> Result<(), String> {
         return Err(format!(
             "highlight {highlight:?} is not a Word highlight colour ({})",
             HIGHLIGHTS.join(", ")
+        ));
+    }
+    if let Some(font) = &format.font
+        && (font.trim().is_empty()
+            || font.chars().count() > 31
+            || font.chars().any(char::is_control))
+    {
+        return Err(format!(
+            "font {font:?} must be a nonempty name of at most 31 characters"
+        ));
+    }
+    if let Some(color) = &format.color
+        && color != "auto"
+        && !(color.len() == 6 && color.bytes().all(|b| b.is_ascii_hexdigit()))
+    {
+        return Err(format!(
+            "color {color:?} must be six hex digits (FF0000) or auto"
+        ));
+    }
+    if let Some(HalfPoints(size)) = format.size_pt
+        && !(2..=3276).contains(&size)
+    {
+        return Err(format!(
+            "size_pt {} is outside 1..=1638",
+            f64::from(size) / 2.0
         ));
     }
     if text.is_empty() && *format != RunFormat::default() {

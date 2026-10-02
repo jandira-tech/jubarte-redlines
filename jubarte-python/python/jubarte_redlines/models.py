@@ -517,7 +517,9 @@ def _selector(value: Selector) -> dict[str, str | int]:
     )
 
 
-_FORMAT_FIELDS = frozenset({"bold", "italic", "underline", "highlight"})
+_FORMAT_FIELDS = frozenset(
+    {"bold", "italic", "underline", "highlight", "font", "size_pt", "color", "strike", "caps"}
+)
 
 
 def _format(value: Mapping[str, object]) -> dict[str, object]:
@@ -526,7 +528,7 @@ def _format(value: Mapping[str, object]) -> dict[str, object]:
     if unknown:
         raise ValueError(f"unknown format fields: {sorted(unknown)}")
     if not spec:
-        raise ValueError("format needs at least one of bold, italic, underline, highlight")
+        raise ValueError(f"format needs at least one of {', '.join(sorted(_FORMAT_FIELDS))}")
     return spec
 
 
@@ -872,6 +874,23 @@ class EditPlan:
         if id is not None:
             op = {"id": id, **op}
         return self._with(op)
+
+    def format_run(
+        self,
+        paragraph: Selector,
+        *,
+        find: str,
+        format: Mapping[str, object],
+        occurrence: int | None = None,
+        id: str | None = None,
+    ) -> EditPlan:
+        """Change the run formatting of ``find`` (bold, italic, underline,
+        highlight, font, size_pt, color, strike, caps) as a tracked property
+        change. ``occurrence`` (1-based) picks one of several matches."""
+        op: dict[str, object] = {"kind": "format_run", "paragraph": _selector(paragraph), "find": find, "format": _format(format)}
+        if occurrence is not None:
+            op["occurrence"] = occurrence
+        return self._with(_with_optional(op, id=id))
 
     def to_dict(self) -> dict[str, object]:
         """The wire form."""

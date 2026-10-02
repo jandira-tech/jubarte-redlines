@@ -154,6 +154,12 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   identical neighbouring paragraph instead, the plan is refused
   (`UNSUPPORTED_STRUCTURE`) rather than leave the comment on text that
   stays.
+- Edit plans: `format_run` changes the run formatting of one occurrence of
+  existing text (`find`, optional 1-based `occurrence`); the redline records
+  the old formatting as `w:rPrChange`. Run `format` (here and on `replace`,
+  `insert`) adds `font`, `size_pt`, `color` (six hex digits or `auto`),
+  `strike` and `caps` to `bold`/`italic`/`underline`/`highlight`. Python:
+  `EditPlan.format_run(...)`.
 - `uvx jubarte-redlines redline a.docx b.docx -o redline.docx` runs the CLI
   without an install: the Python wheel installs a `jubarte-redlines`
   console script, `redline` is an alias of `compare`, and usage names the
