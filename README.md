@@ -750,7 +750,7 @@ your own environment before choosing an engine.
 | Rust / CLI | CI tests Linux, macOS and Windows |
 | Rust toolchain | Rust 1.88+ |
 | Python | CPython 3.10+ |
-| Python release wheels | Current release workflow builds macOS and manylinux x86_64/arm64 wheels |
+| Python release wheels | macOS x86_64/arm64, manylinux_2_28 x86_64/arm64, musllinux_1_2 x86_64/arm64, Windows x86_64 (abi3, CPython 3.10+) |
 | Node | Node 18+ |
 | Browser | WebAssembly builds |
 | CLI release workflow | Linux x86_64/arm64, macOS x86_64/arm64, Windows x86_64 targets |

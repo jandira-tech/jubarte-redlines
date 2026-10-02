@@ -57,7 +57,7 @@
 #      commit into ENGINE_COMMIT.txt), npm smoke test, artifacts commit,
 #      annotated `vX.Y.Z` tag whose body is the github summary
 #      point of no return — type `vX.Y.Z` to confirm, then push; release.yml
-#      builds the five CLI binaries + four PyPI wheels + sdist and creates
+#      builds the five CLI binaries + seven PyPI wheels + sdist and creates
 #      the `jubarte vX.Y.Z` GitHub release itself
 #   8. crates.io — `cargo publish`, after proving the summary is inside the
 #      .crate
@@ -692,6 +692,12 @@ else
     uvx maturin build --release --manifest-path jubarte-python/Cargo.toml --out dist/pypi
     uvx maturin sdist --manifest-path jubarte-python/Cargo.toml --out dist/pypi
     echo "  ! only the local-platform wheel + sdist will reach PyPI" >&2
+  fi
+  if [ "$got_wheels" = 1 ]; then
+    # One wheel per README platform row (seven). A release.yml run that lost
+    # a wheel job must not ship a partial set under a final version.
+    python3 scripts/check_release_artifacts.py dist/pypi --version "$VER" \
+      || die "wheel set incomplete; see scripts/check_release_artifacts.py"
   fi
   uv publish --token "$UV_PUBLISH_TOKEN" dist/pypi/*
   step "uv publish done"
