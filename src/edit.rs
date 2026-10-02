@@ -492,6 +492,20 @@ pub enum OperationKind {
         /// Title paragraph above the TOC (`"Contents"`).
         title: Option<String>,
     },
+    /// Replace one occurrence of `find` with one full block
+    /// (U+2588) per character, untracked: the clean copy and the redline
+    /// both show the blocks and neither keeps the text. The plan is refused
+    /// with `REDACTION_LEAK` when the text still occurs anywhere in either
+    /// output, and the report never repeats it.
+    Redact {
+        /// Paragraph to redact in; must match exactly one.
+        paragraph: Selector,
+        /// Exact text to remove.
+        find: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Which occurrence of `find` (1-based) when it occurs more than once.
+        occurrence: Option<usize>,
+    },
 }
 
 fn default_toc_levels() -> u8 {
@@ -1175,6 +1189,7 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
             ],
             "page_setup" => &["section", "page", "orientation", "margins_dxa"],
             "insert_toc" => &["position", "levels", "title"],
+            "redact" => &["find", "occurrence"],
             other => {
                 return Err(err(
                     "INVALID_PLAN",
@@ -1224,7 +1239,9 @@ pub fn apply_plan(source: &[u8], plan: &EditPlan) -> Result<EditResult, EditErro
     tx.apply()?;
     let (mut clean, mut marked) = tx.finish()?;
     if plan.existing_revisions == ExistingRevisions::Keep {
-        return tracked::result(&tx, clean);
+        let result = tracked::result(&tx, clean)?;
+        tx.check_redactions(&[&result.clean, &result.redline])?;
+        return Ok(result);
     }
     let mut fields = Vec::new();
     if plan.update_fields {
@@ -1282,6 +1299,7 @@ pub fn apply_plan(source: &[u8], plan: &EditPlan) -> Result<EditResult, EditErro
         error.outcomes[op].code = Some(error.code.clone());
         return Err(error);
     }
+    tx.check_redactions(&[&clean, &redline])?;
     let mut report = tx.report(true);
     report.paragraphs.to = crate::inspect::paragraphs(&clean)
         .map(|p| p.len())
@@ -1929,7 +1947,8 @@ impl<'p> Transaction<'p> {
             | OperationKind::InsertToc { paragraph, .. }
             | OperationKind::FormatRun { paragraph, .. }
             | OperationKind::InsertFootnote { paragraph, .. }
-            | OperationKind::InsertImage { paragraph, .. } => paragraph,
+            | OperationKind::InsertImage { paragraph, .. }
+            | OperationKind::Redact { paragraph, .. } => paragraph,
             OperationKind::List { .. } => {
                 return Err(fail(
                     "INVALID_PLAN",
@@ -2050,6 +2069,29 @@ impl<'p> Transaction<'p> {
                         comment: comment.clone(),
                         attach_before: true,
                         format: format.clone(),
+                    },
+                    outcome,
+                ))
+            }
+            OperationKind::Redact {
+                find, occurrence, ..
+            } => {
+                // Refusals name the text by its place, never by itself.
+                let hide = |m: String| m.replace(&format!("{find:?}"), "the text to redact");
+                let (start, end) = self
+                    .find_range(projection, find, *occurrence, &mut outcome)
+                    .map_err(|(c, m)| fail(&c, hide(m), outcome.clone()))?;
+                let blocks = redaction(find);
+                outcome.context = Some(context(text, start, end, &format!("{{{blocks}}}")));
+                Ok((
+                    Resolved::Text {
+                        para,
+                        start,
+                        end,
+                        replacement: blocks,
+                        comment: None,
+                        attach_before: true,
+                        format: None,
                     },
                     outcome,
                 ))
@@ -3613,6 +3655,33 @@ impl<'p> Transaction<'p> {
         Ok(())
     }
 
+    /// Refuse the plan when the text of a redaction still occurs in one of
+    /// `outputs` (a comment on it, another paragraph, a header, the
+    /// document properties). The message names the parts, never the text.
+    fn check_redactions(&self, outputs: &[&[u8]]) -> Result<(), EditError> {
+        for (op, operation) in self.plan.operations.iter().enumerate() {
+            let OperationKind::Redact { find, .. } = &operation.kind else {
+                continue;
+            };
+            let parts: std::collections::BTreeSet<String> = outputs
+                .iter()
+                .flat_map(|doc| crate::scrub::leaks(doc, find))
+                .collect();
+            if parts.is_empty() {
+                continue;
+            }
+            let message = format!(
+                "the redacted text still occurs in {}; redact every copy in the same plan, or remove the comment or part that holds it",
+                parts.into_iter().collect::<Vec<_>>().join(", ")
+            );
+            let mut error = self.conflict(op, &message);
+            error.code = "REDACTION_LEAK".into();
+            error.outcomes[op].code = Some(error.code.clone());
+            return Err(error);
+        }
+        Ok(())
+    }
+
     fn conflict(&self, op_index: usize, message: &str) -> EditError {
         let id = self.outcomes[op_index].id.clone();
         let mut e = err("OVERLAPPING_EDITS", Some(&id), message);
@@ -4137,7 +4206,19 @@ impl<'p> Transaction<'p> {
             })
             .cloned()
             .collect();
-        if self.deletion_comments.is_empty() && thread_ops.is_empty() && self.watermark.is_none() {
+        // A redaction is no change either: the base loses the text too.
+        let redactions: Vec<Operation> = self
+            .plan
+            .operations
+            .iter()
+            .filter(|op| matches!(op.kind, OperationKind::Redact { .. }))
+            .cloned()
+            .collect();
+        if self.deletion_comments.is_empty()
+            && thread_ops.is_empty()
+            && self.watermark.is_none()
+            && redactions.is_empty()
+        {
             return Ok(std::borrow::Cow::Borrowed(&self.base));
         }
         let mut operations: Vec<Operation> = self
@@ -4174,6 +4255,7 @@ impl<'p> Transaction<'p> {
                 .filter(|op| matches!(op.kind, OperationKind::Watermark { .. }))
                 .cloned(),
         );
+        operations.extend(redactions);
         let plan = EditPlan {
             schema_version: SCHEMA_VERSION,
             source_sha256: None,
@@ -4397,6 +4479,7 @@ fn kind_name(kind: &OperationKind) -> &'static str {
         OperationKind::InsertImage { .. } => "insert_image",
         OperationKind::PageSetup { .. } => "page_setup",
         OperationKind::InsertToc { .. } => "insert_toc",
+        OperationKind::Redact { .. } => "redact",
     }
 }
 
@@ -4421,6 +4504,11 @@ fn check_comment(text: &str) -> Result<(), String> {
 }
 
 /// `before {mark} after` with up to 20 chars of context on either side.
+/// What a redaction leaves of `find`: one full block per character.
+fn redaction(find: &str) -> String {
+    "\u{2588}".repeat(find.chars().count())
+}
+
 fn context(text: &str, start: usize, end: usize, mark: &str) -> String {
     const WINDOW: usize = 20;
     let before: String = text[..start]

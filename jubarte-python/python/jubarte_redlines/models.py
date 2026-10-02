@@ -678,6 +678,19 @@ class EditPlan:
         _set_occurrence(op, occurrence)
         return self._with(_with_optional(op, id=id))
 
+    def redact(self, paragraph: Selector, *, find: str, id: str | None = None, occurrence: int | None = None) -> EditPlan:
+        """Replace the unique occurrence of ``find`` (or its ``occurrence``-th hit) with one block per character.
+
+        The redaction is no tracked change: the clean copy and the redline
+        both show the blocks. The plan is refused with ``REDACTION_LEAK``
+        when the text still occurs anywhere in either document (another
+        paragraph, a comment, a header, the properties); the report never
+        repeats it.
+        """
+        op: dict[str, object] = {"kind": "redact", "paragraph": _selector(paragraph), "find": find}
+        _set_occurrence(op, occurrence)
+        return self._with(_with_optional(op, id=id))
+
     def comment(
         self,
         paragraph: Selector,

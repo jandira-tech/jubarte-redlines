@@ -565,6 +565,24 @@ pub fn update_fields(docx: &[u8]) -> Result<FieldsOutput, JsValue> {
     })
 }
 
+/// Remove who touched a document: author names (as one alias), rsids, the
+/// people and dates in the document properties, and comments.
+/// `optionsJson` is `{"author_alias": string, "rsids": bool, "docprops":
+/// bool, "comments": bool}`, a field left out off; without it, everything
+/// goes under the alias `Author`.
+///
+/// Mirrors `jubarte::scrub::scrub`.
+#[wasm_bindgen(js_name = scrubDocument)]
+pub fn scrub_document(docx: &[u8], options_json: Option<String>) -> Result<Vec<u8>, JsValue> {
+    let options: jubarte::scrub::ScrubOptions = match options_json.as_deref() {
+        Some(json) if !json.trim().is_empty() => {
+            serde_json::from_str(json).map_err(|e| js_err(format!("invalid scrub options: {e}")))?
+        }
+        _ => jubarte::scrub::ScrubOptions::default(),
+    };
+    jubarte::scrub::scrub(docx, &options).map_err(js_err)
+}
+
 /// What this build can do, as JSON (`runtime: "wasm"`): PDF and field
 /// refresh only in the full build, PNG never.
 ///
@@ -669,6 +687,25 @@ mod tests {
         assert!(paragraphs.iter().all(|p| !p.page_break));
         let manifest: serde_json::Value = serde_json::from_str(&capabilities().unwrap()).unwrap();
         assert_eq!(manifest["operations"]["append"], true);
+    }
+
+    #[test]
+    fn scrub_document_renames_authors_and_reads_options() {
+        let red = jubarte::document_comparer::compare_documents(&word("a\n"), &word("b\n"), "Jane")
+            .unwrap();
+        let authors = |docx: &[u8]| -> Vec<Option<String>> {
+            jubarte::changes::list_changes(docx)
+                .unwrap()
+                .into_iter()
+                .map(|c| c.author)
+                .collect()
+        };
+        let all = scrub_document(&red, None).unwrap();
+        assert!(authors(&all).iter().all(|a| a.as_deref() == Some("Author")));
+        let kept = scrub_document(&red, Some(r#"{"rsids":true}"#.to_string())).unwrap();
+        assert!(authors(&kept).iter().all(|a| a.as_deref() == Some("Jane")));
+        let manifest: serde_json::Value = serde_json::from_str(&capabilities().unwrap()).unwrap();
+        assert_eq!(manifest["operations"]["scrub"], true);
     }
 
     #[test]
