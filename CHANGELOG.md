@@ -385,6 +385,19 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Changed
 
+- A Word 97-2003 `.doc`, or an encrypted document of any Word version (both
+  are OLE compound files), is refused with the new `LEGACY_DOC` code and the
+  hint to save it as `.docx` without a password, on every entry point and in
+  every binding; RTF is `UNSUPPORTED_PACKAGE` ("an RTF file, not a .docx
+  package"). Both used to surface as a ZIP error (`INVALID_PACKAGE`). The
+  check is `admission::sniff`, which `admit` runs before any budget and the
+  CLI runs as it reads a file. `admission::code_first` puts a refusal's code
+  in front of whatever wrapped it (`I/O error: INPUT_LIMIT: …` reads
+  `INPUT_LIMIT: …`, `document B: LEGACY_DOC: …` reads `LEGACY_DOC:
+  document B: …`); the CLI's compare, revisions and convert failures,
+  Python's `JubarteError` and WASM's thrown strings print refusals that
+  way. `AdmissionErrorKind` gains `LegacyDocument` (a match on it needs the
+  arm) and `ALL`.
 - Crate docs: the "Lossless" tagline is now "Word-faithful", and a Fidelity
   section lists the main things the comparer normalizes (non-standard
   `w:sdtPr` children, `mc:AlternateContent`, and in the default mode the

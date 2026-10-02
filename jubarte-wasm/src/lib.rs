@@ -52,8 +52,12 @@ pub fn init_panic_hook() {
     console_error_panic_hook::set_once();
 }
 
+/// An error as the thrown string; an admission refusal reads code first
+/// after the prefix (`jubarte-wasm: LEGACY_DOC: …`), whatever wrapped it.
 fn js_err(e: impl std::fmt::Display) -> JsValue {
-    JsValue::from_str(&format!("jubarte-wasm: {e}"))
+    let message = e.to_string();
+    let message = jubarte::admission::code_first(&message).unwrap_or(message);
+    JsValue::from_str(&format!("jubarte-wasm: {message}"))
 }
 
 /// `WmlComparerSettings::default()` with `input_limits_json` (a JSON object

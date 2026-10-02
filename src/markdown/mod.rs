@@ -224,6 +224,9 @@ pub struct ReadDocx {
 /// # Ok::<(), jubarte::markdown::MarkdownError>(())
 /// ```
 pub fn docx_to_markdown(docx: &[u8], options: &MarkdownOptions) -> Result<ReadDocx, MarkdownError> {
+    // A `.doc`, an encrypted document or RTF is named for what it is
+    // (`LEGACY_DOC`, `UNSUPPORTED_PACKAGE`), not reported as a bad ZIP.
+    crate::admission::sniff(docx).map_err(|refused| MarkdownError::Docx(refused.to_string()))?;
     let revisions = match options.track_changes {
         TrackChanges::All => from_docx::Revisions::Markup,
         TrackChanges::Accept => from_docx::Revisions::Accept,

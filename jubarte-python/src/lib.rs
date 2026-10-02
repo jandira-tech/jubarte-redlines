@@ -26,8 +26,11 @@ create_exception!(
     "Raised when the jubarte-redlines engine cannot process a document."
 );
 
+/// An engine error as `JubarteError`; an admission refusal reads code
+/// first (`LEGACY_DOC: …`, `INPUT_LIMIT: …`), whatever wrapped it.
 fn err(e: impl std::fmt::Display) -> PyErr {
-    JubarteError::new_err(e.to_string())
+    let message = e.to_string();
+    JubarteError::new_err(jubarte::admission::code_first(&message).unwrap_or(message))
 }
 
 fn pdf_options(
@@ -118,7 +121,7 @@ fn list_changes_json(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
         let changes = jubarte::changes::list_changes(docx).map_err(|e| e.to_string())?;
         serde_json::to_string(&changes).map_err(|e| e.to_string())
     })
-    .map_err(|e: String| JubarteError::new_err(e))
+    .map_err(|e: String| err(e))
 }
 
 /// Every comment as a JSON array (the objects `jubarte comments --json`
@@ -138,7 +141,7 @@ fn list_comments_json(
         let comments = jubarte::comments::select_comments(comments, author.as_deref(), latest);
         serde_json::to_string(&comments).map_err(|e| e.to_string())
     })
-    .map_err(|e: String| JubarteError::new_err(e))
+    .map_err(|e: String| err(e))
 }
 
 fn change_filter(filter_json: &str) -> PyResult<jubarte::changes::ChangeFilter> {
@@ -186,7 +189,7 @@ fn get_revisions_json(
             .map_err(|e| e.to_string())?;
         Ok(jubarte::document_comparer::revisions_to_json(&revs))
     })
-    .map_err(|e: String| JubarteError::new_err(e))
+    .map_err(|e: String| err(e))
 }
 
 /// Render a DOCX package (bytes) → PDF bytes (Word-style layout).
@@ -552,7 +555,7 @@ fn validate_json(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
         let findings = jubarte::validate::validate(docx).map_err(|e| e.to_string())?;
         serde_json::to_string(&findings).map_err(|e| e.to_string())
     })
-    .map_err(|e: String| JubarteError::new_err(e))
+    .map_err(|e: String| err(e))
 }
 
 /// `repair_json`'s result: the repaired package and `{"repaired": [...],
@@ -591,7 +594,7 @@ fn audit_tracked_json(
             .map_err(|e| e.to_string())?;
         serde_json::to_string(&findings).map_err(|e| e.to_string())
     })
-    .map_err(|e: String| JubarteError::new_err(e))
+    .map_err(|e: String| err(e))
 }
 
 /// Refresh field results from jubarte's layout → `(docx, json)`; `json` is
