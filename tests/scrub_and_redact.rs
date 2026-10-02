@@ -532,3 +532,12 @@ fn a_redaction_that_finds_nothing_never_repeats_the_text() {
         assert!(!report.contains(find), "{report}");
     }
 }
+
+#[test]
+fn leaks_finds_escaped_text_split_across_runs() {
+    // `&` is stored as `&amp;`, and the text spans two runs: neither the raw
+    // bytes nor one text node hold "Acme & Sons", the paragraph does.
+    let split = docx(r#"<w:p><w:r><w:t>Acme &amp; </w:t></w:r><w:r><w:t>Sons</w:t></w:r></w:p>"#);
+    assert_eq!(leaks(&split, "Acme & Sons"), ["word/document.xml"]);
+    assert!(leaks(&split, "Sons & Acme").is_empty());
+}
