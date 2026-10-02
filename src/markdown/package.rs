@@ -390,15 +390,30 @@ fn numbering(package: &mut PartFs, main: &str, document: &Document) -> Vec<u32> 
     if document.lists.is_empty() {
         return Vec::new();
     }
-    let part = numbering_part(package, main);
-    let Some(existing) = package.part_string(&part) else {
+    let Some((_, first_num)) = append_numbering(package, main, |bullets, first_num| {
+        xml::numbering(&document.lists, bullets, bullets + 1, first_num)
+    }) else {
         return Vec::new();
     };
+    (0..document.lists.len())
+        .map(|i| first_num + u32::try_from(i).unwrap_or(0))
+        .collect()
+}
+
+/// Appends `w:abstractNum`s and `w:num`s to `main`'s numbering part, making
+/// one if needed. `build` gets the first free abstract and num ids and
+/// returns the `(abstracts, nums)` markup; returns those first ids.
+pub(crate) fn append_numbering(
+    package: &mut PartFs,
+    main: &str,
+    build: impl FnOnce(u32, u32) -> (String, String),
+) -> Option<(u32, u32)> {
+    let part = numbering_part(package, main);
+    let existing = package.part_string(&part)?;
     let next = |value: Option<i64>| u32::try_from(value.unwrap_or(0).max(0) + 1).unwrap_or(1);
-    let bullets = next(max_attribute(&existing, "w:abstractNum", "w:abstractNumId"));
-    let decimal = bullets + 1;
+    let first_abstract = next(max_attribute(&existing, "w:abstractNum", "w:abstractNumId"));
     let first_num = next(max_attribute(&existing, "w:num", "w:numId"));
-    let (abstracts, nums) = xml::numbering(&document.lists, bullets, decimal, first_num);
+    let (abstracts, nums) = build(first_abstract, first_num);
     // Every w:abstractNum precedes every w:num.
     let abstract_at = [
         "<w:num ",
@@ -422,9 +437,7 @@ fn numbering(package: &mut PartFs, main: &str, document: &Document) -> Vec<u32> 
         );
         package.set_part(&part, updated.into_bytes());
     }
-    (0..document.lists.len())
-        .map(|i| first_num + u32::try_from(i).unwrap_or(0))
-        .collect()
+    Some((first_abstract, first_num))
 }
 
 /// Writes the footnotes into the notes part, making one if needed.

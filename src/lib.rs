@@ -39,6 +39,8 @@
 
 /// Resource admission for untrusted DOCX input (ZIP and XML budgets).
 pub mod admission;
+/// Append one document after another, carrying its parts.
+pub mod append;
 /// Word's built-in style names.
 mod builtin_styles;
 /// Machine-readable manifest of what this build can do.
