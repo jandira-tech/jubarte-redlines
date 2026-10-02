@@ -290,6 +290,30 @@ class Story:
 
 
 @dataclass(frozen=True, slots=True)
+class ContentControl:
+    """A content control (``w:sdt``) in the body; ``EditPlan.fill_control`` fills it.
+
+    ``kind`` is ``text``, ``rich_text``, ``drop_down``, ``combo_box``, ``date``,
+    ``checkbox``, ``picture``, ``group``, ``repeating``, ``building_block``,
+    ``citation``, ``bibliography``, ``equation`` or ``unknown``. ``paragraph_ids``
+    lists the paragraphs a block-level control spans, or the one holding a
+    run-level control. ``choices`` are the list values of a drop-down or combo
+    box; ``checked`` is a checkbox's state.
+    """
+
+    id: str
+    kind: str
+    text: str
+    paragraph_ids: tuple[str, ...]
+    locked: bool
+    placeholder: bool
+    tag: str | None = None
+    alias: str | None = None
+    choices: tuple[str, ...] = ()
+    checked: bool | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class Summary:
     """Package facts (XML facts, not rendered-page facts)."""
 
@@ -341,6 +365,18 @@ class Snapshot:
     paragraphs: tuple[Paragraph, ...]
     stories: tuple[Story, ...] = ()
     tables: tuple[Table, ...] = ()
+    controls: tuple[ContentControl, ...] = ()
+
+    def control(self, id: str | None = None, *, tag: str | None = None, alias: str | None = None) -> ContentControl:
+        """The one control with this id (``body:sdt:N``), tag or alias; give exactly one."""
+        given = [(k, v) for k, v in (("id", id), ("tag", tag), ("alias", alias)) if v is not None]
+        if len(given) != 1:
+            raise ValueError("give exactly one of id, tag or alias")
+        key, value = given[0]
+        hits = [c for c in self.controls if getattr(c, key) == value]
+        if len(hits) != 1:
+            raise LookupError(f"{len(hits)} controls have {key} {value!r}; need exactly one")
+        return hits[0]
 
     def paragraph(self, id_or_index: str | int) -> Paragraph:
         """The paragraph with this id (``body:p:N``, ``header1:p:0``) or body index."""
@@ -411,6 +447,21 @@ def _decode_snapshot(payload: str) -> Snapshot:
             )
             for t in data.get("tables", ())
         ),
+        controls=tuple(
+            ContentControl(
+                id=c["id"],
+                kind=c["kind"],
+                text=c["text"],
+                paragraph_ids=tuple(c["paragraph_ids"]),
+                locked=c["locked"],
+                placeholder=c["placeholder"],
+                tag=c.get("tag"),
+                alias=c.get("alias"),
+                choices=tuple(c.get("choices", ())),
+                checked=c.get("checked"),
+            )
+            for c in data.get("controls", ())
+        ),
     )
 
 
@@ -426,6 +477,19 @@ ExistingRevisions = Literal["refuse", "accept", "reject", "keep"]
 """What an edit plan does with tracked changes already in the source:
 ``refuse`` (default), ``accept`` or ``reject`` them first, or ``keep`` them
 tracked and add the plan's edits as new revisions beside them."""
+
+ControlSelector = str | dict[str, str]
+"""A control id (``body:sdt:N``) or exactly one of ``{"id"|"tag"|"alias": ...}``."""
+
+
+def _control_selector(value: ControlSelector) -> str | dict[str, str]:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict) and len(value) == 1:
+        key, inner = next(iter(value.items()))
+        if key in ("id", "tag", "alias") and isinstance(inner, str):
+            return {key: inner}
+    raise TypeError('control selector must be an id ("body:sdt:N") or one of {id|tag|alias: ...}')
 
 
 def _selector(value: Selector) -> dict[str, str | int]:
@@ -781,6 +845,33 @@ class EditPlan:
         """
         op: dict[str, object] = {"kind": "watermark", "text": text, "color": color, "diagonal": diagonal, "font": font}
         return self._with(_with_optional(op, id=id))
+
+    def fill_control(
+        self,
+        control: ControlSelector,
+        *,
+        text: str | None = None,
+        choice: str | None = None,
+        checked: bool | None = None,
+        date: str | None = None,
+        id: str | None = None,
+    ) -> EditPlan:
+        """Fill one content control with exactly one of ``text``, ``choice`` (a list
+        item's value or display text), ``checked`` or ``date`` (``YYYY-MM-DD``).
+
+        The control keeps its properties in the clean copy; the redline shows the
+        fill as tracked text (the comparer unwraps controls in revised paragraphs,
+        as Word Compare does)."""
+        values = {"text": text, "choice": choice, "checked": checked, "date": date}
+        given = {k: v for k, v in values.items() if v is not None}
+        if len(given) != 1:
+            raise ValueError("fill_control takes exactly one of text, choice, checked, date")
+        if checked is not None and not isinstance(checked, bool):
+            raise TypeError("checked must be a bool")
+        op: dict[str, object] = {"kind": "fill_control", "control": _control_selector(control), **given}
+        if id is not None:
+            op = {"id": id, **op}
+        return self._with(op)
 
     def to_dict(self) -> dict[str, object]:
         """The wire form."""
