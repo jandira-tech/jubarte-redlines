@@ -69,6 +69,10 @@
 #      release and is deployed, the app's release files are committed in the
 #      jubarte-app repository, and the Mac App Store and benchmark commands
 #      are printed (the App Store upload itself: release_downstream.sh --app)
+#  13. facts — scripts/check_release_facts.py: jubarte-app/data/facts.jsonl,
+#      which jubarte.pro and the Mac app print the version, date, files and
+#      release list from, names this release (and its every required wheel),
+#      and is committed in the jubarte-app checkout
 #
 # Idempotent: each publish checks the registry first and skips a version
 # that is already live, so a failed run can simply be re-run.
@@ -742,6 +746,17 @@ say "12. Downstream — jubarte.pro, jubarte-app, App Store, benchmark"
 # intact; rerun scripts/release_downstream.sh $VER on its own.
 scripts/release_downstream.sh "$VER" \
   || die "downstream failed — the release is out; rerun scripts/release_downstream.sh $VER"
+
+# =============================================================================
+say "13. Facts — jubarte-app/data/facts.jsonl names $VER"
+# =============================================================================
+# jubarte.pro and the Mac app read the engine's version, date, files and
+# release list from this log; step 12's site step appends the release to it.
+# A log left on the previous version ships a download page and an About window
+# that name the wrong engine, so the release is not done until it moves.
+python3 scripts/check_release_facts.py "$VER" \
+  || die "jubarte-app/data/facts.jsonl is not on $VER — the release is out; fix the facts (scripts/release_downstream.sh $VER, or jubarte-app/scripts/facts.py), commit them in jubarte-app, then: python3 scripts/check_release_facts.py $VER"
+step "ok — jubarte-app/data/facts.jsonl names $VER"
 
 say "Released jubarte $VER"
 echo "  https://github.com/jandira-tech/jubarte-redlines/releases/tag/$TAG"
