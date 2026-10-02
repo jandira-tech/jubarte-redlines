@@ -9,6 +9,7 @@
 //! (Calibri 11 / line 276 / after 200 twips), and `sectPr` page geometry.
 
 mod altchunk;
+mod diff_render;
 mod font;
 mod font_table;
 mod metafile;
@@ -31,6 +32,7 @@ use crate::xmllinq::{Dom, NodeId, XName, XNamespace};
 
 use font::{Face, FaceId, FaceRef, Fonts, NO_BREAK_HYPHEN};
 
+pub use diff_render::{DiffOptions, PageDiff, RenderDiff, diff_render};
 pub use font::{FontReportEntry, FontStep, font_report_json};
 
 /// The bundled catalogue faces alone (metric twins of Word's: Carlito for
@@ -55,6 +57,13 @@ pub enum ConvertError {
     /// A PNG resolution outside `1..=MAX_PNG_DPI`, or a page too large to
     /// rasterize at the requested one.
     Raster(String),
+    /// [`RenderRequest::pages`] named a page the layout did not produce.
+    PageOutOfRange {
+        /// The zero-based index asked for.
+        requested: usize,
+        /// Pages the layout produced.
+        page_count: usize,
+    },
 }
 
 impl fmt::Display for ConvertError {
@@ -64,6 +73,15 @@ impl fmt::Display for ConvertError {
             Self::MissingDocument => write!(f, "DOCX has no main document part"),
             Self::Emit(err) => write!(f, "emitting PDF: {err}"),
             Self::Raster(err) => write!(f, "rasterizing PNG: {err}"),
+            Self::PageOutOfRange {
+                requested,
+                page_count,
+            } => write!(
+                f,
+                "page {} is out of range: the document has {page_count} page{}",
+                requested + 1,
+                if *page_count == 1 { "" } else { "s" }
+            ),
         }
     }
 }
@@ -330,12 +348,17 @@ impl RenderReport {
 }
 
 /// What [`render`] should produce from its single layout pass.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct RenderRequest {
     /// Write the PDF.
     pub pdf: bool,
     /// Rasterize every page to PNG at this resolution.
     pub png_dpi: Option<f32>,
+    /// Zero-based pages to rasterize (any order, repeats ignored); `None`
+    /// rasterizes every page. Layout and the report always cover the whole
+    /// document. An index at or past the page count is
+    /// [`ConvertError::PageOutOfRange`].
+    pub pages: Option<Vec<usize>>,
 }
 
 /// Output of [`render`].
@@ -343,7 +366,8 @@ pub struct RenderRequest {
 pub struct Rendered {
     /// PDF bytes when requested.
     pub pdf: Option<Vec<u8>>,
-    /// One PNG per page when requested (page order).
+    /// One PNG per page when requested (page order), or one per selected
+    /// page in ascending order when [`RenderRequest::pages`] is set.
     pub pngs: Vec<Vec<u8>>,
     /// Page count, page text and font resolutions.
     pub report: RenderReport,
@@ -359,7 +383,12 @@ pub fn render(
     options: PdfOptions,
     request: RenderRequest,
 ) -> Result<Rendered, ConvertError> {
-    if let Some(dpi) = request.png_dpi
+    let RenderRequest {
+        pdf: want_pdf,
+        png_dpi,
+        pages: wanted,
+    } = request;
+    if let Some(dpi) = png_dpi
         && !(1.0..=MAX_PNG_DPI).contains(&dpi)
     {
         return Err(ConvertError::Raster(format!(
@@ -369,13 +398,14 @@ pub fn render(
     let (result, font_report) = font::with_font_report(|| {
         let previous = REVISIONS.with(|r| r.replace(options.revisions));
         let result = with_pages(docx, |fonts, pages| {
-            let pdf = request.pdf.then(|| pdf::emit(fonts, pages, options));
-            let pngs: Result<Vec<Vec<u8>>, ConvertError> = match request.png_dpi {
-                Some(dpi) => pages
-                    .iter()
-                    .enumerate()
-                    .map(|(i, page)| {
-                        raster::paint_page(fonts, page, dpi)
+            let selected = selected_pages(wanted, pages.len());
+            let pdf = (want_pdf && selected.is_ok()).then(|| pdf::emit(fonts, pages, options));
+            let pngs: Result<Vec<Vec<u8>>, ConvertError> = match (png_dpi, selected) {
+                (_, Err(err)) => Err(err),
+                (Some(dpi), Ok(selected)) => selected
+                    .into_iter()
+                    .map(|i| {
+                        raster::paint_page(fonts, &pages[i], dpi)
                             .map(|pixmap| raster::encode_png(&pixmap))
                             .ok_or_else(|| {
                                 ConvertError::Raster(format!(
@@ -385,7 +415,7 @@ pub fn render(
                             })
                     })
                     .collect(),
-                None => Ok(Vec::new()),
+                (None, Ok(_)) => Ok(Vec::new()),
             };
             let texts = pages
                 .iter()
@@ -413,6 +443,26 @@ pub fn render(
     })
 }
 
+/// The zero-based pages to rasterize, ascending and without repeats: all of
+/// them when `pages` is `None`.
+fn selected_pages(
+    pages: Option<Vec<usize>>,
+    page_count: usize,
+) -> Result<Vec<usize>, ConvertError> {
+    let Some(mut selected) = pages else {
+        return Ok((0..page_count).collect());
+    };
+    selected.sort_unstable();
+    selected.dedup();
+    match selected.last() {
+        Some(&requested) if requested >= page_count => Err(ConvertError::PageOutOfRange {
+            requested,
+            page_count,
+        }),
+        _ => Ok(selected),
+    }
+}
+
 /// Rasterize every page to PNG at `dpi` (96 is screen resolution; 150 reads
 /// comfortably; 300 is print).
 pub fn docx_to_png(
@@ -426,6 +476,7 @@ pub fn docx_to_png(
         RenderRequest {
             pdf: false,
             png_dpi: Some(dpi),
+            pages: None,
         },
     )?
     .pngs)
