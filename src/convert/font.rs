@@ -2002,7 +2002,11 @@ fn scan_family_faces(family: &str, user: Option<&Path>) -> (SourcedFaces, Vec<Pa
     // (dir, whole folder is the family): Word's cloud-font cache keeps each
     // family in its own folder under numeric file names (Poppins/2397….ttf).
     let mut dirs: Vec<(PathBuf, bool)> = if latin {
-        DIRS.iter().map(|d| (PathBuf::from(d), false)).collect()
+        DIRS.iter()
+            .map(PathBuf::from)
+            .chain(windows_font_dirs())
+            .map(|d| (d, false))
+            .collect()
     } else {
         Vec::new()
     };
@@ -2199,6 +2203,23 @@ fn family_faces_in(family: &str, dirs: &[(PathBuf, bool)]) -> SourcedFaces {
                 continue;
             };
             found.push((pass, style, (FaceSource::new(&path, None), bytes)));
+        }
+    }
+    // Windows abbreviates its file names (times.ttf, timesbd.ttf,
+    // cour.ttf): a stem catches at most the regular face, so its folders
+    // also answer by the family name inside each file.
+    for (dir, _) in dirs.iter().filter(|(d, _)| latin && windows_fonts_dir(d)) {
+        for (path, names) in font_name_index(dir).iter() {
+            let source = FaceSource::new(path, None);
+            if !names.contains(&key) || found.iter().any(|(_, _, (s, _))| *s == source) {
+                continue;
+            }
+            let Ok(bytes) = fs::read(path) else {
+                continue;
+            };
+            if let Some((pass, style)) = face_family_style(&bytes, family) {
+                found.push((pass, style, (source, bytes)));
+            }
         }
     }
     found.append(&mut collected);
@@ -2445,24 +2466,67 @@ fn face_family_names(face: &ttf_parser::Face<'_>, id: u16) -> Vec<String> {
 fn cjk_family_faces(family: &str, stems: &[&str]) -> Vec<((bool, bool), Vec<u8>)> {
     let key = format!("east-asian\u{1f}{family}\u{1f}{}", stems.join(","));
     indexed_faces(&FONT_INDEX, &key, || {
-        let dirs = CJK_DIRS.iter().map(PathBuf::from).collect();
-        (scan_cjk_family_faces(family, stems), dirs)
+        (scan_cjk_family_faces(family, stems), cjk_dirs())
     })
 }
 
-/// The folders Word's East Asian faces live in.
+/// The folders Word for Mac keeps its East Asian faces in.
 const CJK_DIRS: &[&str] = &[
     "/Applications/Microsoft Word.app/Contents/Resources/DFonts",
     "/Library/Fonts/Microsoft",
     "/Library/Fonts",
 ];
 
+/// The folders Word's East Asian faces live in: Word for Mac's, then
+/// Windows' own (msgothic.ttc, msyh.ttc and malgun.ttf ship there).
+fn cjk_dirs() -> Vec<PathBuf> {
+    CJK_DIRS
+        .iter()
+        .map(PathBuf::from)
+        .chain(windows_font_dirs())
+        .collect()
+}
+
+/// Windows' font folders: the system's and the per-user one fonts
+/// installed without administrator rights land in. Empty elsewhere.
+fn windows_font_dirs() -> Vec<PathBuf> {
+    if cfg!(target_os = "windows") {
+        windows_font_dirs_from(|key| std::env::var_os(key))
+    } else {
+        Vec::new()
+    }
+}
+
+/// A Windows font folder, the system's (`C:\WINDOWS\Fonts`) or the
+/// per-user one (`…\Microsoft\Windows\Fonts`): both end in
+/// `Windows\Fonts`, in any case.
+fn windows_fonts_dir(dir: &Path) -> bool {
+    let mut tail = dir
+        .components()
+        .rev()
+        .map(|c| c.as_os_str().to_string_lossy());
+    tail.next().is_some_and(|c| c.eq_ignore_ascii_case("fonts"))
+        && tail
+            .next()
+            .is_some_and(|c| c.eq_ignore_ascii_case("windows"))
+}
+
+fn windows_font_dirs_from(env: impl Fn(&str) -> Option<std::ffi::OsString>) -> Vec<PathBuf> {
+    let set = |key: &str| env(key).filter(|v| !v.is_empty()).map(PathBuf::from);
+    let root = set("WINDIR")
+        .or_else(|| set("SystemRoot"))
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+    let mut dirs = vec![root.join("Fonts")];
+    dirs.extend(set("LOCALAPPDATA").map(|d| d.join("Microsoft").join("Windows").join("Fonts")));
+    dirs
+}
+
 /// `cjk_family_faces` read from disk.
 fn scan_cjk_family_faces(family: &str, stems: &[&str]) -> SourcedFaces {
     let want = fold_family(family);
     let mut files: Vec<(usize, PathBuf)> = Vec::new();
-    for dir in CJK_DIRS {
-        let Ok(entries) = fs::read_dir(dir) else {
+    for dir in cjk_dirs() {
+        let Ok(entries) = fs::read_dir(&dir) else {
             continue;
         };
         for path in entries.flatten().map(|e| e.path()) {
@@ -2683,7 +2747,7 @@ fn font_index_path() -> Option<PathBuf> {
 
 /// Bump the `1` when the family search's matching rules change; the crate
 /// version drops the answers another release recorded.
-const FONT_INDEX_HEADER: &str = concat!("jubarte-font-index\t1\t", env!("CARGO_PKG_VERSION"));
+const FONT_INDEX_HEADER: &str = concat!("jubarte-font-index\t2\t", env!("CARGO_PKG_VERSION"));
 
 /// A modification time in nanoseconds, `None` for a missing path.
 fn mtime_of(path: &Path) -> Option<u128> {
@@ -3264,6 +3328,50 @@ mod tests {
     }
 
     #[test]
+    fn windows_fonts_are_searched_in_the_system_and_user_folders() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |key: &str| {
+                pairs
+                    .iter()
+                    .find(|(k, _)| *k == key)
+                    .map(|(_, v)| std::ffi::OsString::from(v))
+            }
+        };
+        let user = |root: &str| {
+            PathBuf::from(root)
+                .join("Microsoft")
+                .join("Windows")
+                .join("Fonts")
+        };
+        assert_eq!(
+            windows_font_dirs_from(env(&[
+                ("WINDIR", r"D:\Win"),
+                ("LOCALAPPDATA", r"C:\Users\a\AppData\Local")
+            ])),
+            vec![
+                PathBuf::from(r"D:\Win").join("Fonts"),
+                user(r"C:\Users\a\AppData\Local")
+            ]
+        );
+        // SystemRoot stands in for WINDIR; an empty value counts as unset.
+        assert_eq!(
+            windows_font_dirs_from(env(&[("WINDIR", ""), ("SystemRoot", r"E:\W")])),
+            vec![PathBuf::from(r"E:\W").join("Fonts")]
+        );
+        assert_eq!(
+            windows_font_dirs_from(env(&[])),
+            vec![PathBuf::from(r"C:\Windows").join("Fonts")]
+        );
+        // The East Asian search reads them after Word for Mac's folders.
+        let dirs = cjk_dirs();
+        assert_eq!(
+            &dirs[..CJK_DIRS.len()],
+            CJK_DIRS.iter().map(PathBuf::from).collect::<Vec<_>>()
+        );
+        assert_eq!(dirs.len() > CJK_DIRS.len(), cfg!(target_os = "windows"));
+    }
+
+    #[test]
     fn an_ideograph_a_face_lacks_still_measures_one_em() {
         // Without Word's East Asian faces (Linux, Windows CI, WASM) CJK
         // text shapes to the Latin face's .notdef, ~0.6 em: a cell that
@@ -3372,7 +3480,7 @@ mod tests {
         );
         let text = format_font_index(&entries);
         assert_eq!(parse_font_index(&text), entries);
-        assert!(parse_font_index(&text.replacen("\t1", "\t0", 1)).is_empty());
+        assert!(parse_font_index(&text.replacen("\t2\t", "\t0\t", 1)).is_empty());
     }
 
     #[test]
@@ -3391,6 +3499,10 @@ mod tests {
         let header = text.lines().next().unwrap();
         assert!(header.ends_with(&format!("\t{}", env!("CARGO_PKG_VERSION"))));
         assert!(parse_font_index(&text.replace(env!("CARGO_PKG_VERSION"), "0.0.0")).is_empty());
+        // Rules 2 (Windows folders, matched by internal name): an index
+        // the same release wrote under rules 1 never listed those folders.
+        assert!(header.starts_with("jubarte-font-index\t2\t"));
+        assert!(parse_font_index(&text.replacen("\t2\t", "\t1\t", 1)).is_empty());
     }
 
     #[test]
@@ -4799,6 +4911,37 @@ mod tests {
             );
             assert_eq!(found[0].2, bytes);
             assert!(family_faces_in("Liberation Serif", &dirs).is_empty());
+        }
+
+        #[test]
+        fn windows_font_folders_find_every_style_by_its_internal_name() {
+            // Windows abbreviates: times.ttf, timesbd.ttf, timesi.ttf,
+            // cour.ttf. The regular file's stem is a prefix of the family
+            // key, the bold one's is not, and "cour" is too short to match.
+            let root = tempfile::tempdir().unwrap();
+            let dir = root.path().join("WINDOWS").join("Fonts");
+            fs::create_dir_all(&dir).unwrap();
+            let regular = include_bytes!("../../assets/fonts/LiberationSerif-Regular.ttf");
+            let bold = include_bytes!("../../assets/fonts/LiberationSerif-Bold.ttf");
+            let mono = include_bytes!("../../assets/fonts/LiberationMono-Regular.ttf");
+            fs::write(dir.join("liberat.ttf"), regular).unwrap();
+            fs::write(dir.join("liberatbd.ttf"), bold).unwrap();
+            fs::write(dir.join("lmo.ttf"), mono).unwrap();
+            let dirs = [(dir.clone(), false)];
+            let found = family_faces_in("Liberation Serif", &dirs);
+            let styles: Vec<_> = found.iter().map(|(style, _, _)| *style).collect();
+            assert_eq!(styles, vec![(false, false), (true, false)]);
+            assert!(found.iter().any(|(_, _, b)| b == bold));
+            assert_eq!(family_faces_in("Liberation Mono", &dirs).len(), 1);
+            // Other folders keep matching by file name alone.
+            let other = root.path().join("Fonts");
+            fs::create_dir(&other).unwrap();
+            fs::write(other.join("liberat.ttf"), regular).unwrap();
+            fs::write(other.join("liberatbd.ttf"), bold).unwrap();
+            assert_eq!(
+                family_faces_in("Liberation Serif", &[(other, false)]).len(),
+                1
+            );
         }
 
         #[test]
