@@ -1,7 +1,7 @@
 ---
 name: jubarte-documents
 description: "Use this skill whenever the user wants to read, edit, redline, comment on, compare, accept/reject, or render Word documents (.docx). Triggers: 'Word doc', '.docx', 'tracked changes', 'redline', 'compare these documents', 'accept all changes', 'render to PDF', 'what does this contract say', 'comment on clause', or a request to change specific clauses of a .docx as tracked changes. One engine (jubarte) does the reading, the editing, the clean copy, the PDF and the page images; no pandoc, LibreOffice or Poppler. Creating a brand-new .docx from scratch still uses the docx npm library (section 5). Do NOT use for PDFs, spreadsheets, Google Docs, or legacy .doc files."
-license: Proprietary. LICENSE.txt has complete terms
+license: AGPL-3.0-only
 ---
 
 # DOCX with jubarte: read, edit as tracked changes, verify
@@ -112,11 +112,14 @@ to see the report without writing.
 Operation kinds: `replace`, `insert` (one of `after`, `before`,
 `position: start|end`), `delete`, `comment` (`find` optional: whole
 paragraph), `insert_paragraph` (`runs` with `bold`/`italic`/`underline`/
-`highlight`; copies the anchor's paragraph properties), `delete_paragraph`,
+`highlight`; copies the anchor's paragraph properties, or those of the
+paragraph `like` selects), `delete_paragraph` (optional `comment`),
 `format_paragraph` (any of `style` (id or name), `alignment`
 `left|center|right|justify`, `line_spacing` as a multiple such as `1.15`,
 `space_before`/`space_after` in points), `merge_paragraphs` (joins the next
-paragraph onto this one; optional `separator`, usually `" "`). `replace` and
+paragraph onto this one; optional `separator`, usually `" "`), `rewrite`
+(`text`: the paragraph's whole new text; only the words that differ are
+edited, so the rest keeps its runs and formatting). `replace` and
 `insert` take an optional `format` (`bold`/`italic`/`underline`/`highlight`)
 that applies to the new text only. `replace` takes `"whole": true` to show
 the change as the whole old text deleted, then the whole new text inserted.
@@ -138,8 +141,17 @@ Gotchas:
   refused (`UNSUPPORTED_STRUCTURE`); edit the words on either side.
 - Two inserts at the same position keep plan order. A replace and an insert
   inside its range conflict.
+- `rewrite` needs no anchors: give the paragraph's new text. Tabs, breaks
+  and symbols stay where they are (write a tab or a break as a space); new
+  words take the formatting of the run before them. It is refused where a
+  `replace` would be: a changed word inside a link or a field.
 - `delete_paragraph` refuses a paragraph that carries a section break or is
   the only paragraph of a table cell.
+- A `delete_paragraph` `comment` sits on the deleted text in the redline
+  only; the clean copy has no paragraph to hold it. When an identical
+  paragraph is next to it, the comparer may delete the twin instead, and the
+  plan is refused (`UNSUPPORTED_STRUCTURE`) rather than leave the comment on
+  text that stays.
 - The redline is produced by comparing the source with the clean copy, the
   way Word Compare does. A long replacement therefore appears as a
   word-level diff against the old text. Give the `replace` `"whole": true`
@@ -194,6 +206,17 @@ jubarte reject redline.docx -o base.docx
 Accepting a deleted paragraph mark joins that paragraph to the next one, as
 Word does; a paragraph whose runs are all deleted disappears.
 
+Either side may be Markdown (the `jubarte` binary): `jubarte contract.docx
+edited.md -o redline.docx` applies the Markdown's edits to the Word document
+and redlines only those, keeping empty paragraphs, fields and formatting.
+`jubarte diff old new` prints the changes as a patch in the style of git
+diff: only the changed paragraphs, each at its `[line:N]` (Markdown) or
+`[body:p:N]` (Word) locator, with `[-old-]{+new+}` and CriticMarkup comments;
+`--columns 0` stops the wrapping and `--format critic` prints two Markdown
+documents as CriticMarkup (`{~~old~>new~~}`). `-o changes.docx` writes the
+changes as tracked changes. `jubarte edit` writes the edit's patch as
+`patch.diff` and prints it (`-q` prints nothing). See docs/MARKDOWN.md.
+
 ## 5. Create a new document (docx-js)
 
 `docx` (npm) is preinstalled; write a script and `require('docx')`. Footguns:
@@ -207,6 +230,11 @@ Word does; a paragraph whose runs are all deleted disappears.
 - Horizontal rule: a paragraph bottom border, not a table. Dot leaders: `PositionalTab`.
 
 Then verify with `jubarte convert output.docx --png --dpi 100` and `Read` the pages.
+
+For prose, Markdown is shorter: `jubarte convert draft.md --reference-doc
+house.docx -o draft.docx` takes the house styles, and CriticMarkup in the
+Markdown (`{++added++}`, `{--removed--}`, `{==text==}{>>comment<<}`) becomes
+tracked changes and comments.
 
 ## Dependencies
 

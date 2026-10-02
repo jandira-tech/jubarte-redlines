@@ -141,5 +141,187 @@ class RegistryProbes(unittest.TestCase):
         self.assertIn(".DS_Store", step8.split("cargo publish")[0])
 
 
+def step(n: int) -> str:
+    """Text of release.sh step `n`, up to the next numbered step."""
+    text = RELEASE_SH.read_text()
+    start = text.index(f'say "{n}. ')
+    nxt = [text.find(f'say "{n + 1}. ', start), text.find('say "POINT OF NO RETURN"', start)]
+    ends = [i for i in nxt if i > start]
+    return text[start:min(ends) if ends else len(text)]
+
+
+class NpmCli(unittest.TestCase):
+    """`npx jubarte-redlines` ships beside jubarte-wasm, on its version."""
+
+    def test_the_cli_package_follows_the_engine_version(self) -> None:
+        s1 = step(1)
+        self.assertIn('(cd jubarte-wasm/cli && npm pkg set "version=$VER" "dependencies.jubarte-wasm=^$VER"', s1)
+        add = next(l for l in step(7).splitlines() if "jubarte-wasm/Cargo.lock jubarte-wasm/npm/package.json" in l)
+        self.assertIn("jubarte-wasm/cli/package.json", add)
+
+    def test_the_cli_is_dry_run_published_and_verified(self) -> None:
+        self.assertRegex(step(6), r"if npm_cli_has; then[^\n]*\n(?:[^\n]*\n)*?else\n[^\n]*\(cd jubarte-wasm/cli && npm publish --dry-run")
+        self.assertIn('check "npm        jubarte-redlines $VER" npm_cli_has', step(11))
+
+    def test_the_cli_publishes_after_the_wasm_it_depends_on(self) -> None:
+        s9 = step(9)
+        wasm = s9.index("(cd jubarte-wasm/npm && npm publish")
+        cli = s9.index("(cd jubarte-wasm/cli && npm publish")
+        self.assertLess(wasm, cli)
+        self.assertIn("if npm_cli_has; then", s9)
+
+
+class Lessons0101(unittest.TestCase):
+    """What stopped or dirtied the v0.10.1 release, one guard each."""
+
+    def test_lockfiles_resolve_the_bumped_path_dependency(self) -> None:
+        # `cargo metadata --no-deps` resolves nothing, so the tagged commit
+        # kept jubarte-redlines 0.10.0 in three sub-workspace locks.
+        s1 = step(1)
+        self.assertNotIn("--no-deps", s1)
+        self.assertIn("cargo update --offline", s1)
+        for d in ("jubarte-wasm", "jubarte-rust-inproc", "jubarte-app/src-tauri"):
+            self.assertIn(d, s1)
+
+    def test_the_desktop_app_follows_the_engine_version(self) -> None:
+        # tests/release_metadata.rs failed on main: jubarte-app stayed 0.10.0.
+        s1 = step(1)
+        for f in (
+            "jubarte-app/package.json",
+            "jubarte-app/src-tauri/tauri.conf.json",
+            "jubarte-app/src-tauri/Cargo.toml",
+            "jubarte-app/src/index.html",
+        ):
+            self.assertIn(f, s1)
+        self.assertIn("jubarte-app/CHANGELOG.md", step(2))
+
+    def test_a_resume_keeps_the_wasm_build_it_already_committed(self) -> None:
+        # A resumed run rebuilt the package with a later ENGINE_COMMIT than
+        # the one npm already shipped.
+        s7 = step(7)
+        guard = s7.index("regenerate npm artifacts for v$VER")
+        self.assertLess(guard, s7.index("jubarte-wasm/build-npm.sh"))
+
+    def test_the_artifacts_commit_takes_the_wasm_lock(self) -> None:
+        s7 = step(7)
+        add = next(l for l in s7.splitlines() if "git add jubarte-wasm/npm" in l)
+        self.assertIn("jubarte-wasm/Cargo.lock", add)
+
+    def test_npm_publish_takes_a_one_time_password(self) -> None:
+        # npm answered EOTP to the non-interactive publish.
+        s9 = step(9)
+        self.assertIn("NPM_OTP", s9)
+        self.assertIn("--otp", s9)
+
+    def test_pypi_takes_the_workflow_wheels_when_no_release_exists(self) -> None:
+        # The Windows binary failed, release.yml skipped the GitHub release,
+        # and the wheels existed only as workflow artifacts.
+        self.assertIn("gh run download", step(10))
+
+    def test_a_skipped_github_release_is_created_from_the_artifacts(self) -> None:
+        self.assertIn("gh release create", step(10))
+
+    def test_the_api_snapshot_is_byte_stable(self) -> None:
+        # gzip stamped the write time, so every rerun dirtied docs/api/.
+        snap = (HERE / "api_snapshot.py").read_text()
+        self.assertIn("mtime=0", snap)
+
+    def test_windows_checks_out_long_paths(self) -> None:
+        wf = (HERE.parent / ".github/workflows/release.yml").read_text()
+        self.assertIn("core.longpaths", wf)
+
+
+
+DOWNSTREAM_SH = HERE / "release_downstream.sh"
+
+
+class Downstream(unittest.TestCase):
+    """Step 12: jubarte.pro, the jubarte-app commit, the App Store and the
+    benchmark. Each case runs a copy of release_downstream.sh in a throwaway
+    folder with --no-site, so nothing is deployed, pushed or uploaded."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="downstream_sh_"))
+        (self.tmp / "scripts").mkdir()
+        shutil.copy(DOWNSTREAM_SH, self.tmp / "scripts" / "release_downstream.sh")
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def run_downstream(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", str(self.tmp / "scripts" / "release_downstream.sh"), *args],
+            capture_output=True, text=True, timeout=60,
+        )
+
+    def app_repo(self, branch: str) -> Path:
+        app = self.tmp / "jubarte-app"
+        app.mkdir()
+        git = ["git", "-C", str(app)]
+        subprocess.run([*git, "init", "-q", "-b", branch], check=True)
+        (app / "package.json").write_text('{"version": "0.10.2"}\n')
+        return app
+
+    def test_needs_a_release_version(self) -> None:
+        for args in ((), ("0.10",), ("v0.10.2",), ("0.10.2", "--bogus")):
+            self.assertEqual(self.run_downstream(*args).returncode, 2, args)
+
+    def test_stops_without_an_app_folder(self) -> None:
+        r = self.run_downstream("0.10.2", "--no-site")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("no jubarte-app/", r.stderr)
+
+    def test_an_app_folder_that_is_no_checkout_is_left_alone(self) -> None:
+        (self.tmp / "jubarte-app").mkdir()
+        r = self.run_downstream("0.10.2", "--no-site")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("not its own checkout", r.stdout)
+
+    def test_an_app_off_main_is_listed_not_committed(self) -> None:
+        app = self.app_repo("feature")
+        r = self.run_downstream("0.10.2", "--no-site")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("not main", r.stdout)
+        self.assertIn("package.json", r.stdout)
+        log = subprocess.run(["git", "-C", str(app), "log"], capture_output=True, text=True)
+        self.assertNotEqual(log.returncode, 0, "no commit was made")
+
+    def test_prints_the_app_store_and_bench_commands_without_running_them(self) -> None:
+        (self.tmp / "jubarte-app").mkdir()
+        out = self.run_downstream("0.10.2", "--no-site").stdout
+        self.assertIn("not uploaded (pass --app)", out)
+        self.assertIn("asc-new-version.py 0.10.2 --apply", out)
+        self.assertIn("Submit for Review", out)
+        self.assertIn("scripts/release_jubarte.py 0.10.2", out)
+        self.assertIn("scripts/release.sh bench 0.10.2 --redline-tool jubarte-0.10.2", out)
+
+    def test_release_runs_it_after_verify(self) -> None:
+        s12 = RELEASE_SH.read_text().split('say "12. ', 1)[1]
+        self.assertIn('scripts/release_downstream.sh "$VER"', s12)
+        self.assertLess(
+            RELEASE_SH.read_text().index('say "11. Verify'),
+            RELEASE_SH.read_text().index('say "12. Downstream'),
+        )
+
+    def test_the_site_step_runs_the_site_release(self) -> None:
+        text = DOWNSTREAM_SH.read_text()
+        self.assertIn('"$SITE_DIR/scripts/release.sh" engine "$VER"', text)
+        # The upload is opt-in and review is never submitted from here.
+        self.assertIn('if [ "$APP" = 1 ]', text)
+        self.assertNotIn("--submit", text)
+
+
+
+class Header(unittest.TestCase):
+    def test_the_step_list_numbers_the_steps_the_script_prints(self) -> None:
+        """The header's "What it does" list counts the steps as `say` names them."""
+        import re
+
+        text = RELEASE_SH.read_text()
+        header = text.split("# What it does, in order:", 1)[1].split("\n#\n", 1)[0]
+        listed = [int(n) for n in re.findall(r"^#\s+(\d+)\. ", header, re.M)]
+        printed = list(dict.fromkeys(int(n) for n in re.findall(r'say "(\d+)\. ', text)))
+        self.assertEqual(listed, printed)
+
 if __name__ == "__main__":
     unittest.main()

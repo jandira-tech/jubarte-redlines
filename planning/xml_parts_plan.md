@@ -4,6 +4,8 @@ SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 SPDX-License-Identifier: AGPL-3.0-only
 -->
 
+> **Status: HISTORICAL — program closed 2026-10-01 (re-checked at bd262981).** Kept as the record of what was decided and why; nothing here is a commitment. Settled outcomes are in CHANGELOG.md; open residue is in TODO.md.
+
 # XML parts coverage plan for jubarte's DOCX -> PDF converter
 
 Companion to `report.md` and `plan.md` (2026-09-05). Question answered here: which parts
@@ -75,7 +77,20 @@ properties, `document.xml` drawing placement. `styles.xml` character styles also
 | `word/glossary/document.xml` | 0 / 0 | no | building blocks; not rendered by Word either | nothing |
 | `word/webSettings.xml`, `docProps/*`, `customXml/*`, `stylesWithEffects.xml`, `vbaProject.bin`, `activeX/*` | up to 396 / 72 | no | not used by Word's PDF layout | nothing to gain |
 
+**2026-10-01 correction.** Several headline rows above are wrong about the
+current engine: `word/fontTable.xml` is now loaded (`src/convert/font_table.rs`,
+wired at `src/convert/mod.rs` ~475-530, embedded `.odttf` faces through
+`load_embedded_fonts` at ~477); `word/footnotes.xml` is rendered
+(`load_footnotes`, `src/convert/mod.rs` ~558); and `a:srcRect`
+(`src/convert/pdf.rs` ~1626), `pgBorders` (`src/convert/mod.rs` ~4413),
+`tblInd` (~1547), `compatibilityMode` (~6077) and PNG alpha (`/SMask`,
+`src/convert/pdf.rs` ~1563) are implemented. The `Loaded` column is the
+2026-09-05 snapshot, kept as written.
+
 ## 2. Scored inventory
+
+Historical (2026-09-05): the lifts and D-scores below were measured against
+that day's engine and docxide-pdf ceilings; they are not maintained.
 
 `n` = documents carrying the item (corpus / fixtures); `lift` = mean-Jaccard points
 available on that set; `D` desirability; `diff` difficulty; `conf` confidence;
@@ -145,6 +160,14 @@ next tier is footnotes (pagination), latent styles (a table of Word's built-in d
 numbering overrides and the footer block, each worth 1-3 points on one set.
 
 ## 3. Full implementation plans (D = 1.00, confidence high)
+
+2026-10-01 status: plans 3.1 (`fontTable.xml` + embedded fonts) and 3.2 (theme
+slots) are executed, as is 3.3's checkpoint 1 (compat mode + `tblInd` edge
+rule); the later 3.3 checkpoints landed only in part. 3.4 is partial: the
+anchor/wrap residue is collected in the repository-root `_to_improve_docx_to_pdf`,
+`_to_improve_docx_to_pdf_priority` and `_to_improve_page_count` pools (with
+`_to_improve_accepted_changes` and `_to_improve_word_cannot_open` on the
+redline side).
 
 Common to all four: engine code lives in `../jubarte-redlines/src/convert/`; every
 checkpoint runs `python3 planning/sample50_check.py` (from the repository root) and ends with the

@@ -22,10 +22,12 @@ the probe wins.
 This file covers the rules found while beating the English corpus: HF
 `superdoc-dev/docx-corpus`, 500 + 500 files, plus 451 Word redlines of them.
 
-> **Re-checked 2026-09-26 (0.9.2):** still the live rulebook — the newest
-> entries carry live-Word probes from today's session and each convert fix
-> updates this file in the same commit. Pooled outcome vs Word's own exports
-> (RESULTS.md): **jubarte 0.9.2 ranks #1 on both pools** — mean Jaccard
+> **Re-checked 2026-10-01 (0.10.1 + unreleased main):** still the live
+> rulebook — each convert fix updates this file in the same commit. Pooled
+> outcome vs Word's own exports: the results tables live in
+> [neurotic_docx_bench](https://github.com/jandira-tech/neurotic_docx_bench/blob/main/RESULTS.md)
+> (this repo's own RESULTS.md was dropped 2026-09-30, c86aba43). When last
+> pooled, 2026-09-26, **jubarte 0.9.2 ranked #1 on both pools** — mean Jaccard
 > 0.647 / median 0.732 over 2,102 clean docs, and 0.466 / 0.492 over 1,416
 > redlined docs.
 
@@ -117,6 +119,17 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   - a full-width picture takes the first line, and the text wraps under it;
   - a picture that fits opens the first line, and the text follows it or keeps
     its tab stop (6fd8f5e, d2aa5db).
+- **A paragraph of only tabs is a line of its mark**, like one of only
+  spaces. Word 16 probes tab1001: an 11pt or 24pt tab over an 8pt mark,
+  deleted or not, gives an 8pt line. A tab before text does not size the
+  line either. t899ef4's deleted tab paragraph stood 3.8pt too tall, and
+  the drift cost page 2 twenty points (63.4 → 83.4).
+- **A no-break space is a letter to the wrap**, ea41e341. U+00A0, U+2007 and
+  U+202F never break a line, and one at a line's end takes room where a
+  plain space hangs past the edge.
+  - Word 16 probe d3a-d3c (2026-10-01): d328fa3674's cell "Množství
+    pneumatik v tunách" ending in U+00A0 wraps "tunách"; with a plain space
+    or none it fits.
 
 ## Redline markup
 
@@ -125,6 +138,35 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   - is still a text box, not the picture it holds (4c0cf02);
   - still lays out paragraph by paragraph, one line per deleted paragraph,
     centred as styled (bb1600d).
+- **A list label follows its paragraph mark, not its text** (Word 16
+  probes lbl0930, lbl0930b, chg0930; 2026-10-01).
+  - An inserted mark (`pPr/rPr/w:ins`) inks and underlines the label
+    and its tab up to the text. A deleted mark inks and strikes them.
+    Bullets behave the same way.
+  - Inserted or deleted text under an unrevised mark leaves the label
+    black.
+  - A `w:pPrChange` that puts the paragraph into a list counts as an
+    insertion of the label. It is inked in the change author's colour.
+- **Word numbers a revised list twice.**
+  - The original count skips inserted marks. The revised count skips
+    deleted marks.
+  - A deleted mark shows its original number. An inserted mark shows
+    its revised number.
+  - Any other paragraph whose two numbers differ shows the old number
+    plain, then the new one inked and underlined. Its tab runs to the
+    next stop past the pair: "1." at 90, "2." at 99.84, the text at
+    144.
+  - The new number takes the next author colour after the document's
+    own authors (0B6A0B after msi's 394146).
+  - A paragraph a `w:pPrChange` numbered was in no original list, so
+    it shows no old number. en r 00f467c010 shows "2)", not "1)2)".
+  - Only `RevisionStyle::Word` paints the number pair. Our own marks
+    show only the revised number, or the original one for a deleted
+    mark.
+- **A tab's gap carries its run's underline and strike** (probe
+  tab0930). This includes a trailing tab: "Nund<tab>" is underlined
+  from 72 to 108. It also covers an inserted or deleted tab and the
+  tab after a list label.
 
 ## Headers and footers
 
@@ -138,6 +180,26 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   - Probe: the first body baseline for none / before / after / both is
     67.92 / 73.2 / 73.2 / 79.2 in Word.
   - A right-aligned logo lowered this way stays right-aligned.
+- **A header picture after text keeps the body rule**, 2c1f1cee. A picture
+  that fits beside the text shares the text's last line: the line deepens to
+  the picture and the picture's bottom is the baseline. A picture that does
+  not fit leaves the text on line 1 and opens line 2 below it.
+  - Probe: text bottom 43.0, picture 45.3–135.3, body 152.2.
+  - jubarte used to put the picture first (redline 7429fdae's "RA ID" above
+    its journal banner).
+- **A page-wide square float in a compat-15 header pushes the header line
+  under it**, acbac4d3. A header line overlapping a `wrapSquare` (not tight
+  or through) float that spans the text column drops below the float plus
+  its `distB`, and the body follows. Word 2010 and older modes leave the
+  line over the float.
+  - Word 16 probes u0–u4 (2026-10-01): the first body baseline is 125.3 in
+    mode 15 and 100.3 in the legacy modes, for the same header.
+  - 3936a8fe56's banner float now leaves its body where Word's starts.
+- **A field is named by the first word of its instruction**, 8c003773. A
+  result-less `INCLUDEPICTURE ".../page1image1105008"` paints nothing,
+  and neither it nor a `PAGEREF` is a `PAGE` field. 2566689f0f's header
+  painted "111" from three such pictures, which shifted every line of
+  its page.
 
 ## Fonts: macOS system fonts
 
@@ -153,6 +215,40 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
 - **Within a collection, the face at its style's normal width and weight
   wins.** Futura's upright face is Medium (weight 500). Papyrus.ttc lists
   Condensed before Regular. For Helvetica Neue, the Regular beats the Thin.
+
+## Run fonts
+
+- **An `asciiTheme` slot names the ascii face even beside an explicit
+  `hAnsi`**, c3a0444d. With no `w:ascii`, `hAnsi` paints only the characters
+  past U+007F.
+  - 0fc80afa25: `asciiTheme="minorHAnsi" hAnsi="Arial"` paints its minutes
+    in the theme's Calibri; Word's PDF holds no Arial at all.
+- **A character style's `w:vertAlign` raises or lowers its runs.**
+  - ece10bd712's note opens on a literal "1" in "footnote reference"
+    (superscript), not a `w:footnoteRef`. Word paints it at 6.48pt,
+    raised; we painted a 10pt digit on the baseline.
+- **A list label takes the character style its paragraph mark names**
+  (`pPr/rPr/w:rStyle`), then the level's `rPr`. Word 16 probe rsty0930
+  (2026-10-01): with a Courier New 16pt green style, Word paints that
+  "1." over plain Aptos text.
+  - tb27bda's "5.2." labels are Times through Font Style12. We drew them
+    in the theme's sans: 53.5 → 73.7 (Aspose 81.9).
+- **So does an empty line's mark.** Word 16 probe ms1001: an empty
+  paragraph whose mark names a TNR 24 character style is a TNR 24 line.
+  The mark's own `w:sz` still wins over the style. tb27bda's
+  Font Style11 marks are 13.8pt Times lines, not 14.58pt Verdana 12:
+  73.7 → 85.0.
+- **ASCII never takes the East Asian face.** Word 16 probes 2026-10-01: a
+  ")" , "," or space between ideographs paints in the run's ascii font, even
+  under `w:hint="eastAsia"` or a ja-JP `w:lang`. Curly quotes and the em
+  dash take `hAnsi` in a plain run and the East Asian face under the hint
+  or an East Asian `w:eastAsia` lang.
+  - Test: `ascii_punctuation_and_spaces_between_ideographs_take_the_ascii_face`.
+- **The autospace gap is not symmetric.** East Asian text followed by Latin
+  gets 0.25 em. Latin text followed by East Asian gets half the Latin
+  face's OS/2 `xAvgCharWidth`: at 12pt, Arial 2.648pt and Times New Roman
+  2.405pt.
+  - Test: `the_gap_after_latin_text_is_half_its_fonts_average_width`.
 
 ## Redline chrome
 
@@ -174,6 +270,38 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   of its height.
   - Example: redline a820a0da's label row stays on page 1 above a 690pt row
     that Word splits.
+- **A row moves whole only when a cell opens on a `keepNext` paragraph.**
+  `keepLines` on any paragraph, or `keepNext` further down the cell, still
+  lets a row that does not fit break between its paragraphs.
+  - Word 16 probes k1-k6 (compat 15 and legacy alike): keepLines on the
+    first or the last paragraph splits, keepNext on the last splits,
+    keepNext on the first moves the row (fixtures_500 000aba38).
+  - _to_improve 2ad8d15e88: its reference list ends in a keepLines blank;
+    moving the row made 3 pages to Word's 2.
+- **An autofit table with a dxa width gives every column its longest word,
+  even past the margin.** When the words together overrun the measure, each
+  column shrinks or grows to its word and the table runs off the right
+  margin. A pct or auto table stays at the measure and breaks the words
+  (08c53c4f).
+  - Word 16 probes a1-a7: two columns of 30 and 40 underscores make a
+    469.2pt dxa table in a 468pt measure, but a 467.5pt pct or auto table
+    that wraps one underscore each. ee7b597379's tcW 4321/720/4381/4381
+    become 3945/1535/4304/989, the four longest words, and the table
+    ends at 610pt.
+- **Tables with nothing between them are one table**, f2fd0c8b. The second
+  table's rows keep their own cell widths and start at the joined table's
+  left edge, whatever their own `jc`. The joined table is aligned by its
+  widest part.
+  - Word 16 probe_adj (2026-10-01): a centred 453pt table then a 441pt one,
+    centred or left-aligned, start at 79.2 (j1/j3); the 441pt table alone
+    is centred at 85.4. The 441pt table first, then the 453pt one: both
+    start at the 453pt table's centred edge (j14, j17).
+  - A fixed-layout table after an autofit one keeps its own place (j6,
+    j9; 0bf5192ed0's alternating tables). Row `jc` and tracked table, row
+    or cell property changes play no part (j11-j13; 29379c0 bisect).
+  - Open: Word shares one grid across the joined rows (29379c0's first
+    rows take the third table's 2065/6997 columns, and one row is
+    centred on its own); jubarte keeps each table's own grid.
 
 ## VML lines, e8b5bc6
 
@@ -188,32 +316,210 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
   name only the horizontal frame, and Word hangs them from their paragraph.
 - **Open:** a character-relative anchor (`mso-position-horizontal-relative:char`)
   starts at the anchor character's x. We still take it at the column edge.
-
-## A header picture after text (measured, not yet implemented)
-
-In a header paragraph, text followed by an inline picture keeps Word's body
-rule:
-
-- If the picture fits beside the text, it shares the line. The line deepens
-  to the picture and the picture's bottom is the baseline. jubarte does this.
-- If the picture does not fit, the text keeps line 1 and the picture opens
-  line 2 below it.
-  - Probe: text bottom 43.0, picture 45.3–135.3, body 152.2.
-  - jubarte puts the picture first (redline 7429fdae's "RA ID" above its
-    journal banner).
+- **An inline `v:rect` with `filled="f"`** (an old "Horizontal Line" without
+  `o:hr`) is stroked at its own width, past the right margin when it is
+  wider. Probes hr1001 h1–h7 and k1–k6, compat 15:
+  - Its box is the rect plus a 1pt foot under it. A stroke of 2pt or more
+    pads the box by half the stroke on every side instead (4pt: the rect is
+    drawn 2pt in). An unstroked rect paints nothing and has no foot, but
+    keeps its box.
+  - Alone on its line, the line is the larger of the box and the single
+    line of the `w:pict` run's font, and the box sits at the line's bottom.
+    The paragraph mark plays no part: a TNR 12 mark, deleted or not, leaves
+    a 1.1pt rule in a Verdana 10 run on a 12.15pt line. t3c1e5d page 2
+    scored 64.5 → 86.5.
+  - **Open:** a rect in the middle of a text line shares that line in Word
+    (its outline 0.75pt above the baseline, text after it). We put it at the
+    line's end, or on its own line.
 
 ## Pages and keep-with-next
+
+- **`w:pgNumType w:start="0"` numbers the first page 0.** Word honours a
+  zero start (Word 16 probe 2026-10-01); jubarte used to clamp it to 1,
+  520ade18.
 
 - **Parity blank page (fb241e2).** With `w:evenAndOddHeaders`, a section that
   restarts page numbering on the same parity as the previous page's number
   gets a blank page first, without headers or footers, so odd numbers stay on
   right-hand pages.
-- **keepNext with an inline picture or box.** A `keepNext` paragraph moves to
-  the next page with the following paragraph when that paragraph's first line
-  holds an inline picture or text box that doesn't fit. The line counts at the
-  object's full height.
+- **A closing bottom border must fit with its line.** When a paragraph ends
+  its border group, Word fits its last line plus the border's space and
+  width above the body floor, or opens the next page with the line. Word 16
+  probes bd1001: 28pt left, an exact 27.5pt line fits alone, but not with a
+  1pt + 0.75pt border; a 26pt line fits with that border (27.75pt) but not
+  with a 4pt space. A border group split by the page break rules only under
+  its last paragraph, on the new page. 83ba58bf48's bordered "Z á p i s"
+  heads page 2 in Word.
+- **keepNext with an inline picture or box**, 146c6b6d. A `keepNext`
+  paragraph moves to the next page with the following paragraph when that
+  paragraph's first line holds an inline picture or text box that doesn't
+  fit. The line counts at the object's full height.
   - Live Word probe: a heading over a 600pt inline picture opens page 2.
   - Redline d20125ec: 11 pages, as in Word.
+
+## Justified lines and hyphens
+
+- **A numbered cell paragraph justifies its first line from the indent.**
+  The label hangs, and the item text starts at the indent like the lines
+  below. It spreads to the same right edge, even when label and text share
+  a style and arrive as one run.
+  - Probe c4num 2026-10-01 (216pt cell, Times 12): line 1 runs 113.28 to
+    282.5 and the other lines 113.3 to 282.5. We painted the merged
+    "1.\tword …" run whole: 5.4pt left of the indent and ragged.
+- **A compat-15 justified line squeezes its spaces to keep a word, within
+  two limits.** The overflow must be at most a quarter of the line's space
+  width (e522f530, 00044aa0), and at most a third of the overflowing word
+  plus two spaces: shrinking may take half of what moving the word would
+  leave to stretch, its space included. Word 2010 mode (14) never squeezes.
+  - Word 16 probes, Times 9 and 11, 8 to 39 spaces, last words of 2 to 9
+    letters: "times" at 11pt is kept up to 9.7pt and moved at 9.92pt
+    (limit 9.86, with 19 or 30 spaces alike); "measured" kept at 15.2,
+    moved at 16.0 (limit 15.9); an 8-space line keeps "today" at 24% of
+    its spaces and moves it at 30%. Mirror words (`iiiiimmmm`,
+    `mmmmiiiii`) behave alike: width counts, not letters.
+  - _to_improve d06f02170c: 11.07pt over at "times" moves it (6 pages to
+    Word's 7). LibreOffice's Word-interop shrink has only the quarter
+    (`nMinimum = 75` in `sw/source/core/text/portxt.cxx`).
+  - Table cells squeeze too: 2ad8d15e88 keeps "… amacı ve önemi" on its
+    justified cell line, its Verdana spaces at 2.5pt from 2.8.
+- **`w:noBreakHyphen` paints a hyphen and never breaks the line.** Word's
+  PDF holds a plain 0x2D: most faces (Arial, Calibri, Aptos) have no
+  U+2011 glyph. d06f02170c's "self-incrimination".
+- **Before compatibility mode 15, `w:compressPunctuation` narrows a
+  line's spaces to keep its last word**, 4e5607bc, with three gates.
+  - **Gate 1:** the document default (`w:docDefaults/w:rPrDefault`)
+    names no fonts. A missing styles part or an empty docDefaults still
+    squeezes. Probe_dd bisected 3f5209785f's "Duke" and "vocational"
+    down to the docDefaults `w:rFonts`.
+  - **Gate 2:** the squeeze is lost to balanced widths
+    (`w:balanceSingleByteDoubleByteWidth`) under an East Asian
+    `w:themeFontLang` (zh, ja, ko). 496e2984f7 keeps its lines whole.
+    Either setting alone still squeezes, and run languages do not count.
+  - **Gate 3:** only Times New Roman and Arial spaces narrow, by about a
+    fifth. Times keeps the word at 19.97% of its spaces and moves it at
+    20.3%; Arial ranges 17.8–21.3%. Calibri never narrows. Georgia
+    (5–10%) and Courier New (22–28%) differ, and the mechanism is
+    unknown: TNR's JSTF table (Arabic kashida only) and FreeType hinting
+    were ruled out. Word really narrows the spaces; glyph advances stay
+    linear.
+  - Tracked changes, size, `w:enableOpenTypeFeatures` and run-level East
+    Asian fonts or languages make no difference. Only 2 of ~7490 corpus
+    documents meet all three gates.
+  - Under compressed punctuation a hyphen holds its word on the line
+    (496e2984f7, +0.361); this is not the squeeze.
+- **Word paints a precomposed Latin, Greek or Cyrillic letter whole**,
+  f3ca28a2. Cambria's `ccmp` would split "ě" into e plus a caron. Word's
+  PDF of 3509b16c7d holds ě, č and ů as single glyphs, so `ccmp` stays
+  off for those scripts and on for complex ones.
+
+## Paragraph spacing
+
+- **contextualSpacing drops only the flagged paragraph's share of the
+  gap**, 0abf6bde. Two same-style paragraphs stand A's after plus B's
+  before past it apart (the larger of the two); a flagged A loses its
+  after, a flagged B its excess. Word 16 probe_cx (2026-10-01): flagged
+  after 6 over plain before 20 = 14, flagged after 20 over plain before 6
+  = 0, plain after 20 over flagged before 6 = 20, both flagged = 0. Body,
+  cells, text boxes and headers share the rule. 6ef1820785's flagged
+  lines over plain empty paragraphs kept 2pt each: 7 pages, as in Word.
+- **Without HTML auto spacing the spacing adds up**, 6bb7f8b8. Under
+  `w:compat/w:doNotUseHTMLParagraphAutoSpacing` two paragraphs stand the
+  first's after plus the second's before apart, not the larger of the
+  two, in the body and in cells.
+  - Word 16 probe_sum (2026-10-01): exact 20pt lines with 6pt before and
+    after step 26 without the flag and 32 with it. 4640e71ddd sets it:
+    its list rows step 23.5 (20 + 1.8 + 1.8).
+  - `w:beforeLines`/`w:afterLines` count hundredths of the docGrid pitch
+    (12pt without a grid): 4640e71ddd steps 22.3 with its grid removed.
+- **Auto spacing inherits attribute by attribute**, e12998d969. Only an
+  explicit `w:beforeAutospacing`/`w:afterAutospacing` turns auto spacing
+  on or off. A plain `w:before`/`w:after` from a derived style or the
+  paragraph is kept as the fallback.
+  - Word 16 probe asp0930 (2026-10-01): Normal sets `after=100
+    afterAutospacing=1`.
+    - Heading 2 based on it sets `after=80` and keeps the 14pt: line
+      step 27.84.
+    - A direct `after=0` keeps it too: 27.60.
+    - `afterAutospacing="0"` alone brings back Normal's 5pt: 18.96.
+  - e12998d969's headings sat 4pt over their text: 41.0 → 78.8 (Aspose's
+    free converter 75.9).
+
+## Footnotes cited in table cells
+
+- **A note cited in a cell sits on the page of the row that cites it**,
+  ece10bd712. The row's notes raise the floor before the row is placed.
+  - A cantSplit row that no longer fits above that floor moves to the
+    next page whole, and claims its notes there.
+  - So does any other row with no head that fits above the floor.
+  - A row that splits takes its cut at the raised floor.
+  - Word: note and row both on page 1, "(9) Simulated" opens page 2.
+    We dropped the note and kept the row.
+
+## Endnotes
+
+- **Each endnote mark reads its note's place in reference order**,
+  9970aa9e, in the last section's `w:endnotePr` format (else the settings
+  part's), lowerRoman from 1 by default. The note opens on the same mark
+  (`w:endnoteRef`). Strict01 p13 reads "i This is an endnote."; 9134397db6
+  "Ouchi.ii".
+- **The separator note is a line of its own over the notes**, d7a8dcee.
+  Its paragraph lays out as usual and its `w:separator` draws a 144pt
+  black rule with its foot about 2.2pt over that line's baseline
+  (Strict01 p13: rule 450.48, note baseline 435.84). It opens every run
+  of notes, at docEnd or at a sectEnd section.
+  - Open: on a page the notes continue onto, Word draws the
+    `continuationSeparator` instead (9a1c0cc482 p3, 0.48pt there).
+- **A reference to a missing endnote makes the document Word-invalid.**
+  The middle of three `w:endnoteReference`s pointing at an id with no
+  `w:endnote` never finishes opening in Word 16: word_pdf.py timed out
+  twice, while the same file with every id resolved numbers i, ii, iii.
+  Each reference keeps its slot in document order, and a missing body is
+  not painted. No renumbering is invented around the hole.
+
+## Breaks, typed labels and diagrams
+
+- **A `w:br` run sizes only a line it stands alone on.** "Top" then a 20pt
+  break run keeps Top's 11pt line; a 20pt break alone on its line sizes
+  that empty line (Word 16 probe 2026-10-01). _to_improve e124592dd0's
+  36pt break after a 28pt title made us a page longer than Word's 2;
+  fixtures_500 00accd5b's 13.5pt break is the second of two, alone.
+- **An underlined inline picture keeps its run's descent under it.** Word
+  sets an inline picture on its line's baseline. When the picture's run is
+  drawn underlined, either by its own `w:u` or as a tracked insertion, the
+  line also keeps that run's descent below the baseline. Word 16 probes
+  2026-10-01, with a 30pt picture:
+  - in a TNR 12 run, the next baseline is 2.64pt lower, for single and
+    double underlines alike;
+  - in a 36pt run, 7.68pt lower;
+  - a deleted or plain run adds nothing.
+
+  _to_improve e1c745d784's inserted logo and map each lost 2.4pt, so page
+  1 held a line Word sets on page 2.
+- **A picture-only paragraph's breaks open lines under its pictures.**
+  Each is an empty line sized by the break that ends it; the last is
+  sized by the paragraph mark. Word 16 probes 2026-10-01, with a picture
+  in a TNR 12 run followed by a break:
+  - a 7pt mark adds a 7pt line (+8.16pt);
+  - 12pt and 40pt marks add their own lines;
+  - two breaks add a 12pt break line, then the 7pt mark line.
+
+  _to_improve 66cfa52b0c's logo + break + 7pt mark lost that line.
+- **A typed label its own tab places is tabbed text, not a hanging list
+  marker.** English holdout c73c128db4's Defpara "⇥(a)⇥text" hangs 1616
+  twips with a right stop at 1332 and a left one at 1616: Word right-aligns
+  "(a)" on 66.6pt, starts and wraps the text on 80.8pt. The stop a tab
+  aligns to ends the text it measures at the next tab, in the same run too.
+  Pages 108 to Word's 104.
+- **An inline SmartArt diagram takes the line of a picture its size.** No
+  empty text line above it, no gap below, and a multiple's extra under it
+  from the paragraph's run style (probe: 1.5 lines leave the next line at
+  209.52 for both).
+- **The run holding an inline shape sizes its line.** A paragraph whose
+  Calibri run holds only a 144x0.48pt `wps` rule takes that run's line,
+  with or without a trailing Arial 10 space: Word 16 probe_il (2026-10-01)
+  puts the next paragraph 23.76 / 38.40 / 55.44pt under the one above at
+  sz 20 / 44 / 72 (Calibri single lines). 3936a8fe56's rule above each
+  heading is 14.49pt at line 259, not the space's 12.41.
 
 ## Page colour
 
@@ -241,6 +547,17 @@ rule:
   paragraph. A `wrapNone` shape overlays the cell without growing it.
   - Part a 1f3856c4: the flowchart's eight arrows sit in the empty gap cells.
     We used to drop every shape and text box anchored in a cell.
+- **Text runs beside a square float at the cell's left.** Lines whose top
+  is above the float's bottom start its width plus its right distance in;
+  the rest return to the cell's text left. VML and DrawingML agree.
+  - 3cccdeb956's header logo: the address lines sit 9pt right of it. We
+    stacked them under the logo, which moved the body down a line.
+  - Probes 2026-10-01 in a cell without a styles part: Word measures the
+    offset from the text left but keeps the picture inside the cell's
+    edges. `margin-left:-4.75pt` paints at the cell's left edge, and
+    `margin-left:200pt` stops at the right edge with the text under it.
+    That clamp, and text on the left of a float at the cell's right, are
+    not reconstructed yet.
 - **Block arrows point where their preset says.** `downArrow`, `upArrow` and
   `leftArrow` are not rotated `rightArrow`s. The shaft is the middle half
   across the arrow and the head is min(w, h)/2 long.
@@ -254,6 +571,32 @@ rule:
   - Live Word probe: Table Grid with 57-twip top and bottom margins steps Arial
     10 rows 17.76pt apart instead of 12.
   - Part a 1f3856c4.
+- **A compat-15 table sits by its rules' outer edge**, 1d415f4c. Left
+  aligned, its left rule's outer edge is on the margin and the grid half
+  that rule inside, for every row, ruled or not. Centred, the grid is
+  centred and the rules straddle it. Text starts its margin, or half its
+  own left rule when that is wider, past its grid line.
+  - Word 16 probes (2026-10-01): d3e's 1pt rule at 70.8..71.76 with text
+    at 76.3 in each row; r1-r8 paint the text at the same x for 0.5pt and
+    3pt rules, table or cell borders, fixed or autofit layout.
+
+- **A table with no default table style is not pulled and pads 0.5pt.**
+  Without a `w:default="1"` table style (no styles part, PHPWord, docx
+  editors), an unstyled table keeps its border on the margin in every
+  compat mode, and an unnamed cell margin is 0.5pt, not 108 twips, on
+  every side and inner column. A named `tblCellMar` still sets the pad
+  and is still not pulled.
+  - Word 16 probes 2026-10-01: n1-n6, p1-p4, v1-v3, w5. With no styles
+    part, compat 14 puts the rule on 71.76..72.24 and the text at 72.48;
+    compat 15 puts the text at 72.72; a 216-twip `tblCellMar` gives
+    82.80. meeting_agenda_table and meeting_agenda_table_2 set "Time" at
+    72.48. With Normal Table present (v4-v8, w1-w7) the 108-twip pull
+    holds.
+- **`w:start`/`w:end` are the cell's left and right margins.** They count
+  in `tblCellMar`, `tcMar` and `tblPrEx`, and `start` beats a `left` beside
+  it.
+  - Probes s1-s5 2026-10-01: `start`=288 sets the text 14.4pt in.
+    Cicero's start/end=160 tables (70fd78a4f8) sit 8pt in.
 
 ## Rows, groups and templates
 
@@ -298,6 +641,13 @@ rule:
   This holds when the paragraph's `numPr` is direct and it carries no direct
   `jc`.
   - Part a 8aea3634: its numbered Titre1 (heading 1, centred) items sit left.
+- **A negative numbering-level indent beats the paragraph style's.** Like a
+  positive one, it applies when the paragraph's `numPr` is direct and no
+  direct `w:ind` names it.
+  - _to_improve 66cfa52b0c: the level's left=-131 hanging=360 over List
+    Paragraph's 720 sets the text at 65.45 and the bullet at 47.5 in Word.
+    We kept 108, so the bullets wrapped narrower and page 1 overflowed.
+  - Open: an explicit level `left="0"` still reads as absent.
 - **A topAndBottom float can hang below its anchor paragraph.** Any later
   line that meets its band starts under it, not only the anchor paragraph's
   own lines.
@@ -333,8 +683,34 @@ rule:
     background's Normal one. Part b f7143477's body starts at 63.6pt, below
     its 36pt top margin.
 
+## Text boxes
+
+- **A fitted box sizes a blank line by its mark.** An `a:spAutoFit` box
+  grows by a blank paragraph's mark line, empty or holding only spaces.
+  - Probes c5b/c5c 2026-10-01: a Times 20 mark adds 23.1pt (one 22.98pt
+    line). We added a factory Calibri 11 line (13.4pt).
+- **An outline insets the text by half its width.** A painted `a:ln`
+  straddles the box edge. Its inner half adds to every `bodyPr` inset, so
+  the text moves in and a fitted box grows by the whole width.
+  - Probes c6/c7 2026-10-01, zero insets: a 4pt line moves "QQ" 1.9pt
+    right and down (2.1pt left when right-aligned) and fits the box 3.8pt
+    taller. A 1pt line gives 0.5 and 0.9. A fixed box insets its text the
+    same way and keeps its height.
+  - A theme `lnRef` outline does the same at the theme's width. We do not
+    paint those, so we do not inset for them yet.
+
 ## Open, measured but not yet reconstructed
 
+- **Word re-runs autofit on open.** A Word-saved `tblGrid` is that result,
+  but a grid it did not compute is ignored: probe g12 (grid 1500/1800 over
+  tblW 3000) keeps the 150pt table and takes 2.9pt from column 1 for a
+  long word, while 6d73303ea5's saved 8752-twip grid over tblW 8138 paints
+  as saved, widening only the two "Controls" columns to the word.
+  jubarte keeps tblW in both.
+- **A package with no styles part seems to give table cells no margins.**
+  Probe g11 paints a cell's "A" at 72.5 on a 72pt margin, where jubarte,
+  using the 108-twip Normal Table default, paints it at 77.5. Not yet
+  probed apart from the glyph's side bearing.
 - **Photo inside a deleted text box:** it does not paint yet (d20125ec).
 - **Batch compares.** In `word_redline.py`'s default batch mode, "open produced
   2 new documents" happens about every other pair after a compare. Notes are in
@@ -345,11 +721,17 @@ rule:
   the outermost group's margin and relative frame place the result.
   b 069252c3's org chart was painted at page (0,0) from the child's own
   unitless box; Word paints it at (128.5, 284.9).
-- A VML shape's `<w10:wrap type=…>` child names its wrap when the style has
-  no `mso-wrap-style`: 069252c3's topAndBottom group pushes the next
-  paragraph to its band's bottom (Anchor 103.05 -> After 267.45, also with a
-  negative z-index). Word ignores it on a `v:line`: bc404781's wrapped form
-  rules move no text.
+- A VML shape's `<w10:wrap type=…>` child alone names its wrap:
+  069252c3's topAndBottom group pushes the next paragraph to its band's
+  bottom (Anchor 103.05 -> After 267.45, also with a negative z-index).
+  `mso-wrap-style` wraps the lines of the shape's own text box, not the
+  text around it. Word probes 2026-10-01 of 3cccdeb956's logo: with
+  `mso-wrap-style:square` and no `w10:wrap` the text runs over the logo;
+  with `mso-wrap-style:none` and `w10:wrap square` it wraps. Word ignores
+  the wrap on a `v:line`: bc404781's wrapped form rules move no text.
+- VML's wrap distance defaults to 9pt left and right and 0 above and
+  below (`mso-wrap-distance-*`). The same probes put the text 9.08pt clear
+  of the logo; an explicit `mso-wrap-distance-left:0` puts it flush.
 - An inline VML shape (`w:pict` with no position) is sized by its style's
   width/height, and a text box no taller than its paragraph's line sits in
   that line instead of adding a line and then its own height: live Word

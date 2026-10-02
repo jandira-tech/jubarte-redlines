@@ -13,6 +13,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
+/// `w:noBreakHyphen` in run text: the line breaker never splits at it.
+pub(crate) const NO_BREAK_HYPHEN: char = '\u{2011}';
+
+/// The character a face paints for `ch`. Word paints a non-breaking hyphen
+/// as the face's hyphen-minus (0x2D in its PDFs): most faces (Arial,
+/// Calibri, Aptos) have no U+2011 glyph.
+fn painted_char(ch: char) -> char {
+    if ch == NO_BREAK_HYPHEN { '-' } else { ch }
+}
+
 thread_local! {
     static ACTIVE_FONT_TABLE: RefCell<super::font_table::FontTable> =
         RefCell::new(super::font_table::FontTable::default());
@@ -648,6 +658,8 @@ pub(crate) struct Face<'a> {
     paint_ascent: f32,
     /// An East Asian face (OS/2 code pages 932/936/949/950/1361).
     east_asian: bool,
+    /// OS/2 xAvgCharWidth over the em (half an em without one).
+    pub avg_char_width: f32,
     pub bbox: [i16; 4],
     pub widths: Vec<u16>,
     /// The cmap's Unicode subtables, asked per character: the first one
@@ -805,6 +817,7 @@ impl<'a> Face<'a> {
             line_descent,
             paint_ascent,
             east_asian: east_asian_line.is_some(),
+            avg_char_width: avg_char_width(&face).map_or(0.5, |w| w / upem),
             bbox: [bbox.x_min, bbox.y_min, bbox.x_max, bbox.y_max],
             widths,
             cmap,
@@ -812,6 +825,7 @@ impl<'a> Face<'a> {
     }
 
     pub(crate) fn glyph(&self, ch: char) -> u16 {
+        let ch = painted_char(ch);
         self.cmap
             .iter()
             .find_map(|sub| sub.glyph_index(u32::from(ch)))
@@ -893,7 +907,7 @@ impl<'a> Face<'a> {
     /// to `é`, a lam-alef) carries all of them, for `/ToUnicode`.
     pub(crate) fn glyph_texts(&self, text: &str, kern: bool) -> Vec<String> {
         let Some(face) = self.buzz.as_ref() else {
-            return text.chars().map(String::from).collect();
+            return text.chars().map(|c| painted_char(c).to_string()).collect();
         };
         let units = self.shaped_units(face, text, kern);
         let mut starts: Vec<usize> = units.iter().map(|u| u.2 as usize).collect();
@@ -912,7 +926,11 @@ impl<'a> Face<'a> {
                     .find(|&&s| s > at)
                     .copied()
                     .unwrap_or(text.len());
-                text.get(at..end).unwrap_or_default().to_string()
+                text.get(at..end)
+                    .unwrap_or_default()
+                    .chars()
+                    .map(painted_char)
+                    .collect()
             })
             .collect()
     }
@@ -926,33 +944,54 @@ impl<'a> Face<'a> {
             return hit;
         }
         let mut buf = rustybuzz::UnicodeBuffer::new();
-        buf.push_str(text);
+        // Clusters stay byte offsets into `text`, as `push_str` makes them.
+        for (at, ch) in text.char_indices() {
+            buf.add(painted_char(ch), at as u32);
+        }
         // Word Quartz WinAnsi PDFs do not ligate Calibri and place glyphs
         // on hmtx (T=5.38pt), not GPOS/kern (T+e shrinks ~1pt and wipes
         // official color_sim). Title `w:kern val=28` (potpourri 28pt)
         // is the exception: Word "Pot-Pourri" is 108.6 vs hmtx 111.0.
         // docDefaults/Normal kern=2 stays off.
-        let kern_bit = u32::from(kern);
-        let word_pdf = [
-            rustybuzz::Feature::new(rustybuzz::ttf_parser::Tag::from_bytes(b"liga"), 0, ..),
-            rustybuzz::Feature::new(rustybuzz::ttf_parser::Tag::from_bytes(b"clig"), 0, ..),
-            rustybuzz::Feature::new(rustybuzz::ttf_parser::Tag::from_bytes(b"dlig"), 0, ..),
-            rustybuzz::Feature::new(
-                rustybuzz::ttf_parser::Tag::from_bytes(b"kern"),
-                kern_bit,
-                ..,
-            ),
-        ];
         buf.guess_segment_properties();
         let key = (buf.direction(), buf.script(), buf.language(), kern);
         let cached = self.plans.lock().ok().and_then(|p| p.get(&key).cloned());
         let plan = cached.unwrap_or_else(|| {
+            let feature = |tag: &[u8; 4], value| {
+                rustybuzz::Feature::new(rustybuzz::ttf_parser::Tag::from_bytes(tag), value, ..)
+            };
+            let word_pdf = [
+                feature(b"liga", 0),
+                feature(b"clig", 0),
+                feature(b"dlig", 0),
+                feature(b"kern", u32::from(kern)),
+                feature(b"ccmp", 0),
+            ];
+            // Word paints a precomposed Latin, Greek or Cyrillic letter as
+            // its own glyph. Cambria's ccmp splits "ě" into e + a caron
+            // mark, which also leaves the shared "e" glyph unable to say
+            // "ě" in /ToUnicode (3509b16c7d's Czech; Word's PDF holds ě, č,
+            // ů whole). Complex scripts keep ccmp (the plan key holds the
+            // script).
+            let precomposed = [
+                rustybuzz::script::LATIN,
+                rustybuzz::script::GREEK,
+                rustybuzz::script::CYRILLIC,
+                rustybuzz::script::COMMON,
+                rustybuzz::script::INHERITED,
+            ]
+            .contains(&key.1);
+            let features = if precomposed {
+                &word_pdf[..]
+            } else {
+                &word_pdf[..4]
+            };
             let plan = Arc::new(rustybuzz::ShapePlan::new(
                 face,
                 key.0,
                 Some(key.1),
                 key.2.as_ref(),
-                &word_pdf,
+                features,
             ));
             if let Ok(mut plans) = self.plans.lock() {
                 plans.insert(key.clone(), Arc::clone(&plan));
@@ -1172,6 +1211,11 @@ impl<'a> Fonts<'a> {
             CJK_FALLBACK
         };
         self.embedded_index(key, bold, false)
+    }
+
+    /// The face `add_script_fallback` loaded under `key`.
+    pub(crate) fn script_fallback(&self, key: &str, bold: bool) -> Option<FaceRef> {
+        self.embedded_index(key, bold, false).map(FaceRef::Embedded)
     }
 
     /// Word's Thaana face (MV Boli) for Dhivehi the resolved face lacks.
@@ -2467,6 +2511,26 @@ pub(crate) const CJK_FALLBACK_KO: &str = "@cjk-ko";
 pub(crate) const CJK_FALLBACK_KO_SERIF: &str = "@cjk-ko-serif";
 /// Embedded-map key of the Thaana fallback face.
 pub(crate) const THAANA_FALLBACK: &str = "@thaana";
+/// Embedded-map key of the Thai fallback face.
+pub(crate) const THAI_FALLBACK: &str = "@thai";
+/// Embedded-map key of the Devanagari fallback face.
+pub(crate) const DEVANAGARI_FALLBACK: &str = "@devanagari";
+
+/// Loads the face Word paints a script in when the run's font has none:
+/// the first of `families` installed (Word 16 probe scripts 1001: Calibri's
+/// Thai is Leelawadee UI, its Devanagari Mangal).
+pub(crate) fn add_script_fallback(embedded: &mut EmbeddedFonts, key: &str, families: &[&str]) {
+    let faces = cached_faces(key, || {
+        families
+            .iter()
+            .map(|family| installed_family_faces(family))
+            .find(|faces| !faces.is_empty())
+            .unwrap_or_default()
+    });
+    for ((bold, italic), bytes) in faces {
+        embedded.insert((key.to_string(), bold, italic), bytes);
+    }
+}
 
 /// Loads the face Word paints Dhivehi in when the document's font is
 /// missing: MV Boli from Office's cloud fonts (fixtures_500 0003fc93's
@@ -2954,6 +3018,15 @@ fn cjk_code_pages(face: &ttf_parser::Face) -> bool {
         .is_some_and(|range| range & (0b1_1111 << 17) != 0)
 }
 
+/// OS/2 xAvgCharWidth in font units, when positive.
+fn avg_char_width(face: &ttf_parser::Face) -> Option<f32> {
+    face.raw_face()
+        .table(ttf_parser::Tag::from_bytes(b"OS/2"))
+        .and_then(|os2| os2.get(2..4))
+        .map(|b| f32::from(i16::from_be_bytes([b[0], b[1]])))
+        .filter(|&w| w > 0.0)
+}
+
 /// A name record's text: Unicode records as ttf-parser decodes them, and
 /// Macintosh Roman ones when plain ASCII. Apple's Futura.ttc names its
 /// family only in a Mac Roman record, which `to_string` leaves undecoded.
@@ -3086,6 +3159,18 @@ fn entry_describes(entry: &super::font_table::FontEntry) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_non_breaking_hyphen_reads_as_a_hyphen_with_or_without_shaping() {
+        // Word's PDFs carry 0x2D for w:noBreakHyphen; the /ToUnicode text
+        // says so too, whether or not the face shapes through rustybuzz.
+        let mut face = Face::load(FaceId::CarlitoRegular);
+        let text = format!("a{NO_BREAK_HYPHEN}b");
+        assert_eq!(face.glyph_texts(&text, false).concat(), "a-b");
+        face.buzz = None;
+        assert_eq!(face.glyph_texts(&text, false), ["a", "-", "b"]);
+        assert_eq!(face.glyph(NO_BREAK_HYPHEN), face.glyph('-'));
+    }
 
     #[test]
     fn the_font_index_reads_recorded_files_until_a_folder_or_file_changes() {
@@ -4294,6 +4379,21 @@ mod tests {
             "Times 12 single line {}",
             times.single_line_pt(12.0)
         );
+    }
+
+    #[test]
+    fn a_precomposed_czech_letter_paints_as_its_own_glyph() {
+        // 3509b16c7d: Cambria's ccmp splits "ě" into e + a caron mark;
+        // Word's PDF draws ě, č, ů whole, and the shared "e" glyph could
+        // not carry "ě" in /ToUnicode.
+        if !Fonts::is_installed_family("Cambria") {
+            return;
+        }
+        let fonts = Fonts::new();
+        let cambria = fonts.get(fonts.resolve("Cambria", false, false));
+        for letter in ["ě", "č", "ů", "ž"] {
+            assert_eq!(cambria.glyph_texts(letter, false), [letter]);
+        }
     }
 
     #[test]

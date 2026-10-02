@@ -275,6 +275,47 @@ fn minimal_docx_with_settings(body: &str, settings: &str) -> Vec<u8> {
     zip.finish().unwrap().into_inner()
 }
 
+/// `minimal_docx_with_settings` with a styles part holding `styles`.
+fn docx_with_settings_and_styles(body: &str, settings: &str, styles: &str) -> Vec<u8> {
+    let base = minimal_docx_with_settings(body, settings);
+    let mut archive = zip::ZipArchive::new(Cursor::new(base)).unwrap();
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    let opts = SimpleFileOptions::default();
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).unwrap();
+        let name = file.name().to_string();
+        let mut data = String::new();
+        file.read_to_string(&mut data).unwrap();
+        let data = match name.as_str() {
+            "[Content_Types].xml" => data.replace(
+                "</Types>",
+                "<Override PartName=\"/word/styles.xml\" \
+                  ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml\"/></Types>",
+            ),
+            "word/_rels/document.xml.rels" => data.replace(
+                "</Relationships>",
+                "<Relationship Id=\"rIdStyles\" \
+                  Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" \
+                  Target=\"styles.xml\"/></Relationships>",
+            ),
+            _ => data,
+        };
+        zip.start_file(name, opts).unwrap();
+        zip.write_all(data.as_bytes()).unwrap();
+    }
+    zip.start_file("word/styles.xml", opts).unwrap();
+    zip.write_all(
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+             {styles}</w:styles>"
+        )
+        .as_bytes(),
+    )
+    .unwrap();
+    zip.finish().unwrap().into_inner()
+}
+
 /// Styles and fontTable at producer-chosen names, found only through the
 /// main part's relationships (OPC does not fix `word/styles.xml`).
 fn docx_with_renamed_parts(body: &str, styles: &str, font_table: &str) -> Vec<u8> {
@@ -814,6 +855,419 @@ fn numbered_list_revision_keeps_single_counter_after_mini_310() {
     assert!(
         text.contains("3.") && !text.contains("1.2.") && text.contains("Charlie"),
         "mini 310/313 dual orig+current was ITT-neg on redline; text={text:?}"
+    );
+}
+
+/// A `%1.` decimal list (numId 1) and a Symbol bullet list (numId 2).
+const REVISED_LIST_NUMBERING: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+    <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+      <w:abstractNum w:abstractNumId=\"0\">\
+        <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"decimal\"/>\
+          <w:lvlText w:val=\"%1.\"/>\
+          <w:pPr><w:ind w:left=\"720\" w:hanging=\"270\"/></w:pPr></w:lvl>\
+      </w:abstractNum>\
+      <w:abstractNum w:abstractNumId=\"1\">\
+        <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"bullet\"/>\
+          <w:lvlText w:val=\"\u{F0B7}\"/>\
+          <w:pPr><w:ind w:left=\"720\" w:hanging=\"270\"/></w:pPr>\
+          <w:rPr><w:rFonts w:ascii=\"Symbol\" w:hAnsi=\"Symbol\" w:hint=\"default\"/></w:rPr></w:lvl>\
+      </w:abstractNum>\
+      <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+      <w:num w:numId=\"2\"><w:abstractNumId w:val=\"1\"/></w:num>\
+    </w:numbering>";
+
+/// A list paragraph whose mark (`pPr/rPr`) and text are each optionally
+/// wrapped in `ins` / `del` by one author.
+fn revised_list_para(num_id: u32, text: &str, mark: Option<&str>, body: Option<&str>) -> String {
+    let date = "w:author=\"msi\" w:date=\"2026-09-22T12:25:00Z\"";
+    let mark = mark.map_or(String::new(), |m| {
+        format!("<w:rPr><w:{m} w:id=\"1\" {date}/></w:rPr>")
+    });
+    let tag = if body == Some("del") { "delText" } else { "t" };
+    let run = format!("<w:r><w:{tag} xml:space=\"preserve\">{text}</w:{tag}></w:r>");
+    let run = body.map_or(run.clone(), |b| {
+        format!("<w:{b} w:id=\"2\" {date}>{run}</w:{b}>")
+    });
+    format!(
+        "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"{num_id}\"/></w:numPr>{mark}</w:pPr>{run}</w:p>"
+    )
+}
+
+const LETTER_SECT: &str = "<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+    <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+
+/// Whether the touching `boxes` (x, y, w, h) on one line cover `from..to`.
+fn rules_cover(boxes: &[(f32, f32, f32, f32)], from: f32, to: f32) -> bool {
+    boxes.iter().any(|&(x0, y0, _, _)| {
+        if (x0 - from).abs() > 0.5 {
+            return false;
+        }
+        let mut end = from;
+        let mut row: Vec<(f32, f32)> = boxes
+            .iter()
+            .filter(|b| (b.1 - y0).abs() < 0.1)
+            .map(|b| (b.0, b.0 + b.2))
+            .collect();
+        row.sort_by(|a, b| a.0.total_cmp(&b.0));
+        for (x, x2) in row {
+            if x <= end + 0.05 {
+                end = end.max(x2);
+            }
+        }
+        end >= to - 0.5
+    })
+}
+
+const BLACK: &str = "0.000 0.000 0.000";
+
+/// The fill of the glyph right before `needle` (its list label's last
+/// character: the "." of a number, a bullet's trailing space) and of
+/// `needle`'s own first glyph.
+fn label_and_text_fills(pdf: &[u8], needle: &str) -> (String, String) {
+    let (text, fills) = pdf_glyph_fills(pdf);
+    let at = text
+        .find(needle)
+        .unwrap_or_else(|| panic!("{needle} painted in {text:?}"));
+    let chars = text[..at].chars().count();
+    (fills[chars - 1].clone(), fills[chars].clone())
+}
+
+#[test]
+fn a_list_label_follows_its_paragraph_marks_insertion() {
+    // tb27bda (Word 16 probe lbl0930): Word draws a list label with the
+    // revision of its paragraph mark, not of its text. An inserted mark
+    // inks and underlines the label through its tab ("3." over an
+    // unrevised "Only the mark inserted"); inserted text under a plain
+    // mark leaves the label alone. A paragraph that was in the original
+    // but renumbers shows its old number, then the new one inked and
+    // underlined in another author's colour: "1.2.", "2.4.".
+    let body = [
+        revised_list_para(1, "Both mark and text inserted", Some("ins"), Some("ins")),
+        revised_list_para(1, "Only the text inserted", None, Some("ins")),
+        revised_list_para(1, "Only the mark inserted", Some("ins"), None),
+        revised_list_para(1, "Plain item", None, None),
+    ]
+    .concat()
+        + LETTER_SECT;
+    let docx = numbering_docx(&body, Some(REVISED_LIST_NUMBERING));
+    let pdf = docx_to_pdf(&docx).expect("convert inserted list marks");
+    let (text, _) = pdf_glyph_fills(&pdf);
+    for want in [
+        "1.Both mark",
+        "1.2.Only the text",
+        "3.Only the mark",
+        "2.4.Plain item",
+    ] {
+        assert!(text.contains(want), "{want} in Word's labels: {text:?}");
+    }
+    let red = "0.820 0.204 0.220";
+    let (label, item) = label_and_text_fills(&pdf, "Only the mark inserted");
+    assert_eq!((label.as_str(), item.as_str()), (red, BLACK));
+    let (label, _) = label_and_text_fills(&pdf, "Only the text inserted");
+    assert_eq!(
+        label, "0.000 0.471 0.831",
+        "the new number takes the next author's ink"
+    );
+    let streams = pdf_content_streams(&pdf).concat();
+    // The label hangs 13.5pt from 94.5; its tab reaches the text at 108.
+    let red_lines = pdf_fill_boxes_in(&streams, 0.820, 0.204, 0.220);
+    assert!(
+        rules_cover(&red_lines, 94.5, 108.0),
+        "the inserted mark underlines \"3.\" and its tab to 108: {red_lines:?}"
+    );
+    // The new number follows the old one past the indent, so its tab runs
+    // on to the next default stop.
+    let blue_lines = pdf_fill_boxes_in(&streams, 0.0, 0.471, 0.831);
+    let (new_x, _) = pdf_literal_td_xy(&pdf, "Only the text inserted").expect("item painted");
+    assert!((new_x - 144.0).abs() < 0.5, "text tabs on to 144: {new_x}");
+    assert!(
+        blue_lines.iter().any(|&(x, _, _, _)| x > 95.0 && x < 108.0)
+            && blue_lines
+                .iter()
+                .any(|&(x, _, w, _)| (x + w - 144.0).abs() < 0.5),
+        "the new number and its tab are underlined to 144: {blue_lines:?}"
+    );
+
+    // Our own marks keep one number, the revised document's.
+    let pdf = docx_to_pdf_with(&docx, PdfOptions::default()).expect("convert conventional");
+    let (text, _) = pdf_glyph_fills(&pdf);
+    for want in [
+        "1.Both mark",
+        "2.Only the text",
+        "3.Only the mark",
+        "4.Plain item",
+    ] {
+        assert!(text.contains(want), "{want} in our labels: {text:?}");
+    }
+    let (label, item) = label_and_text_fills(&pdf, "Only the mark inserted");
+    assert!(
+        label != BLACK && item == BLACK,
+        "label {label}, item {item}"
+    );
+}
+
+#[test]
+fn numbering_a_tracked_change_added_shows_no_old_number() {
+    // en r 00f467c010: "2)" got its numbering through a w:pPrChange whose
+    // old pPr numbers nothing, after an inserted "1)". It was in no list
+    // before, so Word shows only "2)"; counting it in the original list
+    // painted "1)2)".
+    let date = "w:author=\"msi\" w:date=\"2026-09-22T12:25:00Z\"";
+    let added = format!(
+        "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr>\
+           <w:pPrChange w:id=\"3\" {date}><w:pPr><w:ind w:firstLine=\"720\"/></w:pPr></w:pPrChange>\
+         </w:pPr><w:r><w:t>Numbered by the change</w:t></w:r></w:p>"
+    );
+    let body = revised_list_para(1, "Inserted first", Some("ins"), Some("ins"))
+        + &added
+        + &revised_list_para(1, "Plain third", None, None)
+        + LETTER_SECT;
+    let pdf = docx_to_pdf(&numbering_docx(&body, Some(REVISED_LIST_NUMBERING)))
+        .expect("convert pPrChange numbering");
+    let (text, _) = pdf_glyph_fills(&pdf);
+    for want in ["1.Inserted first", "2.Numbered by", "1.3.Plain third"] {
+        assert!(text.contains(want), "{want} in Word's labels: {text:?}");
+    }
+    // Word 16 probe chg0930: the number the change added is inked and
+    // underlined like an insertion, the text stays plain.
+    let (label, item) = label_and_text_fills(&pdf, "Numbered by the change");
+    assert_eq!(
+        (label.as_str(), item.as_str()),
+        ("0.820 0.204 0.220", BLACK)
+    );
+}
+
+#[test]
+fn a_list_label_follows_its_paragraph_marks_deletion() {
+    // Word 16 probe lbl0930b: a deleted mark inks and strikes its label
+    // and keeps the original number; the paragraphs after it show the
+    // original number, then the revised one ("3.1."). Bullets follow
+    // the mark the same way and never renumber.
+    let body = [
+        revised_list_para(1, "Deleted mark and text", Some("del"), Some("del")),
+        revised_list_para(1, "Deleted mark only", Some("del"), None),
+        revised_list_para(1, "Deleted text only", None, Some("del")),
+        revised_list_para(1, "Plain A", None, None),
+        revised_list_para(1, "Plain B", None, None),
+        revised_list_para(2, "Bullet ins mark", Some("ins"), Some("ins")),
+        revised_list_para(2, "Bullet ins text", None, Some("ins")),
+    ]
+    .concat()
+        + LETTER_SECT;
+    let docx = numbering_docx(&body, Some(REVISED_LIST_NUMBERING));
+    let pdf = docx_to_pdf(&docx).expect("convert deleted list marks");
+    let (text, _) = pdf_glyph_fills(&pdf);
+    for want in [
+        "1.Deleted mark and",
+        "2.Deleted mark only",
+        "3.1.Deleted text only",
+        "4.2.Plain A",
+        "5.3.Plain B",
+    ] {
+        assert!(text.contains(want), "{want} in Word's labels: {text:?}");
+    }
+    let red = "0.820 0.204 0.220";
+    let (label, item) = label_and_text_fills(&pdf, "Deleted mark only");
+    assert_eq!((label.as_str(), item.as_str()), (red, BLACK));
+    let (label, _) = label_and_text_fills(&pdf, "Bullet ins mark");
+    assert_eq!(label, red);
+    let (label, _) = label_and_text_fills(&pdf, "Bullet ins text");
+    assert_eq!(label, BLACK, "inserted text alone leaves the bullet black");
+    let streams = pdf_content_streams(&pdf).concat();
+    let red_lines = pdf_fill_boxes_in(&streams, 0.820, 0.204, 0.220);
+    let struck = red_lines
+        .iter()
+        .filter(|&&(x, _, _, _)| (x - 94.5).abs() < 0.5)
+        .count();
+    assert!(
+        struck >= 2 && rules_cover(&red_lines, 94.5, 108.0),
+        "both deleted marks strike their label and tab: {red_lines:?}"
+    );
+
+    let pdf = docx_to_pdf_with(&docx, PdfOptions::default()).expect("convert conventional");
+    let (text, _) = pdf_glyph_fills(&pdf);
+    for want in [
+        "1.Deleted mark and",
+        "2.Deleted mark only",
+        "1.Deleted text only",
+        "2.Plain A",
+        "3.Plain B",
+    ] {
+        assert!(text.contains(want), "{want} in our labels: {text:?}");
+    }
+}
+
+#[test]
+fn a_tabs_gap_carries_its_runs_underline_and_revision() {
+    // Word 16 probe tab0930: an underlined run's tab is underlined to its
+    // stop, a trailing one too ("Nund<tab>" 72 to 108), and an inserted or
+    // deleted tab carries the insertion underline or the strike across the
+    // gap ("Gins<tab>Hins" one rule). We left every tab gap bare.
+    let date = "w:author=\"msi\" w:date=\"2026-09-22T12:25:00Z\"";
+    let body = format!(
+        "<w:p><w:r><w:rPr><w:u w:val=\"single\"/></w:rPr><w:t>Nund</w:t></w:r>\
+           <w:r><w:rPr><w:u w:val=\"single\"/></w:rPr><w:tab/></w:r></w:p>\
+         <w:p><w:r><w:t xml:space=\"preserve\">Fplain </w:t></w:r>\
+           <w:ins w:id=\"1\" {date}><w:r><w:t>Gins</w:t></w:r><w:r><w:tab/></w:r>\
+           <w:r><w:t>Hins</w:t></w:r></w:ins></w:p>{LETTER_SECT}"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert underlined tabs");
+    let streams = pdf_content_streams(&pdf).concat();
+    let black = pdf_fill_boxes_in(&streams, 0.0, 0.0, 0.0);
+    assert!(
+        rules_cover(&black, 72.0, 108.0),
+        "the trailing underlined tab runs to its stop: {black:?}"
+    );
+    let (gins, _) = pdf_literal_td_xy(&pdf, "Gins").expect("Gins painted");
+    let (hins, _) = pdf_literal_td_xy(&pdf, "Hins").expect("Hins painted");
+    let red = pdf_fill_boxes_in(&streams, 0.820, 0.204, 0.220);
+    assert!(
+        rules_cover(&red, gins, hins + 10.0),
+        "the inserted tab is underlined from {gins} through {hins}: {red:?}"
+    );
+}
+
+#[test]
+fn a_list_label_takes_its_marks_character_style() {
+    // tb27bda (Word 16 probe rsty0930): the paragraph mark's rPr names a
+    // character style (Font Style12: Times New Roman). Word paints the
+    // label in it: Courier New 16pt green "1." over plain Aptos text. We
+    // skipped the mark's rStyle and drew the number in the theme face.
+    let styles = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
+  <w:style w:type="character" w:styleId="Cour"><w:name w:val="Cour"/>
+    <w:rPr><w:rFonts w:ascii="Courier New" w:hAnsi="Courier New"/><w:color w:val="00B050"/><w:sz w:val="32"/></w:rPr></w:style>
+</w:styles>"#;
+    let body = "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr>\
+           <w:rPr><w:rStyle w:val=\"Cour\"/></w:rPr></w:pPr>\
+           <w:r><w:t>Plain text</w:t></w:r></w:p>"
+        .to_string()
+        + LETTER_SECT;
+    let pdf = docx_to_pdf(&numbering_docx_with_styles(
+        &body,
+        Some(REVISED_LIST_NUMBERING),
+        Some(styles),
+    ))
+    .expect("convert mark rStyle label");
+    let (label, item) = label_and_text_fills(&pdf, "Plain text");
+    assert_eq!(
+        (label.as_str(), item.as_str()),
+        ("0.000 0.690 0.314", BLACK)
+    );
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(hay.contains("Courier"), "the label paints in Courier New");
+}
+
+#[test]
+fn an_inline_vml_rect_strokes_its_outline() {
+    // t3c1e5d's "Horizontal Line 1": an inline v:rect 540pt x 1.1pt,
+    // filled="f", stroked by VML's default (black 0.75pt) and no o:hr.
+    // Word strokes it at its full 540pt from the margin, past the right
+    // margin (Word PDF: 70.85 to 610.85); we painted nothing.
+    let body = "<w:p><w:r><w:t>Above</w:t></w:r></w:p>\
+         <w:p><w:r><w:pict xmlns:v=\"urn:schemas-microsoft-com:vml\" \
+           xmlns:w10=\"urn:schemas-microsoft-com:office:word\"><v:rect id=\"Horizontal Line 1\" \
+           style=\"width:540pt;height:1.1pt;visibility:visible;mso-position-horizontal-relative:char;mso-position-vertical-relative:line\" \
+           filled=\"f\"><w10:anchorlock/></v:rect></w:pict></w:r></w:p>\
+         <w:p><w:r><w:t>Below</w:t></w:r></w:p>"
+        .to_string()
+        + LETTER_SECT;
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert inline VML rect");
+    let streams = pdf_content_streams(&pdf).concat();
+    let boxes = pdf_stroke_boxes_in(&streams, 0.0, 0.0, 0.0);
+    assert!(
+        boxes.iter().any(|&(x, _, w, h)| (x - 72.0).abs() < 1.0
+            && (w - 540.0).abs() < 0.5
+            && (h - 1.1).abs() < 0.2),
+        "the rect strokes 540 x 1.1 from the margin: {boxes:?}"
+    );
+}
+
+/// A TNR 12 line, a paragraph holding one inline VML rect (style `rect`
+/// attributes, `w:pict` run in Verdana 10, mark TNR 12, then `tail`
+/// runs), and a TNR 12 line.
+fn vml_rect_between_lines(rect: &str, tail: &str) -> Vec<u8> {
+    let tnr = "<w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+               <w:sz w:val=\"24\"/></w:rPr>";
+    let verdana =
+        "<w:rPr><w:rFonts w:ascii=\"Verdana\" w:hAnsi=\"Verdana\"/><w:sz w:val=\"20\"/></w:rPr>";
+    let body = format!(
+        "<w:p><w:r>{tnr}<w:t>Above</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/>{tnr}</w:pPr>\
+           <w:r>{verdana}<w:pict xmlns:v=\"urn:schemas-microsoft-com:vml\"><v:rect id=\"Horizontal Line 1\" \
+           style=\"width:540pt;{rect};visibility:visible;mso-position-horizontal-relative:char;mso-position-vertical-relative:line\"/>\
+           </w:pict></w:r>{tail}</w:p>\
+         <w:p><w:r>{tnr}<w:t>Below</w:t></w:r></w:p>{LETTER_SECT}"
+    );
+    let settings = "<w:compat><w:compatSetting w:name=\"compatibilityMode\" \
+          w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat>";
+    let styles = "<w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>\
+          <w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr></w:style>";
+    docx_with_settings_and_styles(&body, settings, styles)
+}
+
+#[test]
+fn an_inline_vml_rects_line_is_its_runs_line_with_the_rect_at_its_foot() {
+    // t3c1e5d page 2: a 1.1pt "Horizontal Line" in a Verdana 10 run whose
+    // deleted mark is TNR 12. Word 16 (probes hr1001 h1-h3, any mark):
+    // the rule's line is the run's 12.15pt Verdana line, not the mark's,
+    // the rect 1pt above its bottom; "Below" sits 25.92pt under "Above"
+    // and the rule's bottom 14.01pt under it. We stacked the rect under
+    // a 13.8pt mark line (28.33pt) and dropped the rest of the page.
+    let pdf = docx_to_pdf(&vml_rect_between_lines("height:1.1pt\" filled=\"f", ""))
+        .expect("convert rule paragraph");
+    let ys: Vec<f32> = text_baselines(&pdf).iter().map(|y| 792.0 - y).collect();
+    assert_eq!(ys.len(), 2, "Above and Below: {ys:?}");
+    assert!(
+        (ys[1] - ys[0] - 25.92).abs() < 0.3,
+        "Word's 25.92pt: {ys:?}"
+    );
+    let streams = pdf_content_streams(&pdf).concat();
+    let boxes = pdf_stroke_boxes_in(&streams, 0.0, 0.0, 0.0);
+    let &(_, y, _, h) = boxes
+        .iter()
+        .find(|b| (b.2 - 540.0).abs() < 0.5)
+        .expect("the rule is stroked");
+    assert!((h - 1.1).abs() < 0.2, "1.1pt tall: {boxes:?}");
+    assert!(
+        ((792.0 - y) - ys[0] - 14.01).abs() < 0.3,
+        "the rule's bottom 14.01pt under Above's baseline: y={y} {ys:?}"
+    );
+    // A 20pt rect outgrows that line by its 1pt foot (h4: 34.80 apart).
+    let pdf = docx_to_pdf(&vml_rect_between_lines("height:20pt\" filled=\"f", ""))
+        .expect("convert tall rule paragraph");
+    let ys: Vec<f32> = text_baselines(&pdf).iter().map(|y| 792.0 - y).collect();
+    assert!(
+        (ys[1] - ys[0] - 34.80).abs() < 0.3,
+        "Word's 34.80pt: {ys:?}"
+    );
+}
+
+#[test]
+fn an_unstroked_inline_vml_rect_keeps_its_box_without_a_foot() {
+    // Word 16 probe hr1001 k2: an unstroked 540 x 20pt rect paints nothing
+    // but holds its 20pt line (no 1pt foot); the text after it wraps to
+    // the next line, 32.64pt under "Above". We dropped the rect.
+    let tail = "<w:r><w:rPr><w:rFonts w:ascii=\"Verdana\" w:hAnsi=\"Verdana\"/><w:sz w:val=\"20\"/></w:rPr>\
+                <w:t>Yq</w:t></w:r>";
+    let pdf = docx_to_pdf(&vml_rect_between_lines(
+        "height:20pt\" filled=\"f\" stroked=\"f",
+        tail,
+    ))
+    .expect("convert unstroked rect");
+    let ys: Vec<f32> = text_baselines(&pdf).iter().map(|y| 792.0 - y).collect();
+    assert_eq!(ys.len(), 3, "Above, Yq, Below: {ys:?}");
+    assert!(
+        (ys[1] - ys[0] - 32.64).abs() < 0.3,
+        "Word's 32.64pt: {ys:?}"
+    );
+    let streams = pdf_content_streams(&pdf).concat();
+    assert!(
+        pdf_stroke_boxes_in(&streams, 0.0, 0.0, 0.0)
+            .iter()
+            .all(|b| (b.2 - 540.0).abs() > 0.5),
+        "nothing stroked"
     );
 }
 
@@ -1528,6 +1982,40 @@ fn a_square_float_with_no_side_room_pushes_text_below_it() {
 }
 
 #[test]
+fn a_no_break_hyphen_paints_a_hyphen_and_never_breaks_the_line() {
+    // _to_improve d06f02170c: "self<w:noBreakHyphen/>incrimination" is
+    // "self-incrimination" in Word's PDF (a plain 0x2D, as most faces have
+    // no U+2011); we dropped the hyphen and the lines ran short.
+    let para = |filler: usize, hyphen: &str| {
+        format!(
+            "<w:p><w:r><w:t xml:space=\"preserve\">{}SelfPart</w:t>{hyphen}\
+             <w:t>IncrimPart</w:t></w:r></w:p><w:sectPr/>",
+            "word ".repeat(filler)
+        )
+    };
+    let y = |pdf: &[u8], t: &str| pdf_glyph_text_xy(pdf, t).unwrap_or_else(|| panic!("{t}")).1;
+    let one = docx_to_pdf(&minimal_docx_body(&para(0, "<w:noBreakHyphen/>"))).expect("hyphen");
+    assert!(
+        pdf_glyph_text_xy(&one, "SelfPart-IncrimPart").is_some(),
+        "the non-breaking hyphen paints as a hyphen"
+    );
+    // A filler where an ordinary hyphen breaks between the two parts.
+    let filler = (1..120)
+        .find(|&n| {
+            let pdf = docx_to_pdf(&minimal_docx_body(&para(n, "<w:t>-</w:t>"))).expect("hyphen");
+            (y(&pdf, "SelfPart") - y(&pdf, "IncrimPart")).abs() > 1.0
+        })
+        .expect("a hyphen break");
+    let kept = docx_to_pdf(&minimal_docx_body(&para(filler, "<w:noBreakHyphen/>")))
+        .expect("non-breaking hyphen");
+    assert_eq!(
+        y(&kept, "SelfPart"),
+        y(&kept, "IncrimPart"),
+        "a non-breaking hyphen keeps its word on one line"
+    );
+}
+
+#[test]
 fn a_br_outside_a_run_still_breaks_the_line() {
     // fixtures_500 0065a5f9 (PHPWord): <w:br/> sits directly in the w:p
     // between the title run and the URL hyperlink. Word breaks the line
@@ -1544,6 +2032,81 @@ fn a_br_outside_a_run_still_breaks_the_line() {
         y("BrBefore") - y("BrAfter") > 10.0,
         "the text after the br starts a new line"
     );
+}
+
+#[test]
+fn a_br_before_the_text_of_its_run_breaks_the_line() {
+    // _to_improve f9b9dbd790 redline: each line of the product sheet is
+    // <w:r><w:br/><w:t>…</w:t></w:r>, in plain and inserted runs alike.
+    // Word starts each on its own line; we glued them ("vinduer.Praktisk")
+    // and ended on 9 pages to Word's 10.
+    let body = "<w:p><w:r><w:t>LeadPlain</w:t></w:r><w:r><w:br/><w:t>NextPlain</w:t></w:r></w:p>\
+                <w:p><w:ins w:id=\"1\" w:author=\"A\" w:date=\"2026-01-01T00:00:00Z\">\
+                <w:r><w:t>LeadIns</w:t></w:r><w:r><w:br/><w:t>NextIns</w:t></w:r></w:ins></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("br before text");
+    let y = |t: &str| {
+        pdf_glyph_text_xy(&pdf, t)
+            .unwrap_or_else(|| panic!("{t}"))
+            .1
+    };
+    assert!(
+        y("LeadPlain") - y("NextPlain") > 10.0,
+        "plain run: the br starts a new line"
+    );
+    assert!(
+        y("LeadIns") - y("NextIns") > 10.0,
+        "inserted run: the br starts a new line"
+    );
+}
+
+#[test]
+fn a_br_beside_a_square_float_still_breaks_the_line() {
+    // _to_improve f9b9dbd790 redline: the header's logos wrap square into
+    // the body, and the first paragraph is one w:p of <w:br/> lines.
+    // Word breaks at every br beside and below the logo; we glued them.
+    let float = blip(
+        "1270000",
+        "1270000",
+        "<wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:simplePos x=\"0\" y=\"0\"/>\
+           <wp:positionH relativeFrom=\"margin\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+           <wp:wrapSquare wrapText=\"bothSides\"/>",
+        "</wp:anchor>",
+    );
+    let right = float.replace(
+        "<wp:posOffset>0</wp:posOffset></wp:positionH>",
+        "<wp:posOffset>4572000</wp:posOffset></wp:positionH>",
+    );
+    let body = format!(
+        "<w:p><w:r>{float}</w:r><w:r>{right}</w:r><w:r><w:t>SqOne</w:t></w:r><w:r><w:br/><w:t>SqTwo</w:t></w:r>\
+         <w:r><w:br/></w:r><w:r><w:t>SqThree</w:t></w:r>{below}</w:p><w:sectPr/>",
+        below = (0..10)
+            .map(|i| format!("<w:r><w:br/><w:t>SqBelow{i}</w:t></w:r>"))
+            .collect::<String>()
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&body)).expect("br beside float");
+    let y = |t: &str| {
+        pdf_glyph_text_xy(&pdf, t)
+            .unwrap_or_else(|| panic!("{t}"))
+            .1
+    };
+    assert!(
+        y("SqOne") - y("SqTwo") > 10.0,
+        "the in-run br starts a new line"
+    );
+    assert!(
+        y("SqTwo") - y("SqThree") > 10.0,
+        "the br-only run starts a new line"
+    );
+    for i in 0..9 {
+        let (a, b) = (format!("SqBelow{i}"), format!("SqBelow{}", i + 1));
+        assert!(
+            y(&a) - y(&b) > 10.0,
+            "{b} starts its own line past the float"
+        );
+    }
 }
 
 #[test]
@@ -2051,6 +2614,125 @@ fn character_spacing_widens_the_wrap_measure() {
 }
 
 #[test]
+fn a_justified_numbered_cell_paragraph_spreads_its_first_line_from_the_indent() {
+    // Word 16 probe c4num (2026-10-01): "1." hangs in a 216pt cell and
+    // thirty words justify on every line but the last; the first line's
+    // text starts at the indent (113.28, the other lines 113.3) and ends
+    // where they do (282.5). The marker shares the item's style, so the
+    // two arrive as one run "1.\tword …": we painted it whole, 5.4pt left
+    // of the indent and ragged.
+    let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:abstractNum w:abstractNumId=\"0\">\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"decimal\"/>\
+              <w:lvlText w:val=\"%1.\"/><w:lvlJc w:val=\"left\"/>\
+              <w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/></w:pPr>\
+              <w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+              <w:sz w:val=\"24\"/></w:rPr></w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+        </w:numbering>";
+    let words = vec!["word"; 30].join(" ");
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"4320\" w:type=\"dxa\"/><w:tblLayout w:type=\"fixed\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"4320\"/></w:tblGrid>\
+           <w:tr><w:tc><w:tcPr><w:tcW w:w=\"4320\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr>\
+               <w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/><w:jc w:val=\"both\"/></w:pPr>\
+               <w:r><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+               <w:sz w:val=\"24\"/></w:rPr><w:t>{words}</w:t></w:r></w:p>\
+           </w:tc></w:tr></w:tbl><w:p/><w:sectPr/>"
+    );
+    let pdf = docx_to_pdf(&numbering_docx(&body, Some(numbering))).expect("numbered cell");
+    let mut lines: Vec<(f32, f32, f32)> = Vec::new();
+    for (x, y) in pdf_glyph_text_xys(&pdf, "word") {
+        match lines.iter_mut().find(|(ly, _, _)| (ly - y).abs() < 1.0) {
+            Some(line) => {
+                line.1 = line.1.min(x);
+                line.2 = line.2.max(x);
+            }
+            None => lines.push((y, x, x)),
+        }
+    }
+    assert!(lines.len() >= 3, "the item wraps; lines={lines:?}");
+    let (first, second) = (lines[0], lines[1]);
+    assert!(
+        (first.1 - second.1).abs() < 0.3,
+        "line 1's text starts at the indent like line 2's; lines={lines:?}"
+    );
+    assert!(
+        (first.2 - second.2).abs() < 0.5,
+        "line 1 justifies to the cell's edge like line 2; lines={lines:?}"
+    );
+}
+
+#[test]
+fn a_right_or_centre_tab_ends_the_justified_part_of_a_line() {
+    // Word 16 probes c1tab and c1ctr (2026-10-01): "aa bb" then a tab to
+    // a right (or centre) stop at 216pt, "cc dd", and a line break. The
+    // text before the tab keeps its own spacing (bb at 85.7), and the
+    // tabbed text ends on the stop (cc at 262.3) or centres on it (275.2).
+    let x = |stop: &str, needle: &str| {
+        let body = format!(
+            "<w:p><w:pPr><w:tabs><w:tab w:val=\"{stop}\" w:pos=\"4320\"/></w:tabs>\
+               <w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/><w:jc w:val=\"both\"/></w:pPr>\
+               <w:r><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+               <w:sz w:val=\"24\"/></w:rPr><w:t xml:space=\"preserve\">aa bb</w:t><w:tab/>\
+               <w:t xml:space=\"preserve\">cc dd</w:t><w:br/><w:t>ee</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        );
+        let settings = "<w:compat><w:compatSetting w:name=\"compatibilityMode\" \
+            w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat>";
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, settings)).expect("tab line");
+        pdf_glyph_text_xy(&pdf, needle).expect(needle).0
+    };
+    for (stop, bb, cc) in [("right", 85.7, 262.3), ("center", 85.7, 275.2)] {
+        let (got_bb, got_cc) = (x(stop, "bb"), x(stop, "cc"));
+        assert!(
+            (got_bb - bb).abs() < 0.5 && (got_cc - cc).abs() < 0.5,
+            "{stop} stop: bb={got_bb} (Word {bb}), cc={got_cc} (Word {cc})"
+        );
+    }
+}
+
+#[test]
+fn a_justified_cell_line_ending_in_a_break_spreads_unless_told_not_to() {
+    // Word 16 probes c3br and c3brno (2026-10-01): "aa bb cc", a line
+    // break, "dd" in a justified 216pt cell, compat 15. The line before
+    // the break spreads to the cell's edge (bb 173.9, cc 271.8); with
+    // doNotExpandShiftReturn it keeps its spacing (bb 90.9, cc 105.9).
+    let x = |compat: &str, needle: &str| {
+        let body = "<w:tbl><w:tblPr><w:tblW w:w=\"4320\" w:type=\"dxa\"/><w:tblLayout w:type=\"fixed\"/>\
+               <w:tblCellMar><w:left w:w=\"108\" w:type=\"dxa\"/><w:right w:w=\"108\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"4320\"/></w:tblGrid>\
+             <w:tr><w:tc><w:tcPr><w:tcW w:w=\"4320\" w:type=\"dxa\"/></w:tcPr>\
+               <w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/><w:jc w:val=\"both\"/></w:pPr>\
+                 <w:r><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+                 <w:sz w:val=\"24\"/></w:rPr><w:t xml:space=\"preserve\">aa bb cc</w:t><w:br/><w:t>dd</w:t></w:r></w:p>\
+             </w:tc></w:tr></w:tbl><w:p/>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+        let settings = format!(
+            "<w:compat>{compat}<w:compatSetting w:name=\"compatibilityMode\" \
+             w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(body, &settings)).expect("break cell");
+        pdf_glyph_text_xy(&pdf, needle).expect(needle).0
+    };
+    for (compat, bb, cc) in [
+        ("", 173.9, 271.8),
+        ("<w:doNotExpandShiftReturn/>", 90.9, 105.9),
+    ] {
+        let (got_bb, got_cc) = (x(compat, "bb"), x(compat, "cc"));
+        assert!(
+            (got_bb - bb).abs() < 0.5 && (got_cc - cc).abs() < 0.5,
+            "{compat:?}: bb={got_bb} (Word {bb}), cc={got_cc} (Word {cc})"
+        );
+    }
+}
+
+#[test]
 fn direct_ind_left_keeps_the_numbering_level_hanging() {
     // fixtures_500 00194caa: `<w:ind w:left="426"/>` on a numbered
     // paragraph overrides only the left edge; Word keeps the level's
@@ -2163,18 +2845,443 @@ fn all_lowercase_small_caps_line_keeps_its_authored_height() {
 }
 
 #[test]
-fn a_line_break_run_sizes_the_line_it_ends() {
-    // fixtures_500 00accd5b: "FK Nebužely …" then a 13.5pt run holding
-    // <w:br/>; Word's first line is 13.5pt tall (the gap to the next line
-    // is 26.9pt), we sized it by the 10pt text alone (23.0).
-    let body = r#"<w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:t>Top</w:t></w:r><w:r><w:rPr><w:sz w:val="40"/></w:rPr><w:br/></w:r><w:r><w:t>Bottom</w:t></w:r></w:p><w:sectPr/>"#;
-    let pdf = docx_to_pdf(&minimal_docx_with_settings(body, "")).expect("br size");
-    let ys = text_baselines(&pdf);
-    let pitch = ys[0] - ys[1];
-    // Calibri 20 line 24.41 + Calibri 11 ascent 10.47 - Calibri 20 ascent 19.04.
+fn a_word_cut_by_a_run_boundary_widens_its_column_whole() {
+    // 6d73303ea5's header cell holds "C" + "ontrols": the autofit column
+    // measured each run's piece, found room for "ontrols" and wrapped
+    // the word. Word 16 probe g11 (2026-10-01): "Q" + eleven "u"s in a
+    // 75pt tcW column paint whole on one line.
+    let r = r#"<w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="22"/></w:rPr>"#;
+    let cell = |body: &str| {
+        format!(
+            r#"<w:tc><w:tcPr><w:tcW w:w="1500" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr>{body}</w:p></w:tc>"#
+        )
+    };
+    let body = format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="3000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="1500"/><w:gridCol w:w="1800"/></w:tblGrid><w:tr>{}{}</w:tr></w:tbl><w:p/>{}"#,
+        cell(&format!("<w:r>{r}<w:t>A</w:t></w:r>")),
+        cell(&format!(
+            "<w:r>{r}<w:t>Q</w:t></w:r><w:r>{r}<w:t>uuuuuuuuuuZ</w:t></w:r>"
+        )),
+        letter_body_sect()
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("glued word");
+    let (_, q) = glyph_xy(&pdf, "Q");
+    let (_, z) = glyph_xy(&pdf, "Z");
+    assert!((q - z).abs() < 0.1, "Q at {q}, Z at {z}: the word broke");
+}
+
+#[test]
+fn compressed_punctuation_narrows_a_left_line_before_compat_15() {
+    // Word 16 probes (2026-10-01, Times 12 on a 468pt line): under
+    // compressPunctuation before compat 15 a left-aligned line keeps its
+    // last word on spaces up to a fifth narrower; doNotCompress and
+    // compat 15 move it down, and so does balanceSingleByteDoubleByteWidth
+    // under an East Asian theme language (496e2984f7). Here the word
+    // overflows by 12% of 27 spaces.
+    let r = r#"<w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="24"/></w:rPr>"#;
+    let text = format!("{}{}Z tail", "ab ".repeat(27), "i".repeat(25));
+    let body = format!(
+        r#"<w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r>{r}<w:t xml:space="preserve">{text}</w:t></w:r></w:p>{}"#,
+        letter_body_sect()
+    );
+    let lines = |mode: u8, spacing: &str, lang: &str, compat: &str| {
+        let settings = format!(
+            r#"<w:characterSpacingControl w:val="{spacing}"/>{lang}<w:compat>{compat}<w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="{mode}"/></w:compat>"#
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, &settings)).expect("squeeze");
+        let (_, a) = pdf_glyph_text_xy(&pdf, "ab").expect("first word");
+        let (zx, z) = pdf_glyph_text_xy(&pdf, "Z").expect("last word");
+        (a, z, zx)
+    };
+    let (a, z, zx) = lines(14, "compressPunctuation", "", "");
+    assert!((a - z).abs() < 0.1, "Z at {z} left line 1 at {a}");
+    assert!(zx + 7.33 <= 540.1, "Z at {zx} runs past the margin");
+    let zh = r#"<w:themeFontLang w:val="en-US" w:eastAsia="zh-CN"/>"#;
+    let bal = "<w:balanceSingleByteDoubleByteWidth/>";
+    for (mode, spacing, lang, compat) in [
+        (14, "doNotCompress", "", ""),
+        (15, "compressPunctuation", "", ""),
+        (14, "compressPunctuation", zh, bal),
+    ] {
+        let (a, z, _) = lines(mode, spacing, lang, compat);
+        assert!(
+            (a - z).abs() > 1.0,
+            "compat {mode} {spacing} {lang}{compat} kept Z on line 1"
+        );
+    }
+}
+
+#[test]
+fn compressed_punctuation_narrows_a_cell_line_before_compat_15() {
+    // Word 16 probes c14cp, c14dnc, c15cp (2026-10-01): the body line of
+    // the test above in a 468pt cell with no cell margins. Word keeps Z on
+    // the cell's first line under compressPunctuation at compat 14, and
+    // moves it under doNotCompress or compat 15, as in the body.
+    let r = r#"<w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="24"/></w:rPr>"#;
+    let text = format!("{}{}Z tail", "ab ".repeat(27), "i".repeat(25));
+    let body = format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="9360" w:type="dxa"/><w:tblLayout w:type="fixed"/><w:tblCellMar><w:left w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid><w:gridCol w:w="9360"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="9360" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r>{r}<w:t xml:space="preserve">{text}</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>{}"#,
+        letter_body_sect()
+    );
+    for (mode, spacing, kept) in [
+        (14, "compressPunctuation", true),
+        (14, "doNotCompress", false),
+        (15, "compressPunctuation", false),
+    ] {
+        let settings = format!(
+            r#"<w:characterSpacingControl w:val="{spacing}"/><w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="{mode}"/></w:compat>"#
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, &settings)).expect("cell squeeze");
+        let (_, a) = pdf_glyph_text_xy(&pdf, "ab").expect("first word");
+        let (_, z) = pdf_glyph_text_xy(&pdf, "Z").expect("last word");
+        assert_eq!(
+            (a - z).abs() < 0.1,
+            kept,
+            "compat {mode} {spacing}: Z at {z}, line 1 at {a}"
+        );
+    }
+}
+
+#[test]
+fn compressed_punctuation_leaves_calibri_spaces_whole() {
+    // Word 16 probe e_calibri_cp (2026-10-01, Calibri 12, compat 14): the
+    // spaces compressPunctuation narrows depend on the face, a fifth in
+    // Times New Roman and Arial, none in Calibri. "tail" overflows by less
+    // than a fifth of the line's spaces and still moves down, as
+    // 3f5209785f's Calibri "Duke" does.
+    let r = r#"<w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="24"/></w:rPr>"#;
+    let text = format!("{}{} tail", "ab ".repeat(27), "i".repeat(24));
+    let body = format!(
+        r#"<w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r>{r}<w:t xml:space="preserve">{text}</w:t></w:r></w:p>{}"#,
+        letter_body_sect()
+    );
+    let settings = r#"<w:characterSpacingControl w:val="compressPunctuation"/><w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="14"/></w:compat>"#;
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, settings)).expect("calibri");
+    let (_, a) = pdf_glyph_text_xy(&pdf, "ab").expect("first word");
+    let (_, tail) = pdf_glyph_text_xy(&pdf, "tail").expect("last word");
+    assert!((a - tail).abs() > 1.0, "tail kept on line 1 at {tail}");
+}
+
+#[test]
+fn compressed_punctuation_squeezes_only_without_default_fonts() {
+    // Word 16 probes probe_dd (2026-10-01, Times New Roman 12 on the runs,
+    // compat 14): an empty docDefaults keeps the squeeze; a w:rFonts in
+    // docDefaults, of any face, leaves the spaces whole and moves the word
+    // (3f5209785f's Times New Roman body).
+    let r = r#"<w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="24"/></w:rPr>"#;
+    let text = format!("{}{}Z tail", "ab ".repeat(27), "i".repeat(25));
+    let body = format!(
+        r#"<w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r>{r}<w:t xml:space="preserve">{text}</w:t></w:r></w:p>{}"#,
+        letter_body_sect()
+    );
+    let settings = r#"<w:characterSpacingControl w:val="compressPunctuation"/><w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="14"/></w:compat>"#;
+    let normal = r#"<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>"#;
+    let moved = |defaults: &str| {
+        let styles = format!("{defaults}{normal}");
+        let pdf = docx_to_pdf(&docx_with_settings_and_styles(&body, settings, &styles))
+            .expect("defaults");
+        let (_, a) = pdf_glyph_text_xy(&pdf, "ab").expect("first word");
+        let (_, z) = pdf_glyph_text_xy(&pdf, "Z").expect("last word");
+        (a - z).abs() > 1.0
+    };
+    let sized = r#"<w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="24"/></w:rPr></w:rPrDefault></w:docDefaults>"#;
+    assert!(!moved(sized), "a docDefaults without fonts moved Z");
+    for face in ["Times New Roman", "Arial", "Calibri"] {
+        let named = format!(
+            r#"<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="{face}" w:hAnsi="{face}"/><w:sz w:val="24"/></w:rPr></w:rPrDefault></w:docDefaults>"#
+        );
+        assert!(moved(&named), "docDefaults {face} kept Z on line 1");
+    }
+}
+
+#[test]
+fn a_table_sits_by_its_rules_outer_edge() {
+    // Word 16 probes d3a/d3e (d328fa3674, compat 15, 2026-10-01): a 1pt
+    // left rule on the first row only. Left-aligned, the rule's outer edge
+    // is at the margin and the grid half a rule in, so every row's text,
+    // bordered or not, starts 5.5pt in (76.3). Centred, the rules
+    // straddle the centred grid and the text starts at its 5pt margin
+    // (202.8 from a 197.85 grid). We shifted only the bordered cells,
+    // half a rule past their margin.
+    let settings = r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>"#;
+    let rule = r#"<w:tcBorders><w:top w:val="single" w:sz="8" w:space="0" w:color="000000"/><w:left w:val="single" w:sz="8" w:space="0" w:color="000000"/><w:right w:val="single" w:sz="8" w:space="0" w:color="000000"/></w:tcBorders>"#;
+    let mar = r#"<w:tcMar><w:top w:w="100" w:type="dxa"/><w:left w:w="100" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:right w:w="100" w:type="dxa"/></w:tcMar>"#;
+    let cell = |text: &str, ruled: bool| {
+        let rule = if ruled { rule } else { "" };
+        format!(
+            r#"<w:tc><w:tcPr>{rule}{mar}</w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"#
+        )
+    };
+    let xs = |jc: &str| {
+        let body = format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="3990" w:type="dxa"/>{jc}<w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid><w:gridCol w:w="840"/><w:gridCol w:w="3150"/></w:tblGrid><w:tr>{}{}</w:tr><w:tr>{}{}</w:tr></w:tbl><w:p/><w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1417" w:right="1417" w:bottom="1417" w:left="1417" w:header="708" w:footer="708"/></w:sectPr>"#,
+            cell("Q", true),
+            cell("R", true),
+            cell("V", false),
+            cell("W", false)
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, settings)).expect("rules");
+        ["Q", "R", "V", "W"].map(|g| glyph_xy(&pdf, g).0)
+    };
+    let margin = 1417.0 / 20.0;
+    let left = xs("");
+    for (got, want) in left.iter().zip([0.0, 42.0, 0.0, 42.0]) {
+        let want = margin + 0.5 + 5.0 + want;
+        assert!(
+            (got - want).abs() < 0.15,
+            "left-aligned {left:?}: want {want}"
+        );
+    }
+    let grid = margin + (11906.0 / 20.0 - 2.0 * margin - 199.5) / 2.0;
+    let centred = xs(r#"<w:jc w:val="center"/>"#);
+    for (got, want) in centred.iter().zip([0.0, 42.0, 0.0, 42.0]) {
+        let want = grid + 5.0 + want;
+        assert!(
+            (got - want).abs() < 0.15,
+            "centred {centred:?}: want {want}"
+        );
+    }
+}
+
+#[test]
+fn a_table_right_after_another_starts_at_its_left_edge() {
+    // Word 16 probe_adj (2026-10-01): two tables with no paragraph between
+    // are one table to Word. A centred 453pt table A, then a 441pt table B
+    // centred (j1) or left-aligned (j3): B's rows keep their own cell
+    // widths and start at A's left edge (79.2 both times); B alone is
+    // centred on its own width (85.4). Only tables of one layout type
+    // join (j6/j9). 628's adjacent autofit tables.
+    let borders = r#"<w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders>"#;
+    let table = |grid: &[u32], texts: &[&str], jc: bool| {
+        let cols: String = grid
+            .iter()
+            .map(|w| format!(r#"<w:gridCol w:w="{w}"/>"#))
+            .collect();
+        let cells: String = grid
+            .iter()
+            .zip(texts)
+            .map(|(w, t)| {
+                format!(
+                    r#"<w:tc><w:tcPr><w:tcW w:w="{w}" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>{t}</w:t></w:r></w:p></w:tc>"#
+                )
+            })
+            .collect();
+        let jc = if jc { r#"<w:jc w:val="center"/>"# } else { "" };
+        format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/>{jc}{borders}</w:tblPr><w:tblGrid>{cols}</w:tblGrid><w:tr>{cells}</w:tr></w:tbl>"#
+        )
+    };
+    let a = table(&[1866, 2872, 2330, 1994], &["A1", "A2", "A3", "A4"], true);
+    let left = |body: String, text: &str| {
+        let pdf = docx_to_pdf(&minimal_docx_body(&format!("{body}<w:p/><w:sectPr/>")))
+            .expect("adjacent tables");
+        pdf_glyph_text_xy(&pdf, text).expect("cell text").0
+    };
+    let a1 = left(a.clone(), "A1");
+    for jc in [true, false] {
+        let b = table(&[2745, 6068], &["B1", "B2"], jc);
+        let b1 = left(format!("{a}{b}"), "B1");
+        assert!(
+            (b1 - a1).abs() < 0.3,
+            "jc center {jc}: B starts at A's left edge; A1 {a1}, B1 {b1}"
+        );
+    }
+    // The joined table is placed by its widest part: the narrow B first,
+    // then the wide A, starts both at A's centred edge (j14, j17: 79.9
+    // with A centred or not; 29379c0's three tables at 70.8).
+    for jc in [true, false] {
+        let wide = table(&[1866, 2872, 2330, 1994], &["W1", "W2", "W3", "W4"], jc);
+        let b = table(&[2745, 6068], &["B1", "B2"], true);
+        let body = format!("{b}{wide}");
+        let (b1, w1) = (left(body.clone(), "B1"), left(body, "W1"));
+        assert!(
+            (b1 - a1).abs() < 0.3 && (w1 - a1).abs() < 0.3,
+            "jc center {jc}: narrow then wide start at the wide one's centred edge {a1}; B1 {b1}, W1 {w1}"
+        );
+    }
+    // Apart, B keeps its own centring; so does a fixed-layout B (j6:
+    // 86.2, not 79.9), as in 0bf5192ed0's alternating tables.
+    let b = table(&[2745, 6068], &["B1", "B2"], true);
+    let apart = left(format!("{a}<w:p/>{b}"), "B1");
     assert!(
-        (pitch - 15.84).abs() < 0.3,
-        "the break's 20pt run sizes line one; pitch={pitch} ys={ys:?}"
+        apart - a1 > 5.0,
+        "a paragraph between keeps the tables apart; A1 {a1}, B1 {apart}"
+    );
+    let fixed = b.replace("</w:tblPr>", r#"<w:tblLayout w:type="fixed"/></w:tblPr>"#);
+    let own = left(format!("{a}{fixed}"), "B1");
+    assert!(
+        (own - apart).abs() < 0.3,
+        "a fixed table after an autofit one keeps its own place; B1 {own}, apart {apart}"
+    );
+}
+
+#[test]
+fn contextual_spacing_drops_only_the_flagged_paragraphs_share_of_the_gap() {
+    // Word 16 probe_cx (2026-10-01), two Normal paragraphs, compat 15:
+    // the gap is max(after, before) split into A's after and B's excess
+    // over it, and contextualSpacing drops only the flagged paragraph's
+    // share. A flagged (after 20 / 6) over a plain B (before 6 / 20)
+    // leaves 0 / 14; a plain A (after 20 / 6) over a flagged B leaves
+    // 20 / 6; both flagged 0; neither 20. 6ef1820785's flagged lines over
+    // plain empty paragraphs lost each empty paragraph's 2pt, and a row
+    // Word moves to page 4 stayed on page 3.
+    let settings = r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>"#;
+    let para = |text: &str, before: u32, after: u32, ctx: bool| {
+        let ctx = if ctx { "<w:contextualSpacing/>" } else { "" };
+        format!(
+            r#"<w:p><w:pPr><w:spacing w:before="{}" w:after="{}" w:line="240" w:lineRule="auto"/>{ctx}</w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#,
+            before * 20,
+            after * 20
+        )
+    };
+    let pitch = |a_after: u32, a_ctx: bool, b_before: u32, b_ctx: bool| {
+        let body = format!(
+            "{}{}<w:sectPr/>",
+            para("A", 0, a_after, a_ctx),
+            para("B", b_before, 0, b_ctx)
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, settings)).expect("ctx");
+        let ys = text_baselines(&pdf);
+        assert_eq!(ys.len(), 2, "A and B; ys={ys:?}");
+        ys[0] - ys[1]
+    };
+    let base = pitch(20, true, 6, true);
+    for (a_after, a_ctx, b_before, b_ctx, gap) in [
+        (20, true, 6, false, 0.0),
+        (6, true, 20, false, 14.0),
+        (20, false, 6, true, 20.0),
+        (6, false, 20, true, 6.0),
+        (20, false, 6, false, 20.0),
+    ] {
+        let got = pitch(a_after, a_ctx, b_before, b_ctx) - base;
+        assert!(
+            (got - gap).abs() < 0.3,
+            "A after {a_after} ctx {a_ctx}, B before {b_before} ctx {b_ctx}: gap {got}, Word {gap}"
+        );
+    }
+}
+
+#[test]
+fn without_html_auto_spacing_paragraph_spacing_adds_up() {
+    // Word 16 probe_sum (2026-10-01), compat 15: exact 20pt lines with 6pt
+    // before and after step 26 (the larger of after and before), and 32
+    // (both) under w:doNotUseHTMLParagraphAutoSpacing, in the body and in
+    // a cell alike. 4640e71ddd sets the flag: its list rows step 23.5
+    // (20 + 1.8 + 1.8) where we stepped 21.8.
+    let para = |text: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:spacing w:before="120" w:after="120" w:line="400" w:lineRule="exact"/></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"#
+        )
+    };
+    let paras = format!("{}{}", para("Aone"), para("Btwo"));
+    let cell = format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="5000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="5000" w:type="dxa"/></w:tcPr>{paras}</w:tc></w:tr></w:tbl><w:p/>"#
+    );
+    let compat = |flag: &str| {
+        format!(
+            r#"<w:compat>{flag}<w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>"#
+        )
+    };
+    for (flag, step) in [("", 26.0), ("<w:doNotUseHTMLParagraphAutoSpacing/>", 32.0)] {
+        for (place, body) in [("body", &paras), ("cell", &cell)] {
+            let pdf = docx_to_pdf(&minimal_docx_with_settings(
+                &format!("{body}<w:sectPr/>"),
+                &compat(flag),
+            ))
+            .expect("spacing");
+            let a = pdf_glyph_text_xy(&pdf, "Aone").expect("A").1;
+            let b = pdf_glyph_text_xy(&pdf, "Btwo").expect("B").1;
+            assert!(
+                (a - b - step).abs() < 0.3,
+                "{place} with {flag:?}: lines step {}, Word {step}",
+                a - b
+            );
+        }
+    }
+}
+
+#[test]
+fn the_run_holding_an_inline_shape_sizes_its_line() {
+    // Word 16 probe 2026-10-01 (probe_il): an Arial 10 "TOP", then a
+    // paragraph whose Calibri run holds only a 144x0.48pt inline wps rect
+    // (3936a8fe56's rule above each heading), then "NEXT". The rect's run
+    // sizes the line, with or without a trailing Arial 10 space: TOP to
+    // NEXT is 23.76 at sz 20, 38.40 at sz 44 and 55.44 at sz 72 (Calibri
+    // single lines 12.2, 26.9 and 43.9). We sized it by the space alone.
+    let shape = r#"<w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="0" distR="0"><wp:extent cx="1829435" cy="6097"/><wp:docPr id="1" name="r"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:cNvSpPr/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1829435" cy="6097"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="434242"/></a:solidFill></wps:spPr><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing>"#;
+    let rpr = |font: &str, sz: u32| {
+        format!(
+            r#"<w:rPr><w:rFonts w:ascii="{font}" w:hAnsi="{font}"/><w:sz w:val="{sz}"/></w:rPr>"#
+        )
+    };
+    let ppr = r#"<w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr>"#;
+    let pitch = |sz: u32, space: bool| {
+        let tail = if space {
+            format!(
+                r#"<w:r>{}<w:t xml:space="preserve"> </w:t></w:r>"#,
+                rpr("Arial", 20)
+            )
+        } else {
+            String::new()
+        };
+        let body = format!(
+            r#"<w:p>{ppr}<w:r>{a}<w:t>TOP</w:t></w:r></w:p><w:p>{ppr}<w:r>{c}{shape}</w:r>{tail}</w:p><w:p>{ppr}<w:r>{a}<w:t>NEXT</w:t></w:r></w:p><w:sectPr/>"#,
+            a = rpr("Arial", 20),
+            c = rpr("Calibri", sz),
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("inline shape");
+        let ys = text_baselines(&pdf);
+        assert!(ys.len() >= 2, "TOP and NEXT; ys={ys:?}");
+        ys[0] - ys[ys.len() - 1]
+    };
+    for (sz, want) in [(20, 23.76), (44, 38.40), (72, 55.44)] {
+        for space in [true, false] {
+            let got = pitch(sz, space);
+            assert!(
+                (got - want).abs() < 0.5,
+                "sz {sz} space {space}: TOP to NEXT {got}, Word {want}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_line_break_run_sizes_only_a_line_it_stands_alone_on() {
+    // Word 16 probe 2026-10-01 (probe_br): "Top" then a 20pt run holding
+    // <w:br/> keeps Top's 11pt line (pitch 13.44, the same as an 11pt
+    // break); a 20pt break alone on its own line sizes that empty line
+    // (Top to Bottom 37.92). fixtures_500 00accd5b's 13.5pt break is the
+    // second of two, alone on its line; e124592dd0's 36pt break after a
+    // 28pt title leaves Word's title line 28pt tall.
+    let run = |text: &str, sz: u32| {
+        format!(r#"<w:r><w:rPr><w:sz w:val="{sz}"/></w:rPr><w:t>{text}</w:t></w:r>"#)
+    };
+    let br = |sz: u32| format!(r#"<w:r><w:rPr><w:sz w:val="{sz}"/></w:rPr><w:br/></w:r>"#);
+    let pitch = |inner: String| {
+        let body = format!(
+            r#"<w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr>{inner}</w:p><w:sectPr/>"#
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, "")).expect("br size");
+        let ys = text_baselines(&pdf);
+        assert!(ys.len() >= 2, "two text lines; ys={ys:?}");
+        ys[0] - ys[1]
+    };
+    let plain = pitch(format!("{}{}{}", run("Top", 22), br(22), run("Bottom", 22)));
+    let big = pitch(format!("{}{}{}", run("Top", 22), br(40), run("Bottom", 22)));
+    assert!(
+        (big - plain).abs() < 0.05,
+        "a break after text does not size its line; big={big} plain={plain}"
+    );
+    let alone = pitch(format!(
+        "{}{}{}{}",
+        run("Top", 22),
+        br(22),
+        br(40),
+        run("Bottom", 22)
+    ));
+    assert!(
+        (alone - 37.92).abs() < 0.3,
+        "a break alone on its line sizes it; alone={alone}"
     );
 }
 
@@ -2681,7 +3788,10 @@ fn an_autofit_pct_table_keeps_the_grid_its_width_matches() {
     // fixtures_500 005e8d94: tblW 4949 pct (505pt of 510.2), grid
     // 1546/1263/1341/1958/1991/1991 twips summing to 504.5pt, tcW shares
     // 814/612/650/949/1008/966 within 7% of it. Live Word draws the grid;
-    // we laid the shares out (column two 4.9pt right).
+    // we laid the shares out (column two 4.9pt right). The cells keep
+    // 005e8d94's 108-twip margins; with no default table style Word 16
+    // runs this body with Cell0..Cell5 at 45.12/129.12/192.24/259.44/
+    // 357.36/461.28 (2026-10-01).
     let grid = [1546, 1263, 1341, 1958, 1991, 1991];
     let pct = [814, 612, 650, 949, 1008, 966];
     let cols: String = grid
@@ -2694,13 +3804,13 @@ fn an_autofit_pct_table_keeps_the_grid_its_width_matches() {
         .map(|(i, p)| format!(r#"<w:tc><w:tcPr><w:tcW w:w="{p}" w:type="pct"/></w:tcPr><w:p><w:r><w:t>Cell{i}</w:t></w:r></w:p></w:tc>"#))
         .collect();
     let body = format!(
-        r#"<w:tbl><w:tblPr><w:tblW w:w="4949" w:type="pct"/><w:jc w:val="center"/></w:tblPr><w:tblGrid>{cols}</w:tblGrid><w:tr>{cells}</w:tr></w:tbl><w:p/><w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="851" w:bottom="1134" w:left="851"/></w:sectPr>"#
+        r#"<w:tbl><w:tblPr><w:tblW w:w="4949" w:type="pct"/><w:jc w:val="center"/><w:tblCellMar><w:left w:w="108" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid>{cols}</w:tblGrid><w:tr>{cells}</w:tr></w:tbl><w:p/><w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="851" w:bottom="1134" w:left="851"/></w:sectPr>"#
     );
     let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("pct grid table");
     let (x, _) = pdf_glyph_text_xy(&pdf, "Cell1").expect("cell two paints");
     assert!(
-        (x - 128.1).abs() < 0.4,
-        "column two starts at the grid's 77.3pt; x={x}"
+        (x - 129.12).abs() < 0.3,
+        "column two starts where Word sets it; x={x}"
     );
 }
 
@@ -3419,6 +4529,37 @@ fn a_header_picture_past_the_measure_wraps_to_a_new_row() {
     assert!(
         one - two > 50.0,
         "the second 50pt banner opens a row below; one {one} two {two}"
+    );
+}
+
+#[test]
+fn a_header_picture_after_text_that_cannot_share_its_line_wraps_under_it() {
+    // PR #247 review 4149916397: the trailing-picture test counted the
+    // pictures' width alone. Word 16 probe hpic (2026-10-01): 394pt of text
+    // and a 200pt picture in the 468pt measure do not share a line; the
+    // picture takes the next and the body starts 5.3pt lower than beside
+    // "Short".
+    let pic = "<w:r><w:drawing><wp:inline><wp:extent cx=\"2540000\" cy=\"635000\"/>\
+         <wp:docPr id=\"1\" name=\"Picture 1\"/><a:graphic><a:graphicData \
+         uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\"><pic:pic><pic:blipFill>\
+         <a:blip r:embed=\"rIdImg\"/></pic:blipFill></pic:pic></a:graphicData></a:graphic>\
+         </wp:inline></w:drawing></w:r>";
+    let body_y = |text: &str| {
+        let docx = header_part_docx_at(
+            &format!("<w:p><w:r><w:t xml:space=\"preserve\">{text}</w:t></w:r>{pic}</w:p>"),
+            0,
+        );
+        let pdf = docx_to_pdf(&docx).expect("header");
+        pdf_glyph_text_xy(&pdf, "HdrImgBodyX")
+            .expect("body paints")
+            .1
+    };
+    let short = body_y("Short");
+    let long = body_y(&"Header words that run on ".repeat(3));
+    // Word 5.3pt; we drop 8.4 (the extra line's descent, not yet Word's).
+    assert!(
+        (3.0..9.0).contains(&(short - long)),
+        "the picture drops under the long text; short {short} long {long}"
     );
 }
 
@@ -4700,6 +5841,58 @@ fn a_cell_paragraph_split_across_pages_keeps_its_line_breaks() {
 }
 
 #[test]
+fn a_row_whose_cell_cites_a_footnote_makes_room_for_it() {
+    // ece10bd712: the footnote is cited from a table cell. Word keeps the
+    // note on the citing row's page and moves the row on when the note
+    // will not fit under it; we left the floor where it was, so the row
+    // stayed on page 1 above the note's space and the note slid past it.
+    let mut rows = String::new();
+    for i in 0..40 {
+        rows.push_str(&format!(
+            "<w:tr><w:tc><w:p><w:r><w:t>Filler{i:02}</w:t></w:r></w:p></w:tc></w:tr>"
+        ));
+    }
+    rows.push_str(
+        "<w:tr><w:tc><w:p><w:r><w:t>CitingRow</w:t></w:r>\
+         <w:r><w:rPr><w:vertAlign w:val=\"superscript\"/></w:rPr>\
+           <w:footnoteReference w:id=\"1\"/></w:r></w:p></w:tc></w:tr>\
+         <w:tr><w:tc><w:p><w:r><w:t>AfterRow</w:t></w:r></w:p></w:tc></w:tr>",
+    );
+    let body = format!(
+        "<w:tbl><w:tblGrid><w:gridCol w:w=\"9000\"/></w:tblGrid>{rows}</w:tbl><w:p/>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    );
+    let lines: String = (0..12)
+        .map(|i| format!("<w:p><w:r><w:t>NoteLine{i:02}</w:t></w:r></w:p>"))
+        .collect();
+    let notes = format!(
+        "<w:footnote w:type=\"separator\" w:id=\"-1\"><w:p/></w:footnote>\
+         <w:footnote w:type=\"continuationSeparator\" w:id=\"0\"><w:p/></w:footnote>\
+         <w:footnote w:id=\"1\">{lines}</w:footnote>"
+    );
+    let pdf = docx_to_pdf(&footnotes_docx(&body, &notes)).expect("convert cell footnote");
+    let pages = pdf_content_streams(&pdf);
+    let page_of = |tag: &str| {
+        pages
+            .iter()
+            .position(|p| stream_glyph_text(p).contains(tag))
+            .unwrap_or_else(|| panic!("{tag} painted"))
+    };
+    assert_eq!(
+        page_of("CitingRow"),
+        page_of("NoteLine00"),
+        "the note paints on its citing row's page"
+    );
+    assert_eq!(
+        page_of("CitingRow"),
+        page_of("NoteLine11"),
+        "the whole note fits under the citing row"
+    );
+    assert!(page_of("CitingRow") > 0, "the row moves on to make room");
+}
+
+#[test]
 fn a_keep_next_row_stays_with_the_next_row() {
     // fixtures_500 000aba38: Heading 2 (keepNext) label rows. The first
     // fits under page 1's rows by itself, but not with the row after it;
@@ -4760,10 +5953,11 @@ fn a_floating_table_taller_than_its_page_breaks_across_pages() {
 #[test]
 fn a_phpword_table_without_table_styles_is_not_pulled_into_the_margin() {
     // fixtures_500 00f0e7f3 / 00046848 (PHPWord, compatibilityMode 12):
-    // docDefaults without pPrDefault and no table style: Word keeps the
-    // table border at the margin (cell text 5.4pt in). 00587c73, whose
-    // styles define TableNormal, is pulled left by its cell margin as
-    // usual, and so is a styles part that carries a pPrDefault.
+    // no default table style, so Word keeps the table border at the
+    // margin and pads the cell 0.5pt, pPrDefault or not (Word 16 runs
+    // these bodies with the text at 72.48, probes 2026-10-01). 00587c73,
+    // whose styles define TableNormal, is pulled left by its 108-twip cell
+    // margin as usual (probe v4: 72.0).
     let styles = |defaults: &str, table_style: &str| {
         format!(
             "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
@@ -4778,7 +5972,8 @@ fn a_phpword_table_without_table_styles_is_not_pulled_into_the_margin() {
         <w:tblCellMar><w:left w:w=\"108\" w:type=\"dxa\"/><w:right w:w=\"108\" w:type=\"dxa\"/></w:tblCellMar>\
         </w:tblPr></w:style>";
     let x = |styles_xml: &str| {
-        let body = "<w:tbl><w:tblGrid><w:gridCol w:w=\"9360\"/></w:tblGrid>\
+        let body = "<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/></w:tblPr>\
+               <w:tblGrid><w:gridCol w:w=\"9360\"/></w:tblGrid>\
                <w:tr><w:tc><w:p><w:r><w:t>NoPull</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:sectPr/>";
         let pdf = docx_to_pdf(&docx_with_styles(body, styles_xml)).expect("pull");
         pdf_glyph_text_xy(&pdf, "NoPull").expect("cell text").0
@@ -4787,12 +5982,12 @@ fn a_phpword_table_without_table_styles_is_not_pulled_into_the_margin() {
     let styled = x(&styles("", normal_table));
     let with_ppr_default = x(&styles("<w:pPrDefault><w:pPr/></w:pPrDefault>", ""));
     assert!(
-        (plain - 77.4).abs() < 0.3,
-        "no table styles: not pulled; x={plain}"
+        (plain - 72.48).abs() < 0.3,
+        "no table styles: not pulled, 0.5pt in; x={plain}"
     );
     assert!(
-        (with_ppr_default - 72.0).abs() < 0.3,
-        "pPrDefault present: pulled; x={with_ppr_default}"
+        (with_ppr_default - 72.48).abs() < 0.3,
+        "pPrDefault present, still no table style: not pulled; x={with_ppr_default}"
     );
     assert!(
         (styled - 72.0).abs() < 0.3,
@@ -5342,7 +6537,7 @@ fn a_merged_cells_content_grows_the_last_row_it_spans() {
 }
 
 #[test]
-fn a_row_with_a_keep_lines_paragraph_moves_whole() {
+fn a_row_opening_on_a_heading_moves_whole() {
     // fixtures_500 000aba38: a CV table row whose label cell is Heading 2
     // (keepNext + keepLines) does not fit under page 1's rows. Word moves
     // the whole row to page 2 (page 1 ends at 489pt); we split it.
@@ -5581,6 +6776,91 @@ fn a_keep_next_paragraph_ending_a_page_splits_or_moves_by_compat_mode() {
         (on(&past, "Kp3"), on(&past, "Kp4")),
         (0, 1),
         "one that runs past the page splits as usual"
+    );
+}
+
+#[test]
+fn a_page_break_opening_a_paragraph_after_a_full_page_breaks_once() {
+    // Word 16 probes lb0930 (compat 14 and 15): after 32 exact 20pt lines
+    // "<br page/>Heading" opens page 2. jubarte gave the empty text before
+    // the break a line of its own, which moved down a page, and the break
+    // then left that page blank (priority d9b54326f3: 31 pages, Word 30).
+    let line = |k: usize| {
+        format!(
+            "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"400\" w:lineRule=\"exact\"/></w:pPr>\
+             <w:r><w:t>L{k:02}</w:t></w:r></w:p>"
+        )
+    };
+    let lines: String = (0..32).map(line).collect();
+    let body = format!(
+        "{lines}<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"400\" w:lineRule=\"exact\"/></w:pPr>\
+           <w:r><w:br w:type=\"page\"/></w:r><w:r><w:t>Heading</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>"
+    );
+    for mode in [14, 15] {
+        let settings = format!(
+            r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="{mode}"/></w:compat>"#
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, &settings)).expect("break");
+        assert_eq!(
+            page_with_text(&pdf, "L31"),
+            Some(0),
+            "mode {mode}: 32 lines fill page 1"
+        );
+        assert_eq!(
+            (page_with_text(&pdf, "Heading"), pdf_page_count(&pdf)),
+            (Some(1), 2),
+            "mode {mode}: the break opens page 2 once"
+        );
+    }
+}
+
+#[test]
+fn a_legacy_page_float_gets_one_body_height_below_its_top() {
+    // Word 16 probes y2440_* 0930 (31 exact 20pt rows, tblpY 122pt under a
+    // 72pt margin, page-anchored): compat 14 gives the table one body
+    // height from its own top, so all 31 rows stay on page 1 past the
+    // 720pt floor and the next paragraph flows above the table (priority
+    // d9b54326f3's page 7 row reaches 524.5pt under a 523pt floor);
+    // compat 15 stops at the floor (R28).
+    let rows: String = (0..31)
+        .map(|k| {
+            format!(
+                "<w:tr><w:trPr><w:trHeight w:val=\"400\" w:hRule=\"exact\"/></w:trPr><w:tc>\
+                 <w:tcPr><w:tcW w:w=\"9000\" w:type=\"dxa\"/></w:tcPr><w:p><w:pPr>\
+                 <w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>R{k:02}</w:t></w:r></w:p></w:tc></w:tr>"
+            )
+        })
+        .collect();
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblpPr w:leftFromText=\"180\" w:rightFromText=\"180\" \
+           w:vertAnchor=\"page\" w:horzAnchor=\"margin\" w:tblpY=\"2440\"/>\
+           <w:tblW w:w=\"9000\" w:type=\"dxa\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"9000\"/></w:tblGrid>{rows}</w:tbl>\
+         <w:p><w:r><w:t>After</w:t></w:r></w:p><w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>"
+    );
+    let pages = |mode: u32| {
+        let settings = format!(
+            r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="{mode}"/></w:compat>"#
+        );
+        docx_to_pdf(&minimal_docx_with_settings(&body, &settings)).expect("page float")
+    };
+    let on = |pdf: &[u8], t: &str| page_with_text(pdf, t).expect(t);
+    let legacy = pages(14);
+    assert_eq!(
+        (on(&legacy, "R30"), on(&legacy, "After")),
+        (0, 0),
+        "compat 14 holds the whole table and the paragraph after it on page 1"
+    );
+    let modern = pages(15);
+    assert_eq!(
+        (on(&modern, "R28"), on(&modern, "R29")),
+        (0, 1),
+        "compat 15 breaks at the floor"
     );
 }
 
@@ -6088,6 +7368,12 @@ fn sample_footnote_parts() -> (String, String) {
 }
 
 fn diagram_docx(body: &str, data_xml: &str) -> Vec<u8> {
+    diagram_docx_parts(body, data_xml, None)
+}
+
+/// A diagram package; `drawing` is the cached `dsp:drawing` part Word
+/// paints the shapes from (linked from the document as diagramDrawing).
+fn diagram_docx_parts(body: &str, data_xml: &str, drawing: Option<&str>) -> Vec<u8> {
     let document = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
@@ -6117,6 +7403,9 @@ fn diagram_docx(body: &str, data_xml: &str) -> Vec<u8> {
         <Relationship Id=\"rIdDm\" \
           Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/diagramData\" \
           Target=\"diagrams/data1.xml\"/>\
+        <Relationship Id=\"rIdDd\" \
+          Type=\"http://schemas.microsoft.com/office/2007/relationships/diagramDrawing\" \
+          Target=\"diagrams/drawing1.xml\"/>\
         </Relationships>";
     let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
     let opts = SimpleFileOptions::default();
@@ -6131,6 +7420,10 @@ fn diagram_docx(body: &str, data_xml: &str) -> Vec<u8> {
     zip.write_all(doc_rels.as_bytes()).unwrap();
     zip.start_file("word/diagrams/data1.xml", opts).unwrap();
     zip.write_all(data_xml.as_bytes()).unwrap();
+    if let Some(drawing) = drawing {
+        zip.start_file("word/diagrams/drawing1.xml", opts).unwrap();
+        zip.write_all(drawing.as_bytes()).unwrap();
+    }
     zip.finish().unwrap().into_inner()
 }
 
@@ -6725,6 +8018,38 @@ fn a_picture_paragraphs_mark_rpr_sets_its_extra_leading() {
 }
 
 #[test]
+fn a_page_tall_inline_picture_under_its_space_before_stays_on_the_first_page() {
+    // Priority 9f2c60b301 (Word 16): a 648pt inline cover box fills the
+    // body of a 1in-margin Letter page, in a Heading 1 with 18pt before at
+    // the document start. Word keeps the space (its title sits 19pt lower
+    // than with none) and draws the box on page 1, past the bottom margin;
+    // jubarte broke to page 2 and left page 1 blank (9 pages, Word 8).
+    let pic = blip(
+        "5943600",
+        "8229600",
+        "<wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">",
+        "</wp:inline>",
+    );
+    let docx = drawing_docx(&format!(
+        "<w:p><w:pPr><w:spacing w:before=\"360\"/></w:pPr><w:r>{pic}</w:r></w:p>\
+         <w:p><w:r><w:t>After</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    ));
+    let pdf = docx_to_pdf(&docx).expect("cover box");
+    assert_eq!(
+        pdf_page_count(&pdf),
+        2,
+        "the cover stays on page 1, After opens page 2"
+    );
+    let top = pdf_image_boxes(&pdf).first().expect("picture").1 + 648.0;
+    assert!(
+        (top - (720.0 - 18.0)).abs() < 1.5,
+        "its 18pt before is kept; top={top}"
+    );
+}
+
+#[test]
 fn inline_picture_para_does_not_add_a_text_line_box() {
     // xml 3.4 ckpt 3 / case12: a drawing-only inline picture is the
     // paragraph's line box (cy), not a Normal text line plus the picture
@@ -6873,6 +8198,65 @@ fn vml_images_take_the_slot_of_their_own_shape() {
         (fx - 72.0).abs() < 0.5,
         "in-flow shape paints at the margin, x={fx}"
     );
+}
+
+#[test]
+fn cell_text_runs_beside_a_square_float_at_the_cell_left() {
+    // 3cccdeb956's header cell: a square-wrapped logo at the cell's left,
+    // the address lines after it. Word sets them right of the logo, 9pt
+    // clear (VML's default distance, DrawingML's distR), and the line
+    // under the logo back at the cell's text left (probes cell/cell_dml).
+    let vml = "<w:pict><v:shape style=\"position:absolute;margin-left:0;margin-top:0;\
+        width:100pt;height:34pt;mso-wrap-style:square;\
+        mso-position-horizontal-relative:text;mso-position-vertical-relative:text\">\
+        <v:imagedata r:id=\"rIdImg\"/>\
+        <w10:wrap xmlns:w10=\"urn:schemas-microsoft-com:office:word\" type=\"square\"/>\
+        </v:shape></w:pict>";
+    let dml = "<w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" \
+        simplePos=\"0\" relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" \
+        allowOverlap=\"1\"><wp:simplePos x=\"0\" y=\"0\"/>\
+        <wp:positionH relativeFrom=\"column\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+        <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+        <wp:extent cx=\"1270000\" cy=\"431800\"/><wp:wrapSquare wrapText=\"bothSides\"/>\
+        <wp:docPr id=\"1\" name=\"p\"/><a:graphic><a:graphicData \
+        uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\"><pic:pic>\
+        <pic:nvPicPr><pic:cNvPr id=\"1\" name=\"p\"/><pic:cNvPicPr/></pic:nvPicPr>\
+        <pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill><pic:spPr><a:xfrm>\
+        <a:off x=\"0\" y=\"0\"/><a:ext cx=\"1270000\" cy=\"431800\"/></a:xfrm></pic:spPr>\
+        </pic:pic></a:graphicData></a:graphic></wp:anchor></w:drawing>";
+    for (kind, pic) in [("vml", vml), ("dml", dml)] {
+        let body = format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"6138\" w:type=\"dxa\"/></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"6138\"/></w:tblGrid><w:tr><w:tc>\
+             <w:tcPr><w:tcW w:w=\"6138\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r>{pic}</w:r><w:r><w:t>Beside1</w:t><w:br/><w:t>Beside2</w:t>\
+             <w:br/><w:t>Beside3</w:t><w:br/><w:t>Under4</w:t></w:r></w:p>\
+             </w:tc></w:tr></w:tbl>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+             <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        );
+        let pdf = docx_to_pdf(&drawing_docx(&body)).expect("convert cell float");
+        let (ix, iy) = image_cm_xy(&pdf, "100.00", "34.00");
+        let at = |word: &str| {
+            pdf_literal_td_xy(&pdf, word).unwrap_or_else(|| panic!("{kind}: {word} painted"))
+        };
+        for word in ["Beside1", "Beside2", "Beside3"] {
+            let (x, _) = at(word);
+            assert!(
+                (x - (ix + 109.0)).abs() < 0.5,
+                "{kind}: {word} 9pt right of the picture at {ix}: x={x}"
+            );
+        }
+        assert!(
+            at("Beside1").1 > iy,
+            "{kind}: the first line sits beside the picture, not under it"
+        );
+        let (ux, uy) = at("Under4");
+        assert!(
+            (ux - ix).abs() < 0.5 && uy < iy,
+            "{kind}: the line under the picture is back at the text left: {ux},{uy} vs {ix},{iy}"
+        );
+    }
 }
 
 #[test]
@@ -8961,6 +10345,56 @@ fn diagram_data_labels_are_painted() {
 }
 
 #[test]
+fn a_diagram_only_paragraph_takes_the_room_of_a_picture_its_size() {
+    // _to_improve 25e6d4b508: a 492pt inline SmartArt alone in its
+    // paragraph fits page 10 in Word, as a picture its size does in
+    // jubarte; we laid the paragraph's empty text line above the diagram
+    // too, pushed it to page 11 and ended a page long.
+    let frame = |graphic: &str| {
+        format!(
+            "<w:p><w:r><w:t>LeadLine</w:t></w:r></w:p>\
+             <w:p><w:r><w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">\
+               <wp:extent cx=\"2540000\" cy=\"1270000\"/><wp:docPr id=\"1\" name=\"Object 1\"/>\
+               {graphic}</wp:inline></w:drawing></w:r></w:p>\
+             <w:p><w:r><w:t>AfterLine</w:t></w:r></w:p><w:sectPr/>"
+        )
+    };
+    let diagram = frame(
+        "<a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/diagram\">\
+           <dgm:relIds r:dm=\"rIdDm\"/></a:graphicData></a:graphic>",
+    );
+    let data = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <dgm:dataModel xmlns:dgm=\"http://schemas.openxmlformats.org/drawingml/2006/diagram\" \
+           xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"><dgm:ptList/></dgm:dataModel>";
+    let drawing = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <dsp:drawing xmlns:dsp=\"http://schemas.microsoft.com/office/drawing/2008/diagram\" \
+           xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"><dsp:spTree>\
+           <dsp:sp><dsp:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"2540000\" cy=\"1270000\"/></a:xfrm>\
+             <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>\
+             <a:solidFill><a:srgbClr val=\"4472C4\"/></a:solidFill></dsp:spPr></dsp:sp>\
+         </dsp:spTree></dsp:drawing>";
+    let picture = frame(
+        "<a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+           <pic:pic><pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill></pic:pic>\
+         </a:graphicData></a:graphic>",
+    );
+    let after = |pdf: &[u8]| {
+        pdf_glyph_text_xy(pdf, "AfterLine")
+            .expect("AfterLine paints")
+            .1
+    };
+    let with_diagram =
+        docx_to_pdf(&diagram_docx_parts(&diagram, data, Some(drawing))).expect("diagram paragraph");
+    let with_picture = docx_to_pdf(&drawing_docx(&picture)).expect("picture paragraph");
+    assert!(
+        (after(&with_diagram) - after(&with_picture)).abs() < 1.0,
+        "the line after sits where it does under a picture its size; diagram {} picture {}",
+        after(&with_diagram),
+        after(&with_picture)
+    );
+}
+
+#[test]
 fn empty_diagram_drawing_is_not_stroked() {
     // Strict01 Diagram 1 is an inline graphicData/diagram with no series.
     // Emitting it as an empty stroked box produced a hollow last page.
@@ -9714,6 +11148,53 @@ fn a_hidden_row_of_hidden_text_takes_its_borders_with_it() {
 }
 
 #[test]
+fn a_paragraph_styles_vanish_hides_its_runs() {
+    // PR #247 review: a paragraph style's run properties are its runs'
+    // base, w:vanish included; a run's own vanish=0 still shows it.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+          <w:style w:type=\"paragraph\" w:styleId=\"Secret\"><w:name w:val=\"Secret\"/>\
+            <w:basedOn w:val=\"Normal\"/><w:rPr><w:vanish/></w:rPr></w:style>\
+        </w:styles>";
+    let body = "<w:p><w:r><w:t>Kept</w:t></w:r></w:p>\
+         <w:p><w:pPr><w:pStyle w:val=\"Secret\"/></w:pPr><w:r><w:t>Classified</w:t></w:r>\
+           <w:r><w:rPr><w:vanish w:val=\"0\"/></w:rPr><w:t>Declassified</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&docx_with_styles(body, styles)).expect("hidden paragraph style");
+    let text = stream_glyph_text(&pdf_content_streams(&pdf)[0]);
+    assert!(text.contains("Kept"), "{text}");
+    assert!(
+        !text.contains("Classified"),
+        "the paragraph style hides it: {text}"
+    );
+    assert!(
+        text.contains("Declassified"),
+        "direct vanish=0 wins: {text}"
+    );
+}
+
+#[test]
+fn a_hidden_row_keeps_text_a_later_rpr_shows() {
+    // PR #247 review: the run's leading rPr blocks fold in order; the
+    // second turns vanish off, so the row has visible text and stays.
+    let doc = minimal_docx_body(
+        "<w:p><w:r><w:t>Before</w:t></w:r></w:p>\
+         <w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"pct\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"8460\"/></w:tblGrid><w:tr><w:trPr><w:hidden/></w:trPr><w:tc>\
+           <w:p><w:pPr><w:rPr><w:vanish/></w:rPr></w:pPr><w:r><w:rPr><w:vanish/></w:rPr><w:rPr><w:vanish w:val=\"0\"/></w:rPr>\
+             <w:t>Visible</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+         <w:p><w:r><w:t>After</w:t></w:r></w:p><w:sectPr/>",
+    );
+    let pdf = docx_to_pdf(&doc).expect("hidden row with shown text");
+    assert!(
+        pdf_glyph_text_xy(&pdf, "Visible").is_some(),
+        "the row's text shows, so the row is laid out"
+    );
+}
+
+#[test]
 fn a_hidden_row_of_style_hidden_text_takes_its_borders_with_it() {
     // PR #247 review: the row's text and mark vanish through a character
     // style, not a direct w:vanish. Its runs already stayed off the page;
@@ -10189,11 +11670,18 @@ fn official_potpourri_two_digit_listnumber_still_hangs() {
         pairs >= 10,
         "Word 1.–10. hang at 72/90; fitz 10.Bake concat is theater; pairs={pairs}"
     );
+    // Word's own PDF numbers the third copy twice, original then revised
+    // (its inserted second copy took 6.–10.): "6.11.", "7.12.", "8.13.",
+    // and the deleted "10." alone. Word prints "9.13." after "8.13." for
+    // an unrevised item; we keep the count ("9.14.").
     let text = pdf_winansi_text(&pdf);
-    assert!(
-        !text.contains("6.11"),
-        "mini 310 All Markup 6.11 ITT-neg RL; text={text:?}"
-    );
+    for want in ["6.11.Preheat", "7.12.Whisk", "8.13.Sift"] {
+        assert!(
+            text.matches(want).count() == 1,
+            "{want} once; text={text:?}"
+        );
+    }
+    assert_eq!(text.matches("10.Bake").count(), 2, "copies two and three");
 }
 
 #[test]
@@ -10575,9 +12063,9 @@ fn official_file_34_matches_word_two_pages() {
 
 #[test]
 fn table_cell_jc_center_centers_header_text() {
-    // file_34 / uipriority: header cells `w:jc center`. After the Word
-    // mode<15 edge pull (tblCellMar left=180 twips), Feature sits at
-    // ~116pt in a 150pt col. Unpulled it was 125.3; pad_l-only was 81.
+    // file_34 / uipriority: header cells `w:jc center`, tblCellMar
+    // left=180 twips. With no default table style nothing pulls the table
+    // left: Word 16 runs this body with Feature at 125.35 (2026-10-01).
     let body = "<w:tbl>\
          <w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/>\
            <w:tblCellMar>\
@@ -10620,11 +12108,9 @@ fn table_cell_jc_center_centers_header_text() {
         .min_by(|a, b| a.partial_cmp(b).unwrap());
     let feature_x = feature.or_else(|| xs.iter().copied().min_by(|a, b| a.partial_cmp(b).unwrap()));
     let feature_x = feature_x.expect("Feature F");
-    // mode<15 pulls by tblCellMar left=180 twips (9pt), so the centered
-    // header moves with the table: 125.3 − 9 ≈ 116.3.
     assert!(
-        (110.0..=122.0).contains(&feature_x),
-        "Word centers Feature in the pulled first col at ~116pt, not unpulled 125; x={feature_x} xs={xs:?}"
+        (feature_x - 125.35).abs() < 0.3,
+        "Word centers Feature in the unpulled first col at 125.35; x={feature_x} xs={xs:?}"
     );
 }
 
@@ -11361,10 +12847,12 @@ fn fixed_width_table_is_not_stretched_to_the_page() {
     let text = String::from_utf8_lossy(&pdf);
     let rules = pdf_vertical_rule_xs(&pdf);
     let right = rules.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-    // mode<15: border at margin − 108 twips, so 72 − 5.4 + 300 = 366.6.
+    // No default table style: the border stays on the margin, 72 + 300.
+    // Word 16 runs this body (no tcW, autofit) shrunk to its letters
+    // instead; re-running autofit is not reconstructed yet.
     assert!(
-        (365.5..=367.5).contains(&right),
-        "300pt table ends at 366.6 after Word cell-mar pull, not 372; rules={rules:?}"
+        (371.0..=373.0).contains(&right),
+        "300pt table ends at 372, not stretched; rules={rules:?}"
     );
     assert!(
         !text.contains("540.00"),
@@ -13617,13 +15105,14 @@ fn tblind_table_body() -> &'static str {
 
 #[test]
 fn tbl_ind_mode12_sits_at_indent_minus_cell_margin() {
-    // Word compat < 15: border at margin + tblInd - left cell mar (108 twips).
-    // 72 + 72 - 5.4 = 138.6.
+    // Word compat < 15: border at margin + tblInd - left cell margin. With
+    // no styles part that margin is 0.5pt: Word 16 draws this body's left
+    // rule at 143.28..143.76 and its text at 144.0 (2026-10-01).
     let pdf = docx_to_pdf(&minimal_docx_body(tblind_table_body())).expect("convert tblInd");
     let rules = pdf_vertical_rule_xs(&pdf);
     assert!(
-        rules.iter().any(|x| (137.5..=139.5).contains(x)),
-        "mode 12 tblInd 1440 twips must pull left by 108 twips; rules={rules:?}"
+        rules.iter().any(|x| (*x - 143.5).abs() < 0.3),
+        "mode 12 tblInd 1440 twips pulls left by the 0.5pt margin; rules={rules:?}"
     );
 }
 
@@ -13961,14 +15450,16 @@ fn a_legacy_pct_table_spans_the_text_and_its_cell_margins() {
     );
     let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("convert legacy pct table");
     let hay = String::from_utf8_lossy(&pdf);
-    // Text 468pt + 2 x 5.4pt = 478.8pt from 66.6: col one 60% = 287.28.
+    // Text 468pt + 2 x 5.4pt = 478.8pt: col one 60% = 287.28. With no
+    // default table style the border stays on the margin (Word 16 runs
+    // this body with Z at 364.80, probe 2026-10-01), not 5.4pt left of it.
     let z = [pdf_cm_tj_xy(&hay, "Z"), pdf_tj_xy(&hay, "Z")]
         .concat()
         .first()
         .map(|p| p.0)
         .expect("Z paints");
     assert!(
-        (z - (66.6 + 287.28 + 5.4)).abs() < 0.8,
+        (z - (72.0 + 287.28 + 5.4)).abs() < 0.8,
         "the second column starts 60% of (text + margins) in; Z at {z}"
     );
 }
@@ -14494,6 +15985,65 @@ fn text_before_a_top_margin_float_table_on_its_page_flows_below_it() {
     );
 }
 
+#[test]
+fn a_page_anchored_picture_stays_when_a_body_top_float_pushes_the_text() {
+    // PR #247 review 4149916384: a full-width float table at the body top
+    // moves the text already on its page below it, and the loop moved
+    // every operation after the chrome, so a picture fixed 600pt down the
+    // page moved with the text. Its position is the page's, not the flow's.
+    let img = blip(
+        "635000",
+        "635000",
+        "<wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:positionH relativeFrom=\"page\"><wp:posOffset>3810000</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"page\"><wp:posOffset>7620000</wp:posOffset></wp:positionV>\
+           <wp:wrapNone/>",
+        "</wp:anchor>",
+    );
+    let table = r#"<w:tbl><w:tblPr><w:tblpPr w:leftFromText="180" w:rightFromText="180" w:horzAnchor="margin" w:tblpXSpec="center" w:tblpY="-1185"/><w:tblW w:w="11736" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="11736"/></w:tblGrid><w:tr><w:trPr><w:trHeight w:val="2000" w:hRule="exact"/></w:trPr><w:tc><w:tcPr><w:tcW w:w="11736" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>R00</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+    let pic_y = |with_table: bool| {
+        let body = format!(
+            "<w:p><w:r>{img}</w:r><w:r><w:t>Head0</w:t></w:r></w:p>{}<w:p><w:r><w:t>After</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+            if with_table { table } else { "" }
+        );
+        let pdf = docx_to_pdf(&drawing_docx(&body)).expect("page picture");
+        let head0 = pdf_glyph_text_xy(&pdf, "Head0").expect("Head0").1;
+        (pdf_image_boxes(&pdf)[0].1, head0)
+    };
+    let ((alone, head_alone), (pushed, head_pushed)) = (pic_y(false), pic_y(true));
+    assert!(
+        head_alone - head_pushed > 20.0,
+        "the text moves under the table"
+    );
+    assert!(
+        (alone - pushed).abs() < 0.1,
+        "the page-anchored picture keeps its place: {alone} vs {pushed}"
+    );
+}
+
+#[test]
+fn a_keep_next_picture_paragraph_goes_with_its_follower() {
+    // PR #247 review 4149916353, Word 16 probe kn (2026-10-01, compat 15):
+    // 19 exact 20pt lines leave 268pt; a keepNext paragraph holding only a
+    // 250pt inline picture fits, its 20pt follower does not. Word moves the
+    // picture to page 2 with "Follower"; we measured the paragraph as one
+    // text line and left the picture on page 1.
+    let pdf = docx_to_pdf(include_bytes!(
+        "fixtures/word_probes/keep_next_picture_kn_1001.docx"
+    ))
+    .expect("keepNext picture");
+    let streams = pdf_content_streams(&pdf);
+    assert_eq!(streams.len(), 2);
+    assert!(
+        !streams[0].contains(" Do") && streams[1].contains(" Do"),
+        "the picture starts page 2"
+    );
+    assert_eq!(page_with_text(&pdf, "Follower"), Some(1));
+}
+
 fn tall_unanchored_float_table(heads: &str) -> Vec<u8> {
     // Word probe fe (2026-09-30): 40 exact 20pt rows at tblpY -1185 (top
     // 12.75), no vertAnchor, on a Letter page with 72pt margins.
@@ -14558,7 +16108,7 @@ fn a_tall_top_margin_float_table_after_text_starts_on_the_next_page() {
 
 fn indent_cell_table(width: u32, ppr: &str, text: &str) -> String {
     format!(
-        r#"<w:tbl><w:tblPr><w:tblW w:w="{width}" w:type="dxa"/><w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid><w:gridCol w:w="{width}"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="{width}" w:type="dxa"/></w:tcPr><w:p><w:pPr>{ppr}</w:pPr><w:r><w:t>{text}</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#
+        r#"<w:tbl><w:tblPr><w:tblW w:w="{width}" w:type="dxa"/><w:tblLayout w:type="fixed"/><w:tblCellMar><w:left w:w="108" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid><w:gridCol w:w="{width}"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="{width}" w:type="dxa"/></w:tcPr><w:p><w:pPr>{ppr}</w:pPr><w:r><w:t>{text}</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#
     )
 }
 
@@ -14970,6 +16520,113 @@ fn kern_two_kerns_body_text_like_word() {
     assert!(
         kerned < plain - 2.0,
         "kern=2 tightens AV pairs at 11pt; plain={plain} kerned={kerned}"
+    );
+}
+
+#[test]
+fn word_2013_squeezes_at_most_a_third_of_the_word_and_two_spaces() {
+    // _to_improve d06f02170c: "…at all times" (Times 11, 19 spaces) runs
+    // 11.07pt past a 457.2pt measure; a quarter of its spaces (13.1pt)
+    // would cover it, yet Word moves "times" down. Word 16 probes: the
+    // overflow may be at most (word + 2 spaces) / 3, here 9.86pt (9.7
+    // kept, 9.92 moved), besides the quarter of the spaces.
+    let text = "All political power is vested in and derived from the people only, \
+                therefore, they have the right at all times to modify their form of \
+                government.";
+    let first_line_ends_in_times = |right_twips: u32| {
+        let body = format!(
+            r#"<w:p><w:pPr><w:spacing w:after="0"/><w:ind w:right="{right_twips}"/><w:jc w:val="both"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="22"/></w:rPr><w:t>{text}</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#
+        );
+        let settings = r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>"#;
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, settings)).expect("squeeze");
+        let y = |t: &str| {
+            pdf_glyph_text_xy(&pdf, t)
+                .unwrap_or_else(|| panic!("{t}"))
+                .1
+        };
+        (y("All") - y("times")).abs() < 1.0
+    };
+    // 9.0pt over: kept by narrowing the spaces.
+    assert!(first_line_ends_in_times(175), "9pt over keeps the word");
+    // 11.07pt over: moved, as in Word.
+    assert!(!first_line_ends_in_times(216), "11pt over moves the word");
+}
+
+#[test]
+fn a_justified_cell_line_squeezes_like_a_body_line() {
+    // _to_improve 2ad8d15e88 (compat 15): Word keeps "önemi" on its
+    // justified cell line on 2.5pt Verdana spaces (2.8 at rest); we
+    // never squeezed in cells, wrapped it and ended a page long. The
+    // body's limits hold: d06f02170c's sentence keeps "times" 9pt over
+    // and moves it 11.07pt over (cells of 9401 and 9360 twips less the
+    // 108-twip cell margins).
+    let text = "All political power is vested in and derived from the people only, \
+                therefore, they have the right at all times to modify their form of \
+                government.";
+    let first_line_ends_in_times = |cell_twips: u32| {
+        let body = format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="{cell_twips}" w:type="dxa"/><w:tblCellMar><w:left w:w="108" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid><w:gridCol w:w="{cell_twips}"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="{cell_twips}" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/><w:jc w:val="both"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="22"/></w:rPr><w:t>{text}</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#
+        );
+        let settings = r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>"#;
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, settings)).expect("cell squeeze");
+        let y = |t: &str| {
+            pdf_glyph_text_xy(&pdf, t)
+                .unwrap_or_else(|| panic!("{t}"))
+                .1
+        };
+        (y("All") - y("times")).abs() < 1.0
+    };
+    assert!(first_line_ends_in_times(9401), "9pt over keeps the word");
+    assert!(!first_line_ends_in_times(9360), "11pt over moves the word");
+}
+
+#[test]
+fn a_row_breaks_unless_a_cell_opens_on_a_keep_next_paragraph() {
+    // Word 16 probes k1-k6 2026-10-01: a row that does not fit breaks
+    // between its paragraphs when its cell holds keepLines (first or last
+    // paragraph) or keepNext on its last paragraph; it moves whole only
+    // when the cell opens on a keepNext paragraph (fixtures_500
+    // 000aba38). _to_improve 2ad8d15e88's reference list ends in a
+    // keepLines blank; we moved the row and ended a page long.
+    let first_page_has_head = |first: &str, last: &str| {
+        let mut rows = String::new();
+        for i in 0..30 {
+            rows.push_str(&format!(
+                "<w:tr><w:tc><w:p><w:r><w:t>Filler{i:02}</w:t></w:r></w:p></w:tc></w:tr>"
+            ));
+        }
+        let mut cell = format!("<w:p><w:pPr>{first}</w:pPr><w:r><w:t>KeepHead</w:t></w:r></w:p>");
+        for i in 0..30 {
+            cell.push_str(&format!("<w:p><w:r><w:t>Body{i:02}</w:t></w:r></w:p>"));
+        }
+        cell.push_str(&format!(
+            "<w:p><w:pPr>{last}</w:pPr><w:r><w:t>LastPara</w:t></w:r></w:p>"
+        ));
+        rows.push_str(&format!("<w:tr><w:tc>{cell}</w:tc></w:tr>"));
+        let body = format!(
+            "<w:tbl><w:tblGrid><w:gridCol w:w=\"9000\"/></w:tblGrid>{rows}</w:tbl><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("keep row");
+        let pages = pdf_content_streams(&pdf);
+        let first_page = stream_glyph_text(&pages[0]);
+        assert!(first_page.contains("Filler29"), "the fillers fit page 1");
+        first_page.contains("KeepHead")
+    };
+    assert!(
+        first_page_has_head("<w:keepLines/>", ""),
+        "keepLines first: breaks"
+    );
+    assert!(
+        first_page_has_head("", "<w:keepLines/>"),
+        "keepLines last: breaks"
+    );
+    assert!(
+        first_page_has_head("", "<w:keepNext/>"),
+        "keepNext last: breaks"
+    );
+    assert!(
+        !first_page_has_head("<w:keepNext/>", ""),
+        "keepNext first: whole"
     );
 }
 
@@ -15403,8 +17060,9 @@ fn official_table_bookmark_test_eight_ignores_fixed_tblcellmar_left() {
 fn fixed_layout_honours_tblcellmar_left_right() {
     // xml 3.3: table_pad_h must read tblCellMar on tblLayout=fixed.
     // A 2000-twip (100pt) cell with left=right=720 twips (36pt) insets
-    // the direct shd to 28pt, not the 108-twip default (89.2pt). Mode<15
-    // pull uses the same mar_l, so PadFix stays on the body edge.
+    // the direct shd to 28pt, not the 108-twip default (89.2pt). With no
+    // default table style nothing pulls the table left, so PadFix starts
+    // 36pt in (Word 16 runs this body with it at 108.00, 2026-10-01).
     let body = "<w:tbl><w:tblPr>\
            <w:tblLayout w:type=\"fixed\"/>\
            <w:tblCellMar>\
@@ -15435,8 +17093,8 @@ fn fixed_layout_honours_tblcellmar_left_right() {
     assert!(!xs.is_empty(), "PadFix must paint; xs={xs:?}");
     let x = xs.iter().copied().fold(f32::INFINITY, f32::min);
     assert!(
-        (x - 72.0).abs() < 2.0,
-        "mode<15 pull keeps cell text on the body edge; x={x} xs={xs:?}"
+        (x - 108.0).abs() < 0.3,
+        "an unstyled table is not pulled: text 36pt past the margin; x={x} xs={xs:?}"
     );
 }
 
@@ -15574,6 +17232,48 @@ fn footer_xml_space_padding_is_painted_like_word() {
         text.contains("Page       "),
         "HF xml:space padding paints as Word does; tail {}",
         &text[text.len().saturating_sub(200)..]
+    );
+}
+
+#[test]
+fn a_sections_property_change_record_does_not_name_its_header() {
+    // PR #247 review 4149916330: section 2 omits its header but its
+    // w:sectPrChange keeps the old sectPr, which named "Beta". The record
+    // is history: section 2 inherits section 1's "Alpha".
+    let hdr = |text: &str| {
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+               <w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:hdr>"
+        )
+    };
+    let page = "<w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" w:header=\"720\" w:footer=\"720\"/>";
+    let body = format!(
+        "<w:p><w:pPr><w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>{page}</w:sectPr></w:pPr>\
+           <w:r><w:t>One</w:t></w:r></w:p>\
+         <w:p><w:r><w:t>Two</w:t></w:r></w:p>\
+         <w:sectPr>{page}<w:sectPrChange w:id=\"9\" w:author=\"A\"><w:sectPr>\
+           <w:headerReference w:type=\"default\" r:id=\"rIdH2\"/></w:sectPr></w:sectPrChange></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&hf_docx(
+        &body,
+        &[
+            ("rIdH1", "header", "header1.xml"),
+            ("rIdH2", "header", "header2.xml"),
+        ],
+        &[
+            ("word/header1.xml", hdr("Alpha")),
+            ("word/header2.xml", hdr("Beta")),
+        ],
+    ))
+    .expect("two sections");
+    let streams = pdf_content_streams(&pdf);
+    assert_eq!(streams.len(), 2, "one page per section");
+    assert!(
+        streams[1].contains("(Alpha)") && !streams[1].contains("(Beta)"),
+        "section 2 shows Alpha, not the record's Beta: {}",
+        streams[1]
     );
 }
 
@@ -17156,7 +18856,7 @@ fn page_field_uses_sectpr_ideograph_digital() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "ideographDigital 一 is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -17182,7 +18882,9 @@ fn page_num_fmt_pdf(fmt: &str, start: u32, marker: &str) -> Vec<u8> {
 }
 
 /// Hex glyph operands of the CID text painted in the footer band (below
-/// the 72pt bottom margin): the PAGE label, not any other CID text.
+/// the 72pt bottom margin): the PAGE label, not any other CID text. A face
+/// painted only as CID keeps its plain name, so the hex operand, not a
+/// `…CID` font name, marks the run.
 fn footer_cid_glyph_runs(pdf: &[u8]) -> Vec<String> {
     let mut out = Vec::new();
     for stream in pdf_content_streams(pdf) {
@@ -17198,7 +18900,7 @@ fn footer_cid_glyph_runs(pdf: &[u8]) -> Vec<String> {
                 .collect();
             let Some(&y) = nums.first() else { continue };
             let font = op[cm + 8..].split_whitespace().next().unwrap_or("");
-            if y >= 72.0 || !font.ends_with("CID") {
+            if y >= 72.0 || font.is_empty() {
                 continue;
             }
             if let (Some(a), Some(b)) = (op.find('<'), op.find("> Tj")) {
@@ -17209,6 +18911,31 @@ fn footer_cid_glyph_runs(pdf: &[u8]) -> Vec<String> {
     out.sort();
     out.dedup();
     out
+}
+
+#[test]
+fn scripts_a_latin_face_lacks_paint_from_words_fallbacks() {
+    // Word 16 probes ench and scripts (2026-10-01): Calibri's Thai is
+    // Leelawadee UI, its Devanagari Mangal, its compatibility jamo Malgun
+    // Gothic and its ⒇① MS Gothic. We painted .notdef boxes for all four.
+    if !word_dfonts_available() {
+        return;
+    }
+    let rpr = "<w:rPr><w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\"/></w:rPr>";
+    for text in ["กขค", "अआइ", "ㄱㄴ", "⒇①"] {
+        let body = format!("<w:p><w:r>{rpr}<w:t>{text}</w:t></w:r></w:p><w:sectPr/>");
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect(text);
+        let streams = pdf_content_streams(&pdf).join("\n");
+        assert!(
+            streams.contains("> Tj") && !streams.contains("<0000"),
+            "{text} paints real glyphs: {streams}"
+        );
+    }
+}
+
+/// Whether a hex Identity-H operand holds glyph 0, .notdef.
+fn has_notdef(hex: &str) -> bool {
+    hex.as_bytes().chunks(4).any(|g| g == b"0000")
 }
 
 /// The PAGE label in the footer is one CID run of `glyphs` glyphs.
@@ -17225,6 +18952,13 @@ fn assert_footer_page_label_glyphs(fmt: &str, start: u32, glyphs: usize) {
         glyphs * 4,
         "{fmt} start={start}: {glyphs} glyph(s); runs={runs:?}"
     );
+    // Word paints every label in a face that has it (Word 16: ㈩ and ⒇ in
+    // MS Gothic, 百 in MS Mincho), never a .notdef box.
+    // Script faces come from Word's fonts; elsewhere the label may box.
+    assert!(
+        !word_dfonts_available() || !has_notdef(&runs[0]),
+        "{fmt} start={start}: no .notdef glyph; runs={runs:?}"
+    );
     let lits = pdf_winansi_literals(&pdf);
     assert!(
         !lits.iter().any(|s| s == &start.to_string() || s == "1"),
@@ -17239,7 +18973,10 @@ fn page_labels_bind_to_the_footer_with_the_formatted_glyph_count() {
     // (exact code points are pinned in page_num_fmt_labels; the writer
     // has no ToUnicode map to decode against).
     assert_footer_page_label_glyphs("ideographEnclosedCircle", 10, 1); // ㈩
-    assert_footer_page_label_glyphs("ideographEnclosedCircle", 11, 2); // 一一
+    // Past ㈩ Word writes plain decimal: no CID run (Word 16 footer, "11").
+    let eleven = page_num_fmt_pdf("ideographEnclosedCircle", 11, "PgGlyphX");
+    assert!(footer_cid_glyph_runs(&eleven).is_empty());
+    assert!(pdf_winansi_literals(&eleven).iter().any(|s| s == "11"));
     assert_footer_page_label_glyphs("japaneseCounting", 100, 1); // 百
     assert_footer_page_label_glyphs("japaneseCounting", 101, 2); // 百一
     assert_footer_page_label_glyphs("japaneseCounting", 1000, 1); // 千
@@ -17274,12 +19011,14 @@ fn assert_ideograph_page_is_cid_not_decimal(fmt: &str, marker: &str) {
         !lits.iter().any(|s| s == "1"),
         "{fmt} PAGE must not stay decimal 1; lits={lits:?}"
     );
-    let streams = pdf_content_streams(&pdf);
+    // Identity-H text is a hex operand; a face painted only as CID keeps
+    // its plain name, so the font name proves nothing. Before the label
+    // loaded its CJK face it painted .notdef in Calibri's CID entry, which
+    // passed a name check (Word 16 paints it in MS Gothic or Mincho).
+    let runs = footer_cid_glyph_runs(&pdf);
     assert!(
-        streams
-            .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
-        "{fmt} PAGE must take Identity-H; streams={streams:?}"
+        !runs.is_empty() && (!word_dfonts_available() || runs.iter().all(|r| !has_notdef(r))),
+        "{fmt} PAGE must take Identity-H with real glyphs; runs={runs:?}"
     );
 }
 
@@ -17328,7 +19067,7 @@ fn page_field_uses_sectpr_japanese_counting() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "japaneseCounting 十 is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -17359,7 +19098,7 @@ fn page_field_uses_sectpr_decimal_full_width() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "decimalFullWidth １０ is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -17409,7 +19148,7 @@ fn page_field_uses_sectpr_hebrew1() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "hebrew1 י is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -17457,7 +19196,7 @@ fn page_field_uses_sectpr_thai_numbers() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "thaiNumbers ๑๐ is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -17481,7 +19220,7 @@ fn page_field_uses_sectpr_thai_counting() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "thaiCounting สิบ is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -17499,7 +19238,7 @@ fn page_field_uses_sectpr_hindi_numbers() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "hindiNumbers १० is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -17529,7 +19268,7 @@ fn page_field_uses_sectpr_hindi_counting() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "hindiCounting दस is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -17547,7 +19286,7 @@ fn page_field_uses_sectpr_korean_counting() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "koreanCounting 십 is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -17565,7 +19304,7 @@ fn page_field_uses_sectpr_korean_digital() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "koreanDigital 일영 is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -17583,7 +19322,7 @@ fn page_field_uses_sectpr_korean_digital2() {
     assert!(
         streams
             .iter()
-            .any(|s| s.contains("CID") && s.contains('<') && s.contains("Tj")),
+            .any(|s| s.contains("> Tj") && !(word_dfonts_available() && s.contains("<0000>"))),
         "koreanDigital2 一零 is not WinAnsi; PAGE must take Identity-H; streams={streams:?}"
     );
 }
@@ -18346,6 +20085,19 @@ fn docx_with_styles(body: &str, styles: &str) -> Vec<u8> {
     zip.write_all(rels.as_bytes()).unwrap();
     zip.start_file("word/document.xml", opts).unwrap();
     zip.write_all(document.as_bytes()).unwrap();
+    // Word reads a styles part only through its relationship.
+    zip.start_file("word/_rels/document.xml.rels", opts)
+        .unwrap();
+    zip.write_all(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+         <Relationship Id=\"rIdS\" \
+           Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" \
+           Target=\"styles.xml\"/>\
+         </Relationships>"
+            .as_bytes(),
+    )
+    .unwrap();
     zip.start_file("word/styles.xml", opts).unwrap();
     zip.write_all(styles.as_bytes()).unwrap();
     zip.finish().unwrap().into_inner()
@@ -23472,6 +25224,83 @@ fn even_page_number_start_opens_on_the_even_header() {
 }
 
 #[test]
+fn endnote_marks_number_in_reference_order_in_their_format() {
+    // _to_improve 9134397db6 / cf977017dd (file_77): "Ouch" + endnote 2
+    // + "." + endnote 3 under endnotePr lowerRoman. Word's PDF reads
+    // "Ouchi.ii" and puts "i" / "ii" before the notes. We painted the
+    // notes with neither mark, which shifted every line of the page.
+    let body = "<w:p><w:r><w:t>Ouch</w:t></w:r>\
+         <w:r><w:endnoteReference w:id=\"2\"/></w:r><w:r><w:t>.</w:t></w:r>\
+         <w:r><w:endnoteReference w:id=\"3\"/></w:r></w:p>\
+         <w:sectPr><w:endnotePr><w:numFmt w:val=\"lowerRoman\"/></w:endnotePr>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\"/></w:sectPr>";
+    let note = |id: u32, text: &str| {
+        format!(
+            "<w:endnote w:id=\"{id}\"><w:p><w:r><w:endnoteRef/></w:r>\
+             <w:r><w:t xml:space=\"preserve\"> {text}</w:t></w:r></w:p></w:endnote>"
+        )
+    };
+    let endnotes = format!(
+        "<?xml version=\"1.0\"?>\
+         <w:endnotes xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         <w:endnote w:id=\"0\" w:type=\"separator\"><w:p><w:r><w:separator/></w:r></w:p></w:endnote>\
+         <w:endnote w:id=\"1\" w:type=\"continuationSeparator\"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:endnote>\
+         {}{}</w:endnotes>",
+        note(2, "Tachyon."),
+        note(3, "Fin.")
+    );
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[("rIdE", "endnotes", "endnotes.xml")],
+        &[("word/endnotes.xml", endnotes)],
+    ))
+    .expect("endnotes");
+    let page = pdf_winansi_text(&pdf);
+    assert!(
+        page.contains("Ouchi.ii"),
+        "the references read i and ii; page={page}"
+    );
+    assert!(
+        page.contains("i Tachyon.") && page.contains("ii Fin."),
+        "each note opens on its own mark; page={page}"
+    );
+}
+
+#[test]
+fn a_page_number_start_of_zero_numbers_the_first_page_zero() {
+    // _to_improve 3936a8fe56: pgNumType w:start="0" behind a title page;
+    // Word's PDF numbers its third page 2 and its fourteenth 13. We
+    // clamped the start to 1 and printed every number one high.
+    let header = "<?xml version=\"1.0\"?>\
+        <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+        <w:p><w:r><w:t>Pg</w:t></w:r><w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+        <w:r><w:instrText xml:space=\"preserve\"> PAGE </w:instrText></w:r>\
+        <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r><w:r><w:t>9</w:t></w:r>\
+        <w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:p></w:hdr>"
+        .to_string();
+    let body = "<w:p><w:r><w:t>PageOneBody</w:t></w:r></w:p>\
+         <w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>\
+         <w:p><w:r><w:t>PageTwoBody</w:t></w:r></w:p>\
+         <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\"/><w:pgNumType w:start=\"0\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[("rIdH1", "header", "header1.xml")],
+        &[("word/header1.xml", header)],
+    ))
+    .expect("convert start=0");
+    let pages = pdf_content_streams(&pdf);
+    let p1 = pdf_winansi_text(pages[0].as_bytes());
+    let p2 = pdf_winansi_text(pages[1].as_bytes());
+    assert!(p1.contains("Pg0"), "page 1 is numbered 0; p1={p1}");
+    assert!(p2.contains("Pg1"), "page 2 is numbered 1; p2={p2}");
+}
+
+#[test]
 fn a_taller_even_header_pushes_the_even_page_body_down() {
     // #126: body top follows the parity header now in force.
     let tall = "<?xml version=\"1.0\"?>\
@@ -23487,6 +25316,46 @@ fn a_taller_even_header_pushes_the_even_page_body_down() {
     assert!(
         y2 < y1 - 20.0,
         "even-page body starts under the 4-line header: p1 {y1} p2 {y2}"
+    );
+}
+
+#[test]
+fn a_header_field_is_named_by_its_first_word_not_by_its_path() {
+    // _to_improve 2566689f0f: three result-less INCLUDEPICTURE fields in
+    // the header point at ".../page1image1105008"; Word's PDF paints
+    // nothing for them. Their "page" made each a PAGE field and we
+    // painted "111" over the header, which shifted every text line of
+    // the page against Word's. A PAGEREF is no PAGE either.
+    let field = |instr: &str| {
+        format!(
+            "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+             <w:r><w:instrText xml:space=\"preserve\">{instr}</w:instrText></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>"
+        )
+    };
+    let header = format!(
+        "<?xml version=\"1.0\"?>\
+         <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         <w:p><w:r><w:t>Hd</w:t></w:r>{}{}<w:r><w:t>Pg</w:t></w:r>{}</w:p></w:hdr>",
+        field(r#" INCLUDEPICTURE "C:\\T\\page1image1105008" \* MERGEFORMAT "#),
+        field(" PAGEREF _Toc1 \\h "),
+        field(" PAGE "),
+    );
+    let body = "<w:p><w:r><w:t>Body</w:t></w:r></w:p>\
+         <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&hf_docx(
+        body,
+        &[("rIdH1", "header", "header1.xml")],
+        &[("word/header1.xml", header)],
+    ))
+    .expect("header fields");
+    let page = pdf_winansi_text(pdf_content_streams(&pdf)[0].as_bytes());
+    assert!(
+        page.contains("HdPg1") && !page.contains("Hd1"),
+        "only the PAGE field paints a number; page={page}"
     );
 }
 
@@ -23794,6 +25663,71 @@ fn a_header_picture_too_wide_beside_a_square_float_starts_under_it() {
         "the narrow picture stays on the logo's line: top {} vs logo top {}",
         narrow.1 + narrow.3,
         logo.1 + logo.3
+    );
+}
+
+#[test]
+fn a_page_wide_square_float_in_the_header_pushes_the_body_below_it() {
+    // _to_improve 3936a8fe56 (compat 15): the header's only paragraph
+    // anchors an 81pt banner at page y 9pt, square-wrapped across the
+    // page. The paragraph's line has no room beside it and drops below
+    // it, so the header ends 12.4pt under the banner (90.3pt top margin)
+    // and Word starts every body page at 102.5pt. Word 16 probes
+    // 2026-10-01: half the banner leaves the body at the margin; legacy
+    // modes leave the line over the float, the body only clearing the
+    // float (u0-u4, baseline 100.3 legacy vs 125.3 compat 15).
+    let body_top = |cy: u32, wrap: &str, compat15: bool| {
+        let header = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+               xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
+               xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" \
+               xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+             <w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"259\" w:lineRule=\"auto\"/></w:pPr>\
+             <w:r><w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"114300\" distR=\"114300\" \
+               simplePos=\"0\" relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+               <wp:simplePos x=\"0\" y=\"0\"/>\
+               <wp:positionH relativeFrom=\"page\"><wp:posOffset>130175</wp:posOffset></wp:positionH>\
+               <wp:positionV relativeFrom=\"page\"><wp:posOffset>114300</wp:posOffset></wp:positionV>\
+               <wp:extent cx=\"7430389\" cy=\"{cy}\"/>{wrap}<wp:docPr id=\"1\" name=\"banner\"/>\
+               <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+               <wps:wsp><wps:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"7430389\" cy=\"{cy}\"/></a:xfrm>\
+               <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val=\"CCCCCC\"/></a:solidFill></wps:spPr>\
+               <wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p></w:hdr>"
+        );
+        let body = "<w:p><w:r><w:t>BannerBodyX</w:t></w:r></w:p>\
+             <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+               <w:pgSz w:w=\"11906\" w:h=\"16838\"/>\
+               <w:pgMar w:top=\"1806\" w:right=\"845\" w:bottom=\"1127\" w:left=\"578\" \
+                 w:header=\"180\" w:footer=\"720\"/></w:sectPr>";
+        let settings = "<?xml version=\"1.0\"?>\
+             <w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+             <w:compat><w:compatSetting w:name=\"compatibilityMode\" \
+               w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat></w:settings>";
+        let mut rels = vec![("rIdH1", "header", "header1.xml")];
+        let mut parts = vec![("word/header1.xml", header)];
+        if compat15 {
+            rels.push(("rIdSet", "settings", "settings.xml"));
+            parts.push(("word/settings.xml", settings.to_string()));
+        }
+        let pdf = docx_to_pdf(&hf_docx(body, &rels, &parts)).expect("banner header");
+        let (_, baseline) = pdf_glyph_text_xy(&pdf, "BannerBodyX").expect("body text");
+        841.9 - baseline
+    };
+    let square = "<wp:wrapSquare wrapText=\"bothSides\"/>";
+    // 81pt from 9pt: the banner ends at 90pt, inside the 90.3pt margin.
+    let pushed = body_top(1_028_065, square, true);
+    let legacy = body_top(1_028_065, square, false);
+    assert!(
+        pushed > legacy + 10.0,
+        "compat 15 drops the header line under the banner: baseline {pushed} vs legacy {legacy}"
+    );
+    // 40.5pt ends at 49.5pt: the line under it still ends above 90pt.
+    let kept = body_top(514_032, square, true);
+    let over = body_top(1_028_065, "<wp:wrapNone/>", true);
+    assert!(
+        (kept - over).abs() < 0.5 && pushed > kept + 10.0,
+        "a short or unwrapped banner leaves the body at the margin: {kept} / {over} vs {pushed}"
     );
 }
 
@@ -26005,7 +27939,7 @@ fn space_for_ul_adds_descent_to_wrapped_lines_in_table_cells() {
     ));
     let next = para(&format!("<w:r>{ul}<w:t>K漢字</w:t></w:r>"));
     let body = format!(
-        "<w:tbl><w:tblPr><w:tblW w:w=\"1700\" w:type=\"dxa\"/></w:tblPr>\
+        "<w:tbl><w:tblPr><w:tblW w:w=\"1700\" w:type=\"dxa\"/><w:tblCellMar><w:left w:w=\"108\" w:type=\"dxa\"/><w:right w:w=\"108\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr>\
            <w:tblGrid><w:gridCol w:w=\"1700\"/></w:tblGrid>\
            <w:tr><w:tc>{wrapped}{next}</w:tc></w:tr></w:tbl>\
          <w:p><w:r><w:t>Z</w:t></w:r></w:p>\
@@ -26110,6 +28044,44 @@ fn do_not_expand_shift_return_skips_justify_on_soft_break() {
         bx - ax < 80.0,
         "doNotExpandShiftReturn must not justify the shift-return line; A={ax} B={bx} dx={}",
         bx - ax
+    );
+}
+
+#[test]
+fn do_not_expand_shift_return_holds_past_a_side_float() {
+    // The lines a paragraph rewraps past a side float keep their w:br
+    // ends, so doNotExpandShiftReturn still leaves those lines unstretched
+    // (the rewrap marked every line as unbroken and justified them).
+    let filler = "Lorem ipsum dolor sit amet consectetur adipiscing elit sed do. ".repeat(6);
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblpPr w:leftFromText=\"180\" w:rightFromText=\"180\" \
+           w:vertAnchor=\"text\" w:horzAnchor=\"margin\" w:tblpY=\"1\"/>\
+           <w:tblW w:w=\"2160\" w:type=\"dxa\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"2160\"/></w:tblGrid>\
+           <w:tr><w:trPr><w:trHeight w:val=\"720\" w:hRule=\"exact\"/></w:trPr>\
+           <w:tc><w:p><w:r><w:t>Box</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+         <w:p><w:pPr><w:jc w:val=\"both\"/>\
+           <w:spacing w:before=\"0\" w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+           <w:r><w:t xml:space=\"preserve\">{filler}</w:t></w:r>\
+           <w:r><w:br/><w:t xml:space=\"preserve\">DxShA DxShB</w:t></w:r>\
+           <w:r><w:br/><w:t>DxShEnd</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(
+        &body,
+        "<w:compat><w:doNotExpandShiftReturn/></w:compat>",
+    ))
+    .expect("side float shift return");
+    let x = |t: &str| {
+        pdf_glyph_text_xy(&pdf, t)
+            .unwrap_or_else(|| panic!("{t}"))
+            .0
+    };
+    assert!(
+        x("DxShB") - x("DxShA") < 80.0,
+        "the br-ended line past the float stays unstretched; gap {}",
+        x("DxShB") - x("DxShA")
     );
 }
 
@@ -27564,8 +29536,8 @@ fn endnote_referenced_from_a_table_cell_is_painted() {
 #[test]
 fn endnote_pr_sect_end_paints_notes_before_next_section() {
     // plan.md Step 10 F: w:endnotePr/w:pos=sectEnd dumps notes at the
-    // section boundary, not after the whole body (docEnd). Separator
-    // and in-body markers stay unpainted (mini 619 / 487 KEEP).
+    // section boundary, not after the whole body (docEnd), under the
+    // separator's rule (Word Strict01, 2026-10-01).
     let body = "<w:p><w:r><w:t>SectOneX</w:t></w:r>\
            <w:r><w:endnoteReference w:id=\"1\"/></w:r></w:p>\
          <w:p><w:pPr><w:sectPr>\
@@ -27606,18 +29578,15 @@ fn endnote_pr_sect_end_paints_notes_before_next_section() {
         .into_iter()
         .filter(|(_, _, w, h)| (*w - 144.0).abs() < 2.0 && (*h - 0.72).abs() < 0.15)
         .collect();
-    assert!(
-        hair.is_empty(),
-        "mini 619 separator stays unpainted; hair={hair:?}"
-    );
+    assert_eq!(hair.len(), 1, "one separator over the notes; hair={hair:?}");
 }
 
 #[test]
-fn endnote_ref_in_note_body_stays_unpainted_after_mini_663() {
-    // Word Strict01 p13 paints w:endnoteRef as lowerRoman "i" in the
-    // note body. Mini 663–664 did that and ITT-neg'd NR mean −0.0002
-    // (8 Strict01-family drops −0.0012, 0 gains). Same extra-ink family
-    // as mini 487 in-body marker. KEEP-only forbids. Do not retry.
+fn endnote_ref_in_note_body_paints_its_mark() {
+    // Word paints w:endnoteRef as the note's lowerRoman mark: Strict01
+    // p13 reads "i This is an endnote." (Word 16, 2026-10-01). Mini 663
+    // had left it unpainted for an NR mean move of −0.0002; Word parity
+    // comes first (9134397db6 / cf977017dd scored 0 without the marks).
     let body = "<w:p><w:r><w:t>BodyLine</w:t></w:r>\
            <w:r><w:endnoteReference w:id=\"1\"/></w:r></w:p>\
          <w:sectPr><w:pgSz w:w=\"612pt\" w:h=\"792pt\"/></w:sectPr>";
@@ -27634,17 +29603,16 @@ fn endnote_ref_in_note_body_stays_unpainted_after_mini_663() {
         painted.contains("EndnoteBody"),
         "endnote body must still paint; painted={painted}"
     );
+    // The reference "i" after BodyLine, then the note's own "i".
     assert!(
-        !painted.contains("i EndnoteBody") && !painted.contains("iEndnoteBody"),
-        "mini 663 note-body endnoteRef ITT-neg; painted={painted}"
+        painted.starts_with("BodyLinei") && painted.trim_end().ends_with("i EndnoteBody"),
+        "the note opens on the mark its reference reads; painted={painted}"
     );
 }
 
 #[test]
-fn official_strict01_endnote_body_stays_without_note_ref_after_mini_663() {
-    // Word p13 is "i This is an endnote." Mini 663–664 note-body
-    // w:endnoteRef ITT-neg NR −0.0002 / 8 Strict01 drops. Mini 487
-    // in-body / mini 619 separator stay.
+fn official_strict01_endnote_body_opens_on_its_mark() {
+    // Word p13 is "i This is an endnote." (Word 16, 2026-10-01).
     let path = "tests/corpus/neurotic_docx_bench/grok_run/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
@@ -27655,18 +29623,19 @@ fn official_strict01_endnote_body_stays_without_note_ref_after_mini_663() {
         &painted[painted.len().saturating_sub(80)..]
     );
     assert!(
-        !painted.contains("i This is an endnote"),
-        "mini 663 note-body endnoteRef ITT-neg; painted tail {}",
+        painted.contains("i This is an endnote"),
+        "the note opens on its mark; painted tail {}",
         &painted[painted.len().saturating_sub(80)..]
     );
 }
 
 #[test]
-fn endnote_separator_stays_unpainted_after_mini_619() {
-    // Word Strict01 p13 paints w:separator as a 144pt × 0.72pt black
-    // filled hairline above "This is an endnote." Mini 619–622 did that
-    // and ITT-neg'd NR mean −0.0018 (8 Strict01-family −0.013, 0 gains)
-    // while RL mean +0.0324. KEEP-only forbids the NR drop. Do not retry.
+fn endnote_separator_paints_its_rule_on_its_own_line() {
+    // Word Strict01 p13 (Word 16, 2026-10-01): the separator note's
+    // paragraph is a line of its own, and its w:separator a 144pt × 0.72pt
+    // black rule at the margin above "This is an endnote." Mini 619 had
+    // left both out for an NR mean move of −0.0018; Word parity comes
+    // first.
     let body = "<w:p><w:r><w:t>BodyLine</w:t></w:r>\
            <w:r><w:endnoteReference w:id=\"1\"/></w:r></w:p>\
          <w:sectPr><w:pgSz w:w=\"612pt\" w:h=\"792pt\"/></w:sectPr>";
@@ -27680,18 +29649,18 @@ fn endnote_separator_stays_unpainted_after_mini_619() {
             .into_iter()
             .filter(|(_, _, w, h)| (*w - 144.0).abs() < 2.0 && (*h - 0.72).abs() < 0.15)
             .collect();
+    let note = pdf_glyph_text_xy(&pdf, "This is an endnote.").expect("note");
     assert!(
-        hair.is_empty(),
-        "mini 619 endnote separator ITT-neg; hair={hair:?}"
+        hair.len() == 1 && (hair[0].0 - 72.0).abs() < 0.5 && hair[0].1 > note.1 + 10.0,
+        "one rule at the margin, a line above the note at {note:?}; hair={hair:?}"
     );
 }
 
 #[test]
-fn endnote_reference_stays_unpainted_after_mini_487() {
-    // Word paints a superscript "1" at w:endnoteReference (Strict01 p13).
-    // mini 487 was Word-faithful but ITT-neg: NR 8 Strict01-family drops
-    // of −0.0003, 0 gains (mean rounded 0-delta vs KEEP 471). Quartz
-    // prefers no in-body marker. Endnote *body* still paints.
+fn endnote_reference_paints_its_lower_roman_mark() {
+    // Word paints w:endnoteReference as the note's mark, lowerRoman by
+    // default (Strict01, 9134397db6). Mini 487 had left it unpainted for
+    // an NR move of −0.0003; Word parity comes first.
     let body = "<w:p><w:r><w:t>SeeEnd.</w:t></w:r>\
            <w:r><w:rPr><w:vertAlign w:val=\"superscript\"/></w:rPr>\
              <w:endnoteReference w:id=\"1\"/></w:r></w:p>\
@@ -27710,8 +29679,8 @@ fn endnote_reference_stays_unpainted_after_mini_487() {
         "endnote body must paint; painted={painted}"
     );
     assert!(
-        !painted.contains('1'),
-        "mini 487 in-body endnote marker ITT-neg; painted={painted}"
+        painted.contains("SeeEnd.i") && !painted.contains('1'),
+        "the reference reads i, not 1; painted={painted}"
     );
 }
 
@@ -27812,9 +29781,10 @@ fn official_strict01_long_video_para_starts_page_two() {
 }
 
 #[test]
-fn official_strict01_endnote_separator_stays_unpainted_after_mini_619() {
-    // Word p13 paints w:separator as 144×0.72 black. Mini 619–622 ITT-neg
-    // NR mean −0.0018 (8 Strict01-family drops, 0 gains). Do not retry.
+fn official_strict01_endnote_separator_paints_on_its_own_line() {
+    // Word p13 (Word 16, 2026-10-01): a 144×0.72 black rule at 72, 450.48
+    // and the note's baseline at 435.84, one 11pt Calibri line under the
+    // body's end. Without the separator line the note stood 13.6pt high.
     let path = "tests/corpus/neurotic_docx_bench/grok_run/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
@@ -27825,8 +29795,13 @@ fn official_strict01_endnote_separator_stays_unpainted_after_mini_619() {
         .filter(|(_, _, w, h)| (*w - 144.0).abs() < 2.0 && (*h - 0.72).abs() < 0.15)
         .collect();
     assert!(
-        hair.is_empty(),
-        "mini 619 endnote separator ITT-neg; hair={hair:?}"
+        hair.len() == 1 && (hair[0].0 - 72.0).abs() < 0.5 && (hair[0].1 - 450.48).abs() < 1.0,
+        "Word's separator rule; hair={hair:?}"
+    );
+    let note = pdf_glyph_text_xy(&pdf, "This is an endnote.").expect("note");
+    assert!(
+        (note.1 - 435.84).abs() < 1.0,
+        "the note's baseline sits where Word's does; note={note:?}"
     );
 }
 
@@ -28200,6 +30175,47 @@ fn cell_sdt_content_keeps_its_place() {
     assert!(y("F") > y("S"), "sdt paragraph stays above the next one");
 }
 
+#[test]
+fn a_closing_bottom_border_must_fit_on_the_page_with_its_line() {
+    // Word 16 probes bd1001: 31 exact 20pt lines leave 28pt; an exact
+    // 27.5pt line fits alone (b4) but not with its 1pt + 0.75pt bottom
+    // border (b3), so Word opens page 2 with it and rules it there
+    // (100.56pt from the top). 83ba58bf48's bordered "Z á p i s" kept page
+    // 1 and pulled every later page a line short. Once moved, we also drew
+    // the rule at the line's old height.
+    let doc = |pbdr: &str| {
+        let line = |t: &str, h: u32, extra: &str| {
+            format!(
+                "<w:p><w:pPr>{extra}<w:spacing w:before=\"0\" w:after=\"0\" w:line=\"{h}\" \
+                 w:lineRule=\"exact\"/></w:pPr><w:r><w:t>{t}</w:t></w:r></w:p>"
+            )
+        };
+        let fill: String = (0..31).map(|_| line("Line", 400, "")).collect();
+        let body = fill + &line("Q", 550, pbdr) + &line("After", 400, "") + LETTER_SECT;
+        docx_to_pdf(&minimal_docx_body(&body)).expect("convert bordered page end")
+    };
+    let plain = doc("");
+    assert_eq!(page_of(&plain, "Q"), Some(0), "the line alone fits page 1");
+    let bordered = doc(
+        "<w:pBdr><w:bottom w:val=\"single\" w:sz=\"6\" w:space=\"1\" w:color=\"auto\"/></w:pBdr>",
+    );
+    assert_eq!(
+        page_of(&bordered, "Q"),
+        Some(1),
+        "with its border it opens page 2"
+    );
+    let pages = pdf_content_streams(&bordered);
+    assert!(
+        pdf_horiz_rule_ys(pages[0].as_bytes()).is_empty(),
+        "no rule left on page 1"
+    );
+    let rules = pdf_horiz_rule_ys(pages[1].as_bytes());
+    assert!(
+        rules.iter().any(|y| ((792.0 - y) - 100.9).abs() < 1.0),
+        "the rule sits under the moved line (Word 100.56-101.28): {rules:?}"
+    );
+}
+
 /// Page index holding `glyph` (text paints glyph by glyph: `(K) Tj`).
 fn page_of(pdf: &[u8], glyph: &str) -> Option<usize> {
     let needle = format!("({glyph}) Tj");
@@ -28547,11 +30563,85 @@ fn table_tr_height_at_least_is_max_of_content_and_spec() {
 }
 
 #[test]
-fn table_default_cell_left_is_word_108_twips() {
-    // Median lock: meeting_agenda / q1_sales / employee_directory / …
-    // no tblStyle, no tblCellMar. Word default tcMar left is 108 twips
-    // (5.4pt). Mode < 15 pulls the table left by that mar so cell text
-    // lines up with body at the margin (plan xml 3.3 ckpt 1).
+fn a_cell_margins_start_and_end_are_its_left_and_right() {
+    // Word 16 probes s1-s5 (2026-10-01, compat 14, no styles part): a
+    // tblCellMar or tcMar w:start of 288 twips sets the text 14.4pt past
+    // the left rule (86.4), and beats a w:left of 72 beside it. We read
+    // only w:left/w:right; Cicero's start/end=160 tables (70fd78a4f8) lost
+    // their 8pt margins.
+    let x = |table_mar: &str, cell_mar: &str| {
+        let body = format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="4320" w:type="dxa"/>{table_mar}</w:tblPr><w:tblGrid><w:gridCol w:w="4320"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="4320" w:type="dxa"/>{cell_mar}</w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r><w:t>QQ</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>{}"#,
+            letter_body_sect()
+        );
+        let settings = r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="14"/></w:compat>"#;
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, settings)).expect("start/end");
+        pdf_glyph_text_xy(&pdf, "QQ").expect("QQ").0
+    };
+    let start = r#"<w:tblCellMar><w:start w:w="288" w:type="dxa"/><w:end w:w="288" w:type="dxa"/></w:tblCellMar>"#;
+    let both = r#"<w:tblCellMar><w:left w:w="72" w:type="dxa"/><w:start w:w="288" w:type="dxa"/></w:tblCellMar>"#;
+    let cell = r#"<w:tcMar><w:start w:w="288" w:type="dxa"/></w:tcMar>"#;
+    for (table_mar, cell_mar) in [(start, ""), (both, ""), ("", cell)] {
+        let at = x(table_mar, cell_mar);
+        assert!(
+            (at - 86.4).abs() < 0.3,
+            "start=288 sets the text 14.4pt in; x={at} ({table_mar}{cell_mar})"
+        );
+    }
+}
+
+#[test]
+fn an_unstyled_tables_cells_pad_half_a_point_on_every_side() {
+    // Word 16 probes p1/p3 (2026-10-01): with no styles part a bordered
+    // two-column table (144pt columns) sets "QB" 0.48pt past its middle
+    // rule and ends a right-aligned "RA" 0.52pt short of it, in compat 14
+    // (rules 72/216/360, no pull) and compat 15 (rules a quarter point in).
+    // We padded 108 twips and pulled the compat 14 table 5.4pt left.
+    let r = r#"<w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="24"/></w:rPr>"#;
+    let cell = |text: &str, jc: &str| {
+        format!(
+            r#"<w:tc><w:tcPr><w:tcW w:w="2880" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/>{jc}</w:pPr><w:r>{r}<w:t>{text}</w:t></w:r></w:p></w:tc>"#
+        )
+    };
+    let right = r#"<w:jc w:val="right"/>"#;
+    let body = format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="5760" w:type="dxa"/><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:left w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:right w:val="single" w:sz="4" w:space="0" w:color="000000"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="000000"/></w:tblBorders><w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid><w:gridCol w:w="2880"/><w:gridCol w:w="2880"/></w:tblGrid><w:tr>{}{}</w:tr><w:tr>{}{}</w:tr></w:tbl><w:p/>{}"#,
+        cell("QA", ""),
+        cell("QB", ""),
+        cell("RA", right),
+        cell("RB", right),
+        letter_body_sect()
+    );
+    for (mode, rule) in [(14, 216.0), (15, 216.24)] {
+        let settings = format!(
+            r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="{mode}"/></w:compat>"#
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, &settings)).expect("unstyled");
+        let rules = pdf_vertical_rule_xs(&pdf);
+        assert!(
+            rules.iter().any(|x| (x - rule).abs() < 0.3),
+            "compat {mode}: the middle rule at {rule}; rules={rules:?}"
+        );
+        let qb = pdf_glyph_text_xy(&pdf, "QB").expect("QB").0;
+        assert!(
+            (qb - rule - 0.48).abs() < 0.3,
+            "compat {mode}: QB 0.48pt past the rule; x={qb}"
+        );
+        let qa = pdf_glyph_text_xy(&pdf, "QA").expect("QA").0;
+        assert!(
+            (qa - (rule - 144.0) - 0.48).abs() < 0.3,
+            "compat {mode}: QA 0.48pt past the left rule, not pulled; x={qa}"
+        );
+    }
+}
+
+#[test]
+fn a_table_without_a_default_style_keeps_its_border_on_the_margin() {
+    // meeting_agenda / q1_sales / employee_directory: no tblStyle, no
+    // tblCellMar and no default table style. Word 16 sets "Time" at 72.48
+    // in 90e2c33814 and e0c027b1ca and in this body, with the rules on
+    // 72/228/384/540 (2026-10-01): no pull, 0.5pt cell margins. We pulled
+    // the table 108 twips left as if Normal Table were there.
     let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
            <w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr>\
@@ -28610,8 +30700,8 @@ fn table_default_cell_left_is_word_108_twips() {
         .map(|(x, _)| *x)
         .fold(f32::INFINITY, f32::min);
     assert!(
-        (time_x - 72.0).abs() < 1.2,
-        "mode<15 pulls the table left by 108 twips so cell text aligns with body; Time x={time_x} xs={xs:?}"
+        (time_x - 72.48).abs() < 0.3,
+        "an unstyled table pads its cells 0.5pt from the margin; Time x={time_x} xs={xs:?}"
     );
     assert!(
         starts.iter().all(|x| (*x - 77.4).abs() > 1.0),
@@ -28619,8 +30709,8 @@ fn table_default_cell_left_is_word_108_twips() {
     );
     let rules = pdf_vertical_rule_xs(&pdf);
     assert!(
-        rules.iter().any(|x| (65.4..=67.8).contains(x)),
-        "mode<15 left border sits at margin − 108 twips (66.6); rules={rules:?}"
+        rules.iter().any(|x| (*x - 72.0).abs() < 0.3),
+        "the left border stays on the margin; rules={rules:?}"
     );
 }
 
@@ -28880,9 +30970,10 @@ fn cell_tcmar_left_overrides_tblcellmar() {
 }
 
 #[test]
-fn tblcellmar_start_end_stays_default_after_mini_marse() {
-    // Cicero: tblCellMar start/end=160. Mapping to left/right (mini
-    // 221–224) dropped Cicero −0.027 ITT. Keep default 108 twips.
+fn tblcellmar_start_end_set_the_cell_margins() {
+    // Cicero: tblCellMar start/end. Word 16 runs this body with PadCell at
+    // 144.0, the 1440-twip start past an unpulled table (2026-10-01). We
+    // ignored start/end on an old Cicero score proxy and painted it at 72.
     let body = "<w:tbl><w:tblPr>\
            <w:tblW w:w=\"9360\" w:type=\"dxa\"/>\
            <w:tblCellMar>\
@@ -28900,8 +30991,8 @@ fn tblcellmar_start_end_stays_default_after_mini_marse() {
     assert!(!xs.is_empty(), "PadCell must paint; xs={xs:?}");
     let x = xs.iter().copied().fold(f32::INFINITY, f32::min);
     assert!(
-        (x - 72.0).abs() < 1.2,
-        "start/end stay ignored; default 108 twips pulls cell text to the body edge; x={x} xs={xs:?}"
+        (x - 144.0).abs() < 0.3,
+        "start=1440 sets the cell text 72pt in; x={x} xs={xs:?}"
     );
 }
 
@@ -29666,6 +31757,42 @@ fn rev_bar_marks_revised_header_and_footer_lines() {
     );
 }
 
+#[test]
+fn rev_bar_marks_leading_empty_header_and_footer_paragraphs() {
+    // PR #247 review: an empty revised paragraph over the part's text was
+    // painted by the leading-empty loop alone, which filled it but never
+    // barred it; trailing and all-empty paragraphs were barred.
+    let part = "<w:p><w:pPr><w:pPrChange w:id=\"3\" w:author=\"A\"><w:pPr><w:ind w:right=\"360\"/></w:pPr></w:pPrChange></w:pPr></w:p>\
+         <w:p><w:r><w:t>Kept chrome</w:t></w:r></w:p>";
+    for (name, docx) in [
+        ("header", header_part_docx(part)),
+        ("footer", footer_part_docx(part)),
+    ] {
+        let bars = pdf_page_bar_spans(&docx_to_pdf(&docx).expect(name));
+        assert_eq!(
+            bars[0].len(),
+            1,
+            "the {name}'s leading revised paragraph is barred: {bars:?}"
+        );
+    }
+}
+
+#[test]
+fn an_all_empty_footer_paints_its_paragraph_border() {
+    // PR #247 review: an empty first footer paragraph with a top border
+    // suppressed the part's fallback rule, but the all-empty path painted
+    // only fills and bars, so the rule vanished.
+    let part = "<w:p><w:pPr><w:pBdr><w:top w:val=\"single\" w:sz=\"8\" w:space=\"1\" w:color=\"000000\"/></w:pBdr></w:pPr></w:p>\
+         <w:p/>";
+    let pdf = docx_to_pdf(&footer_part_docx(part)).expect("footer");
+    let ys = pdf_horiz_rule_ys(&pdf);
+    // Over the two empty paragraphs stacked up from w:footer (36pt).
+    assert!(
+        matches!(ys[..], [y] if y > 60.0 && y < 100.0),
+        "the empty footer paragraph's top border paints once: {ys:?}"
+    );
+}
+
 /// Each page's change bars (0.72pt-wide filled rects) as (bottom, top).
 fn pdf_page_bar_spans(pdf: &[u8]) -> Vec<Vec<(f32, f32)>> {
     let hay = String::from_utf8_lossy(pdf);
@@ -30277,13 +32404,13 @@ fn tblw_pct_sixty_stretches_narrow_grid() {
            <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert pct table");
     let xs = pdf_vertical_rule_xs(&pdf);
-    // 60% of 468 is 280.8; mode<15 right edge is 72 − 5.4 + 280.8 = 347.4.
-    // Known gap: Word itself runs this exact body (no styles part) 72.0-
-    // 353.76, because with nothing defining cell margins its are 0 (no
-    // pull); table_pad_h still defaults to 108 twips.
+    // 60% of 468 is 280.8 from the margin: with no styles part nothing
+    // pulls the table left. Word itself runs this exact body 72.0-353.76
+    // (rule edges); we end 0.7pt short of that.
     assert!(
-        xs.iter().any(|x| (346.0..=349.0).contains(x)),
-        "60% table right edge is 347.4 after Word cell-mar pull, not 352.8; xs={xs:?}"
+        xs.iter().any(|x| (*x - 72.0).abs() < 0.3)
+            && xs.iter().any(|x| (352.5..=354.0).contains(x)),
+        "60% table runs 72 to 352.8; xs={xs:?}"
     );
     assert!(
         xs.iter().all(|x| (*x - 272.0).abs() > 1.0),
@@ -31525,12 +33652,11 @@ fn settings_default_tab_stop_overrides_half_inch_grid() {
 }
 
 #[test]
-fn underlined_tab_stays_three_pt_tick_after_mini_447() {
-    // Word-faithful: file_22 / sd_2517 underline the tab *advance*
-    // (p103 288–522). Mini 445–448 painted that gap but ITT-neg:
-    // NR 59.4515/53.4527 (+0.0003, file_22/sd_2517 +0.010) vs KEEP
-    // 441–444 59.4512/53.4527; RL 55.5033/49.6304 (mean −0.0007,
-    // accepted sd_2517 redline −0.1095). Extra ink vs Quartz.
+fn an_underlined_tab_is_underlined_across_its_gap() {
+    // Word underlines the tab's advance (file_22 / sd_2517 p103 288–522;
+    // Word 16 probe tab0930 2026-10-01: "Bund<tab>Cund" one rule). Mini
+    // 445–448 painted it once and the old ITT scorer called it negative;
+    // the holdout and priority gates measure it neutral to positive now.
     let body = "<w:p><w:pPr><w:tabs>\
            <w:tab w:val=\"left\" w:pos=\"5760\"/>\
          </w:tabs></w:pPr>\
@@ -31545,8 +33671,8 @@ fn underlined_tab_stays_three_pt_tick_after_mini_447() {
         .filter(|(_, _, w, h)| *h > 0.0 && *h < 1.6 && *w > 40.0)
         .collect();
     assert!(
-        hair.is_empty(),
-        "mini 447 ITT-neg gap underline; keep the 3pt tick; hair={hair:?}"
+        hair.iter().any(|&(x, _, w, _)| x < 80.0 && x + w > 359.5),
+        "A's underline runs through the tab to the 288pt stop; hair={hair:?}"
     );
 }
 
@@ -32567,8 +34693,9 @@ fn shipped_docx_to_pdf_paints_ins_underline_and_del_strike() {
 #[test]
 fn del_list_bullet_marker_uses_del_ink() {
     // addition_removal p3: Word paints ListBullet • in #D13438 matching
-    // delText. The numbering glyph is inserted from paragraph rstyle
-    // (black) before collect_runs sees w:del.
+    // delText. The paragraph's mark is deleted with its text, and Word
+    // inks a label by its mark (probe lbl0930b: deleted text under a plain
+    // mark leaves the bullet black).
     let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
            <w:abstractNum w:abstractNumId=\"1\">\
@@ -32579,7 +34706,8 @@ fn del_list_bullet_marker_uses_del_ink() {
            </w:abstractNum>\
            <w:num w:numId=\"1\"><w:abstractNumId w:val=\"1\"/></w:num>\
          </w:numbering>";
-    let body = "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr>\
+    let body = "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr>\
+           <w:rPr><w:del w:id=\"1\" w:author=\"Pat\"/></w:rPr></w:pPr>\
          <w:del w:id=\"0\" w:author=\"Pat\"><w:r><w:delText>Parity</w:delText></w:r></w:del>\
          </w:p><w:sectPr/>";
     let pdf = docx_to_pdf(&numbering_docx(body, Some(numbering))).expect("convert del bullet");
@@ -32845,6 +34973,179 @@ fn a_shape_that_fits_its_text_ignores_its_percentage_height() {
         !boxes.is_empty() && boxes.iter().all(|(_, _, _, h)| *h < 40.0),
         "the box keeps its text's height, not 20% of the margin; boxes={boxes:?}"
     );
+}
+
+#[test]
+fn a_box_that_fits_its_text_holds_its_grid_line() {
+    // Word 16 (2026-10-01, 4640e71ddd variants): a floating a:spAutoFit
+    // box around one Times 12 line is 25.7pt high on an 18pt line grid
+    // (one pitch plus its 3.6pt insets) and 21.5 without the grid. We sized
+    // the box by the face alone (21pt) while its text took the grid line,
+    // so the line fell under the box floor and was dropped: 4640e71ddd's
+    // "附件1" box painted empty.
+    let docx = |grid: &str| {
+        let body = format!(
+            "<w:p><w:r><w:drawing><wp:anchor simplePos=\"0\" relativeHeight=\"1\" \
+              behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+              <wp:positionH relativeFrom=\"column\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+              <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+              <wp:extent cx=\"711835\" cy=\"1404620\"/>\
+              <wp:wrapNone/>\
+              <wp:docPr id=\"1\" name=\"Text Box 2\"/>\
+              <a:graphic><a:graphicData \
+                uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+                <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+                  <wps:cNvSpPr txBox=\"1\"/>\
+                  <wps:spPr><a:prstGeom prst=\"rect\"/>\
+                    <a:solidFill><a:srgbClr val=\"FF0000\"/></a:solidFill>\
+                    <a:ln><a:noFill/></a:ln></wps:spPr>\
+                  <wps:txbx><w:txbxContent><w:p><w:pPr>\
+                    <w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/>\
+                    <w:jc w:val=\"center\"/></w:pPr>\
+                    <w:r><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+                    <w:sz w:val=\"24\"/></w:rPr><w:t>Annex1</w:t></w:r></w:p></w:txbxContent></wps:txbx>\
+                  <wps:bodyPr wrap=\"square\" lIns=\"91440\" tIns=\"45720\" rIns=\"91440\" bIns=\"45720\">\
+                    <a:spAutoFit/></wps:bodyPr>\
+                </wps:wsp>\
+              </a:graphicData></a:graphic>\
+            </wp:anchor></w:drawing></w:r></w:p><w:sectPr>{grid}</w:sectPr>"
+        );
+        docx_to_pdf(&drawing_docx(&body)).expect("fitted box")
+    };
+    for (grid, word_h) in [
+        (r#"<w:docGrid w:type="lines" w:linePitch="360"/>"#, 25.2),
+        ("", 21.0),
+    ] {
+        let pdf = docx(grid);
+        let text = pdf_winansi_text(&pdf);
+        let boxes = pdf_fill_boxes_in(&pdf_content_streams(&pdf)[0], 1.0, 0.0, 0.0);
+        assert!(
+            text.contains("Annex1"),
+            "grid {grid:?}: the box keeps its line; text={text}"
+        );
+        assert!(
+            boxes.len() == 1 && (boxes[0].3 - word_h).abs() < 0.6,
+            "grid {grid:?}: Word's box is {word_h} high; boxes={boxes:?}"
+        );
+    }
+}
+
+#[test]
+fn a_text_boxs_outline_insets_its_text_by_half_its_width() {
+    // Word 16 probes c6/c7 (2026-10-01, zero bodyPr insets): a 4pt a:ln
+    // sets "QQ" 1.9pt right and down of where an unstroked box puts it
+    // (2.1pt left when right-aligned), and an a:spAutoFit box grows 3.8pt;
+    // a 1pt line moves it 0.5 and grows it 0.9. The outline straddles the
+    // edge, and its inner half belongs to the inset.
+    let ln = |w: u32| {
+        if w == 0 {
+            "<a:ln><a:noFill/></a:ln>".to_string()
+        } else {
+            format!("<a:ln w=\"{w}\"><a:solidFill><a:srgbClr val=\"0000FF\"/></a:solidFill></a:ln>")
+        }
+    };
+    let probe = |w: u32, fit: bool| {
+        let fit = if fit { "<a:spAutoFit/>" } else { "" };
+        let body = format!(
+            "<w:p><w:r><w:drawing><wp:anchor simplePos=\"0\" relativeHeight=\"1\" \
+              behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+              <wp:positionH relativeFrom=\"column\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+              <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+              <wp:extent cx=\"1828800\" cy=\"254000\"/><wp:wrapNone/>\
+              <wp:docPr id=\"1\" name=\"Text Box 1\"/>\
+              <a:graphic><a:graphicData \
+                uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+                <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+                  <wps:cNvSpPr txBox=\"1\"/>\
+                  <wps:spPr><a:prstGeom prst=\"rect\"/>\
+                    <a:solidFill><a:srgbClr val=\"FF0000\"/></a:solidFill>{}</wps:spPr>\
+                  <wps:txbx><w:txbxContent><w:p><w:pPr>\
+                    <w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+                    <w:r><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+                    <w:sz w:val=\"24\"/></w:rPr><w:t>QQ</w:t></w:r></w:p></w:txbxContent></wps:txbx>\
+                  <wps:bodyPr wrap=\"square\" lIns=\"0\" tIns=\"0\" rIns=\"0\" bIns=\"0\">{fit}</wps:bodyPr>\
+                </wps:wsp>\
+              </a:graphicData></a:graphic>\
+            </wp:anchor></w:drawing></w:r></w:p><w:sectPr/>",
+            ln(w)
+        );
+        let pdf = docx_to_pdf(&drawing_docx(&body)).expect("outlined box");
+        let boxes = pdf_fill_boxes_in(&pdf_content_streams(&pdf)[0], 1.0, 0.0, 0.0);
+        assert_eq!(boxes.len(), 1, "one red box; boxes={boxes:?}");
+        (pdf_glyph_text_xy(&pdf, "QQ").expect("QQ"), boxes[0].3)
+    };
+    let ((x0, y0), h0) = probe(0, true);
+    for (w, half) in [(12700, 0.5), (50800, 2.0)] {
+        let ((x, y), h) = probe(w, true);
+        assert!(
+            (x - x0 - half).abs() < 0.3 && (y0 - y - half).abs() < 0.3,
+            "a {w} EMU outline moves the text {half}pt in: ({x0},{y0}) -> ({x},{y})"
+        );
+        assert!(
+            (h - h0 - 2.0 * half).abs() < 0.3,
+            "a fitted box grows by the {w} EMU outline: {h0} -> {h}"
+        );
+    }
+    let ((x0, _), _) = probe(0, false);
+    let ((x, _), h) = probe(50800, false);
+    assert!(
+        (x - x0 - 2.0).abs() < 0.3 && (h - 20.0).abs() < 0.3,
+        "a fixed box insets its text too and keeps its 20pt: x {x0} -> {x}, h {h}"
+    );
+}
+
+#[test]
+fn a_box_that_fits_its_text_sizes_a_blank_line_by_its_mark() {
+    // Word 16 probes c5a-c5c (2026-10-01): a floating a:spAutoFit box
+    // around a Times 12 "QQ" line grows by 23.1pt for an empty paragraph
+    // under a Times 20 mark, and the same for one holding only 20pt
+    // spaces: a blank line is a line of its mark (22.98pt). We sized it
+    // as a factory Calibri 11 line (13.4pt).
+    let r12 = r#"<w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="24"/></w:rPr>"#;
+    let r20 = r#"<w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="40"/></w:rPr>"#;
+    let p0 = r#"<w:spacing w:after="0" w:line="240" w:lineRule="auto"/>"#;
+    let height = |blank: &str| {
+        let body = format!(
+            "<w:p><w:r><w:drawing><wp:anchor simplePos=\"0\" relativeHeight=\"1\" \
+              behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+              <wp:positionH relativeFrom=\"column\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+              <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>0</wp:posOffset></wp:positionV>\
+              <wp:extent cx=\"1828800\" cy=\"1828800\"/><wp:wrapNone/>\
+              <wp:docPr id=\"1\" name=\"Text Box 1\"/>\
+              <a:graphic><a:graphicData \
+                uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+                <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+                  <wps:cNvSpPr txBox=\"1\"/>\
+                  <wps:spPr><a:prstGeom prst=\"rect\"/>\
+                    <a:solidFill><a:srgbClr val=\"FF0000\"/></a:solidFill>\
+                    <a:ln><a:noFill/></a:ln></wps:spPr>\
+                  <wps:txbx><w:txbxContent>\
+                    <w:p><w:pPr>{p0}</w:pPr><w:r>{r12}<w:t>QQ</w:t></w:r></w:p>{blank}\
+                  </w:txbxContent></wps:txbx>\
+                  <wps:bodyPr wrap=\"square\" lIns=\"0\" tIns=\"0\" rIns=\"0\" bIns=\"0\">\
+                    <a:spAutoFit/></wps:bodyPr>\
+                </wps:wsp>\
+              </a:graphicData></a:graphic>\
+            </wp:anchor></w:drawing></w:r></w:p><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&drawing_docx(&body)).expect("fitted box");
+        let boxes = pdf_fill_boxes_in(&pdf_content_streams(&pdf)[0], 1.0, 0.0, 0.0);
+        assert_eq!(boxes.len(), 1, "one red box; boxes={boxes:?}");
+        boxes[0].3
+    };
+    let alone = height("");
+    for blank in [
+        format!("<w:p><w:pPr>{p0}{r20}</w:pPr></w:p>"),
+        format!(
+            "<w:p><w:pPr>{p0}{r20}</w:pPr><w:r>{r20}<w:t xml:space=\"preserve\">  </w:t></w:r></w:p>"
+        ),
+    ] {
+        let grown = height(&blank) - alone;
+        assert!(
+            (grown - 22.98).abs() < 0.3,
+            "a blank line under a Times 20 mark adds 22.98pt; grew {grown} ({blank})"
+        );
+    }
 }
 
 #[test]
@@ -36675,6 +38976,107 @@ fn an_inline_picture_line_ends_at_the_picture_bottom() {
 }
 
 #[test]
+fn an_underlined_picture_run_keeps_its_descent_under_the_picture() {
+    // e1c745d784's inserted logo and map: Word draws an inserted run
+    // underlined and keeps its descent under the picture, so the next
+    // baseline sits 2.64pt lower for TNR 12 (Word probes 2026-10-01: the
+    // same for w:u single or double, 7.68pt in a 36pt run, nothing for a
+    // deleted or plain run). Without it page 1 held one line too many.
+    let gap = |wrap: (&str, &str), rpr: &str| {
+        let r = "<w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+                 <w:sz w:val=\"24\"/>";
+        let body = format!(
+            "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+             {}<w:r><w:rPr>{r}{rpr}</w:rPr><w:drawing><wp:inline distT=\"0\" distB=\"0\" \
+             distL=\"0\" distR=\"0\"><wp:extent cx=\"762000\" cy=\"381000\"/>\
+             <wp:docPr id=\"1\" name=\"p\"/><a:graphic><a:graphicData \
+             uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\"><pic:pic>\
+             <pic:nvPicPr><pic:cNvPr id=\"1\" name=\"p\"/><pic:cNvPicPr/></pic:nvPicPr>\
+             <pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill><pic:spPr><a:xfrm>\
+             <a:off x=\"0\" y=\"0\"/><a:ext cx=\"762000\" cy=\"381000\"/></a:xfrm></pic:spPr>\
+             </pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>{}</w:p>\
+             <w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+             <w:r><w:rPr>{r}</w:rPr><w:t>After</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+             <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+            wrap.0, wrap.1
+        );
+        let pdf = docx_to_pdf(&drawing_docx(&body)).expect("convert picture run");
+        let (_, img_y) = image_cm_xy(&pdf, "60.00", "30.00");
+        let after = text_baselines(&pdf).into_iter().fold(f32::MIN, f32::max);
+        img_y - after
+    };
+    let ins = (
+        "<w:ins w:id=\"1\" w:author=\"A\" w:date=\"2026-01-01T00:00:00Z\">",
+        "</w:ins>",
+    );
+    let del = (
+        "<w:del w:id=\"1\" w:author=\"A\" w:date=\"2026-01-01T00:00:00Z\">",
+        "</w:del>",
+    );
+    let plain = gap(("", ""), "");
+    for (what, g) in [
+        ("inserted", gap(ins, "")),
+        ("underlined", gap(("", ""), "<w:u w:val=\"single\"/>")),
+    ] {
+        assert!(
+            (g - plain - 2.6).abs() < 0.3,
+            "{what}: TNR 12's descent under the picture; plain={plain} gap={g}"
+        );
+    }
+    let deleted = gap(del, "");
+    assert!(
+        (deleted - plain).abs() < 0.05,
+        "deleted: no descent; plain={plain} gap={deleted}"
+    );
+}
+
+#[test]
+fn a_break_after_a_picture_opens_the_marks_line() {
+    // 66cfa52b0c's logo paragraph: picture, a w:br, and a 7pt mark. Word
+    // lays the break's empty line in the mark's size under the picture;
+    // with two breaks the middle line takes the break run's size (Word 16
+    // probes 2026-10-01: +8.16pt and +21.84pt over the picture alone).
+    let gap = |brs: &str, mark_sz: u32| {
+        let r = "<w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+                 <w:sz w:val=\"24\"/>";
+        let body = format!(
+            "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/>\
+             <w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+             <w:sz w:val=\"{mark_sz}\"/></w:rPr></w:pPr>\
+             <w:r><w:rPr>{r}</w:rPr><w:drawing><wp:inline distT=\"0\" distB=\"0\" \
+             distL=\"0\" distR=\"0\"><wp:extent cx=\"762000\" cy=\"381000\"/>\
+             <wp:docPr id=\"1\" name=\"p\"/><a:graphic><a:graphicData \
+             uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\"><pic:pic>\
+             <pic:nvPicPr><pic:cNvPr id=\"1\" name=\"p\"/><pic:cNvPicPr/></pic:nvPicPr>\
+             <pic:blipFill><a:blip r:embed=\"rIdImg\"/></pic:blipFill><pic:spPr><a:xfrm>\
+             <a:off x=\"0\" y=\"0\"/><a:ext cx=\"762000\" cy=\"381000\"/></a:xfrm></pic:spPr>\
+             </pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>\
+             <w:r><w:rPr>{r}</w:rPr>{brs}</w:r></w:p>\
+             <w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+             <w:r><w:rPr>{r}</w:rPr><w:t>After</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+             <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        );
+        let pdf = docx_to_pdf(&drawing_docx(&body)).expect("convert picture + break");
+        let (_, img_y) = image_cm_xy(&pdf, "60.00", "30.00");
+        let after = text_baselines(&pdf).into_iter().fold(f32::MIN, f32::max);
+        img_y - after
+    };
+    let alone = gap("", 14);
+    let one = gap("<w:br/>", 14) - alone;
+    assert!(
+        (one - 8.16).abs() < 0.3,
+        "one break: a 7pt mark line; +{one}"
+    );
+    let two = gap("<w:br/><w:br/>", 14) - alone;
+    assert!(
+        (two - 21.84).abs() < 0.4,
+        "two breaks: a 12pt break line, then the 7pt mark line; +{two}"
+    );
+}
+
+#[test]
 fn a_hanging_label_keeps_the_full_measure_for_its_text() {
     // fixtures_500 00b7801e: ind left=2880 hanging=2880, "Monday 7/22⇥"
     // in the gutter. The text after the tab has the whole 288pt measure;
@@ -36694,6 +39096,123 @@ fn a_hanging_label_keeps_the_full_measure_for_its_text() {
         ys.len(),
         1,
         "label and 228pt of text fit one line; ys={ys:?}"
+    );
+}
+
+#[test]
+fn a_negative_level_indent_beats_the_list_paragraph_style() {
+    // 66cfa52b0c: List Paragraph says left=720, the bullet level
+    // left=-131 hanging=360. Word sets the text 6.55pt into the left
+    // margin (65.45) and the bullet 18pt before it; we kept the style's
+    // 36pt, so every bullet wrapped narrower and page 1 overflowed.
+    let numbering = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:abstractNum w:abstractNumId="2">
+    <w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="o"/>
+      <w:lvlJc w:val="left"/><w:pPr><w:ind w:left="-131" w:hanging="360"/></w:pPr></w:lvl>
+  </w:abstractNum>
+  <w:num w:numId="17"><w:abstractNumId w:val="2"/></w:num>
+</w:numbering>"#;
+    let styles = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
+  <w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/>
+    <w:basedOn w:val="Normal"/><w:pPr><w:ind w:left="720"/></w:pPr></w:style>
+</w:styles>"#;
+    let body = "<w:p><w:pPr><w:pStyle w:val=\"ListParagraph\"/><w:numPr><w:ilvl w:val=\"0\"/>\
+         <w:numId w:val=\"17\"/></w:numPr></w:pPr><w:r><w:t>Attend</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&numbering_docx_with_styles(
+        body,
+        Some(numbering),
+        Some(styles),
+    ))
+    .expect("convert negative level indent");
+    let (x, _) = pdf_literal_td_xy(&pdf, "Attend").expect("Attend painted");
+    assert!(
+        (x - 65.45).abs() < 0.5,
+        "the level's left=-131 places the text at 65.45: x={x}"
+    );
+}
+
+#[test]
+fn a_character_styles_superscript_raises_the_run() {
+    // ece10bd712: the footnote's number is a literal "1" in the
+    // character style "footnote reference" (vertAlign superscript), not
+    // a w:footnoteRef. Word paints it small and raised; we dropped the
+    // style's vertAlign and painted a full-size digit on the baseline.
+    let styles = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
+  <w:style w:type="character" w:styleId="af2"><w:name w:val="footnote reference"/>
+    <w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style>
+</w:styles>"#;
+    let body = "<w:p><w:r><w:t>Base</w:t></w:r>\
+         <w:r><w:rPr><w:rStyle w:val=\"af2\"/></w:rPr><w:t>Up</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&numbering_docx_with_styles(body, None, Some(styles)))
+        .expect("convert superscript character style");
+    let (_, base) = pdf_literal_td_xy(&pdf, "Base").expect("Base painted");
+    let (_, up) = pdf_literal_td_xy(&pdf, "Up").expect("Up painted");
+    assert!(
+        up - base > 2.0,
+        "the style's superscript raises Up above Base: base={base} up={up}"
+    );
+}
+
+#[test]
+fn auto_spacing_inherits_per_attribute_down_the_style_chain() {
+    // te12998 (Word 16 probe asp0930): Normal says after=100
+    // afterAutospacing=1; Heading 2, based on it, sets only after=80.
+    // Word keeps the inherited auto 14pt (gap 27.84 = 13.8 line + 14), a
+    // direct after=0 keeps it too (27.60), and only afterAutospacing="0"
+    // brings back the style's 5pt (18.96). We let any w:after clear the
+    // flag, so every heading sat 4pt over its text.
+    let styles = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:sz w:val="24"/></w:rPr></w:rPrDefault><w:pPrDefault/></w:docDefaults>
+  <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/>
+    <w:pPr><w:spacing w:after="100" w:afterAutospacing="1"/></w:pPr></w:style>
+  <w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/>
+    <w:pPr><w:spacing w:before="0" w:after="80"/></w:pPr></w:style>
+</w:styles>"#;
+    let p =
+        |t: &str, ppr: &str| format!("<w:p><w:pPr>{ppr}</w:pPr><w:r><w:t>{t}</w:t></w:r></w:p>");
+    let body = [
+        p("AAheading", "<w:pStyle w:val=\"Heading2\"/>"),
+        p("BBnormal", ""),
+        p("CCdirectzero", "<w:spacing w:after=\"0\"/>"),
+        p("DDnormal", ""),
+        p("EEautooff", "<w:spacing w:afterAutospacing=\"0\"/>"),
+        p("FFnormal", ""),
+    ]
+    .concat()
+        + "<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    let pdf = docx_to_pdf(&numbering_docx_with_styles(&body, None, Some(styles)))
+        .expect("convert auto spacing chain");
+    let y = |t: &str| {
+        pdf_literal_td_xy(&pdf, t)
+            .unwrap_or_else(|| panic!("{t} painted"))
+            .1
+    };
+    let line = y("BBnormal") - y("CCdirectzero");
+    assert!(
+        (y("AAheading") - y("BBnormal") - line).abs() < 0.5,
+        "the heading keeps Normal's auto after: heading gap {} vs {line}",
+        y("AAheading") - y("BBnormal")
+    );
+    assert!(
+        (y("CCdirectzero") - y("DDnormal") - line).abs() < 0.5,
+        "a direct after=0 keeps the auto after: {} vs {line}",
+        y("CCdirectzero") - y("DDnormal")
+    );
+    let off = y("EEautooff") - y("FFnormal");
+    assert!(
+        (line - off - 9.0).abs() < 0.5,
+        "afterAutospacing=0 gives back the style's 5pt (14 - 5 = 9 less): {off} vs {line}"
     );
 }
 
@@ -37083,6 +39602,43 @@ fn a_right_to_left_paragraph_mirrors_its_alignment_and_indents() {
 }
 
 #[test]
+fn an_empty_lines_mark_takes_its_character_style() {
+    // tb27bda: empty paragraphs whose mark says only rStyle "Font Style11"
+    // (Times New Roman) under a Verdana Normal. Word 16 probe ms1001: a
+    // mark styled "Big" (TNR 24) makes a TNR 24 line, Above to Below
+    // 39.6pt (m1); the mark's own sz 8 still wins over it, 21.36pt (m3).
+    // We ignored the character style: 14.58pt Verdana 12 lines that
+    // drifted tb27bda's page 2 by 2.9pt.
+    let gap = |mark: &str| {
+        let body = format!(
+            "<w:p><w:r><w:t>Above</w:t></w:r></w:p><w:p><w:pPr><w:rPr>{mark}</w:rPr></w:pPr></w:p>\
+             <w:p><w:r><w:t>Below</w:t></w:r></w:p>{LETTER_SECT}"
+        );
+        let settings = "<w:compat><w:compatSetting w:name=\"compatibilityMode\" \
+              w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat>";
+        let styles = "<w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">\
+              <w:name w:val=\"Normal\"/><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+              <w:rPr><w:rFonts w:ascii=\"Verdana\" w:hAnsi=\"Verdana\"/><w:sz w:val=\"20\"/></w:rPr></w:style>\
+            <w:style w:type=\"character\" w:customStyle=\"1\" w:styleId=\"Big\"><w:name w:val=\"Big\"/>\
+              <w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/><w:sz w:val=\"48\"/></w:rPr></w:style>";
+        let pdf = docx_to_pdf(&docx_with_settings_and_styles(&body, settings, styles))
+            .expect("convert styled mark");
+        let ys: Vec<f32> = text_baselines(&pdf).iter().map(|y| 792.0 - y).collect();
+        ys[ys.len() - 1] - ys[0]
+    };
+    let styled = gap("<w:rStyle w:val=\"Big\"/>");
+    assert!(
+        (styled - 39.6).abs() < 0.3,
+        "a TNR 24 line (Word 39.6): {styled}"
+    );
+    let sized = gap("<w:rStyle w:val=\"Big\"/><w:sz w:val=\"16\"/>");
+    assert!(
+        (sized - 21.36).abs() < 0.3,
+        "its own sz wins (Word 21.36): {sized}"
+    );
+}
+
+#[test]
 fn a_spaces_only_paragraph_is_sized_by_its_mark() {
     // fixtures_500 00195f87: a paragraph of 12pt spaces under a 14pt mark
     // stood 2.1pt short. Checked in Word: a spaces-only paragraph's line
@@ -37116,6 +39672,35 @@ fn a_spaces_only_paragraph_is_sized_by_its_mark() {
         assert!(
             (spaced - empty).abs() < 0.3,
             "spaces {spaces} under mark {mark} sit like an empty mark-{mark} paragraph: {spaced} vs {empty}"
+        );
+    }
+    // Tabs too, deleted or not (Word 16 probes tab1001 t1/t2/t4/t7: an
+    // 11pt or 24pt tab over an 8pt mark is an 8pt line). t899ef4's deleted
+    // 11pt tab over a deleted 8pt mark stood 3.8pt too tall.
+    let del = "w:id=\"9\" w:author=\"a\" w:date=\"2026-09-22T12:19:00Z\"";
+    let empty = next_y(&format!("<w:p><w:pPr>{flat}{}</w:pPr></w:p>", tnr(16)));
+    for (name, middle) in [
+        (
+            "tab",
+            format!(
+                "<w:p><w:pPr>{flat}{}</w:pPr><w:r>{}<w:tab/></w:r></w:p>",
+                tnr(16),
+                tnr(48)
+            ),
+        ),
+        (
+            "deleted tab",
+            format!(
+                "<w:p><w:pPr>{flat}{}</w:pPr><w:del {del}><w:r>{}<w:tab/></w:r></w:del></w:p>",
+                tnr(16).replace("<w:rPr>", &format!("<w:rPr><w:del {del}/>")),
+                tnr(22)
+            ),
+        ),
+    ] {
+        let tabbed = next_y(&middle);
+        assert!(
+            (tabbed - empty).abs() < 0.3,
+            "a {name} alone sits like an empty mark-8 paragraph: {tabbed} vs {empty}"
         );
     }
 }
@@ -38238,6 +40823,39 @@ fn a_typed_label_tab_lands_on_the_hanging_indent_not_a_later_right_stop() {
 }
 
 #[test]
+fn a_typed_label_right_aligns_on_its_own_stop_in_the_hanging_gutter() {
+    // English holdout c73c128db4 (Word 16 probe 2026-10-01, probe_rt):
+    // Defpara "<tab>(a)<tab>text" hangs 1616 twips with a right stop at
+    // 1332 and a left one at 1616. Word right-aligns "(a)" on 66.6pt,
+    // starts the text on 80.8pt and wraps it there; an italic run after it
+    // keeps the label in place. We hung "(a)" as a list marker, sent the
+    // text to the 108pt default stop, and the merged "<tab>(a)<tab>…" run
+    // right-aligned the label with the italic run's width too.
+    let ppr = r#"<w:pPr><w:tabs><w:tab w:val="right" w:pos="1332"/><w:tab w:val="left" w:pos="1616"/></w:tabs><w:ind w:left="1616" w:hanging="1616"/></w:pPr>"#;
+    let body = format!(
+        r#"<w:p><w:r><w:t>Plain</w:t></w:r></w:p><w:p>{ppr}<w:r><w:tab/><w:t>(a)</w:t></w:r><w:r><w:tab/><w:t xml:space="preserve">Sentence starts here </w:t></w:r><w:r><w:rPr><w:i/></w:rPr><w:t>Slanted</w:t></w:r></w:p><w:p>{ppr}<w:r><w:tab/><w:t>(b)</w:t></w:r><w:r><w:tab/><w:t>Long item text that runs on and on past the right margin of this page so it wraps WrapMark</w:t></w:r></w:p><w:sectPr/>"#
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("typed label");
+    let margin = pdf_literal_td_xy(&pdf, "Plain").expect("Plain").0;
+    let label = pdf_literal_td_xy(&pdf, "(a)").expect("(a)").0;
+    let text = pdf_literal_td_xy(&pdf, "Sentence").expect("Sentence").0;
+    let (wrapped, wrapped_y) = pdf_literal_td_xy(&pdf, "WrapMark").expect("WrapMark");
+    let long_y = pdf_literal_td_xy(&pdf, "Long").expect("Long").1;
+    assert!(
+        label > margin + 40.0 && label < margin + 66.6 - 5.0,
+        "(a) ends on the 66.6pt right stop; label={label} margin={margin}"
+    );
+    assert!(
+        (text - margin - 80.8).abs() < 0.3,
+        "the text starts on the 1616-twip stop; text={text}"
+    );
+    assert!(
+        wrapped_y < long_y - 1.0 && wrapped < margin + 400.0,
+        "the long item wraps inside the margin; WrapMark at {wrapped},{wrapped_y} Long y {long_y}"
+    );
+}
+
+#[test]
 fn latin_inside_east_asian_text_takes_the_ascii_face_and_a_quarter_em_gap() {
     if !word_dfonts_available() {
         eprintln!(
@@ -38261,6 +40879,204 @@ fn latin_inside_east_asian_text_takes_the_ascii_face_and_a_quarter_em_gap() {
         String::from_utf8_lossy(&pdf).contains("/BaseFont /Arial"),
         "Q in Arial"
     );
+}
+
+#[test]
+fn ascii_punctuation_and_spaces_between_ideographs_take_the_ascii_face() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; ascii_punctuation_and_spaces_between_ideographs_take_the_ascii_face measures Word's faces"
+        );
+        return;
+    }
+    // Word 16 probes a1-a7 (2026-10-01), Arial with an MS Mincho East
+    // Asian face at 12pt: every ASCII character between ideographs, "(",
+    // ",", "." and the space, paints in Arial, with a w:hint="eastAsia"
+    // or an East Asian language too. Curly quotes and dashes take Arial
+    // without one. We kept each with the ideograph before it, in MS
+    // Mincho, 2pt wider per bracket and 8pt per quote.
+    let x = |text: &str, rpr: &str, needle: &str| {
+        let body = format!(
+            "<w:p><w:r><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:eastAsia=\"MS Mincho\"{rpr}/>\
+             <w:sz w:val=\"24\"/></w:rPr><w:t xml:space=\"preserve\">{text}</w:t></w:r></w:p><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("ascii in East Asian text");
+        pdf_glyph_text_xy(&pdf, needle)
+            .unwrap_or_else(|| panic!("{needle} of {text} paints in Arial"))
+            .0
+    };
+    for (text, rpr, needle, word) in [
+        ("漢(漢)漢", "", ")", 100.0),
+        // Q after the closing quote: Word's next glyph sits at 103.99.
+        ("漢“漢”Q", "", "Q", 104.0),
+        ("漢(漢 漢,漢", " w:hint=\"eastAsia\"", ",", 115.33),
+    ] {
+        let got = x(text, rpr, needle);
+        assert!(
+            (got - word).abs() < 0.3,
+            "{needle} in {text}{rpr}: x={got}, Word {word}"
+        );
+    }
+}
+
+#[test]
+fn the_gap_after_latin_text_is_half_its_fonts_average_width() {
+    if !word_dfonts_available() {
+        eprintln!(
+            "skip: Word DFonts absent; the_gap_after_latin_text_is_half_its_fonts_average_width measures Word's faces"
+        );
+        return;
+    }
+    // Word 16 probes g1-g7 (2026-10-01), "漢Q漢" at 12pt: Q sits a quarter
+    // em (3pt) after the first ideograph whatever the faces, but the
+    // ideograph after Q follows by half the Latin face's OS/2 average
+    // width: 2.65 in Arial (904/2048 em), 2.41 in Times New Roman
+    // (821/2048), with MS Mincho, MS Gothic or Yu Mincho alike. We used a
+    // quarter em on both sides. "漢Q漢A" puts an ASCII marker after the
+    // second ideograph.
+    let gap = |ascii: &str| {
+        let body = format!(
+            "<w:p><w:r><w:rPr><w:rFonts w:ascii=\"{ascii}\" w:hAnsi=\"{ascii}\" w:eastAsia=\"MS Mincho\"/>\
+             <w:sz w:val=\"24\"/></w:rPr><w:t>漢Q漢A</w:t></w:r></w:p><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("trailing gap");
+        let q = pdf_glyph_text_xy(&pdf, "Q").expect("Q").0;
+        let a = pdf_glyph_text_xy(&pdf, "A").expect("A").0;
+        (q, a)
+    };
+    for (ascii, q_adv, word_gap) in [("Arial", 9.336, 2.648), ("Times New Roman", 8.664, 2.405)] {
+        let (q, a) = gap(ascii);
+        // A follows the second ideograph by its own 3pt quarter em.
+        let got = a - 3.0 - 12.0 - (q + q_adv);
+        assert!(
+            (q - 87.0).abs() < 0.3 && (got - word_gap).abs() < 0.2,
+            "{ascii}: Q at {q} (Word 87.0), gap after Q {got} (Word {word_gap})"
+        );
+    }
+}
+
+#[test]
+fn hangul_takes_the_quarter_em_gap_and_auto_space_de_off_drops_it() {
+    if !word_dfonts_available() {
+        return;
+    }
+    // Word 16 probe hgap (2026-10-01): "가나다ABC가나다" in Malgun Gothic
+    // 12pt sets ABC 3pt off the Hangul on each side, as for ideographs
+    // (PR #247 review 4147143789); w:autoSpaceDE="0" drops both gaps, for
+    // Hangul and for ideographs alike (we kept the ideograph gap).
+    let q_x = |text: &str, off: bool| {
+        let ppr = if off {
+            "<w:pPr><w:autoSpaceDE w:val=\"0\"/></w:pPr>"
+        } else {
+            ""
+        };
+        let body = format!(
+            "<w:p>{ppr}<w:r><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:eastAsia=\"Malgun Gothic\"/>\
+             <w:sz w:val=\"24\"/></w:rPr><w:t>{text}</w:t></w:r></w:p><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("autospace");
+        pdf_glyph_text_xy(&pdf, "Q").expect("Q").0
+    };
+    for text in ["가Q가", "漢Q漢"] {
+        let (on, off) = (q_x(text, false), q_x(text, true));
+        assert!(
+            (on - off - 3.0).abs() < 0.3,
+            "{text}: a 3pt gap that autoSpaceDE=0 drops; on={on} off={off}"
+        );
+    }
+}
+
+#[test]
+fn a_digit_takes_the_autospace_gaps_that_auto_space_dn_off_drops() {
+    if !word_dfonts_available() {
+        return;
+    }
+    // Word 16 probes dn1-dn3 (2026-10-01), Arial with MS Mincho at 12pt:
+    // "漢5漢" sets the digit at 87.00 and the next ideograph at 96.32 (a
+    // quarter em before it, half Arial's average width after it).
+    // w:autoSpaceDN="0" drops both gaps (84.00, 90.67) and leaves the gaps
+    // around a letter alone ("漢Q漢": Q at 87.00). The ideographs paint as
+    // CIDs, so a trailing "A" marks the second one: 12pt wide and a quarter
+    // em before A.
+    let xs = |text: &str, glyph: &str, dn_off: bool| {
+        let ppr = if dn_off {
+            "<w:pPr><w:autoSpaceDN w:val=\"0\"/></w:pPr>"
+        } else {
+            ""
+        };
+        let body = format!(
+            "<w:p>{ppr}<w:r><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:eastAsia=\"MS Mincho\"/>\
+             <w:sz w:val=\"24\"/></w:rPr><w:t>{text}A</w:t></w:r></w:p><w:sectPr/>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("digit autospace");
+        let glyph_x = pdf_glyph_text_xy(&pdf, glyph).expect("glyph").0;
+        let a = pdf_glyph_text_xy(&pdf, "A").expect("A").0;
+        (glyph_x, a - 12.0 - 3.0)
+    };
+    for (text, glyph, dn_off, word) in [
+        ("漢5漢", "5", false, (87.0, 96.32)),
+        ("漢5漢", "5", true, (84.0, 90.67)),
+        ("漢Q漢", "Q", true, (87.0, 98.98)),
+    ] {
+        let (x, next) = xs(text, glyph, dn_off);
+        assert!(
+            (x - word.0).abs() < 0.3 && (next - word.1).abs() < 0.3,
+            "{text} autoSpaceDN off={dn_off}: {glyph} at {x}, next ideograph at {next}; Word {word:?}"
+        );
+    }
+}
+
+#[test]
+fn a_character_style_toggles_its_paragraph_styles_bold_italic_strike_and_caps() {
+    // Word 16 probes xor and tog (2026-10-01): a character style's w:b,
+    // w:i, w:strike and w:caps toggle what the paragraph style set: both
+    // on paint plain. A basedOn chain is nearest-wins (CharB on CharA, both
+    // bold, stays bold) and direct w:b wins outright.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>\
+            <w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/></w:rPr></w:style>\
+          <w:style w:type=\"paragraph\" w:styleId=\"P\"><w:name w:val=\"P\"/><w:basedOn w:val=\"Normal\"/>\
+            <w:rPr><w:b/><w:i/><w:strike/><w:caps/></w:rPr></w:style>\
+          <w:style w:type=\"character\" w:styleId=\"A\"><w:name w:val=\"A\"/>\
+            <w:rPr><w:b/><w:i/><w:strike/><w:caps/></w:rPr></w:style>\
+          <w:style w:type=\"character\" w:styleId=\"B\"><w:name w:val=\"B\"/><w:basedOn w:val=\"A\"/>\
+            <w:rPr><w:b/></w:rPr></w:style>\
+        </w:styles>";
+    let render = |para: &str| {
+        let body = format!("{para}<w:sectPr/>");
+        let pdf = docx_to_pdf(&docx_with_styles(&body, styles)).expect("toggles");
+        // The faces' names: "Italic" alone also matches /ItalicAngle.
+        let hay = String::from_utf8_lossy(&pdf)
+            .split("/BaseFont /")
+            .skip(1)
+            .filter_map(|s| s.split_whitespace().next())
+            .collect::<Vec<_>>()
+            .join(" ");
+        (pdf, hay)
+    };
+    let (pdf, hay) = render(
+        "<w:p><w:pPr><w:pStyle w:val=\"P\"/></w:pPr><w:r><w:rPr><w:rStyle w:val=\"A\"/></w:rPr>\
+         <w:t>toggled off entirely here</w:t></w:r></w:p>",
+    );
+    assert!(
+        !hay.contains("Bold") && !hay.contains("Italic"),
+        "plain face: {hay}"
+    );
+    assert!(pdf_horiz_rule_ys(&pdf).is_empty(), "no strike");
+    assert!(
+        pdf_winansi_text(&pdf).contains("toggled"),
+        "lowercase: {}",
+        pdf_winansi_text(&pdf)
+    );
+    let (_, chain) =
+        render("<w:p><w:r><w:rPr><w:rStyle w:val=\"B\"/></w:rPr><w:t>chain</w:t></w:r></w:p>");
+    assert!(chain.contains("Bold"), "a basedOn chain is nearest-wins");
+    let (_, direct) = render(
+        "<w:p><w:pPr><w:pStyle w:val=\"P\"/></w:pPr><w:r><w:rPr><w:rStyle w:val=\"A\"/><w:b/></w:rPr>\
+         <w:t>direct</w:t></w:r></w:p>",
+    );
+    assert!(direct.contains("Bold"), "direct w:b wins");
 }
 
 #[test]
@@ -41047,6 +43863,41 @@ fn an_autofit_column_widens_to_its_longest_word() {
 }
 
 #[test]
+fn a_dxa_autofit_table_widens_past_the_margin_to_its_longest_words() {
+    // Word 16 probes 2026-10-01 (a1, a5): an autofit table with a dxa
+    // tblW gives every column its longest word even when the words
+    // together overrun the measure; the table runs past the right margin.
+    // _to_improve ee7b597379's signature table (tcW 4321/720/4381/4381,
+    // zero cell margins) ends at 610pt in Word; scaling the tcW into the
+    // 471pt tblW broke "Environmental" by character and cost a page.
+    let cell = |w: u32, text: &str| {
+        format!(
+            "<w:tc><w:tcPr><w:tcW w:w=\"{w}\" w:type=\"dxa\"/></w:tcPr>\
+               <w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"
+        )
+    };
+    let lead = "_".repeat(33);
+    let tail = "_".repeat(36);
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"9422\" w:type=\"dxa\"/>\
+           <w:tblCellMar><w:left w:w=\"0\" w:type=\"dxa\"/><w:right w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"3945\"/><w:gridCol w:w=\"1535\"/><w:gridCol w:w=\"4304\"/><w:gridCol w:w=\"989\"/></w:tblGrid>\
+           <w:tr>{}{}{}{}</w:tr></w:tbl><w:sectPr/>",
+        cell(4321, &lead),
+        cell(720, "Environmental"),
+        cell(4381, &tail),
+        cell(4381, "Sciences")
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("overrun autofit table");
+    let (x_word, _) = pdf_glyph_text_xy(&pdf, "Environmental").expect("the word stays whole");
+    let (x_last, _) = pdf_glyph_text_xy(&pdf, "Sciences").expect("the last column paints");
+    assert!(
+        x_last - x_word > 250.0,
+        "the second and third columns hold their words: {x_word} -> {x_last}"
+    );
+}
+
+#[test]
 fn a_vml_shape_without_a_relative_sits_in_the_column() {
     // VML's absent mso-position-*-relative is `text`: e73ba1e0's header
     // logo group at margin-left 331.4pt, margin-top -12.5pt paints at
@@ -41115,7 +43966,7 @@ fn a_cell_line_takes_the_height_of_its_own_runs() {
     // "call" and wraps 11pt deleted text under it; the small lines step
     // at their own 11pt height, not at the big word's.
     let body = "<w:tbl><w:tblPr><w:tblW w:w=\"2400\" w:type=\"dxa\"/>\
-        <w:tblLayout w:type=\"fixed\"/></w:tblPr>\
+        <w:tblLayout w:type=\"fixed\"/><w:tblCellMar><w:left w:w=\"108\" w:type=\"dxa\"/><w:right w:w=\"108\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr>\
         <w:tblGrid><w:gridCol w:w=\"2400\"/></w:tblGrid><w:tr><w:tc>\
         <w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/></w:tcPr>\
         <w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
@@ -41613,6 +44464,38 @@ fn a_fixed_table_past_22_inches_squeezes_its_last_columns_to_the_limit() {
 }
 
 #[test]
+fn a_centred_table_past_22_inches_ignores_its_indent_in_the_cap() {
+    // PR #247 review: a centred table is placed without its tblInd, so the
+    // 22in cap must not subtract it either. A 7pt indent squeezed the
+    // table to 1577pt and moved its centred start 3.5pt right.
+    let table = |ind: u32| {
+        let cell = |text: &str| {
+            format!(
+                "<w:tc><w:tcPr><w:tcW w:w=\"20000\" w:type=\"dxa\"/></w:tcPr>\
+                 <w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"
+            )
+        };
+        format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:jc w:val=\"center\"/>\
+               <w:tblInd w:w=\"{ind}\" w:type=\"dxa\"/><w:tblLayout w:type=\"fixed\"/></w:tblPr>\
+               <w:tblGrid><w:gridCol w:w=\"20000\"/><w:gridCol w:w=\"20000\"/></w:tblGrid>\
+               <w:tr>{}{}</w:tr></w:tbl><w:p/><w:sectPr/>",
+            cell("Top"),
+            cell("Far")
+        )
+    };
+    let top_x = |ind: u32| {
+        let pdf = docx_to_pdf(&minimal_docx_body(&table(ind))).expect("centred table");
+        pdf_glyph_text_xy(&pdf, "Top").expect("Top paints").0
+    };
+    let (bare, indented) = (top_x(0), top_x(140));
+    assert!(
+        (bare - indented).abs() < 0.1,
+        "a centred table caps at 22in whatever its tblInd: x {bare} vs {indented}"
+    );
+}
+
+#[test]
 fn shaded_empty_header_and_footer_paragraphs_paint_their_bands() {
     // PR #247 review: Word paints an empty paragraph's shading across its
     // mark's line. Word, these parts (Arial 10, single, no spacing): the
@@ -41771,6 +44654,77 @@ fn hangul_in_a_run_that_names_only_latin_faces_paints_in_the_hang_script_font() 
     for code in ["<BC1C>", "<D45C>"] {
         assert!(text.contains(code), "the glyph for U+{code} is drawn");
     }
+}
+
+#[test]
+fn a_justified_line_with_spaces_after_its_tab_keeps_the_leader() {
+    // PR #247 review: a justified line whose text after its last tab has
+    // spaces took the word-by-word path, which sent the tab to paint_run:
+    // the next left stop, no leader. The tab now goes to its stop with
+    // its dot leader, and only the spaces after it stretch.
+    let words = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau";
+    let body = format!(
+        "<w:p><w:pPr><w:jc w:val=\"both\"/><w:tabs><w:tab w:val=\"left\" w:leader=\"dot\" w:pos=\"4320\"/></w:tabs></w:pPr>\
+         <w:r><w:t xml:space=\"preserve\">Item\t{words} {words}</w:t></w:r></w:p><w:sectPr/>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("justified tab");
+    let text = stream_glyph_text(&pdf_content_streams(&pdf)[0]);
+    assert!(text.contains("....."), "the dot leader is painted: {text}");
+    let (item_x, _) = pdf_glyph_text_xy(&pdf, "Item").expect("Item painted");
+    let (alpha_x, _) = pdf_glyph_text_xy(&pdf, "alpha").expect("alpha painted");
+    assert!(
+        (alpha_x - item_x - 216.0).abs() < 1.0,
+        "alpha starts at the 3in stop: item={item_x} alpha={alpha_x}"
+    );
+}
+
+#[test]
+fn contextual_spacing_does_not_reach_across_a_nested_table() {
+    // PR #247 review: a cell's paragraphs were folded as one stack, so two
+    // same-style contextual paragraphs on either side of a nested table
+    // lost their after/before spacing and the table touched the text.
+    // They are not consecutive: their spacing stays.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+          <w:style w:type=\"paragraph\" w:styleId=\"Item\"><w:name w:val=\"Item\"/>\
+            <w:pPr><w:spacing w:before=\"400\" w:after=\"400\"/>CTX</w:pPr></w:style>\
+        </w:styles>";
+    let body = "<w:tbl><w:tblGrid><w:gridCol w:w=\"6000\"/></w:tblGrid><w:tr><w:tc>\
+          <w:p><w:pPr><w:pStyle w:val=\"Item\"/></w:pPr><w:r><w:t>Above</w:t></w:r></w:p>\
+          <w:tbl><w:tblGrid><w:gridCol w:w=\"3000\"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Inner</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+          <w:p><w:pPr><w:pStyle w:val=\"Item\"/></w:pPr><w:r><w:t>Below</w:t></w:r></w:p>\
+        </w:tc></w:tr></w:tbl><w:p/><w:sectPr/>";
+    let below = |ctx: &str| {
+        let pdf =
+            docx_to_pdf(&docx_with_styles(body, &styles.replace("CTX", ctx))).expect("nested");
+        pdf_glyph_text_xy(&pdf, "Below").expect("Below painted").1
+    };
+    let (plain, contextual) = (below(""), below("<w:contextualSpacing/>"));
+    assert!(
+        (plain - contextual).abs() < 0.5,
+        "contextual spacing stops at the nested table: plain={plain} contextual={contextual}"
+    );
+}
+
+#[test]
+fn hangul_only_in_a_header_still_loads_the_korean_fallback() {
+    // PR #247 review: the CJK fallbacks were loaded only when the body
+    // held East Asian text, so Hangul in a header (or footer, or note)
+    // under a face without Hangul lost its glyphs.
+    if !word_dfonts_available() {
+        return;
+    }
+    let pdf = docx_to_pdf(&header_part_docx(
+        "<w:p><w:r><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\" w:eastAsia=\"Arial\"/></w:rPr>\
+         <w:t>발표</w:t></w:r></w:p>",
+    ))
+    .expect("hangul header");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("/MalgunGothic"),
+        "the header's Hangul paints in Malgun Gothic"
+    );
 }
 
 #[test]

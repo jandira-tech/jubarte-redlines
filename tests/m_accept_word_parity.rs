@@ -103,6 +103,30 @@ fn moved_from_marks_join_a_deleted_mark_run() {
     assert_eq!(paragraphs(&accepted), ["Section", "Subject", "The end"]);
 }
 
+/// A table whose rows are all deleted vanishes after a moved-from mark too,
+/// when no paragraph follows it. Emptying its cells and then dropping the
+/// emptied rows (the moveFrom row pass) left a `w:tbl` with no row, which
+/// Word's Compare then read as a table of its own: accepted,
+/// docx_lots_of_comments_addition_removal_redline_removal_v_addition kept
+/// two, and our redline marked 52 changes where Word found none.
+#[test]
+fn a_wholly_deleted_table_after_a_moved_from_mark_leaves_no_table() {
+    let body = format!(
+        r#"<w:p><w:r><w:t>Start</w:t></w:r></w:p>
+<w:p>{mv1}<w:moveFrom w:id="2" {REV}><w:r><w:t>Heading</w:t></w:r></w:moveFrom></w:p>
+<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>
+<w:tr><w:trPr><w:del w:id="3" {REV}/></w:trPr><w:tc><w:p>{m4}<w:del w:id="5" {REV}><w:r><w:delText>Old cell</w:delText></w:r></w:del></w:p></w:tc></w:tr>
+</w:tbl>"#,
+        mv1 = moved_mark(1),
+        m4 = deleted_mark(4),
+    );
+    let accepted = accept_revisions(&docx(&body)).unwrap();
+    let xml = part_string(&accepted, "word/document.xml").unwrap();
+    assert!(!xml.contains("<w:tbl>"), "{xml}");
+    assert_eq!(paragraphs(&accepted), ["Start"]);
+    assert_word_valid_package(&accepted);
+}
+
 const W14_NS: &str = "http://schemas.microsoft.com/office/word/2010/wordml";
 const W15_NS: &str = "http://schemas.microsoft.com/office/word/2012/wordml";
 const CID_NS: &str = "http://schemas.microsoft.com/office/word/2016/wordml/cid";

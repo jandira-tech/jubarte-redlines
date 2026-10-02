@@ -212,6 +212,7 @@ fn paint_op<'f>(
     ts: Transform,
 ) {
     match op {
+        Op::Pin(_) => {}
         Op::Text {
             face,
             size,

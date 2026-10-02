@@ -1,5 +1,13 @@
 # JavaScript and TypeScript APIs Implementation Plan
 
+> **Status (2026-10-01, bd262981): not started as written — patch 0003 must
+> not be applied.** The repo substituted raw additive WASM exports
+> (`applyEditPlan`/`previewEditPlan`, `EditOutput.patch`,
+> `diffDocuments`; bf1e0b21) plus the second npm package
+> `jubarte-redlines` (a CLI over `jubarte-wasm`; a6d5e8ae). No JS facade
+> or worker exists — re-evaluate JS1/JS2 against those raw exports before
+> building either.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make Node/browser usage readable and typed without breaking existing WASM users.

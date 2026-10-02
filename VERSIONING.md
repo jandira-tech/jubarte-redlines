@@ -21,8 +21,9 @@ All products under `jubarte*` share **Semantic Versioning**
 | repo | artifact | version files | bump tool |
 |---|---|---|---|
 | **jubarte-redlines** (this repo) | crates.io crate + CLI `jubarte` | `Cargo.toml` `[package].version`, `CHANGELOG.md` | `scripts/release.sh x.y.z …` (calls `bump-version.mjs`) |
-| **jubarte-app** (`jubarte-app/` submodule) | Mac App Store / Tauri shell | `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `src/index.html`, `CHANGELOG.md` | `bun run bump x.y.z` |
-| **jubarte-site** (`jubarte-app/jubarte-site/`) | marketing/site (optional) | `package.json` | manual / site deploy only |
+| **jubarte-redlines** npm CLI (`jubarte-wasm/cli/`) | npm package `jubarte-redlines` (the `npx jubarte-redlines` runner) | `jubarte-wasm/cli/package.json` | `scripts/release.sh` (publishes it with the engine version) |
+| **jubarte-app** (`jubarte-app/` — a plain tracked directory in this repo that also carries its own nested `.git`; there is no `.gitmodules`) | Mac App Store / Tauri shell | `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `src/index.html`, `CHANGELOG.md` | `scripts/release.sh` step 1 (the engine's version); step 12 (`scripts/release_downstream.sh`) commits them on `release/vx.y.z` in the app's repository; `release_downstream.sh x.y.z --app` uploads the App Store build |
+| **jubarte-site** (`jubarte-app/jubarte-site/`) | jubarte.pro (Cloudflare Worker) | `site/data/release.ts`, `package.json` (`jubarte-wasm`), `pnpm-workspace.yaml` | `scripts/release.sh` step 12: `jubarte-site/scripts/release.sh engine x.y.z` (download page, demo engine, deploy); benchmark figures follow with `release.sh bench x.y.z` after neurotic_docx_bench's `scripts/release_jubarte.py` |
 
 `jubarte-app` depends on the engine via:
 
@@ -139,7 +140,84 @@ shell needs a store build that embeds the new engine.
    listing against the previous release's snapshot. The snapshot ships in the
    release commit, so `git diff` between release tags shows API drift.
 
+   Read the drift as semver: a new field on a public struct that is not
+   `#[non_exhaustive]`, or a changed public fn signature, breaks struct
+   literals and callers, so it needs a **minor** bump before 1.0 (0.10.1
+   shipped four such fields as a patch).
+
+### Before you run it
+
+- **Desktop app.** `release.sh` step 1 moves jubarte-app to the engine
+  version (`package.json`, `src-tauri/tauri.conf.json`,
+  `src-tauri/Cargo.toml`, `src/index.html`) and step 2 refuses to go on
+  until `jubarte-app/CHANGELOG.md` has a `## [x.y.z]` section naming
+  `jubarte-redlines x.y.z`. `tests/release_metadata.rs` fails main otherwise.
+- **Lockfiles.** Step 1 runs `cargo update --offline -p jubarte-redlines` in
+  the root, `jubarte-python`, `jubarte-wasm`, `jubarte-rust-inproc` and
+  `jubarte-app/src-tauri`. A metadata-only pass does not refresh a path
+  dependency's version.
+- **npm two-factor auth.** A non-interactive `npm publish` answers `EOTP`.
+  Run from a terminal, or pass a fresh code: `NPM_OTP=123456
+  scripts/release.sh x.y.z …`. Codes live about 30 seconds, so export it just
+  before step 9.
+- **Credentials.** `cargo login`, `npm whoami`,
+  `UV_PUBLISH_TOKEN`, `gh auth status`. Read tokens from their files at run
+  time; never paste them into the command line history.
+- **Windows paths.** Git for Windows stops at 260 characters. The release
+  workflow sets `core.longpaths`, and `tests/repo_paths_fit_windows.rs` keeps
+  every tracked path under 200 characters. Stage long fixture names under
+  short ones instead of raising the limit.
+
+### When a run stops
+
+Re-run the same command with `--skip-gates` once the gates have passed on
+the same commit. Every step checks what already exists:
+
+| stopped at | what the re-run does |
+|---|---|
+| before the tag | redoes the version sync and the release commit |
+| after the tag | keeps the release commit and the tag; never re-tags |
+| after the wasm artifacts commit | keeps that commit (`build(wasm): regenerate npm artifacts for vX.Y.Z`) instead of rebuilding: a rebuild stamps a newer `ENGINE_COMMIT` than the package npm may already hold |
+| any publish | skips every registry that already has the version |
+
+Do not hand-edit a tracked file between the tag and the re-run: the clean
+tree check stops the run, and a tag cannot be moved once pushed.
+
+### When release.yml skips the GitHub release
+
+The release job needs every binary. If one fails (v0.10.1: the Windows
+checkout), the wheels and the other binaries exist only as workflow
+artifacts. Step 10 notices a finished run with no release and then:
+
+1. `gh run download <run>` fetches every artifact into `dist/release/`;
+2. builds the sdist from `git archive vX.Y.Z` (the tagged source, not the
+   working tree);
+3. writes `SHA256SUMS.txt`, and creates the release with `gh release create`.
+   The notes are the tag summary, a line naming the binaries that are
+   missing, the CHANGELOG section and the compare link;
+4. publishes the wheels plus the sdist to PyPI.
+
+A missing binary cannot be added under the same tag once the fix lands on a
+later commit. Ship it with the next patch release.
+
+### Verify every registry
+
+`release.sh` step 11 does this. To check by hand:
+
+```bash
+V=x.y.z
+curl -sfA jubarte-release https://crates.io/api/v1/crates/jubarte-redlines/$V | jq -r .version.num
+npm view jubarte-wasm@$V version releaseNotes
+curl -sf https://pypi.org/pypi/jubarte-redlines/$V/json | jq -r '.urls[].filename'
+gh release view v$V --json assets -q '.assets[].name'
+```
+
+crates.io answers 403 to a request with no User-Agent, so always pass `-A`.
+
 ## Step-by-step: cut an app release (jubarte-app)
+
+An engine release already moves the app's version (see above). For an
+app-only release:
 
 1. Point path dep at the engine commit/tag you intend to ship.  
 2. `bun run bump 0.3.1` (syncs package / Cargo / tauri.conf / app-bar).  
@@ -152,7 +230,7 @@ shell needs a store build that embeds the new engine.
 |---|---|---|
 | `Cargo.toml` version | crate semver | crates.io, docs.rs, dependants |
 | git tag `vX.Y.Z` | immutable release id | humans, CI |
-| binary content hash under `utils/jubarte/jubarte-rust/` | neurotic `tool_version` (`jubarte-rust@<sha12>`) | RESULTS.md ranking |
+| binary content hash under `utils/jubarte/jubarte-rust/` | neurotic `tool_version` (`jubarte-rust@<sha12>`) | [bench RESULTS.md](https://github.com/jandira-tech/neurotic_docx_bench/blob/main/RESULTS.md) ranking |
 | app store build number | Tauri/MAS | App Store Connect |
 
 The neurotic bench does **not** use Cargo semver for jubarte-rust; it hashes the

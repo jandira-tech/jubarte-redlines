@@ -83,6 +83,7 @@ pub(super) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) {
         .collect();
 
     let mut kept: HashSet<String> = HashSet::new();
+    let mut dropped = false;
     let mut dropped_paras: HashSet<String> = HashSet::new();
     let mut authors: HashSet<String> = HashSet::new();
     let para_id = W14::name("paraId");
@@ -100,6 +101,7 @@ pub(super) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) {
                 }
             }
             comments.dom.remove(c);
+            dropped = true;
         }
     }
     // Anchors of the dropped comments go (their commentReference went with
@@ -127,7 +129,8 @@ pub(super) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) {
         for (part, _, rel_type) in FAMILY {
             remove_part(pkg, &main, part, rel_type);
         }
-    } else {
+    } else if dropped {
+        // An untouched part keeps its bytes.
         comments.store(pkg);
         prune_by_para(pkg, &dropped_paras);
     }

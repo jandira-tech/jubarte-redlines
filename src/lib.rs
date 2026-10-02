@@ -39,6 +39,8 @@
 
 /// Resource admission for untrusted DOCX input (ZIP and XML budgets).
 pub mod admission;
+/// Word's built-in style names.
+mod builtin_styles;
 /// Machine-readable manifest of what this build can do.
 pub mod capabilities;
 /// Tracked changes one at a time: list, accept or reject a selection.
@@ -57,6 +59,8 @@ pub mod document_comparer;
 pub mod edit;
 /// Read-only paragraph/package views and the Markdown projection for agents.
 pub mod inspect;
+/// Markdown to Word, with CriticMarkup as tracked changes and comments.
+pub mod markdown;
 /// Markup simplification (PowerTools `MarkupSimplifier` port).
 pub mod markup_simplifier;
 /// WordprocessingML and related namespace / `XName` constants.

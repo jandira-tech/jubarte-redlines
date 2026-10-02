@@ -12,9 +12,10 @@ SPDX-FileCopyrightText = "2026 Jandira Technologies, LLC"
 SPDX-License-Identifier = "AGPL-3.0-only"
 
 # The root license is the canonical repository license text, not a source file.
-# jubarte-python/ carries a copy so the PyPI sdist/wheel bundle the full text.
+# jubarte-python/ and the npm packages carry copies so the PyPI sdist/wheel
+# and the npm tarballs bundle the full text.
 [[annotations]]
-path = ["LICENSE", "jubarte-python/LICENSE"]
+path = ["LICENSE", "jubarte-python/LICENSE", "jubarte-wasm/npm/LICENSE", "jubarte-wasm/cli/LICENSE"]
 precedence = "override"
 SPDX-FileCopyrightText = "1989, 1991 Free Software Foundation, Inc."
 SPDX-License-Identifier = "AGPL-3.0-only"
@@ -32,6 +33,25 @@ path = "LICENSES/LicenseRef-Docxodus-MIT.txt"
 precedence = "override"
 SPDX-FileCopyrightText = ["Microsoft Corporation", "2025-2026 John Scrudato IV"]
 SPDX-License-Identifier = "LicenseRef-Docxodus-MIT"
+
+[[annotations]]
+path = "LICENSES/LicenseRef-anymd-MIT.txt"
+precedence = "override"
+SPDX-FileCopyrightText = "2024-2026 SylphxAI"
+SPDX-License-Identifier = "LicenseRef-anymd-MIT"
+
+# Word to Markdown fixtures and scripts copied from anymd (see LICENSES.md).
+[[annotations]]
+path = "tests/fixtures/from-docx/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["2026 Jandira Technologies, LLC", "2024-2026 SylphxAI"]
+SPDX-License-Identifier = "AGPL-3.0-only"
+
+[[annotations]]
+path = "tests/fixtures/from-docx/equations.docx"
+precedence = "override"
+SPDX-FileCopyrightText = ["2026 Jandira Technologies, LLC", "Microsoft Corporation"]
+SPDX-License-Identifier = "AGPL-3.0-only"
 
 # Metric-compatible Calibri substitute used by LibreOffice (same files soffice embeds).
 [[annotations]]

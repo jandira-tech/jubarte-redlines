@@ -35,12 +35,14 @@
 #                 --no-wait     PyPI gets sdist+local wheel instead of CI wheels
 #
 # What it does, in order:
-#   1. preflight — tools, registry credentials, main branch, clean tree
-#   2. version sync — Cargo.toml and the README's Socket badge version
+#   0. preflight — tools, registry credentials, main branch, clean tree
+#   1. version sync — Cargo.toml and the README's Socket badge version
 #      (bump-version.mjs), jubarte-python/Cargo.toml,
-#      jubarte-wasm/npm/package.json, and all four Cargo.lock files
-#   3. changelog check — dated `## [x.y.z]` section + release-link footer,
-#      then the five summaries + the docs statement land in their channels
+#      jubarte-wasm/npm/package.json, jubarte-wasm/cli/package.json (the
+#      `npx jubarte-redlines` CLI), and all four Cargo.lock files
+#   2. changelog check — dated `## [x.y.z]` section + release-link footer
+#   3. summaries — the five summaries + the docs statement land in their
+#      channels
 #   4. gates — fmt, clippy -D warnings, test --all-features, convert-sweep
 #      unit tests, REUSE lint (sequential cargo per AGENTS.md)
 #   5. api docs drift — REQUIRED review: `cargo doc --no-deps
@@ -54,13 +56,19 @@
 #   7. `chore(release): vX.Y.Z` commit, wasm npm rebuild (stamps the release
 #      commit into ENGINE_COMMIT.txt), npm smoke test, artifacts commit,
 #      annotated `vX.Y.Z` tag whose body is the github summary
-#   8. point of no return — type `vX.Y.Z` to confirm, then push; release.yml
+#      point of no return — type `vX.Y.Z` to confirm, then push; release.yml
 #      builds the five CLI binaries + four PyPI wheels + sdist and creates
 #      the `jubarte vX.Y.Z` GitHub release itself
-#   9. publishes — crates.io (`cargo publish`, after proving the summary is
-#      inside the .crate), npm (`npm publish` on jubarte-wasm/npm), PyPI
-#      (CI wheels + sdist via `uv publish`)
-#  10. verify — every registry answers with the new version AND its summary
+#   8. crates.io — `cargo publish`, after proving the summary is inside the
+#      .crate
+#   9. npm — `npm publish` on jubarte-wasm/npm, then the jubarte-redlines
+#      CLI on jubarte-wasm/cli
+#  10. PyPI — CI wheels + sdist via `uv publish`
+#  11. verify — every registry answers with the new version AND its summary
+#  12. downstream — scripts/release_downstream.sh: jubarte.pro moves to the
+#      release and is deployed, the app's release files are committed in the
+#      jubarte-app repository, and the Mac App Store and benchmark commands
+#      are printed (the App Store upload itself: release_downstream.sh --app)
 #
 # Idempotent: each publish checks the registry first and skips a version
 # that is already live, so a failed run can simply be re-run.
@@ -68,6 +76,7 @@
 # Credentials (preflight checks each):
 #   crates.io  `cargo login`                      (~/.cargo/credentials.toml)
 #   npm        `npm login`                        (npm whoami must answer)
+#              NPM_OTP=<code>                     (two-factor accounts, non-TTY)
 #   PyPI       UV_PUBLISH_TOKEN=pypi-…            (uv publish --token)
 #   GitHub     `gh auth login`                    (drives the release + wheels)
 set -euo pipefail
@@ -143,6 +152,7 @@ crates_has()  { curl -sf -A "jubarte-release (github.com/jandira-tech/jubarte-re
                   "https://crates.io/api/v1/crates/jubarte-redlines/$VER" >/dev/null; }
 pypi_has()    { curl -sf "https://pypi.org/pypi/jubarte-redlines/$VER/json" >/dev/null; }
 npm_has()     { [ "$(npm view "jubarte-wasm@$VER" version 2>/dev/null)" = "$VER" ]; }
+npm_cli_has() { [ "$(npm view "jubarte-redlines@$VER" version 2>/dev/null)" = "$VER" ]; }
 ghrel_has()   { gh release view "$TAG" >/dev/null 2>&1; }
 
 # =============================================================================
@@ -192,14 +202,30 @@ fi
 sed -i.bak "s/^version = \"$CUR\"$/version = \"$VER\"/" jubarte-python/Cargo.toml \
   && rm jubarte-python/Cargo.toml.bak
 (cd jubarte-wasm/npm && npm pkg set "version=$VER" >/dev/null)
-step "jubarte-python/Cargo.toml + jubarte-wasm/npm/package.json → $VER"
+# `npx jubarte-redlines` runs on the jubarte-wasm of its own release.
+(cd jubarte-wasm/cli && npm pkg set "version=$VER" "dependencies.jubarte-wasm=^$VER" >/dev/null)
+step "jubarte-python/Cargo.toml + jubarte-wasm/{npm,cli}/package.json → $VER"
 
-# Lockfiles: cargo metadata rewrites each workspace lock against the bumped
-# manifests without touching registry deps.
-for d in . jubarte-python jubarte-wasm jubarte-rust-inproc; do
-  (cd "$d" && cargo metadata --no-deps --format-version 1 -q >/dev/null)
+# The desktop app ships on the engine's version (tests/release_metadata.rs):
+# its package.json, Tauri config, crate manifest and app-bar label.
+(cd jubarte-app && npm pkg set "version=$VER" >/dev/null)
+sed -i.bak "s/\"version\": \"$CUR\"/\"version\": \"$VER\"/" jubarte-app/src-tauri/tauri.conf.json \
+  && rm jubarte-app/src-tauri/tauri.conf.json.bak
+sed -i.bak "s/^version = \"$CUR\"$/version = \"$VER\"/" jubarte-app/src-tauri/Cargo.toml \
+  && rm jubarte-app/src-tauri/Cargo.toml.bak
+sed -i.bak "s/id=\"appbar-ver\">v$CUR</id=\"appbar-ver\">v$VER</" jubarte-app/src/index.html \
+  && rm jubarte-app/src/index.html.bak
+step "jubarte-app/package.json, jubarte-app/src-tauri/tauri.conf.json, jubarte-app/src-tauri/Cargo.toml, jubarte-app/src/index.html → $VER"
+
+# Lockfiles: re-resolve only jubarte-redlines (the root package, or the path
+# dependency every other workspace pins), offline, so registry deps stay put.
+# (A metadata-only pass resolves nothing: v0.10.1 was tagged with three locks
+# still on 0.10.0.)
+for d in . jubarte-python jubarte-wasm jubarte-rust-inproc jubarte-app/src-tauri; do
+  (cd "$d" && cargo update --offline -q -p jubarte-redlines)
 done
-step "Cargo.lock ×4 refreshed"
+(cd jubarte-app/src-tauri && cargo update --offline -q -p jubarte-app)
+step "Cargo.lock ×5 refreshed"
 
 # =============================================================================
 say "2. Changelog check"
@@ -210,6 +236,10 @@ grep -q "^## \[$VER\] - [0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}" CHANGELOG.md \
 grep -q "^\[$VER\]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v$VER" CHANGELOG.md \
   || die "CHANGELOG.md is missing the \`[$VER]: …/tag/$TAG\` release-link footer"
 step "$VER section + link footer present"
+grep -q "^## \[$VER\]" jubarte-app/CHANGELOG.md \
+  && grep -qF "jubarte-redlines $VER" jubarte-app/CHANGELOG.md \
+  || die "jubarte-app/CHANGELOG.md needs a \`## [$VER]\` section naming the jubarte-redlines $VER engine — write it first"
+step "jubarte-app $VER section present"
 
 # =============================================================================
 say "3. Summaries → each registry's channel"
@@ -411,6 +441,11 @@ if npm_has; then
 else
   (cd jubarte-wasm/npm && npm publish --dry-run >/dev/null)
 fi
+if npm_cli_has; then
+  step "jubarte-redlines $VER already on npm — dry run skipped"
+else
+  (cd jubarte-wasm/cli && npm publish --dry-run >/dev/null)
+fi
 uvx maturin sdist --manifest-path jubarte-python/Cargo.toml --out target/release-check >/dev/null
 # The pypi summary must survive into the sdist or we stop here.
 sdist=$(ls target/release-check/*.tar.gz 2>/dev/null | head -1)
@@ -435,32 +470,47 @@ fi
 say "7. Release commit → wasm artifacts → annotated tag"
 # =============================================================================
 
-# A resumed run finds the release commit under the wasm-artifact commit.
-if ! git log -3 --format=%s | grep -x "chore(release): v$VER" >/dev/null; then
-  git add Cargo.toml Cargo.lock CHANGELOG.md README.md VERSIONING.md \
-    jubarte-python/Cargo.toml jubarte-python/Cargo.lock \
-    jubarte-python/pyproject.toml \
-    jubarte-wasm/Cargo.lock jubarte-wasm/npm/package.json \
-    jubarte-rust-inproc/Cargo.lock \
-    docs/api
-  git commit -m "chore(release): v$VER" -m "Docs: $DOCS_UPDATED"
-fi
-step "release commit $(git rev-parse --short HEAD)"
+# A resumed run finds the release commit under the wasm-artifact commit. Once
+# the tag exists everything below it was built, and npm may already ship that
+# build: rebuilding would stamp a later ENGINE_COMMIT than the one published
+# (the v0.10.1 resume did, on a tree the follow-up commits had moved on).
+if git rev-parse -q --verify "refs/tags/$TAG^{commit}" >/dev/null; then
+  step "tag $TAG exists — release commit $(git rev-parse --short "$TAG^{commit}") and its npm build are kept (resume)"
+else
+  if ! git log -3 --format=%s | grep -x "chore(release): v$VER" >/dev/null; then
+    git add Cargo.toml Cargo.lock CHANGELOG.md README.md VERSIONING.md \
+      jubarte-python/Cargo.toml jubarte-python/Cargo.lock \
+      jubarte-python/pyproject.toml \
+      jubarte-wasm/Cargo.lock jubarte-wasm/npm/package.json jubarte-wasm/cli/package.json \
+      jubarte-rust-inproc/Cargo.lock \
+      jubarte-app/package.json jubarte-app/CHANGELOG.md jubarte-app/src/index.html \
+      jubarte-app/src-tauri/Cargo.toml jubarte-app/src-tauri/Cargo.lock \
+      jubarte-app/src-tauri/tauri.conf.json \
+      docs/api
+    git commit -m "chore(release): v$VER" -m "Docs: $DOCS_UPDATED"
+  fi
+  step "release commit $(git rev-parse --short HEAD)"
 
-# Clean tree now, so build-npm.sh stamps ENGINE_COMMIT.txt with the release
-# commit — the commit the published artifacts can be rebuilt from.
-jubarte-wasm/build-npm.sh
-node jubarte-wasm/npm-smoke.mjs
-# Snapshot the shipped wasm typings beside the rust API dump, after the
-# rebuild so docs/api/ records what npm actually publishes.
-for t in node node-slim web web-slim; do
-  cp "jubarte-wasm/npm/$t/jubarte_wasm.d.ts" "docs/api/jubarte-wasm-$t-v$VER.d.ts"
-done
-if [ -n "$(git status --porcelain -- jubarte-wasm/npm docs/api)" ]; then
-  git add jubarte-wasm/npm docs/api
-  git commit -m "build(wasm): regenerate npm artifacts for v$VER"
+  if git log -2 --format=%s | grep -x "build(wasm): regenerate npm artifacts for v$VER" >/dev/null; then
+    step "npm artifacts for v$VER already committed (resume) — not rebuilt"
+  else
+    # Clean tree now, so build-npm.sh stamps ENGINE_COMMIT.txt with the release
+    # commit — the commit the published artifacts can be rebuilt from.
+    jubarte-wasm/build-npm.sh
+    node jubarte-wasm/npm-smoke.mjs
+    # Snapshot the shipped wasm typings beside the rust API dump, after the
+    # rebuild so docs/api/ records what npm actually publishes.
+    for t in node node-slim web web-slim; do
+      cp "jubarte-wasm/npm/$t/jubarte_wasm.d.ts" "docs/api/jubarte-wasm-$t-v$VER.d.ts"
+    done
+    # The build re-resolves jubarte-wasm/Cargo.lock too; it ships in this commit.
+    if [ -n "$(git status --porcelain -- jubarte-wasm/npm jubarte-wasm/Cargo.lock docs/api)" ]; then
+      git add jubarte-wasm/npm jubarte-wasm/Cargo.lock docs/api
+      git commit -m "build(wasm): regenerate npm artifacts for v$VER"
+    fi
+  fi
+  step "npm artifacts rebuilt + smoke-tested (engine $(cut -c1-7 jubarte-wasm/npm/ENGINE_COMMIT.txt))"
 fi
-step "npm artifacts rebuilt + smoke-tested (engine $(cat jubarte-wasm/npm/ENGINE_COMMIT.txt | cut -c1-7))"
 
 # The github summary is the tag annotation body; release.yml prepends it to
 # the release notes. An existing local tag that lacks it is re-created; a tag
@@ -527,29 +577,108 @@ fi
 say "9. npm"
 # =============================================================================
 
+# An account with two-factor auth answers a non-interactive publish with
+# EOTP (v0.10.1 stopped here). NPM_OTP=<code> passes a one-time password;
+# an interactive terminal lets npm prompt for it.
 if npm_has; then
   step "jubarte-wasm $VER already on npm — skipped"
 else
-  (cd jubarte-wasm/npm && npm publish)
+  if [ -n "${NPM_OTP:-}" ]; then
+    publish_ok() { (cd jubarte-wasm/npm && npm publish --otp "$NPM_OTP"); }
+  else
+    publish_ok() { (cd jubarte-wasm/npm && npm publish); }
+  fi
+  publish_ok || die "npm publish failed. If npm asked for a one-time password (EOTP), run
+         (cd jubarte-wasm/npm && npm publish --otp <code>)
+       then rerun this same command with --skip-gates: every registry that
+       already holds $VER is skipped."
   step "npm publish done"
+fi
+# The CLI depends on jubarte-wasm@^$VER, so it goes second. A one-time
+# password lasts about 30 s; a stale NPM_OTP fails here alone and the rerun
+# skips jubarte-wasm.
+if npm_cli_has; then
+  step "jubarte-redlines $VER already on npm — skipped"
+else
+  if [ -n "${NPM_OTP:-}" ]; then
+    publish_cli() { (cd jubarte-wasm/cli && npm publish --otp "$NPM_OTP"); }
+  else
+    publish_cli() { (cd jubarte-wasm/cli && npm publish); }
+  fi
+  publish_cli || die "npm publish of jubarte-redlines failed. With two-factor auth, run
+         (cd jubarte-wasm/cli && npm publish --otp <code>)
+       or rerun this same command with --skip-gates and a fresh NPM_OTP."
+  step "npm publish (jubarte-redlines CLI) done"
 fi
 
 # =============================================================================
 say "10. PyPI"
 # =============================================================================
 
+# release.yml attaches the wheels to the GitHub release it creates. When any
+# binary fails its release job is skipped (v0.10.1: the Windows runner could
+# not check out long fixture paths), and the wheels exist only as workflow
+# artifacts: the release is then created here from that run's artifacts,
+# with a note naming the binaries it lacks.
+release_run() {
+  gh run list -w Release --branch "$TAG" -L 1 --json databaseId,status \
+    -q '.[0] | "\(.databaseId) \(.status)"' 2>/dev/null || true
+}
+release_from_artifacts() {
+  local run_id=$1 a missing=""
+  rm -rf dist/release dist/release-art dist/release-src
+  mkdir -p dist/release dist/release-src
+  gh run download "$run_id" -D dist/release-art
+  find dist/release-art -type f -exec mv {} dist/release/ \;
+  rm -rf dist/release-art
+  git archive "$TAG" | tar -x -C dist/release-src
+  (cd dist/release-src \
+    && uvx maturin sdist --manifest-path jubarte-python/Cargo.toml --out ../release)
+  rm -rf dist/release-src
+  (cd dist/release && shasum -a 256 -- * > SHA256SUMS.txt)
+  for a in linux-x86_64 linux-aarch64 macos-x86_64 macos-aarch64 windows-x86_64; do
+    ls dist/release/jubarte-"$VER"-"$a".* >/dev/null 2>&1 || missing="$missing $a"
+  done
+  {
+    printf '%s\n\n' "$GITHUB_SUMMARY"
+    if [ -n "$missing" ]; then
+      printf '> Not attached:%s (release.yml run %s failed to build them).\n\n' "$missing" "$run_id"
+    fi
+    awk -v ver="$VER" '
+      index($0, "## [" ver "] - ") == 1 { on=1; next }
+      on && /^## \[/ { exit }
+      on { print }
+    ' CHANGELOG.md
+    [ -n "$PREV_TAG" ] && [ "$PREV_TAG" != "$TAG" ] && printf \
+      '\n**Full Changelog**: https://github.com/jandira-tech/jubarte-redlines/compare/%s...%s\n' \
+      "$PREV_TAG" "$TAG"
+  } > dist/release-notes.md
+  gh release create "$TAG" --title "jubarte $TAG" --notes-file dist/release-notes.md dist/release/*
+  step "GitHub release $TAG created from run $run_id${missing:+ — missing:$missing}"
+}
+
+if [ "$NO_WAIT" = 0 ] && ! ghrel_has; then
+  step "waiting for release.yml (up to ~45 min)…"
+  for _ in $(seq 1 90); do
+    ghrel_has && break
+    read -r RUN_ID RUN_STATE <<<"$(release_run)"
+    [ "${RUN_STATE:-}" = completed ] && break
+    sleep 30
+  done
+  if ! ghrel_has; then
+    read -r RUN_ID RUN_STATE <<<"$(release_run)"
+    [ "${RUN_STATE:-}" = completed ] \
+      || die "release.yml for $TAG has not finished — rerun this command later"
+    release_from_artifacts "$RUN_ID"
+  fi
+fi
+
 if pypi_has; then
   step "jubarte-redlines $VER already on PyPI — skipped"
 else
-  mkdir -p dist/pypi
+  rm -rf dist/pypi; mkdir -p dist/pypi
   got_wheels=0
   if [ "$NO_WAIT" = 0 ]; then
-    # release.yml must finish the wheels job before the release exists.
-    step "waiting for release.yml to attach wheels (up to ~45 min)…"
-    for _ in $(seq 1 90); do
-      gh release view "$TAG" >/dev/null 2>&1 && break
-      sleep 30
-    done
     if gh release download "$TAG" --pattern 'jubarte_redlines-*' \
         --dir dist/pypi --clobber 2>/dev/null \
        && ls dist/pypi/*.whl >/dev/null 2>&1; then
@@ -591,11 +720,21 @@ check() { if eval "$2"; then step "ok — $1"; else echo "  ✗ $1" >&2; ok=0; f
 sleep 20 # crates.io index lag
 check "crates.io  jubarte-redlines $VER" crates_has
 check "npm        jubarte-wasm $VER" npm_has
+check "npm        jubarte-redlines $VER" npm_cli_has
 check "npm        releaseNotes.$VER shipped" npm_note
 check "PyPI       jubarte-redlines $VER" pypi_has
 check "GitHub     release $TAG" ghrel_has
 check "GitHub     notes carry --github-summary" gh_note
 [ "$ok" = 1 ] || die "verification failed — check the lines marked ✗"
+
+# =============================================================================
+say "12. Downstream — jubarte.pro, jubarte-app, App Store, benchmark"
+# =============================================================================
+# After verify: the site reads the GitHub release's files and the npm package
+# that step 11 just proved live. A failure here leaves the release itself
+# intact; rerun scripts/release_downstream.sh $VER on its own.
+scripts/release_downstream.sh "$VER" \
+  || die "downstream failed — the release is out; rerun scripts/release_downstream.sh $VER"
 
 say "Released jubarte $VER"
 echo "  https://github.com/jandira-tech/jubarte-redlines/releases/tag/$TAG"

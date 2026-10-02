@@ -1567,42 +1567,51 @@ fn styles_the_revision_lacks(
         .collect()
 }
 
-/// Put each saved style back in place of the one its key finds.
+/// Put each saved style back in place of the one its key finds. Twins of one
+/// key (a built-in name in two cases) go back in order, each on its own.
 fn restore_styles(
     dom: &mut Dom,
     styles_root: NodeId,
     saved: Vec<((String, String), NodeId)>,
 ) -> bool {
     let mut changed = false;
+    let mut restored = std::collections::HashSet::new();
     for (key, copy) in saved {
         let Some(live) = dom
             .elements(styles_root, Some(&W::name("style")))
             .into_iter()
-            .find(|&s| style_match_key(dom, s).as_ref() == Some(&key))
+            .find(|&s| !restored.contains(&s) && style_match_key(dom, s).as_ref() == Some(&key))
         else {
             continue;
         };
         if dom.serialize_element(live) != dom.serialize_element(copy) {
             dom.replace_with(live, &[copy]);
+            restored.insert(copy);
             changed = true;
+        } else {
+            restored.insert(live);
         }
     }
     changed
 }
 
+/// The key Word pairs two stylesheets' styles by: the type, and the name
+/// (the id when it has none). A built-in name matches in any case, a custom
+/// one only exactly: Word keeps `Indent(A)` beside `Indent(a)`.
 fn style_match_key(dom: &Dom, style: NodeId) -> Option<(String, String)> {
     let ty = dom
         .attribute(style, &W::name("type"))
         .unwrap_or("paragraph")
         .to_string();
-    let key = dom
+    let name = dom
         .element(style, &W::name("name"))
         .and_then(|n| dom.attribute(n, &W::val()))
-        .map(|v| v.to_ascii_lowercase())
-        .or_else(|| {
-            dom.attribute(style, &W::name("styleId"))
-                .map(|v| v.to_ascii_lowercase())
-        })?;
+        .or_else(|| dom.attribute(style, &W::name("styleId")))?;
+    let key = if crate::builtin_styles::is_built_in(name) {
+        name.to_ascii_lowercase()
+    } else {
+        name.to_string()
+    };
     Some((ty, key))
 }
 
@@ -4666,6 +4675,14 @@ pub fn accept_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
     pkg.to_zip()
 }
 
+/// [`accept_revisions`] keeping bookmark and comment ids: a redline names
+/// its comments by the ids the documents gave them, as `edit` reports them.
+fn accept_source_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
+    let mut pkg = PartFs::open(docx)?;
+    crate::revision_processor::accept_revisions_package_keeping_ids(&mut pkg);
+    pkg.to_zip()
+}
+
 /// A.11 — `RevisionProcessor.RejectRevisions` byte facade: reject every
 /// tracked revision across main + headers/footers + notes + styles parts.
 pub fn reject_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
@@ -6123,7 +6140,7 @@ fn compare_documents_impl(
     if original == modified {
         let mut owned = crate::strict_translation::strict_to_transitional_docx(original);
         if settings.merge_replaced_paragraphs && docx_has_tracked_changes(&owned) {
-            owned = accept_revisions(&owned)?;
+            owned = accept_source_revisions(&owned)?;
         }
         // IDENTICAL-INPUT still runs drawing/shape id fixups: source packages
         // may carry colliding wp:docPr/@id (strict01 corpus) that the full
@@ -6162,8 +6179,8 @@ fn compare_documents_impl(
     if settings.merge_replaced_paragraphs
         && (docx_has_tracked_changes(&original_owned) || docx_has_tracked_changes(&modified_owned))
     {
-        original_owned = accept_revisions(&original_owned)?;
-        modified_owned = accept_revisions(&modified_owned)?;
+        original_owned = accept_source_revisions(&original_owned)?;
+        modified_owned = accept_source_revisions(&modified_owned)?;
     }
 
     // After prep, packages may still be byte-identical (rare non-self paths).
@@ -6973,9 +6990,12 @@ fn compare_documents_impl(
                 // `Listaszerbekezds` and Table Grid `Rcsostblzat`).
                 let mut b_by_key: std::collections::HashMap<(String, String), String> =
                     std::collections::HashMap::new();
-                for (id, &s) in &b_idx {
-                    if let Some(k) = style_match_key(&sd, s) {
-                        b_by_key.entry(k).or_insert_with(|| id.clone());
+                for s in sd.elements(br, Some(&W::name("style"))) {
+                    if let (Some(k), Some(id)) = (
+                        style_match_key(&sd, s),
+                        sd.attribute(s, &W::name("styleId")),
+                    ) {
+                        b_by_key.entry(k).or_insert_with(|| id.to_string());
                     }
                 }
                 let b_id_for = |out_id: &str| -> Option<String> {
@@ -7549,6 +7569,9 @@ fn compare_documents_impl(
     }
     out.to_zip()
 }
+
+#[cfg(test)]
+mod based_style_record_tests;
 
 #[cfg(test)]
 mod tests {

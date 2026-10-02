@@ -117,6 +117,10 @@ pub(crate) enum Op {
         rotate_deg: f32,
         oval: bool,
     },
+    /// Brackets the operations of an object fixed to the page (`true`
+    /// opens, `false` closes): moves of the text flow leave them where
+    /// they are. Paints nothing.
+    Pin(bool),
     /// Behind-doc Word watermark (header SDT gallery=Watermarks).
     Watermark {
         face: FaceRef,
@@ -237,6 +241,7 @@ impl Op {
                 start.1 += dy;
                 segments.iter_mut().flatten().for_each(|p| p.1 += dy);
             }
+            Op::Pin(_) => {}
         }
     }
 
@@ -696,6 +701,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                         b = color[2],
                     );
                 }
+                Op::Pin(_) => {}
                 Op::Line {
                     x1,
                     y1,
@@ -1734,6 +1740,8 @@ fn stream_object(ops: &str, compress: bool) -> Vec<u8> {
 fn winansi_byte(ch: char) -> Option<u8> {
     match ch as u32 {
         0x20..=0x7E | 0xA0..=0xFF => Some(ch as u8),
+        // A non-breaking hyphen is a hyphen on the page, as in Word's PDFs.
+        0x2011 => Some(b'-'),
         0x0152 => Some(0x8C),
         0x0153 => Some(0x9C),
         0x0160 => Some(0x8A),

@@ -288,8 +288,7 @@ fn document100_vs_lots_of_comments_carries_unique_bodies() {
 
 /// Same comment *texts* on A and B under different ids (Word renumbered the
 /// set across two redline-derived sources). Union-by-id produces 12 comments;
-/// Word's own redline of this pair keeps 6 with 6 anchors: B's set (with
-/// Word's renumbered ids), where the
+/// Word's own redline of this pair keeps 6 with 6 anchors: B's set, where the
 /// Complex/Threaded bodies appear twice because a copied section carries its
 /// own pair. A range maps to the copy at its own place, so the two pairs are
 /// not collapsed as duplicates (this test once asserted 4, which was that
@@ -322,15 +321,12 @@ fn renumbered_same_text_comments_prefer_b_not_double_union() {
     let pkg = open_valid_output(&out);
     let ids = comment_ids(&pkg);
     let (s, e, r) = anchor_ids(&pkg);
-    // Word's redline of this pair (corpus/word_based/docx_redlines_word)
-    // keeps B's six comments renumbered in document order: 0 1 3 4 10 11.
-    let word: HashSet<String> = ["0", "1", "3", "4", "10", "11"]
-        .into_iter()
-        .map(String::from)
-        .collect();
+    // B's six comments under B's ids. Word 16 (2026-10-01) writes them as
+    // 0 1 3 4 10 11: it numbers every comment, bookmark and revision on one
+    // counter, which jubarte does not copy (docs/WORD_DIFFERENCES.md).
     assert_eq!(
-        ids, word,
-        "must not double-union: B's six comments with Word's ids"
+        ids, b_ids,
+        "must not double-union: B's six comments, B's ids"
     );
     assert_eq!(s.len(), 6, "starts={s:?}");
     assert_eq!(e.len(), 6, "ends={e:?}");

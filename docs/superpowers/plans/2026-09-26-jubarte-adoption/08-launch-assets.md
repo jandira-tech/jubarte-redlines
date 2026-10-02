@@ -1,5 +1,9 @@
 # Jubarte Launch Assets and Partner Contributions Implementation Plan
 
+> **Status (2026-10-01, bd262981): drafts only, never executed — by design:
+> launching needs the owner's authorization.** Re-check every claim against
+> 0.10.1 and the per-plan statuses before using any asset.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Give the maintainer ready-to-review acquisition assets that lead to real document tasks and can be tested before spending on promotion.

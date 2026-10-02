@@ -931,17 +931,45 @@ fn non_separator_prefix_sums(
     prefix
 }
 
+/// Whether a window holds the words of one paragraph at most: words only, and
+/// no paragraph mark before its last word.
+fn within_one_paragraph(dom: &Dom, cul: &[ComparisonUnit]) -> bool {
+    let Some((_, before_last)) = cul.split_last() else {
+        return true;
+    };
+    cul.iter().all(|u| matches!(u, ComparisonUnit::Word(_)))
+        && !before_last.iter().any(|u| {
+            matches!(u, ComparisonUnit::Word(w) if w.contents.iter().any(|a| atom_is_ppr(dom, a)))
+        })
+}
+
 /// Keep the **first-found** candidate maximising `(content_score, len)`. Strict
 /// `>` replacement means ties never displace the incumbent — so the winner is the
 /// earliest one in the enumeration order (`i1` ascending, then `i2` ascending).
+///
+/// With `diagonal` (Word mode, within one paragraph), a tie goes to the
+/// run nearer the diagonal (`|i1 - i2|` smaller), as Word pairs repeated text
+/// in place: of two equal `1,000 again.` sentences turned into `1,500 again.`
+/// and `2,000 again.`, Word changes `000` and `1` in place
+/// (tests/m_word_tokens.rs), where the first-found run paired the first
+/// sentence with the second. Windows across paragraphs keep first-found (the
+/// list and equal-count pairings of m393 and m45 depend on it).
 #[inline]
 fn consider_candidate(
     best: &mut Option<(usize, usize, usize, usize)>,
     cand: (usize, usize, usize, usize),
+    diagonal: bool,
 ) {
     let better = match best {
         None => true,
-        Some(b) => cand.0 > b.0 || (cand.0 == b.0 && cand.1 > b.1),
+        Some(b) => {
+            cand.0 > b.0
+                || (cand.0 == b.0
+                    && (cand.1 > b.1
+                        || (diagonal
+                            && cand.1 == b.1
+                            && cand.2.abs_diff(cand.3) < b.2.abs_diff(b.3))))
+        }
     };
     if better {
         *best = Some(cand);
@@ -962,6 +990,8 @@ fn longest_common_run_scan(
         (Some(d), Some(s)) => Some(non_separator_prefix_sums(d, cul1, s)),
         _ => None,
     };
+    let diagonal = settings.is_some_and(|s| s.merge_replaced_paragraphs)
+        && dom.is_some_and(|d| within_one_paragraph(d, cul1) && within_one_paragraph(d, cul2));
     // best: (content_score, len, i1, i2)
     let mut best: Option<(usize, usize, usize, usize)> = None;
     for i1 in 0..cul1.len() {
@@ -970,7 +1000,7 @@ fn longest_common_run_scan(
             if len > 0 {
                 let content =
                     common_run_content_score(dom, cul1, i1, len, settings, prefix.as_deref());
-                consider_candidate(&mut best, (content, len, i1, i2));
+                consider_candidate(&mut best, (content, len, i1, i2), diagonal);
             }
         }
     }
@@ -1010,6 +1040,8 @@ fn longest_common_run_indexed(
         index.entry(u.sha1_key()).or_default().push(i2);
     }
 
+    let diagonal = settings.is_some_and(|s| s.merge_replaced_paragraphs)
+        && dom.is_some_and(|d| within_one_paragraph(d, cul1) && within_one_paragraph(d, cul2));
     // best: (content_score, len, i1, i2) — same tuple/tie-break as the scan.
     let mut best: Option<(usize, usize, usize, usize)> = None;
     for i1 in 0..cul1.len() {
@@ -1034,7 +1066,7 @@ fn longest_common_run_indexed(
             if len > 0 {
                 let content =
                     common_run_content_score(dom, cul1, i1, len, settings, prefix.as_deref());
-                consider_candidate(&mut best, (content, len, i1, i2));
+                consider_candidate(&mut best, (content, len, i1, i2), diagonal);
             }
         }
     }
@@ -1994,23 +2026,6 @@ fn stamp_confetti_then_replace(
     Some(stamp_seqs)
 }
 
-/// M-ANCHOR helper: window relatedness — at least 20% of the SMALLER side's
-/// units have some sha1 match anywhere on the other side. Computed with a
-/// hash-set of the larger side (O(n) extra).
-fn windows_related(cul1: &[ComparisonUnit], cul2: &[ComparisonUnit]) -> bool {
-    let (small, large) = if cul1.len() <= cul2.len() {
-        (cul1, cul2)
-    } else {
-        (cul2, cul1)
-    };
-    let large_hashes: std::collections::HashSet<&str> = large.iter().map(|u| u.sha1()).collect();
-    let hits = small
-        .iter()
-        .filter(|u| large_hashes.contains(u.sha1()))
-        .count();
-    hits * 5 >= small.len()
-}
-
 /// Lowercased word tokens from a paragraph group's descendant `w:t` values.
 fn para_text_tokens(dom: &Dom, u: &ComparisonUnit) -> std::collections::HashSet<String> {
     para_text_tokens_from_units(dom, std::slice::from_ref(u))
@@ -2945,9 +2960,13 @@ pub fn do_lcs_algorithm(
             } else {
                 len
             };
+            // The ratio is against the whole window, so it shrinks as a
+            // story of paired paragraphs grows; Word keeps their anchors.
             if max_len > 0
                 && !edge_word
                 && (ratio_len as f64) / (max_len as f64) < settings.detail_threshold
+                && !(settings.merge_replaced_paragraphs
+                    && stream_paragraphs_pair_in_order(dom, &cul1, &cul2))
             {
                 len = 0;
             }
@@ -3099,45 +3118,6 @@ pub fn do_lcs_algorithm(
                     || dom.value_str(a.content_element).trim().is_empty()
             })
         })
-    {
-        len = 0;
-    }
-
-    // M-ANCHOR attempt 3 (parity/_scratch/anchor_sensitivity.md): a SHORT,
-    // low-text common run inside a LARGE window of two UNRELATED sides is a
-    // coincidence collision (empty paras, 'ipsum', '(dolore)'), not an
-    // anchor — Word collapses such whole-doc replacements to insert-all +
-    // delete-all (sd2517b GT: consolidated 18-run shape). Void the run —
-    // never substitute another one; the alternatives in such windows are
-    // junk too (fs's '.', sd2517b's lorem tokens). Three conditions, ALL
-    // required:
-    //   1. both sides large — min side > 32 protects the paragraph-merge
-    //      pivot of short replacements (fs pair: window 53+5, pMark anchor
-    //      is the MIX-paragraph pivot);
-    //   2. run weak in absolute terms — len ≤ 2 AND < 15 chars of real
-    //      trimmed w:t text (deliberately NOT keyed on textless-ness);
-    //   3. window unrelated — fewer than 20% of the smaller side's units
-    //      have ANY sha1 match on the other side (related big documents
-    //      keep their legitimate empty-para alignment).
-    // Word-mode only. EMPIRICAL NOTE (2026-07-04): on the motivating real
-    // sd2517b pair this gate is a NO-OP — the junk anchors there fire in
-    // step_h-descended lopsided windows (3+1059, 225+2, 39+2, 5+46, 2+45;
-    // min side ≤ 5), never in a both-sides-large window, and the 131+120
-    // top window already resolves len=0 via the earlier guards. The gate
-    // still pins the synthetic whole-doc-replacement physics (m41 tests)
-    // without touching any of the four spot-oracle pairs.
-    // Lone paragraph-mark anchors (len==1, only w:pPr) are excluded: they
-    // score run_real_text_len==0 and would otherwise be voided in large
-    // unrelated windows, breaking the paragraph-merge pivot physics that
-    // Step D / the M-BLK path rely on (PR #81 review 3523298506).
-    if len > 0
-        && len <= 2
-        && !is_only_paragraph_mark
-        && settings.merge_replaced_paragraphs
-        && !edge_word
-        && cul1.len().min(cul2.len()) > 32
-        && run_real_text_len(dom, &cul1[i1..i1 + len]) < 15
-        && !windows_related(&cul1, &cul2)
     {
         len = 0;
     }
@@ -3547,6 +3527,32 @@ fn peel_story_final_groups<K: PartialEq>(
             lg.pop();
         }
         return Some((vec![mark_a], vec![mark_b]));
+    }
+    // The revision ends on an empty paragraph after a table, the original is
+    // one run of words: the empty paragraph's mark pairs with the original's
+    // closing mark, and the original's last paragraph is deleted into it
+    // (Word 16, multi_section × nested_table_rowspan). Unpaired, the
+    // revision's closing paragraph was inserted and stripped as trailing
+    // matter, so the story ended on its table (math paragraphs ×
+    // nested_table_rowspan). The other way round Word keeps the original's
+    // empty paragraph live after the deleted table and the revised last
+    // paragraph on its inserted mark (nested_table_rowspan × numbered_list).
+    let lone_mark = |g: &(K, Vec<ComparisonUnit>)| {
+        g.1.len() == 1 && unit_is_single_atom_ppr(dom, &g.1[0]) && unit_closes_story(dom, &g.1[0])
+    };
+    // Nothing before the empty paragraph is of the run's kind: a title above
+    // the table would take the run's words instead.
+    if let ([run], Some(close)) = (lg.as_slice(), rg.last())
+        && rg.len() >= 2
+        && lone_mark(close)
+        && run.1.len() >= 2
+        && closes(run)
+        && bare_mark(run)
+        && rg[..rg.len() - 1].iter().all(|g| g.0 != run.0)
+    {
+        let mark_b = rg.pop()?.1;
+        let mark_a = lg[0].1.pop()?;
+        return Some((vec![mark_a], mark_b));
     }
     if lg.len() == rg.len() || lg.len() < 2 || rg.len() < 2 {
         return None;
@@ -5729,7 +5735,10 @@ fn has_common_run_ge(left: &[ComparisonUnit], right: &[ComparisonUnit], target: 
 /// keeps the original's properties and deleted mark, and the story-final
 /// paragraph carries the revised properties.
 pub fn pair_story_final_marks(dom: &Dom, seqs: &mut Vec<CorrelatedSequence>) {
-    if pair_final_marks_behind_inserted_tail(dom, seqs) {
+    if pair_final_marks_behind_inserted_tail(dom, seqs)
+        || pair_final_marks_behind_replaced_tail(dom, seqs)
+        || pair_final_marks_past_deleted_tail(dom, seqs)
+    {
         return;
     }
     let n = seqs.len();
@@ -5790,9 +5799,124 @@ pub fn pair_story_final_marks(dom: &Dom, seqs: &mut Vec<CorrelatedSequence>) {
     ));
 }
 
+/// The units end on a paragraph mark, bare or closing a paragraph group.
+fn ends_with_mark(dom: &Dom, units: &[ComparisonUnit]) -> bool {
+    units.last().is_some_and(|u| {
+        unit_is_single_atom_ppr(dom, u)
+            || as_group(u).is_some_and(|g| {
+                g.group_type == ComparisonUnitGroupType::Paragraph
+                    && g.contents
+                        .last()
+                        .is_some_and(|c| unit_is_single_atom_ppr(dom, c))
+            })
+    })
+}
+
+/// Split the paragraph mark off the units' last paragraph; a paragraph
+/// group leaves its words behind.
+fn split_final_mark(dom: &Dom, units: &mut Vec<ComparisonUnit>) -> Option<ComparisonUnit> {
+    let last = units.pop()?;
+    if unit_is_single_atom_ppr(dom, &last) {
+        return Some(last);
+    }
+    let mut contents = group_contents(&last);
+    let mark = contents.pop();
+    units.extend(contents);
+    mark
+}
+
+/// The revised story's closing mark paired with an interior mark of the
+/// original, whose last paragraphs follow deleted: `[Equal …¶] [Deleted
+/// …¶]`. Word keeps the two stories' final marks paired whatever precedes
+/// them, so the interior mark is deleted with the paragraphs after it and
+/// the revised closing mark pairs the original's. Left as it was, the
+/// original's deleted closing mark stayed (a body ends on a paragraph) and
+/// accepting the redline kept an empty paragraph the revision never had
+/// (file_86 × file_88).
+fn pair_final_marks_past_deleted_tail(dom: &Dom, seqs: &mut Vec<CorrelatedSequence>) -> bool {
+    let n = seqs.len();
+    if n < 2 || seqs[n - 1].correlation_status != CorrelationStatus::Deleted {
+        return false;
+    }
+    let Some(k) = seqs
+        .iter()
+        .rposition(|s| s.correlation_status != CorrelationStatus::Deleted)
+    else {
+        return false;
+    };
+    fn units(v: &Option<Vec<ComparisonUnit>>) -> &[ComparisonUnit] {
+        v.as_deref().unwrap_or_default()
+    }
+    let closes = |v: &[ComparisonUnit]| {
+        ends_with_mark(dom, v) && v.last().is_some_and(|u| unit_closes_story(dom, u))
+    };
+    let (equal, deleted) = (&seqs[k], &seqs[n - 1]);
+    if equal.correlation_status != CorrelationStatus::Equal
+        || !ends_with_mark(dom, units(&equal.com_units_1))
+        || !closes(units(&equal.com_units_2))
+        || !closes(units(&deleted.com_units_1))
+    {
+        return false;
+    }
+    let split = |v: &mut Option<Vec<ComparisonUnit>>| {
+        v.as_mut().and_then(|units| split_final_mark(dom, units))
+    };
+    let (Some(interior), Some(revised_close), Some(original_close)) = (
+        split(&mut seqs[k].com_units_1),
+        split(&mut seqs[k].com_units_2),
+        split(&mut seqs[n - 1].com_units_1),
+    ) else {
+        return false;
+    };
+    seqs[k + 1]
+        .com_units_1
+        .get_or_insert_with(Vec::new)
+        .insert(0, interior);
+    seqs.push(CorrelatedSequence::paired(
+        CorrelationStatus::Equal,
+        vec![original_close],
+        vec![revised_close],
+    ));
+    for i in [n - 1, k] {
+        if [&seqs[i].com_units_1, &seqs[i].com_units_2]
+            .into_iter()
+            .flatten()
+            .all(Vec::is_empty)
+        {
+            seqs.remove(i);
+        }
+    }
+    true
+}
+
+/// A replaced tail the LCS left deleted-first, `[Equal …¶] [Deleted …¶]
+/// [Inserted …¶]` (a kept title over a rewritten body), or a whole story
+/// replaced, `[Deleted …¶] [Inserted …¶]`: Word inserts first and pairs the
+/// final marks as behind an inserted tail (Word 16 probes 2026-10-01,
+/// tests/fixtures/word_probes/final_marks; tests/m_whole_story_final_marks.rs).
+fn pair_final_marks_behind_replaced_tail(dom: &Dom, seqs: &mut Vec<CorrelatedSequence>) -> bool {
+    let n = seqs.len();
+    // An insertion ahead of the deleted run placed it mid-revision on purpose
+    // (employment × lease: the original spliced in after "3. Rent").
+    if n < 2
+        || seqs[n - 2].correlation_status != CorrelationStatus::Deleted
+        || seqs[n - 1].correlation_status != CorrelationStatus::Inserted
+        || n > 2 && seqs[n - 3].correlation_status == CorrelationStatus::Inserted
+    {
+        return false;
+    }
+    seqs.swap(n - 2, n - 1);
+    if pair_final_marks_behind_inserted_tail(dom, seqs) {
+        return true;
+    }
+    seqs.swap(n - 2, n - 1);
+    false
+}
+
 /// A replaced tail with the inserted paragraphs ahead of the deleted ones,
 /// `[Equal …¶] [Inserted …¶]+ [Deleted …¶]+` (bullet_list_bold ×
-/// bullet_list): Word still pairs the two final marks, so the last inserted
+/// bullet_list), or a whole story so replaced, `[Inserted …¶]+ [Deleted
+/// …¶]+`: Word still pairs the two final marks, so the last inserted
 /// paragraph joins the first deleted one under its deleted mark, and the
 /// original's last mark stands for the revised one. Left unpaired, that last
 /// mark stayed live and accepting the redline kept an empty paragraph the
@@ -5800,7 +5924,7 @@ pub fn pair_story_final_marks(dom: &Dom, seqs: &mut Vec<CorrelatedSequence>) {
 fn pair_final_marks_behind_inserted_tail(dom: &Dom, seqs: &mut Vec<CorrelatedSequence>) -> bool {
     let n = seqs.len();
     let status = |i: usize| seqs[i].correlation_status;
-    if n < 3 || status(n - 1) != CorrelationStatus::Deleted {
+    if n < 2 || status(n - 1) != CorrelationStatus::Deleted {
         return false;
     }
     let Some(k) = (0..n)
@@ -5812,41 +5936,41 @@ fn pair_final_marks_behind_inserted_tail(dom: &Dom, seqs: &mut Vec<CorrelatedSeq
     if status(k) != CorrelationStatus::Inserted {
         return false;
     }
-    let Some(prev) = (0..k)
+    let ends_para = |v: &[ComparisonUnit]| ends_with_mark(dom, v);
+    // A whole story replaced has no kept paragraph before its inserted run.
+    let kept_before = (0..k)
         .rev()
         .find(|&i| status(i) != CorrelationStatus::Inserted)
-    else {
-        return false;
+        .is_none_or(|prev| {
+            status(prev) == CorrelationStatus::Equal
+                && ends_para(seqs[prev].com_units_2.as_deref().unwrap_or_default())
+        });
+    // The last inserted words join the first deleted paragraph; a deleted
+    // table there leaves them no paragraph to join.
+    let joins_paragraph = seqs[k + 1]
+        .com_units_1
+        .as_deref()
+        .and_then(<[ComparisonUnit]>::first)
+        .is_some_and(|u| {
+            as_group(u).is_none_or(|g| g.group_type == ComparisonUnitGroupType::Paragraph)
+        });
+    // Both marks close their stories; a paragraph closing a block content
+    // control is followed by the story's own closing paragraph.
+    let closes = |v: Option<&[ComparisonUnit]>| {
+        v.unwrap_or_default()
+            .last()
+            .is_some_and(|u| unit_closes_story(dom, u))
     };
-    let ends_para = |v: &[ComparisonUnit]| {
-        v.last().is_some_and(|u| {
-            unit_is_single_atom_ppr(dom, u)
-                || as_group(u).is_some_and(|g| {
-                    g.group_type == ComparisonUnitGroupType::Paragraph
-                        && g.contents
-                            .last()
-                            .is_some_and(|c| unit_is_single_atom_ppr(dom, c))
-                })
-        })
-    };
-    if status(prev) != CorrelationStatus::Equal
-        || !ends_para(seqs[prev].com_units_2.as_deref().unwrap_or_default())
+    if !kept_before
+        || !joins_paragraph
         || !ends_para(seqs[k].com_units_2.as_deref().unwrap_or_default())
         || !ends_para(seqs[n - 1].com_units_1.as_deref().unwrap_or_default())
+        || !closes(seqs[k].com_units_2.as_deref())
+        || !closes(seqs[n - 1].com_units_1.as_deref())
     {
         return false;
     }
-    // Split the paragraph mark off a side's last paragraph.
-    let split_mark = |units: &mut Vec<ComparisonUnit>| -> Option<ComparisonUnit> {
-        let last = units.pop()?;
-        if unit_is_single_atom_ppr(dom, &last) {
-            return Some(last);
-        }
-        let mut contents = group_contents(&last);
-        let mark = contents.pop();
-        units.extend(contents);
-        mark
-    };
+    let split_mark = |units: &mut Vec<ComparisonUnit>| split_final_mark(dom, units);
     let (Some(pb), Some(pa)) = (
         seqs[k].com_units_2.as_mut().and_then(split_mark),
         seqs[n - 1].com_units_1.as_mut().and_then(split_mark),
@@ -5967,6 +6091,70 @@ pub fn detect_unrelated_sources_word_mode(
     }
     head.extend(seqs);
     Some((head, false))
+}
+
+/// The two stories' paragraphs pair up in order: at least half of the
+/// shorter story's text paragraphs find, a few paragraphs past the last
+/// pair, one sharing most of their words. An edit in every paragraph leaves
+/// no paragraph hash in common, and the longest common run shrinks against
+/// a growing document, yet the documents are one revision: Word marks each
+/// changed word in its paragraph (Word 16, 2026-10-01: 28 paragraphs with
+/// one changed word each, 56 word revisions).
+fn paragraphs_pair_in_order(dom: &Dom, cu1: &[ComparisonUnit], cu2: &[ComparisonUnit]) -> bool {
+    let paragraphs = |cu: &[ComparisonUnit]| -> Vec<std::collections::HashSet<String>> {
+        cu.iter()
+            .filter(|u| {
+                as_group(u).is_some_and(|g| g.group_type == ComparisonUnitGroupType::Paragraph)
+                    && unit_has_text_token(dom, u)
+            })
+            .map(|u| para_text_tokens(dom, u))
+            .collect()
+    };
+    word_sets_pair_in_order(paragraphs(cu1), paragraphs(cu2))
+}
+
+/// `paragraphs_pair_in_order` over word streams, whose paragraphs end at
+/// their marks.
+fn stream_paragraphs_pair_in_order(
+    dom: &Dom,
+    cul1: &[ComparisonUnit],
+    cul2: &[ComparisonUnit],
+) -> bool {
+    let paragraphs = |cul: &[ComparisonUnit]| -> Vec<std::collections::HashSet<String>> {
+        cul.split_inclusive(|u| unit_is_single_atom_ppr(dom, u))
+            .map(|p| para_text_tokens_from_units(dom, p))
+            .filter(|words| !words.is_empty())
+            .collect()
+    };
+    word_sets_pair_in_order(paragraphs(cul1), paragraphs(cul2))
+}
+
+fn word_sets_pair_in_order(
+    p1: Vec<std::collections::HashSet<String>>,
+    p2: Vec<std::collections::HashSet<String>>,
+) -> bool {
+    /// Paragraphs the revision may insert between two pairs.
+    const REACH: usize = 8;
+    let (short, long) = if p1.len() <= p2.len() {
+        (p1, p2)
+    } else {
+        (p2, p1)
+    };
+    if short.len() < 4 {
+        return false;
+    }
+    let (mut next, mut paired) = (0, 0);
+    for words in &short {
+        if let Some(k) = long[next..]
+            .iter()
+            .take(REACH)
+            .position(|other| token_jaccard(words, other) >= 0.5)
+        {
+            paired += 1;
+            next += k + 1;
+        }
+    }
+    2 * paired >= short.len()
 }
 
 fn detect_unrelated_sources_word_mode_inner(
@@ -7402,7 +7590,7 @@ fn detect_unrelated_sources_word_mode_inner(
         }
         return None;
     }
-    if !disjoint {
+    if !disjoint || paragraphs_pair_in_order(dom, cu1, cu2) {
         return None;
     }
     // M318/M394 (memo×nda, employment×lease): large-vocab related prose with
@@ -9591,5 +9779,28 @@ mod indexed_lcr_tests {
         let got = longest_common_run_indexed(None, &a, &b, None);
         assert_eq!(got, longest_common_run_scan(None, &a, &b, None));
         assert_eq!(got, (1, 1, 1), "collision must not fabricate an X==Y match");
+    }
+}
+
+#[cfg(test)]
+mod story_final_mark_tests {
+    use super::*;
+
+    /// A story whose every sequence is deleted has no revised final mark to
+    /// pair: the sequences stay as they are.
+    #[test]
+    fn a_wholly_deleted_story_keeps_its_sequences() {
+        let dom = Dom::new();
+        let mut seqs = vec![
+            CorrelatedSequence::deleted(Vec::new()),
+            CorrelatedSequence::deleted(Vec::new()),
+        ];
+        pair_story_final_marks(&dom, &mut seqs);
+        assert_eq!(seqs.len(), 2);
+        assert!(
+            seqs.iter()
+                .all(|s| s.correlation_status == CorrelationStatus::Deleted
+                    && s.com_units_2.is_none())
+        );
     }
 }

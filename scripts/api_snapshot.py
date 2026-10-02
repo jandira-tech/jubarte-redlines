@@ -169,6 +169,46 @@ def ty(t) -> str:
     return f"?{kind}"
 
 
+def _generics(g: dict | None) -> tuple[str, str]:
+    """`<…>` parameters and the `where` clause: a bound that changes is a
+    source-breaking change, so it belongs in the signature. `impl Trait`
+    arguments (synthetic parameters) show in their argument instead."""
+    if not g:
+        return "", ""
+    params = []
+    for p in g.get("params", []):
+        kind, val = next(iter(p["kind"].items()))
+        name = p["name"]
+        if kind == "lifetime":
+            outlives = val.get("outlives") or []
+            params.append(name + (": " + " + ".join(outlives) if outlives else ""))
+        elif kind == "type":
+            if val.get("is_synthetic", val.get("synthetic")):
+                continue
+            bounds = val.get("bounds") or []
+            s = name + (": " + " + ".join(bound(b) for b in bounds) if bounds else "")
+            if val.get("default") is not None:
+                s += f" = {ty(val['default'])}"
+            params.append(s)
+        elif kind == "const":
+            s = f"const {name}: {ty(val.get('type'))}"
+            if val.get("default") is not None:
+                s += f" = {val['default']}"
+            params.append(s)
+    preds = []
+    for w in g.get("where_predicates", []):
+        kind, val = next(iter(w.items()))
+        if kind == "bound_predicate":
+            preds.append(f"{ty(val['type'])}: " + " + ".join(bound(b) for b in val.get("bounds", [])))
+        elif kind == "lifetime_predicate":
+            preds.append(f"{val['lifetime']}: " + " + ".join(val.get("outlives", [])))
+        elif kind == "eq_predicate":
+            rhs = val.get("rhs")
+            rhs = ty(rhs.get("type")) if isinstance(rhs, dict) and "type" in rhs else str(rhs)
+            preds.append(f"{ty(val['lhs'])} = {rhs}")
+    return (f"<{', '.join(params)}>" if params else ""), (" where " + ", ".join(preds) if preds else "")
+
+
 def _sig(fn: dict) -> str:
     sig = fn.get("sig", fn.get("decl", {}))
     ins = ", ".join(f"{n}: {ty(t)}" for n, t in sig.get("inputs", []))
@@ -185,7 +225,8 @@ def _sig(fn: dict) -> str:
         )
         if on
     )
-    return f"{flags}({ins}){out}"
+    params, where = _generics(fn.get("generics"))
+    return f"{flags}{params}({ins}){out}{where}"
 
 
 def _vis(vis) -> str:
@@ -271,6 +312,12 @@ def flatten(doc: dict) -> list[str]:
     return sorted(lines)
 
 
+def write_gz(path: Path, data: bytes) -> None:
+    """Compress `data` to `path` with no timestamp in the gzip header."""
+    with open(path, "wb") as raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as gz:
+        gz.write(data)
+
+
 def main() -> None:
     label = sys.argv[1] if len(sys.argv) > 1 else crate_version()
     build_doc_json()
@@ -278,8 +325,7 @@ def main() -> None:
 
     out_dir = ROOT / "docs" / "api"
     out_dir.mkdir(parents=True, exist_ok=True)
-    with gzip.open(out_dir / f"jubarte-v{label}.json.gz", "wb") as gz:
-        gz.write(DOC_JSON.read_bytes())
+    write_gz(out_dir / f"jubarte-v{label}.json.gz", DOC_JSON.read_bytes())
     (out_dir / f"jubarte-v{label}.api.txt").write_text(
         "\n".join(sorted(set(flatten(doc)))) + "\n"
     )

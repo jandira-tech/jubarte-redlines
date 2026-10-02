@@ -2,11 +2,14 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! M437 — word-mode letter-hyphen glues to the preceding word ("Left-").
+//! M437 — word-mode `Left-aligned` is three words, as in Word Compare.
 //!
-//! tab_alignment × tab_test free-mesh was confetti ("Left"|"-"|"aligned") that
-//! mid-matched base "aligned". Word peels "Left-" as one unit. Glue hyphen to
-//! the preceding letter-run and start a new word on the following letter.
+//! M437 glued the hyphen to the preceding word ("Left-") because Word's
+//! redline of tab_alignment × tab_test inserts "Left-" in one revision. That
+//! revision is two words Word inserted side by side: Word 16 probes
+//! (tests/fixtures/word_probes/tokens/separators_*) change only `Left` in
+//! `Left-aligned` → `Right-aligned` and only `aligned` in `Left-aligned` →
+//! `Left-justified`, the hyphen staying unchanged.
 
 use jubarte::comparer::WmlComparerSettings;
 use jubarte::comparer::atomize::create_comparison_unit_atom_list;
@@ -46,7 +49,7 @@ fn para_word_texts(dom: &Dom, units: &[ComparisonUnit]) -> Vec<String> {
 }
 
 #[test]
-fn word_mode_left_hyphen_aligned_is_two_words() {
+fn word_mode_left_hyphen_aligned_is_three_words() {
     let s = WmlComparerSettings {
         merge_replaced_paragraphs: true,
         ..WmlComparerSettings::default()
@@ -64,8 +67,8 @@ fn word_mode_left_hyphen_aligned_is_two_words() {
         .collect();
     assert_eq!(
         content,
-        vec!["Left-", "aligned"],
-        "word-mode must glue hyphen to preceding letters; got {words:?}"
+        vec!["Left", "-", "aligned"],
+        "the hyphen is a word of its own, as in Word; got {words:?}"
     );
 }
 
