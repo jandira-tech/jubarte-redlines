@@ -19,7 +19,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::inspect::{
     InspectError, Opened, body_paragraph_nodes, parse_part, project_paragraph,
@@ -37,7 +37,7 @@ pub const REFERENCE_NOT_FOUND: &str = "Error! Reference source not found.";
 pub const NO_TOC_ENTRIES: &str = "No table of contents entries found.";
 
 /// One field whose cached result was written.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FieldUpdate {
     /// Field type, upper case (`PAGEREF`, `REF`, `NUMPAGES`, `SEQ`, `TOC`).
     pub kind: String,

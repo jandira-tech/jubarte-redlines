@@ -66,6 +66,11 @@ pub struct Operations {
     /// plan carries its redline's.
     #[serde(default)]
     pub patch: bool,
+    /// Refresh `PAGEREF`, `REF`, `NUMPAGES`, `SEQ` and `TOC` results from
+    /// jubarte's layout (`jubarte fields update`, an edit plan's
+    /// `update_fields`).
+    #[serde(default)]
+    pub fields: bool,
 }
 
 /// Documented scope limits.
@@ -136,6 +141,7 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             markdown_to_docx: true,
             markdown_diff: true,
             patch: true,
+            fields: true,
         },
         edit_plan_versions: vec![crate::inspect::SCHEMA_VERSION],
         edit_operations: [
@@ -148,6 +154,7 @@ pub fn capabilities(runtime: &str) -> Capabilities {
             "format_paragraph",
             "merge_paragraphs",
             "rewrite",
+            "insert_toc",
         ]
         .iter()
         .map(|s| (*s).to_string())
@@ -178,7 +185,12 @@ mod tests {
         assert_eq!(c.engine_version, env!("CARGO_PKG_VERSION"));
         assert_eq!(c.runtime, "rust");
         assert_eq!(c.edit_plan_versions, [1]);
-        assert_eq!(c.edit_operations.len(), 9);
+        assert_eq!(c.edit_operations.len(), 10);
+        assert!(c.operations.fields);
+        assert_eq!(
+            c.edit_operations.last().map(String::as_str),
+            Some("insert_toc")
+        );
         assert!(c.edit_operations.iter().any(|kind| kind == "rewrite"));
         assert!(c.operations.markdown_to_docx && c.operations.markdown_diff);
         let json: serde_json::Value = serde_json::from_str(&capabilities_json("cli")).unwrap();
