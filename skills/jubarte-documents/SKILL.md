@@ -154,7 +154,9 @@ twentieths of a point (the text width split evenly when omitted), and
 `font`; no paragraph: writes Word's own diagonal text watermark into every
 default header; one per document), `format_run` (`find`
 plus `format`: restyles existing text as a tracked formatting change;
-`occurrence`, 1-based, picks one of several matches). `replace` and
+`occurrence`, 1-based, picks one of several matches), `insert_footnote`
+(`after` plus the note's `text`; body paragraphs only; optional
+`occurrence`). `replace` and
 `insert` take an optional `format` (`bold`/`italic`/`underline`/`highlight`,
 `font`, `size_pt`, `color` as `FF0000` or `auto`, `strike`, `caps`) that
 applies to the new text only. `replace` takes `"whole": true` to show

@@ -131,7 +131,8 @@ out = doc.edit(plan)               # EditResult: clean, redline, report, diff
 `delete_paragraph`, `format_paragraph`, `merge_paragraphs` and `rewrite` work on
 whole paragraphs; `insert_table(paragraph, rows=[[...], ...])` adds a table and
 `list_paragraphs([...], kind_of_list="decimal")` (wire kind `list`) numbers
-paragraphs; `resolving(accept={...}, reject={...})` settles existing
+paragraphs; `insert_footnote` adds a footnote after an anchor;
+`resolving(accept={...}, reject={...})` settles existing
 tracked changes first. `plan.to_json()` is exactly what `edit --plan` reads.
 
 `diff(old, new)` (new on `main`, first in the release after 0.10.1) shows the

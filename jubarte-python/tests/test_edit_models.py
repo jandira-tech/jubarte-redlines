@@ -296,3 +296,14 @@ def test_format_run_builds_the_wire_operation_with_extended_format_fields():
 def test_format_run_rejects_empty_or_unknown_format(fmt):
     with pytest.raises(ValueError):
         EditPlan(author="Reviewer").format_run(0, find="x", format=fmt)
+
+
+def test_insert_footnote_builds_the_wire_operation():
+    plan = EditPlan(author="Reviewer").insert_footnote(1, after="agree", text="See the agreement.", occurrence=2, id="fn")
+    assert plan.to_dict()["operations"] == [
+        {"id": "fn", "kind": "insert_footnote", "paragraph": {"index": 1}, "after": "agree", "text": "See the agreement.", "occurrence": 2}
+    ]
+    bare = EditPlan(author="Reviewer").insert_footnote("body:p:0", after="x", text="y")
+    assert bare.to_dict()["operations"] == [
+        {"kind": "insert_footnote", "paragraph": {"id": "body:p:0"}, "after": "x", "text": "y"}
+    ]

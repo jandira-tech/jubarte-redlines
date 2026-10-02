@@ -30,6 +30,7 @@ use crate::namespaces::W;
 use crate::xmllinq::{Dom, NodeId, XNamespace};
 
 mod controls;
+mod notes;
 mod rewrite;
 mod runs;
 mod structural;
@@ -398,6 +399,19 @@ pub enum OperationKind {
         format: RunFormat,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         /// Which occurrence of `find` (1-based) when it occurs more than once.
+        occurrence: Option<usize>,
+    },
+    /// Insert a footnote whose reference mark follows one occurrence of
+    /// `after`; the note goes in the footnotes part, created when absent.
+    InsertFootnote {
+        /// Body paragraph to edit; must match exactly one.
+        paragraph: Selector,
+        /// The reference mark goes right after this anchor text.
+        after: String,
+        /// Plain text of the note.
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Which occurrence of `after` (1-based) when it occurs more than once.
         occurrence: Option<usize>,
     },
 }
@@ -1047,6 +1061,7 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
             }
             "fill_control" => &["control", "text", "choice", "checked", "date"],
             "format_run" => &["find", "format", "occurrence"],
+            "insert_footnote" => &["after", "text", "occurrence"],
             other => {
                 return Err(err(
                     "INVALID_PLAN",
@@ -1315,6 +1330,12 @@ enum Resolved {
         end: usize,
         format: RunFormat,
     },
+    InsertFootnote {
+        para: usize,
+        /// Projection offset the reference mark follows.
+        at: usize,
+        text: String,
+    },
 }
 
 /// What a thread operation does to an existing comment.
@@ -1384,6 +1405,8 @@ struct Transaction<'p> {
     controls: Vec<NodeId>,
     /// What `inspect` reports for each of `controls`.
     control_records: Vec<crate::inspect::ContentControl>,
+    /// The footnotes story when `insert_footnote` added notes to it.
+    notes_story: Option<usize>,
 }
 
 /// The body, or a header, footer or notes part, parsed into the plan's DOM.
@@ -1551,6 +1574,7 @@ impl<'p> Transaction<'p> {
             watermark: None,
             controls,
             control_records,
+            notes_story: None,
         })
     }
 
@@ -1693,7 +1717,8 @@ impl<'p> Transaction<'p> {
             | OperationKind::MergeParagraphs { paragraph, .. }
             | OperationKind::Rewrite { paragraph, .. }
             | OperationKind::InsertTable { paragraph, .. }
-            | OperationKind::FormatRun { paragraph, .. } => paragraph,
+            | OperationKind::FormatRun { paragraph, .. }
+            | OperationKind::InsertFootnote { paragraph, .. } => paragraph,
             OperationKind::List { .. } => {
                 return Err(fail(
                     "INVALID_PLAN",
@@ -2020,6 +2045,30 @@ impl<'p> Transaction<'p> {
                         start,
                         end,
                         format: format.clone(),
+                    },
+                    outcome,
+                ))
+            }
+            OperationKind::InsertFootnote {
+                after,
+                text: note,
+                occurrence,
+                ..
+            } => {
+                let at = self
+                    .resolve_footnote(para, projection, after, *occurrence, note, &mut outcome)
+                    .map_err(|(c, m)| fail(&c, m, outcome.clone()))?;
+                outcome.context = Some(context(
+                    text,
+                    at,
+                    at,
+                    &format!("{{^{}}}", excerpt(note, 40)),
+                ));
+                Ok((
+                    Resolved::InsertFootnote {
+                        para,
+                        at,
+                        text: note.clone(),
                     },
                     outcome,
                 ))
@@ -2724,7 +2773,8 @@ impl<'p> Transaction<'p> {
                 | Resolved::DeleteParagraph { para }
                 | Resolved::FormatParagraph { para, .. }
                 | Resolved::MergeParagraphs { para, .. }
-                | Resolved::FormatRun { para, .. } => vec![self.paragraph_story[*para].0],
+                | Resolved::FormatRun { para, .. }
+                | Resolved::InsertFootnote { para, .. } => vec![self.paragraph_story[*para].0],
                 Resolved::InsertParagraph { anchor, .. } | Resolved::InsertTable { anchor, .. } => {
                     vec![self.paragraph_story[*anchor].0]
                 }
@@ -2899,6 +2949,12 @@ impl<'p> Transaction<'p> {
                     }
                     continue;
                 }
+                Resolved::InsertFootnote { para, .. } => {
+                    if deleted.contains(para) {
+                        return Err(self.conflict(*i, "adds a footnote to a deleted paragraph"));
+                    }
+                    continue;
+                }
                 Resolved::CommentSpan { para, last, .. } => {
                     if (*para..=*last).any(|p| deleted.contains(&p)) {
                         return Err(self.conflict(*i, "comments on a deleted paragraph"));
@@ -2971,6 +3027,22 @@ impl<'p> Transaction<'p> {
                 .any(|&(s, e, _)| runs::format_overlaps_edit((*start, *end), (s, e)));
             if overlaps {
                 return Err(self.conflict(*i, "formats text another operation changes"));
+            }
+        }
+        // A reference mark needs its anchor's end to survive the text edits.
+        for (i, r) in &self.resolved {
+            let Resolved::InsertFootnote { para, at, .. } = r else {
+                continue;
+            };
+            let inside = ranges
+                .get(para)
+                .into_iter()
+                .flatten()
+                .any(|&(s, e, _)| e > s && runs::format_overlaps_edit((*at, *at), (s, e)));
+            if inside {
+                return Err(
+                    self.conflict(*i, "puts a footnote inside text another operation changes")
+                );
             }
         }
         Ok(())
@@ -3144,7 +3216,8 @@ impl<'p> Transaction<'p> {
                 | Resolved::InsertTable { .. }
                 | Resolved::List { .. }
                 | Resolved::FillControl { .. }
-                | Resolved::FormatRun { .. } => false,
+                | Resolved::FormatRun { .. }
+                | Resolved::InsertFootnote { .. } => false,
             })
             .count() as u64;
         if needed > 0 && self.next_comment_id + needed - 1 > u64::from(u32::MAX) {
@@ -3193,6 +3266,7 @@ impl<'p> Transaction<'p> {
                         | Resolved::InsertTable { .. }
                         | Resolved::List { .. }
                         | Resolved::FormatRun { .. }
+                        | Resolved::InsertFootnote { .. }
                         | Resolved::Thread { .. }
                         | Resolved::FillControl { .. } => None,
                     };
@@ -3225,6 +3299,36 @@ impl<'p> Transaction<'p> {
         let mut comment_ranges: BTreeMap<usize, Vec<(usize, usize, usize, String)>> =
             BTreeMap::new();
         let mut format_runs: BTreeMap<usize, Vec<(usize, usize, RunFormat)>> = BTreeMap::new();
+        let mut references: BTreeMap<usize, Vec<(usize, u32)>> = BTreeMap::new();
+        let reference_style = self
+            .style_defined("FootnoteReference")
+            .then_some("FootnoteReference");
+        let notes: Vec<(usize, usize, String)> = self
+            .resolved
+            .iter()
+            .filter_map(|(_, r)| match r {
+                Resolved::InsertFootnote { para, at, text } => Some((*para, *at, text.clone())),
+                _ => None,
+            })
+            .collect();
+        if !notes.is_empty() {
+            let story = self.footnotes_story()?;
+            self.notes_story = Some(story);
+            let root = self.stories[story].root;
+            let text_style = self.style_defined("FootnoteText").then_some("FootnoteText");
+            let mut id = notes::next_footnote_id(&self.opened.dom, root);
+            for (para, at, text) in notes {
+                notes::append_footnote(
+                    &mut self.opened.dom,
+                    root,
+                    id,
+                    &text,
+                    (text_style, reference_style),
+                );
+                references.entry(para).or_default().push((at, id));
+                id = id.saturating_add(1);
+            }
+        }
         for (i, r) in &self.resolved {
             match r {
                 Resolved::Text {
@@ -3273,6 +3377,7 @@ impl<'p> Transaction<'p> {
             .keys()
             .chain(comment_ranges.keys())
             .chain(format_runs.keys())
+            .chain(references.keys())
             .copied()
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
@@ -3311,6 +3416,17 @@ impl<'p> Transaction<'p> {
                 let s = new_position(&edits, start, true, None);
                 let e = new_position(&edits, end, false, None);
                 format_range(&mut self.opened.dom, node, s, e, &format);
+            }
+            // Footnote reference marks; reversed so marks sharing a point
+            // end up in plan order.
+            for (at, id) in references
+                .remove(&para)
+                .unwrap_or_default()
+                .into_iter()
+                .rev()
+            {
+                let at = new_position(&edits, at, true, None);
+                notes::insert_reference(&mut self.opened.dom, node, at, id, reference_style);
             }
             // Helper bookmarks around `whole` replacements. Comment ranges
             // placed below land inside them, on the inserted text.
@@ -3695,6 +3811,7 @@ impl<'p> Transaction<'p> {
         let mut written = self.touched_stories();
         written.insert(0);
         written.extend(self.apply_watermark()?);
+        written.extend(self.notes_story);
         let marked = if self.whole_marks.is_empty() {
             None
         } else {
@@ -3853,6 +3970,7 @@ fn kind_name(kind: &OperationKind) -> &'static str {
         OperationKind::Watermark { .. } => "watermark",
         OperationKind::FillControl { .. } => "fill_control",
         OperationKind::FormatRun { .. } => "format_run",
+        OperationKind::InsertFootnote { .. } => "insert_footnote",
     }
 }
 

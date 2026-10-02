@@ -892,6 +892,22 @@ class EditPlan:
             op["occurrence"] = occurrence
         return self._with(_with_optional(op, id=id))
 
+    def insert_footnote(
+        self,
+        paragraph: Selector,
+        *,
+        after: str,
+        text: str,
+        occurrence: int | None = None,
+        id: str | None = None,
+    ) -> EditPlan:
+        """Add a footnote holding ``text`` whose mark follows ``after`` in a
+        body paragraph. ``occurrence`` (1-based) picks one of several matches."""
+        op: dict[str, object] = {"kind": "insert_footnote", "paragraph": _selector(paragraph), "after": after, "text": text}
+        if occurrence is not None:
+            op["occurrence"] = occurrence
+        return self._with(_with_optional(op, id=id))
+
     def to_dict(self) -> dict[str, object]:
         """The wire form."""
         wire: dict[str, object] = {"schema_version": 1, "author": self.author}

@@ -48,6 +48,8 @@ pub use unified::{
 };
 pub use write::markdown_to_docx;
 
+pub(crate) use package::ensure_footnotes_part;
+
 /// What happens to the tracked changes a document describes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum TrackChanges {

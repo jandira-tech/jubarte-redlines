@@ -160,6 +160,13 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   `insert`) adds `font`, `size_pt`, `color` (six hex digits or `auto`),
   `strike` and `caps` to `bold`/`italic`/`underline`/`highlight`. Python:
   `EditPlan.format_run(...)`.
+- Edit plans: `insert_footnote` adds a footnote whose reference mark follows
+  one occurrence of `after` in a body paragraph (optional 1-based
+  `occurrence`). The note is appended after the highest footnote id; the
+  footnotes part, with Word's separator notes, is created when the source
+  has none. `FootnoteText` and `FootnoteReference` are used when the styles
+  part defines them, direct superscript otherwise. Python:
+  `EditPlan.insert_footnote(...)`.
 - `uvx jubarte-redlines redline a.docx b.docx -o redline.docx` runs the CLI
   without an install: the Python wheel installs a `jubarte-redlines`
   console script, `redline` is an alias of `compare`, and usage names the

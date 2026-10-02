@@ -440,9 +440,11 @@ pub(crate) fn append_numbering(
     Some((first_abstract, first_num))
 }
 
-/// Writes the footnotes into the notes part, making one if needed.
-fn footnotes(package: &mut PartFs, main: &str, context: &mut Context<'_>, media: &mut Media) {
-    let part = related(package, main, "/footnotes").unwrap_or_else(|| {
+/// The footnotes part `main` relates to; created with Word's separator and
+/// continuation separator notes, its relationship and its content type when
+/// absent.
+pub(crate) fn ensure_footnotes_part(package: &mut PartFs, main: &str) -> String {
+    related(package, main, "/footnotes").unwrap_or_else(|| {
         let part = sibling(main, "footnotes.xml");
         package.add_document_relationship(
             main,
@@ -468,7 +470,12 @@ fn footnotes(package: &mut PartFs, main: &str, context: &mut Context<'_>, media:
             .into_bytes(),
         );
         part
-    });
+    })
+}
+
+/// Writes the footnotes into the notes part, making one if needed.
+fn footnotes(package: &mut PartFs, main: &str, context: &mut Context<'_>, media: &mut Media) {
+    let part = ensure_footnotes_part(package, main);
     let Some(existing) = package.part_string(&part) else {
         return;
     };
