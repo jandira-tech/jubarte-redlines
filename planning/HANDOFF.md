@@ -323,3 +323,30 @@ exported with `git format-patch b420d64..HEAD` into
 on `b420d64` (or on this branch, resolving CHANGELOG.md), then delete the
 directory once merged. The patches are the authoritative copy if the
 worktrees are gone.
+
+## 10. PR #273 notifications read at shutdown (state as of 07:51 UTC)
+- CI is RED on every head pushed so far: `coverage`, `test (ubuntu-latest)`
+  and `test (windows-latest)` failed on `9054f17` (the docs-only planning
+  commit), on `9d4689f`, and on `a920d04`. Because `9054f17` changes no
+  Rust, these failures are most likely pre-existing on the base
+  (`b420d64`) or environmental, not caused by the WIP safety commit. That is
+  an inference from the head SHAs, not something I verified: the job logs
+  were not read. First action next session: open the failing job logs
+  (run 36972190934 for `9054f17`, 36977718296 for `9d4689f`, 36977749152
+  for `a920d04`, jobs under
+  https://github.com/jandira-tech/jubarte-redlines/actions) and check
+  whether the same test fails on base `b420d64`. If it does, that is a
+  base-branch failure to report once on the PR, not something to fix here;
+  if it does not, it is caused by one of the commits on this branch.
+- `arthrod` marked the PR ready for review at 07:20 UTC (it is no longer a
+  draft). It carries WIP code plus `planning/handoff-patches/`; consider
+  converting it back to draft, or trimming the patches directory, before a
+  human reviews it.
+- Review bots are not usable right now: CodeRabbit hit its free review
+  limit (next included review about an hour after 07:20), Sourcery's
+  250,000-character budget is spent (retry in about 4 days), Codex
+  and Qodo report exhausted allowance / inactive subscription. No review
+  finding exists on the PR; no action was taken on any of those comments.
+- The safety-net check-in `trig_01XiQLjWdV3Wep6mWMTZEywP` fired at 07:01 and
+  was not acted on because this session was already in handoff mode; it is
+  one-shot and will not fire again. The PR remains subscribed.
