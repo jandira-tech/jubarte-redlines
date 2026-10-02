@@ -575,6 +575,11 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   instance or parallel tests). It is now named from the SHA-256 of its
   bytes (`word/media/P{sha256}.ext`), and identical images share one
   part.
+- A redline keeps every embedded OLE picture (`w:object`, such as a
+  Word.Picture.8 diagram) with its picture and OLE data. Before, the
+  comparer re-emitted each one as an empty `<w:object …/>`: unchanged ones
+  lost their picture, and inserted or deleted ones lost their `w:ins` or
+  `w:del` too (5a6c's inserted diagram, which GroupDocs kept).
 - A combining mark or zero width joiner stays in the word it follows, so
   decomposed text (`cafe` + U+0301) is one word like `café`, and an emoji
   sequence joined by U+200D is one token. A decomposed-accent word that
@@ -754,9 +759,15 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
     Bold (1fef0faeb8: 18 pages to Word's 20).
   - Japanese or Chinese text the East Asian face lacks paints in MS
     Gothic (when that face is Times New Roman) or MS Mincho, not
-    Microsoft YaHei. Without Word's East Asian faces (Linux, Windows and
-    WASM builds), a wide character a face lacks measures
-    one em, not the 0.75em `.notdef`.
+    Microsoft YaHei. Without Word's East Asian faces (Linux and WASM
+    builds), a wide character a face lacks measures one em, not the
+    0.75em `.notdef`.
+  - Windows reads its own font folders, `%WINDIR%\Fonts` and the per-user
+    `%LOCALAPPDATA%\Microsoft\Windows\Fonts`, and matches their
+    abbreviated files (`timesbd.ttf`, `cour.ttf`) by the family name
+    inside. Before, it searched only macOS paths and painted Calibri,
+    Times New Roman and MS Gothic with open-source substitutes. The on-disk
+    font index moves to rules 2, so earlier answers are searched again.
   - An Office 365 cloud East Asian face (name-table version ending
     `;O365`) takes 1.3 times its head box for the line, not its hhea
     body.
