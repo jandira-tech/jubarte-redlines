@@ -1852,6 +1852,60 @@ fn rewrite_changes_only_the_words_that_differ() {
 }
 
 #[test]
+fn rewrite_replaces_a_decomposed_word_with_its_accent() {
+    // "cafe" + U+0301 (decomposed), as text copied from a Mac file name or a
+    // PDF arrives, with the accent in a run of its own: the word and its
+    // accent are one change, so the new word takes the old word's formatting
+    // whole instead of leaving the old accent behind in the plain run.
+    let source = docx(&format!(
+        "<w:p>{}{}{}</w:p>",
+        run("Le ", false, false, None),
+        run("cafe", true, false, None),
+        run("\u{301} est chaud.", false, false, None),
+    ));
+    let result = apply_plan(
+        &source,
+        &plan(
+            &source,
+            r#"[{"id":"r","kind":"rewrite","paragraph":{"index":0},"text":"Le the\u0301 est chaud."}]"#,
+        ),
+    )
+    .unwrap();
+    assert_eq!(texts(&result.clean)[0], "Le the\u{301} est chaud.");
+    let op = &result.report.operations[0];
+    assert_eq!((op.kind.as_str(), op.status.as_str()), ("rewrite", "ok"));
+    let clean = paragraphs(&result.clean).unwrap();
+    let bold: Vec<String> = clean[0]
+        .runs
+        .iter()
+        .filter(|r| r.bold)
+        .map(|r| {
+            clean[0]
+                .text
+                .chars()
+                .skip(r.start)
+                .take(r.end - r.start)
+                .collect()
+        })
+        .collect();
+    assert_eq!(bold, ["the\u{301}"]);
+    let redline_xml = part_string(&result.redline, "word/document.xml").unwrap();
+    // The accent is deleted with its word (in a run of its own, as in the
+    // source) and the new word is inserted with its accent.
+    assert!(redline_xml.contains(">cafe</w:delText>"), "{redline_xml}");
+    assert!(
+        redline_xml.contains(">\u{301}</w:delText>"),
+        "{redline_xml}"
+    );
+    assert!(redline_xml.contains(">the\u{301}</w:t>"), "{redline_xml}");
+    assert_eq!(
+        texts(&reject_revisions(&result.redline).unwrap()),
+        texts(&source)
+    );
+    assert_word_valid_package(&result.redline);
+}
+
+#[test]
 fn rewrite_refuses_what_replace_refuses() {
     let body = r#"<w:p><w:hyperlink r:id="rId9"><w:r><w:t>arthur.law</w:t></w:r></w:hyperlink><w:r><w:t xml:space="preserve"> site</w:t></w:r></w:p><w:p/>"#;
     let source = docx(body);

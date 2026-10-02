@@ -434,6 +434,14 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   instance or parallel tests). It is now named from the SHA-256 of its
   bytes (`word/media/P{sha256}.ext`), and identical images share one
   part.
+- A combining mark or zero width joiner stays in the word it follows, so
+  decomposed text (`cafe` + U+0301) is one word like `café`, and an emoji
+  sequence joined by U+200D is one token. A decomposed-accent word that
+  changes is now one replaced word in `diff_markdown`, `jubarte diff` and
+  the `rewrite` edit operation, not a word whose accent is left outside
+  the change. A mark with nothing to attach to is a token of its own. Adds
+  the `unicode-properties` dependency (already in the tree through
+  `rustybuzz`).
 
 ## [0.10.1] - 2026-09-30
 

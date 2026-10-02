@@ -97,6 +97,7 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate"] } # 
 sha1 = "0.11"
 ttf-parser = "0.25" # DOCX→PDF glyph metrics + TTF embed (Carlito / Liberation)
 rustybuzz = "0.20" # HarfBuzz-compatible shaping so advances match soffice
+unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] } # Mark / Symbol general categories for word tokens (`util::word_tokens`); already in the tree through rustybuzz
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff", "bmp", "gif"] } # raster images in the PDF writer
 flate2 = "1.1" # optional `/FlateDecode` on PDF streams (already in the tree via zip/png, but a transitive dep is not usable directly)
 quick-xml = "0.42" # checked XML admission (`xmllinq::parse::validate_xml`) before the permissive DOM parser

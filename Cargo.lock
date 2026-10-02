@@ -1345,6 +1345,7 @@ dependencies = [
  "tempfile",
  "tiny-skia",
  "ttf-parser",
+ "unicode-properties",
  "zip",
 ]
 
