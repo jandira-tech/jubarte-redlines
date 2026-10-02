@@ -1210,7 +1210,25 @@ pub enum WmlComparerRevisionType {
 /// Default placeholder author (`WmlComparerSettings.DefaultAuthorForRevisions`).
 pub const DEFAULT_AUTHOR_FOR_REVISIONS: &str = "Open-Xml-PowerTools";
 
+/// The two supported comparer configurations. Each one is an oracle the
+/// output is tested against; the alignment gates between them are not
+/// meant to be mixed (see [`WmlComparerSettings::merge_replaced_paragraphs`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum CompareMode {
+    /// Word's own Compare: [`WmlComparerSettings::default`].
+    #[default]
+    Word,
+    /// Open-Xml-PowerTools `WmlComparer`:
+    /// [`WmlComparerSettings::powertools_faithful`].
+    PowerTools,
+}
+
 /// Port of `WmlComparerSettings` (defaults verified against WmlComparer.ts:415-457).
+///
+/// Build one with [`Self::new`] and the `with_*` methods, which change only
+/// the scalars that are safe to tune. The fields stay public for existing
+/// struct-update callers; setting the alignment gates by hand produces a
+/// configuration no oracle covers.
 #[derive(Clone, Debug)]
 pub struct WmlComparerSettings {
     /// `word_separators`.
@@ -1276,6 +1294,43 @@ pub struct WmlComparerSettings {
 pub const DEFAULT_DETAIL_THRESHOLD: f64 = 0.02;
 
 impl WmlComparerSettings {
+    /// The preset for `mode`.
+    #[must_use]
+    pub fn new(mode: CompareMode) -> Self {
+        match mode {
+            CompareMode::Word => Self::default(),
+            CompareMode::PowerTools => Self::powertools_faithful(),
+        }
+    }
+
+    /// Set the `w:author` stamped on every revision.
+    #[must_use]
+    pub fn with_author(mut self, author: impl Into<String>) -> Self {
+        self.author_for_revisions = author.into();
+        self
+    }
+
+    /// Set the `w:date` stamped on every revision (ISO-8601).
+    #[must_use]
+    pub fn with_date(mut self, date: impl Into<String>) -> Self {
+        self.date_time_for_revisions = date.into();
+        self
+    }
+
+    /// Set [`Self::detail_threshold`].
+    #[must_use]
+    pub fn with_detail_threshold(mut self, threshold: f64) -> Self {
+        self.detail_threshold = threshold;
+        self
+    }
+
+    /// Set the budget the inputs are admitted under ([`Self::input_limits`]).
+    #[must_use]
+    pub fn with_input_limits(mut self, limits: InputLimits) -> Self {
+        self.input_limits = limits;
+        self
+    }
+
     /// The PowerTools-faithful preset: coarse paragraph fallback
     /// (detail_threshold 0.15, the C# LIBRARY default) and none of the
     /// Word-visual alignment passes. This is the configuration every
