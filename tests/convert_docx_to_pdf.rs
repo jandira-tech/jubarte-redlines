@@ -47380,3 +47380,65 @@ fn a_table_styles_first_row_turned_off_italic_and_bold_stay_off() {
         "w:val=\"0\" turns the header's italic and bold off"
     );
 }
+
+#[test]
+fn an_inserted_field_word_recomputes_paints_its_result_unmarked() {
+    // Word 16 probe fldrev_p1 (2026-10-02): Save as PDF recomputes PAGE,
+    // NUMPAGES, SECTION, STYLEREF, REF, DATE and SEQ, and paints an inserted
+    // one's result in the run's own colour; DOCPROPERTY, AUTHOR, FILENAME and
+    // QUOTE keep their cached result, inked. 5a6c's inserted STYLEREF title
+    // ("Crown Suits Act 1947") is black in Word's PDF; we inked it.
+    let field = |instr: &str, cached: &str| {
+        format!(
+            "<w:p><w:ins w:id=\"1\" w:author=\"A\"><w:r><w:t>In</w:t></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+             <w:r><w:instrText xml:space=\"preserve\"> {instr} </w:instrText></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r><w:r><w:t>{cached}</w:t></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:ins></w:p>"
+        )
+    };
+    let recomputed = [
+        ("STYLEREF \"Heading 1\"", "Sty"),
+        ("SECTION", "Sec"),
+        ("DATE \\@ \"yyyy\"", "Dat"),
+        ("SEQ Figure", "Seq"),
+    ];
+    let cached = [("DOCPROPERTY Title", "Doc"), ("QUOTE \"q\"", "Quo")];
+    let body: String = recomputed
+        .iter()
+        .chain(&cached)
+        .map(|(instr, text)| field(instr, text))
+        .chain(["<w:sectPr/>".to_string()])
+        .collect();
+    let docx = minimal_docx_body(&body);
+    let red = "0.820 0.204 0.220";
+    let colour = |pdf: &[u8], needle: &str| {
+        let (text, fills) = pdf_glyph_fills(pdf);
+        let at = |off: usize| {
+            let byte = text
+                .find(&format!("In{needle}"))
+                .unwrap_or_else(|| panic!("In{needle} in {text}"));
+            fills[text[..byte].chars().count() + off].clone()
+        };
+        (at(0), at(2))
+    };
+    let pdf = docx_to_pdf(&docx).expect("word mode");
+    for (_, text) in recomputed {
+        let (label, result) = colour(&pdf, text);
+        assert_eq!(label, red, "{text}: the inserted text is inked");
+        assert_ne!(result, red, "{text}: the recomputed result is not");
+    }
+    for (_, text) in cached {
+        assert_eq!(
+            colour(&pdf, text).1,
+            red,
+            "{text}: a cached result stays inked"
+        );
+    }
+    // Our own marks keep every inserted result marked.
+    let ours = docx_to_pdf_with(&docx, PdfOptions::default()).expect("default");
+    for (_, text) in recomputed.iter().chain(&cached) {
+        let (label, result) = colour(&ours, text);
+        assert_eq!(result, label, "{text}: default marks ink the result");
+    }
+}

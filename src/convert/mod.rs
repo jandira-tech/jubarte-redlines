@@ -10789,6 +10789,15 @@ fn is_numwords_field(instr: &str) -> bool {
 
 /// A `PAGE` field: its result is the page it lands on, resolved when a
 /// header/footer box is painted (d45aa3d5's footer text box).
+/// A field Word's Save as PDF computes again (Word 16 probe fldrev_p1):
+/// an inserted one's result paints unmarked, as a PAGE number does.
+/// DOCPROPERTY, AUTHOR, FILENAME and QUOTE keep their cached, inked result.
+fn word_recomputes_field(instr: &str) -> bool {
+    const KINDS: [&str; 6] = ["NUMPAGES", "SECTION", "STYLEREF", "REF", "DATE", "SEQ"];
+    let kind = field_first_token(instr);
+    KINDS.iter().any(|k| kind.eq_ignore_ascii_case(k))
+}
+
 fn is_page_field(instr: &str) -> bool {
     field_first_token(instr).eq_ignore_ascii_case("PAGE")
 }
@@ -13913,7 +13922,9 @@ fn collect_runs_rec(
             let rev = mark != RevMark::None;
             let numwords = is_numwords_field(&ctx.field_instr);
             let page_field = ctx.field_result && is_page_field(&ctx.field_instr);
-            if rev && (page_field || numwords) {
+            let recomputed =
+                mark == RevMark::Ins && ctx.field_result && word_recomputes_field(&ctx.field_instr);
+            if rev && (page_field || numwords || recomputed) {
                 unmark_field_number(&mut style, &unmarked, mark);
             }
             if style.small_caps {

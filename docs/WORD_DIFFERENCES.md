@@ -102,11 +102,18 @@ The other 3 of the 32 are not differences:
 - **Which is better.** We think `conventional`; Word's colours are not
   reproducible.
 
-### 5. Revised field numbers (PAGE, NUMPAGES)
+### 5. Revised field results Word computes (PAGE, NUMPAGES, STYLEREF, ...)
 
 - **What happens.** Word paints a revised field's computed number in the
   run's own colour, without the revision ink or underline, although the text
-  around it is marked.
+  around it is marked. An inserted field whose result Save as PDF computes
+  again (NUMPAGES, SECTION, STYLEREF, REF, DATE, SEQ) is painted the same way;
+  DOCPROPERTY, AUTHOR, FILENAME and QUOTE keep their cached result, inked
+  (Word 16 probe fldrev_p1, 2026-10-02). In the body, a deleted field of any
+  kind, PAGE included, keeps its cached result, inked and struck; the footer
+  cases this rule came from (d45aa3d5, 06063858) paint a deleted PAGE's
+  computed number black. We still treat a deleted body PAGE like a footer
+  one (open).
 - **What we do.** Only `--revisions word` copies this. Our own styles mark
   the number like any other revised text.
 - **Which is better.** Ours; Word's version hides a revision.
