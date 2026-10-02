@@ -13,6 +13,7 @@ files and exit codes. ``uvx jubarte-redlines`` runs it without installing.
     python -m jubarte_redlines convert letter.docx --png --dpi 150 --report pages.json
     python -m jubarte_redlines convert letter.docx --png --pages 3-5
     python -m jubarte_redlines diff-render before.docx after.docx --out-dir diff
+    python -m jubarte_redlines convert draft.md --page a4 -o draft.docx
     python -m jubarte_redlines compare a.docx b.docx -o redline.docx --author Legal
     python -m jubarte_redlines accept redline.docx -o clean.docx
     python -m jubarte_redlines changes redline.docx --json
@@ -220,8 +221,46 @@ def cmd_edit(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _from_markdown(args: argparse.Namespace) -> Document:
+    """``args.file`` (Markdown) written as Word, its warnings on stderr."""
+    import warnings
+
+    from .document import from_markdown
+
+    try:
+        text = args.file.read_text(encoding="utf-8")
+        reference = None if args.reference_doc is None else _read(args.reference_doc).to_bytes()
+    except OSError as exc:
+        raise CliError(f"reading {exc.filename}: {exc.strerror}") from exc
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        doc = from_markdown(
+            text,
+            reference=reference,
+            page=args.page,
+            author=args.author,
+            date=args.date,
+            critic=not args.no_critic,
+            track_changes=args.track_changes,
+        )
+    for warning in caught:
+        print(f"warning: {warning.message}", file=sys.stderr)
+    return doc
+
+
 def cmd_convert(args: argparse.Namespace) -> int:
-    doc = _read(args.file)
+    if args.file.suffix.lower() in (".md", ".markdown"):
+        doc = _from_markdown(args)
+        # Markdown goes to Word unless a PDF or PNG is asked for.
+        wants_render = args.pdf or args.png or (args.output is not None and args.output.suffix.lower() != ".docx")
+        if not wants_render:
+            output = args.output or args.file.with_suffix(".docx")
+            _ensure_writable(output, args.force)
+            _write(output, doc.to_bytes())
+            print(f"wrote {output} ({len(doc.to_bytes())} bytes)")
+            return EXIT_OK
+    else:
+        doc = _read(args.file)
     output: Path = args.output or args.file.with_suffix(".pdf")
     want_pdf = args.pdf or not args.png
     for side, what in ((args.font_report, "--font-report"), (args.report, "--report")):
@@ -462,9 +501,9 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     _add_revision_flags(p)
     p.set_defaults(func=cmd_edit)
 
-    p = sub.add_parser("convert", help="DOCX to PDF and/or PNG pages, with an optional page report")
+    p = sub.add_parser("convert", help="DOCX to PDF and/or PNG pages, with an optional page report; Markdown to DOCX")
     p.add_argument("file", type=Path)
-    p.add_argument("-o", "--output", type=Path, help="PDF path [default: <stem>.pdf beside the input]")
+    p.add_argument("-o", "--output", type=Path, help="PDF path [default: <stem>.pdf beside the input; <stem>.docx for Markdown]")
     p.add_argument("--force", action="store_true")
     p.add_argument("--pdf", action="store_true", help="write the PDF (default when --png is absent)")
     p.add_argument("--png", action="store_true", help="rasterize pages to <stem>-page-NN.png")
@@ -474,6 +513,13 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     p.add_argument("--report", type=Path, metavar="FILE", help="JSON page report ({page_count, pages, fonts})")
     _add_revision_flags(p)
     p.add_argument("--pages", metavar="SPEC", help="rasterize only these pages, counted from 1: 3, 1-3,7 (needs --png)")
+    # Markdown input (.md, .markdown): written as Word (<stem>.docx), or rendered with --pdf, --png or -o FILE.pdf.
+    p.add_argument("--page", choices=["letter", "a4"], default="letter", help="Markdown: page size without --reference-doc")
+    p.add_argument("--reference-doc", type=Path, metavar="FILE", help="Markdown: take styles and page setup from this .docx")
+    p.add_argument("--track-changes", choices=["all", "accept", "reject"], default="all", help="Markdown: keep CriticMarkup as tracked changes, or accept or reject them")
+    p.add_argument("--no-critic", action="store_true", help="Markdown: read CriticMarkup delimiters as text")
+    p.add_argument("-a", "--author", default="Redline", help="Markdown: author of the tracked changes and comments")
+    p.add_argument("-d", "--date", help="Markdown: their ISO-8601 date [default: fixed epoch]")
     p.set_defaults(func=cmd_convert)
 
     p = sub.add_parser("compare", aliases=["redline"], help="two documents into a Word tracked-changes document")

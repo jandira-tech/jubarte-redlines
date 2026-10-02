@@ -550,3 +550,39 @@ def capabilities() -> dict[str, object]:
 def read(path: str | os.PathLike[str]) -> Document:
     """Load a local DOCX snapshot; equivalent to ``Document.read(path)``."""
     return Document.read(path)
+
+
+def from_markdown(
+    text: str,
+    *,
+    reference: Document | bytes | None = None,
+    page: Literal["letter", "a4"] = "letter",
+    author: str = "Redline",
+    date: str | None = None,
+    critic: bool = True,
+    track_changes: Literal["all", "accept", "reject"] = "all",
+) -> Document:
+    """Write Markdown as a Word document, as ``jubarte convert draft.md``.
+
+    CriticMarkup (``{++ ++}``, ``{-- --}``, ``{~~ ~> ~~}``, ``{>> <<}``)
+    becomes tracked changes and comments by ``author`` at ``date`` (the
+    engine's fixed epoch by default), unless ``critic`` is false.
+    ``track_changes`` keeps them (``all``) or writes the document with each
+    accepted or rejected. ``reference`` lends its styles and page setup;
+    without it ``page`` picks US Letter or A4, both with one-inch margins.
+    Engine warnings, such as a ``page`` the reference overrides, are raised
+    as ``UserWarning``. Images are written as their alt text.
+    """
+    if isinstance(reference, Document):
+        reference = reference.to_bytes()
+    return Document.from_bytes(
+        _native.markdown_to_docx(
+            text,
+            reference=reference,
+            page=page,
+            author=author,
+            date=date,
+            critic=critic,
+            track_changes=track_changes,
+        )
+    )

@@ -144,6 +144,21 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   - `jubarte edit` writes the redline's patch as `patch.diff` beside the
     other outputs and prints it; `-q` prints nothing. `jubarte capabilities`
     lists `patch`.
+  - `jubarte convert draft.md --page letter|a4` (`DocxOptions::page`,
+    `markdown::PageSize`) writes Markdown on US Letter (the default) or A4,
+    both with one-inch margins. A `--reference-doc`'s page setup wins, and
+    asking for A4 with one adds a warning.
+  - `jubarte text FILE --track-changes all|accept|reject` prints the
+    document as Markdown with its tracked changes as CriticMarkup, or with
+    every change accepted or rejected, as `convert -t md` does; the output
+    then has no `[body:p:N]` ids.
+  - Python: `jubarte_redlines.from_markdown(text, reference=, page=,
+    author=, date=, critic=, track_changes=)` returns a `Document`
+    (`_native.markdown_to_docx` returns the bytes; engine warnings are
+    raised as `UserWarning`), and `python -m jubarte_redlines convert
+    draft.md` writes `draft.docx`, or a PDF or PNG pages.
+  - WASM: `markdownToDocx(text, optionsJson, reference)` in the full and
+    slim builds.
   - Python: `jubarte_redlines.diff(old, new)` and `Document.diff(other)`
     take documents, bytes, Markdown text or paths and return a `Diff`
     (`str()`, `.hunks`, Markdown display in notebooks); `EditResult.diff` is

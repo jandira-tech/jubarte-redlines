@@ -5,7 +5,8 @@
 //! Word redlines between Word and Markdown documents.
 
 use super::{
-    DocxOptions, ImageLoader, MarkdownError, TrackChanges, apply_markdown, markdown_to_docx,
+    DocxOptions, ImageLoader, MarkdownError, PageSize, TrackChanges, apply_markdown,
+    markdown_to_docx,
 };
 use crate::comparer::WmlComparerSettings;
 use crate::document_comparer::compare_documents_with_settings;
@@ -83,6 +84,7 @@ pub fn redline(
                         author: options.settings.author_for_revisions.clone(),
                         date: options.settings.date_time_for_revisions.clone(),
                         images: options.images,
+                        page: PageSize::Letter,
                     },
                 )?;
                 Ok(written.docx)
