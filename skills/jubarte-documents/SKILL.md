@@ -57,7 +57,8 @@ prints the same grids.
 `locked`, `choices` (list values), `checked` and `placeholder`.
 
 Gotchas:
-- Headers, footers, footnotes and endnotes are editable stories; text boxes
+- Headers, footers, footnotes and endnotes are editable stories (the kinds
+  `jubarte capabilities --json` lists under `limits.stories`); text boxes
   are counted in `summary` but not printed and not editable. Comments can
   only be anchored in the body (Word cannot anchor one in a header).
 - `limitations` on a paragraph (`field`, `hyperlink`, `content_control`,

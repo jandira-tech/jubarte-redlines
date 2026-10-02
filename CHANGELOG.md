@@ -361,6 +361,19 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   `RectifyError`; `compare_bodies_faithful_with_notes` keeps its signature and
   panics as before. (`process_footnote_endnote` still has `expect` calls on
   the same path.)
+
+- `jubarte capabilities` (`limits.stories`, also `jubarte_redlines.capabilities()`
+  and the WASM `capabilities()`) advertises every story kind an edit plan
+  addresses, `body`, `header`, `footer`, `footnotes` and `endnotes`, instead
+  of `body` alone, which 0.10.0's header, footer and note editing had left
+  stale. The list is the one `inspect` and `edit` resolve selectors against
+  (`inspect::STORY_KINDS`), checked by a round trip from the manifest through
+  `inspect` to `apply_plan`, so the two cannot drift again. A story is named
+  in a selector by its id, the part's file stem that `inspect` prints
+  (`header1:p:0`, `{"story": "footnotes", "index": 0}`). The module doc
+  no longer claims the operations are derived from the compiled features:
+  the library compiles every operation in, and only a wrapper build (WASM
+  without `pdf`) turns one off.
 - A line ended by a `w:br` keeps its break when the paragraph reflows
   past a header or body float with square or tight wrapping. The lines
   below the float no longer run together, and a justified line that
