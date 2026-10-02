@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -417,20 +418,41 @@ def test_stdio_smoke_initialize_and_list_tools(tmp_path: Path) -> None:
         {"jsonrpc": "2.0", "method": "notifications/initialized"},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
     ]
-    stdin = "".join(json.dumps(m) + "\n" for m in messages)
-    proc = subprocess.run(
+    # Keep stdin open until the tools/list reply arrives, as a real client
+    # does: closing it ends the stdio session, and a request still queued
+    # then goes unanswered (about one run in ten when stdin closed at once).
+    proc = subprocess.Popen(
         [sys.executable, "-m", "jubarte_redlines.mcp_server", "--root", str(tmp_path)],
-        input=stdin,
-        capture_output=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        check=False,
-        timeout=60,
         env={**os.environ, "PYTHONUNBUFFERED": "1"},
     )
-    replies = [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
-    listed = next(r for r in replies if r.get("id") == 2)
+    assert proc.stdin is not None and proc.stdout is not None
+    # A server that never answers must fail the test, not hang it.
+    watchdog = threading.Timer(60, proc.kill)
+    watchdog.start()
+    try:
+        proc.stdin.write("".join(json.dumps(m) + "\n" for m in messages))
+        proc.stdin.flush()
+        listed = None
+        for line in proc.stdout:
+            reply = json.loads(line) if line.strip() else {}
+            if reply.get("id") == 2:
+                listed = reply
+                break
+        proc.stdin.close()
+        assert proc.stderr is not None
+        stderr = proc.stderr.read()
+        proc.wait(timeout=60)
+    finally:
+        watchdog.cancel()
+        if proc.poll() is None:
+            proc.kill()
+    assert listed is not None, f"no tools/list reply; stderr: {stderr}"
     assert {t["name"] for t in listed["result"]["tools"]} == TOOLS
-    assert "Traceback" not in proc.stderr
+    assert "Traceback" not in stderr
 
 
 # -- hardening -----------------------------------------------------------------
