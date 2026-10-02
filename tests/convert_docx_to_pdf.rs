@@ -1155,8 +1155,13 @@ fn a_list_label_takes_its_marks_character_style() {
         (label.as_str(), item.as_str()),
         ("0.000 0.690 0.314", BLACK)
     );
+    // Courier New where it is installed; its bundled metric twin,
+    // Liberation Mono, where it is not (GitHub Actions).
     let hay = String::from_utf8_lossy(&pdf);
-    assert!(hay.contains("Courier"), "the label paints in Courier New");
+    assert!(
+        hay.contains("Courier") || hay.contains("LiberationMono"),
+        "the label paints in Courier New or its stand-in"
+    );
 }
 
 #[test]
@@ -1207,6 +1212,25 @@ fn vml_rect_between_lines(rect: &str, tail: &str) -> Vec<u8> {
     docx_with_settings_and_styles(&body, settings, styles)
 }
 
+/// The baseline pitch of single-spaced Verdana 10 lines (mark included)
+/// in whatever face stands in for Verdana: Word's own, or the bundled
+/// Liberation Sans on a machine without it.
+fn verdana_10_pitch() -> f32 {
+    let verdana =
+        "<w:rPr><w:rFonts w:ascii=\"Verdana\" w:hAnsi=\"Verdana\"/><w:sz w:val=\"20\"/></w:rPr>";
+    let line = format!("<w:p><w:pPr>{verdana}</w:pPr><w:r>{verdana}<w:t>Yq</w:t></w:r></w:p>");
+    let body = format!("{line}{line}{LETTER_SECT}");
+    let settings = "<w:compat><w:compatSetting w:name=\"compatibilityMode\" \
+          w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat>";
+    let styles = "<w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>\
+          <w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr></w:style>";
+    let pdf = docx_to_pdf(&docx_with_settings_and_styles(&body, settings, styles))
+        .expect("convert two Verdana lines");
+    let ys = text_baselines(&pdf);
+    assert_eq!(ys.len(), 2, "two Verdana lines: {ys:?}");
+    ys[0] - ys[1]
+}
+
 #[test]
 fn an_inline_vml_rects_line_is_its_runs_line_with_the_rect_at_its_foot() {
     // t3c1e5d page 2: a 1.1pt "Horizontal Line" in a Verdana 10 run whose
@@ -1219,10 +1243,6 @@ fn an_inline_vml_rects_line_is_its_runs_line_with_the_rect_at_its_foot() {
         .expect("convert rule paragraph");
     let ys: Vec<f32> = text_baselines(&pdf).iter().map(|y| 792.0 - y).collect();
     assert_eq!(ys.len(), 2, "Above and Below: {ys:?}");
-    assert!(
-        (ys[1] - ys[0] - 25.92).abs() < 0.3,
-        "Word's 25.92pt: {ys:?}"
-    );
     let streams = pdf_content_streams(&pdf).concat();
     let boxes = pdf_stroke_boxes_in(&streams, 0.0, 0.0, 0.0);
     let &(_, y, _, h) = boxes
@@ -1230,17 +1250,33 @@ fn an_inline_vml_rects_line_is_its_runs_line_with_the_rect_at_its_foot() {
         .find(|b| (b.2 - 540.0).abs() < 0.5)
         .expect("the rule is stroked");
     assert!((h - 1.1).abs() < 0.2, "1.1pt tall: {boxes:?}");
+    // A 20pt rect outgrows that line by its 1pt foot (h4: 34.80 apart).
+    let tall = docx_to_pdf(&vml_rect_between_lines("height:20pt\" filled=\"f", ""))
+        .expect("convert tall rule paragraph");
+    let tall_ys: Vec<f32> = text_baselines(&tall).iter().map(|y| 792.0 - y).collect();
+    // Whatever face stands in for Verdana, the rule's line is the run's
+    // line: the 20pt rect and its foot replace exactly one run line.
+    let grown = (tall_ys[1] - tall_ys[0]) - (ys[1] - ys[0]);
+    let run_line = verdana_10_pitch();
+    assert!(
+        (grown - (20.0 + 1.0 - run_line)).abs() < 0.1,
+        "the 20pt rect and foot replace one {run_line}pt run line: grew {grown}"
+    );
+    if !word_dfonts_available() {
+        eprintln!("skip: Word DFonts absent; Word's 25.92, 14.01 and 34.80 measure Word's faces");
+        return;
+    }
+    assert!(
+        (ys[1] - ys[0] - 25.92).abs() < 0.3,
+        "Word's 25.92pt: {ys:?}"
+    );
     assert!(
         ((792.0 - y) - ys[0] - 14.01).abs() < 0.3,
         "the rule's bottom 14.01pt under Above's baseline: y={y} {ys:?}"
     );
-    // A 20pt rect outgrows that line by its 1pt foot (h4: 34.80 apart).
-    let pdf = docx_to_pdf(&vml_rect_between_lines("height:20pt\" filled=\"f", ""))
-        .expect("convert tall rule paragraph");
-    let ys: Vec<f32> = text_baselines(&pdf).iter().map(|y| 792.0 - y).collect();
     assert!(
-        (ys[1] - ys[0] - 34.80).abs() < 0.3,
-        "Word's 34.80pt: {ys:?}"
+        (tall_ys[1] - tall_ys[0] - 34.80).abs() < 0.3,
+        "Word's 34.80pt: {tall_ys:?}"
     );
 }
 
@@ -1258,10 +1294,22 @@ fn an_unstroked_inline_vml_rect_keeps_its_box_without_a_foot() {
     .expect("convert unstroked rect");
     let ys: Vec<f32> = text_baselines(&pdf).iter().map(|y| 792.0 - y).collect();
     assert_eq!(ys.len(), 3, "Above, Yq, Below: {ys:?}");
-    assert!(
-        (ys[1] - ys[0] - 32.64).abs() < 0.3,
-        "Word's 32.64pt: {ys:?}"
-    );
+    // In any face, the unstroked rect's line is the stroked one's less
+    // its 1pt foot.
+    let stroked = docx_to_pdf(&vml_rect_between_lines("height:20pt\" filled=\"f", tail))
+        .expect("convert stroked rect");
+    let stroked_ys: Vec<f32> = text_baselines(&stroked).iter().map(|y| 792.0 - y).collect();
+    assert_eq!(stroked_ys.len(), 3, "Above, Yq, Below: {stroked_ys:?}");
+    let foot = (stroked_ys[1] - stroked_ys[0]) - (ys[1] - ys[0]);
+    assert!((foot - 1.0).abs() < 0.05, "only the 1pt foot goes: {foot}");
+    if word_dfonts_available() {
+        assert!(
+            (ys[1] - ys[0] - 32.64).abs() < 0.3,
+            "Word's 32.64pt: {ys:?}"
+        );
+    } else {
+        eprintln!("skip: Word DFonts absent; Word's 32.64 measures Word's faces");
+    }
     let streams = pdf_content_streams(&pdf).concat();
     assert!(
         pdf_stroke_boxes_in(&streams, 0.0, 0.0, 0.0)
@@ -40089,12 +40137,30 @@ fn an_empty_lines_mark_takes_its_character_style() {
         let ys: Vec<f32> = text_baselines(&pdf).iter().map(|y| 792.0 - y).collect();
         ys[ys.len() - 1] - ys[0]
     };
+    let tnr = "<w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>";
     let styled = gap("<w:rStyle w:val=\"Big\"/>");
+    let sized = gap("<w:rStyle w:val=\"Big\"/><w:sz w:val=\"16\"/>");
+    // In any face, the style sizes the line as the same formatting set
+    // directly on the mark does, and the mark's own sz still wins.
+    let direct = gap(&format!("{tnr}<w:sz w:val=\"48\"/>"));
+    let plain = gap("");
+    assert!(
+        (styled - direct).abs() < 0.05 && styled - plain > 5.0,
+        "the style's TNR 24 sizes the line: {styled} vs direct {direct}, plain {plain}"
+    );
+    let sized_direct = gap(&format!("{tnr}<w:sz w:val=\"16\"/>"));
+    assert!(
+        (sized - sized_direct).abs() < 0.05,
+        "its own sz wins: {sized} vs direct {sized_direct}"
+    );
+    if !word_dfonts_available() {
+        eprintln!("skip: Word DFonts absent; Word's 39.6 and 21.36 measure Word's faces");
+        return;
+    }
     assert!(
         (styled - 39.6).abs() < 0.3,
         "a TNR 24 line (Word 39.6): {styled}"
     );
-    let sized = gap("<w:rStyle w:val=\"Big\"/><w:sz w:val=\"16\"/>");
     assert!(
         (sized - 21.36).abs() < 0.3,
         "its own sz wins (Word 21.36): {sized}"
