@@ -26,6 +26,13 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Added
 
+- `scripts/release.sh` step 13 runs `scripts/check_release_facts.py`: the
+  release is not done until jubarte-app's `data/facts.jsonl`, which
+  jubarte.pro and the Mac app print the engine's version, date, files and
+  release list from, names the new version, lists a wheel for every required
+  platform tag and is committed in the jubarte-app checkout. Step 12's
+  `release_downstream.sh` now commits `data/` with the app's release files
+  (the facts were left behind as "not a release file").
 - `jubarte self-update` can require a zipsign (ed25519) signature on the
   release archive, checked against public keys built into the binary, so a
   replaced archive is refused even when its `SHA256SUMS.txt` was replaced
