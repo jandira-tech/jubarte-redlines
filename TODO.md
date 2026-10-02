@@ -331,7 +331,25 @@ numbering, `w:numPr` out of order). 34 fixtures is a small sample and the
 validator is not Word; the scripts lived in an ephemeral container, so the
 repeatable-sweep item below is what makes these numbers reproducible.
 
-- [ ] **Numbering namespaces (validator defect).** Fix open in #314; with it
+**Important (2026-10-02, merging #314, #318 and this PR):**
+
+- **`main` is red** on `convert_docx_to_pdf::space_for_ul_adds_no_descent_to_wrapped_lines_in_table_cells`
+  ("J and Q sit on separate wrapped lines; off=[709.44, 709.44, 682.56,
+  669.36]") on Linux, macOS, Windows and coverage. The test came in with
+  `1eb0c6c` (#310) and fails on `main` itself (`f816e4b`, run locally),
+  so every PR shows it. #314, #318 and this PR were merged on local gates
+  over it, at Arthur's request. It needs its own fix.
+- **`python bindings` failed once** on #312 (`f80566e`):
+  `test_mcp_server.py::test_stdio_smoke_initialize_and_list_tools` got no
+  `tools/list` reply. It passes locally on `main` (`1ee4c38`) and on #318
+  with `mcp` installed; not re-run in CI before the merge. Watch it.
+- **Local Python runs need the `mcp` extra**: without it
+  `tests/test_mcp_server.py` is skipped silently (`importorskip`).
+- **Carry mode drops comments anchored in notes**; whether Word keeps them
+  is the open question in the comments item below.
+- **Nothing from append has been opened in Word yet.**
+
+- [x] **Numbering namespaces (validator defect).** Fixed in #314; with it
   the sweep has 0 outputs with new validator findings. When A has no numbering
   part, `numbering_part` creates a bare `<w:numbering xmlns:w="...">` and
   B's lists keep only local declarations. `tools/validate-docx` then reports
@@ -360,7 +378,7 @@ repeatable-sweep item below is what makes these numbers reproducible.
   (or a sibling script) with the same `--validate` ratchet against
   `tools/validity_baseline.tsv`, and the rule that a finding present in
   either input is not append's.
-- [ ] **Carry comments.** Opt-in carrying of body-anchored comments is open
+- [ ] **Carry comments.** Opt-in carrying of body-anchored comments shipped
   in #318 (`--carry-comments`; drop stays the default). Still open after it:
   comments anchored in B's footnotes and endnotes are dropped and warned,
   because `validate` counts comment anchors in the main part only, `edit`
