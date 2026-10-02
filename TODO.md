@@ -349,9 +349,13 @@ repeatable-sweep item below is what makes these numbers reproducible.
   `%LOCALAPPDATA%\Microsoft\Windows\Fonts` on Windows, where Calibri,
   Cambria, MS Gothic (`msgothic`), YaHei (`msyh`) and Malgun (`malgun`)
   ship. Before, every installed-font folder was a macOS path, so Windows
-  painted Word's own fonts with open-source substitutes. Watch the Windows
-  CI job for tests that move with Windows' font versions. Linux's nested
-  `/usr/share/fonts` tree is still unsearched.
+  painted Word's own fonts with open-source substitutes. Windows abbreviates
+  file names (`times.ttf`, `timesbd.ttf`, `cour.ttf`), so these folders also
+  match faces by the family name inside each file; the first lookup reads
+  every `.ttf`/`.otf` there once per process (reading only the `name` table
+  would cut that). Watch the Windows CI job for tests that move with
+  Windows' font versions. Linux's nested `/usr/share/fonts` tree is still
+  unsearched.
 - **`python bindings` failed once** on #312 (`f80566e`):
   `test_mcp_server.py::test_stdio_smoke_initialize_and_list_tools` got no
   `tools/list` reply. It passes locally on `main` (`1ee4c38`) and on #318
