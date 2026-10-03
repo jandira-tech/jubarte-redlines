@@ -76,3 +76,85 @@ fn m74_file_11_file_12_keeps_inserted_vml_pict_and_media() {
         "pict insert should be revision-marked"
     );
 }
+
+mod common;
+
+/// A paragraph with an embedded `w:object` (Word.Picture.8: a VML
+/// `v:shape` over `v:imagedata`) between two text paragraphs.
+fn object_docx(with_object: bool, after: &str) -> Vec<u8> {
+    use common::docx::{Part, docx_with, para};
+    let object = if with_object {
+        r#"<w:p><w:r><w:object w:dxaOrig="3000" w:dyaOrig="600" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"><v:shape id="s1" style="width:150pt;height:30pt"><v:imagedata r:id="rIdX0" o:title=""/></v:shape></w:object></w:r></w:p>"#
+    } else {
+        ""
+    };
+    let body = format!("{}{object}{}", para("Before"), para(after));
+    docx_with(
+        &body,
+        &[Part {
+            name: "word/media/image1.png",
+            content_type: "image/png",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+            xml: "png",
+        }],
+    )
+}
+
+/// The `w:object` element of `doc`, start tag to end tag.
+fn object_xml(doc: &str) -> &str {
+    let start = doc.find("<w:object").expect("w:object kept in the redline");
+    let end = doc[start..]
+        .find("</w:object>")
+        .map(|e| start + e + "</w:object>".len())
+        .unwrap_or_else(|| {
+            panic!(
+                "w:object emptied: {}",
+                &doc[start..doc.len().min(start + 200)]
+            )
+        });
+    &doc[start..end]
+}
+
+/// The B-side 5a6c "End-Point Assessment" picture: an inserted or deleted
+/// `w:object` lost its VML children (an empty `<w:object …/>` shell) and its
+/// revision mark, because only `w:pict` was re-emitted whole.
+#[test]
+fn an_inserted_or_deleted_vml_object_keeps_its_picture_and_mark() {
+    let (a, b) = (object_docx(false, "After"), object_docx(true, "After"));
+    for (old, new, mark) in [(&a, &b, "w:ins"), (&b, &a, "w:del")] {
+        let out = compare_documents(old, new, "Arthur Souza Rodrigues").expect("compare ok");
+        let doc = document_xml(&out);
+        let object = object_xml(&doc);
+        assert!(
+            object.contains("imagedata"),
+            "{mark}: v:imagedata must survive inside w:object: {object}"
+        );
+        let open = doc
+            .rfind(&format!("<{mark} "))
+            .filter(|&i| i < doc.find("<w:object").unwrap());
+        let close = doc[doc.find("</w:object>").unwrap()..].find(&format!("</{mark}>"));
+        assert!(
+            open.is_some() && close.is_some(),
+            "the object's run must sit under {mark}: {doc}"
+        );
+    }
+}
+
+/// Every unchanged `w:object` was emptied too: a redline of any document
+/// holding OLE pictures lost all of them, whatever changed elsewhere.
+#[test]
+fn an_unchanged_vml_object_keeps_its_picture() {
+    let old = object_docx(true, "After");
+    let new = object_docx(true, "After all");
+    let out = compare_documents(&old, &new, "Arthur Souza Rodrigues").expect("compare ok");
+    let doc = document_xml(&out);
+    let object = object_xml(&doc);
+    assert!(
+        object.contains("imagedata"),
+        "an unchanged w:object must keep its v:imagedata: {object}"
+    );
+    assert!(
+        doc.contains("<w:ins "),
+        "the text edit is still marked: {doc}"
+    );
+}

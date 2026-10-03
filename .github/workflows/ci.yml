@@ -230,6 +230,7 @@ jobs:
       - run: python3 planning/test_sample50_check.py
       - run: python3 scripts/test_release_sh.py
       - run: python3 scripts/test_check_release_artifacts.py
+      - run: python3 scripts/test_check_release_facts.py
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
       - run: python3 scripts/test_bump_version.py
       - run: python3 scripts/test_gemini_extension.py
