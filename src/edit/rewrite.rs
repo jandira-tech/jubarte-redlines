@@ -151,6 +151,17 @@ mod tests {
     }
 
     #[test]
+    fn a_decomposed_word_is_replaced_whole_with_its_accent() {
+        let old = "Le cafe\u{301} est chaud";
+        let edits = rewrite_ranges(old, "Le the\u{301} est chaud");
+        // One edit over "cafe" + U+0301 (4 + 2 bytes), not over "cafe" with
+        // the accent left behind as a stray mark.
+        assert_eq!(edits, [(3, 9, "the\u{301}".to_string())]);
+        assert_eq!(apply(old, &edits), "Le the\u{301} est chaud");
+        assert!(rewrite_ranges(old, old).is_empty());
+    }
+
+    #[test]
     fn insertions_at_the_start_and_end() {
         assert_eq!(rewrite_ranges("b", "a b"), [(0, 0, "a ".to_string())]);
         assert_eq!(rewrite_ranges("a b", "a b c"), [(3, 3, " c".to_string())]);

@@ -2164,6 +2164,68 @@ pub fn list(a: &[u8], b: Option<&[u8]>, opts: &Options) -> Result<String, String
     Ok(out)
 }
 
+/// The five [`TRIAGE`] checks as [`crate::validate::Finding`]s: one per
+/// example, with the triage kind and its detail in the message. The code
+/// table is the one `jubarte validate` prints; kinds the Ring-1 checks
+/// also cover map to the Ring-1 code.
+///
+/// # Errors
+///
+/// A package that is not a readable zip.
+pub fn findings(docx: &[u8]) -> Result<Vec<crate::validate::Finding>, String> {
+    let pkg = Package::open(docx)?;
+    let analysis = analyze(&pkg, &Options::default());
+    let mut out = Vec::new();
+    for (kind, items) in &analysis.findings.by_kind {
+        let code = finding_code(kind);
+        for (part, detail) in items {
+            let message = if detail.is_empty() {
+                format!("{kind} in '{part}'")
+            } else {
+                format!("{kind} in '{part}': {detail}")
+            };
+            out.push(crate::validate::Finding::new(&code, part, "", message));
+        }
+    }
+    Ok(out)
+}
+
+/// The stable code for a triage finding kind.
+fn finding_code(kind: &str) -> String {
+    let code = match kind {
+        "orphan-delText" | "orphan-delInstrText" => "DELTEXT_OUTSIDE_DELETION",
+        "t-under-del" => "TEXT_INSIDE_DELETION",
+        "instrText-under-del" => "INSTR_TEXT_INSIDE_DELETION",
+        "bare-run-in-deleted-textbox" => "BARE_RUN_IN_DELETED_TEXTBOX",
+        "field-code-outside-field"
+        | "field-separate-without-begin"
+        | "field-end-without-begin"
+        | "field-unclosed" => "FIELD_UNBALANCED",
+        "field-partly-deleted" => "FIELD_SPLIT_DELETION",
+        "field-code-kind-vs-state" => "FIELD_CODE_STATE",
+        "part-without-content-type" | "content-types-missing" => "MISSING_CONTENT_TYPE",
+        "override-without-part" => "OVERRIDE_WITHOUT_PART",
+        "rel-duplicate-id" => "DUPLICATE_RID",
+        "rel-target-missing" => "MISSING_REL_TARGET",
+        "rid-not-in-rels" => "DANGLING_RELATIONSHIP",
+        "footnoteReference-dangling" | "endnoteReference-dangling" => "NOTE_REFERENCE_DANGLING",
+        "commentReference-dangling" => "COMMENT_ANCHOR_ORPHAN",
+        "comment-range-unpaired" => "COMMENT_RANGE_UNPAIRED",
+        "ignorable-prefix-undeclared" => "MC_UNBOUND_PREFIX",
+        "xml-undecodable" | "xml-unparsable" => "MALFORMED_XML",
+        "instrText-empty" | "delInstrText-empty" => "EMPTY_FIELD_CODE",
+        "cell-not-ending-in-p" => "CELL_WITHOUT_PARAGRAPH",
+        "row-without-cell" => "ROW_WITHOUT_CELL",
+        "ins-nested-in-ins" | "del-nested-in-del" => "NESTED_SAME_REVISION",
+        "body-sectPr-not-last" => "SECTPR_NOT_LAST",
+        k if k.starts_with("bookmark-in-") && k.ends_with("-control") => {
+            "BOOKMARK_IN_SINGLE_VALUE_CONTROL"
+        }
+        k => return k.to_ascii_uppercase().replace('-', "_"),
+    };
+    code.to_string()
+}
+
 /// The report for one package, or the differences between two.
 pub fn report(a: &[u8], b: Option<&[u8]>, opts: &Options) -> Result<String, String> {
     let is_listing = |c: &Check| {

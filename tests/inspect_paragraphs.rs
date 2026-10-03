@@ -138,8 +138,13 @@ fn not_a_docx_and_malformed_xml_are_errors() {
         paragraphs(b"not a zip"),
         Err(InspectError::Admission(a)) if a.code() == "INVALID_PACKAGE"
     ));
+    // An element left unclosed is malformed XML, which admission now refuses
+    // while it scans the part's end tags.
     let broken = docx("<w:p><w:r><w:t>unclosed</w:t></w:r>");
-    assert!(matches!(paragraphs(&broken), Err(InspectError::Invalid(_))));
+    assert!(matches!(
+        paragraphs(&broken),
+        Err(InspectError::Admission(a)) if a.code() == "INVALID_XML"
+    ));
 }
 
 #[test]

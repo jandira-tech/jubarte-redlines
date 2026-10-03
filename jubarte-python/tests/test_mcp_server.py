@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -333,6 +334,20 @@ def test_tools_whose_engine_feature_is_absent_say_so(tmp_path: Path, tool: str, 
     assert f"lacks {feature}" in error_text(bad)
 
 
+def test_docx_validate_runs_the_engine_and_audits_against_the_original(tmp_path: Path) -> None:
+    write_pair(tmp_path)
+    clean, audited, half = call(
+        tmp_path,
+        ("docx_validate", {"path": "a.docx"}),
+        ("docx_validate", {"path": "b.docx", "original": "a.docx", "author": "Z"}),
+        ("docx_validate", {"path": "b.docx", "original": "a.docx"}),
+    )
+    assert clean.structured_content["result"] == []
+    codes = {f["code"] for f in audited.structured_content["result"]}
+    assert "UNTRACKED_EDIT" in codes, audited.structured_content
+    assert "author" in error_text(half)
+
+
 def test_feature_tools_still_contain_paths(tmp_path: Path) -> None:
     (bad,) = call(tmp_path, ("docx_validate", {"path": "/etc/hostname"}))
     assert "outside root" in error_text(bad)
@@ -344,23 +359,29 @@ def test_feature_tools_delegate_when_the_engine_has_them(tmp_path: Path, monkeyp
     (tmp_path / "o.docx").write_bytes(make_document("y"))
     seen: dict[str, Any] = {}
 
-    def validate(self: Document, original: Document | None = None, author: str | None = None) -> list[dict]:
-        seen["validate"] = (original is not None, author)
+    def validate(self: Document) -> list[dict]:
+        seen["validate"] = True
         return [{"code": "OK"}]
 
+    def audit_tracked(self: Document, original: Document, *, author: str) -> list[dict]:
+        seen["audit"] = (isinstance(original, Document), author)
+        return [{"code": "AUDIT"}]
+
     monkeypatch.setattr(Document, "validate", validate, raising=False)
+    monkeypatch.setattr(Document, "audit_tracked", audit_tracked, raising=False)
     monkeypatch.setattr(Document, "comments", lambda self: ({"id": "c1"},), raising=False)
     monkeypatch.setattr(Document, "audit", lambda self, rules=None: [{"rules": rules}], raising=False)
     v, c, a = call(
         tmp_path,
         ("docx_validate", {"path": "d.docx", "original": "o.docx", "author": "Z"}),
         ("docx_comments", {"path": "d.docx"}),
-        ("docx_audit", {"path": "d.docx", "rules": {"r": 1}}),
+        ("docx_audit", {"path": "d.docx", "rules": ["r"]}),
     )
-    assert v.structured_content["result"] == [{"code": "OK"}]
-    assert seen["validate"] == (True, "Z")
+    assert v.structured_content["result"] == [{"code": "OK"}, {"code": "AUDIT"}]
+    assert seen["validate"] is True
+    assert seen["audit"] == (True, "Z")
     assert c.structured_content["result"] == [{"id": "c1"}]
-    assert a.structured_content["result"] == [{"rules": {"r": 1}}]
+    assert a.structured_content["result"] == [{"rules": ["r"]}]
 
 
 # -- entry point -------------------------------------------------------------
@@ -397,20 +418,41 @@ def test_stdio_smoke_initialize_and_list_tools(tmp_path: Path) -> None:
         {"jsonrpc": "2.0", "method": "notifications/initialized"},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
     ]
-    stdin = "".join(json.dumps(m) + "\n" for m in messages)
-    proc = subprocess.run(
+    # Keep stdin open until the tools/list reply arrives, as a real client
+    # does: closing it ends the stdio session, and a request still queued
+    # then goes unanswered (about one run in ten when stdin closed at once).
+    proc = subprocess.Popen(
         [sys.executable, "-m", "jubarte_redlines.mcp_server", "--root", str(tmp_path)],
-        input=stdin,
-        capture_output=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        check=False,
-        timeout=60,
         env={**os.environ, "PYTHONUNBUFFERED": "1"},
     )
-    replies = [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
-    listed = next(r for r in replies if r.get("id") == 2)
+    assert proc.stdin is not None and proc.stdout is not None
+    # A server that never answers must fail the test, not hang it.
+    watchdog = threading.Timer(60, proc.kill)
+    watchdog.start()
+    try:
+        proc.stdin.write("".join(json.dumps(m) + "\n" for m in messages))
+        proc.stdin.flush()
+        listed = None
+        for line in proc.stdout:
+            reply = json.loads(line) if line.strip() else {}
+            if reply.get("id") == 2:
+                listed = reply
+                break
+        proc.stdin.close()
+        assert proc.stderr is not None
+        stderr = proc.stderr.read()
+        proc.wait(timeout=60)
+    finally:
+        watchdog.cancel()
+        if proc.poll() is None:
+            proc.kill()
+    assert listed is not None, f"no tools/list reply; stderr: {stderr}"
     assert {t["name"] for t in listed["result"]["tools"]} == TOOLS
-    assert "Traceback" not in proc.stderr
+    assert "Traceback" not in stderr
 
 
 # -- hardening -----------------------------------------------------------------
@@ -481,3 +523,19 @@ def test_running_the_module_calls_main(tmp_path: Path, monkeypatch: pytest.Monke
     with pytest.raises(SystemExit) as exc:
         runpy.run_module("jubarte_redlines.mcp_server", run_name="__main__")
     assert exc.value.code == 2
+
+
+def test_docx_audit_runs_the_engine_with_rule_names(tmp_path: Path) -> None:
+    from docx_fixture import docx, para
+
+    (tmp_path / "d.docx").write_bytes(docx(para("• typed bullet")))
+    styled, unknown = call(
+        tmp_path,
+        ("docx_audit", {"path": "d.docx", "rules": ["style"]}),
+        ("docx_audit", {"path": "d.docx", "rules": ["NOPE"]}),
+    )
+    found = styled.structured_content["result"]
+    assert {"code": "LITERAL_BULLET", "rule_set": "style", "severity": "warning", "location": "body:p:0"}.items() <= next(
+        f for f in found if f["code"] == "LITERAL_BULLET"
+    ).items(), found
+    assert "NOPE" in error_text(unknown)

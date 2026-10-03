@@ -2,6 +2,14 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
+// Untrusted bytes reach this module: an out-of-range index or an integer overflow
+// is an abort in the Python and WASM consumers, so both are refused here
+// (test fixtures are exempt).
+#![cfg_attr(
+    not(test),
+    deny(clippy::indexing_slicing, clippy::arithmetic_side_effects)
+)]
+
 //! ISO/IEC 29500 **Strict** → **Transitional** namespace normalization (M8).
 //!
 //! Microsoft Word can save a `.docx` in the ISO *Strict* schema, whose XML
@@ -34,6 +42,8 @@ use std::sync::LazyLock;
 
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
+
+use crate::admission::InputLimits;
 
 /// Substring present in every ISO Strict URI. Its absence in an entry means the
 /// entry is already Transitional (or binary) and needs no rewriting.
@@ -523,10 +533,26 @@ fn translate(text: &str, table: &[(&str, &str)]) -> String {
 /// already Transitional), the original `bytes` are returned unchanged — the zip
 /// is never rebuilt. Only when at least one URI was rewritten is a new zip
 /// assembled (every entry under its original name, Deflated).
+///
+/// Entries inflate under [`InputLimits::compare`]; see
+/// [`strict_to_transitional_docx_within`] for the budget semantics.
 pub fn strict_to_transitional_docx(bytes: &[u8]) -> Vec<u8> {
+    strict_to_transitional_docx_within(bytes, InputLimits::compare())
+}
+
+/// [`strict_to_transitional_docx`] with an explicit inflation budget.
+///
+/// Every entry is inflated through a reader capped at the smaller of
+/// `limits.max_part_bytes` and the package budget left
+/// (`limits.max_uncompressed_bytes`), because the sizes the central directory
+/// declares are not trusted and are never used to size an allocation. An
+/// entry that inflates past its cap ends the scan and `bytes` come back
+/// unchanged, the same answer an unreadable archive gets; a caller that wants
+/// a typed refusal admits the package first with [`crate::admission::admit`].
+pub fn strict_to_transitional_docx_within(bytes: &[u8], limits: InputLimits) -> Vec<u8> {
     // Not a readable zip — leave untouched (PartFs::open reports the real
     // error downstream).
-    let Ok(mut archive) = ZipArchive::new(Cursor::new(bytes.to_vec())) else {
+    let Ok(mut archive) = ZipArchive::new(Cursor::new(bytes)) else {
         return bytes.to_vec();
     };
 
@@ -535,6 +561,7 @@ pub fn strict_to_transitional_docx(bytes: &[u8]) -> Vec<u8> {
     // whether ANY entry actually changed to preserve the zero-churn fast path.
     let mut entries: Vec<(String, Vec<u8>)> = Vec::with_capacity(n);
     let mut any_changed = false;
+    let mut total: u64 = 0;
     for i in 0..n {
         let Ok(mut f) = archive.by_index(i) else {
             return bytes.to_vec();
@@ -543,10 +570,18 @@ pub fn strict_to_transitional_docx(bytes: &[u8]) -> Vec<u8> {
             continue;
         }
         let name = f.name().to_string();
-        let mut buf = Vec::with_capacity(f.size() as usize);
-        if f.read_to_end(&mut buf).is_err() {
+        let remaining = limits.max_uncompressed_bytes.saturating_sub(total);
+        let cap = limits.max_part_bytes.min(remaining);
+        let mut buf = Vec::new();
+        if (&mut f)
+            .take(cap.saturating_add(1))
+            .read_to_end(&mut buf)
+            .is_err()
+            || buf.len() as u64 > cap
+        {
             return bytes.to_vec();
         }
+        total = total.saturating_add(buf.len() as u64);
 
         // Fast path: only text parts carrying the Strict marker can change.
         if name.ends_with(".rels") || name.ends_with(".xml") {
@@ -654,6 +689,49 @@ mod tests {
             "regular styles rel not transitional: {out}"
         );
         assert!(!out.contains(STRICT_MARKER), "strict marker leaked: {out}");
+    }
+
+    /// A Strict package whose media part inflates past the part budget is
+    /// handed back untouched instead of being inflated without bound; the
+    /// same package passes under the comparer's default budget.
+    #[test]
+    fn oversized_part_is_left_untouched_under_a_small_budget() {
+        let strict_doc = concat!(
+            "<?xml version=\"1.0\"?>\n",
+            "<w:document xmlns:w=\"http://purl.oclc.org/ooxml/wordprocessingml/main\">",
+            "<w:body/></w:document>",
+        );
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        writer.start_file("word/document.xml", options).unwrap();
+        writer.write_all(strict_doc.as_bytes()).unwrap();
+        writer.start_file("word/media/blob.bin", options).unwrap();
+        writer.write_all(&vec![0u8; 3 * 1024 * 1024]).unwrap();
+        let strict_pkg = writer.finish().unwrap().into_inner();
+
+        let small = crate::admission::InputLimits {
+            max_part_bytes: 1024 * 1024,
+            ..crate::admission::InputLimits::compare()
+        };
+        assert_eq!(
+            strict_to_transitional_docx_within(&strict_pkg, small),
+            strict_pkg,
+            "a part past the budget stops the rewrite and returns the input"
+        );
+        let total_only = crate::admission::InputLimits {
+            max_uncompressed_bytes: 2 * 1024 * 1024,
+            ..crate::admission::InputLimits::compare()
+        };
+        assert_eq!(
+            strict_to_transitional_docx_within(&strict_pkg, total_only),
+            strict_pkg,
+            "the package budget is honoured as well"
+        );
+        let out = strict_to_transitional_docx(&strict_pkg);
+        assert_ne!(
+            out, strict_pkg,
+            "within the default budget the Strict package is rewritten"
+        );
     }
 
     /// A Transitional package is returned byte-for-byte unchanged (zero-churn).

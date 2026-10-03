@@ -30,7 +30,7 @@ pip install 'jubarte-redlines[mcp]' && jubarte-mcp --root .
 | `docx_accept`, `docx_reject` | `path`, `out`, `ids=null`, `authors=null`, `kinds=null`, `overwrite=false` | `out` and the number of changes left |
 | `docx_validate` | `path`, `original=null`, `author=null` | findings |
 | `docx_comments` | `path` | comment records |
-| `docx_audit` | `path`, `rules=null` | audit findings |
+| `docx_audit` | `path`, `rules=null` (rule sets `a11y`, `style`, `structure` or codes) | accessibility, style and structure findings, each with its paragraph id |
 
 `docx_validate`, `docx_comments` and `docx_audit` are part of the tool
 contract now. Until the engine build has the matching `Document` method they

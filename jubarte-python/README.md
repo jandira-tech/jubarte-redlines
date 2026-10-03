@@ -6,7 +6,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # jubarte-redlines (Python)
 
-Lossless DOCX **redline** engine: compare two Word documents into a
+Word-faithful DOCX **redline** engine: compare two Word documents into a
 tracked-changes document that opens cleanly in Microsoft Word; list, accept,
 or reject revisions; render DOCX to PDF.
 
@@ -92,6 +92,16 @@ revisions with a fixed epoch date by default so output is deterministic;
 pass an ISO-8601 `date` to override. Errors raise
 `jubarte_redlines.JubarteError`.
 
+Both inputs are admitted under a size budget before anything is inflated
+(512 MiB per file and per part, 2 GiB inflated, 10,000 entries, XML depth
+256). `input_limits` overrides it key by key, for example
+`compare_documents(a, b, input_limits={"max_uncompressed_bytes": 256 << 20})`;
+the keys are `max_compressed_bytes`, `max_entries`, `max_part_bytes`,
+`max_uncompressed_bytes` and `max_xml_depth`. A package past the budget
+raises `JubarteError` with `INPUT_LIMIT`, and an unknown key raises
+`invalid input limits`. `get_revisions_json` and
+`CompareOptions(input_limits=...)` take the same mapping.
+
 `read()` returns a `Document` — an immutable snapshot, path I/O done once, no
 operation mutating it or writing files:
 
@@ -127,11 +137,14 @@ plan = (
 out = doc.edit(plan)               # EditResult: clean, redline, report, diff
 ```
 
-`replace`, `insert`, `delete` and `comment` edit run text; `insert_paragraph`,
+`replace`, `insert`, `delete`, `comment` and `format_run` edit run text; `insert_paragraph`,
 `delete_paragraph`, `format_paragraph`, `merge_paragraphs` and `rewrite` work on
 whole paragraphs; `insert_table(paragraph, rows=[[...], ...])` adds a table and
 `list_paragraphs([...], kind_of_list="decimal")` (wire kind `list`) numbers
-paragraphs; `resolving(accept={...}, reject={...})` settles existing
+paragraphs; `insert_footnote` adds a footnote after an anchor;
+`insert_image` adds a picture paragraph; `page_setup` changes the page size,
+orientation and margins;
+`resolving(accept={...}, reject={...})` settles existing
 tracked changes first. `plan.to_json()` is exactly what `edit --plan` reads.
 
 `diff(old, new)` (new on `main`, first in the release after 0.10.1) shows the
@@ -144,9 +157,11 @@ print(diff(read("v1.docx"), read("v2.docx")))
 
 `doc.append(other)` (new on `main`) puts `other` after `doc` on a new page and
 returns `Appended(document, warnings)`: images, links, headers, styles, lists
-and notes come along; comments do not yet (`COMMENTS_DROPPED` in `warnings`).
-`section_break="continuous"` joins on the same page and `keep_sections=True`
-keeps `other`'s page setup, headers and footers.
+and notes come along. Comments are dropped (`COMMENTS_DROPPED` in `warnings`)
+unless `comments="carry"`, which brings the comments `other`'s body anchors
+with their threads and resolution. `section_break="continuous"` joins on the
+same page and `keep_sections=True` keeps `other`'s page setup, headers and
+footers.
 
 ## Also available as
 

@@ -20,11 +20,13 @@ touch `word/document.xml`.
 | Page count / page text | `jubarte convert file.docx --png --report pages.json` |
 | Compare two versions | `jubarte a.docx b.docx -o redline.docx --author "Name"` (Python: `python -m jubarte_redlines compare a.docx b.docx -o redline.docx --author "Name"`) |
 | Clean copy of a redline | `jubarte accept redline.docx -o clean.docx` (or `reject`) |
+| Will Word open it, is every edit tracked | `jubarte validate redline.docx --original file.docx --author "Name"` (`--repair fixed.docx` fixes what it can) |
 | What can this build do | `jubarte capabilities --json` |
 
 Python: `import jubarte_redlines as jubarte; doc = jubarte.read("file.docx")`,
 then `doc.markdown()`, `doc.inspect()`, `doc.edit(plan)`, `doc.to_png()`,
-`doc.render()`, `doc.compare(other, author=...)`, `doc.accept()`.
+`doc.render()`, `doc.compare(other, author=...)`, `doc.accept()`,
+`doc.validate()`, `doc.repair()`, `doc.audit_tracked(original, author=...)`.
 
 ## 1. Read before you edit
 
@@ -55,8 +57,10 @@ prints the same grids.
 `locked`, `choices` (list values), `checked` and `placeholder`.
 
 Gotchas:
-- Headers, footers, footnotes and endnotes are editable stories; text boxes
-  are counted in `summary` but not printed and not editable. Comments can
+- Headers, footers, footnotes and endnotes are editable stories (the kinds
+  `jubarte capabilities --json` lists under `limits.stories`); text boxes
+  are not stories: their text is omitted and not editable, and the owner
+  paragraph carries `text_box_omitted`. Comments can
   only be anchored in the body (Word cannot anchor one in a header).
 - `limitations` on a paragraph (`field`, `hyperlink`, `content_control`,
   `sym`, `drawing`, `revision`) tell you which ranges an edit will refuse.
@@ -121,10 +125,10 @@ Writes `review/clean.docx` (edits applied, no tracked changes),
 `redline-page-NN.png`, `clean-page-NN.png`. Exit 0 means every operation
 matched exactly once. Exit 3 means the plan was refused: the report on stdout
 says which operation and why (`ANCHOR_NOT_FOUND`, `AMBIGUOUS_ANCHOR` with the
-match count, `OVERLAPPING_EDITS`, `UNSUPPORTED_STRUCTURE`, `STALE_SOURCE`,
+match count, `OVERLAPPING_EDITS`, `UNSUPPORTED_STRUCTURE`, `UNSUPPORTED_IMAGE`, `STALE_SOURCE`,
 `EXISTING_REVISIONS`, `REVISION_CONFLICT`, `UNKNOWN_CHANGE`,
-`UNKNOWN_COMMENT`, `COMMENT_NOT_IN_BODY`, `INVALID_PLAN`, `INVALID_EDIT`,
-`LOCKED_CONTROL`);
+`UNKNOWN_COMMENT`, `COMMENT_NOT_IN_BODY`, `REDACTION_LEAK`, `UNSUPPORTED`,
+`INVALID_PLAN`, `INVALID_EDIT`, `LOCKED_CONTROL`);
 fix the plan and rerun. Use `--dry-run`
 to see the report without writing.
 
@@ -152,9 +156,25 @@ twentieths of a point (the text width split evenly when omitted), and
 `bullet|decimal|lower_letter`, `level` 0 to 8, `restart` true by default),
 `watermark` (`text`; optional `color` as six hex digits, `diagonal`,
 `font`; no paragraph: writes Word's own diagonal text watermark into every
-default header; one per document). `replace` and
-`insert` take an optional `format` (`bold`/`italic`/`underline`/`highlight`)
-that applies to the new text only. `replace` takes `"whole": true` to show
+default header; one per document), `format_run` (`find`
+plus `format`: restyles existing text as a tracked formatting change;
+`occurrence`, 1-based, picks one of several matches), `insert_footnote`
+(`after` plus the note's `text`; body paragraphs only; optional
+`occurrence`), `insert_image` (`image_base64` of a PNG, JPEG, GIF, BMP or
+TIFF file, `position` `before|after`, optional `content_type`, `width_emu`
+with 914400 per inch, `alt`; body paragraphs only), `page_setup` (no
+`paragraph`; `section` `last|all`, `page` `letter|a4|{"width_dxa",
+"height_dxa"}`, `orientation` `portrait|landscape`, `margins_dxa` with any
+of top, right, bottom, left, header, footer, 1440 per inch), `redact` (`find`: replaced with one block `█` per
+character in the clean copy and the redline alike, untracked; optional
+`occurrence`), `settings` (any of `track_revisions`, `update_fields` as
+booleans and `protection` `{"edit": "readOnly|comments|trackedChanges|forms|none",
+"enforcement": true}`; no paragraph; one per plan; this `update_fields`
+asks Word to recompute fields on open, the plan's top-level one writes
+jubarte's results now). `replace` and
+`insert` take an optional `format` (`bold`/`italic`/`underline`/`highlight`,
+`font`, `size_pt`, `color` as `FF0000` or `auto`, `strike`, `caps`) that
+applies to the new text only. `replace` takes `"whole": true` to show
 the change as the whole old text deleted, then the whole new text inserted.
 Paragraph selectors: `"body:p:N"` (or `"header1:p:0"`, `"footnotes:p:2"`),
 `{"index": N}`, `{"starts_with": "..."}`, `{"contains": "..."}`; the last two
@@ -162,9 +182,9 @@ must match exactly one paragraph. Those three search the body unless they
 name a story: `{"story": "footer1", "contains": "Page"}`.
 
 Gotchas:
-- `find` must occur exactly once in that paragraph; overlapping occurrences
-  count (`"aa"` occurs twice in `"aaa"`). Widen the anchor instead of
-  guessing.
+- `find` must occur exactly once in that paragraph unless you give
+  `occurrence` (1-based); the refusal says how many times it occurs.
+  Overlapping occurrences count (`"aa"` occurs twice in `"aaa"`).
 - Inserted text takes the formatting of the run it lands in (`after` and
   `end` extend the preceding run; `before` and `start` join the following
   one). To insert bold or highlighted text, give the operation a `format`
@@ -205,6 +225,20 @@ Gotchas:
   header gets one; a later section without its own inherits the previous
   header, as in Word. A document that already holds a watermark, or a
   second `watermark` in the plan, is refused (`UNSUPPORTED_STRUCTURE`).
+- `redact` removes the text from both documents and is no tracked change,
+  so the other side never sees what was there. The plan is refused with
+  `REDACTION_LEAK` when the text still occurs anywhere in either output (a
+  comment, another paragraph, a header, the document properties); the
+  message names the parts, never the text. Redact every copy in the same
+  plan. A short `find` can also match an unrelated attribute value and be
+  refused: the check fails closed.
+- `settings` writes `word/settings.xml` (created when missing) in schema
+  order, in the clean copy and the redline alike: settings are not
+  revisions. `false` removes `w:trackRevisions` or `w:updateFields`;
+  `"edit": "none"` removes the restriction. `protection` has no password
+  (`password` is refused with `UNSUPPORTED`): it is Word's "enforce
+  without password", which any user can turn off. Two `settings` in one
+  plan are `OVERLAPPING_EDITS`.
 - `merge_paragraphs` keeps the second paragraph's properties (what Word's
   accept of a deleted paragraph mark does); the redline deletes the first
   paragraph's mark and inserts only the separator, as Word Compare shows a
@@ -225,6 +259,20 @@ Gotchas:
   delete, format or merge a paragraph you list in the same plan
   (`OVERLAPPING_EDITS`). The redline marks each paragraph's properties as
   changed, and also the `ListParagraph` definition when the plan added it.
+- `insert_toc` (`position` before or after, `levels` 1 to 9, default 3,
+  optional `title` styled `TOCHeading`) inserts a `TOC \o "1-N" \h \z \u`
+  field in the body. Pair it with `"update_fields": true` at the top of the
+  plan: the clean copy's TOC is then filled from the `Heading1`..`HeadingN`
+  paragraphs, and every `PAGEREF`, `REF`, `NUMPAGES` and `SEQ` result is
+  written, before the redline is compared; the report lists them under
+  `fields`. Without it the TOC stays empty until Word updates its fields.
+  On a document you are not editing, `jubarte fields update in.docx -o
+  out.docx --json` does the same. Page numbers are jubarte's layout, which
+  matches Word on most documents but is not Word
+  (`docs/WORD_DIFFERENCES.md` section 11 in the jubarte repository).
+  Field codes stay, so Word's Update Field still works.
+  `update_fields` is refused (`INVALID_PLAN`) with `existing_revisions:
+  "keep"`; `insert_toc` alone works there and is tracked as an insertion.
 
 Content controls (form fields) are filled with `fill_control`, which names a
 control instead of a paragraph and takes exactly one value:
@@ -289,12 +337,22 @@ layout pass. Python: `jubarte_redlines.diff_render(a, b, dpi=100)` and
 Gotchas:
 - Page count is the renderer's layout, not Word's; treat a one-page
   difference between renderer and Word as possible on dense documents.
+- `--report` lists every font and whether it was substituted;
+  `--fail-on-substitution` turns that into exit 4 for CI.
 - `jubarte accept review/redline.docx -o check.docx` then `jubarte text
   check.docx` must equal `jubarte text review/clean.docx`. That is the
   every-edit-is-tracked check; it replaces `validate.py --author`. Under
   `keep`, accept only your own changes:
   `jubarte accept review/redline.docx --author Claude -o check.docx`
   (the author your plan names).
+  `jubarte validate review/redline.docx --original contract.docx --author
+  Claude` runs that check and the Word-validity check in one; it replaces
+  `validate.py --original --author`. `--repair out.docx` fixes what it can
+  and lists what it cannot.
+- `jubarte audit file.docx --json` lists heading skips, images without alt
+  text, tables without a header row, literal bullets, spacer paragraphs,
+  stale TOC and page-count caches, and substituted fonts; `--strict` makes
+  warnings fail. Each finding's `location` is the paragraph id to edit.
 
 ## 4. Compare, accept, reject
 
@@ -322,13 +380,16 @@ changes as tracked changes. `jubarte edit` writes the edit's patch as
 `patch.diff` and prints it (`-q` prints nothing). See docs/MARKDOWN.md.
 
 `jubarte append a.docx b.docx -o ab.docx` puts B after A on a new page;
-images, links, styles, lists and notes come along; comments do not yet
-(warned as `COMMENTS_DROPPED`). More files fold left (`append a b c`);
-`--section-break continuous` joins on the same page and `--keep-sections`
-keeps B's page setup, headers and footers. A style A already has (same
-type and name) keeps A's look. Python: `Document.read("a.docx").append(
-Document.read("b.docx"))` returns `Appended(document, warnings)`; WASM:
-`appendDocuments(a, b, '{"section_break":"continuous"}')`.
+images, links, styles, lists and notes come along. Comments are dropped
+(warned as `COMMENTS_DROPPED`) unless `--carry-comments`, which brings the
+comments B's body anchors with their threads and resolution (those in
+notes, headers and footers are still dropped). More files fold left
+(`append a b c`); `--section-break continuous` joins on the same page and
+`--keep-sections` keeps B's page setup, headers and footers. A style A
+already has (same type and name) keeps A's look. Python:
+`Document.read("a.docx").append(Document.read("b.docx"))` returns
+`Appended(document, warnings)`; WASM: `appendDocuments(a, b,
+'{"section_break":"continuous","comments":"carry"}')`.
 
 ## 5. Create a new document (docx-js)
 
@@ -349,9 +410,23 @@ house.docx -o draft.docx` takes the house styles, and CriticMarkup in the
 Markdown (`{++added++}`, `{--removed--}`, `{==text==}{>>comment<<}`) becomes
 tracked changes and comments.
 
+## 6. Before sending a document out
+
+`jubarte scrub in.docx -o out.docx` removes who touched a document: every
+author (tracked changes, comments, `people.xml`) becomes "Author", rsids go, the document properties lose the creator, last editor,
+revision number, dates, manager, company and custom properties, and
+comments go. Text and tracked changes stay. `--author-alias NAME`,
+`--rsids`, `--docprops` and `--comments` select only those. Python:
+`Document.scrub(author_alias="Counsel", comments=False)`; WASM:
+`scrubDocument(docx, '{"author_alias":"Counsel","rsids":true}')`.
+Scrub refuses to write a package with a validity finding the input did not
+have. Text to hide inside the document is a plan's `redact` (§2).
+
 ## Dependencies
 
 `jubarte` (single binary) or `pip install jubarte-redlines` (`python -m
 jubarte_redlines`, same commands; compare is `compare A B` there) · `docx` (npm) for new documents. As MCP tools (Claude Code, Codex, Gemini CLI):
 `uvx --from 'jubarte-redlines[mcp]' jubarte-mcp --root .` (see `docs/adoption/mcp.md`). Legacy
-`.doc` is not read; ask for a `.docx`.
+`.doc` is refused with `LEGACY_DOC` (so is an encrypted document, which is
+the same OLE container); convert it with Word, or ask for a `.docx`. RTF is
+refused with `UNSUPPORTED_PACKAGE`.

@@ -4,7 +4,7 @@
 
 //! # jubarte
 //!
-//! Lossless DOCX redline engine: compare two Word documents and produce a
+//! Word-faithful DOCX redline engine: compare two Word documents and produce a
 //! tracked-changes (redline) `.docx` — the original document with every
 //! difference against the modified one expressed as Word revisions
 //! (insertions, deletions, moves, and format changes) — that opens cleanly
@@ -13,12 +13,14 @@
 //! ## Example
 //!
 //! ```no_run
-//! let original = std::fs::read("original.docx").unwrap();
-//! let modified = std::fs::read("modified.docx").unwrap();
-//! let redline =
-//!     jubarte::document_comparer::compare_documents(&original, &modified, "Reviewer")
-//!         .expect("compare");
-//! std::fs::write("original_v_modified.docx", &redline).unwrap();
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let original = std::fs::read("original.docx")?;
+//!     let modified = std::fs::read("modified.docx")?;
+//!     let redline =
+//!         jubarte::document_comparer::compare_documents(&original, &modified, "Reviewer")?;
+//!     std::fs::write("original_v_modified.docx", &redline)?;
+//!     Ok(())
+//! }
 //! ```
 //!
 //! For author/date/detail-threshold control, build a
@@ -28,6 +30,23 @@
 //! [`document_comparer::accept_revisions`] / [`document_comparer::reject_revisions`].
 //! Convert a document to PDF with [`convert::docx_to_pdf`].
 //!
+//! ## Fidelity
+//!
+//! The redline is Word-valid, and differences in text and formatting are
+//! revisions, but the engine also normalizes some markup so the output opens
+//! cleanly and matches what Word's own Compare writes. This list is the main
+//! cases, not every one. Both inputs lose non-standard `w:`-namespace children
+//! of `w:sdtPr` and have `mc:AlternateContent` resolved to a single branch.
+//! In the default (Word-visual) mode, the original's own tracked changes are
+//! flattened and compared like text, internal anchor `w:hyperlink` wrappers
+//! (no `r:id`) become runs styled as hyperlinks, content controls in any
+//! paragraph that carries a revision are unwrapped, some redundant default
+//! spacing is stripped, and a breaking and a non-breaking space compare equal
+//! ([`comparer::WmlComparerSettings::conflate_breaking_and_nonbreaking_spaces`]).
+//! [`comparer::WmlComparerSettings::powertools_faithful`] skips the
+//! mode-specific passes.
+//!
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 //! ## Provenance
 //!
@@ -41,6 +60,8 @@
 pub mod admission;
 /// Append one document after another, carrying its parts.
 pub mod append;
+/// Accessibility, style and structure findings (`jubarte audit`).
+pub mod audit;
 /// Word's built-in style names.
 mod builtin_styles;
 /// Machine-readable manifest of what this build can do.
@@ -61,6 +82,7 @@ pub mod debug;
 pub mod document_comparer;
 /// Guarded, uniquely anchored edits applied to a copy and redlined by compare.
 pub mod edit;
+pub mod fields;
 /// Read-only paragraph/package views and the Markdown projection for agents.
 pub mod inspect;
 /// Markdown to Word, with CriticMarkup as tracked changes and comments.
@@ -75,6 +97,10 @@ pub mod opc;
 pub mod perf;
 /// Accept / reject tracked revisions across a package.
 pub mod revision_processor;
+/// Remove authors, rsids, document properties and comments; find a text.
+pub mod scrub;
+/// Document settings an edit plan writes, in `CT_Settings` order.
+pub mod settings;
 /// ISO Strict → Transitional package normalization.
 pub mod strict_translation;
 /// Unique id helpers for revision markup.
@@ -84,6 +110,9 @@ pub mod unid;
 pub mod update;
 /// Shared small utilities.
 pub mod util;
+/// Word-validity findings beyond the schema: validate, repair, and the
+/// tracked-edit audit.
+pub mod validate;
 /// `WmlDocument` — document bytes + lazily parsed main part.
 pub mod wml_document;
 /// Word's default theme part, for originals without one.
@@ -93,11 +122,3 @@ pub mod xmllinq;
 
 /// [`WmlDocument`] re-export for the common library entry point.
 pub use wml_document::WmlDocument;
-
-#[cfg(test)]
-mod smoke {
-    #[test]
-    fn crate_builds() {
-        assert_eq!(2 + 2, 4);
-    }
-}

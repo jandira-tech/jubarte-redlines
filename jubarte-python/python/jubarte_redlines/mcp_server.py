@@ -297,12 +297,17 @@ def build_server(*, root: Path) -> MCPServer:
 
     @mcp.tool(annotations=_READ)
     def docx_validate(path: str, original: str | None = None, author: str | None = None) -> list[dict[str, Any]]:
-        """Findings that would make Word refuse or repair path; with original, also check the redline against it."""
+        """Findings that would make Word refuse or repair path; with original and author, also check that every edit against original is a tracked change by author."""
         doc = load(path)
         base = load(original) if original is not None else None
         if not hasattr(Document, "validate"):
             raise missing("validate")
-        return _plain(engine(lambda: doc.validate(original=base, author=author)))
+        if (base is None) != (author is None):
+            raise ToolError("original and author go together")
+        findings = list(engine(doc.validate))
+        if base is not None:
+            findings.extend(engine(lambda: doc.audit_tracked(base, author=author)))
+        return _plain(findings)
 
     @mcp.tool(annotations=_READ)
     def docx_comments(path: str) -> list[dict[str, Any]]:
@@ -313,8 +318,8 @@ def build_server(*, root: Path) -> MCPServer:
         return _plain(engine(doc.comments))
 
     @mcp.tool(annotations=_READ)
-    def docx_audit(path: str, rules: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-        """Audit findings for path against rules (default: the engine's built-in rules)."""
+    def docx_audit(path: str, rules: list[str] | None = None) -> list[dict[str, Any]]:
+        """Accessibility, style and structure findings for path, each with its paragraph id; rules names rule sets (a11y, style, structure) or codes (default: every rule)."""
         doc = load(path)
         if not hasattr(Document, "audit"):
             raise missing("audit")

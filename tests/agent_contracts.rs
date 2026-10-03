@@ -29,6 +29,13 @@ fn every_advertised_edit_kind_accepts_its_wire_representation() {
         json!({"kind":"list", "paragraphs":[{"index":0}, "body:p:1"], "kind_of_list":"lower_letter", "level":1, "restart":false}),
         json!({"kind":"watermark", "text":"DRAFT", "color":"C0C0C0", "diagonal":true, "font":"Calibri"}),
         json!({"kind":"fill_control", "control":{"tag":"Name"}, "text":"Ada"}),
+        json!({"kind":"format_run", "paragraph":{"index":0}, "find":"a", "occurrence":2, "format":{"bold":true, "font":"Arial", "size_pt":10.5, "color":"FF0000", "strike":false, "caps":true}}),
+        json!({"kind":"insert_footnote", "paragraph":{"index":0}, "after":"a", "occurrence":1, "text":"note"}),
+        json!({"kind":"insert_image", "paragraph":{"index":0}, "position":"before", "image_base64":"iVBORw0KGgo=", "content_type":"image/png", "width_emu":914400, "alt":"Logo"}),
+        json!({"kind":"page_setup", "section":"all", "page":{"width_dxa":12000, "height_dxa":16000}, "orientation":"landscape", "margins_dxa":{"top":-720, "left":1080}}),
+        json!({"kind":"insert_toc", "paragraph":{"index":0}, "position":"before", "levels":2, "title":"Contents"}),
+        json!({"kind":"redact", "paragraph":{"index":0}, "find":"a", "occurrence":2}),
+        json!({"kind":"settings", "track_revisions":true, "update_fields":true, "protection":{"edit":"trackedChanges", "enforcement":true}}),
     ];
     let manifest = capabilities("rust");
     let kinds: Vec<_> = operations
@@ -77,11 +84,16 @@ fn capabilities_roundtrip_preserves_runtime_and_scope_limits() {
         assert_eq!(capabilities(runtime), decoded);
     }
     let manifest = capabilities("rust");
-    assert_eq!(manifest.limits.stories, ["body"]);
+    assert_eq!(
+        manifest.limits.stories,
+        ["body", "header", "footer", "footnotes", "endnotes"]
+    );
+    assert!(manifest.operations.validate && manifest.operations.repair);
     assert!(manifest.limits.plain_text_runs);
     assert!(manifest.limits.refuses_opaque_ranges);
     assert!(!manifest.limits.reads_legacy_doc);
     assert!(manifest.operations.edit_keeps_revisions);
+    assert!(manifest.operations.scrub);
 }
 
 #[test]

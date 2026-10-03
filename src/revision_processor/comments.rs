@@ -63,7 +63,7 @@ impl Parsed {
 
 /// Drop the comments Accept / Reject All left without a reference, prune the
 /// comment family and `people.xml` (module docs).
-pub(super) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) {
+pub(crate) fn prune_orphan_comments(pkg: &mut PartFs, story_parts: &[String]) {
     let Some(mut comments) = Parsed::load(pkg, FAMILY[0].0) else {
         return;
     };

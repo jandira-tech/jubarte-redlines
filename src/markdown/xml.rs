@@ -116,7 +116,7 @@ pub(super) struct List {
 
 /// An embedded picture.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Picture {
+pub(crate) struct Picture {
     pub bytes: Vec<u8>,
     pub extension: &'static str,
     pub content_type: &'static str,
@@ -487,7 +487,9 @@ fn write_run(context: &mut Context<'_>, run: &Run, relate: &mut dyn Relate, out:
     out.push_str("</w:r>");
 }
 
-fn drawing_xml(picture: &Picture, rel: &str, id: u32, out: &mut String) {
+/// A `w:drawing` holding `picture` inline, embedded through `rel`, with
+/// drawing id `id`. The caller declares the `w`, `wp` and `r` prefixes.
+pub(crate) fn drawing_xml(picture: &Picture, rel: &str, id: u32, out: &mut String) {
     let alt = escape(&picture.alt);
     let (cx, cy) = (picture.width, picture.height);
     let _ = write!(

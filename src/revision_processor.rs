@@ -9,12 +9,13 @@
 
 mod annotation_ids;
 mod bookmarks;
-mod comments;
+pub(crate) mod comments;
 mod notes;
 mod sections;
 pub(crate) mod style_records;
 mod word_save;
 
+pub(crate) use comments::prune_orphan_comments;
 pub(crate) use sections::Resolution;
 
 use std::collections::{HashMap, HashSet};

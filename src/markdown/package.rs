@@ -9,7 +9,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::io::{Cursor, Write as _};
 
 use super::xml::{self, Context, Document, Relate, escape};
-use super::{DocxOptions, MarkdownError};
+use super::{DocxOptions, MarkdownError, PageSize};
 use crate::namespaces::W;
 use crate::opc::{PartFs, relative_rel_target};
 use crate::xmllinq::{Dom, serialize_element};
@@ -23,9 +23,24 @@ const WP_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/wordproces
 
 /// Page setup when there is no reference document: US Letter, one-inch
 /// margins, as Word's default template.
-const DEFAULT_SECTION: &str = "<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+const LETTER_SECTION: &str = "<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
     <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
     w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/><w:cols w:space=\"720\"/></w:sectPr>";
+
+/// Page setup for [`PageSize::A4`]: A4 with the same one-inch margins as
+/// Letter. Word's own A4 template uses 2 cm margins; keeping Letter's means a
+/// document changes only the page size the user asked for.
+const A4_SECTION: &str = "<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/>\
+    <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+    w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/><w:cols w:space=\"720\"/></w:sectPr>";
+
+/// The section a document gets when nothing else gives one.
+fn default_section(page: PageSize) -> &'static str {
+    match page {
+        PageSize::Letter => LETTER_SECTION,
+        PageSize::A4 => A4_SECTION,
+    }
+}
 
 /// The styles every document gets, so a reference without them still
 /// resolves the defaults the others are based on.
@@ -61,7 +76,7 @@ pub(super) fn assemble(
 ) -> Result<Vec<u8>, MarkdownError> {
     let template = match options.reference {
         Some(bytes) => bytes.to_vec(),
-        None => default_template().map_err(err)?,
+        None => default_template(options.page).map_err(err)?,
     };
     let mut package = PartFs::open(&template)
         .map_err(|e| MarkdownError::Reference(format!("not a readable .docx ({e})")))?;
@@ -71,7 +86,13 @@ pub(super) fn assemble(
     let source = package
         .part_string(&main)
         .ok_or_else(|| MarkdownError::Reference(format!("'{main}' cannot be read")))?;
-    let (root, section) = frame(&source);
+    // A reference's page setup wins; `page` only fills in for its absence
+    // when there is no reference at all.
+    let page = match options.reference {
+        Some(_) => PageSize::Letter,
+        None => options.page,
+    };
+    let (root, section) = frame(&source, page);
     prune(&mut package, &main);
 
     let styles_part = styles_part(&mut package, &main);
@@ -185,18 +206,19 @@ fn related(package: &PartFs, main: &str, kind: &str) -> Option<String> {
 
 /// The document element's start tag, declaring the prefixes the body uses,
 /// and the body's final section properties.
-fn frame(source: &str) -> (String, String) {
+fn frame(source: &str, page: PageSize) -> (String, String) {
+    let fallback = default_section(page);
     let default_root =
         format!("<w:document xmlns:w=\"{W_NS}\" xmlns:r=\"{R_NS}\" xmlns:wp=\"{WP_NS}\">");
     let Some(start) = source.find("<w:document") else {
-        return (default_root, DEFAULT_SECTION.to_string());
+        return (default_root, fallback.to_string());
     };
     let Some(length) = source[start..].find('>') else {
-        return (default_root, DEFAULT_SECTION.to_string());
+        return (default_root, fallback.to_string());
     };
     let mut root = source[start..start + length].to_string();
     if root.ends_with('/') {
-        return (default_root, DEFAULT_SECTION.to_string());
+        return (default_root, fallback.to_string());
     }
     for (prefix, namespace) in [("w", W_NS), ("r", R_NS), ("wp", WP_NS)] {
         if !root.contains(&format!("xmlns:{prefix}=")) {
@@ -206,7 +228,7 @@ fn frame(source: &str) -> (String, String) {
     root.push('>');
     (
         root,
-        final_section(source).unwrap_or_else(|| DEFAULT_SECTION.to_string()),
+        final_section(source).unwrap_or_else(|| fallback.to_string()),
     )
 }
 
@@ -440,9 +462,11 @@ pub(crate) fn append_numbering(
     Some((first_abstract, first_num))
 }
 
-/// Writes the footnotes into the notes part, making one if needed.
-fn footnotes(package: &mut PartFs, main: &str, context: &mut Context<'_>, media: &mut Media) {
-    let part = related(package, main, "/footnotes").unwrap_or_else(|| {
+/// The footnotes part `main` relates to; created with Word's separator and
+/// continuation separator notes, its relationship and its content type when
+/// absent.
+pub(crate) fn ensure_footnotes_part(package: &mut PartFs, main: &str) -> String {
+    related(package, main, "/footnotes").unwrap_or_else(|| {
         let part = sibling(main, "footnotes.xml");
         package.add_document_relationship(
             main,
@@ -468,7 +492,12 @@ fn footnotes(package: &mut PartFs, main: &str, context: &mut Context<'_>, media:
             .into_bytes(),
         );
         part
-    });
+    })
+}
+
+/// Writes the footnotes into the notes part, making one if needed.
+fn footnotes(package: &mut PartFs, main: &str, context: &mut Context<'_>, media: &mut Media) {
+    let part = ensure_footnotes_part(package, main);
     let Some(existing) = package.part_string(&part) else {
         return;
     };
@@ -507,7 +536,7 @@ fn footnotes(package: &mut PartFs, main: &str, context: &mut Context<'_>, media:
 }
 
 /// The largest picture id (`wp:docPr`) the kept parts use.
-fn max_drawing_id(package: &PartFs) -> u32 {
+pub(crate) fn max_drawing_id(package: &PartFs) -> u32 {
     package
         .parts()
         .iter()
@@ -620,7 +649,8 @@ impl Relate for PartRelate<'_, '_, '_> {
 }
 
 /// The package a document is written into when there is no reference.
-fn default_template() -> Result<Vec<u8>, std::io::Error> {
+fn default_template(page: PageSize) -> Result<Vec<u8>, std::io::Error> {
+    let section = default_section(page);
     let content_types = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
         <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
         <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
@@ -648,7 +678,7 @@ fn default_template() -> Result<Vec<u8>, std::io::Error> {
     );
     let document = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
-         <w:document xmlns:w=\"{W_NS}\" xmlns:r=\"{R_NS}\" xmlns:wp=\"{WP_NS}\"><w:body>{DEFAULT_SECTION}</w:body></w:document>"
+         <w:document xmlns:w=\"{W_NS}\" xmlns:r=\"{R_NS}\" xmlns:wp=\"{WP_NS}\"><w:body>{section}</w:body></w:document>"
     );
     let styles = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
@@ -730,8 +760,28 @@ mod tests {
     }
 
     #[test]
+    fn a_main_part_without_a_usable_root_or_section_falls_back_to_the_page() {
+        // No document element, an unterminated one, and an empty one: the
+        // default root and the page's section.
+        for source in ["<x/>", "<w:document", "<w:document/>"] {
+            for page in [PageSize::Letter, PageSize::A4] {
+                let (root, section) = frame(source, page);
+                assert!(root.starts_with("<w:document xmlns:w="), "{source}: {root}");
+                assert_eq!(section, default_section(page), "{source} {page:?}");
+            }
+        }
+        // A document element whose body has no final section.
+        let (_, section) = frame(
+            "<w:document><w:body><w:p/></w:body></w:document>",
+            PageSize::A4,
+        );
+        assert_eq!(section, A4_SECTION);
+    }
+
+    #[test]
     fn the_text_width_is_the_page_less_its_margins() {
-        assert_eq!(text_width(DEFAULT_SECTION), 9360);
+        assert_eq!(text_width(LETTER_SECTION), 9360);
+        assert_eq!(text_width(A4_SECTION), 9026);
         assert_eq!(
             text_width(
                 "<w:sectPr><w:pgSz w:w=\"11906\"/><w:pgMar w:left=\"1134\" w:right=\"1134\"/></w:sectPr>"

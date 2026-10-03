@@ -4114,8 +4114,8 @@ fn a_header_lines_revisions_and_underline_paint_their_lines() {
     assert_eq!(hair(&ours, 1.0, 0.0, 0.0), 1, "the default deletion strike");
     assert_eq!(
         hair(&ours, 0.0, 0.0, 1.0),
-        3,
-        "the default double insertion underline and the w:u one"
+        2,
+        "the default insertion underline and the w:u one"
     );
 }
 
@@ -5044,9 +5044,10 @@ fn a_short_cover_anchored_at_a_paragraphs_end_keeps_its_lines_on_the_page() {
 
 #[test]
 fn conventional_revisions_are_red_blue_and_green() {
-    // Arthur's convention (the default): deletions red struck through,
-    // insertions blue double-underlined, moved text green (struck where it
-    // left, double-underlined where it landed). Word mode keeps Word's ink.
+    // Arthur's convention (the default), as Litera Compare sets Word's track
+    // changes: deletions red struck through, insertions blue underlined,
+    // moved text green (double-struck where it left, double-underlined where
+    // it landed). Word mode keeps Word's ink.
     let body = r#"<w:p><w:del w:id="1" w:author="A"><w:r><w:delText>Gone</w:delText></w:r></w:del><w:ins w:id="2" w:author="A"><w:r><w:t>Added</w:t></w:r></w:ins><w:moveFrom w:id="3" w:author="A"><w:r><w:t>Left</w:t></w:r></w:moveFrom><w:moveTo w:id="4" w:author="A"><w:r><w:t>Landed</w:t></w:r></w:moveTo></w:p><w:sectPr/>"#;
     let docx = minimal_docx_body(body);
     let conventional = jubarte::convert::docx_to_pdf(&docx).expect("conventional");
@@ -5063,11 +5064,46 @@ fn conventional_revisions_are_red_blue_and_green() {
         !word.contains("0.000 0.000 1.000 rg"),
         "Word mode keeps Word's ink"
     );
-    let conv_lines = hay.matches(" re f").count();
-    let word_lines = word.matches(" re f").count();
+    // Each mark sits where its kind says: the moved-from rules at the
+    // deletion's strike height, the moved-to rules at the insertion's
+    // underline height. Counting hairlines alone would pass a moved-from
+    // text double-underlined.
+    let streams = pdf_content_streams(&conventional).concat();
+    let rules = |r: f32, g: f32, b: f32| {
+        let mut v: Vec<_> = pdf_fill_boxes_in(&streams, r, g, b)
+            .into_iter()
+            .filter(|&(_, _, w, h)| w > 1.0 && h > 0.0 && h < 1.6)
+            .collect();
+        v.sort_by(|a, b| a.0.total_cmp(&b.0));
+        v
+    };
+    let (strike, underline, green) = (
+        rules(1.0, 0.0, 0.0),
+        rules(0.0, 0.0, 1.0),
+        rules(0.0, 0.502, 0.0),
+    );
+    assert_eq!(strike.len(), 1, "one strike for the deletion: {strike:?}");
+    assert_eq!(
+        underline.len(),
+        1,
+        "one underline for the insertion: {underline:?}"
+    );
+    assert_eq!(
+        green.len(),
+        4,
+        "two rules at each end of the move: {green:?}"
+    );
+    let (strike_y, underline_y) = (strike[0].1, underline[0].1);
+    let near_strike = |y: f32| (y - strike_y).abs() < (y - underline_y).abs();
+    // "Left" comes before "Landed" on the line.
+    let (from, to) = green.split_at(2);
     assert!(
-        conv_lines > word_lines,
-        "double underlines add hairlines; conventional {conv_lines} word {word_lines}"
+        from.iter().all(|r| near_strike(r.1)) && from[0].1 != from[1].1,
+        "moved-from text is double-struck: {from:?} strike {strike_y} underline {underline_y}"
+    );
+    assert!(
+        to.iter().all(|r| !near_strike(r.1)) && to[0].1 != to[1].1,
+        "moved-to text is double-underlined: {to:?} strike {strike_y} underline {underline_y}"
     );
 }
 
@@ -7273,6 +7309,161 @@ fn a_page_anchored_table_above_the_flow_starts_the_next_page() {
             "{rows} rows: AfterTable follows the table"
         );
     }
+}
+
+#[test]
+fn a_cell_paragraph_whose_spacing_after_overruns_the_page_still_splits() {
+    // Word 16 probe aft 2026-10-02 (compat 15): five 20pt lines with 4pt
+    // after and 101.5pt left on the page: the lines fit, the spacing does
+    // not, and Word cuts the row 3 + 2 (widow control). We counted every
+    // line as fitting, found nothing to cut and moved the row whole
+    // (12d245d664 page 34 ran a page short of Word from there).
+    let line = |text: &str| format!("<w:r><w:t>{text}</w:t></w:r>");
+    let lines: String = (1..=5)
+        .map(|i| line(&format!("Line{i}")))
+        .collect::<Vec<_>>()
+        .join("<w:r><w:br/></w:r>");
+    let body = format!(
+        "<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"10930\" w:lineRule=\"exact\"/></w:pPr></w:p>\
+         <w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/><w:tblLayout w:type=\"fixed\"/>\
+           <w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"6000\"/></w:tblGrid>\
+           <w:tr><w:tc><w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"80\" w:line=\"400\" w:lineRule=\"exact\"/></w:pPr>{lines}</w:p>\
+           </w:tc></w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>"
+    );
+    let compat = "<w:compat><w:compatSetting w:name=\"compatibilityMode\" \
+                  w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat>";
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, compat)).expect("after overrun");
+    let pages: Vec<Option<usize>> = ["Line3", "Line4"]
+        .iter()
+        .map(|t| page_with_text(&pdf, t))
+        .collect();
+    assert_eq!(pages, [Some(0), Some(1)], "Word cuts the row after Line3");
+}
+
+#[test]
+fn an_empty_cell_paragraph_overrunning_the_page_end_does_not_panic() {
+    // The spacing-after cut steps back one line; an empty paragraph whose
+    // spacing alone overruns the page must not step below none.
+    let exact = |line: u32, after: u32| {
+        format!(
+            "<w:pPr><w:spacing w:before=\"0\" w:after=\"{after}\" w:line=\"{line}\" \
+             w:lineRule=\"exact\"/></w:pPr>"
+        )
+    };
+    let lines: String = (1..=32)
+        .map(|i| format!("<w:p>{}<w:r><w:t>Ln{i:02}</w:t></w:r></w:p>", exact(400, 0)))
+        .collect();
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/><w:tblLayout w:type=\"fixed\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"6000\"/></w:tblGrid>\
+           <w:tr><w:tc><w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/></w:tcPr>{lines}\
+             <w:p>{}</w:p><w:p>{}<w:r><w:t>Tail</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>",
+        exact(100, 400),
+        exact(400, 0)
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("empty paragraph at the page end");
+    assert_eq!(page_with_text(&pdf, "Tail"), Some(1));
+}
+
+#[test]
+fn an_at_least_row_height_holds_again_for_the_part_carried_over() {
+    // Word 16 probe trh 2026-10-02 (compat 15): a 150pt atLeast row of 34
+    // 20pt lines carries two lines to page 2, and that part still stands
+    // 150pt: the next row starts 150.5pt under it (117.4 without the
+    // height). 12d245d664's 175pt row kept its height under the repeated
+    // header; we shrank the carried part to its two lines.
+    let next_row_y = |tr_pr: &str| {
+        let exact = "<w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"400\" \
+                     w:lineRule=\"exact\"/></w:pPr>";
+        let lines: String = (1..=34)
+            .map(|i| format!("<w:p>{exact}<w:r><w:t>Ln{i:02}</w:t></w:r></w:p>"))
+            .collect();
+        let body = format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/><w:tblLayout w:type=\"fixed\"/>\
+               <w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr>\
+               <w:tblGrid><w:gridCol w:w=\"6000\"/></w:tblGrid>\
+               <w:tr>{tr_pr}<w:tc><w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/></w:tcPr>{lines}</w:tc></w:tr>\
+               <w:tr><w:tc><w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/></w:tcPr>\
+                 <w:p>{exact}<w:r><w:t>NextRow</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+                 w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("atLeast tail");
+        assert_eq!(
+            page_with_text(&pdf, "Ln34"),
+            Some(1),
+            "the row carries over"
+        );
+        let y = |needle: &str| pdf_glyph_text_xy(&pdf, needle).expect(needle).1;
+        y("Ln33") - y("NextRow")
+    };
+    let plain = next_row_y("");
+    let tall = next_row_y("<w:trPr><w:trHeight w:val=\"3000\"/></w:trPr>");
+    assert!(
+        (tall - 150.0).abs() < 1.0 && (plain - 40.0).abs() < 1.0,
+        "the carried part stands 150pt: {tall} (plain {plain})"
+    );
+}
+
+#[test]
+fn a_split_rows_tail_keeps_room_for_its_top_rule() {
+    // Word 16 probe sp 2026-10-02: the part of a row carried to the next
+    // page opens under its own top rule and still ends under its last line,
+    // so the row after it starts a rule further down (3pt rules: the last
+    // carried line to the next row 19.92 against 17.04 unruled). The tail
+    // was sized without that rule and the next row rode up over it:
+    // 12d245d664's Scenario tables lost a point a page and gained a line.
+    let gap = |sz: u32| {
+        let exact = "<w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"400\" \
+                     w:lineRule=\"exact\"/></w:pPr>";
+        let lines: String = (1..=60)
+            .map(|i| format!("<w:p>{exact}<w:r><w:t>Ln{i:02}</w:t></w:r></w:p>"))
+            .collect();
+        let rules = if sz == 0 {
+            String::new()
+        } else {
+            ["top", "left", "bottom", "right", "insideH"]
+                .map(|side| {
+                    format!(
+                        "<w:{side} w:val=\"single\" w:sz=\"{sz}\" w:space=\"0\" w:color=\"auto\"/>"
+                    )
+                })
+                .concat()
+        };
+        let body = format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/>\
+               <w:tblLayout w:type=\"fixed\"/><w:tblBorders>{rules}</w:tblBorders></w:tblPr>\
+               <w:tblGrid><w:gridCol w:w=\"6000\"/></w:tblGrid>\
+               <w:tr><w:tc><w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/></w:tcPr>{lines}</w:tc></w:tr>\
+               <w:tr><w:tc><w:tcPr><w:tcW w:w=\"6000\" w:type=\"dxa\"/></w:tcPr>\
+                 <w:p>{exact}<w:r><w:t>NextRow</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+             <w:p/><w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+                 w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("split row tail");
+        assert_eq!(
+            page_with_text(&pdf, "NextRow"),
+            Some(1),
+            "{sz}: the row splits once"
+        );
+        let y = |needle: &str| pdf_glyph_text_xy(&pdf, needle).expect(needle).1;
+        y("Ln60") - y("NextRow")
+    };
+    let (plain, ruled) = (gap(0), gap(24));
+    assert!(
+        (ruled - plain - 3.0).abs() < 0.3,
+        "a 3pt rule between the carried part and the next row: {plain} unruled, {ruled} ruled"
+    );
 }
 
 #[test]
@@ -18110,6 +18301,71 @@ fn a_footer_holding_only_an_uncached_page_field_paints_the_number() {
 }
 
 #[test]
+fn a_header_right_tab_past_the_margin_keeps_its_text_on_the_line() {
+    // Word's stock Header style sets center 4680 / right 9360 tabs; with
+    // margins wider than 1in the right stop stands past the right margin.
+    // Word 16 probes tabh th15/thl (2026-10-02, margins 1800/1620, TNR
+    // 12): "Hleft⇥Hmid⇥Hnumq" stays one line; compat 15 ends Hnumq on the
+    // margin (starts 495.00), legacy layout on the stop (starts 522.00).
+    // We wrapped Hnumq onto a second line in both.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\" w:cs=\"Times New Roman\"/>\
+            <w:sz w:val=\"24\"/></w:rPr></w:rPrDefault><w:pPrDefault/></w:docDefaults>\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style></w:styles>";
+    let header = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:p><w:pPr><w:tabs><w:tab w:val=\"center\" w:pos=\"4680\"/><w:tab w:val=\"right\" w:pos=\"9360\"/></w:tabs>\
+             <w:spacing w:after=\"0\"/></w:pPr>\
+             <w:r><w:t>Hleft</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t>Hmid</w:t></w:r>\
+             <w:r><w:tab/></w:r><w:r><w:t>Hnumq</w:t></w:r></w:p></w:hdr>";
+    let body = "<w:p><w:r><w:t>Body</w:t></w:r></w:p>\
+         <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1620\" w:bottom=\"1440\" w:left=\"1800\" \
+             w:header=\"720\" w:footer=\"720\"/></w:sectPr>";
+    let num = |compat: &str| {
+        let settings = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">{compat}</w:settings>"
+        );
+        let pdf = docx_to_pdf(&hf_docx(
+            body,
+            &[
+                ("rIdH1", "header", "header1.xml"),
+                ("rIdSt", "styles", "styles.xml"),
+                ("rIdSet", "settings", "settings.xml"),
+            ],
+            &[
+                ("word/header1.xml", header.to_string()),
+                ("word/styles.xml", styles.to_string()),
+                ("word/settings.xml", settings),
+            ],
+        ))
+        .expect("header right tab");
+        let left = pdf_glyph_text_xy(&pdf, "Hleft").expect("Hleft");
+        let num = pdf_glyph_text_xy(&pdf, "Hnumq").expect("Hnumq");
+        assert!(
+            (num.1 - left.1).abs() < 0.5,
+            "Hnumq stays on the Hleft line: {num:?} vs {left:?}"
+        );
+        num.0
+    };
+    let compat15 = num(
+        "<w:compat><w:compatSetting w:name=\"compatibilityMode\" w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat>",
+    );
+    assert!(
+        (compat15 - 495.0).abs() < 0.3,
+        "compat 15 ends Hnumq on the margin, starts {compat15}"
+    );
+    let legacy = num("");
+    assert!(
+        (legacy - 522.0).abs() < 0.3,
+        "legacy ends Hnumq on the stop, starts {legacy}"
+    );
+}
+
+#[test]
 fn a_right_framed_header_page_number_shares_the_next_line() {
     // fixtures_500 0014add1: the header's first paragraph is a frame
     // (framePr wrap=around, xAlign=right) holding PAGE; the next paragraph
@@ -20287,6 +20543,43 @@ fn heading_before_applies_after_section_break() {
     assert!(
         page_y > 700.0,
         "the hard page break drops Heading1's before; page_y={page_y}"
+    );
+}
+
+#[test]
+fn a_section_mark_after_a_table_still_credits_its_space_after() {
+    // Word 16 probe sb 2026-10-02 (compat 15): a table, then the blank
+    // paragraph carrying a nextPage section break (after=8), then a 18pt
+    // before heading: Word opens the new page 18 - 8 = 10pt down, as it
+    // does after a text paragraph. We dropped the blank mark, credited the
+    // table's nothing and kept the whole 18pt (12d245d664 page 48).
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+        <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+        <w:sz w:val=\"24\"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr>\
+        <w:spacing w:after=\"160\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr></w:pPrDefault></w:docDefaults>\
+        <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+        </w:styles>";
+    let sect = "<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/><w:pgMar w:top=\"1440\" w:right=\"1440\" \
+                w:bottom=\"1440\" w:left=\"1440\" w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/></w:sectPr>";
+    let heading_y = |before_break: &str| {
+        let body = format!(
+            "{before_break}<w:p><w:pPr>{sect}</w:pPr></w:p>\
+             <w:p><w:pPr><w:spacing w:before=\"360\" w:after=\"0\"/></w:pPr><w:r><w:t>Heading</w:t></w:r></w:p>{sect}"
+        );
+        let pdf = docx_to_pdf(&docx_with_styles(&body, styles)).expect("section mark credit");
+        assert_eq!(page_with_text(&pdf, "Heading"), Some(1));
+        pdf_glyph_text_xy(&pdf, "Heading").expect("Heading").1
+    };
+    let after_text = heading_y("<w:p><w:r><w:t>Text</w:t></w:r></w:p>");
+    let after_table = heading_y(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"dxa\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"5000\"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w=\"5000\" w:type=\"dxa\"/></w:tcPr>\
+         <w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+    );
+    assert!(
+        (after_table - after_text).abs() < 0.1,
+        "the mark's 8pt after credits either way: table {after_table}, text {after_text}"
     );
 }
 
@@ -34768,10 +35061,12 @@ fn iso_strict_tab_val_end_right_aligns_pageref() {
 }
 
 #[test]
-fn toc_dot_leader_stops_a_space_before_the_page_number() {
-    // sd_2517 / file_22 Sumrio 1-3: Word paints `...... 1-3` (a space
-    // before the PAGEREF). paint_tab_leader filled to dest-0.35em so
-    // the last dot sat on the number (`.....1-3`).
+fn toc_dot_leader_runs_to_the_last_grid_cell_before_the_page_number() {
+    // sd_2517 / file_22 Sumrio 1-3. Word 16 renders this very paragraph
+    // (probe sd tocsp, 2026-10-02) with its dots ending 0.37pt before
+    // "1-3": no space is kept, the leader only stops at the last whole
+    // dot cell of its page-wide grid. Its sd_2517 TOC line ends the dots
+    // at 504 with "1-3" at 506, for the same reason.
     let body = "<w:p><w:pPr>\
            <w:tabs>\
              <w:tab w:val=\"left\" w:pos=\"2520\"/>\
@@ -34807,16 +35102,24 @@ fn toc_dot_leader_stops_a_space_before_the_page_number() {
         last_dot.is_finite(),
         "leader dots on the PAGEREF line; dots={dots:?} num=({nx},{ny})"
     );
-    let gap = nx - last_dot;
+    let mut xs: Vec<f32> = dots
+        .iter()
+        .filter(|(_, y)| (y - ny).abs() < 1.0)
+        .map(|(x, _)| *x)
+        .collect();
+    xs.sort_by(f32::total_cmp);
+    // The leader's own pitch (the line's first "." is the one in "1.03").
+    let dw = xs[xs.len() - 1] - xs[xs.len() - 2];
+    let gap = nx - (last_dot + dw);
     assert!(
-        gap >= 5.5,
-        "Word leaves ~space+dot (~6pt left-edge) before 1-3, not ~1.35em jam; gap={gap} last_dot={last_dot} num_x={nx}"
+        (-0.01..dw).contains(&gap),
+        "the last dot cell ends by 1-3, less than a dot before it; gap={gap} dot={dw} last_dot={last_dot} num_x={nx}"
     );
 }
 
 #[test]
 fn official_sd_2517_toc_one_three_not_jammed_into_dots() {
-    // Word p2 `sed adipiscing… ...... 1-3`; ours jammed `.....1-3`.
+    // Word p2 `sed adipiscing… ...... 1-3`; ours once jammed `.....1-3`.
     let path = "tests/corpus/neurotic_docx_bench/grok_run/no_comments_pdf_was_generated_by_word/docx_source/sd_2517_localized_heading_styles.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert sd_2517");
     assert_eq!(pdf_page_count(&pdf), 107, "Word sd_2517 is 107pp");
@@ -34837,10 +35140,11 @@ fn official_sd_2517_toc_one_three_not_jammed_into_dots() {
         .filter(|(_, y)| (y - ny).abs() < 1.5)
         .map(|(x, _)| x)
         .fold(f32::NEG_INFINITY, f32::max);
-    let gap = nx - last_dot;
+    // Word 16's own PDF of this file (probe sd, 2026-10-02): the dots end
+    // at 504 on their 3pt grid and "1-3" starts at 506.
     assert!(
-        gap >= 5.5,
-        "official 1-3 must not sit on the last leader dot; gap={gap} last_dot={last_dot} num=({nx},{ny})"
+        (last_dot - 501.0).abs() < 0.1 && (nx - 506.0).abs() < 0.1,
+        "Word's last dot cell is 501..504 and 1-3 starts at 506; last_dot={last_dot} num=({nx},{ny})"
     );
 }
 
@@ -40038,6 +40342,54 @@ fn an_underlined_picture_run_keeps_its_descent_under_the_picture() {
 }
 
 #[test]
+fn an_inserted_vml_picture_keeps_its_runs_descent_under_it() {
+    // 5a6c9a5c's redline: an inserted Word.Picture.8 object (a w:object
+    // whose preview is a v:imagedata) left the rest of page 2 2.2pt high
+    // in jubarte, so an inserted empty paragraph fitted above the footer
+    // where Word moves it to page 3. Word 16 probes vo (2026-10-02, TNR 10,
+    // a 150x30pt picture) put the next baseline 2.16pt lower when the
+    // w:pict or w:object run is inserted, as for a DrawingML picture.
+    let after = |shape: &str, ins: bool| {
+        let r = "<w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+                 <w:sz w:val=\"20\"/>";
+        let run = format!("<w:r><w:rPr>{r}</w:rPr>{shape}</w:r>");
+        let run = if ins {
+            format!(
+                "<w:ins w:id=\"1\" w:author=\"A\" w:date=\"2026-01-01T00:00:00Z\">{run}</w:ins>"
+            )
+        } else {
+            run
+        };
+        let body = format!(
+            "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+             {run}</w:p>\
+             <w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+             <w:r><w:rPr>{r}</w:rPr><w:t>After</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+             <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        );
+        let pdf = docx_to_pdf(&drawing_docx(&body)).expect("convert VML picture run");
+        text_baselines(&pdf).into_iter().fold(f32::MIN, f32::max)
+    };
+    let shape =
+        "<v:shape style=\"width:150pt;height:30pt\"><v:imagedata r:id=\"rIdImg\"/></v:shape>";
+    for (kind, owner) in [
+        ("w:pict", format!("<w:pict>{shape}</w:pict>")),
+        (
+            "w:object",
+            format!("<w:object w:dxaOrig=\"3000\" w:dyaOrig=\"600\">{shape}</w:object>"),
+        ),
+    ] {
+        // PDF y grows upward: the lower baseline has the smaller y.
+        let drop = after(&owner, false) - after(&owner, true);
+        assert!(
+            (drop - 2.16).abs() < 0.1,
+            "an inserted {kind} picture keeps its 10pt run's descent (2.16pt): {drop}"
+        );
+    }
+}
+
+#[test]
 fn a_break_after_a_picture_opens_the_marks_line() {
     // 66cfa52b0c's logo paragraph: picture, a w:br, and a 7pt mark. Word
     // lays the break's empty line in the mark's size under the picture;
@@ -44159,6 +44511,431 @@ fn link_styles_takes_the_template_normal() {
     assert!(
         linked > 23.0,
         "linkStyles lays out with the template's 12pt / 278 / after 8, got {linked}"
+    );
+}
+
+#[test]
+fn dot_leaders_fill_whole_cells_of_a_page_wide_grid() {
+    // Word lays leader dots in cells as wide as one dot, counted from the
+    // page's left edge, not the margin: the first whole cell past the text
+    // up to the last that ends by the stop. Word 16 probes dots
+    // (2026-10-02, TNR 12, left margin 90.5pt, left dot tab at 5000):
+    // "A" ends 99.14 and its dots run 102 to 339; "Abc" ends 110.47 and
+    // its dots start at 111. Our 0.35-dot pad started them at 100.19 and
+    // stopped a space short of the stop. 12d245d664's TOC lines show the
+    // gap before the dots that this grid makes.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\" w:cs=\"Times New Roman\"/>\
+            <w:sz w:val=\"24\"/></w:rPr></w:rPrDefault><w:pPrDefault/></w:docDefaults>\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style></w:styles>";
+    let para = |text: &str| {
+        format!(
+            "<w:p><w:pPr><w:tabs><w:tab w:val=\"left\" w:leader=\"dot\" w:pos=\"5000\"/></w:tabs>\
+               <w:spacing w:after=\"0\"/></w:pPr>\
+               <w:r><w:t>{text}</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t>Numq</w:t></w:r></w:p>"
+        )
+    };
+    let body = format!(
+        "{}{}<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1810\"/></w:sectPr>",
+        para("A"),
+        para("Abc")
+    );
+    let pdf = docx_to_pdf(&hf_docx(
+        &body,
+        &[("rIdSt", "styles", "styles.xml")],
+        &[("word/styles.xml", styles.to_string())],
+    ))
+    .expect("dot leaders");
+    // Each leader's dots, first and last start: x drops back at a new one.
+    let mut runs: Vec<(f32, f32, usize)> = Vec::new();
+    for (x, _) in pdf_glyph_text_xys(&pdf, ".") {
+        match runs.last_mut() {
+            Some((_, last, n)) if x > *last => (*last, *n) = (x, *n + 1),
+            _ => runs.push((x, x, 1)),
+        }
+    }
+    let first_last = |i: usize| (runs[i].0, runs[i].1 + 3.0, runs[i].2);
+    assert_eq!(runs.len(), 2, "two leaders: {runs:?}");
+    let (a0, a1, an) = first_last(0);
+    assert!(
+        (a0 - 102.0).abs() < 0.05 && (a1 - 339.0).abs() < 0.05 && an == 79,
+        "A's dots fill 102..339: {a0}..{a1} ({an})"
+    );
+    let (b0, b1, bn) = first_last(1);
+    assert!(
+        (b0 - 111.0).abs() < 0.05 && (b1 - 339.0).abs() < 0.05 && bn == 76,
+        "Abc's dots fill 111..339: {b0}..{b1} ({bn})"
+    );
+}
+
+#[test]
+fn a_right_tab_past_the_right_margin_lands_on_it_in_compat_15() {
+    // 12d245d664's TOC styles put a right dot-leader tab at 9360 twips,
+    // 27pt past its right margin; Word ends the page numbers on the margin.
+    // Word 16 probes tab (2026-10-02, margins 1800/1620): compat 15 lands
+    // stops at 8820 (the margin), 9000 and 9360 all on 531pt; with no
+    // settings (legacy layout) 9360 stays at 558pt.
+    let body = |pos: u32| {
+        format!(
+            "<w:p><w:pPr><w:tabs><w:tab w:val=\"right\" w:leader=\"dot\" w:pos=\"{pos}\"/></w:tabs></w:pPr>\
+               <w:r><w:t>Entry</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t>Numq</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1000\" w:right=\"1620\" w:bottom=\"1000\" w:left=\"1800\"/></w:sectPr>"
+        )
+    };
+    let compat15 = "<w:compat><w:compatSetting w:name=\"compatibilityMode\" w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat>";
+    let num_x = |pos: u32, settings: &str| {
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body(pos), settings))
+            .expect("right tab past the margin");
+        pdf_glyph_text_xy(&pdf, "Numq").expect("Numq").0
+    };
+    let at_margin = num_x(8820, compat15);
+    for pos in [9000, 9360] {
+        let x = num_x(pos, compat15);
+        assert!(
+            (x - at_margin).abs() < 0.1,
+            "compat 15 lands a right tab at {pos} on the margin: {x} vs {at_margin}"
+        );
+    }
+    let legacy = num_x(9360, "");
+    assert!(
+        (legacy - at_margin - 27.0).abs() < 0.1,
+        "legacy layout keeps the stop 27pt past the margin: {legacy} vs {at_margin}"
+    );
+}
+
+#[test]
+fn link_styles_leaves_a_cell_the_table_style_size() {
+    // 12d245d664's diagram cells are Table Grid's 10pt in Word, not
+    // Normal's 12pt. Stock Normal.dotm's Normal is empty, so its 12pt is
+    // a docDefault, and a table style's size beats docDefaults. Word 16
+    // probes tsn (2026-10-02, compat 15, with and without
+    // overrideTableStyleFontSizeAndJustification): linkStyles over a file
+    // Normal of 11pt sets the cell at 10pt; a Normal with no size sets it
+    // at 10pt too; a Normal with its own 12pt keeps 12pt.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+            <w:sz w:val=\"24\"/></w:rPr></w:rPrDefault><w:pPrDefault/></w:docDefaults>\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>\
+            <w:pPr><w:spacing w:after=\"160\" w:line=\"278\" w:lineRule=\"auto\"/></w:pPr>\
+            <w:rPr><w:sz w:val=\"22\"/></w:rPr></w:style>\
+          <w:style w:type=\"table\" w:styleId=\"TableGrid\"><w:name w:val=\"Table Grid\"/>\
+            <w:pPr><w:spacing w:after=\"120\"/></w:pPr><w:rPr><w:sz w:val=\"20\"/></w:rPr></w:style></w:styles>";
+    let body = "<w:p><w:r><w:t>Pitchq Pitchq</w:t></w:r></w:p>\
+         <w:tbl><w:tblPr><w:tblStyle w:val=\"TableGrid\"/><w:tblW w:w=\"4000\" w:type=\"dxa\"/></w:tblPr>\
+           <w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>\
+           <w:tr><w:tc><w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr>\
+             <w:p><w:r><w:t>Pitchq Pitchq</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+         <w:p/><w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
+    // The cell's word pitch over the body's: the ratio of their sizes.
+    let ratio = |link: &str| {
+        let settings = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">{link}\
+             <w:compat><w:compatSetting w:name=\"compatibilityMode\" w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat></w:settings>"
+        );
+        let pdf = docx_to_pdf(&hf_docx(
+            body,
+            &[
+                ("rIdSt", "styles", "styles.xml"),
+                ("rIdSet", "settings", "settings.xml"),
+            ],
+            &[
+                ("word/styles.xml", styles.to_string()),
+                ("word/settings.xml", settings),
+            ],
+        ))
+        .expect("linkStyles cell");
+        // Body first, then the cell: the same two words in each.
+        let xs = pdf_glyph_text_xys(&pdf, "Pitchq");
+        assert_eq!(xs.len(), 4, "{xs:?}");
+        (xs[3].0 - xs[2].0) / (xs[1].0 - xs[0].0)
+    };
+    let own = ratio("");
+    let linked = ratio("<w:linkStyles/>");
+    assert!(
+        (own - 1.0).abs() < 0.03,
+        "the file's own 11pt Normal holds in the cell, got {own}"
+    );
+    assert!(
+        (linked - 10.0 / 12.0).abs() < 0.03,
+        "under linkStyles the cell takes Table Grid's 10pt beside 12pt body text, got {linked}"
+    );
+}
+
+#[test]
+fn table_style_indent_and_jc_reach_cells_their_style_leaves_unset() {
+    // 12d245d664's Table Grid carries pPr ind left=720 jc=both. Word 16
+    // probes tsp t1-t3 (2026-10-02, compat 14 and 15, with and without
+    // overrideTableStyleFontSizeAndJustification): an unstyled cell, an
+    // explicit Normal one and a "Default" one (no basedOn) all start 36pt
+    // in and justify; a direct ind left=0 or jc=left still wins.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/>\
+            <w:sz w:val=\"20\"/></w:rPr></w:rPrDefault><w:pPrDefault/></w:docDefaults>\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>\
+            <w:pPr><w:spacing w:after=\"160\" w:line=\"259\" w:lineRule=\"auto\"/></w:pPr></w:style>\
+          <w:style w:type=\"paragraph\" w:customStyle=\"1\" w:styleId=\"Default\"><w:name w:val=\"Default\"/></w:style>\
+          <w:style w:type=\"table\" w:styleId=\"TableGrid\"><w:name w:val=\"Table Grid\"/>\
+            <w:pPr><w:spacing w:after=\"120\"/><w:ind w:left=\"720\"/><w:jc w:val=\"both\"/></w:pPr>\
+            <w:tblPr><w:tblCellMar><w:left w:w=\"108\" w:type=\"dxa\"/><w:right w:w=\"108\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr></w:style>\
+        </w:styles>";
+    let long =
+        "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho";
+    let para = |tag: &str, ppr: &str| {
+        format!(
+            "<w:p><w:pPr>{ppr}</w:pPr><w:r><w:t xml:space=\"preserve\">{tag} {long}</w:t></w:r></w:p>"
+        )
+    };
+    let cell = |p: String| {
+        format!("<w:tc><w:tcPr><w:tcW w:w=\"4320\" w:type=\"dxa\"/></w:tcPr>{p}</w:tc>")
+    };
+    let row = |a: String| format!("<w:tr>{}</w:tr>", cell(a));
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblStyle w:val=\"TableGrid\"/><w:tblW w:w=\"0\" w:type=\"auto\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"4320\"/></w:tblGrid>{}{}{}{}{}</w:tbl><w:p/>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+        row(para("Q1", "")),
+        row(para("Q2", "<w:pStyle w:val=\"Normal\"/>")),
+        row(para("Q3", "<w:pStyle w:val=\"Default\"/>")),
+        row(para("Q4", "<w:ind w:left=\"0\"/>")),
+        row(para("Q5", "<w:jc w:val=\"left\"/>")),
+    );
+    let settings = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         <w:compat><w:compatSetting w:name=\"compatibilityMode\" w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat></w:settings>";
+    let pdf = docx_to_pdf(&hf_docx(
+        &body,
+        &[
+            ("rIdSt", "styles", "styles.xml"),
+            ("rIdSet", "settings", "settings.xml"),
+        ],
+        &[
+            ("word/styles.xml", styles.to_string()),
+            ("word/settings.xml", settings.to_string()),
+        ],
+    ))
+    .expect("table style ind");
+    let x = |needle: &str| pdf_glyph_text_xy(&pdf, needle).expect(needle).0;
+    // Cell text starts at 72 + 5.4 when nothing indents it.
+    let zero = x("Q4");
+    assert!(
+        (zero - 77.4).abs() < 0.5,
+        "direct ind left=0 wins, got {zero}"
+    );
+    for tag in ["Q1", "Q2", "Q3", "Q5"] {
+        let at = x(tag);
+        assert!(
+            (at - zero - 36.0).abs() < 0.5,
+            "{tag} takes the table style's ind left=720, at {at} vs {zero}"
+        );
+    }
+    // Same text, same width: "kappa" sits mid second line. Justified (Q1)
+    // it moves right of the jc=left copy (Q5).
+    let kappa = pdf_glyph_text_xys(&pdf, "kappa");
+    assert_eq!(kappa.len(), 5, "one kappa per cell");
+    assert!(
+        kappa[0].0 > kappa[4].0 + 1.0,
+        "the table style's jc=both justifies, kappa at {} vs {}",
+        kappa[0].0,
+        kappa[4].0
+    );
+}
+
+/// A three-column table (2000/1500/1500 of 5000, or the same in dxa) at
+/// tblInd 108 with 108-twip cell margins: each cell holds a left-aligned
+/// tag and a right-aligned "EndQ". `sz` is the eighth-point rule on every
+/// cell edge (0 for none).
+fn ruled_table_pdf(sz: u32, pct: bool, tc_mar: bool) -> Vec<u8> {
+    let borders = if sz == 0 {
+        String::new()
+    } else {
+        let edge = |e: &str| {
+            format!("<w:{e} w:val=\"single\" w:sz=\"{sz}\" w:space=\"0\" w:color=\"000000\"/>")
+        };
+        format!(
+            "<w:tcBorders>{}{}{}{}</w:tcBorders>",
+            edge("top"),
+            edge("left"),
+            edge("bottom"),
+            edge("right")
+        )
+    };
+    let (tbl_w, widths) = if pct {
+        (
+            "<w:tblW w:w=\"5361\" w:type=\"pct\"/>",
+            [("2000", "pct"), ("1500", "pct"), ("1500", "pct")],
+        )
+    } else {
+        (
+            "<w:tblW w:w=\"9264\" w:type=\"dxa\"/>",
+            [("3706", "dxa"), ("2779", "dxa"), ("2779", "dxa")],
+        )
+    };
+    let mar = if tc_mar {
+        "<w:tcMar><w:left w:w=\"108\" w:type=\"dxa\"/><w:right w:w=\"108\" w:type=\"dxa\"/></w:tcMar>"
+    } else {
+        ""
+    };
+    let cells: String = widths
+        .iter()
+        .enumerate()
+        .map(|(i, (w, t))| {
+            format!(
+                "<w:tc><w:tcPr><w:tcW w:w=\"{w}\" w:type=\"{t}\"/>{borders}{mar}</w:tcPr>\
+                 <w:p><w:r><w:t>C{i}</w:t></w:r></w:p>\
+                 <w:p><w:pPr><w:jc w:val=\"right\"/></w:pPr><w:r><w:t>EndQ{i}</w:t></w:r></w:p></w:tc>"
+            )
+        })
+        .collect();
+    let body = format!(
+        "<w:tbl><w:tblPr>{tbl_w}<w:tblInd w:w=\"108\" w:type=\"dxa\"/><w:tblLayout w:type=\"fixed\"/>\
+           <w:tblCellMar><w:left w:w=\"0\" w:type=\"dxa\"/><w:right w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"3706\"/><w:gridCol w:w=\"2779\"/><w:gridCol w:w=\"2779\"/></w:tblGrid>\
+         <w:tr>{cells}</w:tr></w:tbl><w:p/>\
+         <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1000\" w:right=\"1800\" w:bottom=\"1000\" w:left=\"1800\"/></w:sectPr>"
+    );
+    let settings = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         <w:compat><w:compatSetting w:name=\"compatibilityMode\" w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat></w:settings>";
+    docx_to_pdf(&hf_docx(
+        &body,
+        &[("rIdSet", "settings", "settings.xml")],
+        &[("word/settings.xml", settings.to_string())],
+    ))
+    .expect("ruled table")
+}
+
+#[test]
+fn pct_table_columns_share_the_width_inside_half_the_outer_rules() {
+    // 12d245d664's 107% Scenario tables: Word keeps a pct table's outer
+    // edge at its pct width and lays the columns inside half of each outer
+    // rule (Word 16 probe pct3, 2026-10-02, 3pt rules against none: the
+    // second column's text +0.24, the third's -0.72, the last right edge
+    // -1.67). Unshrunk, the LLT column kept "of product desiccant" (107.4pt)
+    // on a line Word's 107.26pt column breaks.
+    let (plain, ruled) = (
+        ruled_table_pdf(0, true, true),
+        ruled_table_pdf(24, true, true),
+    );
+    let x = |pdf: &[u8], needle: &str| pdf_glyph_text_xy(pdf, needle).expect(needle).0;
+    let shift = |needle: &str| x(&ruled, needle) - x(&plain, needle);
+    for (needle, word) in [("C1", 0.24), ("C2", -0.72), ("EndQ2", -1.67)] {
+        let got = shift(needle);
+        assert!(
+            (got - word).abs() < 0.25,
+            "{needle} moves {got} under 3pt rules, Word {word}"
+        );
+    }
+}
+
+#[test]
+fn dxa_table_cells_keep_their_width_past_half_the_left_rule() {
+    // Word 16 probe pct3 d24 (2026-10-02): a dxa table's grid starts half
+    // its left rule in and every column keeps its full width, so the first
+    // cell's right-aligned text moves right with it (justified lines end at
+    // 276.75, not 275.3). We aligned and justified on a box short by the
+    // half rule.
+    let (plain, ruled) = (
+        ruled_table_pdf(0, false, true),
+        ruled_table_pdf(24, false, true),
+    );
+    let x = |pdf: &[u8], needle: &str| pdf_glyph_text_xy(pdf, needle).expect(needle).0;
+    for needle in ["EndQ0", "EndQ1"] {
+        let got = x(&ruled, needle) - x(&plain, needle);
+        assert!(
+            (got - 1.5).abs() < 0.25,
+            "{needle} moves {got} under a 3pt left rule, Word 1.45"
+        );
+    }
+}
+
+#[test]
+fn zero_margin_cells_keep_their_text_half_the_right_rule_in() {
+    // 12d245d664's Comment cells have no margins: Word keeps their text
+    // half each side rule in, right as left (Word 16 probe zm, 2026-10-02,
+    // 3pt rules against none: the first cell's line end -1.23, the last
+    // cell's -3.47). Measured to the rule, the cell fit "overdose because
+    // the" (118.1pt) on a line Word breaks. Word's rim also sits a tenth
+    // of the rule further in (its columns share 1.1 rules, not one): the
+    // last cell keeps that 0.3pt residual.
+    let (plain, ruled) = (
+        ruled_table_pdf(0, true, false),
+        ruled_table_pdf(24, true, false),
+    );
+    let x = |pdf: &[u8], needle: &str| pdf_glyph_text_xy(pdf, needle).expect(needle).0;
+    for (needle, word, tol) in [("EndQ0", -1.23, 0.25), ("EndQ2", -3.47, 0.6)] {
+        let got = x(&ruled, needle) - x(&plain, needle);
+        assert!(
+            (got - word).abs() < tol,
+            "{needle} moves {got} under 3pt rules, Word {word}"
+        );
+    }
+}
+
+#[test]
+fn link_styles_leaves_unbased_styles_on_the_file_defaults() {
+    // 12d245d664 (en a 9b100bdc): the template replaces Normal only. A
+    // style with no basedOn ("Default") keeps the file's docDefaults:
+    // Word 16 probe lnk l1 (2026-10-02) sets it 10pt single on 11.52pt
+    // lines with and without linkStyles, while Normal steps 17.04.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/>\
+            <w:sz w:val=\"20\"/></w:rPr></w:rPrDefault><w:pPrDefault/></w:docDefaults>\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>\
+            <w:pPr><w:spacing w:after=\"160\" w:line=\"259\" w:lineRule=\"auto\"/></w:pPr>\
+            <w:rPr><w:sz w:val=\"22\"/></w:rPr></w:style>\
+          <w:style w:type=\"paragraph\" w:customStyle=\"1\" w:styleId=\"Default\"><w:name w:val=\"Default\"/>\
+            <w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/></w:rPr></w:style></w:styles>";
+    let para = |text: &str| {
+        format!(
+            "<w:p><w:pPr><w:pStyle w:val=\"Default\"/></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>"
+        )
+    };
+    let body = format!(
+        "{}{}<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+        para("LineAq"),
+        para("LineBq")
+    );
+    let step = |link: &str| {
+        let settings = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">{link}</w:settings>"
+        );
+        let pdf = docx_to_pdf(&hf_docx(
+            &body,
+            &[
+                ("rIdSt", "styles", "styles.xml"),
+                ("rIdSet", "settings", "settings.xml"),
+            ],
+            &[
+                ("word/styles.xml", styles.to_string()),
+                ("word/settings.xml", settings),
+            ],
+        ))
+        .expect("linkStyles");
+        let a = pdf_glyph_text_xy(&pdf, "LineAq").expect("a").1;
+        let b = pdf_glyph_text_xy(&pdf, "LineBq").expect("b").1;
+        a - b
+    };
+    let own = step("");
+    let linked = step("<w:linkStyles/>");
+    assert!(
+        (own - 11.5).abs() < 0.1,
+        "Default runs 10pt single from the file's docDefaults, got {own}"
+    );
+    assert!(
+        (linked - own).abs() < 0.01,
+        "linkStyles leaves a style off Normal's chain alone, got {linked} vs {own}"
     );
 }
 

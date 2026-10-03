@@ -8,7 +8,7 @@ build-backend = "maturin"
 
 [project]
 name = "jubarte-redlines"
-description = "Lossless DOCX redline engine — compare two Word documents into a tracked-changes document that opens cleanly in Microsoft Word; list, accept, or reject revisions; render DOCX to PDF"
+description = "Word-faithful DOCX redline engine — compare two Word documents into a tracked-changes document that opens cleanly in Microsoft Word; list, accept, or reject revisions; render DOCX to PDF"
 # release-notes v0.10.1 — List, accept or reject tracked changes one at a time (list_changes, accept_changes, reject_changes, and resolve_revisions in edit plans), Word-parity Reject All, and much closer-to-Word docx-to-PDF pagination, tables, headers and footers.
 # release-notes v0.10.0 — jubarte_redlines.read() returns a Document with inspect, edit, convert, compare and accept/reject; python -m jubarte_redlines exposes the same commands; EditPlan builds paragraph formatting, joins, whole replacements and header/footer/note edits.
 # release-notes v0.9.3 — Redlines Word refused to open now open. A field whose code changed is replaced whole, and a same-code field stays whole, as in Word's redline. Table, list and section markup follow Word, and the same input writes the same bytes.
@@ -22,7 +22,9 @@ classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "Intended Audience :: Legal Industry",
-  "Operating System :: OS Independent",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Rust",

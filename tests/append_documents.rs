@@ -58,6 +58,7 @@ fn continuous() -> AppendOptions {
     AppendOptions {
         section_break: SectionBreak::Continuous,
         keep_sections: false,
+        ..AppendOptions::default()
     }
 }
 
@@ -150,6 +151,7 @@ fn next_page_puts_a_page_break_between_and_continuous_does_not() {
         AppendOptions {
             section_break: SectionBreak::None,
             keep_sections: false,
+            ..AppendOptions::default()
         },
     ] {
         let out = append_documents(&a, &b, &options).unwrap();
@@ -323,6 +325,7 @@ fn keep_sections_gives_b_its_own_section_and_header() {
         &AppendOptions {
             section_break: SectionBreak::NextPage,
             keep_sections: true,
+            ..AppendOptions::default()
         },
     )
     .unwrap();
@@ -348,6 +351,7 @@ fn keep_sections_gives_b_its_own_section_and_header() {
         &AppendOptions {
             section_break: SectionBreak::Continuous,
             keep_sections: true,
+            ..AppendOptions::default()
         },
     )
     .unwrap();
@@ -521,6 +525,7 @@ fn a_carried_header_brings_its_own_image_and_loses_its_comments() {
         &AppendOptions {
             section_break: SectionBreak::NextPage,
             keep_sections: true,
+            ..AppendOptions::default()
         },
     )
     .unwrap();
@@ -572,6 +577,7 @@ fn a_kept_section_s_tracked_change_takes_a_fresh_id() {
         &AppendOptions {
             section_break: SectionBreak::NextPage,
             keep_sections: true,
+            ..AppendOptions::default()
         },
     )
     .unwrap();
@@ -628,5 +634,85 @@ fn a_numbering_part_the_splice_cannot_read_still_receives_b_s_list() {
         let abstract_at = sheet.rfind("abstractNum ").unwrap();
         let num_at = sheet.rfind(":num ").unwrap();
         assert!(abstract_at < num_at, "{sheet}");
+    }
+}
+
+#[test]
+fn b_s_list_extension_attributes_stay_ignorable_in_a_s_numbering_part() {
+    // Word writes `w15:restartNumberingAfterBreak` and `w16cid:durableId`
+    // on its lists and lists both prefixes in the root's `mc:Ignorable`.
+    // The validator rejects those attributes in a part whose root does not.
+    let w = common::docx::W_NS;
+    let mc = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+    let w15 = "http://schemas.microsoft.com/office/word/2012/wordml";
+    let w16cid = "http://schemas.microsoft.com/office/word/2016/wordml/cid";
+    let b_sheet = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering xmlns:w="{w}" xmlns:mc="{mc}" xmlns:w15="{w15}" xmlns:w16cid="{w16cid}" mc:Ignorable="w15 w16cid"><w:abstractNum w:abstractNumId="0" w15:restartNumberingAfterBreak="0"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/><w:lvlJc w:val="left"/></w:lvl></w:abstractNum><w:num w:numId="1" w16cid:durableId="1905797357"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#
+    );
+    let numbering_rel = format!("{R_NS}/numbering");
+    let numbering_ct =
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml";
+    let with_sheet = |body: &str, sheet: &str| {
+        docx_with(
+            body,
+            &[Part {
+                name: "word/numbering.xml",
+                content_type: numbering_ct,
+                rel_type: &numbering_rel,
+                xml: sheet,
+            }],
+        )
+    };
+    let b = with_sheet(
+        r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>b item</w:t></w:r></w:p>"#,
+        &b_sheet,
+    );
+    let cases = [
+        ("no numbering part", docx(&para("A."))),
+        (
+            "a w: part without the extension prefixes",
+            with_sheet(
+                &para("A."),
+                &format!(
+                    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering xmlns:w="{w}"><w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#
+                ),
+            ),
+        ),
+        (
+            "a self-closed part (DOM path)",
+            with_sheet(
+                &para("A."),
+                &format!(
+                    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering xmlns:w="{w}"/>"#
+                ),
+            ),
+        ),
+    ];
+    for (case, a) in cases {
+        let out = append_documents(&a, &b, &continuous()).unwrap();
+        assert_word_valid_package(&out.docx);
+        let sheet = part_string(&out.docx, "word/numbering.xml").unwrap();
+        assert!(
+            sheet.contains("w15:restartNumberingAfterBreak"),
+            "{case}: {sheet}"
+        );
+        let root = &sheet[sheet.find("<w:numbering").unwrap()..];
+        let root = &root[..=root.find('>').unwrap()];
+        for (prefix, uri) in [("w15", w15), ("w16cid", w16cid)] {
+            assert!(
+                root.contains(&format!(r#"xmlns:{prefix}="{uri}""#)),
+                "{case}: {prefix} undeclared on {root}"
+            );
+        }
+        let at = root.find(r#"mc:Ignorable=""#).unwrap_or_else(|| {
+            panic!("{case}: no mc:Ignorable on {root}");
+        }) + r#"mc:Ignorable=""#.len();
+        let ignorable: Vec<&str> = root[at..at + root[at..].find('"').unwrap()]
+            .split_whitespace()
+            .collect();
+        assert!(
+            ignorable.contains(&"w15") && ignorable.contains(&"w16cid"),
+            "{case}: {root}"
+        );
     }
 }

@@ -20,6 +20,8 @@
 //! flags, and validation are handled by clap (gated behind the default `cli`
 //! feature).
 
+#![forbid(unsafe_code)]
+
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -90,7 +92,7 @@ struct Cli {
         short = 'd',
         long,
         value_name = "ISO8601",
-        default_value = "1970-01-01T00:00:00Z"
+        default_value = jubarte::document_comparer::DEFAULT_DATE
     )]
     date: String,
 
@@ -222,11 +224,13 @@ enum Command {
         #[arg(long)]
         compress: bool,
         /// Write a JSON font-resolution report (`[{requested, step, physical,
-        /// bold, italic, synthetic}, …]`) for this document (plan Step 2f).
+        /// bold, italic, synthetic, substituted}, …]`) for this document
+        /// (plan Step 2f).
         #[arg(long, value_name = "FILE")]
         font_report: Option<PathBuf>,
         /// How tracked changes are painted: `conventional` (deletions red
-        /// struck through, insertions blue double-underlined, moves green),
+        /// struck through, insertions blue underlined, moves green:
+        /// double-struck where they left, double-underlined where they landed),
         /// `word` (what Microsoft Word's Save as PDF paints), or `custom`
         /// (see --revision-palette).
         #[arg(long, value_enum, default_value_t = Revisions::Conventional)]
@@ -244,6 +248,11 @@ enum Command {
         /// still runs over the whole document. Needs PNG output.
         #[arg(long, value_name = "SPEC")]
         pages: Option<String>,
+        /// Exit 4 when a requested font was substituted (listed on stderr
+        /// and in --report). Every output is still written. Exit status:
+        /// 0 ok, 1 error, 4 a requested font was substituted.
+        #[arg(long)]
+        fail_on_substitution: bool,
     },
     /// Compare two documents, Word or Markdown: the changed paragraphs as a
     /// patch on stdout, each change `[-old-]{+new+}` in its paragraph, and
@@ -343,6 +352,11 @@ enum Command {
         /// The document (.docx) to read.
         #[arg(value_name = "FILE")]
         file: PathBuf,
+        /// Print the document as Markdown with its tracked changes as
+        /// CriticMarkup (all), or with every change accepted or rejected,
+        /// like `convert --to md`. The output then has no `[body:p:N]` ids.
+        #[arg(long, value_enum, value_name = "CHOICE")]
+        track_changes: Option<TrackChanges>,
     },
     /// Apply an edit plan: write the clean copy, the Word redline and a
     /// per-operation report (optionally PDF and PNG pages) into a new
@@ -506,11 +520,13 @@ enum Command {
         latest: bool,
     },
     /// Append documents: B after A, then C after that, carrying images,
-    /// links, styles, lists and notes. Comments are not carried (warned).
+    /// links, styles, lists and notes. Comments are dropped (warned) unless
+    /// --carry-comments.
     #[command(after_help = "EXAMPLES:\n  \
         jubarte append a.docx b.docx -o ab.docx\n  \
         jubarte append cover.docx body.docx annex.docx -o all.docx --section-break continuous\n  \
-        jubarte append letter.docx exhibit.docx -o out.docx --keep-sections")]
+        jubarte append letter.docx exhibit.docx -o out.docx --keep-sections\n  \
+        jubarte append review_a.docx review_b.docx -o both.docx --carry-comments")]
     Append {
         /// The documents (.docx), in order.
         #[arg(value_name = "FILE", num_args = 2.., required = true)]
@@ -525,6 +541,11 @@ enum Command {
         /// headers, footers) as a section of its own.
         #[arg(long)]
         keep_sections: bool,
+        /// Carry the comments each appended document's body and notes
+        /// anchor, with their threads and resolution (those in headers and
+        /// footers are still dropped). Off, comments are dropped and warned.
+        #[arg(long)]
+        carry_comments: bool,
         /// Overwrite the output file if it already exists.
         #[arg(long)]
         force: bool,
@@ -532,6 +553,154 @@ enum Command {
         #[arg(short, long)]
         quiet: bool,
     },
+    /// Word-validity findings beyond the schema: what makes Word refuse or
+    /// repair the file. Exit 0 clean, 2 findings, 1 unreadable.
+    #[command(after_help = "EXAMPLES:\n  \
+        jubarte validate contract.docx\n  \
+        jubarte validate contract.docx --json\n  \
+        jubarte validate contract.docx --repair fixed.docx\n  \
+        jubarte validate review/redline.docx --original contract.docx --author Claude")]
+    Validate {
+        /// The document (.docx).
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// One JSON object per finding.
+        #[arg(long)]
+        json: bool,
+        /// Write the repaired package here; remaining findings still exit 2.
+        #[arg(long, value_name = "FILE")]
+        repair: Option<PathBuf>,
+        /// Audit tracked edits: every text change against ORIGINAL must be a
+        /// revision by --author.
+        #[arg(long, value_name = "FILE", requires = "author")]
+        original: Option<PathBuf>,
+        /// The author every change must carry (with --original).
+        #[arg(long, value_name = "NAME", requires = "original")]
+        author: Option<String>,
+        /// Replace an existing --repair output.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Field results written back into the document from jubarte's layout.
+    Fields {
+        #[command(subcommand)]
+        sub: FieldsCommand,
+    },
+    /// Remove who touched a document before it goes out: author names (as
+    /// one alias), rsids, the people and dates in the document properties,
+    /// and comments. Text and tracked changes stay. Without a flag, all
+    /// four go under the alias "Author"; with flags, only those given.
+    #[command(after_help = "EXAMPLES:\n  \
+        jubarte scrub redline.docx -o out.docx                     everything, alias Author\n  \
+        jubarte scrub redline.docx -o out.docx --author-alias Counsel --rsids\n  \
+        jubarte scrub redline.docx -o out.docx --comments          comments only")]
+    Scrub {
+        /// The document (.docx) to scrub.
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Output path.
+        #[arg(short = 'o', long, value_name = "FILE")]
+        output: PathBuf,
+        /// Overwrite the output file if it already exists.
+        #[arg(long)]
+        force: bool,
+        #[command(flatten)]
+        scrub: ScrubSelection,
+    },
+    /// Audit a .docx for accessibility, style and structure defects, each
+    /// finding located by paragraph id. Exits 0 when nothing fails, 2 on
+    /// any `error` finding (or any `warning` with --strict).
+    #[command(after_help = "Rules (code, set, severity):\n  \
+        HEADING_SKIP a11y warning, IMAGE_NO_DESCR a11y error,\n  \
+        TABLE_NO_HEADER_ROW a11y warning, MISSING_LANG a11y warning,\n  \
+        LITERAL_BULLET style warning, EMPTY_SPACER_PARAGRAPH style info,\n  \
+        DIRECT_FORMATTING_OVERRIDES_STYLE style info,\n  \
+        STALE_FIELD_CACHE structure warning, FONT_SUBSTITUTED structure info")]
+    Audit {
+        /// The document (.docx) to audit.
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Emit `{findings, rules, layout}` as JSON.
+        #[arg(long)]
+        json: bool,
+        /// Rule sets (a11y, style, structure) or rule codes, comma-separated
+        /// [default: every rule].
+        #[arg(long, value_name = "RULES", value_delimiter = ',')]
+        rules: Vec<String>,
+        /// Fail (exit 2) on warnings too, not only on errors.
+        #[arg(long)]
+        strict: bool,
+    },
+}
+
+/// `jubarte fields` subcommands.
+#[derive(clap::Subcommand, Debug)]
+enum FieldsCommand {
+    /// Refresh the cached results of PAGEREF, REF, NUMPAGES, SEQ and TOC
+    /// fields from jubarte's layout; TOCs are rebuilt from the headings.
+    /// Field codes stay, so Word can update them again. Page numbers are
+    /// jubarte's layout, not Word's (docs/WORD_DIFFERENCES.md).
+    #[command(after_help = "EXAMPLES:\n  \
+        jubarte fields update in.docx -o out.docx          one line per field written\n  \
+        jubarte fields update in.docx -o out.docx --json   {\"page_count\", \"fields\": [...]}")]
+    Update {
+        /// The document (.docx).
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+        /// Output path.
+        #[arg(short = 'o', long, value_name = "FILE")]
+        output: PathBuf,
+        /// Overwrite the output file if it already exists.
+        #[arg(long)]
+        force: bool,
+        /// Print the fields written as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+/// What `jubarte scrub` removes; everything when no flag is given.
+#[derive(clap::Args, Debug, Default, PartialEq)]
+struct ScrubSelection {
+    /// Name every author (revisions, comments, people.xml) takes.
+    #[arg(long, value_name = "NAME")]
+    author_alias: Option<String>,
+    /// Remove rsids, the edit-session ids that tie copies together.
+    #[arg(long)]
+    rsids: bool,
+    /// Remove creator, last editor, revision number, dates, manager,
+    /// company and custom properties.
+    #[arg(long)]
+    docprops: bool,
+    /// Remove every comment.
+    #[arg(long)]
+    comments: bool,
+}
+
+impl ScrubSelection {
+    fn options(&self) -> jubarte::scrub::ScrubOptions {
+        if *self == Self::default() {
+            return jubarte::scrub::ScrubOptions::default();
+        }
+        jubarte::scrub::ScrubOptions {
+            author_alias: self.author_alias.clone(),
+            rsids: self.rsids,
+            docprops: self.docprops,
+            comments: self.comments,
+        }
+    }
+}
+
+fn run_scrub(
+    file: &Path,
+    output: &Path,
+    force: bool,
+    options: &jubarte::scrub::ScrubOptions,
+) -> Result<(), String> {
+    ensure_writable(output, force)?;
+    let bytes = read_document(file)?;
+    let out = jubarte::scrub::scrub(&bytes, options).map_err(|e| format!("scrub failed: {e}"))?;
+    std::fs::write(output, &out).map_err(|e| format!("writing {}: {e}", output.display()))
 }
 
 /// `jubarte debug` subcommands.
@@ -795,15 +964,37 @@ struct MarkdownArgs {
         short = 'd',
         long,
         value_name = "ISO8601",
-        default_value = "1970-01-01T00:00:00Z"
+        default_value = jubarte::document_comparer::DEFAULT_DATE
     )]
     date: String,
+    /// Markdown to Word: the page size when there is no --reference-doc
+    /// (one-inch margins either way); a reference's page setup wins.
+    #[arg(long, value_enum, value_name = "SIZE", default_value_t = Page::Letter)]
+    page: Page,
+}
+
+/// `--page`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+enum Page {
+    /// US Letter, 8.5 by 11 inches.
+    Letter,
+    /// ISO A4, 210 by 297 mm.
+    A4,
+}
+
+impl From<Page> for jubarte::markdown::PageSize {
+    fn from(choice: Page) -> Self {
+        match choice {
+            Page::Letter => Self::Letter,
+            Page::A4 => Self::A4,
+        }
+    }
 }
 
 /// `jubarte convert --revisions`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 enum Revisions {
-    /// Red strike, blue double underline, green moves.
+    /// Red strike, blue underline, green double marks for moves.
     Conventional,
     /// Microsoft Word's own markup.
     Word,
@@ -1004,9 +1195,46 @@ struct ConvertJob<'a> {
     report: Option<&'a Path>,
     /// Zero-based pages to rasterize; `None` for all.
     pages: Option<&'a [usize]>,
+    /// Exit [`EXIT_FONT_SUBSTITUTED`] when a requested font was substituted.
+    fail_on_substitution: bool,
 }
 
-fn run_convert(job: &ConvertJob<'_>) -> Result<(), String> {
+/// `convert --fail-on-substitution`: the outputs were written, but a
+/// requested font was drawn with a substitute.
+const EXIT_FONT_SUBSTITUTED: u8 = 4;
+
+/// Why `convert` failed, and the exit status that says so.
+#[derive(Debug)]
+struct ConvertFailure {
+    code: u8,
+    message: String,
+}
+
+impl From<String> for ConvertFailure {
+    fn from(message: String) -> Self {
+        Self { code: 1, message }
+    }
+}
+
+impl From<&str> for ConvertFailure {
+    fn from(message: &str) -> Self {
+        message.to_string().into()
+    }
+}
+
+/// The exit status of a `convert` run: 1 for an error, or its own code.
+fn convert_exit_code(r: Result<(), ConvertFailure>) -> ExitCode {
+    match r {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(ConvertFailure { code: 1, message }) => exit_code(Err(message)),
+        Err(ConvertFailure { code, message }) => {
+            eprintln!("error: {message}");
+            ExitCode::from(code)
+        }
+    }
+}
+
+fn run_convert(job: &ConvertJob<'_>) -> Result<(), ConvertFailure> {
     let output = job
         .output
         .map(Path::to_path_buf)
@@ -1024,7 +1252,8 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), String> {
                     return Err(format!(
                         "{what} '{}' is the same file as the {name}",
                         side.display()
-                    ));
+                    )
+                    .into());
                 }
             }
             ensure_writable(side, job.force)?;
@@ -1104,6 +1333,34 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), String> {
     if let Some(report) = job.report {
         std::fs::write(report, rendered.report.to_json())
             .map_err(|e| format!("writing {}: {e}", report.display()))?;
+    }
+    if job.fail_on_substitution {
+        let substituted: Vec<_> = rendered
+            .report
+            .fonts
+            .iter()
+            .filter(|f| f.substituted())
+            .collect();
+        if !substituted.is_empty() {
+            for f in &substituted {
+                eprintln!(
+                    "substituted: {} -> {} ({})",
+                    f.requested, f.physical, f.step
+                );
+            }
+            return Err(ConvertFailure {
+                code: EXIT_FONT_SUBSTITUTED,
+                message: format!(
+                    "{} requested font{} substituted (--fail-on-substitution)",
+                    substituted.len(),
+                    if substituted.len() == 1 {
+                        " was"
+                    } else {
+                        "s were"
+                    }
+                ),
+            });
+        }
     }
     Ok(())
 }
@@ -1344,12 +1601,65 @@ fn run_inspect_tables(file: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn run_text(file: &Path) -> Result<(), String> {
+/// `jubarte audit`: print the findings; `Ok(true)` when one fails the run
+/// (an `error`, or a `warning` under `strict`).
+fn run_audit(file: &Path, json: bool, rules: &[String], strict: bool) -> Result<bool, String> {
     let bytes = read_document(file)?;
-    print!(
-        "{}",
-        jubarte::inspect::markdown(&bytes).map_err(|e| e.to_string())?
-    );
+    let rules: Vec<&str> = rules.iter().map(String::as_str).collect();
+    let report = jubarte::audit::audit_report(&bytes, &rules).map_err(|e| e.to_string())?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?
+        );
+    } else {
+        for finding in &report.findings {
+            println!(
+                "{}\t{}\t{}\t{}",
+                finding.severity, finding.code, finding.location, finding.message
+            );
+        }
+        let count = |severity: &str| {
+            report
+                .findings
+                .iter()
+                .filter(|finding| finding.severity == severity)
+                .count()
+        };
+        println!(
+            "{} findings: {} error, {} warning, {} info ({} rules{})",
+            report.findings.len(),
+            count("error"),
+            count("warning"),
+            count("info"),
+            report.rules.len(),
+            if report.layout { ", with layout" } else { "" }
+        );
+    }
+    Ok(report
+        .findings
+        .iter()
+        .any(|finding| finding.severity == "error" || (strict && finding.severity == "warning")))
+}
+
+fn run_text(file: &Path, track_changes: Option<TrackChanges>) -> Result<(), String> {
+    let bytes = read_document(file)?;
+    let Some(choice) = track_changes else {
+        print!(
+            "{}",
+            jubarte::inspect::markdown(&bytes).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    };
+    let read = jubarte::markdown::docx_to_markdown(
+        &bytes,
+        &jubarte::markdown::MarkdownOptions {
+            track_changes: choice.into(),
+            extract_media: None,
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    print!("{}", read.markdown);
     Ok(())
 }
 
@@ -1568,8 +1878,9 @@ fn insert_before_summary(jsonl: &mut String, line: &str) {
 fn run_revisions(file: &Path, json: bool) -> Result<(), String> {
     let bytes = read_document(file)?;
     let settings = jubarte::comparer::WmlComparerSettings::default();
-    let revs = jubarte::document_comparer::get_revisions(&bytes, &settings)
-        .map_err(|e| format!("get_revisions failed: {e:?}"))?;
+    let revs = jubarte::document_comparer::get_revisions(&bytes, &settings).map_err(|e| {
+        refusal("get_revisions", &e).unwrap_or_else(|| format!("get_revisions failed: {e:?}"))
+    })?;
     if json {
         // Shared serialization (also the wasm `getRevisions` shape): full JSON
         // string escaping — backslash, quote, and ALL control chars < 0x20.
@@ -1698,7 +2009,9 @@ fn run(job: &Job) -> Result<(), String> {
         && Format::of_path(&job.output) != Some(Format::Md)
     {
         jubarte::document_comparer::compare_documents_with_settings(&original, &modified, &settings)
-            .map_err(|e| format!("compare failed: {e:?}"))?
+            .map_err(|e| {
+                refusal("compare", &e).unwrap_or_else(|| format!("compare failed: {e:?}"))
+            })?
     } else {
         let old = Input::new(&job.original, formats.0, original)?;
         let new = Input::new(&job.modified, formats.1, modified)?;
@@ -1761,20 +2074,20 @@ impl<'p> Input<'p> {
     }
 }
 
-/// The first bytes of an OLE compound file: a Word 97-2003 `.doc`, or a
-/// password-encrypted document of any Word version.
-const OLE_MAGIC: &[u8] = b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1";
-
-/// Reads an input document, refusing the OLE files Word alone can open.
+/// Reads an input document, refusing the OLE files Word alone can open and
+/// RTF by their signature (`admission::sniff`, the check the library and
+/// the bindings run too).
 fn read_document(path: &Path) -> Result<Vec<u8>, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
-    if bytes.starts_with(OLE_MAGIC) {
-        return Err(format!(
-            "{} is a Word 97-2003 (.doc) or encrypted document; open it in Word and save it as .docx without a password",
-            path.display()
-        ));
-    }
+    jubarte::admission::sniff(&bytes)
+        .map_err(|refused| format!("{} is {}", path.display(), refused.message))?;
     Ok(bytes)
+}
+
+/// `{what} failed: CODE: …` for an admission refusal, whatever wrapped it
+/// (`admission::code_first`); `None` for any other error.
+fn refusal(what: &str, error: &impl std::fmt::Display) -> Option<String> {
+    jubarte::admission::code_first(&error.to_string()).map(|m| format!("{what} failed: {m}"))
 }
 
 /// Markdown bytes as text, without a byte order mark.
@@ -1990,13 +2303,15 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), String> {
             dpi: 96.0,
             report: None,
             pages: None,
-        }),
+            fail_on_substitution: false,
+        })
+        .map_err(|f| f.message),
         (Format::Docx, None) => unreachable!("a Word output always has a path"),
     }
 }
 
 /// `convert`, for every pair of formats it takes.
-fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), String> {
+fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), ConvertFailure> {
     let bytes = read_document(job.file)?;
     let from = Format::of_input(markdown.from, job.file, &bytes);
     let to = markdown
@@ -2027,7 +2342,9 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
                 } else {
                     jubarte::document_comparer::reject_revisions
                 };
-                let resolved = resolve(&bytes).map_err(|e| format!("convert failed: {e:?}"))?;
+                let resolved = resolve(&bytes).map_err(|e| {
+                    refusal("convert", &e).unwrap_or_else(|| format!("convert failed: {e:?}"))
+                })?;
                 pdf_job(Some(&resolved), to)
             }
         },
@@ -2062,14 +2379,17 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
                     return Err(format!(
                         "{} is already Word: give --track-changes accept or reject, or another --to",
                         job.file.display()
-                    ));
+                    )
+                    .into());
                 }
             };
             let output = job
                 .output
                 .ok_or("--output is required to write Word from Word")?;
             ensure_writable(output, job.force)?;
-            let out = resolve(&bytes).map_err(|e| format!("convert failed: {e:?}"))?;
+            let out = resolve(&bytes).map_err(|e| {
+                refusal("convert", &e).unwrap_or_else(|| format!("convert failed: {e:?}"))
+            })?;
             std::fs::write(output, &out)
                 .map_err(|e| format!("writing {}: {e}", output.display()))?;
             println!("wrote {} ({} bytes)", output.display(), out.len());
@@ -2086,7 +2406,7 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
                 Some(output) => {
                     ensure_writable(output, job.force)?;
                     std::fs::write(output, &out)
-                        .map_err(|e| format!("writing {}: {e}", output.display()))
+                        .map_err(|e| format!("writing {}: {e}", output.display()).into())
                 }
                 None => {
                     print!("{out}");
@@ -2109,6 +2429,7 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
                 author: markdown.author.clone(),
                 date: markdown.date.clone(),
                 images: Some(&loader),
+                page: markdown.page.into(),
             };
             let written = jubarte::markdown::markdown_to_docx(&text, &options)
                 .map_err(|e| format!("convert failed: {e}"))?;
@@ -2127,10 +2448,9 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
             println!("wrote {} ({} bytes)", output.display(), written.docx.len());
             Ok(())
         }
-        (Format::Pdf | Format::Png, _) => Err(format!(
-            "{}: PDF and PNG are not inputs",
-            job.file.display()
-        )),
+        (Format::Pdf | Format::Png, _) => {
+            Err(format!("{}: PDF and PNG are not inputs", job.file.display()).into())
+        }
     }
 }
 
@@ -2164,6 +2484,67 @@ fn run_debug(
     };
     print!("{out}");
     Ok(())
+}
+
+/// One `jubarte validate` run.
+struct ValidateJob<'a> {
+    file: &'a Path,
+    json: bool,
+    repair: Option<&'a Path>,
+    original: Option<&'a Path>,
+    author: Option<&'a str>,
+    force: bool,
+}
+
+/// `jubarte validate`: `Ok(true)` when nothing was found, `Ok(false)` when
+/// findings were printed, `Err` when a file could not be read or written.
+fn run_validate(job: &ValidateJob<'_>) -> Result<bool, String> {
+    use jubarte::validate::{Finding, audit_tracked, repair, validate};
+    let read = |p: &Path| std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()));
+    let docx = read(job.file)?;
+    let mut findings: Vec<Finding> = Vec::new();
+    match job.repair {
+        Some(out) => {
+            if out.exists() && !job.force {
+                return Err(format!(
+                    "output '{}' already exists (use --force to overwrite)",
+                    out.display()
+                ));
+            }
+            let fixed = repair(&docx).map_err(|e| e.to_string())?;
+            std::fs::write(out, &fixed.docx).map_err(|e| format!("{}: {e}", out.display()))?;
+            if !job.json {
+                println!(
+                    "repaired {} finding(s) into {}",
+                    fixed.repaired.len(),
+                    out.display()
+                );
+            }
+            findings.extend(fixed.remaining);
+        }
+        None => findings.extend(validate(&docx).map_err(|e| e.to_string())?),
+    }
+    if let (Some(original), Some(author)) = (job.original, job.author) {
+        let before = read(original)?;
+        findings.extend(audit_tracked(&before, &docx, author).map_err(|e| e.to_string())?);
+    }
+    for f in &findings {
+        if job.json {
+            println!("{}", serde_json::to_string(f).map_err(|e| e.to_string())?);
+        } else {
+            let star = if f.word_fatal { '*' } else { ' ' };
+            println!("{star} {}\t{}#{}\t{}", f.code, f.part, f.path, f.message);
+        }
+    }
+    if !job.json {
+        if findings.is_empty() {
+            println!("no findings");
+        } else {
+            let fatal = findings.iter().filter(|f| f.word_fatal).count();
+            println!("{} finding(s), {fatal} Word-fatal", findings.len());
+        }
+    }
+    Ok(findings.is_empty())
 }
 
 /// `jubarte debug diff`: each file labelled by its stem (by its folder too
@@ -2275,6 +2656,7 @@ fn main() -> ExitCode {
             revision_palette,
             markdown,
             pages: page_spec,
+            fail_on_substitution,
         }) => {
             let style = match revision_style(revisions, revision_palette.as_deref()) {
                 Ok(style) => style,
@@ -2297,8 +2679,9 @@ fn main() -> ExitCode {
                 dpi,
                 report: report.as_deref(),
                 pages: selected.as_deref(),
+                fail_on_substitution,
             };
-            return exit_code(run_convert_any(&job, &markdown));
+            return convert_exit_code(run_convert_any(&job, &markdown));
         }
         Some(Command::Diff {
             old,
@@ -2351,7 +2734,10 @@ fn main() -> ExitCode {
                 run_inspect(&file, json)
             });
         }
-        Some(Command::Text { file }) => return exit_code(run_text(&file)),
+        Some(Command::Text {
+            file,
+            track_changes,
+        }) => return exit_code(run_text(&file, track_changes)),
         Some(Command::Edit {
             file,
             plan,
@@ -2464,14 +2850,73 @@ fn main() -> ExitCode {
             output,
             section_break,
             keep_sections,
+            carry_comments,
             force,
             quiet,
         }) => {
             let options = jubarte::append::AppendOptions {
                 section_break: section_break.into(),
                 keep_sections,
+                comments: if carry_comments {
+                    jubarte::append::AppendComments::Carry
+                } else {
+                    jubarte::append::AppendComments::Drop
+                },
             };
             return exit_code(run_append(&files, &output, &options, force, quiet));
+        }
+        Some(Command::Validate {
+            file,
+            json,
+            repair,
+            original,
+            author,
+            force,
+        }) => {
+            let job = ValidateJob {
+                file: &file,
+                json,
+                repair: repair.as_deref(),
+                original: original.as_deref(),
+                author: author.as_deref(),
+                force,
+            };
+            return match run_validate(&job) {
+                Ok(true) => ExitCode::SUCCESS,
+                Ok(false) => ExitCode::from(2),
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
+        Some(Command::Fields {
+            sub:
+                FieldsCommand::Update {
+                    file,
+                    output,
+                    force,
+                    json,
+                },
+        }) => return exit_code(run_fields_update(&file, &output, force, json)),
+        Some(Command::Scrub {
+            file,
+            output,
+            force,
+            scrub,
+        }) => {
+            return exit_code(run_scrub(&file, &output, force, &scrub.options()));
+        }
+        Some(Command::Audit {
+            file,
+            json,
+            rules,
+            strict,
+        }) => {
+            return match run_audit(&file, json, &rules, strict) {
+                Ok(true) => ExitCode::from(2),
+                result => exit_code(result.map(|_| ())),
+            };
         }
         None => {}
     }
@@ -2550,6 +2995,35 @@ fn run_self_update(_check: bool, _yes: bool, _version: Option<String>) -> Result
     Err("this jubarte was built without the self-update feature; update it the way it was installed".into())
 }
 
+/// `jubarte fields update`: refresh, write, then list what was written.
+fn run_fields_update(file: &Path, output: &Path, force: bool, json: bool) -> Result<(), String> {
+    ensure_writable(output, force)?;
+    let bytes = read_document(file)?;
+    let updated = jubarte::fields::update_fields(&bytes).map_err(|e| e.to_string())?;
+    std::fs::write(output, &updated.docx)
+        .map_err(|e| format!("writing {}: {e}", output.display()))?;
+    if json {
+        let report = serde_json::json!({
+            "page_count": updated.page_count,
+            "fields": updated.fields,
+        });
+        println!("{report}");
+        return Ok(());
+    }
+    for field in &updated.fields {
+        println!(
+            "{}\t{}\t{:?} -> {:?}",
+            field.paragraph, field.kind, field.old, field.new
+        );
+    }
+    eprintln!(
+        "{} field(s) written; {} page(s)",
+        updated.fields.len(),
+        updated.page_count
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2564,6 +3038,7 @@ mod tests {
             output,
             section_break,
             keep_sections,
+            carry_comments,
             force,
             quiet,
         }) = cli.command
@@ -2573,7 +3048,7 @@ mod tests {
         assert_eq!(files.len(), 2);
         assert_eq!(output, PathBuf::from("out.docx"));
         assert_eq!(section_break, SectionBreakArg::NextPage);
-        assert!(!keep_sections && !force && !quiet);
+        assert!(!keep_sections && !carry_comments && !force && !quiet);
         let cli = Cli::try_parse_from([
             "jubarte",
             "append",
@@ -2585,12 +3060,14 @@ mod tests {
             "--section-break",
             "none",
             "--keep-sections",
+            "--carry-comments",
         ])
         .unwrap();
         let Some(Command::Append {
             files,
             section_break,
             keep_sections,
+            carry_comments,
             ..
         }) = cli.command
         else {
@@ -2601,7 +3078,7 @@ mod tests {
             jubarte::append::SectionBreak::from(section_break),
             jubarte::append::SectionBreak::None
         );
-        assert!(keep_sections);
+        assert!(keep_sections && carry_comments);
         assert!(Cli::try_parse_from(["jubarte", "append", "a.docx", "-o", "o.docx"]).is_err());
         assert!(Cli::try_parse_from(["jubarte", "append", "a.docx", "b.docx"]).is_err());
     }
@@ -2865,6 +3342,43 @@ mod tests {
         }
     }
 
+    /// `scrub` without a selection removes all four kinds, under the alias
+    /// `Author`; any flag narrows it to the ones given.
+    #[test]
+    fn scrub_flags_select_what_goes_and_none_selects_everything() {
+        let options = |args: &[&str]| {
+            let cli = Cli::try_parse_from(
+                ["jubarte", "scrub", "in.docx", "-o", "out.docx"]
+                    .iter()
+                    .chain(args),
+            )
+            .unwrap();
+            match cli.command {
+                Some(Command::Scrub { scrub, .. }) => scrub.options(),
+                other => panic!("expected scrub subcommand, got {other:?}"),
+            }
+        };
+        assert_eq!(options(&[]), jubarte::scrub::ScrubOptions::default());
+        assert_eq!(
+            options(&["--rsids", "--author-alias", "Counsel"]),
+            jubarte::scrub::ScrubOptions {
+                author_alias: Some("Counsel".into()),
+                rsids: true,
+                docprops: false,
+                comments: false,
+            }
+        );
+        assert_eq!(
+            options(&["--comments"]),
+            jubarte::scrub::ScrubOptions {
+                author_alias: None,
+                rsids: false,
+                docprops: false,
+                comments: true,
+            }
+        );
+    }
+
     /// `reject <file> -o <out>` parses into `Command::Reject`; `force` defaults
     /// to false (the same no-clobber contract as `accept` / compare).
     #[test]
@@ -2943,6 +3457,24 @@ mod tests {
             Some(Command::Revisions { file, .. }) => assert_eq!(file, PathBuf::from("b.docx")),
             other => panic!("expected revisions subcommand, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn convert_takes_fail_on_substitution_and_defaults_it_off() {
+        let flag = |args: &[&str]| match Cli::try_parse_from(args).unwrap().command {
+            Some(Command::Convert {
+                fail_on_substitution,
+                ..
+            }) => fail_on_substitution,
+            other => panic!("expected convert, got {other:?}"),
+        };
+        assert!(flag(&[
+            "jubarte",
+            "convert",
+            "in.docx",
+            "--fail-on-substitution"
+        ]));
+        assert!(!flag(&["jubarte", "convert", "in.docx"]));
     }
 
     #[test]
@@ -3038,9 +3570,14 @@ mod tests {
             dpi: 96.0,
             report: None,
             pages: None,
+            fail_on_substitution: false,
         })
         .expect_err("report over the PDF must be refused");
-        assert!(err.contains("same file as the PDF output"), "{err}");
+        assert!(
+            err.message.contains("same file as the PDF output"),
+            "{}",
+            err.message
+        );
         assert!(!pdf.exists(), "nothing is written when the paths collide");
         let err = run_convert(&ConvertJob {
             file: &docx,
@@ -3055,9 +3592,14 @@ mod tests {
             dpi: 96.0,
             report: None,
             pages: None,
+            fail_on_substitution: false,
         })
         .expect_err("report over the input must be refused");
-        assert!(err.contains("same file as the input"), "{err}");
+        assert!(
+            err.message.contains("same file as the input"),
+            "{}",
+            err.message
+        );
         assert!(std::fs::read(&docx).expect("docx").starts_with(b"PK"));
     }
 
@@ -3092,6 +3634,49 @@ mod tests {
         assert!(!out.exists());
         let err = read_document(&doc).expect_err("every command reads through read_document");
         assert!(err.contains("save it as .docx"), "{err}");
+        // The same check names RTF for what it is.
+        let rtf = dir.path().join("c.rtf");
+        std::fs::write(&rtf, b"{\\rtf1\\ansi hello}").expect("rtf");
+        let err = read_document(&rtf).expect_err("RTF must be refused");
+        assert!(err.contains("c.rtf is an RTF file"), "{err}");
+    }
+
+    #[test]
+    fn fail_on_substitution_is_exit_4_after_the_outputs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let docx = dir.path().join("in.docx");
+        let pdf = dir.path().join("out.pdf");
+        let report = dir.path().join("fonts.json");
+        std::fs::write(&docx, tiny_docx_bytes("DefinitelyNotAFont")).expect("docx");
+        let err = run_convert(&ConvertJob {
+            file: &docx,
+            bytes: None,
+            output: Some(&pdf),
+            force: false,
+            compress: false,
+            font_report: Some(&report),
+            revisions: RevisionStyle::Word,
+            pdf: false,
+            png: false,
+            dpi: 96.0,
+            report: None,
+            pages: None,
+            fail_on_substitution: true,
+        })
+        .expect_err("a substituted font fails the run");
+        assert_eq!(err.code, EXIT_FONT_SUBSTITUTED);
+        assert!(
+            err.message.contains("--fail-on-substitution"),
+            "{}",
+            err.message
+        );
+        assert!(pdf.exists() && report.exists(), "outputs are written first");
+    }
+
+    #[test]
+    fn a_plain_convert_error_keeps_exit_1() {
+        let failure = ConvertFailure::from("boom");
+        assert_eq!((failure.code, failure.message.as_str()), (1, "boom"));
     }
 
     #[test]
@@ -3114,6 +3699,7 @@ mod tests {
             dpi: 96.0,
             report: None,
             pages: None,
+            fail_on_substitution: false,
         })
         .expect("convert");
         assert!(pdf.exists());
@@ -3325,6 +3911,7 @@ mod tests {
             dpi: 20.0,
             report: None,
             pages,
+            fail_on_substitution: false,
         }
     }
 
@@ -3363,11 +3950,13 @@ mod tests {
             ..convert_job(&docx, &out, Some(&[0]))
         })
         .expect_err("--pages without PNG output");
-        assert!(err.contains("--pages"), "{err}");
+        assert!(err.message.contains("--pages"), "{}", err.message);
         let err = run_convert(&convert_job(&docx, &out, Some(&[5]))).expect_err("page 6 of 3");
         assert!(
-            err.contains("page 6 is out of range: the document has 3 pages"),
-            "{err}"
+            err.message
+                .contains("page 6 is out of range: the document has 3 pages"),
+            "{}",
+            err.message
         );
         assert_eq!(file_names(dir.path()), ["in.docx"], "nothing written");
     }
@@ -3471,5 +4060,50 @@ mod tests {
         let missing = dir.path().join("missing.docx");
         let err = run_diff_render(&diff_job(&missing, &b, None)).expect_err("no file");
         assert!(err.contains("missing.docx"), "{err}");
+    }
+
+    #[test]
+    fn fields_update_parses_its_output_and_flags() {
+        let cli = Cli::try_parse_from([
+            "jubarte", "fields", "update", "in.docx", "-o", "out.docx", "--force", "--json",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(Command::Fields {
+                sub:
+                    FieldsCommand::Update {
+                        file,
+                        output,
+                        force,
+                        json,
+                    },
+            }) => {
+                assert_eq!(file, PathBuf::from("in.docx"));
+                assert_eq!(output, PathBuf::from("out.docx"));
+                assert!(force && json);
+            }
+            other => panic!("expected fields update, got {other:?}"),
+        }
+        assert!(Cli::try_parse_from(["jubarte", "fields", "update", "in.docx"]).is_err());
+    }
+
+    #[test]
+    fn fields_update_writes_the_refreshed_package_and_refuses_to_clobber() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let input = dir.path().join("in.docx");
+        let output = dir.path().join("out.docx");
+        std::fs::write(&input, tiny_docx_bytes("Calibri")).expect("docx");
+        run_fields_update(&input, &output, false, true).expect("update");
+        let written = std::fs::read(&output).expect("output");
+        assert_eq!(
+            jubarte::inspect::paragraphs(&written).unwrap()[0].text,
+            "HELLO"
+        );
+        let err = run_fields_update(&input, &output, false, false).unwrap_err();
+        assert!(err.contains("--force"), "{err}");
+        run_fields_update(&input, &output, true, false).expect("forced");
+        let err =
+            run_fields_update(&dir.path().join("missing.docx"), &output, true, false).unwrap_err();
+        assert!(!err.is_empty());
     }
 }

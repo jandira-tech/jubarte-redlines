@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Document.append: B after A, carrying B's parts; comments are warned."""
+"""Document.append: B after A, carrying B's parts; comments dropped or carried."""
 
 from __future__ import annotations
 
@@ -59,6 +59,23 @@ def test_comments_of_b_are_dropped_with_a_warning():
     assert appended.document.inspect().summary.comments == 0
 
 
+def test_comments_of_b_are_carried_on_request():
+    def commented(text: str, author: str, note: str) -> Document:
+        return Document.from_bytes(docx(para(text))).edit(
+            {
+                "schema_version": 1,
+                "author": author,
+                "operations": [{"kind": "comment", "paragraph": "body:p:0", "text": note}],
+            }
+        ).clean
+
+    appended = commented("A.", "Ann", "OK").append(commented("B.", "Ann", "OK"), comments="carry")
+    assert appended.warnings == ()
+    carried = appended.document.comments()
+    assert [(c.text, c.anchor_text) for c in carried] == [("OK", "A."), ("OK", "B.")]
+    assert carried[0].id != carried[1].id
+
+
 def test_appended_is_frozen():
     appended = Document.from_bytes(docx(para("A."))).append(Document.from_bytes(docx(para("B."))))
     with pytest.raises(FrozenInstanceError):
@@ -72,6 +89,8 @@ def test_appended_is_frozen():
         (None, {"section_break": "page"}, ValueError, "section_break"),
         (None, {"section_break": 1}, TypeError, "section_break"),
         (None, {"keep_sections": "yes"}, TypeError, "keep_sections"),
+        (None, {"comments": "keep"}, ValueError, "comments"),
+        (None, {"comments": True}, TypeError, "comments"),
     ],
 )
 def test_append_rejects_bad_arguments(other, kwargs, error, message):

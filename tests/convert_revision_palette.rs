@@ -6,6 +6,8 @@
 
 use jubarte::convert::{MarkLines, PdfOptions, RevisionMark, RevisionPalette, RevisionStyle};
 
+/// Litera Compare's Word settings: an insertion or deletion is marked once,
+/// a move twice, so a move never reads as an insertion without its colour.
 #[test]
 fn default_options_use_the_documented_conventional_marks() {
     assert_eq!(PdfOptions::default().revisions, RevisionStyle::Conventional);
@@ -21,12 +23,12 @@ fn default_options_use_the_documented_conventional_marks() {
             palette.inserted,
             [0, 0, 255],
             MarkLines::None,
-            MarkLines::Double,
+            MarkLines::Single,
         ),
         (
             palette.moved_from,
             [0, 128, 0],
-            MarkLines::Single,
+            MarkLines::Double,
             MarkLines::None,
         ),
         (

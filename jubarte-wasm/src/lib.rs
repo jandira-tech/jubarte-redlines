@@ -25,6 +25,7 @@
 //! else { JSON.parse(out.json).code }                    // e.g. AMBIGUOUS_ANCHOR
 //! const { text, hunks } = JSON.parse(diffDocuments(      // the changes as a patch
 //!   oldDocx, new TextEncoder().encode(markdown), "Ana Lima", new Date().toISOString().slice(0, 19) + "Z"));
+//! const draft = markdownToDocx("Due in {~~30~>45~~} days.", JSON.stringify({ page: "a4" }));  // Word bytes
 //! ```
 //!
 //! # Build
@@ -51,20 +52,49 @@ pub fn init_panic_hook() {
     console_error_panic_hook::set_once();
 }
 
+/// An error as the thrown string; an admission refusal reads code first
+/// after the prefix (`jubarte-wasm: LEGACY_DOC: …`), whatever wrapped it.
 fn js_err(e: impl std::fmt::Display) -> JsValue {
-    JsValue::from_str(&format!("jubarte-wasm: {e}"))
+    let message = e.to_string();
+    let message = jubarte::admission::code_first(&message).unwrap_or(message);
+    JsValue::from_str(&format!("jubarte-wasm: {message}"))
+}
+
+/// `WmlComparerSettings::default()` with `input_limits_json` (a JSON object
+/// such as `{"max_part_bytes": 67108864}`) laid over its compare budget.
+fn settings_with_limits(
+    input_limits_json: Option<&str>,
+) -> Result<jubarte::comparer::WmlComparerSettings, String> {
+    let settings = jubarte::comparer::WmlComparerSettings::default();
+    let Some(json) = input_limits_json else {
+        return Ok(settings);
+    };
+    let overrides = jubarte::admission::InputLimitOverrides::from_json(json)?;
+    let base = settings.input_limits;
+    Ok(settings.with_input_limits(overrides.apply(base)))
 }
 
 /// Compare two DOCX packages (bytes) → redline DOCX bytes (`w:ins`/`w:del`).
 ///
 /// Mirrors `jubarte::document_comparer::compare_documents`.
+/// `inputLimitsJson` (optional) overrides the admission budget key by key:
+/// `{"max_compressed_bytes", "max_entries", "max_part_bytes",
+/// "max_uncompressed_bytes", "max_xml_depth"}`. A package past the budget
+/// throws with `INPUT_LIMIT`; an unknown key throws `invalid input limits`.
+/// The default budget allows 2 GiB inflated, more than a 32-bit WASM heap
+/// holds, so browser hosts should lower it.
 #[wasm_bindgen(js_name = compareDocuments)]
 pub fn compare_documents(
     original: &[u8],
     modified: &[u8],
     author: &str,
+    input_limits_json: Option<String>,
 ) -> Result<Vec<u8>, JsValue> {
-    jubarte::document_comparer::compare_documents(original, modified, author).map_err(js_err)
+    let settings = settings_with_limits(input_limits_json.as_deref())
+        .map_err(js_err)?
+        .with_author(author);
+    jubarte::document_comparer::compare_documents_with_settings(original, modified, &settings)
+        .map_err(js_err)
 }
 
 /// Accept every tracked revision (package-wide) → clean DOCX bytes.
@@ -142,10 +172,11 @@ pub fn reject_changes(docx: &[u8], filter_json: &str) -> Result<Vec<u8>, JsValue
 /// (`type`/`author`/`date`/`part`/`moveGroupId`/`isMoveSource`/`formatChange`/`text`).
 ///
 /// Mirrors `jubarte::document_comparer::get_revisions` with default settings,
-/// serialized by the shared `revisions_to_json`.
+/// serialized by the shared `revisions_to_json`. `inputLimitsJson` as in
+/// `compareDocuments`.
 #[wasm_bindgen(js_name = getRevisions)]
-pub fn get_revisions(docx: &[u8]) -> Result<String, JsValue> {
-    let settings = jubarte::comparer::WmlComparerSettings::default();
+pub fn get_revisions(docx: &[u8], input_limits_json: Option<String>) -> Result<String, JsValue> {
+    let settings = settings_with_limits(input_limits_json.as_deref()).map_err(js_err)?;
     let revs = jubarte::document_comparer::get_revisions(docx, &settings).map_err(js_err)?;
     Ok(jubarte::document_comparer::revisions_to_json(&revs))
 }
@@ -438,7 +469,8 @@ impl AppendOutput {
 
 /// Append B after A, carrying B's images, links, headers, styles, lists and
 /// notes. `optionsJson` is `{"section_break": "next_page" | "continuous" |
-/// "none", "keep_sections": bool}`, each optional.
+/// "none", "keep_sections": bool, "comments": "drop" | "carry"}`, each
+/// optional; B's comments are dropped (warned) unless `"carry"`.
 ///
 /// Mirrors `jubarte::append::append_documents`.
 #[wasm_bindgen(js_name = appendDocuments)]
@@ -459,8 +491,131 @@ pub fn append_documents(
     })
 }
 
-/// What this build can do, as JSON (`runtime: "wasm"`): PDF only in the full
-/// build, PNG never.
+/// Word-validity findings beyond the schema as a JSON array (`code`,
+/// `part`, `path`, `message`, `word_fatal`, `repairable`); `[]` is a pass.
+///
+/// Mirrors `jubarte::validate::validate`.
+#[wasm_bindgen(js_name = validateDocument)]
+pub fn validate_document(docx: &[u8]) -> Result<String, JsValue> {
+    let findings = jubarte::validate::validate(docx).map_err(js_err)?;
+    serde_json::to_string(&findings).map_err(js_err)
+}
+
+/// Every text change from `original` to `edited` must be a revision by
+/// `author`; the findings (`UNTRACKED_EDIT`, `FOREIGN_AUTHOR`) as a JSON
+/// array.
+///
+/// Mirrors `jubarte::validate::audit_tracked`.
+#[wasm_bindgen(js_name = auditTracked)]
+pub fn audit_tracked(original: &[u8], edited: &[u8], author: &str) -> Result<String, JsValue> {
+    let findings = jubarte::validate::audit_tracked(original, edited, author).map_err(js_err)?;
+    serde_json::to_string(&findings).map_err(js_err)
+}
+
+/// Output of [`repairDocument`](repair_document).
+#[wasm_bindgen]
+pub struct RepairOutput {
+    docx: Vec<u8>,
+    json: String,
+}
+
+#[wasm_bindgen]
+impl RepairOutput {
+    /// The package with every repairable finding fixed.
+    #[wasm_bindgen(getter)]
+    pub fn docx(&self) -> Vec<u8> {
+        self.docx.clone()
+    }
+
+    /// `{"repaired": [...], "remaining": [...]}`: the findings fixed and the
+    /// ones the output still has.
+    #[wasm_bindgen(getter)]
+    pub fn json(&self) -> String {
+        self.json.clone()
+    }
+}
+
+/// The package with every repairable finding fixed, with the findings it
+/// fixed and could not fix in `json`.
+///
+/// Mirrors `jubarte::validate::repair`.
+#[wasm_bindgen(js_name = repairDocument)]
+pub fn repair_document(docx: &[u8]) -> Result<RepairOutput, JsValue> {
+    let repaired = jubarte::validate::repair(docx).map_err(js_err)?;
+    let json = serde_json::json!({
+        "repaired": repaired.repaired,
+        "remaining": repaired.remaining,
+    });
+    Ok(RepairOutput {
+        docx: repaired.docx,
+        json: serde_json::to_string(&json).map_err(js_err)?,
+    })
+}
+
+/// What [`updateFields`](update_fields) returns.
+#[cfg(feature = "pdf")]
+#[wasm_bindgen]
+pub struct FieldsOutput {
+    docx: Vec<u8>,
+    json: String,
+}
+
+#[cfg(feature = "pdf")]
+#[wasm_bindgen]
+impl FieldsOutput {
+    /// The document with refreshed field results.
+    #[wasm_bindgen(getter)]
+    pub fn docx(&self) -> Vec<u8> {
+        self.docx.clone()
+    }
+
+    /// `{"page_count", "fields": [{"kind", "code", "paragraph", "old", "new"}]}`.
+    #[wasm_bindgen(getter)]
+    pub fn json(&self) -> String {
+        self.json.clone()
+    }
+}
+
+/// Refresh the cached results of `PAGEREF`, `REF`, `NUMPAGES`, `SEQ` and
+/// `TOC` fields from jubarte's layout (page numbers are jubarte's, not
+/// Word's). Full build only: it needs the layout the PDF export links.
+///
+/// Mirrors `jubarte::fields::update_fields`.
+#[cfg(feature = "pdf")]
+#[wasm_bindgen(js_name = updateFields)]
+pub fn update_fields(docx: &[u8]) -> Result<FieldsOutput, JsValue> {
+    let updated = jubarte::fields::update_fields(docx).map_err(js_err)?;
+    let json = serde_json::json!({
+        "page_count": updated.page_count,
+        "fields": updated.fields,
+    })
+    .to_string();
+    Ok(FieldsOutput {
+        docx: updated.docx,
+        json,
+    })
+}
+
+/// Remove who touched a document: author names (as one alias), rsids, the
+/// people and dates in the document properties, and comments.
+/// `optionsJson` is `{"author_alias": string, "rsids": bool, "docprops":
+/// bool, "comments": bool}`, a field left out off; without it, everything
+/// goes under the alias `Author`.
+///
+/// Mirrors `jubarte::scrub::scrub`.
+#[wasm_bindgen(js_name = scrubDocument)]
+pub fn scrub_document(docx: &[u8], options_json: Option<String>) -> Result<Vec<u8>, JsValue> {
+    let options: jubarte::scrub::ScrubOptions = match options_json.as_deref() {
+        Some(json) if !json.trim().is_empty() => {
+            serde_json::from_str(json).map_err(|e| js_err(format!("invalid scrub options: {e}")))?
+        }
+        _ => jubarte::scrub::ScrubOptions::default(),
+    };
+    jubarte::scrub::scrub(docx, &options).map_err(js_err)
+}
+
+/// What this build can do, as JSON (`runtime: "wasm"`): PDF and field
+/// refresh only in the full build, PNG never.
 ///
 /// Mirrors `jubarte::capabilities::capabilities`.
 #[wasm_bindgen]
@@ -468,7 +623,100 @@ pub fn capabilities() -> Result<String, JsValue> {
     let mut manifest = jubarte::capabilities::capabilities("wasm");
     manifest.operations.pdf = cfg!(feature = "pdf");
     manifest.operations.png = false;
+    manifest.operations.fields = cfg!(feature = "pdf");
+    if !cfg!(feature = "pdf") {
+        manifest
+            .audit_rules
+            .retain(|code| code != "FONT_SUBSTITUTED");
+    }
     serde_json::to_string_pretty(&manifest).map_err(js_err)
+}
+
+/// `markdownToDocx`'s options (JSON, every field optional).
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MarkdownDocxOptions {
+    #[serde(default)]
+    page: jubarte::markdown::PageSize,
+    author: Option<String>,
+    date: Option<String>,
+    critic: Option<bool>,
+    #[serde(alias = "trackChanges")]
+    track_changes: Option<String>,
+}
+
+/// Markdown with CriticMarkup → DOCX bytes; errors as text so native tests
+/// can reach them (a `JsValue` exists only on wasm).
+fn markdown_docx(
+    text: &str,
+    options_json: Option<String>,
+    reference: Option<Vec<u8>>,
+) -> Result<Vec<u8>, String> {
+    let options: MarkdownDocxOptions =
+        serde_json::from_str(options_json.as_deref().unwrap_or("{}")).map_err(|e| e.to_string())?;
+    let track_changes = match options.track_changes.as_deref() {
+        None => jubarte::markdown::TrackChanges::All,
+        Some(value) => jubarte::markdown::TrackChanges::parse(value)
+            .ok_or_else(|| format!("track_changes must be all, accept or reject, not {value:?}"))?,
+    };
+    let mut docx_options = jubarte::markdown::DocxOptions {
+        reference: reference.as_deref(),
+        track_changes,
+        page: options.page,
+        ..jubarte::markdown::DocxOptions::default()
+    };
+    if let Some(author) = options.author {
+        docx_options.author = author;
+    }
+    if let Some(date) = options.date {
+        docx_options.date = date;
+    }
+    if let Some(critic) = options.critic {
+        docx_options.critic = critic;
+    }
+    jubarte::markdown::markdown_to_docx(text, &docx_options)
+        .map(|written| written.docx)
+        .map_err(|e| e.to_string())
+}
+
+/// Markdown with CriticMarkup → DOCX bytes, as `jubarte convert draft.md`.
+///
+/// `optionsJson` (every field optional): `page` (`"letter"` default, or
+/// `"a4"`), `author` (`"Redline"`), `date` (fixed epoch, so the same Markdown
+/// writes the same bytes), `critic` (`true`: CriticMarkup becomes tracked
+/// changes and comments) and `track_changes` (or `trackChanges`: `"all"`,
+/// `"accept"`, `"reject"`). An unknown field is an error. `reference`, a
+/// `.docx`, lends its styles and page setup, and then `page` is ignored.
+/// Images are written as their alt text, and the engine's warnings are not
+/// returned.
+#[wasm_bindgen(js_name = markdownToDocx)]
+pub fn markdown_to_docx(
+    text: &str,
+    options_json: Option<String>,
+    reference: Option<Vec<u8>>,
+) -> Result<Vec<u8>, JsValue> {
+    markdown_docx(text, options_json, reference).map_err(js_err)
+}
+
+/// Audit findings as JSON `{findings, rules, layout}` (see `jubarte audit`).
+/// `rules` is a comma-separated list of rule sets (`a11y`, `style`,
+/// `structure`) or codes; omitted or empty runs every rule. The slim build
+/// has no layout pass: it leaves `FONT_SUBSTITUTED` out (naming it is an
+/// error) and does not compare `NUMPAGES` caches with a page count.
+#[wasm_bindgen(js_name = auditDocument)]
+pub fn audit_document(docx: &[u8], rules: Option<String>) -> Result<String, JsValue> {
+    let rules = rules.unwrap_or_default();
+    let rules: Vec<&str> = rules
+        .split(',')
+        .map(str::trim)
+        .filter(|rule| !rule.is_empty())
+        .collect();
+    #[cfg(feature = "pdf")]
+    let report = jubarte::audit::audit_report(docx, &rules);
+    #[cfg(not(feature = "pdf"))]
+    let report = jubarte::audit::audit_report_with(docx, &rules, None);
+    let report = report.map_err(js_err)?;
+    serde_json::to_string_pretty(&report).map_err(js_err)
 }
 
 #[cfg(test)]
@@ -499,12 +747,124 @@ mod tests {
     }
 
     #[test]
+    fn scrub_document_renames_authors_and_reads_options() {
+        let red = jubarte::document_comparer::compare_documents(&word("a\n"), &word("b\n"), "Jane")
+            .unwrap();
+        let authors = |docx: &[u8]| -> Vec<Option<String>> {
+            jubarte::changes::list_changes(docx)
+                .unwrap()
+                .into_iter()
+                .map(|c| c.author)
+                .collect()
+        };
+        let all = scrub_document(&red, None).unwrap();
+        assert!(authors(&all).iter().all(|a| a.as_deref() == Some("Author")));
+        let kept = scrub_document(&red, Some(r#"{"rsids":true}"#.to_string())).unwrap();
+        assert!(authors(&kept).iter().all(|a| a.as_deref() == Some("Jane")));
+        let manifest: serde_json::Value = serde_json::from_str(&capabilities().unwrap()).unwrap();
+        assert_eq!(manifest["operations"]["scrub"], true);
+    }
+
+    #[test]
+    fn append_documents_carries_comments_when_asked() {
+        let plan = jubarte::edit::EditPlan::from_json(
+            r#"{"schema_version":1,"author":"Ann","operations":[{"kind":"comment","paragraph":"body:p:0","text":"keep"}]}"#,
+        )
+        .unwrap();
+        let b = jubarte::edit::apply_plan(&word("B.\n"), &plan)
+            .unwrap()
+            .clean;
+        let a = word("A.\n");
+        let carried =
+            append_documents(&a, &b, Some(r#"{"comments":"carry"}"#.to_string())).unwrap();
+        assert_eq!(carried.warnings(), "[]");
+        let comments = jubarte::comments::list_comments(&carried.docx()).unwrap();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].text, "keep");
+        let dropped = append_documents(&a, &b, None).unwrap();
+        assert!(dropped.warnings().contains("COMMENTS_DROPPED"));
+        assert!(
+            jubarte::comments::list_comments(&dropped.docx())
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn capabilities_report_the_wasm_runtime_without_png() {
         let manifest: serde_json::Value = serde_json::from_str(&capabilities().unwrap()).unwrap();
         assert_eq!(manifest["runtime"], "wasm");
         assert_eq!(manifest["operations"]["png"], false);
         assert_eq!(manifest["operations"]["pdf"], cfg!(feature = "pdf"));
         assert_eq!(manifest["operations"]["edit"], true);
+        assert_eq!(manifest["operations"]["fields"], cfg!(feature = "pdf"));
+    }
+
+    #[cfg(feature = "pdf")]
+    #[test]
+    fn update_fields_writes_numpages_and_reports_it() {
+        let source = word("One\n\nTwo\n");
+        let out = update_fields(&source).unwrap();
+        let report: serde_json::Value = serde_json::from_str(&out.json()).unwrap();
+        assert_eq!(report["page_count"], 1);
+        assert_eq!(report["fields"], serde_json::json!([]));
+        assert!(!out.docx().is_empty());
+    }
+
+    #[test]
+    fn input_limits_json_overrides_the_compare_budget_key_by_key() {
+        let base = jubarte::admission::InputLimits::compare();
+        assert_eq!(settings_with_limits(None).unwrap().input_limits, base);
+        let tight = settings_with_limits(Some(r#"{"max_entries": 2}"#)).unwrap();
+        assert_eq!(
+            tight.input_limits,
+            jubarte::admission::InputLimits {
+                max_entries: 2,
+                ..base
+            }
+        );
+        let typo = settings_with_limits(Some(r#"{"max_entrys": 2}"#)).unwrap_err();
+        assert!(typo.starts_with("invalid input limits"), "{typo}");
+        // `js_err` needs a JS host, so only the accepted path runs natively.
+        let redline = compare_documents(
+            &word(OLD),
+            &word(NEW),
+            "A",
+            Some(r#"{"max_entries": 100}"#.into()),
+        )
+        .unwrap();
+        assert!(
+            get_revisions(&redline, None)
+                .unwrap()
+                .contains("\"Inserted\"")
+        );
+    }
+
+    #[test]
+    fn audit_document_locates_findings_and_selects_rules() {
+        let docx = word("• typed bullet\n");
+        let report: serde_json::Value =
+            serde_json::from_str(&audit_document(&docx, Some("style, a11y".into())).unwrap())
+                .unwrap();
+        assert_eq!(report["layout"], false);
+        let bullet = report["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["code"] == "LITERAL_BULLET")
+            .expect("a typed bullet is a finding");
+        assert_eq!(bullet["location"], "body:p:0");
+        assert_eq!(report["rules"].as_array().unwrap().len(), 7);
+        let all: serde_json::Value =
+            serde_json::from_str(&audit_document(&docx, None).unwrap()).unwrap();
+        let manifest: serde_json::Value = serde_json::from_str(&capabilities().unwrap()).unwrap();
+        assert_eq!(all["rules"], manifest["audit_rules"]);
+        let full = cfg!(feature = "pdf");
+        assert_eq!(
+            all["rules"].as_array().unwrap().len(),
+            if full { 9 } else { 8 }
+        );
+        assert_eq!(all["layout"], full);
     }
 
     const OLD: &str = "# Terms\n\nPayment is due in 30 days.\n\n- Delivery\n- Warranty\n";
@@ -627,5 +987,82 @@ mod tests {
         let preview = preview_edit_plan(b"x", "{").unwrap();
         assert!(!preview.ok());
         assert!(preview.json().contains("INVALID_PLAN"));
+    }
+
+    fn document_xml(docx: &[u8]) -> String {
+        jubarte::opc::PartFs::open(docx)
+            .unwrap()
+            .part_string("word/document.xml")
+            .unwrap()
+    }
+
+    fn page_width(docx: &[u8]) -> String {
+        let xml = document_xml(docx);
+        let at = xml.find("<w:pgSz ").unwrap();
+        let tag = &xml[at..at + xml[at..].find('>').unwrap()];
+        let width = tag.find("w:w=\"").unwrap() + 5;
+        tag[width..width + tag[width..].find('"').unwrap()].to_string()
+    }
+
+    #[test]
+    fn markdown_is_written_as_word_on_letter_or_a4() {
+        let letter = markdown_docx("# Terms\n\nBody.\n", None, None).unwrap();
+        assert_eq!(&letter[..2], b"PK");
+        assert_eq!(page_width(&letter), "12240");
+        let a4 = markdown_docx("Body.\n", Some(r#"{"page":"a4"}"#.into()), None).unwrap();
+        assert_eq!(page_width(&a4), "11906");
+        assert_eq!(
+            page_width(&markdown_docx("Body.\n", Some("{}".into()), None).unwrap()),
+            "12240"
+        );
+    }
+
+    #[test]
+    fn markdown_options_set_the_owner_and_resolve_the_changes() {
+        const DRAFT: &str = "Payment is due in {~~30~>45~~} days.\n";
+        let kept = markdown_docx(
+            DRAFT,
+            Some(r#"{"author":"Legal","date":"2026-10-02T00:00:00Z"}"#.into()),
+            None,
+        )
+        .unwrap();
+        let xml = document_xml(&kept);
+        assert!(xml.contains("w:author=\"Legal\""), "{xml}");
+        assert!(xml.contains("w:date=\"2026-10-02T00:00:00Z\""), "{xml}");
+
+        for (options, text) in [
+            (
+                r#"{"track_changes":"accept"}"#,
+                "Payment is due in 45 days.",
+            ),
+            (r#"{"trackChanges":"reject"}"#, "Payment is due in 30 days."),
+            (
+                r#"{"critic":false}"#,
+                "Payment is due in {~~30~>45~~} days.",
+            ),
+        ] {
+            let docx = markdown_docx(DRAFT, Some(options.into()), None).unwrap();
+            let paragraphs = jubarte::inspect::paragraphs(&docx).unwrap();
+            assert_eq!(paragraphs[0].text, text, "{options}");
+        }
+    }
+
+    #[test]
+    fn a_reference_lends_its_page_and_bad_options_are_refused() {
+        let reference =
+            markdown_docx("Template.\n", Some(r#"{"page":"a4"}"#.into()), None).unwrap();
+        let docx = markdown_docx("Body.\n", None, Some(reference)).unwrap();
+        assert_eq!(page_width(&docx), "11906");
+        for bad in [
+            r#"{"page":"legal"}"#,
+            r#"{"track_changes":"keep"}"#,
+            r#"{"pages":"a4"}"#,
+            "{",
+        ] {
+            assert!(
+                markdown_docx("Body.\n", Some(bad.into()), None).is_err(),
+                "{bad}"
+            );
+        }
     }
 }

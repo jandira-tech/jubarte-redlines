@@ -321,3 +321,85 @@ fn order_tables_export_is_nonempty() {
         assert!(ranks.insert(*n, *r).is_none(), "duplicate pPr name {n}");
     }
 }
+
+/// The schema's `CT_Settings` children as `(namespace URI, local name)`, in
+/// sequence order (`w14:docId` and `w15:docId` are two entries).
+fn settings_schema_order(schema: &Value) -> Vec<(String, String)> {
+    fn walk(p: &Value, out: &mut Vec<(String, String)>) {
+        let kind = p.get("Kind").and_then(|k| k.as_str()).unwrap_or("");
+        if let Some(name) = p.get("Name").and_then(|n| n.as_str())
+            && matches!(kind, "Element" | "")
+        {
+            let qualified = name.rsplit_once('/').map_or(name, |(_, q)| q);
+            let (prefix, local) = qualified.split_once(':').expect("prefixed name");
+            let ns = match prefix {
+                "w" => "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+                "m" => "http://schemas.openxmlformats.org/officeDocument/2006/math",
+                "sl" => "http://schemas.openxmlformats.org/schemaLibrary/2006/main",
+                "w14" => "http://schemas.microsoft.com/office/word/2010/wordml",
+                "w15" => "http://schemas.microsoft.com/office/word/2012/wordml",
+                other => panic!("unexpected prefix {other} in CT_Settings"),
+            };
+            out.push((ns.to_string(), local.to_string()));
+        }
+        for item in p
+            .get("Items")
+            .and_then(|i| i.as_array())
+            .into_iter()
+            .flatten()
+        {
+            walk(item, out);
+        }
+    }
+    let particle = find_type_particle(schema, "w:CT_Settings/w:settings")
+        .expect("CT_Settings particle in schema");
+    let mut out = Vec::new();
+    walk(particle, &mut out);
+    out
+}
+
+/// The first place `hand` and the schema disagree, if any.
+fn settings_order_mismatch(hand: &[(&str, &str)], schema: &[(String, String)]) -> Option<String> {
+    let hand: Vec<(String, String)> = hand
+        .iter()
+        .map(|&(ns, local)| (ns.to_string(), local.to_string()))
+        .collect();
+    if hand == schema {
+        return None;
+    }
+    let at = hand
+        .iter()
+        .zip(schema)
+        .position(|(h, s)| h != s)
+        .unwrap_or(hand.len().min(schema.len()));
+    Some(format!(
+        "settings order differs at {at}: hand {:?}, schema {:?} ({} vs {} entries)",
+        hand.get(at),
+        schema.get(at),
+        hand.len(),
+        schema.len()
+    ))
+}
+
+#[test]
+fn settings_order_is_the_schema_sequence() {
+    let raw = std::fs::read_to_string(schema_path()).expect("wml_main_schema.json present");
+    let schema: Value = serde_json::from_str(&raw).expect("valid JSON");
+    let order = settings_schema_order(&schema);
+    assert_eq!(order.len(), 103);
+    if let Some(mismatch) = settings_order_mismatch(jubarte::settings::SETTINGS_ORDER, &order) {
+        panic!("{mismatch}");
+    }
+    // The check bites: two entries swapped are caught.
+    let mut swapped = jubarte::settings::SETTINGS_ORDER.to_vec();
+    let track = swapped
+        .iter()
+        .position(|&(_, l)| l == "trackRevisions")
+        .unwrap();
+    let protect = swapped
+        .iter()
+        .position(|&(_, l)| l == "documentProtection")
+        .unwrap();
+    swapped.swap(track, protect);
+    assert!(settings_order_mismatch(&swapped, &order).is_some());
+}

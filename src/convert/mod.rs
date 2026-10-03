@@ -21,7 +21,7 @@ mod raster;
 mod word_subst;
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -125,9 +125,11 @@ pub struct RevisionPalette {
 }
 
 impl RevisionPalette {
-    /// The legal-redline convention: deletions red and struck through,
-    /// insertions blue with a double underline, moved text green (struck
-    /// through where it left, double-underlined where it landed).
+    /// The legal-redline convention, as Litera Compare sets Word's track
+    /// changes: an insertion or deletion is marked once (blue underline, red
+    /// strike) and a move twice, in green (double strike where it left,
+    /// double underline where it landed), so a move never reads as an
+    /// insertion by its colour alone.
     pub const CONVENTIONAL: Self = Self {
         deleted: RevisionMark {
             color: [0xFF, 0x00, 0x00],
@@ -137,11 +139,11 @@ impl RevisionPalette {
         inserted: RevisionMark {
             color: [0x00, 0x00, 0xFF],
             strike: MarkLines::None,
-            underline: MarkLines::Double,
+            underline: MarkLines::Single,
         },
         moved_from: RevisionMark {
             color: [0x00, 0x80, 0x00],
-            strike: MarkLines::Single,
+            strike: MarkLines::Double,
             underline: MarkLines::None,
         },
         moved_to: RevisionMark {
@@ -487,12 +489,42 @@ pub fn docx_render_report(docx: &[u8], options: PdfOptions) -> Result<RenderRepo
     Ok(render(docx, options, RenderRequest::default())?.report)
 }
 
+/// What one layout pass learned about pages, for writing field results back
+/// into the package (`crate::fields`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct LayoutFacts {
+    /// Pages laid out (the `NUMPAGES` result).
+    pub(crate) page_count: usize,
+    /// Bookmark name to the page label a `PAGEREF` to it shows (the section's
+    /// number format and chapter prefix applied, so "iii" or "2-1").
+    pub(crate) bookmark_pages: BTreeMap<String, String>,
+}
+
+/// Lay `docx` out as the default convert does and report its page facts.
+pub(crate) fn layout_facts(docx: &[u8]) -> Result<LayoutFacts, ConvertError> {
+    let options = PdfOptions::default();
+    let previous = REVISIONS.with(|r| r.replace(options.revisions));
+    let result = with_layout(docx, |_, _, facts| facts.clone());
+    REVISIONS.with(|r| r.set(previous));
+    result
+}
+
 /// The shared layout pipeline: open, resolve fonts, lay out, then hand the
 /// pages to `emit`.
 fn with_pages<T>(
     docx: &[u8],
     emit: impl FnOnce(&Fonts, &[pdf::Page]) -> T,
 ) -> Result<T, ConvertError> {
+    with_layout(docx, |fonts, pages, _| emit(fonts, pages))
+}
+
+/// [`with_pages`] that also hands `emit` the layout's page facts.
+fn with_layout<T>(
+    docx: &[u8],
+    emit: impl FnOnce(&Fonts, &[pdf::Page], &LayoutFacts) -> T,
+) -> Result<T, ConvertError> {
+    crate::document_comparer::admit_package(docx)
+        .map_err(|err| ConvertError::OpenPackage(err.to_string()))?;
     let normalized = crate::strict_translation::strict_to_transitional_docx(docx);
     let pkg =
         PartFs::open(&normalized).map_err(|err| ConvertError::OpenPackage(format!("{err:?}")))?;
@@ -627,8 +659,9 @@ fn with_pages<T>(
                 notes: load_footnotes(&pkg, &main, &sheet),
                 display,
             };
-            let pages = layout(&fonts, &page, &hf, &blocks, compat_mode, footnotes);
-            Ok(emit(&fonts, &pages))
+            let (pages, facts) =
+                layout_with_facts(&fonts, &page, &hf, &blocks, compat_mode, footnotes);
+            Ok(emit(&fonts, &pages, &facts))
         })
     })
 }
@@ -1125,6 +1158,8 @@ struct NamedStyle {
     /// (019d92d9 Bulleted 270/270 over 360/360; 0005cabe Lista1 left=426
     /// alone keeps the level's hanging 360).
     sets_ind: (bool, bool),
+    /// The style chain itself sets `w:jc`.
+    sets_jc: bool,
     /// The style chain itself sets spacing after / before / line. What it
     /// leaves unset comes from docDefaults (or Normal, when the chain runs
     /// through it) and gives way to a table style's pPr in a cell.
@@ -1230,6 +1265,9 @@ struct TblStyle {
     /// The table style's own pPr sets before/after; otherwise cells keep
     /// the default paragraph style's (010902b5's ListTable3: 6pt each).
     sets_space: bool,
+    /// The table style's own pPr sets `w:ind` left / `w:jc`: they reach
+    /// every cell paragraph whose style chain leaves them unset.
+    sets_ind_jc: (bool, bool),
     /// Below compatibility mode 15, the run size an unstyled cell paragraph
     /// takes: the table style's own `w:sz`, else docDefaults', never
     /// Normal's (00004116). `None` in mode 15, where Normal's wins.
@@ -1328,6 +1366,9 @@ struct Defaults {
     /// The default paragraph style's own chain sets (size, font): a table
     /// style's run size / font then yields to it in unstyled cells.
     normal_run: (bool, bool),
+    /// The default paragraph style's chain sets (ind left, jc): a table
+    /// style's own then yields to it in unstyled cells.
+    normal_ind_jc: (bool, bool),
 }
 
 impl Defaults {
@@ -1452,6 +1493,7 @@ impl Defaults {
             punct_squeeze: false,
             normal_spacing: [false; 3],
             normal_run: (false, false),
+            normal_ind_jc: (false, false),
         }
     }
 }
@@ -1608,6 +1650,10 @@ enum Block {
     PageBreak {
         next: Option<Box<SectionChrome>>,
         manual: bool,
+        /// The space after of the blank paragraph that carried this
+        /// section break, which takes no line but still credits the next
+        /// page's space before.
+        mark_after: Option<f32>,
     },
     /// `w:br type=column` — next newspaper column on this page (xml leftover).
     ColumnBreak,
@@ -1685,6 +1731,10 @@ struct TableGeom {
     /// A legacy document's pct table width spans the text plus these
     /// (the table's left + right cell margins); 0 in compatibilityMode 15.
     pct_margins: f32,
+    /// compatibilityMode 15: half the first row's outer left and right
+    /// rules, which a pct table's columns give up so its rim stays at the
+    /// pct width (Word 16 probe pct3, 2026-10-02).
+    pct_rules: f32,
     /// An autofit table whose tblGrid another tool wrote (`gridCol`
     /// carries a `w:type`, which Word never writes): Word fits the columns
     /// to their content on open (PHPWord's 00046848 label column).
@@ -3054,7 +3104,8 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
             default_table: false,
         };
     };
-    let xml = if settings_link_styles(pkg) {
+    let linked = settings_link_styles(pkg);
+    let xml = if linked {
         link_template_styles(&xml)
     } else {
         xml
@@ -3228,6 +3279,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
             hit
         };
         let sets_size = chain_sets("sz", false);
+        let sets_jc = chain_sets("jc", true);
         let hidden = {
             let mut cur = Some(id.as_str());
             let mut on = None;
@@ -3311,6 +3363,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
                 sets_size,
                 sets_family,
                 sets_ind,
+                sets_jc,
                 sets_spacing,
                 not_para: style_not_para,
                 frame,
@@ -3339,7 +3392,10 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
         // paras with no pStyle. sd_2517 Normal is after=0; docDefaults is 200.
         defaults.para = named.para.clone();
         defaults.run = named.run.clone();
-        defaults.normal_run = (named.sets_size, named.sets_family);
+        // The template's Normal is empty: its 12pt is a docDefault, which
+        // a table style's size beats in cells (probe tsn c15l).
+        defaults.normal_run = (named.sets_size && !linked, named.sets_family);
+        defaults.normal_ind_jc = (named.sets_ind.0, named.sets_jc);
     }
     // Below compatibilityMode 15 an unstyled cell takes the table style's
     // size (its own w:sz, else docDefaults', else the OOXML 10pt) unless
@@ -3443,10 +3499,23 @@ fn parse_tbl_style(dom: &Dom, style: NodeId, defaults: &Defaults, theme: &ThemeF
             run.family
         })
         .filter(|f| !f.is_empty());
+    let sets_ind_jc = dom
+        .element(style, &W::p_pr())
+        .map_or((false, false), |ppr| {
+            (
+                first_named(dom, ppr, "ind").is_some_and(|ind| {
+                    attr_any(dom, ind, "left")
+                        .or_else(|| attr_any(dom, ind, "start"))
+                        .is_some()
+                }),
+                first_named(dom, ppr, "jc").is_some(),
+            )
+        });
     let mut out = TblStyle {
         para,
         sets_line,
         sets_space,
+        sets_ind_jc,
         run_size,
         own_size: run_size,
         run_family,
@@ -6670,57 +6739,54 @@ fn settings_link_styles(pkg: &PartFs) -> bool {
     })
 }
 
-/// The stock Normal.dotm's docDefaults: theme minor font, 12pt, kern 1pt,
-/// after=160, line=278.
-const TEMPLATE_DOC_DEFAULTS: &str = "<w:docDefaults><w:rPrDefault><w:rPr>\
-    <w:rFonts w:asciiTheme=\"minorHAnsi\" w:eastAsiaTheme=\"minorHAnsi\" w:hAnsiTheme=\"minorHAnsi\" w:cstheme=\"minorBidi\"/>\
+/// The stock Normal.dotm's Normal as Word resolves it over the template's
+/// docDefaults: theme minor font, 12pt, kern 1pt, after=160, line=278.
+const TEMPLATE_NORMAL: &str = "<w:name w:val=\"Normal\"/><w:qFormat/>\
+    <w:pPr><w:spacing w:after=\"160\" w:line=\"278\" w:lineRule=\"auto\"/></w:pPr>\
+    <w:rPr><w:rFonts w:asciiTheme=\"minorHAnsi\" w:eastAsiaTheme=\"minorHAnsi\" w:hAnsiTheme=\"minorHAnsi\" w:cstheme=\"minorBidi\"/>\
     <w:kern w:val=\"2\"/><w:sz w:val=\"24\"/><w:szCs w:val=\"24\"/>\
-    <w:lang w:val=\"en-US\" w:eastAsia=\"en-US\" w:bidi=\"ar-SA\"/></w:rPr></w:rPrDefault>\
-    <w:pPrDefault><w:pPr><w:spacing w:after=\"160\" w:line=\"278\" w:lineRule=\"auto\"/></w:pPr>\
-    </w:pPrDefault></w:docDefaults>";
+    <w:lang w:val=\"en-US\" w:eastAsia=\"en-US\" w:bidi=\"ar-SA\"/></w:rPr>";
 
 /// styles.xml as Word sees it after `w:linkStyles` pulled in the stock
 /// Normal.dotm (en a 9b100bdc: 12pt on 16pt lines, not the file's 11pt on
-/// 259): its docDefaults, and an empty default paragraph style. The
-/// template's other styles (Default Paragraph Font, Normal Table, No List)
-/// are Word's built-in ones already.
+/// 259). Only the default paragraph style is replaced: a style off its
+/// chain (12d245d664's "Default", no basedOn) keeps the file's own
+/// docDefaults (Word 16 probe lnk l1, 2026-10-02: 10pt single either
+/// way). The template's other styles (Default Paragraph Font, Normal
+/// Table, No List) are Word's built-in ones already.
 fn link_template_styles(xml: &str) -> String {
     let mut out = xml.to_string();
-    if let Some(start) = out.find("<w:docDefaults") {
-        let end = if out[start..].starts_with("<w:docDefaults/>") {
-            Some(start + "<w:docDefaults/>".len())
-        } else {
-            out[start..]
-                .find("</w:docDefaults>")
-                .map(|e| start + e + "</w:docDefaults>".len())
-        };
-        if let Some(end) = end {
-            out.replace_range(start..end, TEMPLATE_DOC_DEFAULTS);
-        }
-    } else if let Some(open) = out.find("<w:styles")
-        && let Some(gt) = out[open..].find('>')
-    {
-        out.insert_str(open + gt + 1, TEMPLATE_DOC_DEFAULTS);
-    }
     let mut from = 0;
     while let Some(at) = out[from..].find("<w:style ").map(|i| from + i) {
         let Some(tag_end) = out[at..].find('>').map(|i| at + i) else {
             break;
         };
-        let tag = &out[at..=tag_end];
+        let tag = out[at..=tag_end].to_string();
         let normal = tag.contains("w:type=\"paragraph\"") && tag.contains("w:default=\"1\"");
-        let Some(end) = out[at..]
-            .find("</w:style>")
-            .map(|i| at + i + "</w:style>".len())
-        else {
+        let end = if tag.ends_with("/>") {
+            Some(tag_end + 1)
+        } else {
+            out[at..]
+                .find("</w:style>")
+                .map(|i| at + i + "</w:style>".len())
+        };
+        let Some(end) = end else {
             break;
         };
-        if normal && !tag.ends_with("/>") {
-            let empty = format!("{tag}<w:name w:val=\"Normal\"/><w:qFormat/></w:style>");
-            out.replace_range(at..end, &empty);
-            break;
+        if normal {
+            let open = tag.trim_end_matches("/>").trim_end_matches('>');
+            out.replace_range(at..end, &format!("{open}>{TEMPLATE_NORMAL}</w:style>"));
+            return out;
         }
         from = end;
+    }
+    if let Some(close) = out.rfind("</w:styles>") {
+        out.insert_str(
+            close,
+            &format!(
+                "<w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">{TEMPLATE_NORMAL}</w:style>"
+            ),
+        );
     }
     out
 }
@@ -7715,6 +7781,7 @@ fn walk_container(
                 blocks.push(Block::PageBreak {
                     next: None,
                     manual: false,
+                    mark_after: None,
                 });
             }
             let page_br = para_has_page_break(dom, child);
@@ -7809,6 +7876,7 @@ fn walk_container(
                     Block::PageBreak {
                         next: None,
                         manual: true,
+                        mark_after: None,
                     }
                 });
             }
@@ -7847,6 +7915,13 @@ fn walk_container(
             // down; at the top of a later page it is none again).
             let sect_mark = sect_here.is_some_and(|s| !is_final_sect(ctx.sects, s))
                 && !(blocks.is_empty() && !page_br && !column_br);
+            // A blank mark dropped below still credits its space after to
+            // the next page (probe sb: a heading after a table and an
+            // after=8 mark opens 10pt down, not 18).
+            let mark_after = match &block {
+                Block::Paragraph { style, .. } if blank && sect_mark => Some(style.after),
+                _ => None,
+            };
             if !blank || (!page_br && !sect_br && !column_br && !sect_mark) {
                 blocks.push(block);
             } else if (column_br || (page_br && sect_here.is_none()))
@@ -7890,6 +7965,7 @@ fn walk_container(
                 blocks.push(Block::PageBreak {
                     next,
                     manual: page_br,
+                    mark_after,
                 });
             } else if column_br {
                 blocks.push(Block::ColumnBreak);
@@ -7951,6 +8027,7 @@ fn walk_container(
                 blocks.push(Block::PageBreak {
                     next: None,
                     manual: false,
+                    mark_after: None,
                 });
             }
             walk_container(ctx, dom, content, numbering, blocks, endnotes);
@@ -7962,6 +8039,7 @@ fn walk_container(
                 blocks.push(Block::PageBreak {
                     next,
                     manual: false,
+                    mark_after: None,
                 });
             }
         }
@@ -8912,7 +8990,7 @@ fn table_col_widths(cols: &[f32], geom: &TableGeom, avail: f32) -> Vec<f32> {
         // Checked in Word on 00587c73: a legacy 100% table is the text
         // width plus its cell margins (452.9pt on 441.9pt); mode 15 is the
         // text width.
-        TblWidth::Pct(p) => (avail + geom.pct_margins) * p,
+        TblWidth::Pct(p) => (avail + geom.pct_margins) * p - geom.pct_rules,
     }
     .max(0.0);
     // The same holds for pct: 005e8d94's 98.98% table keeps its grid
@@ -9865,11 +9943,29 @@ fn keep_table_spacing_unset_by_style(
     }
 }
 
+/// The table style's own `w:ind` left and `w:jc` reach a cell paragraph
+/// whose style chain sets neither (Word 16 probes tsp t1-t3, 2026-10-02:
+/// 12d245d664's Table Grid ind left=720 jc=both indents and justifies
+/// unstyled, Normal and basedOn-less "Default" cells alike, in compat 14
+/// and 15, with or without overrideTableStyleFontSizeAndJustification).
+/// Direct pPr, applied later, still wins.
+fn take_table_ind_jc(pstyle: &mut ParaStyle, table: &TableParaSpacing, style_sets: (bool, bool)) {
+    let (table_ind, table_jc) = table.sets_ind_jc;
+    if table_ind && !style_sets.0 {
+        pstyle.indent_left = table.para.indent_left;
+    }
+    if table_jc && !style_sets.1 {
+        pstyle.align = table.para.align;
+    }
+}
+
 /// A cell's table-style paragraph properties, and whether the table style
 /// itself sets its spacing / line (else they stand in for Normal's).
 struct TableParaSpacing<'a> {
     para: &'a ParaStyle,
     sets: [bool; 2],
+    /// The table style sets its own ind left / jc (`TblStyle::sets_ind_jc`).
+    sets_ind_jc: (bool, bool),
 }
 
 fn para_base(
@@ -9903,6 +9999,10 @@ fn para_base(
             pstyle.line_at_least = t.line_at_least;
         }
     }
+    if let Some(t) = table_spacing {
+        let (own_ind, own_jc) = sheet.defaults.normal_ind_jc;
+        take_table_ind_jc(&mut pstyle, t, (own_ind, own_jc));
+    }
     if let Some(ppr) = dom.element(para, &W::p_pr())
         && let Some(ps) = first_named(dom, ppr, "pStyle")
         && let Some(sid) = dom.attribute(ps, &W::val())
@@ -9916,6 +10016,7 @@ fn para_base(
             rstyle = named.run.clone();
             if let Some(t) = table_spacing {
                 keep_table_spacing_unset_by_style(&mut pstyle, t, named.sets_spacing);
+                take_table_ind_jc(&mut pstyle, t, (named.sets_ind.0, named.sets_jc));
             }
         } else {
             // Word still applies latent built-in heading spacing when the
@@ -11697,6 +11798,7 @@ fn table_block(
                     sets: tdef
                         .as_ref()
                         .map_or([false; 2], |t| [t.sets_space, t.sets_line]),
+                    sets_ind_jc: tdef.as_ref().map_or((false, false), |t| t.sets_ind_jc),
                 };
                 let (mut pstyle, mut r) = para_base(dom, child, sheet, Some(&table_spacing));
                 // An explicit table style's size beats the default paragraph
@@ -12148,11 +12250,23 @@ fn table_block(
             ]
         });
     let centred = matches!(tstyle.align, Align::Center);
+    let table_borders = direct_borders.or_else(|| tdef.and_then(|t| t.borders).map(mirror));
+    // Word 15 keeps a cell's text half its side rules in when they outgrow
+    // its margins, right as left, and wraps it there (probe zm: no margins,
+    // 3pt rules end the first cell's justified lines 1.23pt sooner and
+    // narrow them 4.35pt). The table's pull above keeps the bare margin.
+    if !sheet.defaults.legacy_compat {
+        let ncols = cols.len();
+        for cell in rows.iter_mut().flatten() {
+            cell.pad_l = cell.pad_l.max(cell_left_rule(cell, table_borders) * 0.5);
+            cell.pad_r = cell
+                .pad_r
+                .max(cell_right_rule(cell, table_borders, ncols) * 0.5);
+        }
+    }
     Block::Table {
-        cols,
-        rows,
         style: tstyle,
-        borders: direct_borders.or_else(|| tdef.and_then(|t| t.borders).map(mirror)),
+        borders: table_borders,
         geom: {
             Box::new(TableGeom {
                 row_min,
@@ -12189,12 +12303,28 @@ fn table_block(
                 } else {
                     0.0
                 },
+                pct_rules: if sheet.defaults.legacy_compat {
+                    0.0
+                } else {
+                    rows.first().map_or(0.0, |row| {
+                        let left = row
+                            .first()
+                            .map_or(0.0, |c| cell_left_rule(c, table_borders));
+                        let right = row
+                            .last()
+                            .map_or(0.0, |c| cell_right_rule(c, table_borders, cols.len()));
+                        (left + right) * 0.5
+                    })
+                },
                 content_autofit: !fixed
                     && matches!(table_pref_width(dom, table), TblWidth::Grid)
                     && foreign_grid,
                 cell_spacing: tbl_spacing,
             })
         },
+        // Moved last: the geometry above reads them.
+        cols,
+        rows,
     }
 }
 
@@ -16390,11 +16520,12 @@ fn collect_images(
                 if vml_washout(dom, im) {
                     kind = washed_out(kind);
                 }
+                let slot = vml_owner_slot(dom, im, root).unwrap_or(ImageSlot::Flow);
                 out.push(LaidImage {
                     w,
                     h,
                     kind,
-                    slot: vml_owner_slot(dom, im, root).unwrap_or(ImageSlot::Flow),
+                    slot,
                     behind: false,
                     z: 0,
                     crop: vml_crop(dom, im),
@@ -16419,7 +16550,14 @@ fn collect_images(
                     gap_before: 0.0,
                     lead_chars: 0,
                     after_text: false,
-                    under: None,
+                    // An inserted or underlined w:pict / w:object keeps its
+                    // run's descent under it, as a DrawingML picture does
+                    // (Word 16 probes vo, 2026-10-02).
+                    under: if matches!(slot, ImageSlot::Flow) {
+                        run_style(root).filter(|run| run.underline)
+                    } else {
+                        None
+                    },
                 });
             }
             for line in descendants_local(dom, root, "line") {
@@ -17803,6 +17941,19 @@ fn inset_box(img: &LaidImage, x: f32, y: f32, dw: f32, dh: f32) -> (f32, f32, f3
 
 /// The width of the rule on a cell's left edge: its own left border, else
 /// the table's left (first column) or insideV rule; 0 when none paints.
+/// The width of a cell's right rule: its own `tcBorders`, else the
+/// table's right rim (last column) or inside rule.
+fn cell_right_rule(cell: &TableCell, borders: Option<TblBorders>, ncols: usize) -> f32 {
+    if let Some(cb) = cell.borders {
+        return cb.right.map_or(0.0, |(_, w)| w);
+    }
+    match borders {
+        Some(b) if cell.col + cell.colspan.max(1) >= ncols && b.right => b.outer_width.max(0.24),
+        Some(b) if cell.col + cell.colspan.max(1) < ncols && b.inside_v => b.width.max(0.24),
+        _ => 0.0,
+    }
+}
+
 fn cell_left_rule(cell: &TableCell, borders: Option<TblBorders>) -> f32 {
     if let Some(cb) = cell.borders {
         return cb.left.map_or(0.0, |(_, w)| w);
@@ -19751,7 +19902,16 @@ fn hf_wrap_tab_pieces(fonts: &Fonts, pieces: Vec<Vec<TextRun>>, width: f32) -> V
             squeeze: Squeeze::NONE,
         };
         let right = width - para.indent_right;
-        if hf_tab_piece_end(fonts, &piece, &para, first_start) <= right + 0.5 {
+        // Text that ends on a right stop past the margin stays on its line
+        // (Word 16 probes tabh: compat 15 lands it on the margin, legacy
+        // layout on the stop; the stock Header style's 9360 right tab
+        // under margins wider than 1in).
+        let room = para
+            .tab_stops
+            .iter()
+            .filter(|t| t.align == TabAlign::Right)
+            .fold(right, |room, t| room.max(t.pos));
+        if hf_tab_piece_end(fonts, &piece, &para, first_start) <= room + 0.5 {
             out.push(piece);
             continue;
         }
@@ -21677,6 +21837,24 @@ impl<'a> Layout<'a> {
         });
     }
 
+    /// A paragraph's tab stops where this layout lands them: from
+    /// compatibilityMode 15 a right stop past the line's right edge lands
+    /// on it (Word 16 probes tab, 2026-10-02: 8820, 9000 and 9360 twips
+    /// all end on a 441pt-wide body's margin; legacy layout keeps 9360).
+    fn landed_tab_stops(&self, stops: &[TabStop]) -> Vec<TabStop> {
+        let right = self.content_width();
+        stops
+            .iter()
+            .map(|&stop| {
+                if self.compat_mode >= 15 && stop.align == TabAlign::Right && stop.pos > right {
+                    TabStop { pos: right, ..stop }
+                } else {
+                    stop
+                }
+            })
+            .collect()
+    }
+
     fn flow_left(&self) -> f32 {
         if self.page.col_count <= 1 {
             self.page.margin_l
@@ -22446,7 +22624,7 @@ impl<'a> Layout<'a> {
         self.note_chapter_heading(style);
         self.last_style_id.clone_from(&style.style_id);
         self.page_has_body = true;
-        self.tab_stops.clone_from(&style.tab_stops);
+        self.tab_stops = self.landed_tab_stops(&style.tab_stops);
         // A hanging indent is an implicit left tab stop at the indent
         // (00b7801e: "Monday 7/22<tab>" lands on the wrapped lines' edge).
         if style.indent_first < 0.0
@@ -23410,7 +23588,8 @@ impl<'a> Layout<'a> {
         let indent = style.indent_left + if list { 18.0 } else { 0.0 };
         let width = (self.content_width() - indent - style.indent_right).max(40.0);
         // Measured with the follower's own tab stops.
-        let stops = std::mem::replace(&mut self.tab_stops, style.tab_stops.clone());
+        let landed = self.landed_tab_stops(&style.tab_stops);
+        let stops = std::mem::replace(&mut self.tab_stops, landed);
         let n = self
             .wrap_para_runs(body, style, indent, marker.is_some(), width, list)
             .0
@@ -23749,20 +23928,19 @@ impl<'a> Layout<'a> {
         if dw < 0.4 {
             return;
         }
-        let pad = dw * 0.35;
-        // Word TOC right-tab leaves a space before the PAGEREF
-        // (`...... 1-3`). Ending at dest-0.35em jammed sd_2517 1-3.
-        let trail = pad + face.width_pt(" ", size);
-        let span = x1 - x0 - pad - trail;
-        if span < dw {
+        // Word lays the marks in cells one mark wide, counted from the
+        // page's left edge: the first whole cell past the text up to the
+        // last that ends by the stop (Word 16 probes dots, 2026-10-02: TNR
+        // 12 after "A" ending 99.14 fills 102..339 before a 340.5 stop;
+        // 11pt cells of 2.75 start at 99 under a 90pt margin).
+        let first = (x0 / dw - 0.001).ceil();
+        let last = (x1 / dw + 0.001).floor();
+        if last <= first {
             return;
         }
-        let n = (span / dw).floor() as usize;
-        if n == 0 {
-            return;
-        }
+        let n = (last - first) as usize;
         let fill = TextRun::new(mark.repeat(n), style.clone());
-        self.paint_run(&fill, x0 + pad, y);
+        self.paint_run(&fill, first * dw, y);
     }
 
     fn decimal_prefix_width(&self, rest_of_run: &str, run: &TextRun, following: &[TextRun]) -> f32 {
@@ -24823,7 +25001,8 @@ impl<'a> Layout<'a> {
                     left -= take.chars().count();
                     prefix.push(run.with_text(take));
                 }
-                let stops = std::mem::replace(&mut self.tab_stops, style.tab_stops.clone());
+                let landed = self.landed_tab_stops(&style.tab_stops);
+                let stops = std::mem::replace(&mut self.tab_stops, landed);
                 let x0 = self.page.margin_l + style.indent_left;
                 let w = self.tab_line_width(&prefix, x0);
                 self.tab_stops = stops;
@@ -27459,6 +27638,15 @@ impl<'a> Layout<'a> {
                         cell.pad_l
                     };
                     let pad_r = cell.pad_r;
+                    // The grid sits half the table's left rule in: a
+                    // cell's text box moves with it and keeps its width
+                    // (Word 16 probe pct3 d24: a 3pt rule moves the first
+                    // cell's justified line end 1.45pt right).
+                    let grid_lead = if self.compat_mode >= 15 {
+                        half_rule
+                    } else {
+                        0.0
+                    };
                     let wrap_w = cell_wrap_width(cell, w);
                     let mut para_lines: Vec<LaidCellPara> = Vec::new();
                     let mut para_narrow = Vec::new();
@@ -27480,6 +27668,11 @@ impl<'a> Layout<'a> {
                             color: fill,
                         });
                     }
+                    // Word paints a cell's shading under its rules: the
+                    // per-line fills below go in here, before the strokes,
+                    // so they never cover the row's top rule (12d245d664's
+                    // header rows lost theirs at screen resolutions).
+                    let mut under_rules = (self.pages.len(), self.current().ops.len());
                     let last_row = ri + cell.rowspan.max(1) >= work.len()
                         || matches!(work[ri].0, RowSrc::Head(_));
                     let last_col = cell.col + cell.colspan >= col_w.len();
@@ -27549,7 +27742,7 @@ impl<'a> Layout<'a> {
                         }
                         y_line -= para.style.before;
                         for box_ in &para.boxes {
-                            let inner = (w - pad_l - pad_r).max(0.0);
+                            let inner = (w + grid_lead - pad_l - pad_r).max(0.0);
                             self.emit_cell_box(box_, x + pad_l, inner, y_line, para.style.before);
                         }
                         let lead = cell_lead_picture(para);
@@ -27575,7 +27768,7 @@ impl<'a> Layout<'a> {
                             let (dw, dh) = cell_image_wh(img);
                             let (align, col_x, drop, room) =
                                 cell_image_place(img, para.style.align);
-                            let inner = (w - pad_l - pad_r).max(0.0);
+                            let inner = (w + grid_lead - pad_l - pad_r).max(0.0);
                             let extra = col_x.unwrap_or(match align {
                                 Align::Center => ((inner - dw) / 2.0).max(0.0),
                                 Align::Right => (inner - dw).max(0.0),
@@ -27648,7 +27841,7 @@ impl<'a> Layout<'a> {
                             if !joined_below
                                 && let Some((color, width)) = line.iter().find_map(|r| r.rule)
                             {
-                                let inner_w = (w - pad_l - pad_r).max(1.0);
+                                let inner_w = (w + grid_lead - pad_l - pad_r).max(1.0);
                                 self.current().ops.push(Op::FillRect {
                                     x: x + pad_l,
                                     y: ty,
@@ -27662,19 +27855,25 @@ impl<'a> Layout<'a> {
                                 continue;
                             }
                             if let Some(fill) = cell.fill {
-                                let inner_w = (w - pad_l - pad_r).max(1.0);
+                                let inner_w = (w + grid_lead - pad_l - pad_r).max(1.0);
                                 let (iy, ih) = if one_line && inset == 0.0 && cell.style_fill {
                                     (bottom, h)
                                 } else {
                                     (y_line - line_box, line_box)
                                 };
-                                self.current().ops.push(Op::FillRect {
+                                let op = Op::FillRect {
                                     x: x + pad_l,
                                     y: iy,
                                     w: inner_w,
                                     h: ih,
                                     color: fill,
-                                });
+                                };
+                                if under_rules.0 == self.pages.len() {
+                                    self.current().ops.insert(under_rules.1, op);
+                                    under_rules.1 += 1;
+                                } else {
+                                    self.current().ops.push(op);
+                                }
                             }
                             // Aligned on its ink: the space a wrapped line
                             // broke after does not count (0005052e "Sıra ").
@@ -27703,7 +27902,8 @@ impl<'a> Layout<'a> {
                                 })
                                 .sum();
                             let inner =
-                                (w - pad_l - pad_r - ind_l - para.style.indent_right).max(0.0);
+                                (w + grid_lead - pad_l - pad_r - ind_l - para.style.indent_right)
+                                    .max(0.0);
                             // Each paragraph keeps its own jc (0005052e).
                             let extra = match para.style.align {
                                 Align::Center => ((inner - line_w) / 2.0).max(0.0),
@@ -27815,7 +28015,7 @@ impl<'a> Layout<'a> {
                             && !carried_rule
                             && let Some((color, width, space)) = para.style.border_bottom
                         {
-                            let inner_w = (w - pad_l - pad_r).max(1.0);
+                            let inner_w = (w + grid_lead - pad_l - pad_r).max(1.0);
                             self.hairline_h(
                                 x + pad_l,
                                 y_line - space,
@@ -27922,7 +28122,28 @@ impl<'a> Layout<'a> {
         if has_nested && !nested_broke && rh <= page_room * 1.05 {
             return;
         }
-        let tail_h = tail.iter().map(height).fold(0.0_f32, f32::max);
+        // The carried part opens under its own top rule, and the table's
+        // last row still closes on the bottom rule (Word 16 probe sp
+        // 2026-10-02: 3pt rules push the next row 2.88pt further down).
+        // An atLeast height holds again on the next page (probe trh: a
+        // 150pt row's two carried lines stand 150pt tall; 12d245d664's
+        // 175pt row keeps its height under the repeated header).
+        let last_row = ri + 1 == work.len();
+        let pads = tail
+            .iter()
+            .map(|c| c.pad_t + c.pad_b)
+            .fold(0.0_f32, f32::max);
+        let tail_h = tail
+            .iter()
+            .map(height)
+            .fold(0.0_f32, f32::max)
+            .max(min + pads)
+            + row_top_rule(row, geom, ri)
+            + if last_row {
+                split_bottom_rule(row, geom)
+            } else {
+                0.0
+            };
         // The head ends under its last line, not at the bottom margin
         // (Word 16 probes fb 2026-10-02: the cut part's rules stop at
         // 554.4 on a page whose body runs to 559.3). A cell with nothing
@@ -27944,7 +28165,7 @@ impl<'a> Layout<'a> {
             false,
             0.0,
         );
-        work.insert(ri + 1, (RowSrc::Owned(tail), tail_h, false, 0.0));
+        work.insert(ri + 1, (RowSrc::Owned(tail), tail_h, false, min));
     }
 
     /// A row's cells cut where `room` points run out: the heads, the
@@ -28098,7 +28319,13 @@ impl<'a> Layout<'a> {
             used += h;
             n += 1;
         }
-        if n == 0 || n >= lines.len() {
+        // Every line fitting means only the spacing after overran the page:
+        // Word still cuts, before the last line (Word 16 probe aft
+        // 2026-10-02: five 20pt lines + 4pt after in 101.5pt split 3 + 2).
+        if n >= lines.len() {
+            n = lines.len().saturating_sub(1);
+        }
+        if n == 0 {
             return None;
         }
         // From compat 15 the cut keeps two lines on each side, as in the
@@ -28359,7 +28586,7 @@ impl<'a> Layout<'a> {
             && !para.as_deref().is_some_and(ptab);
         if tabbed && matches!(align, Align::Left | Align::Justify) || aligned_tabs {
             let width = self.content_width();
-            let stops = para
+            let stops: Vec<TabStop> = para
                 .as_ref()
                 .map(|p| {
                     p.tab_stops
@@ -28378,7 +28605,8 @@ impl<'a> Layout<'a> {
                 })
                 .unwrap_or_default();
             let indent = para.as_ref().map_or(0.0, |p| hf_line_indent(p, runs));
-            let saved = std::mem::replace(&mut self.tab_stops, stops);
+            let landed = self.landed_tab_stops(&stops);
+            let saved = std::mem::replace(&mut self.tab_stops, landed);
             let x0 = self.page.margin_l + indent;
             let shift = if aligned_tabs {
                 let room = width - indent - para.as_ref().map_or(0.0, |p| p.indent_right);
@@ -30396,6 +30624,7 @@ fn wrap_runs_segment(
     lines
 }
 
+#[cfg(test)]
 fn layout(
     fonts: &Fonts,
     page: &PageSetup,
@@ -30404,6 +30633,17 @@ fn layout(
     compat_mode: u8,
     footnotes: FootnoteCatalog,
 ) -> Vec<Page> {
+    layout_with_facts(fonts, page, hf, blocks, compat_mode, footnotes).0
+}
+
+fn layout_with_facts(
+    fonts: &Fonts,
+    page: &PageSetup,
+    hf: &HfChrome,
+    blocks: &[Block],
+    compat_mode: u8,
+    footnotes: FootnoteCatalog,
+) -> (Vec<Page>, LayoutFacts) {
     let mut lay = Layout::new(fonts, *page, hf.clone(), compat_mode);
     lay.footnotes = footnotes;
     lay.known_bookmarks = document_bookmark_names(blocks);
@@ -31008,11 +31248,16 @@ fn layout(
                 }
                 lay.emit_table(cols, rows, style, *borders, geom);
             }
-            Block::PageBreak { next, manual } => {
-                lay.last_after = i
-                    .checked_sub(1)
-                    .and_then(|j| block_para_style(&blocks[j]))
-                    .map_or(0.0, |p| p.after);
+            Block::PageBreak {
+                next,
+                manual,
+                mark_after,
+            } => {
+                lay.last_after = mark_after.unwrap_or_else(|| {
+                    i.checked_sub(1)
+                        .and_then(|j| block_para_style(&blocks[j]))
+                        .map_or(0.0, |p| p.after)
+                });
                 lay.hard_page_break(next.as_deref(), *manual);
             }
             Block::ColumnBreak => lay.column_break(),
@@ -31042,7 +31287,13 @@ fn layout(
             p.ops.extend(ops);
         }
     }
-    lay.pages
+    let facts = LayoutFacts {
+        page_count: lay.pages.len(),
+        bookmark_pages: std::mem::take(&mut lay.bookmark_pages)
+            .into_iter()
+            .collect(),
+    };
+    (lay.pages, facts)
 }
 
 struct ConnectorCubic {
@@ -41661,6 +41912,7 @@ mod table_tests {
                 para,
                 sets_line: true,
                 sets_space: true,
+                sets_ind_jc: (false, false),
                 run_size: None,
                 own_size: None,
                 run_family: None,
@@ -42825,6 +43077,7 @@ mod regression_tests {
             keep_at_margin: false,
             rtl: false,
             pct_margins: 0.0,
+            pct_rules: 0.0,
             content_autofit: false,
             cell_spacing: 0.0,
         }

@@ -163,4 +163,4 @@ def test_locked_and_bad_choice_refusals_carry_codes() -> None:
 def test_capabilities_advertise_content_controls() -> None:
     caps = jubarte.capabilities()
     assert caps["operations"]["content_controls"] is True
-    assert caps["edit_operations"][-1] == "fill_control"
+    assert "fill_control" in caps["edit_operations"]

@@ -826,6 +826,27 @@ mod tests {
     }
 
     #[test]
+    fn a_decomposed_accent_is_part_of_the_word_replaced() {
+        // "cafe" + U+0301 and "the" + U+0301: one word replaced, not two
+        // words whose shared combining mark is left outside the change.
+        let (old, new) = ("Le cafe\u{301} est chaud.\n", "Le the\u{301} est chaud.\n");
+        assert_eq!(
+            diff_markdown(old, new),
+            "Le {~~cafe\u{301}~>the\u{301}~~} est chaud.\n"
+        );
+        // The same change in precomposed text reads alike.
+        assert_eq!(
+            diff_markdown("Le caf\u{e9} est chaud.\n", "Le th\u{e9} est chaud.\n"),
+            "Le {~~caf\u{e9}~>th\u{e9}~~} est chaud.\n"
+        );
+        // Only an accent added: the whole word changes, in either form.
+        assert_eq!(
+            words_diff("un cafe est", "un cafe\u{301} est"),
+            "un {~~cafe~>cafe\u{301}~~} est"
+        );
+    }
+
+    #[test]
     fn a_change_inside_a_number_is_the_whole_number() {
         for (old, new, expected) in [
             (

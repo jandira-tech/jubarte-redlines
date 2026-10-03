@@ -26,8 +26,11 @@ create_exception!(
     "Raised when the jubarte-redlines engine cannot process a document."
 );
 
+/// An engine error as `JubarteError`; an admission refusal reads code
+/// first (`LEGACY_DOC: …`, `INPUT_LIMIT: …`), whatever wrapped it.
 fn err(e: impl std::fmt::Display) -> PyErr {
-    JubarteError::new_err(e.to_string())
+    let message = e.to_string();
+    JubarteError::new_err(jubarte::admission::code_first(&message).unwrap_or(message))
 }
 
 fn pdf_options(
@@ -43,26 +46,49 @@ fn pdf_options(
     })
 }
 
+/// `WmlComparerSettings::default()` with `input_limits` (a dict such as
+/// `{"max_part_bytes": 67108864}`) laid over its compare budget. Unknown
+/// keys are refused.
+fn settings_with_limits(
+    input_limits: Option<std::collections::HashMap<String, u64>>,
+) -> PyResult<jubarte::comparer::WmlComparerSettings> {
+    let settings = jubarte::comparer::WmlComparerSettings::default();
+    let Some(limits) = input_limits else {
+        return Ok(settings);
+    };
+    let json = serde_json::to_string(&limits).map_err(err)?;
+    let overrides =
+        jubarte::admission::InputLimitOverrides::from_json(&json).map_err(JubarteError::new_err)?;
+    let base = settings.input_limits;
+    Ok(settings.with_input_limits(overrides.apply(base)))
+}
+
 /// Compare two DOCX packages (bytes) → redline DOCX bytes (`w:ins`/`w:del`).
 ///
 /// Mirrors `jubarte::document_comparer::compare_documents`; `date` (ISO-8601
 /// `w:date` stamp) defaults to the engine's fixed epoch for deterministic
-/// output.
+/// output. `input_limits` overrides the admission budget key by key
+/// (`max_compressed_bytes`, `max_entries`, `max_part_bytes`,
+/// `max_uncompressed_bytes`, `max_xml_depth`); a package past it raises
+/// `JubarteError` with `INPUT_LIMIT`.
 #[pyfunction]
-#[pyo3(signature = (original, modified, author = "jubarte", date = None))]
+#[pyo3(signature = (original, modified, author = "jubarte", date = None, *, input_limits = None))]
 fn compare_documents(
     py: Python<'_>,
     original: &[u8],
     modified: &[u8],
     author: &str,
     date: Option<&str>,
+    input_limits: Option<std::collections::HashMap<String, u64>>,
 ) -> PyResult<Py<PyBytes>> {
+    let settings = settings_with_limits(input_limits)?
+        .with_author(author)
+        .with_date(date.unwrap_or(jubarte::document_comparer::DEFAULT_DATE));
     let out = py
-        .detach(|| match date {
-            Some(d) => jubarte::document_comparer::compare_documents_with_options(
-                original, modified, author, d,
-            ),
-            None => jubarte::document_comparer::compare_documents(original, modified, author),
+        .detach(|| {
+            jubarte::document_comparer::compare_documents_with_settings(
+                original, modified, &settings,
+            )
         })
         .map_err(err)?;
     Ok(PyBytes::new(py, &out).unbind())
@@ -95,7 +121,7 @@ fn list_changes_json(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
         let changes = jubarte::changes::list_changes(docx).map_err(|e| e.to_string())?;
         serde_json::to_string(&changes).map_err(|e| e.to_string())
     })
-    .map_err(|e: String| JubarteError::new_err(e))
+    .map_err(|e: String| err(e))
 }
 
 /// Every comment as a JSON array (the objects `jubarte comments --json`
@@ -115,7 +141,7 @@ fn list_comments_json(
         let comments = jubarte::comments::select_comments(comments, author.as_deref(), latest);
         serde_json::to_string(&comments).map_err(|e| e.to_string())
     })
-    .map_err(|e: String| JubarteError::new_err(e))
+    .map_err(|e: String| err(e))
 }
 
 fn change_filter(filter_json: &str) -> PyResult<jubarte::changes::ChangeFilter> {
@@ -149,23 +175,30 @@ fn reject_changes(py: Python<'_>, docx: &[u8], filter_json: &str) -> PyResult<Py
 /// List the tracked revisions in a DOCX as a JSON array string — the same
 /// object shape as the CLI `jubarte revisions --json` lines
 /// (`type`/`author`/`date`/`part`/`moveGroupId`/`isMoveSource`/`formatChange`/`text`).
+/// `input_limits` as in `compare_documents`.
 #[pyfunction]
-fn get_revisions_json(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
+#[pyo3(signature = (docx, *, input_limits = None))]
+fn get_revisions_json(
+    py: Python<'_>,
+    docx: &[u8],
+    input_limits: Option<std::collections::HashMap<String, u64>>,
+) -> PyResult<String> {
+    let settings = settings_with_limits(input_limits)?;
     py.detach(|| {
-        let settings = jubarte::comparer::WmlComparerSettings::default();
         let revs = jubarte::document_comparer::get_revisions(docx, &settings)
             .map_err(|e| e.to_string())?;
         Ok(jubarte::document_comparer::revisions_to_json(&revs))
     })
-    .map_err(|e: String| JubarteError::new_err(e))
+    .map_err(|e: String| err(e))
 }
 
 /// Render a DOCX package (bytes) → PDF bytes (Word-style layout).
 ///
 /// `compress=True` deflates the PDF's streams (`/FlateDecode`), which is much
 /// smaller but no longer plain text. `revisions` paints tracked changes:
-/// `"conventional"` (red struck deletions, blue double-underlined insertions,
-/// green moves), `"word"` (Microsoft Word's markup) or `"custom"` with
+/// `"conventional"` (red struck deletions, blue underlined insertions, green
+/// moves double-struck and double-underlined), `"word"` (Microsoft Word's
+/// markup) or `"custom"` with
 /// `revision_palette="deleted=#AA0000:strike,..."`.
 #[pyfunction]
 #[pyo3(signature = (docx, compress = false, revisions = "conventional", revision_palette = None))]
@@ -329,7 +362,10 @@ fn diffed(patch: &jubarte::markdown::Patch, columns: usize) -> PyResult<Diffed> 
         .iter()
         .map(|h| serde_json::json!({"at": h.at.to_string(), "removed": h.removed, "text": h.text}))
         .collect();
-    Ok((patch.render(columns), serde_json::to_string(&hunks).map_err(err)?))
+    Ok((
+        patch.render(columns),
+        serde_json::to_string(&hunks).map_err(err)?,
+    ))
 }
 
 fn patch_options(
@@ -509,10 +545,169 @@ fn append_json(
     Ok((PyBytes::new(py, &out.docx).unbind(), warnings))
 }
 
+/// Word-validity findings beyond the schema as a JSON array (`code`,
+/// `part`, `path`, `message`, `word_fatal`, `repairable`); `[]` is a pass.
+/// Mirrors `jubarte::validate::validate`; a package that cannot be read at
+/// all raises.
+#[pyfunction]
+fn validate_json(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
+    py.detach(|| {
+        let findings = jubarte::validate::validate(docx).map_err(|e| e.to_string())?;
+        serde_json::to_string(&findings).map_err(|e| e.to_string())
+    })
+    .map_err(|e: String| err(e))
+}
+
+/// `repair_json`'s result: the repaired package and `{"repaired": [...],
+/// "remaining": [...]}` as JSON.
+type RepairOutcome = (Py<PyBytes>, String);
+
+/// The package with every repairable finding fixed, and the findings it
+/// fixed and could not fix. Mirrors `jubarte::validate::repair`.
+#[pyfunction]
+fn repair_json(py: Python<'_>, docx: &[u8]) -> PyResult<RepairOutcome> {
+    let repaired = py.detach(|| jubarte::validate::repair(docx)).map_err(err)?;
+    let json = serde_json::json!({
+        "repaired": repaired.repaired,
+        "remaining": repaired.remaining,
+    });
+    Ok((
+        PyBytes::new(py, &repaired.docx).unbind(),
+        serde_json::to_string(&json).map_err(err)?,
+    ))
+}
+
+/// Every text change from `original` to `edited` must be a revision by
+/// `author`: the residue after rejecting that author's changes is an
+/// `UNTRACKED_EDIT` finding per paragraph, and another author's change a
+/// `FOREIGN_AUTHOR` one, as a JSON array. Mirrors
+/// `jubarte::validate::audit_tracked`.
+#[pyfunction]
+fn audit_tracked_json(
+    py: Python<'_>,
+    original: &[u8],
+    edited: &[u8],
+    author: &str,
+) -> PyResult<String> {
+    py.detach(|| {
+        let findings = jubarte::validate::audit_tracked(original, edited, author)
+            .map_err(|e| e.to_string())?;
+        serde_json::to_string(&findings).map_err(|e| e.to_string())
+    })
+    .map_err(|e: String| err(e))
+}
+
+/// Refresh field results from jubarte's layout → `(docx, json)`; `json` is
+/// `{"page_count", "fields": [...]}`.
+#[pyfunction]
+fn update_fields(py: Python<'_>, docx: &[u8]) -> PyResult<(Py<PyBytes>, String)> {
+    let updated = py
+        .detach(|| jubarte::fields::update_fields(docx))
+        .map_err(err)?;
+    let report = serde_json::json!({
+        "page_count": updated.page_count,
+        "fields": updated.fields,
+    });
+    Ok((PyBytes::new(py, &updated.docx).unbind(), report.to_string()))
+}
+
+/// Remove the identifying data `options_json` names (`{"author_alias":
+/// "Author", "rsids": true, "docprops": true, "comments": true}`; a field
+/// left out is off) → DOCX bytes.
+#[pyfunction]
+fn scrub_json(py: Python<'_>, docx: &[u8], options_json: &str) -> PyResult<Py<PyBytes>> {
+    let options: jubarte::scrub::ScrubOptions = serde_json::from_str(options_json)
+        .map_err(|e| JubarteError::new_err(format!("invalid scrub options: {e}")))?;
+    let out = py
+        .detach(|| jubarte::scrub::scrub(docx, &options))
+        .map_err(err)?;
+    Ok(PyBytes::new(py, &out).unbind())
+}
+
 /// What this build can do (`runtime: "python"`).
 #[pyfunction]
 fn capabilities_json() -> String {
     jubarte::capabilities::capabilities_json("python")
+}
+
+/// Markdown (with CriticMarkup) → DOCX bytes, as `jubarte convert draft.md`.
+///
+/// `page` is `letter` or `a4` and applies when there is no `reference`
+/// (a `.docx` whose styles and page setup are taken). `track_changes` is
+/// `all`, `accept` or `reject`. `date` defaults to the engine's fixed epoch
+/// so the same Markdown writes the same bytes. Images are written as their
+/// alt text: this entry point reads no files. Each engine warning (such as
+/// a `page` overridden by the reference) is raised as a `UserWarning`.
+#[pyfunction]
+#[pyo3(signature = (
+    text,
+    *,
+    reference = None,
+    page = "letter",
+    author = "Redline",
+    date = None,
+    critic = true,
+    track_changes = "all",
+))]
+fn markdown_to_docx(
+    text: &str,
+    reference: Option<&[u8]>,
+    page: &str,
+    author: &str,
+    date: Option<&str>,
+    critic: bool,
+    track_changes: &str,
+) -> PyResult<Py<PyBytes>> {
+    let page = jubarte::markdown::PageSize::parse(page)
+        .ok_or_else(|| JubarteError::new_err(format!("page must be letter or a4, not {page:?}")))?;
+    let track_changes = jubarte::markdown::TrackChanges::parse(track_changes).ok_or_else(|| {
+        JubarteError::new_err(format!(
+            "track_changes must be all, accept or reject, not {track_changes:?}"
+        ))
+    })?;
+    // Seven parameters keep clippy's argument limit; the interpreter is
+    // reached through `attach`, which only borrows the caller's.
+    Python::attach(|py| {
+        let written = py
+            .detach(|| {
+                // Built here: `DocxOptions` can hold an image loader, which
+                // is not `Send`, so it cannot cross into the detached call.
+                let mut options = jubarte::markdown::DocxOptions {
+                    reference,
+                    critic,
+                    track_changes,
+                    author: author.to_string(),
+                    page,
+                    ..jubarte::markdown::DocxOptions::default()
+                };
+                if let Some(date) = date {
+                    options.date = date.to_string();
+                }
+                jubarte::markdown::markdown_to_docx(text, &options)
+            })
+            .map_err(err)?;
+        let category = py.get_type::<pyo3::exceptions::PyUserWarning>();
+        for warning in &written.warnings {
+            let message = std::ffi::CString::new(warning.as_str()).map_err(err)?;
+            PyErr::warn(py, &category, &message, 1)?;
+        }
+        Ok(PyBytes::new(py, &written.docx).unbind())
+    })
+}
+
+/// `{findings, rules, layout}` from `jubarte::audit` as JSON; `rules`
+/// names rule sets or codes (`None`: every rule).
+#[pyfunction]
+#[pyo3(signature = (docx, rules=None))]
+fn audit_json(py: Python<'_>, docx: &[u8], rules: Option<Vec<String>>) -> PyResult<String> {
+    let rules = rules.unwrap_or_default();
+    let report = py
+        .detach(|| {
+            let rules: Vec<&str> = rules.iter().map(String::as_str).collect();
+            jubarte::audit::audit_report(docx, &rules)
+        })
+        .map_err(err)?;
+    serde_json::to_string(&report).map_err(err)
 }
 
 #[pymodule]
@@ -541,5 +736,12 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(redline_diff_json, m)?)?;
     m.add_function(wrap_pyfunction!(list_comments_json, m)?)?;
     m.add_function(wrap_pyfunction!(append_json, m)?)?;
+    m.add_function(wrap_pyfunction!(validate_json, m)?)?;
+    m.add_function(wrap_pyfunction!(repair_json, m)?)?;
+    m.add_function(wrap_pyfunction!(audit_tracked_json, m)?)?;
+    m.add_function(wrap_pyfunction!(markdown_to_docx, m)?)?;
+    m.add_function(wrap_pyfunction!(update_fields, m)?)?;
+    m.add_function(wrap_pyfunction!(scrub_json, m)?)?;
+    m.add_function(wrap_pyfunction!(audit_json, m)?)?;
     Ok(())
 }

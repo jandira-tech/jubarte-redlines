@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Lossless DOCX redline engine (jubarte-redlines).
+"""Word-faithful DOCX redline engine (jubarte-redlines).
 
 Compare two Word documents into a tracked-changes document that opens cleanly
 in Microsoft Word; list, accept, or reject revisions; render DOCX to PDF.
@@ -61,12 +61,15 @@ from .document import (
     Document,
     EditPlanError,
     EditResult,
+    UpdatedFields,
     capabilities,
     diff,
     diff_render,
+    from_markdown,
     read,
 )
 from .models import (
+    AuditFinding,
     Change,
     Comment,
     CompareOptions,
@@ -75,6 +78,8 @@ from .models import (
     EditOutcome,
     EditPlan,
     EditReport,
+    FieldUpdate,
+    Finding,
     FontResolution,
     FormatChange,
     Hunk,
@@ -86,6 +91,7 @@ from .models import (
     RenderDiff,
     Rendered,
     RenderReport,
+    Repaired,
     ResolvedRevisions,
     Revision,
     RevisionCounts,
@@ -134,4 +140,10 @@ __all__ += [
     "diff_render",
     "RenderDiff",
     "PageDiff",
+    "Finding",
+    "Repaired",
+    "FieldUpdate",
+    "UpdatedFields",
 ]
+__all__ += ["from_markdown"]
+__all__ += ["AuditFinding"]
