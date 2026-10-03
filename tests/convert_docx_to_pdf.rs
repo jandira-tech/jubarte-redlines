@@ -48962,3 +48962,73 @@ fn a_page_break_in_a_header_paragraph_is_a_line_break() {
         "under a 72pt margin the header still fits: body at {b2} against {b3}"
     );
 }
+
+#[test]
+fn a_double_cell_border_takes_three_strokes_of_room() {
+    // Word 16 probes (bench `scripts/probe_table_top.py`, 2026-10-03, 9
+    // documents; Letter, Arial 12, "Alpha", an empty paragraph, then a
+    // fixed one-column table): the first row's text sits 0.72 under its
+    // no-border place with a single sz=6 top border, 2.16-2.25 with a
+    // double sz=6 (three strokes of 0.75), 2.88 with a single sz=24; a
+    // double insideH stacks 2.25 into the next row's pitch (23.28 from
+    // "LEAD" to "NEXT" with before=90 after=54). The engine made room
+    // for one stroke of a double: 4910ce2060's rows sat 1.5pt high.
+    let arial = r#"<w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:cs="Arial"/><w:sz w:val="24"/>"#;
+    let para = |text: &str, spacing: &str| {
+        let run = if text.is_empty() {
+            String::new()
+        } else {
+            format!(r#"<w:r><w:rPr>{arial}</w:rPr><w:t>{text}</w:t></w:r>"#)
+        };
+        format!(r#"<w:p><w:pPr>{spacing}<w:rPr>{arial}</w:rPr></w:pPr>{run}</w:p>"#)
+    };
+    let table = |val: &str, rows: &[&str]| {
+        let rows: String = rows
+            .iter()
+            .map(|text| {
+                format!(
+                    r#"<w:tr><w:tc><w:tcPr><w:tcW w:w="5040" w:type="dxa"/><w:tcBorders><w:top w:val="{val}" w:sz="6" w:space="0" w:color="auto"/></w:tcBorders></w:tcPr>{}</w:tc></w:tr>"#,
+                    para(text, r#"<w:spacing w:before="90" w:after="54" w:line="240" w:lineRule="auto"/>"#)
+                )
+            })
+            .collect();
+        format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="5040" w:type="dxa"/><w:tblLayout w:type="fixed"/><w:tblCellMar><w:left w:w="120" w:type="dxa"/><w:right w:w="120" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid><w:gridCol w:w="5040"/></w:tblGrid>{rows}</w:tbl>"#
+        )
+    };
+    let render = |val: &str| {
+        let body = format!(
+            "{}{}{}{}",
+            para(
+                "Alpha",
+                r#"<w:spacing w:after="0" w:line="240" w:lineRule="auto"/>"#
+            ),
+            para(
+                "",
+                r#"<w:spacing w:after="0" w:line="240" w:lineRule="auto"/>"#
+            ),
+            table(val, &["LEAD", "NEXT"]),
+            letter_body_sect()
+        );
+        let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("converts");
+        let (_, ay) = pdf_glyph_text_xy(&pdf, "Alpha").expect("Alpha");
+        let (_, ly) = pdf_glyph_text_xy(&pdf, "LEAD").expect("LEAD");
+        let (_, ny) = pdf_glyph_text_xy(&pdf, "NEXT").expect("NEXT");
+        (ay - ly, ly - ny)
+    };
+    // PDF y grows upward: distances are down the page.
+    let (single_lead, single_pitch) = render("single");
+    let (double_lead, double_pitch) = render("double");
+    assert!(
+        ((double_lead - single_lead) - 1.5).abs() < 0.2,
+        "a double sz=6 rim sits 1.5 (two more 0.75 strokes) under a single one's: single {single_lead}, double {double_lead}"
+    );
+    assert!(
+        ((double_pitch - single_pitch) - 1.5).abs() < 0.2,
+        "a double rule between the rows stacks 1.5 more into the pitch: single {single_pitch}, double {double_pitch}"
+    );
+    assert!(
+        (double_pitch - 23.25).abs() < 0.3,
+        "Word's LEAD-to-NEXT pitch under a double sz=6 rule is 23.28, got {double_pitch}"
+    );
+}

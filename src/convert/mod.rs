@@ -3695,7 +3695,15 @@ fn parse_border_edge(dom: &Dom, el: NodeId) -> Option<([f32; 3], f32)> {
     let color = attr_any(dom, el, "color")
         .and_then(parse_hex_color)
         .unwrap_or([0.0, 0.0, 0.0]);
-    Some((color, (sz / 8.0).max(0.24)))
+    // A double border is three strokes of `sz` (two lines and their gap)
+    // and the row makes room for all three (Word 16 probes, bench
+    // `scripts/probe_table_top.py`, 2026-10-03: a double sz=6 top border
+    // puts the first row's text 2.16-2.25 under its no-border place, a
+    // single 0.72, a sz=24 single 2.88; a double insideH stacks 2.25 into
+    // the next row's pitch). 4910ce2060's double-rimmed rows sat 1.5
+    // high. The painter fills the room as one band.
+    let strokes = if val == "double" { 3.0 } else { 1.0 };
+    Some((color, (sz / 8.0 * strokes).max(0.24)))
 }
 
 fn parse_tbl_borders(dom: &Dom, parent: NodeId) -> Option<TblBorders> {
