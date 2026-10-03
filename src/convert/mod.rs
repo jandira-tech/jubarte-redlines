@@ -9242,7 +9242,7 @@ fn unclamped_col_widths(
     {
         let mut mins = vec![0.0_f32; cols.len()];
         for cell in rows.iter().flatten() {
-            if cell.colspan != 1 || cell.col >= cols.len() {
+            if cell.colspan != 1 || cell.col >= cols.len() || cell.grid_skip {
                 continue;
             }
             let pads = cell.pad_l - 2.0 * geom.cell_spacing + cell.pad_r;
@@ -9275,7 +9275,9 @@ fn autofit_to_words(
     for cell in rows.iter().flatten() {
         // Vertical text runs along the row, not across the column: 1c99b5cd's
         // btLr "Theory Topics" column stays 13pt wide in Word.
-        if cell.colspan != 1 || cell.col >= widths.len() || cell.vertical {
+        // A gridBefore/gridAfter placeholder is no cell and has no
+        // margins to widen its column for (ed36b607e8's 5-twip column).
+        if cell.colspan != 1 || cell.col >= widths.len() || cell.vertical || cell.grid_skip {
             continue;
         }
         let pads = cell.pad_l - 2.0 * geom.cell_spacing + cell.pad_r;
@@ -9424,7 +9426,11 @@ fn content_autofit_widths(
     let mut mins = vec![0.0_f32; n];
     let mut maxs = vec![0.0_f32; n];
     for cell in rows.iter().flatten() {
-        if cell.colspan != 1 || cell.col >= n {
+        // A gridBefore/gridAfter placeholder is no cell: it has no
+        // margins and sets no minimum, its grid column stays as drafted
+        // (ed36b607e8: a 5-twip column a row skips keeps Word's 0.25pt;
+        // a cell's margins there pushed the row 10.5pt in).
+        if cell.colspan != 1 || cell.col >= n || cell.grid_skip {
             continue;
         }
         // The spacing inset in pad_l is the column's gap, counted below.
@@ -12327,7 +12333,18 @@ fn table_block(
             row_grid_skip(dom, row, "Before"),
             row_grid_skip(dom, row, "After"),
         );
+        // A skip without a wBefore/wAfter is as wide as the grid columns
+        // it leaves empty (ed36b607e8: a 5-twip first column a row skips
+        // keeps Word's 0.25pt; an auto width fitted it to a cell's
+        // margins, 10.8pt, and pushed the row's text in).
+        let grid_width = |at: usize, span: usize| -> PrefWidth {
+            PrefWidth::Dxa(cols.iter().skip(at).take(span).sum())
+        };
         if let Some((span, pref)) = grid_before {
+            let pref = match pref {
+                PrefWidth::Auto => grid_width(grid_at, span),
+                p => p,
+            };
             cells.push(grid_skip_cell(span, pref, tbl_pad_l, tbl_pad_r));
             grid_at += span;
         }
@@ -12669,6 +12686,10 @@ fn table_block(
             });
         }
         if let Some((span, pref)) = grid_after {
+            let pref = match pref {
+                PrefWidth::Auto => grid_width(grid_at, span),
+                p => p,
+            };
             cells.push(grid_skip_cell(span, pref, tbl_pad_l, tbl_pad_r));
         }
         // Word All Markup appends a “Deleted Cells” column when the

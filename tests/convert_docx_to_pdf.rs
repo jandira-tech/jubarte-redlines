@@ -48835,3 +48835,58 @@ fn wordperfect_justification_keeps_a_line_within_four_percent_of_its_measure() {
         "it starts the next line at {nx}, line start {bx}; ax {ax}"
     );
 }
+
+#[test]
+fn a_grid_before_skip_is_the_grid_columns_width_not_a_cells_margins() {
+    // ed36b607e8 (Word's PDF, 2026-10-03): a 5-twip first grid column
+    // that the header row and the "Lunch allowance" row skip with
+    // gridBefore=1 (no wBefore) while the rows between span it. Word
+    // starts the skipping rows' text 0.25pt right of the spanning rows'
+    // (76.8 against 76.6); the engine fitted the skipped column to a
+    // cell's margins (10.8pt), started those rows 10.5pt in, wrapped the
+    // 5508-twip cell's lines a word short and pushed page 6 along.
+    let cell = |w: u32, span: u32, text: &str| {
+        let span = if span > 1 {
+            format!(r#"<w:gridSpan w:val="{span}"/>"#)
+        } else {
+            String::new()
+        };
+        format!(
+            r#"<w:tc><w:tcPr><w:tcW w:w="{w}" w:type="dxa"/>{span}</w:tcPr><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>"#
+        )
+    };
+    let skip = r#"<w:trPr><w:gridBefore w:val="1"/><w:gridAfter w:val="1"/><w:wAfter w:w="532" w:type="dxa"/></w:trPr>"#;
+    let body = format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr>
+        <w:tblGrid><w:gridCol w:w="5"/><w:gridCol w:w="5505"/><w:gridCol w:w="1619"/><w:gridCol w:w="1400"/><w:gridCol w:w="531"/></w:tblGrid>
+        <w:tr>{skip}{}{}{}</w:tr>
+        <w:tr>{}{}{}</w:tr>
+        <w:tr>{skip}{}{}{}</w:tr>
+        </w:tbl><w:p/>{}"#,
+        cell(5508, 1, "Alpha"),
+        cell(1620, 1, "One"),
+        cell(1400, 1, "Two"),
+        cell(5508, 2, "Beta"),
+        cell(1620, 1, "Three"),
+        cell(1400, 2, "Four"),
+        cell(5508, 1, "Gamma"),
+        cell(1620, 1, "Five"),
+        cell(1400, 1, "Six"),
+        // The document's A4 page with 1418-twip margins: the 9060-twip grid
+        // outruns the 7070-twip measure and the columns are content-fitted.
+        r#"<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1418" w:right="1418" w:bottom="1418" w:left="1418" w:header="709" w:footer="709" w:gutter="0"/></w:sectPr>"#
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("converts");
+    let (ax, _) = pdf_glyph_text_xy(&pdf, "Alpha").expect("row 1 paints");
+    let (bx, _) = pdf_glyph_text_xy(&pdf, "Beta").expect("row 2 paints");
+    let (gx, _) = pdf_glyph_text_xy(&pdf, "Gamma").expect("row 3 paints");
+    assert!(
+        (ax - bx - 0.25).abs() < 0.3,
+        "a skipping row starts the 5-twip column later than a spanning one: Word +0.25, got {}",
+        ax - bx
+    );
+    assert!(
+        (gx - ax).abs() < 0.05,
+        "both skipping rows start alike: {ax} / {gx}"
+    );
+}
