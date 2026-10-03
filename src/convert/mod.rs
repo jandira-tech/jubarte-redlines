@@ -972,6 +972,9 @@ struct TabStop {
     pos: f32,
     align: TabAlign,
     leader: TabLeader,
+    /// A `w:val="num"` stop: the numbering tab Word manages from the
+    /// level's indent, not one the author typed (`marker_gutter_stop`).
+    numbering: bool,
 }
 
 /// A header/footer `w:ptab alignment="center"` stop: the middle of the text
@@ -2820,6 +2823,7 @@ fn next_tab_stop(x: f32, origin: f32, stops: &[TabStop], default_tab: f32) -> Ta
                 pos: abs,
                 align: stop.align,
                 leader: stop.leader,
+                numbering: stop.numbering,
             };
         }
     }
@@ -2832,6 +2836,7 @@ fn next_tab_stop(x: f32, origin: f32, stops: &[TabStop], default_tab: f32) -> Ta
         pos: origin + ((rel / grid).floor() + 1.0) * grid,
         align: TabAlign::Left,
         leader: TabLeader::None,
+        numbering: false,
     }
 }
 
@@ -2914,6 +2919,7 @@ fn parse_tab_stops(dom: &Dom, ppr: NodeId) -> Vec<TabStop> {
                 pos: twip(pos),
                 align,
                 leader,
+                numbering: val == "num",
             });
         }
     }
@@ -20151,6 +20157,7 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet, text_w: f32) -> 
                     pos,
                     align,
                     leader: TabLeader::None,
+                    numbering: false,
                 })
             })
             .collect();
@@ -23394,6 +23401,7 @@ impl<'a> Layout<'a> {
                     pos: style.indent_left,
                     align: TabAlign::Left,
                     leader: TabLeader::None,
+                    numbering: false,
                 },
             );
         }
@@ -23461,9 +23469,9 @@ impl<'a> Layout<'a> {
         // Lines at these indices measure `width`; the rest the full measure.
         let mut narrow = 0..usize::MAX;
         let (mut lines, mut ends_br) = if reflow && inset_from > 0.5 {
-            self.wrap_para_runs(body, style, indent, marker.is_some(), full_width, list)
+            self.wrap_para_runs(body, style, indent, marker, full_width, list)
         } else {
-            self.wrap_para_runs(body, style, indent, marker.is_some(), width, list)
+            self.wrap_para_runs(body, style, indent, marker, width, list)
         };
         if reflow && inset_from > 0.5 {
             // A band lower in the paragraph (001c1554) leaves the lines
@@ -23654,10 +23662,14 @@ impl<'a> Layout<'a> {
                 ascent + rise - shrink
             };
             self.y -= grid_pad + drop;
-            let first_extra = if line_i == 0 && marker.is_none() {
-                style.indent_first
-            } else {
-                0.0
+            // With a label, line one starts on a custom stop inside the
+            // gutter when the paragraph sets one (`marker_gutter_stop`).
+            let first_extra = match marker {
+                _ if line_i != 0 => 0.0,
+                None => style.indent_first,
+                Some(mark) => self
+                    .marker_gutter_stop(mark, style, indent)
+                    .map_or(0.0, |stop| stop - indent),
             };
             // A tab's width is its resolved stop, not a glyph: centring,
             // right alignment and justification all start from it.
@@ -24129,10 +24141,11 @@ impl<'a> Layout<'a> {
         body: &[TextRun],
         style: &ParaStyle,
         indent: f32,
-        has_marker: bool,
+        marker: Option<&TextRun>,
         width: f32,
         list: bool,
     ) -> (Vec<Vec<TextRun>>, Vec<bool>) {
+        let has_marker = marker.is_some();
         // Word 2013+ layout (compatibilityMode 15) keeps a justified line's
         // last word by narrowing its spaces, up to a quarter of their width
         // (00044aa0; the fraction that best reproduces Word's line breaks in
@@ -24152,6 +24165,14 @@ impl<'a> Layout<'a> {
             squeeze,
         };
         if has_marker {
+            // The label's suffix tab lands on the first stop past the
+            // label: a custom left stop inside the gutter (f23fc5de2e's
+            // 284-twip stop under a 709-twip hang starts "I." text 14.2pt
+            // in) or, failing one, the indent where the body starts.
+            let start = marker
+                .and_then(|m| self.marker_gutter_stop(m, style, indent))
+                .unwrap_or(indent);
+            let first_width = width + (indent - start);
             // The tab after a label in the hanging gutter lands on the
             // indent where the body starts: it takes no room there (a
             // typed "1."<tab> under a right stop at 209pt squeezed
@@ -24170,13 +24191,20 @@ impl<'a> Layout<'a> {
                 return wrap_runs_tabbed(
                     self.fonts,
                     &trimmed,
-                    width,
+                    first_width,
                     width,
                     list,
-                    Some(&tabs(indent)),
+                    Some(&tabs(start)),
                 );
             }
-            return wrap_runs_tabbed(self.fonts, body, width, width, list, Some(&tabs(indent)));
+            return wrap_runs_tabbed(
+                self.fonts,
+                body,
+                first_width,
+                width,
+                list,
+                Some(&tabs(start)),
+            );
         }
         let hanging = -style.indent_first;
         if hanging > 0.0
@@ -24342,7 +24370,7 @@ impl<'a> Layout<'a> {
         let landed = self.landed_tab_stops(&style.tab_stops);
         let stops = std::mem::replace(&mut self.tab_stops, landed);
         let n = self
-            .wrap_para_runs(body, style, indent, marker.is_some(), width, list)
+            .wrap_para_runs(body, style, indent, marker, width, list)
             .0
             .len();
         self.tab_stops = stops;
@@ -24354,10 +24382,11 @@ impl<'a> Layout<'a> {
         body: &[TextRun],
         style: &ParaStyle,
         indent: f32,
-        has_marker: bool,
+        marker: Option<&TextRun>,
         width: f32,
         list: bool,
     ) -> (Vec<Vec<TextRun>>, Vec<bool>) {
+        let has_marker = marker.is_some();
         let list = list && !has_marker;
         let right = self
             .tab_stops
@@ -24366,7 +24395,7 @@ impl<'a> Layout<'a> {
             .rev()
             .find(|t| t.align == TabAlign::Right);
         let Some(stop) = right else {
-            return self.wrap_hanging_or_first(body, style, indent, has_marker, width, list);
+            return self.wrap_hanging_or_first(body, style, indent, marker, width, list);
         };
         // A right stop the paragraph never tabs to is just a stop: the
         // first line still loses its firstLine indent (000ebd12 Normal
@@ -24377,14 +24406,14 @@ impl<'a> Layout<'a> {
         let Some((prefix, suffix)) =
             peel_trailing_tab(body).filter(|_| !body.iter().any(|r| r.text.contains('\n')))
         else {
-            return self.wrap_hanging_or_first(body, style, indent, has_marker, width, list);
+            return self.wrap_hanging_or_first(body, style, indent, marker, width, list);
         };
         // A tab that only separates the list label ("1.") from its text is
         // no TOC leader: Word tabs to the hanging indent and wraps the text
         // like any paragraph. Riding the right stop ran 008033c9 item "1."
         // 45pt past the right margin on one line.
         if has_marker && prefix.iter().all(|r| r.text.trim().is_empty()) {
-            return self.wrap_hanging_or_first(body, style, indent, has_marker, width, list);
+            return self.wrap_hanging_or_first(body, style, indent, marker, width, list);
         }
         // Nor is a last tab that lands on another stop. English redline
         // df4265bd hangs 879 twips with a right stop at 595 and a left one
@@ -24410,7 +24439,7 @@ impl<'a> Layout<'a> {
             );
             if land.align != TabAlign::Right || (land.pos - self.flow_left() - stop.pos).abs() > 0.5
             {
-                return self.wrap_hanging_or_first(body, style, indent, has_marker, width, list);
+                return self.wrap_hanging_or_first(body, style, indent, marker, width, list);
             }
         }
         // Missing PAGEREF is Word's long Error! string, not a 9-1 page
@@ -24623,6 +24652,27 @@ impl<'a> Layout<'a> {
             .get(ink_face(self.fonts, &run.style, before))
             .avg_char_width;
         script_gap(&run.style, before, after, latin_avg)
+    }
+
+    /// The custom left stop a numbering label's suffix tab reaches inside
+    /// the hanging gutter: the first one past the label's end and short of
+    /// the indent (Word 16, f23fc5de2e: "I." hanging 709 twips with a left
+    /// stop at 284 starts its text 14.2pt in, not 35.45). The indent itself
+    /// is the stop of last resort, so a stop at or past it changes nothing,
+    /// and a `num` stop is Word's own, re-derived from the level: 019d92d9's
+    /// Bulleted style keeps its num stop at 270 under a direct numPr whose
+    /// level hangs 360, and live Word starts the text at 360.
+    fn marker_gutter_stop(&self, mark: &TextRun, style: &ParaStyle, indent: f32) -> Option<f32> {
+        if style.list_jc_right || style.indent_first >= 0.0 {
+            return None;
+        }
+        let end = indent + style.indent_first + self.run_width_pt(mark, mark.text.trim_end());
+        self.tab_stops
+            .iter()
+            .filter(|t| t.align == TabAlign::Left && !t.numbering)
+            .filter(|t| t.pos > end + 0.01 && t.pos < indent - 0.01)
+            .map(|t| t.pos)
+            .reduce(f32::min)
     }
 
     fn run_width_pt(&self, run: &TextRun, text: &str) -> f32 {
@@ -42539,6 +42589,7 @@ mod numbering_tests {
                     pos: 90.0,
                     align: TabAlign::Left,
                     leader: TabLeader::None,
+                    numbering: false,
                 }],
                 size: None,
                 underline: false,

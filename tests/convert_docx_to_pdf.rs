@@ -48184,3 +48184,55 @@ fn a_deeper_item_ahead_of_its_parent_level_uses_up_the_parent_s_start() {
         "and the next 5; text={text:?}"
     );
 }
+
+#[test]
+fn a_numbering_label_tabs_to_a_custom_stop_inside_its_hanging_gutter() {
+    // f23fc5de2e (corpus clean), Word's PDF: the paragraph hangs 709 twips
+    // (35.45pt) under upperRoman "%1." and sets its own left stop at 284
+    // twips (14.2pt). Word paints "I." at the margin and starts the text
+    // 14.2pt after it, on the custom stop: the label's suffix tab lands on
+    // the first stop past the label, and the hanging indent is only the
+    // stop of last resort. The engine started the text at the indent,
+    // 35.45pt in.
+    let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:abstractNum w:abstractNumId=\"0\">\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"1\"/><w:numFmt w:val=\"upperRoman\"/><w:lvlText w:val=\"%1.\"/>\
+              <w:lvlJc w:val=\"left\"/><w:pPr><w:ind w:left=\"720\" w:hanging=\"720\"/></w:pPr></w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+        </w:numbering>";
+    let item = |tabs: &str, text: &str| {
+        format!(
+            "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr>{tabs}\
+             <w:ind w:left=\"709\" w:hanging=\"709\"/></w:pPr>\
+             <w:r><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/><w:sz w:val=\"24\"/></w:rPr>\
+             <w:t>{text}</w:t></w:r></w:p>"
+        )
+    };
+    let body = format!(
+        "{}{}<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+        item(
+            "<w:tabs><w:tab w:val=\"left\" w:pos=\"284\"/></w:tabs>",
+            "Alpha"
+        ),
+        item("", "Beta")
+    );
+    let pdf = docx_to_pdf(&numbering_docx(&body, Some(numbering))).expect("gutter stop");
+    let (label_x, _) = pdf_glyph_text_xy(&pdf, "I.").expect("label I.");
+    let (alpha_x, _) = pdf_glyph_text_xy(&pdf, "Alpha").expect("Alpha");
+    let (beta_x, _) = pdf_glyph_text_xy(&pdf, "Beta").expect("Beta");
+    assert!(
+        (label_x - 72.0).abs() < 0.6,
+        "the label sits at the margin, got {label_x}"
+    );
+    assert!(
+        (alpha_x - label_x - 14.2).abs() < 0.6,
+        "the text after the label starts on the 284-twip stop inside the gutter, got {alpha_x} (label {label_x})"
+    );
+    assert!(
+        (beta_x - label_x - 35.45).abs() < 0.6,
+        "without a stop in the gutter the text starts at the hanging indent, got {beta_x} (label {label_x})"
+    );
+}
