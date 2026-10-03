@@ -22,8 +22,8 @@ All products under `jubarte*` share **Semantic Versioning**
 |---|---|---|---|
 | **jubarte-redlines** (this repo) | crates.io crate + CLI `jubarte` | `Cargo.toml` `[package].version`, `CHANGELOG.md` | `scripts/release.sh x.y.z …` (calls `bump-version.mjs`) |
 | **jubarte-redlines** npm CLI (`jubarte-wasm/cli/`) | npm package `jubarte-redlines` (the `npx jubarte-redlines` runner) | `jubarte-wasm/cli/package.json` | `scripts/release.sh` (publishes it with the engine version) |
-| **jubarte-app** (`jubarte-app/` — a plain tracked directory in this repo that also carries its own nested `.git`; there is no `.gitmodules`) | Mac App Store / Tauri shell | `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `src/index.html`, `CHANGELOG.md` | `scripts/release.sh` step 1 (the engine's version); step 12 (`scripts/release_downstream.sh`) commits them on `release/vx.y.z` in the app's repository; `release_downstream.sh x.y.z --app` uploads the App Store build |
-| **jubarte-site** (`jubarte-app/jubarte-site/`) | jubarte.pro (Cloudflare Worker) | `site/data/release.ts`, `package.json` (`jubarte-wasm`), `pnpm-workspace.yaml` | `scripts/release.sh` step 12: `jubarte-site/scripts/release.sh engine x.y.z` (download page, demo engine, deploy); benchmark figures follow with `release.sh bench x.y.z` after neurotic_docx_bench's `scripts/release_jubarte.py` |
+| **jubarte-app** (`jubarte-app/` — a plain tracked directory in this repo that also carries its own nested `.git`; there is no `.gitmodules`) | Mac App Store / Tauri shell | `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `src/index.html`, `CHANGELOG.md` | `scripts/release.sh` step 1 (the engine's version); step 13 (`scripts/release_downstream.sh`) commits them on `release/vx.y.z` in the app's repository; `release_downstream.sh x.y.z --app` uploads the App Store build |
+| **jubarte-site** (`jubarte-app/jubarte-site/`) | jubarte.pro (Cloudflare Worker) | `site/data/release.ts`, `package.json` (`jubarte-wasm`), `pnpm-workspace.yaml` | `scripts/release.sh` step 13: `jubarte-site/scripts/release.sh engine x.y.z` (download page, demo engine, deploy); benchmark figures follow with `release.sh bench x.y.z` after neurotic_docx_bench's release flow writes the engine's `release_info/` files |
 
 `jubarte-app` depends on the engine via:
 
@@ -131,7 +131,7 @@ shell needs a store build that embeds the new engine.
    rehearses everything locally; every publish step skips a version that is
    already live, so a failed run can simply be re-run.
 
-   Before the dry-runs, step 5 is a required API-docs drift assessment:
+   Before the dry-runs, step 6 is a required API-docs drift assessment:
    `cargo doc --no-deps --document-private-items --open` opens the rendered
    docs for review, `scripts/api_snapshot.py` writes a machine-readable copy
    under `docs/api/` (`jubarte-vx.y.z.json.gz` rustdoc JSON +
@@ -144,6 +144,44 @@ shell needs a store build that embeds the new engine.
    `#[non_exhaustive]`, or a changed public fn signature, breaks struct
    literals and callers, so it needs a **minor** bump before 1.0 (0.10.1
    shipped four such fields as a patch).
+
+### Release evidence: `release_info/` (step 3 refuses a release without it)
+
+From 0.11.2 on, every release ships its benchmark evidence in
+`release_info/` — six files per release, written by the bench, named
+`<definition>_<version>_<mm-dd-yy_hh-mm>.<ext>`
+(`sample_redline_0.11.2_10-03-26_16-51.csv` and its five siblings;
+`release_info/README.md` is the spec):
+
+- `sample_redline_…csv` / `sample_conversion_…csv` — the two 600-item
+  samples, every file a row names (inputs, oracles, both tools' outputs)
+  beside its sha256, paths relative to the bench root. A missing output is
+  an empty path, an empty sha and a 0.
+- `results_redline_…json` / `results_conversion_…json` — per-document
+  scores, ITT aggregates, per-state splits, the paired bootstrap 95%
+  interval of jubarte minus the comparator (2,000 resamples, seed 42), the
+  tool versions, and the name + sha256 of the sample CSV they score.
+- `website_data_…jsonl` / `app_data_…jsonl` — every website fact and every
+  app-frontend item the release moves, in the destination's record shape.
+
+The flow that writes them runs **before** `scripts/release.sh` (its step 3
+dies without the six files), against a release-candidate binary built from
+this checkout before the version bump (the candidate names the commit that
+becomes the release commit's parent; see release_info/README.md, "Which
+binary the evidence names"):
+
+```bash
+(cd ../neurotic_docx_bench && uv run python -m neurotic_docx_bench.jubarte_release_info 0.11.2 --engine-dir "$(cd .. && pwd)/jubarte-redlines" --binary target/release/jubarte --plan)
+```
+
+After the GitHub release exists, the same command without `--binary` re-runs
+it on the release's own binary. `scripts/check_release_info.py` is the gate
+(step 3) and prints the aggregates; with a bench checkout at hand
+(`$NEUROTIC_DOCX_BENCH` or `../neurotic_docx_bench`) it also passes
+`--bench-root` and verifies every sha256 column against the real file —
+without one the columns are format-checked only, and the script says so.
+The files ship in the release commit. `scripts/release_downstream.sh`
+prints these commands in its Benchmark section.
 
 ### Before you run it
 
@@ -159,7 +197,7 @@ shell needs a store build that embeds the new engine.
 - **npm two-factor auth.** A non-interactive `npm publish` answers `EOTP`.
   Run from a terminal, or pass a fresh code: `NPM_OTP=123456
   scripts/release.sh x.y.z …`. Codes live about 30 seconds, so export it just
-  before step 9.
+  before step 10.
 - **Credentials.** `cargo login`, `npm whoami`,
   `UV_PUBLISH_TOKEN`, `gh auth status`. Read tokens from their files at run
   time; never paste them into the command line history.
@@ -207,7 +245,7 @@ and `jubarte self-update` skips that release until a signed one follows.
 
 ### Verify every registry
 
-`release.sh` step 11 does this. To check by hand:
+`release.sh` step 12 does this. To check by hand:
 
 ```bash
 V=x.y.z

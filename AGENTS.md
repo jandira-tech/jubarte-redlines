@@ -158,6 +158,27 @@ the error is what you initially thought because we get this wrong routinely.
   report), with a broken probe in `tests/m_validity_ring1.rs`;
   `tests/common/validity.rs` only wraps `ring1` for the test gate.
 
+## Release evidence (release_info/)
+
+Every engine release ships its benchmark evidence: six files per release in
+`release_info/`, written by neurotic_docx_bench's `jubarte_release_info`
+flow — the two 600-item sample CSVs (each file a row names beside its
+sha256, paths relative to the bench root), the two results JSONs scored on
+exactly those samples, and the website/app change lists.
+`release_info/README.md` is the spec; `scripts/release.sh` step 3 refuses a
+release whose six files are missing, duplicated or unsound, and
+`scripts/check_release_info.py` is the checker. The sha256 columns are
+verified against the bench's real files only when a bench checkout is at
+hand (`--bench-root`, which release.sh passes when it finds one); without
+one they are format-checked only, and the release says so.
+
+- Run the flow before releasing, against a release-candidate binary built
+  from this checkout (`--binary`); the GitHub release binary is the default
+  only after the release exists.
+- One scoring job at a time: the flow never runs two scorers concurrently.
+- Do not edit the files by hand — a number in them is always the bench's.
+  Redraw the sample or rerun the flow instead.
+
 ## Licensing and provenance
 
 The repository's only project license is AGPL-3.0-only (`LICENSE`), and

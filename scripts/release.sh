@@ -20,7 +20,7 @@
 #                              prepends it to the GitHub release notes
 #     --how-readme-and-other-docs-were-updated "…"
 #                              required → `> **Docs.** …` under the changelog
-#                              summary + the release commit body; step 3
+#                              summary + the release commit body; step 4
 #                              lists the README/docs files changed since the
 #                              previous tag beside it
 #
@@ -44,35 +44,44 @@
 #      cut from README.md by scripts/library_readmes.py, links pinned to
 #      the tag
 #   2. changelog check — dated `## [x.y.z]` section + release-link footer
-#   3. summaries — the five summaries + the docs statement land in their
+#   3. release evidence — scripts/check_release_info.py proves the six
+#      release_info/ files of $VER (the two 600-item sample CSVs with every
+#      file's sha256 — hashed against the bench's own files when a bench
+#      checkout is at hand (--bench-root), format-checked only otherwise
+#      and then said so; the two results JSONs scored on exactly those
+#      samples, bound to them by the CSV's real sha256 and to the scored
+#      binary by its commit + sha256; and the website/app change lists);
+#      the bench writes them before this script runs
+#      (release_info/README.md), and the release commit carries them
+#   4. summaries — the five summaries + the docs statement land in their
 #      channels
-#   4. gates — fmt, clippy -D warnings, test --all-features, convert-sweep
+#   5. gates — fmt, clippy -D warnings, test --all-features, convert-sweep
 #      unit tests, REUSE lint (sequential cargo per AGENTS.md)
-#   5. api docs drift — REQUIRED review: `cargo doc --no-deps
+#   6. api docs drift — REQUIRED review: `cargo doc --no-deps
 #      --document-private-items --open` opens the rendered docs for the
 #      releaser to assess drift against what this release ships; a
 #      machine-readable snapshot lands in docs/api/ (rustdoc JSON + flat
 #      api.txt + the wasm .d.ts files) and is diffed against the previous
 #      release's copy
-#   6. publish dry-runs — cargo publish --dry-run, npm --dry-run, maturin sdist
+#   7. publish dry-runs — cargo publish --dry-run, npm --dry-run, maturin sdist
 #      (with the pypi comment proven inside the sdist)
-#   7. `chore(release): vX.Y.Z` commit, wasm npm rebuild (stamps the release
+#   8. `chore(release): vX.Y.Z` commit, wasm npm rebuild (stamps the release
 #      commit into ENGINE_COMMIT.txt), npm smoke test, artifacts commit,
 #      annotated `vX.Y.Z` tag whose body is the github summary
 #      point of no return — type `vX.Y.Z` to confirm, then push; release.yml
 #      builds the five CLI binaries + seven PyPI wheels + sdist and creates
 #      the `jubarte vX.Y.Z` GitHub release itself
-#   8. crates.io — `cargo publish`, after proving the summary is inside the
+#   9. crates.io — `cargo publish`, after proving the summary is inside the
 #      .crate
-#   9. npm — `npm publish` on jubarte-wasm/npm, then the jubarte-redlines
+#  10. npm — `npm publish` on jubarte-wasm/npm, then the jubarte-redlines
 #      CLI on jubarte-wasm/cli
-#  10. PyPI — CI wheels + sdist via `uv publish`
-#  11. verify — every registry answers with the new version AND its summary
-#  12. downstream — scripts/release_downstream.sh: jubarte.pro moves to the
+#  11. PyPI — CI wheels + sdist via `uv publish`
+#  12. verify — every registry answers with the new version AND its summary
+#  13. downstream — scripts/release_downstream.sh: jubarte.pro moves to the
 #      release and is deployed, the app's release files are committed in the
 #      jubarte-app repository, and the Mac App Store and benchmark commands
 #      are printed (the App Store upload itself: release_downstream.sh --app)
-#  13. facts — scripts/check_release_facts.py: jubarte-app/data/facts.jsonl,
+#  14. facts — scripts/check_release_facts.py: jubarte-app/data/facts.jsonl,
 #      which jubarte.pro and the Mac app print the version, date, files and
 #      release list from, names this release (and its every required wheel),
 #      and is committed in the jubarte-app checkout
@@ -211,10 +220,20 @@ fi
 # Manifests bump-version.mjs does not own.
 sed -i.bak "s/^version = \"$CUR\"$/version = \"$VER\"/" jubarte-python/Cargo.toml \
   && rm jubarte-python/Cargo.toml.bak
+# The two publish = false crates move with the engine too: wasm-pack writes
+# the crate's own version into pkg/package.json, and a 0.10.0 stamped there
+# already passed itself off as the engine's version in tooling. They may
+# sit on an older version than $CUR (nothing ever bumped them), so the sed
+# takes any x.y.z rather than $CUR; a resumed run rewrites the same $VER.
+for f in jubarte-wasm/Cargo.toml jubarte-rust-inproc/Cargo.toml; do
+  sed -i.bak -E "s/^version = \"[0-9]+\.[0-9]+\.[0-9]+\"$/version = \"$VER\"/" "$f" \
+    && rm "$f.bak"
+done
+step "jubarte-python/Cargo.toml, jubarte-wasm/Cargo.toml, jubarte-rust-inproc/Cargo.toml → $VER"
 (cd jubarte-wasm/npm && npm pkg set "version=$VER" >/dev/null)
 # `npx jubarte-redlines` runs on the jubarte-wasm of its own release.
 (cd jubarte-wasm/cli && npm pkg set "version=$VER" "dependencies.jubarte-wasm=^$VER" >/dev/null)
-step "jubarte-python/Cargo.toml + jubarte-wasm/{npm,cli}/package.json → $VER"
+step "jubarte-wasm/{npm,cli}/package.json → $VER"
 
 # The desktop app ships on the engine's version (tests/release_metadata.rs):
 # its package.json, Tauri config, crate manifest and app-bar label.
@@ -227,10 +246,42 @@ sed -i.bak "s/id=\"appbar-ver\">v$CUR</id=\"appbar-ver\">v$VER</" jubarte-app/sr
   && rm jubarte-app/src/index.html.bak
 step "jubarte-app/package.json, jubarte-app/src-tauri/tauri.conf.json, jubarte-app/src-tauri/Cargo.toml, jubarte-app/src/index.html → $VER"
 
+# A crash mid-step-1 leaves the manifests half-bumped, and a resumed run
+# cannot repair it: CUR is then already $VER, every pattern above keys on a
+# version the unbumped files no longer carry, and sed matches nothing while
+# exiting 0 silently (wheels would ship as the old version). Prove every
+# file step 1 touched really is on $VER, by name.
+half_bumped() {
+  die "$1 is not on $VER after the version sync — a half-bumped tree from an interrupted step 1; fix $1 by hand, commit or reset, and rerun"
+}
+for f in Cargo.toml jubarte-python/Cargo.toml jubarte-wasm/Cargo.toml \
+         jubarte-rust-inproc/Cargo.toml jubarte-app/src-tauri/Cargo.toml; do
+  grep -q "^version = \"$VER\"$" "$f" || half_bumped "$f"
+done
+for f in jubarte-wasm/npm/package.json jubarte-wasm/cli/package.json \
+         jubarte-app/package.json jubarte-app/src-tauri/tauri.conf.json \
+         gemini-extension.json; do
+  grep -q "\"version\": \"$VER\"" "$f" || half_bumped "$f"
+done
+grep -qF "id=\"appbar-ver\">v$VER<" jubarte-app/src/index.html \
+  || half_bumped "jubarte-app/src/index.html"
+grep -qF "badge.socket.dev/cargo/package/jubarte-redlines/$VER" README.md \
+  || half_bumped "README.md (Socket badge)"
+step "every file step 1 touched is on $VER"
+
 # Lockfiles: re-resolve only jubarte-redlines (the root package, or the path
 # dependency every other workspace pins), offline, so registry deps stay put.
 # (A metadata-only pass resolves nothing: v0.10.1 was tagged with three locks
-# still on 0.10.0.)
+# still on 0.10.0.) Each `cargo update --offline -q -p jubarte-redlines`
+# re-records, in that directory's own Cargo.lock, BOTH the new
+# jubarte-redlines version AND the directory's own member version bumped
+# above (cargo rewrites the whole lock once the manifests moved):
+#   .                     → Cargo.lock
+#   jubarte-python        → jubarte-python/Cargo.lock
+#   jubarte-wasm          → jubarte-wasm/Cargo.lock
+#   jubarte-rust-inproc   → jubarte-rust-inproc/Cargo.lock
+#   jubarte-app/src-tauri → jubarte-app/src-tauri/Cargo.lock (the update
+#                          after the loop re-records its jubarte-app member)
 for d in . jubarte-python jubarte-wasm jubarte-rust-inproc jubarte-app/src-tauri; do
   (cd "$d" && cargo update --offline -q -p jubarte-redlines)
 done
@@ -259,7 +310,44 @@ grep -q "^## \[$VER\]" jubarte-app/CHANGELOG.md \
 step "jubarte-app $VER section present"
 
 # =============================================================================
-say "3. Summaries → each registry's channel"
+say "3. release_info — the benchmark evidence of $VER"
+# =============================================================================
+# The six files release_info/README.md names must sit in release_info/ for
+# this version before anything is written: the two 600-item sample CSVs
+# (every file a row names carries its sha256 beside it), the two results
+# JSONs scored on exactly those samples, and the website/app change lists.
+# The bench writes them — neurotic_docx_bench's jubarte_release_info flow,
+# against a release candidate built from this checkout (--binary), since
+# these results are required before the release exists; the candidate
+# names the commit that will become the release commit's parent
+# (release_info/README.md, "Which binary the evidence names"). The checker
+# prints the aggregates; the release commit (step 8) carries the folder.
+#
+# The sample paths name files of the BENCH repository. With a bench
+# checkout at hand, --bench-root makes the checker hash every non-empty
+# path cell and compare it with the CSV's sha256 — the real proof the
+# evidence names real, unmodified files. Without one, the sha256 columns
+# are format-checked only (present, paired, 64 lowercase hex), and that is
+# said out loud below.
+BENCH_ROOT=""
+if [ -n "${NEUROTIC_DOCX_BENCH:-}" ] && [ -d "$NEUROTIC_DOCX_BENCH" ]; then
+  BENCH_ROOT="$NEUROTIC_DOCX_BENCH"
+elif [ -d ../neurotic_docx_bench ]; then
+  BENCH_ROOT="$(cd ../neurotic_docx_bench && pwd)"
+fi
+if [ -n "$BENCH_ROOT" ]; then
+  python3 scripts/check_release_info.py "$VER" --bench-root "$BENCH_ROOT" \
+    || die "release_info/ does not carry $VER's six files, or they do not match the bench's files — run the bench flow that writes them (release_info/README.md), commit them, then rerun"
+  step "six files verified: samples + results + website/app data (sha256 columns checked against $BENCH_ROOT)"
+else
+  echo "  ! no bench checkout found (NEUROTIC_DOCX_BENCH, ../neurotic_docx_bench) — the samples' sha256 columns are format-checked only, not verified against real files" >&2
+  python3 scripts/check_release_info.py "$VER" \
+    || die "release_info/ does not carry $VER's six files — run the bench flow that writes them (release_info/README.md), commit them, then rerun"
+  step "six files verified: samples + results + website/app data (sha256 columns format-checked only)"
+fi
+
+# =============================================================================
+say "4. Summaries → each registry's channel"
 # =============================================================================
 
 cat <<EOF
@@ -380,13 +468,13 @@ else
 fi
 toml_release_note jubarte-python/Cargo.toml "$PYPI_SUMMARY"
 
-# GitHub — the summary rides in the annotated tag body (see step 6);
+# GitHub — the summary rides in the annotated tag body (see step 8);
 # release.yml prepends %(contents:body) to the release notes.
 step "all five summaries + docs statement staged"
 
 # =============================================================================
 if [ "$SKIP_GATES" = 0 ]; then
-  say "4. Gates (sequential cargo, per AGENTS.md)"
+  say "5. Gates (sequential cargo, per AGENTS.md)"
   cargo fmt --check
   cargo clippy --all-targets --all-features -- -D warnings
   cargo test --all-features
@@ -395,22 +483,23 @@ if [ "$SKIP_GATES" = 0 ]; then
   python3 scripts/test_convert_sweep.py
   python3 planning/test_sample50_check.py
   python3 scripts/test_release_sh.py
+  python3 scripts/test_check_release_info.py
   python3 scripts/test_library_readmes.py
   # Python bindings: build the extension from this checkout and run pytest.
   # jubarte-python/uv.lock is tracked; whatever uv rewrites in it ships in
-  # the release commit (step 7), so the tree stays clean for a resumed run.
+  # the release commit (step 8), so the tree stays clean for a resumed run.
   (cd jubarte-python \
     && uv run --with maturin maturin develop --release >/dev/null \
     && uv run --with pytest pytest -q)
   uv tool run --from 'reuse[charset-normalizer]' reuse lint >/dev/null
   step "fmt / clippy / tests / docs / sweep-units / pytest / REUSE all green"
 else
-  say "4. Gates — SKIPPED (--skip-gates)"
+  say "5. Gates — SKIPPED (--skip-gates)"
 fi
 # =============================================================================
 
 # =============================================================================
-say "5. API docs — drift assessment"
+say "6. API docs — drift assessment"
 # =============================================================================
 
 # Required release review: the releaser reads the rendered docs (--open) and
@@ -450,9 +539,9 @@ if [ "$SKIP_GATES" = 0 ]; then
 fi
 
 # =============================================================================
-say "6. Publish dry-runs"
-# The bump and summaries are staged but not committed until step 6, so the
-# dry run packages the dirty tree; the real publish (step 8) stays clean.
+say "7. Publish dry-runs"
+# The bump and summaries are staged but not committed until step 8, so the
+# dry run packages the dirty tree; the real publish (step 9) stays clean.
 # A resumed run skips the dry run of a registry that already holds $VER:
 # npm refuses even a dry run over a published version.
 if crates_has; then
@@ -470,6 +559,10 @@ if npm_cli_has; then
 else
   (cd jubarte-wasm/cli && npm publish --dry-run >/dev/null)
 fi
+# Wipe the folder first: a reused checkout kept the previous release's
+# sdists and the `head -1` below picked the lexicographically oldest (a
+# leftover 0.11.1 sorts before 0.11.2), killing the grep on a healthy tree.
+rm -rf target/release-check
 uvx maturin sdist --manifest-path jubarte-python/Cargo.toml --out target/release-check >/dev/null
 # The pypi summary must survive into the sdist or we stop here.
 sdist=$(ls target/release-check/*.tar.gz 2>/dev/null | head -1)
@@ -505,7 +598,7 @@ EOF
 fi
 
 # =============================================================================
-say "7. Release commit → wasm artifacts → annotated tag"
+say "8. Release commit → wasm artifacts → annotated tag"
 # =============================================================================
 
 # A resumed run finds the release commit under the wasm-artifact commit. Once
@@ -517,19 +610,21 @@ if git rev-parse -q --verify "refs/tags/$TAG^{commit}" >/dev/null; then
 else
   if ! git log -3 --format=%s | grep -x "chore(release): v$VER" >/dev/null; then
     # docs/{rust,python,javascript}.md are regenerated by scripts/gen_docs.sh
-    # in step 5; they ship in this commit beside docs/api, or the post-push
+    # in step 6; they ship in this commit beside docs/api, or the post-push
     # docs CI fails and the dirty tree blocks a resumed release.
     git add Cargo.toml Cargo.lock CHANGELOG.md README.md VERSIONING.md \
       README.crates.md jubarte-wasm/npm/README.md jubarte-wasm/cli/README.md \
       jubarte-python/README.md \
       jubarte-python/Cargo.toml jubarte-python/Cargo.lock \
       jubarte-python/pyproject.toml jubarte-python/uv.lock \
+      jubarte-wasm/Cargo.toml \
       jubarte-wasm/Cargo.lock jubarte-wasm/npm/package.json jubarte-wasm/cli/package.json \
-      jubarte-rust-inproc/Cargo.lock \
+      jubarte-rust-inproc/Cargo.toml jubarte-rust-inproc/Cargo.lock \
       jubarte-app/package.json jubarte-app/CHANGELOG.md jubarte-app/src/index.html \
       jubarte-app/src-tauri/Cargo.toml jubarte-app/src-tauri/Cargo.lock \
       jubarte-app/src-tauri/tauri.conf.json \
       gemini-extension.json \
+      release_info \
       docs/api \
       docs/rust.md docs/python.md docs/javascript.md
     git commit -m "chore(release): v$VER" -m "Docs: $DOCS_UPDATED"
@@ -548,7 +643,7 @@ else
     for t in node node-slim web web-slim; do
       cp "jubarte-wasm/npm/$t/jubarte_wasm.d.ts" "docs/api/jubarte-wasm-$t-v$VER.d.ts"
     done
-    # docs/javascript.md quotes these typings; step 5 read the previous
+    # docs/javascript.md quotes these typings; step 6 read the previous
     # release's (v0.11.0 shipped a reference missing 13 new functions).
     python3 scripts/gen_wasm_api.py \
       --dts jubarte-wasm/npm/node/jubarte_wasm.d.ts \
@@ -588,7 +683,7 @@ cat <<EOF
     PyPI       jubarte-redlines $VER
     GitHub     release $TAG (release.yml builds binaries + wheels)
   Summaries ride along on every channel — verify greps them afterwards.
-  The rustdoc drift review (step 5) is a required sign-off on this release.
+  The rustdoc drift review (step 6) is a required sign-off on this release.
 EOF
 if [ "$YES" = 0 ]; then
   read -r -p "  type 'v$VER' to confirm: " a
@@ -604,7 +699,7 @@ fi
 step "pushed — release workflow started"
 
 # =============================================================================
-say "8. crates.io"
+say "9. crates.io"
 # =============================================================================
 
 if crates_has; then
@@ -624,7 +719,7 @@ else
 fi
 
 # =============================================================================
-say "9. npm"
+say "10. npm"
 # =============================================================================
 
 # An account with two-factor auth answers a non-interactive publish with
@@ -662,7 +757,7 @@ else
 fi
 
 # =============================================================================
-say "10. PyPI"
+say "11. PyPI"
 # =============================================================================
 
 # release.yml attaches the wheels to the GitHub release it creates. When any
@@ -685,6 +780,12 @@ release_from_artifacts() {
   (cd dist/release-src \
     && uvx maturin sdist --manifest-path jubarte-python/Cargo.toml --out ../release)
   rm -rf dist/release-src
+  # A run that lost a wheel job never becomes a public release: step 11's
+  # own wheel check would fire only after the release is out, and a rerun
+  # would then meet a release that already exists. A missing binary is
+  # named in the notes below; a missing wheel stops here.
+  python3 scripts/check_release_artifacts.py dist/release --version "$VER" \
+    || die "release.yml run $run_id lacks wheels — no GitHub release was created; fix the release jobs, rerun the workflow on $TAG, then rerun this script"
   (cd dist/release && shasum -a 256 -- * > SHA256SUMS.txt)
   for a in linux-x86_64 linux-aarch64 macos-x86_64 macos-aarch64 windows-x86_64; do
     ls dist/release/jubarte-"$VER"-"$a".* >/dev/null 2>&1 || missing="$missing $a"
@@ -738,9 +839,16 @@ else
     fi
   fi
   if [ "$got_wheels" = 0 ]; then
+    # No partial wheel set reaches PyPI under a final version by accident:
+    # the local build below is one platform's wheel. --no-wait is the
+    # explicit consent to exactly that (it is also what skipped the
+    # download above); check_release_facts.py would otherwise die on the
+    # missing wheels only after the release is out.
+    [ "$NO_WAIT" = 1 ] \
+      || die "the $TAG release carries no jubarte_redlines wheels — PyPI would get only the local wheel + sdist under a final version; fix the release jobs, or rerun with --no-wait to consent to the partial set"
     uvx maturin build --release --manifest-path jubarte-python/Cargo.toml --out dist/pypi
     uvx maturin sdist --manifest-path jubarte-python/Cargo.toml --out dist/pypi
-    echo "  ! only the local-platform wheel + sdist will reach PyPI" >&2
+    echo "  ! only the local-platform wheel + sdist will reach PyPI (--no-wait given)" >&2
   fi
   if [ "$got_wheels" = 1 ]; then
     # One wheel per README platform row (seven). A release.yml run that lost
@@ -753,7 +861,7 @@ else
 fi
 
 # =============================================================================
-say "11. Verify — versions AND summaries"
+say "12. Verify — versions AND summaries"
 # =============================================================================
 
 npm_note() {
@@ -784,19 +892,19 @@ check "GitHub     notes carry --github-summary" gh_note
 [ "$ok" = 1 ] || die "verification failed — check the lines marked ✗"
 
 # =============================================================================
-say "12. Downstream — jubarte.pro, jubarte-app, App Store, benchmark"
+say "13. Downstream — jubarte.pro, jubarte-app, App Store, benchmark"
 # =============================================================================
 # After verify: the site reads the GitHub release's files and the npm package
-# that step 11 just proved live. A failure here leaves the release itself
+# that step 12 just proved live. A failure here leaves the release itself
 # intact; rerun scripts/release_downstream.sh $VER on its own.
 scripts/release_downstream.sh "$VER" \
   || die "downstream failed — the release is out; rerun scripts/release_downstream.sh $VER"
 
 # =============================================================================
-say "13. Facts — jubarte-app/data/facts.jsonl names $VER"
+say "14. Facts — jubarte-app/data/facts.jsonl names $VER"
 # =============================================================================
 # jubarte.pro and the Mac app read the engine's version, date, files and
-# release list from this log; step 12's site step appends the release to it.
+# release list from this log; step 13's site step appends the release to it.
 # A log left on the previous version ships a download page and an About window
 # that name the wrong engine, so the release is not done until it moves.
 python3 scripts/check_release_facts.py "$VER" \
