@@ -48236,3 +48236,58 @@ fn a_numbering_label_tabs_to_a_custom_stop_inside_its_hanging_gutter() {
         "without a stop in the gutter the text starts at the hanging indent, got {beta_x} (label {label_x})"
     );
 }
+
+#[test]
+fn fixed_html_auto_spacing_uses_the_explicit_before_and_after() {
+    // f23fc5de2e (corpus clean), Word's PDF: every paragraph carries
+    // before=100 beforeAutospacing=1 after=100 afterAutospacing=1 and the
+    // document sets doNotUseHTMLParagraphAutoSpacing ("use fixed paragraph
+    // spacing for the HTML auto setting"). Word's list rows pitch 23.8pt:
+    // the 13.8pt Times 12 line plus the explicit 5pt before and 5pt after,
+    // summed, exactly as rows without the auto flags. The engine put the
+    // auto value (14pt) on each side, 18pt more.
+    let para = |spacing: &str, text: &str| {
+        format!(
+            "<w:p><w:pPr><w:spacing {spacing}/></w:pPr>\
+             <w:r><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/><w:sz w:val=\"24\"/></w:rPr>\
+             <w:t>{text}</w:t></w:r></w:p>"
+        )
+    };
+    let pitch = |spacing: &str, compat: &str| {
+        let body = format!(
+            "{}{}{}",
+            para(spacing, "Alpha"),
+            para(spacing, "Beta"),
+            letter_body_sect()
+        );
+        let settings = format!(
+            "<w:compat>{compat}<w:compatSetting w:name=\"compatibilityMode\" \
+             w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, &settings)).expect("auto spacing");
+        let y = |t: &str| {
+            pdf_glyph_text_xy(&pdf, t)
+                .unwrap_or_else(|| panic!("{t}"))
+                .1
+        };
+        y("Alpha") - y("Beta")
+    };
+    let auto =
+        "w:before=\"100\" w:beforeAutospacing=\"1\" w:after=\"100\" w:afterAutospacing=\"1\"";
+    let plain = "w:before=\"100\" w:after=\"100\"";
+    let fixed = "<w:doNotUseHTMLParagraphAutoSpacing/>";
+    let fixed_auto = pitch(auto, fixed);
+    let fixed_plain = pitch(plain, fixed);
+    assert!(
+        (fixed_auto - fixed_plain).abs() < 0.1,
+        "under the flag the auto rows pitch like the explicit 5 + 5 rows: {fixed_auto} vs {fixed_plain}"
+    );
+    // Without the flag the auto value stands: 14 between the rows (the
+    // larger of after and before) against 5 for the explicit rows.
+    let html_auto = pitch(auto, "");
+    let html_plain = pitch(plain, "");
+    assert!(
+        (html_auto - html_plain - 9.0).abs() < 0.1,
+        "HTML auto spacing keeps 14 between the rows: {html_auto} vs {html_plain}"
+    );
+}

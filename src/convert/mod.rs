@@ -4455,8 +4455,13 @@ fn apply_ppr(dom: &Dom, ppr: NodeId, style: &mut ParaStyle) {
                 style.before = before;
             }
         }
+        // Under `doNotUseHTMLParagraphAutoSpacing` ("use fixed paragraph
+        // spacing for the HTML auto setting") the auto flag is void and
+        // the explicit value stands: f23fc5de2e's before=100 after=100
+        // list rows pitch 23.8 in Word's PDF, the 13.8 line plus 5 and 5,
+        // not the 14 and 14 the flags would give.
         if attr_any(dom, sp, "beforeAutospacing").is_some() {
-            style.before_auto = is_auto_spacing(dom, sp, "beforeAutospacing");
+            style.before_auto = is_auto_spacing(dom, sp, "beforeAutospacing") && !style.sum_spacing;
             style.before = if style.before_auto {
                 14.0
             } else {
@@ -4464,7 +4469,7 @@ fn apply_ppr(dom: &Dom, ppr: NodeId, style: &mut ParaStyle) {
             };
         }
         if attr_any(dom, sp, "afterAutospacing").is_some() {
-            style.after_auto = is_auto_spacing(dom, sp, "afterAutospacing");
+            style.after_auto = is_auto_spacing(dom, sp, "afterAutospacing") && !style.sum_spacing;
             style.after = if style.after_auto {
                 14.0
             } else {
