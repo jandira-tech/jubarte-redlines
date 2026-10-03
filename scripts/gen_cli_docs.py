@@ -150,6 +150,44 @@ def build_block(runner: list[str], display: str, max_depth: int) -> str:
     return "\n".join(parts).strip("\n")
 
 
+def command_summaries(text: str) -> list[tuple[str, str]]:
+    """``(name, description)`` per top-level subcommand, wrapped lines joined.
+
+    clap prints ``  name  description`` and indents a wrapped description
+    under itself; ``help`` is left out.
+    """
+    rows: list[tuple[str, str]] = []
+    in_section = False
+    for line in text.splitlines():
+        if line.strip() in ("Commands:", "commands:"):
+            in_section = True
+            continue
+        if not in_section:
+            continue
+        if not line.strip() or not line.startswith("  "):
+            break
+        match = re.match(r"^  ([a-z][a-z0-9_-]*)\s{2,}(.*)$", line)
+        if match:
+            rows.append((match.group(1), match.group(2).strip()))
+        elif rows and line.startswith("    "):
+            name, desc = rows[-1]
+            rows[-1] = (name, f"{desc} {line.strip()}")
+    return [(n, d) for n, d in rows if n != "help"]
+
+
+def build_summary(runner: list[str], display: str) -> str:
+    """A markdown table of every top-level command, from ``--help`` alone."""
+    top = run_help(runner, [])
+    about = top.splitlines()[0].strip() if top else ""
+    lines = ["| Command | What it does |", "|---|---|"]
+    if about:
+        lines.append(f"| `{display} ORIGINAL MODIFIED` | {about} |")
+    for name, desc in command_summaries(top):
+        cell = desc.replace("|", r"\|")
+        lines.append(f"| `{display} {name}` | {cell} |")
+    return "\n".join(lines)
+
+
 def replace_block(text: str, marker: str, content: str) -> str:
     start = START.format(marker=marker)
     end = END.format(marker=marker)
@@ -179,9 +217,17 @@ def main() -> None:
         default=2,
         help="how deep to recurse into nested subcommands (default 2)",
     )
+    parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="write a one-row-per-command table instead of every --help",
+    )
     args = parser.parse_args()
 
-    block = build_block(args.runner, args.display, args.max_depth)
+    if args.summary:
+        block = build_summary(args.runner, args.display)
+    else:
+        block = build_block(args.runner, args.display, args.max_depth)
     text = open(args.file, encoding="utf-8").read()
     updated = replace_block(text, args.marker, block)
     if updated != text:
