@@ -48129,10 +48129,17 @@ fn an_empty_rprdefault_lays_the_text_out_in_times_new_roman() {
           <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
         </w:styles>";
     let body = "<w:p><w:r><w:t>Plain body text</w:t></w:r></w:p><w:sectPr/>";
+    // Times New Roman is the installed face, or Liberation Serif where
+    // the machine has none; Calibri's stand-in is Carlito.
+    let times_not_calibri = |pdf: &[u8]| {
+        let hay = String::from_utf8_lossy(pdf);
+        (hay.contains("/BaseFont /Times") || hay.contains("/BaseFont /LiberationSerif"))
+            && !hay.contains("/BaseFont /Calibri")
+            && !hay.contains("/BaseFont /Carlito")
+    };
     let pdf = docx_to_pdf(&docx_with_styles(body, styles)).expect("empty rPrDefault");
-    let hay = String::from_utf8_lossy(&pdf);
     assert!(
-        hay.contains("/BaseFont /Times") && !hay.contains("/BaseFont /Calibri"),
+        times_not_calibri(&pdf),
         "an empty rPrDefault means Times New Roman, not Calibri"
     );
     assert!(!pdf_tf_xs(&pdf, "10.08 Tf").is_empty(), "and 10pt");
@@ -48147,9 +48154,8 @@ fn an_empty_rprdefault_lays_the_text_out_in_times_new_roman() {
          </a:theme>";
     let pdf = docx_to_pdf(&docx_with_styles_and_theme(body, styles, theme))
         .expect("empty rPrDefault with a theme");
-    let hay = String::from_utf8_lossy(&pdf);
     assert!(
-        hay.contains("/BaseFont /Times") && !hay.contains("/BaseFont /Calibri"),
+        times_not_calibri(&pdf),
         "a theme part does not name the default face"
     );
 }
@@ -48763,8 +48769,21 @@ fn an_installed_family_wins_over_the_documents_embedded_copy() {
     // survives every other change; only line=240 moves it, to 16.08).
     // Word takes an installed font over the document's embedded copy.
     // Here Carlito's bytes pose as the embedded Times (1.2207 em: 17.09
-    // at 14pt); the installed Times, or its metric twin Liberation
-    // Serif, keeps the pitch at 16.09.
+    // at 14pt); the installed Times keeps the pitch at 16.09. The
+    // catalogue reads system faces from the macOS folders only, so a
+    // machine without Times New Roman there paints the embedded copy.
+    let installed = [
+        "/System/Library/Fonts/Supplemental",
+        "/Library/Fonts",
+        "/Applications/Microsoft Word.app/Contents/Resources/DFonts",
+        "/Library/Fonts/Microsoft",
+    ]
+    .iter()
+    .any(|dir| {
+        std::path::Path::new(dir)
+            .join("Times New Roman.ttf")
+            .is_file()
+    });
     let carlito = include_bytes!("../assets/fonts/Carlito-Regular.ttf");
     let para = |text: &str| {
         format!(
@@ -48779,9 +48798,11 @@ fn an_installed_family_wins_over_the_documents_embedded_copy() {
     let alpha = pdf_glyph_text_xy(&pdf, "Alpha").expect("Alpha paints");
     let beta = pdf_glyph_text_xy(&pdf, "Beta").expect("Beta paints");
     let pitch = alpha.1 - beta.1;
+    let want = if installed { 16.09 } else { 17.09 };
     assert!(
-        (pitch - 16.09).abs() < 0.15,
-        "Times 14 single-spaced steps 16.09 in the installed face, got {pitch} (17.09 is the embedded Carlito)"
+        (pitch - want).abs() < 0.15,
+        "Times 14 single-spaced steps 16.09 in the installed face and 17.09 in the embedded Carlito; \
+         installed: {installed}, got {pitch}"
     );
 }
 

@@ -7533,6 +7533,14 @@ fn paint_comment_balloons(fonts: &Fonts, sheet: &StyleSheet, pages: &mut [Page])
     const FIRST_LINE_TOP: f32 = 2.67;
     const BOX_PAD: f32 = 4.31;
     const PITCH: f32 = 1.236;
+    // A resolved face is a requested font in the report: a document that
+    // paints no balloon asks for neither the label's face nor the text's.
+    if !pages
+        .iter()
+        .any(|p| p.markup_pane && !p.comments.is_empty() && !p.vertical)
+    {
+        return;
+    }
     let balloon = sheet.by_id.get("BalloonText");
     let size = balloon.filter(|b| b.sets_size).map_or(9.0, |b| b.run.size);
     let label_family = balloon
