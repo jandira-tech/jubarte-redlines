@@ -24606,6 +24606,20 @@ impl<'a> Layout<'a> {
                 .map(|r| self.run_width_pt(r, r.text.trim_start_matches('\t')))
                 .sum()
         };
+        // A right stop that cannot hold the text after the last tab is no
+        // TOC leader either: 7c02cf95f3's Defpara opens "<tab>Port or
+        // Harbour includes…" against a right stop at 1332 twips inside its
+        // 1616-twip hanging indent, and Word starts the sentence where the
+        // tab stands and wraps it at the margin (three lines, the rest at
+        // the hanging indent). Pinned to the stop as a page number, the
+        // paragraph was one line that ran off the page. The room is a
+        // line's, from its start to the stop: a wrapped TOC description's
+        // head runs past the stop on one line (sd_2517) and still keeps
+        // its page number there.
+        let line_start = indent + style.indent_first.min(0.0);
+        if suf_w > stop.pos - line_start + 0.5 {
+            return self.wrap_hanging_or_first(body, style, indent, marker, width, list);
+        }
         let first_x =
             self.page.margin_l + indent + if has_marker { 0.0 } else { style.indent_first };
         // Word wraps every TOC line in the column up to the right tab,

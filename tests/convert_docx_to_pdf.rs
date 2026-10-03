@@ -48499,3 +48499,53 @@ fn the_squeeze_keeps_the_last_word_within_a_third_of_it_and_its_space() {
         );
     }
 }
+
+#[test]
+fn a_leading_tab_whose_right_stop_cannot_hold_the_text_wraps_the_paragraph() {
+    // 7c02cf95f3's Defpara: a right stop at 1332 twips inside a 1616-twip
+    // hanging indent, the paragraph opened by a tab. "Port or Harbour
+    // includes…" is far wider than the stop, so Word starts it where the
+    // tab stands and wraps it at the margin: three lines (x 120.2–456.5,
+    // then 201.0–459.0 and 201.0–454.6 at the hanging indent) and "under
+    // an Act…" on a fourth. The TOC right-tab path took everything after
+    // the paragraph's last tab as the stop's page-number suffix and laid
+    // the whole paragraph on one line that ran off the page.
+    let styles = "<w:docDefaults><w:rPrDefault><w:rPr>\
+        <w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/><w:sz w:val=\"24\"/>\
+        </w:rPr></w:rPrDefault></w:docDefaults>\
+        <w:style w:type=\"paragraph\" w:styleId=\"Defpara\"><w:name w:val=\"Defpara\"/>\
+        <w:pPr><w:tabs><w:tab w:val=\"right\" w:pos=\"1332\"/></w:tabs>\
+        <w:ind w:left=\"1616\" w:hanging=\"1616\"/></w:pPr></w:style>";
+    let body = "<w:p><w:pPr><w:pStyle w:val=\"Defpara\"/></w:pPr><w:r><w:tab/></w:r>\
+        <w:r><w:rPr><w:b/><w:i/></w:rPr><w:t>Port or Harbour</w:t></w:r>\
+        <w:r><w:t xml:space=\"preserve\"> includes a port or a fishing boat harbour declared \
+        as such under the Shipping and Pilotage Act 1967 and a port under the control of a \
+        port authority established under an Act.</w:t></w:r></w:p>";
+    let pdf = docx_to_pdf(&docx_with_settings_and_styles(body, "", styles)).expect("converts");
+    let port = pdf_glyph_text_xy(&pdf, "Port").expect("Port paints");
+    let end = pdf_glyph_text_xy(&pdf, "Act.").expect("the end paints");
+    assert!(
+        port.1 - end.1 > 1.5 * 13.8,
+        "the paragraph wraps onto at least three Times 12 lines: Port at y {}, Act. at y {}",
+        port.1,
+        end.1
+    );
+    let lines = pdf_line_min_xs(&pdf);
+    assert!(lines.len() >= 3, "three lines or more, got {lines:?}");
+    assert!(
+        (lines[0] - port.0).abs() < 0.5,
+        "the first line starts where the tab stood (the stop cannot hold the text), got {lines:?}"
+    );
+    for x in &lines[1..] {
+        assert!(
+            (x - (port.0 + 80.8)).abs() < 1.0,
+            "continuation lines start at the 1616-twip hanging indent, got {lines:?}"
+        );
+    }
+    for (x, _) in pdf_glyph_text_xys(&pdf, "a") {
+        assert!(
+            x < port.0 + 468.0,
+            "no glyph past the right margin, one at x {x}"
+        );
+    }
+}
