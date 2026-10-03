@@ -58,7 +58,8 @@ if [ "$SITE" = 0 ]; then
 else
   for t in pnpm gh npm curl; do command -v "$t" >/dev/null || die "missing tool: $t"; done
   "$SITE_DIR/scripts/release.sh" engine "$VER"
-  changed=$(git status --porcelain -- "$SITE_DIR" | cut -c4-)
+  # The site's release facts live in jubarte-app/data/facts.jsonl, beside it.
+  changed=$(git status --porcelain -- "$SITE_DIR" "$APP_DIR/data" | cut -c4-)
   if [ -z "$changed" ]; then
     step "jubarte.pro already on $VER (nothing to commit here)"
   else
@@ -84,13 +85,13 @@ elif [ "$(app_git branch --show-current)" != main ]; then
   app_git status --short | sed 's/^/      /'
 else
   app_git switch -q -c "release/$TAG"
-  app_git add -A -- package.json CHANGELOG.md src/index.html src-tauri jubarte-site
+  app_git add -A -- package.json CHANGELOG.md src/index.html src-tauri jubarte-site data
   app_git commit -q -m "release $VER on the jubarte-redlines $VER engine" \
     -m "Version files from jubarte-redlines scripts/release.sh; jubarte.pro from jubarte-site/scripts/release.sh engine $VER."
   app_git push -q -u origin "release/$TAG"
   (cd "$APP_DIR" && gh pr create --base main --head "release/$TAG" \
     --title "release $VER" \
-    --body "jubarte-app $VER on the jubarte-redlines $VER engine: version files, CHANGELOG, and jubarte.pro (already deployed) on the $TAG release.")
+    --body "jubarte-app $VER on the jubarte-redlines $VER engine: version files, CHANGELOG, data/facts.jsonl, and jubarte.pro (already deployed) on the $TAG release.")
   step "release/$TAG pushed, pull request opened"
   left=$(app_git status --porcelain)
   [ -z "$left" ] || { step "left uncommitted (not a release file):"; printf '%s\n' "$left" | sed 's/^/      /'; }
@@ -117,5 +118,5 @@ say "Benchmark"
 echo "  Score $VER (hours; the redline stage needs Microsoft Word):"
 echo "      (cd ../neurotic_docx_bench && scripts/release_jubarte.py $VER --plan)"
 echo "      (cd ../neurotic_docx_bench && scripts/release_jubarte.py $VER)"
-echo "  Then copy its RESULTS.md figures into $SITE_DIR/site/data/bench.ts and publish them:"
+echo "  Then append its RESULTS.md figures to $APP_DIR/data/facts.jsonl (bench.*, with $APP_DIR/scripts/facts.py) and publish them:"
 echo "      (cd $SITE_DIR && scripts/release.sh bench $VER --redline-tool jubarte-$VER)"
