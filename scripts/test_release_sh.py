@@ -207,6 +207,24 @@ class Lessons0101(unittest.TestCase):
         add = next(l for l in s7.splitlines() if "git add jubarte-wasm/npm" in l)
         self.assertIn("jubarte-wasm/Cargo.lock", add)
 
+    def test_the_artifacts_commit_regenerates_the_js_reference(self) -> None:
+        # docs/javascript.md quotes jubarte-wasm/npm/node/jubarte_wasm.d.ts.
+        # Step 5 ran before the rebuild, so v0.11.0 shipped a reference
+        # generated from the 0.10.1 typings, missing 13 new functions.
+        s7 = step(7)
+        regen = s7.index("scripts/gen_wasm_api.py")
+        self.assertLess(s7.index("jubarte-wasm/build-npm.sh"), regen)
+        add = next(l for l in s7.splitlines() if "git add jubarte-wasm/npm" in l)
+        self.assertIn("docs/javascript.md", add)
+
+    def test_pypi_is_checked_on_the_project_listing(self) -> None:
+        # PyPI's CDN keeps a 404 for /pypi/<name>/<version>/json once asked
+        # before the upload; v0.11.0's verify failed on a release that was
+        # live. The project listing is purged on upload.
+        line = next(l for l in RELEASE_SH.read_text().splitlines() if l.startswith("pypi_has()"))
+        self.assertNotIn("/$VER/json", line)
+        self.assertIn("pypi.org/pypi/jubarte-redlines/json", line)
+
     def test_the_gates_build_the_public_docs_without_warnings(self) -> None:
         # The 0.11.0 docs carried 41 dead intra-doc links (rendered as bare
         # brackets on docs.rs) because nothing built the public docs with

@@ -70,6 +70,34 @@ signatures and doc comments the package ships.
 <!-- gen:wasm-api:start -->
 Reflects `jubarte-wasm/npm/node/jubarte_wasm.d.ts` (the full Node build; the slim entry points drop `docxToPdf` and `pdfPageCount`).
 
+### `AppendOutput`
+
+```typescript
+class AppendOutput {
+    readonly docx: Uint8Array
+    readonly warnings: string
+}
+```
+
+What `appendDocuments` returns.
+
+#### `AppendOutput.docx`
+
+```typescript
+readonly docx: Uint8Array
+```
+
+The joined document.
+
+#### `AppendOutput.warnings`
+
+```typescript
+readonly warnings: string
+```
+
+What was not carried, as a JSON array of `CODE: message` strings
+(`COMMENTS_DROPPED: ...`).
+
 ### `EditOutput`
 
 ```typescript
@@ -77,6 +105,7 @@ class EditOutput {
     readonly clean: Uint8Array | undefined
     readonly json: string
     readonly ok: boolean
+    readonly patch: string | undefined
     readonly redline: Uint8Array | undefined
 }
 ```
@@ -111,6 +140,16 @@ readonly ok: boolean
 
 `true` when the plan was applied (or resolved, for a preview).
 
+#### `EditOutput.patch`
+
+```typescript
+readonly patch: string | undefined
+```
+
+The changes the redline tracks as a patch (see
+`diffDocuments`), by the plan's author and date;
+`undefined` on refusal and for previews.
+
 #### `EditOutput.redline`
 
 ```typescript
@@ -119,6 +158,61 @@ readonly redline: Uint8Array | undefined
 
 The source compared against the clean copy (Word tracked changes);
 `undefined` on refusal and for previews.
+
+### `FieldsOutput`
+
+```typescript
+class FieldsOutput {
+    readonly docx: Uint8Array
+    readonly json: string
+}
+```
+
+What `updateFields` returns.
+
+#### `FieldsOutput.docx`
+
+```typescript
+readonly docx: Uint8Array
+```
+
+The document with refreshed field results.
+
+#### `FieldsOutput.json`
+
+```typescript
+readonly json: string
+```
+
+`{"page_count", "fields": [{"kind", "code", "paragraph", "old", "new"}]}`.
+
+### `RepairOutput`
+
+```typescript
+class RepairOutput {
+    readonly docx: Uint8Array
+    readonly json: string
+}
+```
+
+Output of `repairDocument`.
+
+#### `RepairOutput.docx`
+
+```typescript
+readonly docx: Uint8Array
+```
+
+The package with every repairable finding fixed.
+
+#### `RepairOutput.json`
+
+```typescript
+readonly json: string
+```
+
+`{"repaired": [...], "remaining": [...]}`: the findings fixed and the
+ones the output still has.
 
 ### `acceptChanges`
 
@@ -143,6 +237,19 @@ Accept every tracked revision (package-wide) → clean DOCX bytes.
 
 Mirrors `jubarte::document_comparer::accept_revisions`.
 
+### `appendDocuments`
+
+```typescript
+appendDocuments(a: Uint8Array, b: Uint8Array, options_json?: string | null): AppendOutput
+```
+
+Append B after A, carrying B's images, links, headers, styles, lists and
+notes. `optionsJson` is `{"section_break": "next_page" | "continuous" |
+"none", "keep_sections": bool, "comments": "drop" | "carry"}`, each
+optional; B's comments are dropped (warned) unless `"carry"`.
+
+Mirrors `jubarte::append::append_documents`.
+
 ### `applyEditPlan`
 
 ```typescript
@@ -154,26 +261,74 @@ the per-operation report.
 
 Mirrors `jubarte::edit::apply_plan_json`.
 
+### `auditDocument`
+
+```typescript
+auditDocument(docx: Uint8Array, rules?: string | null): string
+```
+
+Audit findings as JSON `{findings, rules, layout}` (see `jubarte audit`).
+`rules` is a comma-separated list of rule sets (`a11y`, `style`,
+`structure`) or codes; omitted or empty runs every rule. The slim build
+has no layout pass: it leaves `FONT_SUBSTITUTED` out (naming it is an
+error) and does not compare `NUMPAGES` caches with a page count.
+
+### `auditTracked`
+
+```typescript
+auditTracked(original: Uint8Array, edited: Uint8Array, author: string): string
+```
+
+Every text change from `original` to `edited` must be a revision by
+`author`; the findings (`UNTRACKED_EDIT`, `FOREIGN_AUTHOR`) as a JSON
+array.
+
+Mirrors `jubarte::validate::audit_tracked`.
+
 ### `capabilities`
 
 ```typescript
 capabilities(): string
 ```
 
-What this build can do, as JSON (`runtime: "wasm"`): PDF only in the full
-build, PNG never.
+What this build can do, as JSON (`runtime: "wasm"`): PDF and field
+refresh only in the full build, PNG never.
 
 Mirrors `jubarte::capabilities::capabilities`.
 
 ### `compareDocuments`
 
 ```typescript
-compareDocuments(original: Uint8Array, modified: Uint8Array, author: string): Uint8Array
+compareDocuments(original: Uint8Array, modified: Uint8Array, author: string, input_limits_json?: string | null): Uint8Array
 ```
 
 Compare two DOCX packages (bytes) → redline DOCX bytes (`w:ins`/`w:del`).
 
 Mirrors `jubarte::document_comparer::compare_documents`.
+`inputLimitsJson` (optional) overrides the admission budget key by key:
+`{"max_compressed_bytes", "max_entries", "max_part_bytes",
+"max_uncompressed_bytes", "max_xml_depth"}`. A package past the budget
+throws with `INPUT_LIMIT`; an unknown key throws `invalid input limits`.
+The default budget allows 2 GiB inflated, more than a 32-bit WASM heap
+holds, so browser hosts should lower it.
+
+### `diffDocuments`
+
+```typescript
+diffDocuments(old: Uint8Array, _new: Uint8Array, author: string, date: string, columns?: number | null, old_name?: string | null, new_name?: string | null): string
+```
+
+The changes from `old` to `new` as a patch, JSON `{"text", "hunks":
+[{"at", "removed", "text"}]}`: only the changed paragraphs, each whole,
+with `[-old-]{+new+}` changes and CriticMarkup comments, at its
+`body:p:N` id in a Word document or `line:N` in Markdown.
+
+Each side is a `.docx` package or UTF-8 Markdown
+(`new TextEncoder().encode(text)`). `author` and `date` (ISO 8601) own
+the changes; `columns` wraps the lines (72 by default, 0 does not);
+the names default to `old.docx`/`old.md` and `new.docx`/`new.md`.
+
+Mirrors `jubarte::markdown::patch_documents`.
 
 ### `documentMarkdown`
 
@@ -216,7 +371,7 @@ The JSON-lines form of a report (`load`, one `op` per operation,
 ### `getRevisions`
 
 ```typescript
-getRevisions(docx: Uint8Array): string
+getRevisions(docx: Uint8Array, input_limits_json?: string | null): string
 ```
 
 List the tracked revisions in a DOCX as a JSON array string — the same
@@ -224,7 +379,8 @@ object shape as the CLI `jubarte revisions --json` lines
 (`type`/`author`/`date`/`part`/`moveGroupId`/`isMoveSource`/`formatChange`/`text`).
 
 Mirrors `jubarte::document_comparer::get_revisions` with default settings,
-serialized by the shared `revisions_to_json`.
+serialized by the shared `revisions_to_json`. `inputLimitsJson` as in
+`compareDocuments`.
 
 ### `initPanicHook`
 
@@ -258,6 +414,36 @@ id `acceptChanges` / `rejectChanges` select by (the same objects as
 `text`, `move_name`, `move_side`, `inside`).
 
 Mirrors `jubarte::changes::list_changes`.
+
+### `listComments`
+
+```typescript
+listComments(docx: Uint8Array, author?: string | null, latest?: boolean | null): string
+```
+
+List every comment as a JSON array string (the objects `jubarte comments
+--json` prints: `id`, `author`, `initials`, `date`, `text`, `parent`,
+`done`, `paragraph`, `anchor_text`, `before`, `after`). `author` keeps
+one author's comments; `latest` keeps the newest comment of each thread.
+
+Mirrors `jubarte::comments::list_comments` and `select_comments`.
+
+### `markdownToDocx`
+
+```typescript
+markdownToDocx(text: string, options_json?: string | null, reference?: Uint8Array | null): Uint8Array
+```
+
+Markdown with CriticMarkup → DOCX bytes, as `jubarte convert draft.md`.
+
+`optionsJson` (every field optional): `page` (`"letter"` default, or
+`"a4"`), `author` (`"Redline"`), `date` (fixed epoch, so the same Markdown
+writes the same bytes), `critic` (`true`: CriticMarkup becomes tracked
+changes and comments) and `track_changes` (or `trackChanges`: `"all"`,
+`"accept"`, `"reject"`). An unknown field is an error. `reference`, a
+`.docx`, lends its styles and page setup, and then `page` is ignored.
+Images are written as their alt text, and the engine's warnings are not
+returned.
 
 ### `pdfPageCount`
 
@@ -301,6 +487,31 @@ Reject every tracked revision (package-wide) → base DOCX bytes.
 
 Mirrors `jubarte::document_comparer::reject_revisions`.
 
+### `repairDocument`
+
+```typescript
+repairDocument(docx: Uint8Array): RepairOutput
+```
+
+The package with every repairable finding fixed, with the findings it
+fixed and could not fix in `json`.
+
+Mirrors `jubarte::validate::repair`.
+
+### `scrubDocument`
+
+```typescript
+scrubDocument(docx: Uint8Array, options_json?: string | null): Uint8Array
+```
+
+Remove who touched a document: author names (as one alias), rsids, the
+people and dates in the document properties, and comments.
+`optionsJson` is `{"author_alias": string, "rsids": bool, "docprops":
+bool, "comments": bool}`, a field left out off; without it, everything
+goes under the alias `Author`.
+
+Mirrors `jubarte::scrub::scrub`.
+
 ### `sourceSha256`
 
 ```typescript
@@ -311,6 +522,29 @@ SHA-256 (lowercase hex) of the bytes: the `source_sha256` guard an edit
 plan carries.
 
 Mirrors `jubarte::inspect::source_sha256`.
+
+### `updateFields`
+
+```typescript
+updateFields(docx: Uint8Array): FieldsOutput
+```
+
+Refresh the cached results of `PAGEREF`, `REF`, `NUMPAGES`, `SEQ` and
+`TOC` fields from jubarte's layout (page numbers are jubarte's, not
+Word's). Full build only: it needs the layout the PDF export links.
+
+Mirrors `jubarte::fields::update_fields`.
+
+### `validateDocument`
+
+```typescript
+validateDocument(docx: Uint8Array): string
+```
+
+Word-validity findings beyond the schema as a JSON array (`code`,
+`part`, `path`, `message`, `word_fatal`, `repairable`); `[]` is a pass.
+
+Mirrors `jubarte::validate::validate`.
 <!-- gen:wasm-api:end -->
 
 ## CLI usage
