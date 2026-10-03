@@ -722,7 +722,10 @@ A `STYLEREF` in a header or footer shows the body text in its style
 on its page, or the last with `\l`. A page without one shows the last
 before it, and a page before any shows the first after it (probe sref_p1,
 2026-10-02). 5a6c's running head reads s. 4 / s. 9 / s. 12 where the
-cached result says s. 1 (`patch_stylerefs`).
+cached result says s. 1 (`patch_stylerefs`). The line is laid out again
+around the result: 515f's jc=right "s. 10" ends on its cell edge at 482.28
+like the cached "s. 1" did, so its start moves left; a centred line keeps
+its middle, and text after the field on a left line moves on.
 
 ## Metafile pictures
 

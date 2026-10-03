@@ -10752,6 +10752,16 @@ fn apply_field_results(
         .collect()
 }
 
+/// A painted `STYLEREF` result: its page and op, its line's ops
+/// (`line`) and the share of a width change the line's start takes.
+struct StyleRefOp {
+    page: usize,
+    op: usize,
+    target: std::rc::Rc<StyleRef>,
+    line: std::ops::Range<usize>,
+    align: f32,
+}
+
 /// A `STYLEREF` field's target: the style it names (by name, any case,
 /// or by id; a bare digit is that heading level) and its `\l` switch.
 #[derive(Debug, PartialEq)]
@@ -20681,8 +20691,11 @@ struct Layout<'a> {
     fill_join: Option<(usize, f32)>,
     bookmark_pages: HashMap<String, String>,
     pageref_ops: Vec<(usize, usize, String)>,
-    /// Header/footer `STYLEREF` results painted: (page, op, target).
-    styleref_ops: Vec<(usize, usize, std::rc::Rc<StyleRef>)>,
+    /// Header/footer `STYLEREF` results painted, patched after layout.
+    styleref_ops: Vec<StyleRefOp>,
+    /// The line being painted: its first op and the share of a width
+    /// change its start takes (0 left, 0.5 centre, 1 right).
+    line_frame: Option<(usize, f32)>,
     /// Body text by paragraph style, then by character style, in paint
     /// order: what a header `STYLEREF` shows (`patch_stylerefs`).
     style_hits: [Vec<StyleHit>; 2],
@@ -21142,6 +21155,7 @@ impl<'a> Layout<'a> {
             bookmark_pages: HashMap::new(),
             pageref_ops: Vec::new(),
             styleref_ops: Vec::new(),
+            line_frame: None,
             style_hits: [Vec::new(), Vec::new()],
             para_serial: 0,
             known_bookmarks: HashSet::new(),
@@ -23174,6 +23188,7 @@ impl<'a> Layout<'a> {
                     && !(self.do_not_expand_shift_return && ends_br.get(line_i) == Some(&true)));
             let x = self.flow_left() + indent + extra + first_extra;
             let baseline = self.y;
+            let frame = self.open_line_frame(style.align);
             let ops_start = self.current().ops.len();
             let mut x = x;
             let mut line = line;
@@ -23229,6 +23244,7 @@ impl<'a> Layout<'a> {
                 self.tab_shift = 0.0;
             }
             self.paint_line_number(baseline);
+            self.close_line_frame(frame);
             self.last_line_end = Some((x + line_w, baseline));
             self.last_line = Some(LastLine {
                 page: self.pages.len(),
@@ -24532,7 +24548,7 @@ impl<'a> Layout<'a> {
             if let Some(name) = run.pageref.as_deref() {
                 self.pageref_ops.push((page_i, op_i, name.to_string()));
             } else if let Some(target) = styleref {
-                self.styleref_ops.push((page_i, op_i, target.clone()));
+                self.note_styleref_op(page_i, op_i, target);
             }
         } else {
             let mut gx = x;
@@ -28163,6 +28179,7 @@ impl<'a> Layout<'a> {
                             // grid like the page margin (00004116's cells).
                             let edge = ((x + pad_l) / 0.24 + 0.5).floor() * 0.24;
                             let mut tx = edge + ind_l + extra;
+                            let frame = self.open_line_frame(para.style.align);
                             if li == 0
                                 && let Some(img) = lead
                             {
@@ -28213,6 +28230,7 @@ impl<'a> Layout<'a> {
                                     body = &line[1..];
                                 }
                                 self.paint_justified_line(body, tx, ty, leftover);
+                                self.close_line_frame(frame);
                                 self.clip_right = None;
                                 y_line -= line_box;
                                 continue;
@@ -28252,6 +28270,7 @@ impl<'a> Layout<'a> {
                                 }
                                 tx = self.paint_run(run, tx, ty);
                             }
+                            self.close_line_frame(frame);
                             self.clip_right = None;
                             y_line -= line_box;
                         }
@@ -28909,6 +28928,7 @@ impl<'a> Layout<'a> {
             Align::Right => (width - line_w).max(0.0),
         };
         let mut x = self.page.margin_l + ind_l + extra;
+        let frame = self.open_line_frame(align);
         for run in runs {
             let untabbed;
             let run = if run.text.contains('\t') {
@@ -28932,7 +28952,7 @@ impl<'a> Layout<'a> {
             let w = face.width_pt(chrome_measure_text(&run.text), run.style.layout_size());
             if let Some(target) = run.styleref.as_ref() {
                 let at = (self.pages.len().saturating_sub(1), self.current().ops.len());
-                self.styleref_ops.push((at.0, at.1, target.clone()));
+                self.note_styleref_op(at.0, at.1, target);
             }
             self.current().ops.push(Op::text(
                 fid,
@@ -28952,6 +28972,7 @@ impl<'a> Layout<'a> {
             self.decorate_run(x, run.style.paint_y(y), ink, &run.style);
             x += w;
         }
+        self.close_line_frame(frame);
     }
 
     /// A header/footer part's anchored boxes, placed like the body's with
@@ -29696,7 +29717,8 @@ impl<'a> Layout<'a> {
     /// in its first.
     fn patch_stylerefs(&mut self) {
         let mut done: Vec<(usize, *const StyleRef)> = Vec::new();
-        for (pi, oi, target) in &self.styleref_ops {
+        for at in &self.styleref_ops {
+            let (pi, oi, target) = (&at.page, &at.op, &at.target);
             let first = !done.contains(&(*pi, std::rc::Rc::as_ptr(target)));
             done.push((*pi, std::rc::Rc::as_ptr(target)));
             let hits: Vec<&StyleHit> = self
@@ -29718,12 +29740,71 @@ impl<'a> Layout<'a> {
             };
             let value = if first { hit.text.trim() } else { "" };
             let fonts = self.fonts;
-            if let Some(Op::Text {
-                face, text, glyphs, ..
-            }) = self.pages.get_mut(*pi).and_then(|p| p.ops.get_mut(*oi))
-            {
-                *glyphs = fonts.get(*face).glyphs(value);
-                *text = value.to_string();
+            let Some(ops) = self.pages.get_mut(*pi).map(|p| &mut p.ops) else {
+                continue;
+            };
+            let Some(Op::Text {
+                face,
+                size,
+                text,
+                glyphs,
+                hscale,
+                ..
+            }) = ops.get_mut(*oi)
+            else {
+                continue;
+            };
+            let face_ = fonts.get(*face);
+            let grow = (face_.width_pt(value, *size) - face_.width_pt(text, *size)) * *hscale;
+            *glyphs = face_.glyphs(value);
+            *text = value.to_string();
+            // Word lays the line out again around the new result (515f's
+            // jc=right "s. 10" keeps its end on the cell edge).
+            let end = at.line.end.min(ops.len());
+            for (i, op) in ops.iter_mut().enumerate().take(end).skip(at.line.start) {
+                let dx = if i <= *oi {
+                    -grow * at.align
+                } else {
+                    grow * (1.0 - at.align)
+                };
+                shift_op_x(op, dx);
+            }
+        }
+    }
+
+    /// Records a painted `STYLEREF` result in the line being painted.
+    fn note_styleref_op(&mut self, page: usize, op: usize, target: &std::rc::Rc<StyleRef>) {
+        let (start, align) = self.line_frame.unwrap_or((op, 0.0));
+        self.styleref_ops.push(StyleRefOp {
+            page,
+            op,
+            target: target.clone(),
+            line: start.min(op)..op + 1,
+            align,
+        });
+    }
+
+    /// Opens a line for `note_styleref_op`; returns the mark that
+    /// `close_line_frame` takes.
+    fn open_line_frame(&mut self, align: Align) -> usize {
+        let share = match align {
+            Align::Center => 0.5,
+            Align::Right => 1.0,
+            Align::Left | Align::Justify => 0.0,
+        };
+        self.line_frame = Some((self.current().ops.len(), share));
+        self.styleref_ops.len()
+    }
+
+    /// Ends the line opened at `mark`: its `STYLEREF` results move the
+    /// ops painted after them too.
+    fn close_line_frame(&mut self, mark: usize) {
+        self.line_frame = None;
+        let page = self.pages.len().saturating_sub(1);
+        let end = self.current().ops.len();
+        for at in self.styleref_ops.iter_mut().skip(mark) {
+            if at.page == page {
+                at.line.end = at.line.end.max(end);
             }
         }
     }

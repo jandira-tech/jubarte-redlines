@@ -47553,6 +47553,77 @@ fn an_inserted_field_word_recomputes_paints_its_result_unmarked() {
 }
 
 #[test]
+fn a_header_styleref_result_realigns_its_line() {
+    // 515f's running head "s. 10" sits in a jc=right header cell: Word
+    // ends it on the cell edge (x 460.0 to 482.28) where we kept the
+    // cached "s. 1" start and ran 5.6pt past it. A patched result lays
+    // its line out again: a right line keeps its end, a centred one its
+    // middle, a left one moves the text after it.
+    let make = |cached: &str| {
+        let fld = format!(
+            "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+             <w:r><w:instrText xml:space=\"preserve\"> STYLEREF CharX </w:instrText></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r><w:r><w:t>{cached}</w:t></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>"
+        );
+        let t = |s: &str| format!("<w:r><w:t xml:space=\"preserve\">{s}</w:t></w:r>");
+        let para = |jc: &str, pre: &str, post: &str| {
+            format!(
+                "<w:p><w:pPr><w:jc w:val=\"{jc}\"/></w:pPr>{}{fld}{}</w:p>",
+                t(pre),
+                t(post)
+            )
+        };
+        let header = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+             {}{}{}<w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"dxa\"/></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"5000\"/></w:tblGrid><w:tr><w:tc>\
+             <w:tcPr><w:tcW w:w=\"5000\" w:type=\"dxa\"/></w:tcPr>{}</w:tc></w:tr></w:tbl>\
+             <w:p/></w:hdr>",
+            para("right", "s. ", ""),
+            para("center", "c. ", ""),
+            para("left", "L[", "]tail"),
+            para("right", "t. ", ""),
+        );
+        let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+            <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+            <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+            <w:style w:type=\"character\" w:styleId=\"CharX\"><w:name w:val=\"CharX\"/></w:style></w:styles>"
+            .to_string();
+        let body = "<w:p><w:r><w:t xml:space=\"preserve\">x </w:t></w:r>\
+             <w:r><w:rPr><w:rStyle w:val=\"CharX\"/></w:rPr><w:t>1000</w:t></w:r></w:p>\
+             <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+               <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+                 w:header=\"720\" w:footer=\"720\"/></w:sectPr>";
+        docx_to_pdf(&hf_docx(
+            body,
+            &[
+                ("rIdH1", "header", "header1.xml"),
+                ("rIdS", "styles", "styles.xml"),
+            ],
+            &[("word/header1.xml", header), ("word/styles.xml", styles)],
+        ))
+        .expect("convert styleref header")
+    };
+    let patched = make("1");
+    let control = make("1000");
+    for needle in ["s. ", "c. ", "L[", "]tail", "t. ", "1000"] {
+        let got = pdf_glyph_text_xys(&patched, needle);
+        let want = pdf_glyph_text_xys(&control, needle);
+        assert!(!want.is_empty(), "{needle} is painted");
+        assert_eq!(got.len(), want.len(), "{needle}: {got:?} vs {want:?}");
+        for (g, w) in got.iter().zip(&want) {
+            assert!(
+                (g.0 - w.0).abs() < 0.05 && (g.1 - w.1).abs() < 0.05,
+                "{needle}: patched {got:?}, as if cached {want:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_header_styleref_shows_the_styled_text_of_its_own_page() {
     // Word 16 probe sref_p1 (2026-10-02), the rule behind 5a6c's running
     // head ("s. 9" where we printed the header's cached "s. 1"): a header

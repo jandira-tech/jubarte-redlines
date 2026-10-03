@@ -478,8 +478,10 @@ diagram and VML picture size; each needs a Word probe or a decision first.
   nothing in jubarte. 5a6c's `styleref CharPartNo` fields are empty in
   Word too, so this matches there; probe a body with the style before
   filling them.
-- [ ] **A patched header STYLEREF keeps its cached width** for alignment
-  (a right tab or a right-aligned line still measures the cached text).
+- [ ] **A patched header STYLEREF after a tab** still measures the cached
+  text for the tab stop. Aligned lines re-lay around the new result (515f
+  "s. 10" on a jc=right cell edge, `a_header_styleref_result_realigns_its_line`);
+  a right or centre tab segment does not.
 - [ ] **A 10pt inline VML picture in a 10pt TNR paragraph**: Word puts the
   next baseline 1.5pt lower than we do (probe vo3 v_h10, x50); taller
   pictures match within the 0.24pt baseline grid.
