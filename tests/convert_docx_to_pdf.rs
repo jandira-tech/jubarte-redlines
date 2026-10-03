@@ -11781,10 +11781,13 @@ fn numbering_hanging_indent_shifts_bullet_off_the_margin() {
 }
 
 #[test]
-fn numbering_lvljc_right_puts_marker_at_gutter_end() {
+fn numbering_lvljc_right_ends_the_marker_on_the_first_line_indent() {
     // sd_2517 unnamed ilvl 2/5/8 are w:lvlJc=right with hanging=180.
-    // Word right-aligns the marker in the hanging gutter (right edge at
-    // body start). We left-align at hanging start.
+    // Word right-aligns the marker on the first-line indent (left less
+    // hanging): Strict01 p11 "I." 84.45–90 under left 108 / hanging 18,
+    // corpus 62780fc256 "III." ending at 90 (720/360), 9453196efa "I."
+    // ending at the margin from 64.2 (360/360), e0fe3a82eb "I." at 55.
+    // Here left 720 / hanging 80 puts the edge at 104; "1." is ~8pt wide.
     let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
         <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
           <w:abstractNum w:abstractNumId=\"0\">\
@@ -11803,16 +11806,16 @@ fn numbering_lvljc_right_puts_marker_at_gutter_end() {
     assert!(!ones.is_empty(), "marker 1. must paint; xs={ones:?}");
     let min_x = ones.iter().copied().fold(f32::INFINITY, f32::min);
     assert!(
-        min_x < 102.0,
-        "lvlJc=right tucks a wider-than-gutter marker so its right hits body 108, not hanging-start 99; min_x={min_x} xs={ones:?}"
+        (93.0..99.0).contains(&min_x),
+        "lvlJc=right ends the marker on the first-line indent 104 (starts ~96); min_x={min_x} xs={ones:?}"
     );
 }
 
 #[test]
-fn numbering_lvljc_end_puts_marker_at_gutter_end() {
+fn numbering_lvljc_end_ends_the_marker_on_the_first_line_indent() {
     // Strict01 numbering: lowerRoman/upperRoman levels use ISO Strict
-    // w:lvlJc val="end" (LTR right). parse only mapped "right", so "i."
-    // left-aligns in the hanging gutter instead of sharing a right edge.
+    // w:lvlJc val="end" (LTR right), the same right edge on the
+    // first-line indent as val="right".
     let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
         <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
           <w:abstractNum w:abstractNumId=\"0\">\
@@ -11831,17 +11834,16 @@ fn numbering_lvljc_end_puts_marker_at_gutter_end() {
     assert!(!ones.is_empty(), "marker 1. must paint; xs={ones:?}");
     let min_x = ones.iter().copied().fold(f32::INFINITY, f32::min);
     assert!(
-        min_x < 102.0,
-        "lvlJc=end is LTR right, same tuck as val=right; min_x={min_x} xs={ones:?}"
+        (93.0..99.0).contains(&min_x),
+        "lvlJc=end is LTR right: the marker ends on the first-line indent 104; min_x={min_x} xs={ones:?}"
     );
 }
 
 #[test]
-fn numbering_lvljc_end_stays_body_aligned_after_mini_705() {
-    // Word Strict01 I. x0=84.45 (right edge at hanging start 90). Aligning
-    // lvlJc=end to hanging start was Word-faithful but mini 705 ITT-neg:
-    // NR 60.6554→60.6553, 8 Strict01-family −0.0006 / 0 gains. Keep the
-    // body-indent tuck (~100) that Quartz ITT preferred.
+fn numbering_lvljc_end_ends_the_marker_on_the_hanging_start() {
+    // Word Strict01 I. x0=84.45, x1=90: the right edge on the hanging
+    // start. An ITT metric once preferred a tuck against the body (mini
+    // 705, ~100); Word's PDF is the target and puts it at 84.45.
     let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
         <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
           <w:abstractNum w:abstractNumId=\"0\">\
@@ -11867,12 +11869,12 @@ fn numbering_lvljc_end_stays_body_aligned_after_mini_705() {
         .map(|(x, _)| x)
         .collect();
     assert!(
-        i_xs.iter().any(|&x| (x - 100.0).abs() < 2.0),
-        "mini 705 hanging-start 84.45 was ITT-neg; keep body-aligned ~100; i_xs={i_xs:?}"
+        i_xs.iter().any(|&x| (x - 84.45).abs() < 2.0),
+        "I. ends on the hanging start 90, from Word's 84.45; i_xs={i_xs:?}"
     );
     assert!(
-        !i_xs.iter().any(|&x| (x - 84.45).abs() < 1.5),
-        "do not retry hanging-start I. x=84.45; i_xs={i_xs:?}"
+        !i_xs.iter().any(|&x| (x - 100.0).abs() < 2.0),
+        "no tuck against the body start; i_xs={i_xs:?}"
     );
     assert!(
         v_xs.iter().any(|&x| (x - 108.0).abs() < 1.5),
@@ -11881,9 +11883,8 @@ fn numbering_lvljc_end_stays_body_aligned_after_mini_705() {
 }
 
 #[test]
-fn official_strict01_upper_roman_stays_body_aligned_after_mini_705() {
-    // Word p11 I. x0=84.45 x1=90. Mini 705 hanging-start alignment dropped
-    // NR mean −0.0001 (Strict01 family −0.0006, 0 gains). Keep ~100.
+fn official_strict01_upper_roman_ends_on_the_hanging_start() {
+    // Word p11 I. x0=84.45 x1=90: the right edge on the hanging start.
     let path = "tests/corpus/neurotic_docx_bench/grok_run/no_comments_pdf_was_generated_by_word/docx_source/Strict01.docx";
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert official Strict01");
     assert_eq!(pdf_page_count(&pdf), 13, "Word Strict01 is 13pp");
@@ -11895,12 +11896,12 @@ fn official_strict01_upper_roman_stays_body_aligned_after_mini_705() {
         .filter(|&x| (70.0..110.0).contains(&x))
         .collect();
     assert!(
-        i_xs.iter().any(|&x| (x - 100.0).abs() < 2.0),
-        "mini 705 ITT-neg hanging-start 84.45; keep body-aligned ~100; i_xs={i_xs:?}"
+        i_xs.iter().any(|&x| (x - 84.45).abs() < 1.5),
+        "Word's I. starts at 84.45 and ends on the hanging start 90; i_xs={i_xs:?}"
     );
     assert!(
-        !i_xs.iter().any(|&x| x < 91.0),
-        "do not retry Word hanging-start I. <91; i_xs={i_xs:?}"
+        !i_xs.iter().any(|&x| (x - 100.0).abs() < 2.0),
+        "no tuck against the body start; i_xs={i_xs:?}"
     );
 }
 

@@ -23835,19 +23835,26 @@ impl<'a> Layout<'a> {
                 && let Some(mark) = marker
             {
                 let mx = if style.list_jc_right {
-                    // The suffix tab has no ink: it spans the gutter like
-                    // the space the tuck was measured with (mini 705).
-                    let mw = match mark.text.strip_suffix('\t') {
-                        Some(num) => self.run_width_pt(mark, &format!("{num} ")),
-                        None => self.run_width_pt(mark, &mark.text),
-                    };
-                    let body_x = self.flow_left() + indent + extra;
-                    (body_x - mw).max(self.flow_left() + extra)
+                    // Word right-aligns the label on the first-line indent
+                    // (left less hanging), into the margin when it must,
+                    // and the suffix tab takes the text on from there:
+                    // Strict01 p11 "I." 84.45–90 under left 108 / hanging
+                    // 18; corpus 62780fc256 "III." ends at 90 (720/360),
+                    // 9453196efa "I." at 72 from 64.2 (360/360),
+                    // 1fef0faeb8 "i." at 90 (1440 over a 360 hang),
+                    // e0fe3a82eb "I." at 55 (720/630). The earlier tuck
+                    // against the body start rested on an ITT metric that
+                    // was not Word's PDF (mini 705).
+                    let mw = self.run_width_pt(mark, mark.text.trim_end());
+                    self.flow_left() + indent - hanging + extra - mw
                 } else {
                     self.flow_left() + indent - hanging + extra
                 };
                 self.paint_run(mark, mx, baseline);
                 let mut end = mx + self.run_width_pt(mark, mark.text.trim_end());
+                if style.list_jc_right && end >= x {
+                    x = self.advance_tab(end, baseline, 0.0, 0.0, &mark.style);
+                }
                 let mut gap_style = &mark.style;
                 // A renumbered paragraph's new number follows its old one,
                 // then tabs on to the next stop (probe lbl0930: "1." at 90,
