@@ -14601,7 +14601,17 @@ fn collect_runs_rec(
         }
         let raw = {
             let mut out = String::new();
-            collect_visible_marked(ctx.dom, node, &mut out, false, !ctx.in_table);
+            collect_visible_marked(
+                ctx.dom,
+                node,
+                &mut out,
+                false,
+                if ctx.in_table {
+                    BreakText::Drop
+                } else {
+                    BreakText::Mark
+                },
+            );
             out
         };
         let mut text = rev_text(
@@ -14879,8 +14889,27 @@ fn rev_text(text: &str, mark: RevMark, preserve_ws: bool) -> String {
     }
 }
 
+/// A header or footer run's text: a page or column break in it is a
+/// line break (`BreakText::Line`).
 fn collect_visible(dom: &Dom, node: NodeId, out: &mut String, in_del: bool) {
-    collect_visible_marked(dom, node, out, in_del, false);
+    collect_visible_marked(dom, node, out, in_del, BreakText::Line);
+}
+
+/// What a run's page or column break becomes in its collected text.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BreakText {
+    /// Nothing: a table cell's.
+    Drop,
+    /// `PAGE_BREAK_MARK` / `COLUMN_BREAK_MARK`: the body paragraph splits
+    /// there (`split_page_breaks`).
+    Mark,
+    /// A line break: a header or footer paragraph, where no page can
+    /// break. Word 16 probes (bench `scripts/probe_header_br.py`,
+    /// 2026-10-03, 11 documents): the break ends a line of its run's font
+    /// (9.5pt Arial: 11.0; 20pt: 23.0), a column break the same, and the
+    /// body moves down by as much under a header taller than the top
+    /// margin. 4910ce2060's header title sat 11pt high.
+    Line,
 }
 
 /// A body run's text keeps its page breaks as `PAGE_BREAK_MARK`, so its
@@ -14944,13 +14973,19 @@ fn form_checkbox(dom: &Dom, run: NodeId) -> Option<(Option<f32>, bool)> {
     ))
 }
 
-fn collect_visible_marked(dom: &Dom, node: NodeId, out: &mut String, in_del: bool, pages: bool) {
+fn collect_visible_marked(
+    dom: &Dom,
+    node: NodeId,
+    out: &mut String,
+    in_del: bool,
+    breaks: BreakText,
+) {
     if skip_non_text(dom, node) {
         return;
     }
     if dom.name_is(node, &W::del()) || dom.name_is(node, &W::move_from()) {
         for idx in 0..dom.child_count(node) {
-            collect_visible_marked(dom, dom.child_at(node, idx), out, true, pages);
+            collect_visible_marked(dom, dom.child_at(node, idx), out, true, breaks);
         }
         return;
     }
@@ -14989,12 +15024,12 @@ fn collect_visible_marked(dom: &Dom, node: NodeId, out: &mut String, in_del: boo
         if dom.name_is(node, &W::name("br")) {
             let kind = dom.attribute(node, &W::name("type"));
             let page = kind.is_some_and(|k| k == "page" || k == "oddPage" || k == "evenPage");
-            if page && pages {
-                out.push(PAGE_BREAK_MARK);
-            } else if kind == Some("column") && pages {
-                out.push(COLUMN_BREAK_MARK);
-            } else if !page && kind != Some("column") {
-                out.push('\n');
+            let column = kind == Some("column");
+            match breaks {
+                BreakText::Mark if page => out.push(PAGE_BREAK_MARK),
+                BreakText::Mark if column => out.push(COLUMN_BREAK_MARK),
+                BreakText::Drop if page || column => {}
+                _ => out.push('\n'),
             }
         } else {
             out.push('\t');
@@ -15002,7 +15037,7 @@ fn collect_visible_marked(dom: &Dom, node: NodeId, out: &mut String, in_del: boo
         return;
     }
     for idx in 0..dom.child_count(node) {
-        collect_visible_marked(dom, dom.child_at(node, idx), out, in_del, pages);
+        collect_visible_marked(dom, dom.child_at(node, idx), out, in_del, breaks);
     }
 }
 
@@ -20414,11 +20449,15 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet, text_w: f32) -> 
                 pending.push(first);
                 // Each w:br in it is one more line (000ebd12's closing
                 // FSHNormL paragraph is a break line plus its mark's line).
-                let breaks: usize = line.iter().map(|r| r.text.matches('\n').count()).sum();
-                for _ in 0..breaks {
-                    let mut extra = empty_break(para, &pstyle, &prun);
-                    extra.para_gap = 0.0;
-                    pending.push(extra);
+                // Each line is the break run's own (a 9.5pt page break
+                // alone in a 14pt-marked paragraph: 10.9 + 16.1, probe hb8).
+                for r in line.iter().filter(|r| r.text.contains('\n')) {
+                    for _ in 0..r.text.matches('\n').count() {
+                        let mut extra = empty_break(para, &pstyle, &prun);
+                        extra.style = r.style.clone();
+                        extra.para_gap = 0.0;
+                        pending.push(extra);
+                    }
                 }
                 last = Some(pstyle);
             }
@@ -21214,6 +21253,17 @@ fn collect_hf_rev_runs(
         // footer indents "BGYS.F-06" with six); plain runs still squeeze.
         let text = visible_text(dom, node, mark, run_preserves_space(dom, node));
         if !text.is_empty() {
+            // A break with nothing before it on its line leaves a line of
+            // its run's font (Word 16 probes, bench
+            // `scripts/probe_header_br.py`, 2026-10-03: a 9.5pt page break
+            // opening a header paragraph stands an 11.0 line over the
+            // text, a 20pt one 23.0; 4910ce2060's title sat 11pt high).
+            // `hf_paragraph_lines` keeps a line only for its content.
+            if text == "\n" && !line_has_content(runs) {
+                let mut blank = TextRun::new("", style.clone());
+                blank.ends_line = true;
+                runs.push(blank);
+            }
             runs.push(TextRun::new(text, style));
             if scan.result {
                 scan.emitted = true;

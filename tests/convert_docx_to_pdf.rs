@@ -48890,3 +48890,75 @@ fn a_grid_before_skip_is_the_grid_columns_width_not_a_cells_margins() {
         "both skipping rows start alike: {ax} / {gx}"
     );
 }
+
+#[test]
+fn a_page_break_in_a_header_paragraph_is_a_line_break() {
+    // Word 16 probes (bench `scripts/probe_header_br.py`, 2026-10-03, 11
+    // documents): a page or column break inside a header or footer
+    // paragraph, where no page can break, ends a line. The paragraph
+    // gains a line of the break run's font ahead of its text (9.5pt
+    // Arial: 11.0; 20pt: 23.0; a plain line break the same), the body
+    // moves down by as much when the header is taller than the top
+    // margin, and stays at the margin when the header fits. 4910ce2060's
+    // default header opens its second paragraph with one in a 9.5pt run:
+    // Word's title sits 27.1pt under the first line, ours sat 16.1.
+    let arial = r#"<w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:cs="Arial"/>"#;
+    let header = |brk: &str| {
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+               <w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/><w:jc w:val=\"center\"/></w:pPr>\
+                 <w:r><w:rPr>{arial}<w:b/><w:sz w:val=\"28\"/></w:rPr><w:t>Title</w:t></w:r></w:p>\
+               <w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/><w:jc w:val=\"center\"/><w:rPr>{arial}<w:sz w:val=\"28\"/></w:rPr></w:pPr>{brk}\
+                 <w:r><w:rPr>{arial}<w:b/><w:sz w:val=\"28\"/></w:rPr><w:t>Key</w:t></w:r></w:p></w:hdr>"
+        )
+    };
+    let brk =
+        format!(r#"<w:r><w:rPr>{arial}<w:sz w:val="19"/></w:rPr><w:br w:type="page"/></w:r>"#);
+    let body = |top: u32| {
+        format!(
+            "<w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr>\
+               <w:r><w:rPr>{arial}<w:sz w:val=\"24\"/></w:rPr><w:t>Body</w:t></w:r></w:p>\
+             <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+               <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"{top}\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+                 w:header=\"360\" w:footer=\"360\"/></w:sectPr>"
+        )
+    };
+    let render = |top: u32, brk: &str| {
+        let pdf = docx_to_pdf(&hf_docx(
+            &body(top),
+            &[("rIdH1", "header", "header1.xml")],
+            &[("word/header1.xml", header(brk))],
+        ))
+        .expect("converts");
+        let (_, ty) = pdf_glyph_text_xy(&pdf, "Title").expect("Title");
+        let (_, ky) = pdf_glyph_text_xy(&pdf, "Key").expect("Key");
+        let (_, by) = pdf_glyph_text_xy(&pdf, "Body").expect("Body");
+        (ty, ky, by)
+    };
+    // PDF y grows upward: a lower line has the smaller y.
+    let (t0, k0, b0) = render(720, "");
+    let (t1, k1, b1) = render(720, &brk);
+    assert!(
+        ((t0 - k0) - 16.1).abs() < 0.4,
+        "no break: Key one 14pt line under Title (Word 16.1), got {}",
+        t0 - k0
+    );
+    assert!(
+        ((t1 - k1) - 27.0).abs() < 0.4,
+        "the break's 9.5pt line (10.9) comes first: Word 27.1, got {}",
+        t1 - k1
+    );
+    assert!(
+        ((b0 - b1) - 10.9).abs() < 0.4,
+        "under a 36pt margin the body moves down by that line (Word 11.0), got {}",
+        b0 - b1
+    );
+    let (_, _, b2) = render(1440, &brk);
+    let (_, _, b3) = render(1440, "");
+    assert!(
+        (b2 - b3).abs() < 0.2,
+        "under a 72pt margin the header still fits: body at {b2} against {b3}"
+    );
+}
