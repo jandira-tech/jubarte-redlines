@@ -27,7 +27,9 @@ elif [ $# -gt 0 ]; then
   exit 2
 fi
 
-GENERATED_DOCS=(docs/rust.md docs/python.md docs/javascript.md)
+GENERATED_DOCS=(docs/rust.md docs/python.md docs/javascript.md README.md
+  README.crates.md jubarte-python/README.md jubarte-wasm/npm/README.md
+  jubarte-wasm/cli/README.md)
 
 # --- Rust CLI ----------------------------------------------------------------
 # Build the binary so the reference quotes the flags of this source tree. In
@@ -44,6 +46,9 @@ fi
 python3 scripts/gen_cli_docs.py \
   --runner "$ROOT/target/debug/jubarte" \
   --display jubarte --file docs/rust.md --marker cli-rust
+python3 scripts/gen_cli_docs.py --summary \
+  --runner "$ROOT/target/debug/jubarte" \
+  --display jubarte --file README.md --marker cli-summary
 
 # --- Python CLI + API ---------------------------------------------------------
 PY=$ROOT/jubarte-python/.venv/bin/python
@@ -75,6 +80,9 @@ python3 scripts/gen_cli_docs.py \
 python3 scripts/gen_wasm_api.py \
   --dts jubarte-wasm/npm/node/jubarte_wasm.d.ts \
   --file docs/javascript.md --marker wasm-api
+
+# --- Per-library READMEs, cut from README.md (after its command table) --------
+python3 scripts/library_readmes.py
 
 # --- Drift gate ---------------------------------------------------------------
 if [ "$CHECK" = 1 ]; then

@@ -6,7 +6,9 @@ name: Docs
 
 # The generated blocks in docs/rust.md, docs/python.md and docs/javascript.md
 # (CLI references from real --help output, API references from the shipped
-# module/declaration files) must never drift from the code. This job
+# module/declaration files), README.md's command table, and the per-library
+# READMEs scripts/library_readmes.py cuts from README.md must never drift
+# from the code. This job
 # regenerates them and fails when the committed pages differ.
 on:
   push:
@@ -19,6 +21,10 @@ on:
       - docs/rust.md
       - docs/python.md
       - docs/javascript.md
+      - README.md
+      - README.crates.md
+      - "**/README.fragment.md"
+      - scripts/library_readmes.py
       - scripts/gen_docs.sh
       - scripts/gen_cli_docs.py
       - scripts/gen_python_api.py
@@ -32,6 +38,10 @@ on:
       - docs/rust.md
       - docs/python.md
       - docs/javascript.md
+      - README.md
+      - README.crates.md
+      - "**/README.fragment.md"
+      - scripts/library_readmes.py
       - scripts/gen_docs.sh
       - scripts/gen_cli_docs.py
       - scripts/gen_python_api.py

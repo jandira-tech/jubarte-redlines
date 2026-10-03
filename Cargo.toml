@@ -17,7 +17,7 @@ description = "Word-faithful DOCX redline engine — compare two Word documents 
 repository = "https://github.com/jandira-tech/jubarte-redlines"
 homepage = "https://github.com/jandira-tech/jubarte-redlines"
 documentation = "https://docs.rs/jubarte-redlines"
-readme = "README.md"
+readme = "README.crates.md"
 keywords = ["docx", "redline", "track-changes", "openxml", "word"]
 categories = ["text-processing", "parser-implementations", "command-line-utilities"]
 # Keep the published package lean: test fixtures/goldens (~3 MB) and dev tools
@@ -31,6 +31,7 @@ include = [
   "/benches/**",
   "/Cargo.toml",
   "/README.md",
+  "/README.crates.md",
   "/CHANGELOG.md",
   "/KNOWN_ISSUES.md",
   "/TUNING_AUDIT.md",
