@@ -524,6 +524,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- `scripts/release.sh` step 4 deleted `jubarte-python/uv.lock` after pytest,
+  though the file is tracked: the release left a dirty tree and a resumed run
+  stopped in preflight. The lockfile stays, and the release commit stages it.
+
 - `capabilities().limits.stories` listed `body` only; `inspect` and `edit`
   address headers, footers, footnotes and endnotes too, and the manifest
   now says so (text boxes stay reported in `summary` but not editable).

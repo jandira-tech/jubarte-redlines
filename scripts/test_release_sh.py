@@ -207,6 +207,16 @@ class Lessons0101(unittest.TestCase):
         add = next(l for l in s7.splitlines() if "git add jubarte-wasm/npm" in l)
         self.assertIn("jubarte-wasm/Cargo.lock", add)
 
+    def test_the_gates_keep_the_tracked_python_lockfile(self) -> None:
+        # jubarte-python/uv.lock is tracked (f8fe3542). Deleting it after
+        # pytest left the release tree dirty, and a resumed run then died in
+        # preflight; whatever uv rewrote in it ships in the release commit.
+        self.assertNotIn("rm -f jubarte-python/uv.lock", step(4))
+        s7 = step(7)
+        start = s7.index("git add Cargo.toml")
+        add = s7[start : s7.index("git commit", start)]
+        self.assertIn("jubarte-python/uv.lock", add)
+
     def test_the_release_commit_takes_the_gemini_manifest(self) -> None:
         # bump-version.mjs rewrites gemini-extension.json's version.
         s7 = step(7)
