@@ -46488,30 +46488,53 @@ fn shaded_empty_header_and_footer_paragraphs_paint_their_bands() {
 }
 
 #[test]
-fn a_flat_picture_after_header_text_adds_no_line() {
+fn a_flat_connector_after_header_text_takes_a_line_and_paints_it() {
     // e0fe3a82eb's first-page header: "School of Pure & Applied Sciences"
-    // then a 508pt connector 0pt tall. Word's body starts where the
-    // text's lines end; the trailing-picture line (PR #247 review) set it
-    // a line lower for a picture with no height.
-    let flat = full_width_dot().replace("cy=\"914400\"", "cy=\"0\"");
-    let body_y = |tail: &str| {
+    // (Times 14) then an inline straight connector 508.5pt wide and 0pt
+    // tall in a run of the default size. Word's PDF: the text's baseline
+    // at 125.52, a 2pt teal stroke at 140.9 on a line of its own, and the
+    // body's first baseline at 164.88, one 12pt Times line (13.8) under
+    // where ours began (150.96). An earlier reading of this header had
+    // Word add no line; the PDF shows the line and the stroke.
+    let connector = "<w:r><w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">\
+        <wp:extent cx=\"6457950\" cy=\"0\"/><wp:docPr id=\"7\" name=\"Straight Arrow Connector 1\"/>\
+        <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+          <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+            <wps:cNvCnPr/><wps:spPr><a:xfrm flipH=\"1\"><a:off x=\"0\" y=\"0\"/><a:ext cx=\"6457950\" cy=\"0\"/></a:xfrm>\
+            <a:prstGeom prst=\"straightConnector1\"><a:avLst/></a:prstGeom><a:noFill/>\
+            <a:ln w=\"25400\"><a:solidFill><a:srgbClr val=\"00BFB3\"/></a:solidFill></a:ln></wps:spPr>\
+            <wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>";
+    let render = |tail: &str| {
         let lines: String = (1..=4)
             .map(|i| format!("<w:p><w:r><w:t>Line{i}</w:t></w:r></w:p>"))
             .collect();
-        let pdf = docx_to_pdf(&header_part_docx(&format!(
+        docx_to_pdf(&header_part_docx(&format!(
             "{lines}<w:p><w:r><w:t>Lead</w:t></w:r>{tail}</w:p>"
         )))
-        .expect("tall header");
-        pdf_glyph_text_xy(&pdf, "HdrImgBodyX")
+        .expect("tall header")
+    };
+    let body_y = |pdf: &[u8]| {
+        pdf_glyph_text_xy(pdf, "HdrImgBodyX")
             .expect("body paints")
             .1
     };
-    let (bare, flat_y) = (body_y(""), body_y(&flat));
+    let (bare, with) = (render(""), render(connector));
+    let drop = body_y(&bare) - body_y(&with);
+    // The default run here is Calibri 11 and the fixture's paragraphs
+    // run at the 1.15 multiple: one line of it, 13.43 x 1.15.
     assert!(
-        (bare - flat_y).abs() < 0.5,
-        "the flat picture keeps the body in place: {flat_y} vs {bare}"
+        (drop - 15.44).abs() < 0.8,
+        "the connector's line moves the body down one default line, got {drop}"
+    );
+    // The stroke itself: a 2pt line in 00BFB3 across the header, under
+    // "Lead".
+    let hay = String::from_utf8_lossy(&with);
+    assert!(
+        hay.contains("0 0.749 0.702 RG") || hay.contains("0 0.75 0.7 RG"),
+        "the connector strokes in its teal"
     );
 }
+
 #[test]
 fn a_centred_or_bottom_row_splits_at_the_page_end_like_any_row() {
     // docxide suite education_consultant_posting: its 76-paragraph

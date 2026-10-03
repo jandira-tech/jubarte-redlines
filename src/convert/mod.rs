@@ -2095,6 +2095,11 @@ struct LaidImage {
     /// or a tracked insertion): its line keeps this run's descent under
     /// the picture.
     under: Option<RunStyle>,
+    /// A flat inline shape in a header or footer (e0fe3a82eb's 508pt,
+    /// 0pt-tall straight connector under its header title): Word still
+    /// gives it a line of its run's font, 13.8pt of Times 12 there, and
+    /// strokes it on that line.
+    chrome_flat_run: Option<RunStyle>,
 }
 
 /// The last painted body line: its ops start at `ops_start` on page
@@ -2784,6 +2789,7 @@ fn text_box_image(b: LaidTextBox, effect: [f32; 4]) -> LaidImage {
         lead_chars: 0,
         after_text: false,
         under: None,
+        chrome_flat_run: None,
     }
 }
 
@@ -10798,6 +10804,7 @@ fn paragraph_block(
                 lead_chars: 0,
                 after_text: false,
                 under: None,
+                chrome_flat_run: None,
             },
         );
     }
@@ -16960,6 +16967,7 @@ fn collect_images(
                     lead_chars: 0,
                     after_text: false,
                     under: None,
+                    chrome_flat_run: None,
                 });
             }
             let child_slot = |slot: ImageSlot| match slot {
@@ -17018,6 +17026,7 @@ fn collect_images(
                     lead_chars: 0,
                     after_text: false,
                     under: None,
+                    chrome_flat_run: None,
                 });
             }
             continue;
@@ -17087,6 +17096,7 @@ fn collect_images(
                         } else {
                             None
                         },
+                        chrome_flat_run: None,
                     });
                 } else {
                     out.push(LaidImage {
@@ -17119,6 +17129,7 @@ fn collect_images(
                         lead_chars: 0,
                         after_text: false,
                         under: None,
+                        chrome_flat_run: None,
                     });
                 }
             }
@@ -17196,6 +17207,7 @@ fn collect_images(
                         lead_chars: 0,
                         after_text: false,
                         under: None,
+                        chrome_flat_run: None,
                     });
                     continue;
                 };
@@ -17247,6 +17259,7 @@ fn collect_images(
                     } else {
                         None
                     },
+                    chrome_flat_run: None,
                 });
             }
             for line in descendants_local(dom, root, "line") {
@@ -17418,6 +17431,7 @@ fn vml_line_image(dom: &Dom, line: NodeId, root: NodeId) -> Option<LaidImage> {
         lead_chars: 0,
         after_text: false,
         under: None,
+        chrome_flat_run: None,
     })
 }
 
@@ -17502,6 +17516,7 @@ fn vml_rect_image(
         lead_chars: lead_chars_before(dom, para, root),
         after_text: trails_text(dom, para, root),
         under: None,
+        chrome_flat_run: None,
     })
 }
 
@@ -19472,24 +19487,45 @@ fn chrome_part_xml(
                 b
             }));
             // Each stands in its drawing's wp:effectExtent (dcda3ae's
-            // note bar 0.75pt under its line top).
-            let effects: Vec<[f32; 4]> = part_dom
+            // note bar 0.75pt under its line top). A stroked or filled
+            // shape without text is a box too (e0fe3a82eb's connector).
+            let effects: Vec<([f32; 4], RunStyle)> = part_dom
                 .descendants(para, Some(&WP::name("inline")))
                 .into_iter()
                 .filter(|inl| {
-                    !descendants_local(&part_dom, *inl, "txbx").is_empty()
+                    (!descendants_local(&part_dom, *inl, "txbx").is_empty()
+                        || (!descendants_local(&part_dom, *inl, "wsp").is_empty()
+                            && (shape_line_color(&part_dom, *inl, &sheet.theme).is_some()
+                                || shape_fill_color(&part_dom, *inl, &sheet.theme).is_some())))
                         && !part_dom.ancestors(*inl, None).iter().any(|a| {
                             local_name_is(&part_dom, *a, "Fallback")
                                 || local_name_is(&part_dom, *a, "txbxContent")
                         })
                 })
-                .map(|inl| inline_effect_pt(&part_dom, inl))
+                .map(|inl| {
+                    let mut run = prun.clone();
+                    if let Some(rpr) = part_dom
+                        .ancestors(inl, Some(&W::name("r")))
+                        .first()
+                        .and_then(|r| part_dom.element(*r, &W::r_pr()))
+                    {
+                        apply_rpr(&part_dom, rpr, &mut run, &sheet.theme);
+                    }
+                    (inline_effect_pt(&part_dom, inl), run)
+                })
                 .collect();
             if effects.len() == flow.len() {
                 flow_boxes = flow
                     .into_iter()
                     .zip(effects)
-                    .map(|(b, effect)| text_box_image(b, effect))
+                    .map(|(b, (effect, run))| {
+                        let flat = b.h < 0.5;
+                        let mut img = text_box_image(b, effect);
+                        if flat {
+                            img.chrome_flat_run = Some(run);
+                        }
+                        img
+                    })
                     .collect();
             }
         }
@@ -19511,6 +19547,15 @@ fn chrome_part_xml(
                 .line_exact
                 .or(pstyle.line_at_least.map(|l| l.max(size * 1.15)))
                 .unwrap_or(size * 1.15 * pstyle.line_mult.max(1.0));
+            // A picture-only paragraph's line is its picture plus the
+            // mark's descent (e0fe3a82eb's 75.75pt logo over its title).
+            let pic = hf_inline_pic_h(&part_dom, para);
+            let line = if pic > 0.0 && para_shown_text(&part_dom, para).trim().is_empty() {
+                let face = fonts().get(fonts().resolve(&prun.family, prun.bold, prun.italic));
+                line.max(pic + face.line_descent_pt(size))
+            } else {
+                line
+            };
             // A paragraph's own space before sits below its anchor top,
             // like the body's `para_top` (010ec7df's box 5pt low otherwise).
             para_top += (pstyle.before - last_after).max(0.0) + line + pstyle.after;
@@ -19653,6 +19698,19 @@ fn chrome_part_xml(
                     img.chrome_lead = lead && !trails;
                     if trails {
                         img.chrome_above = trail_top;
+                        // A flat shape stands on its line's baseline, its
+                        // stroke centred half a point under it (e0fe3a82eb:
+                        // Word's 2pt teal line at 140.9, 15.4pt under the
+                        // title's baseline; the line's own baseline is
+                        // 140.4).
+                        if let Some(run) = &img.chrome_flat_run {
+                            let face =
+                                fonts().get(fonts().resolve(&run.family, run.bold, run.italic));
+                            img.chrome_above += face.single_line_pt(run.size)
+                                - face.line_descent_pt(run.size)
+                                + 0.5
+                                - img.h.max(1.0) * 0.5;
+                        }
                     } else if under_text {
                         // A picture paragraph after the part's text stands on
                         // its own line under it, its space before past the
@@ -20259,9 +20317,12 @@ fn collect_hf_runs(dom: &Dom, node: NodeId, sheet: &StyleSheet, text_w: f32) -> 
             hf_inline_pic_h(dom, para)
         };
         if trails {
-            let mark = line
-                .last()
-                .map_or_else(|| prun.clone(), |r| r.style.clone());
+            // A flat shape's line is its own run's (e0fe3a82eb's 12pt
+            // connector run under a 14pt title).
+            let mark = hf_flat_pic_run(dom, para, &prun, &sheet.theme).unwrap_or_else(|| {
+                line.last()
+                    .map_or_else(|| prun.clone(), |r| r.style.clone())
+            });
             let mut pic_line = TextRun::new("", mark.clone());
             pic_line.hf_pic_h = hf_inline_pic_h(dom, para);
             pic_line.ends_line = true;
@@ -20368,6 +20429,36 @@ fn hf_inline_pic_h(dom: &Dom, para: NodeId) -> f32 {
         .fold(0.0_f32, f32::max)
 }
 
+/// The run of a chrome paragraph's trailing shapes when all of them are
+/// flat (extent cy 0): Word gives such a shape a line of its run's font,
+/// not the text's (e0fe3a82eb's 12pt connector run under a 14pt title).
+fn hf_flat_pic_run(
+    dom: &Dom,
+    para: NodeId,
+    prun: &RunStyle,
+    theme: &ThemeFonts,
+) -> Option<RunStyle> {
+    if hf_inline_pic_h(dom, para) >= 0.5 {
+        return None;
+    }
+    let inl = dom
+        .descendants(para, Some(&WP::name("inline")))
+        .into_iter()
+        .find(|inl| {
+            dom.ancestors(*inl, Some(&W::name("txbxContent")))
+                .is_empty()
+        })?;
+    let mut run = prun.clone();
+    if let Some(rpr) = dom
+        .ancestors(inl, Some(&W::name("r")))
+        .first()
+        .and_then(|r| dom.element(*r, &W::r_pr()))
+    {
+        apply_rpr(dom, rpr, &mut run, theme);
+    }
+    Some(run)
+}
+
 /// A chrome paragraph's inline pictures fill its first line, leaving no
 /// room for its text: Word sets the text on the lines under them
 /// (0800162a66's 441.9pt footer banner over "ŠIS DOKUMENTS …" in 441.9pt
@@ -20402,9 +20493,9 @@ fn hf_pic_owns_line(dom: &Dom, para: NodeId, sheet: &StyleSheet, text_w: f32) ->
 }
 
 /// A chrome paragraph's text comes first and its later inline pictures
-/// fill a line: Word wraps them to the line under the text. Pictures with
-/// no height open no line (e0fe3a82eb's 0pt connector under its header
-/// text).
+/// fill a line: Word wraps them to the line under the text, a flat one
+/// (e0fe3a82eb's 0pt connector under its header title) to a line of its
+/// run's font.
 fn hf_pic_trails_line(dom: &Dom, para: NodeId, sheet: &StyleSheet, text_w: f32) -> bool {
     let mut seen_text = false;
     let mut text = String::new();
@@ -20433,7 +20524,7 @@ fn hf_pic_trails_line(dom: &Dom, para: NodeId, sheet: &StyleSheet, text_w: f32) 
             pics_h = pics_h.max(cy.unwrap_or(0.0) / 12700.0);
         }
     }
-    if pics_w <= 0.0 || pics_h <= 0.0 {
+    if pics_w <= 0.0 {
         return false;
     }
     let (pstyle, prun) = para_base(dom, para, sheet, None);
@@ -21305,7 +21396,7 @@ fn chrome_pic_line(fonts: &Fonts, img: &LaidImage) -> f32 {
     let mult = 1.0 + img.chrome_leading.as_ref().map_or(0.0, |(extra, _)| *extra);
     chrome_pic_top(fonts, img)
         + img.chrome_after
-        + img.h
+        + chrome_pic_h(fonts, img)
         + chrome_pic_descent(fonts, img)
         + img.chrome_leading.as_ref().map_or(0.0, |(extra, mark)| {
             let face = fonts.get(fonts.resolve(&mark.family, mark.bold, mark.italic));
@@ -21316,6 +21407,15 @@ fn chrome_pic_line(fonts: &Fonts, img: &LaidImage) -> f32 {
             let face = fonts.get(fonts.resolve(&mark.family, mark.bold, mark.italic));
             face.line_descent_pt(mark.size) + mult * face.single_line_pt(mark.size)
         })
+}
+
+/// A chrome picture's height on its line: its own, or its run's single
+/// line for a flat shape (`LaidImage::chrome_flat_run`).
+fn chrome_pic_h(fonts: &Fonts, img: &LaidImage) -> f32 {
+    img.chrome_flat_run.as_ref().map_or(img.h, |run| {
+        let face = fonts.get(fonts.resolve(&run.family, run.bold, run.italic));
+        img.h.max(face.single_line_pt(run.size))
+    })
 }
 
 /// The descent a chrome picture's line keeps over its paragraph's text on
@@ -26285,6 +26385,16 @@ impl<'a> Layout<'a> {
         for img in &images {
             if img.chrome_flow && img.chrome_drop > last_drop {
                 dx = 0.0;
+            }
+            // A flat shape on its own line under the text starts the
+            // line, set by its paragraph's alignment.
+            if img.chrome_flat_run.is_some() {
+                let room = (self.content_width() - img.w).max(0.0);
+                dx = match img.chrome_align {
+                    Align::Center => room / 2.0,
+                    Align::Right => room,
+                    Align::Left | Align::Justify => 0.0,
+                };
             }
             if img.chrome_flow {
                 last_drop = img.chrome_drop;
