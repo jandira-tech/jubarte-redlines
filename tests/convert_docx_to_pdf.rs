@@ -48784,3 +48784,54 @@ fn an_installed_family_wins_over_the_documents_embedded_copy() {
         "Times 14 single-spaced steps 16.09 in the installed face, got {pitch} (17.09 is the embedded Carlito)"
     );
 }
+
+#[test]
+fn wordperfect_justification_keeps_a_line_within_four_percent_of_its_measure() {
+    // Word 16 probes (bench `scripts/probe_wp_justify.py`, 2026-10-03, 42
+    // documents): under `w:wpJustification` a justified line keeps its
+    // last word while its natural width is within 1.04 of the measure
+    // (kept at 1.0385 in Courier New 10 and 9, Arial 12 at 1.037, Times
+    // New Roman 12 at 1.038; wrapped at 1.041 in Courier 14, 1.042 in
+    // Arial, 1.043 in Times), whatever the number of spaces (3 or 21) or
+    // the last word's length. A monospaced line paints every advance
+    // narrower alike: 67 Courier New 12 cells on 468pt advance 6.985.
+    // 041ec70002 (Texas statutes, the WordPerfect compat set) holds 66 and
+    // 67 characters a line in Word's PDF and ran two pages long here.
+    let r = r#"<w:rPr><w:rFonts w:ascii="Courier New" w:hAnsi="Courier New"/><w:sz w:val="24"/></w:rPr>"#;
+    let words = "alpha bravo delta gamma kappa omega sigma theta zetas yotta";
+    let tail = " north south east west upper lower inner outer first last wide tall";
+    let para = |long: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:spacing w:after="0"/><w:jc w:val="both"/></w:pPr><w:r>{r}<w:t xml:space="preserve">{words} {long}{tail}</w:t></w:r></w:p>"#
+        )
+    };
+    // 67 cells: kept, compressed; 68: the long word moves down.
+    let body = format!(
+        "{}{}{}",
+        para("mmmmmmm"),
+        para("nnnnnnnn"),
+        letter_body_sect()
+    );
+    let settings = r#"<w:compat><w:wpJustification/><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="14"/></w:compat>"#;
+    let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, settings)).expect("converts");
+    let (ax, ay) = pdf_glyph_text_xys(&pdf, "alpha")[0];
+    let (mx, my) = pdf_glyph_text_xy(&pdf, "mmmmmmm").expect("67-cell word paints");
+    assert!(
+        (my - ay).abs() < 0.5,
+        "the 67th cell stays on line 1: alpha at {ay}, m at {my}"
+    );
+    assert!(
+        (mx - (72.0 + 60.0 * 6.985)).abs() < 0.4,
+        "60 compressed cells before it: Word starts it at 491.1, got {mx} (natural 504.0)"
+    );
+    let (nx, ny) = pdf_glyph_text_xy(&pdf, "nnnnnnnn").expect("68-cell word paints");
+    let (bx, by) = pdf_glyph_text_xys(&pdf, "alpha")[1];
+    assert!(
+        ny < by - 5.0,
+        "the 68th cell moves the word down: alpha at {by}, n at {ny}"
+    );
+    assert!(
+        (nx - bx).abs() < 0.2,
+        "it starts the next line at {nx}, line start {bx}; ax {ax}"
+    );
+}

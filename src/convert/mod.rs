@@ -1372,6 +1372,9 @@ struct Defaults {
     legacy_compat: bool,
     /// `settings_punct_squeeze`: cell lines narrow their spaces too.
     punct_squeeze: bool,
+    /// `w:compat/w:wpJustification`: a justified line keeps its last word
+    /// within `WP_SQUEEZE` and paints every advance narrower.
+    wp_justify: bool,
     /// The default paragraph style's own w:spacing sets [after, before,
     /// line]: a table style's pPr does not override those in its cells.
     normal_spacing: [bool; 3],
@@ -1505,6 +1508,7 @@ impl Defaults {
             },
             legacy_compat: false,
             punct_squeeze: false,
+            wp_justify: false,
             normal_spacing: [false; 3],
             normal_run: (false, false),
             normal_ind_jc: (false, false),
@@ -3153,6 +3157,7 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
     defaults.run.punct_compress = defaults.legacy_compat
         && settings_character_spacing(pkg) != CharacterSpacing::DoNotCompress;
     defaults.punct_squeeze = settings_punct_squeeze(pkg);
+    defaults.wp_justify = settings_flag(pkg, "wpJustification");
     defaults.para.sum_spacing = settings_flag(pkg, "doNotUseHTMLParagraphAutoSpacing");
     let mut raw: std::collections::HashMap<String, RawStyle> = std::collections::HashMap::new();
     let Some(xml) = pkg.part_string(&main_rel_part(pkg, "styles", "word/styles.xml")) else {
@@ -12558,6 +12563,12 @@ fn table_block(
                         p.squeeze = JUSTIFY_SQUEEZE;
                     }
                 }
+            } else if sheet.defaults.wp_justify {
+                for p in &mut cell_paras {
+                    if matches!(p.style.align, Align::Justify) {
+                        p.squeeze = WP_SQUEEZE;
+                    }
+                }
             } else if sheet.defaults.punct_squeeze {
                 for p in &mut cell_paras {
                     p.squeeze = PUNCT_SQUEEZE;
@@ -19095,6 +19106,8 @@ struct HfChrome {
     /// right on odd pages (live Word 2026-09-25).
     rev_bars_facing: bool,
     punct_squeeze: bool,
+    /// `w:compat/w:wpJustification` (`Defaults::wp_justify`).
+    wp_justify: bool,
     /// `w:compat/w:ulTrailSpace` (xml leftover).
     ul_trail_space: bool,
     /// `w:compat/w:doNotExpandShiftReturn` (xml leftover).
@@ -19111,6 +19124,7 @@ fn first_section_hf(
     let Some(sect) = live_sect_prs(dom, body).into_iter().next() else {
         return HfChrome {
             punct_squeeze: sheet.defaults.punct_squeeze,
+            wp_justify: sheet.defaults.wp_justify,
             ul_trail_space: settings_ul_trail_space(pkg),
             do_not_expand_shift_return: settings_do_not_expand_shift_return(pkg),
             ..Default::default()
@@ -19147,6 +19161,7 @@ fn first_section_hf(
         mirror_margins: settings_mirror_margins(pkg),
         rev_bars_facing: settings_even_and_odd_headers(pkg),
         punct_squeeze: sheet.defaults.punct_squeeze,
+        wp_justify: sheet.defaults.wp_justify,
         ul_trail_space: settings_ul_trail_space(pkg),
         do_not_expand_shift_return: settings_do_not_expand_shift_return(pkg),
     }
@@ -21309,6 +21324,8 @@ struct Layout<'a> {
     /// right on odd pages (live Word 2026-09-25).
     rev_bars_facing: bool,
     punct_squeeze: bool,
+    /// `w:compat/w:wpJustification` (`Defaults::wp_justify`).
+    wp_justify: bool,
     /// `w:compat/w:ulTrailSpace`: underline trailing spaces even in cells.
     ul_trail_space: bool,
     /// `w:compat/w:doNotExpandShiftReturn`: do not justify a `w:br` line.
@@ -21834,6 +21851,7 @@ impl<'a> Layout<'a> {
             mirror_margins: hf.mirror_margins,
             rev_bars_facing: hf.rev_bars_facing,
             punct_squeeze: hf.punct_squeeze,
+            wp_justify: hf.wp_justify,
             ul_trail_space: hf.ul_trail_space,
             do_not_expand_shift_return: hf.do_not_expand_shift_return,
             col_i: 0,
@@ -23941,7 +23959,8 @@ impl<'a> Layout<'a> {
             // A justified line Word kept by squeezing its spaces paints them
             // narrower, even on the paragraph's last line (00044aa0).
             let squeeze_line = fill < -0.05
-                && (matches!(style.align, Align::Justify) && self.compat_mode >= 15
+                && (matches!(style.align, Align::Justify)
+                    && (self.compat_mode >= 15 || self.wp_justify)
                     || self.punct_squeeze && PUNCT_SQUEEZE.narrows_line(line));
             let justify_left = if squeeze_line { fill } else { fill.max(0.0) };
             let justify = squeeze_line
@@ -24386,7 +24405,9 @@ impl<'a> Layout<'a> {
         // last word by narrowing its spaces, up to a quarter of their width
         // (00044aa0; the fraction that best reproduces Word's line breaks in
         // the 96 compat-15 fixtures). Older modes break as before.
-        let squeeze = if matches!(style.align, Align::Justify) && self.compat_mode >= 15 {
+        let squeeze = if matches!(style.align, Align::Justify) && self.wp_justify {
+            WP_SQUEEZE
+        } else if matches!(style.align, Align::Justify) && self.compat_mode >= 15 {
             JUSTIFY_SQUEEZE
         } else if self.punct_squeeze {
             PUNCT_SQUEEZE
@@ -25471,6 +25492,10 @@ impl<'a> Layout<'a> {
     }
 
     fn paint_justified_line(&mut self, line: &[TextRun], x: f32, y: f32, leftover: f32) {
+        if leftover < 0.0 && self.wp_justify {
+            self.paint_compressed(line, x, y, leftover);
+            return;
+        }
         let gaps = inter_word_gaps(line);
         // Justifying stretches only the spaces after the last tab. With
         // none, the line is its tabs: they go to their stops with their
@@ -25525,6 +25550,52 @@ impl<'a> Layout<'a> {
             let x = self.advance_tab(x, y, after_w, decimal_w, &line[k].style);
             self.paint_line_with_tabs(&tail, x, y);
         }
+    }
+
+    /// Paint a line WordPerfect justification kept past its measure
+    /// (`WP_SQUEEZE`): `leftover` (negative) is taken out of every glyph
+    /// gap alike in a monospaced face (Courier New 12 on 468pt: 67 cells
+    /// at 6.985, letters and spaces); in a proportional face the spaces
+    /// give a quarter of their width first and the rest comes out of every
+    /// gap (Arial 12 at 1.037: spaces 3.33 → 2.39, letters 0.11 narrower
+    /// each; Word 16 probes 2026-10-03).
+    fn paint_compressed(&mut self, line: &[TextRun], x: f32, y: f32, leftover: f32) {
+        let text: String = line.iter().map(|r| r.text.as_str()).collect();
+        let chars = text.trim_end().chars().count();
+        let spaces = inter_word_gaps(line);
+        if chars < 2 {
+            self.paint_stretched(line, x, y, 0.0);
+            return;
+        }
+        let first = line
+            .iter()
+            .find(|r| !r.text.trim().is_empty())
+            .unwrap_or(&line[0]);
+        let space_w = self.run_width_pt(first, " ");
+        let mono = (self.run_width_pt(first, "i") - self.run_width_pt(first, "m")).abs() < 0.01;
+        let quarter = if mono {
+            0.0
+        } else {
+            0.25 * space_w * spaces as f32
+        };
+        if !mono && -leftover <= quarter {
+            self.paint_stretched(line, x, y, leftover / spaces.max(1) as f32);
+            return;
+        }
+        // `paint_stretched` paints words and spaces as separate runs: a
+        // run's tracking covers its own gaps, so each space's two
+        // boundaries get theirs through the pad.
+        let delta = (leftover + quarter) / (chars - 1) as f32;
+        let pad = if mono { 0.0 } else { -0.25 * space_w } + 2.0 * delta;
+        let runs: Vec<TextRun> = line
+            .iter()
+            .map(|r| {
+                let mut run = r.clone();
+                run.style.track += delta;
+                run
+            })
+            .collect();
+        self.paint_stretched(&runs, x, y, pad);
     }
 
     /// Paint `line` word by word, each space before its last ink widened
@@ -31436,6 +31507,9 @@ struct Squeeze {
     word_cap: bool,
     /// Only the spaces of a face Word narrows count (`narrows`).
     face_bound: bool,
+    /// Share of the line's measure the whole line may run over, every
+    /// advance narrowing alike (`WP_SQUEEZE`; 0: none).
+    line_share: f32,
 }
 
 impl Squeeze {
@@ -31443,6 +31517,7 @@ impl Squeeze {
         share: 0.0,
         word_cap: false,
         face_bound: false,
+        line_share: 0.0,
     };
 
     /// Whether a space set in `family` counts toward the squeeze.
@@ -31453,10 +31528,11 @@ impl Squeeze {
     /// Whether a line past its measure paints its spaces narrower: one of
     /// its spaces must be one the squeeze counts.
     fn narrows_line(self, line: &[TextRun]) -> bool {
-        self.share > 0.0
-            && line
-                .iter()
-                .any(|run| run.text.contains(' ') && self.narrows(&run.style.family))
+        self.line_share > 0.0
+            || self.share > 0.0
+                && line
+                    .iter()
+                    .any(|run| run.text.contains(' ') && self.narrows(&run.style.family))
     }
 }
 
@@ -31470,6 +31546,23 @@ const JUSTIFY_SQUEEZE: Squeeze = Squeeze {
     share: 0.25,
     word_cap: true,
     face_bound: false,
+    line_share: 0.0,
+};
+
+/// WordPerfect justification (`w:compat/w:wpJustification`, the Texas
+/// statutes' compat set): a justified line keeps its last word while its
+/// natural width is within 1.04 of the measure, whatever its spaces (3 or
+/// 21) or the word's length, and paints every advance narrower alike.
+/// Word 16 probes 2026-10-03 (bench `scripts/probe_wp_justify.py`, 42
+/// documents): kept at 1.0385 (Courier New 10 and 9), 1.037 (Arial 12),
+/// 1.038 (Times New Roman 12); wrapped at 1.041 (Courier 14), 1.042
+/// (Arial), 1.043 (Times). Courier New 12 on 468pt holds 67 cells at
+/// 6.985 each; 041ec70002's lines hold 66 and 67 in Word's PDF.
+const WP_SQUEEZE: Squeeze = Squeeze {
+    share: 0.0,
+    word_cap: false,
+    face_bound: false,
+    line_share: 0.04,
 };
 
 /// The second bound of `JUSTIFY_SQUEEZE`: the overflow may be at most
@@ -31490,6 +31583,7 @@ const PUNCT_SQUEEZE: Squeeze = Squeeze {
     share: 0.2,
     word_cap: false,
     face_bound: true,
+    line_share: 0.0,
 };
 
 /// The faces whose spaces `compressPunctuation` narrows by a fifth. Word 16
@@ -31809,7 +31903,8 @@ fn wrap_runs_segment(
         let overflow = x + w - limit;
         let squeezed = fit.squeeze.share > 0.0
             && overflow <= fit.squeeze.share * line_spaces
-            && (!fit.squeeze.word_cap || overflow <= SQUEEZE_WORD_SHARE * (w + space_w));
+            && (!fit.squeeze.word_cap || overflow <= SQUEEZE_WORD_SHARE * (w + space_w))
+            || fit.squeeze.line_share > 0.0 && overflow <= fit.squeeze.line_share * limit;
         let hang = hanging_punct_width(fonts, &unit);
         // A space hangs past the edge unless one space is wider than the
         // line: then each is a line of its own, as each character is
