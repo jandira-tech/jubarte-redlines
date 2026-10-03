@@ -66,9 +66,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `jubarte::comparer` | comparison tuning | `WmlComparerSettings` (incl. `detail_threshold`, `detect_moves`, `merge_replaced_paragraphs`), `WmlComparerSettings::powertools_faithful()`, `compare_bodies*` |
 | `jubarte::changes` | list / selectively resolve changes | `list_changes`, `accept_changes`, `reject_changes`, `ChangeFilter` (constructor `ChangeFilter::ids(..)`, public `ids`/`authors`/`kinds` fields) |
 | `jubarte::convert` | render DOCX | `docx_to_pdf`, `docx_to_pdf_with(PdfOptions)`, `docx_to_pdf_report`, `docx_to_png`, `render`, `pdf_page_count`, `font_report_json`, `RevisionStyle`, `RevisionPalette` |
-| `jubarte::inspect` | document snapshot for agents | `inspect_json`, `Snapshot`, `Paragraph`, `Span`, `Story`, `SCHEMA_VERSION` |
+| `jubarte::inspect` | document snapshot for agents | `paragraphs`, `summary`, `stories`, `controls`, `markdown`, `inspect_json`, `Snapshot`, `Paragraph`, `Span`, `Story`, `SCHEMA_VERSION` |
 | `jubarte::edit` | atomic JSON edit plans | `apply_plan`, `apply_plan_json`, `EditPlan::from_json`/`to_json` |
 | `jubarte::markdown` | Markdown in and out | `markdown_to_docx`, `docx_to_markdown`, `diff_markdown`, `patch_documents`, `patch_redline`, `redline`, `RedlineOptions` |
+| `jubarte::validate` | will Word open it, and repair | `validate`, `repair`, `audit_tracked`, `Finding` |
+| `jubarte::audit` | accessibility, style and structure findings | `audit`, `audit_report`, `audit_report_with`, `AuditReport` |
+| `jubarte::scrub` | remove authors and metadata before sending | `scrub`, `ScrubOptions`, `leaks` |
+| `jubarte::append` | one document after another | `append_documents`, `AppendOptions`, `SectionBreak`, `AppendComments` |
+| `jubarte::comments` | comment threads | `list_comments`, `CommentRecord` |
+| `jubarte::fields` | refresh a TOC and other fields | `update_fields`, `FieldUpdate` |
 | `jubarte::capabilities` | discover the build's surface | `capabilities(runtime)`, `capabilities_json` |
 | `jubarte::debug` | triage catalogs for a DOCX | `list`, `report`, `Check`, `TRIAGE` |
 | `jubarte::admission` | input validation budgets | `admit(bytes, InputLimits)` |

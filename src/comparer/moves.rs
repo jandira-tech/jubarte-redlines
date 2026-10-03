@@ -347,10 +347,10 @@ pub fn promote_skip_ahead_equals(
 /// - M117: length ratio ≥0.90 and thr = max(settings, 0.97)
 /// - M118: drop all pending when expansion thrash (pending≥12, near_exact≥8, size_ratio≥2)
 ///
-/// Dispatches to [`detect_moves_memoized`], which precomputes each block's text /
+/// Dispatches to `detect_moves_memoized`, which precomputes each block's text /
 /// word count / Jaccard token-set ONCE instead of re-extracting and re-tokenizing
 /// on every (deleted × inserted) pair. Its retagging is identical to the historical
-/// [`detect_moves_reference`], proven by `memoized_matches_reference`.
+/// `detect_moves_reference`, proven by `memoized_matches_reference`.
 pub fn detect_moves_in_atom_list(
     dom: &Dom,
     atoms: &mut [ComparisonUnitAtom],
@@ -360,7 +360,7 @@ pub fn detect_moves_in_atom_list(
 }
 
 /// Per-block precomputed text features, shared by every pair comparison in
-/// [`detect_moves_memoized`] (computed once per block instead of O(del × ins)).
+/// `detect_moves_memoized` (computed once per block instead of O(del × ins)).
 struct BlockText {
     /// Raw concatenated block text (`extract_text_from_atom_block`).
     text: String,
@@ -415,7 +415,7 @@ fn jaccard_precomputed(a: &BlockText, b: &BlockText) -> f64 {
 
 /// Memoized `detect_moves` — the asymptotic fix for the fixture-B hotspot.
 ///
-/// Structurally identical to [`detect_moves_reference`], except each block's text
+/// Structurally identical to `detect_moves_reference`, except each block's text
 /// features (text / collapsed / word count / Jaccard tokens / char count) are
 /// computed **once** into `del_info`/`ins_info` and reused, instead of
 /// re-extracting and re-tokenizing every inserted block on every deleted block
@@ -571,7 +571,7 @@ fn detect_moves_memoized(
 }
 
 /// Historical reference: O(del × ins) with per-pair text re-extraction and
-/// re-tokenization. Kept as the equivalence oracle for [`detect_moves_memoized`]
+/// re-tokenization. Kept as the equivalence oracle for `detect_moves_memoized`
 /// (`memoized_matches_reference`); not compiled into release builds now that
 /// production dispatches to the memoized path (PR3 Phase D).
 #[cfg(test)]
@@ -725,7 +725,7 @@ fn detect_moves_reference(
 }
 
 /// PR3 — the memoized `detect_moves` MUST retag atoms identically to the
-/// historical [`detect_moves_reference`]. These tests are the equivalence oracle:
+/// historical `detect_moves_reference`. These tests are the equivalence oracle:
 /// they build atoms over a real in-memory `Dom` and assert both paths produce the
 /// same `(correlation_status, move_group_id, move_name)` on every atom, across an
 /// obvious-move case and thousands of seeded-random sequences under several

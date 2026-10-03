@@ -207,6 +207,13 @@ class Lessons0101(unittest.TestCase):
         add = next(l for l in s7.splitlines() if "git add jubarte-wasm/npm" in l)
         self.assertIn("jubarte-wasm/Cargo.lock", add)
 
+    def test_the_gates_build_the_public_docs_without_warnings(self) -> None:
+        # The 0.11.0 docs carried 41 dead intra-doc links (rendered as bare
+        # brackets on docs.rs) because nothing built the public docs with
+        # warnings denied; step 5 builds them with private items, warnings on.
+        s4 = step(4)
+        self.assertIn('RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features', s4)
+
     def test_the_gates_keep_the_tracked_python_lockfile(self) -> None:
         # jubarte-python/uv.lock is tracked (f8fe3542). Deleting it after
         # pytest left the release tree dirty, and a resumed run then died in

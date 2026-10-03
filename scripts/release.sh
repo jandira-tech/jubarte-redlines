@@ -387,6 +387,8 @@ if [ "$SKIP_GATES" = 0 ]; then
   cargo fmt --check
   cargo clippy --all-targets --all-features -- -D warnings
   cargo test --all-features
+  # The docs.rs build: a dead intra-doc link renders as bare brackets there.
+  RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
   python3 scripts/test_convert_sweep.py
   python3 planning/test_sample50_check.py
   python3 scripts/test_release_sh.py
@@ -398,7 +400,7 @@ if [ "$SKIP_GATES" = 0 ]; then
     && uv run --with maturin maturin develop --release >/dev/null \
     && uv run --with pytest pytest -q)
   uv tool run --from 'reuse[charset-normalizer]' reuse lint >/dev/null
-  step "fmt / clippy / tests / sweep-units / pytest / REUSE all green"
+  step "fmt / clippy / tests / docs / sweep-units / pytest / REUSE all green"
 else
   say "4. Gates — SKIPPED (--skip-gates)"
 fi

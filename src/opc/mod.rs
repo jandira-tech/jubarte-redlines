@@ -23,7 +23,7 @@
 //!     → parse / resolve / add relationships
 //!   - `resolve_rel_target`         → relative target resolution
 //!   - `content_types.content_type_for` / `add_default` / `add_override`
-//!     → read / mutate [Content_Types].xml
+//!     → read / mutate `[Content_Types].xml`
 //!   - `main_document_part`         → the package → main-document rel
 //!
 //! rdocx-opc keys parts/rels with a LEADING SLASH (`/word/document.xml`). This
@@ -314,14 +314,14 @@ impl PartFs {
             .map(|s| s.to_string())
     }
 
-    /// Add an Override entry to [Content_Types].xml.
+    /// Add an Override entry to `[Content_Types].xml`.
     pub fn add_content_type_override(&mut self, part_name: &str, content_type: &str) {
         self.pkg
             .content_types
             .add_override(&norm(part_name), content_type);
     }
 
-    /// Add a Default extension mapping to [Content_Types].xml.
+    /// Add a Default extension mapping to `[Content_Types].xml`.
     pub fn add_content_type_default(&mut self, ext: &str, content_type: &str) {
         self.pkg.content_types.add_default(ext, content_type);
     }
@@ -366,7 +366,7 @@ impl PartFs {
         }
     }
 
-    /// Remove an Override entry from [Content_Types].xml (no-op when absent).
+    /// Remove an Override entry from `[Content_Types].xml` (no-op when absent).
     pub fn remove_content_type_override(&mut self, part_name: &str) {
         self.pkg.content_types.overrides.remove(&norm(part_name));
     }

@@ -12,7 +12,7 @@
 //! thread (`w15:paraIdParent`) and resolution (`w15:done`);
 //! `commentsIds.xml` maps the key to a `w16cid:durableId`;
 //! `commentsExtensible.xml` carries the UTC date by durable id; and
-//! `people.xml` lists the authors. [`CommentFamily`] loads all of them and
+//! `people.xml` lists the authors. `CommentFamily` loads all of them and
 //! writes them back consistent: every comment paragraph has a paraId, and
 //! each extended part has exactly one row per comment.
 //!
