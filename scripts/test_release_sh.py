@@ -358,5 +358,50 @@ class WheelSetGate(unittest.TestCase):
         self.assertTrue((HERE / "test_check_release_artifacts.py").is_file())
 
 
+
+class LibraryReadmes(unittest.TestCase):
+    """release.sh cuts one README per library, gates on it, and ships it."""
+
+    def setUp(self) -> None:
+        self.text = RELEASE_SH.read_text(encoding="utf-8")
+
+    def section(self, start: str, end: str) -> str:
+        i = self.text.index(start)
+        return self.text[i:self.text.index(end, i)]
+
+    def test_version_sync_cuts_them_for_the_release(self) -> None:
+        sync = self.section('say "1.', 'say "2.')
+        self.assertRegex(
+            sync,
+            r'python3 scripts/library_readmes.py --version "\$VER"[^\n]*\n?[^\n]*\|\| die ',
+        )
+
+    def test_dry_run_step_proves_every_registry_ships_its_cut(self) -> None:
+        dry = self.section('say "6.', 'if [ "$DRY_RUN" = 1 ]')
+        self.assertIn('library_readmes.py --check --version "$VER"', dry)
+        self.assertIn("grep -qx README.crates.md", dry)
+        self.assertIn("PKG-INFO", dry)
+        self.assertIn("jubarte-wasm/npm jubarte-wasm/cli", dry)
+
+    def test_the_release_commit_carries_them(self) -> None:
+        commit = self.section('git add Cargo.toml', 'git commit -m "chore(release)')
+        for path in (
+            "README.crates.md",
+            "jubarte-python/README.md",
+            "jubarte-wasm/npm/README.md",
+            "jubarte-wasm/cli/README.md",
+        ):
+            self.assertIn(path, commit)
+
+    def test_gates_run_the_generator_tests(self) -> None:
+        gates = self.section('say "4. Gates', 'say "4. Gates — SKIPPED')
+        self.assertIn("python3 scripts/test_library_readmes.py", gates)
+
+    def test_the_crate_points_at_its_generated_readme(self) -> None:
+        cargo = (HERE.parent / "Cargo.toml").read_text(encoding="utf-8")
+        self.assertIn('readme = "README.crates.md"', cargo)
+        self.assertIn('"/README.crates.md"', cargo)
+
+
 if __name__ == "__main__":
     unittest.main()

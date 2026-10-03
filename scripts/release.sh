@@ -39,7 +39,10 @@
 #   1. version sync — Cargo.toml and the README's Socket badge version
 #      (bump-version.mjs), jubarte-python/Cargo.toml,
 #      jubarte-wasm/npm/package.json, jubarte-wasm/cli/package.json (the
-#      `npx jubarte-redlines` CLI), and all four Cargo.lock files
+#      `npx jubarte-redlines` CLI), and all four Cargo.lock files; then one
+#      README per published library (crates.io, PyPI, both npm packages)
+#      cut from README.md by scripts/library_readmes.py, links pinned to
+#      the tag
 #   2. changelog check — dated `## [x.y.z]` section + release-link footer
 #   3. summaries — the five summaries + the docs statement land in their
 #      channels
@@ -231,6 +234,13 @@ done
 (cd jubarte-app/src-tauri && cargo update --offline -q -p jubarte-app)
 step "Cargo.lock ×5 refreshed"
 
+# One README per published library, cut from README.md and the library's
+# README.fragment.md, links pinned to $TAG. It refuses when a public Python
+# or WASM name is missing from its README: document it in the fragment.
+python3 scripts/library_readmes.py --version "$VER" >/dev/null \
+  || die "library READMEs: a public API name is undocumented (see above); add it to the fragment"
+step "README.crates.md, jubarte-python/README.md, jubarte-wasm/{npm,cli}/README.md cut for v$VER"
+
 # =============================================================================
 say "2. Changelog check"
 # =============================================================================
@@ -380,6 +390,7 @@ if [ "$SKIP_GATES" = 0 ]; then
   python3 scripts/test_convert_sweep.py
   python3 planning/test_sample50_check.py
   python3 scripts/test_release_sh.py
+  python3 scripts/test_library_readmes.py
   # Python bindings: build the extension from this checkout and run pytest
   # (uv run leaves a uv.lock the repo does not track).
   (cd jubarte-python \
@@ -464,6 +475,20 @@ tar -xzOf "$sdist" "$member" | grep -F "# release-notes v$VER" >/dev/null \
   || die "pypi summary comment did not make it into the sdist"
 step "cargo / npm / maturin dry-runs OK — sdist carries the pypi comment"
 
+# Each registry ships the README cut for this release, gates skipped or not.
+STAMP="for v$VER (README.md sha256"
+python3 scripts/library_readmes.py --check --version "$VER" \
+  || die "library READMEs are stale: run scripts/library_readmes.py --version $VER"
+cargo package --list --allow-dirty 2>/dev/null | grep -qx README.crates.md \
+  || die "the crate does not ship README.crates.md (Cargo.toml include)"
+pkginfo=$(tar -tzf "$sdist" | grep '/PKG-INFO$' | head -1)
+tar -xzOf "$sdist" "$pkginfo" | grep -qF "$STAMP" \
+  || die "the sdist's PyPI description is not the v$VER README"
+for d in jubarte-wasm/npm jubarte-wasm/cli; do
+  grep -qF "$STAMP" "$d/README.md" || die "$d/README.md is not cut for v$VER"
+done
+step "crates.io, PyPI and npm READMEs are the ones cut for v$VER"
+
 if [ "$DRY_RUN" = 1 ]; then
   say "DRY RUN complete"
   cat <<EOF
@@ -490,6 +515,8 @@ else
     # in step 5; they ship in this commit beside docs/api, or the post-push
     # docs CI fails and the dirty tree blocks a resumed release.
     git add Cargo.toml Cargo.lock CHANGELOG.md README.md VERSIONING.md \
+      README.crates.md jubarte-wasm/npm/README.md jubarte-wasm/cli/README.md \
+      jubarte-python/README.md \
       jubarte-python/Cargo.toml jubarte-python/Cargo.lock \
       jubarte-python/pyproject.toml \
       jubarte-wasm/Cargo.lock jubarte-wasm/npm/package.json jubarte-wasm/cli/package.json \
