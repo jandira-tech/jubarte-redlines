@@ -930,6 +930,12 @@ impl<'a> Face<'a> {
         Self::from_bytes(id, id.bytes(), id.postscript().to_string()).expect("bundled TTF is valid")
     }
 
+    /// The slot's bundled face, whatever this machine has installed.
+    #[cfg(test)]
+    pub(crate) fn bundled(id: FaceId) -> Self {
+        Self::load(id)
+    }
+
     fn from_path(id: FaceId, path: &Path) -> Option<Self> {
         let bytes = fs::read(path).ok()?;
         let ps = ttf_postscript_name(&bytes).unwrap_or_else(|| id.postscript().to_string());
@@ -1102,7 +1108,7 @@ impl<'a> Face<'a> {
     /// bullet painted nothing. The Symbol slot reads the code by Adobe's
     /// Symbol encoding, any other face as Wingdings; the first stand-in the
     /// face has a glyph for wins. A face that has the code keeps it.
-    fn symbol_stand_in(&self, ch: char) -> Option<char> {
+    pub(crate) fn symbol_stand_in(&self, ch: char) -> Option<char> {
         let low = u8::try_from(u32::from(ch).checked_sub(0xF000)?).ok()?;
         if low < 0x20 || self.cmap_glyph(ch) != 0 {
             return None;

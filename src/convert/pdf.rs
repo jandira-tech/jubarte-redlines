@@ -1552,14 +1552,7 @@ fn face_unicode_map(
                 .into_iter()
                 .any(|t| t.platform_id == ttf_parser::PlatformId::Windows && t.encoding_id == 0)
         });
-    let symbol = face.pdf_name().starts_with("Symbol");
-    let read = |c: char| {
-        if symbol_encoded {
-            symbol_font_text(c, symbol)
-        } else {
-            c
-        }
-    };
+    let read = |c: char| read_back(face, symbol_encoded, c);
     let mut map = BTreeMap::new();
     let mut zipped = BTreeMap::new();
     let mut painted = BTreeSet::new();
@@ -1598,6 +1591,17 @@ fn face_unicode_map(
     }
     map.retain(|g, _| *g != 0 && painted.contains(g));
     map
+}
+
+/// The text a painted character reads back as: Word's for a symbol-encoded
+/// face (`symbol_font_text`), and for a symbol code a text face stands in
+/// for, the character it painted (`Face::symbol_stand_in`).
+fn read_back(face: &super::font::Face, symbol_encoded: bool, c: char) -> char {
+    if symbol_encoded {
+        symbol_font_text(c, face.pdf_name().starts_with("Symbol"))
+    } else {
+        face.symbol_stand_in(c).unwrap_or(c)
+    }
 }
 
 /// The text Word's PDFs carry for a symbol-encoded face's U+F020..U+F0FF
@@ -2101,6 +2105,21 @@ mod tests {
             top > centre && top < centre + 0.6,
             "top {top} near {centre}"
         );
+    }
+
+    /// A bullet a text face stands in for (the WASM build has no Symbol)
+    /// reads back as the character painted, not the private-use code: the
+    /// WASM PDF's bullets read U+F0B7 where the native PDF's read "•"
+    /// (parity check 2026-10-03).
+    #[test]
+    fn a_stood_in_symbol_code_reads_back_as_the_character_painted() {
+        use super::super::font::{Face, FaceId};
+        let symbol = Face::bundled(FaceId::Symbol);
+        assert_eq!(super::read_back(&symbol, false, '\u{F0B7}'), '•');
+        assert_eq!(super::read_back(&symbol, false, 'a'), 'a');
+        let sans = Face::bundled(FaceId::SansRegular);
+        assert_eq!(super::read_back(&sans, false, '\u{F0A7}'), '▪');
+        assert_eq!(super::read_back(&sans, false, '\u{2011}'), '\u{2011}');
     }
 
     /// Word 16 probes sym/sym2 (2026-10-02): a symbol-encoded face's
