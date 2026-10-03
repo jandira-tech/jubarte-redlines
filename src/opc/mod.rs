@@ -33,9 +33,9 @@
 
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::io::{Cursor, Write};
+use std::io::{Cursor, Read, Write};
 
-use rdocx_opc::OpcPackage;
+use rdocx_opc::{ContentTypes, OpcPackage};
 pub use rdocx_opc::{OpcError, Relationship, Relationships};
 
 /// Input the engine refuses before or while reading it, as an `Err` the
@@ -117,6 +117,68 @@ fn denorm(name: &str) -> String {
 }
 
 /// Convert a part name (leading-slash form, e.g. `/word/document.xml`) to its
+/// rdocx-opc's parsers read empty elements only (`Event::Empty`), so a
+/// `<Relationship …></Relationship>` written with an explicit close is
+/// skipped, and with it the part it names: corpus 37c6c62345 lost its
+/// header and footer that way. `[Content_Types].xml`'s `Default` and
+/// `Override` have the same parser. Re-read those files from the zip with
+/// each explicit close folded into an empty element.
+fn reparse_explicitly_closed(pkg: &mut OpcPackage, bytes: &[u8]) {
+    let Ok(mut zip) = ZipArchive::new(Cursor::new(bytes)) else {
+        return;
+    };
+    for i in 0..zip.len() {
+        let Ok(mut file) = zip.by_index(i) else {
+            continue;
+        };
+        let name = file.name().to_string();
+        let is_rels = name.ends_with(".rels");
+        if !is_rels && name != "[Content_Types].xml" {
+            continue;
+        }
+        let mut data = Vec::new();
+        if file.read_to_end(&mut data).is_err() {
+            continue;
+        }
+        let tags: &[&str] = if is_rels {
+            &["Relationship"]
+        } else {
+            &["Default", "Override"]
+        };
+        let Some(folded) = fold_explicit_closes(&data, tags) else {
+            continue;
+        };
+        if is_rels {
+            if let Some(owner) = rels_path_to_part_name(&name)
+                && let Ok(rels) = Relationships::from_xml(&folded)
+            {
+                if owner.is_empty() {
+                    pkg.package_rels = rels;
+                } else {
+                    pkg.part_rels.insert(norm(&owner), rels);
+                }
+            }
+        } else if let Ok(types) = ContentTypes::from_xml(&folded) {
+            pkg.content_types = types;
+        }
+    }
+}
+
+/// `xml` with every `<tag …></tag>` folded into `<tag …/>`, or None when
+/// it has no explicit close of those tags.
+fn fold_explicit_closes(xml: &[u8], tags: &[&str]) -> Option<Vec<u8>> {
+    let mut text = std::str::from_utf8(xml).ok()?.to_string();
+    let mut changed = false;
+    for tag in tags {
+        let close = format!("></{tag}>");
+        if text.contains(&close) {
+            text = text.replace(&close, "/>");
+            changed = true;
+        }
+    }
+    changed.then(|| text.into_bytes())
+}
+
 /// `.rels` file path (e.g. `word/_rels/document.xml.rels`). Mirrors the
 /// private `rdocx_opc::package::part_name_to_rels_path`.
 fn part_name_to_rels_path(part_name: &str) -> String {
@@ -165,6 +227,7 @@ impl PartFs {
     /// Open a `.docx`/OPC package from raw bytes.
     pub fn open(bytes: &[u8]) -> Result<Self, OpcError> {
         let mut pkg = OpcPackage::from_reader(Cursor::new(bytes.to_vec()))?;
+        reparse_explicitly_closed(&mut pkg, bytes);
         unescape_relationships(&mut pkg.package_rels);
         pkg.part_rels.values_mut().for_each(unescape_relationships);
         unescape_content_types(&mut pkg.content_types.defaults);
