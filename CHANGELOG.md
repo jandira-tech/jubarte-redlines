@@ -15,6 +15,8 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-03
+
 ### Added
 
 - `scripts/release.sh` step 13 runs `scripts/check_release_facts.py`: the
@@ -183,125 +185,6 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   `scripts/gen_docs.sh` regenerates them, release step 5 runs it and
   commits the pages, and the Docs CI job fails when they drift from the
   code.
-
-### Changed
-
-- `--revisions conventional` (the default, `RevisionPalette::CONVENTIONAL`)
-  now paints Litera Compare's marks: an insertion or deletion is marked once
-  (blue underline, red strike) and a move twice, in green (double strike
-  where it left, double underline where it landed). Insertions were
-  double-underlined and moved-from text single-struck, so a landed move read
-  as an insertion except for its colour. `word` and `custom` are unchanged.
-- A Word 97-2003 `.doc`, or an encrypted document of any Word version (both
-  are OLE compound files), is refused with the new `LEGACY_DOC` code and the
-  hint to save it as `.docx` without a password, on every entry point and in
-  every binding; RTF is `UNSUPPORTED_PACKAGE` ("an RTF file, not a .docx
-  package"). Both used to surface as a ZIP error (`INVALID_PACKAGE`). The
-  check is `admission::sniff`, which `admit` runs before any budget and the
-  CLI runs as it reads a file. `admission::code_first` puts a refusal's code
-  in front of whatever wrapped it (`I/O error: INPUT_LIMIT: …` reads
-  `INPUT_LIMIT: …`, `document B: LEGACY_DOC: …` reads `LEGACY_DOC:
-  document B: …`); the CLI's compare, revisions and convert failures,
-  Python's `JubarteError` and WASM's thrown strings print refusals that
-  way. `AdmissionErrorKind` gains `LegacyDocument` (a match on it needs the
-  arm) and `ALL`.
-- Crate docs: the "Lossless" tagline is now "Word-faithful", and a Fidelity
-  section lists the main things the comparer normalizes (non-standard
-  `w:sdtPr` children, `mc:AlternateContent`, and in the default mode the
-  original's tracked changes, internal anchor hyperlinks, content controls in
-  any paragraph that carries a revision, redundant default spacing, and the
-  breaking versus non-breaking space distinction). It is not exhaustive.
-- Doc comments that described a SHA-1 string check behind the LCS common-run
-  match now say what the code does: the 128-bit FNV-1a fingerprint of the
-  hash string alone decides equality there. The macro-generated docs in
-  `namespaces` show the actual URI and local name, `w:cols` and
-  `SECT_GEOMETRY` comments are corrected, and the repeated finalize passes in
-  the comparer say why they run twice. `DEFAULT_DATE` and `MC::ns()` replace
-  duplicated literals. No output change.
-
-- The redline comparer admits both inputs before it inflates anything
-  (`compare_documents*`, `edit` plans that compare, `WmlDocument::from_bytes`).
-  A package past the budget is an `Err` whose message carries the stable
-  `INPUT_LIMIT` code (or `UNSUPPORTED_PACKAGE`, `INVALID_PACKAGE`, ...) and
-  names the side ("original document: ..."); the typed
-  `admission::AdmissionError` is the `io::Error` source of the returned
-  `OpcError::Io(InvalidData)`. The budget is the new
-  `admission::InputLimits::compare()` (512 MiB per file and part, 2 GiB
-  inflated, 10 000 entries, depth 256) and
-  `WmlComparerSettings::input_limits` overrides it. Admission is one extra
-  inflate pass over each input. The `inspect` and `edit` budget
-  (`InputLimits::default()`) is unchanged.
-- `strict_translation::strict_to_transitional_docx` no longer sizes an
-  allocation from the ZIP central directory's declared size or copies the
-  input first, and stops at the budget instead of inflating without limit;
-  `strict_to_transitional_docx_within` takes the budget explicitly. Over the
-  budget it returns the input unchanged, as it already did for an unreadable
-  archive.
-- CI: every third-party GitHub Action in `ci.yml` and `release.yml` is
-  pinned to a commit SHA, with the release tag it resolves to as a trailing
-  comment so Dependabot can bump both; Dependabot groups Cargo minor and
-  patch bumps into one weekly pull request. Clippy with `-D warnings` now
-  also runs on jubarte-rust-inproc, jubarte-python and jubarte-wasm (for
-  `wasm32-unknown-unknown`), standalone packages the root workspace does
-  not cover; jubarte-app/src-tauri keeps its own CI. The MSRV job runs the
-  all-feature test suite on Rust 1.88 instead of `cargo check`, as
-  README.md has said it does.
-- Matching a style name against Word's built-in styles no longer allocates
-  a lowercase copy of the name on each lookup; the answer is unchanged.
-- `util::sha1::sha1_fingerprint` and `sha1_fingerprint128` are renamed
-  `fnv1a_64` and `fnv1a_128`: they compute 64- and 128-bit FNV-1a of the
-  SHA-1 hex string, not SHA-1, and their docs now say so. Output is
-  unchanged. The 128-bit key alone decides equality in the LCS common-run
-  match and the interior-run skip, which the docs state instead of claiming
-  a string check follows (other paths, such as prefix and suffix trimming,
-  still compare the hash strings).
-  `ComparisonUnit::sha1_key` and `sha1_key128` return the same FNV-1a
-  values and keep their names for now. `jubarte::util::fnv1a_128` is
-  re-exported beside `fnv1a_64`.
-- `ComparisonLog` and `CompareContext` derive `Debug`.
-- Admission now checks end-tag names while it scans each XML part: a
-  mismatched, stray or unclosed element is `InvalidXml` instead of passing
-  the scan. All 819 `.docx`/`.docm`/`.dotx`
-  files in the repository still pass.
-- The library and the CLI `forbid(unsafe_code)` (examples keep the package
-  `deny`), and `admission`, `strict_translation` and `opc` deny
-  `clippy::indexing_slicing` and `clippy::arithmetic_side_effects` outside
-  tests. The ZIP end-of-central-directory scan, the ZIP64 record read and
-  the budget counters in those modules now use checked or saturating
-  arithmetic and `get`; behaviour is unchanged.
-- `accept_revisions`, `reject_revisions`, `get_revisions`, `list_changes` (and
-  the accept/reject-changes functions) and the `convert` functions admit their
-  input under `InputLimits::compare()` before they inflate it, as the compare
-  path does; a package past the budget is an `Err` carrying `INPUT_LIMIT`
-  instead of an allocation abort. Admission also reads the main part once
-  more for nesting depth when its name is not `.xml` or `.rels`.
-- Copied media parts are named with a lowercase extension
-  (`word/media/P{sha256}.png`), since part names are case-insensitive, so the
-  same image under `.png` and `.PNG` is one part.
-- `word_tokens`: emoji skin tone modifiers stay in their sequence, and a mark
-  that is also alphabetic (a Devanagari vowel sign) with nothing before it no
-  longer starts a word. Flags, keycaps and tag sequences may still split.
-- The crate and PyPI descriptions and the Python and npm READMEs say "Word-faithful" instead of "Lossless".
-- **Breaking:** `WmlDocument::document_byte_array` is private; read it
-  with `WmlDocument::bytes()`.
-- `get_revisions` admits its input under `settings.input_limits` instead
-  of always using `InputLimits::compare()` (the default settings give the
-  same budget).
-- Each published package carries its own README, generated at release
-  from the repository README and a per-package fragment by
-  `scripts/library_readmes.py`: crates.io (`README.crates.md`), PyPI,
-  and both npm packages. Links are pinned to the release tag, because
-  the registries cannot resolve relative links. The release checks that
-  every artifact carries the README for its version (#339).
-- `tiny-skia` 0.12: `png` 0.17 and `bitflags` 1 leave the engine's
-  dependency tree (the Mac app still builds them through Tauri's `ico`).
-  Rendered PDFs are byte-identical (#340).
-
-### Deprecated
-
-- `util::sha1::sha1_fingerprint`, `util::sha1::sha1_fingerprint128` and
-  `util::sha1_fingerprint` stay as deprecated aliases of the `fnv1a_*`
-  names for one release and are then removed.
 - `jubarte audit FILE [--json] [--rules a11y,style,structure|CODE,...]
   [--strict]` (`audit::audit`) reports accessibility, style and structure
   findings, each with its rule set, severity and the paragraph id
@@ -321,12 +204,6 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   leaves `FONT_SUBSTITUTED` out and does not compare `NUMPAGES` caches with
   a page count; that keeps the renderer out of it (6.12 MB against 6.06 MB
   before; linking the layout pass made it 16.0 MB).
-
-### Fixed
-
-- `capabilities().limits.stories` listed `body` only; `inspect` and `edit`
-  address headers, footers, footnotes and endnotes too, and the manifest
-  now says so (text boxes stay reported in `summary` but not editable).
 - `scripts/release.sh` step 12 runs `scripts/release_downstream.sh`: jubarte.pro
   moves to the release (download page, demo engine) and is deployed, the
   app's release files are committed on `release/vx.y.z` in the jubarte-app
@@ -525,6 +402,132 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   `EditPlan.insert_toc`, `EditPlan(update_fields=True)`); `capabilities`
   reports `operations.fields`. Page numbers are jubarte's, not Word's
   ([docs/WORD_DIFFERENCES.md](docs/WORD_DIFFERENCES.md) section 11).
+
+### Changed
+
+- `--revisions conventional` (the default, `RevisionPalette::CONVENTIONAL`)
+  now paints Litera Compare's marks: an insertion or deletion is marked once
+  (blue underline, red strike) and a move twice, in green (double strike
+  where it left, double underline where it landed). Insertions were
+  double-underlined and moved-from text single-struck, so a landed move read
+  as an insertion except for its colour. `word` and `custom` are unchanged.
+- A Word 97-2003 `.doc`, or an encrypted document of any Word version (both
+  are OLE compound files), is refused with the new `LEGACY_DOC` code and the
+  hint to save it as `.docx` without a password, on every entry point and in
+  every binding; RTF is `UNSUPPORTED_PACKAGE` ("an RTF file, not a .docx
+  package"). Both used to surface as a ZIP error (`INVALID_PACKAGE`). The
+  check is `admission::sniff`, which `admit` runs before any budget and the
+  CLI runs as it reads a file. `admission::code_first` puts a refusal's code
+  in front of whatever wrapped it (`I/O error: INPUT_LIMIT: …` reads
+  `INPUT_LIMIT: …`, `document B: LEGACY_DOC: …` reads `LEGACY_DOC:
+  document B: …`); the CLI's compare, revisions and convert failures,
+  Python's `JubarteError` and WASM's thrown strings print refusals that
+  way. `AdmissionErrorKind` gains `LegacyDocument` (a match on it needs the
+  arm) and `ALL`.
+- Crate docs: the "Lossless" tagline is now "Word-faithful", and a Fidelity
+  section lists the main things the comparer normalizes (non-standard
+  `w:sdtPr` children, `mc:AlternateContent`, and in the default mode the
+  original's tracked changes, internal anchor hyperlinks, content controls in
+  any paragraph that carries a revision, redundant default spacing, and the
+  breaking versus non-breaking space distinction). It is not exhaustive.
+- Doc comments that described a SHA-1 string check behind the LCS common-run
+  match now say what the code does: the 128-bit FNV-1a fingerprint of the
+  hash string alone decides equality there. The macro-generated docs in
+  `namespaces` show the actual URI and local name, `w:cols` and
+  `SECT_GEOMETRY` comments are corrected, and the repeated finalize passes in
+  the comparer say why they run twice. `DEFAULT_DATE` and `MC::ns()` replace
+  duplicated literals. No output change.
+
+- The redline comparer admits both inputs before it inflates anything
+  (`compare_documents*`, `edit` plans that compare, `WmlDocument::from_bytes`).
+  A package past the budget is an `Err` whose message carries the stable
+  `INPUT_LIMIT` code (or `UNSUPPORTED_PACKAGE`, `INVALID_PACKAGE`, ...) and
+  names the side ("original document: ..."); the typed
+  `admission::AdmissionError` is the `io::Error` source of the returned
+  `OpcError::Io(InvalidData)`. The budget is the new
+  `admission::InputLimits::compare()` (512 MiB per file and part, 2 GiB
+  inflated, 10 000 entries, depth 256) and
+  `WmlComparerSettings::input_limits` overrides it. Admission is one extra
+  inflate pass over each input. The `inspect` and `edit` budget
+  (`InputLimits::default()`) is unchanged.
+- `strict_translation::strict_to_transitional_docx` no longer sizes an
+  allocation from the ZIP central directory's declared size or copies the
+  input first, and stops at the budget instead of inflating without limit;
+  `strict_to_transitional_docx_within` takes the budget explicitly. Over the
+  budget it returns the input unchanged, as it already did for an unreadable
+  archive.
+- CI: every third-party GitHub Action in `ci.yml` and `release.yml` is
+  pinned to a commit SHA, with the release tag it resolves to as a trailing
+  comment so Dependabot can bump both; Dependabot groups Cargo minor and
+  patch bumps into one weekly pull request. Clippy with `-D warnings` now
+  also runs on jubarte-rust-inproc, jubarte-python and jubarte-wasm (for
+  `wasm32-unknown-unknown`), standalone packages the root workspace does
+  not cover; jubarte-app/src-tauri keeps its own CI. The MSRV job runs the
+  all-feature test suite on Rust 1.88 instead of `cargo check`, as
+  README.md has said it does.
+- Matching a style name against Word's built-in styles no longer allocates
+  a lowercase copy of the name on each lookup; the answer is unchanged.
+- `util::sha1::sha1_fingerprint` and `sha1_fingerprint128` are renamed
+  `fnv1a_64` and `fnv1a_128`: they compute 64- and 128-bit FNV-1a of the
+  SHA-1 hex string, not SHA-1, and their docs now say so. Output is
+  unchanged. The 128-bit key alone decides equality in the LCS common-run
+  match and the interior-run skip, which the docs state instead of claiming
+  a string check follows (other paths, such as prefix and suffix trimming,
+  still compare the hash strings).
+  `ComparisonUnit::sha1_key` and `sha1_key128` return the same FNV-1a
+  values and keep their names for now. `jubarte::util::fnv1a_128` is
+  re-exported beside `fnv1a_64`.
+- `ComparisonLog` and `CompareContext` derive `Debug`.
+- Admission now checks end-tag names while it scans each XML part: a
+  mismatched, stray or unclosed element is `InvalidXml` instead of passing
+  the scan. All 819 `.docx`/`.docm`/`.dotx`
+  files in the repository still pass.
+- The library and the CLI `forbid(unsafe_code)` (examples keep the package
+  `deny`), and `admission`, `strict_translation` and `opc` deny
+  `clippy::indexing_slicing` and `clippy::arithmetic_side_effects` outside
+  tests. The ZIP end-of-central-directory scan, the ZIP64 record read and
+  the budget counters in those modules now use checked or saturating
+  arithmetic and `get`; behaviour is unchanged.
+- `accept_revisions`, `reject_revisions`, `get_revisions`, `list_changes` (and
+  the accept/reject-changes functions) and the `convert` functions admit their
+  input under `InputLimits::compare()` before they inflate it, as the compare
+  path does; a package past the budget is an `Err` carrying `INPUT_LIMIT`
+  instead of an allocation abort. Admission also reads the main part once
+  more for nesting depth when its name is not `.xml` or `.rels`.
+- Copied media parts are named with a lowercase extension
+  (`word/media/P{sha256}.png`), since part names are case-insensitive, so the
+  same image under `.png` and `.PNG` is one part.
+- `word_tokens`: emoji skin tone modifiers stay in their sequence, and a mark
+  that is also alphabetic (a Devanagari vowel sign) with nothing before it no
+  longer starts a word. Flags, keycaps and tag sequences may still split.
+- The crate and PyPI descriptions and the Python and npm READMEs say "Word-faithful" instead of "Lossless".
+- **Breaking:** `WmlDocument::document_byte_array` is private; read it
+  with `WmlDocument::bytes()`.
+- `get_revisions` admits its input under `settings.input_limits` instead
+  of always using `InputLimits::compare()` (the default settings give the
+  same budget).
+- Each published package carries its own README, generated at release
+  from the repository README and a per-package fragment by
+  `scripts/library_readmes.py`: crates.io (`README.crates.md`), PyPI,
+  and both npm packages. Links are pinned to the release tag, because
+  the registries cannot resolve relative links. The release checks that
+  every artifact carries the README for its version (#339).
+- `tiny-skia` 0.12: `png` 0.17 and `bitflags` 1 leave the engine's
+  dependency tree (the Mac app still builds them through Tauri's `ico`).
+  Rendered PDFs are byte-identical (#340).
+
+### Deprecated
+
+- `util::sha1::sha1_fingerprint`, `util::sha1::sha1_fingerprint128` and
+  `util::sha1_fingerprint` stay as deprecated aliases of the `fnv1a_*`
+  names for one release and are then removed.
+
+### Fixed
+
+- `capabilities().limits.stories` listed `body` only; `inspect` and `edit`
+  address headers, footers, footnotes and endnotes too, and the manifest
+  now says so (text boxes stay reported in `summary` but not editable).
+
 - A footnote or endnote layout the renumbering step cannot resolve is an
   `Err` from `compare_documents*`, not a panic that aborts the Python
   interpreter or the WASM instance.
@@ -2439,6 +2442,7 @@ measured Q0 performance stack) plus release tooling (`VERSIONING.md`,
 - See [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the covering tests are marked
   `#[ignore]` with matching reasons.
 
+[0.11.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.11.0
 [0.10.1]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.10.1
 [0.10.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.10.0
 [0.9.3]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.9.3

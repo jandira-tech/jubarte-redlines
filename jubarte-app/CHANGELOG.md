@@ -8,6 +8,17 @@ features bump the **minor**, fixes bump the **patch**).
 See [README → Versioning & release](README.md#versioning--release) for how to cut
 a new version.
 
+## [0.11.0] — 2026-10-03
+
+### Changed
+- **Engine upgraded to jubarte-redlines 0.11.0**: the default revision marks
+  follow Litera Compare (insertions underlined once in blue, deletions struck
+  once in red, moves doubled in green); a Word 97-2003 `.doc` or a
+  password-protected document is refused with a message asking for an
+  unprotected `.docx` instead of a ZIP error; and PDF export follows Word more
+  closely on tables, text boxes, line spacing, lists, fonts, headers, footers,
+  notes and fields.
+
 ## [0.10.1] — 2026-09-30
 
 ### Changed
