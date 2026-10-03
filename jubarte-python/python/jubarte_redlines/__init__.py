@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Lossless DOCX redline engine (jubarte-redlines).
+"""Word-faithful DOCX redline engine (jubarte-redlines).
 
 Compare two Word documents into a tracked-changes document that opens cleanly
 in Microsoft Word; list, accept, or reject revisions; render DOCX to PDF.
@@ -56,21 +56,42 @@ def get_revisions(docx: bytes) -> list[dict[str, Any]]:
 
 
 # Additive ergonomic surface; low-level functions above keep their contracts.
-from .document import Document, EditPlanError, EditResult, capabilities, read
+from .document import (
+    Appended,
+    Document,
+    EditPlanError,
+    EditResult,
+    UpdatedFields,
+    capabilities,
+    diff,
+    diff_render,
+    from_markdown,
+    read,
+)
 from .models import (
+    AuditFinding,
     Change,
+    Comment,
     CompareOptions,
+    ContentControl,
+    Diff,
     EditOutcome,
     EditPlan,
     EditReport,
+    FieldUpdate,
+    Finding,
     FontResolution,
     FormatChange,
+    Hunk,
+    PageDiff,
     PageText,
     Paragraph,
     ParagraphDelta,
     PdfOptions,
+    RenderDiff,
     Rendered,
     RenderReport,
+    Repaired,
     ResolvedRevisions,
     Revision,
     RevisionCounts,
@@ -78,13 +99,20 @@ from .models import (
     Span,
     Story,
     Summary,
+    Table,
+    TableCell,
 )
 
 __all__ += [
+    "Appended",
     "Document",
     "read",
+    "diff",
+    "Diff",
+    "Hunk",
     "capabilities",
     "Change",
+    "Comment",
     "CompareOptions",
     "FormatChange",
     "PdfOptions",
@@ -99,11 +127,23 @@ __all__ += [
     "ParagraphDelta",
     "Snapshot",
     "Story",
+    "ContentControl",
     "Summary",
+    "Table",
+    "TableCell",
     "Paragraph",
     "Span",
     "Rendered",
     "RenderReport",
     "PageText",
     "FontResolution",
+    "diff_render",
+    "RenderDiff",
+    "PageDiff",
+    "Finding",
+    "Repaired",
+    "FieldUpdate",
+    "UpdatedFields",
 ]
+__all__ += ["from_markdown"]
+__all__ += ["AuditFinding"]

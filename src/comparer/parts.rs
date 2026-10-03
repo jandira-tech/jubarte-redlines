@@ -135,12 +135,17 @@ pub fn is_external_relationship(rel_type: &str, target: &str) -> bool {
 
 use super::tables::S_RELATIONSHIP_ATTRIBUTE_NAMES;
 use crate::opc::PartFs;
-use crate::unid::generate_unid;
 use crate::xmllinq::{Dom, NodeId};
 
 /// Package URI for a part being copied during dangling-rel reconcile.
 /// Markup parts keep their `word/…` path (with collision uniquify); binary
-/// media still lands under `word/media/P{unid}.ext`.
+/// media lands under `word/media/P{sha256}.ext` (extension lowercased, since
+/// part names are case-insensitive), named by the SHA-256 of its bytes. The name depends only on the media, never on how many compares ran
+/// before it in the process, so one pair compared twice gives identical bytes.
+/// Identical media copied twice share one part. A name already held by
+/// different bytes (a SHA-256 collision, or a source part that happens to
+/// carry the name) gets a `_{n}` suffix, so two different images never share a
+/// part.
 fn dest_uri_for_reconciled_part(dest: &PartFs, target_part: &str, bytes: &[u8]) -> String {
     let ext = target_part
         .rsplit('.')
@@ -153,7 +158,20 @@ fn dest_uri_for_reconciled_part(dest: &PartFs, target_part: &str, bytes: &[u8]) 
         "png" | "jpeg" | "jpg" | "gif" | "tiff" | "tif" | "bmp" | "svg" | "ico" | "emf" | "wmf"
     );
     if target_part.starts_with("word/media/") || is_image {
-        return format!("word/media/P{}.{ext}", generate_unid());
+        let digest = crate::inspect::source_sha256(bytes);
+        let mut n = 0usize;
+        loop {
+            let candidate = if n == 0 {
+                format!("word/media/P{digest}.{ext_lc}")
+            } else {
+                format!("word/media/P{digest}_{n}.{ext_lc}")
+            };
+            match dest.part_bytes(&candidate) {
+                None => return candidate,
+                Some(existing) if existing == bytes => return candidate,
+                Some(_) => n += 1,
+            }
+        }
     }
     // Preserve conventional word/* paths for footers/headers/numbering/notes.
     match dest.part_bytes(target_part) {
@@ -363,7 +381,7 @@ pub fn reconcile_dangling_relationships(
                             // paths (word/footerN.xml). Dumping them into word/media/P*.xml
                             // (legacy always-media rewrite) left file_21 with 0 renderable
                             // footers while Word's redline carries all 20+ — LO page geometry
-                            // drifts (106 vs 107). Images still use media/P{unid}.ext.
+                            // drifts (106 vs 107). Images still use media/P{sha256}.ext.
                             let new_uri = dest_uri_for_reconciled_part(dest, &target_part, &bytes);
                             if let Some(ct) = src.content_type_for(&target_part) {
                                 dest.add_content_type_override(&new_uri, &ct);
@@ -515,6 +533,105 @@ pub fn carry_relationship(
     ))
 }
 
+/// Carry every relationship the subtree `root` names (`r:id`, `r:embed`,
+/// `r:link`, ...) from `src_part` of `src` onto `dest_part` of `dest` through
+/// [`carry_relationship`], and rewrite each attribute to the carried id. A
+/// reference `src` cannot resolve loses its attribute. An XML part copied
+/// this way (a header, a chart) gets its own relationships carried too.
+pub fn carry_part_relationships(
+    dest: &mut PartFs,
+    dest_part: &str,
+    src: &PartFs,
+    src_part: &str,
+    dom: &mut Dom,
+    root: NodeId,
+) {
+    carry_subtree_relationships(dest, dest_part, src, src_part, dom, root, 0);
+}
+
+/// Nesting a carried part may reach: header to chart to embedding is three.
+const MAX_CARRY_DEPTH: usize = 8;
+
+fn carry_subtree_relationships(
+    dest: &mut PartFs,
+    dest_part: &str,
+    src: &PartFs,
+    src_part: &str,
+    dom: &mut Dom,
+    root: NodeId,
+    depth: usize,
+) {
+    let mut minted: std::collections::HashMap<String, Option<String>> =
+        std::collections::HashMap::new();
+    for el in dom.descendants_and_self(root, None) {
+        for (an, rid) in dom.attributes(el) {
+            if !S_RELATIONSHIP_ATTRIBUTE_NAMES.contains(&an) {
+                continue;
+            }
+            let suffix = dom
+                .name(el)
+                .and_then(|n| required_rel_type_suffix(n.local_name()));
+            let key = format!("{rid}\u{0}{}", suffix.unwrap_or(""));
+            let new_rid = match minted.get(&key) {
+                Some(id) => id.clone(),
+                None => {
+                    let carried = carry_with_own_relationships(
+                        dest, dest_part, src, src_part, &rid, suffix, depth,
+                    );
+                    minted.insert(key, carried.clone());
+                    carried
+                }
+            };
+            dom.set_attribute_value(el, &an, new_rid.as_deref());
+        }
+    }
+}
+
+/// [`carry_relationship`], then the same for the relationships of an XML
+/// part it newly copied.
+fn carry_with_own_relationships(
+    dest: &mut PartFs,
+    dest_part: &str,
+    src: &PartFs,
+    src_part: &str,
+    rid: &str,
+    suffix: Option<&str>,
+    depth: usize,
+) -> Option<String> {
+    let fits = |ty: &str| suffix.is_none_or(|s| ty.ends_with(s));
+    let before: std::collections::HashSet<String> = dest.parts().into_iter().collect();
+    let new_rid = carry_relationship(dest, dest_part, src, src_part, rid, fits)?;
+    let target = |pkg: &PartFs, part: &str, id: &str| {
+        let row = pkg.read_rels_for(part)?.items.iter().find(|r| r.id == id)?;
+        (row.target_mode.as_deref() != Some("External"))
+            .then(|| pkg.resolve_rel_target(part, &row.target))
+    };
+    if depth < MAX_CARRY_DEPTH
+        && let Some(new_part) = target(dest, dest_part, &new_rid)
+        && let Some(src_target) = target(src, src_part, rid)
+        && new_part.ends_with(".xml")
+        && !before.contains(&new_part)
+        && src.read_rels_for(&src_target).is_some()
+        && let Some(xml) = dest.part_string(&new_part)
+    {
+        let mut part_dom = Dom::new();
+        let doc = part_dom.parse_xdocument(&xml);
+        if let Some(part_root) = part_dom.root(doc) {
+            carry_subtree_relationships(
+                dest,
+                &new_part,
+                src,
+                &src_target,
+                &mut part_dom,
+                part_root,
+                depth + 1,
+            );
+            dest.set_part(&new_part, part_dom.serialize_document(doc).into_bytes());
+        }
+    }
+    Some(new_rid)
+}
+
 fn reconcile_one_part(dest: &mut PartFs, part: &str, a: &PartFs, b: &PartFs) {
     let Some(xml) = dest.part_string(part) else {
         return;
@@ -577,6 +694,54 @@ fn reconcile_one_part(dest: &mut PartFs, part: &str, a: &PartFs, b: &PartFs) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const PACKAGE: &[u8] = include_bytes!("../../tests/fixtures/relids/image_doc.docx");
+
+    #[test]
+    fn media_name_is_the_sha256_of_the_bytes_and_ignores_earlier_calls() {
+        let dest = PartFs::open(PACKAGE).unwrap();
+        let bytes = b"image bytes";
+        let first = dest_uri_for_reconciled_part(&dest, "word/media/image9.PNG", bytes);
+        // Unrelated copies in between must not move the name.
+        for i in 0..5u8 {
+            dest_uri_for_reconciled_part(&dest, "word/media/other.png", &[i]);
+        }
+        let second = dest_uri_for_reconciled_part(&dest, "word/media/image9.PNG", bytes);
+        assert_eq!(first, second);
+        assert_eq!(
+            first,
+            format!("word/media/P{}.png", crate::inspect::source_sha256(bytes))
+        );
+    }
+
+    #[test]
+    fn extension_case_does_not_split_identical_media() {
+        // OPC part names are case-insensitive, so P{d}.png and P{d}.PNG would
+        // be one name; the generated name always carries a lowercase extension.
+        let dest = PartFs::open(PACKAGE).unwrap();
+        let bytes = b"image bytes";
+        assert_eq!(
+            dest_uri_for_reconciled_part(&dest, "word/media/image1.png", bytes),
+            dest_uri_for_reconciled_part(&dest, "word/media/image2.PNG", bytes)
+        );
+    }
+
+    #[test]
+    fn a_name_held_by_different_bytes_is_never_reused() {
+        let mut dest = PartFs::open(PACKAGE).unwrap();
+        let bytes = b"image bytes";
+        let base = dest_uri_for_reconciled_part(&dest, "word/media/a.png", bytes);
+        dest.set_part(&base, b"a different image".to_vec());
+        let next = dest_uri_for_reconciled_part(&dest, "word/media/a.png", bytes);
+        assert_ne!(base, next);
+        assert!(next.ends_with("_1.png"), "{next}");
+        // The same bytes already stored under the name reuse that name.
+        dest.set_part(&next, bytes.to_vec());
+        assert_eq!(
+            dest_uri_for_reconciled_part(&dest, "word/media/a.png", bytes),
+            next
+        );
+    }
 
     #[test]
     fn revised_part_name_undoes_both_collision_forms() {

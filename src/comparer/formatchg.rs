@@ -37,7 +37,7 @@ type CanonicalRprChild = (XName, Vec<(XName, String)>);
 /// local name; each child keeps name + filtered (no rsid*, no pt) attrs sorted by
 /// local name; nested sub-elements dropped. Because it only reads, the spec can then
 /// be materialized into ANY arena — `dom` itself (same-dom normalize) or a throwaway
-/// scratch arena (see [`normalized_rpr_serialized`]).
+/// scratch arena (see `normalized_rpr_serialized`).
 fn canonical_rpr_spec(src: &Dom, rpr: Option<NodeId>) -> Vec<CanonicalRprChild> {
     let mut spec: Vec<CanonicalRprChild> = Vec::new();
     if let Some(rpr) = rpr {
@@ -88,7 +88,7 @@ fn build_canonical_rpr(dst: &mut Dom, spec: &[CanonicalRprChild]) -> NodeId {
 }
 
 /// `NormalizeRunProperties` — canonical `w:rPr` built in the same arena `dom`. The
-/// scratch-serialization path ([`normalized_rpr_serialized`]) instead builds into a
+/// scratch-serialization path (`normalized_rpr_serialized`) instead builds into a
 /// DEDICATED arena so the persistent one is never enlarged (MEM-ATTRIBUTE-01).
 pub fn normalize_run_properties(dom: &mut Dom, rpr: Option<NodeId>) -> NodeId {
     let spec = canonical_rpr_spec(dom, rpr);
@@ -366,7 +366,7 @@ fn detect_format_changes_impl(
     let mut para_changes: Vec<PendingParaFormatChange> = Vec::new();
     // Cache each distinct rPr's normalized serialization: runs share one rPr, so
     // this collapses O(Equal atoms) normalizations to O(distinct rPr). See
-    // [`normalized_rpr_serialized`].
+    // `normalized_rpr_serialized`.
     let mut norm_cache: std::collections::HashMap<Option<NodeId>, String> =
         std::collections::HashMap::new();
     // Dedicated throwaway arena for rPr-normalization serialization, kept SEPARATE

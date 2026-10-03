@@ -15,6 +15,859 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-03
+
+> **Summary.** Edit plans become a document editor (rewrite, insert_table, list, format_run, insert_footnote, insert_image, page_setup, fill_control, watermark, redact, settings, fields update, and occurrence targeting); new jubarte audit, validate (with --repair and --original), scrub, append, comments, diff-render and convert --pages; Markdown alongside Word; a jubarte-mcp MCP server and uvx/npx runners. Inputs are admitted under limits before anything inflates, and a legacy .doc or encrypted file is refused with LEGACY_DOC. The default conventional marks follow Litera Compare. Python wheels for Windows and musl Linux. docx-to-PDF follows Word 16 in more table, text box, spacing, list, font, header, footer, note and field cases. Breaking: WmlDocument::document_byte_array is private (use bytes()), AdmissionErrorKind gains LegacyDocument, and sha1_fingerprint* are renamed fnv1a_* (deprecated aliases stay one release).
+>
+> **Docs.** README rewritten around the task-to-command table, with per-library READMEs (README.crates.md, jubarte-python/README.md, jubarte-wasm/npm and cli READMEs) cut from fragments by scripts/library_readmes.py and locked by tests/readme_coverage.rs; the crate's rustdoc front page maps every task to its module, with no dead intra-doc links (release.sh now builds the docs with -D warnings); new docs/rust.md, docs/python.md, docs/javascript.md, docs/MARKDOWN.md and docs/adoption/ (MCP, install matrix, agent skills); docs/SELF_UPDATE.md covers signed releases; docs/WORD_DIFFERENCES.md, WORD_LAYOUT_RULES.md and WORD_COMPARE_RULES.md extended; GEMINI.md added; RESULTS.md removed in favour of the neurotic bench.
+
+### Added
+
+- `scripts/release.sh` step 13 runs `scripts/check_release_facts.py`: the
+  release is not done until jubarte-app's `data/facts.jsonl`, which
+  jubarte.pro and the Mac app print the engine's version, date, files and
+  release list from, names the new version, lists a wheel for every required
+  platform tag and is committed in the jubarte-app checkout. Step 12's
+  `release_downstream.sh` now commits `data/` with the app's release files
+  (the facts were left behind as "not a release file").
+- `jubarte self-update` can require a zipsign (ed25519) signature on the
+  release archive, checked against public keys built into the binary, so a
+  replaced archive is refused even when its `SHA256SUMS.txt` was replaced
+  too. Signing is staged: no key ships yet, and until the maintainers
+  commit one the updater checks `SHA256SUMS.txt` only, as before. Once a
+  key and a first signed release are set, that release and every later
+  one must be signed; a `--version` downgrade to an earlier, unsigned
+  release is checked by its SHA-256 alone. `release.yml` signs each
+  archive before writing `SHA256SUMS.txt` when the `ZIPSIGN_PRIVATE_KEY`
+  secret is set, and refuses to publish unsigned archives once a public
+  key is committed under `keys/`. Setup and key rotation:
+  [docs/SELF_UPDATE.md](docs/SELF_UPDATE.md#signed-releases).
+- The font report says whether each requested font was substituted: a
+  `substituted` field in `convert --font-report` and `--report` (true for
+  the `word_substitution`, `generic` and `unknown` steps, and for
+  `open_fallback` unless the bundled face is the requested family itself),
+  `FontReportEntry::substituted()` in Rust, and
+  `FontResolution.substituted` with `RenderReport.substitutions` in
+  Python. `jubarte convert --fail-on-substitution` lists each substitution
+  on stderr and exits 4 after writing every output, for CI.
+- `comparer::CompareMode { Word, PowerTools }` and
+  `WmlComparerSettings::new(mode)`, with `with_author`, `with_date`,
+  `with_detail_threshold` and `with_input_limits` builders, so callers can
+  name a supported configuration instead of writing a struct literal. The
+  fields stay public; nothing existing breaks.
+- `admission::InputLimitOverrides`: key-by-key overrides of an
+  `InputLimits` budget parsed from JSON, unknown keys refused.
+- Python `compare_documents(..., input_limits=...)`,
+  `get_revisions_json(..., input_limits=...)` and
+  `CompareOptions(input_limits=...)`; WASM `compareDocuments(...,
+  inputLimitsJson)` and `getRevisions(..., inputLimitsJson)`. Hosts can now
+  lower the 512 MiB / 2 GiB compare budget, which a 32-bit WASM heap cannot
+  hold.
+- `WmlDocument::bytes()`, the bytes the document was opened from.
+
+- `fuzz/`: cargo-fuzz targets for `admission::admit`,
+  `strict_translation::strict_to_transitional_docx_within` and
+  `compare_documents_with_settings`, seeded from the repository's `.docx`
+  fixtures (`fuzz/seed.sh`), and a non-blocking CI job (`fuzz-smoke`) that
+  runs each for 60 seconds. See `fuzz/README.md`.
+
+- `jubarte-mcp`, an MCP server over stdio in the Python package
+  (`pip install 'jubarte-redlines[mcp]'`): `docx_text`, `docx_inspect`,
+  `docx_edit`, `docx_render`, `docx_compare`, `docx_changes`, `docx_accept`,
+  `docx_reject`, `docx_capabilities`, and `docx_validate`, `docx_comments`,
+  `docx_audit` (which report a missing engine feature until it lands). Every
+  path must resolve under `--root`, outputs are files, and nothing is
+  replaced without `overwrite`. Setup for Claude Code, Codex and Gemini CLI
+  in [docs/adoption/mcp.md](docs/adoption/mcp.md).
+- Gemini CLI extension: `gemini-extension.json` and `GEMINI.md` at the
+  repository root; `scripts/bump-version.mjs` keeps the manifest version in
+  step with `Cargo.toml`.
+- Python: `Document.inspect_json()` returns the engine's inspect snapshot as
+  JSON text.
+- `jubarte diff-render A B` (`convert::diff_render`) lays out and rasterizes
+  both documents at one resolution (`--dpi`, default 100) and compares the
+  pages pixel for pixel: each page's `changed_ratio`, the box around the
+  changed pixels, and `only_in` for a page one side lacks. `--out-dir` writes
+  `a-page-NN.png`, `b-page-NN.png` and `diff-page-NN.png` (b's page with the
+  change painted magenta and boxed; `--no-overlay` skips it) for the pages
+  that differ, and `diff.json`; `--json` prints it. Exits 0 when no page
+  differs and 5 when one does, so a CI step can gate on it. Python:
+  `jubarte_redlines.diff_render(a, b, dpi=)` returns a `RenderDiff` of
+  `PageDiff`s, and `python -m jubarte_redlines diff-render` matches the
+  binary.
+- `jubarte convert FILE --png --pages 1-3,7` rasterizes only those pages
+  (counted from 1) after one layout pass of the whole document; the page
+  report still covers every page. `RenderRequest.pages` (zero-based) in
+  Rust, `Document.to_png(pages=)` and `Document.render(pages=)` in Python. A
+  page past the end is `ConvertError::PageOutOfRange`. `RenderRequest` is no
+  longer `Copy`.
+- `capabilities` reports `operations.diff_render` and
+  `operations.page_ranges`.
+- Edit plans take `"existing_revisions": "keep"`: another party's tracked
+  changes stay tracked, byte for byte, and the plan's edits become new
+  revisions beside them by the plan's author and date (ids after the
+  highest in the package), emitted directly instead of through compare.
+  The clean copy has the plan's edits applied and theirs still tracked;
+  the report's revision counts and the patch (`patch.diff`, Python
+  `EditResult.diff`) cover the plan's own changes. Edits inside their
+  revisions, and deleting, merging or reformatting a paragraph whose mark
+  or properties they changed, are refused. New tables are inserted rows,
+  list numbering and paragraph formatting are `w:pPrChange`, and comment
+  replies, resolutions and deletions carry into the redline. New
+  `markdown::patch_own_changes`, capability
+  `operations.edit_keeps_revisions`, and Python `existing_revisions="keep"`.
+- `watermark` edit operation (`{"kind":"watermark","text":"DRAFT"}`, with
+  optional `color`, `diagonal` and `font`; Python `EditPlan.watermark`)
+  writes Word's own VML text watermark, in its `Watermarks` content
+  control, into every default header. A first section without a default
+  header gets a new header part with its relationship, content-type
+  override and `w:headerReference`. The comparison base carries the same
+  watermark, so the redline holds it untracked. One per document: a second
+  one, or a header that already holds one, is refused with
+  `UNSUPPORTED_STRUCTURE`.
+- `jubarte validate FILE` (`validate::validate`, Python `Document.validate`,
+  WASM `validateDocument`): Word-validity findings beyond the schema, as
+  data. Each finding carries a stable `code` (`TEXT_INSIDE_DELETION`,
+  `MC_UNBOUND_PREFIX`, `DANGLING_RELATIONSHIP`, ...), the part and element
+  path, whether Word refuses or repairs the file for it (`word_fatal`) and
+  whether `--repair` fixes it. The Ring-1 invariants the test suite gated
+  every produced package on (`tests/common/validity.rs`) now live in the
+  library, with the five `jubarte debug` triage checks
+  (`debug::findings`) behind them. Exit 0 clean, 2 findings, 1 unreadable;
+  `--json` prints one object per finding.
+- `jubarte validate FILE --repair OUT.docx` (`validate::repair`,
+  `Document.repair`, `repairDocument`) fixes the findings with a
+  deterministic fix (unbound `mc:Choice Requires` prefixes, `w:t` inside a
+  deletion, `w:delText` outside one or under a move source, bookmarks in
+  single-value content controls, dangling relationship attributes,
+  duplicate drawing and revision ids, paragraph ids outside Word's range,
+  table cells without a last paragraph, orphan comment anchors) and lists
+  what remains. A package with nothing repairable comes back as its own
+  bytes (#333).
+- `jubarte validate EDITED --original ORIGINAL --author NAME`
+  (`validate::audit_tracked`, `Document.audit_tracked`, `auditTracked`):
+  every text change against the original must be a revision by that
+  author; a paragraph that still differs after rejecting the author's
+  changes is an `UNTRACKED_EDIT` finding at its id, another author's change
+  a `FOREIGN_AUTHOR` one. It replaces `validate.py --original --author`.
+- `capabilities` reports `operations.validate` and `operations.repair`.
+- `jubarte scrub` (`scrub::scrub`, Python `Document.scrub`, WASM
+  `scrubDocument`) removes who touched a document before it goes out: one
+  author alias for every tracked change, comment and `people.xml` person
+  (without presence information), no rsids, no creator, last editor,
+  revision number, dates, manager, company or custom properties, and no
+  comments. Each is optional (`ScrubOptions`); without a choice all four go
+  under the alias "Author". Text, tracked changes and revision dates stay.
+  Scrub refuses (`ScrubError::Invalid`) to write a package with a
+  `validate` finding the input did not have. Capability `operations.scrub`.
+- `redact` edit operation (`{"kind":"redact","paragraph":...,"find":"..."}`,
+  optional `occurrence`; Python `EditPlan.redact`) replaces the text with
+  one full block per character in the clean copy and the redline,
+  untracked. The plan is
+  refused with `REDACTION_LEAK` when the text still occurs in either output
+  (`scrub::leaks`: text, attribute values, a paragraph's joined run text,
+  raw bytes of binary parts); the refusal names the parts and never repeats
+  the text, nor does the report. Works under `existing_revisions: "keep"`.
+- `settings` edit operation (`{"kind":"settings","track_revisions":true,
+  "update_fields":true,"protection":{"edit":"trackedChanges"}}`; Python
+  `EditPlan.settings`) writes `w:trackRevisions`, `w:updateFields` and
+  `w:documentProtection` into `word/settings.xml`, created with its
+  relationship and content type when missing, in `CT_Settings` order
+  (`settings::SETTINGS_ORDER`, held to `tests/data/wml_main_schema.json` by
+  `tests/schema_consistency.rs`). The clean copy and the redline both carry
+  them. `false` and `"edit": "none"` remove; a `password` is refused with
+  `UNSUPPORTED` (Word's legacy hash is not written); one per plan.
+- Python wheels for Windows x86_64 and musl Linux (Alpine) x86_64/arm64; the
+  glibc floor of the Linux wheels drops from 2.34 to 2.28 (RHEL 8, Debian
+  10, Ubuntu 20.04). `scripts/check_release_artifacts.py` refuses to publish
+  a wheel set that misses an advertised platform, and `scripts/release.sh`
+  runs it before `uv publish`.
+- `docs/rust.md`, `docs/python.md` and `docs/javascript.md` carry the
+  CLI references of the `jubarte`, Python and npm commands, taken from
+  their real `--help`, and the Python and jubarte-wasm API references,
+  taken from the shipped module and declaration files.
+  `scripts/gen_docs.sh` regenerates them, release step 5 runs it and
+  commits the pages, and the Docs CI job fails when they drift from the
+  code.
+- `jubarte audit FILE [--json] [--rules a11y,style,structure|CODE,...]
+  [--strict]` (`audit::audit`) reports accessibility, style and structure
+  findings, each with its rule set, severity and the paragraph id
+  (`body:p:N`, `footer1:p:N`) an edit plan targets, or a part name:
+  `HEADING_SKIP`, `IMAGE_NO_DESCR`, `TABLE_NO_HEADER_ROW`, `MISSING_LANG`,
+  `LITERAL_BULLET`, `EMPTY_SPACER_PARAGRAPH`,
+  `DIRECT_FORMATTING_OVERRIDES_STYLE`, `STALE_FIELD_CACHE` (an empty TOC,
+  or a `NUMPAGES` cache that differs from the laid-out page count) and
+  `FONT_SUBSTITUTED` (a font this machine draws with another face). It exits
+  0 when nothing fails, 2 on an `error` finding, and on a `warning` too with
+  `--strict`. The layout pass the last two rules need runs only when they
+  are selected and have something to check; `--json` reports `layout: true`
+  when it ran. Python `Document.audit(rules=None)` returns `AuditFinding`s,
+  WASM `auditDocument(docx, rules)` the JSON report, and `jubarte
+  capabilities` lists `operations.audit` and `audit_rules`. The slim WASM
+  build has no layout pass (`audit::audit_report_with` with none), so it
+  leaves `FONT_SUBSTITUTED` out and does not compare `NUMPAGES` caches with
+  a page count; that keeps the renderer out of it (6.12 MB against 6.06 MB
+  before; linking the layout pass made it 16.0 MB).
+- `scripts/release.sh` step 12 runs `scripts/release_downstream.sh`: jubarte.pro
+  moves to the release (download page, demo engine) and is deployed, the
+  app's release files are committed on `release/vx.y.z` in the jubarte-app
+  repository with a pull request, and the Mac App Store and benchmark
+  commands are printed; `release_downstream.sh x.y.z --app` uploads the App
+  Store build (Submit for Review stays a person's click).
+- Markdown alongside Word ([docs/MARKDOWN.md](docs/MARKDOWN.md)):
+  - `jubarte convert draft.md` (`markdown::markdown_to_docx`) writes
+    CommonMark with GitHub's tables, strikethrough, task lists and footnotes
+    as `.docx`, PDF or PNG, pandoc style (`-f`/`-t`, `--reference-doc`,
+    `--resource-path`). CriticMarkup becomes Word tracked changes and
+    comments; `--track-changes all|accept|reject` (pandoc's flag) keeps,
+    accepts or rejects them, and `--no-critic` reads the delimiters as text.
+    A change can cross paragraph breaks; a block that is one change whole is
+    added or removed with its paragraph mark. On a `.docx`,
+    `--track-changes accept|reject` renders the accepted or rejected
+    document.
+  - `jubarte diff OLD NEW` prints the changes between any two documents,
+    Word or Markdown, as a patch in the style of git diff
+    (`markdown::patch_documents`). Only changed paragraphs are shown, each
+    whole, under `@@ [line:N] @@` for Markdown or `@@ [body:p:N] @@` (the id
+    `jubarte text` and edit plans use) for Word; `@@ -[body:p:N] @@` marks
+    a removed paragraph, located in the old version. Changes are `[-old-]{+new+}`, widened to whole words
+    and numbers; highlights and comments stay CriticMarkup. The owner is
+    named once, on the `+++` line (`--author`, else git's `user.name`, else
+    Redline; `--date`, else now); a change by someone else is followed by
+    `{>>Name (date)<<}`. Lines wrap at 72 columns (`--columns`, 0 for none).
+    `--format critic` prints two Markdown documents as CriticMarkup, pandiff
+    style (`markdown::diff_markdown`). With `-o` it writes a Word redline or
+    PDF of any two documents (`markdown::redline`) and still prints the
+    patch. The positional compare takes Markdown too. Without `-d`, a Word
+    redline carries the current date, so two runs differ.
+  - Word against Markdown: the Markdown's edits are applied to the Word
+    document (`markdown::apply_markdown`) and only they show in the
+    redline; empty paragraphs, fields, links, formatting and section breaks
+    stay. On a fixture with three edits, the redline has 4 revisions where
+    writing the Markdown to Word and comparing gave 434.
+  - `markdown::resolve_critic` accepts or rejects CriticMarkup in Markdown.
+  - `jubarte edit` writes the redline's patch as `patch.diff` beside the
+    other outputs and prints it; `-q` prints nothing. `jubarte capabilities`
+    lists `patch`.
+  - `jubarte convert draft.md --page letter|a4` (`DocxOptions::page`,
+    `markdown::PageSize`) writes Markdown on US Letter (the default) or A4,
+    both with one-inch margins. A `--reference-doc`'s page setup wins, and
+    asking for A4 with one adds a warning.
+  - `jubarte text FILE --track-changes all|accept|reject` prints the
+    document as Markdown with its tracked changes as CriticMarkup, or with
+    every change accepted or rejected, as `convert -t md` does; the output
+    then has no `[body:p:N]` ids.
+  - Python: `jubarte_redlines.from_markdown(text, reference=, page=,
+    author=, date=, critic=, track_changes=)` returns a `Document`
+    (`_native.markdown_to_docx` returns the bytes; engine warnings are
+    raised as `UserWarning`), and `python -m jubarte_redlines convert
+    draft.md` writes `draft.docx`, or a PDF or PNG pages.
+  - WASM: `markdownToDocx(text, optionsJson, reference)` in the full and
+    slim builds.
+  - Python: `jubarte_redlines.diff(old, new)` and `Document.diff(other)`
+    take documents, bytes, Markdown text or paths and return a `Diff`
+    (`str()`, `.hunks`, Markdown display in notebooks); `EditResult.diff` is
+    an edit's patch. WASM: `diffDocuments(old, new, author, date)` and
+    `EditOutput.patch`.
+- Edit plans: `rewrite` gives a paragraph its new text and applies only the
+  words that differ, keeping runs, formatting, tabs and fields; and
+  `insert_paragraph` takes `like`, the paragraph whose properties the new
+  one copies instead of the anchor's. Both are in `jubarte capabilities`,
+  the Python plan builder and the agent skill.
+- Edit plans: `insert_table` puts a table before or after a body
+  paragraph (`rows`, optional `header_row`, `widths_dxa` and `style`).
+  The table has a DXA `w:tblW` equal to the sum of the column widths, a
+  `w:gridCol` and a DXA `w:tcW` for every column, and `w:tblHeader` on the
+  first row when asked. Its cells take the anchor's paragraph style.
+  `TableGrid` is added to `styles.xml` when absent. The redline shows the
+  rows inserted. Ragged rows and mismatched widths are `INVALID_EDIT`, and
+  nested tables are `UNSUPPORTED_STRUCTURE`. In `jubarte capabilities`, the
+  Python builder (`EditPlan.insert_table`) and the agent skill.
+- Edit plans: `list` makes body paragraphs a bulleted, decimal or
+  lower-letter list (`paragraphs`, `kind_of_list`, `level` 0 to 8,
+  `restart`). A new list adds one `w:abstractNum` (nine levels) and one
+  `w:num` to `numbering.xml`, which is created when absent. Every
+  `w:abstractNum` stays before every `w:num`, with ids after the
+  document's. Each paragraph gets direct `w:numPr`, and `ListParagraph`
+  when it has no style. The redline shows a `w:pPrChange` per paragraph.
+  `restart: false` continues the nearest preceding list. Python:
+  `EditPlan.list_paragraphs`.
+- `inspect` reads tables as grids: the snapshot (`jubarte inspect --json`,
+  `inspect::inspect_json`, WASM `inspectDocument`) gains `tables`. Each
+  body table, nested ones included, has `index`, `rows` of cells
+  (`paragraph_ids`, `text`), `header_rows` and `widths_dxa`. The ids feed
+  straight into an edit plan. Also available as `inspect::tables` and
+  `jubarte inspect FILE --tables`. Python: `Snapshot.tables` (`Table`,
+  `TableCell`).
+- Edit plans: `delete_paragraph` takes an optional `comment`, anchored on
+  the deleted text in the redline (the clean copy has no paragraph to hold
+  it) and shown on the removed paragraph's hunk in the patch. Python:
+  `EditPlan.delete_paragraph(..., comment=)`. When the comparer deletes an
+  identical neighbouring paragraph instead, the plan is refused
+  (`UNSUPPORTED_STRUCTURE`) rather than leave the comment on text that
+  stays.
+- Edit plans: `format_run` changes the run formatting of one occurrence of
+  existing text (`find`, optional 1-based `occurrence`); the redline records
+  the old formatting as `w:rPrChange`. Run `format` (here and on `replace`,
+  `insert`) adds `font`, `size_pt`, `color` (six hex digits or `auto`),
+  `strike` and `caps` to `bold`/`italic`/`underline`/`highlight`. Python:
+  `EditPlan.format_run(...)`.
+- Edit plans: `insert_footnote` adds a footnote whose reference mark follows
+  one occurrence of `after` in a body paragraph (optional 1-based
+  `occurrence`). The note is appended after the highest footnote id; the
+  footnotes part, with Word's separator notes, is created when the source
+  has none. `FootnoteText` and `FootnoteReference` are used when the styles
+  part defines them, direct superscript otherwise. Python:
+  `EditPlan.insert_footnote(...)`.
+- Edit plans: `insert_image` inserts a paragraph holding one inline picture
+  before or after a body paragraph (`position`). The plan carries the file
+  as `image_base64`; PNG, JPEG, GIF, BMP and TIFF are embedded, anything
+  else is refused with `UNSUPPORTED_IMAGE`, and a `content_type` that does
+  not match the bytes is `INVALID_EDIT`. `width_emu` sets the width and
+  keeps the aspect ratio; by default the picture is its pixel size at 96 dpi,
+  at most 6.5 inches wide. `alt` becomes the picture's description. Python:
+  `EditPlan.insert_image(..., image=bytes)`.
+- Edit plans: `page_setup` sets the page size (`letter`, `a4` or
+  `{"width_dxa", "height_dxa"}`), `orientation` and `margins_dxa` (any of
+  top, right, bottom, left, header, footer) of the last section or, with
+  `"section": "all"`, of every section. Unchanged values stay; a document
+  without a final section gets Word's default Letter page first. The
+  redline records the old geometry as `w:sectPrChange` on every changed
+  section: the comparer records the final one, and the edit adds the record
+  to mid-document sections. Margins that leave no text width or height are
+  refused. Python: `EditPlan.page_setup(...)`.
+- `uvx jubarte-redlines redline a.docx b.docx -o redline.docx` runs the CLI
+  without an install: the Python wheel installs a `jubarte-redlines`
+  console script, `redline` is an alias of `compare`, and usage names the
+  command the user typed. On main after 0.10.1; ships with the next
+  release.
+- `npx jubarte-redlines redline a.docx b.docx -o redline.docx` runs the
+  same CLI: a new npm package, `jubarte-redlines` (jubarte-wasm/cli), puts
+  a bin over the jubarte-wasm API with the commands, flags, messages and
+  exit codes of `uvx jubarte-redlines`. On main after 0.10.1; ships with
+  the next release.
+- Comment threads (`comments::list_comments`): `jubarte comments FILE
+  [--json] [--author NAME] [--latest]`, Python `Document.comments()` and
+  WASM `listComments` list every comment with its thread (`parent`,
+  `done`), the text it is anchored to and 80 characters on either side.
+  Edit plans reply to (`reply_comment`), resolve or reopen
+  (`resolve_comment`), reword (`edit_comment`) and delete
+  (`delete_comment`, with its replies and anchors) existing comments, and
+  `comment` takes `through` to cover several paragraphs. Whenever an edit
+  writes comments, every comment paragraph gets a `w14:paraId` and
+  `commentsExtended.xml`, `commentsIds.xml` and `commentsExtensible.xml`
+  hold one row per comment. New refusals: `UNKNOWN_COMMENT`, and
+  `COMMENT_NOT_IN_BODY` (previously `UNSUPPORTED_STRUCTURE`) for a comment
+  anchored in a header, footer or note. The capabilities manifest lists the
+  four operations and `operations.comment_threads`.
+- `jubarte append a.docx b.docx [c.docx ...] -o out.docx`
+  (`append::append_documents`, Python `Document.append`, WASM
+  `appendDocuments`) puts each document after the previous one on a new
+  page (`--section-break continuous|none` joins them on the same page;
+  `--keep-sections` keeps each appended document's page setup, headers and
+  footers as a section of its own). Images, links, headers, styles, lists,
+  footnotes and endnotes come along under ids that do not collide; a style
+  whose type and name the first document already has takes its definition
+  there. Comments are removed and reported as `COMMENTS_DROPPED` by
+  default; `--carry-comments` (`AppendOptions.comments = Carry`, Python
+  `comments="carry"`, WASM `{"comments":"carry"}`) carries the comments the
+  appended body anchors under fresh ids, whole (formatting, line breaks,
+  links, the styles they use), with their reply threads, resolution and
+  dates; comments anchored in notes, headers and footers are still dropped
+  and reported. `capabilities` lists `append`.
+- `inspect` lists the body's content controls under `controls` (id
+  `body:sdt:N`, tag, alias, kind, text, paragraphs, lock, choices, checkbox
+  state, placeholder flag); Rust `inspect::controls()` and Python
+  `Snapshot.controls` / `ContentControl` read them.
+- Edit plans fill content controls: `fill_control` selects a control by id,
+  tag or alias and writes `text`, a list `choice`, a checkbox state
+  (`checked`) or a `date` in the control's format, keeping its properties.
+  Locked controls are refused with the new `LOCKED_CONTROL` code; choices
+  outside the list, value forms the control cannot take and impossible
+  dates are `INVALID_EDIT`. Python `EditPlan.fill_control`; capabilities
+  report `operations.content_controls` and `fill_control`. The redline
+  shows a fill as tracked text without the control (KNOWN_ISSUES.md #7).
+- `occurrence` (1-based) on the `replace`, `insert`, `delete` and `comment`
+  edit operations picks one hit of a repeated anchor; the Python builders
+  take `occurrence=`. Without it, the `AMBIGUOUS_ANCHOR` refusal now says
+  how many times the anchor occurs and the range to choose from.
+  `occurrence: 0`, or `occurrence` with no anchor to pick from (`insert`
+  at a `position`, `comment` without `find`), is an `INVALID_EDIT`. Rust
+  code that builds these `OperationKind` variants with struct literals
+  must add `occurrence: None`.
+- Field results from jubarte's layout: `jubarte fields update FILE -o OUT
+  [--json]` (`fields::update_fields`, Python `Document.update_fields()`,
+  WASM `updateFields` in the full build) rebuilds each body `TOC` from the
+  `Heading1`..`Heading9` paragraphs, with `_Toc` bookmarks, hyperlinks and
+  dot-leader page numbers, and writes `PAGEREF`, `REF`, `NUMPAGES` and
+  `SEQ` results in the body, headers, footers and notes. Field codes stay;
+  a field whose switches it does not implement keeps its cached result. Edit
+  plans gain `insert_toc` and `"update_fields": true` (Python
+  `EditPlan.insert_toc`, `EditPlan(update_fields=True)`); `capabilities`
+  reports `operations.fields`. Page numbers are jubarte's, not Word's
+  ([docs/WORD_DIFFERENCES.md](docs/WORD_DIFFERENCES.md) section 11).
+
+### Changed
+
+- `--revisions conventional` (the default, `RevisionPalette::CONVENTIONAL`)
+  now paints Litera Compare's marks: an insertion or deletion is marked once
+  (blue underline, red strike) and a move twice, in green (double strike
+  where it left, double underline where it landed). Insertions were
+  double-underlined and moved-from text single-struck, so a landed move read
+  as an insertion except for its colour. `word` and `custom` are unchanged.
+- A Word 97-2003 `.doc`, or an encrypted document of any Word version (both
+  are OLE compound files), is refused with the new `LEGACY_DOC` code and the
+  hint to save it as `.docx` without a password, on every entry point and in
+  every binding; RTF is `UNSUPPORTED_PACKAGE` ("an RTF file, not a .docx
+  package"). Both used to surface as a ZIP error (`INVALID_PACKAGE`). The
+  check is `admission::sniff`, which `admit` runs before any budget and the
+  CLI runs as it reads a file. `admission::code_first` puts a refusal's code
+  in front of whatever wrapped it (`I/O error: INPUT_LIMIT: …` reads
+  `INPUT_LIMIT: …`, `document B: LEGACY_DOC: …` reads `LEGACY_DOC:
+  document B: …`); the CLI's compare, revisions and convert failures,
+  Python's `JubarteError` and WASM's thrown strings print refusals that
+  way. `AdmissionErrorKind` gains `LegacyDocument` (a match on it needs the
+  arm) and `ALL`.
+- Crate docs: the "Lossless" tagline is now "Word-faithful", and a Fidelity
+  section lists the main things the comparer normalizes (non-standard
+  `w:sdtPr` children, `mc:AlternateContent`, and in the default mode the
+  original's tracked changes, internal anchor hyperlinks, content controls in
+  any paragraph that carries a revision, redundant default spacing, and the
+  breaking versus non-breaking space distinction). It is not exhaustive.
+- Doc comments that described a SHA-1 string check behind the LCS common-run
+  match now say what the code does: the 128-bit FNV-1a fingerprint of the
+  hash string alone decides equality there. The macro-generated docs in
+  `namespaces` show the actual URI and local name, `w:cols` and
+  `SECT_GEOMETRY` comments are corrected, and the repeated finalize passes in
+  the comparer say why they run twice. `DEFAULT_DATE` and `MC::ns()` replace
+  duplicated literals. No output change.
+
+- The redline comparer admits both inputs before it inflates anything
+  (`compare_documents*`, `edit` plans that compare, `WmlDocument::from_bytes`).
+  A package past the budget is an `Err` whose message carries the stable
+  `INPUT_LIMIT` code (or `UNSUPPORTED_PACKAGE`, `INVALID_PACKAGE`, ...) and
+  names the side ("original document: ..."); the typed
+  `admission::AdmissionError` is the `io::Error` source of the returned
+  `OpcError::Io(InvalidData)`. The budget is the new
+  `admission::InputLimits::compare()` (512 MiB per file and part, 2 GiB
+  inflated, 10 000 entries, depth 256) and
+  `WmlComparerSettings::input_limits` overrides it. Admission is one extra
+  inflate pass over each input. The `inspect` and `edit` budget
+  (`InputLimits::default()`) is unchanged.
+- `strict_translation::strict_to_transitional_docx` no longer sizes an
+  allocation from the ZIP central directory's declared size or copies the
+  input first, and stops at the budget instead of inflating without limit;
+  `strict_to_transitional_docx_within` takes the budget explicitly. Over the
+  budget it returns the input unchanged, as it already did for an unreadable
+  archive.
+- CI: every third-party GitHub Action in `ci.yml` and `release.yml` is
+  pinned to a commit SHA, with the release tag it resolves to as a trailing
+  comment so Dependabot can bump both; Dependabot groups Cargo minor and
+  patch bumps into one weekly pull request. Clippy with `-D warnings` now
+  also runs on jubarte-rust-inproc, jubarte-python and jubarte-wasm (for
+  `wasm32-unknown-unknown`), standalone packages the root workspace does
+  not cover; jubarte-app/src-tauri keeps its own CI. The MSRV job runs the
+  all-feature test suite on Rust 1.88 instead of `cargo check`, as
+  README.md has said it does.
+- Matching a style name against Word's built-in styles no longer allocates
+  a lowercase copy of the name on each lookup; the answer is unchanged.
+- `util::sha1::sha1_fingerprint` and `sha1_fingerprint128` are renamed
+  `fnv1a_64` and `fnv1a_128`: they compute 64- and 128-bit FNV-1a of the
+  SHA-1 hex string, not SHA-1, and their docs now say so. Output is
+  unchanged. The 128-bit key alone decides equality in the LCS common-run
+  match and the interior-run skip, which the docs state instead of claiming
+  a string check follows (other paths, such as prefix and suffix trimming,
+  still compare the hash strings).
+  `ComparisonUnit::sha1_key` and `sha1_key128` return the same FNV-1a
+  values and keep their names for now. `jubarte::util::fnv1a_128` is
+  re-exported beside `fnv1a_64`.
+- `ComparisonLog` and `CompareContext` derive `Debug`.
+- Admission now checks end-tag names while it scans each XML part: a
+  mismatched, stray or unclosed element is `InvalidXml` instead of passing
+  the scan. All 819 `.docx`/`.docm`/`.dotx`
+  files in the repository still pass.
+- The library and the CLI `forbid(unsafe_code)` (examples keep the package
+  `deny`), and `admission`, `strict_translation` and `opc` deny
+  `clippy::indexing_slicing` and `clippy::arithmetic_side_effects` outside
+  tests. The ZIP end-of-central-directory scan, the ZIP64 record read and
+  the budget counters in those modules now use checked or saturating
+  arithmetic and `get`; behaviour is unchanged.
+- `accept_revisions`, `reject_revisions`, `get_revisions`, `list_changes` (and
+  the accept/reject-changes functions) and the `convert` functions admit their
+  input under `InputLimits::compare()` before they inflate it, as the compare
+  path does; a package past the budget is an `Err` carrying `INPUT_LIMIT`
+  instead of an allocation abort. Admission also reads the main part once
+  more for nesting depth when its name is not `.xml` or `.rels`.
+- Copied media parts are named with a lowercase extension
+  (`word/media/P{sha256}.png`), since part names are case-insensitive, so the
+  same image under `.png` and `.PNG` is one part.
+- `word_tokens`: emoji skin tone modifiers stay in their sequence, and a mark
+  that is also alphabetic (a Devanagari vowel sign) with nothing before it no
+  longer starts a word. Flags, keycaps and tag sequences may still split.
+- The crate and PyPI descriptions and the Python and npm READMEs say "Word-faithful" instead of "Lossless".
+- **Breaking:** `WmlDocument::document_byte_array` is private; read it
+  with `WmlDocument::bytes()`.
+- `get_revisions` admits its input under `settings.input_limits` instead
+  of always using `InputLimits::compare()` (the default settings give the
+  same budget).
+- Each published package carries its own README, generated at release
+  from the repository README and a per-package fragment by
+  `scripts/library_readmes.py`: crates.io (`README.crates.md`), PyPI,
+  and both npm packages. Links are pinned to the release tag, because
+  the registries cannot resolve relative links. The release checks that
+  every artifact carries the README for its version (#339).
+- `tiny-skia` 0.12: `png` 0.17 and `bitflags` 1 leave the engine's
+  dependency tree (the Mac app still builds them through Tauri's `ico`).
+  Rendered PDFs are byte-identical (#340).
+
+### Deprecated
+
+- `util::sha1::sha1_fingerprint`, `util::sha1::sha1_fingerprint128` and
+  `util::sha1_fingerprint` stay as deprecated aliases of the `fnv1a_*`
+  names for one release and are then removed.
+
+### Fixed
+
+- The crate's front page (docs.rs) described only comparing, accepting and
+  rejecting. It now maps every task to where it starts: compare, changes,
+  edit plans, inspect, PDF/PNG, Markdown, validate and repair, audit, scrub,
+  append, comments, fields, admission and capabilities, with a compiled
+  edit-plan example. `docs/rust.md`'s API tour gains the same modules.
+
+- 41 intra-doc links rendered as bare brackets. A module documented both on
+  its `pub mod` line and inside its own file resolved its links at the crate
+  root, so `admission`, `append`, `audit`, `comments`, `edit`, `markdown`,
+  `scrub`, `settings`, `validate` and `unid` lost theirs; the rest linked to
+  private items. `scripts/release.sh` step 4 now builds the public docs with
+  `RUSTDOCFLAGS="-D warnings"`, as docs.rs renders them.
+
+- `scripts/release.sh` step 4 deleted `jubarte-python/uv.lock` after pytest,
+  though the file is tracked: the release left a dirty tree and a resumed run
+  stopped in preflight. The lockfile stays, and the release commit stages it.
+
+- `capabilities().limits.stories` listed `body` only; `inspect` and `edit`
+  address headers, footers, footnotes and endnotes too, and the manifest
+  now says so (text boxes stay reported in `summary` but not editable).
+
+- A footnote or endnote layout the renumbering step cannot resolve is an
+  `Err` from `compare_documents*`, not a panic that aborts the Python
+  interpreter or the WASM instance.
+  `comparer::try_compare_bodies_faithful_with_notes` returns the
+  `RectifyError`; `compare_bodies_faithful_with_notes` keeps its signature and
+  panics as before. (`process_footnote_endnote` still has `expect` calls on
+  the same path.)
+
+- `limits.stories` in the capability manifest is now built from the list
+  `inspect` and `edit` resolve selectors against (`inspect::STORY_KINDS`),
+  checked by a round trip from the manifest through `inspect` to
+  `apply_plan`, so the two cannot drift again. A story is named in a
+  selector by its id, the part's file stem that `inspect` prints
+  (`header1:p:0`, `{"story": "footnotes", "index": 0}`). The module doc
+  no longer claims the operations are derived from the compiled features:
+  the library compiles every operation in, and only a wrapper build (WASM
+  without `pdf`) turns one off.
+- `markup_simplifier::transform_element_to_single_character_runs` no longer
+  panics (debug builds) or silently keeps only the first run (release builds)
+  when its element is a `w:r`: an empty run, a run with only `w:rPr` or an
+  empty `w:t`, and a run of two or more characters each explode into zero or
+  several runs, not one root. A `w:r` is outside the function's contract and
+  is returned unchanged with the DOM untouched. The signature is unchanged.
+  Also, a one-character `w:t` holding a tab, CR or LF now carries
+  `xml:space="preserve"` like a space does.
+- A line ended by a `w:br` keeps its break when the paragraph reflows
+  past a header or body float with square or tight wrapping. The lines
+  below the float no longer run together, and a justified line that
+  ends in a break stays unstretched under `doNotExpandShiftReturn`.
+- Below compatibility mode 15, a page-anchored floating table that
+  starts below the body top gets one body height of rows from its own
+  top on its first page, past the bottom margin, as Word does; the
+  paragraph after it flows in the room above it. Mode 15 still breaks at
+  the page's floor.
+- A paragraph that opens with a page break takes no line before the
+  break, so a page filled to its last line breaks once instead of
+  leaving a blank page. Priority d9b54326f3: 32 pages → Word's 30.
+- An object taller than what is left of a page under nothing but the
+  space before that opened the page stays on that page, past the bottom
+  margin, as in Word, instead of leaving it blank. Priority 9f2c60b301's
+  648pt cover box under Heading 1's 18pt before: 9 pages → Word's 8.
+- CriticMarkup: a closing delimiter or `~>` behind a backslash is text, as
+  an escaped opener already was, so `{++a \++} b++}` inserts `a \++} b`.
+  Reading Markdown full of openers without closers no longer takes time
+  quadratic in its length (120,000 unclosed openers took minutes; now
+  milliseconds).
+- Input admission (`admission::admit`) no longer panics on two integer
+  overflows. A ZIP64 locator whose record offset is near `usize::MAX`
+  overflowed the bounds check before the end record was read; the offset
+  is now checked and the record read through `get`, so any offset that
+  does not fit the buffer is `INVALID_PACKAGE`. Budgets of `u64::MAX` for
+  `max_part_bytes` and `max_uncompressed_bytes` overflowed the per-part
+  read cap (`cap + 1`); it saturates. Valid archives admit as before.
+- Comparing the same pair twice in one process gives identical bytes. An
+  image copied into the redline was named `word/media/P{n}.ext` from a
+  process-wide counter, so its part name and the relationship Target
+  pointing at it changed with every earlier compare (a server, a WASM
+  instance or parallel tests). It is now named from the SHA-256 of its
+  bytes (`word/media/P{sha256}.ext`), and identical images share one
+  part.
+- A redline keeps every embedded OLE picture (`w:object`, such as a
+  Word.Picture.8 diagram) with its picture and OLE data. Before, the
+  comparer re-emitted each one as an empty `<w:object …/>`: unchanged ones
+  lost their picture, and inserted or deleted ones lost their `w:ins` or
+  `w:del` too (5a6c's inserted diagram, which GroupDocs kept).
+- A combining mark or zero width joiner stays in the word it follows, so
+  decomposed text (`cafe` + U+0301) is one word like `café`, and an emoji
+  sequence joined by U+200D is one token. A decomposed-accent word that
+  changes is now one replaced word in `diff_markdown`, `jubarte diff` and
+  the `rewrite` edit operation, not a word whose accent is left outside
+  the change. A mark with nothing to attach to is a token of its own. Adds
+  the `unicode-properties` dependency (already in the tree through
+  `rustybuzz`).
+- A footnote or endnote reference whose definition, or whose whole notes
+  part, is missing no longer panics in `process_footnote_endnote`; the
+  comparer returns a typed `Err` (`RectifyError::MissingNoteDef` or
+  `MissingSourcePart`), and every lookup is made before a definition is
+  rewritten. `process_footnote_endnote` now returns
+  `Result<(), RectifyError>`, and `RectifyError` gains `MissingSourcePart`
+  and `UnsupportedReferenceStatus`, which is a breaking change for callers
+  that match it exhaustively.
+- Numbering ids read from a document (`w:abstractNumId`, `w:numId`,
+  `w:numPicBulletId`) no longer overflow when one is `i32::MAX`; the "next
+  free id" arithmetic saturates (a panic in debug builds, a wrapped id in
+  release builds before).
+- docx-to-PDF follows Word 16 in the cases below. Each was measured
+  against a probe document Word laid out (`word_pdf.py`), and a test
+  holds Word's numbers. Page breaks and keeping:
+  - A table row that does not fit moves to the next page whole only when
+    one of its cells opens on a keep-with-next paragraph. keepLines, or
+    keepNext on a cell's last paragraph, still lets it break between
+    paragraphs. Before, 2ad8d15e88's reference list ended a page long.
+  - A row cut at the page end keeps a line only while that line, the
+    row's top rule and the table's bottom rule fit above the body
+    bottom. The cut closes with the table's bottom border and ends under
+    its last line. 2b479f55f8 now opens every page on Word's row.
+  - A cell paragraph whose lines fit but whose space after does not is
+    still cut before its last line at a row split, and an atLeast row
+    height holds again for the part carried to the next page.
+  - The part of a row carried to the next page opens under its own top
+    rule, so the next row starts a rule lower.
+  - A footnote cited from a table cell claims its row's page. Before,
+    the note vanished (ece10bd712).
+  - A paragraph that ends a border group fits its last line, the
+    border's space and its width above the body floor, or opens the next
+    page with them. Before, a split group drew its rule at the first
+    page's foot.
+  - A keep-with-next paragraph of inline pictures moves with its
+    follower, measured by the pictures' height, not one text line.
+  - A blank paragraph that carries a section break takes no line, but
+    its space after still offsets the next page's opening space before,
+    even after a table (12d245d664 page 48).
+  - A page-anchored floating table whose offset lies above the text
+    already on its page starts the next page at that offset.
+  - Objects fixed to the page stay put when a full-width float at the
+    body top pushes the text down.
+  - `pgNumType w:start="0"` numbers the first page 0. We clamped it to 1
+    and printed every number one high (3936a8fe56).
+- Tables:
+  - Tables with nothing between them are one table: the second keeps its
+    row widths and starts at the first one's left edge, and the joined
+    table aligns by its widest part. Tables of different layout types
+    stay apart.
+  - From compatibility mode 15, a left-aligned table puts its left rule's
+    outer edge on the margin and its grid half that rule inside. A
+    centred table centres its grid. Text sits its cell margin, or half
+    its own rule when wider, past the grid line.
+  - A compat-15 pct table keeps its rim at the pct width and its columns
+    share the room inside half of each outer rule. A cell with no margins
+    sets its text half its own side rule in on both sides and wraps
+    there.
+  - Without a `w:default` table style, an unstyled table keeps its border
+    on the margin and an unnamed cell margin pads 0.5pt, not 108 twips.
+  - `w:start` and `w:end` cell margins are the left and right margins;
+    start beats a left set beside it.
+  - A dxa-width autofit table gives every column its longest word, even
+    past the right margin. A pct or auto table stays at the measure and
+    breaks the words. An autofit grid wider than its room re-autofits
+    between longest words and preferred widths.
+  - In a fixed table, a pct cell in any row sets its column, and
+    overflowing pct columns starve the rest down to their margins plus
+    1pt. A row's largest top and bottom cell margins apply to every
+    cell.
+  - From compatibility mode 15, a space wider than its cell hangs past
+    it; legacy layout stacks it. A cell narrower than a letter gives each
+    punctuation mark its own line.
+  - A justified cell line keeps its last word by narrowing its spaces,
+    as a compat-15 body line does. A justified numbered cell line
+    spreads from its indent.
+  - A `w:hideMark` cell's empty last paragraph takes no height
+    (e1cfa0591a: 14 pages to Word's 12). An empty cell paragraph whose
+    mark is hidden takes no line.
+  - Two or more text-anchored floating tables at one cell anchor sit
+    side by side. A cell's exact line sets its baseline as a body line
+    does; its text sat 4.7pt high.
+  - A floating table in a cell followed only by empty paragraphs runs
+    those lines beside it. A row reads only its own `w:trPr`, never a
+    nested table's.
+  - Cell text wraps beside a square float at the cell's left.
+  - With `w:adjustLineHeightInTable`, cell lines snap to the section's
+    document grid as body lines do.
+  - A table style's own `w:ind` left and `w:jc` reach every cell
+    paragraph whose style chain leaves them unset. Cell shading paints
+    under the rules, which it used to hide.
+  - Under `w:linkStyles`, a cell takes its table style's size unless the
+    file's Normal sets its own.
+  - Word mode (`--revisions word`) keeps a row-revised table's old fixed
+    layout when its `w:tblPrChange` recorded one
+    ([docs/WORD_DIFFERENCES.md](docs/WORD_DIFFERENCES.md) #7).
+  - A centred table's 22-inch width cap ignores its `w:tblInd`.
+  - Contextual spacing and the after/before fold stop at a nested table.
+  - A table style's `w:b` or `w:i` with `w:val="0"` turns bold or italic
+    off in its cells instead of on (#338).
+- Text boxes, frames and floats:
+  - A paragraph-relative text box that would run past the bottom margin
+    is lifted to end there, as Word lifts it. The lines that meet it
+    start the next page (49fe5bd42a: 3 pages to Word's 5).
+  - A framePr with `yAlign` and no `y` floats aligned in its margin or
+    page, out of the flow (3ec631ca50: 4 pages to Word's 3). A floating
+    table wholly beside the text column narrows no line.
+  - A page-wide square float in a compat-15 header drops the header line
+    below it, and the body starts under that line.
+  - A text box's painted outline insets its text by half its width. A
+    fitted (`a:spAutoFit`) box takes the height its lines paint, and
+    sizes a blank line by its paragraph mark.
+  - An inline DrawingML text box in a header or footer takes its line
+    and paints. A bordered paragraph's fill reaches its rules, also
+    across the spacing inside a border group.
+  - A VML shape wraps text only by its `w10:wrap`, and its wrap distance
+    defaults to 9pt left and right. An inline unfilled `v:rect` (an old
+    horizontal line) strokes and sizes its line.
+  - A SmartArt diagram takes the line of a picture its size. A
+    paragraph holding only a diagram lays no empty text line above it
+    (25e6d4b508: 51 pages to Word's 50).
+  - The run holding an inline shape sizes its line (3936a8fe56: 15 pages
+    to Word's 16).
+  - An underlined or inserted inline picture keeps its run's descent
+    under the picture, DrawingML or VML (`w:pict`, or a `w:object` such as
+    an embedded Word.Picture.8). A picture-only paragraph lays out its
+    `w:br` lines. The control redline 5a6c9a5c went from 33 pages to
+    Word's 35.
+  - A header picture after text wraps when the text's last line leaves
+    no room for it.
+  - A table inside a text box lays out as a table between the box's
+    paragraphs. Before, its cells ran together as one line of text, and
+    5a6c9a5c's banner lost its grey band (#338).
+  - An inline VML picture is sized in whole pixels at 143 dpi, as Word
+    sizes it: points to HIMETRIC, HIMETRIC to pixels, and pixels to
+    twips, each rounded half up. A 37pt image is 36.75pt. A DrawingML
+    picture keeps its extent (#338).
+  - A WMF picture's text records paint as PDF text in their selected
+    font. Its rectangles fill with the brush and outline with the pen,
+    and a null brush leaves them hollow. Before, 5a6c9a5c's diagram
+    showed only its "+" and "→" (#338).
+  - A row of inline pictures starts at the paragraph's first-line indent,
+    unless the paragraph has a list label (#338).
+- Lines, spacing and breaks:
+  - `w:contextualSpacing` drops only the flagged paragraph's share of
+    the gap. A flagged after of 6 over a plain before of 20 leaves 14,
+    not 0.
+  - With `w:doNotUseHTMLParagraphAutoSpacing`, paragraph spacing adds up
+    instead of taking the larger value.
+  - Auto spacing inherits attribute by attribute; a later plain
+    `w:before` is the value an `w:beforeAutospacing="0"` brings back.
+  - A line-break run sizes only a line it stands alone on. A paragraph
+    of only tabs is a line of its paragraph mark. A paragraph mark's
+    character style sizes its line.
+  - A no-break space (U+00A0, U+2007, U+202F) neither breaks a line nor
+    hangs past it.
+  - `w:noBreakHyphen` paints a hyphen and never splits. A compat-15
+    justified line squeezes an overflowing word only within Word's
+    limits: a quarter of a space, and a third of the word plus two
+    spaces.
+  - `compressPunctuation` narrows spaces only where Word does: before
+    mode 15, only while the default font names no face, and only Times
+    New Roman and Arial spaces.
+- Lists and tabs:
+  - From compatibility mode 15, a right tab past the right margin lands
+    on the margin; legacy layout keeps the stop. In a header, the text
+    after such a tab stays on its line in every mode; we wrapped it.
+  - Tab leaders fill whole cells, one mark wide, of a grid counted from
+    the page's left edge, up to the last cell that ends by the stop.
+  - A typed label such as `<tab>(a)<tab>` right-aligns on its own stop in
+    the hanging gutter and its text wraps on the next stop (c73c128db4).
+  - A justified line whose text after its last tab holds spaces keeps
+    that tab's stop and leader.
+  - A list label takes its paragraph mark's character style and its
+    revision: an inserted mark underlines the label through its tab, a
+    deleted one strikes it. A tab's gap carries its run's underline and
+    strike.
+  - A negative numbering-level indent beats the paragraph style's.
+- Fonts and scripts:
+  - Absent fonts take Word 16.114's own substitutes: Myriad Pro is Segoe
+    UI, Proxima Nova Tahoma, Futura PT Century Gothic, Adobe Garamond Pro
+    Garamond. An unknown font-table entry is Cambria when roman and
+    Calibri otherwise. A Bold-only family paints its regular runs in that
+    Bold (1fef0faeb8: 18 pages to Word's 20).
+  - Japanese or Chinese text the East Asian face lacks paints in MS
+    Gothic (when that face is Times New Roman) or MS Mincho, not
+    Microsoft YaHei. Without Word's East Asian faces (Linux and WASM
+    builds), a wide character a face lacks measures one em, not the
+    0.75em `.notdef`.
+  - Windows reads its own font folders, `%WINDIR%\Fonts` and the per-user
+    `%LOCALAPPDATA%\Microsoft\Windows\Fonts`, and matches their
+    abbreviated files (`timesbd.ttf`, `cour.ttf`) by the family name
+    inside. Before, it searched only macOS paths and painted Calibri,
+    Times New Roman and MS Gothic with open-source substitutes. The on-disk
+    font index moves to rules 2, so earlier answers are searched again.
+  - An Office 365 cloud East Asian face (name-table version ending
+    `;O365`) takes 1.3 times its head box for the line, not its hhea
+    body.
+  - `w:balanceSingleByteDoubleByteWidth` widens spaces to the East Asian
+    face's average width, only under Word's East Asian layout. A closing
+    bracket before another bracket, or an opening one before an opening
+    one, advances half an em. Lone full-width punctuation keeps its full
+    width.
+  - ASCII between ideographs keeps the ascii face. The gap after Latin
+    text before East Asian text is half the Latin face's average width.
+    Hangul takes the autoSpace quarter em, and `w:autoSpaceDE`/`DN` off
+    drop it.
+  - `w:spaceForUL` adds no space under underlined East Asian text.
+  - A character style toggles its paragraph style's bold, italic, strike
+    and caps: both set means plain.
+  - An `hAnsi` face beside an `asciiTheme` slot paints only characters
+    past U+007F.
+  - Calibri's Thai paints in Leelawadee UI, its Devanagari in Mangal, its
+    compatibility jamo in Malgun Gothic. List and page-number formats
+    that write a script load its fallback face. Scripts only in a header,
+    footer, note or comment load their fallbacks too.
+  - Text written as numeric character references loads the faces its
+    characters need.
+  - A precomposed Latin letter (ě, č, ů) paints as its own glyph.
+  - Symbol-font text extracts as Word writes it: list bullets read back
+    as •.
+- Headers, footers, notes and fields:
+  - Endnote marks number in reference order, in the format the section's
+    `w:endnotePr` gives (lowerRoman by default). The endnote separator
+    stands on its own line over the notes.
+  - A header field is named by its first word: an INCLUDEPICTURE whose
+    path holds "page" no longer paints as a PAGE number.
+  - A `w:sectPrChange` record's header references are not the section's
+    own.
+  - A paragraph style's `w:vanish` hides its runs; a hidden row folds
+    every run's properties.
+  - A leading empty revised header or footer paragraph gets its change
+    bar, and an all-empty footer paints its paragraph borders.
+  - A header or footer STYLEREF shows the first body text in the named
+    paragraph or character style on its page (with `\l`, the last). With
+    no match on the page it shows the last before the page, and before
+    any match the first after. The field's line is laid out again around
+    the new text, so a right-aligned or centred header stays on its edge.
+    Before, every page printed the cached result; 5a6c9a5c's "s. 1" is
+    now s. 4, s. 9 and s. 12, as in Word (#338).
+  - Word mode (`--revisions word`) paints an inserted field that Word
+    recomputes (PAGE, NUMPAGES, SECTION, STYLEREF, REF, DATE, SEQ)
+    unmarked, as Word does. Cached fields such as DOCPROPERTY stay
+    marked, and the default revision styles mark both
+    ([docs/WORD_DIFFERENCES.md](docs/WORD_DIFFERENCES.md) #5, #338).
+
 ## [0.10.1] - 2026-09-30
 
 > **Summary.** Tracked changes can be accepted or rejected one at a time, as Word's Accept / Reject This Change, from the CLI, edit plans (resolve_revisions), Python and WASM; Reject All matches Word on text and mark state; docx-to-PDF follows Word far more closely on page breaks, keep-with-next, table rows, floating tables, headers, footers and comment balloons; jubarte debug gains --check render, diff A B [C …] and -c text.
@@ -86,7 +939,6 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   leaves follows `existing_revisions`. A change selected by both sides is
   refused with `REVISION_CONFLICT`, an id the document lacks with
   `UNKNOWN_CHANGE`; the report lists the resolved ids.
-
 - `jubarte debug FILE -c text` prints each story part's paragraphs with
   `{+inserted+}` / `[-deleted-]` runs, the paragraph mark's revision state
   and table rows; `-c xml` prints part XML one element per line without
@@ -1611,6 +2463,7 @@ measured Q0 performance stack) plus release tooling (`VERSIONING.md`,
 - See [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the covering tests are marked
   `#[ignore]` with matching reasons.
 
+[0.11.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.11.0
 [0.10.1]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.10.1
 [0.10.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.10.0
 [0.9.3]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.9.3

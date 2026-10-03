@@ -6,10 +6,12 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+from types import MappingProxyType
 from typing import Literal, TypedDict
 
 RevisionKind = Literal["Inserted", "Deleted", "Moved", "FormatChanged"]
@@ -25,8 +27,15 @@ class CompareOptions:
     """
 
     date: str | datetime | None = None
+    #: Admission budget overrides (``max_compressed_bytes``, ``max_entries``,
+    #: ``max_part_bytes``, ``max_uncompressed_bytes``, ``max_xml_depth``);
+    #: unset keys keep the engine's compare budget. The engine refuses
+    #: unknown keys when the comparison runs.
+    input_limits: Mapping[str, int] | None = field(default=None, hash=False)
 
     def __post_init__(self) -> None:
+        if self.input_limits is not None:
+            object.__setattr__(self, "input_limits", _input_limits(self.input_limits))
         if self.date is None:
             return
         if isinstance(self.date, datetime):
@@ -48,6 +57,25 @@ class CompareOptions:
         # __post_init__ turns every datetime into str.
         assert self.date is None or isinstance(self.date, str)
         return self.date
+
+    def native_input_limits(self) -> dict[str, int] | None:
+        """Return the overrides as the native ``input_limits`` dict."""
+        return None if self.input_limits is None else dict(self.input_limits)
+
+
+def _input_limits(value: object) -> Mapping[str, int]:
+    if not isinstance(value, Mapping):
+        raise TypeError("input_limits must be a mapping of str to int")
+    limits: dict[str, int] = {}
+    for key, limit in value.items():
+        if not isinstance(key, str):
+            raise TypeError("input_limits keys must be strings")
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            raise TypeError(f"input_limits[{key!r}] must be an int")
+        if limit < 0:
+            raise ValueError(f"input_limits[{key!r}] must not be negative")
+        limits[key] = limit
+    return MappingProxyType(limits)
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,6 +211,52 @@ def _decode_changes(payload: str) -> tuple[Change, ...]:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class Comment:
+    """One comment with its thread position and the text it is anchored to.
+
+    ``id`` is the comment's ``w:id``, which ``EditPlan.reply_comment``,
+    ``resolve_comment``, ``edit_comment`` and ``delete_comment`` take.
+    ``parent`` is the id of the comment it replies to (Word threads are one
+    level deep); ``done`` is set when the thread is resolved. ``paragraph``
+    is the paragraph id where the range starts (``body:p:12``);
+    ``anchor_text`` is the commented text, paragraphs joined by ``\n``, with
+    up to 80 characters ``before`` and ``after`` it.
+    """
+
+    id: int
+    author: str
+    initials: str | None
+    date: str | None
+    text: str
+    parent: int | None
+    done: bool
+    paragraph: str | None
+    anchor_text: str
+    before: str
+    after: str
+
+
+def _decode_comments(payload: str) -> tuple[Comment, ...]:
+    rows: list[dict[str, object]] = json.loads(payload)
+    return tuple(
+        Comment(
+            id=row["id"],  # type: ignore[arg-type]
+            author=row["author"],  # type: ignore[arg-type]
+            initials=row.get("initials"),  # type: ignore[arg-type]
+            date=row.get("date"),  # type: ignore[arg-type]
+            text=row["text"],  # type: ignore[arg-type]
+            parent=row.get("parent"),  # type: ignore[arg-type]
+            done=row["done"],  # type: ignore[arg-type]
+            paragraph=row.get("paragraph"),  # type: ignore[arg-type]
+            anchor_text=row["anchor_text"],  # type: ignore[arg-type]
+            before=row["before"],  # type: ignore[arg-type]
+            after=row["after"],  # type: ignore[arg-type]
+        )
+        for row in rows
+    )
+
+
 def change_filter(
     ids: Sequence[str] | None = None,
     authors: Sequence[str] | None = None,
@@ -244,6 +318,30 @@ class Story:
 
 
 @dataclass(frozen=True, slots=True)
+class ContentControl:
+    """A content control (``w:sdt``) in the body; ``EditPlan.fill_control`` fills it.
+
+    ``kind`` is ``text``, ``rich_text``, ``drop_down``, ``combo_box``, ``date``,
+    ``checkbox``, ``picture``, ``group``, ``repeating``, ``building_block``,
+    ``citation``, ``bibliography``, ``equation`` or ``unknown``. ``paragraph_ids``
+    lists the paragraphs a block-level control spans, or the one holding a
+    run-level control. ``choices`` are the list values of a drop-down or combo
+    box; ``checked`` is a checkbox's state.
+    """
+
+    id: str
+    kind: str
+    text: str
+    paragraph_ids: tuple[str, ...]
+    locked: bool
+    placeholder: bool
+    tag: str | None = None
+    alias: str | None = None
+    choices: tuple[str, ...] = ()
+    checked: bool | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class Summary:
     """Package facts (XML facts, not rendered-page facts)."""
 
@@ -263,6 +361,29 @@ class Summary:
 
 
 @dataclass(frozen=True, slots=True)
+class TableCell:
+    """A table cell: the ids of its own paragraphs and their text joined with ``\\n``."""
+
+    paragraph_ids: tuple[str, ...]
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class Table:
+    """A body table as a grid; nested tables are separate entries.
+
+    ``rows`` holds the cells as the XML has them (a merged cell is one cell),
+    ``header_rows`` the leading rows that repeat as a header, ``widths_dxa``
+    the grid column widths in twentieths of a point (0 when unreadable).
+    """
+
+    index: int
+    rows: tuple[tuple[TableCell, ...], ...]
+    header_rows: int
+    widths_dxa: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class Snapshot:
     """What ``Document.inspect()`` returns; the coordinates an ``EditPlan`` uses."""
 
@@ -271,6 +392,19 @@ class Snapshot:
     summary: Summary
     paragraphs: tuple[Paragraph, ...]
     stories: tuple[Story, ...] = ()
+    tables: tuple[Table, ...] = ()
+    controls: tuple[ContentControl, ...] = ()
+
+    def control(self, id: str | None = None, *, tag: str | None = None, alias: str | None = None) -> ContentControl:
+        """The one control with this id (``body:sdt:N``), tag or alias; give exactly one."""
+        given = [(k, v) for k, v in (("id", id), ("tag", tag), ("alias", alias)) if v is not None]
+        if len(given) != 1:
+            raise ValueError("give exactly one of id, tag or alias")
+        key, value = given[0]
+        hits = [c for c in self.controls if getattr(c, key) == value]
+        if len(hits) != 1:
+            raise LookupError(f"{len(hits)} controls have {key} {value!r}; need exactly one")
+        return hits[0]
 
     def paragraph(self, id_or_index: str | int) -> Paragraph:
         """The paragraph with this id (``body:p:N``, ``header1:p:0``) or body index."""
@@ -329,6 +463,33 @@ def _decode_snapshot(payload: str) -> Snapshot:
             )
             for s in data.get("stories", ())
         ),
+        tables=tuple(
+            Table(
+                index=t["index"],
+                rows=tuple(
+                    tuple(TableCell(paragraph_ids=tuple(c["paragraph_ids"]), text=c["text"]) for c in row)
+                    for row in t["rows"]
+                ),
+                header_rows=t["header_rows"],
+                widths_dxa=tuple(t["widths_dxa"]),
+            )
+            for t in data.get("tables", ())
+        ),
+        controls=tuple(
+            ContentControl(
+                id=c["id"],
+                kind=c["kind"],
+                text=c["text"],
+                paragraph_ids=tuple(c["paragraph_ids"]),
+                locked=c["locked"],
+                placeholder=c["placeholder"],
+                tag=c.get("tag"),
+                alias=c.get("alias"),
+                choices=tuple(c.get("choices", ())),
+                checked=c.get("checked"),
+            )
+            for c in data.get("controls", ())
+        ),
     )
 
 
@@ -340,7 +501,25 @@ Selector = str | int | dict[str, str | int]
 """A paragraph id (``body:p:N``, ``header1:p:0``), a body index, or ``{"starts_with"|"contains"|"id"|"index": ...}``;
 ``index``/``starts_with``/``contains`` also take ``"story": "header1"`` (default: the body)."""
 
-ExistingRevisions = Literal["refuse", "accept", "reject"]
+ExistingRevisions = Literal["refuse", "accept", "reject", "keep"]
+ProtectionEdit = Literal["none", "readOnly", "comments", "trackedChanges", "forms"]
+_PROTECTIONS = ("none", "readOnly", "comments", "trackedChanges", "forms")
+"""What an edit plan does with tracked changes already in the source:
+``refuse`` (default), ``accept`` or ``reject`` them first, or ``keep`` them
+tracked and add the plan's edits as new revisions beside them."""
+
+ControlSelector = str | dict[str, str]
+"""A control id (``body:sdt:N``) or exactly one of ``{"id"|"tag"|"alias": ...}``."""
+
+
+def _control_selector(value: ControlSelector) -> str | dict[str, str]:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict) and len(value) == 1:
+        key, inner = next(iter(value.items()))
+        if key in ("id", "tag", "alias") and isinstance(inner, str):
+            return {key: inner}
+    raise TypeError('control selector must be an id ("body:sdt:N") or one of {id|tag|alias: ...}')
 
 
 def _selector(value: Selector) -> dict[str, str | int]:
@@ -368,7 +547,12 @@ def _selector(value: Selector) -> dict[str, str | int]:
     )
 
 
-_FORMAT_FIELDS = frozenset({"bold", "italic", "underline", "highlight"})
+_FORMAT_FIELDS = frozenset(
+    {"bold", "italic", "underline", "highlight", "font", "size_pt", "color", "strike", "caps"}
+)
+
+
+_MARGIN_FIELDS = frozenset({"top", "right", "bottom", "left", "header", "footer"})
 
 
 def _format(value: Mapping[str, object]) -> dict[str, object]:
@@ -377,7 +561,7 @@ def _format(value: Mapping[str, object]) -> dict[str, object]:
     if unknown:
         raise ValueError(f"unknown format fields: {sorted(unknown)}")
     if not spec:
-        raise ValueError("format needs at least one of bold, italic, underline, highlight")
+        raise ValueError(f"format needs at least one of {', '.join(sorted(_FORMAT_FIELDS))}")
     return spec
 
 
@@ -415,12 +599,15 @@ class EditPlan:
     source_sha256: str | None = None
     operations: tuple[dict[str, object], ...] = ()
     resolve_revisions: dict[str, dict[str, list[str]]] | None = None
+    update_fields: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.author, str) or not self.author.strip():
             raise ValueError("author must be a nonempty string")
-        if self.existing_revisions not in ("refuse", "accept", "reject"):
-            raise ValueError("existing_revisions must be refuse, accept or reject")
+        if not isinstance(self.update_fields, bool):
+            raise TypeError("update_fields must be a bool")
+        if self.existing_revisions not in ("refuse", "accept", "reject", "keep"):
+            raise ValueError("existing_revisions must be refuse, accept, reject or keep")
 
     def _with(self, op: dict[str, object]) -> EditPlan:
         return replace(self, operations=(*self.operations, op))
@@ -466,17 +653,20 @@ class EditPlan:
         comment: str | None = None,
         whole: bool = False,
         id: str | None = None,
+        occurrence: int | None = None,
     ) -> EditPlan:
-        """Replace the unique occurrence of ``find``; ``format`` styles only the new text.
+        """Replace the unique occurrence of ``find``, or its ``occurrence``-th hit (1-based).
 
-        ``whole=True`` shows the change as all of ``find`` deleted, then all of
-        ``replacement`` inserted, instead of Word Compare's word-level diff.
+        ``format`` styles only the new text. ``whole=True`` shows the change as
+        all of ``find`` deleted, then all of ``replacement`` inserted, instead
+        of Word Compare's word-level diff.
         """
         op: dict[str, object] = {"kind": "replace", "paragraph": _selector(paragraph), "find": find, "replacement": replacement}
         if format is not None:
             op["format"] = _format(format)
         if whole:
             op["whole"] = True
+        _set_occurrence(op, occurrence)
         return self._with(_with_optional(op, id=id, comment=comment))
 
     def insert(
@@ -490,8 +680,12 @@ class EditPlan:
         format: Mapping[str, object] | None = None,
         comment: str | None = None,
         id: str | None = None,
+        occurrence: int | None = None,
     ) -> EditPlan:
-        """Insert ``text`` after/before a unique anchor or at the paragraph edge; ``format`` styles it."""
+        """Insert ``text`` after/before an anchor or at the paragraph edge; ``format`` styles it.
+
+        The anchor must be unique unless ``occurrence`` (1-based) picks one hit.
+        """
         given = [k for k, v in (("after", after), ("before", before), ("position", position)) if v is not None]
         if len(given) != 1:
             raise ValueError("insert needs exactly one of after, before, position")
@@ -504,18 +698,46 @@ class EditPlan:
             op["position"] = position
         if format is not None:
             op["format"] = _format(format)
+        _set_occurrence(op, occurrence)
         return self._with(_with_optional(op, id=id, comment=comment))
 
-    def delete(self, paragraph: Selector, *, find: str, id: str | None = None) -> EditPlan:
-        """Delete the unique occurrence of ``find``."""
+    def delete(self, paragraph: Selector, *, find: str, id: str | None = None, occurrence: int | None = None) -> EditPlan:
+        """Delete the unique occurrence of ``find``, or its ``occurrence``-th hit (1-based)."""
         op: dict[str, object] = {"kind": "delete", "paragraph": _selector(paragraph), "find": find}
+        _set_occurrence(op, occurrence)
         return self._with(_with_optional(op, id=id))
 
-    def comment(self, paragraph: Selector, *, text: str, find: str | None = None, id: str | None = None) -> EditPlan:
-        """Comment on the unique occurrence of ``find`` or on the whole paragraph."""
+    def redact(self, paragraph: Selector, *, find: str, id: str | None = None, occurrence: int | None = None) -> EditPlan:
+        """Replace the unique occurrence of ``find`` (or its ``occurrence``-th hit) with one block per character.
+
+        The redaction is no tracked change: the clean copy and the redline
+        both show the blocks. The plan is refused with ``REDACTION_LEAK``
+        when the text still occurs anywhere in either document (another
+        paragraph, a comment, a header, the properties); the report never
+        repeats it.
+        """
+        op: dict[str, object] = {"kind": "redact", "paragraph": _selector(paragraph), "find": find}
+        _set_occurrence(op, occurrence)
+        return self._with(_with_optional(op, id=id))
+
+    def comment(
+        self,
+        paragraph: Selector,
+        *,
+        text: str,
+        find: str | None = None,
+        through: Selector | None = None,
+        id: str | None = None,
+        occurrence: int | None = None,
+    ) -> EditPlan:
+        """Comment on the unique occurrence of ``find`` (or its ``occurrence``-th hit) or on
+        the whole paragraph; with ``through``, on every paragraph from ``paragraph`` to that one."""
         op: dict[str, object] = {"kind": "comment", "paragraph": _selector(paragraph), "text": text}
         if find is not None:
             op["find"] = find
+        if through is not None:
+            op["through"] = _selector(through)
+        _set_occurrence(op, occurrence)
         return self._with(_with_optional(op, id=id))
 
     def insert_paragraph(
@@ -524,20 +746,30 @@ class EditPlan:
         *,
         runs: Sequence[Mapping[str, object] | str],
         position: Literal["before", "after"] = "after",
+        like: Selector | None = None,
         style: str | None = None,
         comment: str | None = None,
         id: str | None = None,
     ) -> EditPlan:
-        """Insert a new paragraph next to the anchor, copying its properties."""
+        """Insert a new paragraph next to the anchor, copying its properties,
+        or those of the ``like`` paragraph."""
         op: dict[str, object] = {"kind": "insert_paragraph", "paragraph": _selector(paragraph), "position": position, "runs": list(_run_specs(runs))}
+        if like is not None:
+            op["like"] = _selector(like)
         if style is not None:
             op["style"] = style
         return self._with(_with_optional(op, id=id, comment=comment))
 
-    def delete_paragraph(self, paragraph: Selector, *, id: str | None = None) -> EditPlan:
-        """Delete a whole paragraph, mark included."""
+    def delete_paragraph(
+        self, paragraph: Selector, *, comment: str | None = None, id: str | None = None
+    ) -> EditPlan:
+        """Delete a whole paragraph, mark included.
+
+        ``comment`` is anchored on the deleted text in the redline; the clean
+        copy has no paragraph to hold it.
+        """
         op: dict[str, object] = {"kind": "delete_paragraph", "paragraph": _selector(paragraph)}
-        return self._with(_with_optional(op, id=id))
+        return self._with(_with_optional(op, comment=comment, id=id))
 
     def format_paragraph(
         self,
@@ -576,6 +808,287 @@ class EditPlan:
         op: dict[str, object] = {"kind": "merge_paragraphs", "paragraph": _selector(paragraph)}
         return self._with(_with_optional(op, separator=separator, id=id))
 
+    def rewrite(self, paragraph: Selector, *, text: str, id: str | None = None) -> EditPlan:
+        """Make the paragraph read as ``text``: only the words that differ are
+        edited, so the rest keeps its runs and formatting."""
+        op: dict[str, object] = {"kind": "rewrite", "paragraph": _selector(paragraph), "text": text}
+        return self._with(_with_optional(op, id=id))
+
+    def insert_table(
+        self,
+        paragraph: Selector,
+        *,
+        rows: Sequence[Sequence[str]],
+        position: Literal["before", "after"] = "after",
+        header_row: bool = False,
+        widths_dxa: Sequence[int] | None = None,
+        style: str | None = None,
+        id: str | None = None,
+    ) -> EditPlan:
+        """Insert a table next to the anchor paragraph; the redline shows its
+        rows inserted.
+
+        ``rows`` is the cell text row by row, every row the same length;
+        ``widths_dxa`` the column widths in twentieths of a point (the text
+        width split evenly when omitted); ``style`` a table style id or name
+        (``TableGrid``, added when the document lacks it, by default).
+        """
+        op: dict[str, object] = {"kind": "insert_table", "paragraph": _selector(paragraph), "position": position, "rows": _table_rows(rows)}
+        if header_row:
+            op["header_row"] = True
+        if widths_dxa is not None:
+            if isinstance(widths_dxa, (str, bytes)) or not all(isinstance(w, int) and not isinstance(w, bool) for w in widths_dxa):
+                raise TypeError("widths_dxa must be a sequence of integers")
+            op["widths_dxa"] = list(widths_dxa)
+        return self._with(_with_optional(op, style=style, id=id))
+
+    def list_paragraphs(
+        self,
+        paragraphs: Sequence[Selector],
+        *,
+        kind_of_list: Literal["bullet", "decimal", "lower_letter"] = "bullet",
+        level: int = 0,
+        restart: bool = True,
+        id: str | None = None,
+    ) -> EditPlan:
+        """Make the paragraphs a list (wire kind ``list``); the redline records
+        each paragraph's old properties.
+
+        ``level`` is 0 (outermost) to 8. ``restart=False`` continues the list
+        of the nearest numbered paragraph before the first one instead of
+        starting a new one.
+        """
+        if isinstance(paragraphs, (str, bytes, dict)):
+            raise TypeError("paragraphs must be a sequence of selectors")
+        op: dict[str, object] = {"kind": "list", "paragraphs": [_selector(p) for p in paragraphs]}
+        if kind_of_list != "bullet":
+            op["kind_of_list"] = kind_of_list
+        if level:
+            op["level"] = level
+        if not restart:
+            op["restart"] = False
+        return self._with(_with_optional(op, id=id))
+
+    def reply_comment(self, comment_id: int, *, text: str, id: str | None = None) -> EditPlan:
+        """Reply to comment ``comment_id`` (``Document.comments`` lists the ids),
+        anchored on the same text; a reply to a reply joins the thread."""
+        op: dict[str, object] = {"kind": "reply_comment", "comment_id": comment_id, "text": text}
+        return self._with(_with_optional(op, id=id))
+
+    def resolve_comment(self, comment_id: int, *, done: bool = True, id: str | None = None) -> EditPlan:
+        """Resolve comment ``comment_id`` and its replies; ``done=False`` reopens them."""
+        op: dict[str, object] = {"kind": "resolve_comment", "comment_id": comment_id, "done": done}
+        return self._with(_with_optional(op, id=id))
+
+    def edit_comment(self, comment_id: int, *, text: str, id: str | None = None) -> EditPlan:
+        """Replace the text of comment ``comment_id``; its author, date and thread stay."""
+        op: dict[str, object] = {"kind": "edit_comment", "comment_id": comment_id, "text": text}
+        return self._with(_with_optional(op, id=id))
+
+    def delete_comment(self, comment_id: int, *, id: str | None = None) -> EditPlan:
+        """Remove comment ``comment_id`` with its replies and anchors."""
+        op: dict[str, object] = {"kind": "delete_comment", "comment_id": comment_id}
+        return self._with(_with_optional(op, id=id))
+
+    def watermark(
+        self,
+        text: str,
+        *,
+        color: str = "C0C0C0",
+        diagonal: bool = True,
+        font: str = "Calibri",
+        id: str | None = None,
+    ) -> EditPlan:
+        """Write Word's own text watermark into every default header.
+
+        ``text`` is 1 to 64 plain characters, ``color`` six hex digits, and
+        ``diagonal=False`` lays it horizontal. One watermark per document; it
+        is header content, so the redline carries it without tracking it.
+        """
+        op: dict[str, object] = {"kind": "watermark", "text": text, "color": color, "diagonal": diagonal, "font": font}
+        return self._with(_with_optional(op, id=id))
+
+    def fill_control(
+        self,
+        control: ControlSelector,
+        *,
+        text: str | None = None,
+        choice: str | None = None,
+        checked: bool | None = None,
+        date: str | None = None,
+        id: str | None = None,
+    ) -> EditPlan:
+        """Fill one content control with exactly one of ``text``, ``choice`` (a list
+        item's value or display text), ``checked`` or ``date`` (``YYYY-MM-DD``).
+
+        The control keeps its properties in the clean copy; the redline shows the
+        fill as tracked text (the comparer unwraps controls in revised paragraphs,
+        as Word Compare does)."""
+        values = {"text": text, "choice": choice, "checked": checked, "date": date}
+        given = {k: v for k, v in values.items() if v is not None}
+        if len(given) != 1:
+            raise ValueError("fill_control takes exactly one of text, choice, checked, date")
+        if checked is not None and not isinstance(checked, bool):
+            raise TypeError("checked must be a bool")
+        op: dict[str, object] = {"kind": "fill_control", "control": _control_selector(control), **given}
+        if id is not None:
+            op = {"id": id, **op}
+        return self._with(op)
+
+    def format_run(
+        self,
+        paragraph: Selector,
+        *,
+        find: str,
+        format: Mapping[str, object],
+        occurrence: int | None = None,
+        id: str | None = None,
+    ) -> EditPlan:
+        """Change the run formatting of ``find`` (bold, italic, underline,
+        highlight, font, size_pt, color, strike, caps) as a tracked property
+        change. ``occurrence`` (1-based) picks one of several matches."""
+        op: dict[str, object] = {"kind": "format_run", "paragraph": _selector(paragraph), "find": find, "format": _format(format)}
+        if occurrence is not None:
+            op["occurrence"] = occurrence
+        return self._with(_with_optional(op, id=id))
+
+    def insert_footnote(
+        self,
+        paragraph: Selector,
+        *,
+        after: str,
+        text: str,
+        occurrence: int | None = None,
+        id: str | None = None,
+    ) -> EditPlan:
+        """Add a footnote holding ``text`` whose mark follows ``after`` in a
+        body paragraph. ``occurrence`` (1-based) picks one of several matches."""
+        op: dict[str, object] = {"kind": "insert_footnote", "paragraph": _selector(paragraph), "after": after, "text": text}
+        if occurrence is not None:
+            op["occurrence"] = occurrence
+        return self._with(_with_optional(op, id=id))
+
+    def insert_image(
+        self,
+        paragraph: Selector,
+        *,
+        image: bytes,
+        position: Literal["before", "after"] = "after",
+        content_type: str | None = None,
+        width_emu: int | None = None,
+        alt: str | None = None,
+        id: str | None = None,
+    ) -> EditPlan:
+        """Insert a paragraph holding the picture ``image`` (PNG, JPEG, GIF,
+        BMP or TIFF bytes) next to a body paragraph. ``width_emu`` sets the
+        width (914400 per inch) and keeps the aspect ratio; by default the
+        picture is its pixel size at 96 dpi, at most 6.5 inches wide."""
+        if not image:
+            raise ValueError("image must hold the picture's bytes")
+        op: dict[str, object] = {
+            "kind": "insert_image",
+            "paragraph": _selector(paragraph),
+            "position": position,
+            "image_base64": base64.b64encode(bytes(image)).decode("ascii"),
+        }
+        if content_type is not None:
+            op["content_type"] = content_type
+        if width_emu is not None:
+            op["width_emu"] = width_emu
+        return self._with(_with_optional(op, alt=alt, id=id))
+
+    def page_setup(
+        self,
+        *,
+        section: Literal["last", "all"] = "last",
+        page: Literal["letter", "a4"] | Mapping[str, int] | None = None,
+        orientation: Literal["portrait", "landscape"] | None = None,
+        margins_dxa: Mapping[str, int] | None = None,
+        id: str | None = None,
+    ) -> EditPlan:
+        """Set the page size, orientation and margins of the last section or
+        of every section, as a tracked section change. ``page`` is ``"letter"``,
+        ``"a4"`` or ``{"width_dxa", "height_dxa"}``; ``margins_dxa`` takes any
+        of top, right, bottom, left, header, footer, in twentieths of a point
+        (1440 per inch)."""
+        op: dict[str, object] = {"kind": "page_setup", "section": section}
+        if page is not None:
+            if isinstance(page, Mapping):
+                if set(page) != {"width_dxa", "height_dxa"}:
+                    raise ValueError("a custom page needs exactly width_dxa and height_dxa")
+                op["page"] = dict(page)
+            else:
+                op["page"] = page
+        if orientation is not None:
+            op["orientation"] = orientation
+        if margins_dxa is not None:
+            unknown = set(margins_dxa) - _MARGIN_FIELDS
+            if unknown:
+                raise ValueError(f"unknown margins: {sorted(unknown)}")
+            if not margins_dxa:
+                raise ValueError("margins_dxa needs at least one margin")
+            op["margins_dxa"] = dict(margins_dxa)
+        if len(op) == 2:
+            raise ValueError("page_setup needs page, orientation or margins_dxa")
+        return self._with(_with_optional(op, id=id))
+
+    def insert_toc(
+        self,
+        paragraph: Selector,
+        *,
+        position: Literal["before", "after"] = "after",
+        levels: int = 3,
+        title: str | None = None,
+        id: str | None = None,
+    ) -> EditPlan:
+        """Insert a table of contents (``TOC \\o "1-levels" \\h \\z \\u``) next to
+        the anchor, after an optional ``TOCHeading`` title.
+
+        Its entries and page numbers are written when the plan sets
+        ``update_fields=True``; page numbers come from jubarte's layout.
+        """
+        if isinstance(levels, bool) or not isinstance(levels, int) or not 1 <= levels <= 9:
+            raise ValueError("levels must be an int from 1 to 9")
+        op: dict[str, object] = {"kind": "insert_toc", "paragraph": _selector(paragraph), "position": position, "levels": levels}
+        return self._with(_with_optional(op, title=title, id=id))
+
+    def settings(
+        self,
+        *,
+        track_revisions: bool | None = None,
+        update_fields: bool | None = None,
+        protection: ProtectionEdit | None = None,
+        enforcement: bool = True,
+        id: str | None = None,
+    ) -> EditPlan:
+        """Write document settings, in schema order, into both documents.
+
+        ``track_revisions`` turns Track Changes on or off, ``update_fields``
+        asks Word to update fields on open (``w:updateFields``; the plan's own
+        ``update_fields`` writes jubarte's results instead), and ``protection`` restricts
+        editing (``"readOnly"``, ``"comments"``, ``"trackedChanges"``,
+        ``"forms"``; ``"none"`` lifts it). The restriction has no password,
+        so any user can turn it off in Word. A setting left as ``None``
+        stays as it is; one ``settings`` per plan.
+        """
+        for name, value in (("track_revisions", track_revisions), ("update_fields", update_fields)):
+            if value is not None and not isinstance(value, bool):
+                raise TypeError(f"{name} must be a bool or None")
+        if not isinstance(enforcement, bool):
+            raise TypeError("enforcement must be a bool")
+        if protection is not None and protection not in _PROTECTIONS:
+            raise ValueError(f"protection must be one of {', '.join(_PROTECTIONS)}")
+        if track_revisions is None and update_fields is None and protection is None:
+            raise ValueError("settings needs at least one of track_revisions, update_fields, protection")
+        op: dict[str, object] = {"kind": "settings"}
+        if track_revisions is not None:
+            op["track_revisions"] = track_revisions
+        if update_fields is not None:
+            op["update_fields"] = update_fields
+        if protection is not None:
+            op["protection"] = {"edit": protection, "enforcement": enforcement}
+        return self._with(_with_optional(op, id=id))
+
     def to_dict(self) -> dict[str, object]:
         """The wire form."""
         wire: dict[str, object] = {"schema_version": 1, "author": self.author}
@@ -590,11 +1103,33 @@ class EditPlan:
         if self.existing_revisions != "refuse":
             wire["existing_revisions"] = self.existing_revisions
         wire["operations"] = [dict(op) for op in self.operations]
+        if self.update_fields:
+            wire["update_fields"] = True
         return wire
 
     def to_json(self) -> str:
         """The wire form as JSON (what ``jubarte edit --plan`` reads)."""
         return json.dumps(self.to_dict(), ensure_ascii=False, indent=2)
+
+
+def _table_rows(rows: Sequence[Sequence[str]]) -> list[list[str]]:
+    """A copy of ``rows``, each a sequence of cell strings; the engine checks the shape."""
+    if isinstance(rows, (str, bytes)):
+        raise TypeError("rows must be a sequence of rows, not a string")
+    out: list[list[str]] = []
+    for row in rows:
+        if isinstance(row, (str, bytes)) or not all(isinstance(cell, str) for cell in row):
+            raise TypeError("each row must be a sequence of cell strings")
+        out.append(list(row))
+    return out
+
+
+def _set_occurrence(op: dict[str, object], occurrence: int | None) -> None:
+    if occurrence is None:
+        return
+    if occurrence < 1:
+        raise ValueError("occurrence is 1-based; it must be 1 or more")
+    op["occurrence"] = occurrence
 
 
 def _with_optional(op: dict[str, object], **extra: str | None) -> dict[str, object]:
@@ -677,6 +1212,7 @@ class EditReport:
     comments_added: int
     revisions: RevisionCounts
     resolved_revisions: ResolvedRevisions = ResolvedRevisions()
+    fields: tuple[FieldUpdate, ...] = ()
     _json: str = field(repr=False, compare=False, default="")
 
     def to_jsonl(self) -> str:
@@ -709,8 +1245,24 @@ def _decode_report(payload: str) -> EditReport:
             accepted=tuple(data.get("resolved_revisions", {}).get("accepted", ())),
             rejected=tuple(data.get("resolved_revisions", {}).get("rejected", ())),
         ),
+        fields=_decode_field_updates(data.get("fields", ())),
         _json=payload,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class FieldUpdate:
+    """One field whose cached result was written from jubarte's layout."""
+
+    kind: str
+    code: str
+    paragraph: str
+    old: str
+    new: str
+
+
+def _decode_field_updates(rows: Sequence[Mapping[str, str]]) -> tuple[FieldUpdate, ...]:
+    return tuple(FieldUpdate(**row) for row in rows)
 
 
 # ---------------------------------------------------------------------------
@@ -720,7 +1272,13 @@ def _decode_report(payload: str) -> EditReport:
 
 @dataclass(frozen=True, slots=True)
 class FontResolution:
-    """One requested family/style and the physical face that painted it."""
+    """One requested family/style and the physical face that painted it.
+
+    ``substituted`` is true when the requested family was drawn with a
+    substitute (Word's substitution table, a bundled face of another family,
+    a generic family or the last resort); a faked style alone is
+    ``synthetic``.
+    """
 
     requested: str
     step: str
@@ -728,6 +1286,7 @@ class FontResolution:
     bold: bool
     italic: bool
     synthetic: bool
+    substituted: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -746,6 +1305,11 @@ class RenderReport:
     pages: tuple[PageText, ...]
     fonts: tuple[FontResolution, ...]
 
+    @property
+    def substitutions(self) -> tuple[FontResolution, ...]:
+        """The fonts drawn with a substitute for the requested family."""
+        return tuple(f for f in self.fonts if f.substituted)
+
 
 @dataclass(frozen=True, slots=True)
 class Rendered:
@@ -762,4 +1326,182 @@ def _decode_render_report(payload: str) -> RenderReport:
         page_count=data["page_count"],
         pages=tuple(PageText(**p) for p in data["pages"]),
         fonts=tuple(FontResolution(**f) for f in data["fonts"]),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class PageDiff:
+    """How one page differs between the two sides of ``diff_render``.
+
+    ``index`` is zero-based. ``changed_ratio`` is changed pixels over all
+    pixels (0.0 to 1.0; 1.0 when the page exists on one side only or the two
+    pages differ in size). ``bbox`` is ``(x0, y0, x1, y1)`` in pixels around
+    every changed pixel (``x1``/``y1`` exclusive), ``None`` when equal.
+    ``only_in`` is ``"a"`` or ``"b"`` for a page only one side has.
+    """
+
+    index: int
+    changed_ratio: float
+    bbox: tuple[int, int, int, int] | None
+    only_in: Literal["a", "b"] | None = None
+
+    @property
+    def differs(self) -> bool:
+        """Whether this page differs at all."""
+        return self.changed_ratio > 0.0 or self.only_in is not None
+
+
+@dataclass(frozen=True, slots=True)
+class RenderDiff:
+    """Output of ``diff_render``: one ``PageDiff`` per page of the longer
+    document, both sides' PNG pages, and per page diff ``b``'s page with the
+    change painted magenta and boxed (``None`` when the page is equal, on one
+    side only, a different size, or overlays were not asked for)."""
+
+    pages: tuple[PageDiff, ...]
+    a: tuple[bytes, ...]
+    b: tuple[bytes, ...]
+    overlays: tuple[bytes | None, ...]
+    a_report: RenderReport
+    b_report: RenderReport
+
+    @property
+    def differs(self) -> bool:
+        """Whether any page differs."""
+        return any(p.differs for p in self.pages)
+
+
+def _decode_page_diffs(payload: str) -> tuple[PageDiff, ...]:
+    return tuple(
+        PageDiff(
+            index=p["index"],
+            changed_ratio=float(p["changed_ratio"]),
+            bbox=None if p["bbox"] is None else (p["bbox"][0], p["bbox"][1], p["bbox"][2], p["bbox"][3]),
+            only_in=p.get("only_in"),
+        )
+        for p in json.loads(payload)
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class Hunk:
+    """One changed paragraph of a ``Diff``.
+
+    ``at`` is where it is: ``body:p:N`` (or a header's, footer's or note's
+    ``header1:p:N``, ``footnotes:p:N``...) in a Word document, as
+    ``Document.markdown`` and edit plans number paragraphs, or ``line:N`` in
+    Markdown; in the new version, or the old one when ``removed``. ``text``
+    is the paragraph with its changes, unwrapped.
+    """
+
+    at: str
+    removed: bool
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class Diff:
+    """The changes between two documents, as ``git diff --word-diff`` shows
+    them: only the changed paragraphs, each whole, with ``[-old-]{+new+}``
+    for the changes and CriticMarkup ``{==highlights==}`` and
+    ``{>>comments<<}``.
+
+    ``str(diff)`` is the text; in Jupyter it displays as a ``diff`` block.
+    ``hunks`` are the changed paragraphs (none for ``format="critic"``).
+    """
+
+    text: str
+    hunks: tuple[Hunk, ...] = ()
+
+    def __str__(self) -> str:
+        return self.text
+
+    def _repr_markdown_(self) -> str:
+        return f"```diff\n{self.text}```\n"
+
+
+def _decode_diff(diffed: tuple[str, str]) -> Diff:
+    text, hunks = diffed
+    return Diff(
+        text=text,
+        hunks=tuple(Hunk(at=h["at"], removed=h["removed"], text=h["text"]) for h in json.loads(hunks)),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class Finding:
+    """One thing wrong with a package, from ``Document.validate``.
+
+    ``code`` is stable (``TEXT_INSIDE_DELETION``, ``MC_UNBOUND_PREFIX``,
+    ``UNTRACKED_EDIT``, ...); ``part`` is the package part and ``path`` the
+    element chain inside it (``w:body[0]/w:p[3]/w:r[2]``, empty for a
+    package-level finding). ``word_fatal`` is true when Word refuses or
+    repairs the file for it, ``repairable`` when ``Document.repair`` fixes
+    it.
+    """
+
+    code: str
+    part: str
+    path: str
+    message: str
+    word_fatal: bool
+    repairable: bool
+
+
+@dataclass(frozen=True, slots=True)
+class Repaired:
+    """Output of ``Document.repair``: the repaired document, the findings it
+    fixed and the ones it could not."""
+
+    document: object
+    repaired: tuple[Finding, ...]
+    remaining: tuple[Finding, ...]
+
+
+def _decode_findings(rows: list[dict[str, object]]) -> tuple[Finding, ...]:
+    return tuple(
+        Finding(
+            code=row["code"],  # type: ignore[arg-type]
+            part=row["part"],  # type: ignore[arg-type]
+            path=row["path"],  # type: ignore[arg-type]
+            message=row["message"],  # type: ignore[arg-type]
+            word_fatal=bool(row["word_fatal"]),
+            repairable=bool(row["repairable"]),
+        )
+        for row in rows
+    )
+
+
+def _decode_findings_json(payload: str) -> tuple[Finding, ...]:
+    return _decode_findings(json.loads(payload))
+
+
+@dataclass(frozen=True, slots=True)
+class AuditFinding:
+    """One ``Document.audit`` finding.
+
+    ``code`` is the rule (``HEADING_SKIP``, ``IMAGE_NO_DESCR``...),
+    ``rule_set`` is ``a11y``, ``style`` or ``structure``, ``severity`` is
+    ``error``, ``warning`` or ``info``, and ``location`` is the paragraph id
+    (``body:p:N``, ``footer1:p:N``...) an edit plan targets, or a part name
+    for a document-wide finding.
+    """
+
+    code: str
+    rule_set: str
+    severity: str
+    location: str
+    message: str
+
+
+def _decode_audit(payload: str) -> tuple[AuditFinding, ...]:
+    return tuple(
+        AuditFinding(
+            code=f["code"],
+            rule_set=f["rule_set"],
+            severity=f["severity"],
+            location=f["location"],
+            message=f["message"],
+        )
+        for f in json.loads(payload)["findings"]
     )

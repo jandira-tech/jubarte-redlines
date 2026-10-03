@@ -13,6 +13,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
+/// `w:noBreakHyphen` in run text: the line breaker never splits at it.
+pub(crate) const NO_BREAK_HYPHEN: char = '\u{2011}';
+
+/// The character a face paints for `ch`. Word paints a non-breaking hyphen
+/// as the face's hyphen-minus (0x2D in its PDFs): most faces (Arial,
+/// Calibri, Aptos) have no U+2011 glyph.
+fn painted_char(ch: char) -> char {
+    if ch == NO_BREAK_HYPHEN { '-' } else { ch }
+}
+
 thread_local! {
     static ACTIVE_FONT_TABLE: RefCell<super::font_table::FontTable> =
         RefCell::new(super::font_table::FontTable::default());
@@ -144,17 +154,48 @@ pub struct FontReportEntry {
 }
 
 impl FontReportEntry {
-    /// One JSON object matching `{requested, step, physical, bold, italic, synthetic}`.
+    /// True when the requested family was not drawn with its own face (or
+    /// its `w:altName`): Word's substitution table, a bundled open fallback
+    /// for another family, a generic family, or the last resort. A bundled
+    /// face of the requested family itself (`Carlito` drawn with Carlito) is
+    /// not a substitution. A faked style (`synthetic`) alone is not one
+    /// either.
+    #[must_use]
+    pub fn substituted(&self) -> bool {
+        match self.step {
+            FontStep::Embedded | FontStep::Explicit | FontStep::AltName | FontStep::Theme => false,
+            FontStep::OpenFallback => !self.physical_is_requested_family(),
+            FontStep::WordSubstitution | FontStep::Generic | FontStep::Unknown => true,
+        }
+    }
+
+    /// The physical face's family (its PostScript name before any `-Style`
+    /// suffix) is the requested family, ignoring case, spaces and hyphens.
+    fn physical_is_requested_family(&self) -> bool {
+        let squash = |s: &str| {
+            s.chars()
+                .filter(|c| !matches!(c, ' ' | '-'))
+                .flat_map(char::to_lowercase)
+                .collect::<String>()
+        };
+        let family = self.physical.split('-').next().unwrap_or_default();
+        let requested = squash(family_token(&self.requested));
+        !requested.is_empty() && requested == squash(family)
+    }
+
+    /// One JSON object matching
+    /// `{requested, step, physical, bold, italic, synthetic, substituted}`.
     #[must_use]
     pub fn to_json(&self) -> String {
         format!(
-            "{{\"requested\":{},\"step\":{},\"physical\":{},\"bold\":{},\"italic\":{},\"synthetic\":{}}}",
+            "{{\"requested\":{},\"step\":{},\"physical\":{},\"bold\":{},\"italic\":{},\"synthetic\":{},\"substituted\":{}}}",
             json_string(&self.requested),
             json_string(self.step.as_str()),
             json_string(&self.physical),
             json_bool(self.bold),
             json_bool(self.italic),
             json_bool(self.synthetic),
+            json_bool(self.substituted()),
         )
     }
 }
@@ -195,6 +236,27 @@ fn json_string(s: &str) -> String {
 
 fn json_bool(v: bool) -> &'static str {
     if v { "true" } else { "false" }
+}
+
+/// A character Unicode lays out wide (East_Asian_Width W or F): CJK
+/// ideographs, kana, CJK punctuation, Hangul and the full-width forms.
+/// Every East Asian face draws them one em wide.
+fn east_asian_wide(c: char) -> bool {
+    matches!(
+        c,
+        '\u{1100}'..='\u{115F}'
+            | '\u{2E80}'..='\u{303E}'
+            | '\u{3041}'..='\u{33FF}'
+            | '\u{3400}'..='\u{4DBF}'
+            | '\u{4E00}'..='\u{9FFF}'
+            | '\u{A960}'..='\u{A97F}'
+            | '\u{AC00}'..='\u{D7A3}'
+            | '\u{F900}'..='\u{FAFF}'
+            | '\u{FE30}'..='\u{FE4F}'
+            | '\u{FF01}'..='\u{FF60}'
+            | '\u{FFE0}'..='\u{FFE6}'
+            | '\u{20000}'..='\u{3FFFD}'
+    )
 }
 
 /// Word Quartz Save-as-PDF writes a small `Tc` at 300dpi body sizes so
@@ -648,6 +710,11 @@ pub(crate) struct Face<'a> {
     paint_ascent: f32,
     /// An East Asian face (OS/2 code pages 932/936/949/950/1361).
     east_asian: bool,
+    /// OS/2 PANOSE says Latin text with serifs (MS Mincho, Times New
+    /// Roman), not sans (MS Gothic, Arial, Calibri).
+    pub serif: bool,
+    /// OS/2 xAvgCharWidth over the em (half an em without one).
+    pub avg_char_width: f32,
     pub bbox: [i16; 4],
     pub widths: Vec<u16>,
     /// The cmap's Unicode subtables, asked per character: the first one
@@ -721,13 +788,23 @@ impl<'a> Face<'a> {
         // 1361) 1.3 times its hhea ascent + descent, lineGap aside, the
         // extra split above and below the text. Live Word at 12pt: SimSun
         // and MS Mincho step 15.6, YaHei 20.7, Meiryo 23.3, Yu Gothic 17.0.
+        // A face from Word's own Office 365 font service takes its head box
+        // instead (Word 16 probes lg4–lg6 at 20pt: STFangsong 33.84 and
+        // STXihei 35.88, 1.3 times their 1.301 and 1.377 em boxes; DFonts'
+        // DengXian and Yu Mincho, boxes 1.207 and 1.655, keep hhea).
         let east_asian_line = cjk_code_pages(&face).then(|| {
-            let body = f32::from(face.ascender()) - f32::from(face.descender());
-            (body * 1.3, (body * 0.3) / 2.0)
+            let (top, bottom) = if office_365_face(&face) {
+                let bbox = face.global_bounding_box();
+                (f32::from(bbox.y_max), f32::from(bbox.y_min))
+            } else {
+                (f32::from(face.ascender()), f32::from(face.descender()))
+            };
+            let half = (top - bottom) * 0.3 / 2.0;
+            (top, bottom.abs(), half)
         });
-        if let Some((height, half)) = east_asian_line {
-            line_height = height;
-            line_descent += half;
+        if let Some((top, bottom, half)) = east_asian_line {
+            line_height = top + bottom + 2.0 * half;
+            line_descent = bottom + half;
         }
         // macOS Helvetica: Word's single line is 1.2 em, not its 1.0 em
         // hhea body, with the win descent below the baseline (English part
@@ -771,7 +848,7 @@ impl<'a> Face<'a> {
             paint_ascent
         };
         let paint_ascent = match east_asian_line {
-            Some((_, half)) => f32::from(face.ascender()) + half,
+            Some((top, _, half)) => top + half,
             None => paint_ascent,
         };
         let glyph_count = face.number_of_glyphs();
@@ -805,6 +882,8 @@ impl<'a> Face<'a> {
             line_descent,
             paint_ascent,
             east_asian: east_asian_line.is_some(),
+            serif: panose_serif(&face),
+            avg_char_width: avg_char_width(&face).map_or(0.5, |w| w / upem),
             bbox: [bbox.x_min, bbox.y_min, bbox.x_max, bbox.y_max],
             widths,
             cmap,
@@ -812,6 +891,7 @@ impl<'a> Face<'a> {
     }
 
     pub(crate) fn glyph(&self, ch: char) -> u16 {
+        let ch = painted_char(ch);
         self.cmap
             .iter()
             .find_map(|sub| sub.glyph_index(u32::from(ch)))
@@ -819,9 +899,13 @@ impl<'a> Face<'a> {
     }
 
     pub(crate) fn advance_pt(&self, ch: char, size: f32) -> f32 {
-        let gid = self.glyph(ch) as usize;
-        let adv = self.widths.get(gid).copied().unwrap_or(0);
-        f32::from(adv) * size / self.upem + word_device_track(size)
+        let gid = self.glyph(ch);
+        let adv = if gid == 0 && east_asian_wide(ch) {
+            self.upem
+        } else {
+            f32::from(self.widths.get(usize::from(gid)).copied().unwrap_or(0))
+        };
+        adv * size / self.upem + word_device_track(size)
     }
 
     pub(crate) fn width_pt(&self, text: &str, size: f32) -> f32 {
@@ -893,7 +977,7 @@ impl<'a> Face<'a> {
     /// to `é`, a lam-alef) carries all of them, for `/ToUnicode`.
     pub(crate) fn glyph_texts(&self, text: &str, kern: bool) -> Vec<String> {
         let Some(face) = self.buzz.as_ref() else {
-            return text.chars().map(String::from).collect();
+            return text.chars().map(|c| painted_char(c).to_string()).collect();
         };
         let units = self.shaped_units(face, text, kern);
         let mut starts: Vec<usize> = units.iter().map(|u| u.2 as usize).collect();
@@ -912,7 +996,11 @@ impl<'a> Face<'a> {
                     .find(|&&s| s > at)
                     .copied()
                     .unwrap_or(text.len());
-                text.get(at..end).unwrap_or_default().to_string()
+                text.get(at..end)
+                    .unwrap_or_default()
+                    .chars()
+                    .map(painted_char)
+                    .collect()
             })
             .collect()
     }
@@ -926,33 +1014,54 @@ impl<'a> Face<'a> {
             return hit;
         }
         let mut buf = rustybuzz::UnicodeBuffer::new();
-        buf.push_str(text);
+        // Clusters stay byte offsets into `text`, as `push_str` makes them.
+        for (at, ch) in text.char_indices() {
+            buf.add(painted_char(ch), at as u32);
+        }
         // Word Quartz WinAnsi PDFs do not ligate Calibri and place glyphs
         // on hmtx (T=5.38pt), not GPOS/kern (T+e shrinks ~1pt and wipes
         // official color_sim). Title `w:kern val=28` (potpourri 28pt)
         // is the exception: Word "Pot-Pourri" is 108.6 vs hmtx 111.0.
         // docDefaults/Normal kern=2 stays off.
-        let kern_bit = u32::from(kern);
-        let word_pdf = [
-            rustybuzz::Feature::new(rustybuzz::ttf_parser::Tag::from_bytes(b"liga"), 0, ..),
-            rustybuzz::Feature::new(rustybuzz::ttf_parser::Tag::from_bytes(b"clig"), 0, ..),
-            rustybuzz::Feature::new(rustybuzz::ttf_parser::Tag::from_bytes(b"dlig"), 0, ..),
-            rustybuzz::Feature::new(
-                rustybuzz::ttf_parser::Tag::from_bytes(b"kern"),
-                kern_bit,
-                ..,
-            ),
-        ];
         buf.guess_segment_properties();
         let key = (buf.direction(), buf.script(), buf.language(), kern);
         let cached = self.plans.lock().ok().and_then(|p| p.get(&key).cloned());
         let plan = cached.unwrap_or_else(|| {
+            let feature = |tag: &[u8; 4], value| {
+                rustybuzz::Feature::new(rustybuzz::ttf_parser::Tag::from_bytes(tag), value, ..)
+            };
+            let word_pdf = [
+                feature(b"liga", 0),
+                feature(b"clig", 0),
+                feature(b"dlig", 0),
+                feature(b"kern", u32::from(kern)),
+                feature(b"ccmp", 0),
+            ];
+            // Word paints a precomposed Latin, Greek or Cyrillic letter as
+            // its own glyph. Cambria's ccmp splits "ě" into e + a caron
+            // mark, which also leaves the shared "e" glyph unable to say
+            // "ě" in /ToUnicode (3509b16c7d's Czech; Word's PDF holds ě, č,
+            // ů whole). Complex scripts keep ccmp (the plan key holds the
+            // script).
+            let precomposed = [
+                rustybuzz::script::LATIN,
+                rustybuzz::script::GREEK,
+                rustybuzz::script::CYRILLIC,
+                rustybuzz::script::COMMON,
+                rustybuzz::script::INHERITED,
+            ]
+            .contains(&key.1);
+            let features = if precomposed {
+                &word_pdf[..]
+            } else {
+                &word_pdf[..4]
+            };
             let plan = Arc::new(rustybuzz::ShapePlan::new(
                 face,
                 key.0,
                 Some(key.1),
                 key.2.as_ref(),
-                &word_pdf,
+                features,
             ));
             if let Ok(mut plans) = self.plans.lock() {
                 plans.insert(key.clone(), Arc::clone(&plan));
@@ -977,6 +1086,16 @@ impl<'a> Face<'a> {
                 .is_some_and(|(a, z)| a.2 < z.2)
         {
             glyphs.reverse();
+        }
+        // East Asian wide text the face lacks measures one em, as in every
+        // face Word falls back to for it: a Latin .notdef (0.75 em in
+        // Liberation Sans) packed CJK lines where Word wraps them.
+        let em = self.upem.round() as i32;
+        for glyph in glyphs.iter_mut().filter(|g| g.0 == 0) {
+            let ch = text.get(glyph.2 as usize..).and_then(|t| t.chars().next());
+            if ch.is_some_and(east_asian_wide) {
+                glyph.1 = em;
+            }
         }
         let units: ShapedUnits = glyphs.into();
         if let Ok(mut cache) = self.shaped.lock() {
@@ -1174,15 +1293,31 @@ impl<'a> Fonts<'a> {
         self.embedded_index(key, bold, false)
     }
 
+    /// The face `add_script_fallback` loaded under `key`.
+    pub(crate) fn script_fallback(&self, key: &str, bold: bool) -> Option<FaceRef> {
+        self.embedded_index(key, bold, false).map(FaceRef::Embedded)
+    }
+
     /// Word's Thaana face (MV Boli) for Dhivehi the resolved face lacks.
     pub(crate) fn thaana_glyph_fallback(&self, bold: bool) -> Option<FaceRef> {
         self.embedded_index(THAANA_FALLBACK, bold, false)
             .map(FaceRef::Embedded)
     }
 
-    /// The CJK fallback face for a glyph the resolved face lacks.
-    pub(crate) fn cjk_glyph_fallback(&self, bold: bool) -> Option<FaceRef> {
-        self.embedded_index(CJK_FALLBACK, bold, false)
+    /// The CJK face for a glyph the run's East Asian face lacks: MS Gothic
+    /// for Times New Roman, which `ea` falls back to when the run names
+    /// none, else MS Mincho, whatever the language (Word 16 probes jf and
+    /// 33g, 2026-10-02: Verdana, Arial, Calibri and absent faces are all
+    /// MS Mincho; zh-CN and ko-KR text too). YaHei only stands in when
+    /// those two are not installed.
+    pub(crate) fn cjk_glyph_fallback(&self, bold: bool, ea: Option<&str>) -> Option<FaceRef> {
+        let key = if ea.is_none_or(|f| fold_family(f) == "timesnewroman") {
+            CJK_FALLBACK_GOTHIC
+        } else {
+            CJK_FALLBACK_MINCHO
+        };
+        self.embedded_index(key, bold, false)
+            .or_else(|| self.embedded_index(CJK_FALLBACK, bold, false))
             .map(FaceRef::Embedded)
     }
 
@@ -1202,17 +1337,24 @@ impl<'a> Fonts<'a> {
         if let Some(&idx) = self.extra_index.get(&exact) {
             return Some(idx);
         }
-        if bold || italic {
+        // Then the regular face, then any face at all: Word paints Segoe
+        // Print, installed only as Bold, in that Bold (probe my5).
+        [
+            (false, false),
+            (bold, !italic),
+            (!bold, italic),
+            (!bold, !italic),
+        ]
+        .into_iter()
+        .find_map(|(bold, italic)| {
             self.extra_index
                 .get(&FaceKey {
-                    family: exact.family,
-                    bold: false,
-                    italic: false,
+                    family: exact.family.clone(),
+                    bold,
+                    italic,
                 })
                 .copied()
-        } else {
-            None
-        }
+        })
     }
 
     /// `family` is present and not an East Asian face: Calibri, not SimSun
@@ -1224,6 +1366,33 @@ impl<'a> Fonts<'a> {
         let present =
             self.embedded_index(family, false, false).is_some() || catalogue_paints_family(family);
         present && !self.get(self.resolve(family, false, false)).east_asian
+    }
+
+    /// Whether `family` is an East Asian face: a name written in CJK or
+    /// one we know as CJK, or a present face whose code pages are East
+    /// Asian. An absent Latin name, accented or not, is not.
+    pub(crate) fn family_is_east_asian(&self, family: &str) -> bool {
+        if family.chars().any(super::is_cjk_break_char) || !cjk_file_stems(family).is_empty() {
+            return true;
+        }
+        let present =
+            self.embedded_index(family, false, false).is_some() || catalogue_paints_family(family);
+        present && self.get(self.resolve(family, false, false)).east_asian
+    }
+
+    /// An installed or embedded eastAsia face's average character width
+    /// as an em fraction (Word 16 probe sp2: MS Mincho and MS Gothic
+    /// 0.5em), the width a balanced space takes under
+    /// `w:balanceSingleByteDoubleByteWidth`; `None` for an absent name.
+    pub(crate) fn east_asia_avg_em(&self, family: &str) -> Option<f32> {
+        self.east_asia_face(family).map(|face| face.avg_char_width)
+    }
+
+    /// `family`'s face when installed or embedded.
+    pub(crate) fn east_asia_face(&self, family: &str) -> Option<&Face<'a>> {
+        let present =
+            self.embedded_index(family, false, false).is_some() || catalogue_paints_family(family);
+        present.then(|| self.get(self.resolve(family, false, false)))
     }
 
     pub(crate) fn get(&self, id: impl Into<FaceRef>) -> &Face<'a> {
@@ -1331,30 +1500,7 @@ impl<'a> Fonts<'a> {
             );
         }
         let mut visited = HashSet::new();
-        let (id, step, via_default) = self.resolve_walk(family, bold, italic, table, &mut visited);
-        // An unknown family="auto" face paints in the document default,
-        // which may itself be an embedded-only face (PR #167 review).
-        if let Some(default) = via_default
-            && let Some(idx) = self.embedded_index(family_token(default), bold, italic)
-        {
-            let face = FaceRef::Embedded(idx);
-            let exact = self.extra_index.contains_key(&FaceKey {
-                family: family_token(default).to_ascii_lowercase(),
-                bold,
-                italic,
-            });
-            return (
-                face,
-                FontReportEntry {
-                    requested: family.to_string(),
-                    step: FontStep::Embedded,
-                    physical: self.get(face).pdf_name().to_string(),
-                    bold,
-                    italic,
-                    synthetic: (bold || italic) && !exact,
-                },
-            );
-        }
+        let (id, step) = self.resolve_walk(family, bold, italic, table, &mut visited);
         let face = FaceRef::Catalogue(id);
         (
             face,
@@ -1371,8 +1517,8 @@ impl<'a> Fonts<'a> {
 
     /// Resolve `family` using Word's font table. Installed faces win;
     /// otherwise `w:altName`, then the Word-substitution evidence table,
-    /// then `w:family`/`w:pitch` generics. Unknown names use the evidence
-    /// table's Cambria row (plan Step 2d).
+    /// then the entry's generic. Unknown names use the evidence table's
+    /// Cambria row (plan Step 2d).
     #[cfg(test)]
     pub(crate) fn resolve_in(
         &self,
@@ -1393,27 +1539,23 @@ impl<'a> Fonts<'a> {
         table: &super::font_table::FontTable,
     ) -> (FaceId, FontStep) {
         let mut visited = HashSet::new();
-        let (id, step, _) = self.resolve_walk(family, bold, italic, table, &mut visited);
-        (id, step)
+        self.resolve_walk(family, bold, italic, table, &mut visited)
     }
 
     /// Follow `family` through the font table. Iterative: an altName chain
-    /// is bounded by the table's size, never by the call stack. The third
-    /// value is the document default an unknown family="auto" face fell
-    /// back to, if the walk took that hop.
-    fn resolve_walk<'t>(
+    /// is bounded by the table's size, never by the call stack.
+    fn resolve_walk(
         &self,
-        family: &'t str,
+        family: &str,
         bold: bool,
         italic: bool,
-        table: &'t super::font_table::FontTable,
+        table: &super::font_table::FontTable,
         visited: &mut HashSet<String>,
-    ) -> (FaceId, FontStep, Option<&'t str>) {
+    ) -> (FaceId, FontStep) {
         let mut current = family;
         let mut via_alt = false;
-        let mut via_default = None;
-        // The generic of a name the altName chain passed through: a chain
-        // that dead-ends (Myriad Pro → absent Segoe UI) keeps it.
+        // The generic of the first entry the altName chain passed through:
+        // a chain that dead-ends in an absent altName keeps it.
         let mut chain_generic = "";
         let (id, step) = loop {
             // Word splits rFonts on comma but does not CSS-unquote. Evidence
@@ -1442,16 +1584,13 @@ impl<'a> Fonts<'a> {
             // CSS-style list row (`"Foo", Bar, serif`) is keyed by the full
             // string, not by its first token.
             let whole = current.trim();
-            // The family/pitch generic stands behind an entry that describes
-            // its face (a panose past the family kind) or names an altName:
-            // 019d9ee6's Myriad Pro (swiss, altName Segoe UI) is Arial in
-            // Word, while 01177cdf's Museo Sans (0200…0, "modern", no
-            // altName) takes the document's default.
+            // Every entry stands for a generic, whatever its panose and
+            // pitch say (Word 16 probes my6/my7): roman is Cambria, any
+            // other family Calibri.
             if chain_generic.is_empty()
                 && let Some(entry) = table.get(primary)
-                && entry_describes(entry)
             {
-                chain_generic = super::word_subst::generic_physical(entry.family, entry.pitch);
+                chain_generic = super::word_subst::entry_generic(entry);
             }
             let alt = table
                 .alt_name(primary)
@@ -1473,54 +1612,12 @@ impl<'a> Fonts<'a> {
                     FontStep::Generic,
                 );
             }
-            // A missing Arabic or Hebrew face (charset B2 / B1) is Arial in
-            // Word, spaces and all: 00205272's absent "B Compset" draws
-            // Persian and 3.33pt spaces in Arial, not Cambria.
-            if let Some(entry) = table.get(primary)
-                && entry
-                    .charset
-                    .as_deref()
-                    .is_some_and(|c| c.eq_ignore_ascii_case("B2") || c.eq_ignore_ascii_case("B1"))
-            {
-                break (
-                    Self::face_from_physical("Arial", bold, italic),
-                    FontStep::Generic,
-                );
-            }
-            // An unknown face Word knows nothing about (family="auto", no
-            // panose) paints in the document's default font: 010300e3's
-            // Serenity and 00b5aa69's Shivaji01 are Calibri there.
-            if let Some(entry) = table.get(primary)
-                && !entry_describes(entry)
-            {
-                // A default that is itself missing leaves Word's own
-                // Calibri (01177cdf's theme Museo Sans).
-                match table.default_family() {
-                    Some(default)
-                        if via_default.is_none() && !default.eq_ignore_ascii_case(primary) =>
-                    {
-                        current = default;
-                        via_default = Some(default);
-                        continue;
-                    }
-                    _ => {
-                        break (
-                            Self::face_from_physical("Calibri", bold, italic),
-                            FontStep::Generic,
-                        );
-                    }
-                }
-            }
             break (
                 Self::face_from_physical(&super::word_subst::unknown_physical(), bold, italic),
                 FontStep::Unknown,
             );
         };
-        (
-            id,
-            if via_alt { FontStep::AltName } else { step },
-            via_default,
-        )
+        (id, if via_alt { FontStep::AltName } else { step })
     }
 
     /// `family` names an installed catalogue face directly (the report's
@@ -1905,7 +2002,11 @@ fn scan_family_faces(family: &str, user: Option<&Path>) -> (SourcedFaces, Vec<Pa
     // (dir, whole folder is the family): Word's cloud-font cache keeps each
     // family in its own folder under numeric file names (Poppins/2397….ttf).
     let mut dirs: Vec<(PathBuf, bool)> = if latin {
-        DIRS.iter().map(|d| (PathBuf::from(d), false)).collect()
+        DIRS.iter()
+            .map(PathBuf::from)
+            .chain(windows_font_dirs())
+            .map(|d| (d, false))
+            .collect()
     } else {
         Vec::new()
     };
@@ -2102,6 +2203,23 @@ fn family_faces_in(family: &str, dirs: &[(PathBuf, bool)]) -> SourcedFaces {
                 continue;
             };
             found.push((pass, style, (FaceSource::new(&path, None), bytes)));
+        }
+    }
+    // Windows abbreviates its file names (times.ttf, timesbd.ttf,
+    // cour.ttf): a stem catches at most the regular face, so its folders
+    // also answer by the family name inside each file.
+    for (dir, _) in dirs.iter().filter(|(d, _)| latin && windows_fonts_dir(d)) {
+        for (path, names) in font_name_index(dir).iter() {
+            let source = FaceSource::new(path, None);
+            if !names.contains(&key) || found.iter().any(|(_, _, (s, _))| *s == source) {
+                continue;
+            }
+            let Ok(bytes) = fs::read(path) else {
+                continue;
+            };
+            if let Some((pass, style)) = face_family_style(&bytes, family) {
+                found.push((pass, style, (source, bytes)));
+            }
         }
     }
     found.append(&mut collected);
@@ -2348,24 +2466,67 @@ fn face_family_names(face: &ttf_parser::Face<'_>, id: u16) -> Vec<String> {
 fn cjk_family_faces(family: &str, stems: &[&str]) -> Vec<((bool, bool), Vec<u8>)> {
     let key = format!("east-asian\u{1f}{family}\u{1f}{}", stems.join(","));
     indexed_faces(&FONT_INDEX, &key, || {
-        let dirs = CJK_DIRS.iter().map(PathBuf::from).collect();
-        (scan_cjk_family_faces(family, stems), dirs)
+        (scan_cjk_family_faces(family, stems), cjk_dirs())
     })
 }
 
-/// The folders Word's East Asian faces live in.
+/// The folders Word for Mac keeps its East Asian faces in.
 const CJK_DIRS: &[&str] = &[
     "/Applications/Microsoft Word.app/Contents/Resources/DFonts",
     "/Library/Fonts/Microsoft",
     "/Library/Fonts",
 ];
 
+/// The folders Word's East Asian faces live in: Word for Mac's, then
+/// Windows' own (msgothic.ttc, msyh.ttc and malgun.ttf ship there).
+fn cjk_dirs() -> Vec<PathBuf> {
+    CJK_DIRS
+        .iter()
+        .map(PathBuf::from)
+        .chain(windows_font_dirs())
+        .collect()
+}
+
+/// Windows' font folders: the system's and the per-user one fonts
+/// installed without administrator rights land in. Empty elsewhere.
+fn windows_font_dirs() -> Vec<PathBuf> {
+    if cfg!(target_os = "windows") {
+        windows_font_dirs_from(|key| std::env::var_os(key))
+    } else {
+        Vec::new()
+    }
+}
+
+/// A Windows font folder, the system's (`C:\WINDOWS\Fonts`) or the
+/// per-user one (`…\Microsoft\Windows\Fonts`): both end in
+/// `Windows\Fonts`, in any case.
+fn windows_fonts_dir(dir: &Path) -> bool {
+    let mut tail = dir
+        .components()
+        .rev()
+        .map(|c| c.as_os_str().to_string_lossy());
+    tail.next().is_some_and(|c| c.eq_ignore_ascii_case("fonts"))
+        && tail
+            .next()
+            .is_some_and(|c| c.eq_ignore_ascii_case("windows"))
+}
+
+fn windows_font_dirs_from(env: impl Fn(&str) -> Option<std::ffi::OsString>) -> Vec<PathBuf> {
+    let set = |key: &str| env(key).filter(|v| !v.is_empty()).map(PathBuf::from);
+    let root = set("WINDIR")
+        .or_else(|| set("SystemRoot"))
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+    let mut dirs = vec![root.join("Fonts")];
+    dirs.extend(set("LOCALAPPDATA").map(|d| d.join("Microsoft").join("Windows").join("Fonts")));
+    dirs
+}
+
 /// `cjk_family_faces` read from disk.
 fn scan_cjk_family_faces(family: &str, stems: &[&str]) -> SourcedFaces {
     let want = fold_family(family);
     let mut files: Vec<(usize, PathBuf)> = Vec::new();
-    for dir in CJK_DIRS {
-        let Ok(entries) = fs::read_dir(dir) else {
+    for dir in cjk_dirs() {
+        let Ok(entries) = fs::read_dir(&dir) else {
             continue;
         };
         for path in entries.flatten().map(|e| e.path()) {
@@ -2465,8 +2626,30 @@ pub(crate) const CJK_FALLBACK: &str = "@cjk";
 pub(crate) const CJK_FALLBACK_JA: &str = "@cjk-ja";
 pub(crate) const CJK_FALLBACK_KO: &str = "@cjk-ko";
 pub(crate) const CJK_FALLBACK_KO_SERIF: &str = "@cjk-ko-serif";
+pub(crate) const CJK_FALLBACK_GOTHIC: &str = "@cjk-gothic";
+pub(crate) const CJK_FALLBACK_MINCHO: &str = "@cjk-mincho";
 /// Embedded-map key of the Thaana fallback face.
 pub(crate) const THAANA_FALLBACK: &str = "@thaana";
+/// Embedded-map key of the Thai fallback face.
+pub(crate) const THAI_FALLBACK: &str = "@thai";
+/// Embedded-map key of the Devanagari fallback face.
+pub(crate) const DEVANAGARI_FALLBACK: &str = "@devanagari";
+
+/// Loads the face Word paints a script in when the run's font has none:
+/// the first of `families` installed (Word 16 probe scripts 1001: Calibri's
+/// Thai is Leelawadee UI, its Devanagari Mangal).
+pub(crate) fn add_script_fallback(embedded: &mut EmbeddedFonts, key: &str, families: &[&str]) {
+    let faces = cached_faces(key, || {
+        families
+            .iter()
+            .map(|family| installed_family_faces(family))
+            .find(|faces| !faces.is_empty())
+            .unwrap_or_default()
+    });
+    for ((bold, italic), bytes) in faces {
+        embedded.insert((key.to_string(), bold, italic), bytes);
+    }
+}
 
 /// Loads the face Word paints Dhivehi in when the document's font is
 /// missing: MV Boli from Office's cloud fonts (fixtures_500 0003fc93's
@@ -2564,7 +2747,7 @@ fn font_index_path() -> Option<PathBuf> {
 
 /// Bump the `1` when the family search's matching rules change; the crate
 /// version drops the answers another release recorded.
-const FONT_INDEX_HEADER: &str = concat!("jubarte-font-index\t1\t", env!("CARGO_PKG_VERSION"));
+const FONT_INDEX_HEADER: &str = concat!("jubarte-font-index\t2\t", env!("CARGO_PKG_VERSION"));
 
 /// A modification time in nanoseconds, `None` for a missing path.
 fn mtime_of(path: &Path) -> Option<u128> {
@@ -2817,7 +3000,8 @@ fn parse_font_index(text: &str) -> HashMap<String, IndexEntry> {
 }
 
 /// Loads Word's East Asian fallback faces (YaHei, Yu Gothic, Malgun
-/// Gothic, Batang) for a document that has East Asian text.
+/// Gothic, Batang, MS Gothic, MS Mincho) for a document that has East
+/// Asian text.
 pub(crate) fn add_cjk_fallbacks(embedded: &mut EmbeddedFonts) {
     for (key, family, stems) in [
         (CJK_FALLBACK, "Microsoft YaHei", &["msyh", "msyhbd"][..]),
@@ -2828,6 +3012,8 @@ pub(crate) fn add_cjk_fallbacks(embedded: &mut EmbeddedFonts) {
             &["malgun", "malgunbd"][..],
         ),
         (CJK_FALLBACK_KO_SERIF, "Batang", &["batang"][..]),
+        (CJK_FALLBACK_GOTHIC, "MS Gothic", &["msgothic"][..]),
+        (CJK_FALLBACK_MINCHO, "MS Mincho", &["msmincho"][..]),
     ] {
         for ((bold, italic), bytes) in cached_faces(key, || cjk_family_faces(family, stems)) {
             embedded.insert((key.to_string(), bold, italic), bytes);
@@ -2866,7 +3052,12 @@ pub(crate) fn add_installed_faces(
         }
         // A family runs name but the table omits (015beda9 has no table
         // part; Word still draws its Segoe UI) loads like a table family.
-        let faces = cached_faces(name, || installed_family_faces(name));
+        let mut faces = cached_faces(name, || installed_family_faces(name));
+        if faces.is_empty()
+            && let Some(sub) = super::word_subst::word_name_substitute(name)
+        {
+            faces = cached_faces(sub, || installed_family_faces(sub));
+        }
         for ((bold, italic), bytes) in faces {
             embedded.insert((lower.clone(), bold, italic), bytes);
         }
@@ -2877,6 +3068,13 @@ pub(crate) fn add_installed_faces(
             continue;
         }
         let mut faces = cached_faces(&entry.name, || installed_family_faces(&entry.name));
+        // Word's own stand-in for a family it knows beats the altName:
+        // "Myriad Pro" with altName Arial is Segoe UI.
+        if faces.is_empty()
+            && let Some(sub) = super::word_subst::word_name_substitute(&entry.name)
+        {
+            faces = cached_faces(sub, || installed_family_faces(sub));
+        }
         // An absent family draws in its installed altName (b88ac900's
         // "BernhardFashion BT" → Gabriola in Word's PDF).
         if faces.is_empty()
@@ -2885,6 +3083,18 @@ pub(crate) fn add_installed_faces(
             && !catalogue_paints_family(alt)
         {
             faces = cached_faces(alt, || installed_family_faces(alt));
+        }
+        // Then the script its sig claims (Faruma's Thaana → MV Boli),
+        // unless the altName is a catalogue face Word draws instead.
+        if faces.is_empty()
+            && cjk_file_stems(&entry.name).is_empty()
+            && !entry
+                .alt_name
+                .as_deref()
+                .is_some_and(catalogue_paints_family)
+            && let Some(face) = super::word_subst::script_face(entry)
+        {
+            faces = cached_faces(face, || installed_family_faces(face));
         }
         // Runs may name the family by its altName ("MS Mincho" for the
         // table's "ＭＳ 明朝"); the same faces answer to both.
@@ -2946,12 +3156,41 @@ fn pick_ranked_faces<T>(mut found: Vec<(u8, (bool, bool), T)>) -> Vec<((bool, bo
 /// TrueType outlines is skipped: PDF FontFile2 cannot carry CFF.
 /// OS/2 `ulCodePageRange1` names a Japanese, Chinese or Korean code page
 /// (bits 17-21).
+/// A copy from Word's Office 365 font service: its name-table version
+/// says so ("Version 1.03;O365"). macOS's own SinoType faces and Word's
+/// bundled DFonts (but MingLiU-ExtB) carry none.
+fn office_365_face(face: &ttf_parser::Face) -> bool {
+    face.names()
+        .into_iter()
+        .filter(|n| n.name_id == ttf_parser::name_id::VERSION)
+        .filter_map(|n| n.to_string())
+        .any(|v| v.contains(";O365"))
+}
+
 fn cjk_code_pages(face: &ttf_parser::Face) -> bool {
     face.raw_face()
         .table(ttf_parser::Tag::from_bytes(b"OS/2"))
         .and_then(|os2| os2.get(78..82))
         .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
         .is_some_and(|range| range & (0b1_1111 << 17) != 0)
+}
+
+/// OS/2 xAvgCharWidth in font units, when positive.
+/// PANOSE family type 2 (Latin text) with a serif style of 2 (cove)
+/// through 10 (triangle); 11-13 are the sans styles.
+fn panose_serif(face: &ttf_parser::Face) -> bool {
+    face.raw_face()
+        .table(ttf_parser::Tag::from_bytes(b"OS/2"))
+        .and_then(|os2| os2.get(32..34))
+        .is_some_and(|p| p[0] == 2 && (2..=10).contains(&p[1]))
+}
+
+fn avg_char_width(face: &ttf_parser::Face) -> Option<f32> {
+    face.raw_face()
+        .table(ttf_parser::Tag::from_bytes(b"OS/2"))
+        .and_then(|os2| os2.get(2..4))
+        .map(|b| f32::from(i16::from_be_bytes([b[0], b[1]])))
+        .filter(|&w| w > 0.0)
 }
 
 /// A name record's text: Unicode records as ttf-parser decodes them, and
@@ -3073,19 +3312,98 @@ fn sanitize_pdf_name(name: &str) -> String {
         .collect()
 }
 
-/// A font-table entry Word substitutes by its generic: one with a panose
-/// that says something beyond its family kind (`0200…0` and all-zero say
-/// nothing) or with an altName.
-fn entry_describes(entry: &super::font_table::FontEntry) -> bool {
-    entry.alt_name.is_some()
-        || entry
-            .panose
-            .is_some_and(|p| p.iter().skip(1).any(|b| *b != 0))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_accented_latin_name_is_not_an_east_asian_face() {
+        // PR #304 review: a non-ASCII Latin family is no East Asian face,
+        // while a CJK name stays one even when absent (ee79137dd5's 標楷體).
+        let fonts = Fonts::new();
+        assert!(!fonts.family_is_east_asian("Café Prb Absent"));
+        assert!(fonts.family_is_east_asian("標楷體"));
+        assert!(fonts.family_is_east_asian("ＭＳ 明朝"));
+        assert!(!fonts.family_is_east_asian("Prb Absent"));
+    }
+
+    #[test]
+    fn windows_fonts_are_searched_in_the_system_and_user_folders() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |key: &str| {
+                pairs
+                    .iter()
+                    .find(|(k, _)| *k == key)
+                    .map(|(_, v)| std::ffi::OsString::from(v))
+            }
+        };
+        let user = |root: &str| {
+            PathBuf::from(root)
+                .join("Microsoft")
+                .join("Windows")
+                .join("Fonts")
+        };
+        assert_eq!(
+            windows_font_dirs_from(env(&[
+                ("WINDIR", r"D:\Win"),
+                ("LOCALAPPDATA", r"C:\Users\a\AppData\Local")
+            ])),
+            vec![
+                PathBuf::from(r"D:\Win").join("Fonts"),
+                user(r"C:\Users\a\AppData\Local")
+            ]
+        );
+        // SystemRoot stands in for WINDIR; an empty value counts as unset.
+        assert_eq!(
+            windows_font_dirs_from(env(&[("WINDIR", ""), ("SystemRoot", r"E:\W")])),
+            vec![PathBuf::from(r"E:\W").join("Fonts")]
+        );
+        assert_eq!(
+            windows_font_dirs_from(env(&[])),
+            vec![PathBuf::from(r"C:\Windows").join("Fonts")]
+        );
+        // The East Asian search reads them after Word for Mac's folders.
+        let dirs = cjk_dirs();
+        assert_eq!(
+            &dirs[..CJK_DIRS.len()],
+            CJK_DIRS.iter().map(PathBuf::from).collect::<Vec<_>>()
+        );
+        assert_eq!(dirs.len() > CJK_DIRS.len(), cfg!(target_os = "windows"));
+    }
+
+    #[test]
+    fn an_ideograph_a_face_lacks_still_measures_one_em() {
+        // Without Word's East Asian faces (Linux, Windows CI, WASM) CJK
+        // text shapes to the Latin face's .notdef, ~0.6 em: a cell that
+        // wraps "J漢字漢字漢字" + "Q漢字漢字漢字" in Word fitted both on
+        // one line. Every face Word falls back to draws them one em wide;
+        // half-width katakana stay narrow.
+        let mut face = Face::load(FaceId::SansRegular);
+        let em = 11.0 + word_device_track(11.0);
+        for text in ["漢字", "かな", "，。", "한글", "ＡＢ"] {
+            assert!(
+                face.shape(text, 11.0).iter().all(|(gid, _)| *gid == 0),
+                "{text}"
+            );
+            let w = face.width_pt(text, 11.0);
+            assert!((w - 2.0 * em).abs() < 0.01, "{text}: {w}");
+        }
+        assert!(face.width_pt("ｶﾅ", 11.0) < 2.0 * em - 1.0);
+        face.buzz = None;
+        assert!((face.width_pt("漢字", 11.0) - 2.0 * em).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_non_breaking_hyphen_reads_as_a_hyphen_with_or_without_shaping() {
+        // Word's PDFs carry 0x2D for w:noBreakHyphen; the /ToUnicode text
+        // says so too, whether or not the face shapes through rustybuzz.
+        let mut face = Face::load(FaceId::CarlitoRegular);
+        let text = format!("a{NO_BREAK_HYPHEN}b");
+        assert_eq!(face.glyph_texts(&text, false).concat(), "a-b");
+        face.buzz = None;
+        assert_eq!(face.glyph_texts(&text, false), ["a", "-", "b"]);
+        assert_eq!(face.glyph(NO_BREAK_HYPHEN), face.glyph('-'));
+    }
 
     #[test]
     fn the_font_index_reads_recorded_files_until_a_folder_or_file_changes() {
@@ -3162,7 +3480,7 @@ mod tests {
         );
         let text = format_font_index(&entries);
         assert_eq!(parse_font_index(&text), entries);
-        assert!(parse_font_index(&text.replacen("\t1", "\t0", 1)).is_empty());
+        assert!(parse_font_index(&text.replacen("\t2\t", "\t0\t", 1)).is_empty());
     }
 
     #[test]
@@ -3181,6 +3499,10 @@ mod tests {
         let header = text.lines().next().unwrap();
         assert!(header.ends_with(&format!("\t{}", env!("CARGO_PKG_VERSION"))));
         assert!(parse_font_index(&text.replace(env!("CARGO_PKG_VERSION"), "0.0.0")).is_empty());
+        // Rules 2 (Windows folders, matched by internal name): an index
+        // the same release wrote under rules 1 never listed those folders.
+        assert!(header.starts_with("jubarte-font-index\t2\t"));
+        assert!(parse_font_index(&text.replacen("\t2\t", "\t1\t", 1)).is_empty());
     }
 
     #[test]
@@ -3204,6 +3526,36 @@ mod tests {
             (face.ascent_pt(12.0) - 12.11).abs() < 0.1,
             "{}",
             face.ascent_pt(12.0)
+        );
+    }
+
+    #[test]
+    fn an_office_365_east_asian_face_takes_its_box_for_the_line() {
+        // Word 16 probes lg4/lg5: 华文仿宋 (STFangsong from Word's cloud
+        // cache, version "1.03;O365", hhea 860/-260, head box 986/-315)
+        // steps 33.84 at 20pt (1.3 x the 1.301 em box, not 1.3 x the 1.12
+        // em hhea body) with its 10pt baseline 11.76 under the margin.
+        let Some(home) = std::env::var_os("HOME") else {
+            return;
+        };
+        let path = Path::new(&home).join(
+            "Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts/STFangsong/32515377567.ttf",
+        );
+        let Ok(bytes) = fs::read(&path) else {
+            return;
+        };
+        let bytes: &'static [u8] = Box::leak(bytes.into_boxed_slice());
+        let face =
+            Face::from_bytes(FaceId::SansRegular, bytes, "STFangsong".into()).expect("STFangsong");
+        assert!(
+            (face.single_line_pt(20.0) - 33.83).abs() < 0.05,
+            "{}",
+            face.single_line_pt(20.0)
+        );
+        assert!(
+            (face.ascent_pt(10.0) - 11.81).abs() < 0.1,
+            "{}",
+            face.ascent_pt(10.0)
         );
     }
 
@@ -3489,9 +3841,9 @@ mod tests {
     }
 
     #[test]
-    fn resolve_font_table_swiss_generic_is_arial() {
-        // The generic needs a panose that describes the face; a bare entry
-        // takes the default (a_bare_missing_entry_takes_the_default…).
+    fn a_missing_swiss_entry_is_calibri_not_arial() {
+        // Word 16 probe my7 (this exact entry, fresh session): Calibri. The
+        // swiss → Arial generic was an older Word build's.
         let table = super::super::font_table::parse_font_table_xml(
             r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
                  <w:font w:name="SomeSwiss"><w:panose1 w:val="020B0604020202020204"/><w:family w:val="swiss"/></w:font>
@@ -3500,12 +3852,14 @@ mod tests {
         let fonts = Fonts::new();
         assert_eq!(
             fonts.resolve_in("SomeSwiss", false, false, &table),
-            FaceId::SansRegular
+            FaceId::CarlitoRegular
         );
     }
 
     #[test]
-    fn resolve_font_table_roman_generic_is_times() {
+    fn a_missing_roman_entry_is_cambria_not_times() {
+        // Word 16 probes my6/my7: any roman entry (TNR, Georgia, zero or no
+        // panose, even fixed pitch) is Cambria.
         let table = super::super::font_table::parse_font_table_xml(
             r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
                  <w:font w:name="SomeRoman"><w:panose1 w:val="02020603050405020304"/><w:family w:val="roman"/></w:font>
@@ -3514,15 +3868,14 @@ mod tests {
         let fonts = Fonts::new();
         assert_eq!(
             fonts.resolve_in("SomeRoman", false, false, &table),
-            FaceId::SerifRegular
+            FaceId::CambriaRegular
         );
     }
 
     #[test]
-    fn resolve_font_table_fixed_pitch_is_courier() {
-        // A fixed-pitch entry that describes its face (a panose past the
-        // family kind) still falls to Courier; a bare one does not (see
-        // the next test, live Word 2026-09-25: Calibri).
+    fn a_missing_fixed_pitch_entry_is_calibri_not_courier() {
+        // Word 16 probe my7 (this exact entry, both orders): Calibri; pitch
+        // and panose play no part.
         let table = super::super::font_table::parse_font_table_xml(
             r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
                  <w:font w:name="SomeFixed"><w:panose1 w:val="02070309020205020404"/><w:pitch w:val="fixed"/></w:font>
@@ -3531,7 +3884,7 @@ mod tests {
         let fonts = Fonts::new();
         assert_eq!(
             fonts.resolve_in("SomeFixed", false, false, &table),
-            FaceId::MonoRegular
+            FaceId::CarlitoRegular
         );
     }
 
@@ -3555,20 +3908,21 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_entry_with_an_alt_name_keeps_its_generic() {
-        // fixtures_500 019d9ee6: Myriad Pro (swiss, panose all zero, altName
-        // an absent Segoe UI) is Arial in Word's PDF.
+    fn a_missing_entry_with_an_absent_alt_name_keeps_its_generic() {
+        // Word 16 probe my6: a swiss entry whose altName is absent is
+        // Calibri. (019d9ee6's Arial reference came from Word's cloud-font
+        // download race; today's Word draws its Myriad Pro in Segoe UI.)
         let table = super::super::font_table::parse_font_table_xml(
             r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-                 <w:font w:name="Myriad Pro"><w:altName w:val="Qwertzu Absent"/>
+                 <w:font w:name="Qwmyr Pro"><w:altName w:val="Qwertzu Absent"/>
                    <w:panose1 w:val="00000000000000000000"/><w:family w:val="swiss"/>
                    <w:notTrueType/><w:pitch w:val="variable"/></w:font>
                </w:fonts>"#,
         );
         let fonts = Fonts::new();
         assert_eq!(
-            fonts.resolve_in("Myriad Pro", false, false, &table),
-            FaceId::SansRegular
+            fonts.resolve_in("Qwmyr Pro", false, false, &table),
+            FaceId::CarlitoRegular
         );
     }
 
@@ -3637,6 +3991,64 @@ mod tests {
         let names = ["Helvetica Neue".to_string()];
         add_installed_faces(&mut embedded, &table, &names, &names, false);
         assert!(embedded.contains_key(&("helvetica neue".to_string(), false, false)));
+    }
+
+    #[test]
+    fn word_s_own_stand_in_for_an_absent_family_beats_its_alt_name() {
+        // Word 16 probe my3: "Myriad Pro" with altName Arial is Segoe UI.
+        if installed_family_faces("Segoe UI").is_empty() {
+            return;
+        }
+        let table = super::super::font_table::parse_font_table_xml(
+            r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                 <w:font w:name="Myriad Pro"><w:altName w:val="Arial"/><w:family w:val="auto"/></w:font>
+               </w:fonts>"#,
+        );
+        let mut embedded = EmbeddedFonts::new();
+        let names = ["Myriad Pro".to_string(), "Myriad Pro Light".to_string()];
+        add_installed_faces(&mut embedded, &table, &names, &names, false);
+        let fonts = Fonts::for_document(&embedded);
+        let physical = |family: &str| {
+            let (face, _) = fonts.classify_in(family, false, false, &table);
+            fonts.get(face).pdf_name().to_string()
+        };
+        assert!(physical("Myriad Pro").starts_with("SegoeUI"));
+        assert!(physical("Myriad Pro Light").starts_with("SegoeUI"));
+    }
+
+    #[test]
+    fn an_absent_face_claiming_thaana_draws_in_mv_boli() {
+        // 55fcbe9086: Word draws all of Faruma's runs, Latin ones too, in
+        // MV Boli; we drew Cambria and ran a page long.
+        if installed_family_faces("MV Boli").is_empty() {
+            return;
+        }
+        let table = super::super::font_table::parse_font_table_xml(
+            r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                 <w:font w:name="Qzaruma"><w:panose1 w:val="02000500030200090000"/><w:family w:val="auto"/>
+                   <w:sig w:usb0="00000003" w:usb1="00000000" w:usb2="00000100" w:usb3="00000000" w:csb0="00000001" w:csb1="00000000"/></w:font>
+               </w:fonts>"#,
+        );
+        let mut embedded = EmbeddedFonts::new();
+        let names = ["Qzaruma".to_string()];
+        add_installed_faces(&mut embedded, &table, &names, &names, false);
+        let fonts = Fonts::for_document(&embedded);
+        let (face, _) = fonts.classify_in("Qzaruma", false, false, &table);
+        assert!(fonts.get(face).pdf_name().starts_with("MVBoli"));
+    }
+
+    #[test]
+    fn a_family_installed_only_in_bold_paints_regular_text_in_that_bold() {
+        // Word 16 probe my5: Segoe Print and Segoe Script, installed only as
+        // Bold, draw their regular runs in Bold, not in Cambria.
+        let mut fonts = Fonts::new();
+        fonts.insert_embedded("Qx Print", true, false, FaceId::MonoBold.bytes());
+        let table = super::super::font_table::FontTable::default();
+        for (bold, italic) in [(false, false), (false, true), (true, false)] {
+            let (face, entry) = fonts.classify_in("Qx Print", bold, italic, &table);
+            assert_eq!(entry.step, FontStep::Embedded, "{bold} {italic}");
+            assert_eq!(fonts.get(face).pdf_name(), "LiberationMono-Bold");
+        }
     }
 
     #[test]
@@ -3858,10 +4270,9 @@ mod tests {
         };
         assert_eq!(physical("標楷體"), "MicrosoftYaHei");
         assert!(physical("HGP行書体").starts_with("YuGothic"));
-        assert_eq!(
-            physical("SomeLatin"),
-            "ArialMT",
-            "Latin families are untouched"
+        assert!(
+            physical("SomeLatin").starts_with("Calibri"),
+            "Latin families keep their own generic"
         );
     }
 
@@ -3914,9 +4325,9 @@ mod tests {
 
     #[test]
     fn resolve_dead_end_altname_keeps_the_original_generic() {
-        // fixtures_500 019d9ee6: Myriad Pro (swiss) → altName Segoe UI,
-        // which is neither installed nor in the table. Word paints Arial,
-        // the swiss generic, not the unknown-family Cambria.
+        // An altName that is neither installed nor in the table leaves the
+        // first entry's generic: Word 16 probe my6 paints a swiss entry with
+        // an absent altName in Calibri, not the unknown-family Cambria.
         let table = super::super::font_table::parse_font_table_xml(
             r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
                  <w:font w:name="SomeMyriad"><w:altName w:val="SomeSegoe"/><w:family w:val="swiss"/></w:font>
@@ -3925,7 +4336,7 @@ mod tests {
         let fonts = Fonts::new();
         assert_eq!(
             fonts.resolve_in("SomeMyriad", false, false, &table),
-            FaceId::SansRegular
+            FaceId::CarlitoRegular
         );
     }
 
@@ -4188,20 +4599,18 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_auto_family_takes_the_embedded_default_face() {
-        // PR #167 review: the family="auto" fallback resolved the document
-        // default through the catalogue only, so an embedded default face
-        // lost to Cambria.
+    fn an_unknown_auto_family_is_calibri_even_beside_an_embedded_default() {
+        // Word 16 probe my6: the document's default font plays no part; a
+        // bare family="auto" entry is Calibri in a styled and a bare doc.
         let mut fonts = Fonts::new();
         fonts.insert_embedded("Press Start 2P", false, false, FaceId::MonoRegular.bytes());
-        let mut table = super::super::font_table::parse_font_table_xml(
+        let table = super::super::font_table::parse_font_table_xml(
             "<w:fonts xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
              <w:font w:name=\"Serenity\"><w:family w:val=\"auto\"/></w:font></w:fonts>",
         );
-        table.set_default_family("Press Start 2P");
-        let (_, entry) = fonts.classify_in("Serenity", false, false, &table);
-        assert_eq!(entry.step, FontStep::Embedded);
-        assert_eq!(entry.physical, "LiberationMono");
+        let (face, entry) = fonts.classify_in("Serenity", false, false, &table);
+        assert_eq!(entry.step, FontStep::Generic);
+        assert_eq!(face, FaceRef::Catalogue(FaceId::CarlitoRegular));
     }
 
     #[test]
@@ -4232,7 +4641,7 @@ mod tests {
         let json = font_report_json(std::slice::from_ref(&entry));
         assert_eq!(
             json,
-            r#"[{"requested":"Calibri \"body\"","step":"explicit","physical":"Calibri","bold":false,"italic":true,"synthetic":false}]"#
+            r#"[{"requested":"Calibri \"body\"","step":"explicit","physical":"Calibri","bold":false,"italic":true,"synthetic":false,"substituted":false}]"#
         );
     }
 
@@ -4294,6 +4703,21 @@ mod tests {
             "Times 12 single line {}",
             times.single_line_pt(12.0)
         );
+    }
+
+    #[test]
+    fn a_precomposed_czech_letter_paints_as_its_own_glyph() {
+        // 3509b16c7d: Cambria's ccmp splits "ě" into e + a caron mark;
+        // Word's PDF draws ě, č, ů whole, and the shared "e" glyph could
+        // not carry "ě" in /ToUnicode.
+        if !Fonts::is_installed_family("Cambria") {
+            return;
+        }
+        let fonts = Fonts::new();
+        let cambria = fonts.get(fonts.resolve("Cambria", false, false));
+        for letter in ["ě", "č", "ů", "ž"] {
+            assert_eq!(cambria.glyph_texts(letter, false), [letter]);
+        }
     }
 
     #[test]
@@ -4490,6 +4914,37 @@ mod tests {
         }
 
         #[test]
+        fn windows_font_folders_find_every_style_by_its_internal_name() {
+            // Windows abbreviates: times.ttf, timesbd.ttf, timesi.ttf,
+            // cour.ttf. The regular file's stem is a prefix of the family
+            // key, the bold one's is not, and "cour" is too short to match.
+            let root = tempfile::tempdir().unwrap();
+            let dir = root.path().join("WINDOWS").join("Fonts");
+            fs::create_dir_all(&dir).unwrap();
+            let regular = include_bytes!("../../assets/fonts/LiberationSerif-Regular.ttf");
+            let bold = include_bytes!("../../assets/fonts/LiberationSerif-Bold.ttf");
+            let mono = include_bytes!("../../assets/fonts/LiberationMono-Regular.ttf");
+            fs::write(dir.join("liberat.ttf"), regular).unwrap();
+            fs::write(dir.join("liberatbd.ttf"), bold).unwrap();
+            fs::write(dir.join("lmo.ttf"), mono).unwrap();
+            let dirs = [(dir.clone(), false)];
+            let found = family_faces_in("Liberation Serif", &dirs);
+            let styles: Vec<_> = found.iter().map(|(style, _, _)| *style).collect();
+            assert_eq!(styles, vec![(false, false), (true, false)]);
+            assert!(found.iter().any(|(_, _, b)| b == bold));
+            assert_eq!(family_faces_in("Liberation Mono", &dirs).len(), 1);
+            // Other folders keep matching by file name alone.
+            let other = root.path().join("Fonts");
+            fs::create_dir(&other).unwrap();
+            fs::write(other.join("liberat.ttf"), regular).unwrap();
+            fs::write(other.join("liberatbd.ttf"), bold).unwrap();
+            assert_eq!(
+                family_faces_in("Liberation Serif", &[(other, false)]).len(),
+                1
+            );
+        }
+
+        #[test]
         fn dfonts_index_finds_abbreviated_names_and_ignores_corrupt_fonts() {
             let root = tempfile::tempdir().unwrap();
             let dir = root.path().join("DFonts");
@@ -4540,11 +4995,10 @@ mod tests {
 
         #[test]
         fn a_missing_default_font_terminates_at_calibri_without_losing_style() {
-            let mut table = crate::convert::font_table::parse_font_table_xml(
+            let table = crate::convert::font_table::parse_font_table_xml(
                 r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
             <w:font w:name="PR168 Missing Face"/><w:font w:name="PR168 Missing Default"/></w:fonts>"#,
             );
-            table.set_default_family("PR168 Missing Default");
             assert_eq!(
                 Fonts::new().resolve_in("PR168 Missing Face", true, true, &table),
                 FaceId::CarlitoBoldItalic

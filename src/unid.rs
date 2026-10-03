@@ -8,9 +8,26 @@
 //! path (`AssignToAllElements`), whose only requirement (per the TS docs) is that
 //! ids be **unique and content-independent within each version**. We satisfy that
 //! with a process-wide monotonic counter formatted as 32 hex chars instead of a
-//! random GUID: same algorithmic properties, but deterministic (so the whole
-//! pipeline is reproducible and testable). The counter is content-independent and
-//! unique, exactly what the matching heuristics assume.
+//! random GUID: same algorithmic properties, and no randomness. The counter is
+//! content-independent and unique, exactly what the matching heuristics assume.
+//!
+//! # What is and is not reproducible
+//!
+//! The counter is **process-global and never reset**, so a unid's value depends
+//! on how many ids were handed out earlier in the process (earlier compares, or
+//! other threads comparing at the same time). Two consequences:
+//!
+//! - Unid values are not reproducible between two compares in one process, and
+//!   code must not compare them to constants or print them into output.
+//! - The output bytes are still reproducible, because the `pt:Unid` attributes
+//!   the comparer writes are stripped from the parts it produces before the
+//!   package is written (`remove_powertools_scratch_markup`) and no unid is used to name anything
+//!   that reaches the package. The same pair compared twice in one process, with
+//!   a fixed date, gives identical bytes (`tests/compare_is_reproducible.rs`).
+//!
+//! Do not put [`generate_unid`] output into a part name, a relationship target
+//! or any other output string. Copied media parts are named from the SHA-256 of
+//! their bytes instead (`comparer::parts`).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 

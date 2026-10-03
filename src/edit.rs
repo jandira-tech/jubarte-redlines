@@ -25,16 +25,25 @@ use serde::{Deserialize, Serialize};
 use crate::changes::{Change, ChangeError, ChangeFilter};
 
 use crate::comparer::{WmlComparerRevisionType, WmlComparerSettings};
-use crate::inspect::{Opened, Piece, Projection, SCHEMA_VERSION, project_paragraph, source_sha256};
-use crate::namespaces::{R, W};
+use crate::inspect::{
+    BODY_STORY, Opened, Piece, Projection, SCHEMA_VERSION, project_paragraph, source_sha256,
+};
+use crate::namespaces::W;
 use crate::xmllinq::{Dom, NodeId, XNamespace};
 
+mod controls;
+mod images;
+mod notes;
+mod rewrite;
+mod runs;
+mod sections;
+mod structural;
+mod tracked;
+mod watermark;
 mod whole;
 
-const COMMENTS_REL: &str =
-    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
-const COMMENTS_CT: &str =
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml";
+pub use controls::ControlSelector;
+pub use sections::{CustomPage, Margins, Orientation, PageSize, Paper, SectionScope};
 
 /// A versioned, portable set of operations against one document snapshot.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,6 +73,11 @@ pub struct EditPlan {
     pub existing_revisions: ExistingRevisions,
     /// Operations in report order.
     pub operations: Vec<Operation>,
+    /// Refresh `PAGEREF`, `REF`, `NUMPAGES`, `SEQ` and `TOC` results in the
+    /// edited copy from jubarte's layout ([`crate::fields::update_fields`])
+    /// before the redline is compared.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub update_fields: bool,
 }
 
 /// The tracked changes a plan accepts and rejects before it edits, as
@@ -111,6 +125,9 @@ pub enum ExistingRevisions {
     Accept,
     /// Reject them first; the plan then edits that rejected base.
     Reject,
+    /// Leave them tracked; the plan's edits become new revisions beside them
+    /// (direct emission; no compare).
+    Keep,
 }
 
 /// One operation. `id` defaults to `op-N` (1-based) in the report.
@@ -146,6 +163,10 @@ pub enum OperationKind {
         /// Show the change as all of `find` deleted, then all of
         /// `replacement` inserted, instead of Word Compare's word-level diff.
         whole: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Which hit of a repeated anchor to use (1-based); required when
+        /// the anchor occurs more than once.
+        occurrence: Option<usize>,
     },
     /// Insert `text` after/before exactly one occurrence of an anchor, or at
     /// the paragraph's start/end. Exactly one of `after`, `before`,
@@ -170,6 +191,10 @@ pub enum OperationKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         /// Comment text anchored to the changed text.
         comment: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Which hit of a repeated anchor to use (1-based); required when
+        /// the anchor occurs more than once.
+        occurrence: Option<usize>,
     },
     /// Delete exactly one occurrence of `find`.
     Delete {
@@ -177,6 +202,10 @@ pub enum OperationKind {
         paragraph: Selector,
         /// Exact text to delete; must occur exactly once.
         find: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Which hit of a repeated anchor to use (1-based); required when
+        /// the anchor occurs more than once.
+        occurrence: Option<usize>,
     },
     /// Comment on exactly one occurrence of `find`, or on the whole paragraph.
     Comment {
@@ -187,9 +216,18 @@ pub enum OperationKind {
         find: Option<String>,
         /// Plain text to insert.
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Last paragraph of a range from the start of `paragraph` to the
+        /// end of this one (same story, not before `paragraph`); `find`
+        /// must be left out.
+        through: Option<Selector>,
+        /// Which hit of a repeated anchor to use (1-based); required when
+        /// the anchor occurs more than once.
+        occurrence: Option<usize>,
     },
     /// Insert a new paragraph next to the anchor paragraph, copying its
-    /// paragraph properties (never its section break or revision marks).
+    /// paragraph properties (never its section break or revision marks), or
+    /// those of `like`.
     InsertParagraph {
         /// Paragraph to edit; must match exactly one.
         paragraph: Selector,
@@ -198,6 +236,11 @@ pub enum OperationKind {
         position: Side,
         /// Runs of the new paragraph, in order.
         runs: Vec<RunSpec>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Paragraph whose properties and run formatting the new paragraph
+        /// copies instead of the anchor's: a plain paragraph inserted after a
+        /// list item, for one.
+        like: Option<Selector>,
         /// Paragraph style id to set instead of the anchor's.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         /// Paragraph style id to set instead of the anchor's.
@@ -210,6 +253,10 @@ pub enum OperationKind {
     DeleteParagraph {
         /// Paragraph to delete; must match exactly one.
         paragraph: Selector,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Comment on the deleted text. It is in the redline only: the clean
+        /// copy has no paragraph to hold it.
+        comment: Option<String>,
     },
     /// Change a paragraph's style, alignment or spacing; the redline records
     /// the old properties (`w:pPrChange`). At least one field besides
@@ -233,6 +280,17 @@ pub enum OperationKind {
         /// Space after the paragraph, in points.
         space_after: Option<Points>,
     },
+    /// Make the paragraph read as `text`: the engine applies the smallest
+    /// word-level edits, so unchanged words keep their runs and formatting,
+    /// and new words take the formatting of the run before them. Tabs, line
+    /// breaks and symbols stay where they are; `text` may write a tab or a
+    /// break as a space and leave a symbol out.
+    Rewrite {
+        /// Paragraph to rewrite; must match exactly one.
+        paragraph: Selector,
+        /// The paragraph's new text, plain.
+        text: String,
+    },
     /// Join the paragraph with the one right after it. The first's text moves
     /// to the start of the second, whose paragraph properties (and section
     /// break) survive, as when Word accepts a deleted paragraph mark. The
@@ -244,6 +302,276 @@ pub enum OperationKind {
         /// Plain text placed between the two (for example `" "`).
         separator: Option<String>,
     },
+    /// Reply to comment `comment_id`, as the plan's author; the reply is
+    /// anchored on the same range. Word threads are one level deep, so a
+    /// reply to a reply joins the thread's first comment.
+    ReplyComment {
+        /// `w:id` of the comment replied to (`jubarte comments` lists them).
+        comment_id: u32,
+        /// Reply text; `\n` starts a new line.
+        text: String,
+    },
+    /// Resolve comment `comment_id` and its replies (`done: false` opens
+    /// them again).
+    ResolveComment {
+        /// `w:id` of the comment.
+        comment_id: u32,
+        #[serde(default = "resolve_done")]
+        /// Resolved (default) or open.
+        done: bool,
+    },
+    /// Replace the text of comment `comment_id`; its id, author, date and
+    /// thread stay.
+    EditComment {
+        /// `w:id` of the comment.
+        comment_id: u32,
+        /// New text; `\n` starts a new line.
+        text: String,
+    },
+    /// Remove comment `comment_id`, its replies, their range markers and
+    /// references.
+    DeleteComment {
+        /// `w:id` of the comment.
+        comment_id: u32,
+    },
+    /// Insert a table next to the anchor paragraph. Each cell holds one
+    /// paragraph in the anchor's paragraph style; the redline shows the
+    /// rows inserted. Body paragraphs outside tables only.
+    InsertTable {
+        /// Anchor paragraph; must match exactly one.
+        paragraph: Selector,
+        #[serde(default)]
+        /// Which side of the anchor paragraph.
+        position: Side,
+        /// Cell text, row by row; every row has the same number of cells.
+        rows: Vec<Vec<String>>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        /// Mark the first row as a header row that repeats on each page.
+        header_row: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Column widths in twentieths of a point; the text width split
+        /// evenly when omitted.
+        widths_dxa: Option<Vec<u32>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Table style, by id or name; `TableGrid` (added when the document
+        /// lacks it) when omitted.
+        style: Option<String>,
+    },
+    /// Make the paragraphs a list: each gets direct numbering at `level`,
+    /// and `ListParagraph` when it has no style. The redline records each
+    /// paragraph's old properties (`w:pPrChange`).
+    List {
+        /// Paragraphs to number, each selector matching exactly one; body
+        /// only.
+        paragraphs: Vec<Selector>,
+        #[serde(default)]
+        /// Bullets, decimal numbers or lowercase letters.
+        kind_of_list: ListKind,
+        #[serde(default)]
+        /// List level, 0 (outermost) to 8.
+        level: u32,
+        #[serde(default = "default_true")]
+        /// Start a new list (true), or continue the list of the nearest
+        /// numbered paragraph before the first one, in that list's format.
+        restart: bool,
+    },
+    /// Write Word's own text watermark (Insert > Watermark) into every
+    /// default header, creating a header where the first section has none.
+    /// One per document. It is header content, not a tracked change: the
+    /// clean copy and the redline both carry it.
+    Watermark {
+        /// The watermark text, plain, 1 to 64 characters.
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Fill colour, six hex digits (default `C0C0C0`).
+        color: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Diagonal at 315 degrees (default); `false` lays it horizontal.
+        diagonal: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Font family (default `Calibri`).
+        font: Option<String>,
+    },
+    /// Fill one content control (`w:sdt`) in the body with exactly one of
+    /// `text`, `choice`, `checked` or `date`. The control keeps its
+    /// properties; its content becomes the value.
+    FillControl {
+        /// The control: `"body:sdt:N"`, `{"id"}`, `{"tag"}` or `{"alias"}`;
+        /// must match exactly one.
+        control: ControlSelector,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Plain text, for text, rich-text and combo-box controls.
+        text: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// A list item's value or display text, for drop-down and combo-box
+        /// controls; the display text is written.
+        choice: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Checkbox state.
+        checked: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// `YYYY-MM-DD`, for date controls; written in the control's format.
+        date: Option<String>,
+    },
+    /// Change the run formatting of one occurrence of existing text; the
+    /// redline records the old formatting (`w:rPrChange`).
+    FormatRun {
+        /// Paragraph to format; must match exactly one.
+        paragraph: Selector,
+        /// Exact text to format.
+        find: String,
+        /// Formatting to set; fields not given stay as they are.
+        format: RunFormat,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Which occurrence of `find` (1-based) when it occurs more than once.
+        occurrence: Option<usize>,
+    },
+    /// Insert a footnote whose reference mark follows one occurrence of
+    /// `after`; the note goes in the footnotes part, created when absent.
+    InsertFootnote {
+        /// Body paragraph to edit; must match exactly one.
+        paragraph: Selector,
+        /// The reference mark goes right after this anchor text.
+        after: String,
+        /// Plain text of the note.
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Which occurrence of `after` (1-based) when it occurs more than once.
+        occurrence: Option<usize>,
+    },
+    /// Insert a paragraph holding one inline picture next to the anchor
+    /// paragraph. PNG, JPEG, GIF, BMP or TIFF.
+    InsertImage {
+        /// Body paragraph the picture goes next to; must match exactly one.
+        paragraph: Selector,
+        #[serde(default)]
+        /// Which side of the anchor paragraph.
+        position: Side,
+        /// The picture file, base64-encoded.
+        image_base64: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// The picture's media type; checked against its bytes when given.
+        content_type: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Width in EMU (914400 per inch); the height keeps the aspect
+        /// ratio. Default: the pixel size at 96 dpi, at most 6.5 inches.
+        width_emu: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Alternative text (`wp:docPr descr`).
+        alt: Option<String>,
+    },
+    /// Set the page size, orientation and margins of the last section or of
+    /// every section; the redline records the old ones (`w:sectPrChange`).
+    /// At least one of `page`, `orientation`, `margins_dxa`.
+    PageSetup {
+        #[serde(default)]
+        /// `last` (default) or `all`.
+        section: SectionScope,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// `letter`, `a4`, or `{"width_dxa", "height_dxa"}`.
+        page: Option<PageSize>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// `portrait` or `landscape`.
+        orientation: Option<Orientation>,
+        #[serde(default, skip_serializing_if = "is_default_margins")]
+        /// Margins to change, in twentieths of a point.
+        margins_dxa: Margins,
+    },
+    /// Insert a table of contents next to the anchor paragraph: a `TOC \o
+    /// "1-{levels}" \h \z \u` field, after an optional title paragraph
+    /// styled `TOCHeading`. Its entries are written when the plan sets
+    /// `update_fields`; otherwise the field is empty until Word updates it.
+    InsertToc {
+        /// Paragraph to insert next to; must match exactly one, in the body.
+        paragraph: Selector,
+        #[serde(default)]
+        /// Which side of the anchor paragraph.
+        position: Side,
+        #[serde(default = "default_toc_levels")]
+        /// Heading levels listed, 1 to 9 (default 3).
+        levels: u8,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Title paragraph above the TOC (`"Contents"`).
+        title: Option<String>,
+    },
+    /// Replace one occurrence of `find` with one full block
+    /// (U+2588) per character, untracked: the clean copy and the redline
+    /// both show the blocks and neither keeps the text. The plan is refused
+    /// with `REDACTION_LEAK` when the text still occurs anywhere in either
+    /// output, and the report never repeats it.
+    Redact {
+        /// Paragraph to redact in; must match exactly one.
+        paragraph: Selector,
+        /// Exact text to remove.
+        find: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Which occurrence of `find` (1-based) when it occurs more than once.
+        occurrence: Option<usize>,
+    },
+    /// Write document settings into `word/settings.xml` in schema order:
+    /// Track Changes, update fields on open, editing restrictions. Settings
+    /// are not revisions: the clean copy and the redline both carry them.
+    /// One per plan; a setting left out stays as it is.
+    Settings {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Turn Track Changes on (`w:trackRevisions`) or off.
+        track_revisions: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Ask Word to update fields on open (`w:updateFields`), or not. The
+        /// plan's own `update_fields` writes jubarte's results instead.
+        update_fields: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Restrict editing (`w:documentProtection`); `edit: none` lifts it.
+        protection: Option<crate::settings::Protection>,
+    },
+}
+
+fn default_toc_levels() -> u8 {
+    3
+}
+
+fn is_default_margins(margins: &Margins) -> bool {
+    *margins == Margins::default()
+}
+
+fn resolve_done() -> bool {
+    true
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// The numbering of a [`OperationKind::List`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ListKind {
+    #[default]
+    /// `•`, `◦`, `▪` by level.
+    Bullet,
+    /// `1.`, `2.`, ...
+    Decimal,
+    /// `a.`, `b.`, ...
+    LowerLetter,
+}
+
+impl ListKind {
+    fn format(self) -> crate::markdown::xml::ListFormat {
+        use crate::markdown::xml::ListFormat;
+        match self {
+            Self::Bullet => ListFormat::Bullet,
+            Self::Decimal => ListFormat::Decimal,
+            Self::LowerLetter => ListFormat::LowerLetter,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Bullet => "bullet",
+            Self::Decimal => "decimal",
+            Self::LowerLetter => "lower_letter",
+        }
+    }
 }
 
 /// Line spacing, stored as `w:line` (240 = single); JSON is the multiple.
@@ -341,6 +669,43 @@ pub struct RunFormat {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     /// Highlight color name (`yellow`, ...) or `none`.
     pub highlight: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Font name, set for every script (`w:rFonts`).
+    pub font: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Font size in points, rounded to half points.
+    pub size_pt: Option<HalfPoints>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Text colour as six hex digits (`FF0000`) or `auto`.
+    pub color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Set or clear single strikethrough.
+    pub strike: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Set or clear all caps.
+    pub caps: Option<bool>,
+}
+
+/// A font size stored in half points (`w:sz`); JSON is points.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HalfPoints(pub u32);
+
+impl Serialize for HalfPoints {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_f64(f64::from(self.0) / 2.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for HalfPoints {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let points = f64::deserialize(d)?;
+        if !points.is_finite() || !(0.0..=1638.0).contains(&points) {
+            return Err(serde::de::Error::custom(format!(
+                "size_pt {points} is outside 0..=1638"
+            )));
+        }
+        Ok(Self((points * 2.0).round() as u32))
+    }
 }
 
 /// Paragraph edge for an insertion without a text anchor.
@@ -432,6 +797,7 @@ impl RunSpec {
             italic: self.italic,
             underline: self.underline,
             highlight: self.highlight.clone(),
+            ..RunFormat::default()
         }
     }
 }
@@ -523,6 +889,9 @@ pub struct EditReport {
     pub comments_added: usize,
     /// Zero until the redline exists (a preview never compares).
     pub revisions: RevisionCounts,
+    /// Fields whose results `update_fields` wrote into the clean copy.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<crate::fields::FieldUpdate>,
 }
 
 impl EditReport {
@@ -773,12 +1142,27 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
         };
         let kind = map.get("kind").and_then(|k| k.as_str()).unwrap_or("");
         let allowed: &[&str] = match kind {
-            "replace" => &["find", "replacement", "format", "comment", "whole"],
-            "insert" => &["after", "before", "position", "text", "format", "comment"],
-            "delete" => &["find"],
-            "comment" => &["find", "text"],
-            "insert_paragraph" => &["position", "runs", "style", "comment"],
-            "delete_paragraph" => &[],
+            "replace" => &[
+                "find",
+                "replacement",
+                "format",
+                "comment",
+                "whole",
+                "occurrence",
+            ],
+            "insert" => &[
+                "after",
+                "before",
+                "position",
+                "text",
+                "format",
+                "comment",
+                "occurrence",
+            ],
+            "delete" => &["find", "occurrence"],
+            "comment" => &["find", "text", "through", "occurrence"],
+            "insert_paragraph" => &["position", "runs", "like", "style", "comment"],
+            "delete_paragraph" => &["comment"],
             "format_paragraph" => &[
                 "style",
                 "alignment",
@@ -787,6 +1171,53 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
                 "space_after",
             ],
             "merge_paragraphs" => &["separator"],
+            "rewrite" => &["text"],
+            "reply_comment" => &["comment_id", "text"],
+            "resolve_comment" => &["comment_id", "done"],
+            "edit_comment" => &["comment_id", "text"],
+            "delete_comment" => &["comment_id"],
+            "insert_table" => &["position", "rows", "header_row", "widths_dxa", "style"],
+            "list" if map.contains_key("paragraph") => {
+                return Err(err(
+                    "INVALID_PLAN",
+                    None,
+                    format!("operations[{i}] (list): takes paragraphs, not paragraph"),
+                ));
+            }
+            "list" => &["paragraphs", "kind_of_list", "level", "restart"],
+            "watermark" => {
+                if map.contains_key("paragraph") {
+                    return Err(err(
+                        "INVALID_PLAN",
+                        None,
+                        format!("operations[{i}] (watermark): a watermark takes no paragraph"),
+                    ));
+                }
+                &["text", "color", "diagonal", "font"]
+            }
+            "fill_control" => &["control", "text", "choice", "checked", "date"],
+            "format_run" => &["find", "format", "occurrence"],
+            "insert_footnote" => &["after", "text", "occurrence"],
+            "insert_image" => &[
+                "position",
+                "image_base64",
+                "content_type",
+                "width_emu",
+                "alt",
+            ],
+            "page_setup" => &["section", "page", "orientation", "margins_dxa"],
+            "insert_toc" => &["position", "levels", "title"],
+            "redact" => &["find", "occurrence"],
+            "settings" => {
+                if map.contains_key("paragraph") {
+                    return Err(err(
+                        "INVALID_PLAN",
+                        None,
+                        format!("operations[{i}] (settings): settings take no paragraph"),
+                    ));
+                }
+                &["track_revisions", "update_fields", "protection"]
+            }
             other => {
                 return Err(err(
                     "INVALID_PLAN",
@@ -795,6 +1226,20 @@ fn check_operation_keys(plan: &serde_json::Value) -> Result<(), EditError> {
                 ));
             }
         };
+        if kind == "fill_control" && map.contains_key("paragraph") {
+            return Err(err(
+                "INVALID_PLAN",
+                None,
+                format!("operations[{i}] (fill_control): selects a control, not a paragraph"),
+            ));
+        }
+        if kind == "page_setup" && map.contains_key("paragraph") {
+            return Err(err(
+                "INVALID_PLAN",
+                None,
+                format!("operations[{i}] (page_setup): sections take no paragraph"),
+            ));
+        }
         for key in map.keys() {
             if !COMMON.contains(&key.as_str()) && !allowed.contains(&key.as_str()) {
                 return Err(err(
@@ -815,23 +1260,51 @@ pub fn apply_plan_json(source: &[u8], plan_json: &str) -> Result<EditResult, Edi
 
 /// Resolve and apply the plan; compare source and copy into a redline.
 pub fn apply_plan(source: &[u8], plan: &EditPlan) -> Result<EditResult, EditError> {
+    check_update_fields(plan)?;
     let mut tx = Transaction::start(source, plan)?;
     tx.resolve()?;
+    tracked::check(&tx)?;
     tx.apply()?;
-    let (clean, marked) = tx.finish()?;
+    let (mut clean, mut marked) = tx.finish()?;
+    if plan.existing_revisions == ExistingRevisions::Keep {
+        let result = tracked::result(&tx, clean)?;
+        tx.check_redactions(&[&result.clean, &result.redline])?;
+        return Ok(result);
+    }
+    let mut fields = Vec::new();
+    if plan.update_fields {
+        let refresh = |bytes: &[u8]| {
+            crate::fields::update_fields(bytes)
+                .map_err(|e| err("FIELDS_FAILED", None, e.to_string()))
+        };
+        let updated = refresh(&clean)?;
+        clean = updated.docx;
+        fields = updated.fields;
+        if let Some(bytes) = &marked {
+            marked = Some(refresh(bytes)?.docx);
+        }
+    }
     let settings = WmlComparerSettings {
         author_for_revisions: plan.author.clone(),
         date_time_for_revisions: tx.date.clone(),
         ..WmlComparerSettings::default()
     };
     let revised = marked.as_deref().unwrap_or(&clean);
+    let base = tx.commented_base()?;
     let mut redline =
-        crate::document_comparer::compare_documents_with_settings(&tx.base, revised, &settings)
+        crate::document_comparer::compare_documents_with_settings(&base, revised, &settings)
             .map_err(|e| err("COMPARE_FAILED", None, e.to_string()))?;
+    if tx
+        .resolved
+        .iter()
+        .any(|(_, r)| matches!(r, Resolved::PageSetup { .. }))
+    {
+        redline = sections::record_mid_changes(&redline, &base, &plan.author, &tx.date)?;
+    }
     if marked.is_some() {
         let (rewritten, fallbacks) = whole::rewrite(
             &redline,
-            (&tx.base, revised),
+            (&base, revised),
             &tx.whole_marks,
             &plan.author,
             &tx.date,
@@ -841,11 +1314,31 @@ pub fn apply_plan(source: &[u8], plan: &EditPlan) -> Result<EditResult, EditErro
             tx.outcomes[op].message = Some(format!("shown as a word-level diff: {reason}"));
         }
     }
+    if let Some(&(_, op)) = tx
+        .deletion_comments
+        .iter()
+        .find(|&&(id, _)| comment_holds_kept_text(&redline, id))
+    {
+        let mut error = tx.conflict(
+            op,
+            "the comparer deleted an identical paragraph instead, so the comment would sit on text that stays; delete without a comment, or comment on a neighbouring paragraph",
+        );
+        error.code = "UNSUPPORTED_STRUCTURE".into();
+        error.outcomes[op].code = Some(error.code.clone());
+        return Err(error);
+    }
+    // Settings are not revisions: the redline takes them as they are.
+    if let Some(request) = &tx.settings {
+        redline = crate::settings::apply_settings_to_docx(&redline, request)
+            .map_err(|m| err("PACKAGE_WRITE", None, m))?;
+    }
+    tx.check_redactions(&[&clean, &redline])?;
     let mut report = tx.report(true);
     report.paragraphs.to = crate::inspect::paragraphs(&clean)
         .map(|p| p.len())
         .unwrap_or(report.paragraphs.from);
     report.revisions = revision_counts(&redline, &settings);
+    report.fields = fields;
     Ok(EditResult {
         clean,
         redline,
@@ -853,10 +1346,26 @@ pub fn apply_plan(source: &[u8], plan: &EditPlan) -> Result<EditResult, EditErro
     })
 }
 
+/// `update_fields` refreshes the clean copy the comparer reads. Under
+/// `existing_revisions: "keep"` the redline replays the edits instead, so a
+/// refreshed clean copy would no longer be the accepted redline.
+fn check_update_fields(plan: &EditPlan) -> Result<(), EditError> {
+    if plan.update_fields && plan.existing_revisions == ExistingRevisions::Keep {
+        return Err(err(
+            "INVALID_PLAN",
+            None,
+            "update_fields cannot be combined with existing_revisions \"keep\"; refresh the fields with `jubarte fields update` after accepting or rejecting the kept changes",
+        ));
+    }
+    Ok(())
+}
+
 /// Resolve every operation without producing documents.
 pub fn preview_plan(source: &[u8], plan: &EditPlan) -> Result<EditReport, EditError> {
+    check_update_fields(plan)?;
     let mut tx = Transaction::start(source, plan)?;
     tx.resolve()?;
+    tracked::check(&tx)?;
     let mut report = tx.report(true);
     report.paragraphs.to = report.paragraphs.from;
     Ok(report)
@@ -968,12 +1477,117 @@ enum Resolved {
         side: Side,
         /// Runs of the new paragraph, in order.
         runs: Vec<RunSpec>,
+        /// The paragraph whose properties it copies.
+        like: usize,
         /// Paragraph style id to set instead of the anchor's.
         style: Option<String>,
         /// Comment text anchored to the changed text.
         comment: Option<String>,
+        /// `insert_toc`: the paragraphs are the TOC field (and its title),
+        /// not `runs`.
+        toc: Option<TocSpec>,
+    },
+    InsertTable {
+        anchor: usize,
+        side: Side,
+        rows: Vec<Vec<String>>,
+        header_row: bool,
+        /// One width per column, in twentieths of a point.
+        widths: Vec<u32>,
+        /// Resolved table style id.
+        style: String,
+        /// The style's definition must be added to the styles part.
+        add_style: bool,
+    },
+    List {
+        /// Paragraphs to number, in plan order.
+        paras: Vec<usize>,
+        kind: ListKind,
+        level: u32,
+        /// The `w:numId` to continue, or a new list when `None`.
+        join: Option<String>,
+        /// The document's "List Paragraph" style id, for unstyled items.
+        style: String,
+        /// That style's definition must be added to the styles part.
+        add_style: bool,
+    },
+    /// A comment from the start of `para` to the end of `last`.
+    CommentSpan {
+        para: usize,
+        last: usize,
+        /// Comment text.
+        text: String,
+    },
+    /// A reply to, resolution, edit or deletion of an existing comment.
+    Thread {
+        op: ThreadOp,
+        /// Stories whose markers the operation adds to or removes.
+        stories: Vec<usize>,
+        /// Paragraph holding the target comment's reference, when found.
+        anchor: Option<usize>,
+    },
+    FillControl {
+        /// Index into `Transaction::controls`.
+        control: usize,
+        /// The paragraphs it spans (or the one holding it).
+        paragraphs: Vec<usize>,
+        /// The control holds paragraphs rather than runs.
+        block: bool,
+        value: controls::FillValue,
+    },
+    FormatRun {
+        para: usize,
+        start: usize,
+        end: usize,
+        format: RunFormat,
+    },
+    InsertFootnote {
+        para: usize,
+        /// Projection offset the reference mark follows.
+        at: usize,
+        text: String,
+    },
+    InsertImage {
+        anchor: usize,
+        side: Side,
+        picture: crate::markdown::Picture,
+    },
+    PageSetup {
+        targets: sections::Targets,
     },
 }
+
+/// What a thread operation does to an existing comment.
+#[derive(Clone, Debug)]
+enum ThreadOp {
+    Reply { parent: u32, text: String },
+    Resolve { id: u32, done: bool },
+    Edit { id: u32, text: String },
+    Delete { id: u32 },
+}
+
+impl ThreadOp {
+    /// The existing comment the operation acts on.
+    fn target(&self) -> u32 {
+        match self {
+            ThreadOp::Reply { parent: id, .. }
+            | ThreadOp::Resolve { id, .. }
+            | ThreadOp::Edit { id, .. }
+            | ThreadOp::Delete { id } => *id,
+        }
+    }
+}
+
+/// A resolved `insert_toc`.
+#[derive(Clone, Debug)]
+struct TocSpec {
+    levels: u8,
+    title: Option<String>,
+}
+
+/// What resolving an operation gives: its resolved form and outcome, or the
+/// error with the outcome so far.
+type Resolution<T> = Result<(T, EditOutcome), Box<(EditError, EditOutcome)>>;
 
 struct Transaction<'p> {
     plan: &'p EditPlan,
@@ -994,11 +1608,33 @@ struct Transaction<'p> {
     outcomes: Vec<EditOutcome>,
     resolved: Vec<(usize, Resolved)>,
     comments: Vec<(u32, String)>,
+    /// `(comment id, operation)` of each commented paragraph deletion.
+    deletion_comments: Vec<(u32, usize)>,
+    /// Ids new comments take, last first, before `next_comment_id`.
+    preset_comment_ids: Vec<u32>,
     /// One past the highest source comment id; u64 so it cannot overflow.
     next_comment_id: u64,
     comments_added: usize,
     /// Helper bookmarks around `whole` replacements, one per operation.
     whole_marks: Vec<whole::Mark>,
+    /// `w:abstractNum` and `w:num` elements new lists add.
+    new_numbering: (Vec<String>, Vec<String>),
+    /// Style definitions the edits need (`ListParagraph`).
+    needed_styles: std::collections::BTreeSet<String>,
+    /// The source's comment part family; taken when the parts are written.
+    family: Option<crate::comments::CommentFamily>,
+    /// Comment replied to, by the reply's new id.
+    reply_parents: BTreeMap<u32, u32>,
+    /// The plan's watermark, written into the default headers at finish.
+    watermark: Option<watermark::Spec>,
+    /// The body's content controls, `body:sdt:N` order.
+    controls: Vec<NodeId>,
+    /// What `inspect` reports for each of `controls`.
+    control_records: Vec<crate::inspect::ContentControl>,
+    /// The footnotes story when `insert_footnote` added notes to it.
+    notes_story: Option<usize>,
+    /// The plan's settings, written into the settings part at finish.
+    settings: Option<crate::settings::SettingsRequest>,
 }
 
 /// The body, or a header, footer or notes part, parsed into the plan's DOM.
@@ -1061,12 +1697,12 @@ impl<'p> Transaction<'p> {
         let has_revisions =
             crate::inspect::revision_count(&probe.dom, probe.body) + story_revisions > 0;
         let (base, mut opened) = match (has_revisions, plan.existing_revisions) {
-            (false, _) => (source.to_vec(), probe),
+            (false, _) | (true, ExistingRevisions::Keep) => (source.to_vec(), probe),
             (true, ExistingRevisions::Refuse) => {
                 return Err(err(
                     "EXISTING_REVISIONS",
                     None,
-                    "the document already holds tracked changes; set existing_revisions to accept or reject",
+                    "the document already holds tracked changes; set existing_revisions to keep, accept or reject",
                 ));
             }
             (true, policy) => {
@@ -1081,7 +1717,7 @@ impl<'p> Transaction<'p> {
         };
         let base_sha256 = source_sha256(&base);
         let mut stories = vec![StoryPart {
-            id: "body".to_string(),
+            id: BODY_STORY.to_string(),
             part: opened.main.clone(),
             document: opened.document,
             root: opened.body,
@@ -1134,6 +1770,10 @@ impl<'p> Transaction<'p> {
                 .to_uppercase()
         });
         let next_comment_id = existing_comment_ids(&opened).map_or(0, |max| u64::from(max) + 1);
+        let controls = crate::inspect::body_control_nodes(&opened.dom, opened.body);
+        let control_records = crate::inspect::collect_controls(&opened.dom, opened.body);
+        let family = crate::comments::CommentFamily::load(&opened.pkg, &opened.main)
+            .map_err(|m| err("INVALID_DOCUMENT", None, m))?;
         Ok(Self {
             plan,
             source_sha256: source_hash,
@@ -1150,9 +1790,20 @@ impl<'p> Transaction<'p> {
             outcomes: Vec::new(),
             resolved: Vec::new(),
             comments: Vec::new(),
+            deletion_comments: Vec::new(),
+            preset_comment_ids: Vec::new(),
             next_comment_id,
             comments_added: 0,
             whole_marks: Vec::new(),
+            new_numbering: (Vec::new(), Vec::new()),
+            needed_styles: std::collections::BTreeSet::new(),
+            family: Some(family),
+            reply_parents: BTreeMap::new(),
+            watermark: None,
+            controls,
+            control_records,
+            notes_story: None,
+            settings: None,
         })
     }
 
@@ -1174,6 +1825,7 @@ impl<'p> Transaction<'p> {
             operations: self.outcomes.clone(),
             comments_added: self.comments_added,
             revisions: RevisionCounts::default(),
+            fields: Vec::new(),
         }
     }
 
@@ -1184,13 +1836,111 @@ impl<'p> Transaction<'p> {
         for (i, op) in self.plan.operations.iter().enumerate() {
             let id = op.id.clone().unwrap_or_else(|| format!("op-{}", i + 1));
             let kind = kind_name(&op.kind).to_string();
-            match self.resolve_one(&id, &op.kind) {
+            let result = match &op.kind {
+                OperationKind::Rewrite { paragraph, text } => {
+                    self.resolve_rewrite(&id, paragraph, text)
+                }
+                OperationKind::List {
+                    paragraphs,
+                    kind_of_list,
+                    level,
+                    restart,
+                } => self
+                    .resolve_list(&id, paragraphs, *kind_of_list, *level, *restart)
+                    .map(|(resolved, outcome)| (vec![resolved], outcome)),
+                OperationKind::PageSetup {
+                    section,
+                    page,
+                    orientation,
+                    margins_dxa,
+                } => {
+                    let mut outcome = EditOutcome {
+                        id: id.clone(),
+                        kind: String::new(),
+                        status: String::new(),
+                        paragraph: None,
+                        matches: 0,
+                        context: None,
+                        comment_id: None,
+                        code: None,
+                        message: None,
+                    };
+                    match self.resolve_page_setup(
+                        *section,
+                        *page,
+                        *orientation,
+                        *margins_dxa,
+                        &mut outcome,
+                    ) {
+                        Ok(targets) => {
+                            outcome.context = Some(format!("{{§ {} section(s)}}", targets.len()));
+                            Ok((vec![Resolved::PageSetup { targets }], outcome))
+                        }
+                        Err((code, message)) => {
+                            Err(Box::new((err(&code, Some(&id), message), outcome)))
+                        }
+                    }
+                }
+                OperationKind::ReplyComment { .. }
+                | OperationKind::ResolveComment { .. }
+                | OperationKind::EditComment { .. }
+                | OperationKind::DeleteComment { .. } => self
+                    .resolve_thread(&id, &op.kind)
+                    .map(|(resolved, outcome)| (vec![resolved], outcome)),
+                OperationKind::Watermark {
+                    text,
+                    color,
+                    diagonal,
+                    font,
+                } => self
+                    .resolve_watermark(&id, (text, color.as_deref(), *diagonal, font.as_deref()))
+                    .map(|(spec, outcome)| {
+                        self.watermark = Some(spec);
+                        (Vec::new(), outcome)
+                    }),
+                OperationKind::FillControl {
+                    control,
+                    text,
+                    choice,
+                    checked,
+                    date,
+                } => self.resolve_fill_control(
+                    &id,
+                    &controls::FillRequest {
+                        control,
+                        text: text.as_deref(),
+                        choice: choice.as_deref(),
+                        checked: *checked,
+                        date: date.as_deref(),
+                    },
+                ),
+                OperationKind::Settings {
+                    track_revisions,
+                    update_fields,
+                    protection,
+                } => {
+                    let request = crate::settings::SettingsRequest {
+                        track_revisions: *track_revisions,
+                        update_fields: *update_fields,
+                        protection: protection.clone(),
+                    };
+                    self.resolve_settings(&id, &request).map(|outcome| {
+                        self.settings = Some(request);
+                        (Vec::new(), outcome)
+                    })
+                }
+                other => self
+                    .resolve_one(&id, other)
+                    .map(|(resolved, outcome)| (vec![resolved], outcome)),
+            };
+            match result {
                 Ok((resolved, mut outcome)) => {
                     outcome.id = id;
                     outcome.kind = kind;
                     outcome.status = "ok".into();
                     self.outcomes.push(outcome);
-                    self.resolved.push((i, resolved));
+                    self.resolved
+                        .extend(resolved.into_iter().map(|resolved| (i, resolved)));
                 }
                 Err(boxed) => {
                     let (mut e, outcome) = *boxed;
@@ -1240,9 +1990,61 @@ impl<'p> Transaction<'p> {
             | OperationKind::Delete { paragraph, .. }
             | OperationKind::Comment { paragraph, .. }
             | OperationKind::InsertParagraph { paragraph, .. }
-            | OperationKind::DeleteParagraph { paragraph }
+            | OperationKind::DeleteParagraph { paragraph, .. }
             | OperationKind::FormatParagraph { paragraph, .. }
-            | OperationKind::MergeParagraphs { paragraph, .. } => paragraph,
+            | OperationKind::MergeParagraphs { paragraph, .. }
+            | OperationKind::Rewrite { paragraph, .. }
+            | OperationKind::InsertTable { paragraph, .. }
+            | OperationKind::InsertToc { paragraph, .. }
+            | OperationKind::FormatRun { paragraph, .. }
+            | OperationKind::InsertFootnote { paragraph, .. }
+            | OperationKind::InsertImage { paragraph, .. }
+            | OperationKind::Redact { paragraph, .. } => paragraph,
+            OperationKind::List { .. } => {
+                return Err(fail(
+                    "INVALID_PLAN",
+                    "list resolves through resolve_list".into(),
+                    outcome,
+                ));
+            }
+            OperationKind::PageSetup { .. } => {
+                return Err(fail(
+                    "INVALID_PLAN",
+                    "page_setup resolves through resolve_page_setup".into(),
+                    outcome,
+                ));
+            }
+            OperationKind::ReplyComment { .. }
+            | OperationKind::ResolveComment { .. }
+            | OperationKind::EditComment { .. }
+            | OperationKind::DeleteComment { .. } => {
+                return Err(fail(
+                    "INVALID_PLAN",
+                    "thread operations resolve through resolve_thread".into(),
+                    outcome,
+                ));
+            }
+            OperationKind::Watermark { .. } => {
+                return Err(fail(
+                    "INVALID_PLAN",
+                    "watermark resolves through resolve_watermark".into(),
+                    outcome,
+                ));
+            }
+            OperationKind::FillControl { .. } => {
+                return Err(fail(
+                    "INVALID_PLAN",
+                    "fill_control resolves through resolve_fill_control".into(),
+                    outcome,
+                ));
+            }
+            OperationKind::Settings { .. } => {
+                return Err(fail(
+                    "INVALID_PLAN",
+                    "settings resolve through resolve_settings".into(),
+                    outcome,
+                ));
+            }
         };
         let para = match self.select(selector) {
             Ok(p) => p,
@@ -1252,6 +2054,28 @@ impl<'p> Transaction<'p> {
             }
         };
         outcome.paragraph = Some(self.paragraph_id(para));
+        // `occurrence` picks a hit of an anchor; with no anchor it would be
+        // silently ignored.
+        let anchorless = matches!(
+            kind,
+            OperationKind::Insert {
+                after: None,
+                before: None,
+                occurrence: Some(_),
+                ..
+            } | OperationKind::Comment {
+                find: None,
+                occurrence: Some(_),
+                ..
+            }
+        );
+        if anchorless {
+            return Err(fail(
+                "INVALID_EDIT",
+                "occurrence needs an anchor: give find, after or before".into(),
+                outcome,
+            ));
+        }
         let comments = match kind {
             OperationKind::Replace { comment, .. }
             | OperationKind::Insert { comment, .. }
@@ -1261,8 +2085,8 @@ impl<'p> Transaction<'p> {
         };
         if comments && self.paragraph_story[para].0 != 0 {
             return Err(fail(
-                "UNSUPPORTED_STRUCTURE",
-                "comments are supported in the body only".into(),
+                "COMMENT_NOT_IN_BODY",
+                "comments are supported in the body only: Word cannot anchor one in a header, footer or note".into(),
                 outcome,
             ));
         }
@@ -1274,6 +2098,7 @@ impl<'p> Transaction<'p> {
                 replacement,
                 format,
                 comment,
+                occurrence,
                 ..
             } => {
                 check_text(replacement).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
@@ -1285,7 +2110,7 @@ impl<'p> Transaction<'p> {
                     check_comment(note).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
                 }
                 let (start, end) = self
-                    .find_range(projection, find, &mut outcome)
+                    .find_range(projection, find, *occurrence, &mut outcome)
                     .map_err(|(c, m)| fail(&c, m, outcome.clone()))?;
                 outcome.context = Some(context(
                     text,
@@ -1306,9 +2131,34 @@ impl<'p> Transaction<'p> {
                     outcome,
                 ))
             }
-            OperationKind::Delete { find, .. } => {
+            OperationKind::Redact {
+                find, occurrence, ..
+            } => {
+                // Refusals name the text by its place, never by itself.
+                let hide = |m: String| m.replace(&format!("{find:?}"), "the text to redact");
                 let (start, end) = self
-                    .find_range(projection, find, &mut outcome)
+                    .find_range(projection, find, *occurrence, &mut outcome)
+                    .map_err(|(c, m)| fail(&c, hide(m), outcome.clone()))?;
+                let blocks = redaction(find);
+                outcome.context = Some(context(text, start, end, &format!("{{{blocks}}}")));
+                Ok((
+                    Resolved::Text {
+                        para,
+                        start,
+                        end,
+                        replacement: blocks,
+                        comment: None,
+                        attach_before: true,
+                        format: None,
+                    },
+                    outcome,
+                ))
+            }
+            OperationKind::Delete {
+                find, occurrence, ..
+            } => {
+                let (start, end) = self
+                    .find_range(projection, find, *occurrence, &mut outcome)
                     .map_err(|(c, m)| fail(&c, m, outcome.clone()))?;
                 outcome.context = Some(context(
                     text,
@@ -1336,6 +2186,7 @@ impl<'p> Transaction<'p> {
                 text: new,
                 format,
                 comment,
+                occurrence,
                 ..
             } => {
                 check_text(new).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
@@ -1356,13 +2207,13 @@ impl<'p> Transaction<'p> {
                 let (pos, attach_before) = match (after, before, position) {
                     (Some(after), None, None) => {
                         let (_, end) = self
-                            .find_range(projection, after, &mut outcome)
+                            .find_range(projection, after, *occurrence, &mut outcome)
                             .map_err(|(c, m)| fail(&c, m, outcome.clone()))?;
                         (end, true)
                     }
                     (None, Some(before), None) => {
                         let (start, _) = self
-                            .find_range(projection, before, &mut outcome)
+                            .find_range(projection, before, *occurrence, &mut outcome)
                             .map_err(|(c, m)| fail(&c, m, outcome.clone()))?;
                         (start, false)
                     }
@@ -1399,12 +2250,62 @@ impl<'p> Transaction<'p> {
                 ))
             }
             OperationKind::Comment {
-                find, text: note, ..
+                find,
+                text: note,
+                through: Some(through),
+                ..
+            } => {
+                check_comment(note).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+                if find.is_some() {
+                    return Err(fail(
+                        "INVALID_EDIT",
+                        "find and through cannot be combined: through comments on whole paragraphs"
+                            .into(),
+                        outcome,
+                    ));
+                }
+                let last = match self.select(through) {
+                    Ok(p) => p,
+                    Err((code, msg, matches)) => {
+                        outcome.matches = matches;
+                        return Err(fail(&code, format!("through: {msg}"), outcome));
+                    }
+                };
+                if self.paragraph_story[last].0 != self.paragraph_story[para].0 || last < para {
+                    return Err(fail(
+                        "INVALID_EDIT",
+                        format!(
+                            "through ({}) must be in the same story as paragraph and not before it",
+                            self.paragraph_id(last)
+                        ),
+                        outcome,
+                    ));
+                }
+                outcome.matches = 1;
+                outcome.context = Some(format!(
+                    "{{#{} ... {}}}",
+                    self.paragraph_id(para),
+                    self.paragraph_id(last)
+                ));
+                Ok((
+                    Resolved::CommentSpan {
+                        para,
+                        last,
+                        text: note.clone(),
+                    },
+                    outcome,
+                ))
+            }
+            OperationKind::Comment {
+                find,
+                text: note,
+                occurrence,
+                ..
             } => {
                 check_comment(note).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
                 let (start, end) = match find {
                     Some(find) => self
-                        .find_range(projection, find, &mut outcome)
+                        .find_range(projection, find, *occurrence, &mut outcome)
                         .map_err(|(c, m)| fail(&c, m, outcome.clone()))?,
                     None => {
                         outcome.matches = 1;
@@ -1431,8 +2332,15 @@ impl<'p> Transaction<'p> {
                     outcome,
                 ))
             }
-            OperationKind::DeleteParagraph { .. } => {
+            OperationKind::DeleteParagraph { comment, .. } => {
                 outcome.matches = 1;
+                if let Some(note) = comment {
+                    check_comment(note).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+                    if !text.is_empty() {
+                        self.check_range(projection, 0, text.len())
+                            .map_err(|m| fail("UNSUPPORTED_STRUCTURE", m, outcome.clone()))?;
+                    }
+                }
                 let node = self.paragraph_nodes[para];
                 let dom = &self.opened.dom;
                 if !dom.descendants(node, Some(&W::sect_pr())).is_empty() {
@@ -1463,14 +2371,135 @@ impl<'p> Transaction<'p> {
                 outcome.context = Some(format!("{{-¶ {}}}", excerpt(text, 60)));
                 Ok((Resolved::DeleteParagraph { para }, outcome))
             }
+            OperationKind::FormatRun {
+                find,
+                format,
+                occurrence,
+                ..
+            } => {
+                let (start, end) = self
+                    .resolve_format_run(projection, find, *occurrence, format, &mut outcome)
+                    .map_err(|(c, m)| fail(&c, m, outcome.clone()))?;
+                outcome.context = Some(context(
+                    text,
+                    start,
+                    end,
+                    &format!("{{~{}}}", &text[start..end]),
+                ));
+                Ok((
+                    Resolved::FormatRun {
+                        para,
+                        start,
+                        end,
+                        format: format.clone(),
+                    },
+                    outcome,
+                ))
+            }
+            OperationKind::InsertFootnote {
+                after,
+                text: note,
+                occurrence,
+                ..
+            } => {
+                let at = self
+                    .resolve_footnote(para, projection, after, *occurrence, note, &mut outcome)
+                    .map_err(|(c, m)| fail(&c, m, outcome.clone()))?;
+                outcome.context = Some(context(
+                    text,
+                    at,
+                    at,
+                    &format!("{{^{}}}", excerpt(note, 40)),
+                ));
+                Ok((
+                    Resolved::InsertFootnote {
+                        para,
+                        at,
+                        text: note.clone(),
+                    },
+                    outcome,
+                ))
+            }
+            OperationKind::InsertImage {
+                position,
+                image_base64,
+                content_type,
+                width_emu,
+                alt,
+                ..
+            } => {
+                outcome.matches = 1;
+                if self.paragraph_story[para].0 != 0 {
+                    return Err(fail(
+                        "UNSUPPORTED_STRUCTURE",
+                        "pictures can be inserted in the body only".into(),
+                        outcome,
+                    ));
+                }
+                let picture = images::picture(
+                    image_base64,
+                    content_type.as_deref(),
+                    *width_emu,
+                    alt.as_deref().unwrap_or_default(),
+                )
+                .map_err(|(c, m)| fail(&c, m, outcome.clone()))?;
+                outcome.context = Some(format!(
+                    "{{+¶ picture {} {}x{} EMU}} {}",
+                    picture.content_type,
+                    picture.width,
+                    picture.height,
+                    excerpt(text, 40)
+                ));
+                Ok((
+                    Resolved::InsertImage {
+                        anchor: para,
+                        side: *position,
+                        picture,
+                    },
+                    outcome,
+                ))
+            }
+            OperationKind::Rewrite { .. }
+            | OperationKind::List { .. }
+            | OperationKind::ReplyComment { .. }
+            | OperationKind::ResolveComment { .. }
+            | OperationKind::EditComment { .. }
+            | OperationKind::DeleteComment { .. }
+            | OperationKind::PageSetup { .. } => Err(fail(
+                "INVALID_PLAN",
+                "rewrite, list, page_setup and thread operations resolve on their own paths".into(),
+                outcome,
+            )),
+            OperationKind::Watermark { .. } => Err(fail(
+                "INVALID_PLAN",
+                "watermark resolves through resolve_watermark".into(),
+                outcome,
+            )),
+            OperationKind::FillControl { .. } => Err(fail(
+                "INVALID_PLAN",
+                "fill_control resolves through resolve_fill_control".into(),
+                outcome,
+            )),
+            OperationKind::Settings { .. } => Err(fail(
+                "INVALID_PLAN",
+                "settings resolve through resolve_settings".into(),
+                outcome,
+            )),
             OperationKind::InsertParagraph {
                 position,
                 runs,
+                like,
                 style,
                 comment,
                 ..
             } => {
                 outcome.matches = 1;
+                let like = match like {
+                    Some(selector) => self.select(selector).map_err(|(code, msg, _)| {
+                        fail(&code, format!("like: {msg}"), outcome.clone())
+                    })?,
+                    None => para,
+                };
                 if runs.is_empty() || runs.iter().all(|r| r.text.is_empty()) {
                     return Err(fail("INVALID_EDIT", "runs must carry text".into(), outcome));
                 }
@@ -1496,8 +2525,10 @@ impl<'p> Transaction<'p> {
                         anchor: para,
                         side: *position,
                         runs: runs.clone(),
+                        like,
                         style,
                         comment: comment.clone(),
+                        toc: None,
                     },
                     outcome,
                 ))
@@ -1586,12 +2617,447 @@ impl<'p> Transaction<'p> {
                     outcome,
                 ))
             }
+            OperationKind::InsertTable {
+                position,
+                rows,
+                header_row,
+                widths_dxa,
+                style,
+                ..
+            } => {
+                outcome.matches = 1;
+                if self.paragraph_story[para].0 != 0 {
+                    return Err(fail(
+                        "UNSUPPORTED_STRUCTURE",
+                        "insert_table is supported in the body only".into(),
+                        outcome,
+                    ));
+                }
+                let dom = &self.opened.dom;
+                if !dom
+                    .ancestors(self.paragraph_nodes[para], Some(&W::tc()))
+                    .is_empty()
+                {
+                    return Err(fail(
+                        "UNSUPPORTED_STRUCTURE",
+                        "the anchor paragraph is in a table cell; nested tables are not supported"
+                            .into(),
+                        outcome,
+                    ));
+                }
+                let columns = structural::check_rows(rows, widths_dxa.as_deref())
+                    .map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+                let widths = match widths_dxa {
+                    Some(widths) => widths.clone(),
+                    None => {
+                        let each = structural::text_width(dom, self.opened.body)
+                            / u32::try_from(columns).unwrap_or(1);
+                        vec![each; columns]
+                    }
+                };
+                let (style, add_style) = structural::resolve_table_style(
+                    &structural::table_styles(&self.opened),
+                    style.as_deref().unwrap_or("TableGrid"),
+                )
+                .map_err(|m| fail("UNKNOWN_STYLE", m, outcome.clone()))?;
+                outcome.context = Some(format!(
+                    "{{+table {}x{columns}}} {}",
+                    rows.len(),
+                    excerpt(&rows[0].join(" | "), 60)
+                ));
+                Ok((
+                    Resolved::InsertTable {
+                        anchor: para,
+                        side: *position,
+                        rows: rows.clone(),
+                        header_row: *header_row,
+                        widths,
+                        style,
+                        add_style,
+                    },
+                    outcome,
+                ))
+            }
+            OperationKind::InsertToc {
+                position,
+                levels,
+                title,
+                ..
+            } => {
+                outcome.matches = 1;
+                if self.paragraph_story[para].0 != 0 {
+                    return Err(fail(
+                        "UNSUPPORTED_STRUCTURE",
+                        "a table of contents goes in the body".into(),
+                        outcome,
+                    ));
+                }
+                if !(1..=9).contains(levels) {
+                    return Err(fail(
+                        "INVALID_EDIT",
+                        format!("levels {levels} is outside 1..=9"),
+                        outcome,
+                    ));
+                }
+                if let Some(title) = title {
+                    if title.is_empty() {
+                        return Err(fail(
+                            "INVALID_EDIT",
+                            "title must carry text".into(),
+                            outcome,
+                        ));
+                    }
+                    check_text(title).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+                }
+                outcome.context = Some(format!("{{+TOC 1-{levels}}}"));
+                if !self.plan.update_fields {
+                    outcome.message = Some(
+                        "the TOC has no entries until its fields are updated: set \"update_fields\": true, or update fields in Word".into(),
+                    );
+                }
+                Ok((
+                    Resolved::InsertParagraph {
+                        anchor: para,
+                        side: *position,
+                        runs: Vec::new(),
+                        like: para,
+                        style: None,
+                        comment: None,
+                        toc: Some(TocSpec {
+                            levels: *levels,
+                            title: title.clone(),
+                        }),
+                    },
+                    outcome,
+                ))
+            }
         }
     }
 
     /// The paragraph `para` merges with: the next sibling paragraph, with only
     /// range markup (bookmarks, comment ranges, ...) between them. `para`'s
     /// properties are discarded, so it may not carry a section break.
+    /// `reply_comment`, `resolve_comment`, `edit_comment`, `delete_comment`:
+    /// the comment must exist (`UNKNOWN_COMMENT`); a reply needs the
+    /// comment's reference to anchor on.
+    fn resolve_thread(&self, id: &str, kind: &OperationKind) -> Resolution<Resolved> {
+        let mut outcome = EditOutcome {
+            id: id.to_string(),
+            kind: String::new(),
+            status: String::new(),
+            paragraph: None,
+            matches: 0,
+            context: None,
+            comment_id: None,
+            code: None,
+            message: None,
+        };
+        let fail = |code: &str, msg: String, outcome: EditOutcome| {
+            Box::new((err(code, Some(id), msg), outcome))
+        };
+        let op = match kind {
+            OperationKind::ReplyComment { comment_id, text } => ThreadOp::Reply {
+                parent: *comment_id,
+                text: text.clone(),
+            },
+            OperationKind::ResolveComment { comment_id, done } => ThreadOp::Resolve {
+                id: *comment_id,
+                done: *done,
+            },
+            OperationKind::EditComment { comment_id, text } => ThreadOp::Edit {
+                id: *comment_id,
+                text: text.clone(),
+            },
+            OperationKind::DeleteComment { comment_id } => ThreadOp::Delete { id: *comment_id },
+            _ => {
+                return Err(fail(
+                    "INVALID_PLAN",
+                    "not a thread operation".into(),
+                    outcome,
+                ));
+            }
+        };
+        let target = op.target();
+        let family = self.family.as_ref().expect("loaded in start");
+        if !family.contains(target) {
+            return Err(fail(
+                "UNKNOWN_COMMENT",
+                format!("no comment {target} in the document (jubarte comments lists them)"),
+                outcome,
+            ));
+        }
+        if let ThreadOp::Reply { text, .. } | ThreadOp::Edit { text, .. } = &op {
+            check_comment(text).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+        }
+        let ids = match &op {
+            ThreadOp::Delete { id } => family.with_replies(*id),
+            _ => vec![target],
+        };
+        let (stories, reference) = self.comment_markers(&ids, target);
+        let anchor = reference.and_then(|r| {
+            self.opened
+                .dom
+                .ancestors(r, Some(&W::p()))
+                .into_iter()
+                .find_map(|p| self.paragraph_nodes.iter().position(|&n| n == p))
+        });
+        if matches!(op, ThreadOp::Reply { .. }) && reference.is_none() {
+            return Err(fail(
+                "UNSUPPORTED_STRUCTURE",
+                format!("comment {target} has no reference in the document to anchor a reply on"),
+                outcome,
+            ));
+        }
+        outcome.matches = 1;
+        outcome.paragraph = anchor.map(|p| self.paragraph_id(p));
+        if !matches!(op, ThreadOp::Reply { .. }) {
+            outcome.comment_id = Some(target);
+        }
+        outcome.context = Some(format!("comment {target}"));
+        let stories = match op {
+            ThreadOp::Resolve { .. } | ThreadOp::Edit { .. } => Vec::new(),
+            _ => stories,
+        };
+        Ok((
+            Resolved::Thread {
+                op,
+                stories,
+                anchor,
+            },
+            outcome,
+        ))
+    }
+
+    /// Stories holding markers of the comments `ids`, and the reference
+    /// element of comment `target`.
+    fn comment_markers(&self, ids: &[u32], target: u32) -> (Vec<usize>, Option<NodeId>) {
+        let dom = &self.opened.dom;
+        let wanted: Vec<String> = ids.iter().map(u32::to_string).collect();
+        let target = target.to_string();
+        let mut stories = Vec::new();
+        let mut reference = None;
+        for (index, story) in self.stories.iter().enumerate() {
+            for local in ["commentRangeStart", "commentRangeEnd", "commentReference"] {
+                for marker in dom.descendants(story.root, Some(&W::name(local))) {
+                    let Some(value) = dom.attribute(marker, &W::id()) else {
+                        continue;
+                    };
+                    if !wanted.iter().any(|w| w == value) {
+                        continue;
+                    }
+                    if !stories.contains(&index) {
+                        stories.push(index);
+                    }
+                    if local == "commentReference" && value == target && reference.is_none() {
+                        reference = Some(marker);
+                    }
+                }
+            }
+        }
+        (stories, reference)
+    }
+
+    /// `rewrite`: the smallest word-level edits that make the paragraph read
+    /// as `new_text`, each checked as a `replace` or an `insert` is.
+    fn resolve_rewrite(
+        &self,
+        id: &str,
+        paragraph: &Selector,
+        new_text: &str,
+    ) -> Resolution<Vec<Resolved>> {
+        let mut outcome = EditOutcome {
+            id: id.to_string(),
+            kind: String::new(),
+            status: String::new(),
+            paragraph: None,
+            matches: 0,
+            context: None,
+            comment_id: None,
+            code: None,
+            message: None,
+        };
+        let fail = |code: &str, msg: String, outcome: EditOutcome| {
+            Box::new((err(code, Some(id), msg), outcome))
+        };
+        let para = match self.select(paragraph) {
+            Ok(p) => p,
+            Err((code, msg, matches)) => {
+                outcome.matches = matches;
+                return Err(fail(&code, msg, outcome));
+            }
+        };
+        outcome.paragraph = Some(self.paragraph_id(para));
+        let new_text: String = new_text
+            .chars()
+            .map(|c| {
+                if matches!(c, '\t' | '\n' | '\r') {
+                    ' '
+                } else {
+                    c
+                }
+            })
+            .collect();
+        check_text(&new_text).map_err(|m| fail("INVALID_EDIT", m, outcome.clone()))?;
+        let projection = &self.projections[para];
+        let text = &projection.text;
+        let edits = rewrite::rewrite_ranges(text, &new_text);
+        let mut resolved = Vec::with_capacity(edits.len());
+        for (start, end, replacement) in edits {
+            // New text joins the run before it, unless a tab, break or
+            // symbol is there.
+            let attach_before = text[..start]
+                .chars()
+                .next_back()
+                .is_some_and(|c| !matches!(c, '\t' | '\n' | '\r' | '\u{FFFC}'));
+            let checked = if start == end {
+                self.check_insert_position(projection, start, attach_before)
+            } else {
+                self.check_range(projection, start, end)
+            };
+            checked.map_err(|m| fail("UNSUPPORTED_STRUCTURE", m, outcome.clone()))?;
+            resolved.push(Resolved::Text {
+                para,
+                start,
+                end,
+                replacement,
+                comment: None,
+                attach_before,
+                format: None,
+            });
+        }
+        outcome.matches = 1;
+        outcome.context = Some(format!("{{≡ {}}}", excerpt(&new_text, 60)));
+        Ok((resolved, outcome))
+    }
+
+    /// `list`: every selector matches one body paragraph, once; `restart:
+    /// false` finds the list to continue.
+    fn resolve_list(
+        &self,
+        id: &str,
+        selectors: &[Selector],
+        kind: ListKind,
+        level: u32,
+        restart: bool,
+    ) -> Resolution<Resolved> {
+        let mut outcome = EditOutcome {
+            id: id.to_string(),
+            kind: String::new(),
+            status: String::new(),
+            paragraph: None,
+            matches: 0,
+            context: None,
+            comment_id: None,
+            code: None,
+            message: None,
+        };
+        let fail = |code: &str, msg: String, outcome: EditOutcome| {
+            Box::new((err(code, Some(id), msg), outcome))
+        };
+        if selectors.is_empty() {
+            return Err(fail(
+                "INVALID_EDIT",
+                "paragraphs must select at least one paragraph".into(),
+                outcome,
+            ));
+        }
+        if level > 8 {
+            return Err(fail(
+                "INVALID_EDIT",
+                format!("level {level} is outside 0..=8"),
+                outcome,
+            ));
+        }
+        let mut paras: Vec<usize> = Vec::with_capacity(selectors.len());
+        for (i, selector) in selectors.iter().enumerate() {
+            let para = match self.select(selector) {
+                Ok(p) => p,
+                Err((code, msg, matches)) => {
+                    outcome.matches = matches;
+                    return Err(fail(&code, format!("paragraphs[{i}]: {msg}"), outcome));
+                }
+            };
+            if paras.contains(&para) {
+                return Err(fail(
+                    "INVALID_EDIT",
+                    format!("paragraphs[{i}] selects {} again", self.paragraph_id(para)),
+                    outcome,
+                ));
+            }
+            if self.paragraph_story[para].0 != 0 {
+                return Err(fail(
+                    "UNSUPPORTED_STRUCTURE",
+                    format!(
+                        "paragraphs[{i}]: list is supported in the body only, not {}",
+                        self.paragraph_id(para)
+                    ),
+                    outcome,
+                ));
+            }
+            paras.push(para);
+        }
+        outcome.matches = paras.len();
+        outcome.paragraph = Some(
+            paras
+                .iter()
+                .map(|&p| self.paragraph_id(p))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+        let join = if restart {
+            None
+        } else {
+            let first = paras.iter().copied().min().unwrap_or(0);
+            let found = (0..first)
+                .rev()
+                .find_map(|p| structural::direct_num_id(&self.opened.dom, self.paragraph_nodes[p]));
+            match found {
+                Some(num_id) => Some(num_id),
+                None => {
+                    return Err(fail(
+                        "UNSUPPORTED_STRUCTURE",
+                        "restart: false continues the list of a numbered paragraph before the first one, and there is none".into(),
+                        outcome,
+                    ));
+                }
+            }
+        };
+        // The document's own "List Paragraph" (localized documents give it
+        // another id), else the engine's, added when used.
+        let styles = self.paragraph_styles();
+        let (style, add_style) = styles
+            .iter()
+            .find(|(id, _)| id == "ListParagraph")
+            .or_else(|| {
+                styles
+                    .iter()
+                    .find(|(_, name)| name.eq_ignore_ascii_case("List Paragraph"))
+            })
+            .map_or(("ListParagraph".to_string(), true), |(id, _)| {
+                (id.clone(), false)
+            });
+        let how = match &join {
+            Some(num_id) => format!("continues list {num_id}"),
+            None => format!("list {}", kind.name()),
+        };
+        outcome.context = Some(format!(
+            "{{¶ {how} level {level}}} {} paragraph(s): {}",
+            paras.len(),
+            excerpt(&self.projections[paras[0]].text, 40)
+        ));
+        Ok((
+            Resolved::List {
+                paras,
+                kind,
+                level,
+                join,
+                style,
+                add_style,
+            },
+            outcome,
+        ))
+    }
+
     fn merge_partner(&self, para: usize) -> Result<usize, String> {
         let dom = &self.opened.dom;
         let node = self.paragraph_nodes[para];
@@ -1673,9 +3139,11 @@ impl<'p> Transaction<'p> {
                 Some((story, n)) => (story, Some(n)),
                 None => return not_found(format!("unknown paragraph id {id}")),
             },
-            Selector::Index { index, story } => (story.as_deref().unwrap_or("body"), Some(*index)),
+            Selector::Index { index, story } => {
+                (story.as_deref().unwrap_or(BODY_STORY), Some(*index))
+            }
             Selector::StartsWith { story, .. } | Selector::Contains { story, .. } => {
-                (story.as_deref().unwrap_or("body"), None)
+                (story.as_deref().unwrap_or(BODY_STORY), None)
             }
         };
         let Some(story_index) = self.stories.iter().position(|s| s.id == story) else {
@@ -1746,15 +3214,25 @@ impl<'p> Transaction<'p> {
     fn touched_stories(&self) -> std::collections::BTreeSet<usize> {
         self.resolved
             .iter()
-            .map(|(_, r)| match r {
+            .flat_map(|(_, r)| match r {
+                Resolved::PageSetup { .. } => Vec::new(),
                 Resolved::Text { para, .. }
                 | Resolved::CommentRange { para, .. }
+                | Resolved::CommentSpan { para, .. }
                 | Resolved::DeleteParagraph { para }
                 | Resolved::FormatParagraph { para, .. }
-                | Resolved::MergeParagraphs { para, .. } => *para,
-                Resolved::InsertParagraph { anchor, .. } => *anchor,
+                | Resolved::MergeParagraphs { para, .. }
+                | Resolved::FormatRun { para, .. }
+                | Resolved::InsertFootnote { para, .. } => vec![self.paragraph_story[*para].0],
+                Resolved::InsertParagraph { anchor, .. }
+                | Resolved::InsertTable { anchor, .. }
+                | Resolved::InsertImage { anchor, .. } => {
+                    vec![self.paragraph_story[*anchor].0]
+                }
+                Resolved::List { paras, .. } => vec![self.paragraph_story[paras[0]].0],
+                Resolved::Thread { stories, .. } => stories.clone(),
+                Resolved::FillControl { .. } => vec![0],
             })
-            .map(|para| self.paragraph_story[para].0)
             .collect()
     }
 
@@ -1781,12 +3259,14 @@ impl<'p> Transaction<'p> {
         (self.opened.body, "the body")
     }
 
-    /// The unique occurrence of `find` (overlapping occurrences count), checked
-    /// to lie within editable direct text.
+    /// The unique occurrence of `find`, or its `occurrence`-th hit (1-based)
+    /// when given (overlapping occurrences count), checked to lie within
+    /// editable direct text.
     fn find_range(
         &self,
         projection: &Projection,
         find: &str,
+        occurrence: Option<usize>,
         outcome: &mut EditOutcome,
     ) -> Result<(usize, usize), (String, String)> {
         if find.is_empty() {
@@ -1799,18 +3279,34 @@ impl<'p> Transaction<'p> {
             .filter(|&i| text[i..].starts_with(find))
             .collect();
         outcome.matches = hits.len();
-        let start = match hits.as_slice() {
-            [one] => *one,
-            [] => {
+        let start = match (hits.as_slice(), occurrence) {
+            ([], _) => {
                 return Err((
                     "ANCHOR_NOT_FOUND".into(),
                     format!("{find:?} does not occur in the paragraph"),
                 ));
             }
-            many => {
+            (_, Some(0)) => {
+                return Err(("INVALID_EDIT".into(), "occurrence is 1-based".into()));
+            }
+            ([one], None) => *one,
+            (many, None) => {
+                let n = many.len();
                 return Err((
                     "AMBIGUOUS_ANCHOR".into(),
-                    format!("{find:?} occurs {} times in the paragraph", many.len()),
+                    format!(
+                        "{find:?} occurs {n} times in the paragraph; set \"occurrence\" to 1..={n}"
+                    ),
+                ));
+            }
+            (many, Some(k)) if k <= many.len() => many[k - 1],
+            (many, Some(k)) => {
+                let n = many.len();
+                return Err((
+                    "AMBIGUOUS_ANCHOR".into(),
+                    format!(
+                        "{find:?} occurs {n} times in the paragraph; occurrence {k} is outside occurrence 1..={n}"
+                    ),
                 ));
             }
         };
@@ -1887,7 +3383,9 @@ impl<'p> Transaction<'p> {
         }
         self.check_deletions_leave_valid_containers(&deleted)?;
         self.check_paragraph_ops(&deleted)?;
+        self.check_control_conflicts(&deleted)?;
         self.check_comment_ids_fit()?;
+        self.check_thread_ops()?;
         let mut ranges: BTreeMap<usize, Vec<(usize, usize, usize)>> = BTreeMap::new();
         for (i, r) in &self.resolved {
             let (para, start, end) = match r {
@@ -1900,7 +3398,7 @@ impl<'p> Transaction<'p> {
                     }
                     continue;
                 }
-                Resolved::InsertParagraph { anchor, .. } => {
+                Resolved::InsertParagraph { anchor, .. } | Resolved::InsertImage { anchor, .. } => {
                     if deleted.contains(anchor) {
                         return Err(
                             self.conflict(*i, "anchors a new paragraph on a deleted paragraph")
@@ -1908,9 +3406,47 @@ impl<'p> Transaction<'p> {
                     }
                     continue;
                 }
+                Resolved::InsertTable { anchor, .. } => {
+                    if deleted.contains(anchor) {
+                        return Err(self.conflict(*i, "anchors a new table on a deleted paragraph"));
+                    }
+                    continue;
+                }
+                Resolved::FormatRun { para, .. } => {
+                    if deleted.contains(para) {
+                        return Err(self.conflict(*i, "formats text of a deleted paragraph"));
+                    }
+                    continue;
+                }
+                Resolved::InsertFootnote { para, .. } => {
+                    if deleted.contains(para) {
+                        return Err(self.conflict(*i, "adds a footnote to a deleted paragraph"));
+                    }
+                    continue;
+                }
+                Resolved::CommentSpan { para, last, .. } => {
+                    if (*para..=*last).any(|p| deleted.contains(&p)) {
+                        return Err(self.conflict(*i, "comments on a deleted paragraph"));
+                    }
+                    continue;
+                }
+                Resolved::Thread {
+                    op: ThreadOp::Reply { .. },
+                    anchor: Some(anchor),
+                    ..
+                } if deleted.contains(anchor) => {
+                    return Err(self.conflict(
+                        *i,
+                        "replies to a comment whose reference is in a deleted paragraph",
+                    ));
+                }
                 Resolved::DeleteParagraph { .. }
                 | Resolved::FormatParagraph { .. }
-                | Resolved::MergeParagraphs { .. } => continue,
+                | Resolved::MergeParagraphs { .. }
+                | Resolved::List { .. }
+                | Resolved::PageSetup { .. }
+                | Resolved::Thread { .. }
+                | Resolved::FillControl { .. } => continue,
             };
             if deleted.contains(&para) {
                 return Err(self.conflict(*i, "edits text of a deleted paragraph"));
@@ -1944,6 +3480,56 @@ impl<'p> Transaction<'p> {
                 });
             if cuts {
                 return Err(self.conflict(*i, "comment range cuts through an edited range"));
+            }
+        }
+        // Formatting applies to source text: no text edit may change it.
+        for (i, r) in &self.resolved {
+            let Resolved::FormatRun {
+                para, start, end, ..
+            } = r
+            else {
+                continue;
+            };
+            let overlaps = ranges
+                .get(para)
+                .into_iter()
+                .flatten()
+                .any(|&(s, e, _)| runs::format_overlaps_edit((*start, *end), (s, e)));
+            if overlaps {
+                return Err(self.conflict(*i, "formats text another operation changes"));
+            }
+        }
+        // One page setup per section.
+        let setups: Vec<(usize, &sections::Targets)> = self
+            .resolved
+            .iter()
+            .filter_map(|(i, r)| match r {
+                Resolved::PageSetup { targets } => Some((*i, targets)),
+                _ => None,
+            })
+            .collect();
+        for (n, (i, targets)) in setups.iter().enumerate() {
+            if setups[..n]
+                .iter()
+                .any(|(_, earlier)| sections::targets_overlap(earlier, targets))
+            {
+                return Err(self.conflict(*i, "sets up a section another operation sets up"));
+            }
+        }
+        // A reference mark needs its anchor's end to survive the text edits.
+        for (i, r) in &self.resolved {
+            let Resolved::InsertFootnote { para, at, .. } = r else {
+                continue;
+            };
+            let inside = ranges
+                .get(para)
+                .into_iter()
+                .flatten()
+                .any(|&(s, e, _)| e > s && runs::format_overlaps_edit((*at, *at), (s, e)));
+            if inside {
+                return Err(
+                    self.conflict(*i, "puts a footnote inside text another operation changes")
+                );
             }
         }
         Ok(())
@@ -1991,12 +3577,40 @@ impl<'p> Transaction<'p> {
                     );
                 }
                 Resolved::InsertParagraph { anchor, side, .. }
+                | Resolved::InsertImage { anchor, side, .. }
                     if (*side == Side::After && merge_heads.contains(anchor))
                         || (*side == Side::Before && merge_tails.contains(anchor)) =>
                 {
                     return Err(self.conflict(*i, "inserts a paragraph between two a merge joins"));
                 }
+                Resolved::InsertTable { anchor, side, .. }
+                    if (*side == Side::After && merge_heads.contains(anchor))
+                        || (*side == Side::Before && merge_tails.contains(anchor)) =>
+                {
+                    return Err(self.conflict(*i, "inserts a table between two a merge joins"));
+                }
                 _ => {}
+            }
+        }
+        let mut listed: Vec<usize> = Vec::new();
+        for (i, r) in &self.resolved {
+            let Resolved::List { paras, .. } = r else {
+                continue;
+            };
+            for para in paras {
+                let message = if deleted.contains(para) {
+                    "numbers a deleted paragraph"
+                } else if listed.contains(para) {
+                    "numbers a paragraph another list operation numbers"
+                } else if formatted.contains(para) {
+                    "numbers a paragraph another operation formats"
+                } else if merge_heads.contains(para) {
+                    "numbers a paragraph whose properties a merge discards"
+                } else {
+                    listed.push(*para);
+                    continue;
+                };
+                return Err(self.conflict(*i, message));
             }
         }
         Ok(())
@@ -2039,20 +3653,61 @@ impl<'p> Transaction<'p> {
         Ok(())
     }
 
+    /// Thread operations against each other: nothing may act on a comment
+    /// another operation deletes, and a comment is edited once.
+    fn check_thread_ops(&self) -> Result<(), EditError> {
+        let family = self.family.as_ref().expect("loaded in start");
+        let mut gone: Vec<(usize, Vec<u32>)> = Vec::new();
+        let mut edited: Vec<u32> = Vec::new();
+        for (i, r) in &self.resolved {
+            let Resolved::Thread { op, .. } = r else {
+                continue;
+            };
+            match op {
+                ThreadOp::Delete { id } => gone.push((*i, family.with_replies(*id))),
+                ThreadOp::Edit { id, .. } => {
+                    if edited.contains(id) {
+                        return Err(self.conflict(*i, "edits a comment another operation edits"));
+                    }
+                    edited.push(*id);
+                }
+                _ => {}
+            }
+        }
+        for (i, r) in &self.resolved {
+            let Resolved::Thread { op, .. } = r else {
+                continue;
+            };
+            let target = op.target();
+            if gone.iter().any(|(j, ids)| j != i && ids.contains(&target)) {
+                return Err(self.conflict(*i, "acts on a comment another operation deletes"));
+            }
+        }
+        Ok(())
+    }
+
     /// New comments take ids after the source's highest; refuse a plan whose
     /// comments would not fit in `w:id`'s 32 bits.
     fn check_comment_ids_fit(&self) -> Result<(), EditError> {
         let needed = self
             .resolved
             .iter()
-            .filter(|(_, r)| match r {
+            .filter(|(i, r)| match r {
                 Resolved::Text { comment, .. } | Resolved::InsertParagraph { comment, .. } => {
                     comment.is_some()
                 }
-                Resolved::CommentRange { .. } => true,
-                Resolved::DeleteParagraph { .. }
-                | Resolved::FormatParagraph { .. }
-                | Resolved::MergeParagraphs { .. } => false,
+                Resolved::CommentRange { .. } | Resolved::CommentSpan { .. } => true,
+                Resolved::Thread { op, .. } => matches!(op, ThreadOp::Reply { .. }),
+                Resolved::DeleteParagraph { .. } => self.deletion_comment(*i).is_some(),
+                Resolved::FormatParagraph { .. }
+                | Resolved::MergeParagraphs { .. }
+                | Resolved::InsertTable { .. }
+                | Resolved::List { .. }
+                | Resolved::FillControl { .. }
+                | Resolved::FormatRun { .. }
+                | Resolved::InsertFootnote { .. }
+                | Resolved::InsertImage { .. }
+                | Resolved::PageSetup { .. } => false,
             })
             .count() as u64;
         if needed > 0 && self.next_comment_id + needed - 1 > u64::from(u32::MAX) {
@@ -2061,6 +3716,84 @@ impl<'p> Transaction<'p> {
                 None,
                 "the source's comment ids leave no room for new comments",
             ));
+        }
+        Ok(())
+    }
+
+    /// Check a `settings` operation: something to write, no password, and
+    /// one per plan.
+    fn resolve_settings(
+        &self,
+        id: &str,
+        request: &crate::settings::SettingsRequest,
+    ) -> Result<EditOutcome, Box<(EditError, EditOutcome)>> {
+        let mut outcome = EditOutcome {
+            id: id.to_string(),
+            kind: String::new(),
+            status: String::new(),
+            paragraph: None,
+            matches: 0,
+            context: None,
+            comment_id: None,
+            code: None,
+            message: None,
+        };
+        let fail = |code: &str, msg: &str, outcome: EditOutcome| {
+            Box::new((err(code, Some(id), msg), outcome))
+        };
+        if *request == crate::settings::SettingsRequest::default() {
+            return Err(fail(
+                "INVALID_EDIT",
+                "settings needs track_revisions, update_fields or protection",
+                outcome,
+            ));
+        }
+        if request
+            .protection
+            .as_ref()
+            .is_some_and(|p| p.password.is_some())
+        {
+            return Err(fail(
+                "UNSUPPORTED",
+                "a protection password is not written: Word's legacy hash needs w:cryptProviderType, w:cryptAlgorithmSid, a spin count and a salt; leave the password out to enforce the restriction without one",
+                outcome,
+            ));
+        }
+        if self.settings.is_some() {
+            return Err(fail(
+                "OVERLAPPING_EDITS",
+                "one settings operation per plan; put every setting in the first",
+                outcome,
+            ));
+        }
+        outcome.matches = 1;
+        outcome.context = Some(request.describe());
+        Ok(outcome)
+    }
+
+    /// Refuse the plan when the text of a redaction still occurs in one of
+    /// `outputs` (a comment on it, another paragraph, a header, the
+    /// document properties). The message names the parts, never the text.
+    fn check_redactions(&self, outputs: &[&[u8]]) -> Result<(), EditError> {
+        for (op, operation) in self.plan.operations.iter().enumerate() {
+            let OperationKind::Redact { find, .. } = &operation.kind else {
+                continue;
+            };
+            let parts: std::collections::BTreeSet<String> = outputs
+                .iter()
+                .flat_map(|doc| crate::scrub::leaks(doc, find))
+                .collect();
+            if parts.is_empty() {
+                continue;
+            }
+            let message = format!(
+                "the redacted text still occurs in {}; redact every copy in the same plan, or remove the comment or part that holds it",
+                parts.into_iter().collect::<Vec<_>>().join(", ")
+            );
+            let mut error = self.conflict(op, &message);
+            error.code = "REDACTION_LEAK".into();
+            error.outcomes[op].code = Some(error.code.clone());
+            return Err(error);
         }
         Ok(())
     }
@@ -2087,23 +3820,85 @@ impl<'p> Transaction<'p> {
                     let text = match r {
                         Resolved::Text { comment, .. }
                         | Resolved::InsertParagraph { comment, .. } => comment.clone(),
-                        Resolved::CommentRange { text, .. } => Some(text.clone()),
-                        Resolved::DeleteParagraph { .. }
-                        | Resolved::FormatParagraph { .. }
-                        | Resolved::MergeParagraphs { .. } => None,
+                        Resolved::CommentRange { text, .. }
+                        | Resolved::CommentSpan { text, .. } => Some(text.clone()),
+                        Resolved::Thread {
+                            op: ThreadOp::Reply { text, .. },
+                            ..
+                        } => Some(text.clone()),
+                        Resolved::DeleteParagraph { .. } => {
+                            self.deletion_comment(*i).map(str::to_string)
+                        }
+                        Resolved::FormatParagraph { .. }
+                        | Resolved::MergeParagraphs { .. }
+                        | Resolved::InsertTable { .. }
+                        | Resolved::List { .. }
+                        | Resolved::FormatRun { .. }
+                        | Resolved::InsertFootnote { .. }
+                        | Resolved::InsertImage { .. }
+                        | Resolved::PageSetup { .. }
+                        | Resolved::Thread { .. }
+                        | Resolved::FillControl { .. } => None,
                     };
                     text.map(|t| (*i, t))
                 })
                 .collect();
         for (i, text) in comments {
-            let id = self.new_comment(text);
+            let id = if self.deletion_comment(i).is_some() {
+                // Written into the source copy the comparer reads, not here.
+                let id = self.reserve_comment_id();
+                self.deletion_comments.push((id, i));
+                id
+            } else {
+                self.new_comment(text)
+            };
             ids.insert(i, id);
             self.outcomes[i].comment_id = Some(id);
+        }
+        for (i, r) in &self.resolved {
+            if let Resolved::Thread {
+                op: ThreadOp::Reply { parent, .. },
+                ..
+            } = r
+            {
+                self.reply_parents.insert(ids[i], *parent);
+            }
         }
         // 1. Text edits and their comments, paragraph by paragraph.
         let mut by_para: BTreeMap<usize, Vec<ScheduledEdit>> = BTreeMap::new();
         let mut comment_ranges: BTreeMap<usize, Vec<(usize, usize, usize, String)>> =
             BTreeMap::new();
+        let mut format_runs: BTreeMap<usize, Vec<(usize, usize, RunFormat)>> = BTreeMap::new();
+        let mut references: BTreeMap<usize, Vec<(usize, u32)>> = BTreeMap::new();
+        let reference_style = self
+            .style_defined("FootnoteReference")
+            .then_some("FootnoteReference");
+        let notes: Vec<(usize, usize, String)> = self
+            .resolved
+            .iter()
+            .filter_map(|(_, r)| match r {
+                Resolved::InsertFootnote { para, at, text } => Some((*para, *at, text.clone())),
+                _ => None,
+            })
+            .collect();
+        if !notes.is_empty() {
+            let story = self.footnotes_story()?;
+            self.notes_story = Some(story);
+            let root = self.stories[story].root;
+            let text_style = self.style_defined("FootnoteText").then_some("FootnoteText");
+            let mut id = notes::next_footnote_id(&self.opened.dom, root);
+            for (para, at, text) in notes {
+                notes::append_footnote(
+                    &mut self.opened.dom,
+                    root,
+                    id,
+                    &text,
+                    (text_style, reference_style),
+                );
+                references.entry(para).or_default().push((at, id));
+                id = id.saturating_add(1);
+            }
+        }
         for (i, r) in &self.resolved {
             match r {
                 Resolved::Text {
@@ -2134,12 +3929,25 @@ impl<'p> Transaction<'p> {
                         .or_default()
                         .push((*start, *end, *i, text.clone()));
                 }
+                Resolved::FormatRun {
+                    para,
+                    start,
+                    end,
+                    format,
+                } => {
+                    format_runs
+                        .entry(*para)
+                        .or_default()
+                        .push((*start, *end, format.clone()));
+                }
                 _ => {}
             }
         }
         let touched: Vec<usize> = by_para
             .keys()
             .chain(comment_ranges.keys())
+            .chain(format_runs.keys())
+            .chain(references.keys())
             .copied()
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
@@ -2172,6 +3980,23 @@ impl<'p> Transaction<'p> {
                         format,
                     );
                 }
+            }
+            // `format_run` ranges, in new coordinates and plan order.
+            for (start, end, format) in format_runs.remove(&para).unwrap_or_default() {
+                let s = new_position(&edits, start, true, None);
+                let e = new_position(&edits, end, false, None);
+                format_range(&mut self.opened.dom, node, s, e, &format);
+            }
+            // Footnote reference marks; reversed so marks sharing a point
+            // end up in plan order.
+            for (at, id) in references
+                .remove(&para)
+                .unwrap_or_default()
+                .into_iter()
+                .rev()
+            {
+                let at = new_position(&edits, at, true, None);
+                notes::insert_reference(&mut self.opened.dom, node, at, id, reference_style);
             }
             // Helper bookmarks around `whole` replacements. Comment ranges
             // placed below land inside them, on the inserted text.
@@ -2218,28 +4043,96 @@ impl<'p> Transaction<'p> {
                 anchor_comment(&mut self.opened.dom, node, start, end, ids[&i]);
             }
         }
-        // 2. Paragraph insertions (anchors are source paragraphs, untouched by 1).
+        // 1b. Comments over several paragraphs, in their edited text.
+        for (i, r) in &self.resolved {
+            if let Resolved::CommentSpan { para, last, .. } = r {
+                anchor_span(
+                    &mut self.opened.dom,
+                    self.paragraph_nodes[*para],
+                    self.paragraph_nodes[*last],
+                    ids[i],
+                );
+            }
+        }
+        // 1c. Content control fills (text edits never reach control content).
+        self.apply_fills();
+        // 2. Paragraph and table insertions (anchors are source paragraphs,
+        // untouched by 1).
         let inserts: Vec<(usize, Resolved)> = self
             .resolved
             .iter()
-            .filter(|(_, r)| matches!(r, Resolved::InsertParagraph { .. }))
+            .filter(|(_, r)| {
+                matches!(
+                    r,
+                    Resolved::InsertParagraph { .. }
+                        | Resolved::InsertTable { .. }
+                        | Resolved::InsertImage { .. }
+                )
+            })
             .cloned()
             .collect();
+        let mut tables: Vec<NodeId> = Vec::new();
+        let mut media_used = std::collections::HashSet::new();
+        let mut drawing_id = crate::markdown::max_drawing_id(&self.opened.pkg);
         // Several paragraphs after one anchor follow it in plan order: each
         // goes after the one inserted there before it.
         let mut last_after: BTreeMap<usize, NodeId> = BTreeMap::new();
         for (i, r) in inserts {
-            if let Resolved::InsertParagraph {
-                anchor,
-                side,
-                runs,
-                style,
-                comment,
-            } = r
-            {
-                let anchor_node = self.paragraph_nodes[anchor];
-                let new =
-                    build_paragraph(&mut self.opened.dom, anchor_node, &runs, style.as_deref());
+            let (anchor, side, news, commented) = match r {
+                Resolved::InsertParagraph {
+                    anchor,
+                    side,
+                    runs,
+                    like,
+                    style,
+                    comment,
+                    toc,
+                } => {
+                    let like_node = self.paragraph_nodes[like];
+                    let news = match &toc {
+                        Some(toc) => toc_paragraphs(&mut self.opened.dom, toc),
+                        None => vec![build_paragraph(
+                            &mut self.opened.dom,
+                            like_node,
+                            &runs,
+                            style.as_deref(),
+                        )],
+                    };
+                    (anchor, side, news, comment.is_some())
+                }
+                Resolved::InsertTable {
+                    anchor,
+                    side,
+                    rows,
+                    header_row,
+                    widths,
+                    style,
+                    ..
+                } => {
+                    let new = structural::build_table(
+                        &mut self.opened.dom,
+                        self.paragraph_nodes[anchor],
+                        &rows,
+                        header_row,
+                        &widths,
+                        &style,
+                    );
+                    tables.push(new);
+                    (anchor, side, vec![new], false)
+                }
+                Resolved::InsertImage {
+                    anchor,
+                    side,
+                    picture,
+                } => {
+                    drawing_id = drawing_id.saturating_add(1);
+                    let new = self.image_paragraph(&picture, &mut media_used, drawing_id);
+                    (anchor, side, vec![new], false)
+                }
+                _ => continue,
+            };
+            let anchor_node = self.paragraph_nodes[anchor];
+            for &new in &news {
                 match side {
                     Side::After => {
                         let prev = last_after.get(&anchor).copied().unwrap_or(anchor_node);
@@ -2248,10 +4141,11 @@ impl<'p> Transaction<'p> {
                     }
                     Side::Before => self.opened.dom.add_before_self(anchor_node, new),
                 }
-                if comment.is_some() {
-                    let projection = project_paragraph(&self.opened.dom, new);
-                    anchor_comment(&mut self.opened.dom, new, 0, projection.text.len(), ids[&i]);
-                }
+            }
+            let new = news[news.len() - 1];
+            if commented {
+                let projection = project_paragraph(&self.opened.dom, new);
+                anchor_comment(&mut self.opened.dom, new, 0, projection.text.len(), ids[&i]);
             }
         }
         // 3. Paragraph formatting.
@@ -2270,6 +4164,47 @@ impl<'p> Transaction<'p> {
                     *alignment,
                     *spacing,
                 );
+            }
+        }
+        // 3b. Lists: new numbering instances take ids after the source's.
+        let (mut next_abstract, mut next_num) = structural::next_numbering_ids(&self.opened);
+        for (_, r) in &self.resolved {
+            let Resolved::List {
+                paras,
+                kind,
+                level,
+                join,
+                style,
+                add_style,
+            } = r
+            else {
+                continue;
+            };
+            let num_id = match join {
+                Some(num_id) => num_id.clone(),
+                None => {
+                    let (abstracts, nums) = &mut self.new_numbering;
+                    abstracts.push(crate::markdown::xml::abstract_num(
+                        next_abstract,
+                        kind.format(),
+                    ));
+                    nums.push(crate::markdown::xml::num(next_num, next_abstract, None));
+                    next_abstract += 1;
+                    next_num += 1;
+                    (next_num - 1).to_string()
+                }
+            };
+            for &para in paras {
+                let styled = structural::number_paragraph(
+                    &mut self.opened.dom,
+                    self.paragraph_nodes[para],
+                    *level,
+                    &num_id,
+                    style,
+                );
+                if styled && *add_style {
+                    self.needed_styles.insert(style.clone());
+                }
             }
         }
         // 4. Merges, first first, so a chain folds into its last paragraph.
@@ -2300,28 +4235,208 @@ impl<'p> Transaction<'p> {
                 self.opened.dom.remove(self.paragraph_nodes[*para]);
             }
         }
+        // 6. Reply markers beside their comment's; deleted comments' markers.
+        let roots: Vec<NodeId> = self.stories.iter().map(|s| s.root).collect();
+        for (i, r) in &self.resolved {
+            let Resolved::Thread { op, .. } = r else {
+                continue;
+            };
+            match op {
+                ThreadOp::Reply { parent, .. } => {
+                    place_reply_markers(&mut self.opened.dom, &roots, *parent, ids[i]);
+                }
+                ThreadOp::Delete { id } => {
+                    let family = self.family.as_ref().expect("loaded in start");
+                    let gone: Vec<String> = family
+                        .with_replies(*id)
+                        .iter()
+                        .map(u32::to_string)
+                        .collect();
+                    remove_comment_markers(&mut self.opened.dom, &roots, &gone);
+                }
+                ThreadOp::Resolve { .. } | ThreadOp::Edit { .. } => {}
+            }
+        }
+        // 7. A paragraph after each new table, and between it and a table
+        // before it, once the deletions have settled its neighbours.
+        for table in tables {
+            structural::separate(&mut self.opened.dom, table);
+        }
+        // 8. Page setup.
+        let setups: Vec<sections::Targets> = self
+            .resolved
+            .iter()
+            .filter_map(|(_, r)| match r {
+                Resolved::PageSetup { targets } => Some(targets.clone()),
+                _ => None,
+            })
+            .collect();
+        for targets in &setups {
+            self.apply_page_setup(targets);
+        }
         Ok(())
     }
 
     fn new_comment(&mut self, text: String) -> u32 {
+        let id = self.reserve_comment_id();
+        self.comments.push((id, text));
+        id
+    }
+
+    fn reserve_comment_id(&mut self) -> u32 {
+        self.comments_added += 1;
+        if let Some(id) = self.preset_comment_ids.pop() {
+            return id;
+        }
         // check_conflicts proved every new id fits in u32.
         let id = u32::try_from(self.next_comment_id).unwrap_or(u32::MAX);
         self.next_comment_id += 1;
-        self.comments_added += 1;
-        self.comments.push((id, text));
         id
+    }
+
+    /// The comment of operation `op` when it deletes a paragraph.
+    fn deletion_comment(&self, op: usize) -> Option<&str> {
+        match &self.plan.operations[op].kind {
+            OperationKind::DeleteParagraph { comment, .. } => comment.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// The copy the comparer reads as the original: the base, with each
+    /// deleted paragraph's comment anchored on its whole text. The comparer
+    /// carries the comment onto the deleted text of the redline. A plan's
+    /// watermark is written into this copy as well, so it stays untracked.
+    fn commented_base(&self) -> Result<std::borrow::Cow<'_, [u8]>, EditError> {
+        // Edited and deleted comments are edited and deleted in the original
+        // too: the comparer carries the copy's comment parts only when they
+        // define every comment of the original unchanged.
+        let thread_ops: Vec<Operation> = self
+            .plan
+            .operations
+            .iter()
+            .filter(|op| {
+                matches!(
+                    op.kind,
+                    OperationKind::EditComment { .. } | OperationKind::DeleteComment { .. }
+                )
+            })
+            .cloned()
+            .collect();
+        // A redaction is no change either: the base loses the text too.
+        let redactions: Vec<Operation> = self
+            .plan
+            .operations
+            .iter()
+            .filter(|op| matches!(op.kind, OperationKind::Redact { .. }))
+            .cloned()
+            .collect();
+        if self.deletion_comments.is_empty()
+            && thread_ops.is_empty()
+            && self.watermark.is_none()
+            && redactions.is_empty()
+        {
+            return Ok(std::borrow::Cow::Borrowed(&self.base));
+        }
+        let mut operations: Vec<Operation> = self
+            .deletion_comments
+            .iter()
+            .map(|&(_, op)| {
+                let operation = &self.plan.operations[op];
+                let OperationKind::DeleteParagraph {
+                    paragraph,
+                    comment: Some(text),
+                } = &operation.kind
+                else {
+                    unreachable!("deletion_comments holds commented deletions");
+                };
+                Operation {
+                    id: operation.id.clone(),
+                    kind: OperationKind::Comment {
+                        paragraph: paragraph.clone(),
+                        find: None,
+                        text: text.clone(),
+                        through: None,
+                        occurrence: None,
+                    },
+                }
+            })
+            .collect();
+        operations.extend(thread_ops);
+        // A watermark is header content, not a change: the base carries it
+        // too, so the comparer leaves it untracked.
+        operations.extend(
+            self.plan
+                .operations
+                .iter()
+                .filter(|op| matches!(op.kind, OperationKind::Watermark { .. }))
+                .cloned(),
+        );
+        operations.extend(redactions);
+        let plan = EditPlan {
+            schema_version: SCHEMA_VERSION,
+            source_sha256: None,
+            author: self.plan.author.clone(),
+            date: Some(self.date.clone()),
+            initials: Some(self.initials.clone()),
+            resolve_revisions: None,
+            existing_revisions: ExistingRevisions::default(),
+            operations,
+            update_fields: false,
+        };
+        let mut tx = Transaction::start(&self.base, &plan)?;
+        tx.preset_comment_ids = self
+            .deletion_comments
+            .iter()
+            .rev()
+            .map(|&(id, _)| id)
+            .collect();
+        tx.resolve()?;
+        tx.apply()?;
+        let (commented, _) = tx.finish()?;
+        Ok(std::borrow::Cow::Owned(commented))
     }
 
     /// The clean copy, and the copy the comparer reads when `whole`
     /// replacements carry helper bookmarks (the clean copy never does).
     fn finish(&mut self) -> Result<(Vec<u8>, Option<Vec<u8>>), EditError> {
-        if !self.comments.is_empty() {
+        let threads = self
+            .resolved
+            .iter()
+            .any(|(_, r)| matches!(r, Resolved::Thread { .. }));
+        if !self.comments.is_empty() || threads {
             self.write_comments_part()?;
+        }
+        let mut styles: std::collections::BTreeSet<String> = self
+            .resolved
+            .iter()
+            .filter_map(|(_, r)| match r {
+                Resolved::InsertTable {
+                    style,
+                    add_style: true,
+                    ..
+                } => Some(style.clone()),
+                _ => None,
+            })
+            .collect();
+        styles.extend(self.needed_styles.iter().cloned());
+        let main = self.opened.main.clone();
+        if !styles.is_empty() {
+            structural::add_styles(&mut self.opened.pkg, &main, &styles);
+        }
+        let (abstracts, nums) = std::mem::take(&mut self.new_numbering);
+        if !nums.is_empty() {
+            structural::splice_numbering(&mut self.opened.pkg, &main, &abstracts, &nums);
         }
         // The body is always written; a story part only when an operation
         // edits it, so untouched parts keep their exact bytes.
         let mut written = self.touched_stories();
         written.insert(0);
+        written.extend(self.apply_watermark()?);
+        written.extend(self.notes_story);
+        if let Some(request) = &self.settings {
+            crate::settings::apply_settings(&mut self.opened.pkg, &main, request)
+                .map_err(|m| err("INVALID_DOCUMENT", None, m))?;
+        }
         let marked = if self.whole_marks.is_empty() {
             None
         } else {
@@ -2353,76 +4468,81 @@ impl<'p> Transaction<'p> {
         }
     }
 
+    /// Write the comment part family: the plan's new comments and replies,
+    /// then its edits, resolutions and deletions; every part consistent
+    /// (see [`crate::comments`]).
     fn write_comments_part(&mut self) -> Result<(), EditError> {
-        let existing = self.opened.related("comments").into_iter().next();
-        let part_name = existing
-            .clone()
-            .unwrap_or_else(|| "word/comments.xml".to_string());
-        let mut dom = Dom::new();
-        let (document, root) = match &existing {
-            Some(name) => {
-                let xml = self.opened.pkg.part_string(name).ok_or_else(|| {
-                    err(
-                        "INVALID_DOCUMENT",
-                        None,
-                        format!("missing comments part {name}"),
-                    )
-                })?;
-                let document = dom.parse_xdocument(&xml);
-                let root = dom
-                    .root(document)
-                    .ok_or_else(|| err("INVALID_DOCUMENT", None, "empty comments part"))?;
-                (document, root)
-            }
-            None => {
-                let document = dom.parse_xdocument(&format!(
-                    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:comments xmlns:w="{}" xmlns:r="{}"/>"#,
-                    W::URI,
-                    R::URI
-                ));
-                let root = dom.root(document).expect("root");
-                (document, root)
-            }
+        let main = self.opened.main.clone();
+        let mut family = match self.family.take() {
+            Some(family) => family,
+            None => crate::comments::CommentFamily::load(&self.opened.pkg, &main)
+                .map_err(|m| err("INVALID_DOCUMENT", None, m))?,
         };
         for (id, text) in &self.comments {
-            let comment = dom.new_element(W::name("comment"));
-            dom.set_attribute_value(comment, &W::id(), Some(&id.to_string()));
-            dom.set_attribute_value(comment, &W::author(), Some(&self.plan.author));
-            dom.set_attribute_value(comment, &W::date(), Some(&self.date));
-            dom.set_attribute_value(comment, &W::name("initials"), Some(&self.initials));
-            let p = dom.new_element(W::p());
-            let ref_run = dom.new_element(W::r());
-            let annotation = dom.new_element(W::name("annotationRef"));
-            dom.add(ref_run, annotation);
-            dom.add(p, ref_run);
-            for (i, line) in text.split('\n').enumerate() {
-                let run = dom.new_element(W::r());
-                if i > 0 {
-                    let br = dom.new_element(W::name("br"));
-                    dom.add(run, br);
-                }
-                let t = dom.new_element(W::t());
-                dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some("preserve"));
-                dom.add_text(t, line);
-                dom.add(run, t);
-                dom.add(p, run);
+            family.add(&crate::comments::NewComment {
+                id: *id,
+                author: &self.plan.author,
+                date: &self.date,
+                initials: &self.initials,
+                text,
+                parent: self.reply_parents.get(id).copied(),
+            });
+        }
+        let ops: Vec<&ThreadOp> = self
+            .resolved
+            .iter()
+            .filter_map(|(_, r)| match r {
+                Resolved::Thread { op, .. } => Some(op),
+                _ => None,
+            })
+            .collect();
+        for op in &ops {
+            if let ThreadOp::Edit { id, text } = op {
+                family.set_text(*id, text);
             }
-            dom.add(comment, p);
-            dom.add(root, comment);
         }
-        let xml = dom.serialize_document(document);
-        self.opened.pkg.set_part(&part_name, xml.into_bytes());
-        if existing.is_none() {
-            let main = self.opened.main.clone();
-            self.opened
-                .pkg
-                .add_document_relationship(&main, COMMENTS_REL, "comments.xml");
-            self.opened
-                .pkg
-                .add_content_type_override("/word/comments.xml", COMMENTS_CT);
+        for op in &ops {
+            if let ThreadOp::Resolve { id, done } = op {
+                family.set_done(*id, *done);
+            }
         }
+        for op in &ops {
+            if let ThreadOp::Delete { id } = op {
+                family.remove(*id);
+            }
+        }
+        family.store(&mut self.opened.pkg, &main);
         Ok(())
     }
+}
+
+/// Whether comment `id`'s range in `redline` holds text that is not deleted.
+fn comment_holds_kept_text(redline: &[u8], id: u32) -> bool {
+    let Ok(opened) = Opened::open(redline) else {
+        return false;
+    };
+    let id = id.to_string();
+    let parts = std::iter::once(opened.main.clone())
+        .chain(opened.story_parts().into_iter().map(|(_, _, part)| part));
+    for part in parts {
+        let Ok((dom, _, root)) = crate::inspect::parse_part(&opened.pkg, &part) else {
+            continue;
+        };
+        let mut inside = false;
+        for node in dom.descendants(root, None) {
+            let Some(name) = dom.name(node).filter(|n| n.namespace_name() == W::URI) else {
+                continue;
+            };
+            let is_id = || dom.attribute(node, &W::id()) == Some(id.as_str());
+            match name.local_name() {
+                "commentRangeStart" if is_id() => inside = true,
+                "commentRangeEnd" if is_id() => inside = false,
+                "t" if inside => return true,
+                _ => {}
+            }
+        }
+    }
+    false
 }
 
 fn existing_comment_ids(opened: &Opened) -> Option<u32> {
@@ -2465,6 +4585,22 @@ fn kind_name(kind: &OperationKind) -> &'static str {
         OperationKind::DeleteParagraph { .. } => "delete_paragraph",
         OperationKind::FormatParagraph { .. } => "format_paragraph",
         OperationKind::MergeParagraphs { .. } => "merge_paragraphs",
+        OperationKind::Rewrite { .. } => "rewrite",
+        OperationKind::ReplyComment { .. } => "reply_comment",
+        OperationKind::ResolveComment { .. } => "resolve_comment",
+        OperationKind::EditComment { .. } => "edit_comment",
+        OperationKind::DeleteComment { .. } => "delete_comment",
+        OperationKind::InsertTable { .. } => "insert_table",
+        OperationKind::List { .. } => "list",
+        OperationKind::Watermark { .. } => "watermark",
+        OperationKind::FillControl { .. } => "fill_control",
+        OperationKind::FormatRun { .. } => "format_run",
+        OperationKind::InsertFootnote { .. } => "insert_footnote",
+        OperationKind::InsertImage { .. } => "insert_image",
+        OperationKind::PageSetup { .. } => "page_setup",
+        OperationKind::InsertToc { .. } => "insert_toc",
+        OperationKind::Redact { .. } => "redact",
+        OperationKind::Settings { .. } => "settings",
     }
 }
 
@@ -2489,6 +4625,11 @@ fn check_comment(text: &str) -> Result<(), String> {
 }
 
 /// `before {mark} after` with up to 20 chars of context on either side.
+/// What a redaction leaves of `find`: one full block per character.
+fn redaction(find: &str) -> String {
+    "\u{2588}".repeat(find.chars().count())
+}
+
 fn context(text: &str, start: usize, end: usize, mark: &str) -> String {
     const WINDOW: usize = 20;
     let before: String = text[..start]
@@ -2662,6 +4803,114 @@ fn anchor_comment(dom: &mut Dom, paragraph: NodeId, start: usize, end: usize, id
         dom.add(paragraph, range_start);
         dom.add(paragraph, range_end);
         dom.add(paragraph, reference_run);
+    }
+}
+
+fn comment_marker(dom: &mut Dom, local: &str, id: &str) -> NodeId {
+    let marker = dom.new_element(W::name(local));
+    dom.set_attribute_value(marker, &W::id(), Some(id));
+    marker
+}
+
+fn comment_reference_run(dom: &mut Dom, id: &str) -> NodeId {
+    let run = dom.new_element(W::r());
+    let reference = comment_marker(dom, "commentReference", id);
+    dom.add(run, reference);
+    run
+}
+
+/// Comment `id` from the start of paragraph `first` to the end of `last`:
+/// the start marker before `first`'s first run, the end marker and the
+/// reference run after `last`'s last run (appended to an empty paragraph).
+fn anchor_span(dom: &mut Dom, first: NodeId, last: NodeId, id: u32) {
+    let id = id.to_string();
+    let range_start = comment_marker(dom, "commentRangeStart", &id);
+    let range_end = comment_marker(dom, "commentRangeEnd", &id);
+    let reference_run = comment_reference_run(dom, &id);
+    let len = project_paragraph(dom, first).text.len();
+    let scratch = dom.new_element(W::name("commentRangeEnd"));
+    if len > 0 && wrap_range(dom, first, 0, len, range_start, scratch) {
+        dom.remove(scratch);
+    } else {
+        match dom.element(first, &W::p_pr()) {
+            Some(ppr) => dom.add_after_self(ppr, range_start),
+            None => dom.add_first(first, range_start),
+        }
+    }
+    let len = project_paragraph(dom, last).text.len();
+    let scratch = dom.new_element(W::name("commentRangeStart"));
+    if len > 0 && wrap_range(dom, last, 0, len, scratch, range_end) {
+        dom.remove(scratch);
+        dom.add_after_self(range_end, reference_run);
+    } else {
+        dom.add(last, range_end);
+        dom.add(last, reference_run);
+    }
+}
+
+/// Markers of reply `id` beside those of comment `parent`, as Word writes
+/// them: the start after the parent's start, the end after the parent's
+/// end, the reference run after the parent's reference run.
+fn place_reply_markers(dom: &mut Dom, roots: &[NodeId], parent: u32, id: u32) {
+    let parent = parent.to_string();
+    let id = id.to_string();
+    let find = |dom: &Dom, local: &str| {
+        roots.iter().find_map(|&root| {
+            dom.descendants(root, Some(&W::name(local)))
+                .into_iter()
+                .find(|&m| dom.attribute(m, &W::id()) == Some(parent.as_str()))
+        })
+    };
+    let (start, end, reference) = (
+        find(dom, "commentRangeStart"),
+        find(dom, "commentRangeEnd"),
+        find(dom, "commentReference"),
+    );
+    let Some(reference) = reference else {
+        return;
+    };
+    let parent_run = dom
+        .parent(reference)
+        .filter(|&r| dom.name_is(r, &W::r()))
+        .unwrap_or(reference);
+    let new_run = comment_reference_run(dom, &id);
+    dom.add_after_self(parent_run, new_run);
+    let new_end = comment_marker(dom, "commentRangeEnd", &id);
+    match end {
+        Some(end) => dom.add_after_self(end, new_end),
+        None => dom.add_before_self(new_run, new_end),
+    }
+    let new_start = comment_marker(dom, "commentRangeStart", &id);
+    match start {
+        Some(start) => dom.add_after_self(start, new_start),
+        None => dom.add_before_self(new_end, new_start),
+    }
+}
+
+/// Remove the range markers and references of the comments `ids`; a run
+/// left holding nothing but its properties goes too.
+fn remove_comment_markers(dom: &mut Dom, roots: &[NodeId], ids: &[String]) {
+    for &root in roots {
+        for local in ["commentRangeStart", "commentRangeEnd", "commentReference"] {
+            for marker in dom.descendants(root, Some(&W::name(local))) {
+                if !dom
+                    .attribute(marker, &W::id())
+                    .is_some_and(|v| ids.iter().any(|id| id == v))
+                {
+                    continue;
+                }
+                let run = dom.parent(marker).filter(|&r| dom.name_is(r, &W::r()));
+                dom.remove(marker);
+                if let Some(run) = run
+                    && dom
+                        .elements(run, None)
+                        .iter()
+                        .all(|&c| dom.name_is(c, &W::r_pr()))
+                {
+                    dom.remove(run);
+                }
+            }
+        }
     }
 }
 
@@ -2936,6 +5185,49 @@ fn merge_into(dom: &mut Dom, head: NodeId, next: NodeId, separator: &str) {
     dom.remove(head);
 }
 
+/// `insert_toc`'s paragraphs: the optional `TOCHeading` title, then a
+/// paragraph holding an empty `TOC` field.
+fn toc_paragraphs(dom: &mut Dom, toc: &TocSpec) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    if let Some(title) = &toc.title {
+        let p = dom.new_element(W::p());
+        let ppr = dom.new_element(W::p_pr());
+        let style = dom.new_element(W::p_style());
+        dom.set_attribute_value(style, &W::val(), Some("TOCHeading"));
+        dom.add(ppr, style);
+        dom.add(p, ppr);
+        let run = dom.new_element(W::r());
+        let t = dom.new_element(W::t());
+        dom.set_attribute_value(t, &XNamespace::xml().name("space"), Some("preserve"));
+        dom.add_text(t, title);
+        dom.add(run, t);
+        dom.add(p, run);
+        out.push(p);
+    }
+    let p = dom.new_element(W::p());
+    let mark = |dom: &mut Dom, p: NodeId, kind: &str| {
+        let run = dom.new_element(W::r());
+        let fld = dom.new_element(W::name("fldChar"));
+        dom.set_attribute_value(fld, &W::name("fldCharType"), Some(kind));
+        dom.add(run, fld);
+        dom.add(p, run);
+    };
+    mark(dom, p, "begin");
+    let run = dom.new_element(W::r());
+    let instr = dom.new_element(W::name("instrText"));
+    dom.set_attribute_value(instr, &XNamespace::xml().name("space"), Some("preserve"));
+    dom.add_text(
+        instr,
+        &format!(" TOC \\o \"1-{}\" \\h \\z \\u ", toc.levels),
+    );
+    dom.add(run, instr);
+    dom.add(p, run);
+    mark(dom, p, "separate");
+    mark(dom, p, "end");
+    out.push(p);
+    out
+}
+
 /// A new paragraph modeled on `anchor`: its `pPr` minus section break and
 /// revision marks, runs formatted like the anchor's first run plus the
 /// requested toggles.
@@ -3040,6 +5332,36 @@ fn apply_run_format(dom: &mut Dom, rpr: NodeId, format: &RunFormat) {
             insert_rpr_child(dom, rpr, h);
         }
     }
+    toggle(dom, rpr, "strike", format.strike);
+    toggle(dom, rpr, "caps", format.caps);
+    if let Some(font) = &format.font {
+        if let Some(old) = dom.element(rpr, &W::name("rFonts")) {
+            dom.remove(old);
+        }
+        let fonts = dom.new_element(W::name("rFonts"));
+        for script in ["ascii", "hAnsi", "eastAsia", "cs"] {
+            dom.set_attribute_value(fonts, &W::name(script), Some(font));
+        }
+        insert_rpr_child(dom, rpr, fonts);
+    }
+    if let Some(color) = &format.color {
+        if let Some(old) = dom.element(rpr, &W::name("color")) {
+            dom.remove(old);
+        }
+        let el = dom.new_element(W::name("color"));
+        dom.set_attribute_value(el, &W::val(), Some(color));
+        insert_rpr_child(dom, rpr, el);
+    }
+    if let Some(HalfPoints(size)) = format.size_pt {
+        for local in ["sz", "szCs"] {
+            if let Some(old) = dom.element(rpr, &W::name(local)) {
+                dom.remove(old);
+            }
+            let el = dom.new_element(W::name(local));
+            dom.set_attribute_value(el, &W::val(), Some(&size.to_string()));
+            insert_rpr_child(dom, rpr, el);
+        }
+    }
 }
 
 /// `ST_HighlightColor`.
@@ -3071,6 +5393,31 @@ fn check_format(format: &RunFormat, text: &str) -> Result<(), String> {
         return Err(format!(
             "highlight {highlight:?} is not a Word highlight colour ({})",
             HIGHLIGHTS.join(", ")
+        ));
+    }
+    if let Some(font) = &format.font
+        && (font.trim().is_empty()
+            || font.chars().count() > 31
+            || font.chars().any(char::is_control))
+    {
+        return Err(format!(
+            "font {font:?} must be a nonempty name of at most 31 characters"
+        ));
+    }
+    if let Some(color) = &format.color
+        && color != "auto"
+        && !(color.len() == 6 && color.bytes().all(|b| b.is_ascii_hexdigit()))
+    {
+        return Err(format!(
+            "color {color:?} must be six hex digits (FF0000) or auto"
+        ));
+    }
+    if let Some(HalfPoints(size)) = format.size_pt
+        && !(2..=3276).contains(&size)
+    {
+        return Err(format!(
+            "size_pt {} is outside 1..=1638",
+            f64::from(size) / 2.0
         ));
     }
     if text.is_empty() && *format != RunFormat::default() {

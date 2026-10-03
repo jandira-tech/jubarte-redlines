@@ -6,25 +6,43 @@
 
 from __future__ import annotations
 
+import json
 import os
+import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 from . import _native
 from .models import (
+    AuditFinding,
     Change,
+    Comment,
     ChangeKind,
     CompareOptions,
+    Diff,
     EditOutcome,
     EditPlan,
     EditReport,
+    FieldUpdate,
+    Finding,
     PdfOptions,
+    RenderDiff,
     Rendered,
+    Repaired,
     Revision,
     Snapshot,
+    _decode_audit,
     _decode_changes,
+    _decode_comments,
+    _decode_diff,
+    _decode_field_updates,
+    _decode_findings,
+    _decode_findings_json,
     _decode_outcomes,
+    _decode_page_diffs,
     _decode_render_report,
     _decode_report,
     _decode_revisions,
@@ -40,7 +58,7 @@ class EditPlanError(_native.JubarteError):
     ``code`` is the stable engine code (``STALE_SOURCE``, ``ANCHOR_NOT_FOUND``,
     ``AMBIGUOUS_ANCHOR``, ``OVERLAPPING_EDITS``, ``UNSUPPORTED_STRUCTURE``,
     ``EXISTING_REVISIONS``, ``REVISION_CONFLICT``, ``UNKNOWN_CHANGE``,
-    ``INVALID_PLAN``, ...), ``message`` the engine's
+    ``REDACTION_LEAK``, ``UNSUPPORTED``, ``INVALID_PLAN``, ...), ``message`` the engine's
     detail without the code, ``operation`` the id of the operation that
     failed, and ``outcomes`` every operation's status at that point, so the
     caller can see which anchors resolved.
@@ -69,11 +87,31 @@ class EditPlanError(_native.JubarteError):
 
 @dataclass(frozen=True, slots=True)
 class EditResult:
-    """Clean copy, Word redline and per-operation report of one plan."""
+    """Clean copy, Word redline, per-operation report and the patch of one
+    plan: ``diff`` is what the redline tracks, by the plan's author and date."""
 
     clean: Document
     redline: Document
     report: EditReport
+    diff: Diff
+
+
+SectionBreak = Literal["next_page", "continuous", "none"]
+_SECTION_BREAKS = ("next_page", "continuous", "none")
+AppendComments = Literal["drop", "carry"]
+_APPEND_COMMENTS = ("drop", "carry")
+
+
+@dataclass(frozen=True, slots=True)
+class Appended:
+    """``Document.append``'s result: the joined document and what was not carried.
+
+    ``warnings`` are ``CODE: message`` lines, such as
+    ``COMMENTS_DROPPED: 1 comment of B was not carried``.
+    """
+
+    document: Document
+    warnings: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +124,8 @@ class Document:
     """
 
     _data: bytes = field(repr=False)
+    #: The file name it was read from (``Document.read``), used in patches.
+    name: str | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self._data, bytes):
@@ -102,7 +142,8 @@ class Document:
     @classmethod
     def read(cls, path: str | os.PathLike[str]) -> Document:
         """Read a local file; normal FileNotFoundError/PermissionError propagate."""
-        return cls.from_bytes(Path(path).read_bytes())
+        path = Path(path)
+        return cls(path.read_bytes(), path.name)
 
     def to_bytes(self) -> bytes:
         """Return the immutable DOCX snapshot."""
@@ -136,6 +177,7 @@ class Document:
                 modified._data,
                 author=author,
                 date=options.native_date(),
+                input_limits=options.native_input_limits(),
             )
         )
 
@@ -158,6 +200,32 @@ class Document:
             _native.accept_changes(self._data, change_filter(ids, authors, kinds))
         )
 
+    def scrub(
+        self,
+        *,
+        author_alias: str | None = "Author",
+        rsids: bool = True,
+        docprops: bool = True,
+        comments: bool = True,
+    ) -> Document:
+        """Return a new document without who touched it.
+
+        ``author_alias`` names every author (tracked changes, comments,
+        ``people.xml``; ``None`` keeps the names), ``rsids`` drops the
+        edit-session ids, ``docprops`` the creator, last editor, revision
+        number, dates, manager, company and custom properties, and
+        ``comments`` every comment. Text and tracked changes stay.
+        """
+        if author_alias is not None and not isinstance(author_alias, str):
+            raise TypeError("author_alias must be a string or None")
+        for name, value in (("rsids", rsids), ("docprops", docprops), ("comments", comments)):
+            if not isinstance(value, bool):
+                raise TypeError(f"{name} must be a bool")
+        options = json.dumps(
+            {"author_alias": author_alias, "rsids": rsids, "docprops": docprops, "comments": comments}
+        )
+        return Document.from_bytes(_native.scrub_json(self._data, options))
+
     def reject(
         self,
         *,
@@ -176,6 +244,14 @@ class Document:
     def changes(self) -> tuple[Change, ...]:
         """Every tracked change, each with the id ``accept`` / ``reject`` select by."""
         return _decode_changes(_native.list_changes_json(self._data))
+
+    def comments(self, *, author: str | None = None, latest: bool = False) -> tuple[Comment, ...]:
+        """Every comment with its thread and anchored text, in document part order.
+
+        ``author`` keeps one author's comments (exact match); ``latest`` keeps
+        the newest comment of each thread.
+        """
+        return _decode_comments(_native.list_comments_json(self._data, author, latest))
 
     def revisions(self) -> tuple[Revision, ...]:
         """Return immutable metadata for the revisions listed by the engine."""
@@ -211,12 +287,42 @@ class Document:
         Every operation is resolved against this snapshot before anything is
         changed; a refused plan produces no documents. Comments in the plan
         are anchored in the clean copy and carried through the redline.
+
+        With ``existing_revisions="keep"`` another party's tracked changes stay
+        tracked: the clean copy is this document with the plan's edits applied
+        and theirs still tracked, the redline adds the plan's edits as new
+        revisions beside theirs, and ``diff`` shows the plan's edits only.
         """
         ok, clean, redline, payload = _native.edit_json(self._data, plan_json(plan))
         if not ok:
             raise EditPlanError._from_json(payload)
         assert clean is not None and redline is not None
-        return EditResult(Document.from_bytes(clean), Document.from_bytes(redline), _decode_report(payload))
+        report = _decode_report(payload)
+        diff = _decode_diff(
+            _native.redline_diff_json(
+                redline,
+                name=self.name or "document.docx",
+                author=report.author,
+                date=report.date,
+                own_only=report.existing_revisions == "keep",
+            )
+        )
+        return EditResult(Document.from_bytes(clean), Document.from_bytes(redline), report, diff)
+
+    def diff(
+        self,
+        other: Document | str,
+        *,
+        author: str | None = None,
+        date: str | None = None,
+        columns: int = 72,
+        format: Literal["patch", "critic"] = "patch",
+    ) -> Diff:
+        """The changes from this document to ``other`` (a ``Document`` or
+        Markdown text), as ``jubarte_redlines.diff`` gives them."""
+        if not isinstance(other, (Document, str)):
+            raise TypeError("other must be a Document or Markdown text")
+        return diff(self, other, author=author, date=date, columns=columns, format=format)
 
     def preview(self, plan: EditPlan | dict[str, object] | str) -> EditReport:
         """Resolve every operation and report, without producing documents."""
@@ -225,8 +331,32 @@ class Document:
             raise EditPlanError._from_json(payload)
         return _decode_report(payload)
 
-    def to_png(self, *, dpi: float = 96.0, options: PdfOptions | None = None) -> tuple[bytes, ...]:
-        """One PNG per page, straight from the layout (no PDF round trip)."""
+    def update_fields(self) -> UpdatedFields:
+        """Refresh ``PAGEREF``, ``REF``, ``NUMPAGES``, ``SEQ`` and ``TOC`` results.
+
+        TOCs are rebuilt from the headings, then one layout pass gives the
+        page numbers: jubarte's layout, not Word's. Field codes stay, so Word
+        can update them again. This document is unchanged.
+        """
+        data, payload = _native.update_fields(self._data)
+        report = json.loads(payload)
+        return UpdatedFields(
+            document=Document(data, self.name),
+            fields=_decode_field_updates(report["fields"]),
+            page_count=report["page_count"],
+        )
+
+    def to_png(
+        self, *, dpi: float = 96.0, options: PdfOptions | None = None, pages: Sequence[int] | None = None
+    ) -> tuple[bytes, ...]:
+        """One PNG per page, straight from the layout (no PDF round trip).
+
+        ``pages`` (counted from 1, any order, repeats ignored) rasterizes only
+        those pages, in ascending order, after one layout pass of the whole
+        document.
+        """
+        if pages is not None:
+            return self.render(pdf=False, png_dpi=dpi, options=options, pages=pages).pngs
         options = _pdf_options(options)
         return tuple(
             _native.docx_to_png(
@@ -237,8 +367,19 @@ class Document:
             )
         )
 
-    def render(self, *, pdf: bool = True, png_dpi: float | None = None, options: PdfOptions | None = None) -> Rendered:
-        """One layout pass: optional PDF, optional PNG pages, and the page report."""
+    def render(
+        self,
+        *,
+        pdf: bool = True,
+        png_dpi: float | None = None,
+        options: PdfOptions | None = None,
+        pages: Sequence[int] | None = None,
+    ) -> Rendered:
+        """One layout pass: optional PDF, optional PNG pages, and the page report.
+
+        ``pages`` (counted from 1) rasterizes only those pages; the report
+        still covers every page. A page past the end raises ``JubarteError``.
+        """
         options = _pdf_options(options)
         pdf_bytes, pngs, report = _native.render(
             self._data,
@@ -247,8 +388,162 @@ class Document:
             compress=options.compress,
             revisions=options.revisions,
             revision_palette=options.revision_palette,
+            pages=None if pages is None else _zero_based(pages),
         )
         return Rendered(pdf=pdf_bytes, pngs=tuple(pngs), report=_decode_render_report(report))
+
+    def inspect_json(self) -> str:
+        """The engine's ``inspect`` snapshot as JSON text, unchanged (``inspect`` decodes it)."""
+        return _native.inspect_json(self._data)
+    # -- validity ------------------------------------------------------------
+
+    def validate(self) -> tuple[Finding, ...]:
+        """Word-validity findings beyond the schema; an empty tuple is a pass.
+
+        A package the engine cannot read at all raises ``JubarteError``.
+        """
+        return _decode_findings_json(_native.validate_json(self._data))
+
+    def repair(self) -> Repaired:
+        """A copy with every repairable finding fixed, plus what was fixed and what remains."""
+        data, payload = _native.repair_json(self._data)
+        import json
+
+        parts = json.loads(payload)
+        return Repaired(
+            document=Document(data, self.name),
+            repaired=_decode_findings(parts["repaired"]),
+            remaining=_decode_findings(parts["remaining"]),
+        )
+
+    def audit_tracked(self, original: Document | bytes, *, author: str) -> tuple[Finding, ...]:
+        """Every text change against ``original`` must be a revision by ``author``.
+
+        Rejecting that author's changes must give ``original``'s text back;
+        a paragraph that still differs is an ``UNTRACKED_EDIT`` finding and
+        another author's change a ``FOREIGN_AUTHOR`` one. An empty tuple
+        means every edit is tracked.
+        """
+        before = original.to_bytes() if isinstance(original, Document) else original
+        return _decode_findings_json(_native.audit_tracked_json(before, self._data, author))
+
+    def append(
+        self,
+        other: Document,
+        *,
+        section_break: SectionBreak = "next_page",
+        keep_sections: bool = False,
+        comments: AppendComments = "drop",
+    ) -> Appended:
+        """Put ``other`` after this document, carrying its parts.
+
+        Images, links, headers, styles, lists and notes come along under ids
+        that do not collide; a style this document already has (same type and
+        name) keeps this document's look. ``section_break="continuous"`` or
+        ``"none"`` joins on the same page; ``keep_sections`` keeps ``other``'s
+        page setup, headers and footers as a section of its own. ``other``'s
+        comments are dropped and reported in ``warnings``; with
+        ``comments="carry"`` those its body anchors come along with their
+        threads and resolution (those in notes, headers and footers are still
+        dropped and reported).
+        """
+        if not isinstance(other, Document):
+            raise TypeError("other must be a Document")
+        if not isinstance(section_break, str):
+            raise TypeError("section_break must be a string")
+        if section_break not in _SECTION_BREAKS:
+            raise ValueError(f"section_break must be one of {', '.join(_SECTION_BREAKS)}")
+        if not isinstance(keep_sections, bool):
+            raise TypeError("keep_sections must be a bool")
+        if not isinstance(comments, str):
+            raise TypeError("comments must be a string")
+        if comments not in _APPEND_COMMENTS:
+            raise ValueError(f"comments must be one of {', '.join(_APPEND_COMMENTS)}")
+        options = json.dumps(
+            {"section_break": section_break, "keep_sections": keep_sections, "comments": comments}
+        )
+        data, warnings = _native.append_json(self._data, other._data, options)
+        return Appended(Document.from_bytes(data), tuple(json.loads(warnings)))
+
+    def audit(self, rules: Sequence[str] | str | None = None) -> tuple[AuditFinding, ...]:
+        """Accessibility, style and structure findings, each located by
+        paragraph id. ``rules`` names rule sets (``a11y``, ``style``,
+        ``structure``) or codes, as a sequence or a comma-separated string;
+        ``None`` runs every rule. ``jubarte audit --help`` lists the codes."""
+        if rules is None:
+            selected = None
+        else:
+            if isinstance(rules, str):
+                rules = [rule for rule in rules.split(",") if rule.strip()]
+            if not all(isinstance(rule, str) for rule in rules):
+                raise TypeError("rules must be strings")
+            selected = [rule.strip() for rule in rules]
+        return _decode_audit(_native.audit_json(self._data, selected))
+
+
+def _zero_based(pages: Sequence[int]) -> list[int]:
+    """Page numbers counted from 1 as the engine's zero-based indices."""
+    out = []
+    for page in pages:
+        if isinstance(page, bool) or not isinstance(page, int) or page < 1:
+            raise ValueError(f"pages are counted from 1; got {page!r}")
+        out.append(page - 1)
+    return out
+
+
+def diff_render(
+    a: Document | bytes | str | os.PathLike[str],
+    b: Document | bytes | str | os.PathLike[str],
+    *,
+    dpi: float = 100.0,
+    overlay: bool = True,
+    options: PdfOptions | None = None,
+) -> RenderDiff:
+    """Which pages of Word documents ``a`` and ``b`` differ, pixel for
+    pixel, from one layout pass each at ``dpi``.
+
+    Each side is a ``Document``, Word ``bytes``, or a path (``str`` or
+    ``os.PathLike``). ``overlay`` paints the changed pixels of each changed
+    page magenta over ``b``'s page and boxes them. ``options`` sets the
+    revision style both sides are painted with (``compress`` is ignored).
+    """
+    options = _pdf_options(options)
+    pages, a_pngs, b_pngs, overlays, a_report, b_report = _native.diff_render_json(
+        _word_bytes(a),
+        _word_bytes(b),
+        dpi=float(dpi),
+        overlay=overlay,
+        revisions=options.revisions,
+        revision_palette=options.revision_palette,
+    )
+    return RenderDiff(
+        pages=_decode_page_diffs(pages),
+        a=tuple(a_pngs),
+        b=tuple(b_pngs),
+        overlays=tuple(overlays),
+        a_report=_decode_render_report(a_report),
+        b_report=_decode_render_report(b_report),
+    )
+
+
+def _word_bytes(side: object) -> bytes:
+    """A ``diff_render`` side as Word bytes."""
+    if isinstance(side, Document):
+        return side._data
+    if isinstance(side, bytes):
+        return side
+    if isinstance(side, (str, os.PathLike)):
+        return Path(side).read_bytes()
+    raise TypeError("each side must be a Document, Word bytes or a path")
+
+
+@dataclass(frozen=True, slots=True)
+class UpdatedFields:
+    """``Document.update_fields``: the refreshed copy and what was written."""
+
+    document: Document
+    fields: tuple[FieldUpdate, ...]
+    page_count: int
 
 
 def _pdf_options(options: PdfOptions | None) -> PdfOptions:
@@ -257,6 +552,74 @@ def _pdf_options(options: PdfOptions | None) -> PdfOptions:
     if not isinstance(options, PdfOptions):
         raise TypeError("options must be PdfOptions or None")
     return options
+
+
+def diff(
+    old: Document | bytes | str | os.PathLike[str],
+    new: Document | bytes | str | os.PathLike[str],
+    *,
+    author: str | None = None,
+    date: str | None = None,
+    columns: int = 72,
+    format: Literal["patch", "critic"] = "patch",
+) -> Diff:
+    """The changes from ``old`` to ``new``: the changed paragraphs, each at
+    its ``body:p:N`` id in a Word document or ``line:N`` in Markdown, with
+    ``[-old-]{+new+}`` changes and CriticMarkup comments.
+
+    Each side is a ``Document`` or Word ``bytes``, Markdown text (``str``),
+    or a path (``.md``/``.markdown`` read as Markdown, anything else as
+    Word). ``author`` and ``date`` own the changes, shown once in the
+    header [default: ``git config user.name``, else Redline; now].
+    ``columns`` wraps the lines (0 does not). ``format="critic"`` gives the
+    whole document as CriticMarkup instead, as ``jubarte diff --format
+    critic`` does.
+    """
+    if format not in ("patch", "critic"):
+        raise ValueError("format must be patch or critic")
+    if not isinstance(columns, int) or columns < 0:
+        raise ValueError("columns must be a nonnegative integer")
+    (old_side, old_name), (new_side, new_name) = _side(old, "old"), _side(new, "new")
+    return _decode_diff(
+        _native.diff_json(
+            old_side,
+            new_side,
+            old_name=old_name,
+            new_name=new_name,
+            author=author if author is not None else _default_author(),
+            date=date if date is not None else datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            columns=columns,
+            critic=format == "critic",
+        )
+    )
+
+
+def _side(side: object, default: str) -> tuple[bytes | str, str]:
+    """A diff side as the engine takes it (Word bytes or Markdown text), and its name."""
+    if isinstance(side, Document):
+        return side._data, side.name or f"{default}.docx"
+    if isinstance(side, bytes):
+        return side, f"{default}.docx"
+    if isinstance(side, str):
+        return side, f"{default}.md"
+    if isinstance(side, os.PathLike):
+        path = Path(side)
+        if path.suffix.lower() in (".md", ".markdown"):
+            return path.read_text(encoding="utf-8"), path.name
+        return path.read_bytes(), path.name
+    raise TypeError("each side must be a Document, bytes, Markdown text or a path")
+
+
+def _default_author() -> str:
+    """``git config user.name``, else Redline: as ``jubarte diff``."""
+    try:
+        out = subprocess.run(
+            ["git", "config", "user.name"], capture_output=True, text=True, check=False, timeout=5
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "Redline"
+    name = out.stdout.strip()
+    return name if out.returncode == 0 and name else "Redline"
 
 
 def capabilities() -> dict[str, object]:
@@ -269,3 +632,39 @@ def capabilities() -> dict[str, object]:
 def read(path: str | os.PathLike[str]) -> Document:
     """Load a local DOCX snapshot; equivalent to ``Document.read(path)``."""
     return Document.read(path)
+
+
+def from_markdown(
+    text: str,
+    *,
+    reference: Document | bytes | None = None,
+    page: Literal["letter", "a4"] = "letter",
+    author: str = "Redline",
+    date: str | None = None,
+    critic: bool = True,
+    track_changes: Literal["all", "accept", "reject"] = "all",
+) -> Document:
+    """Write Markdown as a Word document, as ``jubarte convert draft.md``.
+
+    CriticMarkup (``{++ ++}``, ``{-- --}``, ``{~~ ~> ~~}``, ``{>> <<}``)
+    becomes tracked changes and comments by ``author`` at ``date`` (the
+    engine's fixed epoch by default), unless ``critic`` is false.
+    ``track_changes`` keeps them (``all``) or writes the document with each
+    accepted or rejected. ``reference`` lends its styles and page setup;
+    without it ``page`` picks US Letter or A4, both with one-inch margins.
+    Engine warnings, such as a ``page`` the reference overrides, are raised
+    as ``UserWarning``. Images are written as their alt text.
+    """
+    if isinstance(reference, Document):
+        reference = reference.to_bytes()
+    return Document.from_bytes(
+        _native.markdown_to_docx(
+            text,
+            reference=reference,
+            page=page,
+            author=author,
+            date=date,
+            critic=critic,
+            track_changes=track_changes,
+        )
+    )

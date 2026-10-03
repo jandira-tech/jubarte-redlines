@@ -2,6 +2,14 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
+// Untrusted bytes reach this module: an out-of-range index or an integer overflow
+// is an abort in the Python and WASM consumers, so both are refused here
+// (test fixtures are exempt).
+#![cfg_attr(
+    not(test),
+    deny(clippy::indexing_slicing, clippy::arithmetic_side_effects)
+)]
+
 //! OPC (Open Packaging Conventions) layer — M1.5.
 //!
 //! SPIKE FINDINGS (rdocx-opc 0.1, verified 2026-06-27):
@@ -15,7 +23,7 @@
 //!     → parse / resolve / add relationships
 //!   - `resolve_rel_target`         → relative target resolution
 //!   - `content_types.content_type_for` / `add_default` / `add_override`
-//!     → read / mutate [Content_Types].xml
+//!     → read / mutate `[Content_Types].xml`
 //!   - `main_document_part`         → the package → main-document rel
 //!
 //! rdocx-opc keys parts/rels with a LEADING SLASH (`/word/document.xml`). This
@@ -29,6 +37,20 @@ use std::io::{Cursor, Write};
 
 use rdocx_opc::OpcPackage;
 pub use rdocx_opc::{OpcError, Relationship, Relationships};
+
+/// Input the engine refuses before or while reading it, as an `Err` the
+/// caller can handle rather than a panic, which would abort a WASM instance
+/// or the Python interpreter. `InvalidData` is std's kind for input that is
+/// well-formed but unacceptable; the typed `err` travels as the
+/// [`std::io::Error`] source, so `Display` carries its message and
+/// `io::Error::get_ref` lets a caller downcast it (for example to
+/// [`crate::admission::AdmissionError`] and read its stable code).
+pub(crate) fn refused<E>(err: E) -> OpcError
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    OpcError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, err))
+}
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
@@ -99,9 +121,7 @@ fn denorm(name: &str) -> String {
 /// private `rdocx_opc::package::part_name_to_rels_path`.
 fn part_name_to_rels_path(part_name: &str) -> String {
     let name = part_name.strip_prefix('/').unwrap_or(part_name);
-    if let Some(pos) = name.rfind('/') {
-        let dir = &name[..pos];
-        let file = &name[pos + 1..];
+    if let Some((dir, file)) = name.rsplit_once('/') {
         format!("{dir}/_rels/{file}.rels")
     } else {
         format!("_rels/{name}.rels")
@@ -294,14 +314,14 @@ impl PartFs {
             .map(|s| s.to_string())
     }
 
-    /// Add an Override entry to [Content_Types].xml.
+    /// Add an Override entry to `[Content_Types].xml`.
     pub fn add_content_type_override(&mut self, part_name: &str, content_type: &str) {
         self.pkg
             .content_types
             .add_override(&norm(part_name), content_type);
     }
 
-    /// Add a Default extension mapping to [Content_Types].xml.
+    /// Add a Default extension mapping to `[Content_Types].xml`.
     pub fn add_content_type_default(&mut self, ext: &str, content_type: &str) {
         self.pkg.content_types.add_default(ext, content_type);
     }
@@ -346,7 +366,7 @@ impl PartFs {
         }
     }
 
-    /// Remove an Override entry from [Content_Types].xml (no-op when absent).
+    /// Remove an Override entry from `[Content_Types].xml` (no-op when absent).
     pub fn remove_content_type_override(&mut self, part_name: &str) {
         self.pkg.content_types.overrides.remove(&norm(part_name));
     }
@@ -361,6 +381,15 @@ impl PartFs {
         }
         let rels = self.pkg.get_or_create_part_rels(&key);
         rels.items.retain(|r| r.rel_type != rel_type);
+    }
+
+    /// Remove every package-level relationship (`_rels/.rels`) of the given
+    /// type. The parts they target are left to the caller.
+    pub fn remove_package_relationships_by_type(&mut self, rel_type: &str) {
+        self.pkg
+            .package_rels
+            .items
+            .retain(|r| r.rel_type != rel_type);
     }
 
     /// Remove the relationship `rel_id` of `source_part` and, unless another

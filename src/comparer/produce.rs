@@ -893,10 +893,12 @@ pub fn coalesce_recurse(
             continue;
         }
 
-        // w:pict (VML image) — clone full subtree + status. Must not fall
-        // through to reconstruct_element / empty Allowable shell: attribute-
-        // only v:imagedata children emit no atoms when recursed (M74).
-        if aname == W::pict() {
+        // w:pict (VML image) and w:object (embedded OLE picture) — clone
+        // full subtree + status. Must not fall through to
+        // reconstruct_element / empty Allowable shell: attribute-only
+        // v:imagedata children emit no atoms when recursed (M74), and an
+        // object rebuilt that way lost its picture and its revision mark.
+        if aname == W::pict() || aname == W::object() {
             for (_key, gc) in &groupedchildren {
                 for gcc in gc {
                     let d = dom.clone_subtree(gcc.content_element);

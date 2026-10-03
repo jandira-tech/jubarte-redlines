@@ -5,10 +5,11 @@
 //! `jubarte self-update`: replace this binary with a GitHub release, only when
 //! the user runs the command (docs/SELF_UPDATE.md).
 //!
-//! The release lookup, SHA-256 check against `SHA256SUMS.txt`, archive
-//! extraction and binary swap are the `self_update` crate's. This module
-//! decides what to install and when to ask, and keeps those decisions free of
-//! I/O so they are unit-tested.
+//! The release lookup, SHA-256 check against `SHA256SUMS.txt`, zipsign
+//! signature check, archive extraction and binary swap are the `self_update`
+//! crate's. This module decides what to install, when to ask, and when a
+//! signature is required, and keeps those decisions free of I/O so they are
+//! unit-tested.
 
 use std::io::{BufRead, IsTerminal, Write};
 
@@ -18,6 +19,27 @@ use self_update::version::cmp_versions;
 const REPO_OWNER: &str = "jandira-tech";
 const REPO_NAME: &str = "jubarte-redlines";
 const SUMS_ASSET: &str = "SHA256SUMS.txt";
+
+/// The ed25519 public keys trusted to sign release archives (zipsign), any
+/// one of which must have signed a release from [`FIRST_SIGNED_RELEASE`] on.
+///
+/// Empty until the owner commits a key, and with no key the updater checks
+/// `SHA256SUMS.txt` alone, as before. To trust a key, commit the 32-byte file
+/// `zipsign gen-key` writes and list it here:
+///
+/// ```text
+/// const RELEASE_KEYS: &[self_update::VerifyingKey] =
+///     &[*include_bytes!("../keys/release-signing.pub")];
+/// ```
+///
+/// A file that is not exactly 32 bytes fails the build. Set
+/// [`FIRST_SIGNED_RELEASE`] in the same commit; docs/SELF_UPDATE.md has the
+/// steps, including key rotation.
+const RELEASE_KEYS: &[self_update::VerifyingKey] = &[];
+
+/// The first release whose archives `release.yml` signed, without a leading
+/// `v` (`Some("0.11.0")`). `None` until [`RELEASE_KEYS`] holds a key.
+const FIRST_SIGNED_RELEASE: Option<&str> = None;
 
 /// What the user asked for.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -127,7 +149,9 @@ pub fn plan(current: &str, target: &str, requested: bool) -> Result<Plan, String
 /// # Errors
 ///
 /// A message for an unsupported platform, a refused preflight, a network or
-/// GitHub failure, a missing or mismatched checksum, or a failed swap.
+/// GitHub failure, a missing or mismatched checksum, a missing or invalid
+/// signature where one is required ([`signature_required`]), or a failed
+/// swap.
 pub fn run(opts: &Options) -> Result<(), String> {
     let interactive = std::io::stdin().is_terminal();
     preflight(opts, interactive)?;
@@ -186,6 +210,12 @@ pub fn run(opts: &Options) -> Result<(), String> {
         return Ok(());
     }
 
+    let signed = signature_required(&to, FIRST_SIGNED_RELEASE, !RELEASE_KEYS.is_empty())?;
+    if signed {
+        builder.verifying_keys(RELEASE_KEYS);
+    } else if !RELEASE_KEYS.is_empty() {
+        eprintln!("note: {to} predates signed releases; only its SHA-256 is checked.");
+    }
     let installer = builder
         .release_tag(format!("v{to}"))
         .build()
@@ -195,6 +225,31 @@ pub fn run(opts: &Options) -> Result<(), String> {
         .map_err(|e| format!("update to {to} failed; the installed binary is unchanged: {e}"))?;
     println!("jubarte {from} -> {to} installed.");
     Ok(())
+}
+
+/// Whether installing `target_version` must pass a zipsign signature check
+/// against the trusted keys.
+///
+/// True only when keys are trusted and the target is `first_signed` or later:
+/// releases published before signing began carry no signature, so a
+/// `--version` downgrade to one of them is checked by its SHA-256 alone.
+///
+/// # Errors
+///
+/// A message when keys are trusted, a first signed release is set, and either
+/// version is not semver.
+pub fn signature_required(
+    target_version: &str,
+    first_signed: Option<&str>,
+    keys_present: bool,
+) -> Result<bool, String> {
+    let Some(first) = first_signed.filter(|_| keys_present) else {
+        return Ok(false);
+    };
+    let (target, first) = (bare(target_version), bare(first));
+    let order = cmp_versions(target, first)
+        .map_err(|e| format!("version {target} against first signed release {first}: {e}"))?;
+    Ok(order.is_ge())
 }
 
 fn confirm(from: &str, to: &str) -> Result<bool, String> {
@@ -308,5 +363,75 @@ mod tests {
     #[test]
     fn a_non_semver_tag_is_an_error() {
         assert!(plan("0.10.0", "nightly", false).is_err());
+    }
+
+    #[test]
+    fn without_keys_no_signature_is_required() {
+        for (target, first) in [
+            ("0.12.0", Some("0.11.0")),
+            ("0.11.0", Some("0.11.0")),
+            ("0.9.0", Some("0.11.0")),
+            ("0.12.0", None),
+        ] {
+            assert_eq!(
+                signature_required(target, first, false),
+                Ok(false),
+                "{target} with first signed {first:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn keys_without_a_first_signed_release_require_nothing() {
+        assert_eq!(signature_required("0.12.0", None, true), Ok(false));
+        assert_eq!(signature_required("v0.12.0", None, true), Ok(false));
+    }
+
+    #[test]
+    fn the_first_signed_release_and_later_ones_require_a_signature() {
+        let first = Some("0.11.0");
+        assert_eq!(signature_required("0.11.0", first, true), Ok(true));
+        assert_eq!(signature_required("v0.11.0", first, true), Ok(true));
+        assert_eq!(signature_required("0.11.1", first, true), Ok(true));
+        assert_eq!(signature_required("v1.0.0", first, true), Ok(true));
+        // A `v` on the threshold is the same release.
+        assert_eq!(
+            signature_required("0.11.0", Some("v0.11.0"), true),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn releases_before_the_first_signed_one_are_checksum_only() {
+        let first = Some("0.11.0");
+        assert_eq!(signature_required("0.10.1", first, true), Ok(false));
+        assert_eq!(signature_required("v0.10.1", first, true), Ok(false));
+        // A pre-release of the first signed version sorts before it.
+        assert_eq!(signature_required("0.11.0-rc.1", first, true), Ok(false));
+    }
+
+    #[test]
+    fn a_non_semver_version_is_an_error_when_signing_is_on() {
+        assert!(signature_required("nightly", Some("0.11.0"), true).is_err());
+        assert!(signature_required("0.11.0", Some("next"), true).is_err());
+    }
+
+    #[test]
+    fn the_shipped_key_set_and_threshold_agree() {
+        // Both are set in the same commit (docs/SELF_UPDATE.md): a threshold
+        // with no key would never check a signature, and a key with no
+        // threshold would never be used.
+        assert_eq!(
+            FIRST_SIGNED_RELEASE.is_some(),
+            !RELEASE_KEYS.is_empty(),
+            "set FIRST_SIGNED_RELEASE and RELEASE_KEYS together"
+        );
+        if let Some(first) = FIRST_SIGNED_RELEASE {
+            // The threshold is semver and carries no `v`. It is set to the
+            // next release, before `Cargo.toml` is bumped, so it is not
+            // compared with this build's version.
+            assert!(!first.starts_with('v'), "write {first} without the v");
+            assert_eq!(signature_required(first, Some(first), true), Ok(true));
+        }
     }
 }

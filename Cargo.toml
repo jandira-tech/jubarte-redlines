@@ -8,16 +8,16 @@
 
 [package]
 name = "jubarte-redlines"
-version = "0.10.1"
+version = "0.11.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Jandira Technologies, LLC"]
 license = "AGPL-3.0-only"
-description = "Lossless DOCX redline engine — compare two Word documents into a tracked-changes document that opens cleanly in Microsoft Word; list, accept, or reject revisions"
+description = "Word-faithful DOCX redline engine — compare two Word documents into a tracked-changes document that opens cleanly in Microsoft Word; list, accept, or reject revisions"
 repository = "https://github.com/jandira-tech/jubarte-redlines"
 homepage = "https://github.com/jandira-tech/jubarte-redlines"
 documentation = "https://docs.rs/jubarte-redlines"
-readme = "README.md"
+readme = "README.crates.md"
 keywords = ["docx", "redline", "track-changes", "openxml", "word"]
 categories = ["text-processing", "parser-implementations", "command-line-utilities"]
 # Keep the published package lean: test fixtures/goldens (~3 MB) and dev tools
@@ -31,6 +31,7 @@ include = [
   "/benches/**",
   "/Cargo.toml",
   "/README.md",
+  "/README.crates.md",
   "/CHANGELOG.md",
   "/KNOWN_ISSUES.md",
   "/TUNING_AUDIT.md",
@@ -38,6 +39,7 @@ include = [
   "/LICENSES.md",
   "/NOTICE",
   "/LICENSES/**",
+  "/keys/*.pub",
 ]
 
 # Rust import path stays `jubarte::…` (historical library name). The crates.io
@@ -49,6 +51,7 @@ include = [
 "0.9.3" = "Redlines Word refused to open now open. A field whose code changed is replaced whole, and a same-code field stays whole, as in Word's redline. Table, list and section markup follow Word, and the same input writes the same bytes."
 "0.10.0" = "Adds jubarte inspect, text, edit and capabilities with input-admission budgets, --mode word|powertools, convert --png and self-update; Word-mode redlines keep changed text boxes, per-section headers and footers, and comment anchors as Word does."
 "0.10.1" = "Per-change accept/reject (Word's Accept / Reject This Change) in the library and edit plans; Word-parity fixes to Reject All; many docx-to-PDF layout fixes (page breaks, keep-with-next by compat mode, table row splits, floating tables, headers/footers, comment balloons); new debug checks (--check render, diff, -c text)."
+"0.11.0" = "Edit plans gain rewrite, tables, lists, run formatting, footnotes, images, page setup, content controls, watermark, redact, settings and field updates; new audit, validate/repair, scrub, append, comments and diff-render modules; input admission with LEGACY_DOC refusal; conventional marks follow Litera Compare; closer-to-Word docx-to-PDF. Breaking: WmlDocument::document_byte_array is private, use bytes()."
 [lib]
 name = "jubarte"
 path = "src/lib.rs"
@@ -59,7 +62,7 @@ all-features = true
 # Workspace lint policy (plan A1). Groups at priority = -1; pedantic is NOT
 # enabled as a group — only individually chosen low-hit pedantic lints.
 [lints.rust]
-unsafe_code = "deny" # crate is 100% safe today; keep it that way
+unsafe_code = "deny" # the library and CLI forbid it outright; the allocation-counting examples and tests need it
 
 [lints.clippy]
 correctness = { level = "deny", priority = -1 }
@@ -97,13 +100,16 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate"] } # 
 sha1 = "0.11"
 ttf-parser = "0.25" # DOCX→PDF glyph metrics + TTF embed (Carlito / Liberation)
 rustybuzz = "0.20" # HarfBuzz-compatible shaping so advances match soffice
+unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] } # Mark / Symbol general categories for word tokens (`util::word_tokens`); already in the tree through rustybuzz
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff", "bmp", "gif"] } # raster images in the PDF writer
 flate2 = "1.1" # optional `/FlateDecode` on PDF streams (already in the tree via zip/png, but a transitive dep is not usable directly)
 quick-xml = "0.42" # checked XML admission (`xmllinq::parse::validate_xml`) before the permissive DOM parser
 sha2 = "0.11" # SHA-256 snapshot guard shared by `inspect` and `edit`
 serde = { version = "1", features = ["derive"] } # inspect snapshot / edit plan / report wire types
 serde_json = "1"
-tiny-skia = "0.11" # DOCX→PNG page raster over the layout display list
+tiny-skia = "0.12" # DOCX→PNG page raster over the layout display list
+pulldown-cmark = { version = "0.13", default-features = false } # Markdown → DOCX (`jubarte::markdown`); CommonMark + GFM tables/footnotes
+similar = { version = "3", default-features = false } # line and word diffs of Markdown (`jubarte::markdown::diff_markdown`)
 foldhash = "0.2" # the XML name interner's hasher: well mixed low bits for short, similar names, unlike SipHash (slow) or FNV (clustered)
 clap = { version = "4.5", features = ["derive"], optional = true }
 # CLI-only global allocator. The redline pipeline is ~41% allocation self-time
@@ -111,13 +117,16 @@ clap = { version = "4.5", features = ["derive"], optional = true }
 # mimalloc cuts that per-alloc cost with zero behaviour change. Kept out of the
 # pure-library dependency tree so downstream consumers pick their own allocator.
 mimalloc = { version = "0.1", default-features = false, optional = true }
-# `jubarte self-update`: release lookup, SHA256SUMS.txt check, archive
-# extraction and binary replacement. Only the command contacts the network.
-self_update = { version = "1.3", default-features = false, features = ["ureq", "rustls", "github", "archive-tar", "compression-tar-gz", "checksums"], optional = true }
+# `jubarte self-update`: release lookup, SHA256SUMS.txt check, zipsign
+# signature check (`signatures`, enforced once a release key is committed:
+# docs/SELF_UPDATE.md), archive extraction and binary replacement. Only the
+# command contacts the network.
+self_update = { version = "1.3", default-features = false, features = ["ureq", "rustls", "github", "archive-tar", "compression-tar-gz", "checksums", "signatures"], optional = true }
 
 # Windows releases are .zip. Zip support stays off elsewhere: it turns on the
 # zip crate's `time` feature, which stamps wall-clock times into our own
-# archives unless every entry sets its time (986c526).
+# archives unless every entry sets its time (986c526). `archive-zip` also
+# turns on zipsign's zip verifier when `signatures` is on (above).
 [target.'cfg(windows)'.dependencies]
 self_update = { version = "1.3", default-features = false, features = ["archive-zip", "compression-zip-deflate"], optional = true }
 
@@ -129,8 +138,13 @@ required-features = ["cli"]
 criterion = "0.8"
 # Round-trip validation of produced .docx files in integration tests; only the
 # `parts` feature (= dep:zip) is built.
-ooxmlsdk = { version = "0.12", default-features = false, features = ["parts"] }
+ooxmlsdk = { version = "0.13.1", default-features = false, features = ["parts"] }
 tempfile = "3"
+# tests/self_update_signature.rs: sign a throwaway .tar.gz exactly as
+# `zipsign sign tar` does in release.yml, then check it with the updater's
+# verifier. Test-only keys; nothing here signs a release.
+zipsign-api = { version = "0.2", default-features = false, features = ["sign-tar"] }
+tar = { version = "0.4", default-features = false }
 
 [[bench]]
 name = "redline"

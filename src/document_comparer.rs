@@ -114,14 +114,27 @@ fn part_rels_agree(
 /// `headerReference`/`footerReference` elements in the main document, resolved to
 /// part names via the document rels.
 fn header_footer_refs(pkg: &PartFs) -> Vec<(String, String, String)> {
+    header_footer_refs_by_section(pkg)
+        .1
+        .into_iter()
+        .map(|(_, kind, ty, part)| (kind, ty, part))
+        .collect()
+}
+
+/// A header/footer reference with the index of the section holding it.
+type SectionRef = (usize, String, String, String);
+
+/// A document's section count and [`header_footer_refs`], each tagged
+/// with the index of the section that references it.
+fn header_footer_refs_by_section(pkg: &PartFs) -> (usize, Vec<SectionRef>) {
     let main = pkg
         .main_document_part()
         .unwrap_or_else(|| "word/document.xml".to_string());
     let Some(xml) = pkg.part_string(&main) else {
-        return Vec::new();
+        return (0, Vec::new());
     };
     let Some(rels) = pkg.read_rels_for(&main) else {
-        return Vec::new();
+        return (0, Vec::new());
     };
     let id_to_target: std::collections::HashMap<&str, &str> = rels
         .items
@@ -131,8 +144,9 @@ fn header_footer_refs(pkg: &PartFs) -> Vec<(String, String, String)> {
     let mut d = Dom::new();
     let doc = d.parse_xdocument(&xml);
     let Some(root) = d.root(doc) else {
-        return Vec::new();
+        return (0, Vec::new());
     };
+    let sections = section_props(&d, root);
     let mut out = Vec::new();
     for (ref_name, kind) in [
         (W::name("headerReference"), "header"),
@@ -143,6 +157,10 @@ fn header_footer_refs(pkg: &PartFs) -> Vec<(String, String, String)> {
                 .attribute(r, &W::name("type"))
                 .unwrap_or("default")
                 .to_string();
+            let section = d
+                .parent(r)
+                .and_then(|s| sections.iter().position(|&x| x == s))
+                .unwrap_or(0);
             if let Some(rid) = d.attribute(r, &R::name("id"))
                 && let Some(&tgt) = id_to_target.get(rid)
             {
@@ -151,39 +169,92 @@ fn header_footer_refs(pkg: &PartFs) -> Vec<(String, String, String)> {
                 } else {
                     format!("word/{}", tgt.trim_start_matches('/'))
                 };
-                out.push((kind.to_string(), ty, part));
+                out.push((section, kind.to_string(), ty, part));
             }
         }
     }
-    out
+    (sections.len(), out)
 }
 
-/// The revised part a header/footer part is diffed against: the one the
-/// same section references for the same kind and type (the `at`-th such
-/// reference in each document), or none when A's part is unchanged in B.
-/// Keyed by kind and type alone, every section's default footer met the last
-/// section's ("Page 1 of 4" against "Page 4 of 4"), and an unchanged footer
-/// came out deleted and inserted again.
+/// A document's sections in order: each paragraph mark's `w:sectPr`, then
+/// the body's own. The `w:sectPr` in a `w:sectPrChange` is no section.
+fn section_props(dom: &Dom, root: NodeId) -> Vec<NodeId> {
+    dom.descendants(root, Some(&W::sect_pr()))
+        .into_iter()
+        .filter(|&s| {
+            dom.parent(s)
+                .is_some_and(|p| dom.name_is(p, &W::p_pr()) || dom.name_is(p, &W::body()))
+        })
+        .collect()
+}
+
+/// The revised section each original section became, read off the
+/// redline's section breaks: the section of a deleted break has none (Word
+/// leaves its headers as they were, probes hs1/hs3), an inserted break's is
+/// the revision's alone. None when the breaks do not account for both
+/// documents' sections.
+fn section_pairing(
+    redline_xml: &str,
+    sections_a: usize,
+    sections_b: usize,
+) -> Option<Vec<Option<usize>>> {
+    let mut d = Dom::new();
+    let doc = d.parse_xdocument(redline_xml);
+    let root = d.root(doc)?;
+    let marked = |s: NodeId, mark: &XName| {
+        d.parent(s)
+            .filter(|&p| d.name_is(p, &W::p_pr()))
+            .and_then(|p| d.element(p, &W::r_pr()))
+            .is_some_and(|r| d.element(r, mark).is_some())
+    };
+    let mut pairing = Vec::new();
+    let mut at_b = 0;
+    for s in section_props(&d, root) {
+        let deleted = marked(s, &W::del());
+        if !marked(s, &W::ins()) {
+            pairing.push((!deleted).then_some(at_b));
+        }
+        if !deleted {
+            at_b += 1;
+        }
+    }
+    (pairing.len() == sections_a && at_b == sections_b).then_some(pairing)
+}
+
+/// The revised part a header/footer part is diffed against, or none when
+/// A's part is unchanged in B. With the redline's `section` pairing, it is
+/// the one the paired revised section shows for the same kind and type
+/// (its own or the one it inherits); a part no surviving section shows has
+/// none. Without it, the `at`-th such reference in each
+/// document. Keyed by kind and type alone, every section's default footer
+/// met the last section's ("Page 1 of 4" against "Page 4 of 4"), and an
+/// unchanged footer came out deleted and inserted again.
 fn pair_header_footer(
     pkg1: &PartFs,
     pkg2: &PartFs,
-    refs_b: &[(String, String, String)],
+    refs_b: &[SectionRef],
     (kind, ty, part_a): (&str, &str, &str),
     at: usize,
+    section: Option<Option<usize>>,
 ) -> Option<String> {
-    let same_slot: Vec<&str> = refs_b
+    let same_slot: Vec<(usize, &str)> = refs_b
         .iter()
-        .filter(|(k, t, _)| k == kind && t == ty)
-        .map(|(_, _, p)| p.as_str())
+        .filter(|(_, k, t, _)| k == kind && t == ty)
+        .map(|(s, _, _, p)| (*s, p.as_str()))
         .collect();
     let bytes_a = pkg1.part_bytes(part_a);
-    if same_slot.iter().any(|&p| pkg2.part_bytes(p) == bytes_a) {
+    if same_slot
+        .iter()
+        .any(|&(_, p)| pkg2.part_bytes(p) == bytes_a)
+    {
         return None;
     }
-    same_slot
-        .get(at)
-        .or(same_slot.last())
-        .map(|p| p.to_string())
+    let paired = match section {
+        Some(Some(b)) => same_slot.iter().rev().find(|&&(s, _)| s <= b),
+        Some(None) => None,
+        None => same_slot.get(at).or(same_slot.last()),
+    };
+    paired.map(|&(_, p)| p.to_string())
 }
 
 /// Default pinned revision date when the caller doesn't specify one.
@@ -1567,42 +1638,51 @@ fn styles_the_revision_lacks(
         .collect()
 }
 
-/// Put each saved style back in place of the one its key finds.
+/// Put each saved style back in place of the one its key finds. Twins of one
+/// key (a built-in name in two cases) go back in order, each on its own.
 fn restore_styles(
     dom: &mut Dom,
     styles_root: NodeId,
     saved: Vec<((String, String), NodeId)>,
 ) -> bool {
     let mut changed = false;
+    let mut restored = std::collections::HashSet::new();
     for (key, copy) in saved {
         let Some(live) = dom
             .elements(styles_root, Some(&W::name("style")))
             .into_iter()
-            .find(|&s| style_match_key(dom, s).as_ref() == Some(&key))
+            .find(|&s| !restored.contains(&s) && style_match_key(dom, s).as_ref() == Some(&key))
         else {
             continue;
         };
         if dom.serialize_element(live) != dom.serialize_element(copy) {
             dom.replace_with(live, &[copy]);
+            restored.insert(copy);
             changed = true;
+        } else {
+            restored.insert(live);
         }
     }
     changed
 }
 
+/// The key Word pairs two stylesheets' styles by: the type, and the name
+/// (the id when it has none). A built-in name matches in any case, a custom
+/// one only exactly: Word keeps `Indent(A)` beside `Indent(a)`.
 fn style_match_key(dom: &Dom, style: NodeId) -> Option<(String, String)> {
     let ty = dom
         .attribute(style, &W::name("type"))
         .unwrap_or("paragraph")
         .to_string();
-    let key = dom
+    let name = dom
         .element(style, &W::name("name"))
         .and_then(|n| dom.attribute(n, &W::val()))
-        .map(|v| v.to_ascii_lowercase())
-        .or_else(|| {
-            dom.attribute(style, &W::name("styleId"))
-                .map(|v| v.to_ascii_lowercase())
-        })?;
+        .or_else(|| dom.attribute(style, &W::name("styleId")))?;
+    let key = if crate::builtin_styles::is_built_in(name) {
+        name.to_ascii_lowercase()
+    } else {
+        name.to_string()
+    };
     Some((ty, key))
 }
 
@@ -4443,7 +4523,7 @@ fn defined_style_ids(pkg: &PartFs, main: &str) -> Option<std::collections::HashS
 /// FillInEmptyFootnotesEndnotes, DetachExternalData and
 /// AddUnidsToMarkupInContentParts in the C# order. Returns the names of the
 /// parts it rewrote or created (empty = pure no-op, bytes untouched). An
-/// orphaned footnote/endnote reference is an [`invalid_content`] error — C#
+/// orphaned footnote/endnote reference is an `invalid_content` error — C#
 /// throws DocxodusException when no ComparisonLog is wired (:1676), and the
 /// compare path wires none.
 pub fn pre_process_markup(
@@ -4636,6 +4716,31 @@ fn invalid_content(msg: String) -> OpcError {
     OpcError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, msg))
 }
 
+/// Admit one compare input under `limits`. A refusal keeps the typed
+/// [`AdmissionError`](crate::admission::AdmissionError) as the error source
+/// (its `code()` is the stable `INPUT_LIMIT`/`UNSUPPORTED_PACKAGE`/… string)
+/// and names which document was refused.
+fn admit_input(
+    side: &str,
+    bytes: &[u8],
+    limits: crate::admission::InputLimits,
+) -> Result<(), OpcError> {
+    crate::admission::admit(bytes, limits)
+        .map(drop)
+        .map_err(|refusal| {
+            crate::opc::refused(crate::admission::AdmissionError {
+                kind: refusal.kind,
+                message: format!("{side} document: {}", refusal.message),
+            })
+        })
+}
+
+/// Admit a single package under the compare budget before a public entry
+/// point opens it: `PartFs::open` inflates every entry without a bound.
+pub(crate) fn admit_package(bytes: &[u8]) -> Result<(), OpcError> {
+    admit_input("input", bytes, crate::admission::InputLimits::compare())
+}
+
 /// The namespace declarations C# attaches to a freshly-created
 /// `w:footnotes`/`w:endnotes` root (`NamespaceAttributes`/
 /// `FreshNamespaceAttributes` :1580–:1602), verbatim.
@@ -4661,14 +4766,24 @@ const NOTES_ROOT_NAMESPACE_ATTRS: &str = concat!(
 /// A.11 — `RevisionProcessor.AcceptRevisions` byte facade: accept every
 /// tracked revision across main + headers/footers + notes + styles parts.
 pub fn accept_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
+    admit_package(docx)?;
     let mut pkg = PartFs::open(docx)?;
     crate::revision_processor::accept_revisions_package(&mut pkg);
+    pkg.to_zip()
+}
+
+/// [`accept_revisions`] keeping bookmark and comment ids: a redline names
+/// its comments by the ids the documents gave them, as `edit` reports them.
+fn accept_source_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
+    let mut pkg = PartFs::open(docx)?;
+    crate::revision_processor::accept_revisions_package_keeping_ids(&mut pkg);
     pkg.to_zip()
 }
 
 /// A.11 — `RevisionProcessor.RejectRevisions` byte facade: reject every
 /// tracked revision across main + headers/footers + notes + styles parts.
 pub fn reject_revisions(docx: &[u8]) -> Result<Vec<u8>, OpcError> {
+    admit_package(docx)?;
     let mut pkg = PartFs::open(docx)?;
     crate::revision_processor::reject_revisions_package(&mut pkg);
     pkg.to_zip()
@@ -5839,16 +5954,19 @@ fn merge_custom_properties(out: &mut PartFs, pkg2: &PartFs) {
         .filter_map(|&p| dom.attribute(p, &pid)?.parse::<u32>().ok())
         .max()
         .unwrap_or(1);
-    let a_names: std::collections::HashSet<String> = a_props
+    // Property names match without regard to case: the original's
+    // "Actno" and the revision's "ActNo" are one property, and two of them
+    // make Word refuse the package (19eb128df9 vs 9666fa13fb).
+    let mut a_names: std::collections::HashSet<String> = a_props
         .iter()
-        .filter_map(|&p| dom.attribute(p, &name).map(str::to_string))
+        .filter_map(|&p| dom.attribute(p, &name).map(str::to_lowercase))
         .collect();
     let mut added = false;
     for bp in dom.elements(b_root, None) {
         let Some(n) = dom.attribute(bp, &name) else {
             continue;
         };
-        if a_names.contains(n) {
+        if !a_names.insert(n.to_lowercase()) {
             continue;
         }
         let clone = dom.clone_subtree(bp);
@@ -5895,7 +6013,7 @@ fn repair_missing_core_relationships(out: &mut PartFs, out_main: &str) {
 /// D.6 — `WmlComparer.GetRevisions` (:3940) byte facade: list every tracked
 /// revision in a redline `.docx` — main-part groups, footnote/endnote
 /// definition groups, `w:rPrChange` format changes, then (settings-gated)
-/// move detection. `TestForInvalidContent` failures are an [`invalid_content`]
+/// move detection. `TestForInvalidContent` failures are an `invalid_content`
 /// error where C# throws.
 pub fn get_revisions(
     docx: &[u8],
@@ -5903,6 +6021,7 @@ pub fn get_revisions(
 ) -> Result<Vec<crate::comparer::WmlComparerRevision>, OpcError> {
     use crate::comparer::{preprocess, revisions};
 
+    admit_input("input", docx, settings.input_limits)?;
     let pkg = PartFs::open(docx)?;
     let main = pkg
         .main_document_part()
@@ -6117,13 +6236,20 @@ fn compare_documents_impl(
     settings: &WmlComparerSettings,
     pre_process_original: bool,
 ) -> Result<Vec<u8>, OpcError> {
+    // Admit both packages before anything inflates them: the central
+    // directory's sizes are untrusted, and an unbounded inflate aborts the
+    // Python and WASM hosts rather than failing the call.
+    admit_input("original", original, settings.input_limits)?;
     // IDENTICAL-INPUT-01: same input bytes → empty redline is the (accepted)
     // original package. Avoids dual package prep, Dom parse, LCS, and produce.
     // Critical for self-compare fixtures (e.g. redline × self).
     if original == modified {
-        let mut owned = crate::strict_translation::strict_to_transitional_docx(original);
+        let mut owned = crate::strict_translation::strict_to_transitional_docx_within(
+            original,
+            settings.input_limits,
+        );
         if settings.merge_replaced_paragraphs && docx_has_tracked_changes(&owned) {
-            owned = accept_revisions(&owned)?;
+            owned = accept_source_revisions(&owned)?;
         }
         // IDENTICAL-INPUT still runs drawing/shape id fixups: source packages
         // may carry colliding wp:docPr/@id (strict01 corpus) that the full
@@ -6136,8 +6262,15 @@ fn compare_documents_impl(
     // PartFs::open sees them (mirrors the OpenXML SDK's pre-compare step).
     // Transitional packages round-trip byte-identical (zero-churn), so the
     // golden/parity paths are unaffected; only Strict inputs are rewritten.
-    let mut original_owned = crate::strict_translation::strict_to_transitional_docx(original);
-    let mut modified_owned = crate::strict_translation::strict_to_transitional_docx(modified);
+    admit_input("modified", modified, settings.input_limits)?;
+    let mut original_owned = crate::strict_translation::strict_to_transitional_docx_within(
+        original,
+        settings.input_limits,
+    );
+    let mut modified_owned = crate::strict_translation::strict_to_transitional_docx_within(
+        modified,
+        settings.input_limits,
+    );
 
     // Accept-before-diff flattens a revised insertion into live text, so a late
     // pass can no longer see where that insertion ended. Keep both main parts
@@ -6162,8 +6295,8 @@ fn compare_documents_impl(
     if settings.merge_replaced_paragraphs
         && (docx_has_tracked_changes(&original_owned) || docx_has_tracked_changes(&modified_owned))
     {
-        original_owned = accept_revisions(&original_owned)?;
-        modified_owned = accept_revisions(&modified_owned)?;
+        original_owned = accept_source_revisions(&original_owned)?;
+        modified_owned = accept_source_revisions(&modified_owned)?;
     }
 
     // After prep, packages may still be byte-identical (rare non-self paths).
@@ -6269,7 +6402,7 @@ fn compare_documents_impl(
             }
         }
     }
-    let result_root = crate::comparer::compare_bodies_faithful_with_notes(
+    let result_root = crate::comparer::try_compare_bodies_faithful_with_notes(
         &mut dom,
         root1,
         root2,
@@ -6277,7 +6410,8 @@ fn compare_documents_impl(
         body2,
         settings,
         Some(&mut notes_ctx),
-    );
+    )
+    .map_err(crate::opc::refused)?;
     for root in [root1, root2] {
         dom.set_attribute_value(root, &crate::namespaces::PT::default_line(), None);
         dom.set_attribute_value(
@@ -6973,9 +7107,12 @@ fn compare_documents_impl(
                 // `Listaszerbekezds` and Table Grid `Rcsostblzat`).
                 let mut b_by_key: std::collections::HashMap<(String, String), String> =
                     std::collections::HashMap::new();
-                for (id, &s) in &b_idx {
-                    if let Some(k) = style_match_key(&sd, s) {
-                        b_by_key.entry(k).or_insert_with(|| id.clone());
+                for s in sd.elements(br, Some(&W::name("style"))) {
+                    if let (Some(k), Some(id)) = (
+                        style_match_key(&sd, s),
+                        sd.attribute(s, &W::name("styleId")),
+                    ) {
+                        b_by_key.entry(k).or_insert_with(|| id.to_string());
                     }
                 }
                 let b_id_for = |out_id: &str| -> Option<String> {
@@ -7271,18 +7408,38 @@ fn compare_documents_impl(
     // (original's) part. That part keeps A's rels, so a part whose B references
     // (a logo, a hyperlink) would resolve to something else there is skipped.
     {
-        let refs_b = header_footer_refs(&pkg2);
+        let (sections_a, refs_a) = header_footer_refs_by_section(&pkg1);
+        let (sections_b, refs_b) = header_footer_refs_by_section(&pkg2);
+        let pairing = out
+            .part_string(&main1)
+            .and_then(|x| section_pairing(&x, sections_a, sections_b));
+        let own_slots: std::collections::HashSet<(usize, String, String)> = refs_a
+            .iter()
+            .map(|(s, k, t, _)| (*s, k.clone(), t.clone()))
+            .collect();
         let mut ordinals: std::collections::HashMap<(String, String), usize> =
             std::collections::HashMap::new();
         let mut diffed = std::collections::HashSet::new();
-        for (kind, ty, part_a) in header_footer_refs(&pkg1) {
+        for (section_a, kind, ty, part_a) in refs_a {
             let ordinal = ordinals.entry((kind.clone(), ty.clone())).or_default();
             let at = *ordinal;
             *ordinal += 1;
             if !diffed.insert(part_a.clone()) {
                 continue;
             }
-            let Some(part_b) = pair_header_footer(&pkg1, &pkg2, &refs_b, (&kind, &ty, &part_a), at)
+            // The part also shows in the later sections that inherit it:
+            // the first whose break survives says what it became (Word
+            // probe hs5 diffs a deleted section's header that the last
+            // section inherits).
+            let section = pairing.as_ref().map(|p| {
+                (section_a..p.len())
+                    .take_while(|&s| {
+                        s == section_a || !own_slots.contains(&(s, kind.clone(), ty.clone()))
+                    })
+                    .find_map(|s| p[s])
+            });
+            let Some(part_b) =
+                pair_header_footer(&pkg1, &pkg2, &refs_b, (&kind, &ty, &part_a), at, section)
             else {
                 continue;
             };
@@ -7504,6 +7661,7 @@ fn compare_documents_impl(
                 // Last: every pass above may append properties out of order.
                 crate::comparer::finalize::enforce_part_schema_order(&mut vd, vr);
                 crate::comparer::finalize::declare_extension_namespaces_ignorable(&mut vd, vr);
+                crate::comparer::finalize::bind_compatibility_prefixes(&mut vd, vr);
                 out.set_part(&part, vd.serialize_element(vr).into_bytes());
             }
         }
@@ -7548,6 +7706,9 @@ fn compare_documents_impl(
     }
     out.to_zip()
 }
+
+#[cfg(test)]
+mod based_style_record_tests;
 
 #[cfg(test)]
 mod tests {

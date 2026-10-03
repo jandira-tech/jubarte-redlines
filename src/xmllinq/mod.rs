@@ -538,7 +538,7 @@ impl Dom {
     }
 
     /// DOM-ITER-03: visit every descendant element in document order without
-    /// allocating a result `Vec`. Same pre-order as [`descendants`]. The filter
+    /// allocating a result `Vec`. Same pre-order as [`Self::descendants`]. The filter
     /// selects which elements are *visited*; recursion still enters every
     /// element child (XLinq `Descendants` semantics).
     pub fn for_each_descendant_element(
@@ -553,7 +553,7 @@ impl Dom {
         });
     }
 
-    /// The first descendant element, in [`descendants`] order, that passes
+    /// The first descendant element, in [`Self::descendants`] order, that passes
     /// `filter` and `pred`; the walk stops there instead of listing the
     /// whole subtree first.
     pub fn find_descendant_element(

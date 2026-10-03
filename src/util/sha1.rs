@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! Port of `SHA1HashStringForUTF8String` / `SHA1HashStringForByteArray` /
-//! `HexStringFromBytes` from `PtUtil.ts`.
+//! `HexStringFromBytes` from `PtUtil.ts`, plus the FNV-1a fingerprints
+//! ([`fnv1a_64`], [`fnv1a_128`]) the LCS derives from those SHA-1 hex strings.
 
 use sha1::{Digest, Sha1};
 
@@ -109,17 +110,17 @@ where
     hex_string_from_bytes(&hasher.finalize())
 }
 
-/// A fixed-width `u64` fingerprint of a hash string, used as a cheap pre-filter
-/// for comparison-unit equality in the LCS hot path (`longest_common_run`). It
-/// is a *pure deterministic function* of the string, so equal strings always
-/// map to equal keys — the pre-filter never wrongly rejects a real match, and
-/// the full hash string stays the source of truth (`key_eq && str_eq`). Not
-/// lossless (u64 can collide), which is why the string confirmation remains.
+/// 64-bit FNV-1a of the string's bytes (offset basis `0xcbf29ce484222325`,
+/// prime `0x100000001b3`). Not SHA-1 and not cryptographic.
 ///
-/// Implemented as 64-bit FNV-1a over the string's bytes: deterministic,
-/// dependency-free, and well-distributed for the (already uniformly random)
-/// SHA-1 hex inputs it fingerprints.
-pub fn sha1_fingerprint(s: &str) -> u64 {
+/// Used as the `u64` bucket key of the comparison-unit index in the LCS hot
+/// path (`longest_common_run`): units whose keys differ are never compared,
+/// and units sharing a bucket go on to the 128-bit key, [`fnv1a_128`]. It is a
+/// pure deterministic function of the string, so equal strings always share a
+/// key and the pre-filter never drops a real match; a `u64` collision only
+/// costs an extra probe. The input is already a SHA-1 hex digest of document
+/// content, so a caller cannot choose the FNV input bytes directly.
+pub fn fnv1a_64(s: &str) -> u64 {
     const OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x0000_0100_0000_01b3;
     let mut hash = OFFSET_BASIS;
@@ -130,15 +131,20 @@ pub fn sha1_fingerprint(s: &str) -> u64 {
     hash
 }
 
-/// A 128-bit fingerprint of a hash string (128-bit FNV-1a). Used by the LCS
-/// hot path (`extend_common_run`) to test comparison-unit equality with a
-/// single integer compare instead of a full 40-byte SHA-1 hex `memcmp`. Equal
-/// strings always map to equal fingerprints; distinct strings collide with
-/// probability ~2^-128 (negligible for non-adversarial document content, and
-/// strictly stronger than the existing 64-bit index key). Deterministic and
-/// dependency-free, matching [`sha1_fingerprint`]'s FNV construction widened to
-/// 128 bits.
-pub fn sha1_fingerprint128(s: &str) -> u128 {
+/// 128-bit FNV-1a of the string's bytes (offset basis
+/// `0x6c62272e07bb014262b821756295c58d`, prime `0x1000000000000000000013b`).
+/// Not SHA-1 and not cryptographic.
+///
+/// In the LCS hot path (`extend_common_run` and the interior-run skip in
+/// `longest_common_run`) this key *alone* decides comparison-unit equality:
+/// two units correlate when their 128-bit keys are equal, with no further
+/// comparison of the 40-byte SHA-1 hex strings. Equal strings always share a
+/// key; distinct strings that collide would wrongly correlate. That is
+/// accepted because the input is already a SHA-1 hex digest of the content,
+/// so an attacker cannot choose the FNV input bytes directly and a generic
+/// collision costs about 2^64 work, far beyond any document pair. Same
+/// construction as [`fnv1a_64`], widened to 128 bits.
+pub fn fnv1a_128(s: &str) -> u128 {
     const OFFSET_BASIS: u128 = 0x6c62_272e_07bb_0142_62b8_2175_6295_c58d;
     const PRIME: u128 = 0x0000_0000_0100_0000_0000_0000_0000_013b;
     let mut hash = OFFSET_BASIS;
@@ -147,4 +153,19 @@ pub fn sha1_fingerprint128(s: &str) -> u128 {
         hash = hash.wrapping_mul(PRIME);
     }
     hash
+}
+
+/// Former name of [`fnv1a_64`]. It never computed SHA-1.
+#[deprecated(since = "0.10.2", note = "renamed to `fnv1a_64`; this was never SHA-1")]
+pub fn sha1_fingerprint(s: &str) -> u64 {
+    fnv1a_64(s)
+}
+
+/// Former name of [`fnv1a_128`]. It never computed SHA-1.
+#[deprecated(
+    since = "0.10.2",
+    note = "renamed to `fnv1a_128`; this was never SHA-1"
+)]
+pub fn sha1_fingerprint128(s: &str) -> u128 {
+    fnv1a_128(s)
 }
