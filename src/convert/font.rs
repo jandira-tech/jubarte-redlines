@@ -26,7 +26,12 @@ fn painted_char(ch: char) -> char {
 /// The Unicode character behind a Symbol face's code (the low byte of its
 /// U+F0xx character), by Adobe's Symbol encoding: U+F0B7 is the bullet,
 /// U+F061 alpha. `None` for the codes Unicode has no character for (the
-/// bracket and radical pieces).
+/// bracket and radical pieces). Where Adobe's table names a character a
+/// text face never has, the one it does have stands: Greek Δ and Ω for the
+/// increment and ohm signs, ® © ™ for the corporate-use serif and sans
+/// marks, 〈 〉 for the deprecated angle brackets, and € at 0xA0 as Apple's
+/// Symbol has it. A code whose character the face lacks paints nothing
+/// (the card suits in Carlito, ℵ ℑ ℜ ℘ in every bundled face).
 fn symbol_unicode(low: u8) -> Option<char> {
     Some(match low {
         0x22 => '∀',
@@ -76,7 +81,7 @@ fn symbol_unicode(low: u8) -> Option<char> {
         0x6A => 'ϕ',
         0x6B => 'κ',
         0x6C => 'λ',
-        0x6D => 'μ',
+        0x6D => 'µ', // the micro sign, as `symbol_font_text` reads it back
         0x6E => 'ν',
         0x6F => 'ο',
         0x70 => 'π',
@@ -1108,6 +1113,10 @@ impl<'a> Face<'a> {
     /// bullet painted nothing. The Symbol slot reads the code by Adobe's
     /// Symbol encoding, any other face as Wingdings; the first stand-in the
     /// face has a glyph for wins. A face that has the code keeps it.
+    ///
+    /// The face does not know the family it was resolved for, so a code of
+    /// Webdings or Wingdings 2 and 3 on a face without it is read as
+    /// Wingdings' too, and may paint another dingbat than Word's.
     pub(crate) fn symbol_stand_in(&self, ch: char) -> Option<char> {
         let low = u8::try_from(u32::from(ch).checked_sub(0xF000)?).ok()?;
         if low < 0x20 || self.cmap_glyph(ch) != 0 {
@@ -3896,6 +3905,7 @@ mod tests {
     #[test]
     fn a_symbol_face_keeps_its_own_codes() {
         let Some(path) = system_override(FaceId::Symbol) else {
+            eprintln!("skipped: Word's Symbol face is not installed on this machine");
             return;
         };
         let face = Face::from_path(FaceId::Symbol, &path).expect("Symbol parses");
@@ -3914,6 +3924,13 @@ mod tests {
         assert_eq!(symbol_unicode(0xB3), Some('≥'));
         assert_eq!(symbol_unicode(0x60), None);
         assert_eq!(symbol_unicode(0xF0), None);
+        // µ is the micro sign U+00B5, the character a real Symbol face's
+        // text reads back as, not the Greek letter U+03BC.
+        assert_eq!(symbol_unicode(0x6D), Some('\u{B5}'));
+        // The stand-ins for characters a text face never has.
+        assert_eq!(symbol_unicode(0x44), Some('Δ'));
+        assert_eq!(symbol_unicode(0xD2), Some('®'));
+        assert_eq!(symbol_unicode(0xA0), Some('€'));
     }
 
     #[test]

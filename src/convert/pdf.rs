@@ -1568,8 +1568,18 @@ fn face_unicode_map(
             {
                 painted.extend(glyphs.iter().copied());
                 for c in text.chars() {
-                    if let Some(g) = parsed.as_ref().and_then(|p| p.glyph_index(c)) {
-                        map.entry(g.0).or_insert_with(|| read(c).to_string());
+                    // A stood-in symbol code has no glyph of its own: the
+                    // glyph painted is its stand-in's, whatever the shaped
+                    // count of the run.
+                    let shown = read(c);
+                    let stood_in = |p: &ttf_parser::Face| {
+                        (!symbol_encoded).then(|| p.glyph_index(shown)).flatten()
+                    };
+                    if let Some(g) = parsed
+                        .as_ref()
+                        .and_then(|p| p.glyph_index(c).or_else(|| stood_in(p)))
+                    {
+                        map.entry(g.0).or_insert_with(|| shown.to_string());
                     }
                 }
                 if glyphs.len() == text.chars().count() {
@@ -2120,6 +2130,31 @@ mod tests {
         let sans = Face::bundled(FaceId::SansRegular);
         assert_eq!(super::read_back(&sans, false, '\u{F0A7}'), '▪');
         assert_eq!(super::read_back(&sans, false, '\u{2011}'), '\u{2011}');
+    }
+
+    /// A run whose shaped glyphs are not one per character (a balloon's
+    /// batched text) still maps the stand-in's glyph to its character.
+    #[test]
+    fn a_stood_in_symbol_code_reads_back_in_a_run_shaped_to_another_count() {
+        use super::super::font::{Face, FaceId};
+        use super::{Op, Page};
+        let sans = Face::bundled(FaceId::SansRegular);
+        let (a, square) = (sans.glyph('a'), sans.glyph('\u{F0A7}'));
+        assert_ne!(square, 0);
+        let mut page = Page::new(612.0, 792.0);
+        page.ops.push(Op::Text {
+            face: FaceId::SansRegular.into(),
+            size: 11.0,
+            x: 72.0,
+            y: 72.0,
+            glyphs: vec![a, square, square],
+            color: [0.0; 3],
+            text: "a\u{F0A7}".to_string(),
+            hscale: 1.0,
+        });
+        let map = super::face_unicode_map(&sans, FaceId::SansRegular.into(), &[page]);
+        assert_eq!(map.get(&square).map(String::as_str), Some("▪"));
+        assert_eq!(map.get(&a).map(String::as_str), Some("a"));
     }
 
     /// Word 16 probes sym/sym2 (2026-10-02): a symbol-encoded face's
