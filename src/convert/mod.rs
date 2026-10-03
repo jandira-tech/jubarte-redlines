@@ -31157,8 +31157,8 @@ fn wrap_cell_runs(
 struct Squeeze {
     /// Share of the line's plain spaces the line may give up (0: none).
     share: f32,
-    /// The overflow must also stay within a third of the word and two
-    /// spaces (`wrap_runs_segment`).
+    /// The overflow must also stay within `SQUEEZE_WORD_SHARE` of the
+    /// word and its space (`wrap_runs_segment`).
     word_cap: bool,
     /// Only the spaces of a face Word narrows count (`narrows`).
     face_bound: bool,
@@ -31187,12 +31187,26 @@ impl Squeeze {
 }
 
 /// Word 2013+ layout (compatibilityMode 15) keeps a justified line's last
-/// word by narrowing its spaces, up to a quarter of their width (00044aa0).
+/// word by narrowing its spaces, up to a quarter of their total width
+/// (Word 16 probes 2026-10-03, bench `scripts/probe_justify*.py`: Calibri,
+/// Times, Cambria, Arial, Tahoma, Verdana, 4 to 25 spaces, every boundary
+/// between 0.244 and 0.251 of the spaces), and while the overflow is
+/// within `SQUEEZE_WORD_SHARE` of the word.
 const JUSTIFY_SQUEEZE: Squeeze = Squeeze {
     share: 0.25,
     word_cap: true,
     face_bound: false,
 };
+
+/// The second bound of `JUSTIFY_SQUEEZE`: the overflow may be at most
+/// this share of the last word plus one space. 23 Word boundaries at
+/// 0.2pt steps (Calibri 11 and 14, Times 11 and 12, words of 10 to 38pt;
+/// "ad" 11.05pt in Calibri 11 kept at 4.42, moved at 4.72; "laboris"
+/// 38.2pt in Calibri 14 kept at 14.06, moved at 14.30) admit a·word +
+/// b·space only for a from 0.3425 to 0.35 with b from 0.37 down to 0.29;
+/// a constant or a font-size term fits none, and the earlier
+/// (word + 2 spaces) / 3 breaks every one of the 23.
+const SQUEEZE_WORD_SHARE: f32 = 0.345;
 
 /// Before compatibility mode 15, `compressPunctuation` lets a line of any
 /// alignment keep its last word on spaces up to a fifth narrower, however
@@ -31514,16 +31528,14 @@ fn wrap_runs_segment(
             (w, tab_past) = tab_w(t, line_i, x);
         }
         let limit = line_limit(line_i);
-        // Word squeezes only while the overflow is at most a third of the
-        // word and two spaces: shrinking may take half of what moving the
-        // word would leave to stretch, its space included. Word 16 probes
-        // (compat 15, Times 9 and 11, 8 to 39 spaces, 2 to 9 letter words):
-        // "times" at 11pt keeps up to 9.7 of 9.86pt; d06f02170c's 11.07pt
-        // moves it although a quarter of the spaces is 13.1pt.
+        // Word squeezes only while the overflow is within
+        // `SQUEEZE_WORD_SHARE` of the word and its space: d06f02170c's
+        // "times" (Times 11, 23.8pt) runs 11.07pt over and moves although a
+        // quarter of its 19 spaces is 13.1pt; Word's cap for it is 9.17.
         let overflow = x + w - limit;
         let squeezed = fit.squeeze.share > 0.0
             && overflow <= fit.squeeze.share * line_spaces
-            && (!fit.squeeze.word_cap || overflow <= (w + 2.0 * space_w) / 3.0);
+            && (!fit.squeeze.word_cap || overflow <= SQUEEZE_WORD_SHARE * (w + space_w));
         let hang = hanging_punct_width(fonts, &unit);
         // A space hangs past the edge unless one space is wider than the
         // line: then each is a line of its own, as each character is

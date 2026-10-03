@@ -17545,12 +17545,13 @@ fn kern_two_kerns_body_text_like_word() {
 }
 
 #[test]
-fn word_2013_squeezes_at_most_a_third_of_the_word_and_two_spaces() {
+fn word_2013_squeezes_at_most_a_third_of_the_word_and_its_space() {
     // _to_improve d06f02170c: "…at all times" (Times 11, 19 spaces) runs
     // 11.07pt past a 457.2pt measure; a quarter of its spaces (13.1pt)
-    // would cover it, yet Word moves "times" down. Word 16 probes: the
-    // overflow may be at most (word + 2 spaces) / 3, here 9.86pt (9.7
-    // kept, 9.92 moved), besides the quarter of the spaces.
+    // would cover it, yet Word moves "times" down. Word 16 probes
+    // (justify4, 0.2pt steps): the overflow may be at most 0.345 × (word
+    // + one space), here 9.17pt ("times" 23.83 + 2.75; Word keeps 8.56
+    // and moves 9.18), besides the quarter of the spaces.
     let text = "All political power is vested in and derived from the people only, \
                 therefore, they have the right at all times to modify their form of \
                 government.";
@@ -48290,4 +48291,107 @@ fn fixed_html_auto_spacing_uses_the_explicit_before_and_after() {
         (html_auto - html_plain - 9.0).abs() < 0.1,
         "HTML auto spacing keeps 14 between the rows: {html_auto} vs {html_plain}"
     );
+}
+
+#[test]
+fn the_squeeze_keeps_the_last_word_within_a_third_of_it_and_its_space() {
+    // Word 16 probes (bench scripts/probe_justify3.py, Calibri 11 and
+    // Times 12, justified, 20 spaces on a 468pt measure, compat 15): the
+    // quarter of the spaces (12.4 / 15pt) is not the bound here, the last
+    // word is. Word keeps "ad" (11.05pt) 4.03pt over and moves it 5.10
+    // over; keeps "sed" (15.55) at 5.50 and moves it at 6.56; keeps
+    // Times "ad" (11.33) at 4.56 and moves it at 5.22. The cap is 0.345 ×
+    // (word + space): 4.67, 6.22, 4.94. The old (word + 2 spaces) / 3
+    // (5.36, 6.84, 5.78) kept all three moved words.
+    let probes: [(&str, u32, &str, bool); 6] = [
+        (
+            "Calibri",
+            22,
+            "quis nisi quis incid adipi tem elit adipi com ull ven amet sed adipi dolor ma exerci nos veniam tnnntnnn ad veniam laboris ipsum aliqua incididunt exercitation dolor minim lorem consectetur tempor amet magna tempor",
+            true,
+        ),
+        (
+            "Calibri",
+            22,
+            "ipsum nos lorem exerci ali tem elit aliqua enim ven dol incid ipsum tem minim ma conse conse ip tlmnt ad amet labore adipiscing elit tempor tempor nostrud dolore tempor ipsum labore consectetur amet labore",
+            false,
+        ),
+        (
+            "Calibri",
+            22,
+            "ull enim tem nisi com ull ma elit enim elit amet quis ven dol tem ipsum dolor tem aliquaelitenim ltnolt sed lorem ullamco ipsum magna minim dolor enim nostrud tempor elit exercitation amet nostrud nostrud",
+            true,
+        ),
+        (
+            "Calibri",
+            22,
+            "sed tem nisi minim enim elit lorem amet incid adipi ipsum sed sed tem lab com nos dol minimexe lltnll sed tempor lorem lorem nisi elit aliquip eiusmod dolor veniam nisi nisi sed consectetur amet",
+            false,
+        ),
+        (
+            "Times New Roman",
+            24,
+            "mi elit enim dolor conse ali lab lab elit quis ven sed amet amet enim nisi ma quis veniam llmml ad quis exercitation magna adipiscing laboris dolor sed nisi sed magna ullamco magna nisi quis",
+            true,
+        ),
+        (
+            "Times New Roman",
+            24,
+            "com conse mi mi adipi amet lorem adipi tem lab ma amet sed ma ip dol incid ven dolore lmmm ad sed aliquip aliquip commodo dolor dolor aliquip consectetur adipiscing dolor elit sed dolor consectetur",
+            false,
+        ),
+    ];
+    let settings = "<w:compat><w:compatSetting w:name=\"compatibilityMode\" \
+                    w:uri=\"http://schemas.microsoft.com/office/word\" w:val=\"15\"/></w:compat>";
+    for (i, (face, sz, text, kept)) in probes.iter().enumerate() {
+        let words: Vec<&str> = text.split(' ').collect();
+        // Line one holds 21 words; its last is the probe word, the rest
+        // open line two.
+        let last = words[20];
+        // A word the line holds once, so its first paint is its only one.
+        let next = words[21..]
+            .iter()
+            .find(|w| words.iter().filter(|x| x == w).count() == 1)
+            .expect("a unique word on line two");
+        let body = format!(
+            "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/><w:jc w:val=\"both\"/></w:pPr>\
+             <w:r><w:rPr><w:rFonts w:ascii=\"{face}\" w:hAnsi=\"{face}\"/><w:sz w:val=\"{sz}\"/></w:rPr>\
+             <w:t>{text}</w:t></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+             <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        );
+        let pdf = docx_to_pdf(&minimal_docx_with_settings(&body, settings)).expect("probe");
+        let y = |w: &str| {
+            pdf_glyph_text_xy(&pdf, w)
+                .unwrap_or_else(|| panic!("{w} in probe {i}"))
+                .1
+        };
+        let first = y(words[0]);
+        // The probe word may recur earlier on the line ("sed" four times)
+        // and inside other words ("ad" in "adipi"): kept, it is the last
+        // paint of line one (past x 450 on the 468pt measure); moved, it
+        // opens line two at the margin.
+        let hits = pdf_glyph_text_xys(&pdf, last);
+        let line_two = y(next);
+        let ends_line_one = hits
+            .iter()
+            .any(|&(hx, hy)| (hy - first).abs() < 1.0 && hx > 450.0);
+        let opens_line_two = hits
+            .iter()
+            .any(|&(hx, hy)| (hy - line_two).abs() < 1.0 && hx < 73.0);
+        assert!(
+            (y(next) - first).abs() > 1.0,
+            "probe {i}: {next:?} after the probe word is on line two"
+        );
+        assert_eq!(
+            (ends_line_one, opens_line_two),
+            (*kept, !*kept),
+            "probe {i} ({face} {sz}, last word {last:?}): Word {}; paints {hits:?}",
+            if *kept {
+                "keeps it on line one"
+            } else {
+                "moves it to line two"
+            }
+        );
+    }
 }
