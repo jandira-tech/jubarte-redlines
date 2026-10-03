@@ -189,7 +189,12 @@ impl Page {
 /// margin from 9.15pt past the text edge. `k` is a whole 1/300 fitting
 /// page and pane into the paper width less 8pt (file_27 mr 54: 219/300;
 /// docxide case63/64 mr 90: 229/300; fixtures_500 00b0c1ee A4: 228/300;
-/// landscape mr 36: 230/300).
+/// landscape mr 36: 230/300). The scaled page's top is where the EXACT
+/// fit (before the 1/300 floor) centres the page, 0.48pt down, on the
+/// 1/300in grid: 410 corpus PDFs with comments, 14 page geometries, 13
+/// exact (Letter 1in margins 99.84 where plain centring of the floored
+/// page gives 100.32; A4 108.48 against 108.0; Letter with a 70.9pt right
+/// margin one grid unit high). The fit's constants are 8.05 and 266.7.
 #[derive(Clone, Copy)]
 pub(crate) struct MarkupChrome {
     pub(crate) gx: f32,
@@ -203,16 +208,24 @@ pub(crate) struct MarkupChrome {
 
 const MARKUP_PANE_W: f32 = 257.3;
 const MARKUP_PANE_GAP: f32 = 9.15;
+/// The fit Word scales by: paper width less this, over the page's text
+/// edge plus `MARKUP_FIT_SPAN` (fitted with the vertical placement on
+/// the 14 geometries; the pane's own gap and width sum to 266.45).
+const MARKUP_FIT_INSET: f32 = 8.05;
+const MARKUP_FIT_SPAN: f32 = 266.7;
+/// How far under the exact fit's centre the scaled page sits.
+const MARKUP_FIT_DROP: f32 = 0.48;
 
 pub(crate) fn markup_chrome(width: f32, height: f32, margin_r: f32) -> Option<MarkupChrome> {
     let span = width - margin_r + MARKUP_PANE_GAP + MARKUP_PANE_W;
     if span <= 0.0 {
         return None;
     }
-    let k = ((width - 8.0) / span * 300.0).floor() / 300.0;
+    let exact = (width - MARKUP_FIT_INSET) / (width - margin_r + MARKUP_FIT_SPAN);
+    let k = (exact * 300.0).floor() / 300.0;
     let tx = 0.96;
     let gh = height * k;
-    let ty = ((height - gh) / 2.0 / 0.24).round() * 0.24;
+    let ty = ((height * (1.0 - exact) / 2.0 + MARKUP_FIT_DROP) / 0.24).floor() * 0.24;
     Some(MarkupChrome {
         gx: tx + (width - margin_r + MARKUP_PANE_GAP) * k,
         gy: ty,
@@ -1983,6 +1996,39 @@ fn stands_upright(c: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::uniquify;
+
+    /// Word's Save as PDF with markup (410 corpus PDFs, 14 page
+    /// geometries, 2026-10-03): the pane and page scale by a whole 1/300
+    /// of the fit, and the scaled page sits where the exact fit centres
+    /// it, 0.48pt down, on the 1/300in grid. Letter with 1in margins:
+    /// pane 99.84–691.2 (not 100.32); 0.75in right: 106.32; 1.25in:
+    /// 93.12; A4: 108.48; A4 landscape: 58.56.
+    #[test]
+    fn markup_page_sits_where_the_exact_fit_centres_it() {
+        let chrome = |w: f32, h: f32, mr: f32| super::markup_chrome(w, h, mr).expect("chrome");
+        for (w, h, mr, k300, top) in [
+            (612.0, 792.0, 72.0, 224.0, 99.84),
+            (612.0, 792.0, 54.0, 219.0, 106.32),
+            (612.0, 792.0, 90.0, 229.0, 93.12),
+            (612.0, 792.0, 108.0, 235.0, 85.92),
+            (595.3, 841.9, 72.0, 223.0, 108.48),
+            (595.3, 841.9, 89.85, 228.0, 101.28),
+            (595.3, 841.9, 45.35, 215.0, 118.56),
+            (841.9, 595.3, 72.0, 241.0, 58.56),
+        ] {
+            let c = chrome(w, h, mr);
+            assert!(
+                ((c.k * 300.0) - k300).abs() < 0.01,
+                "{w}x{h} mr {mr}: k {} not {k300}/300",
+                c.k * 300.0
+            );
+            assert!(
+                (c.gy - top).abs() < 0.01,
+                "{w}x{h} mr {mr}: page top {} not {top}",
+                c.gy
+            );
+        }
+    }
 
     /// Word 16 probes sym/sym2 (2026-10-02): a symbol-encoded face's
     /// U+F0xx text reads back as its low byte; Symbol keeps seven
