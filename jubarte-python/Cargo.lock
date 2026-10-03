@@ -412,7 +412,7 @@ dependencies = [
 
 [[package]]
 name = "jubarte-python"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "jubarte-redlines",
  "pyo3",
@@ -421,7 +421,7 @@ dependencies = [
 
 [[package]]
 name = "jubarte-redlines"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "flate2",
  "foldhash",

@@ -17,6 +17,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [0.11.0] - 2026-10-03
 
+> **Summary.** Edit plans become a document editor (rewrite, insert_table, list, format_run, insert_footnote, insert_image, page_setup, fill_control, watermark, redact, settings, fields update, and occurrence targeting); new jubarte audit, validate (with --repair and --original), scrub, append, comments, diff-render and convert --pages; Markdown alongside Word; a jubarte-mcp MCP server and uvx/npx runners. Inputs are admitted under limits before anything inflates, and a legacy .doc or encrypted file is refused with LEGACY_DOC. The default conventional marks follow Litera Compare. Python wheels for Windows and musl Linux. docx-to-PDF follows Word 16 in more table, text box, spacing, list, font, header, footer, note and field cases. Breaking: WmlDocument::document_byte_array is private (use bytes()), AdmissionErrorKind gains LegacyDocument, and sha1_fingerprint* are renamed fnv1a_* (deprecated aliases stay one release).
+>
+> **Docs.** README rewritten around the task-to-command table, with per-library READMEs (README.crates.md, jubarte-python/README.md, jubarte-wasm/npm and cli READMEs) cut from fragments by scripts/library_readmes.py and locked by tests/readme_coverage.rs; the crate's rustdoc front page maps every task to its module, with no dead intra-doc links (release.sh now builds the docs with -D warnings); new docs/rust.md, docs/python.md, docs/javascript.md, docs/MARKDOWN.md and docs/adoption/ (MCP, install matrix, agent skills); docs/SELF_UPDATE.md covers signed releases; docs/WORD_DIFFERENCES.md, WORD_LAYOUT_RULES.md and WORD_COMPARE_RULES.md extended; GEMINI.md added; RESULTS.md removed in favour of the neurotic bench.
+
 ### Added
 
 - `scripts/release.sh` step 13 runs `scripts/check_release_facts.py`: the
