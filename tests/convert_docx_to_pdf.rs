@@ -48549,3 +48549,149 @@ fn a_leading_tab_whose_right_stop_cannot_hold_the_text_wraps_the_paragraph() {
         );
     }
 }
+
+/// A page of half-point paragraphs (`line=10 exact`, numbered L0001…)
+/// whose first holds a footnote reference: the last one on page one
+/// reads the body floor to half a point. `sep_rpr` dresses the separator
+/// note's run; `after` is each paragraph's `w:after` in twips; the page
+/// is Letter with 1in margins (the bench probes) or 636ef078e7's A4 (top
+/// 1417, the other margins 1134).
+fn half_point_footnote_docx(
+    sep_rpr: &str,
+    after: u32,
+    n: usize,
+    with_note: bool,
+    a4: bool,
+) -> Vec<u8> {
+    let ppr = format!(
+        "<w:pPr><w:spacing w:after=\"{after}\" w:line=\"10\" w:lineRule=\"exact\"/></w:pPr>"
+    );
+    let reference = if with_note {
+        "<w:r><w:rPr><w:vertAlign w:val=\"superscript\"/></w:rPr><w:footnoteReference w:id=\"1\"/></w:r>"
+    } else {
+        ""
+    };
+    let mut body =
+        format!("<w:p>{ppr}<w:r><w:t xml:space=\"preserve\">L0001 </w:t></w:r>{reference}</w:p>");
+    for i in 2..=n {
+        body.push_str(&format!("<w:p>{ppr}<w:r><w:t>L{i:04}</w:t></w:r></w:p>"));
+    }
+    body.push_str(if a4 {
+        "<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/>\
+         <w:pgMar w:top=\"1417\" w:right=\"1134\" w:bottom=\"1134\" w:left=\"1134\"/></w:sectPr>"
+    } else {
+        "<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+    });
+    let notes = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:footnotes xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+         <w:footnote w:type=\"separator\" w:id=\"-1\"><w:p>\
+           <w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+           <w:r>{sep_rpr}<w:separator/></w:r></w:p></w:footnote>\
+         <w:footnote w:type=\"continuationSeparator\" w:id=\"0\"><w:p>\
+           <w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+           <w:r>{sep_rpr}<w:continuationSeparator/></w:r></w:p></w:footnote>\
+         <w:footnote w:id=\"1\"><w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+           <w:r><w:rPr><w:vertAlign w:val=\"superscript\"/><w:sz w:val=\"20\"/></w:rPr><w:footnoteRef/></w:r>\
+           <w:r><w:rPr><w:sz w:val=\"20\"/></w:rPr><w:t xml:space=\"preserve\"> note1 note2 note3</w:t></w:r>\
+         </w:p></w:footnote></w:footnotes>"
+    );
+    footnote_docx(&body, &notes)
+}
+
+/// The highest `Lnnnn` painted on page one. That page's stream holds over
+/// a thousand paragraphs, past `pdf_content_streams`' size cap, so it is
+/// read directly.
+fn last_half_point_para_on_page_one(pdf: &[u8]) -> usize {
+    let hay = String::from_utf8_lossy(pdf);
+    let mut rest = hay.as_ref();
+    let mut text = String::new();
+    while let Some(i) = rest.find(">>\nstream\n") {
+        let after = &rest[i + 10..];
+        let Some(end) = after.find("\nendstream") else {
+            break;
+        };
+        let body = &after[..end];
+        if body.contains(" Tf") {
+            text = pdf_winansi_text(body.as_bytes());
+            break;
+        }
+        rest = &after[end + 1..];
+    }
+    text.match_indices('L')
+        .filter_map(|(i, _)| text.get(i + 1..i + 5)?.parse::<usize>().ok())
+        .max()
+        .expect("a numbered paragraph on page one")
+}
+
+#[test]
+fn footnote_separator_reserves_its_own_line_above_the_notes() {
+    // Word 16 probes 2026-10-03 (`probe_footnote_sep.py` s0/s2): with a
+    // one-line 10pt note at the foot of a Letter page, the body of
+    // half-point paragraphs ends at L1244 under a plain Calibri 11
+    // separator (one 13.43 line over the note's 12.21) and at L1222 when
+    // the separator run is 20pt (24.41). A flat 12pt gap kept three
+    // paragraphs more.
+    let plain = half_point_footnote_docx("", 0, 1400, true, false);
+    let last = last_half_point_para_on_page_one(&docx_to_pdf(&plain).expect("converts"));
+    assert!(
+        (1243..=1245).contains(&last),
+        "Calibri 11 separator: Word ends page one at L1244, got L{last}"
+    );
+    let big = half_point_footnote_docx("<w:rPr><w:sz w:val=\"40\"/></w:rPr>", 0, 1400, true, false);
+    let last = last_half_point_para_on_page_one(&docx_to_pdf(&big).expect("converts"));
+    assert!(
+        (1221..=1223).contains(&last),
+        "20pt separator run: Word ends page one at L1222, got L{last}"
+    );
+}
+
+#[test]
+fn footnote_separator_rule_is_the_separator_fonts_strikeout_line() {
+    // Word 16 probes 2026-10-03 (s0, s2): the rule is the separator run's
+    // strikeout line, 144pt from the margin: Calibri 11 draws it 0.72
+    // thick with its top 2.75 over the baseline (page y 702.0–702.72 over
+    // a note baseline at 717.36 on Letter), a 20pt run 1.2 thick at
+    // 697.44–698.64. In PDF coordinates (y up): bottoms at 89.28 and 93.36.
+    let rule_of = |sep_rpr: &str| {
+        let pdf =
+            docx_to_pdf(&half_point_footnote_docx(sep_rpr, 0, 40, true, false)).expect("converts");
+        let pages = pdf_content_streams(&pdf);
+        pdf_fill_boxes_in(&pages[0], 0.0, 0.0, 0.0)
+            .into_iter()
+            .filter(|(x, _, w, h)| (*w - 144.0).abs() < 1.0 && *h < 2.0 && (*x - 72.0).abs() < 0.5)
+            .collect::<Vec<_>>()
+    };
+    let plain = rule_of("");
+    assert!(
+        plain.len() == 1 && (plain[0].1 - 89.28).abs() < 0.5 && (plain[0].3 - 0.72).abs() < 0.15,
+        "Calibri 11 separator rule at 89.28, 0.72 thick; got {plain:?}"
+    );
+    let big = rule_of("<w:rPr><w:sz w:val=\"40\"/></w:rPr>");
+    assert!(
+        big.len() == 1 && (big[0].1 - 93.36).abs() < 0.5 && (big[0].3 - 1.2).abs() < 0.2,
+        "20pt separator rule at 93.36, 1.2 thick; got {big:?}"
+    );
+}
+
+#[test]
+fn a_last_lines_space_after_must_fit_above_the_footnotes() {
+    // Word 16 probes 2026-10-03 (636ef078e7's A4 package, g vs n1): with
+    // 5pt after each half-point paragraph, a page with a one-line note
+    // ends at L0125 — L0126's line alone would fit (bottom 758.85 under a
+    // 759.66 floor) but not its spacing after — while the same body
+    // without a note ends at L0130, whose spacing after crosses the
+    // margin freely. 636ef078e7 p3: Word moves the two last lines of a
+    // paragraph whose last line fits by 1.8pt but not its 8pt after.
+    let with = half_point_footnote_docx("", 100, 400, true, true);
+    let last = last_half_point_para_on_page_one(&docx_to_pdf(&with).expect("converts"));
+    assert_eq!(
+        last, 125,
+        "over a footnote the last paragraph's after must fit: Word ends at L0125"
+    );
+    let without = half_point_footnote_docx("", 100, 400, false, true);
+    let last = last_half_point_para_on_page_one(&docx_to_pdf(&without).expect("converts"));
+    assert_eq!(last, 130, "at the margin it need not: Word ends at L0130");
+}
+

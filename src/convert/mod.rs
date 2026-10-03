@@ -655,9 +655,11 @@ fn with_layout<T>(
             let display = number_footnote_refs(&mut blocks);
             resolve_cell_fields(&mut blocks);
             keep_opening_row_mark(&mut blocks);
+            let (notes, separator) = load_footnotes(&pkg, &main, &sheet);
             let footnotes = FootnoteCatalog {
-                notes: load_footnotes(&pkg, &main, &sheet),
+                notes,
                 display,
+                separator,
             };
             let (mut pages, facts) =
                 layout_with_facts(&fonts, &page, &hf, &blocks, compat_mode, footnotes);
@@ -1706,13 +1708,22 @@ struct FootnotePara {
 struct FootnoteCatalog {
     notes: HashMap<String, Vec<FootnotePara>>,
     display: HashMap<String, String>,
+    /// The `w:type="separator"` note's paragraphs, laid out over each
+    /// page's notes; Word's default (a line of the default font with no
+    /// spacing) when the part has none (probe s8).
+    separator: Vec<FootnotePara>,
 }
 
-/// Word footnote separator: 0.5pt rule, 2in (144pt), 12pt gap above notes
-/// (`docxide-pdf` `draw_note_separator` / `render_page_footnotes`).
-const FOOTNOTE_SEP_PT: f32 = 0.5;
+/// Word's note separator rule is 2in (144pt) wide. Its height is the
+/// separator note's own paragraph (`FootnoteCatalog::separator`), not a
+/// fixed gap: Word 16 probes 2026-10-03 (bench `probe_footnote_sep.py`)
+/// end a half-point body at L1244 under a Calibri 11 separator (13.43
+/// over a 12.21 note), L1222 under a 20pt separator run (24.41), L1211
+/// under an exact 30pt one, L1217 under a double one, and its before /
+/// after and the first note's before all count. A flat 12pt kept three
+/// half-point paragraphs more and, with 636ef078e7's Aptos 11, let two
+/// body lines onto page 3 that Word moves.
 const FOOTNOTE_SEP_W: f32 = 144.0;
-const FOOTNOTE_SEP_GAP: f32 = 12.0;
 
 #[derive(Clone)]
 struct TableGeom {
@@ -7976,18 +7987,20 @@ fn number_endnote_refs(blocks: &mut [Block], (fmt, start): (NumFmt, u32)) {
     });
 }
 
+/// The footnotes part's notes by id, and the separator note's paragraphs
+/// (Word's default one when the part declares none).
 fn load_footnotes(
     pkg: &PartFs,
     main: &str,
     sheet: &StyleSheet,
-) -> HashMap<String, Vec<FootnotePara>> {
+) -> (HashMap<String, Vec<FootnotePara>>, Vec<FootnotePara>) {
     let Some(xml) = part_xml_by_rel_kind(pkg, main, "footnotes") else {
-        return HashMap::new();
+        return (HashMap::new(), Vec::new());
     };
     let mut ndom = Dom::new();
     let doc = ndom.parse_xdocument(&xml);
     let Some(root) = ndom.root(doc) else {
-        return HashMap::new();
+        return (HashMap::new(), Vec::new());
     };
     let comments = load_comments(pkg, main);
     let sects: Vec<NodeId> = Vec::new();
@@ -8002,12 +8015,14 @@ fn load_footnotes(
     };
     let mut numbering = load_numbering(pkg);
     let mut out = HashMap::new();
+    let mut separator = Vec::new();
     for note in ndom.descendants(root, Some(&W::footnote())) {
-        if note_is_structural(&ndom, note) {
+        let is_separator = attr_any(&ndom, note, "type") == Some("separator");
+        if note_is_structural(&ndom, note) && !is_separator {
             continue;
         }
         let id = attr_any(&ndom, note, "id").unwrap_or("").to_string();
-        if id.is_empty() {
+        if id.is_empty() && !is_separator {
             continue;
         }
         let mut paras = Vec::new();
@@ -8021,11 +8036,35 @@ fn load_footnotes(
                 }
             }
         }
-        if !paras.is_empty() {
+        if is_separator {
+            separator = paras;
+        } else if !paras.is_empty() {
             out.insert(id, paras);
         }
     }
-    out
+    if separator.is_empty() {
+        separator.push(default_separator_para(sheet));
+    }
+    (out, separator)
+}
+
+/// Word's separator when the part declares none: one `w:separator` run
+/// of the default font on a single line with no spacing (probe s8 ends
+/// where the declared Calibri 11 separator does).
+fn default_separator_para(sheet: &StyleSheet) -> FootnotePara {
+    let mut run = TextRun::new(String::new(), sheet.defaults.run.clone());
+    run.strut = true;
+    run.note_rule = true;
+    let mut style = sheet.defaults.para.clone();
+    style.before = 0.0;
+    style.after = 0.0;
+    style.line_mult = 1.0;
+    style.line_exact = None;
+    style.line_at_least = None;
+    FootnotePara {
+        runs: vec![run],
+        style,
+    }
 }
 
 fn number_footnote_refs(blocks: &mut [Block]) -> HashMap<String, String> {
@@ -10903,9 +10942,13 @@ fn paragraph_block(
     // deleted or not (Word 16 probes tab1001 t1/t2/t4/t7: an 11pt or 24pt
     // tab alone over an 8pt mark is an 8pt line; t899ef4's deleted tab
     // paragraph stood 3.8pt too tall).
+    // A note separator's run sizes its own line (Word 16 probes 2026-10-03:
+    // a 20pt `w:separator` run reserves 24.41, a 20pt mark over an 11pt
+    // run 13.43), so it is no blank.
     let spaces_only = !runs.is_empty()
         && runs.iter().all(|r| {
             !r.list_marker
+                && !r.note_rule
                 && matches!(r.field, FieldKind::None)
                 && r.text.chars().all(|c| matches!(c, ' ' | '\u{3000}' | '\t'))
         });
@@ -22420,12 +22463,15 @@ impl<'a> Layout<'a> {
             } else {
                 self.lifted_line_box(line, marker.filter(|_| line_i == 0), natural, style)
             };
-            let foot = if line_i + 1 == lines.len() {
+            let last = line_i + 1 == lines.len();
+            let foot = if last {
                 self.bottom_border_foot(style)
             } else {
                 0.0
             };
-            if y - line_fit_need(natural, ascent, style, line_box) - foot < self.body_floor {
+            let after = self.after_over_notes(style, last);
+            if y - line_fit_need(natural, ascent, style, line_box) - foot - after < self.body_floor
+            {
                 break;
             }
             y -= line_box;
@@ -22792,12 +22838,36 @@ impl<'a> Layout<'a> {
             return 0.0;
         }
         let width = self.content_width();
-        FOOTNOTE_SEP_GAP
+        self.separator_h(width)
             + self
                 .page_fn_ids
                 .iter()
                 .map(|id| self.note_height(id, width))
                 .sum::<f32>()
+    }
+
+    /// The separator note's paragraphs over a page's notes: their own
+    /// lines and spacing (Word 16 probes s0–s8).
+    fn separator_h(&self, width: f32) -> f32 {
+        if self.footnotes.separator.is_empty() {
+            return self.fonts.get(FaceId::CarlitoRegular).single_line_pt(11.0);
+        }
+        self.paras_height(&self.footnotes.separator, width)
+    }
+
+    /// Over a footnote area a paragraph's last line brings its space
+    /// after along: Word 16 probes 2026-10-03 (636ef078e7's package, g
+    /// vs n1) end a half-point body with 5pt after at L0125 over a note,
+    /// one paragraph short of the line that fits alone, and at L0130 at
+    /// the plain margin, whose after crosses it freely. 636ef078e7 p3:
+    /// the last line fits by 1.8pt, its 8pt after does not, and widow
+    /// control takes the line before it along.
+    fn after_over_notes(&self, style: &ParaStyle, last: bool) -> f32 {
+        if last && !self.page_fn_ids.is_empty() {
+            style.after
+        } else {
+            0.0
+        }
     }
 
     fn refresh_body_floor(&mut self) {
@@ -22808,11 +22878,16 @@ impl<'a> Layout<'a> {
         let Some(paras) = self.footnotes.notes.get(id) else {
             return 10.0;
         };
+        self.paras_height(paras, width).max(10.0)
+    }
+
+    /// Note paragraphs' height at `width`: every paragraph's space
+    /// before counts, the first one's too (Word 16 probe t1: 10pt before
+    /// on the note moves the body floor and the rule up 10pt).
+    fn paras_height(&self, paras: &[FootnotePara], width: f32) -> f32 {
         let mut h = 0.0_f32;
-        for (i, para) in paras.iter().enumerate() {
-            if i > 0 {
-                h += para.style.before;
-            }
+        for para in paras {
+            h += para.style.before;
             let size = para
                 .runs
                 .iter()
@@ -22833,7 +22908,7 @@ impl<'a> Layout<'a> {
             h += line_box * lines.len().max(1) as f32;
             h += para.style.after;
         }
-        h.max(10.0)
+        h
     }
 
     fn added_footnote_h(&self, line: &[TextRun]) -> f32 {
@@ -22849,7 +22924,7 @@ impl<'a> Layout<'a> {
             extra += self.note_height(id, width);
         }
         if extra > 0.0 && self.page_fn_ids.is_empty() {
-            extra += FOOTNOTE_SEP_GAP;
+            extra += self.separator_h(width);
         }
         extra
     }
@@ -22873,25 +22948,24 @@ impl<'a> Layout<'a> {
         let ids = std::mem::take(&mut self.page_fn_ids);
         let text_width = self.content_width();
         let notes_h: f32 = ids.iter().map(|id| self.note_height(id, text_width)).sum();
+        let sep_h = self.separator_h(text_width);
         let floor = self.chrome_floor();
-        let block_top = floor + notes_h + FOOTNOTE_SEP_GAP;
-        let sep_y = block_top - 3.0;
-        let sep_w = FOOTNOTE_SEP_W.min(text_width);
-        self.hairline_h(
-            self.page.margin_l,
-            sep_y,
-            self.page.margin_l + sep_w,
-            FOOTNOTE_SEP_PT,
-            [0.0, 0.0, 0.0],
-        );
-        let mut y = sep_y - 9.0;
+        // The separator paragraph tops the block; its `w:separator` run
+        // paints the rule on its baseline (`paint_run`).
+        let mut y = floor + notes_h + sep_h;
+        let separator = self.footnotes.separator.clone();
+        if separator.is_empty() {
+            y -= sep_h;
+        } else {
+            y = self.paint_note_paras(&separator, y, text_width);
+        }
         for id in &ids {
             y = self.paint_one_footnote(id, y, text_width);
         }
         self.refresh_body_floor();
     }
 
-    fn paint_one_footnote(&mut self, id: &str, mut y: f32, width: f32) -> f32 {
+    fn paint_one_footnote(&mut self, id: &str, y: f32, width: f32) -> f32 {
         let Some(paras) = self.footnotes.notes.get(id).cloned() else {
             return y;
         };
@@ -22901,27 +22975,38 @@ impl<'a> Layout<'a> {
             .get(id)
             .cloned()
             .unwrap_or_else(|| "1".to_string());
-        for (pi, para) in paras.iter().enumerate() {
-            let runs: Vec<TextRun> = para
-                .runs
-                .iter()
-                .map(|run| {
-                    if run.note_ref {
-                        let mut run = run.clone();
-                        run.text.clone_from(&display);
-                        run.style.vert = VertAlign::Super;
-                        run
-                    } else {
-                        run.clone()
-                    }
-                })
-                .collect();
-            if pi > 0 {
-                y -= para.style.before;
-            }
+        let paras: Vec<FootnotePara> = paras
+            .iter()
+            .map(|para| FootnotePara {
+                runs: para
+                    .runs
+                    .iter()
+                    .map(|run| {
+                        if run.note_ref {
+                            let mut run = run.clone();
+                            run.text.clone_from(&display);
+                            run.style.vert = VertAlign::Super;
+                            run
+                        } else {
+                            run.clone()
+                        }
+                    })
+                    .collect(),
+                style: para.style.clone(),
+            })
+            .collect();
+        self.paint_note_paras(&paras, y, width)
+    }
+
+    /// Paints note paragraphs down from `y`, each under its space before
+    /// (the first one's too, probe t1), and returns the cursor below.
+    fn paint_note_paras(&mut self, paras: &[FootnotePara], mut y: f32, width: f32) -> f32 {
+        for para in paras {
+            let runs = &para.runs;
+            y -= para.style.before;
             let indent = para.style.indent_left;
             let measure = (width - indent - para.style.indent_right).max(40.0);
-            let lines = wrap_runs(self.fonts, &runs, measure, measure, false);
+            let lines = wrap_runs(self.fonts, runs, measure, measure, false);
             for line in &lines {
                 let size = line.iter().map(|r| r.style.size).fold(10.0_f32, f32::max);
                 let fid = line.first().map_or(FaceId::CarlitoRegular.into(), |r| {
@@ -23727,12 +23812,14 @@ impl<'a> Layout<'a> {
                 }
             }
             if !at_floor {
-                let foot = if line_i + 1 == lines.len() {
+                let last = line_i + 1 == lines.len();
+                let foot = if last {
                     self.bottom_border_foot(style)
                 } else {
                     0.0
                 };
-                self.ensure(line_fit_need(natural, ascent, style, line_box) + foot);
+                let after = self.after_over_notes(style, last);
+                self.ensure(line_fit_need(natural, ascent, style, line_box) + foot + after);
             }
             // Lines moved to a new page box their borders there (probe
             // bd1001 b2: the rule under a moved line, not at the old y).
@@ -25060,14 +25147,22 @@ impl<'a> Layout<'a> {
     }
 
     fn paint_run(&mut self, run: &TextRun, x: f32, y: f32) -> f32 {
-        // Word's separator: 0.72pt thick, its foot 2.16pt over the
-        // baseline (Strict01 p13: rule 450.48, baseline 448.32).
+        // Word's separator is the run's strikeout line on the 300dpi grid
+        // (Word 16 probes 2026-10-03: Calibri 11 0.72 thick with its top
+        // 2.75 over the baseline, Strict01 p13's rule 450.48 over the
+        // 448.32 baseline; a 20pt run 1.2 at 5.0; Aptos 11 0.48 at 3.93).
         if run.note_rule {
+            let fid = self
+                .fonts
+                .resolve(&run.style.family, run.style.bold, run.style.italic);
+            let face = self.fonts.get(fid);
+            let size = run.style.layout_size();
+            let thick = ((face.strike_size_pt(size) / 0.24).round() * 0.24).max(0.24);
             self.current().ops.push(Op::FillRect {
                 x,
-                y: y + 2.16,
+                y: y + face.strike_pos_pt(size) - thick,
                 w: FOOTNOTE_SEP_W,
-                h: 0.72,
+                h: thick,
                 color: [0.0, 0.0, 0.0],
             });
             return x + FOOTNOTE_SEP_W;

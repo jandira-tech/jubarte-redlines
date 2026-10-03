@@ -708,6 +708,12 @@ pub(crate) struct Face<'a> {
     line_descent: f32,
     /// Win ascent when USE_TYPO_METRICS is unset (Liberation ↔ Arial).
     paint_ascent: f32,
+    /// OS/2 strikeout line in font units: Word draws a note separator as
+    /// the separator run's strikeout (Word 16 probes 2026-10-03: Calibri
+    /// 11 a 0.72 rule with its top 2.75 over the baseline, a 20pt run 1.2
+    /// at 5.0; Aptos 11 0.48 at 3.93).
+    strike_pos: f32,
+    strike_size: f32,
     /// An East Asian face (OS/2 code pages 932/936/949/950/1361).
     east_asian: bool,
     /// OS/2 PANOSE says Latin text with serifs (MS Mincho, Times New
@@ -870,6 +876,11 @@ impl<'a> Face<'a> {
             .unwrap_or_default();
         let bbox = face.global_bounding_box();
         let buzz = rustybuzz::Face::from_slice(bytes, 0);
+        let (strike_pos, strike_size) = face
+            .strikeout_metrics()
+            .map_or((upem * 0.25, upem * 0.065), |m| {
+                (f32::from(m.position), f32::from(m.thickness))
+            });
         Some(Self {
             bytes,
             buzz,
@@ -881,6 +892,8 @@ impl<'a> Face<'a> {
             line_height,
             line_descent,
             paint_ascent,
+            strike_pos,
+            strike_size,
             east_asian: east_asian_line.is_some(),
             serif: panose_serif(&face),
             avg_char_width: avg_char_width(&face).map_or(0.5, |w| w / upem),
@@ -941,6 +954,16 @@ impl<'a> Face<'a> {
     /// table as `single_line_pt`).
     pub(crate) fn line_descent_pt(&self, size: f32) -> f32 {
         self.line_descent * size / self.upem
+    }
+
+    /// The strikeout line's top over the baseline.
+    pub(crate) fn strike_pos_pt(&self, size: f32) -> f32 {
+        self.strike_pos * size / self.upem
+    }
+
+    /// The strikeout line's thickness.
+    pub(crate) fn strike_size_pt(&self, size: f32) -> f32 {
+        self.strike_size * size / self.upem
     }
 
     pub(crate) fn glyphs(&self, text: &str) -> Vec<u16> {
