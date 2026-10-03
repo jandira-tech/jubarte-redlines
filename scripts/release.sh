@@ -391,12 +391,12 @@ if [ "$SKIP_GATES" = 0 ]; then
   python3 planning/test_sample50_check.py
   python3 scripts/test_release_sh.py
   python3 scripts/test_library_readmes.py
-  # Python bindings: build the extension from this checkout and run pytest
-  # (uv run leaves a uv.lock the repo does not track).
+  # Python bindings: build the extension from this checkout and run pytest.
+  # jubarte-python/uv.lock is tracked; whatever uv rewrites in it ships in
+  # the release commit (step 7), so the tree stays clean for a resumed run.
   (cd jubarte-python \
     && uv run --with maturin maturin develop --release >/dev/null \
     && uv run --with pytest pytest -q)
-  rm -f jubarte-python/uv.lock
   uv tool run --from 'reuse[charset-normalizer]' reuse lint >/dev/null
   step "fmt / clippy / tests / sweep-units / pytest / REUSE all green"
 else
@@ -518,7 +518,7 @@ else
       README.crates.md jubarte-wasm/npm/README.md jubarte-wasm/cli/README.md \
       jubarte-python/README.md \
       jubarte-python/Cargo.toml jubarte-python/Cargo.lock \
-      jubarte-python/pyproject.toml \
+      jubarte-python/pyproject.toml jubarte-python/uv.lock \
       jubarte-wasm/Cargo.lock jubarte-wasm/npm/package.json jubarte-wasm/cli/package.json \
       jubarte-rust-inproc/Cargo.lock \
       jubarte-app/package.json jubarte-app/CHANGELOG.md jubarte-app/src/index.html \
