@@ -5864,12 +5864,13 @@ pub fn strip_last_pure_del_mark_when_pprchange(dom: &mut Dom, root: NodeId) {
 /// `w:del`, matching Word's order. Text-preserving: each of the delText / ins-text
 /// streams keeps its own order (only their interleaving changes). Recurses.
 ///
-/// A wrapper holding a `fldChar` stays put: swapping a deleted field's `end`
-/// with an inserted field's `begin` crosses the two fields, and Word crashed
-/// opening the redline (English pair 57f96361×3832d290).
+/// A wrapper holding part of a field stays put: swapping a deleted field's
+/// `end` with an inserted field's `begin` crosses the two fields, and Word
+/// crashed opening the redline (English pair 57f96361×3832d290). A wrapper
+/// whose fields are complete swaps whole: Word's redline of super_editor
+/// hyperlink_multiple_runs × diff_before10 (corpus a098bd5ad9) writes the
+/// inserted "One two" before the deleted HYPERLINK field.
 pub fn reorder_replacements_ins_before_del(dom: &mut Dom, node: NodeId) {
-    let ins = W::ins();
-    let del = W::del();
     let fld_char = W::name("fldChar");
     let mut i = 0usize;
     loop {
@@ -5878,16 +5879,12 @@ pub fn reorder_replacements_ins_before_del(dom: &mut Dom, node: NodeId) {
             break;
         }
         let (a, b) = (kids[i], kids[i + 1]);
-        let is_replacement = dom.is_element(a)
-            && dom.is_element(b)
-            && dom.name(a).as_ref() == Some(&del)
-            && dom.name(b).as_ref() == Some(&ins)
-            && dom.attribute(a, &W::author()).map(|s| s.to_string())
-                == dom.attribute(b, &W::author()).map(|s| s.to_string())
-            && dom.attribute(a, &W::date()).map(|s| s.to_string())
-                == dom.attribute(b, &W::date()).map(|s| s.to_string())
-            && dom.descendants(a, Some(&fld_char)).is_empty()
-            && dom.descendants(b, Some(&fld_char)).is_empty();
+        let is_replacement = matches!(
+            (revision_wrapper(dom, a), revision_wrapper(dom, b)),
+            (Some((false, author_a, date_a)), Some((true, author_b, date_b)))
+                if author_a == author_b && date_a == date_b
+        ) && fields_complete(dom, a, &fld_char)
+            && fields_complete(dom, b, &fld_char);
         if is_replacement {
             dom.remove(b);
             dom.add_before_self(a, b); // ins (b) now precedes del (a)
@@ -5901,6 +5898,68 @@ pub fn reorder_replacements_ins_before_del(dom: &mut Dom, node: NodeId) {
             reorder_replacements_ins_before_del(dom, c);
         }
     }
+}
+
+/// Every field char under `node` belongs to a field that begins and ends
+/// under it: no `fldChar` at all, or begins and ends that nest and balance.
+fn fields_complete(dom: &Dom, node: NodeId, fld_char: &XName) -> bool {
+    let mut depth = 0i32;
+    for fc in dom.descendants(node, Some(fld_char)) {
+        match dom.attribute(fc, &W::name("fldCharType")) {
+            Some("begin") => depth += 1,
+            Some("end") => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    depth == 0
+}
+
+/// A node that is one revision for the replacement swap: a `w:ins`
+/// (`true`) or `w:del` (`false`) wrapper, or a `w:hyperlink` whose element
+/// children are all one of them by one author and date (Word's redline of
+/// super_editor hyperlink_multiple_runs × diff_before10, corpus a098bd5ad9,
+/// writes "One two" inserted before the deleted "Click here now" link;
+/// the swap saw a hyperlink, not a deletion, and left the link first).
+fn revision_wrapper(dom: &Dom, node: NodeId) -> Option<(bool, String, String)> {
+    if !dom.is_element(node) {
+        return None;
+    }
+    let own = |n: NodeId| {
+        let kind = match dom.name(n).as_ref() {
+            Some(name) if *name == W::ins() => true,
+            Some(name) if *name == W::del() => false,
+            _ => return None,
+        };
+        Some((
+            kind,
+            dom.attribute(n, &W::author()).unwrap_or("").to_string(),
+            dom.attribute(n, &W::date()).unwrap_or("").to_string(),
+        ))
+    };
+    if let Some(rev) = own(node) {
+        return Some(rev);
+    }
+    if dom.name(node).as_ref() != Some(&W::name("hyperlink")) {
+        return None;
+    }
+    let mut found: Option<(bool, String, String)> = None;
+    for child in dom.nodes(node) {
+        if !dom.is_element(child) {
+            continue;
+        }
+        let rev = own(child)?;
+        match &found {
+            None => found = Some(rev),
+            Some(first) if *first == rev => {}
+            Some(_) => return None,
+        }
+    }
+    found
 }
 
 /// Merge consecutive sibling `w:ins` (and consecutive `w:del`) wrappers that

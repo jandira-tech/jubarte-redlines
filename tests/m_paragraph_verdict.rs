@@ -391,3 +391,71 @@ fn both_end_words_kept_tip_a_short_paragraph_to_word_level() {
         "{longer:#?}"
     );
 }
+
+#[test]
+fn a_replaced_hyperlink_paragraph_inserts_before_it_deletes() {
+    // Word's redline of super_editor hyperlink_multiple_runs × diff_before10
+    // (corpus a098bd5ad9): the hyperlink paragraph "Click here now" is
+    // replaced by "One two", and Word writes the insertion first, the
+    // deleted field after it. The verdict branch emitted the deleted
+    // hyperlink first; the writer's insertion-first reorder only saw bare
+    // runs (2000-pair control, 2026-10-03: −15.3 on the PDF score).
+    let link = "<w:p><w:hyperlink w:anchor=\"top\"><w:r><w:t xml:space=\"preserve\">Click </w:t></w:r>\
+                <w:r><w:t>here</w:t></w:r><w:r><w:t xml:space=\"preserve\"> now</w:t></w:r></w:hyperlink></w:p>";
+    let side = |body: &str| docx(&format!("{}{}{}", para("Clause"), body, para("End")));
+    let ours =
+        compare_documents(&side(link), &side(&para("One two")), "Comparison").expect("compare");
+    let changes: Vec<String> = list_changes(&ours)
+        .expect("list changes")
+        .into_iter()
+        .map(|c| format!("{:?} {}", c.kind, c.text))
+        .collect();
+    let ins = changes
+        .iter()
+        .position(|c| c.starts_with("Insertion") && c.contains("One two"));
+    let del = changes
+        .iter()
+        .position(|c| c.starts_with("Deletion") && c.contains("Click"));
+    assert!(
+        matches!((ins, del), (Some(i), Some(d)) if i < d),
+        "the insertion precedes the deleted hyperlink; changes={changes:?}"
+    );
+}
+
+#[test]
+fn a_replaced_external_hyperlink_paragraph_inserts_before_it_deletes() {
+    // The corpus pair itself (a098bd5ad9) links by r:id: the writer keeps
+    // the `w:hyperlink` wrapper around the deleted runs, and the swap must
+    // read that wrapper as the deletion it holds.
+    let link = "<w:p><w:hyperlink r:id=\"rIdH\"><w:r><w:t xml:space=\"preserve\">Click </w:t></w:r>\
+                <w:r><w:t>here</w:t></w:r><w:r><w:t xml:space=\"preserve\"> now</w:t></w:r></w:hyperlink></w:p>";
+    let rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+        <Relationship Id=\"rIdH\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink\" \
+          Target=\"https://example.com/\" TargetMode=\"External\"/></Relationships>";
+    let side = |body: &str| docx(&format!("{}{}{}", para("Clause"), body, para("End")));
+    let base =
+        common::docx::replace_entry(&side(link), "word/_rels/document.xml.rels", rels.as_bytes());
+    let ours = compare_documents(&base, &side(&para("One two")), "Comparison").expect("compare");
+    let changes: Vec<String> = list_changes(&ours)
+        .expect("list changes")
+        .into_iter()
+        .map(|c| format!("{:?} {}", c.kind, c.text))
+        .collect();
+    let ins = changes
+        .iter()
+        .position(|c| c.starts_with("Insertion") && c.contains("One two"));
+    let del = changes
+        .iter()
+        .position(|c| c.starts_with("Deletion") && c.contains("Click"));
+    assert!(
+        matches!((ins, del), (Some(i), Some(d)) if i < d),
+        "the insertion precedes the deleted hyperlink; changes={changes:?}"
+    );
+    let xml = common::docx::part_string(&ours, "word/document.xml").expect("document");
+    assert!(
+        xml.contains("<w:hyperlink")
+            && xml.find("<w:ins").unwrap() < xml.find("<w:hyperlink").unwrap(),
+        "the hyperlink wrapper survives and follows the insertion"
+    );
+}
