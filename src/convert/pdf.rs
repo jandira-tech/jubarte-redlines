@@ -189,12 +189,14 @@ impl Page {
 /// margin from 9.15pt past the text edge. `k` is a whole 1/300 fitting
 /// page and pane into the paper width less 8pt (file_27 mr 54: 219/300;
 /// docxide case63/64 mr 90: 229/300; fixtures_500 00b0c1ee A4: 228/300;
-/// landscape mr 36: 230/300). The scaled page's top is where the EXACT
-/// fit (before the 1/300 floor) centres the page, 0.48pt down, on the
-/// 1/300in grid: 410 corpus PDFs with comments, 14 page geometries, 13
-/// exact (Letter 1in margins 99.84 where plain centring of the floored
-/// page gives 100.32; A4 108.48 against 108.0; Letter with a 70.9pt right
-/// margin one grid unit high). The fit's constants are 8.05 and 266.7.
+/// landscape mr 36: 230/300). The scaled page's top sits where the EXACT
+/// fit (before the 1/300 floor) centres the page, half a 1/300in grid
+/// unit down, on that grid. 410 corpus PDFs with comments cover 14 page
+/// geometries (`MARKUP_PANE_TABLE`): the fit reproduces every scale and
+/// 12 of the 14 tops; no one offset lands all 14 (the Letter 70.9pt and A4
+/// 89.85pt right margins fall one unit off), so a known geometry takes
+/// its measured row and the fit serves the rest. The scorer is
+/// pixel-sharp: Word's own page shifted 0.25pt scores 0.72 against itself.
 #[derive(Clone, Copy)]
 pub(crate) struct MarkupChrome {
     pub(crate) gx: f32,
@@ -209,23 +211,55 @@ pub(crate) struct MarkupChrome {
 const MARKUP_PANE_W: f32 = 257.3;
 const MARKUP_PANE_GAP: f32 = 9.15;
 /// The fit Word scales by: paper width less this, over the page's text
-/// edge plus `MARKUP_FIT_SPAN` (fitted with the vertical placement on
-/// the 14 geometries; the pane's own gap and width sum to 266.45).
-const MARKUP_FIT_INSET: f32 = 8.05;
-const MARKUP_FIT_SPAN: f32 = 266.7;
+/// edge plus `MARKUP_FIT_SPAN` (36 and 1107 300-dpi pixels; the widest
+/// margins to the 1/300 boundaries over the 14 geometries, 0.06/300; the
+/// pane's own gap and width sum to 266.45). Word's A4 is 595.2 x 841.92
+/// here, as in its PDFs (2480 x 3508 pixels), not the 595.3 of the twips.
+const MARKUP_FIT_INSET: f32 = 8.64;
+const MARKUP_FIT_SPAN: f32 = 265.68;
 /// How far under the exact fit's centre the scaled page sits.
-const MARKUP_FIT_DROP: f32 = 0.48;
+const MARKUP_FIT_DROP: f32 = 0.54;
+/// Word's measured placement per page geometry: paper width, height and
+/// right margin in 300-dpi pixels, then the scale in 300ths and the
+/// scaled page's top in pixels (410 corpus PDFs, 2026-10-03; Letter 1in
+/// margins alone are 317 of them).
+const MARKUP_PANE_TABLE: &[(u32, u32, u32, u32, u32)] = &[
+    (2480, 3508, 189, 215, 494),
+    (2480, 3508, 236, 218, 476),
+    (2480, 3508, 300, 223, 452),
+    (2480, 3508, 319, 224, 444),
+    (2480, 3508, 354, 226, 430),
+    (2480, 3508, 374, 228, 422),
+    (2480, 3508, 501, 237, 367),
+    (2550, 3300, 225, 219, 443),
+    (2550, 3300, 295, 224, 417),
+    (2550, 3300, 300, 224, 416),
+    (2550, 3300, 375, 229, 388),
+    (2550, 3300, 450, 235, 358),
+    (2479, 3508, 302, 223, 451),
+    (3508, 2480, 300, 241, 244),
+];
 
 pub(crate) fn markup_chrome(width: f32, height: f32, margin_r: f32) -> Option<MarkupChrome> {
     let span = width - margin_r + MARKUP_PANE_GAP + MARKUP_PANE_W;
     if span <= 0.0 {
         return None;
     }
+    let px = |pt: f32| (pt * 300.0 / 72.0).round() as u32;
+    let known = MARKUP_PANE_TABLE
+        .iter()
+        .find(|row| row.0 == px(width) && row.1 == px(height) && row.2 == px(margin_r));
     let exact = (width - MARKUP_FIT_INSET) / (width - margin_r + MARKUP_FIT_SPAN);
-    let k = (exact * 300.0).floor() / 300.0;
+    let k = known.map_or((exact * 300.0).floor() / 300.0, |row| row.3 as f32 / 300.0);
     let tx = 0.96;
     let gh = height * k;
-    let ty = ((height * (1.0 - exact) / 2.0 + MARKUP_FIT_DROP) / 0.24).floor() * 0.24;
+    // The measured gap is above the page (PDF y runs upward: `ty` is the
+    // gap below it).
+    let top = known.map_or(
+        ((height * (1.0 - exact) / 2.0 + MARKUP_FIT_DROP) / 0.24).floor() * 0.24,
+        |row| row.4 as f32 * 0.24,
+    );
+    let ty = height - top - gh;
     Some(MarkupChrome {
         gx: tx + (width - margin_r + MARKUP_PANE_GAP) * k,
         gy: ty,
@@ -2006,15 +2040,23 @@ mod tests {
     #[test]
     fn markup_page_sits_where_the_exact_fit_centres_it() {
         let chrome = |w: f32, h: f32, mr: f32| super::markup_chrome(w, h, mr).expect("chrome");
+        // The 14 measured geometries, at the engine's page sizes (A4 is
+        // Word's 595.2 x 841.92).
         for (w, h, mr, k300, top) in [
             (612.0, 792.0, 72.0, 224.0, 99.84),
             (612.0, 792.0, 54.0, 219.0, 106.32),
+            (612.0, 792.0, 70.9, 224.0, 100.08),
             (612.0, 792.0, 90.0, 229.0, 93.12),
             (612.0, 792.0, 108.0, 235.0, 85.92),
-            (595.3, 841.9, 72.0, 223.0, 108.48),
-            (595.3, 841.9, 89.85, 228.0, 101.28),
-            (595.3, 841.9, 45.35, 215.0, 118.56),
-            (841.9, 595.3, 72.0, 241.0, 58.56),
+            (595.2, 841.92, 45.35, 215.0, 118.56),
+            (595.2, 841.92, 56.7, 218.0, 114.24),
+            (595.2, 841.92, 72.0, 223.0, 108.48),
+            (595.2, 841.92, 76.55, 224.0, 106.56),
+            (595.2, 841.92, 85.05, 226.0, 103.2),
+            (595.2, 841.92, 89.85, 228.0, 101.28),
+            (595.2, 841.92, 120.25, 237.0, 88.08),
+            (595.0, 842.0, 72.45, 223.0, 108.24),
+            (841.92, 595.2, 72.0, 241.0, 58.56),
         ] {
             let c = chrome(w, h, mr);
             assert!(
@@ -2022,12 +2064,29 @@ mod tests {
                 "{w}x{h} mr {mr}: k {} not {k300}/300",
                 c.k * 300.0
             );
+            // `gy` is the gap under the page; Word's measured gap is above it.
             assert!(
-                (c.gy - top).abs() < 0.01,
+                (h - c.gy - c.gh - top).abs() < 0.01,
                 "{w}x{h} mr {mr}: page top {} not {top}",
-                c.gy
+                h - c.gy - c.gh
             );
         }
+        // An unmeasured geometry takes the fit: Letter with a 1.1in right
+        // margin scales by floor(300 x exact)/300 and sits on the 1/300in
+        // grid under the exact fit's centre.
+        let c = chrome(612.0, 792.0, 79.2);
+        let exact = (612.0 - 8.64) / (612.0 - 79.2 + 265.68);
+        assert!(((c.k * 300.0) - (exact * 300.0_f32).floor()).abs() < 0.01);
+        let centre = 792.0 * (1.0 - exact) / 2.0;
+        let top = 792.0 - c.gy - c.gh;
+        assert!(
+            (top / 0.24 - (top / 0.24).round()).abs() < 0.01,
+            "on the grid"
+        );
+        assert!(
+            top > centre && top < centre + 0.6,
+            "top {top} near {centre}"
+        );
     }
 
     /// Word 16 probes sym/sym2 (2026-10-02): a symbol-encoded face's
