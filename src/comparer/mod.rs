@@ -1286,12 +1286,28 @@ pub struct WmlComparerSettings {
     /// compiling.
     #[doc(hidden)]
     pub in_stamp_residual: bool,
+    /// Internal recursion state, not a tuning knob: true while resolving a
+    /// paragraph window Word marks word by word (see
+    /// [`WORD_LEVEL_KEPT_RATIO`]), where every common run stays and the
+    /// run-voiding gates must not fire. Leave it at its default; it stays
+    /// public only so struct-update literals keep compiling.
+    #[doc(hidden)]
+    pub in_word_level_paragraph: bool,
 }
 
 /// The word-visual default for [`WmlComparerSettings::detail_threshold`] —
 /// single source for the struct default, the CLI `--detail-threshold`
 /// default, and the CLI's faithful-preset sentinel check.
 pub const DEFAULT_DETAIL_THRESHOLD: f64 = 0.02;
+
+/// Word's rule for one changed paragraph (Word 16, 783 single-paragraph
+/// probes, 2026-10-03): it is marked word by word when the characters of
+/// the words its alignment keeps (spaces excluded) reach this fraction of
+/// the longer side's characters (spaces included), and replaced whole
+/// otherwise. Constant from 200 to 4800 words and for kept runs of 2 to 16
+/// words; the clean probes separate at 0.1206 against 0.128. Word applies
+/// it again to every window between the anchors it keeps.
+pub const WORD_LEVEL_KEPT_RATIO: f64 = 0.12;
 
 impl WmlComparerSettings {
     /// The preset for `mode`.
@@ -1385,6 +1401,7 @@ impl Default for WmlComparerSettings {
             detect_format_changes: true,
             input_limits: InputLimits::compare(),
             in_stamp_residual: false,
+            in_word_level_paragraph: false,
         }
     }
 }
