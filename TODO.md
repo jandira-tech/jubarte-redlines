@@ -532,6 +532,10 @@ diagram and VML picture size; each needs a Word probe or a decision first.
   text for the tab stop. Aligned lines re-lay around the new result (515f
   "s. 10" on a jc=right cell edge, `a_header_styleref_result_realigns_its_line`);
   a right or centre tab segment does not.
+- [ ] **An underlined or highlighted patched STYLEREF** keeps the cached
+  result's underline and highlight width: `patch_stylerefs` moves the
+  line's ops but resizes only the text. Probe an underlined, highlighted
+  header STYLEREF whose body text is longer than its cached result.
 - [ ] **A 10pt inline VML picture in a 10pt TNR paragraph**: Word puts the
   next baseline 1.5pt lower than we do (probe vo3 v_h10, x50); taller
   pictures match within the 0.24pt baseline grid.
