@@ -459,3 +459,36 @@ repeatable-sweep item below is what makes these numbers reproducible.
   carried header or footer are not remapped; picture bullets lose the
   picture; `npx jubarte-redlines` has no `append`; `jubarte_wasm.d.ts` gains
   `appendDocuments` only at the next `build-npm.sh`.
+
+## 10. PDF parity follow-ups from 5a6c (2026-10-02)
+
+Status: open. Found while fixing 5a6c's banner, header STYLEREF, WMF
+diagram and VML picture size; each needs a Word probe or a decision first.
+
+- [ ] **A deleted body PAGE field.** Word keeps its cached result, struck
+  and in the author's colour (probe fldrev_p1). We recompute it and paint
+  it black, which `a_revised_page_field_paints_its_number_unmarked` locks
+  from footer evidence (d45aa3d5, 06063858: a deleted footer PAGE is
+  recomputed and painted black). Body and footer may differ; the field
+  needs to know its story before the rule can split.
+- [ ] **Body NUMPAGES, DATE, SECTION and SEQ.** Word recomputes them in
+  the body; we show the cached text (`word_recomputes_field` only
+  unmarks an inserted result).
+- [ ] **An uncached header STYLEREF** (begin/end, no separate) paints
+  nothing in jubarte. 5a6c's `styleref CharPartNo` fields are empty in
+  Word too, so this matches there; probe a body with the style before
+  filling them.
+- [ ] **A patched header STYLEREF keeps its cached width** for alignment
+  (a right tab or a right-aligned line still measures the cached text).
+- [ ] **A 10pt inline VML picture in a 10pt TNR paragraph**: Word puts the
+  next baseline 1.5pt lower than we do (probe vo3 v_h10, x50); taller
+  pictures match within the 0.24pt baseline grid.
+- [ ] **WMF text runs 4.6% large in Word** (9.51pt where the record says
+  9.09pt at 5a6c's scale) and its second line 0.45pt lower; the x
+  positions match. EMF text is still not painted
+  (`emf_exttextoutw_stays_unpainted_after_mini_365` locks out bitmap
+  digits); painting it as text like WMF is the likely fix, and needs
+  the Strict01 bench rerun.
+- [ ] **5a6c page 5** shows a stray `_` line that Word does not.
+- [ ] **5a6c pages 11 and 13**: a header that Word leaves empty shows
+  "Crown Suits Act 1947" in jubarte (present before this work).
