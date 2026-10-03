@@ -9295,7 +9295,7 @@ fn autofit_to_words(
     // last of them (9f41b69c's "Controls" over a 0.65pt grid column).
     for cell in rows.iter().flatten() {
         let end = cell.col + cell.colspan;
-        if cell.colspan < 2 || end > widths.len() || cell.vertical {
+        if cell.colspan < 2 || end > widths.len() || cell.vertical || cell.grid_skip {
             continue;
         }
         let pads = cell.pad_l - 2.0 * geom.cell_spacing + cell.pad_r;
@@ -13400,6 +13400,12 @@ fn column_prefs(raw_rows: &[Vec<RawCell>], grid: &[f32], fixed: bool) -> Vec<Pre
     let mut col = 0usize;
     for cell in row {
         let span = cell.colspan.max(1);
+        // A gridBefore/gridAfter placeholder is no cell: its grid width is
+        // the row's own math, not a preference for the column.
+        if cell.grid_skip {
+            col += span;
+            continue;
+        }
         let covered: f32 = (col..col + span)
             .map(|i| grid.get(i).copied().unwrap_or(0.0))
             .sum();
@@ -13427,6 +13433,7 @@ fn column_prefs(raw_rows: &[Vec<RawCell>], grid: &[f32], fixed: bool) -> Vec<Pre
         for cell in row {
             let span = cell.colspan.max(1);
             if span == 1
+                && !cell.grid_skip
                 && let Some(slot) = pref.get_mut(col)
             {
                 // A pct cell in any row sets its column over the rows that
@@ -14904,7 +14911,7 @@ fn collect_visible(dom: &Dom, node: NodeId, out: &mut String, in_del: bool) {
 }
 
 /// What a run's page or column break becomes in its collected text.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 enum BreakText {
     /// Nothing: a table cell's.
     Drop,

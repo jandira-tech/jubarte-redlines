@@ -48881,7 +48881,7 @@ fn a_grid_before_skip_is_the_grid_columns_width_not_a_cells_margins() {
     let (bx, _) = pdf_glyph_text_xy(&pdf, "Beta").expect("row 2 paints");
     let (gx, _) = pdf_glyph_text_xy(&pdf, "Gamma").expect("row 3 paints");
     assert!(
-        (ax - bx - 0.25).abs() < 0.3,
+        (ax - bx - 0.25).abs() < 0.1,
         "a skipping row starts the 5-twip column later than a spanning one: Word +0.25, got {}",
         ax - bx
     );
@@ -48960,6 +48960,19 @@ fn a_page_break_in_a_header_paragraph_is_a_line_break() {
     assert!(
         (b2 - b3).abs() < 0.2,
         "under a 72pt margin the header still fits: body at {b2} against {b3}"
+    );
+    // A column break ends the same line (probe hb6: 27.0 as the page break).
+    let col =
+        format!(r#"<w:r><w:rPr>{arial}<w:sz w:val="19"/></w:rPr><w:br w:type="column"/></w:r>"#);
+    let (t4, k4, b4) = render(720, &col);
+    assert!(
+        ((t4 - k4) - 27.0).abs() < 0.4,
+        "a column break takes the same 9.5pt line: Word 27.1, got {}",
+        t4 - k4
+    );
+    assert!(
+        (b4 - b1).abs() < 0.2,
+        "and moves the body as the page break does: {b4} against {b1}"
     );
 }
 

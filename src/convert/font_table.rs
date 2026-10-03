@@ -460,9 +460,12 @@ mod tests {
             .expect("Press Start 2P embed");
         let face = ttf_parser::Face::parse(press, 0).expect("Press Start 2P TTF");
         assert!(face.units_per_em() > 0);
+        // case8 also embeds Arial. The catalogue paints Arial (installed, or
+        // its bundled metric twin), and an installed family wins over the
+        // document's embedded copy, as Word's own PDF shows (8c11ad13af).
         assert!(
-            embeds.contains_key(&("arial".into(), false, false)),
-            "case8 also embeds Arial"
+            !embeds.contains_key(&("arial".into(), false, false)),
+            "an embedded copy of a family the catalogue paints is left out"
         );
     }
 }
