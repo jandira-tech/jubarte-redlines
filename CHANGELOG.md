@@ -136,7 +136,8 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   single-value content controls, dangling relationship attributes,
   duplicate drawing and revision ids, paragraph ids outside Word's range,
   table cells without a last paragraph, orphan comment anchors) and lists
-  what remains.
+  what remains. A package with nothing repairable comes back as its own
+  bytes (#333).
 - `jubarte validate EDITED --original ORIGINAL --author NAME`
   (`validate::audit_tracked`, `Document.audit_tracked`, `auditTracked`):
   every text change against the original must be a revision by that
@@ -286,6 +287,14 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 - `get_revisions` admits its input under `settings.input_limits` instead
   of always using `InputLimits::compare()` (the default settings give the
   same budget).
+- Each published package carries its own README, generated at release
+  from the repository README and a per-package fragment by
+  `scripts/library_readmes.py`: crates.io (`README.crates.md`), PyPI,
+  and both npm packages. Links are pinned to the release tag, because
+  the registries cannot resolve relative links. The release checks that
+  every artifact carries the README for its version (#339).
+- `tiny-skia` 0.12: `png` 0.17 and `bitflags` 1 leave the dependency
+  tree. Rendered PDFs are byte-identical (#340).
 
 ### Deprecated
 
