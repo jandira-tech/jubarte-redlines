@@ -7173,6 +7173,11 @@ fn word_balloon_comments(
 /// A range end is live inside a `w:p` with content before it there: text or
 /// deleted text, a drawing, picture, object, symbol, tab, or a comment
 /// reference mark.
+/// Its own range start before it in that paragraph counts too: an empty
+/// range followed by its reference is a reference alone, with or without
+/// an empty run between (Word 16, round 6 of the balloon probes,
+/// 2026-10-03: 13 shapes, all with a balloon; corpus 6ef6726c28 and
+/// 1672057675 explained, the 151-document survey exact at 151/151).
 fn comment_range_end_is_live(dom: &Dom, end: NodeId) -> bool {
     let mut up = dom.parent(end);
     while let Some(node) = up {
@@ -7187,10 +7192,16 @@ fn comment_range_end_is_live(dom: &Dom, end: NodeId) -> bool {
     let Some(para) = up else {
         return false;
     };
+    // An empty range, its own start right before it in the paragraph, is
+    // a reference alone to Word: corpus 6ef6726c28's balloon.
+    let id = attr_any(dom, end, "id");
     dom.descendants(para, None)
         .into_iter()
         .take_while(|&node| node != end)
         .any(|node| {
+            if dom.name_is(node, &W::name("commentRangeStart")) {
+                return id.is_some() && attr_any(dom, node, "id") == id;
+            }
             if dom.name_is(node, &W::t()) || dom.name_is(node, &W::name("delText")) {
                 return (0..dom.child_count(node))
                     .filter_map(|i| dom.text_value(dom.child_at(node, i)))
@@ -13807,7 +13818,7 @@ fn notes_for(ctx: &mut RunCollect<'_>, ids: &[String]) -> Vec<CommentNote> {
     out
 }
 
-fn flush_pending_comments(ctx: &mut RunCollect<'_>, runs: &mut [TextRun]) {
+fn flush_pending_comments(ctx: &mut RunCollect<'_>, runs: &mut Vec<TextRun>) {
     if ctx.pending.is_empty() {
         return;
     }
@@ -13816,11 +13827,19 @@ fn flush_pending_comments(ctx: &mut RunCollect<'_>, runs: &mut [TextRun]) {
     if notes.is_empty() {
         return;
     }
-    if let Some(last) = runs.last_mut() {
-        for note in &mut notes {
-            note.after = true;
+    for note in &mut notes {
+        note.after = true;
+    }
+    match runs.last_mut() {
+        Some(last) => last.comments.extend(notes),
+        // A paragraph with nothing but the reference mark: an empty run
+        // carries the note to the paragraph's place (6ef6726c28).
+        None => {
+            let mut carrier = TextRun::new(String::new(), ctx.base.clone());
+            carrier.strut = true;
+            carrier.comments = notes;
+            runs.push(carrier);
         }
-        last.comments.extend(notes);
     }
 }
 
@@ -24746,6 +24765,10 @@ impl<'a> Layout<'a> {
                 color: [0.0, 0.0, 0.0],
             });
             return x + FOOTNOTE_SEP_W;
+        }
+        if run.text.is_empty() && !run.comments.is_empty() {
+            self.place_run_comments(run, x, y, 0.0);
+            return x;
         }
         if run.checkbox.is_none()
             && let Some(pieces) = script_pieces(&run.style, &run.text)

@@ -46283,13 +46283,20 @@ fn a_range_end_after_text_or_a_tab_gets_word_s_balloon() {
         assert!(has_balloon_pane(&pdf), "live end after {before}");
         assert_eq!(painted_balloons(&pdf), 1, "one balloon after {before}");
     }
-    // An empty w:t is no content: the end stays dead.
+    // An empty range gets a balloon too, with or without an empty w:t
+    // between its start and its end: Word 16, round 6 of the balloon
+    // probes (2026-10-03, 13 shapes, `comment_balloons_0929/round6.py`),
+    // which corrected the 2026-09-29 reading of this case.
     let body = format!(
         "<w:p><w:commentRangeStart w:id=\"0\"/><w:r><w:t></w:t></w:r><w:commentRangeEnd w:id=\"0\"/>\
          <w:r><w:commentReference w:id=\"0\"/></w:r></w:p>{LETTER}"
     );
     let pdf = docx_to_pdf(&comments_docx(&body, &comments_part("0", "Ada", "Note"))).expect("pdf");
-    assert!(!has_balloon_pane(&pdf), "an empty w:t is not content");
+    assert!(
+        has_balloon_pane(&pdf),
+        "an empty range is a reference alone"
+    );
+    assert_eq!(painted_balloons(&pdf), 1);
 }
 
 #[test]
@@ -47976,4 +47983,29 @@ fn balloon_labels_count_through_the_document_and_rank_replies() {
     for label in ["Commented [A1]: ", "Commented [B1R2]: ", "Commented [B2]: "] {
         assert!(text.contains(label), "{label} in {text}");
     }
+}
+
+/// An empty range (its start and end adjacent at the paragraph's start)
+/// followed by its reference gets a balloon in Word, like a reference
+/// alone: corpus 6ef6726c28 (`<w:commentRangeStart w:id="11"/>
+/// <w:commentRangeEnd w:id="11"/><w:r><w:commentReference w:id="11"/>`)
+/// has one balloon in Word's PDF. The live-end rule read the end as dead
+/// (no content before it in its paragraph) and painted nothing.
+#[test]
+fn an_empty_range_at_a_paragraph_start_gets_word_s_balloon() {
+    let body = format!(
+        "<w:p><w:r><w:t>Before.</w:t></w:r></w:p>\
+         <w:p><w:commentRangeStart w:id=\"9\"/><w:commentRangeStart w:id=\"11\"/>\
+         <w:commentRangeEnd w:id=\"11\"/>\
+         <w:r><w:rPr><w:rStyle w:val=\"CommentReference\"/></w:rPr>\
+         <w:commentReference w:id=\"11\"/></w:r></w:p>{LETTER}"
+    );
+    let pdf = docx_to_pdf(&comments_docx(&body, &comments_part("11", "Ada", "Fin."))).expect("pdf");
+    assert!(has_balloon_pane(&pdf));
+    assert_eq!(
+        painted_balloons(&pdf),
+        1,
+        "the empty range's comment has a balloon"
+    );
+    assert!(pdf_winansi_text(&pdf).contains("Fin."));
 }
