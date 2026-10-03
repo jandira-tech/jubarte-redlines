@@ -564,6 +564,12 @@ class ReleaseSh(unittest.TestCase):
         add = text[start:text.index("git commit", start)]
         self.assertIn("release_info", add)
 
+    def test_git_stores_the_evidence_byte_for_byte(self) -> None:
+        # The results files name their sample by sha256, and the samples are
+        # CRLF csv: a checkout that rewrites line ends breaks the hash.
+        attributes = (HERE.parent / ".gitattributes").read_text().splitlines()
+        self.assertIn("release_info/** -text", attributes)
+
 
 if __name__ == "__main__":
     unittest.main()
