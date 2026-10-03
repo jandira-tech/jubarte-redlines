@@ -251,6 +251,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
     `itertools.pairwise` and `str.removeprefix` kept the convert-sweep job
     red on the self-hosted runner), and `jubarte-wasm` no longer lists
     `js-sys`, which it never used.
+  - Where main takes changes only through a pull request, the release
+    commits go up as `release/vX.Y.Z`, and the pull request is merged at
+    once with a merge commit (`scripts/push_main.sh`), so the tag still
+    names the commit the gates ran on. A direct push is tried first.
   - Git stores `release_info/` byte for byte (`.gitattributes`, `-text`):
     the samples are CRLF csv and the results name them by sha256, so a
     checkout that rewrote line ends would fail step 3.

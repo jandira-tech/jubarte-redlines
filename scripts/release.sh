@@ -68,7 +68,9 @@
 #   8. `chore(release): vX.Y.Z` commit, wasm npm rebuild (stamps the release
 #      commit into ENGINE_COMMIT.txt), npm smoke test, artifacts commit,
 #      annotated `vX.Y.Z` tag whose body is the github summary
-#      point of no return — type `vX.Y.Z` to confirm, then push; release.yml
+#      point of no return — type `vX.Y.Z` to confirm, then push (where main
+#      takes changes only through a pull request, scripts/push_main.sh opens
+#      one for the release commits and merges it at once); release.yml
 #      builds the five CLI binaries + seven PyPI wheels + sdist and creates
 #      the `jubarte vX.Y.Z` GitHub release itself
 #   9. crates.io — `cargo publish`, after proving the summary is inside the
@@ -690,7 +692,11 @@ if [ "$YES" = 0 ]; then
   [ "$a" = "v$VER" ] || die "aborted — nothing pushed; local commits/tag remain"
 fi
 
-git push origin main
+# shellcheck source=scripts/push_main.sh
+. scripts/push_main.sh
+push_main "release/$TAG" "chore(release): $TAG" \
+  "The release commits of jubarte $TAG, from scripts/release.sh. Merged at once with a merge commit: the tag names the commit the gates ran on." \
+  || die "main was not updated — nothing is published; the release commits and the tag are local, rerun once main takes them"
 if git ls-remote --tags origin "$TAG" | grep . >/dev/null; then
   step "tag $TAG already on origin — push skipped"
 else

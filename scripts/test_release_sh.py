@@ -13,6 +13,7 @@ non-main branch, so a run that gets past argument validation stops at the
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import tempfile
@@ -403,6 +404,125 @@ class Downstream(unittest.TestCase):
         self.assertIn('if [ "$APP" = 1 ]', text)
         self.assertNotIn("--submit", text)
 
+
+
+class PushMain(unittest.TestCase):
+    """scripts/push_main.sh against a real origin: one that takes a direct
+    push, and one whose main takes changes only through a pull request (a
+    pre-receive hook stands in for the ruleset, a stub `gh` for GitHub)."""
+
+    HOOK = """#!/bin/sh
+while read old new ref; do
+  if [ "$ref" = refs/heads/main ] && [ "${VIA_PULL_REQUEST:-}" != 1 ]; then
+    echo "GH013: Repository rule violations found for refs/heads/main" >&2
+    exit 1
+  fi
+done
+"""
+    GH = """#!/bin/sh
+# stub gh: `pr view` knows no pull request until `pr create`; `pr merge`
+# merges the head into main with a merge commit, as GitHub's merge does.
+echo "$@" >> "$GH_LOG"
+case "$1 $2" in
+  "pr view") [ -f "$GH_LOG.open" ] && echo OPEN || exit 1 ;;
+  "pr create") : > "$GH_LOG.open" ;;
+  "pr merge")
+    work=$(mktemp -d) && git clone -q "$ORIGIN" "$work/c" && cd "$work/c" \
+      && git -c user.name=gh -c user.email=gh@example.com merge -q --no-ff -m "Merge pull request" "origin/$3" \
+      && VIA_PULL_REQUEST=1 git push -q origin HEAD:main ;;
+esac
+"""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.origin = self.tmp / "origin.git"
+        self.work = self.tmp / "work"
+        self.log = self.tmp / "gh.log"
+        self.log.write_text("")
+        bin_dir = self.tmp / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "gh").write_text(self.GH)
+        (bin_dir / "gh").chmod(0o755)
+        self.env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+                    "GH_LOG": str(self.log), "ORIGIN": str(self.origin),
+                    "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
+                    "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com"}
+        self.git("init", "-q", "--bare", str(self.origin), cwd=self.tmp)
+        self.git("symbolic-ref", "HEAD", "refs/heads/main", cwd=self.origin)
+        self.git("clone", "-q", str(self.origin), str(self.work), cwd=self.tmp)
+        self.git("checkout", "-q", "-b", "main")
+        self.commit("base")
+        self.git("push", "-q", "origin", "main")
+
+    def git(self, *args: str, cwd: Path | None = None) -> str:
+        return subprocess.run(["git", *args], cwd=cwd or self.work, env=self.env,
+                              capture_output=True, text=True, check=True).stdout.strip()
+
+    def commit(self, name: str) -> str:
+        (self.work / name).write_text(name)
+        self.git("add", name)
+        self.git("commit", "-q", "-m", name)
+        return self.git("rev-parse", "HEAD")
+
+    def protect_main(self) -> None:
+        hook = self.origin / "hooks" / "pre-receive"
+        hook.write_text(self.HOOK)
+        hook.chmod(0o755)
+
+    def push_main(self) -> subprocess.CompletedProcess[str]:
+        script = f'. "{HERE / "push_main.sh"}" && push_main release/v9.9.9 "chore(release): v9.9.9" "body"'
+        return subprocess.run(["bash", "-c", script], cwd=self.work, env=self.env,
+                              capture_output=True, text=True)
+
+    def origin_main(self) -> str:
+        return self.git("rev-parse", "main", cwd=self.origin)
+
+    def test_an_open_main_takes_the_push_and_no_pull_request(self) -> None:
+        release = self.commit("release")
+        result = self.push_main()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.origin_main(), release)
+        self.assertEqual(self.log.read_text(), "")
+
+    def test_a_main_that_wants_a_pull_request_gets_one_merged_at_once(self) -> None:
+        self.protect_main()
+        release = self.commit("release")
+        result = self.push_main()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.log.read_text()
+        self.assertIn("pr create --base main --head release/v9.9.9", calls)
+        self.assertIn("pr merge release/v9.9.9 --merge", calls)
+        # a merge commit: the gated (and tagged) commit itself is in main
+        parents = self.git("rev-list", "--parents", "-n", "1", "main", cwd=self.origin).split()
+        self.assertEqual(len(parents), 3)
+        self.assertEqual(parents[2], release)
+        # and the local main is the one origin holds
+        self.assertEqual(self.git("rev-parse", "HEAD"), self.origin_main())
+
+    def test_a_rerun_merges_the_open_pull_request_without_a_second_one(self) -> None:
+        self.protect_main()
+        self.commit("release")
+        Path(str(self.log) + ".open").write_text("")
+        result = self.push_main()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("pr create", self.log.read_text())
+        self.assertIn("pr merge release/v9.9.9 --merge", self.log.read_text())
+
+    def test_a_refused_merge_fails_the_push(self) -> None:
+        self.protect_main()
+        self.commit("release")
+        self.env["ORIGIN"] = str(self.tmp / "nowhere.git")  # the stub's merge cannot happen
+        result = self.push_main()
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_both_release_scripts_go_through_it(self) -> None:
+        for name in ("release.sh", "release_downstream.sh"):
+            text = (HERE / name).read_text()
+            self.assertIn("scripts/push_main.sh", text, name)
+            self.assertIn("push_main ", text, name)
+            self.assertNotIn("git push origin main", text, name)
+            self.assertNotIn("git push -q origin HEAD:main", text, name)
 
 
 class Header(unittest.TestCase):

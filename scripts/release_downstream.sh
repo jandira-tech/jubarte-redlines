@@ -69,7 +69,11 @@ else
     git add -- $changed
     git commit -q -m "chore(site): jubarte.pro on $TAG" \
       -m "Download page and demo engine from the $TAG release (jubarte-site/scripts/release.sh engine $VER)."
-    git push -q origin HEAD:main
+    # shellcheck source=scripts/push_main.sh
+    . scripts/push_main.sh
+    push_main "chore/site-$TAG" "chore(site): jubarte.pro on $TAG" \
+      "Download page and demo engine from the $TAG release (jubarte-site/scripts/release.sh engine $VER)." \
+      || die "the site commit did not reach main — jubarte.pro is deployed; push $(git rev-parse --short HEAD) through a pull request"
     step "committed and pushed $(git rev-parse --short HEAD): $(printf '%s' "$changed" | tr '\n' ' ')"
   fi
 fi
