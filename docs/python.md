@@ -429,9 +429,7 @@ operations: `replace`, `insert`, `delete`, `comment`; paragraph-level:
 `rewrite`; `resolving(accept={...}, reject={...})` settles existing tracked
 changes first. `plan.to_json()` is exactly what `edit --plan` reads.
 
-`diff(old, new)` (new on `main`, first in the release after 0.10.1; `main`
-builds still report `__version__` 0.10.1 until that release's version bump,
-so the PyPI 0.10.1 wheel does not have it) shows the changed paragraphs
+`diff(old, new)` (since 0.11.0) shows the changed paragraphs
 between two documents — or a document and Markdown text — as `[-old-]{+new+}`
 marks (`format="critic"` for CriticMarkup):
 

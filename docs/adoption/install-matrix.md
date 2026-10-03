@@ -3,40 +3,33 @@
 
 # Install matrix
 
-Read live from PyPI, npm, crates.io and the GitHub release on 2026-10-02.
+What every release from 0.11.0 on carries. `scripts/check_release_artifacts.py`
+refuses a release whose wheel set lacks a platform below, and
+`scripts/release.sh` creates no GitHub release without all of them. The
+0.11.0 set was read live from PyPI, npm, crates.io and the GitHub release
+on 2026-10-03.
 
-## jubarte 0.10.1 (released 2026-09-30)
+## jubarte 0.11.2 (released 2026-10-03)
 
 | Channel | Artifact | Platforms |
 |---|---|---|
-| PyPI `jubarte-redlines` | abi3 wheels, Python >= 3.10 | Linux x86_64 and aarch64 (`manylinux_2_34`, glibc 2.34 or newer); macOS x86_64 (10.12+) and arm64 (11.0+); sdist |
+| PyPI `jubarte-redlines` | abi3 wheels, Python >= 3.10 | Linux x86_64 and aarch64, glibc 2.28 or newer (`manylinux_2_28`) and musl 1.2 (`musllinux_1_2`); macOS x86_64 (10.12+) and arm64 (11.0+); Windows x86_64; sdist |
 | crates.io `jubarte-redlines` (library `jubarte`) | `cargo install jubarte-redlines` | anywhere Rust 1.88+ builds, Windows included |
-| npm `jubarte-wasm` | WebAssembly library | any Node or browser |
-| GitHub release `v0.10.1` | `jubarte` binary tarballs + `SHA256SUMS.txt` | Linux x86_64 and aarch64, macOS x86_64 and aarch64 |
+| npm `jubarte-wasm` | WebAssembly library | any Node 18+ or browser |
+| npm `jubarte-redlines` | the command line, `npx jubarte-redlines` | any Node 18+ |
+| GitHub release `v0.11.2` | `jubarte` binary archives + `SHA256SUMS.txt` | Linux x86_64 and aarch64, macOS x86_64 and aarch64, Windows x86_64 |
 
-Gaps a provider's sandbox may hit today:
+The wheel installs two console scripts: `jubarte-redlines` (so
+`uvx jubarte-redlines redline a.docx b.docx -o redline.docx` runs with no
+install) and, with the `mcp` extra, `jubarte-mcp` ([mcp.md](mcp.md)).
 
-- **No Windows wheel and no Windows binary.** The release notes say the
-  Windows runner could not check out the tag (fixture paths over its path
-  limit). On Windows, use `cargo install jubarte-redlines` or the sdist,
-  which builds from source and needs a Rust toolchain.
-- **glibc 2.34 floor.** Debian 11, RHEL 8 and Amazon Linux 2 have an older
-  glibc and fall back to the sdist build.
-- **No musl wheel.** Alpine falls back to the sdist build.
-- **npm `jubarte-redlines` (the `npx` command line) is not published.**
-  The package is on `main` (`jubarte-wasm/cli/`) and ships with the next
-  release.
-- **`uvx jubarte-redlines` needs the next release.** 0.10.1 has
-  `python -m jubarte_redlines`; the `jubarte-redlines` console script is
-  on `main` (`[project.scripts]` in `jubarte-python/pyproject.toml`), as
-  is `jubarte-mcp`, the MCP server behind the `mcp` extra
-  ([mcp.md](mcp.md)).
+Gaps a provider's sandbox may still hit:
 
-## Pending (S10, plan 1 Task 1, `adopt/s10-wheels`)
-
-S10 adds a Windows x86_64 wheel, a glibc 2.28 floor (`manylinux_2_28`),
-musllinux wheels and a release-time check that refuses to publish a wheel
-set missing any of them. The table above is updated when it ships.
+- **glibc 2.28 floor.** Debian 10 or older, RHEL 7 and Amazon Linux 2 have
+  an older glibc and fall back to the sdist build, which needs a Rust
+  toolchain.
+- **No Windows arm64 wheel or binary.** Use `cargo install jubarte-redlines`
+  or the sdist there.
 
 ## Check it yourself
 
