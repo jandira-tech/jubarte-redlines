@@ -3,10 +3,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! Word marks a changed paragraph word by word, or replaces it whole, by one
-//! rule (Word 16, 783 single-paragraph probes, 2026-10-03): the characters
-//! of the words its alignment keeps, over the characters of the longer side
-//! (spaces included), reach 0.12 or the paragraph is replaced. The rule is
-//! constant from 200 to 4800 words and for runs of 2 to 16 words, and Word
+//! rule (Word 16, 1178 single-paragraph probes, 2026-10-03): the kept span
+//! — the characters of the words its alignment keeps with the blanks inside
+//! a kept run and on either side of it — over the characters of the longer
+//! side reaches 0.15 or the paragraph is replaced. The rule is constant
+//! from 6 to 4800 words and for lone words and runs of 2 to 16, and Word
 //! applies it again to each window between the anchors it keeps, so a
 //! rewritten stretch with a stray shared word or two is replaced as one
 //! block inside a word-level paragraph.
@@ -278,10 +279,11 @@ fn a_unit_without_text_changed_beside_kept_words_is_marked() {
 
 #[test]
 fn a_short_paragraph_keeping_a_lone_word_is_marked_word_by_word() {
-    // A short paragraph keeps whatever it shares: the bench's redline of
-    // document_100_ultimate_demo × double_spacing_bold_demo keeps
-    // " document " and "." of this 12-word paragraph, 0.114 of the longer
-    // side's characters, and so must the engine.
+    // The bench's redline of document_100_ultimate_demo × double_spacing_bold_demo
+    // keeps " document " and "." of this 12-word paragraph: with the
+    // paragraph mark, 12 of the longer side's 80 characters, 0.15 exactly
+    // (short1 and edge1 put the band at 0.149–0.151 for 12-word
+    // paragraphs), and Word marks it word by word.
     let changes = changes(
         "This final document showcases the complete range of styling options available.",
         "Bold double-spaced text for easy document editing and review.",
@@ -302,5 +304,90 @@ fn a_short_paragraph_keeping_a_lone_word_is_marked_word_by_word() {
             .iter()
             .any(|c| c.starts_with("Insertion") && c.contains("editing")),
         "{changes:#?}"
+    );
+}
+
+/// `n` words, the revision keeping the first and the last when asked and
+/// rewriting the rest. Returns the two texts.
+fn ends(n: usize, first: bool, last: bool) -> (String, String) {
+    let a: Vec<String> = (0..n).map(|i| word(0, i)).collect();
+    let b: Vec<String> = a
+        .iter()
+        .enumerate()
+        .map(|(i, w)| {
+            if (first && i == 0) || (last && i + 1 == n) {
+                w.clone()
+            } else {
+                word(1, i)
+            }
+        })
+        .collect();
+    (a.join(" "), b.join(" "))
+}
+
+#[test]
+fn a_lone_first_word_does_not_anchor_a_rewritten_paragraph() {
+    // Word replaces a paragraph that keeps only its first word, at 12, 20,
+    // 40, 80, 160 and 300 words alike (edge1 `first-both`, 12 of 12
+    // replaced): the opening word is no anchor, the ratio rules.
+    for n in [12, 40, 300] {
+        let (a, b) = ends(n, true, false);
+        let changes = changes(&a, &b);
+        let text: Vec<&String> = changes.iter().filter(|c| c.contains(" text ")).collect();
+        assert_eq!(
+            text.len(),
+            2,
+            "{n} words: one deletion and one insertion: {changes:#?}"
+        );
+        assert!(
+            text.iter().all(|c| c.contains(&word(0, 0))),
+            "{n} words: the first word goes with the paragraph: {changes:#?}"
+        );
+    }
+}
+
+#[test]
+fn a_lone_last_word_does_not_anchor_a_rewritten_paragraph() {
+    // The same for the last word (edge1 `last-both`, 12 of 12 replaced).
+    for n in [12, 40, 300] {
+        let (a, b) = ends(n, false, true);
+        let changes = changes(&a, &b);
+        let text: Vec<&String> = changes.iter().filter(|c| c.contains(" text ")).collect();
+        assert_eq!(
+            text.len(),
+            2,
+            "{n} words: one deletion and one insertion: {changes:#?}"
+        );
+        assert!(
+            text.iter().all(|c| c.contains(&word(0, n - 1))),
+            "{n} words: the last word goes with the paragraph: {changes:#?}"
+        );
+    }
+}
+
+#[test]
+fn both_end_words_kept_tip_a_short_paragraph_to_word_level() {
+    // Two six-letter words and their blanks are 14 of a 12-word
+    // paragraph's 83 characters — 15 of 84 with the mark, 0.179 — and Word
+    // keeps them (edge1 `ends-both` at 12 words, both seeds); at 20 words
+    // the same two words are 15 of 140, 0.107, and Word replaces the
+    // paragraph (both seeds).
+    let (a, b) = ends(12, true, true);
+    let short = changes(&a, &b);
+    for w in [word(0, 0), word(0, 11)] {
+        assert_eq!(
+            mentions(&short, &w),
+            0,
+            "kept word {w} stays plain: {short:#?}"
+        );
+    }
+    let (a, b) = ends(20, true, true);
+    let longer = changes(&a, &b);
+    let text: Vec<&String> = longer.iter().filter(|c| c.contains(" text ")).collect();
+    assert_eq!(text.len(), 2, "replaced whole: {longer:#?}");
+    assert!(
+        text.iter()
+            .all(|c| c.contains(&word(0, 0)) && c.contains(&word(0, 19))),
+        "{longer:#?}"
     );
 }

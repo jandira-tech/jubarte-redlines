@@ -9409,10 +9409,8 @@ fn heckel_links(k1: &[u32], k2: &[u32], w1: &[u32]) -> Vec<(usize, usize)> {
     mono
 }
 
-/// The most characters any in-order alignment of two key sequences keeps:
-/// a longest common subsequence weighted by `w1`, the characters each
-/// left unit contributes. Keys of 0 never match.
-fn weighted_lcs(k1: &[u32], k2: &[u32], w1: &[u32]) -> u64 {
+/// The last row of the weighted-LCS table of `k1` against `k2`.
+fn weighted_lcs_row(k1: &[u32], k2: &[u32], w1: &[u32]) -> Vec<u64> {
     let mut prev = vec![0u64; k2.len() + 1];
     let mut cur = vec![0u64; k2.len() + 1];
     for (i, &ka) in k1.iter().enumerate() {
@@ -9426,7 +9424,103 @@ fn weighted_lcs(k1: &[u32], k2: &[u32], w1: &[u32]) -> u64 {
         }
         std::mem::swap(&mut prev, &mut cur);
     }
-    prev[k2.len()]
+    prev
+}
+
+/// The pairs `(i, j)` of a heaviest common subsequence of `k1` and `k2`
+/// (a match weighs `w1[i]`; a key of 0 never matches), in order, in
+/// linear space (Hirschberg).
+fn weighted_lcs_pairs(k1: &[u32], k2: &[u32], w1: &[u32]) -> Vec<(usize, usize)> {
+    fn go(
+        k1: &[u32],
+        k2: &[u32],
+        w1: &[u32],
+        off1: usize,
+        off2: usize,
+        out: &mut Vec<(usize, usize)>,
+    ) {
+        if k1.is_empty() || k2.is_empty() {
+            return;
+        }
+        if k1.len() == 1 {
+            if k1[0] != 0
+                && let Some(j) = k2.iter().position(|&kb| kb == k1[0])
+            {
+                out.push((off1, off2 + j));
+            }
+            return;
+        }
+        let mid = k1.len() / 2;
+        let left = weighted_lcs_row(&k1[..mid], k2, &w1[..mid]);
+        let rk1: Vec<u32> = k1[mid..].iter().rev().copied().collect();
+        let rk2: Vec<u32> = k2.iter().rev().copied().collect();
+        let rw1: Vec<u32> = w1[mid..].iter().rev().copied().collect();
+        let right = weighted_lcs_row(&rk1, &rk2, &rw1);
+        let m = k2.len();
+        let split = (0..=m)
+            .max_by_key(|&j| (left[j] + right[m - j], std::cmp::Reverse(j)))
+            .unwrap_or(0);
+        go(&k1[..mid], &k2[..split], &w1[..mid], off1, off2, out);
+        go(
+            &k1[mid..],
+            &k2[split..],
+            &w1[mid..],
+            off1 + mid,
+            off2 + split,
+            out,
+        );
+    }
+    let mut out = Vec::new();
+    go(k1, k2, w1, 0, 0, &mut out);
+    out
+}
+
+/// The characters of the kept span: every kept run's words, the blanks
+/// between them, and the blank on either side of it when both sides have
+/// one — what Word's equal segments hold (" font ", " document ").
+/// `blank` marks a unit whose text is nothing but separators; `chars`
+/// is each unit's character count on the first side.
+fn kept_span(
+    pairs: &[(usize, usize)],
+    w1: &[u32],
+    chars: &[u32],
+    blank1: &[bool],
+    blank2: &[bool],
+) -> u64 {
+    let mut total = 0u64;
+    let mut idx = 0;
+    while idx < pairs.len() {
+        let (i0, j0) = pairs[idx];
+        let mut end = idx;
+        while end + 1 < pairs.len() {
+            let (i, j) = pairs[end];
+            let (ni, nj) = pairs[end + 1];
+            let joined = ni - i == nj - j
+                && (i + 1..ni).all(|x| blank1[x])
+                && (j + 1..nj).all(|y| blank2[y]);
+            if !joined {
+                break;
+            }
+            end += 1;
+        }
+        let (i1, j1) = pairs[end];
+        for k in idx..=end {
+            total += u64::from(w1[pairs[k].0]);
+        }
+        for x in i0..=i1 {
+            if blank1[x] {
+                total += u64::from(chars[x]);
+            }
+        }
+        if i0 > 0 && j0 > 0 && blank1[i0 - 1] && blank2[j0 - 1] {
+            total += u64::from(chars[i0 - 1]);
+        }
+        if i1 + 1 < blank1.len() && j1 + 1 < blank2.len() && blank1[i1 + 1] && blank2[j1 + 1] {
+            total += u64::from(chars[i1 + 1]);
+        }
+        idx = end + 1;
+    }
+    total
 }
 
 /// Largest word-by-word table the paragraph resolver computes — about
@@ -9438,10 +9532,11 @@ const PARAGRAPH_WINDOW_CELL_CAP: usize = 100_000_000;
 /// resolves a changed paragraph (Word 16, 783 single-paragraph probes,
 /// 2026-10-03), or decline it unchanged for the other resolvers.
 ///
-/// The characters of the words Word's alignment keeps (separators and
-/// spaces excluded), over the characters of the longer side (spaces
-/// included), reach [`super::WORD_LEVEL_KEPT_RATIO`] or the window is
-/// replaced whole, inserted then deleted. A word-level window keeps its
+/// The kept span — the characters of the words Word's alignment keeps,
+/// with the blanks inside a kept run and the blank on either side of it
+/// (see [`kept_span`]) — over the characters of the longer side, reaches
+/// [`super::WORD_LEVEL_KEPT_RATIO`] or the window is replaced whole,
+/// inserted then deleted. A word-level window keeps its
 /// anchors — the runs grown from the words unique to both sides — and
 /// each gap between them is a window judged on its own — anchored again
 /// by the words unique to the gap, as Word links single stopwords inside
@@ -9455,9 +9550,7 @@ const PARAGRAPH_WINDOW_CELL_CAP: usize = 100_000_000;
 ///
 /// Only a whole paragraph a side qualifies: Word units throughout, text
 /// on both sides, each side ending in its paragraph mark — or a gap this
-/// resolver carved out of such a paragraph (`in_word_level_paragraph`).
-/// Under [`super::WORD_LEVEL_MIN_WORDS`] words the threshold is
-/// [`super::WORD_LEVEL_KEPT_RATIO_SHORT`]. A
+/// resolver carved out of such a paragraph (`in_word_level_paragraph`). A
 /// fragment the run resolvers cut out of a multi-paragraph region keeps
 /// their arrangement: the probes judged whole paragraphs, and Word keeps
 /// " font " and "." of a paragraph it mostly rewrites inside a
@@ -9520,10 +9613,13 @@ fn resolve_paragraph_window(
     // 2003" → "Firearms Act 1973"). A side's characters in all.
     let mut keys: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
     let instr = W::name("instrText");
-    let mut side = |cul: &[ComparisonUnit]| -> (Vec<u32>, Vec<u32>, Vec<bool>, usize) {
+    type Side = (Vec<u32>, Vec<u32>, Vec<bool>, Vec<bool>, Vec<u32>, usize);
+    let mut side = |cul: &[ComparisonUnit]| -> Side {
         let mut ks = Vec::with_capacity(cul.len());
         let mut ws = Vec::with_capacity(cul.len());
         let mut textless = Vec::with_capacity(cul.len());
+        let mut blank = Vec::with_capacity(cul.len());
+        let mut each = Vec::with_capacity(cul.len());
         let mut chars = 0usize;
         for u in cul {
             let mut text = String::new();
@@ -9533,20 +9629,23 @@ fn resolve_paragraph_window(
                     text.push_str(&dom.value_str(a.content_element));
                 }
             }
-            chars += text.chars().count();
+            let count = text.chars().count();
+            chars += count;
             let weight = text
                 .chars()
                 .filter(|ch| !settings.word_separators.contains(ch) && !ch.is_whitespace())
                 .count();
             ws.push(u32::try_from(weight).unwrap_or(u32::MAX));
             textless.push(text.is_empty());
+            blank.push(!text.is_empty() && weight == 0);
+            each.push(u32::try_from(count).unwrap_or(u32::MAX));
             let next = u32::try_from(keys.len() + 1).unwrap_or(u32::MAX);
             ks.push(*keys.entry(u.sha1().to_string()).or_insert(next));
         }
-        (ks, ws, textless, chars)
+        (ks, ws, textless, blank, each, chars)
     };
-    let (k1, w1, textless1, chars1) = side(words1);
-    let (k2, w2, textless2, chars2) = side(words2);
+    let (k1, w1, textless1, blank1, each1, chars1) = side(words1);
+    let (k2, w2, textless2, blank2, _, chars2) = side(words2);
     // A side without a word — separators and punctuation only, the residue
     // of a cross-paragraph pairing (font_family × font_size leaves "." to
     // face a sentence) — is no paragraph to judge; the suffix match keeps
@@ -9566,19 +9665,27 @@ fn resolve_paragraph_window(
     if chars1 == 0 || chars2 == 0 || wordless(words1, &w1) || wordless(words2, &w2) {
         return Err(unknown);
     }
-    // A short paragraph keeps whatever it shares (Word's redlines of the
-    // bench corpus: 35 of the 40 paragraphs changed on their own that keep
-    // under 0.12 of the longer side keep a lone word, all of them short);
-    // the run resolvers keep it. A gap inside a judged paragraph is judged
-    // whatever its size.
-    let word_count = |ws: &[u32]| ws.iter().filter(|&&w| w > 0).count();
-    let threshold = if word_count(&w1).max(word_count(&w2)) < super::WORD_LEVEL_MIN_WORDS {
-        super::WORD_LEVEL_KEPT_RATIO_SHORT
-    } else {
-        super::WORD_LEVEL_KEPT_RATIO
-    };
-    let kept = weighted_lcs(&k1, &k2, &w1);
-    let ratio = (kept as f64) / (chars1.max(chars2) as f64);
+    // Blanks never pair on their own: a kept span takes the blanks beside
+    // its words.
+    let k1b: Vec<u32> = k1
+        .iter()
+        .zip(&blank1)
+        .map(|(&k, &b)| if b { 0 } else { k })
+        .collect();
+    let k2b: Vec<u32> = k2
+        .iter()
+        .zip(&blank2)
+        .map(|(&k, &b)| if b { 0 } else { k })
+        .collect();
+    let pairs = weighted_lcs_pairs(&k1b, &k2b, &w1);
+    // The paragraph mark is a character of each side, and a kept one: the
+    // two marks always pair. It tips the shortest paragraphs (short1,
+    // edge1: a 12-word paragraph keeping " document " and "." is 11 of
+    // 79 characters, 12 of 80 with its mark, and Word marks it word by
+    // word).
+    let mark = usize::from(both_marked);
+    let kept = kept_span(&pairs, &w1, &each1, &blank1, &blank2) + mark as u64;
+    let ratio = (kept as f64) / ((chars1.max(chars2) + mark) as f64);
     static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if *TRACE.get_or_init(|| std::env::var_os("JUBARTE_TRACE_PARAGRAPH").is_some()) {
         eprintln!(
@@ -9589,7 +9696,7 @@ fn resolve_paragraph_window(
             chars2,
         );
     }
-    if ratio < threshold {
+    if ratio < super::WORD_LEVEL_KEPT_RATIO {
         // The two marks pair, so a replaced tail of a paragraph whose
         // opening the LCS already kept stays in its paragraph (font_family
         // × font_size: Word MMDM, a replaced mark made MMIMDEE), and a

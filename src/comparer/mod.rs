@@ -1300,33 +1300,25 @@ pub struct WmlComparerSettings {
 /// default, and the CLI's faithful-preset sentinel check.
 pub const DEFAULT_DETAIL_THRESHOLD: f64 = 0.02;
 
-/// Word's rule for one changed paragraph (Word 16, 783 single-paragraph
-/// probes, 2026-10-03): it is marked word by word when the characters of
-/// the words its alignment keeps (spaces excluded) reach this fraction of
-/// the longer side's characters (spaces included), and replaced whole
-/// otherwise. Constant from 200 to 4800 words and for kept runs of 2 to 16
-/// words; the clean probes separate at 0.1206 against 0.128. Word applies
-/// it again to every window between the anchors it keeps.
-///
-/// The longer side, not the shorter: of the 39 probes keeping under 0.12
-/// of the longer side but 0.12 or more of the shorter (wave5's 1600- vs
-/// 3900-character cells among them) Word replaces 38.
-pub const WORD_LEVEL_KEPT_RATIO: f64 = 0.12;
-
-/// From this many words on the longer side the threshold is
-/// [`WORD_LEVEL_KEPT_RATIO`]; below it [`WORD_LEVEL_KEPT_RATIO_SHORT`].
-/// The 200–4800-word probes separate at 0.1207 against 0.1206–0.128; the
-/// 6–160-word ones (short1, asym1: 358 pairs) at 0.105 against 0.107.
-/// Whether the step is length or the probes' sentence punctuation is the
-/// `punct1` wave's question; until it answers, the two thresholds stand.
-pub const WORD_LEVEL_MIN_WORDS: usize = 200;
-
-/// The threshold below [`WORD_LEVEL_MIN_WORDS`] words (short1, asym1: a
-/// lone six-letter word of 12 is replaced at 0.056, of 6 kept at 0.065;
-/// the band at 60–160 words is 0.101–0.104 replaced, 0.109–0.114 kept).
-/// Below 200 words a lone kept word moves the ratio by whole hundredths,
-/// so the two thresholds are not one value seen twice.
-pub const WORD_LEVEL_KEPT_RATIO_SHORT: f64 = 0.105;
+/// Word's rule for one changed paragraph (Word 16, 1178 single-paragraph
+/// probes over 6–4800 words, 2026-10-03): it is marked word by word when
+/// the kept span — the characters of the words its alignment keeps, the
+/// blanks between the words of a kept run, and the blank on either side
+/// of the run when both sides have one, what its equal segments hold
+/// (" font ", " document ") — plus the paragraph mark, a kept character
+/// of each side, reaches this fraction of the longer side's characters,
+/// mark included, and replaced whole otherwise. One threshold for lone kept
+/// words and runs of 4 and 16, for 6 and for 4800 words, for a paragraph
+/// against one 3× its length: at 0.15 the waves agree with Word on 1.000
+/// (wave7, edge1), 0.992 (paragraphs of 40 words or fewer), 0.988
+/// (short1), 0.983 (asym1) and 0.924 (denom1, whose replaced rows reach
+/// 0.173: long paragraphs with lone kept words, where Word's own
+/// alignment keeps fewer words than a longest common subsequence — the
+/// aligner's gap, not the rule's). Counting the letters alone, the
+/// threshold reads 0.105 for lone words and 0.12 for runs of 4, which is
+/// this rule seen without its blanks. Word applies it again to every
+/// window between the anchors it keeps.
+pub const WORD_LEVEL_KEPT_RATIO: f64 = 0.15;
 
 impl WmlComparerSettings {
     /// The preset for `mode`.
