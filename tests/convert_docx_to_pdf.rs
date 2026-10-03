@@ -6983,8 +6983,8 @@ fn an_at_least_row_height_leaves_out_the_cell_margins() {
 fn cells_inside_content_controls_are_laid_out() {
     // fixtures_500 003c9ddd: cells wrapped in a cell-level w:sdt
     // (tr > sdt > sdtContent > tc). Taking only direct w:tc children
-    // dropped their text. Row-level sdt rows stay out (see the mini 454
-    // and file_196 locks).
+    // dropped their text. Row-level sdt rows paint too
+    // (`table_sdt_repeating_rows_paint_like_word`).
     let body = "<w:tbl><w:tblPr><w:tblW w:w=\"6000\" w:type=\"dxa\"/></w:tblPr>\
          <w:tblGrid><w:gridCol w:w=\"3000\"/><w:gridCol w:w=\"3000\"/></w:tblGrid>\
          <w:tr><w:tc><w:p><w:r><w:t>PlainCell</w:t></w:r></w:p></w:tc>\
@@ -39005,12 +39005,12 @@ fn official_strict01_diagram_item_stays_pad_twelve_after_mini_665() {
 }
 
 #[test]
-fn table_sdt_repeating_row_stays_header_only_after_mini_454() {
+fn table_sdt_repeating_rows_paint_like_word() {
     // Word Strict01/file_196 paint repeating-section SDT rows 100/200/300
-    // (and 400/500/600) on 13pp. Unwrapping those w:sdt rows was mini 454
-    // ITT-neg: NR 57.9023/50.978 vs KEEP 449–452 59.4518/53.4527,
-    // file_100/115/185/196 −23 each (13→14pp), Strict01 family −0.15,
-    // 0 gains. Extra rows vs our looser packing overflow the clones.
+    // (and 400/500/600) on 13pp. Unwrapping those w:sdt rows was once
+    // ITT-negative (mini 454: file_100/115/185/196 went 13→14pp on the
+    // looser packing of the time); the packing now holds Word's 13 pages
+    // with the rows painted (2026-10-03, main 6b91df7a + this change).
     // Keep direct-w:tr-only.
     let body = "\
          <w:tbl><w:tblGrid>\
@@ -39047,16 +39047,20 @@ fn table_sdt_repeating_row_stays_header_only_after_mini_454() {
         painted.contains("HeadA") && painted.contains("HeadB") && painted.contains("HeadC"),
         "header cells must still paint: {painted:?}"
     );
+    // Word paints the repeating-section rows (its PDF of corpus 527ec4ed07
+    // shows 100/200/300 under the header on page 4); they were kept out
+    // after mini 454 scored lower with them, a page-count effect the
+    // packing has since caught up with (file_196 stays at Word's 13 pages).
     assert!(
-        !painted.contains("100") && !painted.contains("400"),
-        "mini 454 ITT-neg SDT rows; keep header-only: {painted:?}"
+        painted.contains("100") && painted.contains("400"),
+        "repeating-section rows paint like Word's: {painted:?}"
     );
 }
 
 #[test]
 fn table_cell_sdt_unwraps_the_nested_paragraph() {
-    // xml leftover: sdt unwrap is partial. Body-level sdt is walked;
-    // repeating-section w:sdt rows stay locked (mini 454 KEEP above).
+    // xml leftover: sdt unwrap is partial. Body-level sdt is walked and
+    // repeating-section w:sdt rows paint (above).
     // A cell with a direct para plus a sibling sdt-wrapped para currently
     // skips the sdt (only empty cells fall back to collect_runs_in).
     let body = "<w:tbl><w:tblGrid><w:gridCol w:w=\"4680\"/></w:tblGrid>\
@@ -47712,4 +47716,37 @@ fn a_header_styleref_shows_the_styled_text_of_its_own_page() {
         assert!(page.contains(body), "page {i} holds {body}: {page:?}");
         assert!(page.contains(want), "page {i}: want {want}; {page:?}");
     }
+}
+
+#[test]
+fn a_row_inside_a_content_control_is_painted() {
+    // Strict01's "MyTable" repeating section (corpus 527ec4ed07, with its
+    // 100/200/300 row) wraps whole rows in `w:sdt`; Word paints them like
+    // any row, and so does a cell a content control wraps (Latin1). The
+    // rows used to be skipped, which emptied the table.
+    let cell = |text: &str| format!("<w:tc><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>");
+    let sdt = |inner: String, tag: &str| {
+        format!(
+            "<w:sdt><w:sdtPr><w:alias w:val=\"{tag}\"/><w:tag w:val=\"{tag}\"/><w:id w:val=\"7\"/></w:sdtPr>\
+             <w:sdtEndPr/><w:sdtContent>{inner}</w:sdtContent></w:sdt>"
+        )
+    };
+    let body = format!(
+        "<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>\
+           <w:tr>{}</w:tr>{}<w:tr>{}</w:tr></w:tbl><w:sectPr/>",
+        cell("RowOne"),
+        sdt(
+            format!("<w:tr>{}</w:tr>", sdt(cell("RowTwo"), "Latin1")),
+            "MyTable"
+        ),
+        cell("RowThree"),
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("content-control rows");
+    let one = pdf_literal_td_y(&pdf, "RowOne").expect("RowOne");
+    let two = pdf_literal_td_y(&pdf, "RowTwo").expect("the content-control row is painted");
+    let three = pdf_literal_td_y(&pdf, "RowThree").expect("RowThree");
+    assert!(
+        one > two && two > three,
+        "rows in order, the wrapped one between: {one} {two} {three}"
+    );
 }

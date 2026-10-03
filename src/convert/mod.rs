@@ -11813,21 +11813,13 @@ fn table_block(
     let mut row_cant_split = Vec::new();
     let mut header_rows = 0usize;
     let mut still_header = true;
-    // Direct `w:tr` only — descendants() would flatten nested tables into this one.
-    // Repeating-section w:sdt rows (Strict01 100/200/300) are Word-faithful,
-    // but painting them sends file_196 past Word's 13pp on our looser packing.
-    // customXml-wrapped rows are the table's own (docxide case67).
-    let all_rows: Vec<NodeId> = (0..dom.child_count(table))
-        .map(|i| dom.child_at(table, i))
-        .flat_map(|c| {
-            if local_name_is(dom, c, "customXml") {
-                dom.elements(c, Some(&W::tr()))
-            } else if dom.name_is(c, &W::tr()) {
-                vec![c]
-            } else {
-                Vec::new()
-            }
-        })
+    // The table's own `w:tr` only — descendants() would flatten nested
+    // tables into this one. A row a content control or a custom-XML
+    // wrapper holds is the table's own and Word paints it: a repeating
+    // section's rows (Strict01's MyTable: 100/200/300), docxide case67's
+    // customXml rows.
+    let all_rows: Vec<NodeId> = wrapped_children(dom, table, "tr")
+        .into_iter()
         .filter(|&row| !row_is_hidden(dom, row, &sheet.by_id))
         .collect();
     let row_count = all_rows.len();
