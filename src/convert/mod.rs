@@ -3195,11 +3195,23 @@ fn load_stylesheet(pkg: &PartFs) -> StyleSheet {
             *slot = Some("Aptos".into());
         }
     }
-    if let Some(dd) = dom
+    let doc_defaults = dom
         .descendants(root, Some(&W::name("docDefaults")))
         .into_iter()
-        .next()
+        .next();
+    // An rPrDefault that names no face is the OOXML default, Times New
+    // Roman, whatever theme part the package carries (theme faces reach a
+    // run only through asciiTheme attributes): Word's PDFs of 0edc50c464,
+    // cbb3bab843, 0a1badc333, 43432ba9ab and 6d510ca476 (with a theme) set
+    // the body in Times New Roman 10, not the factory Calibri.
+    if has("rPrDefault")
+        && doc_defaults.is_some_and(|dd| dom.descendants(dd, Some(&W::name("rFonts"))).is_empty())
     {
+        defaults.run.family = "Times New Roman".into();
+        defaults.run.family_hansi = Some("Times New Roman".into());
+        defaults.run.family_cs = Some("Times New Roman".into());
+    }
+    if let Some(dd) = doc_defaults {
         if let Some(rpr) = first_named(&dom, dd, "rPr") {
             apply_rpr(&dom, rpr, &mut defaults.run, &theme);
             // Word squeezes compressed punctuation only while the document
@@ -9197,6 +9209,11 @@ fn cell_content_extent(fonts: &Fonts, cell: &TableCell) -> (f32, f32) {
     for para in &cell.paras {
         let indent = para.style.indent_left.max(0.0) + para.style.indent_right.max(0.0);
         let mut line = 0.0_f32;
+        // The blanks a line ends with hang past it: Word's autofit of
+        // 0edc50c464's "npm" + 15 blanks + a 24-letter link + 17 blanks
+        // spans the content without the trailing blanks (201.3pt with
+        // the cell margins; the blanks would make it 300).
+        let mut trailing = 0.0_f32;
         // The unit a run leaves open at its end: a word cut by a run
         // boundary is one unit, as `wrap_runs_segment` glues it
         // (6d73303ea5's "C" + "ontrols" header is 44.7pt, not 36). An
@@ -9215,14 +9232,21 @@ fn cell_content_extent(fonts: &Fonts, cell: &TableCell) -> (f32, f32) {
             let width = |t: &str| face.width_pt(t, size) * run.style.hscale();
             for (i, piece) in run.text.split('\n').enumerate() {
                 if i > 0 {
-                    max = max.max(line + indent);
+                    max = max.max(line - trailing + indent);
                     line = 0.0;
+                    trailing = 0.0;
                     carry = 0.0;
                 }
                 if piece.is_empty() {
                     continue;
                 }
                 line += width(piece);
+                let kept = piece.trim_end_matches(is_wrap_space);
+                trailing = if kept.is_empty() {
+                    trailing + width(piece)
+                } else {
+                    width(&piece[kept.len()..])
+                };
                 let opens =
                     |c: Option<char>| c.is_some_and(|c| !is_wrap_space(c) && !is_cjk_break_char(c));
                 let mut glue = opens(piece.chars().next());
@@ -9258,7 +9282,7 @@ fn cell_content_extent(fonts: &Fonts, cell: &TableCell) -> (f32, f32) {
                 };
             }
         }
-        max = max.max(line + indent);
+        max = max.max(line - trailing + indent);
     }
     (min, max.max(min))
 }
@@ -12090,9 +12114,12 @@ fn table_block(
     let mut foreign_grid = false;
     if let Some(grid) = direct_named(dom, table, "tblGrid") {
         for col in dom.elements(grid, Some(&W::name("gridCol"))) {
-            foreign_grid |= attr_any(dom, col, "type").is_some();
-            let w = dom
-                .attribute(col, &W::name("w"))
+            // A `w:type` on a gridCol, or a gridCol without a width, is
+            // a grid Word never wrote: it fits the columns to their
+            // content on open (0edc50c464's `<w:gridCol/>` tables).
+            let width = dom.attribute(col, &W::name("w"));
+            foreign_grid |= attr_any(dom, col, "type").is_some() || width.is_none();
+            let w = width
                 .and_then(|s| s.parse::<f32>().ok())
                 .map(twip)
                 .unwrap_or(80.0);

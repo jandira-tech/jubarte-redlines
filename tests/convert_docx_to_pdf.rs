@@ -8011,7 +8011,7 @@ fn file_34_char_styles_xml() -> &'static str {
     // file_34 / uipriority: custom character styles carry w:sz on the
     // style rPr; the run only has rStyle (no direct sz).
     "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-     <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr/></w:rPrDefault><w:pPrDefault><w:pPr/></w:pPrDefault></w:docDefaults>\
+     <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr/></w:pPrDefault></w:docDefaults>\
        <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">\
          <w:name w:val=\"Normal\"/>\
          <w:rPr><w:sz w:val=\"22\"/></w:rPr></w:style>\
@@ -8060,7 +8060,7 @@ fn hyperlink_char_style_without_sz_keeps_para_size_after_mini_333() {
     // NamedStyle.run onto a 16pt heading would shrink sd_2517 TOC
     // (already gated) and body hyperlinks. Unset sz must not overlay.
     let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-         <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr/></w:rPrDefault><w:pPrDefault><w:pPr/></w:pPrDefault></w:docDefaults>\
+         <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr/></w:pPrDefault></w:docDefaults>\
            <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">\
              <w:name w:val=\"Normal\"/>\
              <w:rPr><w:sz w:val=\"32\"/></w:rPr></w:style>\
@@ -17930,7 +17930,7 @@ fn official_table_bookmark_end_keeps_seven_tests_on_page_one() {
 fn line240_table_style(style_id: &str) -> String {
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-         <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault></w:docDefaults>\
+         <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\"/><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault></w:docDefaults>\
            <w:style w:type=\"table\" w:styleId=\"{style_id}\">\
              <w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
            </w:style>\
@@ -20560,7 +20560,7 @@ fn page_field_continues_across_section_without_start() {
 
 fn heading1_before_480_styles() -> &'static str {
     "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr/></w:rPrDefault><w:pPrDefault><w:pPr/></w:pPrDefault></w:docDefaults>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr/></w:pPrDefault></w:docDefaults>\
           <w:style w:type=\"paragraph\" w:styleId=\"Heading1\">\
             <w:name w:val=\"heading 1\"/>\
             <w:pPr><w:spacing w:before=\"480\" w:after=\"0\"/></w:pPr>\
@@ -21946,7 +21946,7 @@ fn light_shading_accent1_styles() -> &'static str {
     // bold-only. Run w:b val=0 must clear that bold; unstyled cell text
     // keeps 365F91 (Word "Executive / Sales").
     "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr/></w:rPrDefault><w:pPrDefault><w:pPr/></w:pPrDefault></w:docDefaults>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr/></w:pPrDefault></w:docDefaults>\
           <w:style w:type=\"table\" w:styleId=\"LightShading-Accent1\">\
             <w:rPr><w:color w:val=\"365F91\" w:themeColor=\"accent1\" w:themeShade=\"BF\"/></w:rPr>\
             <w:tblStylePr w:type=\"firstRow\"><w:rPr><w:b/></w:rPr></w:tblStylePr>\
@@ -22099,7 +22099,7 @@ fn table_style_firstrow_italic_from_tblstylepr() {
     // is w:b + w:i (not bold-only). Word Quartz embeds Aptos-BoldItalic.
     // KEEP applied firstRow bold only.
     let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr/></w:rPrDefault><w:pPrDefault><w:pPr/></w:pPrDefault></w:docDefaults>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr/></w:pPrDefault></w:docDefaults>\
           <w:style w:type=\"table\" w:styleId=\"LightShading-Accent1\">\
             <w:tblStylePr w:type=\"firstRow\">\
               <w:rPr><w:b/><w:i/><w:sz w:val=\"24\"/></w:rPr>\
@@ -22170,7 +22170,7 @@ fn official_i_am_sharing_executive_stays_black_after_mini_112() {
 fn medium_shading_accent1_styles() -> &'static str {
     // comments-lots MediumShading1-Accent1: firstRow 4F81BD, band1Horz D3DFEE.
     "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault></w:docDefaults>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\"/><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault></w:docDefaults>\
           <w:style w:type=\"table\" w:styleId=\"MediumShading1-Accent1\">\
             <w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
             <w:tblPr><w:tblStyleRowBandSize w:val=\"1\"/></w:tblPr>\
@@ -22355,7 +22355,7 @@ fn grid_table4_accent1_styles() -> &'static str {
     // rPr color FFFFFF. Header cells have no direct w:color; Word paints
     // Region/Q1 white on the dark fill. We currently leave them black.
     "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault></w:docDefaults>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\"/><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault></w:docDefaults>\
           <w:style w:type=\"table\" w:styleId=\"GridTable4-Accent1\">\
             <w:tblPr><w:tblBorders>\
               <w:top w:val=\"single\" w:sz=\"4\" w:color=\"45B0E1\"/>\
@@ -33787,7 +33787,7 @@ fn tblw_pct_sixty_stretches_narrow_grid() {
 
 fn table_grid_line240_styles() -> String {
     "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-         <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault></w:docDefaults>\
+         <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii=\"Calibri\" w:hAnsi=\"Calibri\"/><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault></w:docDefaults>\
            <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\">\
              <w:name w:val=\"Normal\"/></w:style>\
            <w:style w:type=\"paragraph\" w:styleId=\"Heading2\">\
@@ -48008,4 +48008,90 @@ fn an_empty_range_at_a_paragraph_start_gets_word_s_balloon() {
         "the empty range's comment has a balloon"
     );
     assert!(pdf_winansi_text(&pdf).contains("Fin."));
+}
+
+#[test]
+fn an_empty_rprdefault_lays_the_text_out_in_times_new_roman() {
+    // Word's PDFs of the corpus documents whose docDefaults carry an
+    // empty rPrDefault and whose Normal names no font (0edc50c464,
+    // cbb3bab843, 0a1badc333, 43432ba9ab; 6d510ca476 with a theme part)
+    // set the body in Times New Roman 10: an rPrDefault that names no
+    // face means the OOXML default, not the factory Calibri. A missing
+    // rPrDefault keeps Word's built-in Aptos (015beda9).
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:docDefaults><w:rPrDefault><w:rPr/></w:rPrDefault><w:pPrDefault><w:pPr/></w:pPrDefault></w:docDefaults>\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+        </w:styles>";
+    let body = "<w:p><w:r><w:t>Plain body text</w:t></w:r></w:p><w:sectPr/>";
+    let pdf = docx_to_pdf(&docx_with_styles(body, styles)).expect("empty rPrDefault");
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(
+        hay.contains("/BaseFont /Times") && !hay.contains("/BaseFont /Calibri"),
+        "an empty rPrDefault means Times New Roman, not Calibri"
+    );
+    assert!(!pdf_tf_xs(&pdf, "10.08 Tf").is_empty(), "and 10pt");
+    // A theme part changes nothing: theme faces reach a run only through
+    // asciiTheme/hAnsiTheme attributes (6d510ca476's body is Times).
+    let theme = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <a:theme xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\">\
+           <a:themeElements><a:fontScheme name=\"Office\">\
+             <a:majorFont><a:latin typeface=\"Calibri\"/></a:majorFont>\
+             <a:minorFont><a:latin typeface=\"Calibri\"/></a:minorFont>\
+           </a:fontScheme></a:themeElements>\
+         </a:theme>";
+    let pdf = docx_to_pdf(&docx_with_styles_and_theme(body, styles, theme))
+        .expect("empty rPrDefault with a theme");
+    let hay = String::from_utf8_lossy(&pdf);
+    assert!(
+        hay.contains("/BaseFont /Times") && !hay.contains("/BaseFont /Calibri"),
+        "a theme part does not name the default face"
+    );
+}
+
+#[test]
+fn a_grid_without_widths_fits_its_columns_to_their_content() {
+    // 0edc50c464 (corpus with_comments_tracking), Word's PDF: a table with
+    // an empty tblPr, `<w:gridCol/>` columns and no tcW is laid out by
+    // autofit. Its first cell holds "npm" + 15 spaces (Times 10) and the
+    // hyperlink "@eigenpal/docx-js-editor" + 17 spaces (Courier New 9.5):
+    // Word keeps the two on one line and starts the second cell's text
+    // 201.3pt right of the first (the content without its trailing
+    // spaces, plus the 5.4pt cell margins). The engine's 80pt default
+    // column wrapped the hyperlink and put the second cell at 95pt.
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:docDefaults><w:rPrDefault><w:rPr>\
+            <w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/><w:sz w:val=\"20\"/>\
+          </w:rPr></w:rPrDefault><w:pPrDefault><w:pPr/></w:pPrDefault></w:docDefaults>\
+          <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+          <w:style w:type=\"table\" w:default=\"1\" w:styleId=\"TableNormal\"><w:name w:val=\"Normal Table\"/></w:style>\
+        </w:styles>";
+    let courier = "<w:rPr><w:rFonts w:ascii=\"Courier New\" w:hAnsi=\"Courier New\"/><w:sz w:val=\"19\"/></w:rPr>";
+    let cell = |label: &str, link: &str| {
+        format!(
+            "<w:tc><w:p><w:r><w:t xml:space=\"preserve\">{label}               </w:t></w:r>\
+             <w:r>{courier}<w:t xml:space=\"preserve\">{link}                 </w:t></w:r></w:p></w:tc>"
+        )
+    };
+    let body = format!(
+        "<w:tbl><w:tblPr/><w:tblGrid><w:gridCol/><w:gridCol/></w:tblGrid><w:tr>{}{}</w:tr></w:tbl>\
+         <w:p/><w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+         <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>",
+        cell("npm", "@eigenpal/docx-js-editor"),
+        cell("github", "eigenpal/docx-editor"),
+    );
+    let pdf = docx_to_pdf(&docx_with_styles(&body, styles)).expect("width-less grid");
+    let npm = pdf_glyph_text_xy(&pdf, "npm").expect("npm");
+    let link = pdf_glyph_text_xy(&pdf, "@eigenpal").expect("@eigenpal");
+    let github = pdf_glyph_text_xy(&pdf, "github").expect("github");
+    assert!(
+        (npm.1 - link.1).abs() < 0.5,
+        "the hyperlink stays on the label's line; npm={npm:?} link={link:?}"
+    );
+    let pitch = github.0 - npm.0;
+    assert!(
+        (pitch - 201.3).abs() < 3.0,
+        "the first column spans its content (Word 201.3pt); pitch={pitch}"
+    );
 }
