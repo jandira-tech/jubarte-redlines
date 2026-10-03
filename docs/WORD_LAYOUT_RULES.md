@@ -495,6 +495,15 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
 
   _to_improve e1c745d784's inserted logo and map each lost 2.4pt, so page
   1 held a line Word sets on page 2.
+
+  A VML picture (`w:pict`, or a `w:object` such as an embedded
+  Word.Picture.8 whose preview is a `v:imagedata`) follows the same rule.
+  Word 16 probes vo (2026-10-02, TNR 10, a 150x30pt picture) put the next
+  baseline 2.16pt lower when the run is inserted. A plain VML picture
+  also sits 0.24pt lower than a DrawingML one, which we do not model yet.
+  The 5a6c9a5c redline lost 2.2pt under its inserted diagram, so an
+  inserted empty paragraph fitted above the footer where Word moves it to
+  the next page: 33 pages against Word's 35.
 - **A picture-only paragraph's breaks open lines under its pictures.**
   Each is an empty line sized by the break that ends it; the last is
   sized by the paragraph mark. Word 16 probes 2026-10-01, with a picture
