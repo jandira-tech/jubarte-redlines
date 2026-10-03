@@ -46231,6 +46231,86 @@ fn has_balloon_pane(pdf: &[u8]) -> bool {
 const LETTER: &str = "<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
      <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
 
+/// Vertical strokes of the content stream, each `(x, y_low, y_high, width)`.
+fn pdf_vertical_strokes(pdf: &[u8]) -> Vec<(f32, f32, f32, f32)> {
+    let mut out = Vec::new();
+    for stream in pdf_content_streams(pdf) {
+        for line in stream.lines() {
+            let t: Vec<&str> = line.split_whitespace().collect();
+            // "W w R G B RG X1 Y1 m X2 Y2 l S"
+            if t.len() == 13 && t[1] == "w" && t[5] == "RG" && t[8] == "m" && t[11] == "l" {
+                let f = |i: usize| t[i].parse::<f32>().unwrap_or(f32::NAN);
+                let (x1, y1, x2, y2) = (f(6), f(7), f(9), f(10));
+                if (x1 - x2).abs() < 0.01 && (y1 - y2).abs() > 1.0 {
+                    out.push((x1, y1.min(y2), y1.max(y2), f(0)));
+                }
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn a_comment_range_gets_word_s_brackets_at_its_ends() {
+    // Word brackets a commented range in the author's ink: a 0.179pt
+    // stroke down each end of the tinted range, with 0.18pt serifs
+    // pointing in, and the dotted connector leaves the closing one
+    // (bb35ae41ba: "[" at 77.03 and the range 77.12–110.81, 153.6–163.1;
+    // 08286ffbfb: "[" at 54.63 and "]" at 69.5 round 54.72–69.24, the
+    // connector from 69.32).
+    let body = format!(
+        "<w:p><w:r><w:t xml:space=\"preserve\">Before </w:t></w:r>\
+         <w:commentRangeStart w:id=\"0\"/><w:r><w:t>Commented words</w:t></w:r>\
+         <w:commentRangeEnd w:id=\"0\"/><w:r><w:commentReference w:id=\"0\"/></w:r>\
+         <w:r><w:t xml:space=\"preserve\"> after.</w:t></w:r></w:p>{LETTER}"
+    );
+    let docx = comments_docx(&body, &comments_part("0", "Ada", "Note"));
+    let pdf = docx_to_pdf(&docx).expect("word mode");
+    assert_eq!(pdf_notes(&pdf).len(), 0, "Word mode writes no annotation");
+    // The tinted range's box.
+    let hay = pdf_content_streams(&pdf).concat();
+    let tint = hay
+        .lines()
+        .find(|l| l.ends_with("re f") && !l.contains("0.949 0.949 0.949"))
+        .expect("the range tint");
+    let t: Vec<f32> = tint
+        .split_whitespace()
+        .filter_map(|w| w.parse().ok())
+        .collect();
+    let (tx, ty, tw, th) = (t[3], t[4], t[5], t[6]);
+    let verticals = pdf_vertical_strokes(&pdf);
+    let at = |x: f32| {
+        verticals
+            .iter()
+            .find(|(sx, _, _, _)| (sx - x).abs() < 0.3)
+            .copied()
+    };
+    let open = at(tx - 0.09).unwrap_or_else(|| {
+        panic!(
+            "an opening bracket at {}; verticals {verticals:?}",
+            tx - 0.09
+        )
+    });
+    let close = at(tx + tw + 0.09).unwrap_or_else(|| {
+        panic!(
+            "a closing bracket at {}; verticals {verticals:?}",
+            tx + tw + 0.09
+        )
+    });
+    for (name, b) in [("open", open), ("close", close)] {
+        assert!(
+            (b.1 - ty).abs() < 0.3 && (b.2 - (ty + th)).abs() < 0.3,
+            "{name} bracket spans the tint {ty}..{}: {b:?}",
+            ty + th
+        );
+        // Laid-out units: the markup page scales by 224/300 on Letter.
+        assert!(
+            (b.3 * 224.0 / 300.0 - 0.179).abs() < 0.01,
+            "{name} bracket is Word's 0.179 stroke: {b:?}"
+        );
+    }
+}
+
 #[test]
 fn word_draws_no_balloon_for_a_comment_whose_range_ends_between_paragraphs() {
     // Word's compare of b175a00954_file_27 vs f32428a03a_file_28 keeps the

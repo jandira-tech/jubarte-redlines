@@ -841,6 +841,7 @@ mod tests {
             },
         ]);
         page.comments.push(PdfComment {
+            id: "0".into(),
             x: 180.0,
             y: 80.0,
             w: 15.0,

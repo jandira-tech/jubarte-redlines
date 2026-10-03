@@ -751,6 +751,9 @@ struct RunStyle {
     /// Inside a comment's range: the pale fill Word paints under the
     /// commented text, the author's balloon tint.
     tint: Option<[f32; 3]>,
+    /// The comment whose range `tint` belongs to: the painter records the
+    /// tinted boxes under its id for the range's brackets.
+    tint_id: Option<String>,
     /// Extra points after each glyph (`w:spacing` on `w:rPr`, twips).
     track: f32,
     /// Horizontal scale (`w:w` percent, 100 = 1.0).
@@ -1403,6 +1406,7 @@ impl Defaults {
                 color_auto: true,
                 highlight: None,
                 tint: None,
+                tint_id: None,
                 highlight_marker: false,
                 track: 0.0,
                 scale: 1.0,
@@ -7495,6 +7499,8 @@ fn paint_comment_balloons(fonts: &Fonts, sheet: &StyleSheet, pages: &mut [Page])
     const INSET: f32 = 3.4;
     const STROKE: f32 = 0.358;
     const CONNECTOR: f32 = 0.179;
+    const BRACKET_OFF: f32 = 0.09;
+    const BRACKET_SERIF: f32 = 0.18;
     const DOT: f32 = 0.5376;
     const STACK_GAP: f32 = 0.717;
     const PANE_LEAD: f32 = 3.5;
@@ -7608,6 +7614,34 @@ fn paint_comment_balloons(fonts: &Fonts, sheet: &StyleSheet, pages: &mut [Page])
                     x += adv;
                 }
                 baseline -= pitch;
+            }
+            // Word brackets the range in the author's ink: a connector-
+            // width stroke down each end of the tinted text with 0.18pt
+            // serifs pointing in (bb35ae41ba: "[" at 77.03 for the range
+            // from 77.12; 08286ffbfb: "[" 54.63 and "]" 69.5 round
+            // 54.72–69.24, the connector leaving from 69.32).
+            let rects: Vec<&pdf::CommentTint> =
+                page.tints.iter().filter(|t| t.id == note.id).collect();
+            if let (Some(first), Some(last)) = (rects.first(), rects.last()) {
+                let (off, serif, width) = (BRACKET_OFF / k, BRACKET_SERIF / k, CONNECTOR / k);
+                let mut stroke = |x1: f32, y1: f32, x2: f32, y2: f32| {
+                    ops.push(Op::Line {
+                        x1,
+                        y1,
+                        x2,
+                        y2,
+                        width,
+                        color: ink,
+                    });
+                };
+                let x = first.x - off;
+                stroke(x, first.y, x, first.y + first.h);
+                stroke(x, first.y, x + serif, first.y);
+                stroke(x, first.y + first.h, x + serif, first.y + first.h);
+                let x = last.x + last.w + off;
+                stroke(x, last.y, x, last.y + last.h);
+                stroke(x, last.y, x - serif, last.y);
+                stroke(x, last.y + last.h, x - serif, last.y + last.h);
             }
             let elbow = (pane_left - PANE_LEAD / k, note.bottom);
             let dot = DOT / k;
@@ -14570,11 +14604,13 @@ fn collect_runs_rec(
                         first = false;
                     }
                     run.style.tint = open_tint(ctx);
+                    run.style.tint_id = ctx.open.first().cloned();
                     runs.push(run);
                 }
             } else {
                 let mut run = TextRun::new(text, style);
                 run.style.tint = open_tint(ctx);
+                run.style.tint_id = ctx.open.first().cloned();
                 run.rev = rev;
                 run.pageref = pageref;
                 run.ref_name = ref_name;
@@ -14696,6 +14732,7 @@ fn collect_runs_rec(
             );
             run.rev = mark != RevMark::None;
             run.style.tint = open_tint(ctx);
+            run.style.tint_id = ctx.open.first().cloned();
             if !ctx.pending.is_empty() {
                 let pending = std::mem::take(&mut ctx.pending);
                 run.comments = notes_for(ctx, &pending);
@@ -25210,6 +25247,15 @@ impl<'a> Layout<'a> {
                 h: asc + desc,
                 color: tint,
             });
+            if let Some(id) = &run.style.tint_id {
+                self.current().tints.push(pdf::CommentTint {
+                    id: id.clone(),
+                    x,
+                    y: y - desc,
+                    w: w.max(0.5),
+                    h: asc + desc,
+                });
+            }
         }
         if let Some(fill) = run.style.highlight {
             self.current().ops.push(Op::FillRect {
@@ -25298,6 +25344,7 @@ impl<'a> Layout<'a> {
             }
             let width = w.clamp(12.0, 18.0);
             self.current().comments.push(PdfComment {
+                id: note.id.clone(),
                 x: if note.after { x + w } else { x },
                 y,
                 w: width,
@@ -30673,6 +30720,7 @@ fn default_run_style() -> RunStyle {
         color_auto: true,
         highlight: None,
         tint: None,
+        tint_id: None,
         highlight_marker: false,
         track: 0.0,
         scale: 1.0,

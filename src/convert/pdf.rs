@@ -137,6 +137,8 @@ pub(crate) enum Op {
 /// Sticky-note PDF annotation (not painted into the content stream).
 #[derive(Clone)]
 pub(crate) struct PdfComment {
+    /// The comment's id, which ties it to its `CommentTint` boxes.
+    pub id: String,
     pub x: f32,
     pub y: f32,
     pub w: f32,
@@ -155,12 +157,23 @@ pub(crate) struct PdfComment {
     pub resolved: bool,
 }
 
+/// One tinted box of a commented range (laid-out units, bottom-left),
+/// in paint order: the first is the range's start, the last its end.
+pub(crate) struct CommentTint {
+    pub id: String,
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
 /// One finished page, with the section `pgSz` it was laid out against.
 pub(crate) struct Page {
     pub ops: Vec<Op>,
     pub width: f32,
     pub height: f32,
     pub comments: Vec<PdfComment>,
+    pub tints: Vec<CommentTint>,
     /// Word All-Markup pasteboard: scale content, paint gray balloon column.
     pub markup_pane: bool,
     /// The section's right margin, which sets the pasteboard's scale.
@@ -177,6 +190,7 @@ impl Page {
             width,
             height,
             comments: Vec::new(),
+            tints: Vec::new(),
             markup_pane: false,
             margin_r: 0.0,
             vertical: false,
@@ -2119,6 +2133,7 @@ mod tests {
         let mut page = super::Page::new(595.2, 841.92);
         page.vertical = true;
         page.comments.push(super::PdfComment {
+            id: "0".into(),
             x: 100.0,
             y: 700.0,
             w: 20.0,
