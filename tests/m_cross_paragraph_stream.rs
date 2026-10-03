@@ -192,8 +192,15 @@ fn marked_pair(original: &str, revised: &str) -> Vec<String> {
 }
 
 /// Unrelated paragraphs that share no paragraph-opening word are replaced
-/// wholesale, as Word does: file_88's lone "document" and file_160's lone
-/// "and" mid-paragraph are no anchor to stream across the marks on.
+/// wholesale, as Word does: file_88's lone "document" mid-paragraph is no
+/// anchor to stream across the marks on. A lone word is kept inside its
+/// own paragraph, though, when it carries enough of it: Word's three
+/// redlines of file_160 × file_161 (neurotic_docx_bench corpus
+/// `8f8f5a3e4d_file_160__vs__a6e4d0e065_file_161_redline_216bc149ab`,
+/// `…_4453af3002`, `06a3b2e973_…_4806d5125d`) keep " and " of "Italic and
+/// Underline Combo Demo" against "Module 3: Tools and Systems" — 6 of 32
+/// characters with the mark, over the 0.15 of `WORD_LEVEL_KEPT_RATIO` —
+/// as insertion, deletion, " and ", insertion, deletion.
 #[test]
 fn a_lone_mid_paragraph_word_is_no_cross_paragraph_anchor() {
     let lines = marked_pair("file_88.docx", "file_89.docx");
@@ -205,8 +212,8 @@ fn a_lone_mid_paragraph_word_is_no_cross_paragraph_anchor() {
     assert!(
         lines
             .iter()
-            .all(|l| !l.contains("+} and ") && !l.contains("-] and ")),
-        "a lone \"and\" should not be kept between replaced text: {lines:#?}"
+            .any(|l| l == "{+Module 3: Tools+}[-Italic-] and {+Systems+}[-Underline Combo Demo-]¶"),
+        "Word keeps the lone \"and\" inside its paragraph: {lines:#?}"
     );
 }
 
