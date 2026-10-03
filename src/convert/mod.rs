@@ -659,8 +659,9 @@ fn with_layout<T>(
                 notes: load_footnotes(&pkg, &main, &sheet),
                 display,
             };
-            let (pages, facts) =
+            let (mut pages, facts) =
                 layout_with_facts(&fonts, &page, &hf, &blocks, compat_mode, footnotes);
+            paint_comment_balloons(&fonts, &sheet, &mut pages);
             Ok(emit(&fonts, &pages, &facts))
         })
     })
@@ -747,6 +748,9 @@ struct RunStyle {
     /// `highlight` came from `w:highlight`, not run shading: Word keeps
     /// `auto` text black on it, even on black (live Word 2026-09-25).
     highlight_marker: bool,
+    /// Inside a comment's range: the pale fill Word paints under the
+    /// commented text, the author's balloon tint.
+    tint: Option<[f32; 3]>,
     /// Extra points after each glyph (`w:spacing` on `w:rPr`, twips).
     track: f32,
     /// Horizontal scale (`w:w` percent, 100 = 1.0).
@@ -1395,6 +1399,7 @@ impl Defaults {
                 color: [0.0, 0.0, 0.0],
                 color_auto: true,
                 highlight: None,
+                tint: None,
                 highlight_marker: false,
                 track: 0.0,
                 scale: 1.0,
@@ -1510,6 +1515,15 @@ enum FieldKind {
 struct CommentNote {
     id: String,
     author: String,
+    /// `w:initials`, what the balloon label shows.
+    initials: String,
+    /// The comment's number in the balloon label: its rank among the
+    /// comments the body binds, in order of appearance.
+    seq: usize,
+    /// The author's "by author" ink, shared with the revision marks.
+    color: [f32; 3],
+    /// Bound to the run before the note's place: anchor at its end.
+    after: bool,
     text: String,
 }
 
@@ -7288,6 +7302,7 @@ struct WalkCtx<'a> {
 #[derive(Clone)]
 struct CommentRec {
     author: String,
+    initials: String,
     text: String,
 }
 
@@ -7306,6 +7321,7 @@ fn load_comments(pkg: &PartFs, main: &str) -> HashMap<String, CommentRec> {
             continue;
         };
         let author = attr_any(&dom, node, "author").unwrap_or("").to_string();
+        let initials = attr_any(&dom, node, "initials").unwrap_or("").to_string();
         let mut text = String::new();
         for t in dom.descendants(node, Some(&W::t())) {
             if let Some(s) = dom.text_value(t).or_else(|| {
@@ -7320,9 +7336,258 @@ fn load_comments(pkg: &PartFs, main: &str) -> HashMap<String, CommentRec> {
         if text.is_empty() {
             text = element_text(&dom, node);
         }
-        out.insert(id, CommentRec { author, text });
+        out.insert(
+            id,
+            CommentRec {
+                author,
+                initials,
+                text,
+            },
+        );
     }
     out
+}
+
+/// The pale fill Word gives a balloon (and the commented range) for an
+/// author's ink: its own table for the first ten palette colours (read off
+/// its PDFs: 466 balloons of 152 corpus documents, `word_balloon_spec.py`),
+/// a 16 % blend toward white for the rest.
+fn balloon_tint(color: [f32; 3]) -> [f32; 3] {
+    const TABLE: [([u8; 3], [u8; 3]); 10] = [
+        ([0xD1, 0x34, 0x38], [248, 220, 221]),
+        ([0x00, 0x78, 0xD4], [213, 237, 255]),
+        ([0x5C, 0x2E, 0x91], [234, 223, 244]),
+        ([0x49, 0x82, 0x05], [236, 253, 215]),
+        ([0xCC, 0x35, 0x95], [247, 221, 237]),
+        ([0x4E, 0x6A, 0xED], [217, 223, 251]),
+        ([0x6D, 0x57, 0x00], [255, 247, 213]),
+        ([0xCF, 0x0F, 0x1F], [252, 216, 219]),
+        ([0x39, 0x41, 0x46], [232, 235, 236]),
+        ([0x0B, 0x6A, 0x0B], [217, 251, 217]),
+    ];
+    let rgb = color.map(|c| (c * 255.0).round() as u8);
+    TABLE.iter().find(|(ink, _)| *ink == rgb).map_or_else(
+        || color.map(|c| 1.0 - (1.0 - c) * 0.16),
+        |(_, tint)| tint.map(|c| f32::from(c) / 255.0),
+    )
+}
+
+/// Word's comment balloons, painted into the markup pane the way its Save
+/// as PDF paints them (466 balloons of 152 corpus documents, 2026-10-03).
+/// The chrome is measured in page units (the pane's `cm` scales the page
+/// by `k`, so they divide by `k` here); the text in laid-out units:
+///
+/// - the box starts 16.67pt right of the pane's left edge and ends 3.4pt
+///   short of its right edge, a rounded rectangle filled with the author's
+///   tint and stroked 0.36pt in the author's ink;
+/// - its top sits on the top of the commented line, or 0.72pt under the
+///   balloon above when that one reaches lower;
+/// - "Commented [<initials><n>]: " bold, then the comment's text, both at
+///   the Balloon Text style's size (9pt unless the document's style says
+///   otherwise), the label in that style's face (Times New Roman when the
+///   document has none), the text in the document's default face; the
+///   first line's top 2.67pt under the box top, lines 1.236 × size apart,
+///   the box 4.31pt taller than its lines;
+/// - a dotted 0.18pt connector in the author's ink runs from the end of
+///   the commented text along its line's bottom to 3.5pt left of the pane,
+///   then straight to the box's left edge 4.6pt under its top.
+fn paint_comment_balloons(fonts: &Fonts, sheet: &StyleSheet, pages: &mut [Page]) {
+    const BOX_LEFT: f32 = 16.67;
+    const BOX_RIGHT_GAP: f32 = 3.4;
+    const INSET: f32 = 3.4;
+    const STROKE: f32 = 0.358;
+    const CONNECTOR: f32 = 0.179;
+    const DOT: f32 = 0.5376;
+    const STACK_GAP: f32 = 0.717;
+    const PANE_LEAD: f32 = 3.5;
+    const ELBOW_DROP: f32 = 4.6;
+    const CORNER: f32 = 2.4;
+    const FIRST_LINE_TOP: f32 = 2.67;
+    const BOX_PAD: f32 = 4.31;
+    const PITCH: f32 = 1.236;
+    let balloon = sheet.by_id.get("BalloonText");
+    let size = balloon.filter(|b| b.sets_size).map_or(9.0, |b| b.run.size);
+    let label_family = balloon
+        .filter(|b| b.sets_family)
+        .map_or("Times New Roman", |b| b.run.family.as_str());
+    let label_face = fonts.resolve(label_family, true, false);
+    let text_face = fonts.resolve(&sheet.defaults.run.family, false, false);
+    let ascent = fonts.get(label_face).ascent_pt(size);
+    let pitch = PITCH * size;
+    for page in pages.iter_mut() {
+        if !page.markup_pane || page.comments.is_empty() || page.vertical {
+            continue;
+        }
+        let Some(chrome) = pdf::markup_chrome(page.width, page.height, page.margin_r) else {
+            continue;
+        };
+        let k = chrome.k;
+        let pane_left = (chrome.gx - chrome.tx) / k;
+        let pane_right = pane_left + chrome.gw / k;
+        let box_x0 = pane_left + BOX_LEFT / k;
+        let box_x1 = pane_right - BOX_RIGHT_GAP / k;
+        let text_x = box_x0 + INSET / k;
+        let text_w = box_x1 - INSET / k - text_x;
+        if text_w < 20.0 {
+            continue;
+        }
+        let mut notes: Vec<PdfComment> = page.comments.clone();
+        // Top of the page first (y grows upward), left to right on a line.
+        notes.sort_by(|a, b| {
+            b.top
+                .partial_cmp(&a.top)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal))
+        });
+        let mut ceiling = f32::MAX;
+        let mut ops = Vec::new();
+        for note in &notes {
+            let label = format!("Commented [{}{}]: ", note.initials, note.seq);
+            let words: Vec<(FaceRef, String, f32)> = [
+                (label_face, label.as_str()),
+                (text_face, note.contents.as_str()),
+            ]
+            .into_iter()
+            .flat_map(|(face, text)| {
+                text.split_inclusive(' ')
+                    .map(move |word| (face, word.to_string(), advance(fonts, face, word, size)))
+            })
+            .collect();
+            // Greedy lines: a word that does not fit starts the next line;
+            // the blank ending a line's last word carries no width.
+            let mut lines: Vec<Vec<(FaceRef, String, f32)>> = vec![Vec::new()];
+            let mut used = 0.0f32;
+            for (face, word, adv) in words {
+                let bare = if word.ends_with(' ') {
+                    adv - advance(fonts, face, " ", size)
+                } else {
+                    adv
+                };
+                if used > 0.0 && used + bare > text_w {
+                    lines.push(Vec::new());
+                    used = 0.0;
+                }
+                used += adv;
+                lines.last_mut().expect("a line").push((face, word, adv));
+            }
+            let y0 = note.top.min(ceiling);
+            let y1 = y0 - (BOX_PAD + pitch * lines.len() as f32);
+            ceiling = y1 - STACK_GAP / k;
+            let contour = rounded_box(box_x0, y1, box_x1, y0, CORNER / k);
+            ops.push(Op::FillPath {
+                contours: vec![contour.clone()],
+                color: balloon_tint(note.color),
+                even_odd: false,
+            });
+            ops.push(Op::StrokePath {
+                subpaths: vec![(contour, true)],
+                width: STROKE / k,
+                color: note.color,
+            });
+            let mut baseline = y0 - FIRST_LINE_TOP - ascent;
+            for line in &lines {
+                let mut x = text_x;
+                for (face, word, adv) in line {
+                    let shaped = fonts.get(*face).shape_kern(word, size, true);
+                    ops.push(Op::Text {
+                        face: *face,
+                        size,
+                        x,
+                        y: baseline,
+                        glyphs: shaped.iter().map(|(g, _)| *g).collect(),
+                        color: [0.0; 3],
+                        text: word.clone(),
+                        hscale: 1.0,
+                    });
+                    x += adv;
+                }
+                baseline -= pitch;
+            }
+            let elbow = (pane_left - PANE_LEAD / k, note.bottom);
+            let dot = DOT / k;
+            dotted(
+                &mut ops,
+                (note.x, note.bottom),
+                elbow,
+                dot,
+                CONNECTOR / k,
+                note.color,
+            );
+            dotted(
+                &mut ops,
+                elbow,
+                (box_x0, y0 - ELBOW_DROP / k),
+                dot,
+                CONNECTOR / k,
+                note.color,
+            );
+        }
+        page.ops.extend(ops);
+    }
+}
+
+/// The advance of `text` in `face` at `size`.
+fn advance(fonts: &Fonts, face: FaceRef, text: &str, size: f32) -> f32 {
+    fonts
+        .get(face)
+        .shape_kern(text, size, true)
+        .iter()
+        .map(|(_, a)| a)
+        .sum()
+}
+
+/// A rectangle with its corners rounded by `r`, as a closed polyline.
+fn rounded_box(x0: f32, y0: f32, x1: f32, y1: f32, r: f32) -> Vec<(f32, f32)> {
+    let (y0, y1) = (y0.min(y1), y0.max(y1));
+    let r = r.min((x1 - x0) / 2.0).min((y1 - y0) / 2.0).max(0.0);
+    let arc = |cx: f32, cy: f32, from: f32, to: f32| -> Vec<(f32, f32)> {
+        (0..=4)
+            .map(|i| {
+                let t = from + (to - from) * i as f32 / 4.0;
+                (cx + r * t.cos(), cy + r * t.sin())
+            })
+            .collect()
+    };
+    use std::f32::consts::PI;
+    let mut pts = Vec::with_capacity(20);
+    pts.extend(arc(x0 + r, y0 + r, PI, 1.5 * PI));
+    pts.extend(arc(x1 - r, y0 + r, 1.5 * PI, 2.0 * PI));
+    pts.extend(arc(x1 - r, y1 - r, 0.0, 0.5 * PI));
+    pts.extend(arc(x0 + r, y1 - r, 0.5 * PI, PI));
+    pts
+}
+
+/// Square dots of side `width` every `2 * dot` along the segment, the
+/// `[dot dot] 0 d` of Word's connector drawn without a dash pattern.
+fn dotted(
+    ops: &mut Vec<Op>,
+    from: (f32, f32),
+    to: (f32, f32),
+    dot: f32,
+    width: f32,
+    color: [f32; 3],
+) {
+    let (dx, dy) = (to.0 - from.0, to.1 - from.1);
+    let len = (dx * dx + dy * dy).sqrt();
+    if len <= 0.0 || dot <= 0.0 {
+        return;
+    }
+    let (ux, uy) = (dx / len, dy / len);
+    let mut at = 0.0f32;
+    while at < len {
+        let seg = dot.min(len - at);
+        let (sx, sy) = (from.0 + ux * at, from.1 + uy * at);
+        let (ex, ey) = (sx + ux * seg, sy + uy * seg);
+        ops.push(Op::Line {
+            x1: sx,
+            y1: sy,
+            x2: ex,
+            y2: ey,
+            width,
+            color,
+        });
+        at += 2.0 * dot;
+    }
 }
 
 fn next_sect_pr(sects: &[NodeId], current: NodeId) -> Option<NodeId> {
@@ -13453,9 +13718,14 @@ fn notes_for(ctx: &mut RunCollect<'_>, ids: &[String]) -> Vec<CommentNote> {
             continue;
         }
         if let Some(rec) = ctx.comments.get(id) {
+            let color = ctx.authors.color(&rec.author);
             out.push(CommentNote {
                 id: id.clone(),
                 author: rec.author.clone(),
+                initials: rec.initials.clone(),
+                seq: ctx.bound.len(),
+                color,
+                after: false,
                 text: rec.text.clone(),
             });
         }
@@ -13468,13 +13738,24 @@ fn flush_pending_comments(ctx: &mut RunCollect<'_>, runs: &mut [TextRun]) {
         return;
     }
     let pending = std::mem::take(&mut ctx.pending);
-    let notes = notes_for(ctx, &pending);
+    let mut notes = notes_for(ctx, &pending);
     if notes.is_empty() {
         return;
     }
     if let Some(last) = runs.last_mut() {
+        for note in &mut notes {
+            note.after = true;
+        }
         last.comments.extend(notes);
     }
+}
+
+/// The tint of the comment whose range is open here, if any: the first
+/// one opened, as Word shades nested ranges.
+fn open_tint(ctx: &mut RunCollect<'_>) -> Option<[f32; 3]> {
+    let id = ctx.open.first()?;
+    let author = ctx.comments.get(id)?.author.clone();
+    Some(balloon_tint(ctx.authors.color(&author)))
 }
 
 fn apply_named_char_style(style: &mut RunStyle, named: &NamedStyle) {
@@ -13734,10 +14015,7 @@ fn collect_runs_rec(
         if let Some(id) = attr_any(ctx.dom, node, "id") {
             let id = id.to_string();
             if !ctx.open.iter().any(|o| o == &id) {
-                ctx.open.push(id.clone());
-            }
-            if !ctx.pending.iter().any(|o| o == &id) {
-                ctx.pending.push(id);
+                ctx.open.push(id);
             }
         }
         return;
@@ -13745,6 +14023,12 @@ fn collect_runs_rec(
     if ctx.dom.name_is(node, &W::name("commentRangeEnd")) {
         if let Some(id) = attr_any(ctx.dom, node, "id") {
             ctx.open.retain(|o| o != id);
+            // The note binds where the range ends: Word's connector leaves
+            // the commented text there, and the balloon sits on that line.
+            let id = id.to_string();
+            if !ctx.bound.contains(&id) && !ctx.pending.iter().any(|o| o == &id) {
+                ctx.pending.push(id);
+            }
         }
         return;
     }
@@ -14025,10 +14309,12 @@ fn collect_runs_rec(
                         run.comments.clone_from(&pending);
                         first = false;
                     }
+                    run.style.tint = open_tint(ctx);
                     runs.push(run);
                 }
             } else {
                 let mut run = TextRun::new(text, style);
+                run.style.tint = open_tint(ctx);
                 run.rev = rev;
                 run.pageref = pageref;
                 run.ref_name = ref_name;
@@ -14149,6 +14435,7 @@ fn collect_runs_rec(
                 style,
             );
             run.rev = mark != RevMark::None;
+            run.style.tint = open_tint(ctx);
             if !ctx.pending.is_empty() {
                 let pending = std::mem::take(&mut ctx.pending);
                 run.comments = notes_for(ctx, &pending);
@@ -24505,6 +24792,16 @@ impl<'a> Layout<'a> {
             }
         };
         let ink_w = self.clip_width(x, ink_w);
+        if let Some(tint) = run.style.tint {
+            let (asc, desc) = (face.ascent_pt(size), face.descent_pt(size));
+            self.current().ops.push(Op::FillRect {
+                x,
+                y: y - desc,
+                w: w.max(0.5),
+                h: asc + desc,
+                color: tint,
+            });
+        }
         if let Some(fill) = run.style.highlight {
             self.current().ops.push(Op::FillRect {
                 x,
@@ -24580,18 +24877,29 @@ impl<'a> Layout<'a> {
     }
 
     fn place_run_comments(&mut self, run: &TextRun, x: f32, y: f32, w: f32) {
+        if run.comments.is_empty() {
+            return;
+        }
+        let face = self.fonts.get(ink_face(self.fonts, &run.style, &run.text));
+        let top = y + face.ascent_pt(run.style.size);
+        let bottom = y - face.descent_pt(run.style.size);
         for note in &run.comments {
             if !self.placed_comments.insert(note.id.clone()) {
                 continue;
             }
             let width = w.clamp(12.0, 18.0);
             self.current().comments.push(PdfComment {
-                x,
+                x: if note.after { x + w } else { x },
                 y,
                 w: width,
                 h: run.style.size.max(12.0),
+                top,
+                bottom,
                 contents: note.text.clone(),
                 author: note.author.clone(),
+                initials: note.initials.clone(),
+                seq: note.seq,
+                color: note.color,
             });
         }
     }
@@ -29944,6 +30252,7 @@ fn default_run_style() -> RunStyle {
         color: [0.0, 0.0, 0.0],
         color_auto: true,
         highlight: None,
+        tint: None,
         highlight_marker: false,
         track: 0.0,
         scale: 1.0,
@@ -30008,6 +30317,7 @@ fn style_eq(a: &RunStyle, b: &RunStyle) -> bool {
         && a.underline == b.underline
         && a.underline_double == b.underline_double
         && a.underline_wave == b.underline_wave
+        && a.tint == b.tint
         && a.strike == b.strike
         && a.color == b.color
         && a.highlight == b.highlight
@@ -31027,6 +31337,10 @@ fn wrap_runs_segment(
             if let Some(last) = lines.last_mut().and_then(|line| line.last_mut())
                 && style_eq(&last.style, &run.style)
                 && !run.strut
+                // A run carrying comments stays its own run: its start is
+                // where the balloon connectors anchor, and the merge would
+                // drop its notes.
+                && run.comments.is_empty()
                 // A field result stays its own run: a PAGE field's is
                 // repainted per page (d45aa3d5's "Page" + PAGE footer box).
                 && last.field == run.field

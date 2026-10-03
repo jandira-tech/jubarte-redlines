@@ -135,13 +135,21 @@ pub(crate) enum Op {
 }
 
 /// Sticky-note PDF annotation (not painted into the content stream).
+#[derive(Clone)]
 pub(crate) struct PdfComment {
     pub x: f32,
     pub y: f32,
     pub w: f32,
     pub h: f32,
+    /// The commented line's top and bottom (laid-out units): where its
+    /// balloon's top and its connector sit.
+    pub top: f32,
+    pub bottom: f32,
     pub contents: String,
     pub author: String,
+    pub initials: String,
+    pub seq: usize,
+    pub color: [f32; 3],
 }
 
 /// One finished page, with the section `pgSz` it was laid out against.
@@ -897,15 +905,21 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
         let content_id = objs.len() + 1;
         objs.push(stream_object(&stream, options.compress));
         let mut annot_refs = String::new();
-        for note in &page.comments {
+        // Word's Save as PDF writes no annotation for a comment: its
+        // balloon is the print. The other styles keep the sticky note.
+        let sticky: &[PdfComment] = if options.revisions == super::RevisionStyle::Word {
+            &[]
+        } else {
+            &page.comments
+        };
+        for note in sticky {
             let id = objs.len() + 1;
             let scaled = markup.map(|m| PdfComment {
                 x: m.k * note.x + m.tx,
                 y: m.k * note.y + m.ty,
                 w: note.w * m.k,
                 h: note.h * m.k,
-                contents: note.contents.clone(),
-                author: note.author.clone(),
+                ..note.clone()
             });
             let note = scaled.as_ref().unwrap_or(note);
             // The content stream turns a vertical page back with
@@ -915,8 +929,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                 y: page.width - note.x - note.w,
                 w: note.h,
                 h: note.w,
-                contents: note.contents.clone(),
-                author: note.author.clone(),
+                ..note.clone()
             });
             objs.push(text_annot_obj(turned.as_ref().unwrap_or(note)));
             let _ = write!(annot_refs, "{id} 0 R ");
@@ -2002,8 +2015,13 @@ mod tests {
             y: 700.0,
             w: 20.0,
             h: 14.0,
+            top: 690.0,
+            bottom: 703.0,
             contents: "note".into(),
             author: "A".into(),
+            initials: "A".into(),
+            seq: 1,
+            color: [0.0; 3],
         });
         let pdf = super::emit(&fonts, &[page], crate::convert::PdfOptions::default());
         let hay = String::from_utf8_lossy(&pdf);

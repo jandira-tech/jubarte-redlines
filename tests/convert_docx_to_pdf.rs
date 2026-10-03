@@ -35948,7 +35948,10 @@ fn shipped_docx_to_pdf_places_comment_on_range_page() {
         "fixture is two pages, got {}",
         pdf_page_count(&pdf)
     );
-    let notes = pdf_notes(&pdf);
+    // The sticky notes are the default style's; Word mode paints balloons.
+    let ours = docx_to_pdf_with(&comments_docx(body, &comments), PdfOptions::default())
+        .expect("default mode");
+    let notes = pdf_notes(&ours);
     assert_eq!(
         notes.len(),
         1,
@@ -35972,9 +35975,16 @@ fn shipped_docx_to_pdf_places_comment_on_range_page() {
         painted.contains("Bravo"),
         "range text is body ink; painted={painted}"
     );
+    // Word's Save as PDF paints the comment in a balloon on the range
+    // page (the pane's text), and so does every style here: the note is
+    // the annotation, the balloon is the print.
     assert!(
-        !painted.contains("Second page note"),
-        "comment body must not paint extra body ink vs comment-stripped oracles; painted={painted}"
+        painted.contains("Second page note"),
+        "the balloon is painted; painted={painted}"
+    );
+    assert!(
+        pdf_winansi_text(&ours).contains("Second page note"),
+        "the default renderer paints the balloon too"
     );
     // Bravo is the first (and only) text on page 2, so it sits at the
     // default body origin. Content streams are separate PDF objects, so
@@ -36005,7 +36015,8 @@ fn a_comment_anchored_inside_an_insertion_becomes_a_pdf_note() {
            </w:ins>\
            <w:r><w:t xml:space=\"preserve\"> seront analyses.</w:t></w:r></w:p><w:sectPr/>";
     let comments = comments_part("4", "Claude", "Added per policy");
-    let pdf = docx_to_pdf(&comments_docx(body, &comments)).expect("convert");
+    let pdf =
+        docx_to_pdf_with(&comments_docx(body, &comments), PdfOptions::default()).expect("convert");
     let notes = pdf_notes(&pdf);
     assert_eq!(notes.len(), 1, "notes={notes:?}");
     assert!(notes[0].contents.contains("Added per policy"), "{notes:?}");
@@ -36018,7 +36029,10 @@ fn shipped_docx_to_pdf_migrates_word_based_comments() {
     let pdf = docx_to_pdf(&sibling_bytes!(path)).expect("convert word_based comments");
     assert!(pdf.starts_with(b"%PDF"));
     assert!(pdf_page_count(&pdf) >= 1);
-    let notes = pdf_notes(&pdf);
+    // The sticky notes are the default style's; Word mode paints balloons.
+    let notes = pdf_notes(
+        &docx_to_pdf_with(&sibling_bytes!(path), PdfOptions::default()).expect("default mode"),
+    );
     assert!(
         notes.iter().any(|n| n.contents.contains("tachyon")),
         "comment body from comments.xml must land in a PDF note; notes={notes:?}"
@@ -36036,8 +36050,8 @@ fn shipped_docx_to_pdf_migrates_word_based_comments() {
     let painted = pdf_winansi_text(&pdf);
     assert!(painted.contains("Ouch"), "range text stays body ink");
     assert!(
-        !painted.contains("tachyon"),
-        "comment body is annot-only, not extra raster ink; painted={painted}"
+        painted.contains("tachyon"),
+        "Word mode paints the comment's balloon; painted={painted}"
     );
 }
 
@@ -46191,11 +46205,20 @@ fn comments_load_when_comments_extended_is_listed_first() {
             extended,
             listed_first,
         );
-        let notes = pdf_notes(&docx_to_pdf(&docx).expect("pdf"));
-        assert_eq!(notes.len(), 1, "extended part listed first: {listed_first}");
-        assert!(notes[0].contents.contains("Kept"), "{notes:?}");
+        let pdf = docx_to_pdf(&docx).expect("pdf");
+        assert_eq!(
+            painted_balloons(&pdf),
+            1,
+            "extended part listed first: {listed_first}"
+        );
+        assert!(pdf_winansi_text(&pdf).contains("Kept"));
     }
 }
+/// The balloons painted in the pane: one "Commented [..]: " label each.
+fn painted_balloons(pdf: &[u8]) -> usize {
+    pdf_winansi_text(pdf).matches("Commented [").count()
+}
+
 /// Word's grey 0.949 pasteboard beside the shrunk page.
 fn has_balloon_pane(pdf: &[u8]) -> bool {
     pdf_content_streams(pdf)
@@ -46258,7 +46281,7 @@ fn a_range_end_after_text_or_a_tab_gets_word_s_balloon() {
         let pdf =
             docx_to_pdf(&comments_docx(&body, &comments_part("0", "Ada", "Note"))).expect("pdf");
         assert!(has_balloon_pane(&pdf), "live end after {before}");
-        assert_eq!(pdf_notes(&pdf).len(), 1, "one balloon after {before}");
+        assert_eq!(painted_balloons(&pdf), 1, "one balloon after {before}");
     }
     // An empty w:t is no content: the end stays dead.
     let body = format!(
@@ -46276,7 +46299,7 @@ fn a_comment_without_a_range_gets_word_s_balloon() {
     );
     let pdf = docx_to_pdf(&comments_docx(&body, &comments_part("0", "Ada", "Note"))).expect("pdf");
     assert!(has_balloon_pane(&pdf), "a reference alone is a balloon");
-    assert_eq!(pdf_notes(&pdf).len(), 1);
+    assert_eq!(painted_balloons(&pdf), 1);
 }
 
 #[test]
@@ -46316,10 +46339,7 @@ fn a_reply_takes_its_parent_s_balloon_fate() {
         false,
     ))
     .expect("dead parent");
-    assert!(
-        pdf_notes(&dead).is_empty(),
-        "the reply dies with its parent"
-    );
+    assert_eq!(painted_balloons(&dead), 0, "the reply dies with its parent");
     assert!(!has_balloon_pane(&dead));
     let live = docx_to_pdf(&with_comments_extended(
         comments_docx(&body("<w:commentRangeEnd w:id=\"0\"/>"), comments),
@@ -46327,7 +46347,7 @@ fn a_reply_takes_its_parent_s_balloon_fate() {
         false,
     ))
     .expect("live parent");
-    assert_eq!(pdf_notes(&live).len(), 2, "a live parent keeps its reply");
+    assert_eq!(painted_balloons(&live), 2, "a live parent keeps its reply");
 }
 
 #[test]
@@ -47749,4 +47769,80 @@ fn a_row_inside_a_content_control_is_painted() {
         one > two && two > three,
         "rows in order, the wrapped one between: {one} {two} {three}"
     );
+}
+
+/// Word's Save as PDF paints each comment as a balloon in the markup pane:
+/// "Commented [A1]: " in bold, the comment's text, in a box filled with the
+/// author's tint and stroked in the author's ink, the commented words
+/// under the same tint, and no sticky-note annotation (466 balloons of
+/// 152 corpus documents, 2026-10-03). jubarte painted nothing there: the
+/// pane stayed empty and the comment became a non-printed sticky note.
+#[test]
+fn a_comment_paints_a_balloon_in_the_markup_pane() {
+    let body = format!(
+        "<w:p><w:r><w:t xml:space=\"preserve\">Before </w:t></w:r>\
+         <w:commentRangeStart w:id=\"0\"/><w:r><w:t>Commented words</w:t></w:r>\
+         <w:commentRangeEnd w:id=\"0\"/><w:r><w:commentReference w:id=\"0\"/></w:r>\
+         <w:r><w:t xml:space=\"preserve\"> after.</w:t></w:r></w:p>{LETTER}"
+    );
+    let docx = comments_docx(&body, &comments_part("0", "Ada", "Kept balloon text"));
+    let pdf = docx_to_pdf(&docx).expect("word mode");
+    assert!(has_balloon_pane(&pdf), "the pane is there");
+    let text = pdf_winansi_text(&pdf);
+    assert!(
+        text.contains("Commented [A1]: "),
+        "the balloon's label is painted: {text}"
+    );
+    assert!(
+        text.contains("Kept balloon text"),
+        "the balloon's text is painted: {text}"
+    );
+    let stream = pdf_content_streams(&pdf).concat();
+    // The first palette author's tint (Word's D13438 → 248,220,221): the
+    // box and the commented words.
+    assert!(
+        stream.matches("0.973 0.863 0.867 rg").count() >= 2,
+        "the box and the commented words are filled with the author's tint"
+    );
+    assert!(
+        stream.contains("0.820 0.204 0.220 RG"),
+        "and the box is stroked in the author's ink"
+    );
+    // The label is set at the Balloon Text size, 9pt here.
+    assert!(
+        stream.contains(" 9.00 Tf") || stream.contains(" 9 Tf"),
+        "the balloon text is 9pt: {stream}"
+    );
+    assert!(
+        pdf_notes(&pdf).is_empty(),
+        "Word writes no sticky note: the balloon is the print"
+    );
+    // The default renderer keeps its sticky note beside the balloon, and
+    // anchors it where the range ends, after "Before Commented words".
+    let ours = docx_to_pdf_with(&docx, PdfOptions::default()).expect("default mode");
+    let notes = pdf_notes(&ours);
+    assert_eq!(notes.len(), 1);
+    assert!(
+        notes[0].x > 110.0 && notes[0].x < 200.0,
+        "anchored at the range end: {notes:?}"
+    );
+    assert!(pdf_winansi_text(&ours).contains("Commented [A1]: "));
+}
+
+/// A comment reference followed by same-style text in its paragraph bound
+/// its note to the text's run, and the line builder merged that run into
+/// the one before it, dropping the note: the PDF had no sticky note at all.
+#[test]
+fn a_comment_followed_by_text_in_its_paragraph_keeps_its_note() {
+    let body = "<w:p><w:r><w:t xml:space=\"preserve\">Before </w:t></w:r>\
+         <w:commentRangeStart w:id=\"0\"/><w:r><w:t>Commented words</w:t></w:r>\
+         <w:commentRangeEnd w:id=\"0\"/><w:r><w:commentReference w:id=\"0\"/></w:r>\
+         <w:r><w:t xml:space=\"preserve\"> after.</w:t></w:r></w:p><w:sectPr/>";
+    let docx = comments_docx(body, &comments_part("0", "Ada", "Kept"));
+    let ours = docx_to_pdf_with(&docx, PdfOptions::default()).expect("default mode");
+    let notes = pdf_notes(&ours);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contents.contains("Kept"), "{notes:?}");
+    // The text itself is painted whole.
+    assert!(pdf_winansi_text(&ours).contains("Before Commented words after."));
 }
