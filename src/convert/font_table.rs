@@ -194,11 +194,21 @@ pub(crate) fn deobfuscate_odttf(bytes: &[u8], font_key: &str) -> Vec<u8> {
 }
 
 /// `(lowercase family, bold, italic) → deobfuscated TTF bytes`.
+///
+/// A family the catalogue paints is left out: Word takes the installed
+/// font over the document's embedded copy. 8c11ad13af embeds Times New
+/// Roman 7.00 (hhea line gap 0: a 14pt line of 15.50) and Word lays its
+/// Times 14 at 16.08, the installed 5.01's 1.149 em line (Word 16
+/// variants a–f, 2026-10-03: the pitch survives every other change). The
+/// catalogue's twins stand for the families the oracle machine has.
 pub(crate) fn load_embedded_fonts(pkg: &PartFs, table: &FontTable) -> super::font::EmbeddedFonts {
     let mut out = HashMap::new();
     let part = font_table_part(pkg);
     let rels = pkg.read_rels_for(&part);
     for entry in table.iter() {
+        if super::font::catalogue_paints_family(&entry.name) {
+            continue;
+        }
         for (slot, (bold, italic)) in entry.embedded.iter().zip(EMBED_STYLES) {
             let Some((rid, font_key)) = slot else {
                 continue;

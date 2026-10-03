@@ -3139,7 +3139,7 @@ pub(crate) fn add_installed_faces(
 
 /// The catalogue slot for `family` really is that family, not a stand-in
 /// (Tahoma, Trebuchet and Roboto all fold into the Arial slot).
-fn catalogue_paints_family(family: &str) -> bool {
+pub(crate) fn catalogue_paints_family(family: &str) -> bool {
     let norm = |s: &str| -> String {
         s.chars()
             .filter(|c| c.is_ascii_alphanumeric())

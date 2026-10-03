@@ -48695,3 +48695,92 @@ fn a_last_lines_space_after_must_fit_above_the_footnotes() {
     assert_eq!(last, 130, "at the margin it need not: Word ends at L0130");
 }
 
+/// A document embedding `ttf` (a plain sfnt, which the odttf reader takes
+/// as is) under `family` in its font table.
+fn docx_with_embedded_font(body: &str, family: &str, ttf: &[u8]) -> Vec<u8> {
+    let w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    let document = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:document xmlns:w=\"{w}\"><w:body>{body}</w:body></w:document>"
+    );
+    let fonts_xml = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:fonts xmlns:w=\"{w}\" \
+           xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
+         <w:font w:name=\"{family}\"><w:panose1 w:val=\"02020603050405020304\"/>\
+           <w:charset w:val=\"00\"/><w:family w:val=\"roman\"/><w:pitch w:val=\"variable\"/>\
+           <w:embedRegular r:id=\"rIdF1\" w:fontKey=\"{{679B1150-F529-DF46-8678-01AD1B889637}}\"/>\
+         </w:font></w:fonts>"
+    );
+    let content_types = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
+        <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
+        <Default Extension=\"xml\" ContentType=\"application/xml\"/>\
+        <Default Extension=\"odttf\" ContentType=\"application/vnd.openxmlformats-officedocument.obfuscatedFont\"/>\
+        <Override PartName=\"/word/document.xml\" \
+          ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>\
+        <Override PartName=\"/word/fontTable.xml\" \
+          ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml\"/>\
+        </Types>";
+    let rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+        <Relationship Id=\"rId1\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" \
+          Target=\"word/document.xml\"/></Relationships>";
+    let doc_rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+        <Relationship Id=\"rIdFonts\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable\" \
+          Target=\"fontTable.xml\"/></Relationships>";
+    let font_rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+        <Relationship Id=\"rIdF1\" \
+          Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/font\" \
+          Target=\"fonts/font1.odttf\"/></Relationships>";
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    let opts = SimpleFileOptions::default();
+    for (name, data) in [
+        ("[Content_Types].xml", content_types.as_bytes()),
+        ("_rels/.rels", rels.as_bytes()),
+        ("word/document.xml", document.as_bytes()),
+        ("word/_rels/document.xml.rels", doc_rels.as_bytes()),
+        ("word/fontTable.xml", fonts_xml.as_bytes()),
+        ("word/_rels/fontTable.xml.rels", font_rels.as_bytes()),
+        ("word/fonts/font1.odttf", ttf),
+    ] {
+        zip.start_file(name, opts).unwrap();
+        zip.write_all(data).unwrap();
+    }
+    zip.finish().unwrap().into_inner()
+}
+
+#[test]
+fn an_installed_family_wins_over_the_documents_embedded_copy() {
+    // 8c11ad13af embeds Times New Roman 7.00 (hhea line gap 0: a 14pt
+    // line of 15.50) and Word lays its Times 14 paragraphs 16.08 apart
+    // single-spaced (18.72 at 1.15), the installed Times New Roman's
+    // 1.149 em line (Word 16 variants a–f, 2026-10-03: the line gap
+    // survives every other change; only line=240 moves it, to 16.08).
+    // Word takes an installed font over the document's embedded copy.
+    // Here Carlito's bytes pose as the embedded Times (1.2207 em: 17.09
+    // at 14pt); the installed Times, or its metric twin Liberation
+    // Serif, keeps the pitch at 16.09.
+    let carlito = include_bytes!("../assets/fonts/Carlito-Regular.ttf");
+    let para = |text: &str| {
+        format!(
+            "<w:p><w:pPr><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr>\
+             <w:r><w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\"/>\
+             <w:sz w:val=\"28\"/></w:rPr><w:t>{text}</w:t></w:r></w:p>"
+        )
+    };
+    let body = format!("{}{}", para("Alpha"), para("Beta"));
+    let pdf =
+        docx_to_pdf(&docx_with_embedded_font(&body, "Times New Roman", carlito)).expect("converts");
+    let alpha = pdf_glyph_text_xy(&pdf, "Alpha").expect("Alpha paints");
+    let beta = pdf_glyph_text_xy(&pdf, "Beta").expect("Beta paints");
+    let pitch = alpha.1 - beta.1;
+    assert!(
+        (pitch - 16.09).abs() < 0.15,
+        "Times 14 single-spaced steps 16.09 in the installed face, got {pitch} (17.09 is the embedded Carlito)"
+    );
+}
