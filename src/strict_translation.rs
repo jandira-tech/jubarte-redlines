@@ -24,8 +24,8 @@
 //! `OpenXmlNamespaceResolver` (main).
 //!
 //! Two contexts, disambiguated by part extension:
-//!   - **`.xml` parts** (element/attribute namespaces) → [`NAMESPACE_TABLE`].
-//!   - **`.rels` parts** (relationship `Type=`) → [`RELATIONSHIP_TABLE`].
+//!   - **`.xml` parts** (element/attribute namespaces) → `NAMESPACE_TABLE`.
+//!   - **`.rels` parts** (relationship `Type=`) → `RELATIONSHIP_TABLE`.
 //!
 //! Replacements run LONGEST-KEY-FIRST so a key like
 //! `…/relationships/customProperties` is rewritten before its prefix
@@ -496,14 +496,14 @@ const RELATIONSHIP_TABLE: &[(&str, &str)] = &[
     ),
 ];
 
-/// [`NAMESPACE_TABLE`] sorted by descending strict-key length, built once.
+/// `NAMESPACE_TABLE` sorted by descending strict-key length, built once.
 static NAMESPACE_SORTED: LazyLock<Vec<(&'static str, &'static str)>> = LazyLock::new(|| {
     let mut v = NAMESPACE_TABLE.to_vec();
     v.sort_by_key(|e| std::cmp::Reverse(e.0.len()));
     v
 });
 
-/// [`RELATIONSHIP_TABLE`] sorted by descending strict-key length, built once.
+/// `RELATIONSHIP_TABLE` sorted by descending strict-key length, built once.
 static RELATIONSHIP_SORTED: LazyLock<Vec<(&'static str, &'static str)>> = LazyLock::new(|| {
     let mut v = RELATIONSHIP_TABLE.to_vec();
     v.sort_by_key(|e| std::cmp::Reverse(e.0.len()));
@@ -512,7 +512,7 @@ static RELATIONSHIP_SORTED: LazyLock<Vec<(&'static str, &'static str)>> = LazyLo
 
 /// Apply a (strict → transitional) table to `text` via sequential
 /// `str::replace`, longest key first. `text` is assumed to already contain
-/// [`STRICT_MARKER`] (callers gate on that for the fast path).
+/// `STRICT_MARKER` (callers gate on that for the fast path).
 fn translate(text: &str, table: &[(&str, &str)]) -> String {
     let mut out = text.to_string();
     for &(from, to) in table {
@@ -526,10 +526,10 @@ fn translate(text: &str, table: &[(&str, &str)]) -> String {
 /// Normalize an ISO/IEC 29500 **Strict** `.docx` to **Transitional**.
 ///
 /// Walks every zip entry; rewrites Strict URIs in `.rels` parts using
-/// [`RELATIONSHIP_TABLE`] and in `.xml` parts (including `[Content_Types].xml`)
-/// using [`NAMESPACE_TABLE`]; binary parts pass through untouched.
+/// `RELATIONSHIP_TABLE` and in `.xml` parts (including `[Content_Types].xml`)
+/// using `NAMESPACE_TABLE`; binary parts pass through untouched.
 ///
-/// **Zero-churn**: if no entry contains [`STRICT_MARKER`] (i.e. the package is
+/// **Zero-churn**: if no entry contains `STRICT_MARKER` (i.e. the package is
 /// already Transitional), the original `bytes` are returned unchanged — the zip
 /// is never rebuilt. Only when at least one URI was rewritten is a new zip
 /// assembled (every entry under its original name, Deflated).

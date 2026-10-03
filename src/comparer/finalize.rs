@@ -9011,7 +9011,7 @@ pub fn ensure_default_page_size(dom: &mut Dom, root: NodeId) {
 }
 
 /// `w:tblPr` child ranks (PtOpenXmlUtil.cs Order_tblPr) — shared between
-/// [`wml_order_elements_per_standard`], [`synthesize_table_cell_margins`]
+/// `wml_order_elements_per_standard`, [`synthesize_table_cell_margins`]
 /// and [`align_word_table_and_comment_chrome`] so the three can't drift
 /// apart. Names absent from this list rank 999, which keeps `w:tblPrChange`
 /// after `w:tblLook` (150).
@@ -9305,7 +9305,7 @@ pub fn wml_order_elements_per_standard(dom: &mut Dom, root: NodeId) {
 /// style merged from B, a `w:jc` added after the body's ordering pass) still
 /// lands where the schema wants it.
 ///
-/// Also enforces what [`wml_order_elements_per_standard`] cannot express as an
+/// Also enforces what `wml_order_elements_per_standard` cannot express as an
 /// order: the `w:pPr` inside `w:pPrChange` is CT_PPrBase, which has no `w:rPr`,
 /// `w:sectPr` or nested `w:pPrChange` (Sch_InvalidElementContentExpectingComplex
 /// in 2 of the 2026-09-26 English redlines Word refused).
@@ -12710,7 +12710,7 @@ pub fn repair_inherited_invalidity(dom: &mut Dom, root: NodeId) {
 }
 
 /// Enforce the deleted-text invariant everywhere, not just on runs that happened
-/// to go through [`convert_run_text_to_del_text`].
+/// to go through `convert_run_text_to_del_text`.
 ///
 /// Inside `w:del`, `w:t` must be `w:delText` and `w:instrText` must be
 /// `w:delInstrText`. Word enforces this at load and offers to repair the file when
@@ -12725,7 +12725,7 @@ pub fn repair_inherited_invalidity(dom: &mut Dom, root: NodeId) {
 /// that wraps existing runs in `w:del` rather than rebuilding them.
 ///
 /// `w:moveFrom` is deliberately excluded: Word Compare keeps plain `w:t` inside it
-/// (see [`convert_run_text_to_del_text`]'s callers), so "renaming" there would
+/// (see `convert_run_text_to_del_text`'s callers), so "renaming" there would
 /// introduce the very mismatch this pass exists to remove.
 pub fn enforce_deleted_text_kinds(dom: &mut Dom, root: NodeId) {
     fn walk(dom: &mut Dom, node: NodeId) {

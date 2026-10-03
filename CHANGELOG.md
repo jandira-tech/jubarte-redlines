@@ -524,6 +524,19 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- The crate's front page (docs.rs) described only comparing, accepting and
+  rejecting. It now maps every task to where it starts: compare, changes,
+  edit plans, inspect, PDF/PNG, Markdown, validate and repair, audit, scrub,
+  append, comments, fields, admission and capabilities, with a compiled
+  edit-plan example. `docs/rust.md`'s API tour gains the same modules.
+
+- 41 intra-doc links rendered as bare brackets. A module documented both on
+  its `pub mod` line and inside its own file resolved its links at the crate
+  root, so `admission`, `append`, `audit`, `comments`, `edit`, `markdown`,
+  `scrub`, `settings`, `validate` and `unid` lost theirs; the rest linked to
+  private items. `scripts/release.sh` step 4 now builds the public docs with
+  `RUSTDOCFLAGS="-D warnings"`, as docs.rs renders them.
+
 - `scripts/release.sh` step 4 deleted `jubarte-python/uv.lock` after pytest,
   though the file is tracked: the release left a dirty tree and a resumed run
   stopped in preflight. The lockfile stays, and the release commit stages it.
