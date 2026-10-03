@@ -9616,6 +9616,74 @@ fn placeable_wmf_blip_paints_rgb_ink() {
 }
 
 #[test]
+fn a_wmf_writes_its_text_as_text_from_the_first_line_start() {
+    // 5a6c's reprint diagram: a placeable WMF whose boxes hold
+    // META_EXTTEXTOUT strings ("Act as first enacted"). Word's PDF keeps
+    // them as text; we painted none. Its paragraph (left 1418, hanging
+    // 851) starts the picture at the first line, 28.35pt in, not at the
+    // left indent.
+    let mut wmf = vec![0xD7_u8, 0xCD, 0xC6, 0x9A, 0, 0];
+    for v in [0_i16, 0, 1000, 250] {
+        wmf.extend_from_slice(&v.to_le_bytes());
+    }
+    wmf.extend_from_slice(&1440_u16.to_le_bytes());
+    wmf.extend_from_slice(&[0; 6]);
+    let mut header = vec![0_u8; 18];
+    header[0..2].copy_from_slice(&1_u16.to_le_bytes());
+    header[2..4].copy_from_slice(&9_u16.to_le_bytes());
+    header[10..12].copy_from_slice(&1_u16.to_le_bytes());
+    wmf.extend_from_slice(&header);
+    let mut record = |func: u16, body: &[u8]| {
+        wmf.extend_from_slice(&(3 + body.len() as u32 / 2).to_le_bytes());
+        wmf.extend_from_slice(&func.to_le_bytes());
+        wmf.extend_from_slice(body);
+    };
+    record(0x020B, &[0, 0, 0, 0]);
+    record(0x020C, &[250, 0, 0xE8, 0x03]);
+    let mut font = vec![0_u8; 50];
+    font[0..2].copy_from_slice(&(-50_i16).to_le_bytes());
+    font[8..10].copy_from_slice(&400_u16.to_le_bytes());
+    font[18..18 + 15].copy_from_slice(b"Times New Roman");
+    record(0x02FB, &font);
+    record(0x012D, &[0, 0]);
+    let mut text = Vec::new();
+    for v in [0_i16, 100, 9, 0] {
+        text.extend_from_slice(&v.to_le_bytes());
+    }
+    text.extend_from_slice(b"Hello box\0");
+    record(0x0A32, &text);
+    record(0, &[]);
+    let drawing = blip(
+        "5080000",
+        "1270000",
+        "<wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">",
+        "</wp:inline>",
+    );
+    let docx = drawing_docx_media(
+        &format!(
+            "<w:p><w:pPr><w:ind w:left=\"1418\" w:hanging=\"851\"/></w:pPr><w:r>{drawing}</w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+             <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        ),
+        "diagram.wmf",
+        &wmf,
+    );
+    let pdf = docx_to_pdf(&docx).expect("convert WMF text");
+    let streams = pdf_content_streams(&pdf);
+    assert!(
+        streams
+            .iter()
+            .any(|s| pdf_winansi_text(s.as_bytes()).contains("Hello box")),
+        "the WMF string is PDF text"
+    );
+    // 20pt: lfHeight -50 of 250 units over the 100pt picture; x: margin
+    // 72 + (70.9 - 42.55) first-line start + 0.1 of 400pt.
+    let at = pdf_tf_xy(&pdf, "20.00 Tf");
+    assert_eq!(at.len(), 1, "one WMF string: {at:?}");
+    assert!((at[0].0 - 140.35).abs() < 0.1, "first-line start: {at:?}");
+}
+
+#[test]
 fn emf_blip_paints_rgb_ink() {
     // Strict01 image2.emf is a 448×200 EMF of pen strokes + PATCOPY BITBLT.
     let emf = fixture_zip_part(

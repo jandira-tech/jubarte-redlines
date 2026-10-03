@@ -2717,6 +2717,11 @@ enum ImageKind {
     /// line like a picture its size and paints there (dcda3ae's note bar
     /// under its header title).
     TextBox(std::rc::Rc<LaidTextBox>),
+    /// A WMF's raster with the strings it writes, painted as text over it.
+    Metafile {
+        raster: Box<ImageKind>,
+        texts: std::rc::Rc<[metafile::MetaText]>,
+    },
 }
 
 /// The room under an inline VML rect's outline in its laid box: 1pt, or
@@ -18125,6 +18130,10 @@ fn vml_washout(dom: &Dom, im: NodeId) -> bool {
 /// The samples Word paints for a washed-out picture: 0041dade's Word PDF
 /// maps each 8-bit sample to 0.29 * v + 206.7, clipped to white.
 fn washed_out(kind: ImageKind) -> ImageKind {
+    if let ImageKind::Metafile { raster, texts } = kind {
+        let raster = Box::new(washed_out(*raster));
+        return ImageKind::Metafile { raster, texts };
+    }
     let pale = |v: &mut u8| *v = (f32::from(*v) * 0.29 + 206.7).round().min(255.0) as u8;
     match kind {
         ImageKind::Jpeg { bytes, .. } => {
@@ -18172,6 +18181,10 @@ fn soft_edge_pt(dom: &Dom, drawing: NodeId) -> Option<f32> {
 /// radius (case57's photos). `fx`/`fy` are the radius as a fraction of the
 /// picture's width and height.
 fn soften_edges(kind: ImageKind, fx: f32, fy: f32) -> ImageKind {
+    if let ImageKind::Metafile { raster, texts } = kind {
+        let raster = Box::new(soften_edges(*raster, fx, fy));
+        return ImageKind::Metafile { raster, texts };
+    }
     let (width, height, bytes, alpha) = match kind {
         ImageKind::Jpeg { bytes, .. } => {
             let Ok(img) = image::load_from_memory(&bytes) else {
@@ -18243,6 +18256,10 @@ fn duotone_color(dom: &Dom, node: NodeId, pkg: &PartFs) -> Option<[f32; 3]> {
 /// by its Rec.709 luma (English corpus c301012f: green 70AD47 under
 /// accent5 shade 45% satMod 135% → white paints A4B6D6).
 fn duotone_image(kind: ImageKind, dom: &Dom, blip: NodeId, pkg: &PartFs) -> ImageKind {
+    if let ImageKind::Metafile { raster, texts } = kind {
+        let raster = Box::new(duotone_image(*raster, dom, blip, pkg));
+        return ImageKind::Metafile { raster, texts };
+    }
     let Some(duotone) = (0..dom.child_count(blip))
         .map(|i| dom.child_at(blip, i))
         .find(|&c| local_name_is(dom, c, "duotone"))
@@ -18291,12 +18308,19 @@ fn duotone_image(kind: ImageKind, dom: &Dom, blip: NodeId, pkg: &PartFs) -> Imag
 }
 
 fn decode_image(bytes: Vec<u8>) -> Option<ImageKind> {
-    if let Some((width, height, rgb)) = metafile::rasterize(&bytes) {
-        return Some(ImageKind::Rgb {
+    if let Some((width, height, rgb, texts)) = metafile::render(&bytes) {
+        let raster = ImageKind::Rgb {
             width,
             height,
             bytes: rgb,
             alpha: None,
+        };
+        if texts.is_empty() {
+            return Some(raster);
+        }
+        return Some(ImageKind::Metafile {
+            raster: Box::new(raster),
+            texts: texts.into(),
         });
     }
     if bytes.len() > 3
@@ -25055,10 +25079,17 @@ impl<'a> Layout<'a> {
         }
     }
 
-    /// One picture's paint op at (x, y) bottom-left, dw × dh.
-    fn push_image(&mut self, img: &LaidImage, x: f32, y: f32, dw: f32, dh: f32) {
-        let (x, y, dw, dh) = inset_box(img, x, y, dw, dh);
-        match &img.kind {
+    /// A picture's own paint op(s) in its box (x, y bottom-left).
+    fn paint_image_kind(
+        &mut self,
+        img: &LaidImage,
+        kind: &ImageKind,
+        x: f32,
+        y: f32,
+        dw: f32,
+        dh: f32,
+    ) {
+        match kind {
             ImageKind::Jpeg {
                 width,
                 height,
@@ -25095,6 +25126,10 @@ impl<'a> Layout<'a> {
                 rotate_deg: img.rotate_deg,
                 oval: img.oval,
             }),
+            ImageKind::Metafile { raster, texts } => {
+                self.paint_image_kind(img, raster, x, y, dw, dh);
+                self.paint_meta_texts(img, texts, x, y, dw, dh);
+            }
             ImageKind::Reserve => {}
             ImageKind::TextBox(b) => self.paint_box_at(b, x, y, dw, dh),
             ImageKind::Broken => self.current().ops.push(Op::StrokeRect {
@@ -25133,6 +25168,76 @@ impl<'a> Layout<'a> {
             }
             ImageKind::VmlRect { .. } => {}
         }
+    }
+
+    /// A metafile's strings as text over its raster, where Word's PDF has
+    /// them (5a6c's reprint diagram: "Act as first enacted" in its box).
+    fn paint_meta_texts(
+        &mut self,
+        img: &LaidImage,
+        texts: &[metafile::MetaText],
+        x: f32,
+        y: f32,
+        dw: f32,
+        dh: f32,
+    ) {
+        if img.rotate_deg.abs() > 0.01 {
+            return;
+        }
+        let [cl, ct, cr, cb] = img.crop.unwrap_or([0.0; 4]);
+        let (kw, kh) = (1.0 - cl - cr, 1.0 - ct - cb);
+        if kw <= 0.0 || kh <= 0.0 {
+            return;
+        }
+        for t in texts {
+            let (fx, fy) = ((t.x - cl) / kw, (t.y - ct) / kh);
+            if !(0.0..=1.0).contains(&fx) || !(0.0..=1.0).contains(&fy) {
+                continue;
+            }
+            let family = if t.family.is_empty() {
+                "Arial"
+            } else {
+                t.family.as_str()
+            };
+            let fid = self.fonts.resolve(family, t.bold, t.italic);
+            let face = self.fonts.get(fid);
+            let mut size = if t.size > 0.0 { t.size * dh / kh } else { 12.0 };
+            if t.cell {
+                let cell = face.ascent_pt(100.0) + face.descent_pt(100.0);
+                if cell > 0.0 {
+                    size *= 100.0 / cell;
+                }
+            }
+            let scale = if t.aspect > 0.0 {
+                (dw / kw) / (dh / kh) / t.aspect
+            } else {
+                1.0
+            };
+            let top = y + dh - fy * dh;
+            let base = match t.align & 24 {
+                24 => top,
+                8 => top + face.descent_pt(size),
+                _ => top - face.ascent_pt(size),
+            };
+            let w = face.width_pt(&t.text, size) * scale;
+            let left = x + fx * dw
+                - match t.align & 6 {
+                    6 => w / 2.0,
+                    2 => w,
+                    _ => 0.0,
+                };
+            let color = t.color.map(|c| f32::from(c) / 255.0);
+            let glyphs = face.glyphs(&t.text);
+            self.current()
+                .ops
+                .push(Op::text(fid, size, left, base, glyphs, color, t.text.clone()).scaled(scale));
+        }
+    }
+
+    /// One picture's paint op at (x, y) bottom-left, dw × dh.
+    fn push_image(&mut self, img: &LaidImage, x: f32, y: f32, dw: f32, dh: f32) {
+        let (x, y, dw, dh) = inset_box(img, x, y, dw, dh);
+        self.paint_image_kind(img, &img.kind, x, y, dw, dh);
         if let Some((color, width)) = img.outline {
             self.current().ops.push(Op::StrokeRect {
                 x,
@@ -25161,6 +25266,14 @@ impl<'a> Layout<'a> {
         if imgs.is_empty() {
             return;
         }
+        // The first row starts where the first line does: a hanging indent
+        // pulls it out (5a6c's reprint diagram at left 1418 hanging 851
+        // starts 28.35pt in, Word's PDF). A list marker already fills it.
+        let first_ind = if runs.iter().any(|r| r.list_marker) {
+            0.0
+        } else {
+            style.indent_first
+        };
         // The whitespace before the first picture, laid out like text on
         // the paragraph's tab stops.
         let lead = match imgs.first().map(|img| img.lead_chars) {
@@ -25181,7 +25294,7 @@ impl<'a> Layout<'a> {
                 }
                 let landed = self.landed_tab_stops(&style.tab_stops);
                 let stops = std::mem::replace(&mut self.tab_stops, landed);
-                let x0 = self.page.margin_l + style.indent_left;
+                let x0 = self.page.margin_l + style.indent_left + first_ind;
                 let w = self.tab_line_width(&prefix, x0);
                 self.tab_stops = stops;
                 w
@@ -25194,10 +25307,11 @@ impl<'a> Layout<'a> {
         let room = self.content_width() - style.indent_left - style.indent_right;
         let mut row: Vec<(&LaidImage, f32, f32)> = Vec::new();
         let mut lead_now = lead;
-        let mut flush = |lay: &mut Self, row: &mut Vec<(&LaidImage, f32, f32)>| {
+        let mut flush = |lay: &mut Self, row: &mut Vec<(&LaidImage, f32, f32)>, ind: f32| {
             if row.is_empty() {
                 return;
             }
+            let (left, room) = (left + ind, room - ind);
             let gaps: f32 = row.iter().skip(1).map(|r| r.0.gap_before).sum();
             let w: f32 = row.iter().map(|r| r.1).sum::<f32>() + gaps;
             // A VML rect's line is at least its run's single line, the
@@ -25245,15 +25359,17 @@ impl<'a> Layout<'a> {
             lay.pic_row = Some((lay.pages.len(), x, lay.y, h));
             lay.y -= under + extra;
         };
+        let mut ind = first_ind;
         for img in imgs {
             let (dw, dh) = self.image_wh(img);
             let used: f32 = row.iter().map(|r| r.1).sum();
-            if !row.is_empty() && used + dw > room + 0.5 {
-                flush(self, &mut row);
+            if !row.is_empty() && used + dw > room - ind + 0.5 {
+                flush(self, &mut row, ind);
+                ind = 0.0;
             }
             row.push((img, dw, dh));
         }
-        flush(self, &mut row);
+        flush(self, &mut row, ind);
     }
 
     /// The lines a picture-only paragraph's breaks open under its
@@ -25626,81 +25742,7 @@ impl<'a> Layout<'a> {
         if in_header {
             self.hold_header_float(img.slot, x, y, dw, dh);
         }
-        match &img.kind {
-            ImageKind::Jpeg {
-                width,
-                height,
-                bytes,
-                components,
-            } => self.current().ops.push(Op::Jpeg {
-                x,
-                y,
-                dw,
-                dh,
-                width: *width,
-                height: *height,
-                bytes: bytes.clone(),
-                components: *components,
-                crop: img.crop,
-                rotate_deg: img.rotate_deg,
-                oval: img.oval,
-            }),
-            ImageKind::Rgb {
-                width,
-                height,
-                bytes,
-                alpha,
-            } => self.current().ops.push(Op::Rgb {
-                x,
-                y,
-                dw,
-                dh,
-                width: *width,
-                height: *height,
-                bytes: bytes.clone(),
-                alpha: alpha.clone(),
-                crop: img.crop,
-                rotate_deg: img.rotate_deg,
-                oval: img.oval,
-            }),
-            ImageKind::Reserve => {}
-            ImageKind::TextBox(b) => self.paint_box_at(b, x, y, dw, dh),
-            ImageKind::Broken => self.current().ops.push(Op::StrokeRect {
-                x,
-                y,
-                w: dw,
-                h: dh,
-                width: 0.75,
-                color: [0.6, 0.6, 0.6],
-            }),
-            ImageKind::VmlLine {
-                from,
-                to,
-                color,
-                width,
-            } => self.current().ops.push(Op::Line {
-                x1: x + from[0] * dw,
-                y1: y + dh - from[1] * dh,
-                x2: x + to[0] * dw,
-                y2: y + dh - to[1] * dh,
-                width: *width,
-                color: *color,
-            }),
-            ImageKind::VmlRect {
-                pad, color, width, ..
-            } if *width > 0.0 => {
-                let foot = vml_rect_foot(*pad, *width);
-                self.current().ops.push(Op::StrokeRect {
-                    x: x + pad,
-                    y: y + foot,
-                    w: dw - 2.0 * pad,
-                    h: dh - pad - foot,
-                    width: *width,
-                    color: *color,
-                });
-            }
-            ImageKind::VmlRect { .. } => {}
-        }
+        self.paint_image_kind(img, &img.kind, x, y, dw, dh);
     }
 
     fn emit_chrome_table(&mut self, table: &ChromeTable, in_header: bool) {

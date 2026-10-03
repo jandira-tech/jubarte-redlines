@@ -14,14 +14,44 @@ const EMF_SIGNATURE: &[u8] = b" EMF";
 const MAX_SIDE: usize = 384;
 const WHITE: [u8; 3] = [255, 255, 255];
 
-pub(crate) fn rasterize(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+#[cfg(test)]
+fn rasterize(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    render(bytes).map(|(w, h, rgb, _)| (w, h, rgb))
+}
+
+/// The picture's raster and the text it writes. Word's PDF keeps a
+/// metafile's text as text, so it is painted over the raster, not into it.
+pub(crate) fn render(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>, Vec<MetaText>)> {
     if looks_like_wmf(bytes) {
         return raster_wmf(bytes);
     }
     if looks_like_emf(bytes) {
-        return raster_emf(bytes);
+        return raster_emf(bytes).map(|(w, h, rgb)| (w, h, rgb, Vec::new()));
     }
     None
+}
+
+/// A string a metafile writes (`META_EXTTEXTOUT` / `META_TEXTOUT`), placed
+/// as fractions of the picture: `x` from its left, `y` from its top, and
+/// `size` (the font's `lfHeight`) of its height.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct MetaText {
+    pub(crate) text: String,
+    pub(crate) x: f32,
+    pub(crate) y: f32,
+    pub(crate) size: f32,
+    /// `lfHeight` > 0 is the cell height (ascent + descent), else the em.
+    pub(crate) cell: bool,
+    pub(crate) family: String,
+    pub(crate) bold: bool,
+    pub(crate) italic: bool,
+    pub(crate) color: [u8; 3],
+    /// `SETTEXTALIGN`: `y` is the text's top (0), baseline (24) or
+    /// bottom (8); `x` its left (0), centre (6) or right (2).
+    pub(crate) align: u16,
+    /// Logical width over height units: the picture's drawn aspect
+    /// against it stretches the glyphs.
+    pub(crate) aspect: f32,
 }
 
 fn looks_like_wmf(bytes: &[u8]) -> bool {
@@ -272,6 +302,14 @@ struct Map {
 }
 
 impl Map {
+    /// A pen `width` in logical units as canvas pixels, at least one.
+    fn pen_px(&self, width: i32) -> i32 {
+        if self.ext_x.abs() < f32::EPSILON {
+            return 1;
+        }
+        ((width as f32 * self.w / self.ext_x.abs()).round() as i32).max(1)
+    }
+
     fn map(&self, x: i32, y: i32) -> (i32, i32) {
         let sx = if self.ext_x.abs() < f32::EPSILON {
             1.0
@@ -335,10 +373,13 @@ fn read_i32(data: &[u8], off: usize) -> Option<i32> {
     Some(i32::from_le_bytes(b))
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum GdiObj {
     Empty,
     Brush([u8; 3]),
+    /// `BS_NULL`: fills nothing.
+    NullBrush,
+    Font(std::rc::Rc<WmfFont>),
     Pen {
         color: [u8; 3],
         width: i32,
@@ -348,7 +389,59 @@ enum GdiObj {
     Other,
 }
 
-fn raster_wmf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+/// `META_CREATEFONTINDIRECT`'s `LogFont`.
+#[derive(Debug, PartialEq)]
+struct WmfFont {
+    height: i16,
+    weight: i16,
+    italic: bool,
+    face: String,
+}
+
+impl WmfFont {
+    fn parse(data: &[u8], at: usize) -> Option<Self> {
+        let face = data.get(at + 18..)?;
+        let face = &face[..face
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(face.len())
+            .min(32)];
+        Some(Self {
+            height: read_i16(data, at)?,
+            weight: read_i16(data, at + 8)?,
+            italic: *data.get(at + 10)? != 0,
+            face: face.iter().map(|&b| char::from(b)).collect(),
+        })
+    }
+}
+
+/// The device context `META_SAVEDC` keeps.
+#[derive(Clone)]
+struct WmfState {
+    brush: Option<[u8; 3]>,
+    pen: Option<([u8; 3], i32)>,
+    font: Option<std::rc::Rc<WmfFont>>,
+    text_color: [u8; 3],
+    text_align: u16,
+}
+
+/// Windows-1252 text, one byte a character.
+fn ansi_text(bytes: &[u8]) -> String {
+    const HIGH: [char; 32] = [
+        '€', '\u{81}', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '\u{8d}', 'Ž',
+        '\u{8f}', '\u{90}', '‘', '’', '“', '”', '•', '–', '—', '˜', '™', 'š', '›', 'œ', '\u{9d}',
+        'ž', 'Ÿ',
+    ];
+    bytes
+        .iter()
+        .map(|&b| match b {
+            0x80..=0x9F => HIGH[usize::from(b - 0x80)],
+            _ => char::from(b),
+        })
+        .collect()
+}
+
+fn raster_wmf(data: &[u8]) -> Option<(u32, u32, Vec<u8>, Vec<MetaText>)> {
     if data.len() < 40 {
         return None;
     }
@@ -368,9 +461,16 @@ fn raster_wmf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     };
     let nobj = read_u16(data, 22 + 10).unwrap_or(4) as usize;
     let mut objects = vec![GdiObj::Empty; nobj.clamp(1, 64)];
-    let mut brush = [0_u8, 0, 0];
-    let mut pen = [0_u8, 0, 0];
-    let mut pen_w = 1_i32;
+    // A new DC: white brush, black pen, black text at the top left.
+    let mut dc = WmfState {
+        brush: Some(WHITE),
+        pen: Some(([0, 0, 0], 1)),
+        font: None,
+        text_color: [0, 0, 0],
+        text_align: 0,
+    };
+    let mut saved: Vec<WmfState> = Vec::new();
+    let mut texts: Vec<MetaText> = Vec::new();
     let mut winding = false;
     let mut off = 22 + 18;
     while off + 6 <= data.len() {
@@ -409,27 +509,37 @@ fn raster_wmf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
                 let color = colorref(read_u32(data, payload + 2).unwrap_or(0));
                 let slot = objects.iter().position(|o| matches!(o, GdiObj::Empty));
                 if let Some(i) = slot {
+                    // BS_NULL (1) is hollow: the boxes of 5a6c's reprint
+                    // diagram fill white only through their own brush.
                     objects[i] = if style == 1 {
-                        GdiObj::Brush(WHITE)
+                        GdiObj::NullBrush
                     } else {
                         GdiObj::Brush(color)
                     };
                 }
             }
             0x02FA => {
+                let style = read_u16(data, payload).unwrap_or(0);
                 let color = colorref(read_u32(data, payload + 6).unwrap_or(0));
                 let width = read_i16(data, payload + 2).unwrap_or(1) as i32;
                 if let Some(i) = objects.iter().position(|o| matches!(o, GdiObj::Empty)) {
+                    // PS_NULL (5) strokes nothing: width 0.
                     objects[i] = GdiObj::Pen {
                         color,
-                        width: width.max(1),
+                        width: if style & 0x0F == 5 { 0 } else { width.max(1) },
                     };
                 }
             }
-            // CreatePalette / PatternBrush / DIBPatternBrush / Font /
-            // Region take the lowest free slot like a brush or pen, so
-            // later handles count them (Strict01's palette is slot 0).
-            0x00F7 | 0x01F9 | 0x0142 | 0x02FB | 0x06FF => {
+            0x02FB => {
+                if let Some(i) = objects.iter().position(|o| matches!(o, GdiObj::Empty)) {
+                    objects[i] = WmfFont::parse(data, payload)
+                        .map_or(GdiObj::Other, |f| GdiObj::Font(std::rc::Rc::new(f)));
+                }
+            }
+            // CreatePalette / PatternBrush / DIBPatternBrush / Region take
+            // the lowest free slot like a brush or pen, so later handles
+            // count them (Strict01's palette is slot 0).
+            0x00F7 | 0x01F9 | 0x0142 | 0x06FF => {
                 if let Some(i) = objects.iter().position(|o| matches!(o, GdiObj::Empty)) {
                     objects[i] = GdiObj::Other;
                 }
@@ -439,14 +549,73 @@ fn raster_wmf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
                 // Object handles are 0-based table indices (b88ac900).
                 let idx = read_u16(data, payload).unwrap_or(0) as usize;
                 if let Some(obj) = objects.get(idx) {
-                    match *obj {
-                        GdiObj::Brush(c) => brush = c,
+                    match obj {
+                        GdiObj::Brush(c) => dc.brush = Some(*c),
+                        GdiObj::NullBrush => dc.brush = None,
                         GdiObj::Pen { color, width } => {
-                            pen = color;
-                            pen_w = width;
+                            dc.pen = (*width > 0).then_some((*color, *width));
                         }
+                        GdiObj::Font(f) => dc.font = Some(f.clone()),
                         GdiObj::Empty | GdiObj::Other => {}
                     }
+                }
+            }
+            0x001E => saved.push(dc.clone()),
+            // RESTOREDC -n pops n states (5a6c's diagram: -1 after each box).
+            0x0127 => {
+                let n = read_i16(data, payload).unwrap_or(-1);
+                let keep = if n < 0 {
+                    saved.len().saturating_sub(usize::from(n.unsigned_abs()))
+                } else {
+                    usize::from(n.unsigned_abs()).saturating_sub(1)
+                };
+                if keep < saved.len() {
+                    dc = saved[keep].clone();
+                    saved.truncate(keep);
+                }
+            }
+            0x0209 => dc.text_color = colorref(read_u32(data, payload).unwrap_or(0)),
+            0x012E => dc.text_align = read_u16(data, payload).unwrap_or(0),
+            // RECTANGLE / ROUNDRECT: bottom, right, top, left; filled with
+            // the brush, outlined with the pen.
+            0x041B | 0x061C => {
+                let at = if func == 0x061C { payload + 4 } else { payload };
+                let bottom = read_i16(data, at)? as i32;
+                let right = read_i16(data, at + 2)? as i32;
+                let top = read_i16(data, at + 4)? as i32;
+                let left = read_i16(data, at + 6)? as i32;
+                let (x0, y0) = map.map(left, top);
+                let (x1, y1) = map.map(right, bottom);
+                let corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)];
+                if let Some(fill) = dc.brush {
+                    canvas.fill_polygon(&corners, fill);
+                }
+                if let Some((color, width)) = dc.pen {
+                    let w = map.pen_px(width);
+                    for i in 0..4 {
+                        let (a, b) = (corners[i], corners[(i + 1) % 4]);
+                        canvas.stroke_line(a.0, a.1, b.0, b.1, color, w);
+                    }
+                }
+            }
+            // EXTTEXTOUT: y, x, count, options, [rect], string.
+            0x0A32 => {
+                let y = read_i16(data, payload)?;
+                let x = read_i16(data, payload + 2)?;
+                let n = usize::from(read_u16(data, payload + 4)?);
+                let opts = read_u16(data, payload + 6)?;
+                let at = payload + 8 + if opts & 0x0006 != 0 { 8 } else { 0 };
+                if let Some(bytes) = data.get(at..at + n) {
+                    texts.extend(wmf_text(&dc, &map, x, y, bytes));
+                }
+            }
+            // TEXTOUT: count, string (word-padded), y, x.
+            0x0521 => {
+                let n = usize::from(read_u16(data, payload)?);
+                let at = payload + 2 + n.next_multiple_of(2);
+                let (y, x) = (read_i16(data, at)?, read_i16(data, at + 2)?);
+                if let Some(bytes) = data.get(payload + 2..payload + 2 + n) {
+                    texts.extend(wmf_text(&dc, &map, x, y, bytes));
                 }
             }
             0x01F0 => {
@@ -465,7 +634,9 @@ fn raster_wmf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
                     pts.push(map.map(x, y));
                     p += 4;
                 }
-                canvas.fill_polygon(&pts, brush);
+                if let Some(fill) = dc.brush {
+                    canvas.fill_polygon(&pts, fill);
+                }
             }
             // META_POLYPOLYGON: ring count, each ring's point count, then
             // every ring's points, filled as one shape (b88ac900's logo).
@@ -484,9 +655,15 @@ fn raster_wmf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
                     }
                     subpaths.push(ring);
                 }
-                canvas.fill_path(&subpaths, brush, winding);
+                if let Some(fill) = dc.brush {
+                    canvas.fill_path(&subpaths, fill, winding);
+                }
             }
             0x0325 => {
+                let Some((pen, pen_w)) = dc.pen else {
+                    off += size2;
+                    continue;
+                };
                 let n = read_u16(data, payload).unwrap_or(0) as usize;
                 let mut prev: Option<(i32, i32)> = None;
                 let mut p = payload + 2;
@@ -495,7 +672,7 @@ fn raster_wmf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
                     let y = read_i16(data, p + 2)? as i32;
                     let cur = map.map(x, y);
                     if let Some(pr) = prev {
-                        canvas.stroke_line(pr.0, pr.1, cur.0, cur.1, pen, pen_w);
+                        canvas.stroke_line(pr.0, pr.1, cur.0, cur.1, pen, map.pen_px(pen_w));
                     }
                     prev = Some(cur);
                     p += 4;
@@ -505,7 +682,37 @@ fn raster_wmf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
         }
         off += size2;
     }
-    Some(canvas.finish())
+    let (w, h, rgb) = canvas.finish();
+    Some((w, h, rgb, texts))
+}
+
+/// One string of a WMF text record, in the DC's font, colour and
+/// alignment; blank strings write nothing.
+fn wmf_text(dc: &WmfState, map: &Map, x: i16, y: i16, bytes: &[u8]) -> Option<MetaText> {
+    let text = ansi_text(bytes);
+    if text.trim().is_empty() || map.ext_x.abs() < f32::EPSILON || map.ext_y.abs() < f32::EPSILON {
+        return None;
+    }
+    let font = dc.font.as_deref();
+    let height = font.map_or(0, |f| f.height);
+    Some(MetaText {
+        text,
+        x: (f32::from(x) - map.org_x) / map.ext_x,
+        y: (f32::from(y) - map.org_y) / map.ext_y,
+        // lfHeight 0 is the default font, 12pt at 96 dpi of a 1440 inch.
+        size: if height == 0 {
+            0.0
+        } else {
+            f32::from(height.unsigned_abs()) / map.ext_y.abs()
+        },
+        cell: height > 0,
+        family: font.map_or_else(String::new, |f| f.face.clone()),
+        bold: font.is_some_and(|f| f.weight >= 600),
+        italic: font.is_some_and(|f| f.italic),
+        color: dc.text_color,
+        align: dc.text_align,
+        aspect: (map.ext_x / map.ext_y).abs(),
+    })
 }
 
 /// EMF logical → device coordinates (SETMAPMODE / window / viewport).
@@ -757,7 +964,7 @@ fn raster_emf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
                             pen = color;
                             pen_w = width;
                         }
-                        GdiObj::Empty | GdiObj::Other => {}
+                        GdiObj::Empty | GdiObj::Other | GdiObj::NullBrush | GdiObj::Font(_) => {}
                     }
                 }
             }
@@ -1285,5 +1492,128 @@ mod wmf_object_tests {
             "the square fills with the blue brush"
         );
         assert_eq!(at(5, 5), [255, 255, 255], "outside stays white");
+    }
+    /// `META_CREATEFONTINDIRECT` words for an `lfHeight`, weight, italic
+    /// flag and face.
+    fn font(height: i16, weight: u16, italic: bool, face: &str) -> (u16, Vec<u16>) {
+        let mut b = vec![0_u8; 18];
+        b[0..2].copy_from_slice(&height.to_le_bytes());
+        b[8..10].copy_from_slice(&weight.to_le_bytes());
+        b[10] = u8::from(italic);
+        b.extend_from_slice(face.as_bytes());
+        b.resize(18 + 32, 0);
+        (
+            0x02FB,
+            b.chunks(2)
+                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .collect(),
+        )
+    }
+
+    /// `META_EXTTEXTOUT` at (x, y), no options.
+    fn ext_text(x: i16, y: i16, text: &str) -> (u16, Vec<u16>) {
+        let mut b = Vec::new();
+        for v in [y, x, text.len() as i16, 0] {
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+        b.extend_from_slice(text.as_bytes());
+        if b.len() % 2 == 1 {
+            b.push(0);
+        }
+        (
+            0x0A32,
+            b.chunks(2)
+                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn a_rectangle_fills_with_the_brush_and_is_outlined_with_the_pen() {
+        // 5a6c's reprint diagram: each box a META_RECTANGLE under a white
+        // brush and a grey pen; we skipped the record (no boxes at all).
+        let d = wmf(
+            &[
+                brush(0, 255, 0),
+                (0x012D, vec![0]),
+                // A 4-unit grey pen.
+                (0x02FA, vec![0, 4, 0, 0x8080, 0x0280]),
+                (0x012D, vec![1]),
+                // Bottom, right, top, left.
+                (0x041B, vec![80, 80, 20, 20]),
+            ],
+            2,
+        );
+        let (w, h, px) = rasterize(&d).expect("wmf");
+        let at = |x: u32, y: u32| {
+            let i = ((y * h / 100) * w + x * w / 100) as usize * 3;
+            [px[i], px[i + 1], px[i + 2]]
+        };
+        assert_eq!(at(50, 50), [0, 255, 0], "the brush fills the box");
+        assert_eq!(at(20, 50), [128, 128, 128], "the pen outlines it");
+        assert_eq!(at(10, 10), [255, 255, 255], "outside stays white");
+    }
+
+    #[test]
+    fn a_null_brush_rectangle_only_outlines() {
+        let d = wmf(
+            &[
+                brush(255, 0, 0),
+                (0x012D, vec![0]),
+                (0x041B, vec![90, 90, 10, 10]),
+                // BS_NULL into slot 1, then a second box inside the first.
+                (0x02FC, vec![1, 0, 0, 0]),
+                (0x012D, vec![1]),
+                (0x041B, vec![70, 70, 30, 30]),
+            ],
+            2,
+        );
+        let (w, h, px) = rasterize(&d).expect("wmf");
+        let at = |x: u32, y: u32| {
+            let i = ((y * h / 100) * w + x * w / 100) as usize * 3;
+            [px[i], px[i + 1], px[i + 2]]
+        };
+        assert_eq!(
+            at(50, 50),
+            [255, 0, 0],
+            "the hollow box keeps the red under it"
+        );
+        assert_eq!(at(30, 50), [0, 0, 0], "and draws its black outline");
+    }
+
+    #[test]
+    fn text_records_come_out_as_text_in_the_selected_font() {
+        let d = wmf(
+            &[
+                (0x020B, vec![0, 0]),
+                (0x020C, vec![200, 400]),
+                font(-25, 400, false, "Times New Roman"),
+                (0x012D, vec![0]),
+                (0x0209, vec![0x00FF, 0]),
+                ext_text(40, 20, "Act as first "),
+                (0x001E, vec![]),
+                font(-25, 700, true, "Arial"),
+                (0x012D, vec![1]),
+                ext_text(200, 100, "Reprints"),
+                (0x0127, vec![0xFFFF]),
+                ext_text(40, 150, "restored"),
+                ext_text(40, 180, "  "),
+            ],
+            2,
+        );
+        let (_, _, _, texts) = render(&d).expect("wmf");
+        assert_eq!(texts.len(), 3, "blank strings write nothing: {texts:?}");
+        let first = &texts[0];
+        assert_eq!(first.text, "Act as first ");
+        assert_eq!((first.x, first.y, first.size), (0.1, 0.1, 0.125));
+        assert_eq!(first.family, "Times New Roman");
+        assert_eq!(first.color, [255, 0, 0]);
+        assert!(!first.bold && !first.italic && !first.cell);
+        assert_eq!(first.aspect, 2.0);
+        assert!(texts[1].bold && texts[1].italic && texts[1].family == "Arial");
+        assert_eq!(
+            texts[2].family, "Times New Roman",
+            "RESTOREDC brings the font back"
+        );
     }
 }
