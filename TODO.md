@@ -36,6 +36,9 @@ Where every plan-like document stands, one line each (checked 2026-10-01):
   and v0.10.1 (2026-09-30); see `CHANGELOG.md`.
 - [docs/superpowers/plans/2026-09-26-jubarte-adoption.md](docs/superpowers/plans/2026-09-26-jubarte-adoption.md) —
   adoption bundle; per-phase status banners live inside it.
+- [docs/superpowers/plans/2026-10-02-dependency-trim-and-library-readmes.md](docs/superpowers/plans/2026-10-02-dependency-trim-and-library-readmes.md) —
+  planned: PR A tiny-skia 0.12, PR B vendored OPC, PR C per-library
+  READMEs in the release, optional PR D SHA-256.
 
 ## 1. wasm32 memory ceiling on run-fragmented documents (HIGH)
 
@@ -288,7 +291,7 @@ important first:
 - [ ] **Operations still to come**: `format_run` (plan 1, Task 8c) emits
   `w:rPrChange`; `insert_image` and `insert_footnote` emit `w:ins` on their
   runs; `settings` and `watermark` (plan 3) apply to both copies;
-  `fill_control` is refused under keep for now (§9). Each new `Resolved` variant must be handled in
+  `fill_control` is refused under keep for now (§10). Each new `Resolved` variant must be handled in
   `tracked::emit` as well as in `Transaction::apply`.
 - [ ] **WASM**: the WASM edit's diff still uses `patch_redline`, so under
   keep it lists the other party's changes too; use `patch_own_changes` as
@@ -305,48 +308,6 @@ important first:
   and Windows runners, and on `main` (`b420d64`) too; macOS passes. Install
   the fonts in CI or make the tests use metric-compatible substitutes.
 
-## 9. Content controls follow-ups (S14)
-
-Status: OPEN. `fill_control` and the `inspect` `controls` list shipped in
-#298 (2026-10-02). Three known gaps, most important first:
-
-- [ ] **The redline drops the control around a fill** (KNOWN_ISSUES.md #7).
-  The clean copy keeps the `w:sdt`, but the comparer's M390 step
-  (`unwrap_content_controls_in_pure_revisions`, `src/comparer/finalize.rs`)
-  unwraps every control in a paragraph that carries `w:ins` or `w:del`, as
-  Word Compare does. A fill always revises its paragraph, so the redline
-  shows the fill as plain tracked text without the tag, alias or lock.
-  Options: a Word-mode-only exception to M390 for controls whose
-  `w:sdtPr` is unchanged, or re-wrapping the filled runs in the original
-  `w:sdt` after compare. First get Word's own redline of a filled form
-  (fill a control with Track Changes on, and Word Compare of the two
-  copies) and match whichever Word writes. Done when
-  `decision_redline_keeps_the_control_wrapper` in
-  `tests/edit_fill_control.rs` passes and loses its `#[ignore]`.
-- [ ] **Fills are refused under `existing_revisions: "keep"`.** The tracked
-  emitter (`src/edit/tracked.rs`) has no arm for `Resolved::FillControl`,
-  so before the refusal a fill reached the clean copy and the redline
-  showed nothing. `resolve_fill_control` now refuses it with
-  `UNSUPPORTED_STRUCTURE` (test
-  `fills_are_refused_under_keep_until_the_emitter_tracks_them`). To lift
-  it, emit the fill as Word does when you type into a control with Track
-  Changes on: the old content runs in `w:del` and the new run in `w:ins`,
-  inside `w:sdtContent`, so the control survives in the redline. Block-level
-  controls also need the deleted paragraph marks. Checkbox and date state
-  (`w14:checked`, `w:fullDate`) are `w:sdtPr` changes Word does not track;
-  check what Word writes before choosing. Add accept and reject invariant
-  tests, then drop the refusal and the skill's note.
-- [ ] **Checkbox glyphs render blank in PDF and PNG.** Word writes the box
-  (U+2610 unchecked, U+2612 checked) in MS Gothic. Without that font the
-  renderer substitutes Cambria (`jubarte debug FILE --check render` shows
-  `font "MS Gothic" regular → Cambria unknown`), which has no ballot-box
-  glyph, so the box is missing before and after a fill
-  (`examples/agents/fill-form/clean-page-01.png`). Fix in the font
-  substitution: map MS Gothic and MS Mincho to an open font in
-  `assets/fonts/` that covers U+2610 to U+2612, or fall back per glyph when
-  the chosen face lacks a codepoint. Compare with Word's PDF of
-  `examples/agents/fill-form` through `scripts/word_pdf.py`, and add a
-  render test asserting the glyph is drawn.
 ## 9. Append (S13) follow-ups
 
 Status: OPEN. Append shipped in #285 (2026-10-02, `d24e2f6`): `src/append.rs`,
@@ -502,7 +463,54 @@ repeatable-sweep item below is what makes these numbers reproducible.
   picture; `npx jubarte-redlines` has no `append`; `jubarte_wasm.d.ts` gains
   `appendDocuments` only at the next `build-npm.sh`.
 
-## 10. PDF parity follow-ups from 5a6c (2026-10-02)
+## 10. Content controls follow-ups (S14)
+
+Status: OPEN. `fill_control` and the `inspect` `controls` list shipped in
+#298 (2026-10-02). Three known gaps, most important first:
+
+- [ ] **The redline drops the control around a fill** (KNOWN_ISSUES.md #7).
+  The clean copy keeps the `w:sdt`, but the comparer's M390 step
+  (`unwrap_content_controls_in_pure_revisions`, `src/comparer/finalize.rs`)
+  unwraps every control in a paragraph that carries `w:ins` or `w:del`, as
+  Word Compare does. A fill always revises its paragraph, so the redline
+  shows the fill as plain tracked text without the tag, alias or lock.
+  Options: a Word-mode-only exception to M390 for controls whose
+  `w:sdtPr` is unchanged, or re-wrapping the filled runs in the original
+  `w:sdt` after compare. First get Word's own redline of a filled form
+  (fill a control with Track Changes on, and Word Compare of the two
+  copies) and match whichever Word writes. Done when
+  `decision_redline_keeps_the_control_wrapper` in
+  `tests/edit_fill_control.rs` passes and loses its `#[ignore]`.
+- [ ] **Fills are refused under `existing_revisions: "keep"`.** The tracked
+  emitter (`src/edit/tracked.rs`) has no arm for `Resolved::FillControl`,
+  so before the refusal a fill reached the clean copy and the redline
+  showed nothing. `resolve_fill_control` now refuses it with
+  `UNSUPPORTED_STRUCTURE` (test
+  `fills_are_refused_under_keep_until_the_emitter_tracks_them`). To lift
+  it, emit the fill as Word does when you type into a control with Track
+  Changes on: the old content runs in `w:del` and the new run in `w:ins`,
+  inside `w:sdtContent`, so the control survives in the redline. Block-level
+  controls also need the deleted paragraph marks. Checkbox and date state
+  (`w14:checked`, `w:fullDate`) are `w:sdtPr` changes Word does not track;
+  check what Word writes before choosing. Add accept and reject invariant
+  tests, then drop the refusal and the skill's note.
+- [ ] **Checkbox glyphs render blank in PDF and PNG.** Word writes the box
+  (U+2610 unchecked, U+2612 checked) in MS Gothic. Without that font the
+  renderer substitutes Cambria (`jubarte debug FILE --check render` shows
+  `font "MS Gothic" regular → Cambria unknown`), which has no ballot-box
+  glyph, so the box is missing before and after a fill
+  (`examples/agents/fill-form/clean-page-01.png`). Fix in the font
+  substitution: map MS Gothic and MS Mincho to an open font in
+  `assets/fonts/` that covers U+2610 to U+2612, or fall back per glyph when
+  the chosen face lacks a codepoint. Compare with Word's PDF of
+  `examples/agents/fill-form` through `scripts/word_pdf.py`, and add a
+  render test asserting the glyph is drawn.
+  Update 2026-10-02: where MS Gothic is installed (macOS with Office) it
+  now resolves to the real face and the ☒ paints (`jubarte debug` shows
+  `MS-Gothic embedded`); the gap remains on Linux, Windows without the font
+  and WASM, so the per-glyph fallback is still the fix.
+
+## 11. PDF parity follow-ups from 5a6c (2026-10-02)
 
 Status: open. Found while fixing 5a6c's banner, header STYLEREF, WMF
 diagram and VML picture size; each needs a Word probe or a decision first.
