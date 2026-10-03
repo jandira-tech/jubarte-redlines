@@ -157,7 +157,10 @@ crate_ver() { grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2; }
 # crates.io answers 403 to a request without a User-Agent.
 crates_has()  { curl -sf -A "jubarte-release (github.com/jandira-tech/jubarte-redlines)" \
                   "https://crates.io/api/v1/crates/jubarte-redlines/$VER" >/dev/null; }
-pypi_has()    { curl -sf "https://pypi.org/pypi/jubarte-redlines/$VER/json" >/dev/null; }
+# The project listing, not /pypi/<name>/<version>/json: PyPI's CDN keeps a
+# 404 for that URL once anything asked before the upload (the v0.11.0 verify
+# failed on a live release), while the listing is purged on upload.
+pypi_has()    { curl -sf "https://pypi.org/pypi/jubarte-redlines/json" | python3 -c 'import json, sys; sys.exit(sys.argv[1] not in json.load(sys.stdin)["releases"])' "$VER"; }
 npm_has()     { [ "$(npm view "jubarte-wasm@$VER" version 2>/dev/null)" = "$VER" ]; }
 npm_cli_has() { [ "$(npm view "jubarte-redlines@$VER" version 2>/dev/null)" = "$VER" ]; }
 ghrel_has()   { gh release view "$TAG" >/dev/null 2>&1; }
@@ -545,9 +548,14 @@ else
     for t in node node-slim web web-slim; do
       cp "jubarte-wasm/npm/$t/jubarte_wasm.d.ts" "docs/api/jubarte-wasm-$t-v$VER.d.ts"
     done
+    # docs/javascript.md quotes these typings; step 5 read the previous
+    # release's (v0.11.0 shipped a reference missing 13 new functions).
+    python3 scripts/gen_wasm_api.py \
+      --dts jubarte-wasm/npm/node/jubarte_wasm.d.ts \
+      --file docs/javascript.md --marker wasm-api
     # The build re-resolves jubarte-wasm/Cargo.lock too; it ships in this commit.
-    if [ -n "$(git status --porcelain -- jubarte-wasm/npm jubarte-wasm/Cargo.lock docs/api)" ]; then
-      git add jubarte-wasm/npm jubarte-wasm/Cargo.lock docs/api
+    if [ -n "$(git status --porcelain -- jubarte-wasm/npm jubarte-wasm/Cargo.lock docs/api docs/javascript.md)" ]; then
+      git add jubarte-wasm/npm jubarte-wasm/Cargo.lock docs/api docs/javascript.md
       git commit -m "build(wasm): regenerate npm artifacts for v$VER"
     fi
   fi

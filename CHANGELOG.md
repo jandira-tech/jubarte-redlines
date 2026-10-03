@@ -15,6 +15,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+### Fixed
+
+- docs/javascript.md lists every function and class jubarte-wasm 0.11.0 ships; the release reference was generated from the 0.10.1 typings. scripts/release.sh now regenerates it after rebuilding the npm package, and checks PyPI on the project listing, which a cached 404 cannot hide.
+
 ## [0.11.0] - 2026-10-03
 
 > **Summary.** Edit plans become a document editor (rewrite, insert_table, list, format_run, insert_footnote, insert_image, page_setup, fill_control, watermark, redact, settings, fields update, and occurrence targeting); new jubarte audit, validate (with --repair and --original), scrub, append, comments, diff-render and convert --pages; Markdown alongside Word; a jubarte-mcp MCP server and uvx/npx runners. Inputs are admitted under limits before anything inflates, and a legacy .doc or encrypted file is refused with LEGACY_DOC. The default conventional marks follow Litera Compare. Python wheels for Windows and musl Linux. docx-to-PDF follows Word 16 in more table, text box, spacing, list, font, header, footer, note and field cases. Breaking: WmlDocument::document_byte_array is private (use bytes()), AdmissionErrorKind gains LegacyDocument, and sha1_fingerprint* are renamed fnv1a_* (deprecated aliases stay one release).
