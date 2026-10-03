@@ -12568,6 +12568,11 @@ fn table_block(
             }
         }
     }
+    // A short row's cell whose tcW outruns the grid columns it names
+    // spans the columns its width covers: Word lays 25f1d311bd's lone
+    // tcW 10080 cell over its four-column grid (gridSpan absent), not the
+    // first 84pt column; 91 corpus documents carry such a row.
+    stretch_stale_spans(&mut raw_rows, &cols);
     let mut occupancy = 0usize;
     let grid_len = cols.len();
     for row in &raw_rows {
@@ -13131,6 +13136,44 @@ fn cell_pad_tb(dom: &Dom, cell: NodeId, table_t: f32, table_b: f32) -> (f32, f32
             .unwrap_or(fallback)
     };
     (edge("top", table_t), edge("bottom", table_b))
+}
+
+/// A cell's tcW past the grid columns its span names, in a row that
+/// leaves grid columns unused, takes the following columns while each
+/// brings its width closer to the tcW: Word reads the row by its cell
+/// widths and the saved grid as a cache (25f1d311bd). A row whose cells
+/// fit their columns (within `STALE_SPAN_SLACK_PT`) is a short row and
+/// stays one.
+fn stretch_stale_spans(rows: &mut [Vec<RawCell>], cols: &[f32]) {
+    const STALE_SPAN_SLACK_PT: f32 = 20.0;
+    for row in rows.iter_mut() {
+        let used: usize = row.iter().map(|c| c.colspan.max(1)).sum();
+        if used >= cols.len() {
+            continue;
+        }
+        let mut spare = cols.len() - used;
+        let mut col = 0usize;
+        for cell in row.iter_mut() {
+            let span = cell.colspan.max(1);
+            if let PrefWidth::Dxa(want) = cell.pref {
+                let mut covered: f32 = cols.iter().skip(col).take(span).sum();
+                let mut extra = 0usize;
+                while extra < spare
+                    && want - covered > STALE_SPAN_SLACK_PT
+                    && let Some(&next) = cols.get(col + span + extra)
+                    && (covered + next - want).abs() < (want - covered).abs()
+                {
+                    covered += next;
+                    extra += 1;
+                }
+                if extra > 0 {
+                    cell.colspan = span + extra;
+                    spare -= extra;
+                }
+            }
+            col += cell.colspan.max(1);
+        }
+    }
 }
 
 fn cell_span(dom: &Dom, cell: NodeId) -> (usize, VMerge) {

@@ -48095,3 +48095,27 @@ fn a_grid_without_widths_fits_its_columns_to_their_content() {
         "the first column spans its content (Word 201.3pt); pitch={pitch}"
     );
 }
+
+#[test]
+fn a_short_row_s_cell_wider_than_its_grid_column_spans_the_columns_its_width_covers() {
+    // 25f1d311bd (corpus with_comments_tracking), Word's PDF: a one-row
+    // table over a four-column grid (1684/1868/1747/4781 twips) whose
+    // only cell carries tcW 10080 dxa and no gridSpan. Word lays the cell
+    // over the whole grid, its text on full-width lines; the engine gave
+    // it the first 84pt column and wrapped the paragraph into 15 lines,
+    // a page more than Word (91 corpus documents carry such a row).
+    let text = "Bottom line Google Docs is excellent for lightweight browser-first collaboration.";
+    let body = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"1684\"/><w:gridCol w:w=\"1868\"/><w:gridCol w:w=\"1747\"/><w:gridCol w:w=\"4781\"/></w:tblGrid>\
+         <w:tr><w:tc><w:tcPr><w:tcW w:w=\"10080\" w:type=\"dxa\"/></w:tcPr>\
+         <w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/><w:sectPr/>"
+    );
+    let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("stale span");
+    let bottom = pdf_glyph_text_xy(&pdf, "Bottom").expect("Bottom");
+    let collab = pdf_glyph_text_xy(&pdf, "collaboration").expect("collaboration");
+    assert!(
+        (bottom.1 - collab.1).abs() < 0.5 && collab.0 - bottom.0 > 250.0,
+        "the cell spans the grid, its text on one line; Bottom={bottom:?} collaboration={collab:?}"
+    );
+}
