@@ -293,8 +293,9 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   and both npm packages. Links are pinned to the release tag, because
   the registries cannot resolve relative links. The release checks that
   every artifact carries the README for its version (#339).
-- `tiny-skia` 0.12: `png` 0.17 and `bitflags` 1 leave the dependency
-  tree. Rendered PDFs are byte-identical (#340).
+- `tiny-skia` 0.12: `png` 0.17 and `bitflags` 1 leave the engine's
+  dependency tree (the Mac app still builds them through Tauri's `ico`).
+  Rendered PDFs are byte-identical (#340).
 
 ### Deprecated
 
