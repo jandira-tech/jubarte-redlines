@@ -9341,6 +9341,7 @@ fn heckel_links(k1: &[u32], k2: &[u32], w1: &[u32]) -> Vec<(usize, usize)> {
             && j + k < m
             && la[i + k] == usize::MAX
             && lb[j + k] == usize::MAX
+            && k1[i + k] != 0
             && k1[i + k] == k2[j + k]
         {
             la[i + k] = j + k;
@@ -9355,6 +9356,7 @@ fn heckel_links(k1: &[u32], k2: &[u32], w1: &[u32]) -> Vec<(usize, usize)> {
             && j >= k
             && la[i - k] == usize::MAX
             && lb[j - k] == usize::MAX
+            && k1[i - k] != 0
             && k1[i - k] == k2[j - k]
         {
             la[i - k] = j - k;
@@ -9427,8 +9429,9 @@ fn weighted_lcs(k1: &[u32], k2: &[u32], w1: &[u32]) -> u64 {
     prev[k2.len()]
 }
 
-/// Largest word-by-word table the paragraph resolver computes; a longer
-/// pair keeps the run-by-run resolvers.
+/// Largest word-by-word table the paragraph resolver computes — about
+/// 5 000 words a side, every space being a unit; a longer pair keeps the
+/// run-by-run resolvers.
 const PARAGRAPH_WINDOW_CELL_CAP: usize = 100_000_000;
 
 /// Resolve a window holding one paragraph's words a side the way Word
@@ -9440,20 +9443,26 @@ const PARAGRAPH_WINDOW_CELL_CAP: usize = 100_000_000;
 /// included), reach [`super::WORD_LEVEL_KEPT_RATIO`] or the window is
 /// replaced whole, inserted then deleted. A word-level window keeps its
 /// anchors — the runs grown from the words unique to both sides — and
-/// each gap between them is a window judged on its own, so a rewritten
-/// stretch sharing a stray word or two is replaced as one block. The
+/// each gap between them is a window judged on its own — anchored again
+/// by the words unique to the gap, as Word links single stopwords inside
+/// its gaps, or replaced as one block when the gap keeps under 0.12, as a
+/// rewritten stretch sharing a stray word or two does. The
 /// verdict measures a longest common subsequence, the most any alignment
 /// keeps: on text whose kept runs are unique it agrees with Word on 99 %
 /// of the probes; on repetitive text Word loses blocks to a stray match
 /// no in-order alignment makes, and this marks word by word what Word
 /// replaces. The anchors are Heckel's links, extended and kept in order.
 ///
-/// Only the words of one paragraph a side qualify: Word units throughout,
-/// text on both sides, at most one paragraph mark a side and only as the
-/// last unit. Two marks pair with each other and stay out of the gaps. A
-/// word-level window without an anchor resolves run by run with the
-/// voiding gates off. Word mode only; the PowerTools preset keeps its run
-/// threshold.
+/// Only a whole paragraph a side qualifies: Word units throughout, text on
+/// both sides, each side ending in its paragraph mark — or a gap this
+/// resolver carved out of such a paragraph (`in_word_level_paragraph`). A
+/// fragment the run resolvers cut out of a multi-paragraph region keeps
+/// their arrangement: the probes judged whole paragraphs, and Word keeps
+/// " font " and "." of a paragraph it mostly rewrites inside a
+/// three-paragraph region (font_color_demo × font_family_demo). The two
+/// marks pair with each other and stay out of the gaps. A word-level
+/// window without an anchor resolves run by run with the voiding gates
+/// off. Word mode only; the PowerTools preset keeps its run threshold.
 fn resolve_paragraph_window(
     dom: &mut Dom,
     unknown: CorrelatedSequence,
@@ -9480,6 +9489,14 @@ fn resolve_paragraph_window(
     let marked1 = unit_last_atom_is_ppr(dom, &cul1[cul1.len() - 1]);
     let marked2 = unit_last_atom_is_ppr(dom, &cul2[cul2.len() - 1]);
     let both_marked = marked1 && marked2;
+    // The probes judge whole paragraphs; a fragment the run resolvers cut
+    // out of a changed region keeps their arrangement (font_color_demo ×
+    // font_family_demo: Word keeps " font " and "." of a paragraph whose
+    // words it mostly rewrites, inside a three-paragraph region). The gaps
+    // this resolver carves out of a judged paragraph are judged again.
+    if !both_marked && !settings.in_word_level_paragraph {
+        return Err(unknown);
+    }
     let words1 = if both_marked {
         &cul1[..cul1.len() - 1]
     } else {
@@ -9490,22 +9507,29 @@ fn resolve_paragraph_window(
     } else {
         cul2
     };
-    // Each unit's key (0 for no text: never matches) and weight, the
-    // characters a kept word contributes; a side's characters in all.
+    // Each unit's key — its hash, which atomization salts (fields) and
+    // case-folds, so a word inside one field never anchors inside another
+    // and "co[softHyphen]operate" never pairs with "cooperate"; a unit
+    // without text (a field char, a tab, a drawing) keys by its element and
+    // pairs only with its like — its weight, the characters a kept word
+    // contributes, and whether it has text at all. A field's code is text:
+    // Word keeps the shell of a field whose code it kept and marks the
+    // result's words (STYLEREF "Name Of Act/Reg": "Contaminated Sites Act
+    // 2003" → "Firearms Act 1973"). A side's characters in all.
     let mut keys: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
-    let mut side = |cul: &[ComparisonUnit]| -> (Vec<u32>, Vec<u32>, usize) {
+    let instr = W::name("instrText");
+    let mut side = |cul: &[ComparisonUnit]| -> (Vec<u32>, Vec<u32>, Vec<bool>, usize) {
         let mut ks = Vec::with_capacity(cul.len());
         let mut ws = Vec::with_capacity(cul.len());
+        let mut textless = Vec::with_capacity(cul.len());
         let mut chars = 0usize;
         for u in cul {
             let mut text = String::new();
             for a in u.descendant_atoms() {
-                if dom.name_is(a.content_element, &W::t()) {
+                if dom.name_is(a.content_element, &W::t()) || dom.name_is(a.content_element, &instr)
+                {
                     text.push_str(&dom.value_str(a.content_element));
                 }
-            }
-            if settings.case_insensitive {
-                text = text.to_uppercase();
             }
             chars += text.chars().count();
             let weight = text
@@ -9513,17 +9537,14 @@ fn resolve_paragraph_window(
                 .filter(|ch| !settings.word_separators.contains(ch) && !ch.is_whitespace())
                 .count();
             ws.push(u32::try_from(weight).unwrap_or(u32::MAX));
-            if text.is_empty() {
-                ks.push(0);
-            } else {
-                let next = u32::try_from(keys.len() + 1).unwrap_or(u32::MAX);
-                ks.push(*keys.entry(text).or_insert(next));
-            }
+            textless.push(text.is_empty());
+            let next = u32::try_from(keys.len() + 1).unwrap_or(u32::MAX);
+            ks.push(*keys.entry(u.sha1().to_string()).or_insert(next));
         }
-        (ks, ws, chars)
+        (ks, ws, textless, chars)
     };
-    let (k1, w1, chars1) = side(words1);
-    let (k2, w2, chars2) = side(words2);
+    let (k1, w1, textless1, chars1) = side(words1);
+    let (k2, w2, textless2, chars2) = side(words2);
     // A side without a word — separators and punctuation only, the residue
     // of a cross-paragraph pairing (font_family × font_size leaves "." to
     // face a sentence) — is no paragraph to judge; the suffix match keeps
@@ -9545,15 +9566,14 @@ fn resolve_paragraph_window(
     }
     let kept = weighted_lcs(&k1, &k2, &w1);
     let ratio = (kept as f64) / (chars1.max(chars2) as f64);
-    let links = heckel_links(&k1, &k2, &w1);
-    if std::env::var_os("JUBARTE_TRACE_PARAGRAPH").is_some() {
+    static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *TRACE.get_or_init(|| std::env::var_os("JUBARTE_TRACE_PARAGRAPH").is_some()) {
         eprintln!(
-            "[paragraph] {}x{} units, chars {}/{}, kept {kept} = {ratio:.3}, {} anchors, marks {marked1}/{marked2}",
+            "[paragraph] {}x{} units, chars {}/{}, kept {kept} = {ratio:.3}, marks {marked1}/{marked2}",
             words1.len(),
             words2.len(),
             chars1,
             chars2,
-            links.len()
         );
     }
     if ratio < super::WORD_LEVEL_KEPT_RATIO {
@@ -9561,11 +9581,45 @@ fn resolve_paragraph_window(
         // opening the LCS already kept stays in its paragraph (font_family
         // × font_size: Word MMDM, a replaced mark made MMIMDEE), and a
         // replaced paragraph is one paragraph of inserted then deleted
-        // text, as `merge_replaced_paragraphs` folds it.
-        let mut out = vec![
-            CorrelatedSequence::inserted(words2.to_vec()),
-            CorrelatedSequence::deleted(words1.to_vec()),
-        ];
+        // text, as `merge_replaced_paragraphs` folds it. Textless units
+        // alike at either end — a field's begin, separate or end beside a
+        // replaced result — stay paired: the shell outlives its result.
+        let mut lead = 0;
+        while lead < words1.len()
+            && lead < words2.len()
+            && textless1[lead]
+            && textless2[lead]
+            && k1[lead] == k2[lead]
+        {
+            lead += 1;
+        }
+        let mut trail = 0;
+        while lead + trail < words1.len()
+            && lead + trail < words2.len()
+            && textless1[words1.len() - 1 - trail]
+            && textless2[words2.len() - 1 - trail]
+            && k1[words1.len() - 1 - trail] == k2[words2.len() - 1 - trail]
+        {
+            trail += 1;
+        }
+        let (end1, end2) = (words1.len() - trail, words2.len() - trail);
+        let mut out = Vec::new();
+        if lead > 0 {
+            out.push(CorrelatedSequence::paired(
+                CorrelationStatus::Equal,
+                words1[..lead].to_vec(),
+                words2[..lead].to_vec(),
+            ));
+        }
+        out.push(CorrelatedSequence::inserted(words2[lead..end2].to_vec()));
+        out.push(CorrelatedSequence::deleted(words1[lead..end1].to_vec()));
+        if trail > 0 {
+            out.push(CorrelatedSequence::paired(
+                CorrelationStatus::Equal,
+                words1[end1..].to_vec(),
+                words2[end2..].to_vec(),
+            ));
+        }
         if both_marked {
             out.push(CorrelatedSequence::paired(
                 CorrelationStatus::Equal,
@@ -9575,13 +9629,14 @@ fn resolve_paragraph_window(
         }
         return Ok(out);
     }
+    let links = heckel_links(&k1, &k2, &w1);
+    let mut word_level = settings.clone();
+    word_level.in_word_level_paragraph = true;
+    word_level.detail_threshold = 0.0;
     if links.is_empty() {
         if settings.in_word_level_paragraph {
             return Err(unknown);
         }
-        let mut word_level = settings.clone();
-        word_level.in_word_level_paragraph = true;
-        word_level.detail_threshold = 0.0;
         return Ok(resolve_correlated_sequences(
             dom,
             vec![unknown],
@@ -9592,9 +9647,22 @@ fn resolve_paragraph_window(
     let (mut pi, mut pj) = (0usize, 0usize);
     let mut run_start: Option<(usize, usize)> = None;
     let mut run_len = 0usize;
-    let flush =
+    // A gap between anchors is judged now, as a window inside this one.
+    let mut gap = |left: Vec<ComparisonUnit>, right: Vec<ComparisonUnit>, out: &mut Vec<_>| {
+        if left.is_empty() || right.is_empty() {
+            cascade(left, right, out);
+        } else {
+            let unknown = CorrelatedSequence::paired(CorrelationStatus::Unknown, left, right);
+            out.extend(resolve_correlated_sequences(
+                dom,
+                vec![unknown],
+                &word_level,
+            ));
+        }
+    };
+    let mut flush =
         |start: (usize, usize), len: usize, pi: &mut usize, pj: &mut usize, out: &mut Vec<_>| {
-            cascade(
+            gap(
                 words1[*pi..start.0].to_vec(),
                 words2[*pj..start.1].to_vec(),
                 out,
@@ -9624,7 +9692,7 @@ fn resolve_paragraph_window(
     if let Some(start) = run_start {
         flush(start, run_len, &mut pi, &mut pj, &mut out);
     }
-    cascade(words1[pi..].to_vec(), words2[pj..].to_vec(), &mut out);
+    gap(words1[pi..].to_vec(), words2[pj..].to_vec(), &mut out);
     if both_marked {
         out.push(CorrelatedSequence::paired(
             CorrelationStatus::Equal,
