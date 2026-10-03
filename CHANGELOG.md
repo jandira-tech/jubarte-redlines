@@ -686,6 +686,8 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
     ([docs/WORD_DIFFERENCES.md](docs/WORD_DIFFERENCES.md) #7).
   - A centred table's 22-inch width cap ignores its `w:tblInd`.
   - Contextual spacing and the after/before fold stop at a nested table.
+  - A table style's `w:b` or `w:i` with `w:val="0"` turns bold or italic
+    off in its cells instead of on (#338).
 - Text boxes, frames and floats:
   - A paragraph-relative text box that would run past the bottom margin
     is lifted to end there, as Word lifts it. The lines that meet it
@@ -716,6 +718,19 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
     Word's 35.
   - A header picture after text wraps when the text's last line leaves
     no room for it.
+  - A table inside a text box lays out as a table between the box's
+    paragraphs. Before, its cells ran together as one line of text, and
+    5a6c9a5c's banner lost its grey band (#338).
+  - An inline VML picture is sized in whole pixels at 143 dpi, as Word
+    sizes it: points to HIMETRIC, HIMETRIC to pixels, and pixels to
+    twips, each rounded half up. A 37pt image is 36.75pt. A DrawingML
+    picture keeps its extent (#338).
+  - A WMF picture's text records paint as PDF text in their selected
+    font. Its rectangles fill with the brush and outline with the pen,
+    and a null brush leaves them hollow. Before, 5a6c9a5c's diagram
+    showed only its "+" and "→" (#338).
+  - A row of inline pictures starts at the paragraph's first-line indent,
+    unless the paragraph has a list label (#338).
 - Lines, spacing and breaks:
   - `w:contextualSpacing` drops only the flagged paragraph's share of
     the gap. A flagged after of 6 over a plain before of 20 leaves 14,
@@ -806,6 +821,18 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
     every run's properties.
   - A leading empty revised header or footer paragraph gets its change
     bar, and an all-empty footer paints its paragraph borders.
+  - A header or footer STYLEREF shows the first body text in the named
+    paragraph or character style on its page (with `\l`, the last). With
+    no match on the page it shows the last before the page, and before
+    any match the first after. The field's line is laid out again around
+    the new text, so a right-aligned or centred header stays on its edge.
+    Before, every page printed the cached result; 5a6c9a5c's "s. 1" is
+    now s. 4, s. 9 and s. 12, as in Word (#338).
+  - Word mode (`--revisions word`) paints an inserted field that Word
+    recomputes (PAGE, NUMPAGES, SECTION, STYLEREF, REF, DATE, SEQ)
+    unmarked, as Word does. Cached fields such as DOCPROPERTY stay
+    marked, and the default revision styles mark both
+    ([docs/WORD_DIFFERENCES.md](docs/WORD_DIFFERENCES.md) #5, #338).
 
 ## [0.10.1] - 2026-09-30
 
