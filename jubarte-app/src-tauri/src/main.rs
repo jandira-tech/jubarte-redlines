@@ -302,6 +302,30 @@ fn open_with(args: &[&str]) -> Result<(), String> {
     })
 }
 
+/// The message a failed compare shows. An input the engine refused before
+/// opening it (a `.doc` or encrypted file, RTF, a package over the limits)
+/// carries its reason and the document it names; show that, without the
+/// "I/O error: CODE:" wrapping the engine's `OpcError` puts around it.
+fn compare_error(e: &jubarte::opc::OpcError) -> String {
+    use jubarte::admission::{AdmissionError, AdmissionErrorKind};
+    let refusal = match e {
+        jubarte::opc::OpcError::Io(io) => io
+            .get_ref()
+            .and_then(|inner| inner.downcast_ref::<AdmissionError>()),
+        _ => None,
+    };
+    let Some(refusal) = refusal else {
+        return format!("Comparison failed: {e}");
+    };
+    match refusal.message.split_once(" document: ") {
+        Some((side, why)) if refusal.kind == AdmissionErrorKind::LegacyDocument => {
+            format!("The {side} document is {why}.")
+        }
+        Some((side, why)) => format!("Can't compare the {side} document: {why}."),
+        None => format!("Can't compare: {}.", refusal.message),
+    }
+}
+
 fn run_compare(
     original: &str,
     modified: &str,
@@ -320,7 +344,7 @@ fn run_compare(
     };
 
     let redline = document_comparer::compare_documents(&orig, &modif, author)
-        .map_err(|e| format!("Comparison failed: {e}"))?;
+        .map_err(|e| compare_error(&e))?;
 
     // Honour an explicit output name from the "File name" field; otherwise fall
     // back to the CLI's `<orig>_v_<mod>.docx` convention. Both dedupe with ` (n)`.
@@ -623,7 +647,28 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{author_from_core_xml, parse_preview};
+    use super::{author_from_core_xml, compare_error, parse_preview};
+
+    #[test]
+    fn a_legacy_or_encrypted_original_reads_as_a_save_as_hint() {
+        let ole = b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1 a .doc body".to_vec();
+        let err = jubarte::document_comparer::compare_documents(&ole, &ole, "A").unwrap_err();
+        assert_eq!(
+            compare_error(&err),
+            "The original document is a Word 97-2003 (.doc) or encrypted document; \
+             open it in Word and save it as .docx without a password."
+        );
+    }
+
+    #[test]
+    fn another_refusal_names_the_document_without_an_io_prefix() {
+        let rtf = b"{\\rtf1\\ansi hello}".to_vec();
+        let err = jubarte::document_comparer::compare_documents(&rtf, &rtf, "A").unwrap_err();
+        assert_eq!(
+            compare_error(&err),
+            "Can't compare the original document: an RTF file, not a .docx package."
+        );
+    }
 
     const NS: &str = "xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\"";
 

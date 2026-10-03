@@ -126,7 +126,7 @@ Run from the bundle directory:
 cd src-tauri/target/release/bundle
 IDENTITY="Developer ID Application: Jandira Technologies, LLC (NW99N2W6TA)"
 APP="macos/Jubarte.app"
-DMG="dmg/Jubarte_0.10.1_aarch64.dmg"          # match the built version
+DMG="dmg/Jubarte_$(jq -r .version ../../../tauri.conf.json)_aarch64.dmg"  # the built version
 
 # 1. Notarize the .app (zip → submit → staple).
 ditto -c -k --keepParent "$APP" Jubarte.zip

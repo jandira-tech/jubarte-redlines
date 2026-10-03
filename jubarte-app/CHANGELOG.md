@@ -19,6 +19,13 @@ a new version.
   closely on tables, text boxes, line spacing, lists, fonts, headers, footers,
   notes and fields.
 
+### Fixed
+- A document the engine refuses before comparing (a `.doc`, a
+  password-protected file, RTF, one over the size limits) is named in a plain
+  sentence, such as "The original document is a Word 97-2003 (.doc) or
+  encrypted document; open it in Word and save it as .docx without a
+  password.", not "Comparison failed: I/O error: LEGACY_DOC: …".
+
 ## [0.10.1] — 2026-09-30
 
 ### Changed
