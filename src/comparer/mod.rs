@@ -1313,15 +1313,20 @@ pub const DEFAULT_DETAIL_THRESHOLD: f64 = 0.02;
 /// 3900-character cells among them) Word replaces 38.
 pub const WORD_LEVEL_KEPT_RATIO: f64 = 0.12;
 
-/// Below this many words on the longer side Word keeps whatever the two
-/// paragraphs share, however little: of the paragraphs its redlines of
-/// the bench corpus change on their own, 35 keep a lone word under 0.12
-/// of the longer side, every one of them short (document_100_ultimate_demo
-/// × double_spacing_bold_demo keeps " document " and "." of 12 words at
-/// 0.114; font_color_demo × font_family_demo keeps " font " of 8 at
-/// 0.077). A shorter paragraph keeps the run-by-run resolvers. The value
-/// comes from the `short1` and `asym1` Word waves (6–400 words).
+/// From this many words on the longer side the threshold is
+/// [`WORD_LEVEL_KEPT_RATIO`]; below it [`WORD_LEVEL_KEPT_RATIO_SHORT`].
+/// The 200–4800-word probes separate at 0.1207 against 0.1206–0.128; the
+/// 6–160-word ones (short1, asym1: 358 pairs) at 0.105 against 0.107.
+/// Whether the step is length or the probes' sentence punctuation is the
+/// `punct1` wave's question; until it answers, the two thresholds stand.
 pub const WORD_LEVEL_MIN_WORDS: usize = 200;
+
+/// The threshold below [`WORD_LEVEL_MIN_WORDS`] words (short1, asym1: a
+/// lone six-letter word of 12 is replaced at 0.056, of 6 kept at 0.065;
+/// the band at 60–160 words is 0.101–0.104 replaced, 0.109–0.114 kept).
+/// Below 200 words a lone kept word moves the ratio by whole hundredths,
+/// so the two thresholds are not one value seen twice.
+pub const WORD_LEVEL_KEPT_RATIO_SHORT: f64 = 0.105;
 
 impl WmlComparerSettings {
     /// The preset for `mode`.

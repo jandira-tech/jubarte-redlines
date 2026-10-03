@@ -9453,11 +9453,11 @@ const PARAGRAPH_WINDOW_CELL_CAP: usize = 100_000_000;
 /// no in-order alignment makes, and this marks word by word what Word
 /// replaces. The anchors are Heckel's links, extended and kept in order.
 ///
-/// Only a whole paragraph a side qualifies, of at least
-/// [`super::WORD_LEVEL_MIN_WORDS`] words on the longer side: Word units
-/// throughout, text on both sides, each side ending in its paragraph mark
-/// — or a gap this resolver carved out of such a paragraph
-/// (`in_word_level_paragraph`), whatever its size. A
+/// Only a whole paragraph a side qualifies: Word units throughout, text
+/// on both sides, each side ending in its paragraph mark — or a gap this
+/// resolver carved out of such a paragraph (`in_word_level_paragraph`).
+/// Under [`super::WORD_LEVEL_MIN_WORDS`] words the threshold is
+/// [`super::WORD_LEVEL_KEPT_RATIO_SHORT`]. A
 /// fragment the run resolvers cut out of a multi-paragraph region keeps
 /// their arrangement: the probes judged whole paragraphs, and Word keeps
 /// " font " and "." of a paragraph it mostly rewrites inside a
@@ -9572,11 +9572,11 @@ fn resolve_paragraph_window(
     // the run resolvers keep it. A gap inside a judged paragraph is judged
     // whatever its size.
     let word_count = |ws: &[u32]| ws.iter().filter(|&&w| w > 0).count();
-    if !settings.in_word_level_paragraph
-        && word_count(&w1).max(word_count(&w2)) < super::WORD_LEVEL_MIN_WORDS
-    {
-        return Err(unknown);
-    }
+    let threshold = if word_count(&w1).max(word_count(&w2)) < super::WORD_LEVEL_MIN_WORDS {
+        super::WORD_LEVEL_KEPT_RATIO_SHORT
+    } else {
+        super::WORD_LEVEL_KEPT_RATIO
+    };
     let kept = weighted_lcs(&k1, &k2, &w1);
     let ratio = (kept as f64) / (chars1.max(chars2) as f64);
     static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -9589,7 +9589,7 @@ fn resolve_paragraph_window(
             chars2,
         );
     }
-    if ratio < super::WORD_LEVEL_KEPT_RATIO {
+    if ratio < threshold {
         // The two marks pair, so a replaced tail of a paragraph whose
         // opening the LCS already kept stays in its paragraph (font_family
         // × font_size: Word MMDM, a replaced mark made MMIMDEE), and a
@@ -9597,6 +9597,11 @@ fn resolve_paragraph_window(
         // text, as `merge_replaced_paragraphs` folds it. Textless units
         // alike at either end — a field's begin, separate or end beside a
         // replaced result — stay paired: the shell outlives its result.
+        // The deletion goes first here and the writer puts the insertion
+        // before it, as Word does: an inserted-then-deleted sequence ahead
+        // of content that is a tracked insertion on the revised side made
+        // the region re-streamer lose that content (a table of inserted
+        // cells after a replaced hyperlink field, m_table_after_replaced_cell).
         let mut lead = 0;
         while lead < words1.len()
             && lead < words2.len()
@@ -9624,8 +9629,8 @@ fn resolve_paragraph_window(
                 words2[..lead].to_vec(),
             ));
         }
-        out.push(CorrelatedSequence::inserted(words2[lead..end2].to_vec()));
         out.push(CorrelatedSequence::deleted(words1[lead..end1].to_vec()));
+        out.push(CorrelatedSequence::inserted(words2[lead..end2].to_vec()));
         if trail > 0 {
             out.push(CorrelatedSequence::paired(
                 CorrelationStatus::Equal,
