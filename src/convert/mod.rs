@@ -1526,6 +1526,12 @@ struct TextRun {
     /// `REF bookmark` name. Cached `w:t` is a first-pass guess;
     /// missing names become Word's Error! Reference source not found.
     ref_name: Option<String>,
+    /// `STYLEREF` result: in a header or footer Word replaces it with the
+    /// body text in that style on its own page (`patch_stylerefs`).
+    styleref: Option<std::rc::Rc<StyleRef>>,
+    /// The run's character style (`w:rStyle` id), which a header
+    /// `STYLEREF` can name.
+    char_style: Option<std::rc::Rc<str>>,
     /// Plain `REF` copies bookmark text. `\r`/`\n`/`\w`/`\p` keep cache
     /// (sd_2517 numbered cross-refs).
     ref_copy_text: bool,
@@ -1592,6 +1598,8 @@ impl TextRun {
             style,
             pageref: None,
             ref_name: None,
+            styleref: None,
+            char_style: None,
             ref_copy_text: false,
             field: FieldKind::None,
             rev: false,
@@ -2150,6 +2158,10 @@ struct LaidTextBox {
     /// like body paragraphs inside `insets` (010300e3's letter). Empty
     /// keeps the flat-run label path (charts, diagrams, linked boxes).
     paras: Vec<(Vec<TextRun>, ParaStyle)>,
+    /// The box's own tables, each after the number of `paras` before it:
+    /// laid out as tables, not flattened into the box's text (5a6c's
+    /// red-and-grey banner is a two-row table in a footer text box).
+    tables: Vec<(usize, std::rc::Rc<Block>)>,
     /// `bodyPr` lIns/tIns/rIns/bIns (VML `v:textbox/@inset`), points.
     insets: [f32; 4],
     /// `a:custGeom`: the shape's own paths (010300e3's icons).
@@ -2705,6 +2717,11 @@ enum ImageKind {
     /// line like a picture its size and paints there (dcda3ae's note bar
     /// under its header title).
     TextBox(std::rc::Rc<LaidTextBox>),
+    /// A WMF's raster with the strings it writes, painted as text over it.
+    Metafile {
+        raster: Box<ImageKind>,
+        texts: std::rc::Rc<[metafile::MetaText]>,
+    },
 }
 
 /// The room under an inline VML rect's outline in its laid box: 1pt, or
@@ -3555,8 +3572,9 @@ fn parse_tbl_style(dom: &Dom, style: NodeId, defaults: &Defaults, theme: &ThemeF
     for pr in dom.descendants(style, Some(&W::name("tblStylePr"))) {
         let kind = attr_any(dom, pr, "type").unwrap_or("");
         let fill = style_pr_fill(dom, pr);
-        let bold = first_named(dom, pr, "b").is_some();
-        let italic = first_named(dom, pr, "i").is_some();
+        // `<w:i w:val="0"/>` names italic off (5a6c's banner header).
+        let on = |name| first_named(dom, pr, name).is_some_and(|n| !val_is_false(dom, Some(n)));
+        let (bold, italic) = (on("b"), on("i"));
         match kind {
             "firstRow" => {
                 out.first_row_fill = fill;
@@ -8302,6 +8320,7 @@ fn frame_box(
         adj: Vec::new(),
         prst: String::new(),
         paras: laid,
+        tables: Vec::new(),
         // An unbordered frame's text starts on its x/y (e73ba1e0's date at
         // 455.04pt = x 9100tw); a border keeps its point of padding.
         insets: if outline.is_some() {
@@ -10733,6 +10752,62 @@ fn apply_field_results(
         .collect()
 }
 
+/// A painted `STYLEREF` result: its page and op, its line's ops
+/// (`line`) and the share of a width change the line's start takes.
+struct StyleRefOp {
+    page: usize,
+    op: usize,
+    target: std::rc::Rc<StyleRef>,
+    line: std::ops::Range<usize>,
+    align: f32,
+}
+
+/// A `STYLEREF` field's target: the style it names (by name, any case,
+/// or by id; a bare digit is that heading level) and its `\l` switch.
+#[derive(Debug, PartialEq)]
+struct StyleRef {
+    id: String,
+    last: bool,
+}
+
+/// `STYLEREF "Name" [\l]`. Switches that reshape the result (`\n`,
+/// `\r`, `\w`, `\p`, `\s`) keep the cached text.
+fn styleref_target(instr: &str, styles: Option<&HashMap<String, NamedStyle>>) -> Option<StyleRef> {
+    let rest = instr.trim_start();
+    let (kind, rest) = rest.split_at(rest.find(char::is_whitespace)?);
+    if !kind.eq_ignore_ascii_case("STYLEREF") {
+        return None;
+    }
+    let rest = rest.trim_start();
+    let (arg, switches) = match rest.strip_prefix('"') {
+        Some(quoted) => quoted.split_at(quoted.find('"')?),
+        None => rest.split_at(rest.find(char::is_whitespace).unwrap_or(rest.len())),
+    };
+    let switches = switches.trim_start_matches('"');
+    let mut last = false;
+    for sw in switches.split_whitespace() {
+        match sw.to_ascii_lowercase().as_str() {
+            "\\l" => last = true,
+            "\\n" | "\\r" | "\\w" | "\\p" | "\\s" => return None,
+            _ => {}
+        }
+    }
+    let heading;
+    let name = if arg.len() == 1 && arg.as_bytes()[0].is_ascii_digit() && arg != "0" {
+        heading = format!("heading {arg}");
+        heading.as_str()
+    } else {
+        arg
+    };
+    let styles = styles?;
+    let id = styles
+        .iter()
+        .find(|(_, s)| s.para.style_name.eq_ignore_ascii_case(name))
+        .or_else(|| styles.iter().find(|(id, _)| id.eq_ignore_ascii_case(name)))
+        .map(|(id, _)| id.clone())?;
+    Some(StyleRef { id, last })
+}
+
 fn pageref_bookmark(instr: &str) -> Option<String> {
     let mut parts = instr.split_whitespace();
     let pageref = parts.next()?.eq_ignore_ascii_case("PAGEREF");
@@ -10783,6 +10858,15 @@ fn is_numwords_field(instr: &str) -> bool {
 
 /// A `PAGE` field: its result is the page it lands on, resolved when a
 /// header/footer box is painted (d45aa3d5's footer text box).
+/// A field Word's Save as PDF computes again (Word 16 probe fldrev_p1):
+/// an inserted one's result paints unmarked, as a PAGE number does.
+/// DOCPROPERTY, AUTHOR, FILENAME and QUOTE keep their cached, inked result.
+fn word_recomputes_field(instr: &str) -> bool {
+    const KINDS: [&str; 6] = ["NUMPAGES", "SECTION", "STYLEREF", "REF", "DATE", "SEQ"];
+    let kind = field_first_token(instr);
+    KINDS.iter().any(|k| kind.eq_ignore_ascii_case(k))
+}
+
 fn is_page_field(instr: &str) -> bool {
     field_first_token(instr).eq_ignore_ascii_case("PAGE")
 }
@@ -13192,6 +13276,7 @@ struct RunCollect<'a> {
     bound: HashSet<String>,
     pageref: Option<String>,
     ref_name: Option<String>,
+    styleref: Option<std::rc::Rc<StyleRef>>,
     field_instr: String,
     field_result: bool,
     field_emitted: bool,
@@ -13237,6 +13322,7 @@ fn collect_runs_in(
         bound: HashSet::new(),
         pageref: None,
         ref_name: None,
+        styleref: None,
         field_instr: String::new(),
         field_result: false,
         field_emitted: false,
@@ -13621,12 +13707,14 @@ fn collect_fld_simple(
     let instr = attr_any(ctx.dom, node, "instr").unwrap_or("").to_string();
     let saved_pageref = ctx.pageref.take();
     let saved_ref = ctx.ref_name.take();
+    let saved_styleref = ctx.styleref.take();
     let saved_instr = std::mem::take(&mut ctx.field_instr);
     let saved_result = ctx.field_result;
     let saved_emitted = ctx.field_emitted;
     ctx.field_instr.clone_from(&instr);
     ctx.pageref = pageref_bookmark(&instr);
     ctx.ref_name = ref_bookmark(&instr);
+    ctx.styleref = styleref_target(&instr, ctx.styles).map(std::rc::Rc::new);
     ctx.field_result = true;
     ctx.field_emitted = false;
     let before = runs.len();
@@ -13637,6 +13725,7 @@ fn collect_fld_simple(
     finish_field(ctx, runs);
     ctx.pageref = saved_pageref;
     ctx.ref_name = saved_ref;
+    ctx.styleref = saved_styleref;
     ctx.field_instr = saved_instr;
     ctx.field_result = saved_result;
     ctx.field_emitted = saved_emitted;
@@ -13688,17 +13777,22 @@ fn collect_runs_rec(
             "begin" => {
                 ctx.pageref = None;
                 ctx.ref_name = None;
+                ctx.styleref = None;
                 ctx.field_instr.clear();
                 ctx.field_result = false;
                 ctx.field_emitted = false;
                 ctx.dropdown = form_dropdown(ctx.dom, node);
                 ctx.in_dropdown = ctx.dropdown.is_some();
             }
-            "separate" => ctx.field_result = true,
+            "separate" => {
+                ctx.field_result = true;
+                ctx.styleref = styleref_target(&ctx.field_instr, ctx.styles).map(std::rc::Rc::new);
+            }
             "end" => {
                 finish_field(ctx, runs);
                 ctx.pageref = None;
                 ctx.ref_name = None;
+                ctx.styleref = None;
                 ctx.field_instr.clear();
                 ctx.field_result = false;
                 ctx.field_emitted = false;
@@ -13767,16 +13861,19 @@ fn collect_runs_rec(
         if ctx.math_vert != VertAlign::Baseline {
             style.vert = ctx.math_vert;
         }
+        let mut char_style: Option<std::rc::Rc<str>> = None;
         for &rpr in &rprs {
             if let Some(sid) =
                 first_named(ctx.dom, rpr, "rStyle").and_then(|n| ctx.dom.attribute(n, &W::val()))
                 && let Some(named) = ctx.styles.and_then(|s| s.get(sid))
-                && !(ctx.toc && sid.eq_ignore_ascii_case("hyperlink"))
             {
+                char_style = Some(std::rc::Rc::from(sid));
                 // Word Save-as-PDF paints TOC \h entries in the toc
                 // paragraph style (black). Applying Hyperlink 0000FF
                 // + underline wiped sd_2517 / file_22 contents pages.
-                apply_named_char_style(&mut style, named);
+                if !(ctx.toc && sid.eq_ignore_ascii_case("hyperlink")) {
+                    apply_named_char_style(&mut style, named);
+                }
             }
             apply_rpr(ctx.dom, rpr, &mut style, ctx.theme);
         }
@@ -13901,13 +13998,20 @@ fn collect_runs_rec(
                 None
             };
             let ref_copy_text = ref_name.is_some() && ref_copies_bookmark_text(&ctx.field_instr);
+            let styleref = if ctx.field_result {
+                ctx.styleref.clone()
+            } else {
+                None
+            };
             if ctx.field_result {
                 ctx.field_emitted = true;
             }
             let rev = mark != RevMark::None;
             let numwords = is_numwords_field(&ctx.field_instr);
             let page_field = ctx.field_result && is_page_field(&ctx.field_instr);
-            if rev && (page_field || numwords) {
+            let recomputed =
+                mark == RevMark::Ins && ctx.field_result && word_recomputes_field(&ctx.field_instr);
+            if rev && (page_field || numwords || recomputed) {
                 unmark_field_number(&mut style, &unmarked, mark);
             }
             if style.small_caps {
@@ -13917,6 +14021,8 @@ fn collect_runs_rec(
                     run.rev = rev;
                     run.pageref.clone_from(&pageref);
                     run.ref_name.clone_from(&ref_name);
+                    run.styleref.clone_from(&styleref);
+                    run.char_style.clone_from(&char_style);
                     run.ref_copy_text = ref_copy_text;
                     if numwords {
                         run.field = FieldKind::NumWords;
@@ -13934,6 +14040,8 @@ fn collect_runs_rec(
                 run.rev = rev;
                 run.pageref = pageref;
                 run.ref_name = ref_name;
+                run.styleref = styleref;
+                run.char_style = char_style;
                 run.ref_copy_text = ref_copy_text;
                 if numwords {
                     run.field = FieldKind::NumWords;
@@ -14346,11 +14454,11 @@ fn collect_textboxes_styled(
         let mut text_dy = txbx
             .map(|n| first_para_spacing_before(dom, n))
             .unwrap_or(0.0);
-        let paras = match (sheet, txbx) {
+        let (paras, tables) = match (sheet, txbx) {
             (Some(sheet), Some(n)) if txbx_lays_out_paragraphs(dom, shape, n) => {
-                txbx_paragraphs(dom, n, sheet, theme, numbering)
+                txbx_paragraphs(dom, n, sheet, theme, numbering, src)
             }
-            _ => Vec::new(),
+            _ => (Vec::new(), Vec::new()),
         };
         if runs.iter().all(|r| r.text.trim().is_empty()) {
             let (linked, dx, dy) = linked_txbx_content(src, dom, shape, base, theme);
@@ -14517,6 +14625,7 @@ fn collect_textboxes_styled(
                     adj: preset_adjustments(dom, shape),
                     prst: shape_prst(dom, shape),
                     paras: Vec::new(),
+                    tables: Vec::new(),
                     insets: TXBX_INSETS,
                     custom: custom.clone(),
                     group: Vec::new(),
@@ -14563,6 +14672,7 @@ fn collect_textboxes_styled(
                     adj: preset_adjustments(dom, shape),
                     prst: shape_prst(dom, shape),
                     paras: Vec::new(),
+                    tables: Vec::new(),
                     insets: TXBX_INSETS,
                     custom: custom.clone(),
                     group: Vec::new(),
@@ -14635,6 +14745,7 @@ fn collect_textboxes_styled(
             adj: preset_adjustments(dom, shape),
             prst: shape_prst(dom, shape),
             paras,
+            tables,
             insets: textbox_text_insets(dom, shape, theme),
             custom,
             group,
@@ -14698,6 +14809,7 @@ fn group_box(
         adj: Vec::new(),
         prst: String::new(),
         paras: Vec::new(),
+        tables: Vec::new(),
         insets: TXBX_INSETS,
         custom: None,
         group,
@@ -14962,7 +15074,8 @@ fn collect_group(
                 if let Some(sheet) = text.sheet
                     && txbx_lays_out_paragraphs(dom, child, txbx)
                 {
-                    shape.paras = txbx_paragraphs(dom, txbx, sheet, theme, None);
+                    (shape.paras, shape.tables) =
+                        txbx_paragraphs(dom, txbx, sheet, theme, None, None);
                 }
                 shape.insets = textbox_text_insets(dom, child, theme);
                 shape.text_anchor = shape_text_anchor(dom, child);
@@ -15092,7 +15205,6 @@ fn txbx_lays_out_paragraphs(dom: &Dom, shape: NodeId, txbx: NodeId) -> bool {
         .and_then(|b| attr_any(dom, *b, "vert"))
         .is_none_or(|v| v == "horz");
     horizontal
-        && dom.descendants(txbx, Some(&W::tbl())).is_empty()
         && dom
             .descendants(txbx, Some(&W::p()))
             .iter()
@@ -15145,17 +15257,50 @@ fn txbx_paragraphs(
     sheet: &StyleSheet,
     theme: &ThemeFonts,
     numbering: Option<&Numbering>,
-) -> Vec<(Vec<TextRun>, ParaStyle)> {
+    media: Option<(&PartFs, &str)>,
+) -> TxbxContent {
     // A box's lists number on their own copy of the document's lists.
     let mut numbering = numbering.cloned();
-    let mut paras = dom
+    // The box's own paragraphs: not a nested box's, nor a cell's of one of
+    // its tables, which lay out with their table.
+    let own: Vec<NodeId> = dom
         .descendants(txbx, Some(&W::p()))
         .into_iter()
-        .filter(|p| {
-            dom.ancestors(*p, Some(&W::txbx_content()))
-                .first()
-                .is_none_or(|a| *a == txbx)
+        .filter(|&p| {
+            let mut at = dom.parent(p);
+            while let Some(n) = at.filter(|&n| n != txbx) {
+                if dom.name_is(n, &W::tbl()) || dom.name_is(n, &W::txbx_content()) {
+                    return false;
+                }
+                at = dom.parent(n);
+            }
+            true
         })
+        .collect();
+    let mut tables = Vec::new();
+    let mut before = 0;
+    for child in dom.elements(txbx, None) {
+        if dom.name_is(child, &W::tbl()) {
+            let mut lists = numbering.clone().unwrap_or_default();
+            let block = table_block(
+                dom,
+                child,
+                sheet,
+                &mut lists,
+                &mut AuthorColors::default(),
+                &HashMap::new(),
+                media,
+            );
+            tables.push((before, std::rc::Rc::new(block)));
+        } else {
+            before += own
+                .iter()
+                .filter(|&&p| p == child || dom.ancestors(p, None).contains(&child))
+                .count();
+        }
+    }
+    let mut paras = own
+        .into_iter()
         .map(|p| {
             let (mut style, run) = para_base(dom, p, sheet, None);
             let mut runs = collect_runs(dom, p, &run, theme);
@@ -15193,9 +15338,16 @@ fn txbx_paragraphs(
             (runs, style)
         })
         .collect::<Vec<_>>();
-    fold_stacked_spacing(paras.iter_mut().map(|(_, style)| style).collect(), &[]);
-    paras
+    let breaks: Vec<usize> = tables.iter().map(|(at, _)| *at).collect();
+    fold_stacked_spacing(paras.iter_mut().map(|(_, style)| style).collect(), &breaks);
+    (paras, tables)
 }
+
+/// A text box's paragraphs and its tables (`LaidTextBox::tables`).
+type TxbxContent = (
+    Vec<(Vec<TextRun>, ParaStyle)>,
+    Vec<(usize, std::rc::Rc<Block>)>,
+);
 
 /// `bodyPr` insets (EMU) or VML `v:textbox/@inset`, defaulting to Word's.
 /// `wps:bodyPr wrap="none"` with `a:spAutoFit`: the box takes its text's
@@ -16521,6 +16673,11 @@ fn collect_images(
                     kind = washed_out(kind);
                 }
                 let slot = vml_owner_slot(dom, im, root).unwrap_or(ImageSlot::Flow);
+                let (w, h) = if matches!(slot, ImageSlot::Flow) {
+                    (vml_pixel_snap(w), vml_pixel_snap(h))
+                } else {
+                    (w, h)
+                };
                 out.push(LaidImage {
                     w,
                     h,
@@ -17186,6 +17343,21 @@ fn vml_owner_slot(dom: &Dom, im: NodeId, root: NodeId) -> Option<ImageSlot> {
         node = dom.parent(n);
     }
     None
+}
+
+/// Word lays an inline VML picture out in whole pixels at 143 dpi: the
+/// style's points to HIMETRIC (1/100 mm), to pixels, to twips, each
+/// rounded half up. 30pt draws 30.2pt tall, 36 36.25, 37 36.75, 40 39.8,
+/// 151.3 151.55, whatever the image (Word 16 probes vo3-vo5, 2026-10-02).
+/// DrawingML keeps its extent.
+fn vml_pixel_snap(pt: f32) -> f32 {
+    if !(pt.is_finite() && pt > 0.0) {
+        return pt;
+    }
+    let himetric = (f64::from(pt) * 2540.0 / 72.0).round() as i64;
+    let px = (himetric * 143 * 2 + 2540) / (2 * 2540);
+    let tw = (px * 1440 * 2 + 143) / (2 * 143);
+    tw as f32 / 20.0
 }
 
 /// Width/height of the VML shape that owns `im`, falling back to the
@@ -17988,6 +18160,10 @@ fn vml_washout(dom: &Dom, im: NodeId) -> bool {
 /// The samples Word paints for a washed-out picture: 0041dade's Word PDF
 /// maps each 8-bit sample to 0.29 * v + 206.7, clipped to white.
 fn washed_out(kind: ImageKind) -> ImageKind {
+    if let ImageKind::Metafile { raster, texts } = kind {
+        let raster = Box::new(washed_out(*raster));
+        return ImageKind::Metafile { raster, texts };
+    }
     let pale = |v: &mut u8| *v = (f32::from(*v) * 0.29 + 206.7).round().min(255.0) as u8;
     match kind {
         ImageKind::Jpeg { bytes, .. } => {
@@ -18035,6 +18211,10 @@ fn soft_edge_pt(dom: &Dom, drawing: NodeId) -> Option<f32> {
 /// radius (case57's photos). `fx`/`fy` are the radius as a fraction of the
 /// picture's width and height.
 fn soften_edges(kind: ImageKind, fx: f32, fy: f32) -> ImageKind {
+    if let ImageKind::Metafile { raster, texts } = kind {
+        let raster = Box::new(soften_edges(*raster, fx, fy));
+        return ImageKind::Metafile { raster, texts };
+    }
     let (width, height, bytes, alpha) = match kind {
         ImageKind::Jpeg { bytes, .. } => {
             let Ok(img) = image::load_from_memory(&bytes) else {
@@ -18106,6 +18286,10 @@ fn duotone_color(dom: &Dom, node: NodeId, pkg: &PartFs) -> Option<[f32; 3]> {
 /// by its Rec.709 luma (English corpus c301012f: green 70AD47 under
 /// accent5 shade 45% satMod 135% → white paints A4B6D6).
 fn duotone_image(kind: ImageKind, dom: &Dom, blip: NodeId, pkg: &PartFs) -> ImageKind {
+    if let ImageKind::Metafile { raster, texts } = kind {
+        let raster = Box::new(duotone_image(*raster, dom, blip, pkg));
+        return ImageKind::Metafile { raster, texts };
+    }
     let Some(duotone) = (0..dom.child_count(blip))
         .map(|i| dom.child_at(blip, i))
         .find(|&c| local_name_is(dom, c, "duotone"))
@@ -18154,12 +18338,19 @@ fn duotone_image(kind: ImageKind, dom: &Dom, blip: NodeId, pkg: &PartFs) -> Imag
 }
 
 fn decode_image(bytes: Vec<u8>) -> Option<ImageKind> {
-    if let Some((width, height, rgb)) = metafile::rasterize(&bytes) {
-        return Some(ImageKind::Rgb {
+    if let Some((width, height, rgb, texts)) = metafile::render(&bytes) {
+        let raster = ImageKind::Rgb {
             width,
             height,
             bytes: rgb,
             alpha: None,
+        };
+        if texts.is_empty() {
+            return Some(raster);
+        }
+        return Some(ImageKind::Metafile {
+            raster: Box::new(raster),
+            texts: texts.into(),
         });
     }
     if bytes.len() > 3
@@ -20071,6 +20262,8 @@ struct FieldScan {
     result: bool,
     emitted: bool,
     instr: String,
+    /// The field is a `STYLEREF` its page fills in (`patch_stylerefs`).
+    styleref: Option<std::rc::Rc<StyleRef>>,
 }
 
 /// A left-aligned `w:ptab`.
@@ -20118,10 +20311,22 @@ fn collect_hf_rev(
     mark: RevMark,
 ) {
     let start = runs.len();
-    collect_hf_rev_runs(dom, node, base, sheet, scan, runs, mark);
-    if mark != RevMark::None {
-        for run in &mut runs[start..] {
-            run.rev = true;
+    if dom.name_is(node, &W::fld_simple()) {
+        let outer = std::mem::take(scan);
+        let instr = attr_any(dom, node, "instr").unwrap_or("");
+        scan.result = true;
+        scan.styleref = styleref_target(instr, Some(&sheet.by_id)).map(std::rc::Rc::new);
+        for idx in 0..dom.child_count(node) {
+            collect_hf_rev(dom, dom.child_at(node, idx), base, sheet, scan, runs, mark);
+        }
+        *scan = outer;
+    } else {
+        collect_hf_rev_runs(dom, node, base, sheet, scan, runs, mark);
+    }
+    for run in &mut runs[start..] {
+        run.rev |= mark != RevMark::None;
+        if scan.result && run.styleref.is_none() {
+            run.styleref.clone_from(&scan.styleref);
         }
     }
 }
@@ -20158,7 +20363,11 @@ fn collect_hf_rev_runs(
     if dom.name_is(node, &W::fld_char()) {
         match attr_any(dom, node, "fldCharType").unwrap_or("") {
             "begin" => *scan = FieldScan::default(),
-            "separate" => scan.result = true,
+            "separate" => {
+                scan.result = true;
+                scan.styleref =
+                    styleref_target(&scan.instr, Some(&sheet.by_id)).map(std::rc::Rc::new);
+            }
             "end" => {
                 // I_am_sharing: separate then end with no cached w:t.
                 // Still emit PAGE/NUMPAGES so chrome can resolve them.
@@ -20432,6 +20641,8 @@ struct Layout<'a> {
     /// Painting a header's or footer's boxes: they hang where they are
     /// anchored, never lifted onto the body (`box_slot`).
     in_chrome_boxes: bool,
+    /// Painting the page's headers and footers (`chrome`).
+    in_chrome: bool,
     /// The last row of inline pictures: (page, pen x after it, its bottom,
     /// its height). An inline box in the same textless paragraph joins it.
     pic_row: Option<(usize, f32, f32, f32)>,
@@ -20480,6 +20691,16 @@ struct Layout<'a> {
     fill_join: Option<(usize, f32)>,
     bookmark_pages: HashMap<String, String>,
     pageref_ops: Vec<(usize, usize, String)>,
+    /// Header/footer `STYLEREF` results painted, patched after layout.
+    styleref_ops: Vec<StyleRefOp>,
+    /// The line being painted: its first op and the share of a width
+    /// change its start takes (0 left, 0.5 centre, 1 right).
+    line_frame: Option<(usize, f32)>,
+    /// Body text by paragraph style, then by character style, in paint
+    /// order: what a header `STYLEREF` shows (`patch_stylerefs`).
+    style_hits: [Vec<StyleHit>; 2],
+    /// Serial of the body paragraph being painted.
+    para_serial: u32,
     /// Bookmark names present in the DOCX (before layout pages exist).
     /// Missing PAGEREF wraps Word's Error! string; live names patch later.
     known_bookmarks: HashSet<String>,
@@ -20914,6 +21135,7 @@ impl<'a> Layout<'a> {
             tb_band: None,
             tb_step: false,
             in_chrome_boxes: false,
+            in_chrome: false,
             pic_row: None,
             front_floats: Vec::new(),
             line_probe: LineProbe::default(),
@@ -20932,6 +21154,10 @@ impl<'a> Layout<'a> {
             fill_join: None,
             bookmark_pages: HashMap::new(),
             pageref_ops: Vec::new(),
+            styleref_ops: Vec::new(),
+            line_frame: None,
+            style_hits: [Vec::new(), Vec::new()],
+            para_serial: 0,
             known_bookmarks: HashSet::new(),
             bookmark_texts: HashMap::new(),
             word_count: 0,
@@ -22623,6 +22849,7 @@ impl<'a> Layout<'a> {
         let runs = rewritten.as_slice();
         self.note_chapter_heading(style);
         self.last_style_id.clone_from(&style.style_id);
+        self.para_serial += 1;
         self.page_has_body = true;
         self.tab_stops = self.landed_tab_stops(&style.tab_stops);
         // A hanging indent is an implicit left tab stop at the indent
@@ -22961,6 +23188,7 @@ impl<'a> Layout<'a> {
                     && !(self.do_not_expand_shift_return && ends_br.get(line_i) == Some(&true)));
             let x = self.flow_left() + indent + extra + first_extra;
             let baseline = self.y;
+            let frame = self.open_line_frame(style.align);
             let ops_start = self.current().ops.len();
             let mut x = x;
             let mut line = line;
@@ -23016,6 +23244,7 @@ impl<'a> Layout<'a> {
                 self.tab_shift = 0.0;
             }
             self.paint_line_number(baseline);
+            self.close_line_frame(frame);
             self.last_line_end = Some((x + line_w, baseline));
             self.last_line = Some(LastLine {
                 page: self.pages.len(),
@@ -24304,14 +24533,23 @@ impl<'a> Layout<'a> {
         } else {
             face.glyph_texts(&run.text, kern)
         };
-        if let Some(name) = run.pageref.as_deref() {
+        let chrome = self.in_chrome || run.hf_para.is_some();
+        let styleref = run.styleref.as_ref().filter(|_| chrome);
+        if !chrome && !run.list_marker {
+            self.note_style_hit(run);
+        }
+        if run.pageref.is_some() || styleref.is_some() {
             let glyphs: Vec<u16> = shaped.iter().map(|(g, _)| *g).collect();
             let page_i = self.pages.len().saturating_sub(1);
             let op_i = self.current().ops.len();
             self.current().ops.push(
                 Op::text(fid, size, x, y, glyphs, run.style.color, run.text.clone()).scaled(scale),
             );
-            self.pageref_ops.push((page_i, op_i, name.to_string()));
+            if let Some(name) = run.pageref.as_deref() {
+                self.pageref_ops.push((page_i, op_i, name.to_string()));
+            } else if let Some(target) = styleref {
+                self.note_styleref_op(page_i, op_i, target);
+            }
         } else {
             let mut gx = x;
             for (i, (gid, _)) in shaped.iter().enumerate() {
@@ -24877,10 +25115,17 @@ impl<'a> Layout<'a> {
         }
     }
 
-    /// One picture's paint op at (x, y) bottom-left, dw × dh.
-    fn push_image(&mut self, img: &LaidImage, x: f32, y: f32, dw: f32, dh: f32) {
-        let (x, y, dw, dh) = inset_box(img, x, y, dw, dh);
-        match &img.kind {
+    /// A picture's own paint op(s) in its box (x, y bottom-left).
+    fn paint_image_kind(
+        &mut self,
+        img: &LaidImage,
+        kind: &ImageKind,
+        x: f32,
+        y: f32,
+        dw: f32,
+        dh: f32,
+    ) {
+        match kind {
             ImageKind::Jpeg {
                 width,
                 height,
@@ -24917,6 +25162,10 @@ impl<'a> Layout<'a> {
                 rotate_deg: img.rotate_deg,
                 oval: img.oval,
             }),
+            ImageKind::Metafile { raster, texts } => {
+                self.paint_image_kind(img, raster, x, y, dw, dh);
+                self.paint_meta_texts(img, texts, x, y, dw, dh);
+            }
             ImageKind::Reserve => {}
             ImageKind::TextBox(b) => self.paint_box_at(b, x, y, dw, dh),
             ImageKind::Broken => self.current().ops.push(Op::StrokeRect {
@@ -24955,6 +25204,76 @@ impl<'a> Layout<'a> {
             }
             ImageKind::VmlRect { .. } => {}
         }
+    }
+
+    /// A metafile's strings as text over its raster, where Word's PDF has
+    /// them (5a6c's reprint diagram: "Act as first enacted" in its box).
+    fn paint_meta_texts(
+        &mut self,
+        img: &LaidImage,
+        texts: &[metafile::MetaText],
+        x: f32,
+        y: f32,
+        dw: f32,
+        dh: f32,
+    ) {
+        if img.rotate_deg.abs() > 0.01 {
+            return;
+        }
+        let [cl, ct, cr, cb] = img.crop.unwrap_or([0.0; 4]);
+        let (kw, kh) = (1.0 - cl - cr, 1.0 - ct - cb);
+        if kw <= 0.0 || kh <= 0.0 {
+            return;
+        }
+        for t in texts {
+            let (fx, fy) = ((t.x - cl) / kw, (t.y - ct) / kh);
+            if !(0.0..=1.0).contains(&fx) || !(0.0..=1.0).contains(&fy) {
+                continue;
+            }
+            let family = if t.family.is_empty() {
+                "Arial"
+            } else {
+                t.family.as_str()
+            };
+            let fid = self.fonts.resolve(family, t.bold, t.italic);
+            let face = self.fonts.get(fid);
+            let mut size = if t.size > 0.0 { t.size * dh / kh } else { 12.0 };
+            if t.cell {
+                let cell = face.ascent_pt(100.0) + face.descent_pt(100.0);
+                if cell > 0.0 {
+                    size *= 100.0 / cell;
+                }
+            }
+            let scale = if t.aspect > 0.0 {
+                (dw / kw) / (dh / kh) / t.aspect
+            } else {
+                1.0
+            };
+            let top = y + dh - fy * dh;
+            let base = match t.align & 24 {
+                24 => top,
+                8 => top + face.descent_pt(size),
+                _ => top - face.ascent_pt(size),
+            };
+            let w = face.width_pt(&t.text, size) * scale;
+            let left = x + fx * dw
+                - match t.align & 6 {
+                    6 => w / 2.0,
+                    2 => w,
+                    _ => 0.0,
+                };
+            let color = t.color.map(|c| f32::from(c) / 255.0);
+            let glyphs = face.glyphs(&t.text);
+            self.current()
+                .ops
+                .push(Op::text(fid, size, left, base, glyphs, color, t.text.clone()).scaled(scale));
+        }
+    }
+
+    /// One picture's paint op at (x, y) bottom-left, dw × dh.
+    fn push_image(&mut self, img: &LaidImage, x: f32, y: f32, dw: f32, dh: f32) {
+        let (x, y, dw, dh) = inset_box(img, x, y, dw, dh);
+        self.paint_image_kind(img, &img.kind, x, y, dw, dh);
         if let Some((color, width)) = img.outline {
             self.current().ops.push(Op::StrokeRect {
                 x,
@@ -24983,6 +25302,14 @@ impl<'a> Layout<'a> {
         if imgs.is_empty() {
             return;
         }
+        // The first row starts where the first line does: a hanging indent
+        // pulls it out (5a6c's reprint diagram at left 1418 hanging 851
+        // starts 28.35pt in, Word's PDF). A list marker already fills it.
+        let first_ind = if runs.iter().any(|r| r.list_marker) {
+            0.0
+        } else {
+            style.indent_first
+        };
         // The whitespace before the first picture, laid out like text on
         // the paragraph's tab stops.
         let lead = match imgs.first().map(|img| img.lead_chars) {
@@ -25003,7 +25330,7 @@ impl<'a> Layout<'a> {
                 }
                 let landed = self.landed_tab_stops(&style.tab_stops);
                 let stops = std::mem::replace(&mut self.tab_stops, landed);
-                let x0 = self.page.margin_l + style.indent_left;
+                let x0 = self.page.margin_l + style.indent_left + first_ind;
                 let w = self.tab_line_width(&prefix, x0);
                 self.tab_stops = stops;
                 w
@@ -25016,10 +25343,11 @@ impl<'a> Layout<'a> {
         let room = self.content_width() - style.indent_left - style.indent_right;
         let mut row: Vec<(&LaidImage, f32, f32)> = Vec::new();
         let mut lead_now = lead;
-        let mut flush = |lay: &mut Self, row: &mut Vec<(&LaidImage, f32, f32)>| {
+        let mut flush = |lay: &mut Self, row: &mut Vec<(&LaidImage, f32, f32)>, ind: f32| {
             if row.is_empty() {
                 return;
             }
+            let (left, room) = (left + ind, room - ind);
             let gaps: f32 = row.iter().skip(1).map(|r| r.0.gap_before).sum();
             let w: f32 = row.iter().map(|r| r.1).sum::<f32>() + gaps;
             // A VML rect's line is at least its run's single line, the
@@ -25067,15 +25395,17 @@ impl<'a> Layout<'a> {
             lay.pic_row = Some((lay.pages.len(), x, lay.y, h));
             lay.y -= under + extra;
         };
+        let mut ind = first_ind;
         for img in imgs {
             let (dw, dh) = self.image_wh(img);
             let used: f32 = row.iter().map(|r| r.1).sum();
-            if !row.is_empty() && used + dw > room + 0.5 {
-                flush(self, &mut row);
+            if !row.is_empty() && used + dw > room - ind + 0.5 {
+                flush(self, &mut row, ind);
+                ind = 0.0;
             }
             row.push((img, dw, dh));
         }
-        flush(self, &mut row);
+        flush(self, &mut row, ind);
     }
 
     /// The lines a picture-only paragraph's breaks open under its
@@ -25448,81 +25778,7 @@ impl<'a> Layout<'a> {
         if in_header {
             self.hold_header_float(img.slot, x, y, dw, dh);
         }
-        match &img.kind {
-            ImageKind::Jpeg {
-                width,
-                height,
-                bytes,
-                components,
-            } => self.current().ops.push(Op::Jpeg {
-                x,
-                y,
-                dw,
-                dh,
-                width: *width,
-                height: *height,
-                bytes: bytes.clone(),
-                components: *components,
-                crop: img.crop,
-                rotate_deg: img.rotate_deg,
-                oval: img.oval,
-            }),
-            ImageKind::Rgb {
-                width,
-                height,
-                bytes,
-                alpha,
-            } => self.current().ops.push(Op::Rgb {
-                x,
-                y,
-                dw,
-                dh,
-                width: *width,
-                height: *height,
-                bytes: bytes.clone(),
-                alpha: alpha.clone(),
-                crop: img.crop,
-                rotate_deg: img.rotate_deg,
-                oval: img.oval,
-            }),
-            ImageKind::Reserve => {}
-            ImageKind::TextBox(b) => self.paint_box_at(b, x, y, dw, dh),
-            ImageKind::Broken => self.current().ops.push(Op::StrokeRect {
-                x,
-                y,
-                w: dw,
-                h: dh,
-                width: 0.75,
-                color: [0.6, 0.6, 0.6],
-            }),
-            ImageKind::VmlLine {
-                from,
-                to,
-                color,
-                width,
-            } => self.current().ops.push(Op::Line {
-                x1: x + from[0] * dw,
-                y1: y + dh - from[1] * dh,
-                x2: x + to[0] * dw,
-                y2: y + dh - to[1] * dh,
-                width: *width,
-                color: *color,
-            }),
-            ImageKind::VmlRect {
-                pad, color, width, ..
-            } if *width > 0.0 => {
-                let foot = vml_rect_foot(*pad, *width);
-                self.current().ops.push(Op::StrokeRect {
-                    x: x + pad,
-                    y: y + foot,
-                    w: dw - 2.0 * pad,
-                    h: dh - pad - foot,
-                    width: *width,
-                    color: *color,
-                });
-            }
-            ImageKind::VmlRect { .. } => {}
-        }
+        self.paint_image_kind(img, &img.kind, x, y, dw, dh);
     }
 
     fn emit_chrome_table(&mut self, table: &ChromeTable, in_header: bool) {
@@ -26449,7 +26705,7 @@ impl<'a> Layout<'a> {
             self.emit_diag_shapes(x, y, dh, &box_.diag_shapes);
             return;
         }
-        if !box_.paras.is_empty() {
+        if !box_.paras.is_empty() || !box_.tables.is_empty() {
             self.emit_textbox_paras(box_, x, y, dw, dh);
             return;
         }
@@ -26567,8 +26823,17 @@ impl<'a> Layout<'a> {
         let top = y + dh - ti;
         self.y = top;
         let start = self.current().ops.len();
-        for (runs, style) in &box_.paras {
+        // Each table stands before the paragraph it precedes, as in a cell.
+        let width = dw - li - ri;
+        let mut tables = box_.tables.iter().peekable();
+        for (i, (runs, style)) in box_.paras.iter().enumerate() {
+            while let Some((_, table)) = tables.next_if(|(at, _)| *at <= i) {
+                self.y -= self.emit_nested_table(table, x + li, self.y, width);
+            }
             self.emit_runs(runs, style, false, FloatWrap::default());
+        }
+        for (_, table) in tables {
+            self.y -= self.emit_nested_table(table, x + li, self.y, width);
         }
         let used = top - self.y;
         let room = dh - ti - bi;
@@ -27914,6 +28179,7 @@ impl<'a> Layout<'a> {
                             // grid like the page margin (00004116's cells).
                             let edge = ((x + pad_l) / 0.24 + 0.5).floor() * 0.24;
                             let mut tx = edge + ind_l + extra;
+                            let frame = self.open_line_frame(para.style.align);
                             if li == 0
                                 && let Some(img) = lead
                             {
@@ -27964,6 +28230,7 @@ impl<'a> Layout<'a> {
                                     body = &line[1..];
                                 }
                                 self.paint_justified_line(body, tx, ty, leftover);
+                                self.close_line_frame(frame);
                                 self.clip_right = None;
                                 y_line -= line_box;
                                 continue;
@@ -28003,6 +28270,7 @@ impl<'a> Layout<'a> {
                                 }
                                 tx = self.paint_run(run, tx, ty);
                             }
+                            self.close_line_frame(frame);
                             self.clip_right = None;
                             y_line -= line_box;
                         }
@@ -28660,6 +28928,7 @@ impl<'a> Layout<'a> {
             Align::Right => (width - line_w).max(0.0),
         };
         let mut x = self.page.margin_l + ind_l + extra;
+        let frame = self.open_line_frame(align);
         for run in runs {
             let untabbed;
             let run = if run.text.contains('\t') {
@@ -28681,6 +28950,10 @@ impl<'a> Layout<'a> {
             // Same measure as line_w: @@N@@/@@P@@ are patched after paint,
             // so advancing by the mark shoved file_146 "7·" 42pt apart.
             let w = face.width_pt(chrome_measure_text(&run.text), run.style.layout_size());
+            if let Some(target) = run.styleref.as_ref() {
+                let at = (self.pages.len().saturating_sub(1), self.current().ops.len());
+                self.note_styleref_op(at.0, at.1, target);
+            }
             self.current().ops.push(Op::text(
                 fid,
                 size,
@@ -28699,6 +28972,7 @@ impl<'a> Layout<'a> {
             self.decorate_run(x, run.style.paint_y(y), ink, &run.style);
             x += w;
         }
+        self.close_line_frame(frame);
     }
 
     /// A header/footer part's anchored boxes, placed like the body's with
@@ -28722,6 +28996,12 @@ impl<'a> Layout<'a> {
     }
 
     fn chrome(&mut self) {
+        self.in_chrome = true;
+        self.chrome_parts();
+        self.in_chrome = false;
+    }
+
+    fn chrome_parts(&mut self) {
         let page_no = self.pages.len();
         if let Some(mark) = self.watermark.clone() {
             let fid = self.fonts.resolve("Calibri", true, false);
@@ -29395,6 +29675,140 @@ impl<'a> Layout<'a> {
         }
     }
 
+    /// Records a painted body run under its paragraph style and its
+    /// character style. A paragraph is one hit however many runs and
+    /// pages it spans; a character style's hit is a stretch of adjacent
+    /// runs in it.
+    fn note_style_hit(&mut self, run: &TextRun) {
+        let page = self.pages.len().saturating_sub(1);
+        let serial = self.para_serial;
+        let keys = [
+            (!self.last_style_id.is_empty()).then(|| self.last_style_id.as_str().into()),
+            run.char_style.clone(),
+        ];
+        for (hits, key) in self.style_hits.iter_mut().zip(keys) {
+            match (hits.last_mut(), key) {
+                (Some(hit), Some(id)) if hit.serial == serial && hit.id == id && hit.open => {
+                    hit.text.push_str(&run.text);
+                    hit.pages.1 = page;
+                }
+                (last, key) => {
+                    if let Some(hit) = last {
+                        hit.open = false;
+                    }
+                    if let Some(id) = key {
+                        hits.push(StyleHit {
+                            id,
+                            serial,
+                            pages: (page, page),
+                            text: run.text.clone(),
+                            open: true,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    /// Word fills a header or footer `STYLEREF` from the body text in
+    /// that style: the first on its page (`\l`: the last), else the last
+    /// one before the page, else the first one after it (probe sref_p1,
+    /// 2026-10-02). A field split over several runs shows the whole text
+    /// in its first.
+    fn patch_stylerefs(&mut self) {
+        let mut done: Vec<(usize, *const StyleRef)> = Vec::new();
+        for at in &self.styleref_ops {
+            let (pi, oi, target) = (&at.page, &at.op, &at.target);
+            let first = !done.contains(&(*pi, std::rc::Rc::as_ptr(target)));
+            done.push((*pi, std::rc::Rc::as_ptr(target)));
+            let hits: Vec<&StyleHit> = self
+                .style_hits
+                .iter()
+                .flatten()
+                .filter(|h| *h.id == *target.id)
+                .collect();
+            let mut on_page = hits.iter().filter(|h| h.pages.0 <= *pi && *pi <= h.pages.1);
+            let found = if target.last {
+                on_page.next_back()
+            } else {
+                on_page.next()
+            }
+            .or_else(|| hits.iter().rfind(|h| h.pages.1 < *pi))
+            .or_else(|| hits.iter().find(|h| h.pages.0 > *pi));
+            let Some(hit) = found else {
+                continue;
+            };
+            let value = if first { hit.text.trim() } else { "" };
+            let fonts = self.fonts;
+            let Some(ops) = self.pages.get_mut(*pi).map(|p| &mut p.ops) else {
+                continue;
+            };
+            let Some(Op::Text {
+                face,
+                size,
+                text,
+                glyphs,
+                hscale,
+                ..
+            }) = ops.get_mut(*oi)
+            else {
+                continue;
+            };
+            let face_ = fonts.get(*face);
+            let grow = (face_.width_pt(value, *size) - face_.width_pt(text, *size)) * *hscale;
+            *glyphs = face_.glyphs(value);
+            *text = value.to_string();
+            // Word lays the line out again around the new result (515f's
+            // jc=right "s. 10" keeps its end on the cell edge).
+            let end = at.line.end.min(ops.len());
+            for (i, op) in ops.iter_mut().enumerate().take(end).skip(at.line.start) {
+                let dx = if i <= *oi {
+                    -grow * at.align
+                } else {
+                    grow * (1.0 - at.align)
+                };
+                shift_op_x(op, dx);
+            }
+        }
+    }
+
+    /// Records a painted `STYLEREF` result in the line being painted.
+    fn note_styleref_op(&mut self, page: usize, op: usize, target: &std::rc::Rc<StyleRef>) {
+        let (start, align) = self.line_frame.unwrap_or((op, 0.0));
+        self.styleref_ops.push(StyleRefOp {
+            page,
+            op,
+            target: target.clone(),
+            line: start.min(op)..op + 1,
+            align,
+        });
+    }
+
+    /// Opens a line for `note_styleref_op`; returns the mark that
+    /// `close_line_frame` takes.
+    fn open_line_frame(&mut self, align: Align) -> usize {
+        let share = match align {
+            Align::Center => 0.5,
+            Align::Right => 1.0,
+            Align::Left | Align::Justify => 0.0,
+        };
+        self.line_frame = Some((self.current().ops.len(), share));
+        self.styleref_ops.len()
+    }
+
+    /// Ends the line opened at `mark`: its `STYLEREF` results move the
+    /// ops painted after them too.
+    fn close_line_frame(&mut self, mark: usize) {
+        self.line_frame = None;
+        let page = self.pages.len().saturating_sub(1);
+        let end = self.current().ops.len();
+        for at in self.styleref_ops.iter_mut().skip(mark) {
+            if at.page == page {
+                at.line.end = at.line.end.max(end);
+            }
+        }
+    }
+
     fn patch_chap_page(&mut self) {
         if self.page.chap_style.is_none() {
             return;
@@ -29462,6 +29876,29 @@ impl<'a> Layout<'a> {
             })
             .collect()
     }
+}
+
+/// Two runs may merge into one painted run: the same character style
+/// and the same `STYLEREF` field (or none), so `patch_stylerefs` still
+/// finds both.
+fn same_style_refs(a: &TextRun, b: &TextRun) -> bool {
+    let same_field = match (&a.styleref, &b.styleref) {
+        (None, None) => true,
+        (Some(x), Some(y)) => std::rc::Rc::ptr_eq(x, y),
+        _ => false,
+    };
+    same_field && a.char_style == b.char_style
+}
+
+/// Body text in one style, for header `STYLEREF` (`Layout::note_style_hit`).
+struct StyleHit {
+    id: std::rc::Rc<str>,
+    serial: u32,
+    /// First and last page the text is painted on.
+    pages: (usize, usize),
+    text: String,
+    /// The last run painted belongs to this hit.
+    open: bool,
 }
 
 const NUMPAGES_MARK: &str = "@@N@@";
@@ -30573,6 +31010,7 @@ fn wrap_runs_segment(
                         && run.pageref.is_none()
                         && run.ref_name.is_none()
                         && run.footnote_id.is_none()
+                        && same_style_refs(last, run)
                     {
                         last.text.push(ch);
                     } else if let Some(line) = lines.last_mut() {
@@ -30606,6 +31044,7 @@ fn wrap_runs_segment(
                 && run.ref_name.is_none()
                 && last.footnote_id.is_none()
                 && run.footnote_id.is_none()
+                && same_style_refs(last, run)
             {
                 last.text.push_str(tok);
             } else if let Some(line) = lines.last_mut() {
@@ -31281,6 +31720,7 @@ fn layout_with_facts(
     lay.paint_page_footnotes();
     lay.patch_chap_page();
     lay.patch_pagerefs();
+    lay.patch_stylerefs();
     patch_numpages(fonts, &mut lay.pages);
     for (page, ops) in std::mem::take(&mut lay.front_border_ops) {
         if let Some(p) = lay.pages.get_mut(page) {

@@ -9146,7 +9146,7 @@ fn vml_images_take_the_slot_of_their_own_shape() {
         (ax - 300.0).abs() < 0.5 && (ay - (792.0 - 100.0 - 50.0)).abs() < 0.5,
         "absolute shape at page (300,100): {ax},{ay}"
     );
-    let (fx, _) = image_cm_xy(&pdf, "60.00", "30.00");
+    let (fx, _) = image_cm_xy(&pdf, "59.90", "30.20");
     assert!(
         (fx - 72.0).abs() < 0.5,
         "in-flow shape paints at the margin, x={fx}"
@@ -9613,6 +9613,74 @@ fn placeable_wmf_blip_paints_rgb_ink() {
         rgb_image_has_light_gray_fill(&pdf),
         "clipart CRT is a gray-filled polygon (brush 0xDADADA); 0-based SelectObject paints it black"
     );
+}
+
+#[test]
+fn a_wmf_writes_its_text_as_text_from_the_first_line_start() {
+    // 5a6c's reprint diagram: a placeable WMF whose boxes hold
+    // META_EXTTEXTOUT strings ("Act as first enacted"). Word's PDF keeps
+    // them as text; we painted none. Its paragraph (left 1418, hanging
+    // 851) starts the picture at the first line, 28.35pt in, not at the
+    // left indent.
+    let mut wmf = vec![0xD7_u8, 0xCD, 0xC6, 0x9A, 0, 0];
+    for v in [0_i16, 0, 1000, 250] {
+        wmf.extend_from_slice(&v.to_le_bytes());
+    }
+    wmf.extend_from_slice(&1440_u16.to_le_bytes());
+    wmf.extend_from_slice(&[0; 6]);
+    let mut header = vec![0_u8; 18];
+    header[0..2].copy_from_slice(&1_u16.to_le_bytes());
+    header[2..4].copy_from_slice(&9_u16.to_le_bytes());
+    header[10..12].copy_from_slice(&1_u16.to_le_bytes());
+    wmf.extend_from_slice(&header);
+    let mut record = |func: u16, body: &[u8]| {
+        wmf.extend_from_slice(&(3 + body.len() as u32 / 2).to_le_bytes());
+        wmf.extend_from_slice(&func.to_le_bytes());
+        wmf.extend_from_slice(body);
+    };
+    record(0x020B, &[0, 0, 0, 0]);
+    record(0x020C, &[250, 0, 0xE8, 0x03]);
+    let mut font = vec![0_u8; 50];
+    font[0..2].copy_from_slice(&(-50_i16).to_le_bytes());
+    font[8..10].copy_from_slice(&400_u16.to_le_bytes());
+    font[18..18 + 15].copy_from_slice(b"Times New Roman");
+    record(0x02FB, &font);
+    record(0x012D, &[0, 0]);
+    let mut text = Vec::new();
+    for v in [0_i16, 100, 9, 0] {
+        text.extend_from_slice(&v.to_le_bytes());
+    }
+    text.extend_from_slice(b"Hello box\0");
+    record(0x0A32, &text);
+    record(0, &[]);
+    let drawing = blip(
+        "5080000",
+        "1270000",
+        "<wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">",
+        "</wp:inline>",
+    );
+    let docx = drawing_docx_media(
+        &format!(
+            "<w:p><w:pPr><w:ind w:left=\"1418\" w:hanging=\"851\"/></w:pPr><w:r>{drawing}</w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+             <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        ),
+        "diagram.wmf",
+        &wmf,
+    );
+    let pdf = docx_to_pdf(&docx).expect("convert WMF text");
+    let streams = pdf_content_streams(&pdf);
+    assert!(
+        streams
+            .iter()
+            .any(|s| pdf_winansi_text(s.as_bytes()).contains("Hello box")),
+        "the WMF string is PDF text"
+    );
+    // 20pt: lfHeight -50 of 250 units over the 100pt picture; x: margin
+    // 72 + (70.9 - 42.55) first-line start + 0.1 of 400pt.
+    let at = pdf_tf_xy(&pdf, "20.00 Tf");
+    assert_eq!(at.len(), 1, "one WMF string: {at:?}");
+    assert!((at[0].0 - 140.35).abs() < 0.1, "first-line start: {at:?}");
 }
 
 #[test]
@@ -40171,7 +40239,7 @@ fn an_inline_picture_in_a_table_cell_paints() {
          <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
            <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
     let pdf = docx_to_pdf(&drawing_docx(body)).expect("convert picture in cell");
-    let (x, y) = image_cm_xy(&pdf, "120.00", "60.00");
+    let (x, y) = image_cm_xy(&pdf, "119.85", "59.90");
     // Second column starts at 72 + 100pt; the picture's top is the row top.
     assert!(
         x > 170.0 && x < 180.0,
@@ -40276,11 +40344,12 @@ fn an_inline_picture_line_ends_at_the_picture_bottom() {
          <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
            <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
     let pdf = docx_to_pdf(&drawing_docx(body)).expect("convert picture then text");
-    let (_, img_y) = image_cm_xy(&pdf, "60.00", "30.00");
+    let (_, img_y) = image_cm_xy(&pdf, "59.90", "30.20");
     let after = text_baselines(&pdf).into_iter().fold(f32::MIN, f32::max);
     let gap = img_y - after;
+    // One ascent plus the 0.24pt baseline snap; the flat 4pt gap was 15+.
     assert!(
-        gap < 12.5,
+        gap < 12.75,
         "next baseline is one ascent under the picture; gap={gap}"
     );
 }
@@ -40387,6 +40456,44 @@ fn an_inserted_vml_picture_keeps_its_runs_descent_under_it() {
             "an inserted {kind} picture keeps its 10pt run's descent (2.16pt): {drop}"
         );
     }
+}
+
+#[test]
+fn an_inline_vml_picture_snaps_to_whole_143_dpi_pixels() {
+    // Word 16 probes vo3-vo5 (2026-10-02): an inline v:imagedata picture
+    // is laid out in whole pixels at 143 dpi, via HIMETRIC and twips. A
+    // 150x30pt shape draws 150.05x30.2 (the next line 0.24pt lower than
+    // DrawingML's), 40pt 39.8, 37pt 36.75, 151.3pt 151.55. DrawingML keeps
+    // its extent.
+    let picture = |w: &str, h: &str| {
+        let body = format!(
+            "<w:p><w:r><w:pict><v:shape style=\"width:{w}pt;height:{h}pt\">\
+             <v:imagedata r:id=\"rIdImg\"/></v:shape></w:pict></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+             <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        );
+        docx_to_pdf(&drawing_docx(&body)).expect("convert VML picture")
+    };
+    for ((w, h), (ww, wh)) in [
+        (("150", "30"), ("150.05", "30.20")),
+        (("75", "40"), ("75.00", "39.80")),
+        (("151.3", "37"), ("151.55", "36.75")),
+        (("400", "36"), ("399.80", "36.25")),
+    ] {
+        let pdf = picture(w, h);
+        image_cm_xy(&pdf, ww, wh);
+    }
+    let dml = blip(
+        "1905000",
+        "381000",
+        "<wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">",
+        "</wp:inline>",
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&format!(
+        "<w:p><w:r>{dml}</w:r></w:p><w:sectPr/>"
+    )))
+    .expect("convert DrawingML picture");
+    image_cm_xy(&pdf, "150.00", "30.00");
 }
 
 #[test]
@@ -40752,7 +40859,7 @@ fn an_inline_picture_wider_than_the_column_keeps_its_size() {
          <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
            <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
     let pdf = docx_to_pdf(&drawing_docx(body)).expect("convert wide inline picture");
-    let (x, _) = image_cm_xy(&pdf, "600.00", "300.00");
+    let (x, _) = image_cm_xy(&pdf, "600.15", "300.10");
     assert!(
         (x - 72.0).abs() < 0.5,
         "full-size picture at the margin; x={x}"
@@ -46001,7 +46108,7 @@ fn font_index_default_location_persists_missing_family_across_processes() {
     let path = dir.path().join("font-index.tsv");
     let first = std::fs::read_to_string(&path).unwrap();
     assert!(first.starts_with(concat!(
-        "jubarte-font-index\t1\t",
+        "jubarte-font-index\t2\t",
         env!("CARGO_PKG_VERSION"),
         "\n"
     )));
@@ -46018,8 +46125,10 @@ fn font_index_custom_location_recovers_from_stale_or_torn_cache() {
     for contents in [
         "old-cache-version\n",
         "jubarte-font-index\t1\t0.0.0\n",
+        // Same release, older index rules (the Windows-folder pass is 2).
+        concat!("jubarte-font-index\t1\t", env!("CARGO_PKG_VERSION"), "\n"),
         concat!(
-            "jubarte-font-index\t1\t",
+            "jubarte-font-index\t2\t",
             env!("CARGO_PKG_VERSION"),
             "\ntruncated-row\n"
         ),
@@ -46030,7 +46139,7 @@ fn font_index_custom_location_recovers_from_stale_or_torn_cache() {
         convert_with_font_index(dir.path(), Some(path.as_os_str()));
         let recovered = std::fs::read_to_string(&path).unwrap();
         assert!(recovered.starts_with(concat!(
-            "jubarte-font-index\t1\t",
+            "jubarte-font-index\t2\t",
             env!("CARGO_PKG_VERSION"),
             "\n"
         )));
@@ -47290,4 +47399,317 @@ fn a_hide_mark_cells_empty_last_paragraph_takes_no_height() {
         got.iter().zip(word).all(|(g, w)| (g - w).abs() < 0.6),
         "rows apart at Word's {word:?}, got {got:?}"
     );
+}
+
+#[test]
+fn a_table_inside_a_text_box_lays_out_as_a_table() {
+    // 5a6c (en redline holdout): footer3's "End-Point Assessment Recording
+    // Forms" banner is a text box holding a two-row table, a red header row
+    // over a grey band. Word paints the cells, their fills and one row under
+    // the other; we flattened the cells into one run of text, unfilled.
+    let cell = |fill: &str, text: &str| {
+        format!(
+            "<w:tr><w:tc><w:tcPr><w:tcW w:w=\"5760\" w:type=\"dxa\"/>\
+               <w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"{fill}\"/></w:tcPr>\
+               <w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc></w:tr>"
+        )
+    };
+    let tbox = format!(
+        "<w:drawing><wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" \
+           relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\">\
+           <wp:positionH relativeFrom=\"column\"><wp:posOffset>0</wp:posOffset></wp:positionH>\
+           <wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>914400</wp:posOffset></wp:positionV>\
+           <wp:extent cx=\"4114800\" cy=\"1371600\"/><wp:wrapNone/><wp:docPr id=\"9\" name=\"Box\"/>\
+           <a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+             <wps:wsp xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\">\
+               <wps:spPr><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom><a:noFill/></wps:spPr>\
+               <wps:txbx><w:txbxContent><w:tbl><w:tblPr><w:tblW w:w=\"5760\" w:type=\"dxa\"/></w:tblPr>\
+                 <w:tblGrid><w:gridCol w:w=\"5760\"/></w:tblGrid>{}{}</w:tbl><w:p/></w:txbxContent></wps:txbx>\
+               <wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing>",
+        cell("D81E05", "BannerTop"),
+        cell("D9D9D9", "BannerBand")
+    );
+    let docx = drawing_docx(&format!(
+        "<w:p><w:r><w:t>Host</w:t></w:r><w:r>{tbox}</w:r></w:p><w:sectPr/>"
+    ));
+    let pdf = docx_to_pdf(&docx).expect("box table");
+    let hay = String::from_utf8_lossy(&pdf);
+    for (fill, rg) in [
+        ("D81E05", "0.847 0.118 0.020 rg"),
+        ("D9D9D9", "0.851 0.851 0.851 rg"),
+    ] {
+        assert!(
+            hay.match_indices(rg)
+                .any(|(i, _)| hay[i..].lines().next().is_some_and(|l| l.ends_with("re f"))),
+            "the cell's {fill} fill is painted"
+        );
+    }
+    let top = pdf_glyph_text_xy(&pdf, "BannerTop").expect("top row");
+    let band = pdf_glyph_text_xy(&pdf, "BannerBand").expect("band row");
+    assert!(
+        (top.0 - band.0).abs() < 0.5 && top.1 - band.1 > 10.0,
+        "the second row sits under the first, at the same left edge; top={top:?} band={band:?}"
+    );
+}
+
+#[test]
+fn a_table_styles_first_row_turned_off_italic_and_bold_stay_off() {
+    // 5a6c's banner table style (Table-XY) gives its header row
+    // `<w:b/><w:i w:val="0"/>`: bold, upright. We read any w:i as on and
+    // painted the header italic.
+    let pdf_for = |rpr: &str| {
+        let styles = format!(
+            "<w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/>\
+               <w:rPr><w:rFonts w:ascii=\"Arial\" w:hAnsi=\"Arial\"/></w:rPr></w:style>\
+             <w:style w:type=\"table\" w:styleId=\"Head\"><w:name w:val=\"Head\"/>\
+               <w:tblStylePr w:type=\"firstRow\"><w:rPr>{rpr}</w:rPr>\
+                 <w:tcPr><w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"D81E05\"/></w:tcPr></w:tblStylePr></w:style>"
+        );
+        let body = "<w:tbl><w:tblPr><w:tblStyle w:val=\"Head\"/><w:tblW w:w=\"4000\" w:type=\"dxa\"/>\
+               <w:tblLook w:val=\"0420\" w:firstRow=\"1\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>\
+             <w:tr><w:tc><w:p><w:r><w:t>HeadCell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>\
+             <w:p/><w:sectPr/>";
+        let pdf = docx_to_pdf(&docx_with_settings_and_styles(body, "", &styles)).expect("convert");
+        // The faces' names only (every descriptor has an /ItalicAngle).
+        let hay = String::from_utf8_lossy(&pdf).into_owned();
+        hay.split("/BaseFont /")
+            .skip(1)
+            .filter_map(|s| s.split([' ', '/', '\n']).next())
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let on = pdf_for("<w:b/><w:i/>");
+    assert!(
+        on.contains("Italic") && on.contains("Bold"),
+        "control: b and i on"
+    );
+    let off = pdf_for("<w:b w:val=\"0\"/><w:i w:val=\"0\"/>");
+    assert!(
+        !off.contains("Italic") && !off.contains("Bold"),
+        "w:val=\"0\" turns the header's italic and bold off"
+    );
+}
+
+#[test]
+fn an_inserted_field_word_recomputes_paints_its_result_unmarked() {
+    // Word 16 probe fldrev_p1 (2026-10-02): Save as PDF recomputes PAGE,
+    // NUMPAGES, SECTION, STYLEREF, REF, DATE and SEQ, and paints an inserted
+    // one's result in the run's own colour; DOCPROPERTY, AUTHOR, FILENAME and
+    // QUOTE keep their cached result, inked. 5a6c's inserted STYLEREF title
+    // ("Crown Suits Act 1947") is black in Word's PDF; we inked it.
+    let field = |instr: &str, cached: &str| {
+        format!(
+            "<w:p><w:ins w:id=\"1\" w:author=\"A\"><w:r><w:t>In</w:t></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+             <w:r><w:instrText xml:space=\"preserve\"> {instr} </w:instrText></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r><w:r><w:t>{cached}</w:t></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:ins></w:p>"
+        )
+    };
+    let recomputed = [
+        ("STYLEREF \"Heading 1\"", "Sty"),
+        ("SECTION", "Sec"),
+        ("DATE \\@ \"yyyy\"", "Dat"),
+        ("SEQ Figure", "Seq"),
+    ];
+    let cached = [("DOCPROPERTY Title", "Doc"), ("QUOTE \"q\"", "Quo")];
+    let body: String = recomputed
+        .iter()
+        .chain(&cached)
+        .map(|(instr, text)| field(instr, text))
+        .chain(["<w:sectPr/>".to_string()])
+        .collect();
+    let docx = minimal_docx_body(&body);
+    let red = "0.820 0.204 0.220";
+    let colour = |pdf: &[u8], needle: &str| {
+        let (text, fills) = pdf_glyph_fills(pdf);
+        let at = |off: usize| {
+            let byte = text
+                .find(&format!("In{needle}"))
+                .unwrap_or_else(|| panic!("In{needle} in {text}"));
+            fills[text[..byte].chars().count() + off].clone()
+        };
+        (at(0), at(2))
+    };
+    let pdf = docx_to_pdf(&docx).expect("word mode");
+    for (_, text) in recomputed {
+        let (label, result) = colour(&pdf, text);
+        assert_eq!(label, red, "{text}: the inserted text is inked");
+        assert_ne!(result, red, "{text}: the recomputed result is not");
+    }
+    for (_, text) in cached {
+        assert_eq!(
+            colour(&pdf, text).1,
+            red,
+            "{text}: a cached result stays inked"
+        );
+    }
+    // Our own marks keep every inserted result marked.
+    let ours = docx_to_pdf_with(&docx, PdfOptions::default()).expect("default");
+    for (_, text) in recomputed.iter().chain(&cached) {
+        let (label, result) = colour(&ours, text);
+        assert_eq!(result, label, "{text}: default marks ink the result");
+    }
+}
+
+#[test]
+fn a_header_styleref_result_realigns_its_line() {
+    // 515f's running head "s. 10" sits in a jc=right header cell: Word
+    // ends it on the cell edge (x 460.0 to 482.28) where we kept the
+    // cached "s. 1" start and ran 5.6pt past it. A patched result lays
+    // its line out again: a right line keeps its end, a centred one its
+    // middle, a left one moves the text after it.
+    let make = |cached: &str| {
+        let fld = format!(
+            "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+             <w:r><w:instrText xml:space=\"preserve\"> STYLEREF CharX </w:instrText></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r><w:r><w:t>{cached}</w:t></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>"
+        );
+        let t = |s: &str| format!("<w:r><w:t xml:space=\"preserve\">{s}</w:t></w:r>");
+        let para = |jc: &str, pre: &str, post: &str| {
+            format!(
+                "<w:p><w:pPr><w:jc w:val=\"{jc}\"/></w:pPr>{}{fld}{}</w:p>",
+                t(pre),
+                t(post)
+            )
+        };
+        let header = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+             <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+             {}{}{}<w:tbl><w:tblPr><w:tblW w:w=\"5000\" w:type=\"dxa\"/></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"5000\"/></w:tblGrid><w:tr><w:tc>\
+             <w:tcPr><w:tcW w:w=\"5000\" w:type=\"dxa\"/></w:tcPr>{}</w:tc></w:tr></w:tbl>\
+             <w:p/></w:hdr>",
+            para("right", "s. ", ""),
+            para("center", "c. ", ""),
+            para("left", "L[", "]tail"),
+            para("right", "t. ", ""),
+        );
+        let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+            <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+            <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+            <w:style w:type=\"character\" w:styleId=\"CharX\"><w:name w:val=\"CharX\"/></w:style></w:styles>"
+            .to_string();
+        let body = "<w:p><w:r><w:t xml:space=\"preserve\">x </w:t></w:r>\
+             <w:r><w:rPr><w:rStyle w:val=\"CharX\"/></w:rPr><w:t>1000</w:t></w:r></w:p>\
+             <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+               <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+               <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+                 w:header=\"720\" w:footer=\"720\"/></w:sectPr>";
+        docx_to_pdf(&hf_docx(
+            body,
+            &[
+                ("rIdH1", "header", "header1.xml"),
+                ("rIdS", "styles", "styles.xml"),
+            ],
+            &[("word/header1.xml", header), ("word/styles.xml", styles)],
+        ))
+        .expect("convert styleref header")
+    };
+    let patched = make("1");
+    let control = make("1000");
+    for needle in ["s. ", "c. ", "L[", "]tail", "t. ", "1000"] {
+        let got = pdf_glyph_text_xys(&patched, needle);
+        let want = pdf_glyph_text_xys(&control, needle);
+        assert!(!want.is_empty(), "{needle} is painted");
+        assert_eq!(got.len(), want.len(), "{needle}: {got:?} vs {want:?}");
+        for (g, w) in got.iter().zip(&want) {
+            assert!(
+                (g.0 - w.0).abs() < 0.05 && (g.1 - w.1).abs() < 0.05,
+                "{needle}: patched {got:?}, as if cached {want:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_header_styleref_shows_the_styled_text_of_its_own_page() {
+    // Word 16 probe sref_p1 (2026-10-02), the rule behind 5a6c's running
+    // head ("s. 9" where we printed the header's cached "s. 1"): a header
+    // STYLEREF shows the first text in its style on the page (\l: the
+    // last); a page without one shows the last before it; a page before
+    // any shows the first after it. Paragraph and character styles alike.
+    let fld = |instr: &str| {
+        format!(
+            "<w:r><w:fldChar w:fldCharType=\"begin\"/></w:r>\
+             <w:r><w:instrText xml:space=\"preserve\"> {instr} </w:instrText></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"separate\"/></w:r><w:r><w:t>zz</w:t></w:r>\
+             <w:r><w:fldChar w:fldCharType=\"end\"/></w:r>"
+        )
+    };
+    let t = |s: &str| format!("<w:r><w:t xml:space=\"preserve\">{s}</w:t></w:r>");
+    let header = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:hdr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:p>\
+         {}{}{}{}{}{}{}{}{}</w:p></w:hdr>",
+        t("P["),
+        fld("STYLEREF \"Hd\""),
+        t("]C["),
+        fld("STYLEREF CharX"),
+        t("]L["),
+        fld("STYLEREF \"Hd\" \\l"),
+        t("]K["),
+        fld("STYLEREF CharX \\l"),
+        t("]"),
+    );
+    let styles = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+        <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+        <w:style w:type=\"paragraph\" w:styleId=\"Hd\"><w:name w:val=\"Hd\"/><w:basedOn w:val=\"Normal\"/></w:style>\
+        <w:style w:type=\"character\" w:styleId=\"CharX\"><w:name w:val=\"CharX\"/></w:style></w:styles>"
+        .to_string();
+    let hd = |s: &str| format!("<w:p><w:pPr><w:pStyle w:val=\"Hd\"/></w:pPr>{}</w:p>", t(s));
+    let plain = |s: &str| format!("<w:p>{}</w:p>", t(s));
+    let cx = |pre: &str, s: &str| {
+        format!(
+            "<w:p>{}<w:r><w:rPr><w:rStyle w:val=\"CharX\"/></w:rPr><w:t>{s}</w:t></w:r>{}</w:p>",
+            t(pre),
+            t(" after")
+        )
+    };
+    let brk = "<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>";
+    let body = format!(
+        "{}{brk}{}{}{}{}{brk}{}{brk}{}{}{}\
+         <w:sectPr><w:headerReference w:type=\"default\" r:id=\"rIdH1\"/>\
+           <w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+           <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\" \
+             w:header=\"720\" w:footer=\"720\"/></w:sectPr>",
+        plain("PageOne"),
+        hd("Alpha"),
+        cx("x ", "c1"),
+        hd("Beta"),
+        cx("y ", "c2"),
+        plain("PageThree"),
+        plain("PageFour"),
+        hd("Gamma"),
+        cx("z ", "c3"),
+    );
+    let pdf = docx_to_pdf(&hf_docx(
+        &body,
+        &[
+            ("rIdH1", "header", "header1.xml"),
+            ("rIdS", "styles", "styles.xml"),
+        ],
+        &[("word/header1.xml", header), ("word/styles.xml", styles)],
+    ))
+    .expect("convert styleref header");
+    let text: Vec<String> = pdf_content_streams(&pdf)
+        .iter()
+        .map(|s| pdf_winansi_text(s.as_bytes()))
+        .collect();
+    assert_eq!(text.len(), 4, "four pages: {text:?}");
+    for (i, (body, want)) in [
+        ("PageOne", "P[Alpha]C[c1]L[Alpha]K[c1]"),
+        ("Beta", "P[Alpha]C[c1]L[Beta]K[c2]"),
+        ("PageThree", "P[Beta]C[c2]L[Beta]K[c2]"),
+        ("PageFour", "P[Gamma]C[c3]L[Gamma]K[c3]"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let page = &text[i];
+        assert!(page.contains(body), "page {i} holds {body}: {page:?}");
+        assert!(page.contains(want), "page {i}: want {want}; {page:?}");
+    }
 }
