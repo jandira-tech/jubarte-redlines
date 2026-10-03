@@ -144,10 +144,12 @@ fn a_rewritten_stretch_after_a_kept_opening_is_replaced_as_one_block() {
     // 100 kept words, then 300 rewritten ones that share two stray words
     // with the original, both words that also occur in the opening. The
     // paragraph keeps a quarter of its characters, so it is word-level;
-    // the strays are not unique, so they are no anchors, and the stretch
-    // after the opening keeps under 1 %: Word replaces it as one block
+    // the strays are not unique to the paragraph, so they are no anchors
+    // of it, and the stretch after the opening is a gap judged on its own:
+    // it keeps under 1 %, so it is replaced as one block, strays included
     // (`m47_stopword_lone_anchor`: a lone shared "and" or "text" does not
-    // shred the sentence around it).
+    // shred the sentence around it). Inside the block the insertion
+    // precedes the deletion, as Word writes them.
     let mut a: Vec<String> = (0..400).map(|i| word(0, i)).collect();
     a[180] = a[20].clone();
     a[260] = a[40].clone();
@@ -170,6 +172,8 @@ fn a_rewritten_stretch_after_a_kept_opening_is_replaced_as_one_block() {
             "stray word {stray} goes with the block: {changes:#?}"
         );
     }
+    assert!(text[0].starts_with("Insertion"), "{changes:#?}");
+    assert!(text[1].starts_with("Deletion"), "{changes:#?}");
     for w in a[..100].iter().filter(|w| *w != &a[20] && *w != &a[40]) {
         assert_eq!(
             mentions(&changes, w),
@@ -211,10 +215,63 @@ fn a_word_unique_to_both_sides_anchors_inside_a_rewritten_stretch() {
 #[test]
 fn an_insertion_precedes_the_deletion_it_replaces() {
     // Word writes the inserted text before the deleted text it replaces,
-    // whole paragraphs and blocks inside one alike.
+    // whole paragraphs (wave7 `len400_k10_r04`: the inserted paragraph,
+    // then the deleted one) and blocks inside one alike.
     let (a, b, _) = pair(400, 10, 4);
     let changes = changes(&a, &b);
     let text: Vec<&String> = changes.iter().filter(|c| c.contains(" text ")).collect();
     assert!(text[0].starts_with("Insertion"), "{changes:#?}");
     assert!(text[1].starts_with("Deletion"), "{changes:#?}");
+}
+
+#[test]
+fn a_unit_without_text_changed_beside_kept_words_is_marked() {
+    // A tab that becomes a break has no text on either side; the anchor
+    // extension must not pair the two by their emptiness (the units hash
+    // by element, so the comparer deletes the tab and inserts the break).
+    let (a, b, _) = pair(60, 4, 4);
+    let body = |text: &str, mid: &str| {
+        format!(
+            r#"<w:p><w:r><w:t xml:space="preserve">{text}</w:t></w:r><w:r>{mid}</w:r><w:r><w:t xml:space="preserve"> {text}</w:t></w:r></w:p>"#
+        )
+    };
+    let side = |text: &str, mid: &str| {
+        docx(&format!(
+            "{}{}{}",
+            para("Clause"),
+            body(text, mid),
+            para("End")
+        ))
+    };
+    let ours = compare_documents(&side(&a, "<w:tab/>"), &side(&b, "<w:br/>"), "Comparison")
+        .expect("compare");
+    let xml = common::docx::part_string(&ours, "word/document.xml").expect("document.xml");
+    // The revision element enclosing `needle`: the last `w:ins`/`w:del`
+    // opened and not yet closed before it.
+    let enclosing = |needle: &str| -> &'static str {
+        let at = xml
+            .find(needle)
+            .unwrap_or_else(|| panic!("{needle} missing: {xml}"));
+        let before = &xml[..at];
+        let open = ["<w:ins ", "<w:del "]
+            .iter()
+            .filter_map(|tag| before.rfind(tag).map(|i| (i, *tag)))
+            .max_by_key(|(i, _)| *i);
+        let close = ["</w:ins>", "</w:del>"]
+            .iter()
+            .filter_map(|tag| before.rfind(tag))
+            .max();
+        match open {
+            Some((i, tag)) if close.is_none_or(|c| c < i) => {
+                if tag == "<w:ins " {
+                    "ins"
+                } else {
+                    "del"
+                }
+            }
+            _ => "plain",
+        }
+    };
+    assert_eq!(enclosing("<w:tab"), "del", "{xml}");
+    assert_eq!(enclosing("<w:br"), "ins", "{xml}");
 }
