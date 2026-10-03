@@ -47846,3 +47846,134 @@ fn a_comment_followed_by_text_in_its_paragraph_keeps_its_note() {
     // The text itself is painted whole.
     assert!(pdf_winansi_text(&ours).contains("Before Commented words after."));
 }
+
+/// A resolved comment (`w15:done="1"` in commentsExtended) is painted
+/// faded by Word: text in BFBFBF grey, the box stroked in the author's
+/// tint and filled 16 % of that, the commented words under the pale fill
+/// (corpus d2b26d3d09, 2026-10-03: stroke F2CCE4, fill FDF7FB, text
+/// BFBFBF for every resolved balloon).
+#[test]
+fn a_resolved_comment_paints_a_faded_balloon() {
+    let body = format!(
+        "<w:p><w:commentRangeStart w:id=\"0\"/><w:r><w:t>Commented words</w:t></w:r>\
+         <w:commentRangeEnd w:id=\"0\"/><w:r><w:commentReference w:id=\"0\"/></w:r></w:p>{LETTER}"
+    );
+    let comments = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:comments xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+          xmlns:w14=\"http://schemas.microsoft.com/office/word/2010/wordml\">\
+        <w:comment w:id=\"0\" w:author=\"Ada\" w:initials=\"A\">\
+          <w:p w14:paraId=\"00000001\"><w:r><w:t>Settled</w:t></w:r></w:p></w:comment>\
+        </w:comments>";
+    let extended = |done: &str| {
+        format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+            <w15:commentsEx xmlns:w15=\"http://schemas.microsoft.com/office/word/2012/wordml\">\
+            <w15:commentEx w15:paraId=\"00000001\" w15:done=\"{done}\"/></w15:commentsEx>"
+        )
+    };
+    let resolved = docx_to_pdf(&with_comments_extended(
+        comments_docx(&body, comments),
+        &extended("1"),
+        false,
+    ))
+    .expect("resolved");
+    let stream = pdf_content_streams(&resolved).concat();
+    assert!(
+        stream.contains("0.749 0.749 0.749 rg"),
+        "the balloon text is Word's grey"
+    );
+    assert!(
+        stream.contains("0.973 0.863 0.867 RG"),
+        "the box is stroked in the author's tint"
+    );
+    // 16 % of the tint toward white: (0.996, 0.978, 0.979).
+    assert!(
+        stream.matches("0.996 0.978 0.979 rg").count() >= 2,
+        "the box and the commented words take the paler fill"
+    );
+    assert!(
+        !stream.contains("0.820 0.204 0.220 RG"),
+        "and nothing in the author's full ink"
+    );
+    let open = docx_to_pdf(&with_comments_extended(
+        comments_docx(&body, comments),
+        &extended("0"),
+        false,
+    ))
+    .expect("open");
+    let stream = pdf_content_streams(&open).concat();
+    assert!(
+        stream.contains("0.820 0.204 0.220 RG"),
+        "an open comment keeps its ink"
+    );
+    assert!(!stream.contains("0.749 0.749 0.749 rg"));
+}
+
+/// A range opened at body level (before the paragraph) tints the
+/// paragraph's text like one opened inside it: Word's r5_07_start_body
+/// fills "First paragraph, commented." with the author's tint.
+#[test]
+fn a_range_opened_at_body_level_tints_its_paragraph() {
+    let body = format!(
+        "<w:commentRangeStart w:id=\"0\"/>\
+         <w:p><w:r><w:t>First paragraph, commented.</w:t></w:r>\
+         <w:commentRangeEnd w:id=\"0\"/><w:r><w:commentReference w:id=\"0\"/></w:r></w:p>\
+         <w:p><w:r><w:t>Second paragraph.</w:t></w:r></w:p>{LETTER}"
+    );
+    let pdf = docx_to_pdf(&comments_docx(&body, &comments_part("0", "Ada", "Note"))).expect("pdf");
+    let stream = pdf_content_streams(&pdf).concat();
+    assert!(
+        stream.matches("0.973 0.863 0.867 rg").count() >= 2,
+        "the balloon and the commented paragraph are tinted"
+    );
+    // The second paragraph, outside the range, is not: every tint
+    // rectangle sits on the first paragraph's one line.
+    let ys: std::collections::BTreeSet<i64> = stream
+        .lines()
+        .filter(|l| l.starts_with("0.973 0.863 0.867 rg") && l.ends_with("re f"))
+        .filter_map(|l| l.split_whitespace().nth(5)?.parse::<f32>().ok())
+        .map(|y| y.round() as i64)
+        .collect();
+    assert_eq!(ys.len(), 1, "one tinted line: {ys:?}");
+}
+
+/// Word numbers balloons through the document, whatever the author, and
+/// a reply takes its thread's number with "R" and its rank, the parent
+/// counting as 1 (corpus d2b26d3d09: RW1, KB2, JW2R2, RW3, JW3R2, RW3R3;
+/// 0f6e71381a: RG1, WW1R2, RG2, WW2R2, RF2R3). The counter restarted at
+/// each paragraph, so a second paragraph's comment was "[B1]".
+#[test]
+fn balloon_labels_count_through_the_document_and_rank_replies() {
+    let body = format!(
+        "<w:p><w:commentRangeStart w:id=\"0\"/><w:r><w:t>One</w:t></w:r>\
+         <w:commentRangeEnd w:id=\"0\"/><w:r><w:commentReference w:id=\"0\"/></w:r>\
+         <w:r><w:commentReference w:id=\"2\"/></w:r></w:p>\
+         <w:p><w:commentRangeStart w:id=\"1\"/><w:r><w:t>Two</w:t></w:r>\
+         <w:commentRangeEnd w:id=\"1\"/><w:r><w:commentReference w:id=\"1\"/></w:r></w:p>{LETTER}"
+    );
+    let comments = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:comments xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+          xmlns:w14=\"http://schemas.microsoft.com/office/word/2010/wordml\">\
+        <w:comment w:id=\"0\" w:author=\"Ada\" w:initials=\"A\">\
+          <w:p w14:paraId=\"00000001\"><w:r><w:t>First</w:t></w:r></w:p></w:comment>\
+        <w:comment w:id=\"2\" w:author=\"Bob\" w:initials=\"B\">\
+          <w:p w14:paraId=\"00000003\"><w:r><w:t>Reply</w:t></w:r></w:p></w:comment>\
+        <w:comment w:id=\"1\" w:author=\"Bob\" w:initials=\"B\">\
+          <w:p w14:paraId=\"00000002\"><w:r><w:t>Second</w:t></w:r></w:p></w:comment>\
+        </w:comments>";
+    let extended = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w15:commentsEx xmlns:w15=\"http://schemas.microsoft.com/office/word/2012/wordml\">\
+        <w15:commentEx w15:paraId=\"00000001\" w15:done=\"0\"/>\
+        <w15:commentEx w15:paraId=\"00000003\" w15:paraIdParent=\"00000001\" w15:done=\"0\"/>\
+        <w15:commentEx w15:paraId=\"00000002\" w15:done=\"0\"/></w15:commentsEx>";
+    let pdf = docx_to_pdf(&with_comments_extended(
+        comments_docx(&body, comments),
+        extended,
+        false,
+    ))
+    .expect("pdf");
+    let text = pdf_winansi_text(&pdf);
+    for label in ["Commented [A1]: ", "Commented [B1R2]: ", "Commented [B2]: "] {
+        assert!(text.contains(label), "{label} in {text}");
+    }
+}

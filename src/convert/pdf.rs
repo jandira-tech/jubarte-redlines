@@ -148,8 +148,11 @@ pub(crate) struct PdfComment {
     pub contents: String,
     pub author: String,
     pub initials: String,
-    pub seq: usize,
+    /// The number in the balloon label ("3", "3R2").
+    pub label: String,
     pub color: [f32; 3],
+    /// Resolved (`w15:done`): painted faded.
+    pub resolved: bool,
 }
 
 /// One finished page, with the section `pgSz` it was laid out against.
@@ -2020,8 +2023,9 @@ mod tests {
             contents: "note".into(),
             author: "A".into(),
             initials: "A".into(),
-            seq: 1,
+            label: "1".into(),
             color: [0.0; 3],
+            resolved: false,
         });
         let pdf = super::emit(&fonts, &[page], crate::convert::PdfOptions::default());
         let hay = String::from_utf8_lossy(&pdf);

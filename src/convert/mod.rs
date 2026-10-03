@@ -1517,13 +1517,16 @@ struct CommentNote {
     author: String,
     /// `w:initials`, what the balloon label shows.
     initials: String,
-    /// The comment's number in the balloon label: its rank among the
-    /// comments the body binds, in order of appearance.
-    seq: usize,
+    /// The number in the balloon label ("3", "3R2"): `number_comments`'s,
+    /// or the comment's rank among those bound so far when the part was
+    /// loaded without a body.
+    label: String,
     /// The author's "by author" ink, shared with the revision marks.
     color: [f32; 3],
     /// Bound to the run before the note's place: anchor at its end.
     after: bool,
+    /// Resolved: the balloon in faded ink.
+    resolved: bool,
     text: String,
 }
 
@@ -7209,11 +7212,23 @@ fn comment_range_end_is_live(dom: &Dom, end: NodeId) -> bool {
 /// Reply comment id → parent comment id, from `commentsExtended.xml`'s
 /// `w15:paraIdParent` matched to each comment's last `w14:paraId`.
 fn comment_reply_parents(pkg: &PartFs, main: &str) -> HashMap<String, String> {
+    comments_extended(pkg, main).0
+}
+
+/// The comments `commentsExtended.xml` marks resolved (`w15:done="1"`),
+/// by comment id.
+fn comments_resolved(pkg: &PartFs, main: &str) -> HashSet<String> {
+    comments_extended(pkg, main).1
+}
+
+/// `commentsExtended.xml` read against the comments part: each reply's
+/// parent (by comment id), and the resolved comments.
+fn comments_extended(pkg: &PartFs, main: &str) -> (HashMap<String, String>, HashSet<String>) {
     let (Some(comments), Some(extended)) = (
         part_xml_by_rel_kind(pkg, main, "comments"),
         part_xml_by_rel_kind(pkg, main, "commentsExtended"),
     ) else {
-        return HashMap::new();
+        return (HashMap::new(), HashSet::new());
     };
     let mut cdom = Dom::new();
     let cdoc = cdom.parse_xdocument(&comments);
@@ -7232,6 +7247,7 @@ fn comment_reply_parents(pkg: &PartFs, main: &str) -> HashMap<String, String> {
     let mut edom = Dom::new();
     let edoc = edom.parse_xdocument(&extended);
     let mut out = HashMap::new();
+    let mut resolved = HashSet::new();
     if let Some(root) = edom.root(edoc) {
         for ex in edom.descendants(root, Some(&W15::name("commentEx"))) {
             let kid = edom
@@ -7243,9 +7259,14 @@ fn comment_reply_parents(pkg: &PartFs, main: &str) -> HashMap<String, String> {
             if let (Some(kid), Some(parent)) = (kid, parent) {
                 out.insert(kid.clone(), parent.clone());
             }
+            if let Some(kid) = kid
+                && matches!(edom.attribute(ex, &W15::name("done")), Some("1" | "true"))
+            {
+                resolved.insert(kid.clone());
+            }
         }
     }
-    out
+    (out, resolved)
 }
 
 fn w_revision_count(xml: &str, tag: &str) -> usize {
@@ -7272,6 +7293,7 @@ fn collect_blocks(
     let mut numbering = load_numbering(pkg);
     let sects = live_sect_prs(dom, body);
     let mut comments = load_comments(pkg, main);
+    number_comments(dom, body, &mut comments, &comment_reply_parents(pkg, main));
     if let Some(balloons) = word_balloon_comments(pkg, main, dom, body) {
         comments.retain(|id, _| balloons.contains(id));
     }
@@ -7282,6 +7304,7 @@ fn collect_blocks(
         sects: &sects,
         authors: RefCell::new(AuthorColors::default()),
         comments,
+        open_comments: RefCell::new(Vec::new()),
     };
     let mut endnotes = EndnoteBag::load(pkg, main);
     walk_container(&ctx, dom, body, &mut numbering, &mut blocks, &mut endnotes);
@@ -7297,6 +7320,9 @@ struct WalkCtx<'a> {
     sects: &'a [NodeId],
     authors: RefCell<AuthorColors>,
     comments: HashMap<String, CommentRec>,
+    /// Comment ranges open between the blocks: a `w:commentRangeStart` at
+    /// body level opens one for the paragraphs that follow.
+    open_comments: RefCell<Vec<String>>,
 }
 
 #[derive(Clone)]
@@ -7304,6 +7330,11 @@ struct CommentRec {
     author: String,
     initials: String,
     text: String,
+    /// `w15:done` in `commentsExtended.xml`: Word paints the balloon faded.
+    resolved: bool,
+    /// The number in the balloon label ("3", or "3R2" for a reply), set
+    /// by `number_comments`; empty when the part was loaded without a body.
+    label: String,
 }
 
 fn load_comments(pkg: &PartFs, main: &str) -> HashMap<String, CommentRec> {
@@ -7315,6 +7346,7 @@ fn load_comments(pkg: &PartFs, main: &str) -> HashMap<String, CommentRec> {
     let Some(root) = dom.root(doc) else {
         return HashMap::new();
     };
+    let resolved = comments_resolved(pkg, main);
     let mut out = HashMap::new();
     for node in dom.descendants(root, Some(&W::name("comment"))) {
         let Some(id) = attr_any(&dom, node, "id").map(str::to_string) else {
@@ -7336,12 +7368,15 @@ fn load_comments(pkg: &PartFs, main: &str) -> HashMap<String, CommentRec> {
         if text.is_empty() {
             text = element_text(&dom, node);
         }
+        let done = resolved.contains(&id);
         out.insert(
             id,
             CommentRec {
                 author,
                 initials,
                 text,
+                resolved: done,
+                label: String::new(),
             },
         );
     }
@@ -7367,7 +7402,7 @@ fn balloon_tint(color: [f32; 3]) -> [f32; 3] {
     ];
     let rgb = color.map(|c| (c * 255.0).round() as u8);
     TABLE.iter().find(|(ink, _)| *ink == rgb).map_or_else(
-        || color.map(|c| 1.0 - (1.0 - c) * 0.16),
+        || lighten(color, 0.16),
         |(_, tint)| tint.map(|c| f32::from(c) / 255.0),
     )
 }
@@ -7442,7 +7477,7 @@ fn paint_comment_balloons(fonts: &Fonts, sheet: &StyleSheet, pages: &mut [Page])
         let mut ceiling = f32::MAX;
         let mut ops = Vec::new();
         for note in &notes {
-            let label = format!("Commented [{}{}]: ", note.initials, note.seq);
+            let label = format!("Commented [{}{}]: ", note.initials, note.label);
             let words: Vec<(FaceRef, String, f32)> = [
                 (label_face, label.as_str()),
                 (text_face, note.contents.as_str()),
@@ -7473,16 +7508,24 @@ fn paint_comment_balloons(fonts: &Fonts, sheet: &StyleSheet, pages: &mut [Page])
             let y0 = note.top.min(ceiling);
             let y1 = y0 - (BOX_PAD + pitch * lines.len() as f32);
             ceiling = y1 - STACK_GAP / k;
+            // A resolved comment is faded: the stroke takes the tint, the
+            // fill 16 % of that, the text Word's BFBFBF grey (d2b26d3d09).
+            let (ink, fill, text_ink) = if note.resolved {
+                let ink = balloon_tint(note.color);
+                (ink, lighten(ink, 0.16), [0.749; 3])
+            } else {
+                (note.color, balloon_tint(note.color), [0.0; 3])
+            };
             let contour = rounded_box(box_x0, y1, box_x1, y0, CORNER / k);
             ops.push(Op::FillPath {
                 contours: vec![contour.clone()],
-                color: balloon_tint(note.color),
+                color: fill,
                 even_odd: false,
             });
             ops.push(Op::StrokePath {
                 subpaths: vec![(contour, true)],
                 width: STROKE / k,
-                color: note.color,
+                color: ink,
             });
             let mut baseline = y0 - FIRST_LINE_TOP - ascent;
             for line in &lines {
@@ -7495,7 +7538,7 @@ fn paint_comment_balloons(fonts: &Fonts, sheet: &StyleSheet, pages: &mut [Page])
                         x,
                         y: baseline,
                         glyphs: shaped.iter().map(|(g, _)| *g).collect(),
-                        color: [0.0; 3],
+                        color: text_ink,
                         text: word.clone(),
                         hscale: 1.0,
                     });
@@ -7511,7 +7554,7 @@ fn paint_comment_balloons(fonts: &Fonts, sheet: &StyleSheet, pages: &mut [Page])
                 elbow,
                 dot,
                 CONNECTOR / k,
-                note.color,
+                ink,
             );
             dotted(
                 &mut ops,
@@ -7519,7 +7562,7 @@ fn paint_comment_balloons(fonts: &Fonts, sheet: &StyleSheet, pages: &mut [Page])
                 (box_x0, y0 - ELBOW_DROP / k),
                 dot,
                 CONNECTOR / k,
-                note.color,
+                ink,
             );
         }
         page.ops.extend(ops);
@@ -7858,6 +7901,7 @@ fn load_footnotes(
         sects: &sects,
         authors: RefCell::new(AuthorColors::default()),
         comments,
+        open_comments: RefCell::new(Vec::new()),
     };
     let mut numbering = load_numbering(pkg);
     let mut out = HashMap::new();
@@ -8059,6 +8103,21 @@ fn walk_container(
         let Some(child) = child else {
             break;
         };
+        if dom.name_is(child, &W::name("commentRangeStart")) {
+            if let Some(id) = attr_any(dom, child, "id") {
+                let mut open = ctx.open_comments.borrow_mut();
+                if !open.iter().any(|o| o == id) {
+                    open.push(id.to_string());
+                }
+            }
+            continue;
+        }
+        if dom.name_is(child, &W::name("commentRangeEnd")) {
+            if let Some(id) = attr_any(dom, child, "id") {
+                ctx.open_comments.borrow_mut().retain(|o| o != id);
+            }
+            continue;
+        }
         if dom.name_is(child, &W::p()) {
             if para_base(dom, child, ctx.sheet, None).0.page_break_before && !blocks.is_empty() {
                 blocks.push(Block::PageBreak {
@@ -10604,6 +10663,7 @@ fn paragraph_block(
             comments: &ctx.comments,
             in_table,
             toc: is_toc_style(&pstyle),
+            open: Some(&ctx.open_comments),
         },
     );
     if marker.is_empty()
@@ -12204,6 +12264,7 @@ fn table_block(
                         comments,
                         in_table: true,
                         toc: false,
+                        open: None,
                     },
                 );
                 // An empty cell paragraph is a Word line like any other
@@ -12310,6 +12371,7 @@ fn table_block(
                         comments,
                         in_table: true,
                         toc: false,
+                        open: None,
                     },
                 );
                 cell_paras.push(CellPara {
@@ -13478,6 +13540,7 @@ fn collect_runs(dom: &Dom, node: NodeId, base: &RunStyle, theme: &ThemeFonts) ->
             comments: &HashMap::new(),
             in_table: false,
             toc: false,
+            open: None,
         },
     );
     strip_page_marks(runs)
@@ -13554,6 +13617,9 @@ struct RunBag<'a> {
     comments: &'a HashMap<String, CommentRec>,
     in_table: bool,
     toc: bool,
+    /// The comment ranges open where this paragraph starts, written back
+    /// with those still open at its end.
+    open: Option<&'a RefCell<Vec<String>>>,
 }
 
 fn collect_runs_in(
@@ -13574,7 +13640,7 @@ fn collect_runs_in(
         in_table: bag.in_table,
         toc: bag.toc,
         comments: bag.comments,
-        open: Vec::new(),
+        open: bag.open.map(|o| o.borrow().clone()).unwrap_or_default(),
         pending: Vec::new(),
         bound: HashSet::new(),
         pageref: None,
@@ -13590,6 +13656,9 @@ fn collect_runs_in(
     };
     collect_runs_rec(&mut ctx, node, RevMark::None, "", &mut runs);
     flush_pending_comments(&mut ctx, &mut runs);
+    if let Some(open) = bag.open {
+        *open.borrow_mut() = ctx.open.clone();
+    }
     split_hansi_runs(runs)
 }
 
@@ -13723,9 +13792,14 @@ fn notes_for(ctx: &mut RunCollect<'_>, ids: &[String]) -> Vec<CommentNote> {
                 id: id.clone(),
                 author: rec.author.clone(),
                 initials: rec.initials.clone(),
-                seq: ctx.bound.len(),
+                label: if rec.label.is_empty() {
+                    ctx.bound.len().to_string()
+                } else {
+                    rec.label.clone()
+                },
                 color,
                 after: false,
+                resolved: rec.resolved,
                 text: rec.text.clone(),
             });
         }
@@ -13750,12 +13824,68 @@ fn flush_pending_comments(ctx: &mut RunCollect<'_>, runs: &mut [TextRun]) {
     }
 }
 
+/// Word's balloon numbers (466 balloons of 152 corpus documents): a
+/// top-level comment takes the next number in the order its references
+/// appear in the body, whatever its author ("RW1", "KB2", "RW3"); a reply
+/// takes its thread's number and "R" with its rank in the thread, the
+/// parent counting as 1 ("JW2R2", "RW3R3").
+fn number_comments(
+    dom: &Dom,
+    body: NodeId,
+    comments: &mut HashMap<String, CommentRec>,
+    parents: &HashMap<String, String>,
+) {
+    let mut top = 0usize;
+    let mut number_of: HashMap<String, usize> = HashMap::new();
+    let mut replies: HashMap<String, usize> = HashMap::new();
+    let mut seen = HashSet::new();
+    for node in dom.descendants(body, Some(&W::name("commentReference"))) {
+        let Some(id) = attr_any(dom, node, "id") else {
+            continue;
+        };
+        if !seen.insert(id.to_string()) {
+            continue;
+        }
+        let mut root = id;
+        let mut hops = 0;
+        while let Some(parent) = parents.get(root)
+            && hops < 64
+        {
+            root = parent;
+            hops += 1;
+        }
+        let label = if root == id {
+            top += 1;
+            number_of.insert(id.to_string(), top);
+            top.to_string()
+        } else {
+            let n = *number_of.entry(root.to_string()).or_insert_with(|| {
+                top += 1;
+                top
+            });
+            let rank = replies.entry(root.to_string()).or_insert(1);
+            *rank += 1;
+            format!("{n}R{rank}")
+        };
+        if let Some(rec) = comments.get_mut(id) {
+            rec.label = label;
+        }
+    }
+}
+
 /// The tint of the comment whose range is open here, if any: the first
 /// one opened, as Word shades nested ranges.
 fn open_tint(ctx: &mut RunCollect<'_>) -> Option<[f32; 3]> {
     let id = ctx.open.first()?;
-    let author = ctx.comments.get(id)?.author.clone();
-    Some(balloon_tint(ctx.authors.color(&author)))
+    let rec = ctx.comments.get(id)?;
+    let (author, resolved) = (rec.author.clone(), rec.resolved);
+    let tint = balloon_tint(ctx.authors.color(&author));
+    Some(if resolved { lighten(tint, 0.16) } else { tint })
+}
+
+/// `color` blended `k` of the way toward white.
+fn lighten(color: [f32; 3], k: f32) -> [f32; 3] {
+    color.map(|c| 1.0 - (1.0 - c) * k)
 }
 
 fn apply_named_char_style(style: &mut RunStyle, named: &NamedStyle) {
@@ -19165,6 +19295,7 @@ fn chrome_part_xml(
         sects: &[],
         authors: RefCell::new(AuthorColors::default()),
         comments: HashMap::new(),
+        open_comments: RefCell::new(Vec::new()),
     };
     let mut frame: Option<(String, Vec<NodeId>)> = None;
     for para in part_dom.descendants(root, Some(&W::p())) {
@@ -24898,8 +25029,9 @@ impl<'a> Layout<'a> {
                 contents: note.text.clone(),
                 author: note.author.clone(),
                 initials: note.initials.clone(),
-                seq: note.seq,
+                label: note.label.clone(),
                 color: note.color,
+                resolved: note.resolved,
             });
         }
     }

@@ -850,8 +850,9 @@ mod tests {
             contents: "note".into(),
             author: "a".into(),
             initials: "a".into(),
-            seq: 1,
+            label: "1".into(),
             color: [0.0; 3],
+            resolved: false,
         });
         page.markup_pane = true;
         page.margin_r = 72.0;
