@@ -229,7 +229,7 @@ fn a_unit_without_text_changed_beside_kept_words_is_marked() {
     // A tab that becomes a break has no text on either side; the anchor
     // extension must not pair the two by their emptiness (the units hash
     // by element, so the comparer deletes the tab and inserts the break).
-    let (a, b, _) = pair(60, 4, 4);
+    let (a, b, _) = pair(240, 16, 4);
     let body = |text: &str, mid: &str| {
         format!(
             r#"<w:p><w:r><w:t xml:space="preserve">{text}</w:t></w:r><w:r>{mid}</w:r><w:r><w:t xml:space="preserve"> {text}</w:t></w:r></w:p>"#
@@ -274,4 +274,33 @@ fn a_unit_without_text_changed_beside_kept_words_is_marked() {
     };
     assert_eq!(enclosing("<w:tab"), "del", "{xml}");
     assert_eq!(enclosing("<w:br"), "ins", "{xml}");
+}
+
+#[test]
+fn a_short_paragraph_keeping_a_lone_word_is_marked_word_by_word() {
+    // A short paragraph keeps whatever it shares: the bench's redline of
+    // document_100_ultimate_demo × double_spacing_bold_demo keeps
+    // " document " and "." of this 12-word paragraph, 0.114 of the longer
+    // side's characters, and so must the engine.
+    let changes = changes(
+        "This final document showcases the complete range of styling options available.",
+        "Bold double-spaced text for easy document editing and review.",
+    );
+    assert_eq!(
+        mentions(&changes, "document"),
+        0,
+        "the kept word stays plain: {changes:#?}"
+    );
+    assert!(
+        changes
+            .iter()
+            .any(|c| c.starts_with("Deletion") && c.contains("showcases")),
+        "{changes:#?}"
+    );
+    assert!(
+        changes
+            .iter()
+            .any(|c| c.starts_with("Insertion") && c.contains("editing")),
+        "{changes:#?}"
+    );
 }

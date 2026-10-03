@@ -1307,7 +1307,21 @@ pub const DEFAULT_DETAIL_THRESHOLD: f64 = 0.02;
 /// otherwise. Constant from 200 to 4800 words and for kept runs of 2 to 16
 /// words; the clean probes separate at 0.1206 against 0.128. Word applies
 /// it again to every window between the anchors it keeps.
+///
+/// The longer side, not the shorter: of the 39 probes keeping under 0.12
+/// of the longer side but 0.12 or more of the shorter (wave5's 1600- vs
+/// 3900-character cells among them) Word replaces 38.
 pub const WORD_LEVEL_KEPT_RATIO: f64 = 0.12;
+
+/// Below this many words on the longer side Word keeps whatever the two
+/// paragraphs share, however little: of the paragraphs its redlines of
+/// the bench corpus change on their own, 35 keep a lone word under 0.12
+/// of the longer side, every one of them short (document_100_ultimate_demo
+/// × double_spacing_bold_demo keeps " document " and "." of 12 words at
+/// 0.114; font_color_demo × font_family_demo keeps " font " of 8 at
+/// 0.077). A shorter paragraph keeps the run-by-run resolvers. The value
+/// comes from the `short1` and `asym1` Word waves (6–400 words).
+pub const WORD_LEVEL_MIN_WORDS: usize = 200;
 
 impl WmlComparerSettings {
     /// The preset for `mode`.

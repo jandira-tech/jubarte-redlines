@@ -9453,9 +9453,11 @@ const PARAGRAPH_WINDOW_CELL_CAP: usize = 100_000_000;
 /// no in-order alignment makes, and this marks word by word what Word
 /// replaces. The anchors are Heckel's links, extended and kept in order.
 ///
-/// Only a whole paragraph a side qualifies: Word units throughout, text on
-/// both sides, each side ending in its paragraph mark — or a gap this
-/// resolver carved out of such a paragraph (`in_word_level_paragraph`). A
+/// Only a whole paragraph a side qualifies, of at least
+/// [`super::WORD_LEVEL_MIN_WORDS`] words on the longer side: Word units
+/// throughout, text on both sides, each side ending in its paragraph mark
+/// — or a gap this resolver carved out of such a paragraph
+/// (`in_word_level_paragraph`), whatever its size. A
 /// fragment the run resolvers cut out of a multi-paragraph region keeps
 /// their arrangement: the probes judged whole paragraphs, and Word keeps
 /// " font " and "." of a paragraph it mostly rewrites inside a
@@ -9562,6 +9564,17 @@ fn resolve_paragraph_window(
         })
     };
     if chars1 == 0 || chars2 == 0 || wordless(words1, &w1) || wordless(words2, &w2) {
+        return Err(unknown);
+    }
+    // A short paragraph keeps whatever it shares (Word's redlines of the
+    // bench corpus: 35 of the 40 paragraphs changed on their own that keep
+    // under 0.12 of the longer side keep a lone word, all of them short);
+    // the run resolvers keep it. A gap inside a judged paragraph is judged
+    // whatever its size.
+    let word_count = |ws: &[u32]| ws.iter().filter(|&&w| w > 0).count();
+    if !settings.in_word_level_paragraph
+        && word_count(&w1).max(word_count(&w2)) < super::WORD_LEVEL_MIN_WORDS
+    {
         return Err(unknown);
     }
     let kept = weighted_lcs(&k1, &k2, &w1);
