@@ -285,6 +285,8 @@ fn triage_findings_carry_their_codes_and_are_not_repaired() {
     let fixed = repair(&input).unwrap();
     assert!(fixed.repaired.is_empty(), "{:?}", fixed.repaired);
     assert_eq!(codes(&fixed.remaining).len(), findings.len());
+    // Findings, but none repairable: the package is not rewritten either.
+    assert_eq!(fixed.docx, input);
     // The triage checks alone, as `jubarte debug` sees them.
     let triage = jubarte::debug::findings(&input).unwrap();
     assert!(
