@@ -9146,7 +9146,7 @@ fn vml_images_take_the_slot_of_their_own_shape() {
         (ax - 300.0).abs() < 0.5 && (ay - (792.0 - 100.0 - 50.0)).abs() < 0.5,
         "absolute shape at page (300,100): {ax},{ay}"
     );
-    let (fx, _) = image_cm_xy(&pdf, "60.00", "30.00");
+    let (fx, _) = image_cm_xy(&pdf, "59.90", "30.20");
     assert!(
         (fx - 72.0).abs() < 0.5,
         "in-flow shape paints at the margin, x={fx}"
@@ -40239,7 +40239,7 @@ fn an_inline_picture_in_a_table_cell_paints() {
          <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
            <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
     let pdf = docx_to_pdf(&drawing_docx(body)).expect("convert picture in cell");
-    let (x, y) = image_cm_xy(&pdf, "120.00", "60.00");
+    let (x, y) = image_cm_xy(&pdf, "119.85", "59.90");
     // Second column starts at 72 + 100pt; the picture's top is the row top.
     assert!(
         x > 170.0 && x < 180.0,
@@ -40344,11 +40344,12 @@ fn an_inline_picture_line_ends_at_the_picture_bottom() {
          <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
            <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
     let pdf = docx_to_pdf(&drawing_docx(body)).expect("convert picture then text");
-    let (_, img_y) = image_cm_xy(&pdf, "60.00", "30.00");
+    let (_, img_y) = image_cm_xy(&pdf, "59.90", "30.20");
     let after = text_baselines(&pdf).into_iter().fold(f32::MIN, f32::max);
     let gap = img_y - after;
+    // One ascent plus the 0.24pt baseline snap; the flat 4pt gap was 15+.
     assert!(
-        gap < 12.5,
+        gap < 12.75,
         "next baseline is one ascent under the picture; gap={gap}"
     );
 }
@@ -40455,6 +40456,44 @@ fn an_inserted_vml_picture_keeps_its_runs_descent_under_it() {
             "an inserted {kind} picture keeps its 10pt run's descent (2.16pt): {drop}"
         );
     }
+}
+
+#[test]
+fn an_inline_vml_picture_snaps_to_whole_143_dpi_pixels() {
+    // Word 16 probes vo3-vo5 (2026-10-02): an inline v:imagedata picture
+    // is laid out in whole pixels at 143 dpi, via HIMETRIC and twips. A
+    // 150x30pt shape draws 150.05x30.2 (the next line 0.24pt lower than
+    // DrawingML's), 40pt 39.8, 37pt 36.75, 151.3pt 151.55. DrawingML keeps
+    // its extent.
+    let picture = |w: &str, h: &str| {
+        let body = format!(
+            "<w:p><w:r><w:pict><v:shape style=\"width:{w}pt;height:{h}pt\">\
+             <v:imagedata r:id=\"rIdImg\"/></v:shape></w:pict></w:r></w:p>\
+             <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
+             <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        );
+        docx_to_pdf(&drawing_docx(&body)).expect("convert VML picture")
+    };
+    for ((w, h), (ww, wh)) in [
+        (("150", "30"), ("150.05", "30.20")),
+        (("75", "40"), ("75.00", "39.80")),
+        (("151.3", "37"), ("151.55", "36.75")),
+        (("400", "36"), ("399.80", "36.25")),
+    ] {
+        let pdf = picture(w, h);
+        image_cm_xy(&pdf, ww, wh);
+    }
+    let dml = blip(
+        "1905000",
+        "381000",
+        "<wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">",
+        "</wp:inline>",
+    );
+    let pdf = docx_to_pdf(&drawing_docx(&format!(
+        "<w:p><w:r>{dml}</w:r></w:p><w:sectPr/>"
+    )))
+    .expect("convert DrawingML picture");
+    image_cm_xy(&pdf, "150.00", "30.00");
 }
 
 #[test]
@@ -40820,7 +40859,7 @@ fn an_inline_picture_wider_than_the_column_keeps_its_size() {
          <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
            <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
     let pdf = docx_to_pdf(&drawing_docx(body)).expect("convert wide inline picture");
-    let (x, _) = image_cm_xy(&pdf, "600.00", "300.00");
+    let (x, _) = image_cm_xy(&pdf, "600.15", "300.10");
     assert!(
         (x - 72.0).abs() < 0.5,
         "full-size picture at the margin; x={x}"

@@ -16663,6 +16663,11 @@ fn collect_images(
                     kind = washed_out(kind);
                 }
                 let slot = vml_owner_slot(dom, im, root).unwrap_or(ImageSlot::Flow);
+                let (w, h) = if matches!(slot, ImageSlot::Flow) {
+                    (vml_pixel_snap(w), vml_pixel_snap(h))
+                } else {
+                    (w, h)
+                };
                 out.push(LaidImage {
                     w,
                     h,
@@ -17328,6 +17333,21 @@ fn vml_owner_slot(dom: &Dom, im: NodeId, root: NodeId) -> Option<ImageSlot> {
         node = dom.parent(n);
     }
     None
+}
+
+/// Word lays an inline VML picture out in whole pixels at 143 dpi: the
+/// style's points to HIMETRIC (1/100 mm), to pixels, to twips, each
+/// rounded half up. 30pt draws 30.2pt tall, 36 36.25, 37 36.75, 40 39.8,
+/// 151.3 151.55, whatever the image (Word 16 probes vo3-vo5, 2026-10-02).
+/// DrawingML keeps its extent.
+fn vml_pixel_snap(pt: f32) -> f32 {
+    if !(pt.is_finite() && pt > 0.0) {
+        return pt;
+    }
+    let himetric = (f64::from(pt) * 2540.0 / 72.0).round() as i64;
+    let px = (himetric * 143 * 2 + 2540) / (2 * 2540);
+    let tw = (px * 1440 * 2 + 143) / (2 * 143);
+    tw as f32 / 20.0
 }
 
 /// Width/height of the VML shape that owns `im`, falling back to the
