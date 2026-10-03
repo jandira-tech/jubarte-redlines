@@ -48119,3 +48119,68 @@ fn a_short_row_s_cell_wider_than_its_grid_column_spans_the_columns_its_width_cov
         "the cell spans the grid, its text on one line; Bottom={bottom:?} collaboration={collab:?}"
     );
 }
+
+#[test]
+fn a_deeper_item_ahead_of_its_parent_level_uses_up_the_parent_s_start() {
+    // ed36b607e8 (corpus tracking_without_comments), Word's PDF: numId 42
+    // (lvl 0 start 3, "%1"; lvl 1 "%1.%2") opens with three lvl-1
+    // paragraphs, 3.1 3.2 3.3, and the first lvl-0 paragraph after them
+    // is 4, the next 5: the deeper items started level 0 at 3 and used
+    // it. The engine numbered the first lvl-0 paragraph 3.
+    let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+          <w:abstractNum w:abstractNumId=\"0\">\
+            <w:lvl w:ilvl=\"0\"><w:start w:val=\"3\"/><w:numFmt w:val=\"decimal\"/><w:lvlText w:val=\"%1\"/>\
+              <w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/></w:pPr></w:lvl>\
+            <w:lvl w:ilvl=\"1\"><w:start w:val=\"1\"/><w:numFmt w:val=\"decimal\"/><w:lvlText w:val=\"%1.%2\"/>\
+              <w:pPr><w:ind w:left=\"1440\" w:hanging=\"360\"/></w:pPr></w:lvl>\
+          </w:abstractNum>\
+          <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+        </w:numbering>";
+    let item = |ilvl: u32, text: &str| {
+        format!(
+            "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"{ilvl}\"/><w:numId w:val=\"1\"/></w:numPr></w:pPr>\
+             <w:r><w:t>{text}</w:t></w:r></w:p>"
+        )
+    };
+    let body = format!(
+        "{}{}{}{}{}<w:sectPr/>",
+        item(1, "Alpha"),
+        item(1, "Beta"),
+        item(1, "Gamma"),
+        item(0, "Delta"),
+        item(0, "Epsilon")
+    );
+    let pdf = docx_to_pdf(&numbering_docx(&body, Some(numbering))).expect("deeper first");
+    let text = pdf_winansi_text(&pdf);
+    let label_before = |word: &str| {
+        let at = text
+            .find(word)
+            .unwrap_or_else(|| panic!("{word} in {text:?}"));
+        text[..at]
+            .chars()
+            .rev()
+            .filter(|c| !c.is_whitespace())
+            .take(3)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect::<String>()
+    };
+    assert!(
+        label_before("Alpha").ends_with("3.1"),
+        "first deeper item is 3.1; text={text:?}"
+    );
+    assert!(
+        label_before("Gamma").ends_with("3.3"),
+        "third deeper item is 3.3; text={text:?}"
+    );
+    assert!(
+        label_before("Delta").ends_with('4'),
+        "the first lvl-0 item after them is 4; text={text:?}"
+    );
+    assert!(
+        label_before("Epsilon").ends_with('5'),
+        "and the next 5; text={text:?}"
+    );
+}

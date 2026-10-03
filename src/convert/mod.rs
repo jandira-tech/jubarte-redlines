@@ -5239,6 +5239,29 @@ impl Numbering {
                 _ => false,
             }
         });
+        // A deeper item ahead of any item of a shallower level starts that
+        // level at its start value and uses it up: ed36b607e8's list (lvl 0
+        // start 3) opens with 3.1, 3.2, 3.3 and Word numbers the first
+        // lvl-0 paragraph after them 4, the next 5; the engine gave it 3.
+        for level in 0..resolved {
+            if self.counters.contains_key(&(num_id.to_string(), level)) {
+                continue;
+            }
+            let first = self
+                .starts
+                .get(&(num_id.to_string(), level))
+                .copied()
+                .or_else(|| {
+                    self.levels
+                        .get(&abs)
+                        .and_then(|m| m.get(&level))
+                        .map(|l| l.start)
+                })
+                .unwrap_or(1)
+                .max(1);
+            self.counters
+                .insert((num_id.to_string(), level), first.saturating_add(1));
+        }
         let start = self
             .starts
             .get(&(num_id.to_string(), resolved))
