@@ -185,22 +185,18 @@ prints these commands in its Benchmark section.
 
 ### Before you run it
 
-- **Desktop app.** `release.sh` step 1 moves jubarte-app to the engine
-  version (`package.json`, `src-tauri/tauri.conf.json`,
-  `src-tauri/Cargo.toml`, `src/index.html`) and step 2 refuses to go on
-  until `jubarte-app/CHANGELOG.md` has a `## [x.y.z]` section naming
-  `jubarte-redlines x.y.z`. `tests/release_metadata.rs` fails main otherwise.
-- **Lockfiles.** Step 1 runs `cargo update --offline -p jubarte-redlines` in
-  the root, `jubarte-python`, `jubarte-wasm`, `jubarte-rust-inproc` and
-  `jubarte-app/src-tauri`. A metadata-only pass does not refresh a path
-  dependency's version.
-- **npm two-factor auth.** A non-interactive `npm publish` answers `EOTP`.
-  Run from a terminal, or pass a fresh code: `NPM_OTP=123456
-  scripts/release.sh x.y.z …`. Codes live about 30 seconds, so export it just
-  before step 10.
-- **Credentials.** `cargo login`, `npm whoami`,
-  `UV_PUBLISH_TOKEN`, `gh auth status`. Read tokens from their files at run
-  time; never paste them into the command line history.
+`scripts/release.sh --checklist x.y.z` prints the whole release checklist —
+every item a releaser must inspect, grouped by phase (before the script,
+each step of it, after it), each marked `[auto]` (a release.sh line
+enforces it) or `[you]` (a human does it at that moment), each with the
+command that proves it. `release.sh` is the source of that list and keeps
+no other: a real run prints each step's `[you]` items as a short
+"CHECK NOW" block at the moment they matter, and its final summary lists
+every `[you]` item still owed after the script ends (app build, App Store,
+notarization, jubarte.pro, the benchmark lane, the post-release
+reproduction). This section does not repeat the list; the notes below are
+the standing constraints the checklist assumes:
+
 - **Windows paths.** Git for Windows stops at 260 characters. The release
   workflow sets `core.longpaths`, and `tests/repo_paths_fit_windows.rs` keeps
   every tracked path under 200 characters. Stage long fixture names under
