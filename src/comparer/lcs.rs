@@ -820,7 +820,7 @@ pub fn longest_common_run(
 ///
 /// Dispatches to [`longest_common_run_indexed`] — a hash-indexed rewrite that
 /// returns the exact same `(i1, i2, len)` as the historical O(n·m)
-/// [`longest_common_run_scan`] but skips the pairs that cannot possibly match
+/// `longest_common_run_scan` but skips the pairs that cannot possibly match
 /// (proven by `indexed_matches_scan`).
 fn longest_common_run_with_dom(
     dom: Option<&Dom>,
@@ -1019,7 +1019,7 @@ fn longest_common_run_scan(
 /// **only** the matching bucket. Buckets are built in ascending `i2` order, so
 /// probing one visits the same starts, in the same `i2`-ascending order, that the
 /// scan would reach for that `i1`. The candidate sequence — and therefore the
-/// first-found winner — is identical to [`longest_common_run_scan`]; the scan
+/// first-found winner — is identical to `longest_common_run_scan`; the scan
 /// merely also visits the (never-winning) `len == 0` pairs in between. Proven by
 /// `indexed_matches_scan`. A 64-bit key collision lands in a bucket but yields
 /// `len == 0` (the 128-bit compare in [`extend_common_run`] differs), exactly as
@@ -8797,7 +8797,7 @@ fn correlated_hash_run_scan(unknown: &CorrelatedSequence) -> Option<CorrelatedHa
 
 /// CORR-IDX-01 — index right-hand groups by (group_type, correlated hash) and
 /// only extend diagonals from matching starts. Must match
-/// [`correlated_hash_run_scan`] exactly (atom-max + first-found `(i1,i2)`).
+/// `correlated_hash_run_scan` exactly (atom-max + first-found `(i1,i2)`).
 fn correlated_hash_run_indexed(unknown: &CorrelatedSequence) -> Option<CorrelatedHashRun> {
     use ComparisonUnitGroupType::*;
     use std::collections::HashMap;
@@ -8934,7 +8934,7 @@ fn process_correlated_hashes_owned(
     split_at_correlated_run(unknown, run)
 }
 
-/// [`process_correlated_hashes_owned`] with Word's structural final pair: a
+/// `process_correlated_hashes_owned` with Word's structural final pair: a
 /// run ending on the revised story's closing mark against a blank the
 /// original runs on past stops before that pair, which then goes to the two
 /// closing marks (92075b7449: the blank after a shared closing table).
@@ -9094,7 +9094,7 @@ fn same_slot_pairs(
     pairs
 }
 
-/// First DIRECT atom of a unit (Word→contents[0]; Group→None). The TS back-path
+/// First DIRECT atom of a unit (Word→`contents[0]`; Group→None). The TS back-path
 /// uses `ofType(cu.Contents, ComparisonUnitAtom)`, which is direct-only.
 fn first_direct_atom(u: &ComparisonUnit) -> Option<&ComparisonUnitAtom> {
     match u {

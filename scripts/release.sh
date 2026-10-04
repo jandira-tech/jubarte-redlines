@@ -67,8 +67,8 @@
 #      --document-private-items --open` opens the rendered docs for the
 #      releaser to assess drift against what this release ships; a
 #      machine-readable snapshot lands in docs/api/ (rustdoc JSON + flat
-#      api.txt + the wasm .d.ts files) and is diffed against the previous
-#      release's copy
+#      api.txt + the wasm .d.ts files) and its drift from the previous
+#      release's copy is shown, the public surface first
 #   7. publish dry-runs — cargo publish --dry-run, npm --dry-run, maturin sdist
 #      (with the pypi comment proven inside the sdist)
 #   8. `chore(release): vX.Y.Z` commit, wasm npm rebuild (stamps the release
@@ -290,6 +290,16 @@ say()  { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 step() { printf '  - %s\n' "$*"; }
 die()  { printf '\033[31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 
+# Run a cargo packaging command without its one warning per tests/*.rs and
+# examples/*.rs the crate's `include` leaves out of the package (431 lines in
+# the 0.11.2 dry run, all by design). Every other line of stderr, stdout and
+# the command's exit status pass through.
+packaged() {
+  { "$@" 2>&1 1>&3 \
+      | { grep --line-buffered -v 'is not included in the published package$' >&2 || true; }
+  } 3>&1
+}
+
 crate_ver() { grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2; }
 
 # --- registry liveness probes (idempotent resume) -----------------------------
@@ -303,6 +313,22 @@ pypi_has()    { curl -sf "https://pypi.org/pypi/jubarte-redlines/json" | python3
 npm_has()     { [ "$(npm view "jubarte-wasm@$VER" version 2>/dev/null)" = "$VER" ]; }
 npm_cli_has() { [ "$(npm view "jubarte-redlines@$VER" version 2>/dev/null)" = "$VER" ]; }
 ghrel_has()   { gh release view "$TAG" >/dev/null 2>&1; }
+# The release carries every advertised wheel and the sdist. release.yml
+# creates the release first and attaches its assets after (0.11.2: step 11
+# found the release, then no wheel, and died minutes before they arrived).
+ghrel_wheels() { gh release view "$TAG" --json assets -q '.assets[].name' 2>/dev/null \
+                   | python3 scripts/check_release_artifacts.py - --version "$VER" --sdist >/dev/null 2>&1; }
+# A registry answers a fresh upload late: PyPI's project listing (0.11.2:
+# missing seconds after `uv publish`, listed a minute later), crates.io's
+# index, npm's view. Asks up to 12 times, 10 s apart.
+eventually() {
+  local i
+  for i in $(seq 1 12); do
+    "$@" && return 0
+    [ "$i" = 12 ] || sleep 10
+  done
+  return 1
+}
 
 # =============================================================================
 say "0. Preflight"
@@ -624,6 +650,7 @@ if [ "$SKIP_GATES" = 0 ]; then
   python3 scripts/test_release_sh.py
   python3 scripts/test_check_release_info.py
   python3 scripts/test_library_readmes.py
+  python3 scripts/test_api_snapshot.py
   # Python bindings: build the extension from this checkout and run pytest.
   # jubarte-python/uv.lock is tracked; whatever uv rewrites in it ships in
   # the release commit (step 8), so the tree stays clean for a resumed run.
@@ -646,7 +673,9 @@ say "6. API docs — drift assessment"
 # before the point of no return. Re-running a failed release does not reopen
 # the browser: the assessment already happened on the first run.
 if [ "$SKIP_GATES" = 0 ]; then
-  cargo doc --no-deps --document-private-items --open
+  # Warnings denied here too: step 5 builds the public docs only, and the
+  # private items carried 12 dead links and stray HTML tags in 0.11.2.
+  RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items --open
 else
   step "doc review skipped (--skip-gates — assessed on the first run)"
 fi
@@ -659,17 +688,20 @@ python3 scripts/api_snapshot.py "$VER"
 # docs/python.md and docs/javascript.md so they quote this release's runners.
 scripts/gen_docs.sh
 
+# The drift is read off the two rustdoc JSON snapshots, not the two listings:
+# both sides go through this checkout's filter, so a listing whose format
+# changed between releases (v0.11.2's has three columns and every blanket
+# impl) is never the drift.
 PREV_API=""
 if [ -n "$PREV_TAG" ] \
-   && [ -f "docs/api/jubarte-$PREV_TAG.api.txt" ] \
+   && [ -f "docs/api/jubarte-$PREV_TAG.json.gz" ] \
    && [ "$PREV_TAG" != "$TAG" ]; then
-  PREV_API="docs/api/jubarte-$PREV_TAG.api.txt"
+  PREV_API="docs/api/jubarte-$PREV_TAG.json.gz"
 fi
 if [ "$SKIP_GATES" = 0 ]; then
   if [ -n "$PREV_API" ]; then
     step "API drift since $PREV_TAG — review before confirming the push:"
-    { diff -u "$PREV_API" "docs/api/jubarte-v$VER.api.txt" || true; } \
-      | tail -n +3 | sed 's/^/        /'
+    python3 scripts/api_snapshot.py --drift "$PREV_TAG" "v$VER" | sed 's/^/        /'
   elif [ "$PREV_TAG" = "$TAG" ]; then
     step "snapshot already exists for $TAG (resumed run)"
   else
@@ -687,7 +719,7 @@ say "7. Publish dry-runs"
 if crates_has; then
   step "jubarte-redlines $VER already on crates.io — dry run skipped"
 else
-  cargo publish --dry-run --locked --allow-dirty
+  packaged cargo publish --dry-run --locked --allow-dirty
 fi
 if npm_has; then
   step "jubarte-wasm $VER already on npm — dry run skipped"
@@ -955,10 +987,15 @@ release_from_artifacts() {
   step "GitHub release $TAG created from run $run_id${missing:+ — missing:$missing}"
 }
 
-if [ "$NO_WAIT" = 0 ] && ! ghrel_has; then
+# Waits for the release WITH its wheels: a release whose run is still going
+# is not done uploading. Once the run has completed, a release that still
+# lacks a wheel is left to the download below, which names what is missing.
+wait_for_release() {
+  local RUN_ID RUN_STATE
+  ghrel_wheels && return 0
   step "waiting for release.yml (up to ~45 min)…"
   for _ in $(seq 1 90); do
-    ghrel_has && break
+    ghrel_wheels && break
     read -r RUN_ID RUN_STATE <<<"$(release_run)"
     [ "${RUN_STATE:-}" = completed ] && break
     sleep 30
@@ -969,6 +1006,9 @@ if [ "$NO_WAIT" = 0 ] && ! ghrel_has; then
       || die "release.yml for $TAG has not finished — rerun this command later"
     release_from_artifacts "$RUN_ID"
   fi
+}
+if [ "$NO_WAIT" = 0 ]; then
+  wait_for_release
 fi
 
 if pypi_has; then
@@ -1028,12 +1068,11 @@ gh_note() {
 
 ok=1
 check() { if eval "$2"; then step "ok — $1"; else echo "  ✗ $1" >&2; ok=0; fi; }
-sleep 20 # crates.io index lag
-check "crates.io  jubarte-redlines $VER" crates_has
-check "npm        jubarte-wasm $VER" npm_has
-check "npm        jubarte-redlines $VER" npm_cli_has
+check "crates.io  jubarte-redlines $VER" "eventually crates_has"
+check "npm        jubarte-wasm $VER" "eventually npm_has"
+check "npm        jubarte-redlines $VER" "eventually npm_cli_has"
 check "npm        releaseNotes.$VER shipped" npm_note
-check "PyPI       jubarte-redlines $VER" pypi_has
+check "PyPI       jubarte-redlines $VER" "eventually pypi_has"
 check "GitHub     release $TAG" ghrel_has
 check "GitHub     notes carry --github-summary" gh_note
 [ "$ok" = 1 ] || die "verification failed — check the lines marked ✗"

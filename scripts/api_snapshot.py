@@ -7,16 +7,28 @@
 """Machine-readable API snapshot under docs/api/ for drift assessment.
 
     scripts/api_snapshot.py [label]        label defaults to the Cargo version
+    scripts/api_snapshot.py --drift PREV NEW [--private]
 
-Writes two artifacts, regenerated on every release and diffed against the
-previous release's copy by scripts/release.sh:
+The first form writes two artifacts, regenerated on every release:
 
     docs/api/jubarte-v<label>.json.gz  rustdoc JSON (--document-private-items);
                                        gzipped — raw output is ~9 MB and grows
                                        the repo on every release
-    docs/api/jubarte-v<label>.api.txt  flattened `kind<TAB>vis<TAB>path sig`
-                                       listing, sorted, so `diff -u` reads as
-                                       API added/removed/changed lines
+    docs/api/jubarte-v<label>.api.txt  flattened, sorted listing, one item a
+                                       line:
+                                       `surface<TAB>kind<TAB>vis<TAB>path sig`
+
+`surface` is `api` for what a user of the crate can name (public items in
+public modules, what a public `use` re-exports, and their public members)
+and `internal` for the rest, so the public surface sorts first. Impls rustdoc
+writes for every type (blanket ones such as `Into<U>`, auto traits such as
+`Send`) are left out; a trait impl is one line.
+
+The second form is what scripts/release.sh shows at step 6: the drift between
+two releases. The public surface comes in full, what was removed or changed
+before what was added; the crate-private rest is counted by module
+(`--private` lists it). Both sides are rebuilt from their `.json.gz`, so a
+change to the listing's format never reads as drift.
 
 rustdoc JSON is still unstable: with a nightly toolchain present it runs
 `cargo +nightly doc`; without one it falls back to RUSTC_BOOTSTRAP=1 on the
@@ -25,16 +37,20 @@ stable toolchain this repository pins.
 
 from __future__ import annotations
 
+import argparse
 import gzip
 import json
 import os
 import re
 import subprocess
 import sys
+from collections import Counter, defaultdict
 from pathlib import Path
+from typing import NamedTuple
 
 ROOT = Path(__file__).resolve().parent.parent
 DOC_JSON = ROOT / "target" / "doc" / "jubarte.json"
+API_DIR = ROOT / "docs" / "api"
 
 
 def crate_version() -> str:
@@ -241,64 +257,180 @@ def _vis(vis) -> str:
     return ""  # default: private
 
 
-def flatten(doc: dict) -> list[str]:
+class Entry(NamedTuple):
+    """One line of the listing. `kind` and `path` name the item; the other
+    three are what can change about it."""
+
+    surface: str
+    kind: str
+    vis: str
+    path: str
+    detail: str
+
+    def line(self) -> str:
+        return f"{self.surface}\t{self.kind}\t{self.vis}\t{self.path}{self.detail}"
+
+
+def _kind(item: dict) -> tuple[str, dict]:
+    return next(iter(item["inner"].items()))
+
+
+def _children(item: dict) -> list[str]:
+    """Ids of the items rustdoc JSON nests inside a container item."""
+    kind, inner = _kind(item)
+    kids: list = []
+    if kind in ("module", "impl", "trait"):
+        kids = inner.get("items", [])
+    elif kind == "enum":
+        kids = inner.get("variants", [])
+    elif kind == "union":
+        kids = inner.get("fields", [])
+    elif kind in ("struct", "variant"):
+        shape = inner.get("kind", {})
+        if isinstance(shape, dict):
+            named = shape.get("plain") or shape.get("struct") or {}
+            kids = named.get("fields", []) or shape.get("tuple", [])
+    # A stripped tuple field is recorded as null.
+    return [str(k) for k in kids if k is not None]
+
+
+def _is_noise_impl(inner: dict) -> bool:
+    """Impls every type gets without the crate writing them: blanket ones
+    (`impl<T> Into<U> for T`), auto traits (`Send`, `Unpin`), and the marker
+    `derive(PartialEq)` adds beside `PartialEq`."""
+    if inner.get("blanket_impl") is not None:
+        return True
+    if inner.get("is_synthetic", inner.get("synthetic")):
+        return True
+    return (inner.get("trait") or {}).get("path") == "StructuralPartialEq"
+
+
+def _local_target(inner: dict, index: dict) -> str | None:
+    """Id of the type an impl is for, when this crate defines it."""
+    target = (inner.get("for") or {}).get("resolved_path")
+    if target and str(target.get("id")) in index:
+        return str(target["id"])
+    return None
+
+
+def _public_surface(index: dict, root: str, impls: list[str]) -> set[str]:
+    """Ids a user of the crate can name."""
+    api: set[str] = set()
+
+    def add(iid: str) -> None:
+        if iid in api or iid not in index:
+            return
+        api.add(iid)
+        item = index[iid]
+        kind, _ = _kind(item)
+        for kid in _children(item):
+            if kid not in index:
+                continue
+            kid_kind, kid_inner = _kind(index[kid])
+            if kind == "module":
+                if index[kid].get("visibility") != "public":
+                    continue
+                if kid_kind == "use":
+                    api.add(kid)
+                    add(str(kid_inner.get("id")))
+                else:
+                    add(kid)
+            elif kind in ("enum", "variant", "trait"):
+                # Variants, their fields and trait items carry no visibility
+                # of their own: they are as public as their parent.
+                add(kid)
+            elif index[kid].get("visibility") == "public":
+                add(kid)
+
+    add(root)
+    for iid in impls:
+        inner = index[iid]["inner"]["impl"]
+        trait = inner.get("trait")
+        target = _local_target(inner, index)
+        if trait and str(trait.get("id")) in index and str(trait["id"]) not in api:
+            continue  # a crate-private trait
+        if target is not None and target not in api:
+            continue
+        if target is None and not (trait and str(trait.get("id")) in api):
+            continue
+        api.add(iid)
+        for kid in _children(index[iid]):
+            if kid in index and (trait or index[kid].get("visibility") == "public"):
+                api.add(kid)
+    return api
+
+
+def entries(doc: dict) -> list[Entry]:
     index: dict = doc["index"]
     paths: dict = doc.get("paths", {})
+    # Every walk goes in id order, so the listing never depends on the order
+    # rustdoc happened to write the index in.
+    ids = sorted(index, key=lambda iid: (len(iid), iid))
+    impls = [
+        iid for iid in ids
+        if "impl" in index[iid]["inner"] and not _is_noise_impl(index[iid]["inner"]["impl"])
+    ]
+    api = _public_surface(index, str(doc["root"]), impls)
 
     # Parent map: rustdoc JSON records children inside container items, so a
     # child missing from `paths` still resolves by walking up to the crate.
+    # The items of a left-out impl get no parent and are left out with it.
     parent: dict[str, str] = {}
-    for iid, item in index.items():
-        kind, inner = next(iter(item["inner"].items()))
-        kids = []
-        if kind == "module":
-            kids = inner.get("items", [])
-        elif kind == "impl":
-            kids = inner.get("items", [])
-        elif kind == "trait":
-            kids = inner.get("items", [])
-        elif kind == "enum":
-            kids = inner.get("variants", [])
-        elif kind == "struct":
-            s = inner.get("kind", {})
-            kids = (
-                s.get("plain", {}).get("fields", []) or s.get("tuple", [])
-                if isinstance(s, dict)
-                else []
-            )
-        elif kind == "variant":
-            v = inner.get("kind", {})
-            kids = (
-                v.get("struct", {}).get("fields", []) or v.get("tuple", [])
-                if isinstance(v, dict)
-                else []
-            )
-        elif kind == "union":
-            kids = inner.get("fields", [])
-        for k in kids:
-            parent.setdefault(str(k), iid)
+    for iid in ids:
+        item = index[iid]
+        if "impl" in item["inner"] and _is_noise_impl(item["inner"]["impl"]):
+            continue
+        for kid in _children(item):
+            parent.setdefault(kid, iid)
 
-    def label(iid: str) -> str:
-        kind, inner = next(iter(index[iid]["inner"].items()))
-        if kind == "impl":
-            tr = inner.get("trait")
-            target = ty(inner["for"]) if inner.get("for") else "?"
-            if tr:
-                return f"(impl {_path_of(tr)}{_args(tr.get('args'))} for {target})"
-            return f"(impl {target})"
+    def name(iid: str) -> str:
+        kind, inner = _kind(index[iid])
+        if kind == "use":
+            return "*" if inner.get("is_glob") else inner.get("name") or "_"
         return index[iid].get("name") or "_"
+
+    def impl_path(iid: str) -> str:
+        """The type's own path for an inherent impl (its methods read as
+        `Type::method`), `Type::(impl Trait)` for a trait impl."""
+        inner = index[iid]["inner"]["impl"]
+        trait = inner.get("trait")
+        target = _local_target(inner, index)
+        written = ty(inner["for"]) if inner.get("for") else "?"
+        if not trait:
+            return full_path(target) if target else f"(impl {written})"
+        what = _path_of(trait) + _args(trait.get("args"))
+        if target:
+            return f"{full_path(target)}::(impl {what})"
+        return f"(impl {what} for {written})"
 
     def full_path(iid: str) -> str:
         if iid in paths:
             return "::".join(paths[iid]["path"])
+        if "impl" in index[iid]["inner"]:
+            return impl_path(iid)
         pid = parent.get(iid)
-        return f"{full_path(pid)}::{label(iid)}" if pid and pid in index else label(iid)
+        return f"{full_path(pid)}::{name(iid)}" if pid else name(iid)
 
-    lines = []
-    for iid, item in index.items():
-        kind, inner = next(iter(item["inner"].items()))
-        if kind in ("extern_crate", "import", "use", "keyword", "primitive"):
+    out = []
+    for iid in ids:
+        item = index[iid]
+        kind, inner = _kind(item)
+        if kind in ("extern_crate", "import", "keyword", "primitive"):
             continue
+        if kind == "use" and iid not in api:
+            continue  # a private import is no part of any surface
+        pid = parent.get(iid)
+        in_trait_impl = bool(
+            pid and "impl" in index[pid]["inner"] and index[pid]["inner"]["impl"].get("trait")
+        )
+        if kind == "impl":
+            # An inherent impl block is its items; a trait impl is one line.
+            if _is_noise_impl(inner) or not inner.get("trait"):
+                continue
+        elif iid not in paths and pid is None:
+            continue  # reachable only through a left-out impl
+        elif kind == "function" and in_trait_impl:
+            continue  # the trait fixes its signature
         detail = ""
         if kind == "function":
             detail = " " + _sig(inner)
@@ -308,8 +440,118 @@ def flatten(doc: dict) -> list[str]:
             detail = f": {ty(inner['type'])}"
         elif kind == "struct_field":
             detail = f": {ty(inner)}"
-        lines.append(f"{kind}\t{_vis(item.get('visibility'))}\t{full_path(iid)}{detail}")
-    return sorted(lines)
+        elif kind == "use":
+            detail = f" = {inner.get('source', '?')}"
+        out.append(Entry(
+            "api" if iid in api else "internal",
+            kind, _vis(item.get("visibility")), full_path(iid), detail,
+        ))
+    return sorted(set(out))
+
+
+def flatten(doc: dict) -> list[str]:
+    return sorted({e.line() for e in entries(doc)})
+
+
+# --- drift between two snapshots ---------------------------------------------
+
+
+def drift(old: list[Entry], new: list[Entry]) -> list[tuple[Entry | None, Entry | None]]:
+    """`(None, added)`, `(removed, None)` and `(was, now)` pairs, in path
+    order. An item is the same item while its kind and path hold."""
+    sides: dict = defaultdict(lambda: (set(), set()))
+    for i, listing in enumerate((old, new)):
+        for e in listing:
+            sides[(e.path, e.kind)][i].add(e)
+    pairs: list = []
+    for key in sorted(sides):
+        was, now = sides[key]
+        gone, came = sorted(was - now), sorted(now - was)
+        if len(gone) == 1 and len(came) == 1:
+            pairs.append((gone[0], came[0]))
+        else:
+            pairs += [(e, None) for e in gone] + [(None, e) for e in came]
+    return pairs
+
+
+def _module_of(path: str, modules: set[str]) -> str:
+    parts = path.split("::")
+    for n in range(len(parts), 0, -1):
+        if "::".join(parts[:n]) in modules:
+            return "::".join(parts[:n])
+    return parts[0]
+
+
+_TRAIT_IMPL = re.compile(r"^(.+)::\(impl (.+)\)$")
+
+
+def _drift_lines(pairs: list) -> list[str]:
+    """What can break a caller first (removed, changed), then what is new."""
+    lines: list[str] = []
+    impls: dict = {}  # (sign, type) -> its line, the traits appended as met
+    for was, now in sorted(pairs, key=lambda pair: pair[0] is None):
+        e = now or was
+        if was and now:
+            # A `pub fn` whose module opened up changes surface, not text.
+            moved = was.surface != now.surface
+            lines.append(f"  ~ {e.kind}  {e.path}")
+            for label, side in (("was", was), ("now", now)):
+                surface = f"{side.surface}: " if moved else ""
+                lines.append(f"        {label}  {surface}{side.vis}{side.detail}".rstrip())
+            continue
+        sign = "+" if now else "-"
+        trait_impl = _TRAIT_IMPL.match(e.path) if e.kind == "impl" else None
+        if not trait_impl:
+            lines.append(f"  {sign} {e.kind}  {e.path}{e.detail}")
+        elif (sign, trait_impl.group(1)) in impls:
+            # The traits a type gains or loses share one line.
+            lines[impls[sign, trait_impl.group(1)]] += f", {trait_impl.group(2)}"
+        else:
+            impls[sign, trait_impl.group(1)] = len(lines)
+            lines.append(f"  {sign} impl  {trait_impl.group(1)}: {trait_impl.group(2)}")
+    return lines
+
+
+def _counts(pairs: list) -> str:
+    added = sum(1 for was, now in pairs if was is None)
+    removed = sum(1 for was, now in pairs if now is None)
+    return f"{added} added, {removed} removed, {len(pairs) - added - removed} changed"
+
+
+def render_drift(
+    prev: str, label: str, old: list[Entry], new: list[Entry], private: bool = False
+) -> str:
+    """The step-6 report: public drift in full, then the crate-private rest."""
+    public, rest = [], []
+    for pair in drift(old, new):
+        (public if any(e and e.surface == "api" for e in pair) else rest).append(pair)
+    lines = [f"PUBLIC API, what a user of the crate can name: {_counts(public)}"]
+    lines += _drift_lines(public)
+    lines.append("")
+    if private:
+        lines.append(f"CRATE-PRIVATE: {_counts(rest)}")
+        lines += _drift_lines(rest)
+    else:
+        lines.append(f"CRATE-PRIVATE, by module: {_counts(rest)}")
+        modules = {e.path for e in (*old, *new) if e.kind == "module"}
+        per: dict = defaultdict(Counter)
+        for was, now in rest:
+            sign = "~" if was and now else "+" if now else "-"
+            per[_module_of((now or was).path, modules)][sign] += 1
+        for module in sorted(per):
+            tally = " ".join(f"{sign}{per[module][sign]}" for sign in "+-~" if per[module][sign])
+            lines.append(f"    {module}  {tally}")
+        if rest:
+            lines.append(f"  every line: scripts/api_snapshot.py --drift {prev} {label} --private")
+    return "\n".join(lines) + "\n"
+
+
+def load_snapshot(label: str) -> list[Entry]:
+    path = API_DIR / f"jubarte-v{label.lstrip('v')}.json.gz"
+    if not path.is_file():
+        raise SystemExit(f"no rustdoc snapshot {path}")
+    with gzip.open(path) as gz:
+        return entries(json.load(gz))
 
 
 def write_gz(path: Path, data: bytes) -> None:
@@ -318,17 +560,31 @@ def write_gz(path: Path, data: bytes) -> None:
         gz.write(data)
 
 
-def main() -> None:
-    label = sys.argv[1] if len(sys.argv) > 1 else crate_version()
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        description="Write the API snapshot of a release, or show the drift between two."
+    )
+    parser.add_argument("label", nargs="?", help="defaults to the Cargo version")
+    parser.add_argument("--drift", nargs=2, metavar=("PREV", "NEW"),
+                        help="report the drift between two snapshots under docs/api/")
+    parser.add_argument("--private", action="store_true",
+                        help="with --drift: list the crate-private drift line by line")
+    args = parser.parse_args(argv)
+
+    if args.drift:
+        prev, new = args.drift
+        sys.stdout.write(
+            render_drift(prev, new, load_snapshot(prev), load_snapshot(new), args.private)
+        )
+        return
+
+    label = args.label or crate_version()
     build_doc_json()
     doc = json.loads(DOC_JSON.read_text())
 
-    out_dir = ROOT / "docs" / "api"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    write_gz(out_dir / f"jubarte-v{label}.json.gz", DOC_JSON.read_bytes())
-    (out_dir / f"jubarte-v{label}.api.txt").write_text(
-        "\n".join(sorted(set(flatten(doc)))) + "\n"
-    )
+    API_DIR.mkdir(parents=True, exist_ok=True)
+    write_gz(API_DIR / f"jubarte-v{label}.json.gz", DOC_JSON.read_bytes())
+    (API_DIR / f"jubarte-v{label}.api.txt").write_text("\n".join(flatten(doc)) + "\n")
     print(f"docs/api/jubarte-v{label}.json.gz + .api.txt written")
 
 
