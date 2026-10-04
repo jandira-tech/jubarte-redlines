@@ -681,7 +681,7 @@ pub fn pdf_page_count(pdf: &[u8]) -> usize {
         .count()
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Align {
     #[default]
     Left,
@@ -10576,6 +10576,11 @@ fn para_base(
     rstyle.auto_space_de_off = pstyle.auto_space_de_off;
     rstyle.auto_space_dn_off = pstyle.auto_space_dn_off;
     (pstyle, rstyle)
+}
+
+/// The alignment of a display-equation paragraph.
+fn display_math_align(_dom: &Dom, _para: NodeId) -> Option<Align> {
+    None
 }
 
 /// A right-to-left paragraph as the left-to-right one it paints like: its
@@ -36172,38 +36177,93 @@ mod field_tests {
         );
     }
 
-    #[test]
-    fn omml_mr_stays_paragraph_font_after_mini_360() {
-        // Strict01 m:r rFonts Cambria Math + TTC face 1 (mini 360) was
-        // Word-faithful (Strict01 family +0.002) but ITT-neg: NR mean
-        // −0.003 because file_100/115/185/196 each −0.048. Keep flatten
-        // onto paragraph Calibri. Not oMathPara center / linear d/f.
-        let xml = r#"<?xml version="1.0"?>
+    /// The runs of the first paragraph of a `w:document` body fragment.
+    fn math_runs(body: &str) -> Vec<TextRun> {
+        let xml = format!(
+            r#"<?xml version="1.0"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
  xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">
-<w:body><w:p>
-<m:oMath>
-  <m:r>
-    <w:rPr><w:rFonts w:ascii="Cambria Math" w:hAnsi="Cambria Math"/></w:rPr>
-    <m:t>x</m:t>
-  </m:r>
-</m:oMath>
-</w:p></w:body></w:document>"#;
+<w:body>{body}</w:body></w:document>"#
+        );
         let mut dom = Dom::new();
-        let doc = dom.parse_xdocument(xml);
+        let doc = dom.parse_xdocument(&xml);
         let root = dom.root(doc).expect("root");
         let para = dom
             .descendants(root, Some(&W::p()))
             .into_iter()
             .next()
             .expect("p");
-        let runs = collect_runs(&dom, para, &Defaults::word().run, &ThemeFonts::default());
-        let run = runs.iter().find(|r| r.text.contains('x')).expect("x");
-        assert_eq!(
-            run.style.family, "Calibri",
-            "mini 360 Cambria Math ITT-neg; family={:?}",
-            run.style.family
+        collect_runs(&dom, para, &Defaults::word().run, &ThemeFonts::default())
+    }
+
+    #[test]
+    fn omml_letters_are_cambria_math_italic() {
+        // Word's PDF of math_matrix_tests (corpus 6c0ad6c8ef) embeds
+        // CambriaMath and draws a matrix's a as U+1D44E: Word sets math
+        // text in Cambria Math, letters in the mathematical italic block,
+        // digits and operators upright.
+        let runs = math_runs(r#"<w:p><m:oMath><m:r><m:t>ah+2=Z</m:t></m:r></m:oMath></w:p>"#);
+        let run = runs.iter().find(|r| !r.text.is_empty()).expect("math run");
+        assert_eq!(run.style.family, "Cambria Math");
+        assert_eq!(run.text, "\u{1D44E}\u{210E}+2=\u{1D44D}");
+        assert!(!run.style.italic, "the italic is in the code points");
+    }
+
+    #[test]
+    fn omml_upright_and_plain_runs_keep_their_letters() {
+        // m:sty p keeps letters upright in Cambria Math; m:nor is
+        // ordinary text in the run's own font.
+        let runs = math_runs(
+            r#"<w:p><m:oMath><m:r><m:rPr><m:sty m:val="p"/></m:rPr><m:t>sin</m:t></m:r><m:r><m:rPr><m:nor/></m:rPr><m:t>if</m:t></m:r></m:oMath></w:p>"#,
         );
+        let sin = runs.iter().find(|r| r.text == "sin").expect("sin");
+        assert_eq!(sin.style.family, "Cambria Math");
+        let plain = runs.iter().find(|r| r.text == "if").expect("if");
+        assert_eq!(plain.style.family, Defaults::word().run.family);
+    }
+
+    #[test]
+    fn text_outside_math_keeps_its_font() {
+        let runs = math_runs(r#"<w:p><w:r><w:t>ab</w:t></w:r></w:p>"#);
+        assert_eq!(runs[0].text, "ab");
+        assert_eq!(runs[0].style.family, Defaults::word().run.family);
+    }
+
+    #[test]
+    fn display_math_paragraph_takes_the_equation_alignment() {
+        // Word centres an m:oMathPara on the page (math_matrix_tests: the
+        // 2x2 matrix spans x 293-318 on a 612pt page) unless its m:jc
+        // says left or right. A paragraph with text of its own keeps its
+        // alignment.
+        let align = |body: &str| {
+            let xml = format!(
+                r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">
+<w:body>{body}</w:body></w:document>"#
+            );
+            let mut dom = Dom::new();
+            let doc = dom.parse_xdocument(&xml);
+            let root = dom.root(doc).expect("root");
+            let para = dom.descendants(root, Some(&W::p()))[0];
+            display_math_align(&dom, para)
+        };
+        let eq = r#"<m:oMath><m:r><m:t>x</m:t></m:r></m:oMath>"#;
+        assert_eq!(align(&format!("<w:p><m:oMathPara>{eq}</m:oMathPara></w:p>")), Some(Align::Center));
+        assert_eq!(
+            align(&format!(
+                r#"<w:p><m:oMathPara><m:oMathParaPr><m:jc m:val="left"/></m:oMathParaPr>{eq}</m:oMathPara></w:p>"#
+            )),
+            Some(Align::Left)
+        );
+        assert_eq!(
+            align(&format!(
+                r#"<w:p><m:oMathPara><m:oMathParaPr><m:jc m:val="right"/></m:oMathParaPr>{eq}</m:oMathPara></w:p>"#
+            )),
+            Some(Align::Right)
+        );
+        assert_eq!(align(&format!("<w:p><w:r><w:t>Let</w:t></w:r><m:oMathPara>{eq}</m:oMathPara></w:p>")), None);
+        assert_eq!(align(&format!("<w:p>{eq}</w:p>")), None, "inline math is not display");
     }
 
     #[test]
