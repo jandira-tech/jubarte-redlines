@@ -334,7 +334,7 @@ Python wheel, the npm CLI) is in the [per-surface guides](#documentation).
 | `jubarte changes` | List each tracked change with the id `accept --id`, `reject --id` and edit plans take |
 | `jubarte accept` | Accept tracked changes (package-wide) and write the result: every change, or those --id/--author/--kind select (the rest stay tracked) |
 | `jubarte reject` | Reject tracked changes (package-wide) and write the result: every change, or those --id/--author/--kind select (the rest stay tracked) |
-| `jubarte convert` | Convert a .docx to PDF and/or PNG pages (independent of LibreOffice), or Markdown to .docx, PDF or PNG, with CriticMarkup as tracked changes |
+| `jubarte convert` | Convert a .docx to PDF and/or PNG pages (independent of LibreOffice), or Markdown to .docx, PDF or PNG, with CriticMarkup as tracked changes, or a Word 97-2003 .doc to .docx (text, headings, lists, bold, italic and tables) |
 | `jubarte diff` | Compare two documents, Word or Markdown: the changed paragraphs as a patch on stdout, each change `[-old-]{+new+}` in its paragraph, and with --output a Word redline (.docx), CriticMarkup (.md) or a PDF with the changes painted |
 | `jubarte inspect` | Read a .docx: body paragraphs with ids, style, formatting spans and limitations, plus package facts |
 | `jubarte text` | Print the body as Markdown with a `[body:p:N]` id before every paragraph: the coordinates an edit plan uses |

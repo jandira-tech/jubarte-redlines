@@ -187,7 +187,7 @@ enum Command {
     },
     /// Convert a .docx to PDF and/or PNG pages (independent of LibreOffice),
     /// or Markdown to .docx, PDF or PNG, with CriticMarkup as tracked changes,
-    /// or a Word 97-2003 .doc to .docx (text, headings and tables).
+    /// or a Word 97-2003 .doc to .docx (text, headings, lists, bold, italic and tables).
     #[command(after_help = "EXAMPLES:\n  \
         jubarte convert contract.docx                   PDF, Word-style layout\n  \
         jubarte convert draft.md                        draft.docx, CriticMarkup as tracked changes\n  \
@@ -195,7 +195,7 @@ enum Command {
         jubarte convert draft.md --reference-doc house.docx -o draft.docx\n  \
         jubarte convert draft.md -t md --track-changes accept   the text with every change accepted\n  \
         jubarte convert contract.docx -t md             Markdown with <!-- page N of M --> lines\n  \
-        jubarte convert old.doc                         old.docx (text, headings, tables)\n  \
+        jubarte convert old.doc                         old.docx (text, headings, lists, tables)\n  \
         jubarte convert notes.md --no-critic            {++ and the other delimiters as text")]
     Convert {
         /// The document to convert: .docx, Markdown (.md, .markdown), or a
