@@ -27,8 +27,9 @@ const SEARCH_WINDOW: usize = 20_000;
 /// starts on each page, and `<!-- page 1 of M -->` first. `pages` holds the
 /// text painted on each page, in order (`convert::RenderReport::pages`).
 /// Markers go only before a block (a line after a blank line), never inside
-/// a table or list, so a page that starts mid-block is named at the next
-/// block. With no pages, `markdown` is returned as it is.
+/// a table, a list (tight or loose) or a code fence, so a page that starts
+/// mid-block is named at the next block. With no pages, `markdown` is
+/// returned as it is.
 #[must_use]
 pub fn paginate(markdown: &str, pages: &[&str]) -> String {
     let total = pages.len();
@@ -45,17 +46,33 @@ pub fn paginate(markdown: &str, pages: &[&str]) -> String {
     let mut cursor = 0usize;
     let mut current = 0usize;
     let mut block_start = true;
-    let mut in_fence = false;
+    // The open code fence's character and length, while inside one.
+    let mut fence: Option<(char, usize)> = None;
+    // The last block is a list item (or its indented continuation): a
+    // marker before the next item would split the list in two.
+    let mut in_list = false;
     for line in markdown.split_inclusive('\n') {
         let trimmed = line.trim();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            in_fence = !in_fence;
+        let fenced = fence.is_some();
+        match (fence, fence_run(trimmed)) {
+            // A fence opens a block, never mid-paragraph text.
+            (None, Some((ch, len, _))) if block_start => fence = Some((ch, len)),
+            (Some((ch, len)), Some((other, run, true))) if other == ch && run >= len => {
+                fence = None;
+            }
+            _ => {}
         }
+        let row = trimmed.starts_with('|');
+        let continues_list =
+            in_list && (list_item(line) || line.starts_with([' ', '\t'])) && !trimmed.is_empty();
         let text = visible_text(first_cell(trimmed));
-        let key: Vec<char> = letters(&text).take(KEY_CHARS).collect();
+        let line_letters: Vec<char> = letters(&text).collect();
+        let key = line_letters
+            .get(..line_letters.len().min(KEY_CHARS))
+            .unwrap_or(&[]);
         let short = key.get(..key.len().min(SHORT_KEY_CHARS)).unwrap_or(&[]);
-        let full = find(&stream, cursor, &key);
-        let found = if trimmed.starts_with('|') {
+        let full = find(&stream, cursor, key);
+        let found = if row {
             // A row's cells interleave on the page, so its long key can miss
             // its own page and find a later repeat: take the earlier match.
             [full, find(&stream, cursor, short)]
@@ -69,17 +86,59 @@ pub fn paginate(markdown: &str, pages: &[&str]) -> String {
             full.or_else(|| find(&stream, cursor, short))
         };
         if let Some(found) = found {
-            cursor = found.saturating_add(short.len());
+            // Past everything of this line the page agrees with, so a later
+            // block cannot match text quoted inside this one.
+            let matched = if row {
+                short.len()
+            } else {
+                common_prefix(&stream, found, &line_letters).max(short.len())
+            };
+            cursor = found.saturating_add(matched);
             let page = stream.get(found).map_or(current, |&(_, page)| page);
-            if block_start && page > current && !in_fence {
+            if block_start && page > current && !fenced && !continues_list {
                 current = page;
                 out.push_str(&marker(page.saturating_add(1), total));
             }
         }
         out.push_str(line);
-        block_start = trimmed.is_empty() && !in_fence;
+        if !trimmed.is_empty() {
+            in_list = list_item(line) || continues_list;
+        }
+        block_start = trimmed.is_empty() && fence.is_none();
     }
     out
+}
+
+/// A line that opens with three or more backticks or tildes: the
+/// character, how many, and whether nothing else follows (a closing fence).
+fn fence_run(trimmed: &str) -> Option<(char, usize, bool)> {
+    let ch = trimmed.chars().next().filter(|c| matches!(c, '`' | '~'))?;
+    let run = trimmed.chars().take_while(|&c| c == ch).count();
+    (run >= 3).then(|| (ch, run, trimmed.chars().skip(run).all(char::is_whitespace)))
+}
+
+/// A list item line: `-`, `*` or `+`, or digits and `.` or `)`, then a space.
+fn list_item(line: &str) -> bool {
+    let rest = line.trim_start();
+    if let Some(after) = rest.strip_prefix(['-', '*', '+']) {
+        return after.starts_with(' ');
+    }
+    let digits = rest.chars().take_while(char::is_ascii_digit).count();
+    digits > 0
+        && rest
+            .get(digits..)
+            .is_some_and(|after| after.starts_with(". ") || after.starts_with(") "))
+}
+
+/// How many of `line` the page text repeats from `at` on.
+fn common_prefix(stream: &[(char, usize)], at: usize, line: &[char]) -> usize {
+    stream
+        .get(at..)
+        .unwrap_or(&[])
+        .iter()
+        .zip(line)
+        .take_while(|((page_char, _), line_char)| page_char == *line_char)
+        .count()
 }
 
 /// A table row's first cell; any other line as it is. The page text runs
@@ -214,6 +273,52 @@ mod tests {
         assert_eq!(
             paginate(markdown, &pages),
             "<!-- page 1 of 2 -->\n\nThe Supplier shall deliver. The Supplier shall pay.\n\n<!-- page 2 of 2 -->\n\nThe Supplier shall indemnify the buyer.\n"
+        );
+    }
+
+    #[test]
+    fn a_backtick_line_inside_a_paragraph_does_not_silence_later_markers() {
+        let markdown = "Text\\\n```\nmore text.\n\nSecond page starts here.\n";
+        let pages = ["Text\n```\nmore text.", "Second page starts here."];
+        assert!(
+            paginate(markdown, &pages).contains("<!-- page 2 of 2 -->\n\nSecond page"),
+            "{}",
+            paginate(markdown, &pages)
+        );
+    }
+
+    #[test]
+    fn no_marker_inside_a_real_code_fence() {
+        let markdown = "```\ncode one\n\ncode two on page two\n```\n\nAfter the fence.\n";
+        let pages = ["code one", "code two on page two\nAfter the fence."];
+        assert_eq!(
+            paginate(markdown, &pages),
+            "<!-- page 1 of 2 -->\n\n```\ncode one\n\ncode two on page two\n```\n\n<!-- page 2 of 2 -->\n\nAfter the fence.\n"
+        );
+    }
+
+    #[test]
+    fn a_title_quoted_earlier_does_not_pin_its_heading_to_that_page() {
+        let markdown = "Long paragraph. The section Definitions of duties and obligations governs everything.\n\n## Definitions of duties and obligations\n\nBody.\n";
+        let pages = [
+            "Long paragraph. The section Definitions of duties and obligations governs everything.",
+            "Definitions of duties and obligations\nBody.",
+        ];
+        assert!(
+            paginate(markdown, &pages)
+                .contains("<!-- page 2 of 2 -->\n\n## Definitions of duties and obligations"),
+            "{}",
+            paginate(markdown, &pages)
+        );
+    }
+
+    #[test]
+    fn a_loose_list_is_not_split_by_a_marker() {
+        let markdown = "- First item.\n\n- Second item on page two.\n\nAfter the list.\n";
+        let pages = ["First item.", "Second item on page two.\nAfter the list."];
+        assert_eq!(
+            paginate(markdown, &pages),
+            "<!-- page 1 of 2 -->\n\n- First item.\n\n- Second item on page two.\n\n<!-- page 2 of 2 -->\n\nAfter the list.\n"
         );
     }
 

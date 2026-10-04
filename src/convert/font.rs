@@ -1909,12 +1909,13 @@ impl<'a> Fonts<'a> {
 }
 
 /// `requested` is `family` itself, ignoring case, spaces, hyphens and an
-/// `MT` suffix (`Arial MT`, `TimesNewRoman`), or one of its metric-identical
+/// `MT` or `PS MT` suffix (`Arial MT`, `Times New Roman PS MT`), or one of its metric-identical
 /// open twins the catalogue bundles (`Carlito` for Calibri).
 fn names_family(requested: &str, family: &str) -> bool {
     let squash = |s: &str| {
         let key = s.to_ascii_lowercase().replace([' ', '-'], "");
-        key.strip_suffix("mt").map(str::to_string).unwrap_or(key)
+        let key = key.strip_suffix("mt").unwrap_or(&key);
+        key.strip_suffix("ps").unwrap_or(key).to_string()
     };
     let (requested, family) = (squash(requested), squash(family));
     let twins: &[&str] = match family.as_str() {
@@ -4940,6 +4941,9 @@ mod tests {
         assert!(names_family("Arial MT", "Arial"));
         assert!(names_family("TimesNewRoman", "Times New Roman"));
         assert!(!names_family("Times", "Times New Roman"));
+        // Monotype's PostScript-style names in older documents.
+        assert!(names_family("Times New Roman PS MT", "Times New Roman"));
+        assert!(names_family("Arial PS MT", "Arial"));
     }
 
     #[test]
