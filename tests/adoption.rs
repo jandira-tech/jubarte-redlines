@@ -95,10 +95,31 @@ fn long_markdown(count: usize) -> String {
 }
 
 /// Pages in a PDF, counted from its page objects (the trick the page
-/// markers rely on: the PDF says how many pages there are).
+/// markers rely on: the PDF says how many pages there are). A `/Type`
+/// name, any whitespace, then `/Page` not followed by more name letters
+/// (which would make it `/Pages`).
 fn pdf_pages(pdf: &[u8]) -> usize {
-    let text = String::from_utf8_lossy(pdf);
-    text.matches("/Type /Page").count() - text.matches("/Type /Pages").count()
+    let is_space = |b: &u8| matches!(b, b' ' | b'\t' | b'\r' | b'\n' | b'\x0c' | b'\0');
+    let mut pages = 0;
+    let mut rest = pdf;
+    while let Some(at) = rest.windows(5).position(|w| w == b"/Type") {
+        rest = &rest[at + 5..];
+        let value = &rest[rest.iter().take_while(|b| is_space(b)).count()..];
+        if let Some(after) = value.strip_prefix(b"/Page")
+            && !after.first().is_some_and(u8::is_ascii_alphanumeric)
+        {
+            pages += 1;
+        }
+    }
+    pages
+}
+
+#[test]
+fn pdf_pages_reads_page_objects_however_they_are_spaced() {
+    assert_eq!(
+        pdf_pages(b"<</Type/Pages/Count 2>> <</Type /Page>> <</Type\n/Page/Parent 1 0 R>>"),
+        2
+    );
 }
 
 /// Read row: `pandoc -t markdown` -> `jubarte text` with paragraph ids and
@@ -593,6 +614,24 @@ fn a_legacy_doc_converts_to_docx_markdown_and_pdf() {
         stderr.contains("jubarte convert old.doc -o old.docx"),
         "{stderr}"
     );
+    // A .docx or Markdown output lays nothing out: a layout report flag is
+    // refused rather than silently ignored.
+    for flag in [
+        &["--report", "r.json"][..],
+        &["--font-report", "f.json"],
+        &["--fail-on-substitution"],
+    ] {
+        let args = [
+            &["convert", "old.doc", "-o", "again.docx", "--force"][..],
+            flag,
+        ]
+        .concat();
+        let out = jubarte(&args, dir.path());
+        // Exit 1, as the sibling `--pages` without `--png` refusal.
+        assert_eq!(out.status.code(), Some(1), "{flag:?}: {out:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("applies to PDF or PNG output"), "{stderr}");
+    }
 }
 
 /// Markdown read from Word names its pages: as many as the PDF has.
@@ -652,4 +691,9 @@ fn convert_timeout_exits_124_past_the_deadline() {
     ok(&["convert", "long.docx", "--timeout", "600"], dir.path());
     let zero = jubarte(&["convert", "long.docx", "--timeout", "0"], dir.path());
     assert_eq!(zero.status.code(), Some(2), "{zero:?}");
+    // 1e400 parses to infinity: the message says finite, not "more than 0".
+    let endless = jubarte(&["convert", "long.docx", "--timeout", "1e400"], dir.path());
+    assert_eq!(endless.status.code(), Some(2), "{endless:?}");
+    let stderr = String::from_utf8_lossy(&endless.stderr);
+    assert!(stderr.contains("finite"), "{stderr}");
 }

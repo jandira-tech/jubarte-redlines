@@ -21,6 +21,7 @@ on:
       - "tests/legacy_doc_convert.rs"
       - "tests/fixtures/legacy/**"
       - "examples/adoption/**"
+      - "jubarte-python/**"
       - "docs/adoption/**"
       - ".github/workflows/adoption.yml"
   workflow_dispatch:

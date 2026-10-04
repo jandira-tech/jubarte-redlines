@@ -1222,7 +1222,7 @@ fn parse_timeout(value: &str) -> Result<std::time::Duration, String> {
         .map_err(|_| format!("'{value}' is not a number of seconds"))?;
     if !(seconds.is_finite() && seconds > 0.0) {
         return Err(format!(
-            "'{value}': the timeout must be more than 0 seconds"
+            "'{value}': the timeout must be a finite number of seconds above 0"
         ));
     }
     std::time::Duration::try_from_secs_f64(seconds).map_err(|e| format!("'{value}': {e}"))
@@ -2122,9 +2122,11 @@ impl<'p> Input<'p> {
 fn read_document(path: &Path) -> Result<Vec<u8>, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
     jubarte::admission::sniff(&bytes).map_err(|refused| {
-        let hint = if jubarte::legacy_doc::read(&bytes).is_ok() {
+        // Any OLE file gets the hint: telling a .doc from an encrypted
+        // document would mean parsing it just to word an error.
+        let hint = if jubarte::legacy_doc::is_compound_file(&bytes) {
             format!(
-                "; or convert it first: jubarte convert {} -o {}",
+                "; a .doc converts with: jubarte convert {} -o {}",
                 path.display(),
                 path.with_extension("docx").display()
             )
@@ -2378,10 +2380,10 @@ fn paginated(
         TrackChanges::All => Ok(std::borrow::Cow::Borrowed(docx)),
         TrackChanges::Accept => jubarte::document_comparer::accept_revisions(docx)
             .map(std::borrow::Cow::Owned)
-            .map_err(|e| format!("{e:?}")),
+            .map_err(|e| format!("accepting the changes failed: {e:?}")),
         TrackChanges::Reject => jubarte::document_comparer::reject_revisions(docx)
             .map(std::borrow::Cow::Owned)
-            .map_err(|e| format!("{e:?}")),
+            .map_err(|e| format!("rejecting the changes failed: {e:?}")),
     };
     let rendered = resolved.and_then(|bytes| {
         jubarte::convert::render(
@@ -2392,7 +2394,7 @@ fn paginated(
             },
             jubarte::convert::RenderRequest::default(),
         )
-        .map_err(|e| e.to_string())
+        .map_err(|e| format!("layout failed: {e}"))
     });
     match rendered {
         Ok(rendered) => {
@@ -2405,7 +2407,7 @@ fn paginated(
             jubarte::markdown::paginate(markdown, &pages)
         }
         Err(e) => {
-            eprintln!("warning: no page markers: layout failed: {e}");
+            eprintln!("warning: no page markers: {e}");
             markdown.to_string()
         }
     }
@@ -2440,6 +2442,18 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
         });
     if job.pages.is_some() && to != Format::Png && !job.png {
         return Err("--pages selects PNG pages; add --png".into());
+    }
+    // Word and Markdown output lay nothing out, so these would be ignored.
+    if matches!(to, Format::Docx | Format::Md) {
+        for (given, flag) in [
+            (job.report.is_some(), "--report"),
+            (job.font_report.is_some(), "--font-report"),
+            (job.fail_on_substitution, "--fail-on-substitution"),
+        ] {
+            if given {
+                return Err(format!("{flag} applies to PDF or PNG output only").into());
+            }
+        }
     }
     let converted = legacy.then_some(bytes.as_slice());
     let pdf_job = |bytes: Option<&[u8]>, to: Format| {
