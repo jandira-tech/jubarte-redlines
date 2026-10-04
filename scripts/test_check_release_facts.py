@@ -17,6 +17,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -151,6 +152,21 @@ class ReleaseFacts(unittest.TestCase):
         self.assertEqual(self.found(), [])
         self.append({"site.url": "https://jubarte.pro"})
         self.assertTrue(any("uncommitted" in p for p in self.found()), self.found())
+
+    def test_the_app_checkout_the_release_was_given_is_the_one_checked(self) -> None:
+        # A release worktree's own jubarte-app/ is a vendored snapshot with no
+        # facts log: the checkout comes from JUBARTE_APP_DIR, as in step 13.
+        self.append(release_facts())
+        before = os.environ.get("JUBARTE_APP_DIR")
+        os.environ["JUBARTE_APP_DIR"] = str(self.app)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main([VER, "--changelog", str(self.changelog)]), 0)
+        finally:
+            if before is None:
+                del os.environ["JUBARTE_APP_DIR"]
+            else:
+                os.environ["JUBARTE_APP_DIR"] = before
 
     def test_the_cli_exits_1_with_each_problem_and_2_without_a_log(self) -> None:
         self.append(release_facts("0.10.1", "2026-09-30"))
