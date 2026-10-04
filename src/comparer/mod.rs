@@ -1286,12 +1286,39 @@ pub struct WmlComparerSettings {
     /// compiling.
     #[doc(hidden)]
     pub in_stamp_residual: bool,
+    /// Internal recursion state, not a tuning knob: true while resolving a
+    /// paragraph window Word marks word by word (see
+    /// [`WORD_LEVEL_KEPT_RATIO`]), where every common run stays and the
+    /// run-voiding gates must not fire. Leave it at its default; it stays
+    /// public only so struct-update literals keep compiling.
+    #[doc(hidden)]
+    pub in_word_level_paragraph: bool,
 }
 
 /// The word-visual default for [`WmlComparerSettings::detail_threshold`] —
 /// single source for the struct default, the CLI `--detail-threshold`
 /// default, and the CLI's faithful-preset sentinel check.
 pub const DEFAULT_DETAIL_THRESHOLD: f64 = 0.02;
+
+/// Word's rule for one changed paragraph (Word 16, 1178 single-paragraph
+/// probes over 6–4800 words, 2026-10-03): it is marked word by word when
+/// the kept span — the characters of the words its alignment keeps, the
+/// blanks between the words of a kept run, and the blank on either side
+/// of the run when both sides have one, what its equal segments hold
+/// (" font ", " document ") — plus the paragraph mark, a kept character
+/// of each side, reaches this fraction of the longer side's characters,
+/// mark included, and replaced whole otherwise. One threshold for lone kept
+/// words and runs of 4 and 16, for 6 and for 4800 words, for a paragraph
+/// against one 3× its length: at 0.15 the waves agree with Word on 1.000
+/// (wave7, edge1), 0.992 (paragraphs of 40 words or fewer), 0.988
+/// (short1), 0.983 (asym1) and 0.924 (denom1, whose replaced rows reach
+/// 0.173: long paragraphs with lone kept words, where Word's own
+/// alignment keeps fewer words than a longest common subsequence — the
+/// aligner's gap, not the rule's). Counting the letters alone, the
+/// threshold reads 0.105 for lone words and 0.12 for runs of 4, which is
+/// this rule seen without its blanks. Word applies it again to every
+/// window between the anchors it keeps.
+pub const WORD_LEVEL_KEPT_RATIO: f64 = 0.15;
 
 impl WmlComparerSettings {
     /// The preset for `mode`.
@@ -1385,6 +1412,7 @@ impl Default for WmlComparerSettings {
             detect_format_changes: true,
             input_limits: InputLimits::compare(),
             in_stamp_residual: false,
+            in_word_level_paragraph: false,
         }
     }
 }

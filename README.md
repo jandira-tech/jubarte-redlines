@@ -23,6 +23,7 @@ or PNG — from Rust, Python, Node/browser, or the CLI.
 [![npm](https://img.shields.io/npm/v/jubarte-wasm.svg)](https://www.npmjs.com/package/jubarte-wasm)
 [![MSRV](https://img.shields.io/badge/MSRV-1.88-blue)](./Cargo.toml)
 [![license](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](./LICENSE)
+[![Socket Badge](https://badge.socket.dev/cargo/package/jubarte-redlines/0.11.2)](https://badge.socket.dev/cargo/package/jubarte-redlines/0.11.2)
 
 Jubarte is an in-process DOCX engine for applications that need Microsoft
 Word-style review workflows without automating Microsoft Word or LibreOffice.
@@ -147,8 +148,8 @@ cargo install jubarte-redlines
 
 The installed binary is named `jubarte`.
 
-From the release after 0.10.1, the Python wheel and the npm package also
-run the CLI without an install:
+From 0.11.0, the Python wheel and the npm package also run the CLI
+without an install:
 
 ```sh
 uvx jubarte-redlines redline a.docx b.docx -o redline.docx
@@ -415,6 +416,12 @@ jubarte convert redline.docx --png --dpi 144
 jubarte convert long.docx --png --pages 1-3,7
 jubarte convert contract.docx --compress --font-report fonts.json
 ```
+
+A document with comments gets Word's markup pane: each comment in a
+balloon beside its range, joined to it by a dotted connector, with the
+range tinted and bracketed. `--revisions word` writes no comment annotation,
+as Word does; the other styles keep a sticky note on the range as well
+([`docs/WORD_DIFFERENCES.md`](docs/WORD_DIFFERENCES.md)).
 
 A custom palette can be supplied with:
 
@@ -689,7 +696,8 @@ Microsoft Word or LibreOffice.
 
 The documented rendering surface includes:
 
-- tracked changes and comments;
+- tracked changes, and comments as Word's balloons in the markup pane
+  (a resolved comment faded, a reply numbered under its thread);
 - paragraph/run formatting and advanced line layout;
 - CJK and RTL/complex-script text;
 - installed and embedded fonts;

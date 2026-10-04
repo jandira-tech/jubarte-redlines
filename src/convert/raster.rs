@@ -841,12 +841,19 @@ mod tests {
             },
         ]);
         page.comments.push(PdfComment {
+            id: "0".into(),
             x: 180.0,
             y: 80.0,
             w: 15.0,
             h: 15.0,
+            top: 70.0,
+            bottom: 83.0,
             contents: "note".into(),
             author: "a".into(),
+            initials: "a".into(),
+            label: "1".into(),
+            color: [0.0; 3],
+            resolved: false,
         });
         page.markup_pane = true;
         page.margin_r = 72.0;
