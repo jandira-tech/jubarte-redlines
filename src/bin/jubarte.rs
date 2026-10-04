@@ -257,6 +257,11 @@ enum Command {
         /// 0 ok, 1 error, 4 a requested font was substituted.
         #[arg(long)]
         fail_on_substitution: bool,
+        /// Give up after this many seconds: exit 124 (as `timeout(1)`) with
+        /// nothing more written. An output being written at that moment
+        /// may be left partial.
+        #[arg(long, value_name = "SECONDS", value_parser = parse_timeout)]
+        timeout: Option<std::time::Duration>,
     },
     /// Compare two documents, Word or Markdown: the changed paragraphs as a
     /// patch on stdout, each change `[-old-]{+new+}` in its paragraph, and
@@ -1205,6 +1210,35 @@ struct ConvertJob<'a> {
     pages: Option<&'a [usize]>,
     /// Exit [`EXIT_FONT_SUBSTITUTED`] when a requested font was substituted.
     fail_on_substitution: bool,
+}
+
+/// `convert --timeout`: the deadline passed.
+const EXIT_TIMEOUT: i32 = 124;
+
+/// `--timeout`: positive seconds, fractions allowed.
+fn parse_timeout(value: &str) -> Result<std::time::Duration, String> {
+    let seconds: f64 = value
+        .parse()
+        .map_err(|_| format!("'{value}' is not a number of seconds"))?;
+    if !(seconds.is_finite() && seconds > 0.0) {
+        return Err(format!(
+            "'{value}': the timeout must be more than 0 seconds"
+        ));
+    }
+    std::time::Duration::try_from_secs_f64(seconds).map_err(|e| format!("'{value}': {e}"))
+}
+
+/// Exit [`EXIT_TIMEOUT`] once `limit` has passed, whatever the main thread
+/// is doing (layout of a pathological document cannot be interrupted).
+fn arm_timeout(limit: std::time::Duration) {
+    std::thread::spawn(move || {
+        std::thread::sleep(limit);
+        eprintln!(
+            "error: timed out after {}s (--timeout)",
+            limit.as_secs_f64()
+        );
+        std::process::exit(EXIT_TIMEOUT);
+    });
 }
 
 /// `convert --fail-on-substitution`: the outputs were written, but a
@@ -2780,7 +2814,11 @@ fn cli_main() -> ExitCode {
             markdown,
             pages: page_spec,
             fail_on_substitution,
+            timeout,
         }) => {
+            if let Some(limit) = timeout {
+                arm_timeout(limit);
+            }
             let style = match revision_style(revisions, revision_palette.as_deref()) {
                 Ok(style) => style,
                 Err(e) => return exit_code(Err(e)),

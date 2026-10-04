@@ -635,3 +635,21 @@ fn markdown_page_markers_count_the_pdf_pages() {
     );
     assert!(!plain.contains("<!-- page"), "{plain}");
 }
+
+/// Codex #38313's other half: `--timeout` exits 124 once the deadline
+/// passes, and does not get in the way of a conversion that finishes.
+#[test]
+fn convert_timeout_exits_124_past_the_deadline() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("long.md"), long_markdown(400)).unwrap();
+    ok(&["convert", "long.md", "-o", "long.docx"], dir.path());
+    let late = jubarte(
+        &["convert", "long.docx", "--png", "--timeout", "0.001"],
+        dir.path(),
+    );
+    assert_eq!(late.status.code(), Some(124), "{late:?}");
+    assert!(String::from_utf8_lossy(&late.stderr).contains("timed out"));
+    ok(&["convert", "long.docx", "--timeout", "600"], dir.path());
+    let zero = jubarte(&["convert", "long.docx", "--timeout", "0"], dir.path());
+    assert_eq!(zero.status.code(), Some(2), "{zero:?}");
+}
