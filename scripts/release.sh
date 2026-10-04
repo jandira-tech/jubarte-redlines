@@ -267,8 +267,14 @@ for f in jubarte-wasm/npm/package.json jubarte-wasm/cli/package.json \
 done
 grep -qF "id=\"appbar-ver\">v$VER<" jubarte-app/src/index.html \
   || half_bumped "jubarte-app/src/index.html"
-grep -qF "badge.socket.dev/cargo/package/jubarte-redlines/$VER" README.md \
-  || half_bumped "README.md (Socket badge)"
+# The README pins a version only where it carries the Socket badge (the
+# 0.11.0 rewrite dropped it): a pin that is there must be this release's,
+# and a README without one has nothing to move.
+stale_readme_pin() {
+  grep -oE "badge\.socket\.dev/cargo/package/jubarte-redlines/[0-9]+\.[0-9]+\.[0-9]+" README.md \
+    | grep -vxF "badge.socket.dev/cargo/package/jubarte-redlines/$VER" >/dev/null
+}
+stale_readme_pin && half_bumped "README.md (Socket badge)"
 step "every file step 1 touched is on $VER"
 
 # Lockfiles: re-resolve only jubarte-redlines (the root package, or the path

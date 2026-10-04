@@ -299,6 +299,27 @@ class Repairs0112(unittest.TestCase):
         self.assertIn("jubarte-rust-inproc/Cargo.toml", add)
         self.assertIn("jubarte-wasm/Cargo.toml", s8)
 
+    def test_the_readme_pin_is_checked_only_where_the_readme_has_one(self) -> None:
+        # The 0.11.0 README rewrite dropped the Socket badge; step 1 then died
+        # on "README.md (Socket badge) is not on 0.11.2" with nothing to bump.
+        text = RELEASE_SH.read_text()
+        start = text.index("stale_readme_pin() {")
+        fn = text[start:text.index("\n}\n", start) + 3]
+
+        def stale(readme: str) -> bool:
+            with tempfile.TemporaryDirectory() as d:
+                (Path(d) / "README.md").write_text(readme)
+                run = subprocess.run(["bash", "-c", "set -euo pipefail\nVER=0.11.2\n" + fn + "\nstale_readme_pin"],
+                                     cwd=d, capture_output=True, text=True)
+            return run.returncode == 0
+
+        pin = "https://badge.socket.dev/cargo/package/jubarte-redlines/"
+        self.assertFalse(stale("# jubarte\n\nno badge here\n"))
+        self.assertFalse(stale(f"[![s]({pin}0.11.2)](x)\n"))
+        self.assertTrue(stale(f"[![s]({pin}0.11.0)](x)\n"))
+        self.assertTrue(stale(f"[![s]({pin}0.11.2)]({pin}0.11.0)\n"))
+        self.assertIn('stale_readme_pin && half_bumped "README.md (Socket badge)"', step(1))
+
     def test_step7_wipes_the_stale_sdist_folder(self) -> None:
         s7 = step(7)
         wipe = s7.index("rm -rf target/release-check")
