@@ -54,12 +54,20 @@ pub fn paginate(markdown: &str, pages: &[&str]) -> String {
         let text = visible_text(first_cell(trimmed));
         let key: Vec<char> = letters(&text).take(KEY_CHARS).collect();
         let short = key.get(..key.len().min(SHORT_KEY_CHARS)).unwrap_or(&[]);
-        // The earlier of the two matches: a long key can miss its own page
-        // (text wrapped beside other text) and find a later repeat.
-        let found = [find(&stream, cursor, &key), find(&stream, cursor, short)]
-            .into_iter()
-            .flatten()
-            .min();
+        let full = find(&stream, cursor, &key);
+        let found = if trimmed.starts_with('|') {
+            // A row's cells interleave on the page, so its long key can miss
+            // its own page and find a later repeat: take the earlier match.
+            [full, find(&stream, cursor, short)]
+                .into_iter()
+                .flatten()
+                .min()
+        } else {
+            // Elsewhere the full opening is on the page; the short key is a
+            // fallback, since a shared opening ("The Supplier shall") can
+            // occur earlier.
+            full.or_else(|| find(&stream, cursor, short))
+        };
         if let Some(found) = found {
             cursor = found.saturating_add(short.len());
             let page = stream.get(found).map_or(current, |&(_, page)| page);
@@ -190,6 +198,22 @@ mod tests {
         assert!(
             out.contains("<!-- page 3 of 3 -->\n\nThe sources again."),
             "{out}"
+        );
+    }
+
+    #[test]
+    fn a_shared_opening_does_not_pull_a_paragraph_back_a_page() {
+        // "The Supplier shall" opens the second paragraph and also recurs
+        // inside the first; only the second paragraph's full opening is on
+        // page 2.
+        let markdown = "The Supplier shall deliver. The Supplier shall pay.\n\nThe Supplier shall indemnify the buyer.\n";
+        let pages = [
+            "The Supplier shall deliver. The Supplier shall pay.",
+            "The Supplier shall indemnify the buyer.",
+        ];
+        assert_eq!(
+            paginate(markdown, &pages),
+            "<!-- page 1 of 2 -->\n\nThe Supplier shall deliver. The Supplier shall pay.\n\n<!-- page 2 of 2 -->\n\nThe Supplier shall indemnify the buyer.\n"
         );
     }
 

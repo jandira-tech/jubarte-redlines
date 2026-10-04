@@ -163,7 +163,7 @@ pub fn read(bytes: &[u8]) -> Result<LegacyDocument> {
         .stream(if fib.table_one { "1Table" } else { "0Table" })
         .ok_or_else(|| LegacyDocError::new("the table stream the FIB names is missing"))?;
     let pieces = pieces(&table, fib.fc_clx, fib.lcb_clx)?;
-    let chars = main_text(&word, &pieces, fib.ccp_text);
+    let chars = main_text(&word, &pieces, fib.ccp_text)?;
     let styles = heading_styles(&table, fib.fc_stshf, fib.lcb_stshf);
     let papx = FkpIndex::new(
         &word,
@@ -225,7 +225,15 @@ pub fn to_markdown(document: &LegacyDocument) -> String {
                 (Some(level), _) => {
                     out.push_str(&"#".repeat(usize::from(level.clamp(1, 6))));
                     out.push(' ');
-                    out.push_str(&escape_line(&paragraph.text().replace('\n', " ")));
+                    let spans: Vec<Span> = paragraph
+                        .spans
+                        .iter()
+                        .map(|span| Span {
+                            text: span.text.replace('\n', " "),
+                            ..span.clone()
+                        })
+                        .collect();
+                    out.push_str(&render_spans(&spans));
                 }
                 (None, Some(item)) => {
                     let (marker, indent) = if item.ordered {
@@ -400,7 +408,9 @@ impl<'a> CompoundFile<'a> {
         let per_difat = sector_size / 4;
         let mut next = first_difat;
         let mut seen = 0u32;
-        while next != END_OF_CHAIN && next != NO_STREAM && seen < difat_sectors {
+        // A chain longer than the file has sectors is a cycle.
+        let difat_limit = difat_sectors.min(u32::try_from(max_sectors).unwrap_or(u32::MAX));
+        while next != END_OF_CHAIN && next != NO_STREAM && seen < difat_limit {
             let sector = sector_slice(bytes, sector_size, next).ok_or_else(bad)?;
             for i in 0..per_difat.saturating_sub(1) {
                 let entry = u32_at(sector, i.checked_mul(4).ok_or_else(bad)?).ok_or_else(bad)?;
@@ -739,7 +749,14 @@ struct StoryChar {
     fc: u32,
 }
 
-fn main_text(word: &[u8], pieces: &[Piece], ccp_text: u32) -> Vec<StoryChar> {
+/// The main story's characters, CP 0 to `ccp_text`.
+///
+/// # Errors
+///
+/// A piece that points past the `WordDocument` stream: a truncated or
+/// corrupt file, refused rather than converted short.
+fn main_text(word: &[u8], pieces: &[Piece], ccp_text: u32) -> Result<Vec<StoryChar>> {
+    let past = || LegacyDocError::new("a text piece points past the WordDocument stream");
     let mut out = Vec::new();
     for piece in pieces {
         if piece.cp_start >= ccp_text {
@@ -749,23 +766,16 @@ fn main_text(word: &[u8], pieces: &[Piece], ccp_text: u32) -> Vec<StoryChar> {
         let width: u32 = if piece.compressed { 1 } else { 2 };
         let mut pending_high: Option<u16> = None;
         for cp in piece.cp_start..end {
-            let Some(fc) = cp
+            let fc = cp
                 .checked_sub(piece.cp_start)
                 .and_then(|n| n.checked_mul(width))
                 .and_then(|n| n.checked_add(piece.fc))
-            else {
-                break;
-            };
-            let Some(offset) = index(fc) else { break };
+                .ok_or_else(past)?;
+            let offset = index(fc).ok_or_else(past)?;
             let ch = if piece.compressed {
-                match word.get(offset) {
-                    Some(&byte) => cp1252(byte),
-                    None => break,
-                }
+                cp1252(*word.get(offset).ok_or_else(past)?)
             } else {
-                let Some(unit) = u16_at(word, offset) else {
-                    break;
-                };
+                let unit = u16_at(word, offset).ok_or_else(past)?;
                 match (pending_high.take(), unit) {
                     (None, 0xD800..=0xDBFF) => {
                         pending_high = Some(unit);
@@ -781,7 +791,7 @@ fn main_text(word: &[u8], pieces: &[Piece], ccp_text: u32) -> Vec<StoryChar> {
             out.push(StoryChar { ch, fc });
         }
     }
-    out
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -1333,5 +1343,64 @@ mod tests {
             ],
         };
         assert_eq!(to_markdown(&document), "- First\n\n   1. Nested\n\n");
+    }
+
+    #[test]
+    fn a_piece_past_the_stream_is_refused_not_truncated() {
+        let word = b"Hello".to_vec();
+        let piece = Piece {
+            cp_start: 0,
+            cp_end: 10,
+            fc: 0,
+            compressed: true,
+        };
+        let error = main_text(&word, &[piece], 10).unwrap_err().to_string();
+        assert!(error.starts_with("LEGACY_DOC: "), "{error}");
+        assert_eq!(main_text(&word, &[piece], 5).unwrap().len(), 5);
+    }
+
+    #[test]
+    fn a_self_linked_difat_sector_is_bounded_by_the_file() {
+        // Header: 512-byte sectors, one FAT sector, a DIFAT chain that
+        // starts at sector 0 and claims four billion sectors; sector 0
+        // links back to itself and lists sector 0 as a FAT sector.
+        let mut bytes = vec![0u8; 1024];
+        bytes[..8].copy_from_slice(OLE_MAGIC);
+        bytes[0x1E] = 9;
+        bytes[0x20] = 6;
+        bytes[0x2C..0x30].copy_from_slice(&1u32.to_le_bytes());
+        bytes[0x30..0x34].copy_from_slice(&END_OF_CHAIN.to_le_bytes());
+        bytes[0x44..0x48].copy_from_slice(&0u32.to_le_bytes());
+        bytes[0x48..0x4C].copy_from_slice(&u32::MAX.to_le_bytes());
+        for slot in bytes[0x4C..512].as_chunks_mut::<4>().0 {
+            *slot = NO_STREAM.to_le_bytes();
+        }
+        // Sector 0 (bytes 512..1024): 127 entries of 0, then the link to 0.
+        bytes[1020..1024].copy_from_slice(&0u32.to_le_bytes());
+        let started = std::time::Instant::now();
+        let _ = CompoundFile::open(&bytes);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    }
+
+    #[test]
+    fn a_heading_keeps_its_italic_span() {
+        let document = LegacyDocument {
+            blocks: vec![Block::Paragraph(Paragraph {
+                heading: Some(2),
+                list: None,
+                spans: vec![
+                    Span {
+                        text: "Fees ".into(),
+                        ..Span::default()
+                    },
+                    Span {
+                        text: "due".into(),
+                        bold: false,
+                        italic: true,
+                    },
+                ],
+            })],
+        };
+        assert_eq!(to_markdown(&document), "## Fees *due*\n\n");
     }
 }
