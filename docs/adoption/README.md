@@ -8,6 +8,13 @@ These pages are for whoever maintains a provider's Word skill (Anthropic's
 today, the jubarte command that replaces each script, what you give up,
 and how to check every claim in your own sandbox without trusting us.
 
+**Each docx skill Anthropic and OpenAI ship can now drop 814 MB
+(Anthropic's `docx`) or 1,757 MB (OpenAI's `doc`) from its container.**
+The tools jubarte replaces: LibreOffice, Poppler, pandoc, docx-js and
+python-docx, 850 MB for Anthropic's set and 1,793 MB for OpenAI's, v 36 MB
+for jubarte (a 14 MB download). Disk added to a fresh Ubuntu 24.04
+container, measured on 2026-10-04 in [`examples/adoption/00-install-size`](../../examples/adoption/00-install-size/).
+
 | Page | For |
 |---|---|
 | [anthropic-docx-skill.md](anthropic-docx-skill.md) | `anthropics/skills`, `skills/docx` |

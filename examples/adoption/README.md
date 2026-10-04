@@ -24,6 +24,7 @@ LibreOffice 26.8, poppler 26.09, pandoc 3.11, python-docx 1.2.0, docx-js
 
 | Folder | Task | Replaced | jubarte | Verdict |
 |---|---|---|---|---|
+| [00-install-size](00-install-size/) | What the sandbox carries | LibreOffice, Poppler, pandoc, docx-js, python-docx | the release binary or wheel | 850 MB (Anthropic's set) and 1,793 MB (OpenAI's) v 36 MB |
 | [01-render-png](01-render-png/) | Render pages to check | `soffice` + `pdftoppm` | `convert --png --report` | Same page count, size and breaks; not pixel-identical |
 | [02-page-range](02-page-range/) | Render pages 2-3 only | `pdftoppm -f -l` | `convert --png --pages 2-3` | Same pages; jubarte refuses a page past the end where pdftoppm clamps |
 | [03-diff-render](03-diff-render/) | Did my edit move the layout? | two renders + pixel diff | `diff-render` (exit 5) | Same two pages flagged; jubarte adds overlays and JSON |

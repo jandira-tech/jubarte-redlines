@@ -9,6 +9,23 @@ refuses a release whose wheel set lacks a platform below, and
 0.11.0 set was read live from PyPI, npm, crates.io and the GitHub release
 on 2026-10-03.
 
+## Size beside the tools it replaces
+
+Disk each install adds to a fresh Ubuntu 24.04 (linux/amd64) container,
+measured on 2026-10-04 by
+[`examples/adoption/00-install-size/run.sh`](../../examples/adoption/00-install-size/run.sh):
+
+| Install | Size |
+|---|---|
+| jubarte 0.11.2 release binary | 36 MB (14 MB download) |
+| jubarte 0.11.2 wheel, Python already present | 22 MB |
+| LibreOffice, `libreoffice-writer-nogui` without recommends | 392 MB |
+| LibreOffice, `apt-get install libreoffice` | 1,753 MB |
+| Poppler (`poppler-utils`) | 25 MB |
+| pandoc | 200 MB |
+| Node.js, npm and `docx` (docx-js) | 233 MB |
+| python-docx with lxml, Python already present | 15 MB |
+
 ## jubarte 0.11.2 (released 2026-10-03)
 
 | Channel | Artifact | Platforms |

@@ -10,6 +10,12 @@ of it is copied here beyond short quotations.
 
 ## 1. What your skill does today
 
+**Your skill can now drop 814 MB from its container.** The tools jubarte
+replaces: LibreOffice (392 MB, the smallest headless install), Poppler
+(25 MB), pandoc (200 MB) and Node.js with docx-js (233 MB): 850 MB v 36 MB
+for jubarte (a 14 MB download). Disk added to a fresh Ubuntu 24.04
+container, measured on 2026-10-04 in [`examples/adoption/00-install-size`](../../examples/adoption/00-install-size/).
+
 | Step | Today | Dependencies |
 |---|---|---|
 | Create | a docx-js (`docx` npm) script, with eleven listed footguns ("Page size defaults to A4", dual table widths, `ShadingType.CLEAR`, ...) | Node, `docx` |

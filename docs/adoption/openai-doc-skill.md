@@ -12,6 +12,14 @@ seen only through a third-party excerpt and is not covered here.
 
 ## 1. What your skill does today
 
+**Your skill can now drop 1,757 MB from its container.** The tools jubarte
+replaces: LibreOffice (1,753 MB as your install line, `apt-get install -y
+libreoffice`, pulls it; 392 MB for the smallest headless install),
+Poppler (25 MB) and python-docx (15 MB): 1,793 MB v 36 MB for jubarte
+(a 14 MB download; the Python wheel adds 22 MB). `pdf2image` is not
+counted. Disk added to a fresh Ubuntu 24.04 container, measured on
+2026-10-04 in [`examples/adoption/00-install-size`](../../examples/adoption/00-install-size/).
+
 | Step | Today | Dependencies |
 |---|---|---|
 | Render to check | `soffice -env:UserInstallation=file:///tmp/lo_profile_$$ --headless --convert-to pdf`, then `pdftoppm -png`; or `scripts/render_docx.py` | LibreOffice, Poppler, `pdf2image` |
