@@ -22,6 +22,10 @@ After a release, the log's latest records must name it:
   wheel for every tag check_release_artifacts.REQUIRED_WHEEL_TAGS requires;
 - the log is committed in the jubarte-app checkout.
 
+The checkout is `--app PATH`, else $JUBARTE_APP_DIR (the app repository's
+checkout the release was given, as scripts/release_downstream.sh takes it),
+else jubarte-app/ here.
+
 Plain Python 3 (CI runs the tests with the system python): it reads the log
 and never writes it.
 """
@@ -30,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -129,8 +134,9 @@ def problems(version: str, app: Path, changelog: Path) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("version", help="the release, x.y.z")
-    ap.add_argument("--app", type=Path, default=ROOT / "jubarte-app",
-                    help="the jubarte-app checkout (default: jubarte-app/)")
+    ap.add_argument("--app", type=Path,
+                    default=Path(os.environ.get("JUBARTE_APP_DIR") or ROOT / "jubarte-app"),
+                    help="the jubarte-app checkout (default: $JUBARTE_APP_DIR, else jubarte-app/)")
     ap.add_argument("--changelog", type=Path, default=ROOT / "CHANGELOG.md")
     args = ap.parse_args(argv)
     if not re.fullmatch(r"\d+\.\d+\.\d+", args.version):

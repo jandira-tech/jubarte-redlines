@@ -85,14 +85,17 @@
 #      CLI on jubarte-wasm/cli
 #  11. PyPI — CI wheels + sdist via `uv publish`
 #  12. verify — every registry answers with the new version AND its summary
-#  13. downstream — scripts/release_downstream.sh: jubarte.pro moves to the
-#      release and is deployed, the app's release files are committed in the
-#      jubarte-app repository, and the Mac App Store and benchmark commands
+#  13. downstream — scripts/release_downstream.sh, in the app repository's
+#      checkout (JUBARTE_APP_DIR; step 0 has already proved it can run):
+#      jubarte.pro moves to the release — the download page, the demo engine
+#      and the benchmark figures of release_info/website_data — is tested,
+#      committed to the app's main, deployed, and the live benchmark page is
+#      read against release_info/; the Mac App Store and benchmark commands
 #      are printed (the App Store upload itself: release_downstream.sh --app)
-#  14. facts — scripts/check_release_facts.py: jubarte-app/data/facts.jsonl,
-#      which jubarte.pro and the Mac app print the version, date, files and
-#      release list from, names this release (and its every required wheel),
-#      and is committed in the jubarte-app checkout
+#  14. facts — scripts/check_release_facts.py: the app checkout's
+#      data/facts.jsonl, which jubarte.pro and the Mac app print the version,
+#      date, files and release list from, names this release (and its every
+#      required wheel), and is committed there
 #
 # Idempotent: each publish checks the registry first and skips a version
 # that is already live, so a failed run can simply be re-run.
@@ -139,12 +142,14 @@ before|you|NUMBERS: the measured sentence is set before the changelog tooling ru
 before|you|app repository: version files COMMITTED on release/v@V@ (not only bumped in a working tree), CHANGELOG section written, data/facts.jsonl naming the new engine BEFORE the app is built — the app compiles facts.jsonl in|git -C jubarte-app status --porcelain (clean); grep engine.version jubarte-app/data/facts.jsonl
 before|you|app lock: jubarte-app/src-tauri/Cargo.lock records jubarte-redlines @V@ before any app build|grep -A1 'name = "jubarte-redlines"' jubarte-app/src-tauri/Cargo.lock
 before|you|never build the engine's vendored jubarte-app/ — it is a stale snapshot; the app builds in a fresh engine-at-tag + app-at-branch layout|zsh agents/app_build/build_app_0.11.2.sh v@V@ <fresh dir> (clones, discards the vendored copy)
+before|you|JUBARTE_APP_DIR is exported before the run: the app repository's own checkout (arthrod/jubarte-app — never the vendored jubarte-app/ of a release worktree), on main with this release's app branch merged, in sync with its origin, clean, able to build the site (node_modules, public/fixtures) — step 13 deploys jubarte.pro from it|JUBARTE_APP_DIR=<app repo> scripts/release_downstream.sh @V@ --preflight
 before|you|UV_PUBLISH_TOKEN is exported before the run (name only, never print it) — step 0 checks the env var, you must load it|set -a; source <owner .env>; set +a; test -n "$UV_PUBLISH_TOKEN"
 before|you|npm web authentication: each of the two publishes needs the owner's browser approval (2FA) — have the owner at the keyboard for step 10|npm whoami (preflight) and the owner present for both publishes
 before|you|Ring-2 validity ratchet: no NEW OpenXML validator keys vs tools/validity_baseline.tsv; an output the validator cannot even open needs a Word probe before it ships|scripts/redline-sweep.sh <csvs> <src> <out> --validate (then the --probe sweep for refusals)
 before|you|lane validity: every sampled lane output's error kinds already exist in its sources (or are Word's own writing)|python3 lane_validity_vs_sources.py (bench results dir; logs to lane_validity.log)
 before|you|bench hygiene while scoring: one scoring job at a time; Word only through the bench scripts (--timeout 300, WD_MAX=300); probe documents pass tools/validate-docx first; nothing in /tmp|the queue-script pattern of the release work folder (queue.sh: one scorer at a time)
 0|auto|Preflight: main branch, clean tree, tools, crates.io + npm + gh credentials and UV_PUBLISH_TOKEN present|scripts/release.sh step 0 (its die lines)
+0|auto|The site step can run: JUBARTE_APP_DIR names the app repository's checkout, on main, in sync, clean, with the site's release script and its tools — proved before anything is published, not found out at step 13|scripts/release_downstream.sh @V@ --preflight
 1|auto|Version sync: every manifest, the 5 Cargo.locks, the 4 library READMEs; a half-bumped tree from an interrupted run dies naming the file|scripts/release.sh step 1 (the half_bumped loop)
 2|auto|Engine CHANGELOG dated ## [@V@] section + link footer, and the vendored jubarte-app/CHANGELOG.md names jubarte-redlines @V@|grep -F "jubarte-redlines @V@" jubarte-app/CHANGELOG.md
 2|you|The app REPOSITORY's own CHANGELOG.md carries its ## [@V@] section — the engine checks only its vendored copy|grep -F "jubarte-redlines @V@" <app repo>/CHANGELOG.md
@@ -163,14 +168,13 @@ before|you|bench hygiene while scoring: one scoring job at a time; Word only thr
 11|auto|release.yml attached the five CLI binaries and the seven wheels; a partial wheel set never reaches PyPI under a final version|python3 scripts/check_release_artifacts.py dist/pypi --version @V@
 11|you|When a wheel job fails: fix the release jobs and rerun the workflow on the tag (a run that lost a wheel never becomes a public release), or consent explicitly with --no-wait to the partial set|gh run rerun <run-id> --failed; scripts/release.sh @V@ <summaries> --no-wait
 12|auto|Verify: every registry answers with the new version AND its summary|scripts/release.sh step 12 checks (crates.io, npm x2, PyPI, GitHub)
-13|auto|Downstream: jubarte.pro engine step and the app-repo release commit run here; the App Store upload and the benchmark flow are printed, never run|scripts/release_downstream.sh @V@
-13|you|The site step needs the checkout whose jubarte-app/ is the real app repo (its nested .git) — a fresh worktree cannot run it; run release_downstream from there if the release ran elsewhere|git -C jubarte-app rev-parse --show-toplevel (must name the app repo)
-14|auto|jubarte-app/data/facts.jsonl names @V@ and every required wheel, and is committed in the app checkout|python3 scripts/check_release_facts.py @V@
+13|auto|Downstream, in the app checkout: the download page and demo engine move to @V@; the App Store upload and the benchmark flow are printed, never run|scripts/release_downstream.sh @V@
+13|auto|jubarte.pro figures: the bench.* records of release_info/website_data go into the app's data/facts.jsonl once, are proved against release_info, tested, linted, typechecked, committed to the app's main (a push, else a pull request merged at once), deployed, and the live benchmark page is read against the results JSONs — a failed check stops before the deploy|python3 scripts/check_site_live.py @V@
+14|auto|The app checkout's data/facts.jsonl (JUBARTE_APP_DIR) names @V@ and every required wheel, and is committed there|python3 scripts/check_release_facts.py @V@
 after|you|app build: build the app TWICE in the fresh engine-at-tag + app-at-branch layout — the Mac App Store build with --target aarch64-apple-darwin, the Developer ID build without --target (notarize-direct.sh reads that one)|zsh agents/app_build/build_app_0.11.2.sh v@V@ <fresh dir>
 after|you|App Store: upload the pkg, wait for VALID, move and attach the version record, set the en-US What's New text, answer export compliance, then Submit for Review — a human's click; Apple rejects a re-used version number|(cd jubarte-app && ./scripts/asc-build-status.sh); uv run --with cryptography python3 scripts/asc-new-version.py @V@ --apply
 after|you|notarize: Developer ID sign inside-out (nested bundles deepest first, then bare dylibs, then every Mach-O), notarize, staple, validate each artifact — the DMG lands at src-tauri/target/release/bundle/dmg/Jubarte_@V@_aarch64.dmg|ENTITLEMENTS=<entitlements-direct.plist> notarize-direct.sh @V@ <app dir> (keychain profile notarytool-cicero)
-after|you|jubarte.pro: merge the website_data facts (bench.* records), run check-bench with --release-info, build, test, lint, typecheck, deploy|(cd jubarte-app/jubarte-site && scripts/release.sh bench @V@ --redline-tool jubarte-@V@)
-after|you|benchmark lane upload: the site fixtures restage uploads to the Hugging Face dataset and pins fixtures.lock to the @V@ lane|(cd jubarte-app/jubarte-site && scripts/release.sh bench @V@ --redline-tool jubarte-@V@) — its fixtures stage uploads and pins
+after|you|benchmark lane upload: after the full-corpus run, the site fixtures restage uploads to the Hugging Face dataset, pins fixtures.lock to the @V@ lane and deploys — the release's own figures are on jubarte.pro since step 13|(cd "$JUBARTE_APP_DIR/jubarte-site" && scripts/release.sh bench @V@ --redline-tool jubarte-@V@) — its fixtures stage uploads and pins
 after|you|RESULTS.md: the full-corpus run that feeds the bench RESULTS.md still runs for @V@|(cd ../neurotic_docx_bench && uv run scripts/release_jubarte.py @V@)
 after|you|bench rerun: the same release-info flow re-runs WITHOUT --binary, on the release's own binary, now that the GitHub release exists|(cd ../neurotic_docx_bench && uv run python -m neurotic_docx_bench.jubarte_release_info @V@ --engine-dir <engine>)
 after|you|reproduces: the released binary (downloaded from the GitHub release) reproduces the candidate's outputs on the release samples|python3 identity27.py <released binary> <candidate> <out dir> (from the bench root)
@@ -357,6 +361,9 @@ gh auth status >/dev/null 2>&1 || die "gh not authenticated — run \`gh auth lo
 [ -n "${UV_PUBLISH_TOKEN:-}" ] \
   || die "UV_PUBLISH_TOKEN not set — a pypi-… API token for \`uv publish\`"
 step "tools + credentials OK"
+# Step 13 releases jubarte.pro from the app repository's checkout: prove it
+# can before anything is published, not after (0.11.2 found out at step 13).
+scripts/release_downstream.sh "$VER" --preflight
 
 # =============================================================================
 say "1. Version sync → $VER"
@@ -1081,8 +1088,10 @@ check "GitHub     notes carry --github-summary" gh_note
 say "13. Downstream — jubarte.pro, jubarte-app, App Store, benchmark"
 # =============================================================================
 # After verify: the site reads the GitHub release's files and the npm package
-# that step 12 just proved live. A failure here leaves the release itself
-# intact; rerun scripts/release_downstream.sh $VER on its own.
+# that step 12 just proved live, and release_info/website_data's figures. It
+# runs in the app repository's checkout (JUBARTE_APP_DIR, proved in step 0).
+# A failure here leaves the release itself intact; rerun
+# scripts/release_downstream.sh $VER on its own.
 scripts/release_downstream.sh "$VER" \
   || die "downstream failed — the release is out; rerun scripts/release_downstream.sh $VER"
 check_now 13
@@ -1108,8 +1117,8 @@ echo "  https://www.npmjs.com/package/jubarte-wasm/v/$VER"
 say "Checklist — [you] items still owed after the script"
 # =============================================================================
 # The script is done; the checklist is not. Every [you] item of the "after"
-# phase is still owed (app build, App Store, notarization, jubarte.pro, the
-# benchmark lane, the post-release reproduction, the handoff notes) — each
+# phase is still owed (app build, App Store, notarization, the benchmark
+# lane, the post-release reproduction, the handoff notes) — each
 # printed with its command, from the same single source of truth, so none
 # of it has to live in someone's head.
 checklist_items | sed "s/@V@/$VER/g" | awk -F'|' '
