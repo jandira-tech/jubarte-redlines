@@ -96,7 +96,7 @@ perf-profile = []
 self-update = ["cli", "dep:self_update"]
 
 [dependencies]
-rdocx-opc = "0.1" # OPC/zip package layer
+rdocx-opc = "0.14" # OPC/zip package layer
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] } # fallback / direct zip access if rdocx-opc's surface is insufficient
 sha1 = "0.11"
 ttf-parser = "0.25" # DOCX→PDF glyph metrics + TTF embed (Carlito / Liberation)
