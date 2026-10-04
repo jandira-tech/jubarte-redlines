@@ -92,3 +92,4 @@ Claude outputs/
 /fuzz/artifacts/
 /fuzz/target/
 /fuzz/Cargo.lock
+jubarte-app/

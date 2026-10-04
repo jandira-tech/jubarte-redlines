@@ -1816,7 +1816,7 @@ dependencies = [
 
 [[package]]
 name = "jubarte-app"
-version = "0.11.0"
+version = "0.11.2"
 dependencies = [
  "jubarte-redlines",
  "quick-xml 0.42.0",
@@ -1830,7 +1830,7 @@ dependencies = [
 
 [[package]]
 name = "jubarte-redlines"
-version = "0.11.0"
+version = "0.11.2"
 dependencies = [
  "flate2",
  "foldhash",
