@@ -14813,6 +14813,10 @@ fn collect_runs_rec(
         ctx.math_upright = saved;
         return;
     }
+    if ctx.dom.name_is(node, &M::name("d")) {
+        collect_math_delimiter(ctx, node, mark, author, runs);
+        return;
+    }
     if ctx.dom.name_is(node, &M::name("nary")) {
         // Strict01 ∑_{k=0}^{n}: chr lives on naryPr, sub/sup are not
         // m:sSub/sSup. Skip naryPr after emitting chr. Do not center
@@ -14965,6 +14969,54 @@ impl Drop for MathAlphanumerics {
     fn drop(&mut self) {
         MATH_ALPHANUMERICS.with(|slot| slot.set(self.0));
     }
+}
+
+/// An `m:d`: its `begChr`, its `m:e` items with `sepChr` between them,
+/// its `endChr` (Word's PDF of math_all_objects: "(𝑥 + 𝑦)", "sin(𝑥)").
+/// The characters default to `(`, `|` and `)`; an empty `m:val` draws
+/// nothing there.
+fn collect_math_delimiter(
+    ctx: &mut RunCollect<'_>,
+    node: NodeId,
+    mark: RevMark,
+    author: &str,
+    runs: &mut Vec<TextRun>,
+) {
+    let pr = ctx.dom.element(node, &M::name("dPr"));
+    let chr = |name: &str, default: &str| -> String {
+        pr.and_then(|p| ctx.dom.element(p, &M::name(name)))
+            .map(|c| {
+                ctx.dom
+                    .attribute(c, &M::name("val"))
+                    .or_else(|| attr_any(ctx.dom, c, "val"))
+                    .unwrap_or("")
+                    .to_string()
+            })
+            .unwrap_or_else(|| default.to_string())
+    };
+    let (beg, sep, end) = (chr("begChr", "("), chr("sepChr", "|"), chr("endChr", ")"));
+    let push = |ctx: &mut RunCollect<'_>, text: &str, runs: &mut Vec<TextRun>| {
+        if text.is_empty() {
+            return;
+        }
+        let mut style = ctx.base.clone();
+        math_text_style(&mut style);
+        if mark != RevMark::None {
+            apply_rev(&mut style, mark, ctx.authors.color(author));
+        }
+        let mut run = TextRun::new(text, style);
+        run.rev = mark != RevMark::None;
+        runs.push(run);
+    };
+    push(ctx, &beg, runs);
+    let items: Vec<NodeId> = ctx.dom.elements(node, Some(&M::name("e")));
+    for (i, item) in items.into_iter().enumerate() {
+        if i > 0 {
+            push(ctx, &sep, runs);
+        }
+        collect_runs_rec(ctx, item, mark, author, runs);
+    }
+    push(ctx, &end, runs);
 }
 
 /// An `m:r`'s math style: `None` when `m:nor` makes it ordinary text,
@@ -36633,40 +36685,39 @@ mod field_tests {
     }
 
     #[test]
-    fn omml_d_stays_flattened_after_mini_359() {
-        // Strict01 (x+a)^n: m:d default parens. Linear begChr/endChr
-        // (mini 359) was Word-shaped but ITT-neg: Strict01 family
-        // −0.0049 / NR mean −0.0005. Quartz does not match extra
-        // WinAnsi parens. Keep flatten x+a.
-        let xml = r#"<?xml version="1.0"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
- xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">
-<w:body><w:p>
-<m:oMath>
-  <m:d>
-    <m:dPr/>
-    <m:e><m:r><m:t>x</m:t></m:r><m:r><m:t>+</m:t></m:r><m:r><m:t>a</m:t></m:r></m:e>
-  </m:d>
-</m:oMath>
-</w:p></w:body></w:document>"#;
-        let mut dom = Dom::new();
-        let doc = dom.parse_xdocument(xml);
-        let root = dom.root(doc).expect("root");
-        let para = dom
-            .descendants(root, Some(&W::p()))
-            .into_iter()
-            .next()
-            .expect("p");
-        let runs = collect_runs(&dom, para, &Defaults::word().run, &ThemeFonts::default());
-        let joined: String = runs.iter().map(|r| r.text.as_str()).collect();
+    fn omml_d_draws_its_delimiters() {
+        // Word's PDF of math_all_objects (corpus 970e9bbbcc) draws
+        // "17. Delimiter: (𝑥 + 𝑦)" and "sin(𝑥)": m:d's begChr/endChr,
+        // parentheses by default, sepChr (default |) between its m:e.
+        // An empty val draws nothing on that side.
+        let joined = |body: &str| -> String {
+            math_runs(&format!("<w:p><m:oMath>{body}</m:oMath></w:p>"))
+                .iter()
+                .map(|r| r.text.as_str())
+                .collect()
+        };
+        let x = r#"<m:e><m:r><m:t>x</m:t></m:r></m:e>"#;
+        let y = r#"<m:e><m:r><m:t>y</m:t></m:r></m:e>"#;
+        assert_eq!(joined(&format!("<m:d>{x}</m:d>")), "(\u{1D465})");
         assert_eq!(
-            joined, "\u{1D465}+\u{1D44E}",
-            "mini 359 parens ITT-neg; joined={joined:?}"
+            joined(&format!(
+                r#"<m:d><m:dPr><m:begChr m:val="["/><m:endChr m:val="]"/></m:dPr>{x}</m:d>"#
+            )),
+            "[\u{1D465}]"
         );
-        assert!(
-            !joined.contains('(') && !joined.contains(')'),
-            "must not emit linear parens; joined={joined:?}"
+        assert_eq!(
+            joined(&format!("<m:d>{x}{y}</m:d>")),
+            "(\u{1D465}|\u{1D466})"
         );
+        assert_eq!(
+            joined(&format!(
+                r#"<m:d><m:dPr><m:begChr m:val=""/><m:sepChr m:val=","/></m:dPr>{x}{y}</m:d>"#
+            )),
+            "\u{1D465},\u{1D466})"
+        );
+        let runs = math_runs(&format!("<w:p><m:oMath><m:d>{x}</m:d></m:oMath></w:p>"));
+        let open = runs.iter().find(|r| r.text == "(").expect("(");
+        assert_eq!(open.style.family, "Cambria Math");
     }
 
     #[test]

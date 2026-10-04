@@ -38042,10 +38042,10 @@ fn omml_f_nobar_paints_n_over_k() {
 }
 
 #[test]
-fn omml_d_and_f_stay_flattened_after_mini_359() {
-    // Linear m:d parens + m:f noBar n/k (mini 359) was Word-shaped
-    // but ITT-neg vs Quartz stacked noBar: Strict01 family −0.0049.
-    // Keep flatten x+a / nk until delimiters are built up.
+fn omml_d_paints_parens_and_f_nobar_no_slash() {
+    // Word's PDF of math_all_objects draws "(𝑥 + 𝑦)": m:d paints its
+    // parentheses. A noBar fraction stacks n over k with no slash (mini
+    // 359's linear n/k was not Word's).
     let body = "<w:p><m:oMath xmlns:m=\"http://schemas.openxmlformats.org/officeDocument/2006/math\">\
          <m:d><m:e><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>x</m:t></m:r><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>+</m:t></m:r><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>a</m:t></m:r></m:e></m:d>\
          <m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>=</m:t></m:r>\
@@ -38057,13 +38057,19 @@ fn omml_d_and_f_stay_flattened_after_mini_359() {
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert omml d/f lock");
     let hay = String::from_utf8_lossy(&pdf);
     let text = pdf_winansi_text(&pdf);
+    // pdf_winansi_text drops an escaped "(" opening a literal; the
+    // painted literals are the evidence.
     assert!(
-        text.contains("x+a") && text.contains("nk"),
-        "flatten must keep x+a and nk; text={text:?}"
+        hay.contains("(\\() Tj")
+            && hay.contains("(\\)) Tj")
+            && text.contains("x+a")
+            && text.contains("nk"),
+        "m:d paints its parentheses around x+a; text={text:?}"
     );
     assert!(
-        !hay.contains("(\\()") && !hay.contains("(\\))") && !text.contains("n/k"),
-        "mini 359 linear parens/slash ITT-neg; text={text:?}"
+        !text.contains("n/k"),
+        "noBar has no slash; text={text:?} {}",
+        hay.len()
     );
 }
 
