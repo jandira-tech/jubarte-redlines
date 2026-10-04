@@ -589,6 +589,15 @@ fn with_layout<T>(
                 .any(|part| number_formats_write(part, test))
     };
     let has_cjk = writes(takes_cjk_fallback);
+    // Word sets OMML text in Cambria Math whether or not the font table
+    // lists it (sd_2750_borderbox lists only Cambria).
+    let has_math = std::iter::once(&xml)
+        .chain(&stories)
+        .any(|t| t.contains("<m:oMath"));
+    if has_math {
+        family_names.push("Cambria Math".to_string());
+        run_faces.push("Cambria Math".to_string());
+    }
     // Balanced spaces take a run's eastAsia face's width, Latin text or
     // not (`balance_spaces`), so that face loads like a painted one.
     if settings_flag(&pkg, "balanceSingleByteDoubleByteWidth") {
@@ -620,6 +629,13 @@ fn with_layout<T>(
     }
     let fonts = Fonts::for_document(&embedded);
     font::with_font_table(table, || {
+        let _math = MathAlphanumerics::set(
+            !has_math
+                || fonts
+                    .get(fonts.resolve("Cambria Math", false, false))
+                    .glyph('\u{1D44E}')
+                    != 0,
+        );
         let core = load_core_dates(&pkg);
         with_core_dates(core, || {
             let mut sheet = load_stylesheet(&pkg);
@@ -10572,15 +10588,44 @@ fn para_base(
     if pstyle.bidi {
         mirror_bidi(&mut pstyle);
     }
+    if let Some(align) = display_math_align(dom, para) {
+        pstyle.align = align;
+    }
     pstyle.fmt_rev = para_formatting_changed(dom, para) || para_mark_revised(dom, para);
     rstyle.auto_space_de_off = pstyle.auto_space_de_off;
     rstyle.auto_space_dn_off = pstyle.auto_space_dn_off;
     (pstyle, rstyle)
 }
 
-/// The alignment of a display-equation paragraph.
-fn display_math_align(_dom: &Dom, _para: NodeId) -> Option<Align> {
-    None
+/// The alignment of a display-equation paragraph: one that holds an
+/// `m:oMathPara` and no text of its own. Word centres the equation (its
+/// default `centerGroup`, or `center`) unless the `m:oMathParaPr/m:jc`
+/// says `left` or `right`, whatever the paragraph's own `w:jc`.
+fn display_math_align(dom: &Dom, para: NodeId) -> Option<Align> {
+    let math_para = M::name("oMathPara");
+    let display = dom
+        .descendants(para, Some(&math_para))
+        .into_iter()
+        .find(|&m| dom.ancestors(m, Some(&W::p())).first() == Some(&para))?;
+    let own_text = dom
+        .descendants(para, Some(&W::t()))
+        .into_iter()
+        .any(|t| dom.ancestors(t, Some(&math_para)).is_empty() && !element_text(dom, t).is_empty());
+    if own_text {
+        return None;
+    }
+    let jc = dom
+        .element(display, &M::name("oMathParaPr"))
+        .and_then(|pr| dom.element(pr, &M::name("jc")))
+        .and_then(|jc| {
+            dom.attribute(jc, &M::name("val"))
+                .or_else(|| attr_any(dom, jc, "val"))
+        });
+    Some(match jc {
+        Some("left") => Align::Left,
+        Some("right") => Align::Right,
+        _ => Align::Center,
+    })
 }
 
 /// A right-to-left paragraph as the left-to-right one it paints like: its
@@ -13865,6 +13910,11 @@ struct RunCollect<'a> {
     in_dropdown: bool,
     /// OMML `m:sSup` / `m:sSub` overlay (Strict01 binomial).
     math_vert: VertAlign,
+    /// Inside `m:oMath`: text is math text (`math_text_style`).
+    in_math: bool,
+    /// The enclosing `m:r`'s math style: `None` for `m:nor` (ordinary
+    /// text), else whether its letters are upright (`m:sty` p or b).
+    math_upright: Option<bool>,
     /// file_146 pBdr-bottom section heads keep generator xml:space pads.
     /// Body without pBdr stays collapsed (mini 401). Courier New body
     /// pads (file_69 code) stay collapsed too (mini 520 ITT-neg).
@@ -13911,6 +13961,8 @@ fn collect_runs_in(
         dropdown: None,
         in_dropdown: false,
         math_vert: VertAlign::Baseline,
+        in_math: false,
+        math_upright: Some(false),
         keep_xml_space: para_keeps_xml_space(dom, node),
     };
     collect_runs_rec(&mut ctx, node, RevMark::None, "", &mut runs);
@@ -14741,6 +14793,26 @@ fn collect_runs_rec(
         }
         return;
     }
+    if ctx.dom.name_is(node, &M::name("oMath")) {
+        let saved = ctx.in_math;
+        ctx.in_math = true;
+        for idx in 0..ctx.dom.child_count(node) {
+            let child = ctx.dom.child_at(node, idx);
+            collect_runs_rec(ctx, child, mark, author, runs);
+        }
+        ctx.in_math = saved;
+        return;
+    }
+    if ctx.dom.name_is(node, &M::name("r")) {
+        let saved = ctx.math_upright;
+        ctx.math_upright = math_run_upright(ctx.dom, node);
+        for idx in 0..ctx.dom.child_count(node) {
+            let child = ctx.dom.child_at(node, idx);
+            collect_runs_rec(ctx, child, mark, author, runs);
+        }
+        ctx.math_upright = saved;
+        return;
+    }
     if ctx.dom.name_is(node, &M::name("nary")) {
         // Strict01 ∑_{k=0}^{n}: chr lives on naryPr, sub/sup are not
         // m:sSub/sSup. Skip naryPr after emitting chr. Do not center
@@ -14758,6 +14830,9 @@ fn collect_runs_rec(
                 .unwrap_or("");
             if !val.is_empty() {
                 let mut style = ctx.base.clone();
+                if ctx.in_math {
+                    math_text_style(&mut style);
+                }
                 if mark != RevMark::None {
                     apply_rev(&mut style, mark, ctx.authors.color(author));
                 }
@@ -14839,10 +14914,20 @@ fn collect_runs_rec(
             let preserved = ctx.dom.parent(node).is_some_and(|t| {
                 ctx.dom.attribute(t, &XNamespace::xml().name("space")) == Some("preserve")
             });
-            let mut run = TextRun::new(
-                rev_text(text, mark, ctx.in_table || ctx.keep_xml_space || preserved),
-                style,
-            );
+            let mut shown = rev_text(text, mark, ctx.in_table || ctx.keep_xml_space || preserved);
+            if ctx.in_math
+                && let Some(upright) = ctx.math_upright
+            {
+                math_text_style(&mut style);
+                if !upright {
+                    if MATH_ALPHANUMERICS.with(std::cell::Cell::get) {
+                        shown = shown.chars().map(math_italic).collect();
+                    } else {
+                        style.italic = true;
+                    }
+                }
+            }
+            let mut run = TextRun::new(shown, style);
             run.rev = mark != RevMark::None;
             run.style.tint = open_tint(ctx);
             run.style.tint_id = ctx.open.first().cloned();
@@ -14858,6 +14943,75 @@ fn collect_runs_rec(
         let child = ctx.dom.child_at(node, idx);
         collect_runs_rec(ctx, child, mark, author, runs);
     }
+}
+
+thread_local! {
+    static MATH_ALPHANUMERICS: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
+/// Whether this conversion's Cambria Math face draws the mathematical
+/// alphanumeric block, for the conversion's lifetime. Without it (no
+/// Cambria Math installed) math letters stay ASCII and are set italic
+/// rather than vanishing as glyphs the face lacks.
+struct MathAlphanumerics(bool);
+
+impl MathAlphanumerics {
+    fn set(available: bool) -> Self {
+        Self(MATH_ALPHANUMERICS.with(|slot| slot.replace(available)))
+    }
+}
+
+impl Drop for MathAlphanumerics {
+    fn drop(&mut self) {
+        MATH_ALPHANUMERICS.with(|slot| slot.set(self.0));
+    }
+}
+
+/// An `m:r`'s math style: `None` when `m:nor` makes it ordinary text,
+/// `Some(true)` when `m:sty` is `p` (plain) or `b` (bold), whose letters
+/// stay upright, else `Some(false)`: italic letters, Word's default.
+fn math_run_upright(dom: &Dom, r: NodeId) -> Option<bool> {
+    let rpr = dom.element(r, &M::name("rPr"));
+    let prop = |name: &str| rpr.and_then(|p| dom.element(p, &M::name(name)));
+    if let Some(nor) = prop("nor") {
+        let val = dom
+            .attribute(nor, &M::name("val"))
+            .or_else(|| attr_any(dom, nor, "val"));
+        if !matches!(val, Some("0" | "off" | "false")) {
+            return None;
+        }
+    }
+    let sty = prop("sty")
+        .and_then(|s| {
+            dom.attribute(s, &M::name("val"))
+                .or_else(|| attr_any(dom, s, "val"))
+        })
+        .unwrap_or("i");
+    Some(matches!(sty, "p" | "b"))
+}
+
+/// Word sets math text in Cambria Math, italic letters coming from the
+/// mathematical alphanumeric block rather than a slanted face (its PDF of
+/// math_matrix_tests embeds CambriaMath with a = U+1D44E).
+fn math_text_style(style: &mut RunStyle) {
+    style.family = "Cambria Math".to_string();
+    style.family_ea = None;
+    style.family_cs = None;
+    style.italic = false;
+}
+
+/// The mathematical italic form of a Latin or Greek lowercase letter
+/// (h is U+210E, the Planck constant, the block's hole); anything else
+/// as it is.
+fn math_italic(c: char) -> char {
+    let shifted = match c {
+        'h' => return '\u{210E}',
+        'a'..='z' => 0x1D44E + (c as u32 - 'a' as u32),
+        'A'..='Z' => 0x1D434 + (c as u32 - 'A' as u32),
+        'α'..='ω' => 0x1D6FC + (c as u32 - 'α' as u32),
+        _ => return c,
+    };
+    char::from_u32(shifted).unwrap_or(c)
 }
 
 fn math_f_is_nobar(dom: &Dom, f: NodeId) -> bool {
@@ -36121,7 +36275,7 @@ mod field_tests {
         let joined: String = runs.iter().map(|r| r.text.as_str()).collect();
         assert_eq!(
             joined,
-            "x2",
+            "\u{1D465}2",
             "runs={:?}",
             runs.iter().map(|r| r.text.as_str()).collect::<Vec<_>>()
         );
@@ -36165,8 +36319,11 @@ mod field_tests {
             joined.contains('∑'),
             "nary chr must emit ∑; joined={joined:?}"
         );
-        let sub = runs.iter().find(|r| r.text.contains("k=0")).expect("sub");
-        let sup = runs.iter().find(|r| r.text == "n").expect("sup");
+        let sub = runs
+            .iter()
+            .find(|r| r.text.contains("\u{1D458}=0"))
+            .expect("sub");
+        let sup = runs.iter().find(|r| r.text == "\u{1D45B}").expect("sup");
         assert!(
             matches!(sub.style.vert, VertAlign::Sub),
             "nary sub must be Sub"
@@ -36210,6 +36367,21 @@ mod field_tests {
     }
 
     #[test]
+    fn omml_letters_stay_ascii_italic_without_cambria_math() {
+        // A face without the mathematical alphanumeric block drew nothing
+        // for U+1D44E (sd_2750_borderbox lost every math letter); without
+        // Cambria Math the letters keep their ASCII code points, italic.
+        let _none = MathAlphanumerics::set(false);
+        let runs = math_runs(r#"<w:p><m:oMath><m:r><m:t>ab2</m:t></m:r></m:oMath></w:p>"#);
+        let run = runs.iter().find(|r| !r.text.is_empty()).expect("math run");
+        assert_eq!(run.text, "ab2");
+        assert!(run.style.italic);
+        drop(_none);
+        let runs = math_runs(r#"<w:p><m:oMath><m:r><m:t>a</m:t></m:r></m:oMath></w:p>"#);
+        assert_eq!(runs[0].text, "\u{1D44E}", "the flag is restored");
+    }
+
+    #[test]
     fn omml_upright_and_plain_runs_keep_their_letters() {
         // m:sty p keeps letters upright in Cambria Math; m:nor is
         // ordinary text in the run's own font.
@@ -36249,7 +36421,10 @@ mod field_tests {
             display_math_align(&dom, para)
         };
         let eq = r#"<m:oMath><m:r><m:t>x</m:t></m:r></m:oMath>"#;
-        assert_eq!(align(&format!("<w:p><m:oMathPara>{eq}</m:oMathPara></w:p>")), Some(Align::Center));
+        assert_eq!(
+            align(&format!("<w:p><m:oMathPara>{eq}</m:oMathPara></w:p>")),
+            Some(Align::Center)
+        );
         assert_eq!(
             align(&format!(
                 r#"<w:p><m:oMathPara><m:oMathParaPr><m:jc m:val="left"/></m:oMathParaPr>{eq}</m:oMathPara></w:p>"#
@@ -36262,8 +36437,17 @@ mod field_tests {
             )),
             Some(Align::Right)
         );
-        assert_eq!(align(&format!("<w:p><w:r><w:t>Let</w:t></w:r><m:oMathPara>{eq}</m:oMathPara></w:p>")), None);
-        assert_eq!(align(&format!("<w:p>{eq}</w:p>")), None, "inline math is not display");
+        assert_eq!(
+            align(&format!(
+                "<w:p><w:r><w:t>Let</w:t></w:r><m:oMathPara>{eq}</m:oMathPara></w:p>"
+            )),
+            None
+        );
+        assert_eq!(
+            align(&format!("<w:p>{eq}</w:p>")),
+            None,
+            "inline math is not display"
+        );
     }
 
     #[test]
@@ -36475,7 +36659,10 @@ mod field_tests {
             .expect("p");
         let runs = collect_runs(&dom, para, &Defaults::word().run, &ThemeFonts::default());
         let joined: String = runs.iter().map(|r| r.text.as_str()).collect();
-        assert_eq!(joined, "x+a", "mini 359 parens ITT-neg; joined={joined:?}");
+        assert_eq!(
+            joined, "\u{1D465}+\u{1D44E}",
+            "mini 359 parens ITT-neg; joined={joined:?}"
+        );
         assert!(
             !joined.contains('(') && !joined.contains(')'),
             "must not emit linear parens; joined={joined:?}"
@@ -36509,13 +36696,16 @@ mod field_tests {
             .expect("p");
         let runs = collect_runs(&dom, para, &Defaults::word().run, &ThemeFonts::default());
         let joined: String = runs.iter().map(|r| r.text.as_str()).collect();
-        assert_eq!(joined, "nk", "noBar stays n then k; joined={joined:?}");
+        assert_eq!(
+            joined, "\u{1D45B}\u{1D458}",
+            "noBar stays n then k; joined={joined:?}"
+        );
         assert!(
             !joined.contains('/'),
             "mini 359 linear slash ITT-neg; joined={joined:?}"
         );
-        let num = runs.iter().find(|r| r.text == "n").expect("num");
-        let den = runs.iter().find(|r| r.text == "k").expect("den");
+        let num = runs.iter().find(|r| r.text == "\u{1D45B}").expect("num");
+        let den = runs.iter().find(|r| r.text == "\u{1D458}").expect("den");
         assert!(
             matches!(num.style.vert, VertAlign::StackNum),
             "noBar num must stack above"
@@ -36553,7 +36743,10 @@ mod field_tests {
             .expect("p");
         let runs = collect_runs(&dom, para, &Defaults::word().run, &ThemeFonts::default());
         let joined: String = runs.iter().map(|r| r.text.as_str()).collect();
-        assert_eq!(joined, "nk", "mini 359 n/k ITT-neg; joined={joined:?}");
+        assert_eq!(
+            joined, "\u{1D45B}\u{1D458}",
+            "mini 359 n/k ITT-neg; joined={joined:?}"
+        );
         assert!(
             !joined.contains('/'),
             "must not emit linear slash; joined={joined:?}"
