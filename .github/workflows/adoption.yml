@@ -86,3 +86,15 @@ jobs:
             ls "$dir" | grep -qi jubarte || { echo "::error::$dir has no jubarte output"; missing=1; }
           done
           exit "$missing"
+      # Rasters and replaced-tool outputs depend on the runner's fonts and
+      # tool versions, so regenerated evidence is not byte-compared. A
+      # script that stops writing a committed jubarte file fails here (a
+      # replaced tool's file may be gone because the tool is absent), and
+      # what changed is listed for the reviewer.
+      - name: committed evidence is still produced
+        run: |
+          git status --porcelain -- examples/adoption
+          deleted=$(git ls-files --deleted -- examples/adoption | grep -i jubarte || true)
+          if [ -n "$deleted" ]; then echo "::error::no longer produced: $deleted"; exit 1; fi
+          changed=$(git diff --name-only -- examples/adoption | wc -l | tr -d ' ')
+          echo "::notice::$changed committed evidence files differ after regeneration (fonts and tool versions vary by runner)"

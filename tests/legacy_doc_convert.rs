@@ -118,6 +118,29 @@ fn a_section_break_ends_its_paragraph() {
 }
 
 #[test]
+fn title_and_headings_8_and_9_keep_their_styles_and_a_nested_field_its_result() {
+    // styles.doc (make_styles.py, exported by LibreOffice). Word opens the
+    // .docx and draws the Title and Heading 8-9 styles (checked with
+    // word_pdf.py for PR #354).
+    let doc = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/legacy/styles.doc"),
+    )
+    .unwrap();
+    let docx = doc_to_docx(&doc).unwrap();
+    assert_word_valid_package(&docx);
+    let body = common::docx::part_string(&docx, "word/document.xml").unwrap();
+    let styles: Vec<&str> = body
+        .split("<w:pStyle w:val=\"")
+        .skip(1)
+        .filter_map(|rest| rest.split('"').next())
+        .collect();
+    assert_eq!(styles, ["Title", "Heading1", "Heading8", "Heading9"]);
+    let text = jubarte::inspect::markdown(&docx).unwrap();
+    assert!(text.contains("Page check: first"), "{text}");
+    assert!(!text.contains("PAGE"), "{text}");
+}
+
+#[test]
 fn markdown_escapes_what_markdown_would_read_as_syntax() {
     let markdown = doc_to_markdown(&fixture()).unwrap();
     assert!(

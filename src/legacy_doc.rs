@@ -206,14 +206,91 @@ pub fn doc_to_markdown(bytes: &[u8]) -> Result<String> {
 ///
 /// As [`read`], or when the package cannot be written.
 pub fn doc_to_docx(bytes: &[u8]) -> Result<Vec<u8>> {
-    let markdown = doc_to_markdown(bytes)?;
+    document_to_docx(&read(bytes)?)
+}
+
+/// The blocks written as a `.docx` through the Markdown writer, then
+/// Title and Heading 7-9 (which Markdown has no heading for) restored.
+fn document_to_docx(document: &LegacyDocument) -> Result<Vec<u8>> {
+    let markdown = to_markdown(document);
     let options = crate::markdown::DocxOptions {
         critic: false,
         ..crate::markdown::DocxOptions::default()
     };
-    crate::markdown::markdown_to_docx(&markdown, &options)
+    let docx = crate::markdown::markdown_to_docx(&markdown, &options)
         .map(|written| written.docx)
-        .map_err(|error| LegacyDocError::new(format!("writing the .docx: {error}")))
+        .map_err(|error| LegacyDocError::new(format!("writing the .docx: {error}")))?;
+    let styles: Vec<String> = document
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            Block::Paragraph(paragraph) => paragraph.heading,
+            Block::Table(_) => None,
+        })
+        .map(|level| match level {
+            0 => "Title".to_string(),
+            level => format!("Heading{level}"),
+        })
+        .collect();
+    if styles
+        .iter()
+        .all(|id| !matches!(id.as_str(), "Title" | "Heading7" | "Heading8" | "Heading9"))
+    {
+        return Ok(docx);
+    }
+    restyle_headings(&docx, &styles)
+}
+
+/// Give the document's heading paragraphs, in order, the styles `styles`
+/// names, and define any the package lacks.
+fn restyle_headings(docx: &[u8], styles: &[String]) -> Result<Vec<u8>> {
+    const OPEN: &str = "<w:pStyle w:val=\"Heading";
+    let fail = |what: &str| LegacyDocError::new(format!("writing the .docx: {what}"));
+    let mut package = crate::opc::PartFs::open(docx).map_err(|e| fail(&e.to_string()))?;
+    let body = package
+        .part_string("word/document.xml")
+        .ok_or_else(|| fail("no document part"))?;
+    let mut out = String::with_capacity(body.len());
+    let mut rest = body.as_str();
+    let mut wanted = styles.iter();
+    while let Some((before, after)) = rest.split_once(OPEN) {
+        out.push_str(before);
+        let quote = after
+            .find('"')
+            .ok_or_else(|| fail("a broken heading style"))?;
+        let style = wanted
+            .next()
+            .ok_or_else(|| fail("more heading paragraphs than headings"))?;
+        out.push_str("<w:pStyle w:val=\"");
+        out.push_str(style);
+        rest = after
+            .get(quote..)
+            .ok_or_else(|| fail("a broken heading style"))?;
+    }
+    out.push_str(rest);
+    if wanted.next().is_some() {
+        return Err(fail("fewer heading paragraphs than headings"));
+    }
+    package.set_part("word/document.xml", out.into_bytes());
+
+    let mut sheet = package
+        .part_string("word/styles.xml")
+        .ok_or_else(|| fail("no styles part"))?;
+    let mut defined: Vec<&str> = Vec::new();
+    for style in styles {
+        if defined.contains(&style.as_str()) || sheet.contains(&format!("w:styleId=\"{style}\"")) {
+            continue;
+        }
+        let definition = crate::markdown::xml::style_definition(style)
+            .ok_or_else(|| fail("a heading style without a definition"))?;
+        let end = sheet
+            .rfind("</w:styles>")
+            .ok_or_else(|| fail("a styles part without its end"))?;
+        sheet.insert_str(end, &definition);
+        defined.push(style);
+    }
+    package.set_part("word/styles.xml", sheet.into_bytes());
+    package.to_zip().map_err(|e| fail(&e.to_string()))
 }
 
 /// The document's blocks as Markdown.
@@ -434,6 +511,16 @@ impl<'a> CompoundFile<'a> {
             seen = seen.saturating_add(1);
         }
         fat_locations.truncate(index(fat_sectors).ok_or_else(bad)?.min(max_sectors));
+        // Each FAT sector is a different sector; a repeat is a corrupt
+        // (or looping) DIFAT.
+        let mut sorted = fat_locations.clone();
+        sorted.sort_unstable();
+        if sorted
+            .windows(2)
+            .any(|pair| matches!(pair, [a, b] if a == b))
+        {
+            return Err(LegacyDocError::new("a FAT sector is listed twice"));
+        }
         let mut fat = Vec::with_capacity(fat_locations.len().saturating_mul(per_difat));
         for location in fat_locations {
             let sector = sector_slice(bytes, sector_size, location).ok_or_else(bad)?;
@@ -778,6 +865,23 @@ struct StoryChar {
 /// corrupt file, refused rather than converted short.
 fn main_text(word: &[u8], pieces: &[Piece], ccp_text: u32) -> Result<Vec<StoryChar>> {
     let past = || LegacyDocError::new("a text piece points past the WordDocument stream");
+    // The pieces run from CP 0 through the main story without a gap, or
+    // the document would come out quietly shorter than it is.
+    let mut covered = 0u32;
+    for piece in pieces {
+        if covered >= ccp_text {
+            break;
+        }
+        if piece.cp_start != covered || piece.cp_end <= piece.cp_start {
+            break;
+        }
+        covered = piece.cp_end;
+    }
+    if covered < ccp_text {
+        return Err(LegacyDocError::new(
+            "the piece table does not cover the main story",
+        ));
+    }
     let mut out = Vec::new();
     for piece in pieces {
         if piece.cp_start >= ccp_text {
@@ -1156,7 +1260,8 @@ impl Story<'_> {
         let mut cell: Vec<String> = Vec::new();
 
         for story in chars {
-            let in_code = fields.last().copied().unwrap_or(false);
+            // Inside any field's code, even a nested field's result is code.
+            let in_code = fields.iter().any(|&code| code);
             let text = match story.ch {
                 '\u{13}' => {
                     fields.push(true);
@@ -1484,6 +1589,120 @@ mod tests {
         assert_eq!(texts(story(Vec::new()).blocks(&chars)), ["ab\ncd\nef"]);
         // The second \x0C (CP 5) is a section mark: two paragraphs.
         assert_eq!(texts(story(vec![5]).blocks(&chars)), ["ab\ncd", "ef"]);
+    }
+
+    #[test]
+    fn a_field_nested_in_a_field_code_shows_only_the_outer_result() {
+        let (papx, chpx) = (FkpIndex { runs: Vec::new() }, FkpIndex { runs: Vec::new() });
+        let lists = Lists::default();
+        // { IF { PAGE } = 1 "one" } displaying "one": the PAGE result "1"
+        // sits in the outer field's code and is not shown.
+        let chars = story_chars("a\u{13}IF \u{13}PAGE\u{14}1\u{15} = 1 \"one\"\u{14}one\u{15}b\r");
+        let story = Story {
+            papx: &papx,
+            chpx: &chpx,
+            styles: &[],
+            lists: &lists,
+            section_marks: Vec::new(),
+        };
+        let texts: Vec<String> = story
+            .blocks(&chars)
+            .iter()
+            .map(|b| match b {
+                Block::Paragraph(p) => p.text(),
+                Block::Table(_) => "table".into(),
+            })
+            .collect();
+        assert_eq!(texts, ["aoneb"]);
+    }
+
+    #[test]
+    fn a_piece_table_that_does_not_cover_the_story_is_refused() {
+        let word = b"HelloWorld".to_vec();
+        let piece = |cp_start, cp_end, fc| Piece {
+            cp_start,
+            cp_end,
+            fc,
+            compressed: true,
+        };
+        for (pieces, case) in [
+            (vec![piece(0, 5, 0), piece(7, 10, 7)], "a gap"),
+            (vec![piece(2, 10, 2)], "starts after CP 0"),
+            (vec![piece(0, 5, 0)], "ends before the story does"),
+            (vec![piece(5, 10, 5), piece(0, 5, 0)], "out of order"),
+        ] {
+            let error = main_text(&word, &pieces, 10).map(|c| c.len());
+            assert!(
+                error
+                    .as_ref()
+                    .is_err_and(|e| e.to_string().contains("does not cover")),
+                "{case}: {error:?}"
+            );
+        }
+        let whole = main_text(&word, &[piece(0, 5, 0), piece(5, 10, 5)], 10).unwrap();
+        assert_eq!(whole.len(), 10);
+    }
+
+    #[test]
+    fn a_fat_sector_listed_twice_is_refused() {
+        // 512-byte sectors, two FAT sectors both at sector 1.
+        let mut bytes = vec![0u8; 512 * 3];
+        bytes[..8].copy_from_slice(OLE_MAGIC);
+        bytes[0x1A] = 3;
+        bytes[0x1E] = 9;
+        bytes[0x20] = 6;
+        bytes[0x2C..0x30].copy_from_slice(&2u32.to_le_bytes());
+        bytes[0x30..0x34].copy_from_slice(&END_OF_CHAIN.to_le_bytes());
+        bytes[0x44..0x48].copy_from_slice(&END_OF_CHAIN.to_le_bytes());
+        for slot in bytes[0x4C..512].as_chunks_mut::<4>().0 {
+            *slot = NO_STREAM.to_le_bytes();
+        }
+        bytes[0x4C..0x50].copy_from_slice(&1u32.to_le_bytes());
+        bytes[0x50..0x54].copy_from_slice(&1u32.to_le_bytes());
+        let error = CompoundFile::open(&bytes)
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("listed twice"), "{error}");
+    }
+
+    #[test]
+    fn title_and_headings_7_to_9_keep_their_word_styles() {
+        let heading = |level, text: &str| {
+            Block::Paragraph(Paragraph {
+                heading: Some(level),
+                list: None,
+                spans: vec![Span {
+                    text: text.into(),
+                    ..Span::default()
+                }],
+            })
+        };
+        let document = LegacyDocument {
+            blocks: vec![
+                heading(0, "Agreement"),
+                heading(8, "Deep"),
+                heading(2, "Fees"),
+                heading(9, "Deeper"),
+            ],
+        };
+        let docx = document_to_docx(&document).unwrap();
+        let package = crate::opc::PartFs::open(&docx).unwrap();
+        let body = package.part_string("word/document.xml").unwrap();
+        let used: Vec<&str> = body
+            .split("<w:pStyle w:val=\"")
+            .skip(1)
+            .filter_map(|rest| rest.split('"').next())
+            .collect();
+        assert_eq!(used, ["Title", "Heading8", "Heading2", "Heading9"]);
+        let styles = package.part_string("word/styles.xml").unwrap();
+        for id in ["Title", "Heading8", "Heading9", "Heading2"] {
+            assert!(
+                styles.contains(&format!("w:styleId=\"{id}\"")),
+                "{id}: {styles}"
+            );
+        }
+        assert!(crate::validate::ring1(&package).is_empty());
     }
 
     #[test]
