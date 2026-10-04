@@ -33,6 +33,12 @@
 #                 --yes         skip the type-the-version confirmation (CI)
 #                 --skip-gates  reuse an earlier gate pass (retries)
 #                 --no-wait     PyPI gets sdist+local wheel instead of CI wheels
+#                 --checklist   print the whole release checklist — before the
+#                               script, each step, after the script — every
+#                               line [auto] or [you] with its proving command;
+#                               exits 0, touches nothing, works on a dirty
+#                               tree and off main (takes an optional VERSION
+#                               only to print it in the commands)
 #
 # What it does, in order:
 #   0. preflight — tools, registry credentials, main branch, clean tree
@@ -106,8 +112,121 @@ cd "$(dirname "$0")/.."
 
 usage() { sed -n '/^# One-stop release/,/^set -euo pipefail$/p' "$0" | sed '$d' >&2; }
 
+# --- the release checklist — ONE source of truth ------------------------------
+# Every item a releaser must inspect, so none of it lives only in someone's
+# head, a chat or a loop note.  Each line: phase|mark|item|proof.  phase is
+# "before", a step number ("0".."14") or "after"; mark is "auto" (a
+# release.sh line enforces it) or "you" (a human does it at that moment);
+# proof is the command or file that proves it.  @V@ becomes $VER at print
+# time.  --checklist prints all of it; check_now <step> prints one step's
+# [you] lines inside a real run at the moment they matter; the closing
+# summary prints every [you] line still owed after the script ends.
+checklist_items() { cat <<'ITEMS'
+before|you|Decide where the release runs: a clean worktree on main, release PR merged, main in sync with origin/main — the canonical checkout is the owner's and is never the release tree|git worktree add <dir> main; git -C <dir> status --porcelain (empty); git -C <dir> rev-parse HEAD == origin/main
+before|you|release_info: the bench wrote the six evidence files for @V@ BEFORE this script runs (its step 3 refuses without them); with a bench checkout at hand the sha256 columns are verified against the real files|cd ../neurotic_docx_bench && uv run python -m neurotic_docx_bench.jubarte_release_info @V@ --engine-dir <engine> --binary <candidate>
+before|you|identity: the candidate that produced the scored outputs is byte-identical in output to the release commit's binary on the release samples (the two-binary identity run), or the assumption is stated in the release notes when skipped|python3 identity27.py <candidate> <release-commit binary> <out dir> (from the bench root; keeps only differences)
+before|you|parity: the CLI, PyO3 and WASM bindings agree on the samples, build identity proven (--expect-commit HEAD), stale artifacts refused|zsh agents/parity_v2/parity_build_v2.sh then parity_check.py --expect-commit <sha> --engine-dir <engine>
+before|you|CI of the release PR: read each red check's log — fix only genuine test or coverage failures; billing, quota, paused-bot and runner-offline reds are reported and left; pushes that start hosted runners are batched into ONE|gh run view <run-id> --log-failed (one batched push per review round)
+before|you|main's rules let the releaser land the release: a bypass for the owner, or a pull request that can merge — a "Restrict updates" rule with an empty bypass list refuses even an admin merge, and only the owner changes rulesets|gh api repos/jandira-tech/jubarte-redlines/rulesets
+before|you|a run in flight owns its worktree: the version bump stays uncommitted from step 1 to step 8 by design — nobody commits, pushes, edits or tidies there until the script ends (0.11.2: the bump was committed mid-run with a .gitignore line that made step 8 unable to stage the vendored app)|git -C <release worktree> status --short (changes there during a run are the release, not dirt)
+before|you|queued CI is cancelled before the tag is pushed, so release.yml gets the runners first; the pushes to main start CI and Docs runs again — cancel those too|gh run list --repo jandira-tech/jubarte-redlines --json databaseId,status --jq '.[] | select(.status != "completed") | .databaseId'
+before|you|stack: the release binary survives a 1 MiB main-thread stack (Windows' default) on the release samples — every job exits zero|python3 stack1m.py <release binary> <out dir> 1024 (from the bench root)
+before|you|Python 3.8: the script tests must run on the self-hosted runner's old Python — no parenthesised with, no str.removeprefix, no itertools.pairwise, no match statement|uv run -q --no-project --python 3.8 python scripts/test_release_sh.py
+before|you|unused: scan every manifest for dependencies nothing references — each workspace Cargo.toml, every package.json, pyproject (0.11.2 found js-sys in jubarte-wasm/Cargo.toml)|grep -rn <crate> src jubarte-wasm/src benches examples (empty output = removable)
+before|you|keywords: every channel's tags are current and inside its limits — crates.io at most 5 keywords and 5 categories, npm jubarte-wasm AND jubarte-redlines, PyPI keywords, GitHub topics|grep -n keywords Cargo.toml jubarte-python/pyproject.toml jubarte-wasm/npm/package.json jubarte-wasm/cli/package.json; gh api repos/jandira-tech/jubarte-redlines/topics
+before|you|CHANGELOG: engine section dated with the ASCII heading, link footer present; the engine's vendored jubarte-app/CHANGELOG.md names jubarte-redlines @V@; the app repository's own CHANGELOG carries its section|JUBARTE_CHANGELOG_DIR=<dir> NUMBERS="<measured sentence>" python3 apply_changelogs_v2.py <engine> <app repo> <app vendored>
+before|you|NUMBERS: the measured sentence is set before the changelog tooling runs — a missing value is a hard error, never guessed|NUMBERS="jubarte <mean> / <median> vs <comparator> <mean> / <median>, paired CI" — the bench's reported aggregates
+before|you|app repository: version files COMMITTED on release/v@V@ (not only bumped in a working tree), CHANGELOG section written, data/facts.jsonl naming the new engine BEFORE the app is built — the app compiles facts.jsonl in|git -C jubarte-app status --porcelain (clean); grep engine.version jubarte-app/data/facts.jsonl
+before|you|app lock: jubarte-app/src-tauri/Cargo.lock records jubarte-redlines @V@ before any app build|grep -A1 'name = "jubarte-redlines"' jubarte-app/src-tauri/Cargo.lock
+before|you|never build the engine's vendored jubarte-app/ — it is a stale snapshot; the app builds in a fresh engine-at-tag + app-at-branch layout|zsh agents/app_build/build_app_0.11.2.sh v@V@ <fresh dir> (clones, discards the vendored copy)
+before|you|UV_PUBLISH_TOKEN is exported before the run (name only, never print it) — step 0 checks the env var, you must load it|set -a; source <owner .env>; set +a; test -n "$UV_PUBLISH_TOKEN"
+before|you|npm web authentication: each of the two publishes needs the owner's browser approval (2FA) — have the owner at the keyboard for step 10|npm whoami (preflight) and the owner present for both publishes
+before|you|Ring-2 validity ratchet: no NEW OpenXML validator keys vs tools/validity_baseline.tsv; an output the validator cannot even open needs a Word probe before it ships|scripts/redline-sweep.sh <csvs> <src> <out> --validate (then the --probe sweep for refusals)
+before|you|lane validity: every sampled lane output's error kinds already exist in its sources (or are Word's own writing)|python3 lane_validity_vs_sources.py (bench results dir; logs to lane_validity.log)
+before|you|bench hygiene while scoring: one scoring job at a time; Word only through the bench scripts (--timeout 300, WD_MAX=300); probe documents pass tools/validate-docx first; nothing in /tmp|the queue-script pattern of the release work folder (queue.sh: one scorer at a time)
+0|auto|Preflight: main branch, clean tree, tools, crates.io + npm + gh credentials and UV_PUBLISH_TOKEN present|scripts/release.sh step 0 (its die lines)
+1|auto|Version sync: every manifest, the 5 Cargo.locks, the 4 library READMEs; a half-bumped tree from an interrupted run dies naming the file|scripts/release.sh step 1 (the half_bumped loop)
+2|auto|Engine CHANGELOG dated ## [@V@] section + link footer, and the vendored jubarte-app/CHANGELOG.md names jubarte-redlines @V@|grep -F "jubarte-redlines @V@" jubarte-app/CHANGELOG.md
+2|you|The app REPOSITORY's own CHANGELOG.md carries its ## [@V@] section — the engine checks only its vendored copy|grep -F "jubarte-redlines @V@" <app repo>/CHANGELOG.md
+3|auto|The six release_info files verified: results bound to their sample CSV by sha256 and to the scored binary by commit + sha256, website and app data records sound|python3 scripts/check_release_info.py @V@ --bench-root ../neurotic_docx_bench
+3|you|Confirm which binary and commit the evidence names — the scored candidate, deliberately not the shipped binary; state the assumption if the identity run was skipped|jq '.tools.jubarte' release_info/results_redline_@V@_*.json (commit + binary_sha256)
+4|auto|The five summaries + the docs statement land in their channels; step 4 lists the docs files changed since the previous tag beside the statement|scripts/release.sh step 4 (it greps each landing)
+4|you|docs/adoption/README.md names a version nothing moves ("wait for 0.11.0") — reword by hand; the docs statement is checked against the diff, this file is not|grep -n 0.11.0 docs/adoption/README.md
+5|auto|Gates: fmt, clippy -D warnings, tests, public docs -D warnings, sweep units, script tests, pytest, REUSE lint — every new file needs its SPDX headers|uv tool run --from reuse[charset-normalizer] reuse lint
+6|you|rustdoc drift review — REQUIRED sign-off: read the opened docs and the diff against the previous release's API snapshot before the point of no return|cargo doc --no-deps --document-private-items --open (step 6 opens it; --skip-gates skips it on a resume only)
+7|auto|Dry-runs: cargo, npm x2, maturin sdist (folder wiped first) carrying the pypi comment; every registry ships the README cut for v@V@|scripts/release.sh step 7
+8|auto|Release commit, wasm artifacts rebuilt + smoke-tested with ENGINE_COMMIT.txt = the release commit, annotated tag carrying the github summary|cat jubarte-wasm/npm/ENGINE_COMMIT.txt
+8|you|The typed tag confirmation at the point of no return — after it main and the tag are pushed and release.yml publishes|type v@V@ at the prompt (--yes skips it in CI only)
+9|auto|crates.io: the packaged manifest carries the crates summary before the publish|tar -xzOf target/package/jubarte-redlines-@V@.crate jubarte-redlines-@V@/Cargo.toml
+10|auto|npm: jubarte-wasm first, then the jubarte-redlines CLI (it depends on jubarte-wasm ^@V@); a one-time password is passed when set|npm view jubarte-wasm@@V@ version
+10|you|Each npm publish may need the owner's browser approval or a fresh one-time password — codes live about 30 s and the CLI publish follows the wasm one|NPM_OTP=<code> scripts/release.sh @V@ <summaries> --skip-gates (the resume skips what is live)
+11|auto|release.yml attached the five CLI binaries and the seven wheels; a partial wheel set never reaches PyPI under a final version|python3 scripts/check_release_artifacts.py dist/pypi --version @V@
+11|you|When a wheel job fails: fix the release jobs and rerun the workflow on the tag (a run that lost a wheel never becomes a public release), or consent explicitly with --no-wait to the partial set|gh run rerun <run-id> --failed; scripts/release.sh @V@ <summaries> --no-wait
+12|auto|Verify: every registry answers with the new version AND its summary|scripts/release.sh step 12 checks (crates.io, npm x2, PyPI, GitHub)
+13|auto|Downstream: jubarte.pro engine step and the app-repo release commit run here; the App Store upload and the benchmark flow are printed, never run|scripts/release_downstream.sh @V@
+13|you|The site step needs the checkout whose jubarte-app/ is the real app repo (its nested .git) — a fresh worktree cannot run it; run release_downstream from there if the release ran elsewhere|git -C jubarte-app rev-parse --show-toplevel (must name the app repo)
+14|auto|jubarte-app/data/facts.jsonl names @V@ and every required wheel, and is committed in the app checkout|python3 scripts/check_release_facts.py @V@
+after|you|app build: build the app TWICE in the fresh engine-at-tag + app-at-branch layout — the Mac App Store build with --target aarch64-apple-darwin, the Developer ID build without --target (notarize-direct.sh reads that one)|zsh agents/app_build/build_app_0.11.2.sh v@V@ <fresh dir>
+after|you|App Store: upload the pkg, wait for VALID, move and attach the version record, set the en-US What's New text, answer export compliance, then Submit for Review — a human's click; Apple rejects a re-used version number|(cd jubarte-app && ./scripts/asc-build-status.sh); uv run --with cryptography python3 scripts/asc-new-version.py @V@ --apply
+after|you|notarize: Developer ID sign inside-out (nested bundles deepest first, then bare dylibs, then every Mach-O), notarize, staple, validate each artifact — the DMG lands at src-tauri/target/release/bundle/dmg/Jubarte_@V@_aarch64.dmg|ENTITLEMENTS=<entitlements-direct.plist> notarize-direct.sh @V@ <app dir> (keychain profile notarytool-cicero)
+after|you|jubarte.pro: merge the website_data facts (bench.* records), run check-bench with --release-info, build, test, lint, typecheck, deploy|(cd jubarte-app/jubarte-site && scripts/release.sh bench @V@ --redline-tool jubarte-@V@)
+after|you|benchmark lane upload: the site fixtures restage uploads to the Hugging Face dataset and pins fixtures.lock to the @V@ lane|(cd jubarte-app/jubarte-site && scripts/release.sh bench @V@ --redline-tool jubarte-@V@) — its fixtures stage uploads and pins
+after|you|RESULTS.md: the full-corpus run that feeds the bench RESULTS.md still runs for @V@|(cd ../neurotic_docx_bench && uv run scripts/release_jubarte.py @V@)
+after|you|bench rerun: the same release-info flow re-runs WITHOUT --binary, on the release's own binary, now that the GitHub release exists|(cd ../neurotic_docx_bench && uv run python -m neurotic_docx_bench.jubarte_release_info @V@ --engine-dir <engine>)
+after|you|reproduces: the released binary (downloaded from the GitHub release) reproduces the candidate's outputs on the release samples|python3 identity27.py <released binary> <candidate> <out dir> (from the bench root)
+after|you|handoff: the release's running log and handoff notes are written down — nothing a releaser must remember lives only in a head or a chat|the release work folder's STATE.md, kept current to the end
+after|you|app_store facts: the Terms copy that says the store's current version "is a one-time purchase" flips when @V@ goes live — decide when to rewrite it (a facts-only app patch, or pre-emptively now)|grep app_store jubarte-app/data/facts.jsonl
+ITEMS
+}
+
+# The phase headers of --checklist, in print order (the step names match the
+# say lines of the run).
+checklist_phase_title() {
+  case "$1" in
+    before) echo "BEFORE the script" ;;
+    0) echo "step 0 · Preflight" ;;
+    1) echo "step 1 · Version sync" ;;
+    2) echo "step 2 · Changelog check" ;;
+    3) echo "step 3 · release_info evidence" ;;
+    4) echo "step 4 · Summaries" ;;
+    5) echo "step 5 · Gates" ;;
+    6) echo "step 6 · API docs drift" ;;
+    7) echo "step 7 · Publish dry-runs" ;;
+    8) echo "step 8 · Release commit and tag" ;;
+    9) echo "step 9 · crates.io" ;;
+    10) echo "step 10 · npm" ;;
+    11) echo "step 11 · PyPI" ;;
+    12) echo "step 12 · Verify" ;;
+    13) echo "step 13 · Downstream" ;;
+    14) echo "step 14 · Facts" ;;
+    after) echo "AFTER the script — still owed when it ends" ;;
+  esac
+}
+
+print_checklist() {
+  local v p
+  v="${VER:-x.y.z}"
+  printf 'jubarte %s release checklist — scripts/release.sh --checklist\n' "$v"
+  for p in before 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 after; do
+    printf '\n-- %s\n' "$(checklist_phase_title "$p")"
+    checklist_items | sed "s/@V@/$v/g" | awk -F'|' -v ph="$p" '
+      $1 == ph { printf "  [%s] %s\n", $2, $3
+                  if ($4 != "") printf "        proof: %s\n", $4 }
+    '
+  done
+  printf '\n[auto] a release.sh line enforces it   [you] a human does it at that moment\n'
+}
+
+# A real run prints a step's open [you] items the moment it reaches them
+# (nothing at all when the step has none).
+check_now() {
+  checklist_items | sed "s/@V@/$VER/g" | awk -F'|' -v ph="$1" '
+    $1 == ph && $2 == "you" { printf "  CHECK NOW  %s\n             %s\n", $3, $4 }
+  '
+}
+
 VER=""
-DRY_RUN=0; YES=0; SKIP_GATES=0; NO_WAIT=0
+DRY_RUN=0; YES=0; SKIP_GATES=0; NO_WAIT=0; CHECKLIST=0
 CHANGELOG_SUMMARY=""; CRATES_SUMMARY=""; NPM_SUMMARY=""
 PYPI_SUMMARY=""; GITHUB_SUMMARY=""; DOCS_UPDATED=""
 need() { [ -n "${2:-}" ] || { echo "missing value for $1" >&2; exit 2; }; }
@@ -117,6 +236,7 @@ while [ $# -gt 0 ]; do
     --yes)        YES=1 ;;
     --skip-gates) SKIP_GATES=1 ;;
     --no-wait)    NO_WAIT=1 ;;
+    --checklist)  CHECKLIST=1 ;;
     --changelog-summary|--changelog-comments) need "$@"; CHANGELOG_SUMMARY=$2; shift ;;
     --crates-summary|--crates-comments)       need "$@"; CRATES_SUMMARY=$2; shift ;;
     --npm-summary|--npm-comments)             need "$@"; NPM_SUMMARY=$2; shift ;;
@@ -130,6 +250,14 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+
+# --checklist prints the one source of truth and leaves — before any
+# validation and before the preflight, so it needs no summaries, no main
+# branch, no clean tree, and runs no command and no network.
+if [ "$CHECKLIST" = 1 ]; then
+  print_checklist
+  exit 0
+fi
 
 # Fold accidental newlines — every destination takes a single line.
 fold() { printf '%s' "$1" | tr '\n\t' '  ' | tr -s ' '; }
@@ -316,6 +444,7 @@ grep -q "^## \[$VER\]" jubarte-app/CHANGELOG.md \
   && grep -qF "jubarte-redlines $VER" jubarte-app/CHANGELOG.md \
   || die "jubarte-app/CHANGELOG.md needs a \`## [$VER]\` section naming the jubarte-redlines $VER engine — write it first"
 step "jubarte-app $VER section present"
+check_now 2
 
 # =============================================================================
 say "3. release_info — the benchmark evidence of $VER"
@@ -353,6 +482,7 @@ else
     || die "release_info/ does not carry $VER's six files — run the bench flow that writes them (release_info/README.md), commit them, then rerun"
   step "six files verified: samples + results + website/app data (sha256 columns format-checked only)"
 fi
+check_now 3
 
 # =============================================================================
 say "4. Summaries → each registry's channel"
@@ -377,6 +507,7 @@ if [ -n "$PREV_TAG" ]; then
     | sort -u | sed 's/^/        /'
 fi
 step "how they were updated: $DOCS_UPDATED"
+check_now 4
 
 # Escape a value for a TOML basic string.
 toml_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
@@ -545,6 +676,7 @@ if [ "$SKIP_GATES" = 0 ]; then
     step "no previous-release snapshot — docs/api/jubarte-v$VER.api.txt is the baseline"
   fi
 fi
+check_now 6
 
 # =============================================================================
 say "7. Publish dry-runs"
@@ -681,6 +813,7 @@ if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
 else
   git tag -a "$TAG" -m "jubarte $TAG" -m "$GITHUB_SUMMARY"
 fi
+check_now 8
 
 # =============================================================================
 say "POINT OF NO RETURN"
@@ -733,6 +866,7 @@ fi
 # =============================================================================
 say "10. npm"
 # =============================================================================
+check_now 10
 
 # An account with two-factor auth answers a non-interactive publish with
 # EOTP (v0.10.1 stopped here). NPM_OTP=<code> passes a one-time password;
@@ -771,6 +905,7 @@ fi
 # =============================================================================
 say "11. PyPI"
 # =============================================================================
+check_now 11
 
 # release.yml attaches the wheels to the GitHub release it creates. When any
 # binary fails its release job is skipped (v0.10.1: the Windows runner could
@@ -911,6 +1046,7 @@ say "13. Downstream — jubarte.pro, jubarte-app, App Store, benchmark"
 # intact; rerun scripts/release_downstream.sh $VER on its own.
 scripts/release_downstream.sh "$VER" \
   || die "downstream failed — the release is out; rerun scripts/release_downstream.sh $VER"
+check_now 13
 
 # =============================================================================
 say "14. Facts — jubarte-app/data/facts.jsonl names $VER"
@@ -928,3 +1064,15 @@ echo "  https://github.com/jandira-tech/jubarte-redlines/releases/tag/$TAG"
 echo "  https://crates.io/crates/jubarte-redlines/$VER"
 echo "  https://pypi.org/project/jubarte-redlines/$VER/"
 echo "  https://www.npmjs.com/package/jubarte-wasm/v/$VER"
+
+# =============================================================================
+say "Checklist — [you] items still owed after the script"
+# =============================================================================
+# The script is done; the checklist is not. Every [you] item of the "after"
+# phase is still owed (app build, App Store, notarization, jubarte.pro, the
+# benchmark lane, the post-release reproduction, the handoff notes) — each
+# printed with its command, from the same single source of truth, so none
+# of it has to live in someone's head.
+checklist_items | sed "s/@V@/$VER/g" | awk -F'|' '
+  $1 == "after" && $2 == "you" { printf "  [you] %s\n             %s\n", $3, $4 }
+'

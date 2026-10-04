@@ -345,6 +345,18 @@ class Repairs0112(unittest.TestCase):
         self.assertIn('--bench-root "$BENCH_ROOT"', s3)
         self.assertIn("format-checked only", s3)  # the no-bench branch says what is not proven
 
+    def test_nothing_the_release_commit_stages_is_ignored(self) -> None:
+        # A "jubarte-app/" line in .gitignore made `git add` refuse the
+        # vendored app's version files, tracked as they are, and step 8
+        # would have stopped before the release commit.
+        s8 = step(8)
+        start = s8.index("git add Cargo.toml")
+        staged = s8[start:s8.index("git commit", start)].replace("\\\n", " ").split()[2:]
+        self.assertIn("jubarte-app/src-tauri/Cargo.toml", staged)
+        run = subprocess.run(["git", "check-ignore", "--no-index", *staged],
+                             cwd=HERE.parent, capture_output=True, text=True)
+        self.assertEqual(run.stdout, "", "the release commit stages paths .gitignore ignores")
+
 
 DOWNSTREAM_SH = HERE / "release_downstream.sh"
 
@@ -629,6 +641,170 @@ class LibraryReadmes(unittest.TestCase):
         cargo = (HERE.parent / "Cargo.toml").read_text(encoding="utf-8")
         self.assertIn('readme = "README.crates.md"', cargo)
         self.assertIn('"/README.crates.md"', cargo)
+
+
+CHECKLIST_FLAG = "--checklist"
+
+
+def checklist_block() -> str:
+    """The checklist_items() block of release.sh — the one source of truth
+    --checklist, the per-step "CHECK NOW" blocks and the closing summary all
+    print from."""
+    text = RELEASE_SH.read_text()
+    start = text.index("checklist_items() {")
+    return text[start : text.index("\nITEMS\n", start) + len("\nITEMS\n")]
+
+
+def you_item_steps():
+    """Step numbers whose checklist lines carry a [you] item."""
+    steps = []
+    for line in checklist_block().splitlines():
+        parts = line.split("|")
+        if len(parts) == 4 and parts[1] == "you" and parts[0].isdigit():
+            if int(parts[0]) not in steps:
+                steps.append(int(parts[0]))
+    return sorted(steps)
+
+
+class Checklist(unittest.TestCase):
+    """--checklist [VERSION]: prints the whole release checklist, every
+    phase, every line marked [auto] or [you] with its proving command, and
+    exits 0 without touching anything — it leaves before the preflight, so
+    no summaries, no main branch and no clean tree are needed."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.out = subprocess.run(
+            ["bash", str(RELEASE_SH), CHECKLIST_FLAG, "0.11.3"],
+            capture_output=True, text=True, timeout=60,
+        )
+
+    def test_exits_zero(self) -> None:
+        self.assertEqual(self.out.returncode, 0, self.out.stderr)
+
+    def test_prints_every_phase(self) -> None:
+        out = self.out.stdout
+        self.assertIn("BEFORE the script", out)
+        for n in range(15):
+            self.assertIn("step %d " % n, out)
+        self.assertIn("AFTER the script", out)
+
+    def test_marks_and_proves_every_line(self) -> None:
+        self.assertIn("[auto]", self.out.stdout)
+        self.assertIn("[you]", self.out.stdout)
+        self.assertIn("proof:", self.out.stdout)
+
+    def test_leaves_before_any_step_runs(self) -> None:
+        # No step, no network: the exit sits between argument parsing and the
+        # summaries validation, well before the preflight.
+        text = RELEASE_SH.read_text()
+        self.assertLess(
+            text.index('if [ "$CHECKLIST" = 1 ]'),
+            text.index('say "0. Preflight"'),
+        )
+
+    def test_works_off_main_on_a_dirty_tree_without_summaries(self) -> None:
+        tmp = Path(tempfile.mkdtemp(prefix="checklist_"))
+        try:
+            (tmp / "scripts").mkdir()
+            shutil.copy(RELEASE_SH, tmp / "scripts" / "release.sh")
+            subprocess.run(
+                ["git", "-C", str(tmp), "init", "-q", "-b", "not-main"], check=True
+            )
+            (tmp / "dirt").write_text("untracked dirt\n")
+            r = subprocess.run(
+                ["bash", str(tmp / "scripts" / "release.sh"), CHECKLIST_FLAG],
+                capture_output=True, text=True, timeout=60,
+            )
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("BEFORE the script", r.stdout)
+            self.assertIn("[you]", r.stdout)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    # Each item that had to be inspected by hand during the 0.11.2 release
+    # must be findable in the --checklist output by a stable keyword.
+    def kw(self, keyword: str) -> None:
+        self.assertIn(keyword, self.out.stdout, "--checklist must name %r" % keyword)
+
+    def test_item_1_release_info_evidence(self) -> None:
+        self.kw("release_info")
+        self.kw("identity")  # the two-binary identity run
+
+    def test_item_2_binding_parity(self) -> None:
+        self.kw("parity")
+
+    def test_item_3_ci_of_the_release_pr(self) -> None:
+        self.kw("CI")
+
+    def test_item_4_windows_stack_and_old_python(self) -> None:
+        self.kw("1 MiB")
+        self.kw("Python 3.8")
+
+    def test_item_5_unused_dependencies(self) -> None:
+        self.kw("unused")
+
+    def test_item_6_keywords_per_channel(self) -> None:
+        self.kw("keywords")
+
+    def test_item_7_changelogs_and_numbers(self) -> None:
+        self.kw("CHANGELOG")
+        self.kw("NUMBERS")
+
+    def test_item_8_app_repository_release_files(self) -> None:
+        self.kw("facts.jsonl")
+        self.kw("vendored")  # the stale snapshot that is never the app to build
+
+    def test_item_9_credentials_and_human_steps(self) -> None:
+        self.kw("UV_PUBLISH_TOKEN")
+        self.kw("rustdoc")
+        self.kw("point of no return")  # the typed tag confirmation
+
+    def test_item_10_wheels_on_the_release(self) -> None:
+        self.kw("wheel")
+
+    def test_item_11_downstream_site_and_bench(self) -> None:
+        self.kw("jubarte.pro")
+        self.kw("Hugging Face")
+        self.kw("RESULTS.md")
+
+    def test_item_12_mac_app_store(self) -> None:
+        self.kw("App Store")
+
+    def test_item_13_developer_id_notarization(self) -> None:
+        self.kw("notarize")
+        self.kw("DMG")
+
+    def test_item_14_post_release_reproduction(self) -> None:
+        self.kw("reproduces")
+        self.kw("--binary")  # the bench rerun without --binary
+
+    def test_item_15_licensing_and_stale_docs(self) -> None:
+        self.kw("REUSE")
+        self.kw("adoption")
+
+
+class ChecklistPerStep(unittest.TestCase):
+    """A real run must print each step's [you] items at the moment the step
+    reaches them (check_now <step>), and the closing summary must print every
+    [you] item still owed after the script ends — all from the one block."""
+
+    def test_every_step_with_a_you_item_prints_it(self) -> None:
+        steps = you_item_steps()
+        self.assertTrue(steps, "the checklist must carry per-step [you] items")
+        for n in steps:
+            self.assertIn("check_now %d" % n, step(n), "step %d" % n)
+
+    def test_the_closing_summary_prints_the_owed_items(self) -> None:
+        text = RELEASE_SH.read_text()
+        tail = text[text.index('say "Released jubarte') :]
+        self.assertIn("checklist_items", tail)
+        self.assertIn('"after"', tail)
+
+    def test_before_and_after_items_live_in_the_one_block(self) -> None:
+        block = checklist_block()
+        self.assertIn("before|you|", block)
+        self.assertIn("after|you|", block)
 
 
 if __name__ == "__main__":
