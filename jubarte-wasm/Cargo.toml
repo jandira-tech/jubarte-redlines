@@ -10,6 +10,7 @@ edition = "2024"
 publish = false
 description = "wasm-bindgen bindings for jubarte-redlines compare_documents (Word-mode redline)"
 license = "AGPL-3.0-only"
+repository = "https://github.com/jandira-tech/jubarte-redlines"
 
 [lib]
 name = "jubarte_wasm"

@@ -13,9 +13,12 @@ non-main branch, so a run that gets past argument validation stops at the
 
 from __future__ import annotations
 
+import ast
 import os
+import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -117,8 +120,26 @@ class ApiDocDrift(unittest.TestCase):
         self.assertIn("scripts/api_snapshot.py", self.step6())
 
     def test_diffs_against_previous_release_snapshot(self) -> None:
-        self.assertIn("docs/api/jubarte-", self.step6())
-        self.assertIn("diff -u", self.step6())
+        # The 0.11.2 review was a 700-line `diff -u` of the two listings,
+        # blanket impls and crate-private items mixed into the public
+        # surface. The drift report rebuilds both sides from the rustdoc
+        # JSON, public surface first.
+        s6 = self.step6()
+        self.assertIn('docs/api/jubarte-$PREV_TAG.json.gz', s6)
+        self.assertIn('python3 scripts/api_snapshot.py --drift "$PREV_TAG" "v$VER"', s6)
+        self.assertNotIn("diff -u", s6)
+
+    def test_the_private_docs_build_without_warnings(self) -> None:
+        # The docs the releaser reads carried 12 rustdoc warnings in 0.11.2
+        # (dead links, `<tab>` read as HTML): only the public build of step 5
+        # denied them.
+        self.assertIn(
+            'RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items --open',
+            self.step6(),
+        )
+
+    def test_the_gates_test_the_drift_report(self) -> None:
+        self.assertIn("python3 scripts/test_api_snapshot.py", step(5))
 
     def test_release_commit_adds_docs_api(self) -> None:
         text = RELEASE_SH.read_text()
@@ -162,7 +183,7 @@ class NpmCli(unittest.TestCase):
 
     def test_the_cli_is_dry_run_published_and_verified(self) -> None:
         self.assertRegex(step(7), r"if npm_cli_has; then[^\n]*\n(?:[^\n]*\n)*?else\n[^\n]*\(cd jubarte-wasm/cli && npm publish --dry-run")
-        self.assertIn('check "npm        jubarte-redlines $VER" npm_cli_has', step(12))
+        self.assertIn('check "npm        jubarte-redlines $VER" "eventually npm_cli_has"', step(12))
 
     def test_the_cli_publishes_after_the_wasm_it_depends_on(self) -> None:
         s10 = step(10)
@@ -641,6 +662,242 @@ class LibraryReadmes(unittest.TestCase):
         cargo = (HERE.parent / "Cargo.toml").read_text(encoding="utf-8")
         self.assertIn('readme = "README.crates.md"', cargo)
         self.assertIn('"/README.crates.md"', cargo)
+
+
+class QuietGates(unittest.TestCase):
+    """A passing gate prints its unittest summary and nothing else. The 0.11.2
+    log carried `RESULT: REGRESSION`, `missing corpus listing` and a dozen
+    ResourceWarnings from script tests that passed, and read as a failed
+    release."""
+
+    SUMMARY = re.compile(
+        r"\A[.sx]+\n-{70}\nRan \d+ tests? in [\d.]+s\n\nOK(?: \([^)\n]*\))?\n\Z"
+    )
+
+    def script_gates(self):
+        """The script tests step 5 runs, this file aside (it runs them)."""
+        found = re.findall(r"^\s*python3 (\S*test_\w+\.py)$", step(5), re.M)
+        return [rel for rel in found if Path(rel).name != Path(__file__).name]
+
+    def test_every_script_gate_prints_only_its_summary(self) -> None:
+        gates = self.script_gates()
+        self.assertGreaterEqual(len(gates), 4, gates)
+        for rel in gates:
+            with self.subTest(gate=rel):
+                r = subprocess.run(
+                    [sys.executable, rel], cwd=HERE.parent,
+                    capture_output=True, text=True, timeout=300,
+                )
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertEqual(r.stdout, "")
+                self.assertRegex(r.stderr, self.SUMMARY)
+
+    def test_no_script_leaves_a_file_open(self) -> None:
+        # `json.dump(x, open(p, "w"))` and `open(p).read()` leave the closing
+        # to the garbage collector: a ResourceWarning per call under unittest.
+        leaks = []
+        for script in sorted([*HERE.glob("*.py"), *(HERE.parent / "planning").glob("*.py")]):
+            tree = ast.parse(script.read_text(encoding="utf-8"))
+            managed = {
+                id(item.context_expr)
+                for node in ast.walk(tree) if isinstance(node, ast.With)
+                for item in node.items
+            }
+            leaks += [
+                f"{script.relative_to(HERE.parent)}:{node.lineno}"
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name) and node.func.id == "open"
+                and id(node) not in managed
+            ]
+        self.assertEqual(leaks, [], "open() outside a `with`")
+
+
+class LeftOutTargets(unittest.TestCase):
+    """cargo warns once for every tests/*.rs and examples/*.rs the crate's
+    `include` leaves out of the package: 431 `warning:` lines in the 0.11.2
+    dry run, every one of them by design."""
+
+    LEFT_OUT = "warning: ignoring test `a` as `tests/a.rs` is not included in the published package"
+
+    def run_packaged(self, fake: str) -> subprocess.CompletedProcess[str]:
+        text = RELEASE_SH.read_text()
+        start = text.index("\npackaged() {")
+        function = text[start:text.index("\n}\n", start) + 3]
+        return subprocess.run(
+            ["bash", "-c", f"set -euo pipefail\n{function}\nfake() {{ {fake}; }}\npackaged fake"],
+            capture_output=True, text=True, timeout=60,
+        )
+
+    def test_the_left_out_warnings_are_dropped_and_the_rest_kept(self) -> None:
+        r = self.run_packaged(
+            f"echo listed; echo '{self.LEFT_OUT}' >&2; echo 'warning: a real one' >&2"
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, "listed\n")
+        self.assertEqual(r.stderr, "warning: a real one\n")
+
+    def test_a_failed_command_still_fails(self) -> None:
+        r = self.run_packaged(f"echo '{self.LEFT_OUT}' >&2; echo 'error: no' >&2; return 3")
+        self.assertEqual(r.returncode, 3)
+        self.assertEqual(r.stderr, "error: no\n")
+
+    def test_a_run_with_nothing_but_left_out_warnings_passes(self) -> None:
+        r = self.run_packaged(f"echo '{self.LEFT_OUT}' >&2")
+        self.assertEqual((r.returncode, r.stdout, r.stderr), (0, "", ""))
+
+    def test_the_dry_run_goes_through_it(self) -> None:
+        self.assertIn("packaged cargo publish --dry-run --locked --allow-dirty", step(7))
+
+
+def shell_functions(*names: str) -> str:
+    """The definitions of release.sh's functions `names` that exist, in order:
+    one-line, backslash-continued or `{ … }` block."""
+    text = RELEASE_SH.read_text()
+    out = []
+    for name in names:
+        m = re.search(rf"^{re.escape(name)}\(\) ", text, re.M)
+        if m is None:
+            continue
+        start = m.start()
+        first = text[start:text.index("\n", start)].rstrip()
+        if first.endswith("{"):
+            out.append(text[start:text.index("\n}\n", start) + 3])
+            continue
+        end = text.index("\n", start)
+        while text[start:end].rstrip().endswith("\\"):
+            end = text.index("\n", end + 1)
+        out.append(text[start:end + 1])
+    return "".join(out)
+
+
+# stub gh for step 11: the release, its asset names and the release.yml run,
+# each driven by the environment; every asset listing is counted in $STATE.
+GH_RELEASE_STUB = r"""#!/bin/bash
+case "$*" in
+  "release view v9.9.9")
+    [ -z "${NOREL:-}" ] ;;
+  "release view v9.9.9 --json assets"*)
+    [ -z "${NOREL:-}" ] || exit 1
+    n=$(( $(cat "$STATE" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$STATE"
+    echo jubarte-9.9.9-macos-aarch64.tar.gz
+    if [ -z "${PARTIAL:-}" ] && [ "$n" -ge 3 ]; then
+      for t in macosx_10_12_x86_64 macosx_11_0_arm64 manylinux_2_28_x86_64 \
+               manylinux_2_28_aarch64 musllinux_1_2_x86_64 musllinux_1_2_aarch64 win_amd64; do
+        echo "jubarte_redlines-9.9.9-cp310-abi3-$t.whl"
+      done
+      echo jubarte_redlines-9.9.9.tar.gz
+    fi ;;
+  "run list"*)
+    echo "42 ${RUN_STATE:-in_progress}" ;;
+  *)
+    echo "unexpected gh $*" >&2; exit 9 ;;
+esac
+"""
+
+
+class ReleaseWait(unittest.TestCase):
+    """0.11.2: release.yml creates the GitHub release and then uploads its
+    assets; step 11 stopped waiting once the release existed, found no wheel
+    and died, minutes before all seven wheels and the sdist were attached."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="relwait-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        (self.tmp / "gh").write_text(GH_RELEASE_STUB)
+        (self.tmp / "gh").chmod(0o755)
+        self.state = self.tmp / "listings"
+
+    def wait(self, **env: str) -> subprocess.CompletedProcess[str]:
+        functions = shell_functions("ghrel_has", "ghrel_wheels", "release_run", "wait_for_release")
+        script = (
+            "set -euo pipefail\nTAG=v9.9.9; VER=9.9.9\n"
+            'step() { echo "  - $*"; }\ndie() { echo "ERROR: $*" >&2; exit 1; }\n'
+            "sleep() { :; }\n"
+            'release_from_artifacts() { echo "from artifacts $1"; }\n'
+            f"{functions}\nwait_for_release\n"
+            'echo "listings $(cat "$STATE" 2>/dev/null || echo 0)"\n'
+        )
+        full = dict(os.environ, PATH=f"{self.tmp}:{os.environ['PATH']}", STATE=str(self.state), **env)
+        return subprocess.run(["bash", "-c", script], cwd=HERE.parent, env=full,
+                              capture_output=True, text=True, timeout=60)
+
+    def test_a_release_without_its_wheels_yet_is_waited_for(self) -> None:
+        r = self.wait()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("listings 3\n", r.stdout)
+        self.assertNotIn("from artifacts", r.stdout)
+
+    def test_a_finished_run_ends_the_wait_on_a_partial_release(self) -> None:
+        # the download below then names the missing wheels; no second release
+        r = self.wait(PARTIAL="1", RUN_STATE="completed")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("from artifacts", r.stdout)
+        self.assertLessEqual(int(r.stdout.rsplit("listings ", 1)[1]), 3)
+
+    def test_a_run_without_a_release_is_released_from_its_artifacts(self) -> None:
+        r = self.wait(NOREL="1", RUN_STATE="completed")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("from artifacts 42", r.stdout)
+
+    def test_a_run_still_going_after_the_bound_stops_the_script(self) -> None:
+        r = self.wait(NOREL="1")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("has not finished", r.stderr)
+
+
+class RegistryLag(unittest.TestCase):
+    """0.11.2: step 12 called PyPI missing seconds after `uv publish`; the
+    project listing named 0.11.2 a minute later."""
+
+    CURL_STUB = r"""#!/bin/bash
+n=$(( $(cat "$STATE" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$STATE"
+if [ "$n" -ge "${READY_AT:-99}" ]; then
+  echo '{"releases": {"9.9.8": [], "9.9.9": []}}'
+else
+  echo '{"releases": {"9.9.8": []}}'
+fi
+"""
+
+    def probe(self, ready_at: str) -> tuple[subprocess.CompletedProcess[str], int]:
+        tmp = Path(tempfile.mkdtemp(prefix="reglag-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / "curl").write_text(self.CURL_STUB)
+        (tmp / "curl").chmod(0o755)
+        state = tmp / "calls"
+        script = (
+            "set -euo pipefail\nVER=9.9.9\nsleep() { :; }\n"
+            f"{shell_functions('pypi_has', 'eventually')}\n"
+            "if eventually pypi_has; then echo listed; else echo missing; fi\n"
+        )
+        env = dict(os.environ, PATH=f"{tmp}:{os.environ['PATH']}", STATE=str(state), READY_AT=ready_at)
+        r = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True, timeout=60)
+        return r, int(state.read_text()) if state.exists() else 0
+
+    def test_a_listing_that_lags_the_upload_is_asked_again(self) -> None:
+        r, calls = self.probe("3")
+        self.assertEqual((r.stdout, calls), ("listed\n", 3), r.stderr)
+
+    def test_a_version_that_never_appears_is_missing_after_a_bounded_wait(self) -> None:
+        r, calls = self.probe("99")
+        self.assertEqual((r.stdout, calls), ("missing\n", 12), r.stderr)
+
+    def test_every_registry_check_of_step_12_retries(self) -> None:
+        s12 = step(12)
+        for probe in ("crates_has", "npm_has", "npm_cli_has", "pypi_has"):
+            self.assertRegex(s12, rf'check "[^"]*" "eventually {probe}"')
+        self.assertNotIn("sleep 20", s12)
+
+
+class WasmCrate(unittest.TestCase):
+    def test_the_wasm_crate_names_the_repository(self) -> None:
+        # wasm-pack printed "Optional field missing from Cargo.toml:
+        # 'repository'" on each of the four builds of a release.
+        engine = (HERE.parent / "Cargo.toml").read_text(encoding="utf-8")
+        repository = re.search(r'^repository = "[^"]+"$', engine, re.M).group(0)
+        wasm = (HERE.parent / "jubarte-wasm" / "Cargo.toml").read_text(encoding="utf-8")
+        package = wasm[wasm.index("[package]"):wasm.index("[lib]")]
+        self.assertIn(repository + "\n", package)
 
 
 CHECKLIST_FLAG = "--checklist"

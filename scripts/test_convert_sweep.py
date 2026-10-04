@@ -12,6 +12,8 @@ a fake T/ tree and assert the contract the real sweep will use.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import sys
 import tempfile
@@ -243,6 +245,16 @@ class MainOutputTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
+    def _quiet(self, argv: list[str]) -> int:
+        """Run main() with its report kept in `self.err`: the verdict lines
+        are asserted on, never printed into a passing run's log."""
+        self.err = ""
+        captured = io.StringIO()
+        with contextlib.redirect_stderr(captured):
+            result = cs.main(argv)
+        self.err = captured.getvalue()
+        return result
+
     def _main(self, *extra: str, rows=None, discover76=None, discover398=None) -> int:
         rows = [self.row] if rows is None else rows
         # One `with` per patch: the parenthesised form needs Python 3.10.
@@ -253,7 +265,7 @@ class MainOutputTests(unittest.TestCase):
                 cs, "discover_398_or_skip", return_value=discover398 or ([], "")
             ):
                 with mock.patch.object(cs, "convert_and_score", return_value=(rows, [])):
-                    return cs.main(
+                    return self._quiet(
                         ["--jubarte", str(self.jubarte), "--scorer", str(self.scorer), *extra]
                     )
 
@@ -263,6 +275,7 @@ class MainOutputTests(unittest.TestCase):
             result = self._main("76", "--compare", str(self.baseline))
         self.assertEqual(result, 0)
         write_tsv.assert_called_once_with([self.row], Path("/dev/stdout"))
+        self.assertIn("RESULT: OK", self.err)
 
     def test_plain_run_does_not_overwrite_the_baseline(self) -> None:
         with mock.patch.object(cs, "write_tsv") as write_tsv:
@@ -271,12 +284,19 @@ class MainOutputTests(unittest.TestCase):
         write_tsv.assert_called_once_with([self.row], Path("/dev/stdout"))
 
     def test_bless_writes_the_tools_baseline(self) -> None:
-        with mock.patch.object(cs, "write_tsv") as write_tsv:
+        # The checkout is swapped for the temporary tree, so the real write
+        # lands there and the tracked tools/convert_baseline_76.tsv is never
+        # this test's to touch.
+        self.assertEqual(cs.JUBARTE, HERE.parent)
+        tracked = cs.JUBARTE / "tools" / "convert_baseline_76.tsv"
+        before = tracked.read_bytes()
+        with mock.patch.object(cs, "JUBARTE", self.root):
             result = self._main("76", "--bless")
         self.assertEqual(result, 0)
-        write_tsv.assert_called_once_with(
-            [self.row], cs.JUBARTE / "tools" / "convert_baseline_76.tsv"
-        )
+        blessed = self.root / "tools" / "convert_baseline_76.tsv"
+        self.assertEqual(cs.read_tsv(blessed), [self.row])
+        self.assertIn(f"wrote {blessed} (1 rows)", self.err)
+        self.assertEqual(tracked.read_bytes(), before)
 
     def test_compare_reads_baseline_before_out_overwrites_it(self) -> None:
         # --out == --compare must ratchet against the old rows, not the new.
@@ -285,12 +305,16 @@ class MainOutputTests(unittest.TestCase):
             "76", "--compare", str(self.baseline), "--out", str(self.baseline)
         )
         self.assertEqual(result, 1, "a 10-point drop must fail the ratchet")
+        self.assertIn("mean J: baseline 60.00 -> now 50.00 (-10.00)", self.err)
+        self.assertIn("RESULT: REGRESSION", self.err)
+        self.assertIn("\n  case1\n", self.err)
 
     def test_both_mode_fails_when_one_set_is_missing(self) -> None:
         result = self._main(
             "both", discover398=([], "missing corpus listing"), rows=[self.row]
         )
         self.assertEqual(result, 2)
+        self.assertIn("missing corpus listing", self.err)
 
     def test_incomplete_set_fails_before_converting(self) -> None:
         with mock.patch.object(cs, "convert_and_score") as convert:
@@ -299,10 +323,11 @@ class MainOutputTests(unittest.TestCase):
                 "discover_76_or_skip",
                 return_value=([self.job], "incomplete fixtures: case58"),
             ):
-                result = cs.main(
+                result = self._quiet(
                     ["76", "--jubarte", str(self.jubarte), "--scorer", str(self.scorer)]
                 )
         self.assertEqual(result, 2)
+        self.assertIn("incomplete fixtures: case58", self.err)
         convert.assert_not_called()
 
 

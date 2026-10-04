@@ -7508,7 +7508,7 @@ fn balloon_tint(color: [f32; 3]) -> [f32; 3] {
 ///   tint and stroked 0.36pt in the author's ink;
 /// - its top sits on the top of the commented line, or 0.72pt under the
 ///   balloon above when that one reaches lower;
-/// - "Commented [<initials><n>]: " bold, then the comment's text, both at
+/// - `"Commented [<initials><n>]: "` bold, then the comment's text, both at
 ///   the Balloon Text style's size (9pt unless the document's style says
 ///   otherwise), the label in that style's face (Times New Roman when the
 ///   document has none), the text in the document's default face; the
@@ -8824,7 +8824,7 @@ fn frame_box(
 /// break after each piece but the last (`true` = column), and the break the
 /// paragraph ends on (`Some(true)` = column), if any.
 /// Every drawing of `para` sits after its first page break (0071d504's
-/// licence text box opens page two: "<br page/><pict>…").
+/// licence text box opens page two: `<br page/><pict>…`).
 fn drawings_follow_page_break(dom: &Dom, para: NodeId) -> bool {
     let nodes = dom.descendants(para, None);
     let Some(br) = nodes
@@ -21396,7 +21396,7 @@ struct Layout<'a> {
     tab_stops: Vec<TabStop>,
     /// How far the line being painted sits right of its left-aligned
     /// place (centring / right alignment): Word resolves tab stops before
-    /// it moves the line (0020e409's centred "I<tab> SKYRIUS").
+    /// it moves the line (0020e409's centred `I<tab> SKYRIUS`).
     tab_shift: f32,
     section_page: u32,
     chapter: String,
@@ -31314,7 +31314,7 @@ fn is_list_marker_text(text: &str, numbered: bool) -> bool {
 }
 
 /// The spaces justification stretches: Word leaves those before the
-/// line's last tab alone (000eb113's "3.1.<tab>Настоящий …").
+/// line's last tab alone (000eb113's `3.1.<tab>Настоящий …`).
 fn inter_word_gaps(line: &[TextRun]) -> usize {
     let joined: String = line.iter().map(|r| r.text.as_str()).collect();
     let body = joined.trim_end_matches(is_wrap_space);

@@ -136,9 +136,11 @@ shell needs a store build that embeds the new engine.
    docs for review, `scripts/api_snapshot.py` writes a machine-readable copy
    under `docs/api/` (`jubarte-vx.y.z.json.gz` rustdoc JSON +
    `jubarte-vx.y.z.api.txt` flat sorted listing + the four
-   `jubarte-wasm-<target>-vx.y.z.d.ts` files), and the script diffs the new
-   listing against the previous release's snapshot. The snapshot ships in the
-   release commit, so `git diff` between release tags shows API drift.
+   `jubarte-wasm-<target>-vx.y.z.d.ts` files), and the script prints the
+   drift from the previous release's snapshot: the public surface in full,
+   the crate-private rest counted by module
+   (`scripts/api_snapshot.py --drift vA vB --private` lists it). The snapshot
+   ships in the release commit, so any two releases can be compared later.
 
    Read the drift as semver: a new field on a public struct that is not
    `#[non_exhaustive]`, or a changed public fn signature, breaks struct

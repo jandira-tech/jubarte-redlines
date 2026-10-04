@@ -16,6 +16,7 @@ import contextlib
 import io
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from check_release_artifacts import REQUIRED_WHEEL_TAGS, main, missing_platforms
@@ -112,6 +113,28 @@ class CommandLine(unittest.TestCase):
         code, _out, err = self.run_main(str(self.dist), "--version", "0.11.0")
         self.assertEqual(code, 1)
         self.assertEqual(err.count(", ") + 1, len(REQUIRED_WHEEL_TAGS))
+
+    def run_stdin(self, names: list[str], *argv: str) -> tuple[int, str, str]:
+        # release.sh step 11 pipes a GitHub release's asset names in
+        stdin = io.StringIO("".join(f"{name}\n" for name in names))
+        with unittest.mock.patch("sys.stdin", stdin):
+            return self.run_main("-", *argv)
+
+    def test_dash_reads_the_names_from_stdin(self) -> None:
+        code, _out, err = self.run_stdin(complete_set("0.11.2"), "--version", "0.11.2")
+        self.assertEqual(code, 0, err)
+        code, _out, err = self.run_stdin(complete_set("0.11.2")[1:], "--version", "0.11.2")
+        self.assertEqual(code, 1)
+        self.assertIn(REQUIRED_WHEEL_TAGS[0], err)
+
+    def test_sdist_requires_the_versions_sdist(self) -> None:
+        names = complete_set("0.11.2") + ["jubarte_redlines-0.11.1.tar.gz"]
+        code, _out, err = self.run_stdin(names, "--version", "0.11.2", "--sdist")
+        self.assertEqual(code, 1)
+        self.assertIn("jubarte_redlines-0.11.2.tar.gz", err)
+        code, _out, err = self.run_stdin(names + ["jubarte_redlines-0.11.2.tar.gz"],
+                                         "--version", "0.11.2", "--sdist")
+        self.assertEqual(code, 0, err)
 
 
 if __name__ == "__main__":

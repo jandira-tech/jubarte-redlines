@@ -52,13 +52,21 @@ def missing_platforms(filenames: list[str], *, version: str) -> set[str]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("dist", type=pathlib.Path, help="directory holding the wheels to publish")
+    parser.add_argument("dist", help="directory holding the wheels to publish, or - for one file name per line on stdin")
     parser.add_argument("--version", required=True, help="the version being released, e.g. 0.11.0")
+    parser.add_argument("--sdist", action="store_true", help="also require the version's sdist")
     args = parser.parse_args(argv)
-    names = [p.name for p in args.dist.iterdir()]
+    if args.dist == "-":
+        names = [line.strip() for line in sys.stdin if line.strip()]
+    else:
+        names = [p.name for p in pathlib.Path(args.dist).iterdir()]
     missing = missing_platforms(names, version=args.version)
     if missing:
         print("missing wheels for " + args.version + ": " + ", ".join(sorted(missing)), file=sys.stderr)
+        return 1
+    sdist = f"jubarte_redlines-{args.version}.tar.gz"
+    if args.sdist and sdist not in {pathlib.PurePosixPath(n).name for n in names}:
+        print(f"missing sdist for {args.version}: {sdist}", file=sys.stderr)
         return 1
     print(f"all {len(REQUIRED_WHEEL_TAGS)} advertised wheel platforms present for {args.version}")
     return 0

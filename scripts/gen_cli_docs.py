@@ -228,10 +228,12 @@ def main() -> None:
         block = build_summary(args.runner, args.display)
     else:
         block = build_block(args.runner, args.display, args.max_depth)
-    text = open(args.file, encoding="utf-8").read()
+    with open(args.file, encoding="utf-8") as f:
+        text = f.read()
     updated = replace_block(text, args.marker, block)
     if updated != text:
-        open(args.file, "w", encoding="utf-8").write(updated)
+        with open(args.file, "w", encoding="utf-8") as f:
+            f.write(updated)
         print(f"gen_cli_docs: updated {args.file} block {args.marker!r}")
     else:
         print(f"gen_cli_docs: {args.file} block {args.marker!r} already current")
