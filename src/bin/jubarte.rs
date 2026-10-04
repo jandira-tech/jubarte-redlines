@@ -2122,9 +2122,9 @@ impl<'p> Input<'p> {
 fn read_document(path: &Path) -> Result<Vec<u8>, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
     jubarte::admission::sniff(&bytes).map_err(|refused| {
-        // Any OLE file gets the hint: telling a .doc from an encrypted
-        // document would mean parsing it just to word an error.
-        let hint = if jubarte::legacy_doc::is_compound_file(&bytes) {
+        // Only a .doc that converts gets the hint; an encrypted document
+        // or another OLE file would be sent to a command that fails.
+        let hint = if jubarte::legacy_doc::read(&bytes).is_ok() {
             format!(
                 "; a .doc converts with: jubarte convert {} -o {}",
                 path.display(),

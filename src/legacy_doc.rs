@@ -872,7 +872,11 @@ fn main_text(word: &[u8], pieces: &[Piece], ccp_text: u32) -> Result<Vec<StoryCh
         if covered >= ccp_text {
             break;
         }
-        if piece.cp_start != covered || piece.cp_end <= piece.cp_start {
+        // An empty piece (fast-saved files carry them) covers nothing.
+        if piece.cp_end <= piece.cp_start {
+            continue;
+        }
+        if piece.cp_start != covered {
             break;
         }
         covered = piece.cp_end;
@@ -1641,6 +1645,14 @@ mod tests {
         }
         let whole = main_text(&word, &[piece(0, 5, 0), piece(5, 10, 5)], 10).unwrap();
         assert_eq!(whole.len(), 10);
+        // An empty piece (fast-saved files carry them) is no gap.
+        let empty = [
+            piece(0, 0, 0),
+            piece(0, 5, 0),
+            piece(5, 5, 9),
+            piece(5, 10, 5),
+        ];
+        assert_eq!(main_text(&word, &empty, 10).unwrap().len(), 10);
     }
 
     #[test]

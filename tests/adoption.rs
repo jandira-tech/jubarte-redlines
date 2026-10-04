@@ -614,6 +614,14 @@ fn a_legacy_doc_converts_to_docx_markdown_and_pdf() {
         stderr.contains("jubarte convert old.doc -o old.docx"),
         "{stderr}"
     );
+    // An OLE file that is no readable .doc is not told to convert.
+    let mut fake = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1".to_vec();
+    fake.extend_from_slice(b"not a word file at all");
+    std::fs::write(dir.path().join("fake.doc"), fake).unwrap();
+    let refused = jubarte(&["text", "fake.doc"], dir.path());
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(!refused.status.success(), "{stderr}");
+    assert!(!stderr.contains("jubarte convert"), "{stderr}");
     // A .docx or Markdown output lays nothing out: a layout report flag is
     // refused rather than silently ignored.
     for flag in [

@@ -1914,8 +1914,12 @@ impl<'a> Fonts<'a> {
 fn names_family(requested: &str, family: &str) -> bool {
     let squash = |s: &str| {
         let key = s.to_ascii_lowercase().replace([' ', '-'], "");
-        let key = key.strip_suffix("mt").unwrap_or(&key);
-        key.strip_suffix("ps").unwrap_or(key).to_string()
+        // "Times New Roman PS MT" and "Arial MT": a trailing "PS MT" or
+        // "MT", never a lone "ps" ("Warps" is not "War").
+        key.strip_suffix("psmt")
+            .or_else(|| key.strip_suffix("mt"))
+            .unwrap_or(&key)
+            .to_string()
     };
     let (requested, family) = (squash(requested), squash(family));
     let twins: &[&str] = match family.as_str() {
@@ -4944,6 +4948,9 @@ mod tests {
         // Monotype's PostScript-style names in older documents.
         assert!(names_family("Times New Roman PS MT", "Times New Roman"));
         assert!(names_family("Arial PS MT", "Arial"));
+        // Only the "PS MT" pair goes, never a lone trailing "ps".
+        assert!(!names_family("War", "Warps"));
+        assert!(!names_family("PS", "MT"));
     }
 
     #[test]

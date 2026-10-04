@@ -120,14 +120,17 @@ fn fence_run(trimmed: &str) -> Option<(char, usize, bool)> {
 /// A list item line: `-`, `*` or `+`, or digits and `.` or `)`, then a space.
 fn list_item(line: &str) -> bool {
     let rest = line.trim_start();
+    // A marker ends the line or is followed by a space or tab.
+    let marker_ends = |after: &str| after.is_empty() || after.starts_with([' ', '\t']);
     if let Some(after) = rest.strip_prefix(['-', '*', '+']) {
-        return after.starts_with(' ');
+        return marker_ends(after);
     }
     let digits = rest.chars().take_while(char::is_ascii_digit).count();
     digits > 0
         && rest
             .get(digits..)
-            .is_some_and(|after| after.starts_with(". ") || after.starts_with(") "))
+            .and_then(|after| after.strip_prefix(['.', ')']))
+            .is_some_and(marker_ends)
 }
 
 /// How many of `line` the page text repeats from `at` on.
@@ -310,6 +313,16 @@ mod tests {
             "{}",
             paginate(markdown, &pages)
         );
+    }
+
+    #[test]
+    fn a_tab_or_nothing_after_the_bullet_is_still_a_list_item() {
+        for line in ["-\tfoo", "-", "1.\tfoo", "2)", "  * x"] {
+            assert!(list_item(line), "{line:?}");
+        }
+        for line in ["-foo", "1.5 percent", "**bold**"] {
+            assert!(!list_item(line), "{line:?}");
+        }
     }
 
     #[test]
