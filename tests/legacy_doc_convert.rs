@@ -98,6 +98,26 @@ fn bold_and_italic_runs_are_kept() {
 }
 
 #[test]
+fn a_section_break_ends_its_paragraph() {
+    // breaks.doc (make_breaks.py, exported by LibreOffice): LibreOffice
+    // writes the page breaks as paragraph splits and the section break as
+    // a section mark.
+    let doc = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/legacy/breaks.doc"),
+    )
+    .unwrap();
+    assert_eq!(
+        outline(&read(&doc).unwrap().blocks),
+        [
+            "P Before the break",
+            "P after the break, same paragraph.",
+            "P Last paragraph of section one.",
+            "P First paragraph of section two.",
+        ]
+    );
+}
+
+#[test]
 fn markdown_escapes_what_markdown_would_read_as_syntax() {
     let markdown = doc_to_markdown(&fixture()).unwrap();
     assert!(

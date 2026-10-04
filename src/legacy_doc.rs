@@ -183,6 +183,7 @@ pub fn read(bytes: &[u8]) -> Result<LegacyDocument> {
         chpx: &chpx,
         styles: &styles,
         lists: &lists,
+        section_marks: section_marks(&table, fib.plcf_sed),
     };
     Ok(LegacyDocument {
         blocks: story.blocks(&chars),
@@ -225,21 +226,27 @@ pub fn to_markdown(document: &LegacyDocument) -> String {
                 (Some(level), _) => {
                     out.push_str(&"#".repeat(usize::from(level.clamp(1, 6))));
                     out.push(' ');
+                    // A heading's bold is its style's, and Markdown cannot
+                    // unbold a heading; a toggle that inverts the style
+                    // (`0x81`) would otherwise read as bold.
                     let spans: Vec<Span> = paragraph
                         .spans
                         .iter()
                         .map(|span| Span {
                             text: span.text.replace('\n', " "),
+                            bold: false,
                             ..span.clone()
                         })
                         .collect();
                     out.push_str(&render_spans(&spans));
                 }
                 (None, Some(item)) => {
+                    // Four spaces a level nests under a bullet ("- ", content
+                    // at 2) and under a number ("1. ", content at 3) alike.
                     let (marker, indent) = if item.ordered {
-                        ("1. ", "   ")
+                        ("1. ", "    ")
                     } else {
-                        ("- ", "  ")
+                        ("- ", "    ")
                     };
                     out.push_str(&indent.repeat(usize::from(item.level)));
                     out.push_str(marker);
@@ -385,11 +392,15 @@ impl<'a> CompoundFile<'a> {
         if !is_compound_file(bytes) {
             return Err(LegacyDocError::new("not an OLE compound file (.doc)"));
         }
+        let major = u16_at(bytes, 0x1A).ok_or_else(bad)?;
         let sector_shift = u16_at(bytes, 0x1E).ok_or_else(bad)?;
         let mini_shift = u16_at(bytes, 0x20).ok_or_else(bad)?;
-        if !(sector_shift == 9 || sector_shift == 12) || mini_shift != 6 {
+        // Version 3 has 512-byte sectors and version 4 4096-byte ones
+        // ([MS-CFB] 2.2); any other pairing is not a compound file.
+        if !matches!((major, sector_shift), (3, 9) | (4, 12)) || mini_shift != 6 {
             return Err(bad());
         }
+        let v4 = major == 4;
         let sector_size = 1usize << sector_shift;
         let mini_sector_size = 1usize << mini_shift;
         let fat_sectors = u32_at(bytes, 0x2C).ok_or_else(bad)?;
@@ -414,14 +425,15 @@ impl<'a> CompoundFile<'a> {
             let sector = sector_slice(bytes, sector_size, next).ok_or_else(bad)?;
             for i in 0..per_difat.saturating_sub(1) {
                 let entry = u32_at(sector, i.checked_mul(4).ok_or_else(bad)?).ok_or_else(bad)?;
-                if entry != NO_STREAM {
+                // The file cannot hold more FAT sectors than sectors.
+                if entry != NO_STREAM && fat_locations.len() < max_sectors {
                     fat_locations.push(entry);
                 }
             }
             next = u32_at(sector, per_difat.saturating_sub(1).saturating_mul(4)).ok_or_else(bad)?;
             seen = seen.saturating_add(1);
         }
-        fat_locations.truncate(index(fat_sectors).ok_or_else(bad)?);
+        fat_locations.truncate(index(fat_sectors).ok_or_else(bad)?.min(max_sectors));
         let mut fat = Vec::with_capacity(fat_locations.len().saturating_mul(per_difat));
         for location in fat_locations {
             let sector = sector_slice(bytes, sector_size, location).ok_or_else(bad)?;
@@ -449,7 +461,7 @@ impl<'a> CompoundFile<'a> {
             .as_chunks::<128>()
             .0
             .iter()
-            .filter_map(|raw| DirEntry::parse(raw))
+            .filter_map(|raw| DirEntry::parse(raw, v4))
             .collect();
         if first_mini_fat != END_OF_CHAIN && first_mini_fat != NO_STREAM {
             let table = file
@@ -555,7 +567,7 @@ fn sector_slice(bytes: &[u8], sector_size: usize, sector: u32) -> Option<&[u8]> 
 }
 
 impl DirEntry {
-    fn parse(raw: &[u8]) -> Option<Self> {
+    fn parse(raw: &[u8], v4: bool) -> Option<Self> {
         let name_len = usize::from(u16_at(raw, 64)?);
         let units: Vec<u16> = raw
             .get(..name_len.saturating_sub(2).min(64))?
@@ -571,8 +583,13 @@ impl DirEntry {
             right: u32_at(raw, 72)?,
             child: u32_at(raw, 76)?,
             start: u32_at(raw, 116)?,
-            // Version 3 files leave the high half undefined.
-            size: u64::from(u32_at(raw, 120)?),
+            // Version 4 sizes are 64-bit; version 3 leaves the high half
+            // undefined ([MS-CFB] 2.6.1).
+            size: if v4 {
+                u64::from(u32_at(raw, 120)?) | (u64::from(u32_at(raw, 124)?) << 32)
+            } else {
+                u64::from(u32_at(raw, 120)?)
+            },
         })
     }
 }
@@ -595,6 +612,8 @@ struct Fib {
     /// List definitions and overrides; `(0, 0)` when the FIB is too short.
     plf_lst: (u32, u32),
     plf_lfo: (u32, u32),
+    /// The section table: where each section ends.
+    plcf_sed: (u32, u32),
 }
 
 impl Fib {
@@ -654,6 +673,7 @@ impl Fib {
             fc_clx,
             lcb_clx,
             plf_lst: pair(73).unwrap_or((0, 0)),
+            plcf_sed: pair(6)?,
             plf_lfo: pair(74).unwrap_or((0, 0)),
         })
     }
@@ -746,6 +766,7 @@ fn cp1252(byte: u8) -> char {
 #[derive(Clone, Copy, Debug)]
 struct StoryChar {
     ch: char,
+    cp: u32,
     fc: u32,
 }
 
@@ -788,7 +809,7 @@ fn main_text(word: &[u8], pieces: &[Piece], ccp_text: u32) -> Result<Vec<StoryCh
                     (_, unit) => char::from_u32(u32::from(unit)).unwrap_or('\u{FFFD}'),
                 }
             };
-            out.push(StoryChar { ch, fc });
+            out.push(StoryChar { ch, cp, fc });
         }
     }
     Ok(out)
@@ -947,8 +968,10 @@ fn for_each_sprm(grpprl: &[u8], mut each: impl FnMut(u16, &[u8])) {
                 u16_at(grpprl, operand).and_then(|n| usize::from(n).checked_add(1))
             }
             _ => match grpprl.get(operand) {
-                // sprmPChgTabs with its long form: stop reading this group.
-                Some(255) | None => None,
+                // sprmPChgTabs's long form (a count of 255) has its own
+                // layout: stop reading this group. Any other 255 is a count.
+                Some(255) if sprm == 0xC615 => None,
+                None => None,
                 Some(&n) => usize::from(n).checked_add(1),
             },
         };
@@ -1113,6 +1136,9 @@ struct Story<'a> {
     chpx: &'a FkpIndex,
     styles: &'a [Option<u8>],
     lists: &'a Lists,
+    /// CPs of the section marks (`\x0C` ending a section, which ends its
+    /// paragraph too); any other `\x0C` is a page break inside a paragraph.
+    section_marks: Vec<u32>,
 }
 
 impl Story<'_> {
@@ -1147,6 +1173,10 @@ impl Story<'_> {
                     continue;
                 }
                 _ if in_code => continue,
+                '\u{0C}' if self.section_marks.binary_search(&story.cp).is_err() => {
+                    // A page break: Markdown has no pages, so a line break.
+                    '\n'
+                }
                 '\r' | '\u{07}' | '\u{0C}' => {
                     let props = self.papx.at(story.fc);
                     let taken = std::mem::take(&mut spans);
@@ -1215,6 +1245,23 @@ impl Story<'_> {
             spans,
         }));
     }
+}
+
+/// The CP of each section's last character, the mark that ends it, from
+/// `PlcfSed` ([MS-DOC] 2.8.26): `n + 1` CPs, then `n` 12-byte SEDs.
+fn section_marks(table: &[u8], (fc, lcb): (u32, u32)) -> Vec<u32> {
+    let Some(plc) = index(fc)
+        .zip(index(lcb))
+        .and_then(|(from, len)| table.get(from..from.checked_add(len)?))
+    else {
+        return Vec::new();
+    };
+    let count = plc.len().saturating_sub(4) / 16;
+    let mut marks: Vec<u32> = (1..=count)
+        .filter_map(|i| u32_at(plc, i.saturating_mul(4))?.checked_sub(1))
+        .collect();
+    marks.sort_unstable();
+    marks
 }
 
 /// End a table: a row whose end mark is missing still belongs to it.
@@ -1342,7 +1389,7 @@ mod tests {
                 }),
             ],
         };
-        assert_eq!(to_markdown(&document), "- First\n\n   1. Nested\n\n");
+        assert_eq!(to_markdown(&document), "- First\n\n    1. Nested\n\n");
     }
 
     #[test]
@@ -1366,6 +1413,7 @@ mod tests {
         // links back to itself and lists sector 0 as a FAT sector.
         let mut bytes = vec![0u8; 1024];
         bytes[..8].copy_from_slice(OLE_MAGIC);
+        bytes[0x1A] = 3;
         bytes[0x1E] = 9;
         bytes[0x20] = 6;
         bytes[0x2C..0x30].copy_from_slice(&1u32.to_le_bytes());
@@ -1402,5 +1450,127 @@ mod tests {
             })],
         };
         assert_eq!(to_markdown(&document), "## Fees *due*\n\n");
+    }
+
+    fn story_chars(text: &str) -> Vec<StoryChar> {
+        text.chars()
+            .zip(0u32..)
+            .map(|(ch, cp)| StoryChar { ch, cp, fc: cp })
+            .collect()
+    }
+
+    #[test]
+    fn a_page_break_stays_inside_its_paragraph_and_a_section_mark_ends_it() {
+        let (papx, chpx) = (FkpIndex { runs: Vec::new() }, FkpIndex { runs: Vec::new() });
+        let lists = Lists::default();
+        let chars = story_chars("ab\u{0C}cd\u{0C}ef\r");
+        let story = |section_marks: Vec<u32>| Story {
+            papx: &papx,
+            chpx: &chpx,
+            styles: &[],
+            lists: &lists,
+            section_marks,
+        };
+        let texts = |blocks: Vec<Block>| -> Vec<String> {
+            blocks
+                .iter()
+                .map(|b| match b {
+                    Block::Paragraph(p) => p.text(),
+                    Block::Table(_) => "table".into(),
+                })
+                .collect()
+        };
+        // Neither \x0C ends a section: page breaks, one paragraph.
+        assert_eq!(texts(story(Vec::new()).blocks(&chars)), ["ab\ncd\nef"]);
+        // The second \x0C (CP 5) is a section mark: two paragraphs.
+        assert_eq!(texts(story(vec![5]).blocks(&chars)), ["ab\ncd", "ef"]);
+    }
+
+    #[test]
+    fn a_bullet_under_a_number_nests() {
+        let document = LegacyDocument {
+            blocks: vec![
+                Block::Paragraph(Paragraph {
+                    list: Some(ListItem {
+                        ordered: true,
+                        level: 0,
+                    }),
+                    ..plain("A")
+                }),
+                Block::Paragraph(Paragraph {
+                    list: Some(ListItem {
+                        ordered: false,
+                        level: 1,
+                    }),
+                    ..plain("B")
+                }),
+            ],
+        };
+        // "1. " puts content at column 3; the child needs at least that.
+        assert_eq!(to_markdown(&document), "1. A\n\n    - B\n\n");
+    }
+
+    #[test]
+    fn a_count_of_255_is_a_count_except_for_sprm_p_chg_tabs() {
+        // A variable-length sprm (spra 6) with 255 operand bytes, then
+        // sprmPFInTable.
+        let mut grpprl = vec![0x00, 0xC6, 255];
+        grpprl.extend(std::iter::repeat_n(0u8, 255));
+        grpprl.extend([0x16, 0x24, 0x01]);
+        let mut seen = Vec::new();
+        for_each_sprm(&grpprl, |sprm, _| seen.push(sprm));
+        assert_eq!(seen, [0xC600, 0x2416]);
+        let mut seen = Vec::new();
+        for_each_sprm(&[0x15, 0xC6, 255, 0, 0], |sprm, _| seen.push(sprm));
+        assert!(seen.is_empty(), "{seen:?}");
+    }
+
+    #[test]
+    fn a_heading_does_not_read_its_style_bold_as_markup() {
+        let document = LegacyDocument {
+            blocks: vec![Block::Paragraph(Paragraph {
+                heading: Some(1),
+                list: None,
+                spans: vec![Span {
+                    text: "Term".into(),
+                    bold: true,
+                    italic: false,
+                }],
+            })],
+        };
+        assert_eq!(to_markdown(&document), "# Term\n\n");
+    }
+
+    #[test]
+    fn a_version_and_sector_size_mismatch_is_refused() {
+        let mut bytes = vec![0u8; 1024];
+        bytes[..8].copy_from_slice(OLE_MAGIC);
+        bytes[0x1A] = 4; // version 4 ...
+        bytes[0x1E] = 9; // ... with 512-byte sectors
+        bytes[0x20] = 6;
+        assert!(CompoundFile::open(&bytes).is_err());
+    }
+
+    #[test]
+    fn fat_sectors_are_capped_by_the_sectors_in_the_file() {
+        // 1 MB, a self-linked DIFAT sector whose 127 slots all name sector
+        // 0, a DIFAT count of 2^32-1 and a FAT count of 2^32-1: without a
+        // cap the FAT grew to 127 entries per sector per pass (~130 MB).
+        let mut bytes = vec![0u8; 1 << 20];
+        bytes[..8].copy_from_slice(OLE_MAGIC);
+        bytes[0x1A] = 3;
+        bytes[0x1E] = 9;
+        bytes[0x20] = 6;
+        bytes[0x2C..0x30].copy_from_slice(&u32::MAX.to_le_bytes());
+        bytes[0x30..0x34].copy_from_slice(&END_OF_CHAIN.to_le_bytes());
+        bytes[0x44..0x48].copy_from_slice(&0u32.to_le_bytes());
+        bytes[0x48..0x4C].copy_from_slice(&u32::MAX.to_le_bytes());
+        for slot in bytes[0x4C..512].as_chunks_mut::<4>().0 {
+            *slot = NO_STREAM.to_le_bytes();
+        }
+        bytes[1020..1024].copy_from_slice(&0u32.to_le_bytes());
+        let started = std::time::Instant::now();
+        let _ = CompoundFile::open(&bytes);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
     }
 }
