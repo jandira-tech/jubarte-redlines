@@ -66,6 +66,8 @@ jobs:
       - name: run every example
         env:
           JUBARTE: ${{ github.workspace }}/target/release/jubarte
+          # 17-mcp serves this checkout's Python package, not the PyPI release.
+          JUBARTE_MCP_FROM: jubarte-redlines[mcp] @ ${{ github.workspace }}/jubarte-python
         run: |
           failed=0
           for script in examples/adoption/*/run.sh; do

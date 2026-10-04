@@ -20,8 +20,8 @@ python3 mcp_session.py                                        # -> mcp_session.j
 ```
 
 `mcp_session.py` (standard library only) starts
-`uvx --from 'jubarte-redlines[mcp]' jubarte-mcp --root <this
-folder>`, then sends newline-delimited JSON-RPC over its stdin:
+`uvx --from "$JUBARTE_MCP_FROM" jubarte-mcp --root <this folder>`, then
+sends newline-delimited JSON-RPC over its stdin:
 
 1. `initialize` (protocol 2025-06-18) — answered with the server's
    capabilities;
@@ -33,6 +33,11 @@ folder>`, then sends newline-delimited JSON-RPC over its stdin:
 
 Every message sent and received is appended to `mcp_session.jsonl`,
 one JSON object per line with a `dir` of `send` or `recv`.
+
+`JUBARTE_MCP_FROM` picks the package: `jubarte-redlines[mcp]` (the PyPI
+release) by default, and `jubarte-redlines[mcp] @ <repo>/jubarte-python`
+to serve this checkout, as `.github/workflows/adoption.yml` does. The
+committed session was made from the checkout.
 
 ## Tool versions (measured in this folder)
 
@@ -77,9 +82,11 @@ Honest limits, measured here:
   start the server this way (`uvx` would fail to resolve the
   environment — the item brief says to stop there if that happens; it
   did not happen here, the wheel resolved from the local cache).
-- The `initialize` response's `serverInfo` reports the name `jubarte`
-  but an empty `version` string, so a host that displays the server
-  version shows nothing (the wheel's version is 0.11.2).
+- Released 0.11.2 answers `initialize` with an empty
+  `serverInfo.version`. This branch passes the package version
+  (`{"name": "jubarte", "version": "0.11.2"}` in the committed session,
+  served from the checkout); `jubarte-python/tests/test_mcp_server.py`
+  asserts it.
 
 Discrepancies with the adoption pages: the pages say the server
 "serves text, inspect, edit, render, compare, changes, accept and
