@@ -19,16 +19,22 @@
 //! names where each run of characters lives and whether it is stored as
 //! UTF-16 or as 8-bit (Windows-1252) text. Paragraph properties come from
 //! the PAPX formatted disk pages (2.9.177): the style (`istd`, mapped to a
-//! heading level through the style sheet), and the table marks
-//! (`sprmPFInTable`, `sprmPFTtp`) that turn cell and row ends into a table.
+//! heading level through the style sheet), the table marks
+//! (`sprmPFInTable`, `sprmPFTtp`) that turn cell and row ends into a table,
+//! and the list override and level (`sprmPIlfo`, `sprmPIlvl`) whose number
+//! format (`PlfLfo` to `PlfLst` to `LVLF.nfc`) makes a bullet or a number.
+//! Bold and italic come from the CHPX pages (`sprmCFBold`, `sprmCFItalic`).
 //!
 //! What is read: the main story's text, its paragraphs, Heading 1-9 and
-//! Title styles, tables (one level; nested tables are flattened), field
-//! results (codes dropped), line breaks. What is not: character formatting,
-//! lists, headers and footers, notes, comments, tracked changes, pictures,
-//! page setup (the output is US Letter), Word 6/95 files (`nFib` below 193)
-//! and encrypted or obfuscated files, which are refused with `LEGACY_DOC`.
-//! `docs/adoption/plans.md` lists the steps past this minimum.
+//! Title styles, bulleted and numbered lists with their levels, bold and
+//! italic, tables (one level; nested tables are flattened, cell text is
+//! plain), field results (codes dropped), line breaks. What is not: other
+//! character formatting (font, size, colour, underline), list start
+//! numbers and number styles beyond "numbered", headers and footers, notes,
+//! comments, tracked changes, pictures, page setup (the output is US
+//! Letter), Word 6/95 files (`nFib` below 193) and encrypted or obfuscated
+//! files, which are refused with `LEGACY_DOC`. `docs/adoption/plans.md`
+//! lists the steps past this minimum.
 //!
 //! The text becomes escaped Markdown, and [`crate::markdown::markdown_to_docx`]
 //! writes the package, so the `.docx` is the same Word-valid output that
@@ -78,15 +84,50 @@ type Result<T> = std::result::Result<T, LegacyDocError>;
 /// One block of the main story, in document order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Block {
-    /// A paragraph; `heading` is 1-9 for Heading 1-9, 0 for Title.
-    Paragraph {
-        /// Heading level, when the paragraph's style is a heading or Title.
-        heading: Option<u8>,
-        /// The text, with `\n` for each line break.
-        text: String,
-    },
-    /// A table: rows of cells, each cell's paragraphs joined by spaces.
+    /// A paragraph.
+    Paragraph(Paragraph),
+    /// A table: rows of cells, each cell's paragraphs as plain text joined
+    /// by spaces.
     Table(Vec<Vec<String>>),
+}
+
+/// A paragraph of the main story.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Paragraph {
+    /// 1-9 for Heading 1-9, 0 for Title.
+    pub heading: Option<u8>,
+    /// The list level, when the paragraph is numbered or bulleted.
+    pub list: Option<ListItem>,
+    /// The text in runs of one formatting; `\n` is a line break.
+    pub spans: Vec<Span>,
+}
+
+impl Paragraph {
+    /// The paragraph's text, without formatting.
+    #[must_use]
+    pub fn text(&self) -> String {
+        self.spans.iter().map(|span| span.text.as_str()).collect()
+    }
+}
+
+/// A run of text with one bold and italic setting.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Span {
+    /// The text.
+    pub text: String,
+    /// Bold.
+    pub bold: bool,
+    /// Italic.
+    pub italic: bool,
+}
+
+/// A paragraph's place in a list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ListItem {
+    /// Numbered (any number format) rather than bulleted.
+    pub ordered: bool,
+    /// Level, 0 for the outermost.
+    pub level: u8,
 }
 
 /// The main story of a `.doc`.
@@ -124,9 +165,27 @@ pub fn read(bytes: &[u8]) -> Result<LegacyDocument> {
     let pieces = pieces(&table, fib.fc_clx, fib.lcb_clx)?;
     let chars = main_text(&word, &pieces, fib.ccp_text);
     let styles = heading_styles(&table, fib.fc_stshf, fib.lcb_stshf);
-    let papx = PapxIndex::new(&word, &table, fib.fc_plcf_bte_papx, fib.lcb_plcf_bte_papx);
+    let papx = FkpIndex::new(
+        &word,
+        &table,
+        (fib.fc_plcf_bte_papx, fib.lcb_plcf_bte_papx),
+        Fkp::Paragraph,
+    );
+    let chpx = FkpIndex::new(
+        &word,
+        &table,
+        (fib.fc_plcf_bte_chpx, fib.lcb_plcf_bte_chpx),
+        Fkp::Character,
+    );
+    let lists = Lists::new(&table, fib.plf_lst, fib.plf_lfo);
+    let story = Story {
+        papx: &papx,
+        chpx: &chpx,
+        styles: &styles,
+        lists: &lists,
+    };
     Ok(LegacyDocument {
-        blocks: blocks(&chars, &papx, &styles),
+        blocks: story.blocks(&chars),
     })
 }
 
@@ -162,18 +221,24 @@ pub fn to_markdown(document: &LegacyDocument) -> String {
     let mut out = String::new();
     for block in &document.blocks {
         match block {
-            Block::Paragraph { heading, text } => {
-                let lines: Vec<String> = text.split('\n').map(escape_line).collect();
-                match heading {
-                    Some(level) => {
-                        let hashes = "#".repeat(usize::from((*level).clamp(1, 6)));
-                        out.push_str(&hashes);
-                        out.push(' ');
-                        out.push_str(&lines.join(" "));
-                    }
-                    None => out.push_str(&lines.join("\\\n")),
+            Block::Paragraph(paragraph) => match (paragraph.heading, paragraph.list) {
+                (Some(level), _) => {
+                    out.push_str(&"#".repeat(usize::from(level.clamp(1, 6))));
+                    out.push(' ');
+                    out.push_str(&escape_line(&paragraph.text().replace('\n', " ")));
                 }
-            }
+                (None, Some(item)) => {
+                    let (marker, indent) = if item.ordered {
+                        ("1. ", "   ")
+                    } else {
+                        ("- ", "  ")
+                    };
+                    out.push_str(&indent.repeat(usize::from(item.level)));
+                    out.push_str(marker);
+                    out.push_str(&render_spans(&paragraph.spans));
+                }
+                (None, None) => out.push_str(&render_spans(&paragraph.spans)),
+            },
             Block::Table(rows) => {
                 let width = rows.iter().map(Vec::len).max().unwrap_or(0).max(1);
                 for (index, row) in rows.iter().enumerate() {
@@ -199,6 +264,44 @@ pub fn to_markdown(document: &LegacyDocument) -> String {
         out.push_str("\n\n");
     }
     out
+}
+
+/// Spans as Markdown: `**bold**`, `*italic*`, `***both***`, the markers
+/// inside any spaces around the text (`** a**` is not emphasis), a line
+/// break as a backslash at the end of the line.
+fn render_spans(spans: &[Span]) -> String {
+    let mut merged: Vec<Span> = Vec::new();
+    for span in spans {
+        match merged.last_mut() {
+            Some(last) if last.bold == span.bold && last.italic == span.italic => {
+                last.text.push_str(&span.text);
+            }
+            _ => merged.push(span.clone()),
+        }
+    }
+    let mut out = String::new();
+    for span in &merged {
+        let core = span.text.trim();
+        if core.is_empty() {
+            out.push_str(&span.text.replace('\n', "\\\n"));
+            continue;
+        }
+        let lead = span.text.len().saturating_sub(span.text.trim_start().len());
+        let tail = span.text.trim_end().len();
+        let marker = match (span.bold, span.italic) {
+            (true, true) => "***",
+            (true, false) => "**",
+            (false, true) => "*",
+            (false, false) => "",
+        };
+        out.push_str(span.text.get(..lead).unwrap_or(""));
+        out.push_str(marker);
+        let lines: Vec<String> = core.split('\n').map(escape_line).collect();
+        out.push_str(&lines.join("\\\n"));
+        out.push_str(marker);
+        out.push_str(span.text.get(tail..).unwrap_or(""));
+    }
+    out.trim().to_string()
 }
 
 /// Escape one line of text so Markdown reads it back as the same text.
@@ -475,8 +578,13 @@ struct Fib {
     lcb_stshf: u32,
     fc_plcf_bte_papx: u32,
     lcb_plcf_bte_papx: u32,
+    fc_plcf_bte_chpx: u32,
+    lcb_plcf_bte_chpx: u32,
     fc_clx: u32,
     lcb_clx: u32,
+    /// List definitions and overrides; `(0, 0)` when the FIB is too short.
+    plf_lst: (u32, u32),
+    plf_lfo: (u32, u32),
 }
 
 impl Fib {
@@ -521,6 +629,7 @@ impl Fib {
             ))
         };
         let (fc_stshf, lcb_stshf) = pair(1)?;
+        let (fc_plcf_bte_chpx, lcb_plcf_bte_chpx) = pair(12)?;
         let (fc_plcf_bte_papx, lcb_plcf_bte_papx) = pair(13)?;
         let (fc_clx, lcb_clx) = pair(33)?;
         Ok(Self {
@@ -530,8 +639,12 @@ impl Fib {
             lcb_stshf,
             fc_plcf_bte_papx,
             lcb_plcf_bte_papx,
+            fc_plcf_bte_chpx,
+            lcb_plcf_bte_chpx,
             fc_clx,
             lcb_clx,
+            plf_lst: pair(73).unwrap_or((0, 0)),
+            plf_lfo: pair(74).unwrap_or((0, 0)),
         })
     }
 }
@@ -711,24 +824,36 @@ fn heading_styles(table: &[u8], fc: u32, lcb: u32) -> Vec<Option<u8>> {
 }
 
 // ---------------------------------------------------------------------------
-// Paragraph properties (MS-DOC 2.9.177 PapxFkp)
+// Paragraph and character properties (MS-DOC 2.9.177 PapxFkp, 2.9.33 ChpxFkp)
 // ---------------------------------------------------------------------------
 
+/// The properties read from a PAPX or a CHPX; each kind fills its own.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct ParagraphProps {
+struct Props {
     istd: u16,
     in_table: bool,
     row_end: bool,
+    /// List override, 1-based; 0 is none.
+    ilfo: u16,
+    ilvl: u8,
+    bold: bool,
+    italic: bool,
 }
 
-/// Formatted disk pages of paragraph properties, read once.
-struct PapxIndex {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Fkp {
+    Paragraph,
+    Character,
+}
+
+/// Formatted disk pages of one kind, read once.
+struct FkpIndex {
     /// `(fc_start, fc_end, props)` runs, in stream order.
-    runs: Vec<(u32, u32, ParagraphProps)>,
+    runs: Vec<(u32, u32, Props)>,
 }
 
-impl PapxIndex {
-    fn new(word: &[u8], table: &[u8], fc: u32, lcb: u32) -> Self {
+impl FkpIndex {
+    fn new(word: &[u8], table: &[u8], (fc, lcb): (u32, u32), kind: Fkp) -> Self {
         let mut runs = Vec::new();
         let Some(plc) = index(fc)
             .zip(index(lcb))
@@ -748,13 +873,13 @@ impl PapxIndex {
             else {
                 continue;
             };
-            read_fkp(page, &mut runs);
+            read_fkp(page, kind, &mut runs);
         }
         runs.sort_by_key(|run| run.0);
         Self { runs }
     }
 
-    fn at(&self, fc: u32) -> ParagraphProps {
+    fn at(&self, fc: u32) -> Props {
         let after = self.runs.partition_point(|run| run.0 <= fc);
         after
             .checked_sub(1)
@@ -765,10 +890,16 @@ impl PapxIndex {
     }
 }
 
-fn read_fkp(page: &[u8], runs: &mut Vec<(u32, u32, ParagraphProps)>) {
+fn read_fkp(page: &[u8], kind: Fkp, runs: &mut Vec<(u32, u32, Props)>) {
     let Some(&crun) = page.get(511) else { return };
     let crun = usize::from(crun);
     let bx_base = crun.saturating_add(1).saturating_mul(4);
+    // A PAPX entry is a word offset and a 12-byte PHE; a CHPX entry is the
+    // word offset alone.
+    let entry = match kind {
+        Fkp::Paragraph => 13,
+        Fkp::Character => 1,
+    };
     for i in 0..crun {
         let (Some(start), Some(end)) = (
             u32_at(page, i.saturating_mul(4)),
@@ -777,14 +908,49 @@ fn read_fkp(page: &[u8], runs: &mut Vec<(u32, u32, ParagraphProps)>) {
             return;
         };
         let props = page
-            .get(bx_base.saturating_add(i.saturating_mul(13)))
-            .and_then(|&b_offset| papx_props(page, usize::from(b_offset).saturating_mul(2)))
+            .get(bx_base.saturating_add(i.saturating_mul(entry)))
+            .and_then(|&offset| {
+                let at = usize::from(offset).saturating_mul(2);
+                match kind {
+                    Fkp::Paragraph => papx_props(page, at),
+                    Fkp::Character => chpx_props(page, at),
+                }
+            })
             .unwrap_or_default();
         runs.push((start, end, props));
     }
 }
 
-fn papx_props(page: &[u8], at: usize) -> Option<ParagraphProps> {
+/// Call `each` with every sprm in `grpprl` and its operand bytes.
+fn for_each_sprm(grpprl: &[u8], mut each: impl FnMut(u16, &[u8])) {
+    let mut at = 0usize;
+    while let Some(sprm) = u16_at(grpprl, at) {
+        let Some(operand) = at.checked_add(2) else {
+            return;
+        };
+        let size = match sprm >> 13 {
+            0 | 1 => Some(1),
+            2 | 4 | 5 => Some(2),
+            3 => Some(4),
+            7 => Some(3),
+            _ if sprm == 0xD608 || sprm == 0xD606 => {
+                u16_at(grpprl, operand).and_then(|n| usize::from(n).checked_add(1))
+            }
+            _ => match grpprl.get(operand) {
+                // sprmPChgTabs with its long form: stop reading this group.
+                Some(255) | None => None,
+                Some(&n) => usize::from(n).checked_add(1),
+            },
+        };
+        let Some(next) = size.and_then(|size| operand.checked_add(size)) else {
+            return;
+        };
+        each(sprm, grpprl.get(operand..next).unwrap_or(&[]));
+        at = next;
+    }
+}
+
+fn papx_props(page: &[u8], at: usize) -> Option<Props> {
     if at == 0 {
         return None;
     }
@@ -796,133 +962,259 @@ fn papx_props(page: &[u8], at: usize) -> Option<ParagraphProps> {
         (at.checked_add(1)?, cb.checked_mul(2)?.checked_sub(1)?)
     };
     let grpprl = page.get(from..from.checked_add(len)?)?;
-    let mut props = ParagraphProps {
+    let mut props = Props {
         istd: u16_at(grpprl, 0)?,
-        ..ParagraphProps::default()
+        ..Props::default()
     };
-    let mut at = 2usize;
-    while let Some(sprm) = u16_at(grpprl, at) {
-        let operand = at.checked_add(2)?;
-        let size = match sprm >> 13 {
-            0 | 1 => 1,
-            2 | 4 | 5 => 2,
-            3 => 4,
-            7 => 3,
-            _ if sprm == 0xD608 || sprm == 0xD606 => {
-                usize::from(u16_at(grpprl, operand)?).checked_add(1)?
-            }
-            _ => match *grpprl.get(operand)? {
-                // sprmPChgTabs with its long form: stop reading this PAPX.
-                255 => break,
-                n => usize::from(n).checked_add(1)?,
-            },
-        };
-        let value = grpprl.get(operand).copied().unwrap_or(0);
+    for_each_sprm(grpprl.get(2..).unwrap_or(&[]), |sprm, operand| {
+        let value = operand.first().copied().unwrap_or(0);
         match sprm {
             // sprmPFInTable, sprmPFInnerTableCell
             0x2416 | 0x244B => props.in_table |= value != 0,
             // sprmPFTtp, sprmPFInnerTtp
             0x2417 | 0x244C => props.row_end |= value != 0,
             // sprmPItap: a table depth above zero
-            0x6649 => props.in_table |= u32_at(grpprl, operand).is_some_and(|depth| depth > 0),
+            0x6649 => props.in_table |= u32_at(operand, 0).is_some_and(|depth| depth > 0),
+            // sprmPIlfo, sprmPIlvl
+            0x460B => props.ilfo = u16_at(operand, 0).unwrap_or(0),
+            0x260A => props.ilvl = value,
             _ => {}
         }
-        at = operand.checked_add(size)?;
-    }
+    });
     Some(props)
+}
+
+fn chpx_props(page: &[u8], at: usize) -> Option<Props> {
+    if at == 0 {
+        return None;
+    }
+    let cb = usize::from(*page.get(at)?);
+    let from = at.checked_add(1)?;
+    let grpprl = page.get(from..from.checked_add(cb)?)?;
+    let mut props = Props::default();
+    // 1 sets the toggle and 0x81 inverts the style's (a plain style has it
+    // off); 0 clears it and 0x80 keeps the style's.
+    let on = |operand: &[u8]| matches!(operand.first(), Some(0x01 | 0x81));
+    for_each_sprm(grpprl, |sprm, operand| match sprm {
+        // sprmCFBold, sprmCFItalic
+        0x0835 => props.bold = on(operand),
+        0x0836 => props.italic = on(operand),
+        _ => {}
+    });
+    Some(props)
+}
+
+// ---------------------------------------------------------------------------
+// Lists (MS-DOC 2.9.150 PlfLst, 2.9.131 PlfLfo, 2.9.149 LVLF)
+// ---------------------------------------------------------------------------
+
+/// Number format of each list level, by list id, and the list id of each
+/// list override.
+#[derive(Default)]
+struct Lists {
+    /// `lsid` of each LFO; a paragraph's `ilfo` is 1-based into it.
+    overrides: Vec<i32>,
+    /// `nfc` of each level, by `lsid`.
+    formats: Vec<(i32, Vec<u8>)>,
+}
+
+/// `nfc` of a bullet, and of a level that shows no number.
+const NFC_BULLET: u8 = 23;
+const NFC_NONE: u8 = 0xFF;
+
+impl Lists {
+    fn new(table: &[u8], (fc_lst, lcb_lst): (u32, u32), (fc_lfo, lcb_lfo): (u32, u32)) -> Self {
+        let mut lists = Self::default();
+        if lcb_lst == 0 || lcb_lfo == 0 {
+            return lists;
+        }
+        let (Some(lst), Some(lfo)) = (index(fc_lst), index(fc_lfo)) else {
+            return lists;
+        };
+        let count = u16_at(table, lst).map_or(0, usize::from);
+        // The LVLs follow the LSTF array, nine per list (one for a simple
+        // list), in list order.
+        let mut lvl = count
+            .saturating_mul(28)
+            .saturating_add(lst)
+            .saturating_add(2);
+        for i in 0..count {
+            let lstf = lst.saturating_add(2).saturating_add(i.saturating_mul(28));
+            let (Some(lsid), Some(&flags)) =
+                (u32_at(table, lstf), table.get(lstf.saturating_add(26)))
+            else {
+                return lists;
+            };
+            let levels = if flags & 0x01 != 0 { 1 } else { 9 };
+            let mut formats = Vec::with_capacity(levels);
+            for _ in 0..levels {
+                let (Some(&nfc), Some(&chpx), Some(&papx)) = (
+                    table.get(lvl.saturating_add(4)),
+                    table.get(lvl.saturating_add(24)),
+                    table.get(lvl.saturating_add(25)),
+                ) else {
+                    return lists;
+                };
+                formats.push(nfc);
+                let xst = lvl
+                    .saturating_add(28)
+                    .saturating_add(usize::from(papx))
+                    .saturating_add(usize::from(chpx));
+                let Some(cch) = u16_at(table, xst) else {
+                    return lists;
+                };
+                lvl = xst
+                    .saturating_add(2)
+                    .saturating_add(usize::from(cch).saturating_mul(2));
+            }
+            lists.formats.push((lsid.cast_signed(), formats));
+        }
+        let overrides = u32_at(table, lfo).and_then(index).unwrap_or(0);
+        for i in 0..overrides.min(table.len() / 16) {
+            let Some(lsid) = u32_at(
+                table,
+                lfo.saturating_add(4).saturating_add(i.saturating_mul(16)),
+            ) else {
+                break;
+            };
+            lists.overrides.push(lsid.cast_signed());
+        }
+        lists
+    }
+
+    fn item(&self, ilfo: u16, ilvl: u8) -> Option<ListItem> {
+        let lsid = *self.overrides.get(usize::from(ilfo).checked_sub(1)?)?;
+        let formats = &self.formats.iter().find(|(id, _)| *id == lsid)?.1;
+        let nfc = *formats.get(usize::from(ilvl)).or_else(|| formats.first())?;
+        (nfc != NFC_NONE).then_some(ListItem {
+            ordered: nfc != NFC_BULLET,
+            level: ilvl.min(8),
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Blocks
 // ---------------------------------------------------------------------------
 
-/// Split the story into paragraphs at each paragraph mark (`\r`), cell or
-/// row mark (`\x07`) and section or page break (`\x0C`), and group table
-/// paragraphs into rows and cells.
-fn blocks(chars: &[StoryChar], papx: &PapxIndex, styles: &[Option<u8>]) -> Vec<Block> {
-    let mut out = Vec::new();
-    let mut text = String::new();
-    // Field nesting: true while inside a field's code (before its separator).
-    let mut fields: Vec<bool> = Vec::new();
-    let mut rows: Vec<Vec<String>> = Vec::new();
-    let mut row: Vec<String> = Vec::new();
-    let mut cell: Vec<String> = Vec::new();
+/// What the main story's characters are read against.
+struct Story<'a> {
+    papx: &'a FkpIndex,
+    chpx: &'a FkpIndex,
+    styles: &'a [Option<u8>],
+    lists: &'a Lists,
+}
 
-    // A row whose end mark is missing still belongs to the table.
-    let flush_table = |out: &mut Vec<Block>, rows: &mut Vec<Vec<String>>, row: &mut Vec<String>| {
-        if !row.is_empty() {
-            rows.push(std::mem::take(row));
-        }
-        if !rows.is_empty() {
-            out.push(Block::Table(std::mem::take(rows)));
-        }
-    };
+impl Story<'_> {
+    /// Split the story into paragraphs at each paragraph mark (`\r`), cell
+    /// or row mark (`\x07`) and section or page break (`\x0C`), and group
+    /// table paragraphs into rows and cells.
+    fn blocks(&self, chars: &[StoryChar]) -> Vec<Block> {
+        let mut out = Vec::new();
+        let mut spans: Vec<Span> = Vec::new();
+        // Field nesting: true while inside a field's code (before its
+        // separator).
+        let mut fields: Vec<bool> = Vec::new();
+        let mut rows: Vec<Vec<String>> = Vec::new();
+        let mut row: Vec<String> = Vec::new();
+        let mut cell: Vec<String> = Vec::new();
 
-    for story in chars {
-        let in_code = fields.last().copied().unwrap_or(false);
-        match story.ch {
-            '\u{13}' => fields.push(true),
-            '\u{14}' => {
-                if let Some(top) = fields.last_mut() {
-                    *top = false;
+        for story in chars {
+            let in_code = fields.last().copied().unwrap_or(false);
+            let text = match story.ch {
+                '\u{13}' => {
+                    fields.push(true);
+                    continue;
                 }
-            }
-            '\u{15}' => {
-                fields.pop();
-            }
-            _ if in_code => {}
-            '\r' | '\u{07}' | '\u{0C}' => {
-                let props = papx.at(story.fc);
-                let paragraph = clean(&std::mem::take(&mut text));
-                if props.in_table || story.ch == '\u{07}' {
-                    if props.row_end {
-                        if !cell.is_empty() {
-                            row.push(cell.join(" "));
-                            cell.clear();
-                        }
-                        rows.push(std::mem::take(&mut row));
-                    } else if story.ch == '\u{07}' {
-                        cell.push(paragraph);
-                        row.push(cell.join(" ").trim().to_string());
-                        cell.clear();
-                    } else {
-                        cell.push(paragraph);
+                '\u{14}' => {
+                    if let Some(top) = fields.last_mut() {
+                        *top = false;
                     }
                     continue;
                 }
-                flush_table(&mut out, &mut rows, &mut row);
-                if paragraph.trim().is_empty() {
+                '\u{15}' => {
+                    fields.pop();
                     continue;
                 }
-                let heading = styles.get(usize::from(props.istd)).copied().flatten();
-                out.push(Block::Paragraph {
-                    heading,
-                    text: paragraph,
-                });
+                _ if in_code => continue,
+                '\r' | '\u{07}' | '\u{0C}' => {
+                    let props = self.papx.at(story.fc);
+                    let taken = std::mem::take(&mut spans);
+                    if props.in_table || story.ch == '\u{07}' {
+                        let text: String = taken.iter().map(|span| span.text.as_str()).collect();
+                        if props.row_end {
+                            if !cell.is_empty() {
+                                row.push(cell.join(" "));
+                                cell.clear();
+                            }
+                            rows.push(std::mem::take(&mut row));
+                        } else if story.ch == '\u{07}' {
+                            cell.push(text.replace('\n', " "));
+                            row.push(cell.join(" ").trim().to_string());
+                            cell.clear();
+                        } else {
+                            cell.push(text.replace('\n', " "));
+                        }
+                        continue;
+                    }
+                    flush_table(&mut out, &mut rows, &mut row);
+                    self.push_paragraph(&mut out, props, taken);
+                    continue;
+                }
+                '\u{0B}' => '\n',
+                '\u{1E}' => '\u{2011}',
+                // A tab would open a code block at a line's start.
+                '\t' => ' ',
+                // Optional hyphen, picture and object anchors, note and
+                // annotation references: nothing in the text.
+                '\u{1F}' | '\u{01}' | '\u{02}' | '\u{05}' | '\u{08}' => continue,
+                ch if ch.is_control() => continue,
+                ch => ch,
+            };
+            let format = self.chpx.at(story.fc);
+            match spans.last_mut() {
+                Some(last) if last.bold == format.bold && last.italic == format.italic => {
+                    last.text.push(text);
+                }
+                _ => spans.push(Span {
+                    text: text.to_string(),
+                    bold: format.bold,
+                    italic: format.italic,
+                }),
             }
-            '\u{0B}' => text.push('\n'),
-            '\u{1E}' => text.push('\u{2011}'),
-            // Optional hyphen, picture and object anchors, note and
-            // annotation references: nothing in the text.
-            '\u{1F}' | '\u{01}' | '\u{02}' | '\u{05}' | '\u{08}' => {}
-            ch if ch.is_control() && ch != '\t' => {}
-            ch => text.push(ch),
         }
+        if !spans.is_empty() {
+            self.push_paragraph(&mut out, Props::default(), spans);
+        }
+        flush_table(&mut out, &mut rows, &mut row);
+        out
     }
-    let paragraph = clean(&text);
-    if !paragraph.trim().is_empty() {
-        out.push(Block::Paragraph {
-            heading: None,
-            text: paragraph,
-        });
+
+    fn push_paragraph(&self, out: &mut Vec<Block>, props: Props, spans: Vec<Span>) {
+        if spans.iter().all(|span| span.text.trim().is_empty()) {
+            return;
+        }
+        let heading = self.styles.get(usize::from(props.istd)).copied().flatten();
+        let list = heading
+            .is_none()
+            .then(|| self.lists.item(props.ilfo, props.ilvl))
+            .flatten();
+        out.push(Block::Paragraph(Paragraph {
+            heading,
+            list,
+            spans,
+        }));
     }
-    flush_table(&mut out, &mut rows, &mut row);
-    out
 }
 
-/// Tabs become spaces (a leading tab would open a code block).
-fn clean(text: &str) -> String {
-    text.replace('\t', " ")
+/// End a table: a row whose end mark is missing still belongs to it.
+fn flush_table(out: &mut Vec<Block>, rows: &mut Vec<Vec<String>>, row: &mut Vec<String>) {
+    if !row.is_empty() {
+        rows.push(std::mem::take(row));
+    }
+    if !rows.is_empty() {
+        out.push(Block::Table(std::mem::take(rows)));
+    }
 }
 
 #[cfg(test)]
@@ -958,14 +1250,24 @@ mod tests {
         assert!(read(OLE_MAGIC).is_err());
     }
 
+    fn plain(text: &str) -> Paragraph {
+        Paragraph {
+            spans: vec![Span {
+                text: text.into(),
+                ..Span::default()
+            }],
+            ..Paragraph::default()
+        }
+    }
+
     #[test]
     fn tables_become_github_tables() {
         let document = LegacyDocument {
             blocks: vec![
-                Block::Paragraph {
+                Block::Paragraph(Paragraph {
                     heading: Some(1),
-                    text: "Fees".into(),
-                },
+                    ..plain("Fees")
+                }),
                 Block::Table(vec![
                     vec!["Item".into(), "Price".into()],
                     vec!["Setup | once".into()],
@@ -981,11 +1283,55 @@ mod tests {
     #[test]
     fn line_breaks_become_hard_breaks() {
         let document = LegacyDocument {
-            blocks: vec![Block::Paragraph {
-                heading: None,
-                text: "one\ntwo".into(),
-            }],
+            blocks: vec![Block::Paragraph(plain("one\ntwo"))],
         };
         assert_eq!(to_markdown(&document), "one\\\ntwo\n\n");
+    }
+
+    #[test]
+    fn emphasis_markers_hug_the_text_and_lists_get_markers() {
+        let spans = vec![
+            Span {
+                text: "Made by ".into(),
+                ..Span::default()
+            },
+            Span {
+                text: "Acme Corp ".into(),
+                bold: true,
+                italic: false,
+            },
+            Span {
+                text: "and".into(),
+                ..Span::default()
+            },
+            Span {
+                text: " Beta*".into(),
+                bold: true,
+                italic: true,
+            },
+        ];
+        assert_eq!(
+            render_spans(&spans),
+            "Made by **Acme Corp** and ***Beta\\****"
+        );
+        let document = LegacyDocument {
+            blocks: vec![
+                Block::Paragraph(Paragraph {
+                    list: Some(ListItem {
+                        ordered: false,
+                        level: 0,
+                    }),
+                    ..plain("First")
+                }),
+                Block::Paragraph(Paragraph {
+                    list: Some(ListItem {
+                        ordered: true,
+                        level: 1,
+                    }),
+                    ..plain("Nested")
+                }),
+            ],
+        };
+        assert_eq!(to_markdown(&document), "- First\n\n   1. Nested\n\n");
     }
 }

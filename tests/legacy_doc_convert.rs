@@ -20,34 +20,80 @@ fn fixture() -> Vec<u8> {
     .unwrap()
 }
 
+/// Each block as one line: `H1 text`, `- text` / `1. text` with two
+/// spaces per level, `P text`, `T a|b;c|d`.
+fn outline(blocks: &[Block]) -> Vec<String> {
+    blocks
+        .iter()
+        .map(|block| match block {
+            Block::Paragraph(p) => match (p.heading, p.list) {
+                (Some(level), _) => format!("H{level} {}", p.text()),
+                (None, Some(item)) => format!(
+                    "{}{} {}",
+                    "  ".repeat(usize::from(item.level)),
+                    if item.ordered { "1." } else { "-" },
+                    p.text()
+                ),
+                (None, None) => format!("P {}", p.text()),
+            },
+            Block::Table(rows) => format!(
+                "T {}",
+                rows.iter()
+                    .map(|r| r.join("|"))
+                    .collect::<Vec<_>>()
+                    .join(";")
+            ),
+        })
+        .collect()
+}
+
 #[test]
-fn headings_paragraphs_and_the_table_are_read_in_order() {
+fn headings_lists_paragraphs_and_the_table_are_read_in_order() {
     let document = read(&fixture()).unwrap();
-    let heading = |level: u8, text: &str| Block::Paragraph {
-        heading: Some(level),
-        text: text.into(),
-    };
-    let plain = |text: &str| Block::Paragraph {
-        heading: None,
-        text: text.into(),
-    };
     assert_eq!(
-        document.blocks,
-        vec![
-            heading(1, "Services Agreement"),
-            plain("This Agreement is made between Acme Corp and Beta LLC."),
-            heading(2, "1. Fees"),
-            plain("The fee is $1,000 per month [net 30] and #2 applies; use a_b * c."),
-            Block::Table(vec![
-                vec!["Item".into(), "Price".into(), "Notes".into()],
-                vec!["Setup".into(), "500".into(), "one-off".into()],
-                vec!["Support".into(), "100".into(), "monthly".into()],
-            ]),
-            heading(2, "2. Term"),
-            plain("First bullet"),
-            plain("Second bullet"),
-            plain("The term is twelve months."),
+        outline(&document.blocks),
+        [
+            "H1 Services Agreement",
+            "P This Agreement is made between Acme Corp and Beta LLC.",
+            "H2 1. Fees",
+            "P The fee is $1,000 per month [net 30] and #2 applies; use a_b * c.",
+            "T Item|Price|Notes;Setup|500|one-off;Support|100|monthly",
+            "H2 2. Term",
+            "- First bullet",
+            "  - Nested bullet",
+            "- Second bullet",
+            "1. Notice in writing",
+            "1. Cure within ten days",
+            "P The term is twelve months.",
         ]
+    );
+}
+
+#[test]
+fn bold_and_italic_runs_are_kept() {
+    let document = read(&fixture()).unwrap();
+    let Block::Paragraph(intro) = &document.blocks[1] else {
+        panic!("{:?}", document.blocks[1]);
+    };
+    let formatted: Vec<(&str, bool, bool)> = intro
+        .spans
+        .iter()
+        .map(|s| (s.text.as_str(), s.bold, s.italic))
+        .collect();
+    assert_eq!(
+        formatted,
+        [
+            ("This Agreement is made between ", false, false),
+            ("Acme Corp", true, false),
+            (" and ", false, false),
+            ("Beta LLC", false, true),
+            (".", false, false),
+        ]
+    );
+    let markdown = doc_to_markdown(&fixture()).unwrap();
+    assert!(
+        markdown.contains("Cure within ***ten*** days"),
+        "{markdown}"
     );
 }
 

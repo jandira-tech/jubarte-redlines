@@ -14,6 +14,10 @@ The fee is $1,000 per month [net 30] and #2 applies; use a_b * c.
 ## 2. Term
 
 - First bullet
+  - Nested bullet
 - Second bullet
+
+1. Notice in writing
+2. Cure within ***ten*** days
 
 The term is twelve months.
