@@ -1,0 +1,85 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+name: adoption
+
+# The adoption pages (docs/adoption/) make one claim per row about what
+# jubarte replaces. This workflow keeps them honest: tests/adoption.rs runs
+# every row's jubarte command, and each examples/adoption/*/run.sh
+# regenerates its side-by-side outputs. Replaced tools (soffice, pdftoppm,
+# pandoc, python-docx, bun) run when the runner has them and are skipped
+# otherwise; the jubarte side always runs. Actions are pinned as in ci.yml.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "src/**"
+      - "tests/adoption.rs"
+      - "tests/legacy_doc_convert.rs"
+      - "tests/fixtures/legacy/**"
+      - "examples/adoption/**"
+      - "docs/adoption/**"
+      - ".github/workflows/adoption.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  claims:
+    name: adoption claims (tests/adoption.rs)
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: one test per adoption-page row, and the .doc reader
+        run: cargo test --release --test adoption --test legacy_doc_convert --test legacy_doc
+
+  examples:
+    name: side-by-side examples (examples/adoption)
+    runs-on: self-hosted
+    needs: claims
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - run: cargo build --release --bin jubarte
+      - name: which replaced tools this runner has
+        run: |
+          for tool in soffice pdftoppm pdfinfo pdffonts pandoc bun uvx; do
+            if command -v "$tool" >/dev/null; then echo "$tool: $(command -v "$tool")"; else echo "$tool: absent (its side is skipped)"; fi
+          done
+          python3 -c 'import docx; print("python-docx", docx.__version__)' || echo "python-docx: absent (its side is skipped)"
+      - name: run every example
+        env:
+          JUBARTE: ${{ github.workspace }}/target/release/jubarte
+        run: |
+          failed=0
+          for script in examples/adoption/*/run.sh; do
+            echo "::group::$script"
+            if bash "$script"; then echo "ok: $script"; else echo "::error file=$script::exited $?"; failed=1; fi
+            echo "::endgroup::"
+          done
+          exit "$failed"
+      - name: every folder still has its README and jubarte output
+        run: |
+          missing=0
+          for dir in examples/adoption/*/; do
+            [ -f "$dir/README.md" ] || { echo "::error::$dir has no README.md"; missing=1; }
+            [ -f "$dir/run.sh" ] || { echo "::error::$dir has no run.sh"; missing=1; }
+            ls "$dir" | grep -qi jubarte || { echo "::error::$dir has no jubarte output"; missing=1; }
+          done
+          exit "$missing"

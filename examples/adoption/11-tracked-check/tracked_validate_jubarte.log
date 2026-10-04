@@ -1,0 +1,3 @@
+no findings
+validate redline exit=0
+validate redline --json exit=0

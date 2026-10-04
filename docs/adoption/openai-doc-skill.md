@@ -32,30 +32,35 @@ error, `2` usage error, `3` edit plan refused (nothing written).
 | Today | jubarte | Status |
 |---|---|---|
 | `soffice` + `pdftoppm` / `render_docx.py` | `jubarte convert file.docx --png --dpi 100` writes `file-page-NN.png` from jubarte's own layout engine: one binary or one wheel, no system packages. `--report pages.json` gives `page_count`, each page's text and how each requested font resolved. | released |
-| Page ranges and a timeout (#38313) | `jubarte convert file.docx --png --pages 1-3,7` rasterizes only those pages (layout still runs over the whole document). There is no timeout flag; wrap the call in your sandbox's own timeout. | released |
+| Page ranges and a timeout (#38313) | `jubarte convert file.docx --png --pages 1-3,7` rasterizes only those pages (layout still runs over the whole document); a page past the end exits 1 where `pdftoppm -l` clamps. `--timeout 60` exits 124 once 60 seconds pass. | released (`--pages`); main (`--timeout`) |
 | "Did my edit change the layout?" | `jubarte diff-render before.docx after.docx --out-dir d` lays out and rasterizes both at one DPI, writes the changed pages with overlays and `diff.json`, and exits `5` when any page differs (`0` when none does). | released |
-| "Did a font fall back?" | the font report already lists `requested`, `step`, `physical` per face; a `substituted` flag and `--fail-on-substitution` make it one check. | released (report); pending: S9, `adopt/s1-s9-occurrence-fonts` (flag) |
-| python-docx text extraction | `jubarte text file.docx` (Markdown with `[body:p:N]` ids, headers, footers and notes as their own stories) or `jubarte inspect file.docx --json` | released |
+| "Did a font fall back?" | the font report lists `requested`, `step`, `physical` and `substituted` per face; `--fail-on-substitution` exits 4 with every output still written. | released; main (a missing family drawn with a look-alike, such as `Fake Serif Pro` on Times, now counts as substituted) |
+| python-docx text extraction | `jubarte text file.docx` (Markdown with `[body:p:N]` ids, headers, footers and notes as their own stories), `jubarte inspect file.docx --json`, or `jubarte convert file.docx -t md` (plain Markdown with `<!-- page N of M -->` before the first block on each page) | released; main (page markers) |
 | python-docx edits | `jubarte edit file.docx --plan plan.json --out-dir review --png`: Word tracked changes and comments, a clean copy, a per-operation report and the rendered pages in one call. | released |
 | Editing a document that already carries the other side's tracked changes | `"existing_revisions": "keep"` in the plan: their changes stay tracked under their name, and yours become new revisions beside them under the plan's `author`. Without the field, such a document is refused with `EXISTING_REVISIONS`; `accept` or `reject` flatten theirs first. | released |
-| python-docx tables and lists | `insert_table` (`rows`, `header_row`, `widths_dxa`, `style`) and `list` (bulleted, decimal or lower-letter, `level`, `restart`) plan operations, both tracked in the redline | released |
+| python-docx tables and lists | `insert_table` (`rows`, `header_row`, `widths_dxa`, `style`) and `list` (`kind_of_list`: `bullet`, `decimal` or `lower_letter`; `level`, `restart`) plan operations, both tracked in the redline | released |
 | python-docx run formatting, footnotes, images, page setup | structural plan operations | released |
 | Comparing two versions | `jubarte a.docx b.docx -o redline.docx --author "Name"` | released |
 | Accept or reject | `jubarte accept FILE -o OUT` / `reject`, all at once or per change (`--id`, `--author`, `--kind`) | released |
-| Calling it as tools instead of a command line | `uvx --from 'jubarte-redlines[mcp]' jubarte-mcp --root .` serves text, inspect, edit, render, compare, changes, accept and reject as MCP tools, every path confined to `--root`; see [mcp.md](mcp.md). | released |
+| Legacy `.doc` (LibreOffice in the install section) | `jubarte convert old.doc` writes `old.docx`: text, headings, lists, bold, italic, tables ([plans.md](plans.md) §1 for the rest) | main |
+| Calling it as tools instead of a command line | `uvx --from 'jubarte-redlines[mcp]' jubarte-mcp --root .` serves `docx_text`, `docx_inspect`, `docx_edit`, `docx_render`, `docx_compare`, `docx_changes`, `docx_accept`, `docx_reject` and more as MCP tools, every path confined to `--root`; see [mcp.md](mcp.md). | released |
 
 ## 3. What you lose, or keep
 
 - **python-docx for building documents from code.** jubarte edits existing
   documents and creates them from Markdown (released, 0.11.0); tables,
   lists, images, footnotes, run formatting and page setup are released plan
-  operations. A skill that builds a document object by object keeps
-  python-docx for that step and can still render and check the result with
-  jubarte.
+  operations. A plan cannot yet address paragraphs it inserted itself
+  ([plans.md](plans.md) §3). A skill that builds a document object by
+  object keeps python-docx for that step and can still render and check
+  the result with jubarte.
 - **Rendering identical to LibreOffice's.** jubarte targets Word's layout,
   not LibreOffice's. Page counts can differ by one page from Word on dense
-  documents; jubarte's skill says so to the agent.
-- **Legacy `.doc`.** Not read; keep LibreOffice for that conversion.
+  documents; jubarte's skill says so to the agent. Matching LibreOffice's
+  layout is not a goal ([plans.md](plans.md) §4).
+- **Legacy `.doc`, beyond the basics.** `jubarte convert old.doc` reads
+  text, headings, lists, bold, italic and tables (main); keep LibreOffice
+  for fonts, headers, footers, notes, pictures and page setup.
 - **License.** jubarte is AGPL-3.0-only and runs as a separate program your
   skill calls.
 
@@ -67,5 +72,8 @@ uv run --no-project --with jubarte-redlines python -m jubarte_redlines convert y
 uv run --no-project --with jubarte-redlines python -m jubarte_redlines text your.docx
 ```
 
-The install matrix, including what does not install yet (no Windows wheel,
-glibc 2.34 floor), is in [install-matrix.md](install-matrix.md).
+Every row above has a side-by-side folder in
+[`examples/adoption/`](../../examples/adoption/) and a test in
+`tests/adoption.rs`. The install matrix, including what does not install
+yet (no Windows arm64 build, glibc 2.28 floor), is in
+[install-matrix.md](install-matrix.md).

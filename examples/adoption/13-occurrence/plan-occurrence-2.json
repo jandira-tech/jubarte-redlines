@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "source_sha256": "309b087fb8523b8f08e200ad307194e550907b2ab3f98dcdf8392b5566de931a",
+  "author": "Reviewer",
+  "date": "2026-10-04T12:00:00Z",
+  "operations": [
+    {
+      "id": "second-hit",
+      "kind": "replace",
+      "paragraph": { "starts_with": "The Advisor shall store the Records" },
+      "find": "The Advisor shall",
+      "replacement": "The Custodian shall",
+      "occurrence": 2
+    }
+  ]
+}

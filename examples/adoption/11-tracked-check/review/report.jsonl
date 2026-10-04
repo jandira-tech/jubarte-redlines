@@ -1,0 +1,6 @@
+{"author":"Dana Reyes","base_sha256":"ffb8f56e7082864c297c3331004780bda981bfc6f8467de80bef87af49ce7f8d","date":"2026-03-02T10:00:00Z","ev":"load","existing_revisions":"refuse","guarded":true,"paras":8,"sha256":"ffb8f56e7082864c297c3331004780bda981bfc6f8467de80bef87af49ce7f8d"}
+{"at":"body:p:5","ctx":"monthly. The fee is {nine hundred→one thousand one hundred} USD per day, payabl","ev":"op","i":1,"id":"E1-fee","matches":1,"op":"replace","status":"ok"}
+{"at":"body:p:5","ctx":"et thirty (30) days.{+ Late payments accrue interest at one percent per month.} The pilot phase is ","ev":"op","i":2,"id":"E2-interest","matches":1,"op":"insert","status":"ok"}
+{"at":"body:p:5","ctx":"et thirty (30) days.{- The pilot phase is billed at half rate.}","ev":"op","i":3,"id":"E3-pilot","matches":1,"op":"delete","status":"ok"}
+{"dir":"review","ev":"save","outputs":[{"bytes":4250,"f":"clean.docx","sha256":"cab6567acedfbec8a460f85aa7f71418d2e7160e0965f5fd7393bd0702b88023"},{"bytes":8705,"f":"redline.docx","sha256":"ad30906818b4e2d445f56b21518880765d8c7262aaf85e3837e1732479d10f70"},{"bytes":326,"f":"patch.diff","sha256":"0042f88d491dc43c4eaec34722e9578b86adaaf1ccd6b12a0167fe2f4e826492"}]}
+{"comments":{"added":0},"ev":"summary","ops":{"failed":0,"ok":3},"paras":{"d":0,"from":8,"to":8},"revs":{"deleted":3,"format_changed":0,"inserted":3,"moved":0,"total":6},"status":"ok"}

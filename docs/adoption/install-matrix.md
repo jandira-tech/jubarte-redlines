@@ -27,9 +27,10 @@ Gaps a provider's sandbox may still hit:
 
 - **glibc 2.28 floor.** Debian 10 or older, RHEL 7 and Amazon Linux 2 have
   an older glibc and fall back to the sdist build, which needs a Rust
-  toolchain.
+  toolchain. Plan: static musl binaries, then a `manylinux2014` wheel
+  ([plans.md](plans.md) §6).
 - **No Windows arm64 wheel or binary.** Use `cargo install jubarte-redlines`
-  or the sdist there.
+  or the sdist there. Plan: [plans.md](plans.md) §7.
 
 ## Check it yourself
 

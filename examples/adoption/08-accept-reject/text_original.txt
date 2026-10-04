@@ -1,0 +1,15 @@
+[body:p:0 Heading1] Consulting Services Letter
+
+[body:p:1] This letter confirms the consulting engagement between Jandira Technologies, LLC ("the Company") and Northwind Traders Ltd. (the "Client"), starting on 2 March 2026.
+
+[body:p:2 Heading2] Services
+
+[body:p:3] The Company will provide document-automation consulting up to ten days per month, remotely, with one on-site day per quarter.
+
+[body:p:4 Heading2] Fees
+
+[body:p:5] The fee is 900 USD per day, invoiced monthly, payable net thirty (30) days.
+
+[body:p:6 Heading2] Term
+
+[body:p:7] Either party may end this letter on twenty days' written notice to the other address listed below.

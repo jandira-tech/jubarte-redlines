@@ -1,0 +1,7 @@
+{"id":"body:rev:1","kind":"insertion","target":"text","author":"Counterparty","date":"2026-10-01T09:00:00Z","text":"thirty"}
+{"id":"body:rev:2","kind":"deletion","target":"text","author":"Counterparty","date":"2026-10-01T09:00:00Z","text":"forty-five"}
+{"id":"body:rev:3","kind":"insertion","target":"text","author":"Counterparty","date":"2026-10-01T09:00:00Z","text":"1.5"}
+{"id":"body:rev:4","kind":"deletion","target":"text","author":"Counterparty","date":"2026-10-01T09:00:00Z","text":"one"}
+{"id":"body:rev:5","kind":"insertion","target":"text","author":"Us","date":"2026-10-04T12:00:00Z","text":", compounded daily"}
+{"id":"body:rev:6","kind":"deletion","target":"text","author":"Us","date":"2026-10-04T12:00:00Z","text":"ninety days"}
+{"id":"body:rev:7","kind":"insertion","target":"text","author":"Us","date":"2026-10-04T12:00:00Z","text":"sixty days"}

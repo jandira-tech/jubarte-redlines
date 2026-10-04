@@ -1,0 +1,10 @@
+--- a/input.docx
++++ b/input.docx	Reviewer	2026-10-04T12:00:00Z
+@@ [body:p:11] @@
+|{+Step+}|{+Owner+}|{+Week+}|
+
+@@ [body:p:14] @@
+|{+Laptop and accounts+}|{+IT+}|{+1+}|
+
+@@ [body:p:16] @@
+|{+Team introductions+}|{+Manager+}|{+1+}|
