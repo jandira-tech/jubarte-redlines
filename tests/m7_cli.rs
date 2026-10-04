@@ -142,6 +142,26 @@ fn help_and_version_exit_zero() {
     }
 }
 
+/// Windows gives the main thread a 1 MiB stack where Linux and macOS give
+/// 8: the debug build's command dispatch overflowed it before it read an
+/// argument (exit 0xC00000FD on every CLI test of the Windows CI). The same
+/// limit set here must leave the CLI working.
+#[cfg(unix)]
+#[test]
+fn the_cli_runs_on_a_one_megabyte_main_stack() {
+    let out = Command::new("/bin/sh")
+        .args(["-c", "ulimit -s 1024 && exec \"$0\" --help", BIN])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "--help under a 1 MiB main stack: {:?} {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.stdout.is_empty());
+}
+
 // --- gems from recipe PR #60 (revisions subcommand) ---
 
 /// Produce a redline .docx via the plain (subcommand-less) compare surface,

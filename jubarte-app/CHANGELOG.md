@@ -8,6 +8,31 @@ features bump the **minor**, fixes bump the **patch**).
 See [README → Versioning & release](README.md#versioning--release) for how to cut
 a new version.
 
+## [0.11.2] — 2026-10-03
+
+### Changed
+- **Engine upgraded to jubarte-redlines 0.11.2**:
+  - **Redlines follow Word's own verdict.** A changed paragraph is marked
+    word by word when what the two versions share (the kept words with
+    their blanks, plus the paragraph mark) reaches 15 % of the longer
+    version, and replaced whole under that, the rule measured in 1,178 Word
+    comparisons. A replaced hyperlink shows its insertion first, as Word
+    writes it.
+  - **Export PDF and conversion follow Word's PDFs more closely.** Comments
+    print as Word's balloons, in the author's tint with the range bracketed.
+    Headers (a page break inside one, a flat connector), tables (rows inside
+    content controls, skipped grid columns, double borders), footnotes,
+    justified lines (including WordPerfect-style justification) and embedded
+    fonts follow rules measured in Word.
+    On the release's two 600-item samples, scored against Word's own output: redlines mean 76.71 (Docxodus 69.24) with no failed pair, PDFs mean 78.77 (LibreOffice 54.06) with no failed document.
+- **The interface is unchanged from 0.11.1.** Nothing in the app's frontend
+  (`src/`) or its Tauri shell (`src-tauri/`) moved except the four version
+  strings (`package.json`, `src-tauri/tauri.conf.json`,
+  `src-tauri/Cargo.toml`, the app bar in `src/index.html`) and the engine
+  pin in `src-tauri/Cargo.lock`: `git diff 65efbd6 -- src src-tauri` (the
+  0.11.1 release commit) shows only those lines. Every difference a user
+  sees comes from the engine.
+
 ## [0.11.0] — 2026-10-03
 
 ### Changed

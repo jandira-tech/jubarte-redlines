@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# What follows a jubarte release (scripts/release.sh runs this as its step 12):
+# What follows a jubarte release (scripts/release.sh runs this as its step 13):
 #
 #   scripts/release_downstream.sh 0.10.2            jubarte.pro, then the app's commit
 #   scripts/release_downstream.sh 0.10.2 --app      also upload the Mac App Store build
@@ -22,8 +22,10 @@
 #      uploads the build. Apple processes it for a while; the commands that
 #      attach it to a new App Store version are printed, never run, and
 #      Submit for Review stays a person's click.
-#   4. The benchmark — prints the neurotic_docx_bench command that scores
-#      this release, and the site command that publishes its figures.
+#   4. The benchmark — prints the neurotic_docx_bench flow that writes the
+#      six release_info/ files the NEXT release requires (they must exist
+#      before scripts/release.sh runs), and the site command that
+#      publishes the figures.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -67,7 +69,11 @@ else
     git add -- $changed
     git commit -q -m "chore(site): jubarte.pro on $TAG" \
       -m "Download page and demo engine from the $TAG release (jubarte-site/scripts/release.sh engine $VER)."
-    git push -q origin HEAD:main
+    # shellcheck source=scripts/push_main.sh
+    . scripts/push_main.sh
+    push_main "chore/site-$TAG" "chore(site): jubarte.pro on $TAG" \
+      "Download page and demo engine from the $TAG release (jubarte-site/scripts/release.sh engine $VER)." \
+      || die "the site commit did not reach main — jubarte.pro is deployed; push $(git rev-parse --short HEAD) through a pull request"
     step "committed and pushed $(git rev-parse --short HEAD): $(printf '%s' "$changed" | tr '\n' ' ')"
   fi
 fi
@@ -115,8 +121,13 @@ echo "      Submit for Review in App Store Connect is a person's click."
 # =============================================================================
 say "Benchmark"
 # =============================================================================
-echo "  Score $VER (hours; the redline stage needs Microsoft Word):"
-echo "      (cd ../neurotic_docx_bench && scripts/release_jubarte.py $VER --plan)"
-echo "      (cd ../neurotic_docx_bench && scripts/release_jubarte.py $VER)"
-echo "  Then append its RESULTS.md figures to $APP_DIR/data/facts.jsonl (bench.*, with $APP_DIR/scripts/facts.py) and publish them:"
+echo "  release_info/ comes FIRST: scripts/release.sh refuses a release whose"
+echo "  six files are missing (its step 3), so score a release candidate built"
+echo "  from the release commit (hours; the export stages need Microsoft Word):"
+echo "      (cd ../neurotic_docx_bench && uv run python -m neurotic_docx_bench.jubarte_release_info $VER --engine-dir \"\$(cd .. && pwd)/jubarte-redlines\" --binary <candidate> --plan)"
+echo "      (cd ../neurotic_docx_bench && uv run python -m neurotic_docx_bench.jubarte_release_info $VER --engine-dir \"\$(cd .. && pwd)/jubarte-redlines\" --binary <candidate>)"
+echo "  After the GitHub release exists, the same command without --binary"
+echo "  re-runs the flow on the release's own binary. The full-corpus run that"
+echo "  feeds RESULTS.md is still scripts/release_jubarte.py $VER."
+echo "  Then append the sample figures to $APP_DIR/data/facts.jsonl (bench.*, with $APP_DIR/scripts/facts.py, values drafted in release_info/website_data_${VER}_*.jsonl) and publish them:"
 echo "      (cd $SITE_DIR && scripts/release.sh bench $VER --redline-tool jubarte-$VER)"

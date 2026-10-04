@@ -15,9 +15,254 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-10-03
+
+### Added
+
+- `jubarte convert` paints Word's comment balloons in the markup pane. Word's
+  Save as PDF draws each comment as "Commented [initials n]: " bold plus the
+  comment's text, in a rounded box filled with the author's tint and stroked
+  in the author's ink, a dotted connector from the end of the commented
+  range, and the range itself tinted. jubarte left the pane empty and wrote
+  a non-printed sticky note, which the raster scorer painted as an icon over
+  the text. The painter (`paint_comment_balloons`) is built from the geometry
+  of all 466 balloons of 152 corpus documents: chrome in page units (box
+  16.67pt right of the pane, 3.4pt short of its right edge, inset 3.4,
+  stroke 0.358, connector 0.179 dotted, stack gap 0.717, elbow 4.6 under the
+  box top), text at the Balloon Text style's size (9pt unless the document
+  sets it), first line 2.67 under the box top, pitch 1.236 × size. Word mode
+  writes no comment annotation, as Word does; the other revision styles keep
+  the sticky note, now bound where its range ends and anchored at the run
+  end when a paragraph's close binds it. Two bugs fell out: a note on a run
+  the line builder merged into its predecessor was dropped, and notes were
+  bound at the range start instead of the end. Author colours cannot be
+  copied (the same author gets up to six palette colours across the
+  oracle's documents); the order-of-appearance palette stays. On the 537
+  corpus documents with comments: mean 71.98 → 75.35, ≥90 from 25 to 58.
+- A resolved comment (`w15:done` in commentsExtended.xml) paints faded, as
+  Word paints it: text in Word's BFBFBF grey, the box stroked in the
+  author's tint and filled 16 % of it toward white, the commented words under
+  the pale fill. A `w:commentRangeStart` at body level opens the range for
+  the paragraphs that follow. Balloon numbers count through the document
+  whatever the author, and a reply takes its thread's number with "R" and its
+  rank, the parent counting as 1.
+- An empty comment range gets its balloon: a range end with its own start
+  before it in the paragraph is live (an empty range followed by its
+  reference is a reference alone), where the live-end rule read it dead. The
+  151-document balloon survey is exact at 151/151, and a paragraph holding
+  only the reference mark gets an empty strut run to carry the note.
+- A commented range gets Word's brackets at its ends: a 0.179pt stroke down
+  each end of the tinted text with 0.18pt serifs pointing in, the dotted
+  connector leaving the closing one.
+
+### Changed
+
+- Compare, Word mode: a changed paragraph is marked word by word or replaced
+  whole by Word's own rule. The kept span is the characters of the words the
+  alignment keeps, with the blank inside each kept run and the one on either
+  side of it, plus the paragraph mark on both sides; at 0.15 or more of the
+  longer side's characters the paragraph is word-level, under it the words
+  are replaced, and the rule runs again on each gap between the anchors it
+  keeps (1178 single-paragraph Word probes of 6 to 4800 words: wave7 and
+  edge1 1.000, paragraphs of 40 words or fewer 0.992, short1 0.988, asym1
+  0.983, denom1 0.924). The engine used to void each common run shorter than
+  2 % of the window, which replaced paragraphs whose kept runs are short:
+  on 807 Word-labelled paragraphs its verdict agreed with Word's 41 % of the
+  time, now 89 %. Only whole paragraphs are judged; a fragment the run
+  resolvers cut out of a multi-paragraph region keeps their arrangement. A
+  field's code counts as text, so a field whose code is kept stays paired
+  at either end of a replaced window. `weighted_lcs_pairs` (Hirschberg,
+  linear space) returns the alignment and `kept_span` sums it. On a
+  2000-pair control scored against Word's redlines: +0.09 mean, interval
+  above zero.
+
 ### Fixed
 
-- docs/javascript.md lists every function and class jubarte-wasm 0.11.0 ships; the release reference was generated from the 0.10.1 typings. scripts/release.sh now regenerates it after rebuilding the npm package, and checks PyPI on the project listing, which a cached 404 cannot hide.
+- Compare:
+  - A wholly deleted hyperlink, or a deletion holding a complete HYPERLINK
+    field, swaps behind the insertion that replaces it, as Word writes a
+    replacement (insertion first). The writer's swap only saw a bare `w:del`
+    followed by `w:ins` (corpus a098bd5ad9, the one real loss of the
+    2000-pair control, −15.3). A wrapper holding part of a field stays put.
+  - The resolver's replaced branch emits the deletion first. Ahead of
+    content that is itself a tracked insertion on the revised side (a table
+    pasted with Track Changes on, after a cell replaced across a hyperlink
+    field) the insertion-first order made the region re-streamer delete and
+    re-insert that content whole: 101 replaced paragraphs Word keeps in the
+    corpus pair docx_lots_of_comments_addition. The written order is still
+    Word's.
+- Package:
+  - Relationships and content types written with explicit closes are read: a
+    `<Relationship …></Relationship>` (and a `Default`/`Override` in
+    `[Content_Types].xml`) was skipped, and with it the part it named.
+    Corpus 37c6c62345 lost its footer and scored 49. `PartFs::open` re-reads
+    every `.rels` and the content types with each explicit close folded in.
+    1 of 2925 corpus documents; Word reads both forms alike.
+- Tables, grids and borders:
+  - A row a content control wraps is painted, as Word paints it: a `w:tr`
+    inside `w:sdt` (a repeating section's rows) was skipped on purpose to
+    hold a page count the packing has since caught up with;
+    `wrapped_children(dom, table, "tr")` gathers rows through content
+    controls and custom XML alike. 38 of 2925 corpus documents carry row- or
+    cell-level controls; the five in the 300-document sample averaged 64
+    against 83.
+  - A short row's cell wider than its grid columns spans the columns its
+    width covers: `stretch_stale_spans` extends a lone wide `tcW` cell over
+    the following columns (25f1d311bd's tcW 10080 over a four-column grid,
+    no gridSpan, was given the first 84pt column, wrapping its paragraph
+    into 15 lines and a page more than Word). 91 corpus documents carry such
+    a row.
+  - A row's `gridBefore`/`gridAfter` skip is as wide as the grid columns it
+    leaves empty, not a cell's margins: ed36b607e8's 5-twip first column
+    keeps Word's 0.25pt, where a margin-fitted placeholder pushed the row's
+    text 10.5pt in and wrapped its lines a word short. A placeholder is no
+    cell: it sets no minimum in the column fitters, whatever it spans, and no
+    preference for its column.
+  - A double cell or table border takes room for three strokes, two lines
+    and the gap between them: `parse_border_edge` sizes a double `sz` at
+    3 × sz/8 (Word probes: a single sz=6 top border puts the first row's
+    text 0.72 under its no-border place, a double 2.16 to 2.25, a single
+    sz=24 2.88), and row pitch and the split rule follow. The painter still
+    fills that room as one band where Word strokes two lines. 4910ce2060's
+    double-rimmed rows sat 1.5pt high.
+- Lists and tabs:
+  - A deeper list item ahead of its parent level uses up the parent's start:
+    ed36b607e8's list (lvl 0 start 3) opens with 3.1 3.2 3.3 and Word
+    numbers the first lvl-0 paragraph after them 4; the engine gave it 3 and
+    every later label ran one behind.
+  - A numbering label tabs to the first typed stop past it inside its
+    hanging gutter: a custom left stop the paragraph sets, or, failing one,
+    the hanging indent; a `num` stop is Word's own, re-derived from the
+    level, and does not count (`TabStop.numbering`). f23fc5de2e's text
+    starts 14.2pt in as Word's does, not 35.45; 36 corpus documents, 217
+    paragraphs.
+  - A right-aligned list label (`lvlJc=right`, ISO `end`) ends on the
+    paragraph's first-line indent, left less hanging, running into the
+    margin when the label is wider, and the suffix tab takes the text on
+    from there. Six positions measured in Word's PDFs; the four tests that
+    pinned the old tuck now assert Word's.
+  - A right stop that cannot hold the text after the last tab wraps the
+    paragraph: the TOC right-tab path steps aside when the suffix is wider
+    than the room up to the stop, and the ordinary wrapper breaks the lines
+    (7c02cf95f3's definitions, 55.8 → 83.6); long TOC entries whose head
+    overruns the stop on one line keep it.
+- Lines, spacing and justification:
+  - Under `doNotUseHTMLParagraphAutoSpacing` Word ignores
+    `beforeAutospacing`/`afterAutospacing` and lays the explicit values out
+    (f23fc5de2e's rows pitch 23.8pt, not 41.8); the flag's other effect,
+    summing after and before instead of taking the larger, stays. Five
+    corpus documents.
+  - The justified squeeze keeps a justified line's last word while the
+    overflow is within a quarter of the line's total space width and within
+    0.345 × (last word + one space). Four rounds of Word probes, 741
+    single-paragraph documents, 23 boundaries at 0.2pt steps; the old
+    (word + 2 spaces) / 3 cap violated all 23.
+  - `w:wpJustification` (Word's "do full justification like WordPerfect 6.x"
+    option, the compat-14 set Texas's statutes export): a justified line
+    keeps its last word while its natural width is within 1.04 of the
+    measure, a monospaced line compressed uniformly, a proportional one
+    losing a quarter of each space first (42 Word probes). 041ec70002 runs
+    Word's 35 pages (was 37) at 84.1 (was 51.8); seven corpus documents
+    carry the flag.
+- Fonts:
+  - An `rPrDefault` that names no face is the OOXML default, Times New
+    Roman, whatever theme part the package carries; a missing one keeps
+    Word's built-in Aptos. A `<w:gridCol/>` without a width is a grid Word
+    never wrote: the columns are content-fitted, and the autofit maximum
+    leaves out a line's trailing blanks, which hang past the cell
+    (0edc50c464, cbb3bab843, 6d510ca476).
+  - An installed family wins over the document's embedded copy:
+    `load_embedded_fonts` leaves out a font-table family the catalogue
+    paints from an installed face (`catalogue_paints_family`). A machine
+    without the family paints the embedded copy, and families the catalogue
+    does not paint keep their embedded faces. 8c11ad13af 50.7 →
+    92.1, its every Times line having stood 0.65pt short; 75 corpus
+    documents embed fonts.
+  - A Symbol or Wingdings character paints where those faces are absent.
+    Word writes its list bullets as U+F0B7 in Symbol and U+F0A7 in
+    Wingdings; a text face standing in for them (the WASM build, a host
+    without Word's fonts) has a glyph for neither, and the bullet painted
+    nothing. The stand-in paints the Unicode character behind the code:
+    Adobe's Symbol encoding in the Symbol slot (• for F0B7, α for F061),
+    and for Wingdings' bullets, boxes, arrows and ticks the nearest shape
+    the face has (`Face::symbol_stand_in`). The PDF's text reads the same
+    character back. A face that has the code keeps its own glyph, so a
+    machine with Word's fonts converts as before. Found by the new binding
+    parity check: 7 of 12 sampled redlines lost bullets in the WASM PDF.
+  - The font report lists only the fonts the document asks for. The
+    comment balloons' label face (Times New Roman bold) and the default face
+    were resolved for every document, comments or not, so a document asking
+    for Carlito alone reported Calibri too and `--fail-on-substitution`
+    failed on a machine without Calibri. The balloon faces are resolved only
+    when a balloon is painted.
+- Command line:
+  - The CLI runs on an 8 MiB stack on every platform, what Linux and macOS
+    give a main thread. Windows gives 1 MiB, which the debug build's command
+    dispatch overflowed before it read an argument: every CLI test of the
+    Windows CI exited 0xC00000FD. The release binary did not overflow at
+    1 MiB on the 1,200 jobs of the two release samples.
+- Headers, footers and notes:
+  - A page or column break in a header or footer paragraph, where no page
+    can break, ends a line of its run's font (11 Word probes: a 9.5pt break
+    alone stands an 11.0 line, a 20pt one 23.0), the body moving down by as
+    much while the header is taller than the top margin and staying at the
+    margin when it fits; `collect_visible_marked` takes a `BreakText` mode.
+    4910ce2060's header title sat 11pt high and its page 2 sat 3.3 and
+    11.2pt high (54.1 → 81.1). A break inside a header's table cell is
+    still dropped: Word has not been probed there.
+  - A flat inline connector (a stroked `wps:wsp` without a text box) in a
+    header takes a line of its run and paints, its stroke centred half a
+    point under that line's baseline and the shape starting its line by the
+    paragraph's alignment; 12 corpus documents carry one. e0fe3a82eb:
+    jaccard 0.25 → 0.73, text boundary 0.36 → 1.0, break drift 19 → 0.
+  - The footnote area is the separator note's own paragraph (its run's
+    font, size, line rule and before and after; the mark's size does not
+    count), the rule is the separator run's OS/2 strikeout line
+    (`Face::strike_pos_pt` / `strike_size_pt`), and a paragraph's last line
+    over the notes must fit together with its space after (13 Letter probes
+    plus six variants; `FootnoteCatalog::separator`, `after_over_notes`).
+    bc85714262 +27.9, 636ef078e7 +19.2 on the sample.
+- The markup pane:
+  - The markup page takes Word's measured scale and top per page geometry:
+    the scale is a whole 1/300 (the fit floor(300 × (W − 8.64) / (W − mr +
+    265.68)) / 300 reproduces all 14 measured scales) and the top sits on
+    the 1/300in grid where the exact fit (before the floor) centres it,
+    read from `MARKUP_PANE_TABLE` (410 corpus PDFs with comments, 14 page
+    geometries) and fitted for any other. Two refuted first cuts (a twips'
+    A4 width, a gap applied below the page) were caught by the 300-document
+    sample before release.
+- Release tooling:
+  - `scripts/release.sh` regenerates docs/javascript.md after rebuilding the
+    npm package (v0.11.0 shipped a reference generated from the 0.10.1
+    typings, missing appendDocuments, auditDocument, diffDocuments,
+    markdownToDocx, validateDocument and more) and checks PyPI on the
+    project listing, which a cached 404 cannot hide.
+  - `scripts/release.sh` refuses a release without its benchmark evidence
+    (step 3, `scripts/check_release_info.py`): the six `release_info/` files
+    of the version, the two 600-item samples with every file's sha256
+    (hashed against the bench's own files when a bench checkout is at
+    hand), the two results scored on exactly those samples, and the
+    website and app change lists. `release_info/README.md` is the spec.
+  - Step 1 also moves `jubarte-wasm/Cargo.toml` and
+    `jubarte-rust-inproc/Cargo.toml` (both sat on 0.10.0) and dies on a
+    half-bumped tree, naming the file; the dry-run step wipes a previous
+    release's sdist; PyPI gets a partial wheel set only with `--no-wait`.
+  - The script tests run on Python 3.8 (a parenthesised `with`,
+    `itertools.pairwise` and `str.removeprefix` kept the convert-sweep job
+    red on the self-hosted runner), and `jubarte-wasm` no longer lists
+    `js-sys`, which it never used.
+  - Where main takes changes only through a pull request, the release
+    commits go up as `release/vX.Y.Z`, and the pull request is merged at
+    once with a merge commit (`scripts/push_main.sh`), so the tag still
+    names the commit the gates ran on. A direct push is tried first.
+  - Git stores `release_info/` byte for byte (`.gitattributes`, `-text`):
+    the samples are CRLF csv and the results name them by sha256, so a
+    checkout that rewrote line ends would fail step 3.
+- Documentation and registries: the README says how a PDF shows comments
+  and that `uvx`/`npx` run the CLI from 0.11.0; the install matrix lists
+  the wheels and binaries every release since 0.11.0 carries (it still
+  described 0.10.1); adoption rows 0.11.0 shipped read released. Keywords
+  on crates.io, PyPI and both npm packages, and topics on GitHub.
 
 ## [0.11.0] - 2026-10-03
 
@@ -2467,6 +2712,7 @@ measured Q0 performance stack) plus release tooling (`VERSIONING.md`,
 - See [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the covering tests are marked
   `#[ignore]` with matching reasons.
 
+[0.11.2]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.11.2
 [0.11.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.11.0
 [0.10.1]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.10.1
 [0.10.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.10.0

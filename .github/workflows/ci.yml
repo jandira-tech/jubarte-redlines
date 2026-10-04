@@ -229,6 +229,7 @@ jobs:
       - run: python3 scripts/test_convert_sweep.py
       - run: python3 planning/test_sample50_check.py
       - run: python3 scripts/test_release_sh.py
+      - run: python3 scripts/test_check_release_info.py
       - run: python3 scripts/test_library_readmes.py
       - run: python3 scripts/test_check_release_artifacts.py
       - run: python3 scripts/test_check_release_facts.py

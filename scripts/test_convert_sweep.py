@@ -245,18 +245,17 @@ class MainOutputTests(unittest.TestCase):
 
     def _main(self, *extra: str, rows=None, discover76=None, discover398=None) -> int:
         rows = [self.row] if rows is None else rows
-        with (
-            mock.patch.object(
-                cs, "discover_76_or_skip", return_value=discover76 or ([self.job], "")
-            ),
-            mock.patch.object(
-                cs, "discover_398_or_skip", return_value=discover398 or ([], "")
-            ),
-            mock.patch.object(cs, "convert_and_score", return_value=(rows, [])),
+        # One `with` per patch: the parenthesised form needs Python 3.10.
+        with mock.patch.object(
+            cs, "discover_76_or_skip", return_value=discover76 or ([self.job], "")
         ):
-            return cs.main(
-                ["--jubarte", str(self.jubarte), "--scorer", str(self.scorer), *extra]
-            )
+            with mock.patch.object(
+                cs, "discover_398_or_skip", return_value=discover398 or ([], "")
+            ):
+                with mock.patch.object(cs, "convert_and_score", return_value=(rows, [])):
+                    return cs.main(
+                        ["--jubarte", str(self.jubarte), "--scorer", str(self.scorer), *extra]
+                    )
 
     def test_compare_without_out_writes_stdout_not_default_baseline(self) -> None:
         cs.write_tsv([self.row], self.baseline)
@@ -295,12 +294,10 @@ class MainOutputTests(unittest.TestCase):
 
     def test_incomplete_set_fails_before_converting(self) -> None:
         with mock.patch.object(cs, "convert_and_score") as convert:
-            with (
-                mock.patch.object(
-                    cs,
-                    "discover_76_or_skip",
-                    return_value=([self.job], "incomplete fixtures: case58"),
-                ),
+            with mock.patch.object(
+                cs,
+                "discover_76_or_skip",
+                return_value=([self.job], "incomplete fixtures: case58"),
             ):
                 result = cs.main(
                     ["76", "--jubarte", str(self.jubarte), "--scorer", str(self.scorer)]

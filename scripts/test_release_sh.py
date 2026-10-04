@@ -13,6 +13,7 @@ non-main branch, so a run that gets past argument validation stops at the
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import tempfile
@@ -81,19 +82,19 @@ class ResumeDryRuns(unittest.TestCase):
     """A resumed release must not die in step 5 on a registry that already
     holds the version (npm refuses even a dry run over a published version)."""
 
-    def step6(self) -> str:
+    def step7(self) -> str:
         text = RELEASE_SH.read_text()
-        start = text.index('say "6. Publish dry-runs"')
-        return text[start:text.index('say "7.', start)]
+        start = text.index('say "7. Publish dry-runs"')
+        return text[start:text.index('say "8.', start)]
 
     def test_npm_dry_run_skips_a_published_version(self) -> None:
         self.assertRegex(
-            self.step6(), r"if npm_has; then[^\n]*\n(?:[^\n]*\n)*?else\n[^\n]*npm publish --dry-run"
+            self.step7(), r"if npm_has; then[^\n]*\n(?:[^\n]*\n)*?else\n[^\n]*npm publish --dry-run"
         )
 
     def test_cargo_dry_run_skips_a_published_version(self) -> None:
         self.assertRegex(
-            self.step6(), r"if crates_has; then[^\n]*\n(?:[^\n]*\n)*?else\n[^\n]*cargo publish --dry-run"
+            self.step7(), r"if crates_has; then[^\n]*\n(?:[^\n]*\n)*?else\n[^\n]*cargo publish --dry-run"
         )
 
 
@@ -102,27 +103,27 @@ class ApiDocDrift(unittest.TestCase):
     the releaser, and a machine-readable API snapshot lands in docs/api/ so the
     next release can diff the surface."""
 
-    def step5(self) -> str:
+    def step6(self) -> str:
         text = RELEASE_SH.read_text()
-        start = text.index('say "5. API docs')
-        return text[start:text.index('say "6.', start)]
+        start = text.index('say "6. API docs')
+        return text[start:text.index('say "7.', start)]
 
     def test_opens_rendered_docs_for_review(self) -> None:
         self.assertIn(
-            "cargo doc --no-deps --document-private-items --open", self.step5()
+            "cargo doc --no-deps --document-private-items --open", self.step6()
         )
 
     def test_snapshots_machine_readable_api(self) -> None:
-        self.assertIn("scripts/api_snapshot.py", self.step5())
+        self.assertIn("scripts/api_snapshot.py", self.step6())
 
     def test_diffs_against_previous_release_snapshot(self) -> None:
-        self.assertIn("docs/api/jubarte-", self.step5())
-        self.assertIn("diff -u", self.step5())
+        self.assertIn("docs/api/jubarte-", self.step6())
+        self.assertIn("diff -u", self.step6())
 
     def test_release_commit_adds_docs_api(self) -> None:
         text = RELEASE_SH.read_text()
-        step7 = text[text.index('say "7. Release commit'):text.index('say "8.')]
-        self.assertIn("docs/api", step7.split("git commit")[0])
+        step8 = text[text.index('say "8. Release commit'):text.index('say "9.')]
+        self.assertIn("docs/api", step8.split("git commit")[0])
 
 
 class RegistryProbes(unittest.TestCase):
@@ -137,8 +138,8 @@ class RegistryProbes(unittest.TestCase):
 
     def test_publish_purges_finder_litter_first(self) -> None:
         text = RELEASE_SH.read_text()
-        step8 = text[text.index('say "8. crates.io"'):text.index('say "9.')]
-        self.assertIn(".DS_Store", step8.split("cargo publish")[0])
+        step9 = text[text.index('say "9. crates.io"'):text.index('say "10.')]
+        self.assertIn(".DS_Store", step9.split("cargo publish")[0])
 
 
 def step(n: int) -> str:
@@ -156,19 +157,19 @@ class NpmCli(unittest.TestCase):
     def test_the_cli_package_follows_the_engine_version(self) -> None:
         s1 = step(1)
         self.assertIn('(cd jubarte-wasm/cli && npm pkg set "version=$VER" "dependencies.jubarte-wasm=^$VER"', s1)
-        add = next(l for l in step(7).splitlines() if "jubarte-wasm/Cargo.lock jubarte-wasm/npm/package.json" in l)
+        add = next(l for l in step(8).splitlines() if "jubarte-wasm/Cargo.lock jubarte-wasm/npm/package.json" in l)
         self.assertIn("jubarte-wasm/cli/package.json", add)
 
     def test_the_cli_is_dry_run_published_and_verified(self) -> None:
-        self.assertRegex(step(6), r"if npm_cli_has; then[^\n]*\n(?:[^\n]*\n)*?else\n[^\n]*\(cd jubarte-wasm/cli && npm publish --dry-run")
-        self.assertIn('check "npm        jubarte-redlines $VER" npm_cli_has', step(11))
+        self.assertRegex(step(7), r"if npm_cli_has; then[^\n]*\n(?:[^\n]*\n)*?else\n[^\n]*\(cd jubarte-wasm/cli && npm publish --dry-run")
+        self.assertIn('check "npm        jubarte-redlines $VER" npm_cli_has', step(12))
 
     def test_the_cli_publishes_after_the_wasm_it_depends_on(self) -> None:
-        s9 = step(9)
-        wasm = s9.index("(cd jubarte-wasm/npm && npm publish")
-        cli = s9.index("(cd jubarte-wasm/cli && npm publish")
+        s10 = step(10)
+        wasm = s10.index("(cd jubarte-wasm/npm && npm publish")
+        cli = s10.index("(cd jubarte-wasm/cli && npm publish")
         self.assertLess(wasm, cli)
-        self.assertIn("if npm_cli_has; then", s9)
+        self.assertIn("if npm_cli_has; then", s10)
 
 
 class Lessons0101(unittest.TestCase):
@@ -198,23 +199,23 @@ class Lessons0101(unittest.TestCase):
     def test_a_resume_keeps_the_wasm_build_it_already_committed(self) -> None:
         # A resumed run rebuilt the package with a later ENGINE_COMMIT than
         # the one npm already shipped.
-        s7 = step(7)
-        guard = s7.index("regenerate npm artifacts for v$VER")
-        self.assertLess(guard, s7.index("jubarte-wasm/build-npm.sh"))
+        s8 = step(8)
+        guard = s8.index("regenerate npm artifacts for v$VER")
+        self.assertLess(guard, s8.index("jubarte-wasm/build-npm.sh"))
 
     def test_the_artifacts_commit_takes_the_wasm_lock(self) -> None:
-        s7 = step(7)
-        add = next(l for l in s7.splitlines() if "git add jubarte-wasm/npm" in l)
+        s8 = step(8)
+        add = next(l for l in s8.splitlines() if "git add jubarte-wasm/npm" in l)
         self.assertIn("jubarte-wasm/Cargo.lock", add)
 
     def test_the_artifacts_commit_regenerates_the_js_reference(self) -> None:
         # docs/javascript.md quotes jubarte-wasm/npm/node/jubarte_wasm.d.ts.
         # Step 5 ran before the rebuild, so v0.11.0 shipped a reference
         # generated from the 0.10.1 typings, missing 13 new functions.
-        s7 = step(7)
-        regen = s7.index("scripts/gen_wasm_api.py")
-        self.assertLess(s7.index("jubarte-wasm/build-npm.sh"), regen)
-        add = next(l for l in s7.splitlines() if "git add jubarte-wasm/npm" in l)
+        s8 = step(8)
+        regen = s8.index("scripts/gen_wasm_api.py")
+        self.assertLess(s8.index("jubarte-wasm/build-npm.sh"), regen)
+        add = next(l for l in s8.splitlines() if "git add jubarte-wasm/npm" in l)
         self.assertIn("docs/javascript.md", add)
 
     def test_pypi_is_checked_on_the_project_listing(self) -> None:
@@ -229,39 +230,39 @@ class Lessons0101(unittest.TestCase):
         # The 0.11.0 docs carried 41 dead intra-doc links (rendered as bare
         # brackets on docs.rs) because nothing built the public docs with
         # warnings denied; step 5 builds them with private items, warnings on.
-        s4 = step(4)
-        self.assertIn('RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features', s4)
+        s5 = step(5)
+        self.assertIn('RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features', s5)
 
     def test_the_gates_keep_the_tracked_python_lockfile(self) -> None:
         # jubarte-python/uv.lock is tracked (f8fe3542). Deleting it after
         # pytest left the release tree dirty, and a resumed run then died in
         # preflight; whatever uv rewrote in it ships in the release commit.
-        self.assertNotIn("rm -f jubarte-python/uv.lock", step(4))
-        s7 = step(7)
-        start = s7.index("git add Cargo.toml")
-        add = s7[start : s7.index("git commit", start)]
+        self.assertNotIn("rm -f jubarte-python/uv.lock", step(5))
+        s8 = step(8)
+        start = s8.index("git add Cargo.toml")
+        add = s8[start : s8.index("git commit", start)]
         self.assertIn("jubarte-python/uv.lock", add)
 
     def test_the_release_commit_takes_the_gemini_manifest(self) -> None:
         # bump-version.mjs rewrites gemini-extension.json's version.
-        s7 = step(7)
-        start = s7.index("git add Cargo.toml")
-        add = s7[start : s7.index("git commit", start)]
+        s8 = step(8)
+        start = s8.index("git add Cargo.toml")
+        add = s8[start : s8.index("git commit", start)]
         self.assertIn("gemini-extension.json", add)
 
     def test_npm_publish_takes_a_one_time_password(self) -> None:
         # npm answered EOTP to the non-interactive publish.
-        s9 = step(9)
-        self.assertIn("NPM_OTP", s9)
-        self.assertIn("--otp", s9)
+        s10 = step(10)
+        self.assertIn("NPM_OTP", s10)
+        self.assertIn("--otp", s10)
 
     def test_pypi_takes_the_workflow_wheels_when_no_release_exists(self) -> None:
         # The Windows binary failed, release.yml skipped the GitHub release,
         # and the wheels existed only as workflow artifacts.
-        self.assertIn("gh run download", step(10))
+        self.assertIn("gh run download", step(11))
 
     def test_a_skipped_github_release_is_created_from_the_artifacts(self) -> None:
-        self.assertIn("gh release create", step(10))
+        self.assertIn("gh release create", step(11))
 
     def test_the_api_snapshot_is_byte_stable(self) -> None:
         # gzip stamped the write time, so every rerun dirtied docs/api/.
@@ -272,6 +273,56 @@ class Lessons0101(unittest.TestCase):
         wf = (HERE.parent / ".github/workflows/release.yml").read_text()
         self.assertIn("core.longpaths", wf)
 
+
+class Repairs0112(unittest.TestCase):
+    """The 0.11.2 release-machinery repairs: a resumed run must not ship a
+    half-bumped tree (F4), a stale sdist must not be picked (F5), the two
+    publish = false crates follow the engine (F6), a missing wheel set needs
+    explicit consent (F18), and the evidence's sha256 columns are verified
+    against the bench's real files when a bench checkout exists."""
+
+    def test_step1_bumps_the_two_publish_false_crates(self) -> None:
+        s1 = step(1)
+        for f in ("jubarte-wasm/Cargo.toml", "jubarte-rust-inproc/Cargo.toml"):
+            self.assertIn(f, s1)
+
+    def test_step1_dies_on_a_half_bumped_tree(self) -> None:
+        s1 = step(1)
+        self.assertIn('grep -q "^version = \\"$VER\\"$"', s1)
+        self.assertIn("half-bumped", s1)
+        for f in ("jubarte-python/Cargo.toml", "jubarte-app/src-tauri/tauri.conf.json",
+                  "gemini-extension.json", "jubarte-app/src/index.html"):
+            self.assertIn(f, s1)
+        # the release commit carries the two crate manifests step 1 now bumps
+        s8 = step(8)
+        add = next(l for l in s8.splitlines() if "jubarte-rust-inproc/Cargo.lock" in l)
+        self.assertIn("jubarte-rust-inproc/Cargo.toml", add)
+        self.assertIn("jubarte-wasm/Cargo.toml", s8)
+
+    def test_step7_wipes_the_stale_sdist_folder(self) -> None:
+        s7 = step(7)
+        wipe = s7.index("rm -rf target/release-check")
+        self.assertLess(wipe, s7.index("uvx maturin sdist"))
+
+    def test_step11_refuses_partial_wheels_without_consent(self) -> None:
+        s11 = step(11)
+        consent = s11.index('[ "$NO_WAIT" = 1 ]')
+        self.assertIn("|| die", s11[consent:])
+        self.assertIn("--no-wait", s11)
+        self.assertIn("only the local-platform wheel + sdist will reach PyPI (--no-wait given)", s11)
+
+    def test_a_run_that_lost_a_wheel_job_never_becomes_a_public_release(self) -> None:
+        s11 = step(11)
+        body = s11[s11.index("release_from_artifacts() {"):]
+        body = body[:body.index("\n}\n")]
+        check = body.index('scripts/check_release_artifacts.py dist/release --version "$VER"')
+        self.assertIn("|| die", body[check:body.index("gh release create")])
+
+    def test_step3_verifies_the_shas_against_the_bench_when_it_exists(self) -> None:
+        s3 = step(3)
+        self.assertIn("NEUROTIC_DOCX_BENCH", s3)
+        self.assertIn('--bench-root "$BENCH_ROOT"', s3)
+        self.assertIn("format-checked only", s3)  # the no-bench branch says what is not proven
 
 
 DOWNSTREAM_SH = HERE / "release_downstream.sh"
@@ -334,15 +385,16 @@ class Downstream(unittest.TestCase):
         self.assertIn("not uploaded (pass --app)", out)
         self.assertIn("asc-new-version.py 0.10.2 --apply", out)
         self.assertIn("Submit for Review", out)
+        self.assertIn("jubarte_release_info 0.10.2", out)
         self.assertIn("scripts/release_jubarte.py 0.10.2", out)
         self.assertIn("scripts/release.sh bench 0.10.2 --redline-tool jubarte-0.10.2", out)
 
     def test_release_runs_it_after_verify(self) -> None:
-        s12 = RELEASE_SH.read_text().split('say "12. ', 1)[1]
-        self.assertIn('scripts/release_downstream.sh "$VER"', s12)
+        s13 = RELEASE_SH.read_text().split('say "13. ', 1)[1]
+        self.assertIn('scripts/release_downstream.sh "$VER"', s13)
         self.assertLess(
-            RELEASE_SH.read_text().index('say "11. Verify'),
-            RELEASE_SH.read_text().index('say "12. Downstream'),
+            RELEASE_SH.read_text().index('say "12. Verify'),
+            RELEASE_SH.read_text().index('say "13. Downstream'),
         )
 
     def test_the_site_step_runs_the_site_release(self) -> None:
@@ -352,6 +404,125 @@ class Downstream(unittest.TestCase):
         self.assertIn('if [ "$APP" = 1 ]', text)
         self.assertNotIn("--submit", text)
 
+
+
+class PushMain(unittest.TestCase):
+    """scripts/push_main.sh against a real origin: one that takes a direct
+    push, and one whose main takes changes only through a pull request (a
+    pre-receive hook stands in for the ruleset, a stub `gh` for GitHub)."""
+
+    HOOK = """#!/bin/sh
+while read old new ref; do
+  if [ "$ref" = refs/heads/main ] && [ "${VIA_PULL_REQUEST:-}" != 1 ]; then
+    echo "GH013: Repository rule violations found for refs/heads/main" >&2
+    exit 1
+  fi
+done
+"""
+    GH = """#!/bin/sh
+# stub gh: `pr view` knows no pull request until `pr create`; `pr merge`
+# merges the head into main with a merge commit, as GitHub's merge does.
+echo "$@" >> "$GH_LOG"
+case "$1 $2" in
+  "pr view") [ -f "$GH_LOG.open" ] && echo OPEN || exit 1 ;;
+  "pr create") : > "$GH_LOG.open" ;;
+  "pr merge")
+    work=$(mktemp -d) && git clone -q "$ORIGIN" "$work/c" && cd "$work/c" \
+      && git -c user.name=gh -c user.email=gh@example.com merge -q --no-ff -m "Merge pull request" "origin/$3" \
+      && VIA_PULL_REQUEST=1 git push -q origin HEAD:main ;;
+esac
+"""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.origin = self.tmp / "origin.git"
+        self.work = self.tmp / "work"
+        self.log = self.tmp / "gh.log"
+        self.log.write_text("")
+        bin_dir = self.tmp / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "gh").write_text(self.GH)
+        (bin_dir / "gh").chmod(0o755)
+        self.env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+                    "GH_LOG": str(self.log), "ORIGIN": str(self.origin),
+                    "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
+                    "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com"}
+        self.git("init", "-q", "--bare", str(self.origin), cwd=self.tmp)
+        self.git("symbolic-ref", "HEAD", "refs/heads/main", cwd=self.origin)
+        self.git("clone", "-q", str(self.origin), str(self.work), cwd=self.tmp)
+        self.git("checkout", "-q", "-b", "main")
+        self.commit("base")
+        self.git("push", "-q", "origin", "main")
+
+    def git(self, *args: str, cwd: Path | None = None) -> str:
+        return subprocess.run(["git", *args], cwd=cwd or self.work, env=self.env,
+                              capture_output=True, text=True, check=True).stdout.strip()
+
+    def commit(self, name: str) -> str:
+        (self.work / name).write_text(name)
+        self.git("add", name)
+        self.git("commit", "-q", "-m", name)
+        return self.git("rev-parse", "HEAD")
+
+    def protect_main(self) -> None:
+        hook = self.origin / "hooks" / "pre-receive"
+        hook.write_text(self.HOOK)
+        hook.chmod(0o755)
+
+    def push_main(self) -> subprocess.CompletedProcess[str]:
+        script = f'. "{HERE / "push_main.sh"}" && push_main release/v9.9.9 "chore(release): v9.9.9" "body"'
+        return subprocess.run(["bash", "-c", script], cwd=self.work, env=self.env,
+                              capture_output=True, text=True)
+
+    def origin_main(self) -> str:
+        return self.git("rev-parse", "main", cwd=self.origin)
+
+    def test_an_open_main_takes_the_push_and_no_pull_request(self) -> None:
+        release = self.commit("release")
+        result = self.push_main()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.origin_main(), release)
+        self.assertEqual(self.log.read_text(), "")
+
+    def test_a_main_that_wants_a_pull_request_gets_one_merged_at_once(self) -> None:
+        self.protect_main()
+        release = self.commit("release")
+        result = self.push_main()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.log.read_text()
+        self.assertIn("pr create --base main --head release/v9.9.9", calls)
+        self.assertIn("pr merge release/v9.9.9 --merge", calls)
+        # a merge commit: the gated (and tagged) commit itself is in main
+        parents = self.git("rev-list", "--parents", "-n", "1", "main", cwd=self.origin).split()
+        self.assertEqual(len(parents), 3)
+        self.assertEqual(parents[2], release)
+        # and the local main is the one origin holds
+        self.assertEqual(self.git("rev-parse", "HEAD"), self.origin_main())
+
+    def test_a_rerun_merges_the_open_pull_request_without_a_second_one(self) -> None:
+        self.protect_main()
+        self.commit("release")
+        Path(str(self.log) + ".open").write_text("")
+        result = self.push_main()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("pr create", self.log.read_text())
+        self.assertIn("pr merge release/v9.9.9 --merge", self.log.read_text())
+
+    def test_a_refused_merge_fails_the_push(self) -> None:
+        self.protect_main()
+        self.commit("release")
+        self.env["ORIGIN"] = str(self.tmp / "nowhere.git")  # the stub's merge cannot happen
+        result = self.push_main()
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_both_release_scripts_go_through_it(self) -> None:
+        for name in ("release.sh", "release_downstream.sh"):
+            text = (HERE / name).read_text()
+            self.assertIn("scripts/push_main.sh", text, name)
+            self.assertIn("push_main ", text, name)
+            self.assertNotIn("git push origin main", text, name)
+            self.assertNotIn("git push -q origin HEAD:main", text, name)
 
 
 class Header(unittest.TestCase):
@@ -374,8 +545,8 @@ class WheelSetGate(unittest.TestCase):
 
     def step10(self) -> str:
         text = RELEASE_SH.read_text()
-        start = text.index('say "10. PyPI"')
-        return text[start:text.index('say "11.', start)]
+        start = text.index('say "11. PyPI"')
+        return text[start:text.index('say "12.', start)]
 
     def test_check_runs_before_uv_publish(self) -> None:
         step = self.step10()
@@ -412,7 +583,7 @@ class LibraryReadmes(unittest.TestCase):
         )
 
     def test_dry_run_step_proves_every_registry_ships_its_cut(self) -> None:
-        dry = self.section('say "6.', 'if [ "$DRY_RUN" = 1 ]')
+        dry = self.section('say "7.', 'if [ "$DRY_RUN" = 1 ]')
         self.assertIn('library_readmes.py --check --version "$VER"', dry)
         self.assertIn("grep -qx README.crates.md", dry)
         self.assertIn("PKG-INFO", dry)
@@ -429,8 +600,9 @@ class LibraryReadmes(unittest.TestCase):
             self.assertIn(path, commit)
 
     def test_gates_run_the_generator_tests(self) -> None:
-        gates = self.section('say "4. Gates', 'say "4. Gates — SKIPPED')
+        gates = self.section('say "5. Gates', 'say "5. Gates — SKIPPED')
         self.assertIn("python3 scripts/test_library_readmes.py", gates)
+        self.assertIn("python3 scripts/test_check_release_info.py", gates)
 
     def test_the_crate_points_at_its_generated_readme(self) -> None:
         cargo = (HERE.parent / "Cargo.toml").read_text(encoding="utf-8")

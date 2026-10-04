@@ -25,7 +25,9 @@ A comment gets a balloon when
 1. the body references it (`w:commentReference`), and
 2. its `w:commentRangeEnd`, if it has one, is **live**: inside a `w:p`, with content
    before it in that paragraph (`w:t` or `w:delText` with text, `w:drawing`, `w:pict`,
-   `w:object`, `w:sym`, `w:tab`, or another comment's `w:commentReference`), and
+   `w:object`, `w:sym`, `w:tab`, or another comment's `w:commentReference`), or with
+   its own `w:commentRangeStart` before it in that paragraph (an empty range followed
+   by its reference is a reference alone; round 6, 2026-10-03), and
 3. for a reply (`w15:paraIdParent` in `commentsExtended.xml`, matched to the parent's
    last `w14:paraId`), its parent gets one.
 
@@ -35,11 +37,15 @@ paragraph is **dead**: that comment and its replies get no balloon. Where the
 rels, the comments parts or styles (AB2 to AB4 part swaps).
 
 Applied to the 151 corpus documents with comments, the rule predicts Word's balloon
-count exactly for 149 and predicts zero for all 37 zero-balloon documents. Two remain
-unexplained: `with_comments_clean/1672057675_485599b4e9_rejected_tracking` (Word 4,
-predicted 2) and
-`with_comments_clean/6ef6726c28_comments_complex_style_attr_word_redline_accepte`
-(Word 1, predicted 0).
+count exactly for all 151 and zero for all 37 zero-balloon documents
+(`comment_balloons_0929/survey6.py`). The own-start clause is what the first reading
+(149/151) lacked: `6ef6726c28` (`<start 11/><end 11/><ref 11/>`, Word 1) and
+`1672057675` (`<start 0/><start 1/><end 0/><ref 0/><end 1/><ref 1/>`, Word 4). Round 6
+(`round6.py`, 13 shapes in Word 16 on 2026-10-03) confirms it: an empty range gets its
+balloon whether its start and end are adjacent, an empty `w:t` run sits between, the
+reference is styled or plain, another comment's stray start precedes, the paragraph is
+the first, the last or the only one; the end-first-in-paragraph control stays dead.
+The 2026-09-29 probe that read the empty-`w:t` case as dead was wrong.
 
 ## What jubarte does today
 

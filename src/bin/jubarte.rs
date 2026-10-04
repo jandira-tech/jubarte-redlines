@@ -2595,7 +2595,26 @@ fn run_debug_diff(
     Ok(())
 }
 
+/// The stack the CLI runs on: what Linux and macOS give a main thread.
+/// Windows gives 1 MiB, which the debug build's command dispatch overflows
+/// before it reads an argument.
+const STACK_BYTES: usize = 8 * 1024 * 1024;
+
 fn main() -> ExitCode {
+    let cli = std::thread::Builder::new()
+        .name("main".into())
+        .stack_size(STACK_BYTES)
+        .spawn(cli_main);
+    match cli.map(std::thread::JoinHandle::join) {
+        Ok(Ok(code)) => code,
+        // The panic was reported on its own thread; leave as a panic does.
+        Ok(Err(panic)) => std::panic::resume_unwind(panic),
+        // No thread to be had: the stack the system gave is the only one.
+        Err(_) => cli_main(),
+    }
+}
+
+fn cli_main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
         Some(Command::Revisions { file, json }) => {

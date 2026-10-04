@@ -211,6 +211,37 @@ The other 3 of the 32 are not differences:
 - **Status.** Letter copied; other sizes approximate until measured
   against Word.
 
+### 10a. Comment balloons and sticky notes (PDF)
+
+- **What happens.** Word's Save as PDF paints each comment as a balloon
+  in the grey markup pane ("Commented [initials n]: " bold, then the
+  comment's text, in a box filled with the author's tint and stroked in
+  the author's ink, a dotted connector from the end of the commented
+  range, the range itself tinted) and writes no PDF annotation for it.
+  The geometry is measured on 466 balloons of 152 corpus documents
+  (`neurotic_docx_bench/scripts/word_balloon_spec.py`, 2026-10-03) and
+  recorded on `paint_comment_balloons` in `src/convert/mod.rs`.
+- **What we do.** Every style paints the balloon the same way. The
+  default and custom styles also keep a `/Text` annotation (a sticky
+  note a viewer can open, with the author); `RevisionStyle::Word` writes
+  none, as Word does.
+- **Which is better.** The balloon is the print either way; the sticky
+  note is extra value a viewer can use, so the default keeps it. Word's
+  author colours cannot be copied: the same author gets up to six
+  palette colours across the corpus (Word's reviewer table is per
+  session), so jubarte colours authors in order of first appearance.
+  Balloon numbers count through the document whatever the author; a
+  reply takes its thread's number with "R" and its rank, the parent
+  counting as 1 (RW1, KB2, JW2R2, RW3R3). A resolved comment
+  (`w15:done`) is faded: text BFBFBF, stroke in the author's tint, fill
+  16 % of that, the range under the pale fill.
+- **Status.** Copied under `RevisionStyle::Word`; bracket ticks at the
+  range ends and a comment's own run formatting (one corpus document
+  sets 12pt Verdana bold inside a comment) are not painted yet. The
+  bench's r4/r5 probe documents (tracking on, no revisions) show a black
+  changed-line bar beside the commented paragraph; three real documents
+  with tracking on and live balloons show none, so no bar is drawn.
+
 ### 11. Field results jubarte writes (`jubarte fields update`, `update_fields`)
 
 - **What happens.** Word's Update Field recomputes `PAGEREF`, `REF`,

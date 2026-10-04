@@ -135,13 +135,36 @@ pub(crate) enum Op {
 }
 
 /// Sticky-note PDF annotation (not painted into the content stream).
+#[derive(Clone)]
 pub(crate) struct PdfComment {
+    /// The comment's id, which ties it to its `CommentTint` boxes.
+    pub id: String,
     pub x: f32,
     pub y: f32,
     pub w: f32,
     pub h: f32,
+    /// The commented line's top and bottom (laid-out units): where its
+    /// balloon's top and its connector sit.
+    pub top: f32,
+    pub bottom: f32,
     pub contents: String,
     pub author: String,
+    pub initials: String,
+    /// The number in the balloon label ("3", "3R2").
+    pub label: String,
+    pub color: [f32; 3],
+    /// Resolved (`w15:done`): painted faded.
+    pub resolved: bool,
+}
+
+/// One tinted box of a commented range (laid-out units, bottom-left),
+/// in paint order: the first is the range's start, the last its end.
+pub(crate) struct CommentTint {
+    pub id: String,
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
 }
 
 /// One finished page, with the section `pgSz` it was laid out against.
@@ -150,6 +173,7 @@ pub(crate) struct Page {
     pub width: f32,
     pub height: f32,
     pub comments: Vec<PdfComment>,
+    pub tints: Vec<CommentTint>,
     /// Word All-Markup pasteboard: scale content, paint gray balloon column.
     pub markup_pane: bool,
     /// The section's right margin, which sets the pasteboard's scale.
@@ -166,6 +190,7 @@ impl Page {
             width,
             height,
             comments: Vec::new(),
+            tints: Vec::new(),
             markup_pane: false,
             margin_r: 0.0,
             vertical: false,
@@ -178,7 +203,14 @@ impl Page {
 /// margin from 9.15pt past the text edge. `k` is a whole 1/300 fitting
 /// page and pane into the paper width less 8pt (file_27 mr 54: 219/300;
 /// docxide case63/64 mr 90: 229/300; fixtures_500 00b0c1ee A4: 228/300;
-/// landscape mr 36: 230/300).
+/// landscape mr 36: 230/300). The scaled page's top sits where the EXACT
+/// fit (before the 1/300 floor) centres the page, half a 1/300in grid
+/// unit down, on that grid. 410 corpus PDFs with comments cover 14 page
+/// geometries (`MARKUP_PANE_TABLE`): the fit reproduces every scale and
+/// 12 of the 14 tops; no one offset lands all 14 (the Letter 70.9pt and A4
+/// 89.85pt right margins fall one unit off), so a known geometry takes
+/// its measured row and the fit serves the rest. The scorer is
+/// pixel-sharp: Word's own page shifted 0.25pt scores 0.72 against itself.
 #[derive(Clone, Copy)]
 pub(crate) struct MarkupChrome {
     pub(crate) gx: f32,
@@ -192,16 +224,56 @@ pub(crate) struct MarkupChrome {
 
 const MARKUP_PANE_W: f32 = 257.3;
 const MARKUP_PANE_GAP: f32 = 9.15;
+/// The fit Word scales by: paper width less this, over the page's text
+/// edge plus `MARKUP_FIT_SPAN` (36 and 1107 300-dpi pixels; the widest
+/// margins to the 1/300 boundaries over the 14 geometries, 0.06/300; the
+/// pane's own gap and width sum to 266.45). Word's A4 is 595.2 x 841.92
+/// here, as in its PDFs (2480 x 3508 pixels), not the 595.3 of the twips.
+const MARKUP_FIT_INSET: f32 = 8.64;
+const MARKUP_FIT_SPAN: f32 = 265.68;
+/// How far under the exact fit's centre the scaled page sits.
+const MARKUP_FIT_DROP: f32 = 0.54;
+/// Word's measured placement per page geometry: paper width, height and
+/// right margin in 300-dpi pixels, then the scale in 300ths and the
+/// scaled page's top in pixels (410 corpus PDFs, 2026-10-03; Letter 1in
+/// margins alone are 317 of them).
+const MARKUP_PANE_TABLE: &[(u32, u32, u32, u32, u32)] = &[
+    (2480, 3508, 189, 215, 494),
+    (2480, 3508, 236, 218, 476),
+    (2480, 3508, 300, 223, 452),
+    (2480, 3508, 319, 224, 444),
+    (2480, 3508, 354, 226, 430),
+    (2480, 3508, 374, 228, 422),
+    (2480, 3508, 501, 237, 367),
+    (2550, 3300, 225, 219, 443),
+    (2550, 3300, 295, 224, 417),
+    (2550, 3300, 300, 224, 416),
+    (2550, 3300, 375, 229, 388),
+    (2550, 3300, 450, 235, 358),
+    (2479, 3508, 302, 223, 451),
+    (3508, 2480, 300, 241, 244),
+];
 
 pub(crate) fn markup_chrome(width: f32, height: f32, margin_r: f32) -> Option<MarkupChrome> {
     let span = width - margin_r + MARKUP_PANE_GAP + MARKUP_PANE_W;
     if span <= 0.0 {
         return None;
     }
-    let k = ((width - 8.0) / span * 300.0).floor() / 300.0;
+    let px = |pt: f32| (pt * 300.0 / 72.0).round() as u32;
+    let known = MARKUP_PANE_TABLE
+        .iter()
+        .find(|row| row.0 == px(width) && row.1 == px(height) && row.2 == px(margin_r));
+    let exact = (width - MARKUP_FIT_INSET) / (width - margin_r + MARKUP_FIT_SPAN);
+    let k = known.map_or((exact * 300.0).floor() / 300.0, |row| row.3 as f32 / 300.0);
     let tx = 0.96;
     let gh = height * k;
-    let ty = ((height - gh) / 2.0 / 0.24).round() * 0.24;
+    // The measured gap is above the page (PDF y runs upward: `ty` is the
+    // gap below it).
+    let top = known.map_or(
+        ((height * (1.0 - exact) / 2.0 + MARKUP_FIT_DROP) / 0.24).floor() * 0.24,
+        |row| row.4 as f32 * 0.24,
+    );
+    let ty = height - top - gh;
     Some(MarkupChrome {
         gx: tx + (width - margin_r + MARKUP_PANE_GAP) * k,
         gy: ty,
@@ -897,15 +969,21 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
         let content_id = objs.len() + 1;
         objs.push(stream_object(&stream, options.compress));
         let mut annot_refs = String::new();
-        for note in &page.comments {
+        // Word's Save as PDF writes no annotation for a comment: its
+        // balloon is the print. The other styles keep the sticky note.
+        let sticky: &[PdfComment] = if options.revisions == super::RevisionStyle::Word {
+            &[]
+        } else {
+            &page.comments
+        };
+        for note in sticky {
             let id = objs.len() + 1;
             let scaled = markup.map(|m| PdfComment {
                 x: m.k * note.x + m.tx,
                 y: m.k * note.y + m.ty,
                 w: note.w * m.k,
                 h: note.h * m.k,
-                contents: note.contents.clone(),
-                author: note.author.clone(),
+                ..note.clone()
             });
             let note = scaled.as_ref().unwrap_or(note);
             // The content stream turns a vertical page back with
@@ -915,8 +993,7 @@ pub(crate) fn emit(fonts: &Fonts, pages: &[Page], options: PdfOptions) -> Vec<u8
                 y: page.width - note.x - note.w,
                 w: note.h,
                 h: note.w,
-                contents: note.contents.clone(),
-                author: note.author.clone(),
+                ..note.clone()
             });
             objs.push(text_annot_obj(turned.as_ref().unwrap_or(note)));
             let _ = write!(annot_refs, "{id} 0 R ");
@@ -1475,14 +1552,7 @@ fn face_unicode_map(
                 .into_iter()
                 .any(|t| t.platform_id == ttf_parser::PlatformId::Windows && t.encoding_id == 0)
         });
-    let symbol = face.pdf_name().starts_with("Symbol");
-    let read = |c: char| {
-        if symbol_encoded {
-            symbol_font_text(c, symbol)
-        } else {
-            c
-        }
-    };
+    let read = |c: char| read_back(face, symbol_encoded, c);
     let mut map = BTreeMap::new();
     let mut zipped = BTreeMap::new();
     let mut painted = BTreeSet::new();
@@ -1498,8 +1568,18 @@ fn face_unicode_map(
             {
                 painted.extend(glyphs.iter().copied());
                 for c in text.chars() {
-                    if let Some(g) = parsed.as_ref().and_then(|p| p.glyph_index(c)) {
-                        map.entry(g.0).or_insert_with(|| read(c).to_string());
+                    // A stood-in symbol code has no glyph of its own: the
+                    // glyph painted is its stand-in's, whatever the shaped
+                    // count of the run.
+                    let shown = read(c);
+                    let stood_in = |p: &ttf_parser::Face| {
+                        (!symbol_encoded).then(|| p.glyph_index(shown)).flatten()
+                    };
+                    if let Some(g) = parsed
+                        .as_ref()
+                        .and_then(|p| p.glyph_index(c).or_else(|| stood_in(p)))
+                    {
+                        map.entry(g.0).or_insert_with(|| shown.to_string());
                     }
                 }
                 if glyphs.len() == text.chars().count() {
@@ -1521,6 +1601,17 @@ fn face_unicode_map(
     }
     map.retain(|g, _| *g != 0 && painted.contains(g));
     map
+}
+
+/// The text a painted character reads back as: Word's for a symbol-encoded
+/// face (`symbol_font_text`), and for a symbol code a text face stands in
+/// for, the character it painted (`Face::symbol_stand_in`).
+fn read_back(face: &super::font::Face, symbol_encoded: bool, c: char) -> char {
+    if symbol_encoded {
+        symbol_font_text(c, face.pdf_name().starts_with("Symbol"))
+    } else {
+        face.symbol_stand_in(c).unwrap_or(c)
+    }
 }
 
 /// The text Word's PDFs carry for a symbol-encoded face's U+F020..U+F0FF
@@ -1968,6 +2059,104 @@ fn stands_upright(c: char) -> bool {
 mod tests {
     use super::uniquify;
 
+    /// Word's Save as PDF with markup (410 corpus PDFs, 14 page
+    /// geometries, 2026-10-03): the pane and page scale by a whole 1/300
+    /// of the fit, and the scaled page sits where the exact fit centres
+    /// it, 0.48pt down, on the 1/300in grid. Letter with 1in margins:
+    /// pane 99.84–691.2 (not 100.32); 0.75in right: 106.32; 1.25in:
+    /// 93.12; A4: 108.48; A4 landscape: 58.56.
+    #[test]
+    fn markup_page_sits_where_the_exact_fit_centres_it() {
+        let chrome = |w: f32, h: f32, mr: f32| super::markup_chrome(w, h, mr).expect("chrome");
+        // The 14 measured geometries, at the engine's page sizes (A4 is
+        // Word's 595.2 x 841.92).
+        for (w, h, mr, k300, top) in [
+            (612.0, 792.0, 72.0, 224.0, 99.84),
+            (612.0, 792.0, 54.0, 219.0, 106.32),
+            (612.0, 792.0, 70.9, 224.0, 100.08),
+            (612.0, 792.0, 90.0, 229.0, 93.12),
+            (612.0, 792.0, 108.0, 235.0, 85.92),
+            (595.2, 841.92, 45.35, 215.0, 118.56),
+            (595.2, 841.92, 56.7, 218.0, 114.24),
+            (595.2, 841.92, 72.0, 223.0, 108.48),
+            (595.2, 841.92, 76.55, 224.0, 106.56),
+            (595.2, 841.92, 85.05, 226.0, 103.2),
+            (595.2, 841.92, 89.85, 228.0, 101.28),
+            (595.2, 841.92, 120.25, 237.0, 88.08),
+            (595.0, 842.0, 72.45, 223.0, 108.24),
+            (841.92, 595.2, 72.0, 241.0, 58.56),
+        ] {
+            let c = chrome(w, h, mr);
+            assert!(
+                ((c.k * 300.0) - k300).abs() < 0.01,
+                "{w}x{h} mr {mr}: k {} not {k300}/300",
+                c.k * 300.0
+            );
+            // `gy` is the gap under the page; Word's measured gap is above it.
+            assert!(
+                (h - c.gy - c.gh - top).abs() < 0.01,
+                "{w}x{h} mr {mr}: page top {} not {top}",
+                h - c.gy - c.gh
+            );
+        }
+        // An unmeasured geometry takes the fit: Letter with a 1.1in right
+        // margin scales by floor(300 x exact)/300 and sits on the 1/300in
+        // grid under the exact fit's centre.
+        let c = chrome(612.0, 792.0, 79.2);
+        let exact = (612.0 - 8.64) / (612.0 - 79.2 + 265.68);
+        assert!(((c.k * 300.0) - (exact * 300.0_f32).floor()).abs() < 0.01);
+        let centre = 792.0 * (1.0 - exact) / 2.0;
+        let top = 792.0 - c.gy - c.gh;
+        assert!(
+            (top / 0.24 - (top / 0.24).round()).abs() < 0.01,
+            "on the grid"
+        );
+        assert!(
+            top > centre && top < centre + 0.6,
+            "top {top} near {centre}"
+        );
+    }
+
+    /// A bullet a text face stands in for (the WASM build has no Symbol)
+    /// reads back as the character painted, not the private-use code: the
+    /// WASM PDF's bullets read U+F0B7 where the native PDF's read "•"
+    /// (parity check 2026-10-03).
+    #[test]
+    fn a_stood_in_symbol_code_reads_back_as_the_character_painted() {
+        use super::super::font::{Face, FaceId};
+        let symbol = Face::bundled(FaceId::Symbol);
+        assert_eq!(super::read_back(&symbol, false, '\u{F0B7}'), '•');
+        assert_eq!(super::read_back(&symbol, false, 'a'), 'a');
+        let sans = Face::bundled(FaceId::SansRegular);
+        assert_eq!(super::read_back(&sans, false, '\u{F0A7}'), '▪');
+        assert_eq!(super::read_back(&sans, false, '\u{2011}'), '\u{2011}');
+    }
+
+    /// A run whose shaped glyphs are not one per character (a balloon's
+    /// batched text) still maps the stand-in's glyph to its character.
+    #[test]
+    fn a_stood_in_symbol_code_reads_back_in_a_run_shaped_to_another_count() {
+        use super::super::font::{Face, FaceId};
+        use super::{Op, Page};
+        let sans = Face::bundled(FaceId::SansRegular);
+        let (a, square) = (sans.glyph('a'), sans.glyph('\u{F0A7}'));
+        assert_ne!(square, 0);
+        let mut page = Page::new(612.0, 792.0);
+        page.ops.push(Op::Text {
+            face: FaceId::SansRegular.into(),
+            size: 11.0,
+            x: 72.0,
+            y: 72.0,
+            glyphs: vec![a, square, square],
+            color: [0.0; 3],
+            text: "a\u{F0A7}".to_string(),
+            hscale: 1.0,
+        });
+        let map = super::face_unicode_map(&sans, FaceId::SansRegular.into(), &[page]);
+        assert_eq!(map.get(&square).map(String::as_str), Some("▪"));
+        assert_eq!(map.get(&a).map(String::as_str), Some("a"));
+    }
+
     /// Word 16 probes sym/sym2 (2026-10-02): a symbol-encoded face's
     /// U+F0xx text reads back as its low byte; Symbol keeps seven
     /// exceptions (6D µ, A4 ⁄, A6 ƒ, B7 •, B8 ÷, BC …, D8 ¬).
@@ -1998,12 +2187,19 @@ mod tests {
         let mut page = super::Page::new(595.2, 841.92);
         page.vertical = true;
         page.comments.push(super::PdfComment {
+            id: "0".into(),
             x: 100.0,
             y: 700.0,
             w: 20.0,
             h: 14.0,
+            top: 690.0,
+            bottom: 703.0,
             contents: "note".into(),
             author: "A".into(),
+            initials: "A".into(),
+            label: "1".into(),
+            color: [0.0; 3],
+            resolved: false,
         });
         let pdf = super::emit(&fonts, &[page], crate::convert::PdfOptions::default());
         let hay = String::from_utf8_lossy(&pdf);

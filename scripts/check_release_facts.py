@@ -7,7 +7,7 @@
 """Refuse to call a release done while jubarte-app's facts name another one.
 
 `python3 scripts/check_release_facts.py 0.11.0` exits 1 and lists each
-problem; scripts/release.sh runs it after the downstream step (13). jubarte.pro
+problem; scripts/release.sh runs it after the downstream step (14). jubarte.pro
 and the Mac app print the engine's version, release date, files and release
 list from jubarte-app/data/facts.jsonl, an append-only log (one record a line:
 uuidv7 id, timestamp, key, value, source; a key's latest record is its value,
