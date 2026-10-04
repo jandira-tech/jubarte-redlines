@@ -1745,6 +1745,13 @@ impl<'a> Fonts<'a> {
         }
         let mut visited = HashSet::new();
         let (id, step) = self.resolve_walk(family, bold, italic, table, &mut visited);
+        // `mapped_face` also places families by their name's class (`Fake
+        // Serif` on the serif face, `Helvetica` on Arial): the face is
+        // installed, but it is not the family asked for.
+        let step = match step {
+            FontStep::Explicit if !names_family(primary, id.logical_family()) => FontStep::Generic,
+            step => step,
+        };
         let face = FaceRef::Catalogue(id);
         (
             face,
@@ -1899,6 +1906,26 @@ impl<'a> Fonts<'a> {
             (true, true) => FaceId::CambriaBoldItalic,
         })
     }
+}
+
+/// `requested` is `family` itself, ignoring case, spaces, hyphens and an
+/// `MT` suffix (`Arial MT`, `TimesNewRoman`), or one of its metric-identical
+/// open twins the catalogue bundles (`Carlito` for Calibri).
+fn names_family(requested: &str, family: &str) -> bool {
+    let squash = |s: &str| {
+        let key = s.to_ascii_lowercase().replace([' ', '-'], "");
+        key.strip_suffix("mt").map(str::to_string).unwrap_or(key)
+    };
+    let (requested, family) = (squash(requested), squash(family));
+    let twins: &[&str] = match family.as_str() {
+        "calibri" => &["carlito"],
+        "cambria" => &["caladea"],
+        "arial" => &["liberationsans", "arimo"],
+        "timesnewroman" => &["liberationserif", "tinos"],
+        "couriernew" => &["liberationmono", "cousine"],
+        _ => &[],
+    };
+    requested == family || twins.contains(&requested.as_str())
 }
 
 fn family_token(family: &str) -> &str {
@@ -4888,6 +4915,31 @@ mod tests {
         let fonts = Fonts::new();
         let (_, entry) = fonts.classify_in("SomeSwiss", false, false, &table);
         assert_eq!(entry.step, FontStep::Generic);
+    }
+
+    #[test]
+    fn a_family_placed_by_its_name_class_is_substituted() {
+        // `--fail-on-substitution` must see an absent family whose name says
+        // serif, though it is drawn with the installed serif face.
+        let fonts = Fonts::new();
+        let table = super::super::font_table::FontTable::default();
+        for family in ["Jubarte Absent Serif", "Helvetica"] {
+            let (_, entry) = fonts.classify_in(family, false, false, &table);
+            assert!(
+                entry.substituted(),
+                "{family}: {:?} -> {}",
+                entry.step,
+                entry.physical
+            );
+        }
+        let (_, entry) = fonts.classify_in("Times New Roman", false, false, &table);
+        assert!(
+            !entry.substituted() || entry.step == FontStep::OpenFallback,
+            "{entry:?}"
+        );
+        assert!(names_family("Arial MT", "Arial"));
+        assert!(names_family("TimesNewRoman", "Times New Roman"));
+        assert!(!names_family("Times", "Times New Roman"));
     }
 
     #[test]
