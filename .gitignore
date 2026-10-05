@@ -92,3 +92,5 @@ Claude outputs/
 /fuzz/artifacts/
 /fuzz/target/
 /fuzz/Cargo.lock
+.env
+jubarte-app/.impeccable/

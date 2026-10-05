@@ -8,6 +8,8 @@ features bump the **minor**, fixes bump the **patch**).
 See [README → Versioning & release](README.md#versioning--release) for how to cut
 a new version.
 
+## [Unreleased]
+
 ## [0.11.2] — 2026-10-03
 
 ### Changed
@@ -33,23 +35,124 @@ a new version.
   0.11.1 release commit) shows only those lines. Every difference a user
   sees comes from the engine.
 
-## [0.11.0] — 2026-10-03
-
-### Changed
-- **Engine upgraded to jubarte-redlines 0.11.0**: the default revision marks
-  follow Litera Compare (insertions underlined once in blue, deletions struck
-  once in red, moves doubled in green); a Word 97-2003 `.doc` or a
-  password-protected document is refused with a message asking for an
-  unprotected `.docx` instead of a ZIP error; and PDF export follows Word more
-  closely on tables, text boxes, line spacing, lists, fonts, headers, footers,
-  notes and fields.
+## [0.11.1] — 2026-10-03
 
 ### Fixed
-- A document the engine refuses before comparing (a `.doc`, a
-  password-protected file, RTF, one over the size limits) is named in a plain
-  sentence, such as "The original document is a Word 97-2003 (.doc) or
-  encrypted document; open it in Word and save it as .docx without a
-  password.", not "Comparison failed: I/O error: LEGACY_DOC: …".
+- **A refused document says why in a sentence**: a Word 97-2003 `.doc` or a
+  password-protected file reads "The original document is a Word 97-2003
+  (.doc) or encrypted document; open it in Word and save it as .docx without
+  a password." An RTF file or a package over the engine's limits names the
+  document and the reason. Both used to show the engine's raw
+  "Comparison failed: I/O error: LEGACY_DOC: …", and converting one showed
+  "Conversion failed: opening DOCX: …".
+
+### Changed
+- Built on the released jubarte-redlines 0.11.0 engine (tag v0.11.0); the
+  0.11.0 upload was built before the engine release.
+
+## [0.11.0] — 2026-10-02
+
+### Added
+- **Side by side**: a redline shows alone or beside the original, its
+  insertions taken out and its deletions kept, unmarked. The choice is
+  remembered.
+- **Export PDF** (File › Export Redline as PDF, ⌘E) lays the redline out as
+  a PDF, its tracked changes drawn with the marks Settings chose. It is a
+  free preview, opened, shown in Finder and saved as a PDF; taking it spends
+  a free use. "← Back to the redline" returns to the redline.
+- **Instant preview** (Settings › Preview, on by default): documents under
+  1 MB each are redlined, or converted, the moment they are chosen, dropped
+  or swapped, without pressing the button. The size is
+  `app.instant_preview_max_bytes` in `data/facts.jsonl`; jubarte.pro's Demo
+  and App pages do the same, with a checkbox to turn it off.
+- **Settings (⌘, or the gear in the title bar)**: how tracked changes are
+  marked (Conventional, As Word prints, or Custom: a colour and a line for
+  insertions, deletions and each end of a move, used by the preview and the
+  PDFs); a fixed "Revisions by" name for every redline; and Light, Dark or
+  System appearance. The Convert tab's menu is the same setting.
+- **Agent fingerprint** (Settings › Revisions by): for an agent that makes
+  redlines, text written into each one as the custom document property
+  `AgentFingerprint` (Word: File › Properties › Custom). It never appears in
+  the text. One line, at most 255 characters; a property of the same name in
+  any case is replaced, since Word refuses a package that holds two.
+- **Menu bar**: every option the window has, where a Mac user looks for
+  it. Jubarte: About, Settings (⌘,), Jubarte PRO, Restore Purchase. File:
+  Choose Original (⌘O), Modified (⇧⌘O) or a Document to Convert (⌥⌘O); Make
+  Redline (⌘R) or PDF (⇧⌘R); Swap; Open Result (⌘↓), Show in Finder, Save a
+  Copy (⌘S). View: Redline (⌘1), Convert to PDF (⌘2), Appearance. Help: the
+  website, use cases, benchmark, support, Terms of Use and Privacy Policy.
+- **About Jubarte**: the version, the engine it runs, where your documents
+  go (nowhere), the website and support, and the open-source
+  acknowledgements.
+- **Terms of Use and Privacy Policy in the app**: the same sections
+  jubarte.pro prints, from `data/facts.jsonl` compiled in, so they read
+  offline; their links open in the browser.
+
+### Changed
+- **The window, redrawn** after the Claude Design "Jubarte App Window":
+  the title bar reads JUBARTE; Redline and Convert to PDF are tabs at the
+  head of the panel; the panel folds into a strip of icons (the app icon,
+  Show panel, Add documents, the two modes, Open, Show in Finder, Save a
+  copy, the free uses) with the collapse button or View › Show or Hide Panel
+  (⌃⌘S), and stays as it was left. Open, Show in Finder and Save a copy sit
+  in a row, with icons, for a redline and for a PDF; the free uses and
+  Instant preview sit at the foot of the panel. Convert offers PDF, and PNG
+  pages as coming soon. The tracked-change marks are chosen in Settings
+  alone.
+- **A control that cannot act says why**: pressing Create redline with one
+  document keeps the redline and points at the missing slot ("Add the
+  modified document to make a redline."); Open, Show in Finder and Save a
+  copy say what they wait for. The empty preview chooses documents when
+  clicked and says what it waits for.
+- **Settings, tidied**: each kind of change picks its line from a row of
+  "Aa" drawn with that line in its colour, in place of a menu of names; the
+  groups are headed in small mono capitals; Appearance says what it does to
+  the window and that pages stay white; the fingerprint note gives its
+  limit (one line, 255 characters). The preview's page is set larger (16 px,
+  wider margins), as a printed page reads.
+- A Finder hand-off during Export PDF waits for it instead of freezing the
+  window; a PDF of a stale redline is drawn stale; going back and exporting
+  again shows the same PDF, so taking it spends nothing twice; turning
+  Instant preview on never remakes a current result; a redline whose
+  documents changed mid-run is drawn stale; Return on a link or in the
+  paywall no longer starts a run; with the panel folded, a nudge points at
+  the strip; nudges are read out by VoiceOver.
+- The floating and drifting whales stand still for anyone who asked macOS
+  for reduced motion.
+- **App icon: Night.** jubarte.pro's whale mark, flat in its pale blue, on
+  the site's Night colours, so the Dock and the site show one whale. The same
+  `assets/icon.svg` draws jubarte.pro's favicon.
+- **A free use is spent when you take a result, not when it is made.** A
+  redline or a PDF is a free preview in the window; the first Open, Show in
+  Finder or Save a copy of it spends the use (`take_result` runs the gate) and
+  copies it out of the previews folder, which empties at each launch. Finder's
+  Convert to PDF still spends one per PDF. A preview never opens the paywall
+  on its own. The Terms say so.
+- **Preview marks**: insertions and deletions are marked once (underlined in
+  blue, struck in red) and a move twice, in green: double-struck where it left
+  and double-underlined where it landed. The "— moved from §N" note is gone: the struck source shows where the
+  text came from.
+- **No legend**: the revision chips now wear their marks (the deleted count is
+  struck) and replace the legend that repeated them. The formatting chip reads
+  "n Formatted".
+
+- **One record of every changeable fact**: `data/facts.jsonl` holds the
+  versions, prices, free uses, sizes, release list, benchmark figures, page
+  limit and each section of the Terms and the Privacy Policy, one append-only
+  record a line with a uuidv7 id and its timestamp. `scripts/facts.py` (Python
+  3.14) is its only writer; the site reads it, and sync-release.ts appends a
+  new engine release to it.
+- **Jubarte PRO**: the subscription sheet is titled Jubarte PRO, as the
+  website calls the Mac app, and its legal links open the text in the app.
+- **Apple Account**: the sheet points to System Settings → Apple Account →
+  Subscriptions, as macOS now names it (it said Apple ID).
+
+### Fixed
+- **No network at launch**: the app's fonts (Manrope, JetBrains Mono, Source
+  Serif 4, SIL OFL 1.1) are bundled instead of fetched from Google Fonts, so
+  opening Jubarte contacts no one; only a purchase check goes online.
+- **About Jubarte opens on Done**: it used to open with the Engine link
+  focused and ringed, so Return opened the link instead of closing the window.
 
 ## [0.10.1] — 2026-09-30
 

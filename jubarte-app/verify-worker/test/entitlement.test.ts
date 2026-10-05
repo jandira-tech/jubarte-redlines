@@ -76,10 +76,7 @@ describe("isEntitled", () => {
 
   it("revoked non-expiring product is inactive", () => {
     expect(
-      isEntitled(
-        state({ expiresDateMs: null, revocationDateMs: NOW - DAY }),
-        NOW,
-      ),
+      isEntitled(state({ expiresDateMs: null, revocationDateMs: NOW - DAY }), NOW),
     ).toBe(false);
   });
 });

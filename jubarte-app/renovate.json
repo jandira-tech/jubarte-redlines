@@ -2,5 +2,24 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended"
+  ],
+  "packageRules": [
+    {
+      "description": "pnpm 12 refuses a lockfile entry published less than a day ago (minimumReleaseAge, 1440 min by default), so an npm update opens only once it is a day old: a younger one fails `pnpm install --frozen-lockfile` (#21).",
+      "matchDatasources": ["npm"],
+      "minimumReleaseAge": "1 day"
+    },
+    {
+      "description": "@cloudflare/vitest-pool-workers peers vitest ^4.1 (0.22.0), so a vitest major waits until the pool supports it: approve it from the Dependency Dashboard.",
+      "matchPackageNames": ["vitest", "@vitest/**"],
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "muda is a dev-dependency only so the menu test parses shortcuts with the parser tauri links (src-tauri/src/menu.rs, #93). It stays on tauri's muda and moves by hand when a tauri update moves it, never on its own.",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["muda"],
+      "enabled": false
+    }
   ]
 }

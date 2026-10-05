@@ -21,6 +21,12 @@ export interface SubscriptionState {
   latestTransactionId: string | null;
   /** When Apple signed the source payload; used to drop stale updates. */
   signedDateMs: number;
+  /**
+   * False when the source carried no renewal info (a bare /verify transaction): the
+   * grace-period and auto-renew fields are then unknown, not "none", and the stored
+   * values must be kept. Absent means present (notifications always carry it).
+   */
+  renewalInfoPresent?: boolean;
 }
 
 /** Subset of Apple's JWSTransactionDecodedPayload we consume. */
@@ -81,6 +87,7 @@ export function toSubscriptionState(
     autoRenewStatus: renewal?.autoRenewStatus === 1,
     latestTransactionId: txn.transactionId ?? null,
     signedDateMs: txn.signedDate ?? renewal?.signedDate ?? 0,
+    renewalInfoPresent: renewal !== undefined,
   };
 }
 // Staleness / out-of-order protection is enforced atomically in the DB layer

@@ -86,11 +86,36 @@ async function tryBoth<T>(
     try {
       return await fn(sandbox);
     } catch (sandboxError) {
-      // Sandbox is the usual path during development; log it so a real Sandbox
-      // failure is not masked by the Production error (gemini #3583828482).
-      console.warn("jubarte: sandbox verification also failed", sandboxError);
-      // Both failed — surface the Production error (usually the informative one).
-      throw productionError;
+      // Name both reasons: a Sandbox transaction always fails Production with
+      // INVALID_ENVIRONMENT, so its real failure is the Sandbox one
+      // (gemini #3583828482).
+      throw new Error(
+        `production: ${describeVerificationError(productionError)}; ` +
+          `sandbox: ${describeVerificationError(sandboxError)}`,
+      );
     }
   }
+}
+
+// Apple's VerificationStatus, by value. Copied rather than imported: importing
+// the library at module scope breaks Workers (see AppleVerifier).
+const VERIFICATION_STATUS = [
+  "OK",
+  "VERIFICATION_FAILURE",
+  "RETRYABLE_VERIFICATION_FAILURE",
+  "INVALID_APP_IDENTIFIER",
+  "INVALID_ENVIRONMENT",
+  "INVALID_CHAIN_LENGTH",
+  "INVALID_CERTIFICATE",
+  "FAILURE",
+];
+
+/** Why a verification failed, for the log. Apple's VerificationException
+ * carries a numeric status and an empty message, so String(e) reads "Error". */
+export function describeVerificationError(e: unknown): string {
+  if (e instanceof Error && "status" in e && typeof e.status === "number") {
+    const name = VERIFICATION_STATUS[e.status] ?? `status ${e.status}`;
+    return e.cause instanceof Error ? `${name} (${e.cause.message})` : name;
+  }
+  return e instanceof Error ? e.message || e.name : String(e);
 }

@@ -1,7 +1,7 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 // Bump the app version in every place it is hard-coded, in one shot.
 //
-//   bun run bump 0.3.0
+//   pnpm bump 0.3.0
 //
 // Touches: package.json, src-tauri/tauri.conf.json (JSON `.version`),
 // src-tauri/Cargo.toml (the [package] `version` line), and src/index.html
@@ -16,7 +16,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 const next = process.argv[2];
 if (!/^\d+\.\d+\.\d+$/.test(next ?? "")) {
-  console.error(`usage: bun run bump <x.y.z>   (got: ${next ?? "nothing"})`);
+  console.error(`usage: pnpm bump <x.y.z>   (got: ${next ?? "nothing"})`);
   process.exit(1);
 }
 
@@ -59,4 +59,4 @@ if (htmlNext === html) throw new Error(`could not find the app-bar version label
 writeFileSync(htmlPath, htmlNext);
 
 console.log(`bumped ${prev} → ${next}`);
-console.log("next: add a CHANGELOG.md entry, then commit, then `bun run build`.");
+console.log("next: add a CHANGELOG.md entry, then commit, then `pnpm build`.");

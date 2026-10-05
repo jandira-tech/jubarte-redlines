@@ -9,16 +9,13 @@ guidance when the API refuses the first-subscription flow) on PR #1.
 """
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
+from asc_loader import load_module_from_path
 
 SCRIPTS = Path(__file__).resolve().parent
-if str(SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS))
 
-from asc_loader import load_module_from_path
 
 MOD_PATH = SCRIPTS / "asc-resubmit.py"
 
@@ -44,7 +41,9 @@ class FakeAsc:
         return 200, {"data": []}
 
     def writes(self):
-        return [(m, p) for (m, p, _b) in self.requests if m in ("PATCH", "POST", "DELETE")]
+        return [
+            (m, p) for (m, p, _b) in self.requests if m in ("PATCH", "POST", "DELETE")
+        ]
 
 
 def submission(sub_id, state="READY_FOR_REVIEW"):
@@ -57,7 +56,9 @@ def items_holding(version_id):
             {
                 "type": "reviewSubmissionItems",
                 "relationships": {
-                    "appStoreVersion": {"data": {"type": "appStoreVersions", "id": version_id}}
+                    "appStoreVersion": {
+                        "data": {"type": "appStoreVersions", "id": version_id}
+                    }
                 },
             }
         ],
@@ -95,7 +96,9 @@ def test_submit_cancels_only_submissions_holding_this_version():
                 "meta": {"paging": {"total": 2}},
             },
             ("GET", "/reviewSubmissions/SUB-OURS/items"): items_holding(mod.VERSION_ID),
-            ("GET", "/reviewSubmissions/SUB-OTHER/items"): items_holding("some-other-version"),
+            ("GET", "/reviewSubmissions/SUB-OTHER/items"): items_holding(
+                "some-other-version"
+            ),
             ("POST", "/reviewSubmissions"): (201, {"data": {"id": "SUB-NEW"}}),
             ("GET", "/reviewSubmissions/SUB-NEW/items"): items_holding(mod.VERSION_ID),
             ("GET", f"/subscriptions/{mod.SUBSCRIPTION_ID}"): {
@@ -112,13 +115,16 @@ def test_submit_cancels_only_submissions_holding_this_version():
     )
     mod.asc = fake
     mod.DO_SUBMIT = True
+    mod.listing_gaps_for = lambda version: []  # listing reviewed
 
     mod.main("9.9.9", "BUILD-1")
 
     cancelled = [
         p
         for (m, p, b) in fake.requests
-        if m == "PATCH" and b and b.get("data", {}).get("attributes", {}).get("canceled")
+        if m == "PATCH"
+        and b
+        and b.get("data", {}).get("attributes", {}).get("canceled")
     ]
     assert cancelled == ["/reviewSubmissions/SUB-OURS"], cancelled
 
@@ -151,6 +157,7 @@ def test_first_subscription_refusal_aborts_before_final_submit(capsys):
     )
     mod.asc = fake
     mod.DO_SUBMIT = True
+    mod.listing_gaps_for = lambda version: []  # listing reviewed
 
     with pytest.raises(SystemExit):
         mod.main("9.9.9", "BUILD-1")
@@ -160,6 +167,42 @@ def test_first_subscription_refusal_aborts_before_final_submit(capsys):
         for (m, p, b) in fake.requests
         if m == "PATCH" and p == "/reviewSubmissions/SUB-NEW"
     ]
-    assert final_submits == [], "must not submit a version-only review submission (2.1(b))"
+    assert final_submits == [], (
+        "must not submit a version-only review submission (2.1(b))"
+    )
     out = capsys.readouterr().out
     assert "group" in out.lower(), "abort message must point at the web-UI group flow"
+
+
+def test_submit_refuses_a_version_whose_listing_is_not_reviewed():
+    # data/facts.jsonl: app_store.listing.reviewed_for must name the version,
+    # and every listing draft must have reached Apple's field.
+    mod = load_script()
+    fake = FakeAsc({})
+    mod.asc = fake
+    mod.DO_SUBMIT = True
+    mod.listing_gaps_for = lambda version: [f"app_store.listing.reviewed_for is not {version}"]
+
+    with pytest.raises(SystemExit) as stop:
+        mod.main("9.9.9", "BUILD-1")
+
+    assert "reviewed_for is not 9.9.9" in str(stop.value)
+    assert fake.requests == [], "nothing may be read or written before the listing is reviewed"
+
+
+def test_dry_run_names_the_listing_gaps_and_goes_on(capsys):
+    mod = load_script()
+    fake = FakeAsc({})
+    mod.asc = fake
+    mod.DO_SUBMIT = False
+    mod.listing_gaps_for = lambda version: ["app_store.listing.reviewed_for is not 9.9.9"]
+
+    mod.main("9.9.9", "BUILD-1")
+
+    assert "reviewed_for is not 9.9.9" in capsys.readouterr().out
+    assert fake.writes() == []
+
+
+def test_the_gate_reads_the_repository_facts():
+    mod = load_script()
+    assert any("reviewed_for" in gap for gap in mod.listing_gaps_for("0.0.0-never"))

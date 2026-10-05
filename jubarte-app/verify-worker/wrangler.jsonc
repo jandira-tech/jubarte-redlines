@@ -7,6 +7,12 @@
   // and node-fetch — it needs the Node compat layer to load on workerd.
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
+  // App Store Connect posts Server Notifications to https://jubarte.pro/notifications.
+  // That host belongs to jubarte-site (`jubarte.pro/*`); this narrower route wins
+  // for the one path. The app keeps calling /verify on workers.dev, which a
+  // Worker with routes only keeps when it is asked for.
+  "workers_dev": true,
+  "routes": [{ "pattern": "jubarte.pro/notifications", "zone_name": "jubarte.pro" }],
   // Non-secret config. appAppleId + bundleId are required to verify Production
   // data (see MAC_APP_STORE_RELEASE.md). enable_online_checks does OCSP over the
   // network (node-fetch) — left off; flip to "true" only if you need revocation.
@@ -15,6 +21,9 @@
     "APPLE_APP_APPLE_ID": "6790926615",
     "APPLE_ENABLE_ONLINE_CHECKS": "false"
   },
+  // /verify is public (the app calls it on this workers.dev host); limit it per IP.
+  // Namespace ids are account-wide and shared by every Worker that names them.
+  "ratelimits": [{ "name": "VERIFY_LIMITER", "namespace_id": "4101", "simple": { "limit": 30, "period": 60 } }],
   "d1_databases": [
     {
       "binding": "DB",
