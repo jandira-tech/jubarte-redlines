@@ -112,7 +112,8 @@ jobs:
           needs() {
             case "$1" in
               *soffice*|*libreoffice*) echo soffice pdftoppm ;;
-              *pdf_page_size_*) echo soffice pdfinfo ;;
+              # 14's run.sh: soffice and pdftoppm open the branch, pdfinfo writes it.
+              *pdf_page_size_*) echo soffice pdftoppm pdfinfo ;;
               *fonts_jubarte_pdf*) echo pdffonts ;;
               *pandoc*) echo pandoc ;;
               *docxjs*) echo bun ;;
