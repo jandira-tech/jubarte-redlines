@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { AppleVerifier } from "./apple/verifier";
+import { AppleVerifier, describeVerificationError } from "./apple/verifier";
 import { getSubscription, upsertSubscription } from "./db";
 import { isEntitled, type SubscriptionState, toSubscriptionState } from "./entitlement";
 
@@ -9,6 +9,8 @@ export type Bindings = {
   APPLE_BUNDLE_ID: string;
   APPLE_APP_APPLE_ID: string;
   APPLE_ENABLE_ONLINE_CHECKS?: string;
+  /** Workers rate limiter for /verify, keyed on the caller's IP (absent in local dev). */
+  VERIFY_LIMITER?: { limit(options: { key: string }): Promise<{ success: boolean }> };
 };
 
 function getVerifier(env: Bindings): AppleVerifier {
@@ -55,7 +57,10 @@ app.use(
       if (!origin) return "";
       if (origin === "tauri://localhost") return origin;
       if (origin === "http://tauri.localhost") return origin;
-      if (origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:")) {
+      if (
+        origin.startsWith("http://localhost:") ||
+        origin.startsWith("http://127.0.0.1:")
+      ) {
         return origin;
       }
       return "";
@@ -69,17 +74,27 @@ app.get("/", (c) => c.text("jubarte verify-worker"));
 // or currentEntitlements). We verify it against Apple, record/refresh the
 // subscription, and return the authoritative entitlement.
 app.post("/verify", async (c) => {
+  const limiter = c.env.VERIFY_LIMITER;
+  if (limiter) {
+    const ip = c.req.header("cf-connecting-ip") ?? "unknown";
+    if (!(await limiter.limit({ key: ip })).success) {
+      return c.json({ error: "too many requests" }, 429, { "Retry-After": "60" });
+    }
+  }
   const body = (await c.req.json().catch(() => ({}))) as { signedTransaction?: unknown };
   const signed = body.signedTransaction;
   if (typeof signed !== "string" || !signed) {
     return c.json({ error: "missing signedTransaction" }, 400);
   }
 
+  // Outside the try: a misconfigured worker is a 500, not the caller's 400.
+  const verifier = getVerifier(c.env);
   let txn: Awaited<ReturnType<AppleVerifier["verifyTransaction"]>>;
   try {
-    txn = await getVerifier(c.env).verifyTransaction(signed);
+    txn = await verifier.verifyTransaction(signed);
   } catch (e) {
-    return c.json({ error: "verification failed", detail: String(e) }, 400);
+    console.error("verification failed:", describeVerificationError(e));
+    return c.json({ error: "verification failed" }, 400);
   }
 
   const now = Date.now();
@@ -92,7 +107,8 @@ app.post("/verify", async (c) => {
     return c.json(publicView(current, now));
   } catch (e) {
     // DB / internal failures are not client errors (gemini #3583828479).
-    return c.json({ error: "processing failed", detail: String(e) }, 500);
+    console.error("processing failed:", e instanceof Error ? e.message : String(e));
+    return c.json({ error: "processing failed" }, 500);
   }
 });
 
@@ -111,7 +127,8 @@ app.post("/notifications", async (c) => {
   try {
     payload = await verifier.verifyNotification(signed);
   } catch (e) {
-    return c.json({ error: "verification failed", detail: String(e) }, 400);
+    console.error("verification failed:", describeVerificationError(e));
+    return c.json({ error: "verification failed" }, 400);
   }
 
   const signedTxn = payload.data?.signedTransactionInfo;
@@ -130,7 +147,8 @@ app.post("/notifications", async (c) => {
     await upsertSubscription(c.env.DB, state, Date.now());
   } catch (e) {
     // Internal failures must be 5xx so Apple retries (gemini #3583828479).
-    return c.json({ error: "processing failed", detail: String(e) }, 500);
+    console.error("processing failed:", describeVerificationError(e));
+    return c.json({ error: "processing failed" }, 500);
   }
   return c.json({ ok: true, notificationType: payload.notificationType });
 });

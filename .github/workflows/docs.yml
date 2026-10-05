@@ -1,0 +1,60 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+name: Docs
+
+# The generated blocks in docs/rust.md, docs/python.md and docs/javascript.md
+# (CLI references from real --help output, API references from the shipped
+# module/declaration files) must never drift from the code. This job
+# regenerates them and fails when the committed pages differ.
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/docs.yml
+      - src/**
+      - jubarte-python/**
+      - jubarte-wasm/**
+      - docs/rust.md
+      - docs/python.md
+      - docs/javascript.md
+      - scripts/gen_docs.sh
+      - scripts/gen_cli_docs.py
+      - scripts/gen_python_api.py
+      - scripts/gen_wasm_api.py
+  pull_request:
+    paths:
+      - .github/workflows/docs.yml
+      - src/**
+      - jubarte-python/**
+      - jubarte-wasm/**
+      - docs/rust.md
+      - docs/python.md
+      - docs/javascript.md
+      - scripts/gen_docs.sh
+      - scripts/gen_cli_docs.py
+      - scripts/gen_python_api.py
+      - scripts/gen_wasm_api.py
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    name: generated docs drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: jubarte-python
+      - uses: astral-sh/setup-uv@v10.2.0
+      # node is preinstalled on ubuntu-latest; the generator only needs it to
+      # run jubarte-wasm/cli/bin/jubarte-redlines.mjs against the checked-in
+      # jubarte-wasm build.
+      - name: Regenerate and compare
+        run: scripts/gen_docs.sh --check

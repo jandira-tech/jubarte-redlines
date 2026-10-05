@@ -1,12 +1,13 @@
 // Paywall + free-tier gate. Loads as an ES module (imports storekit.js).
 //
-// Access model: every install gets FREE_LIMIT (5) redlines for free — counted
-// and enforced in Rust (src-tauri/src/quota.rs) — after which the annual
-// subscription is required. Entitlement is server-authoritative when online
-// (isEntitledVerified), with a graceful fall back to the local Apple-signed
-// StoreKit receipt (isEntitled) so a paying customer isn't locked out when the
-// backend/network is unreachable. For a locally-run product no client gate is
-// tamper-proof; the backend is the record of truth and the deterrent, not DRM.
+// Access model: every install gets FREE_LIMIT (5) free uses (a redline or a
+// conversion each) — counted and enforced in Rust (src-tauri/src/quota.rs) —
+// after which the annual subscription is required. Entitlement is
+// server-authoritative when online (isEntitledVerified), with a graceful fall
+// back to the local Apple-signed StoreKit receipt (isEntitled) so a paying
+// customer isn't locked out when the backend/network is unreachable. For a
+// locally-run product no client gate is tamper-proof; the backend is the
+// record of truth and the deterrent, not DRM.
 
 import {
   fetchProducts,
@@ -23,7 +24,8 @@ const invoke =
     throw new Error(`Tauri core invoke is not available (command: ${cmd})`);
   });
 
-// Legal pages hosted on jubarte.pro (jubarte-site/ Cloudflare Worker).
+// The Terms of Use and the Privacy Policy open in the app (about.js, from the
+// facts compiled in); jubarte.pro serves the same text when the app cannot.
 const TERMS_URL = "https://jubarte.pro/terms";
 const PRIVACY_URL = "https://jubarte.pro/privacy";
 
@@ -73,6 +75,9 @@ function focusableInPaywall() {
 
 function onPaywallKeydown(e) {
   if (paywall?.hasAttribute("hidden")) return;
+  // A window opened over the paywall (the Terms, the Privacy Policy) keeps
+  // its own keys: Escape closes it, Tab stays in it.
+  if (document.querySelector("dialog[open]")) return;
   if (e.key === "Escape") {
     const later = $("pw-later");
     if (later && !later.hidden) {
@@ -114,6 +119,8 @@ function updateBadge() {
   const el = $("free-left");
   if (!el) return;
   const q = window.jubarte.quota;
+  // The window's notes about free uses are for those who still count them.
+  document.body.dataset.entitled = String(!!window.jubarte.entitled);
   if (window.jubarte.entitled || !q) {
     el.hidden = true;
     return;
@@ -121,8 +128,10 @@ function updateBadge() {
   el.hidden = false;
   el.textContent =
     q.remaining > 0
-      ? `${q.remaining} of ${q.limit} free redlines left`
-      : "Free redlines used up — subscribe";
+      ? `${q.remaining} of ${q.limit} free uses left`
+      : "Free uses spent — subscribe";
+  // The folded panel's strip shows the count alone.
+  el.dataset.short = `${Math.max(q.remaining, 0)}/${q.limit}`;
 }
 
 /** Show the paywall, with copy + dismissability matched to the quota state. */
@@ -132,10 +141,10 @@ function openPaywall() {
   const sub = $("pw-sub");
   if (sub) {
     sub.textContent = exhausted
-      ? `You've used all ${q.limit} free redlines on this Mac. Subscribe for unlimited tracked-changes redlines that open cleanly in Microsoft Word.`
-      : "Unlimited tracked-changes redlines that open cleanly in Microsoft Word.";
+      ? `You've used all ${q.limit} free uses on this Mac. Subscribe for unlimited tracked-changes redlines that open cleanly in Microsoft Word, and PDFs of any document.`
+      : "Unlimited tracked-changes redlines that open cleanly in Microsoft Word, and PDFs of any document.";
   }
-  // While free redlines remain the paywall is an offer, not a wall.
+  // While free uses remain the paywall is an offer, not a wall.
   const later = $("pw-later");
   if (later) later.hidden = !(q && q.remaining > 0);
   previouslyFocused = document.activeElement;
@@ -171,7 +180,7 @@ async function renderProduct() {
       `${p.displayName} is an auto-renewable subscription billed ${p.displayPrice} ` +
       `per ${unit}. It renews automatically unless cancelled at least 24 hours ` +
       `before the end of the current period. Manage or cancel anytime in System ` +
-      `Settings → Apple ID → Subscriptions.`;
+      `Settings → Apple Account → Subscriptions.`;
   } catch {
     /* keep the static fallback copy already in the HTML */
   }
@@ -231,7 +240,7 @@ $("pw-subscribe")?.addEventListener("click", async () => {
   }
 });
 
-$("pw-restore")?.addEventListener("click", async () => {
+async function restorePurchase() {
   setStatus("Restoring your subscription…", true);
   try {
     const s = await restore();
@@ -259,7 +268,8 @@ $("pw-restore")?.addEventListener("click", async () => {
   } catch (e) {
     setStatus(`Restore failed: ${e}`);
   }
-});
+}
+$("pw-restore")?.addEventListener("click", restorePurchase);
 
 $("pw-later")?.addEventListener("click", () => {
   setStatus("");
@@ -268,13 +278,20 @@ $("pw-later")?.addEventListener("click", () => {
 
 $("free-left")?.addEventListener("click", openPaywall);
 
-// Open legal links in the default browser (not the app webview) via the existing
-// open_path command (`open <url>` on macOS launches the default browser).
-const openExternal = (url) => (e) => {
+// The legal links open the text in the app; without about.js, the site.
+const openLegal = (doc, url) => (e) => {
   e.preventDefault();
-  invoke("open_path", { path: url }).catch(() => {});
+  if (window.jubarteAbout) window.jubarteAbout.legal(doc);
+  else invoke("open_path", { path: url }).catch(() => {});
 };
-$("pw-terms-link")?.addEventListener("click", openExternal(TERMS_URL));
-$("pw-privacy-link")?.addEventListener("click", openExternal(PRIVACY_URL));
+$("pw-terms-link")?.addEventListener("click", openLegal("terms", TERMS_URL));
+$("pw-privacy-link")?.addEventListener("click", openLegal("privacy", PRIVACY_URL));
+
+// The menu bar's "Jubarte PRO…" and "Restore Purchase" (menu.js).
+window.jubarte.openPaywall = openPaywall;
+window.jubarte.restorePurchase = () => {
+  openPaywall();
+  return restorePurchase();
+};
 
 checkAccess();

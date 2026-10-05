@@ -14,9 +14,9 @@
 
 [package]
 name = "jubarte-app"
-version = "0.10.1"
+version = "0.11.2"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.90"
 publish = false
 license = "LicenseRef-Proprietary"
 description = "Proprietary Jubarte desktop shell (Tauri) over the jubarte redline engine"
@@ -28,10 +28,12 @@ tauri-build = { version = "2", features = [] }
 
 # StoreKit bridge is macOS-only; swift-rs compiles/links the Swift static lib.
 [target.'cfg(target_os = "macos")'.build-dependencies]
-swift-rs = { version = "1.0.6", features = ["build"] }
+swift-rs = { version = "1.0.8", features = ["build"] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# protocol-asset: the window shows a converted PDF from the app's cache
+# (tauri.conf.json scopes it to $APPCACHE/conversions).
+tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -41,9 +43,23 @@ quick-xml = "0.42"
 #   jubarte = { version = "0.x", default-features = false }
 jubarte = { package = "jubarte-redlines", path = "../..", default-features = false }
 
-# Runtime FFI glue to the Swift StoreKit 2 helper (Mac App Store builds only).
+# Runtime FFI glue to the Swift StoreKit 2 helper (Mac App Store builds only),
+# and the AppKit bindings for the Finder "Redline with Jubarte" service (the
+# same objc2 crates tauri already links).
 [target.'cfg(target_os = "macos")'.dependencies]
-swift-rs = "1.0.6"
+swift-rs = "1.0.8"
+objc2 = "0.6.4"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString", "NSURL"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSPasteboard", "NSPasteboardItem", "NSResponder"] }
+
+# `tauri::test` mock runtime for the Finder hand-off tests.
+[dev-dependencies]
+tauri = { version = "2", features = ["test"] }
+# Builds the conversion tests' document; the engine already links this zip.
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+# The menu tests parse each shortcut as AppKit's menus will (tauri uses muda
+# but does not re-export its Accelerator); a bad one would fail the launch.
+muda = { version = "0.20", default-features = false }
 
 [profile.release]
 lto = true

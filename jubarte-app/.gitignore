@@ -13,7 +13,7 @@ src-tauri/storekit/.swiftpm/
 src-tauri/storekit/**/*.o
 src-tauri/storekit/**/*.a
 
-# Generated art (sources are assets/*.svg; regenerate with `bun run icons`)
+# Generated art (sources are assets/*.svg; regenerate with `pnpm icons`)
 assets/whale-check.png
 assets/icon-1024.png
 
@@ -43,3 +43,12 @@ src-tauri/embedded.provisionprofile
 .crush/
 .omo/
 _scratch/
+
+# ── Design scratch: handoff zips and icon concepts (kept locally) ─────────
+*.zip
+_design_zip/
+_icon_concepts/
+
+# ── Critiques and handoffs: impeccable runs, persona harnesses (kept locally)
+.impeccable/critique/
+HANDOFF.md

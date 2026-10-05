@@ -47,11 +47,14 @@ jobs:
           path: engine/jubarte-app
           persist-credentials: false
 
+      # rustup ships on the macOS runner image; no third-party action needed.
+      # The toolchain is Cargo.toml's `rust-version`, so it moves only with it.
       - name: Rust toolchain (MSRV from Cargo.toml)
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master 2026-08 (toolchain pinned via `toolchain:` input)
-        with:
-          toolchain: "1.88"
-          components: rustfmt, clippy
+        run: |
+          msrv=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)
+          test -n "$msrv"
+          rustup toolchain install "$msrv" --profile minimal --component rustfmt,clippy
+          rustup override set "$msrv"
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -72,29 +75,90 @@ jobs:
         run: cargo test --all-targets
 
       - name: line coverage ≥ 80% (business logic)
-        # Tauri shell (`main.rs`) and StoreKit FFI wrappers need a real App Store
+        # Tauri shell (`main.rs`), the StoreKit FFI wrappers and the AppKit Finder
+        # service (`finder_service.rs`) need a real App Store/AppKit
         # context; gate the pure free-quota module which carries the money path.
         run: |
           rustup component add llvm-tools-preview
-          cargo install cargo-llvm-cov --locked --version 0.8.7 || true
+          cargo install cargo-llvm-cov --locked --version 0.9.1 || true
           cargo llvm-cov --fail-under-lines 80 \
-            --ignore-filename-regex 'main\.rs|storekit\.rs' \
+            --ignore-filename-regex 'main\.rs|storekit\.rs|finder_service\.rs' \
             --summary-only
 
+  # The Linux jobs run on GitHub's runner and on the self-hosted one
+  # (coolify-runner, labels self-hosted/Linux/X64/default), so a check still
+  # runs when either is unavailable. The macOS job above stays on GitHub's
+  # macOS runner: the app builds against AppKit and StoreKit.
   frontend:
-    name: frontend lockfile
-    runs-on: ubuntu-latest
+    name: frontend lockfile (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, self-hosted]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      # pnpm's installer runs on whatever Node the runner has; the
+      # self-hosted runner's is too old (no `node:path`), so Node comes first.
+      # The second setup-node below caches the store, which needs pnpm.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          bun-version: "1.3.14"
+          node-version: 24
+      # pnpm version comes from package.json `packageManager`.
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
       - name: Install (frozen lockfile)
-        run: bun install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
       - name: Package scripts present
         run: |
           test -f package.json
           test -f src/index.html
           test -f src-tauri/tauri.conf.json
+
+  # The three Workers keep their own lockfiles, which the job above never
+  # installs: a Renovate PR touching only them used to pass with nothing run.
+  workers:
+    name: workers (${{ matrix.dir }}, ${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, self-hosted]
+        dir: [jubarte-site, redlines-site, verify-worker]
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # pnpm's installer runs on whatever Node the runner has; the
+      # self-hosted runner's is too old (no `node:path`), so Node comes first.
+      # The second setup-node below caches the store, which needs pnpm.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: ${{ matrix.dir }}/package.json
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: ${{ matrix.dir }}/pnpm-lock.yaml
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+      - name: Lint
+        run: pnpm run lint
+      - name: Typecheck
+        run: pnpm run typecheck
+      # The site's build needs the HF fixtures (build.ts fails closed without
+      # them), so CI runs its Node project, not the workerd one, and skips
+      # cache.test.ts, which reads the built public/.
+      - name: Test
+        run: ${{ matrix.dir == 'jubarte-site' && 'pnpm exec vitest run --project unit --exclude test/node/cache.test.ts' || 'pnpm test' }}

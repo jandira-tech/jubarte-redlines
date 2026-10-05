@@ -1,0 +1,8 @@
+# Python here is scripts/site_fixtures.py and its test. Pinned so that `ruff check`
+# and `ruff format` give the same result whoever runs them; without this file a
+# user-level ruff.toml applies instead.
+line-length = 120
+target-version = "py311"
+
+[format]
+quote-style = "double"

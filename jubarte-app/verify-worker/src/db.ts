@@ -53,14 +53,18 @@ export async function upsertSubscription(
          original_transaction_id, product_id, environment, expires_date_ms,
          grace_period_expires_date_ms, revocation_date_ms, auto_renew_status,
          latest_transaction_id, signed_date_ms, updated_at_ms
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
        ON CONFLICT(original_transaction_id) DO UPDATE SET
          product_id = excluded.product_id,
          environment = excluded.environment,
          expires_date_ms = excluded.expires_date_ms,
-         grace_period_expires_date_ms = excluded.grace_period_expires_date_ms,
+         grace_period_expires_date_ms = CASE WHEN ?11 = 1
+           THEN excluded.grace_period_expires_date_ms
+           ELSE subscriptions.grace_period_expires_date_ms END,
          revocation_date_ms = excluded.revocation_date_ms,
-         auto_renew_status = excluded.auto_renew_status,
+         auto_renew_status = CASE WHEN ?11 = 1
+           THEN excluded.auto_renew_status
+           ELSE subscriptions.auto_renew_status END,
          latest_transaction_id = excluded.latest_transaction_id,
          signed_date_ms = excluded.signed_date_ms,
          updated_at_ms = excluded.updated_at_ms
@@ -77,6 +81,9 @@ export async function upsertSubscription(
       state.latestTransactionId,
       state.signedDateMs,
       nowMs,
+      // ?11: whether this update knows the renewal fields. A bare /verify transaction
+      // does not, and must not end a grace period a notification recorded.
+      state.renewalInfoPresent === false ? 0 : 1,
     )
     .run();
 }
