@@ -54,7 +54,7 @@ jubarte convert redline_jubarte.docx --png --dpi 72 --pages 1
 | `changes_jubarte.txt` | `jubarte changes redline_jubarte.docx`: 10 tracked changes |
 | `compare_page_1_jubarte.png` | page 1 of the redline, jubarte's layout, 72 dpi |
 | `compare_page_1_jubarte_soffice.png` | the same redline through soffice + pdftoppm, 72 dpi |
-| `redline_word.docx`, `compare_page_1_word.png`, `changes_word.jsonl` | Microsoft Word 16's Compare of the same pair (made once with `word_redline.py`; `run.sh` does not drive Word) |
+| `redline_word.docx`, `changes_word.jsonl` | Microsoft Word 16's Compare of the same pair (made once with `word_redline.py`; `run.sh` does not drive Word). No render of Word's page is committed yet: `word_pdf.py` on `redline_word.docx` would make one. |
 
 ## Verdict
 
@@ -76,7 +76,7 @@ What Microsoft Word's own Compare does with the same pair settles how
 coarse this should be. On 2026-10-04 `neurotic_docx_bench/scripts/word_redline.py`
 compared `v1.docx` with `v2.docx` in Word 16 (macOS), and
 `check_redline_identity.py` confirmed the output is that pair
-(`redline_word.docx`, `compare_page_1_word.png`, `changes_word.jsonl`).
+(`redline_word.docx`, `changes_word.jsonl`).
 Word's redline holds the same ten revisions as jubarte's, in the same
 order:
 
