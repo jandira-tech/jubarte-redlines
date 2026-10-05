@@ -23,6 +23,179 @@ fn painted_char(ch: char) -> char {
     if ch == NO_BREAK_HYPHEN { '-' } else { ch }
 }
 
+/// The Unicode character behind a Symbol face's code (the low byte of its
+/// U+F0xx character), by Adobe's Symbol encoding: U+F0B7 is the bullet,
+/// U+F061 alpha. `None` for the codes Unicode has no character for (the
+/// bracket and radical pieces). Where Adobe's table names a character a
+/// text face never has, the one it does have stands: Greek Δ and Ω for the
+/// increment and ohm signs, ® © ™ for the corporate-use serif and sans
+/// marks, 〈 〉 for the deprecated angle brackets, and € at 0xA0 as Apple's
+/// Symbol has it. A code whose character the face lacks paints nothing
+/// (the card suits in Carlito, ℵ ℑ ℜ ℘ in every bundled face).
+fn symbol_unicode(low: u8) -> Option<char> {
+    Some(match low {
+        0x22 => '∀',
+        0x24 => '∃',
+        0x27 => '∋',
+        0x2A => '∗',
+        0x2D => '−',
+        0x40 => '≅',
+        0x41 => 'Α',
+        0x42 => 'Β',
+        0x43 => 'Χ',
+        0x44 => 'Δ',
+        0x45 => 'Ε',
+        0x46 => 'Φ',
+        0x47 => 'Γ',
+        0x48 => 'Η',
+        0x49 => 'Ι',
+        0x4A => 'ϑ',
+        0x4B => 'Κ',
+        0x4C => 'Λ',
+        0x4D => 'Μ',
+        0x4E => 'Ν',
+        0x4F => 'Ο',
+        0x50 => 'Π',
+        0x51 => 'Θ',
+        0x52 => 'Ρ',
+        0x53 => 'Σ',
+        0x54 => 'Τ',
+        0x55 => 'Υ',
+        0x56 => 'ς',
+        0x57 => 'Ω',
+        0x58 => 'Ξ',
+        0x59 => 'Ψ',
+        0x5A => 'Ζ',
+        0x5C => '∴',
+        0x5E => '⊥',
+        0x60 => return None,
+        0x61 => 'α',
+        0x62 => 'β',
+        0x63 => 'χ',
+        0x64 => 'δ',
+        0x65 => 'ε',
+        0x66 => 'φ',
+        0x67 => 'γ',
+        0x68 => 'η',
+        0x69 => 'ι',
+        0x6A => 'ϕ',
+        0x6B => 'κ',
+        0x6C => 'λ',
+        0x6D => 'µ', // the micro sign, as `symbol_font_text` reads it back
+        0x6E => 'ν',
+        0x6F => 'ο',
+        0x70 => 'π',
+        0x71 => 'θ',
+        0x72 => 'ρ',
+        0x73 => 'σ',
+        0x74 => 'τ',
+        0x75 => 'υ',
+        0x76 => 'ϖ',
+        0x77 => 'ω',
+        0x78 => 'ξ',
+        0x79 => 'ψ',
+        0x7A => 'ζ',
+        0x7E => '∼',
+        0x20..=0x7D => char::from(low),
+        0xA0 => '€',
+        0xA1 => 'ϒ',
+        0xA2 => '′',
+        0xA3 => '≤',
+        0xA4 => '⁄',
+        0xA5 => '∞',
+        0xA6 => 'ƒ',
+        0xA7 => '♣',
+        0xA8 => '♦',
+        0xA9 => '♥',
+        0xAA => '♠',
+        0xAB => '↔',
+        0xAC => '←',
+        0xAD => '↑',
+        0xAE => '→',
+        0xAF => '↓',
+        0xB0 => '°',
+        0xB1 => '±',
+        0xB2 => '″',
+        0xB3 => '≥',
+        0xB4 => '×',
+        0xB5 => '∝',
+        0xB6 => '∂',
+        0xB7 => '•',
+        0xB8 => '÷',
+        0xB9 => '≠',
+        0xBA => '≡',
+        0xBB => '≈',
+        0xBC => '…',
+        0xBF => '↵',
+        0xC0 => 'ℵ',
+        0xC1 => 'ℑ',
+        0xC2 => 'ℜ',
+        0xC3 => '℘',
+        0xC4 => '⊗',
+        0xC5 => '⊕',
+        0xC6 => '∅',
+        0xC7 => '∩',
+        0xC8 => '∪',
+        0xC9 => '⊃',
+        0xCA => '⊇',
+        0xCB => '⊄',
+        0xCC => '⊂',
+        0xCD => '⊆',
+        0xCE => '∈',
+        0xCF => '∉',
+        0xD0 => '∠',
+        0xD1 => '∇',
+        0xD2 | 0xE2 => '®',
+        0xD3 | 0xE3 => '©',
+        0xD4 | 0xE4 => '™',
+        0xD5 => '∏',
+        0xD6 => '√',
+        0xD7 => '⋅',
+        0xD8 => '¬',
+        0xD9 => '∧',
+        0xDA => '∨',
+        0xDB => '⇔',
+        0xDC => '⇐',
+        0xDD => '⇑',
+        0xDE => '⇒',
+        0xDF => '⇓',
+        0xE0 => '◊',
+        0xE1 => '〈',
+        0xE5 => '∑',
+        0xF1 => '〉',
+        0xF2 => '∫',
+        _ => return None,
+    })
+}
+
+/// The Unicode characters that can stand for a Wingdings code, nearest
+/// first: the bullets, boxes, arrows and ticks lists are drawn with. A
+/// text face rarely has the dingbat itself (Liberation has no ➢ or ✓), so
+/// each code lists plainer shapes after it.
+fn wingdings_unicode(low: u8) -> &'static [char] {
+    match low {
+        0x6C | 0xA4 | 0xA5 => &['●'],
+        0x6D | 0xA1 | 0xA2 => &['○'],
+        0x6E => &['■'],
+        0x6F | 0x70 | 0x71 | 0x72 | 0xA8 => &['□'],
+        0x73 | 0x74 | 0x75 | 0x77 => &['◆', '♦'],
+        0x76 => &['❖', '♦'],
+        0x9E => &['·'],
+        0x9F => &['•'],
+        0xA0 | 0xA7 => &['▪', '■'],
+        0xD8 => &['➢', '►', '>'],
+        0xDF => &['←'],
+        0xE0 | 0xE8 | 0xF0 => &['→'],
+        0xE1 => &['↑'],
+        0xE2 => &['↓'],
+        0xFB => &['✗', '×'],
+        0xFC => &['✓', '√'],
+        0xFD => &['☒', '□'],
+        0xFE => &['☑', '□'],
+        _ => &[],
+    }
+}
+
 thread_local! {
     static ACTIVE_FONT_TABLE: RefCell<super::font_table::FontTable> =
         RefCell::new(super::font_table::FontTable::default());
@@ -236,6 +409,27 @@ fn json_string(s: &str) -> String {
 
 fn json_bool(v: bool) -> &'static str {
     if v { "true" } else { "false" }
+}
+
+/// A character Unicode lays out wide (East_Asian_Width W or F): CJK
+/// ideographs, kana, CJK punctuation, Hangul and the full-width forms.
+/// Every East Asian face draws them one em wide.
+fn east_asian_wide(c: char) -> bool {
+    matches!(
+        c,
+        '\u{1100}'..='\u{115F}'
+            | '\u{2E80}'..='\u{303E}'
+            | '\u{3041}'..='\u{33FF}'
+            | '\u{3400}'..='\u{4DBF}'
+            | '\u{4E00}'..='\u{9FFF}'
+            | '\u{A960}'..='\u{A97F}'
+            | '\u{AC00}'..='\u{D7A3}'
+            | '\u{F900}'..='\u{FAFF}'
+            | '\u{FE30}'..='\u{FE4F}'
+            | '\u{FF01}'..='\u{FF60}'
+            | '\u{FFE0}'..='\u{FFE6}'
+            | '\u{20000}'..='\u{3FFFD}'
+    )
 }
 
 /// Word Quartz Save-as-PDF writes a small `Tc` at 300dpi body sizes so
@@ -687,6 +881,12 @@ pub(crate) struct Face<'a> {
     line_descent: f32,
     /// Win ascent when USE_TYPO_METRICS is unset (Liberation ↔ Arial).
     paint_ascent: f32,
+    /// OS/2 strikeout line in font units: Word draws a note separator as
+    /// the separator run's strikeout (Word 16 probes 2026-10-03: Calibri
+    /// 11 a 0.72 rule with its top 2.75 over the baseline, a 20pt run 1.2
+    /// at 5.0; Aptos 11 0.48 at 3.93).
+    strike_pos: f32,
+    strike_size: f32,
     /// An East Asian face (OS/2 code pages 932/936/949/950/1361).
     east_asian: bool,
     /// OS/2 PANOSE says Latin text with serifs (MS Mincho, Times New
@@ -700,6 +900,9 @@ pub(crate) struct Face<'a> {
     /// that maps it wins. Enumerating every mapped codepoint up front was
     /// a tenth of a one-page conversion (samply, fixtures_500 0081ba58).
     cmap: Vec<ttf_parser::cmap::Subtable<'a>>,
+    /// The catalogue's Symbol slot: its U+F0xx characters are Symbol's
+    /// codes, any other face's are read as Wingdings' (`symbol_stand_in`).
+    symbol_slot: bool,
     /// Shape plans by segment (direction, script, language) and kerning:
     /// building one was a fifth of a conversion when every run built its
     /// own (redline 0006f790: 21% of samples in `ShapePlan::new`).
@@ -732,6 +935,12 @@ impl<'a> Face<'a> {
         Self::from_bytes(id, id.bytes(), id.postscript().to_string()).expect("bundled TTF is valid")
     }
 
+    /// The slot's bundled face, whatever this machine has installed.
+    #[cfg(test)]
+    pub(crate) fn bundled(id: FaceId) -> Self {
+        Self::load(id)
+    }
+
     fn from_path(id: FaceId, path: &Path) -> Option<Self> {
         let bytes = fs::read(path).ok()?;
         let ps = ttf_postscript_name(&bytes).unwrap_or_else(|| id.postscript().to_string());
@@ -744,7 +953,7 @@ impl<'a> Face<'a> {
     /// `None` when the bytes are not a parseable TTF/TTC face — a truncated
     /// or unsupported *system* font file must fall back to the bundled face,
     /// never panic (a panic here poisons the process-wide `Fonts` LazyLock).
-    fn from_bytes(_id: FaceId, bytes: &'a [u8], pdf_name: String) -> Option<Self> {
+    fn from_bytes(id: FaceId, bytes: &'a [u8], pdf_name: String) -> Option<Self> {
         let face = ttf_parser::Face::parse(bytes, 0).ok()?;
         let upem = f32::from(face.units_per_em());
         let ascent = f32::from(
@@ -849,6 +1058,11 @@ impl<'a> Face<'a> {
             .unwrap_or_default();
         let bbox = face.global_bounding_box();
         let buzz = rustybuzz::Face::from_slice(bytes, 0);
+        let (strike_pos, strike_size) = face
+            .strikeout_metrics()
+            .map_or((upem * 0.25, upem * 0.065), |m| {
+                (f32::from(m.position), f32::from(m.thickness))
+            });
         Some(Self {
             bytes,
             buzz,
@@ -860,27 +1074,72 @@ impl<'a> Face<'a> {
             line_height,
             line_descent,
             paint_ascent,
+            strike_pos,
+            strike_size,
             east_asian: east_asian_line.is_some(),
             serif: panose_serif(&face),
             avg_char_width: avg_char_width(&face).map_or(0.5, |w| w / upem),
             bbox: [bbox.x_min, bbox.y_min, bbox.x_max, bbox.y_max],
             widths,
             cmap,
+            symbol_slot: id == FaceId::Symbol,
         })
     }
 
     pub(crate) fn glyph(&self, ch: char) -> u16 {
-        let ch = painted_char(ch);
+        self.cmap_glyph(self.painted(ch))
+    }
+
+    /// The cmap's glyph for `ch` itself, 0 without one.
+    fn cmap_glyph(&self, ch: char) -> u16 {
         self.cmap
             .iter()
             .find_map(|sub| sub.glyph_index(u32::from(ch)))
             .map_or(0, |gid| gid.0)
     }
 
+    /// The character this face paints for `ch`: `painted_char`'s, and for a
+    /// symbol code the face has no glyph for, the Unicode character that
+    /// stands for it.
+    fn painted(&self, ch: char) -> char {
+        let ch = painted_char(ch);
+        self.symbol_stand_in(ch).unwrap_or(ch)
+    }
+
+    /// A symbol face's U+F020..U+F0FF character on a text face. Word's
+    /// bullets are U+F0B7 in Symbol and U+F0A7 in Wingdings; where those
+    /// faces are absent (a browser's WASM build, a host without Word's
+    /// fonts) the slot holds a text face whose cmap has neither, and the
+    /// bullet painted nothing. The Symbol slot reads the code by Adobe's
+    /// Symbol encoding, any other face as Wingdings; the first stand-in the
+    /// face has a glyph for wins. A face that has the code keeps it.
+    ///
+    /// The face does not know the family it was resolved for, so a code of
+    /// Webdings or Wingdings 2 and 3 on a face without it is read as
+    /// Wingdings' too, and may paint another dingbat than Word's.
+    pub(crate) fn symbol_stand_in(&self, ch: char) -> Option<char> {
+        let low = u8::try_from(u32::from(ch).checked_sub(0xF000)?).ok()?;
+        if low < 0x20 || self.cmap_glyph(ch) != 0 {
+            return None;
+        }
+        if self.symbol_slot {
+            symbol_unicode(low).filter(|&c| self.cmap_glyph(c) != 0)
+        } else {
+            wingdings_unicode(low)
+                .iter()
+                .copied()
+                .find(|&c| self.cmap_glyph(c) != 0)
+        }
+    }
+
     pub(crate) fn advance_pt(&self, ch: char, size: f32) -> f32 {
-        let gid = self.glyph(ch) as usize;
-        let adv = self.widths.get(gid).copied().unwrap_or(0);
-        f32::from(adv) * size / self.upem + word_device_track(size)
+        let gid = self.glyph(ch);
+        let adv = if gid == 0 && east_asian_wide(ch) {
+            self.upem
+        } else {
+            f32::from(self.widths.get(usize::from(gid)).copied().unwrap_or(0))
+        };
+        adv * size / self.upem + word_device_track(size)
     }
 
     pub(crate) fn width_pt(&self, text: &str, size: f32) -> f32 {
@@ -918,6 +1177,16 @@ impl<'a> Face<'a> {
         self.line_descent * size / self.upem
     }
 
+    /// The strikeout line's top over the baseline.
+    pub(crate) fn strike_pos_pt(&self, size: f32) -> f32 {
+        self.strike_pos * size / self.upem
+    }
+
+    /// The strikeout line's thickness.
+    pub(crate) fn strike_size_pt(&self, size: f32) -> f32 {
+        self.strike_size * size / self.upem
+    }
+
     pub(crate) fn glyphs(&self, text: &str) -> Vec<u16> {
         // Only the glyph ids are kept; ids are size-independent, so the
         // shaping size passed here is arbitrary.
@@ -952,7 +1221,7 @@ impl<'a> Face<'a> {
     /// to `é`, a lam-alef) carries all of them, for `/ToUnicode`.
     pub(crate) fn glyph_texts(&self, text: &str, kern: bool) -> Vec<String> {
         let Some(face) = self.buzz.as_ref() else {
-            return text.chars().map(|c| painted_char(c).to_string()).collect();
+            return text.chars().map(|c| self.painted(c).to_string()).collect();
         };
         let units = self.shaped_units(face, text, kern);
         let mut starts: Vec<usize> = units.iter().map(|u| u.2 as usize).collect();
@@ -974,7 +1243,7 @@ impl<'a> Face<'a> {
                 text.get(at..end)
                     .unwrap_or_default()
                     .chars()
-                    .map(painted_char)
+                    .map(|c| self.painted(c))
                     .collect()
             })
             .collect()
@@ -991,7 +1260,7 @@ impl<'a> Face<'a> {
         let mut buf = rustybuzz::UnicodeBuffer::new();
         // Clusters stay byte offsets into `text`, as `push_str` makes them.
         for (at, ch) in text.char_indices() {
-            buf.add(painted_char(ch), at as u32);
+            buf.add(self.painted(ch), at as u32);
         }
         // Word Quartz WinAnsi PDFs do not ligate Calibri and place glyphs
         // on hmtx (T=5.38pt), not GPOS/kern (T+e shrinks ~1pt and wipes
@@ -1061,6 +1330,16 @@ impl<'a> Face<'a> {
                 .is_some_and(|(a, z)| a.2 < z.2)
         {
             glyphs.reverse();
+        }
+        // East Asian wide text the face lacks measures one em, as in every
+        // face Word falls back to for it: a Latin .notdef (0.75 em in
+        // Liberation Sans) packed CJK lines where Word wraps them.
+        let em = self.upem.round() as i32;
+        for glyph in glyphs.iter_mut().filter(|g| g.0 == 0) {
+            let ch = text.get(glyph.2 as usize..).and_then(|t| t.chars().next());
+            if ch.is_some_and(east_asian_wide) {
+                glyph.1 = em;
+            }
         }
         let units: ShapedUnits = glyphs.into();
         if let Ok(mut cache) = self.shaped.lock() {
@@ -1967,7 +2246,11 @@ fn scan_family_faces(family: &str, user: Option<&Path>) -> (SourcedFaces, Vec<Pa
     // (dir, whole folder is the family): Word's cloud-font cache keeps each
     // family in its own folder under numeric file names (Poppins/2397….ttf).
     let mut dirs: Vec<(PathBuf, bool)> = if latin {
-        DIRS.iter().map(|d| (PathBuf::from(d), false)).collect()
+        DIRS.iter()
+            .map(PathBuf::from)
+            .chain(windows_font_dirs())
+            .map(|d| (d, false))
+            .collect()
     } else {
         Vec::new()
     };
@@ -2164,6 +2447,23 @@ fn family_faces_in(family: &str, dirs: &[(PathBuf, bool)]) -> SourcedFaces {
                 continue;
             };
             found.push((pass, style, (FaceSource::new(&path, None), bytes)));
+        }
+    }
+    // Windows abbreviates its file names (times.ttf, timesbd.ttf,
+    // cour.ttf): a stem catches at most the regular face, so its folders
+    // also answer by the family name inside each file.
+    for (dir, _) in dirs.iter().filter(|(d, _)| latin && windows_fonts_dir(d)) {
+        for (path, names) in font_name_index(dir).iter() {
+            let source = FaceSource::new(path, None);
+            if !names.contains(&key) || found.iter().any(|(_, _, (s, _))| *s == source) {
+                continue;
+            }
+            let Ok(bytes) = fs::read(path) else {
+                continue;
+            };
+            if let Some((pass, style)) = face_family_style(&bytes, family) {
+                found.push((pass, style, (source, bytes)));
+            }
         }
     }
     found.append(&mut collected);
@@ -2410,24 +2710,67 @@ fn face_family_names(face: &ttf_parser::Face<'_>, id: u16) -> Vec<String> {
 fn cjk_family_faces(family: &str, stems: &[&str]) -> Vec<((bool, bool), Vec<u8>)> {
     let key = format!("east-asian\u{1f}{family}\u{1f}{}", stems.join(","));
     indexed_faces(&FONT_INDEX, &key, || {
-        let dirs = CJK_DIRS.iter().map(PathBuf::from).collect();
-        (scan_cjk_family_faces(family, stems), dirs)
+        (scan_cjk_family_faces(family, stems), cjk_dirs())
     })
 }
 
-/// The folders Word's East Asian faces live in.
+/// The folders Word for Mac keeps its East Asian faces in.
 const CJK_DIRS: &[&str] = &[
     "/Applications/Microsoft Word.app/Contents/Resources/DFonts",
     "/Library/Fonts/Microsoft",
     "/Library/Fonts",
 ];
 
+/// The folders Word's East Asian faces live in: Word for Mac's, then
+/// Windows' own (msgothic.ttc, msyh.ttc and malgun.ttf ship there).
+fn cjk_dirs() -> Vec<PathBuf> {
+    CJK_DIRS
+        .iter()
+        .map(PathBuf::from)
+        .chain(windows_font_dirs())
+        .collect()
+}
+
+/// Windows' font folders: the system's and the per-user one fonts
+/// installed without administrator rights land in. Empty elsewhere.
+fn windows_font_dirs() -> Vec<PathBuf> {
+    if cfg!(target_os = "windows") {
+        windows_font_dirs_from(|key| std::env::var_os(key))
+    } else {
+        Vec::new()
+    }
+}
+
+/// A Windows font folder, the system's (`C:\WINDOWS\Fonts`) or the
+/// per-user one (`…\Microsoft\Windows\Fonts`): both end in
+/// `Windows\Fonts`, in any case.
+fn windows_fonts_dir(dir: &Path) -> bool {
+    let mut tail = dir
+        .components()
+        .rev()
+        .map(|c| c.as_os_str().to_string_lossy());
+    tail.next().is_some_and(|c| c.eq_ignore_ascii_case("fonts"))
+        && tail
+            .next()
+            .is_some_and(|c| c.eq_ignore_ascii_case("windows"))
+}
+
+fn windows_font_dirs_from(env: impl Fn(&str) -> Option<std::ffi::OsString>) -> Vec<PathBuf> {
+    let set = |key: &str| env(key).filter(|v| !v.is_empty()).map(PathBuf::from);
+    let root = set("WINDIR")
+        .or_else(|| set("SystemRoot"))
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+    let mut dirs = vec![root.join("Fonts")];
+    dirs.extend(set("LOCALAPPDATA").map(|d| d.join("Microsoft").join("Windows").join("Fonts")));
+    dirs
+}
+
 /// `cjk_family_faces` read from disk.
 fn scan_cjk_family_faces(family: &str, stems: &[&str]) -> SourcedFaces {
     let want = fold_family(family);
     let mut files: Vec<(usize, PathBuf)> = Vec::new();
-    for dir in CJK_DIRS {
-        let Ok(entries) = fs::read_dir(dir) else {
+    for dir in cjk_dirs() {
+        let Ok(entries) = fs::read_dir(&dir) else {
             continue;
         };
         for path in entries.flatten().map(|e| e.path()) {
@@ -2648,7 +2991,7 @@ fn font_index_path() -> Option<PathBuf> {
 
 /// Bump the `1` when the family search's matching rules change; the crate
 /// version drops the answers another release recorded.
-const FONT_INDEX_HEADER: &str = concat!("jubarte-font-index\t1\t", env!("CARGO_PKG_VERSION"));
+const FONT_INDEX_HEADER: &str = concat!("jubarte-font-index\t2\t", env!("CARGO_PKG_VERSION"));
 
 /// A modification time in nanoseconds, `None` for a missing path.
 fn mtime_of(path: &Path) -> Option<u128> {
@@ -3017,7 +3360,7 @@ pub(crate) fn add_installed_faces(
 
 /// The catalogue slot for `family` really is that family, not a stand-in
 /// (Tahoma, Trebuchet and Roboto all fold into the Arial slot).
-fn catalogue_paints_family(family: &str) -> bool {
+pub(crate) fn catalogue_paints_family(family: &str) -> bool {
     let norm = |s: &str| -> String {
         s.chars()
             .filter(|c| c.is_ascii_alphanumeric())
@@ -3229,6 +3572,72 @@ mod tests {
     }
 
     #[test]
+    fn windows_fonts_are_searched_in_the_system_and_user_folders() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |key: &str| {
+                pairs
+                    .iter()
+                    .find(|(k, _)| *k == key)
+                    .map(|(_, v)| std::ffi::OsString::from(v))
+            }
+        };
+        let user = |root: &str| {
+            PathBuf::from(root)
+                .join("Microsoft")
+                .join("Windows")
+                .join("Fonts")
+        };
+        assert_eq!(
+            windows_font_dirs_from(env(&[
+                ("WINDIR", r"D:\Win"),
+                ("LOCALAPPDATA", r"C:\Users\a\AppData\Local")
+            ])),
+            vec![
+                PathBuf::from(r"D:\Win").join("Fonts"),
+                user(r"C:\Users\a\AppData\Local")
+            ]
+        );
+        // SystemRoot stands in for WINDIR; an empty value counts as unset.
+        assert_eq!(
+            windows_font_dirs_from(env(&[("WINDIR", ""), ("SystemRoot", r"E:\W")])),
+            vec![PathBuf::from(r"E:\W").join("Fonts")]
+        );
+        assert_eq!(
+            windows_font_dirs_from(env(&[])),
+            vec![PathBuf::from(r"C:\Windows").join("Fonts")]
+        );
+        // The East Asian search reads them after Word for Mac's folders.
+        let dirs = cjk_dirs();
+        assert_eq!(
+            &dirs[..CJK_DIRS.len()],
+            CJK_DIRS.iter().map(PathBuf::from).collect::<Vec<_>>()
+        );
+        assert_eq!(dirs.len() > CJK_DIRS.len(), cfg!(target_os = "windows"));
+    }
+
+    #[test]
+    fn an_ideograph_a_face_lacks_still_measures_one_em() {
+        // Without Word's East Asian faces (Linux, Windows CI, WASM) CJK
+        // text shapes to the Latin face's .notdef, ~0.6 em: a cell that
+        // wraps "J漢字漢字漢字" + "Q漢字漢字漢字" in Word fitted both on
+        // one line. Every face Word falls back to draws them one em wide;
+        // half-width katakana stay narrow.
+        let mut face = Face::load(FaceId::SansRegular);
+        let em = 11.0 + word_device_track(11.0);
+        for text in ["漢字", "かな", "，。", "한글", "ＡＢ"] {
+            assert!(
+                face.shape(text, 11.0).iter().all(|(gid, _)| *gid == 0),
+                "{text}"
+            );
+            let w = face.width_pt(text, 11.0);
+            assert!((w - 2.0 * em).abs() < 0.01, "{text}: {w}");
+        }
+        assert!(face.width_pt("ｶﾅ", 11.0) < 2.0 * em - 1.0);
+        face.buzz = None;
+        assert!((face.width_pt("漢字", 11.0) - 2.0 * em).abs() < 0.01);
+    }
+
+    #[test]
     fn a_non_breaking_hyphen_reads_as_a_hyphen_with_or_without_shaping() {
         // Word's PDFs carry 0x2D for w:noBreakHyphen; the /ToUnicode text
         // says so too, whether or not the face shapes through rustybuzz.
@@ -3315,7 +3724,7 @@ mod tests {
         );
         let text = format_font_index(&entries);
         assert_eq!(parse_font_index(&text), entries);
-        assert!(parse_font_index(&text.replacen("\t1", "\t0", 1)).is_empty());
+        assert!(parse_font_index(&text.replacen("\t2\t", "\t0\t", 1)).is_empty());
     }
 
     #[test]
@@ -3334,6 +3743,10 @@ mod tests {
         let header = text.lines().next().unwrap();
         assert!(header.ends_with(&format!("\t{}", env!("CARGO_PKG_VERSION"))));
         assert!(parse_font_index(&text.replace(env!("CARGO_PKG_VERSION"), "0.0.0")).is_empty());
+        // Rules 2 (Windows folders, matched by internal name): an index
+        // the same release wrote under rules 1 never listed those folders.
+        assert!(header.starts_with("jubarte-font-index\t2\t"));
+        assert!(parse_font_index(&text.replacen("\t2\t", "\t1\t", 1)).is_empty());
     }
 
     #[test]
@@ -3443,6 +3856,81 @@ mod tests {
             .map(|u| u.2)
             .collect();
         assert_eq!(clusters, vec![4, 2, 0]);
+    }
+
+    /// Word's bullet is U+F0B7 in Symbol. Without that face the slot holds
+    /// Liberation Sans, whose cmap has no U+F0B7: the bullet painted
+    /// nothing in a WASM build's PDF (parity check 2026-10-03, 7 of 12
+    /// pairs). The stand-in face paints, measures and reads back "•".
+    #[test]
+    fn a_text_face_in_the_symbol_slot_paints_symbol_codes_as_unicode() {
+        let face = Face::load(FaceId::Symbol);
+        assert_eq!(face.cmap_glyph('\u{F0B7}'), 0, "Liberation has no U+F0B7");
+        let bullet = face.cmap_glyph('•');
+        assert_ne!(bullet, 0);
+        assert_eq!(face.glyph('\u{F0B7}'), bullet);
+        assert_eq!(face.glyphs("\u{F0B7} "), face.glyphs("• "));
+        assert_eq!(face.glyph_texts("\u{F0B7} ", false), ["•", " "]);
+        assert_eq!(
+            face.advance_pt('\u{F0B7}', 11.0),
+            face.advance_pt('•', 11.0)
+        );
+        // Adobe's Symbol encoding, not the low byte: U+F061 is alpha.
+        assert_eq!(face.glyph('\u{F061}'), face.cmap_glyph('α'));
+        assert_eq!(face.glyph('\u{F0AE}'), face.cmap_glyph('→'));
+        // Text that is already Unicode is left alone.
+        assert_eq!(face.glyph('a'), face.cmap_glyph('a'));
+        assert_eq!(face.glyph('•'), bullet);
+    }
+
+    /// Wingdings' bullets on a text face: U+F0A7 is the small square of
+    /// Word's third list level, U+F0D8 the arrowhead, U+F0FC the tick. The
+    /// nearest shape the face has stands for each.
+    #[test]
+    fn a_text_face_paints_wingdings_bullets_with_its_nearest_shape() {
+        let face = Face::load(FaceId::SansRegular);
+        assert_eq!(face.glyph('\u{F0A7}'), face.cmap_glyph('▪'));
+        assert_eq!(face.glyph('\u{F06C}'), face.cmap_glyph('●'));
+        assert_eq!(face.glyph('\u{F06E}'), face.cmap_glyph('■'));
+        assert_eq!(face.cmap_glyph('➢'), 0, "Liberation has no ➢");
+        assert_eq!(face.glyph('\u{F0D8}'), face.cmap_glyph('►'));
+        assert_eq!(face.glyph('\u{F0FC}'), face.cmap_glyph('√'));
+        assert_eq!(face.glyph_texts("\u{F0A7} ", false), ["▪", " "]);
+        // A code no list is drawn with stays what it was.
+        assert_eq!(face.glyph('\u{F021}'), 0);
+    }
+
+    /// A face that has the symbol code keeps its own glyph: Word's Symbol,
+    /// where this machine has it, is not stood in for.
+    #[test]
+    fn a_symbol_face_keeps_its_own_codes() {
+        let Some(path) = system_override(FaceId::Symbol) else {
+            eprintln!("skipped: Word's Symbol face is not installed on this machine");
+            return;
+        };
+        let face = Face::from_path(FaceId::Symbol, &path).expect("Symbol parses");
+        let own = face.cmap_glyph('\u{F0B7}');
+        assert_ne!(own, 0);
+        assert_eq!(face.glyph('\u{F0B7}'), own);
+        assert_eq!(face.glyph_texts("\u{F0B7}", false), ["\u{F0B7}"]);
+    }
+
+    #[test]
+    fn symbol_codes_follow_adobes_symbol_encoding() {
+        assert_eq!(symbol_unicode(0xB7), Some('•'));
+        assert_eq!(symbol_unicode(0x61), Some('α'));
+        assert_eq!(symbol_unicode(0x57), Some('Ω'));
+        assert_eq!(symbol_unicode(0x31), Some('1'));
+        assert_eq!(symbol_unicode(0xB3), Some('≥'));
+        assert_eq!(symbol_unicode(0x60), None);
+        assert_eq!(symbol_unicode(0xF0), None);
+        // µ is the micro sign U+00B5, the character a real Symbol face's
+        // text reads back as, not the Greek letter U+03BC.
+        assert_eq!(symbol_unicode(0x6D), Some('\u{B5}'));
+        // The stand-ins for characters a text face never has.
+        assert_eq!(symbol_unicode(0x44), Some('Δ'));
+        assert_eq!(symbol_unicode(0xD2), Some('®'));
+        assert_eq!(symbol_unicode(0xA0), Some('€'));
     }
 
     #[test]
@@ -4742,6 +5230,37 @@ mod tests {
             );
             assert_eq!(found[0].2, bytes);
             assert!(family_faces_in("Liberation Serif", &dirs).is_empty());
+        }
+
+        #[test]
+        fn windows_font_folders_find_every_style_by_its_internal_name() {
+            // Windows abbreviates: times.ttf, timesbd.ttf, timesi.ttf,
+            // cour.ttf. The regular file's stem is a prefix of the family
+            // key, the bold one's is not, and "cour" is too short to match.
+            let root = tempfile::tempdir().unwrap();
+            let dir = root.path().join("WINDOWS").join("Fonts");
+            fs::create_dir_all(&dir).unwrap();
+            let regular = include_bytes!("../../assets/fonts/LiberationSerif-Regular.ttf");
+            let bold = include_bytes!("../../assets/fonts/LiberationSerif-Bold.ttf");
+            let mono = include_bytes!("../../assets/fonts/LiberationMono-Regular.ttf");
+            fs::write(dir.join("liberat.ttf"), regular).unwrap();
+            fs::write(dir.join("liberatbd.ttf"), bold).unwrap();
+            fs::write(dir.join("lmo.ttf"), mono).unwrap();
+            let dirs = [(dir.clone(), false)];
+            let found = family_faces_in("Liberation Serif", &dirs);
+            let styles: Vec<_> = found.iter().map(|(style, _, _)| *style).collect();
+            assert_eq!(styles, vec![(false, false), (true, false)]);
+            assert!(found.iter().any(|(_, _, b)| b == bold));
+            assert_eq!(family_faces_in("Liberation Mono", &dirs).len(), 1);
+            // Other folders keep matching by file name alone.
+            let other = root.path().join("Fonts");
+            fs::create_dir(&other).unwrap();
+            fs::write(other.join("liberat.ttf"), regular).unwrap();
+            fs::write(other.join("liberatbd.ttf"), bold).unwrap();
+            assert_eq!(
+                family_faces_in("Liberation Serif", &[(other, false)]).len(),
+                1
+            );
         }
 
         #[test]

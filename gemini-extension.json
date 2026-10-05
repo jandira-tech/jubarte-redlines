@@ -1,6 +1,6 @@
 {
   "name": "jubarte-redlines",
-  "version": "0.10.1",
+  "version": "0.11.2",
   "description": "Read, edit as tracked changes, compare, accept/reject and render Word .docx files with one engine; no LibreOffice, pandoc or Poppler.",
   "mcpServers": {
     "jubarte": {

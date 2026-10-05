@@ -6,7 +6,9 @@ name: Docs
 
 # The generated blocks in docs/rust.md, docs/python.md and docs/javascript.md
 # (CLI references from real --help output, API references from the shipped
-# module/declaration files) must never drift from the code. This job
+# module/declaration files), README.md's command table, and the per-library
+# READMEs scripts/library_readmes.py cuts from README.md must never drift
+# from the code. This job
 # regenerates them and fails when the committed pages differ.
 on:
   push:
@@ -19,6 +21,10 @@ on:
       - docs/rust.md
       - docs/python.md
       - docs/javascript.md
+      - README.md
+      - README.crates.md
+      - "**/README.fragment.md"
+      - scripts/library_readmes.py
       - scripts/gen_docs.sh
       - scripts/gen_cli_docs.py
       - scripts/gen_python_api.py
@@ -32,6 +38,10 @@ on:
       - docs/rust.md
       - docs/python.md
       - docs/javascript.md
+      - README.md
+      - README.crates.md
+      - "**/README.fragment.md"
+      - scripts/library_readmes.py
       - scripts/gen_docs.sh
       - scripts/gen_cli_docs.py
       - scripts/gen_python_api.py
@@ -43,18 +53,23 @@ permissions:
 jobs:
   drift:
     name: generated docs drift
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: jubarte-python
-      - uses: astral-sh/setup-uv@v10.2.0
-      # node is preinstalled on ubuntu-latest; the generator only needs it to
-      # run jubarte-wasm/cli/bin/jubarte-redlines.mjs against the checked-in
-      # jubarte-wasm build.
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      # The generator runs jubarte-wasm/cli/bin/jubarte-redlines.mjs against
+      # the checked-in jubarte-wasm build. That CLI is ESM and engines-declares
+      # node >= 18.3 (jubarte-wasm/cli/package.json); the self-hosted runner's
+      # system node predates ESM (`import` is a SyntaxError), so a real node is
+      # set up here instead of trusting the image.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
       - name: Regenerate and compare
         run: scripts/gen_docs.sh --check

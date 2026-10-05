@@ -4,11 +4,34 @@
 
 //! # jubarte
 //!
-//! Word-faithful DOCX redline engine: compare two Word documents and produce a
-//! tracked-changes (redline) `.docx` — the original document with every
-//! difference against the modified one expressed as Word revisions
-//! (insertions, deletions, moves, and format changes) — that opens cleanly
-//! in Microsoft Word. Also lists, accepts, and rejects tracked revisions.
+//! Word-faithful `.docx` toolkit. It compares two Word documents into a
+//! tracked-changes redline that opens cleanly in Microsoft Word, and it also
+//! edits, inspects, checks, cleans, merges and renders them: every function
+//! takes the complete package as `&[u8]` and returns a new one, with no temp
+//! files and no Word or LibreOffice process.
+//!
+//! ## What you can do
+//!
+//! | Task | Start here |
+//! |---|---|
+//! | Compare two documents into a redline | [`document_comparer::compare_documents`]; [`comparer::WmlComparerSettings`] with [`document_comparer::compare_documents_with_settings`] for author, date, moves and detail |
+//! | List, accept or reject tracked changes, all or some | [`document_comparer::get_revisions`], [`document_comparer::accept_revisions`], [`document_comparer::reject_revisions`]; one at a time with [`changes::list_changes`], [`changes::accept_changes`], [`changes::reject_changes`] |
+//! | Edit a document as tracked changes | [`edit::apply_plan`] / [`edit::apply_plan_json`] with an [`edit::EditPlan`]: rewrite, insert, tables, lists, run formatting, footnotes, images, page setup, content controls, watermark, redact, settings |
+//! | Read a document the way an edit addresses it | [`inspect::paragraphs`], [`inspect::summary`], [`inspect::stories`], [`inspect::controls`], [`inspect::inspect_json`], [`inspect::markdown`] |
+//! | Render to PDF or PNG | [`convert::docx_to_pdf`], [`convert::docx_to_pdf_with`] and [`convert::PdfOptions`] (revision marks: [`convert::RevisionStyle`]), [`convert::docx_to_png`]; page-by-page differences with [`convert::diff_render`] |
+//! | Markdown in and out | [`markdown::markdown_to_docx`] (CriticMarkup becomes tracked changes and comments), [`markdown::docx_to_markdown`], [`markdown::diff_markdown`], [`markdown::redline`] |
+//! | Check that Word will open it, and repair it | [`validate::validate`], [`validate::repair`], [`validate::audit_tracked`]; triage with [`debug::report`] |
+//! | Accessibility, style and structure findings | [`audit::audit_report`] |
+//! | Remove authors and metadata before sending | [`scrub::scrub`] with [`scrub::ScrubOptions`]; find leftover text with [`scrub::leaks`] |
+//! | Append one document after another | [`append::append_documents`] with [`append::AppendOptions`] |
+//! | List comment threads | [`comments::list_comments`] |
+//! | Refresh a table of contents and other fields | [`fields::update_fields`] |
+//! | Bound untrusted input before it is opened | [`admission::admit`] with [`admission::InputLimits`] (every entry point above admits its input too) |
+//! | Ask what this build supports | [`capabilities::capabilities_json`] |
+//!
+//! The [Rust guide](https://github.com/jandira-tech/jubarte-redlines/blob/main/docs/rust.md)
+//! walks through each one; the same operations are in Python (`jubarte-redlines`
+//! on PyPI), JavaScript (`jubarte-wasm` on npm) and the `jubarte` CLI.
 //!
 //! ## Example
 //!
@@ -19,18 +42,30 @@
 //!     let redline =
 //!         jubarte::document_comparer::compare_documents(&original, &modified, "Reviewer")?;
 //!     std::fs::write("original_v_modified.docx", &redline)?;
+//!     std::fs::write("original_v_modified.pdf", jubarte::convert::docx_to_pdf(&redline)?)?;
 //!     Ok(())
 //! }
 //! ```
 //!
-//! For author/date/detail-threshold control, build a
-//! [`comparer::WmlComparerSettings`] and call
-//! [`document_comparer::compare_documents_with_settings`]. To inspect a
-//! redline, use [`document_comparer::get_revisions`]; to flatten one, use
-//! [`document_comparer::accept_revisions`] / [`document_comparer::reject_revisions`].
-//! Convert a document to PDF with [`convert::docx_to_pdf`].
+//! An edit plan is JSON, so an agent can write one. Each operation names its
+//! paragraph (an id from [`inspect::paragraphs`]) and text that must occur
+//! there exactly once; the result holds the edited document and its redline:
 //!
-//! ## Fidelity
+//! ```no_run
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let contract = std::fs::read("contract.docx")?;
+//!     let plan = r#"{"schema_version": 1, "author": "Reviewer", "operations": [
+//!         {"kind": "replace", "paragraph": "body:p:4",
+//!          "find": "thirty (30) days", "replacement": "sixty (60) days"}
+//!     ]}"#;
+//!     let edited = jubarte::edit::apply_plan_json(&contract, plan)?;
+//!     std::fs::write("contract_clean.docx", &edited.clean)?;
+//!     std::fs::write("contract_redline.docx", &edited.redline)?;
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ## Comparison fidelity
 //!
 //! The redline is Word-valid, and differences in text and formatting are
 //! revisions, but the engine also normalizes some markup so the output opens
@@ -56,11 +91,8 @@
 //! (MIT). The repository itself is AGPL-3.0-only; `LICENSES/` preserves those
 //! upstream attribution texts without changing the repository license.
 
-/// Resource admission for untrusted DOCX input (ZIP and XML budgets).
 pub mod admission;
-/// Append one document after another, carrying its parts.
 pub mod append;
-/// Accessibility, style and structure findings (`jubarte audit`).
 pub mod audit;
 /// Word's built-in style names.
 mod builtin_styles;
@@ -68,7 +100,6 @@ mod builtin_styles;
 pub mod capabilities;
 /// Tracked changes one at a time: list, accept or reject a selection.
 pub mod changes;
-/// Comment threads: list, and write the comment part family whole.
 pub mod comments;
 /// Core WmlComparer engine (atomize → LCS → produce → finalize).
 pub mod comparer;
@@ -80,12 +111,10 @@ pub mod convert;
 pub mod debug;
 /// Byte-level package API: compare, list, accept, and reject revisions.
 pub mod document_comparer;
-/// Guarded, uniquely anchored edits applied to a copy and redlined by compare.
 pub mod edit;
 pub mod fields;
 /// Read-only paragraph/package views and the Markdown projection for agents.
 pub mod inspect;
-/// Markdown to Word, with CriticMarkup as tracked changes and comments.
 pub mod markdown;
 /// Markup simplification (PowerTools `MarkupSimplifier` port).
 pub mod markup_simplifier;
@@ -97,21 +126,16 @@ pub mod opc;
 pub mod perf;
 /// Accept / reject tracked revisions across a package.
 pub mod revision_processor;
-/// Remove authors, rsids, document properties and comments; find a text.
 pub mod scrub;
-/// Document settings an edit plan writes, in `CT_Settings` order.
 pub mod settings;
 /// ISO Strict → Transitional package normalization.
 pub mod strict_translation;
-/// Unique id helpers for revision markup.
 pub mod unid;
 /// `jubarte self-update`: install a GitHub release, only when asked.
 #[cfg(feature = "self-update")]
 pub mod update;
 /// Shared small utilities.
 pub mod util;
-/// Word-validity findings beyond the schema: validate, repair, and the
-/// tracked-edit audit.
 pub mod validate;
 /// `WmlDocument` — document bytes + lazily parsed main part.
 pub mod wml_document;

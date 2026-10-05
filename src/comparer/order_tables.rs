@@ -5,7 +5,7 @@
 //! Hand order tables for property containers (Ring 1½ schema oracle).
 //!
 //! These ranks must stay in sync with the tables inside
-//! [`super::finalize::wml_order_elements_per_standard`]. The schema-consistency
+//! `super::finalize::wml_order_elements_per_standard`. The schema-consistency
 //! test (`tests/schema_consistency.rs`) fails if they drift from the WML XSD
 //! particle order (except allowlisted PowerTools divergences).
 

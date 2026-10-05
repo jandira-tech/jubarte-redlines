@@ -8,7 +8,7 @@
 
 [package]
 name = "jubarte-redlines"
-version = "0.10.1"
+version = "0.11.2"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Jandira Technologies, LLC"]
@@ -17,9 +17,9 @@ description = "Word-faithful DOCX redline engine — compare two Word documents 
 repository = "https://github.com/jandira-tech/jubarte-redlines"
 homepage = "https://github.com/jandira-tech/jubarte-redlines"
 documentation = "https://docs.rs/jubarte-redlines"
-readme = "README.md"
-keywords = ["docx", "redline", "track-changes", "openxml", "word"]
-categories = ["text-processing", "parser-implementations", "command-line-utilities"]
+readme = "README.crates.md"
+keywords = ["docx", "redline", "track-changes", "word", "pdf"]
+categories = ["text-processing", "parser-implementations", "command-line-utilities", "wasm"]
 # Keep the published package lean: test fixtures/goldens (~3 MB) and dev tools
 # stay in the repository only.
 # Patterns are anchored ("/…"): cargo include globs use gitignore semantics,
@@ -31,6 +31,7 @@ include = [
   "/benches/**",
   "/Cargo.toml",
   "/README.md",
+  "/README.crates.md",
   "/CHANGELOG.md",
   "/KNOWN_ISSUES.md",
   "/TUNING_AUDIT.md",
@@ -50,6 +51,8 @@ include = [
 "0.9.3" = "Redlines Word refused to open now open. A field whose code changed is replaced whole, and a same-code field stays whole, as in Word's redline. Table, list and section markup follow Word, and the same input writes the same bytes."
 "0.10.0" = "Adds jubarte inspect, text, edit and capabilities with input-admission budgets, --mode word|powertools, convert --png and self-update; Word-mode redlines keep changed text boxes, per-section headers and footers, and comment anchors as Word does."
 "0.10.1" = "Per-change accept/reject (Word's Accept / Reject This Change) in the library and edit plans; Word-parity fixes to Reject All; many docx-to-PDF layout fixes (page breaks, keep-with-next by compat mode, table row splits, floating tables, headers/footers, comment balloons); new debug checks (--check render, diff, -c text)."
+"0.11.0" = "Edit plans gain rewrite, tables, lists, run formatting, footnotes, images, page setup, content controls, watermark, redact, settings and field updates; new audit, validate/repair, scrub, append, comments and diff-render modules; input admission with LEGACY_DOC refusal; conventional marks follow Litera Compare; closer-to-Word docx-to-PDF. Breaking: WmlDocument::document_byte_array is private, use bytes()."
+"0.11.2" = "Word-mode compare decides word-level marks or a whole-paragraph replacement by Word's own kept-character rule; convert paints comments as Word's balloons and tracks Word's PDF layout more closely; release_info/ carries each release's benchmark evidence. On two 600-item samples scored against Word's own output: redlines mean 76.71 (Docxodus 69.24), PDFs mean 78.77 (LibreOffice 54.06), no failed item."
 [lib]
 name = "jubarte"
 path = "src/lib.rs"
@@ -105,7 +108,7 @@ quick-xml = "0.42" # checked XML admission (`xmllinq::parse::validate_xml`) befo
 sha2 = "0.11" # SHA-256 snapshot guard shared by `inspect` and `edit`
 serde = { version = "1", features = ["derive"] } # inspect snapshot / edit plan / report wire types
 serde_json = "1"
-tiny-skia = "0.11" # DOCX→PNG page raster over the layout display list
+tiny-skia = "0.12" # DOCX→PNG page raster over the layout display list
 pulldown-cmark = { version = "0.13", default-features = false } # Markdown → DOCX (`jubarte::markdown`); CommonMark + GFM tables/footnotes
 similar = { version = "3", default-features = false } # line and word diffs of Markdown (`jubarte::markdown::diff_markdown`)
 foldhash = "0.2" # the XML name interner's hasher: well mixed low bits for short, similar names, unlike SipHash (slow) or FNV (clustered)
@@ -136,7 +139,7 @@ required-features = ["cli"]
 criterion = "0.8"
 # Round-trip validation of produced .docx files in integration tests; only the
 # `parts` feature (= dep:zip) is built.
-ooxmlsdk = { version = "0.12", default-features = false, features = ["parts"] }
+ooxmlsdk = { version = "0.13.1", default-features = false, features = ["parts"] }
 tempfile = "3"
 # tests/self_update_signature.rs: sign a throwaway .tar.gz exactly as
 # `zipsign sign tar` does in release.yml, then check it with the updater's

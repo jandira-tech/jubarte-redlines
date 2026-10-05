@@ -15,7 +15,6 @@ at 150 DPI, first non-white row, and the median gap between ink bands.
 from __future__ import annotations
 
 import argparse
-import itertools
 import statistics
 import subprocess
 import sys
@@ -52,7 +51,7 @@ def band_pitch(mask: list[bool]) -> float | None:
     starts = _band_starts(mask)
     if len(starts) < 3:
         return None
-    gaps = [b - a for a, b in itertools.pairwise(starts)]
+    gaps = [b - a for a, b in zip(starts, starts[1:])]
     return float(statistics.median(gaps))
 
 

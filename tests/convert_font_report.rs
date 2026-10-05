@@ -50,6 +50,17 @@ fn convert(input: &[u8], extra: &[&str]) -> std::process::Output {
 }
 
 #[test]
+fn the_report_names_only_the_fonts_the_document_asks_for() {
+    // A document without comments paints no balloon, so the balloon
+    // label's Times New Roman and the default face are no requests of it.
+    // Listed, they failed --fail-on-substitution on a machine without
+    // Calibri for a document that asks for Carlito alone.
+    let report = docx_render_report(&font_docx(&["Carlito"]), PdfOptions::default()).unwrap();
+    let requested: Vec<&str> = report.fonts.iter().map(|f| f.requested.as_str()).collect();
+    assert_eq!(requested, ["Carlito"]);
+}
+
+#[test]
 fn a_bundled_family_is_not_substituted_and_the_flag_passes() {
     let docx = font_docx(&["Carlito"]);
     let report = docx_render_report(&docx, PdfOptions::default()).unwrap();

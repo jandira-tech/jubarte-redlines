@@ -26,7 +26,7 @@ env:
 jobs:
   lint:
     name: fmt + clippy
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -57,7 +57,7 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: clippy jubarte-python
         # pyo3 (abi3, extension-module) only needs an interpreter to configure
-        # itself, and clippy links nothing, so ubuntu-latest's python3 is enough.
+        # itself, and clippy links nothing, so the runner's python3 is enough.
         working-directory: jubarte-python
         run: cargo clippy --all-targets -- -D warnings
       - name: clippy jubarte-wasm (wasm32-unknown-unknown)
@@ -75,7 +75,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [self-hosted, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       # tests/corpus keeps the bench's file names, some past Windows'
@@ -91,7 +91,7 @@ jobs:
 
   coverage:
     name: coverage
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -135,7 +135,7 @@ jobs:
 
   msrv:
     name: MSRV (1.88)
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -153,7 +153,7 @@ jobs:
 
   fuzz-smoke:
     name: fuzz smoke (60 s per target)
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     # Non-blocking until the targets have run clean for a while; a crash
     # here is still a real finding (see fuzz/README.md).
     continue-on-error: true
@@ -180,7 +180,7 @@ jobs:
 
   package:
     name: publish dry run
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -191,7 +191,7 @@ jobs:
 
   deny:
     name: cargo-deny + REUSE
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -203,7 +203,7 @@ jobs:
 
   python:
     name: python bindings
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -221,7 +221,7 @@ jobs:
 
   convert-sweep-unit:
     name: convert-sweep unit
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -229,10 +229,18 @@ jobs:
       - run: python3 scripts/test_convert_sweep.py
       - run: python3 planning/test_sample50_check.py
       - run: python3 scripts/test_release_sh.py
+      - run: python3 scripts/test_check_release_info.py
+      - run: python3 scripts/test_library_readmes.py
       - run: python3 scripts/test_check_release_artifacts.py
+      - run: python3 scripts/test_check_release_facts.py
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
       - run: python3 scripts/test_bump_version.py
       - run: python3 scripts/test_gemini_extension.py
       - run: python3 scripts/test_api_snapshot.py
       # `npx jubarte-redlines` over the checked-in jubarte-wasm build.
+      # node:test and the ESM cli need node >= 18 (cli engines >= 18.3); the
+      # self-hosted runner's system node is far older, so set one up.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
       - run: node --test jubarte-wasm/cli/test/cli.test.mjs

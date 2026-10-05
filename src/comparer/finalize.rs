@@ -5864,12 +5864,13 @@ pub fn strip_last_pure_del_mark_when_pprchange(dom: &mut Dom, root: NodeId) {
 /// `w:del`, matching Word's order. Text-preserving: each of the delText / ins-text
 /// streams keeps its own order (only their interleaving changes). Recurses.
 ///
-/// A wrapper holding a `fldChar` stays put: swapping a deleted field's `end`
-/// with an inserted field's `begin` crosses the two fields, and Word crashed
-/// opening the redline (English pair 57f96361×3832d290).
+/// A wrapper holding part of a field stays put: swapping a deleted field's
+/// `end` with an inserted field's `begin` crosses the two fields, and Word
+/// crashed opening the redline (English pair 57f96361×3832d290). A wrapper
+/// whose fields are complete swaps whole: Word's redline of super_editor
+/// hyperlink_multiple_runs × diff_before10 (corpus a098bd5ad9) writes the
+/// inserted "One two" before the deleted HYPERLINK field.
 pub fn reorder_replacements_ins_before_del(dom: &mut Dom, node: NodeId) {
-    let ins = W::ins();
-    let del = W::del();
     let fld_char = W::name("fldChar");
     let mut i = 0usize;
     loop {
@@ -5878,16 +5879,12 @@ pub fn reorder_replacements_ins_before_del(dom: &mut Dom, node: NodeId) {
             break;
         }
         let (a, b) = (kids[i], kids[i + 1]);
-        let is_replacement = dom.is_element(a)
-            && dom.is_element(b)
-            && dom.name(a).as_ref() == Some(&del)
-            && dom.name(b).as_ref() == Some(&ins)
-            && dom.attribute(a, &W::author()).map(|s| s.to_string())
-                == dom.attribute(b, &W::author()).map(|s| s.to_string())
-            && dom.attribute(a, &W::date()).map(|s| s.to_string())
-                == dom.attribute(b, &W::date()).map(|s| s.to_string())
-            && dom.descendants(a, Some(&fld_char)).is_empty()
-            && dom.descendants(b, Some(&fld_char)).is_empty();
+        let is_replacement = matches!(
+            (revision_wrapper(dom, a), revision_wrapper(dom, b)),
+            (Some((false, author_a, date_a)), Some((true, author_b, date_b)))
+                if author_a == author_b && date_a == date_b
+        ) && fields_complete(dom, a, &fld_char)
+            && fields_complete(dom, b, &fld_char);
         if is_replacement {
             dom.remove(b);
             dom.add_before_self(a, b); // ins (b) now precedes del (a)
@@ -5901,6 +5898,68 @@ pub fn reorder_replacements_ins_before_del(dom: &mut Dom, node: NodeId) {
             reorder_replacements_ins_before_del(dom, c);
         }
     }
+}
+
+/// Every field char under `node` belongs to a field that begins and ends
+/// under it: no `fldChar` at all, or begins and ends that nest and balance.
+fn fields_complete(dom: &Dom, node: NodeId, fld_char: &XName) -> bool {
+    let mut depth = 0i32;
+    for fc in dom.descendants(node, Some(fld_char)) {
+        match dom.attribute(fc, &W::name("fldCharType")) {
+            Some("begin") => depth += 1,
+            Some("end") => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    depth == 0
+}
+
+/// A node that is one revision for the replacement swap: a `w:ins`
+/// (`true`) or `w:del` (`false`) wrapper, or a `w:hyperlink` whose element
+/// children are all one of them by one author and date (Word's redline of
+/// super_editor hyperlink_multiple_runs × diff_before10, corpus a098bd5ad9,
+/// writes "One two" inserted before the deleted "Click here now" link;
+/// the swap saw a hyperlink, not a deletion, and left the link first).
+fn revision_wrapper(dom: &Dom, node: NodeId) -> Option<(bool, String, String)> {
+    if !dom.is_element(node) {
+        return None;
+    }
+    let own = |n: NodeId| {
+        let kind = match dom.name(n).as_ref() {
+            Some(name) if *name == W::ins() => true,
+            Some(name) if *name == W::del() => false,
+            _ => return None,
+        };
+        Some((
+            kind,
+            dom.attribute(n, &W::author()).unwrap_or("").to_string(),
+            dom.attribute(n, &W::date()).unwrap_or("").to_string(),
+        ))
+    };
+    if let Some(rev) = own(node) {
+        return Some(rev);
+    }
+    if dom.name(node).as_ref() != Some(&W::name("hyperlink")) {
+        return None;
+    }
+    let mut found: Option<(bool, String, String)> = None;
+    for child in dom.nodes(node) {
+        if !dom.is_element(child) {
+            continue;
+        }
+        let rev = own(child)?;
+        match &found {
+            None => found = Some(rev),
+            Some(first) if *first == rev => {}
+            Some(_) => return None,
+        }
+    }
+    found
 }
 
 /// Merge consecutive sibling `w:ins` (and consecutive `w:del`) wrappers that
@@ -9011,7 +9070,7 @@ pub fn ensure_default_page_size(dom: &mut Dom, root: NodeId) {
 }
 
 /// `w:tblPr` child ranks (PtOpenXmlUtil.cs Order_tblPr) — shared between
-/// [`wml_order_elements_per_standard`], [`synthesize_table_cell_margins`]
+/// `wml_order_elements_per_standard`, [`synthesize_table_cell_margins`]
 /// and [`align_word_table_and_comment_chrome`] so the three can't drift
 /// apart. Names absent from this list rank 999, which keeps `w:tblPrChange`
 /// after `w:tblLook` (150).
@@ -9305,7 +9364,7 @@ pub fn wml_order_elements_per_standard(dom: &mut Dom, root: NodeId) {
 /// style merged from B, a `w:jc` added after the body's ordering pass) still
 /// lands where the schema wants it.
 ///
-/// Also enforces what [`wml_order_elements_per_standard`] cannot express as an
+/// Also enforces what `wml_order_elements_per_standard` cannot express as an
 /// order: the `w:pPr` inside `w:pPrChange` is CT_PPrBase, which has no `w:rPr`,
 /// `w:sectPr` or nested `w:pPrChange` (Sch_InvalidElementContentExpectingComplex
 /// in 2 of the 2026-09-26 English redlines Word refused).
@@ -12710,7 +12769,7 @@ pub fn repair_inherited_invalidity(dom: &mut Dom, root: NodeId) {
 }
 
 /// Enforce the deleted-text invariant everywhere, not just on runs that happened
-/// to go through [`convert_run_text_to_del_text`].
+/// to go through `convert_run_text_to_del_text`.
 ///
 /// Inside `w:del`, `w:t` must be `w:delText` and `w:instrText` must be
 /// `w:delInstrText`. Word enforces this at load and offers to repair the file when
@@ -12725,7 +12784,7 @@ pub fn repair_inherited_invalidity(dom: &mut Dom, root: NodeId) {
 /// that wraps existing runs in `w:del` rather than rebuilding them.
 ///
 /// `w:moveFrom` is deliberately excluded: Word Compare keeps plain `w:t` inside it
-/// (see [`convert_run_text_to_del_text`]'s callers), so "renaming" there would
+/// (see `convert_run_text_to_del_text`'s callers), so "renaming" there would
 /// introduce the very mismatch this pass exists to remove.
 pub fn enforce_deleted_text_kinds(dom: &mut Dom, root: NodeId) {
     fn walk(dom: &mut Dom, node: NodeId) {

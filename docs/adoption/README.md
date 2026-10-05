@@ -25,9 +25,10 @@ Runnable evidence:
 
 ## Status labels used on every page
 
-- **released**: in jubarte 0.10.1 (PyPI, crates.io `jubarte-redlines`, npm
-  `jubarte-wasm`, GitHub release binaries).
-- **main**: merged, not yet released. Install from source or wait for 0.11.0.
+- **released**: in jubarte 0.11.2 (PyPI, crates.io `jubarte-redlines`, npm
+  `jubarte-wasm` and `jubarte-redlines`, GitHub release binaries).
+- **main**: merged, not yet released. Install from source or wait for the
+  next release.
 - **pending**: open work in the provider-adoption plans
   (`docs/superpowers/plans/2026-10-02-provider-adoption-*.md`); the page
   names the suggestion (S1 to S19) and its branch.
@@ -57,4 +58,5 @@ merges:
 - `fields.md`: field and TOC refresh, with the caveat that page numbers are
   jubarte's layout (S6, `adopt/s6-fields`).
 - `python-docx.md`: python-docx calls mapped to edit-plan operations (S8;
-  tables and lists are on main, the rest is pending).
+  tables, lists, images, footnotes, run formatting and page setup are
+  released plan operations; the page itself is pending).

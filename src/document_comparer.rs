@@ -4523,7 +4523,7 @@ fn defined_style_ids(pkg: &PartFs, main: &str) -> Option<std::collections::HashS
 /// FillInEmptyFootnotesEndnotes, DetachExternalData and
 /// AddUnidsToMarkupInContentParts in the C# order. Returns the names of the
 /// parts it rewrote or created (empty = pure no-op, bytes untouched). An
-/// orphaned footnote/endnote reference is an [`invalid_content`] error — C#
+/// orphaned footnote/endnote reference is an `invalid_content` error — C#
 /// throws DocxodusException when no ComparisonLog is wired (:1676), and the
 /// compare path wires none.
 pub fn pre_process_markup(
@@ -6013,7 +6013,7 @@ fn repair_missing_core_relationships(out: &mut PartFs, out_main: &str) {
 /// D.6 — `WmlComparer.GetRevisions` (:3940) byte facade: list every tracked
 /// revision in a redline `.docx` — main-part groups, footnote/endnote
 /// definition groups, `w:rPrChange` format changes, then (settings-gated)
-/// move detection. `TestForInvalidContent` failures are an [`invalid_content`]
+/// move detection. `TestForInvalidContent` failures are an `invalid_content`
 /// error where C# throws.
 pub fn get_revisions(
     docx: &[u8],

@@ -66,9 +66,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `jubarte::comparer` | comparison tuning | `WmlComparerSettings` (incl. `detail_threshold`, `detect_moves`, `merge_replaced_paragraphs`), `WmlComparerSettings::powertools_faithful()`, `compare_bodies*` |
 | `jubarte::changes` | list / selectively resolve changes | `list_changes`, `accept_changes`, `reject_changes`, `ChangeFilter` (constructor `ChangeFilter::ids(..)`, public `ids`/`authors`/`kinds` fields) |
 | `jubarte::convert` | render DOCX | `docx_to_pdf`, `docx_to_pdf_with(PdfOptions)`, `docx_to_pdf_report`, `docx_to_png`, `render`, `pdf_page_count`, `font_report_json`, `RevisionStyle`, `RevisionPalette` |
-| `jubarte::inspect` | document snapshot for agents | `inspect_json`, `Snapshot`, `Paragraph`, `Span`, `Story`, `SCHEMA_VERSION` |
+| `jubarte::inspect` | document snapshot for agents | `paragraphs`, `summary`, `stories`, `controls`, `markdown`, `inspect_json`, `Snapshot`, `Paragraph`, `Span`, `Story`, `SCHEMA_VERSION` |
 | `jubarte::edit` | atomic JSON edit plans | `apply_plan`, `apply_plan_json`, `EditPlan::from_json`/`to_json` |
 | `jubarte::markdown` | Markdown in and out | `markdown_to_docx`, `docx_to_markdown`, `diff_markdown`, `patch_documents`, `patch_redline`, `redline`, `RedlineOptions` |
+| `jubarte::validate` | will Word open it, and repair | `validate`, `repair`, `audit_tracked`, `Finding` |
+| `jubarte::audit` | accessibility, style and structure findings | `audit`, `audit_report`, `audit_report_with`, `AuditReport` |
+| `jubarte::scrub` | remove authors and metadata before sending | `scrub`, `ScrubOptions`, `leaks` |
+| `jubarte::append` | one document after another | `append_documents`, `AppendOptions`, `SectionBreak`, `AppendComments` |
+| `jubarte::comments` | comment threads | `list_comments`, `CommentRecord` |
+| `jubarte::fields` | refresh a TOC and other fields | `update_fields`, `FieldUpdate` |
 | `jubarte::capabilities` | discover the build's surface | `capabilities(runtime)`, `capabilities_json` |
 | `jubarte::debug` | triage catalogs for a DOCX | `list`, `report`, `Check`, `TRIAGE` |
 | `jubarte::admission` | input validation budgets | `admit(bytes, InputLimits)` |
@@ -147,6 +153,13 @@ Commands:
   capabilities  What this binary can do, for agents choosing an operation
   self-update   Install the latest jubarte release from GitHub. Contacts GitHub only when run; nothing checks for updates otherwise
   debug         Triage a .docx Word refuses, or compare two builds of one. Short output: counts by kind, a few examples each; with two files, only what differs
+  diff-render   Which pages of two .docx files look different: both are laid out and rasterized at one resolution and compared pixel for pixel. Exits 0 when every page is the same, 5 when any page differs
+  comments      List every comment with its thread (`parent`, `done`) and the text it is anchored to, with its surroundings
+  append        Append documents: B after A, then C after that, carrying images, links, styles, lists and notes. Comments are dropped (warned) unless --carry-comments
+  validate      Word-validity findings beyond the schema: what makes Word refuse or repair the file. Exit 0 clean, 2 findings, 1 unreadable
+  fields        Field results written back into the document from jubarte's layout
+  scrub         Remove who touched a document before it goes out: author names (as one alias), rsids, the people and dates in the document properties, and comments. Text and tracked changes stay. Without a flag, all four go under the alias "Author"; with flags, only those given
+  audit         Audit a .docx for accessibility, style and structure defects, each finding located by paragraph id. Exits 0 when nothing fails, 2 on any `error` finding (or any `warning` with --strict)
   help          Print this message or the help of the given subcommand(s)
 
 Arguments:
@@ -322,13 +335,13 @@ Options:
           Deflate the PDF's streams (`/FlateDecode`). Much smaller output; the trade is that the page content is no longer plain text, so it cannot be read with `strings` or `grep`
 
       --font-report <FILE>
-          Write a JSON font-resolution report (`[{requested, step, physical, bold, italic, synthetic}, …]`) for this document (plan Step 2f)
+          Write a JSON font-resolution report (`[{requested, step, physical, bold, italic, synthetic, substituted}, …]`) for this document (plan Step 2f)
 
       --revisions <REVISIONS>
-          How tracked changes are painted: `conventional` (deletions red struck through, insertions blue double-underlined, moves green), `word` (what Microsoft Word's Save as PDF paints), or `custom` (see --revision-palette)
+          How tracked changes are painted: `conventional` (deletions red struck through, insertions blue underlined, moves green: double-struck where they left, double-underlined where they landed), `word` (what Microsoft Word's Save as PDF paints), or `custom` (see --revision-palette)
 
           Possible values:
-          - conventional: Red strike, blue double underline, green moves
+          - conventional: Red strike, blue underline, green double marks for moves
           - word:         Microsoft Word's own markup
           - custom:       --revision-palette
           
@@ -383,6 +396,21 @@ Options:
           Markdown to Word: their date (ISO 8601); pinned for reproducible output
           
           [default: 1970-01-01T00:00:00Z]
+
+      --page <SIZE>
+          Markdown to Word: the page size when there is no --reference-doc (one-inch margins either way); a reference's page setup wins
+
+          Possible values:
+          - letter: US Letter, 8.5 by 11 inches
+          - a4:     ISO A4, 210 by 297 mm
+          
+          [default: letter]
+
+      --pages <SPEC>
+          Rasterize only these pages, counted from 1: `3`, `1-3,7`. Layout still runs over the whole document. Needs PNG output
+
+      --fail-on-substitution
+          Exit 4 when a requested font was substituted (listed on stderr and in --report). Every output is still written. Exit status: 0 ok, 1 error, 4 a requested font was substituted
 
   -h, --help
           Print help (see a summary with '-h')
@@ -481,7 +509,7 @@ Options:
           How tracked changes are painted in PDF or PNG output (see `convert --help`)
 
           Possible values:
-          - conventional: Red strike, blue double underline, green moves
+          - conventional: Red strike, blue underline, green double marks for moves
           - word:         Microsoft Word's own markup
           - custom:       --revision-palette
           
@@ -518,8 +546,9 @@ Arguments:
   <FILE>  The document (.docx) to read
 
 Options:
-      --json  Emit the snapshot as JSON (`schema_version`, `source_sha256`, `summary`, `paragraphs`) instead of a human summary
-  -h, --help  Print help
+      --json    Emit the snapshot as JSON (`schema_version`, `source_sha256`, `summary`, `paragraphs`, `stories`, `tables`) instead of a human summary
+      --tables  Print each body table as a grid instead of the paragraphs: a `table N: ROWSxCOLS header_rows=H widths=W,...` line, then one line per row of tab-separated `ids=text` cells
+  -h, --help    Print help
 ```
 
 #### `jubarte text`
@@ -528,13 +557,23 @@ Options:
 $ jubarte text --help
 Print the body as Markdown with a `[body:p:N]` id before every paragraph: the coordinates an edit plan uses
 
-Usage: jubarte text <FILE>
+Usage: jubarte text [OPTIONS] <FILE>
 
 Arguments:
-  <FILE>  The document (.docx) to read
+  <FILE>
+          The document (.docx) to read
 
 Options:
-  -h, --help  Print help
+      --track-changes <CHOICE>
+          Print the document as Markdown with its tracked changes as CriticMarkup (all), or with every change accepted or rejected, like `convert --to md`. The output then has no `[body:p:N]` ids
+
+          Possible values:
+          - all:    Keep them: CriticMarkup becomes Word tracked changes and comments
+          - accept: Accept every change
+          - reject: Reject every change
+
+  -h, --help
+          Print help (see a summary with '-h')
 ```
 
 #### `jubarte edit`
@@ -577,7 +616,7 @@ Options:
           How tracked changes are painted in the redline PDF/PNG
 
           Possible values:
-          - conventional: Red strike, blue double underline, green moves
+          - conventional: Red strike, blue underline, green double marks for moves
           - word:         Microsoft Word's own markup
           - custom:       --revision-palette
           
@@ -732,6 +771,218 @@ EXAMPLES:
   jubarte debug diff a.docx ours_rej.docx word_rej.docx -p styles
   jubarte debug diff a.docx ours_rej.docx word_rej.docx --style "Body Text" --full
   jubarte debug diff a.docx ours.docx --para-text "Section 4"
+```
+
+#### `jubarte diff-render`
+
+```text
+$ jubarte diff-render --help
+Which pages of two .docx files look different: both are laid out and rasterized at one resolution and compared pixel for pixel. Exits 0 when every page is the same, 5 when any page differs
+
+Usage: jubarte diff-render [OPTIONS] <A> <B>
+
+Arguments:
+  <A>  The document before
+  <B>  The document after
+
+Options:
+      --dpi <DPI>      Raster resolution of both sides in dots per inch (1-1200) [default: 100]
+      --out-dir <DIR>  Write the changed pages' PNGs and diff.json here (created if missing)
+      --json           Print diff.json to stdout instead of one line per changed page
+      --no-overlay     Skip the diff-page-NN.png overlays
+      --force          Overwrite files already in --out-dir
+  -h, --help           Print help
+
+EXAMPLES:
+  jubarte diff-render before.docx after.docx                  changed pages on stdout
+  jubarte diff-render before.docx after.docx --out-dir diff   PNGs of the changed pages and diff.json
+  jubarte diff-render a.docx b.docx --json                    the diff.json document on stdout
+
+With --out-dir, each page that differs is written as a-page-NN.png,
+b-page-NN.png and diff-page-NN.png (b's page with the changed pixels
+magenta and boxed); diff.json lists every page with its changed_ratio,
+bbox and, for a page only one side has, only_in.
+```
+
+#### `jubarte comments`
+
+```text
+$ jubarte comments --help
+List every comment with its thread (`parent`, `done`) and the text it is anchored to, with its surroundings
+
+Usage: jubarte comments [OPTIONS] <FILE>
+
+Arguments:
+  <FILE>  The document (.docx)
+
+Options:
+      --json           Emit one JSON object per line
+      --author <NAME>  Only this author's comments (exact match)
+      --latest         One comment per thread: the newest
+  -h, --help           Print help
+```
+
+#### `jubarte append`
+
+```text
+$ jubarte append --help
+Append documents: B after A, then C after that, carrying images, links, styles, lists and notes. Comments are dropped (warned) unless --carry-comments
+
+Usage: jubarte append [OPTIONS] --output <FILE> <FILE> <FILE>...
+
+Arguments:
+  <FILE> <FILE>...
+          The documents (.docx), in order
+
+Options:
+  -o, --output <FILE>
+          Output path
+
+      --section-break <SECTION_BREAK>
+          What separates each document from the one before it
+
+          Possible values:
+          - next-page:  Each document starts on a new page
+          - continuous: Each document continues on the same page (a continuous section break with --keep-sections)
+          - none:       Nothing between the documents (continuous with --keep-sections)
+          
+          [default: next-page]
+
+      --keep-sections
+          Keep each appended document's final section (page size, margins, headers, footers) as a section of its own
+
+      --carry-comments
+          Carry the comments each appended document's body and notes anchor, with their threads and resolution (those in headers and footers are still dropped). Off, comments are dropped and warned
+
+      --force
+          Overwrite the output file if it already exists
+
+  -q, --quiet
+          Print nothing on success
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+EXAMPLES:
+  jubarte append a.docx b.docx -o ab.docx
+  jubarte append cover.docx body.docx annex.docx -o all.docx --section-break continuous
+  jubarte append letter.docx exhibit.docx -o out.docx --keep-sections
+  jubarte append review_a.docx review_b.docx -o both.docx --carry-comments
+```
+
+#### `jubarte validate`
+
+```text
+$ jubarte validate --help
+Word-validity findings beyond the schema: what makes Word refuse or repair the file. Exit 0 clean, 2 findings, 1 unreadable
+
+Usage: jubarte validate [OPTIONS] <FILE>
+
+Arguments:
+  <FILE>  The document (.docx)
+
+Options:
+      --json             One JSON object per finding
+      --repair <FILE>    Write the repaired package here; remaining findings still exit 2
+      --original <FILE>  Audit tracked edits: every text change against ORIGINAL must be a revision by --author
+      --author <NAME>    The author every change must carry (with --original)
+      --force            Replace an existing --repair output
+  -h, --help             Print help
+
+EXAMPLES:
+  jubarte validate contract.docx
+  jubarte validate contract.docx --json
+  jubarte validate contract.docx --repair fixed.docx
+  jubarte validate review/redline.docx --original contract.docx --author Claude
+```
+
+#### `jubarte fields`
+
+```text
+$ jubarte fields --help
+Field results written back into the document from jubarte's layout
+
+Usage: jubarte fields <COMMAND>
+
+Commands:
+  update  Refresh the cached results of PAGEREF, REF, NUMPAGES, SEQ and TOC fields from jubarte's layout; TOCs are rebuilt from the headings. Field codes stay, so Word can update them again. Page numbers are jubarte's layout, not Word's (docs/WORD_DIFFERENCES.md)
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help
+```
+
+#### `jubarte fields update`
+
+```text
+$ jubarte fields update --help
+Refresh the cached results of PAGEREF, REF, NUMPAGES, SEQ and TOC fields from jubarte's layout; TOCs are rebuilt from the headings. Field codes stay, so Word can update them again. Page numbers are jubarte's layout, not Word's (docs/WORD_DIFFERENCES.md)
+
+Usage: jubarte fields update [OPTIONS] --output <FILE> <FILE>
+
+Arguments:
+  <FILE>  The document (.docx)
+
+Options:
+  -o, --output <FILE>  Output path
+      --force          Overwrite the output file if it already exists
+      --json           Print the fields written as JSON
+  -h, --help           Print help
+
+EXAMPLES:
+  jubarte fields update in.docx -o out.docx          one line per field written
+  jubarte fields update in.docx -o out.docx --json   {"page_count", "fields": [...]}
+```
+
+#### `jubarte scrub`
+
+```text
+$ jubarte scrub --help
+Remove who touched a document before it goes out: author names (as one alias), rsids, the people and dates in the document properties, and comments. Text and tracked changes stay. Without a flag, all four go under the alias "Author"; with flags, only those given
+
+Usage: jubarte scrub [OPTIONS] --output <FILE> <FILE>
+
+Arguments:
+  <FILE>  The document (.docx) to scrub
+
+Options:
+  -o, --output <FILE>        Output path
+      --force                Overwrite the output file if it already exists
+      --author-alias <NAME>  Name every author (revisions, comments, people.xml) takes
+      --rsids                Remove rsids, the edit-session ids that tie copies together
+      --docprops             Remove creator, last editor, revision number, dates, manager, company and custom properties
+      --comments             Remove every comment
+  -h, --help                 Print help
+
+EXAMPLES:
+  jubarte scrub redline.docx -o out.docx                     everything, alias Author
+  jubarte scrub redline.docx -o out.docx --author-alias Counsel --rsids
+  jubarte scrub redline.docx -o out.docx --comments          comments only
+```
+
+#### `jubarte audit`
+
+```text
+$ jubarte audit --help
+Audit a .docx for accessibility, style and structure defects, each finding located by paragraph id. Exits 0 when nothing fails, 2 on any `error` finding (or any `warning` with --strict)
+
+Usage: jubarte audit [OPTIONS] <FILE>
+
+Arguments:
+  <FILE>  The document (.docx) to audit
+
+Options:
+      --json           Emit `{findings, rules, layout}` as JSON
+      --rules <RULES>  Rule sets (a11y, style, structure) or rule codes, comma-separated [default: every rule]
+      --strict         Fail (exit 2) on warnings too, not only on errors
+  -h, --help           Print help
+
+Rules (code, set, severity):
+  HEADING_SKIP a11y warning, IMAGE_NO_DESCR a11y error,
+  TABLE_NO_HEADER_ROW a11y warning, MISSING_LANG a11y warning,
+  LITERAL_BULLET style warning, EMPTY_SPACER_PARAGRAPH style info,
+  DIRECT_FORMATTING_OVERRIDES_STYLE style info,
+  STALE_FIELD_CACHE structure warning, FONT_SUBSTITUTED structure info
 ```
 <!-- gen:cli-rust:end -->
 

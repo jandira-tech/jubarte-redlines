@@ -495,6 +495,22 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
 
   _to_improve e1c745d784's inserted logo and map each lost 2.4pt, so page
   1 held a line Word sets on page 2.
+
+  A VML picture (`w:pict`, or a `w:object` such as an embedded
+  Word.Picture.8 whose preview is a `v:imagedata`) follows the same rule.
+  Word 16 probes vo (2026-10-02, TNR 10, a 150x30pt picture) put the next
+  baseline 2.16pt lower when the run is inserted.
+
+  An inline VML picture is laid out in whole pixels at 143 dpi: Word
+  takes the style's points to HIMETRIC (1/100 mm), then to pixels, then
+  to twips, rounding each half up. A 150x30pt shape draws 150.05x30.2pt,
+  so the next line sits 0.24pt lower than under a DrawingML picture; 37pt
+  draws 36.75, 40pt 39.8, 151.3pt 151.55, whatever the image (probes
+  vo3-vo5, 2026-10-02, 60 sizes). DrawingML keeps its extent
+  (`vml_pixel_snap`).
+  The 5a6c9a5c redline lost 2.2pt under its inserted diagram, so an
+  inserted empty paragraph fitted above the footer where Word moves it to
+  the next page: 33 pages against Word's 35.
 - **A picture-only paragraph's breaks open lines under its pictures.**
   Each is an empty line sized by the break that ends it; the last is
   sized by the paragraph mark. Word 16 probes 2026-10-01, with a picture
@@ -698,6 +714,36 @@ B146C2 394146 0B6A0B CA5010 750B1C 5D5A58 881798 69797E 005B70 8E562E
     same way and keeps its height.
   - A theme `lnRef` outline does the same at the theme's width. We do not
     paint those, so we do not inset for them yet.
+
+## Header STYLEREF fields
+
+A `STYLEREF` in a header or footer shows the body text in its style
+(paragraph or character style, named by name or id): the first such text
+on its page, or the last with `\l`. A page without one shows the last
+before it, and a page before any shows the first after it (probe sref_p1,
+2026-10-02). 5a6c's running head reads s. 4 / s. 9 / s. 12 where the
+cached result says s. 1 (`patch_stylerefs`). The line is laid out again
+around the result: 515f's jc=right "s. 10" ends on its cell edge at 482.28
+like the cached "s. 1" did, so its start moves left; a centred line keeps
+its middle, and text after the field on a left line moves on.
+
+## Metafile pictures
+
+- A WMF's text records (`META_EXTTEXTOUT`, `META_TEXTOUT`) are text in
+  Word's PDF, in the font the metafile selects. We paint them as text over
+  the picture's raster (`paint_meta_texts`). Its `META_RECTANGLE` boxes
+  fill with the brush and take the pen's outline; a `BS_NULL` brush fills
+  nothing. 5a6c's reprint diagram showed only its "+" and arrow.
+- An inline picture starts where its paragraph's first line starts: a
+  hanging indent pulls it out unless a list marker fills that room (5a6c:
+  left 1418, hanging 851 puts the diagram 28.35pt in).
+
+## Text boxes holding tables
+
+A table inside a text box lays out as a table, with its fills and rules,
+between the box's paragraphs (5a6c's red "End-Point Assessment Recording
+Forms" banner). A table style's `w:b w:val="0"` or `w:i w:val="0"` turns
+that row's bold or italic off.
 
 ## Open, measured but not yet reconstructed
 

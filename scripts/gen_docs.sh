@@ -27,7 +27,9 @@ elif [ $# -gt 0 ]; then
   exit 2
 fi
 
-GENERATED_DOCS=(docs/rust.md docs/python.md docs/javascript.md)
+GENERATED_DOCS=(docs/rust.md docs/python.md docs/javascript.md README.md
+  README.crates.md jubarte-python/README.md jubarte-wasm/npm/README.md
+  jubarte-wasm/cli/README.md)
 
 # --- Rust CLI ----------------------------------------------------------------
 # Build the binary so the reference quotes the flags of this source tree. In
@@ -44,6 +46,9 @@ fi
 python3 scripts/gen_cli_docs.py \
   --runner "$ROOT/target/debug/jubarte" \
   --display jubarte --file docs/rust.md --marker cli-rust
+python3 scripts/gen_cli_docs.py --summary \
+  --runner "$ROOT/target/debug/jubarte" \
+  --display jubarte --file README.md --marker cli-summary
 
 # --- Python CLI + API ---------------------------------------------------------
 PY=$ROOT/jubarte-python/.venv/bin/python
@@ -64,6 +69,21 @@ python3 scripts/gen_cli_docs.py \
 
 # --- npm CLI + API ------------------------------------------------------------
 command -v node >/dev/null || { echo "error: node not found" >&2; exit 1; }
+# jubarte-wasm/cli/bin/jubarte-redlines.mjs is ESM and engines-declares
+# node >= 18.3 (jubarte-wasm/cli/package.json). An older node dies on the
+# first `import` with a bare SyntaxError raised from inside gen_cli_docs.py,
+# so state the actual requirement here instead.
+node_version="$(node --version)"
+IFS=. read -r node_major node_minor _ <<<"${node_version#v}" || true
+case "${node_major:-}${node_minor:-}" in
+  *[!0-9]* | "") ;; # unparsable version: let the run itself surface the failure
+  *)
+    if [ "$((node_major * 100 + node_minor))" -lt 1803 ]; then
+      echo "error: node ${node_version} is too old: jubarte-wasm/cli needs >= 18.3 (ESM) for docs/javascript.md" >&2
+      exit 1
+    fi
+    ;;
+esac
 mkdir -p jubarte-wasm/cli/node_modules
 # Remove any real directory first: if the target ever exists as one (a real
 # install), `ln -sfn` would nest the symlink inside it instead of replacing.
@@ -75,6 +95,9 @@ python3 scripts/gen_cli_docs.py \
 python3 scripts/gen_wasm_api.py \
   --dts jubarte-wasm/npm/node/jubarte_wasm.d.ts \
   --file docs/javascript.md --marker wasm-api
+
+# --- Per-library READMEs, cut from README.md (after its command table) --------
+python3 scripts/library_readmes.py
 
 # --- Drift gate ---------------------------------------------------------------
 if [ "$CHECK" = 1 ]; then

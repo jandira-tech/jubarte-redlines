@@ -285,6 +285,8 @@ fn triage_findings_carry_their_codes_and_are_not_repaired() {
     let fixed = repair(&input).unwrap();
     assert!(fixed.repaired.is_empty(), "{:?}", fixed.repaired);
     assert_eq!(codes(&fixed.remaining).len(), findings.len());
+    // Findings, but none repairable: the package is not rewritten either.
+    assert_eq!(fixed.docx, input);
     // The triage checks alone, as `jubarte debug` sees them.
     let triage = jubarte::debug::findings(&input).unwrap();
     assert!(
@@ -417,4 +419,14 @@ fn the_audit_sees_an_untracked_header_edit_and_names_its_part() {
             .unwrap()
             .is_empty()
     );
+}
+
+#[test]
+fn a_package_with_nothing_to_repair_comes_back_byte_for_byte() {
+    // Nothing repairable: repair writes nothing, so a caller can compare
+    // bytes to know nothing changed.
+    let clean = docx(&para("nothing wrong"));
+    let fixed = repair(&clean).unwrap();
+    assert!(fixed.repaired.is_empty() && fixed.remaining.is_empty());
+    assert_eq!(fixed.docx, clean);
 }

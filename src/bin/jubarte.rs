@@ -1878,8 +1878,9 @@ fn insert_before_summary(jsonl: &mut String, line: &str) {
 fn run_revisions(file: &Path, json: bool) -> Result<(), String> {
     let bytes = read_document(file)?;
     let settings = jubarte::comparer::WmlComparerSettings::default();
-    let revs = jubarte::document_comparer::get_revisions(&bytes, &settings)
-        .map_err(|e| format!("get_revisions failed: {e:?}"))?;
+    let revs = jubarte::document_comparer::get_revisions(&bytes, &settings).map_err(|e| {
+        refusal("get_revisions", &e).unwrap_or_else(|| format!("get_revisions failed: {e:?}"))
+    })?;
     if json {
         // Shared serialization (also the wasm `getRevisions` shape): full JSON
         // string escaping — backslash, quote, and ALL control chars < 0x20.
@@ -2008,7 +2009,9 @@ fn run(job: &Job) -> Result<(), String> {
         && Format::of_path(&job.output) != Some(Format::Md)
     {
         jubarte::document_comparer::compare_documents_with_settings(&original, &modified, &settings)
-            .map_err(|e| format!("compare failed: {e:?}"))?
+            .map_err(|e| {
+                refusal("compare", &e).unwrap_or_else(|| format!("compare failed: {e:?}"))
+            })?
     } else {
         let old = Input::new(&job.original, formats.0, original)?;
         let new = Input::new(&job.modified, formats.1, modified)?;
@@ -2071,20 +2074,20 @@ impl<'p> Input<'p> {
     }
 }
 
-/// The first bytes of an OLE compound file: a Word 97-2003 `.doc`, or a
-/// password-encrypted document of any Word version.
-const OLE_MAGIC: &[u8] = b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1";
-
-/// Reads an input document, refusing the OLE files Word alone can open.
+/// Reads an input document, refusing the OLE files Word alone can open and
+/// RTF by their signature (`admission::sniff`, the check the library and
+/// the bindings run too).
 fn read_document(path: &Path) -> Result<Vec<u8>, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
-    if bytes.starts_with(OLE_MAGIC) {
-        return Err(format!(
-            "{} is a Word 97-2003 (.doc) or encrypted document; open it in Word and save it as .docx without a password",
-            path.display()
-        ));
-    }
+    jubarte::admission::sniff(&bytes)
+        .map_err(|refused| format!("{} is {}", path.display(), refused.message))?;
     Ok(bytes)
+}
+
+/// `{what} failed: CODE: …` for an admission refusal, whatever wrapped it
+/// (`admission::code_first`); `None` for any other error.
+fn refusal(what: &str, error: &impl std::fmt::Display) -> Option<String> {
+    jubarte::admission::code_first(&error.to_string()).map(|m| format!("{what} failed: {m}"))
 }
 
 /// Markdown bytes as text, without a byte order mark.
@@ -2339,7 +2342,9 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
                 } else {
                     jubarte::document_comparer::reject_revisions
                 };
-                let resolved = resolve(&bytes).map_err(|e| format!("convert failed: {e:?}"))?;
+                let resolved = resolve(&bytes).map_err(|e| {
+                    refusal("convert", &e).unwrap_or_else(|| format!("convert failed: {e:?}"))
+                })?;
                 pdf_job(Some(&resolved), to)
             }
         },
@@ -2382,7 +2387,9 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
                 .output
                 .ok_or("--output is required to write Word from Word")?;
             ensure_writable(output, job.force)?;
-            let out = resolve(&bytes).map_err(|e| format!("convert failed: {e:?}"))?;
+            let out = resolve(&bytes).map_err(|e| {
+                refusal("convert", &e).unwrap_or_else(|| format!("convert failed: {e:?}"))
+            })?;
             std::fs::write(output, &out)
                 .map_err(|e| format!("writing {}: {e}", output.display()))?;
             println!("wrote {} ({} bytes)", output.display(), out.len());
@@ -2588,7 +2595,26 @@ fn run_debug_diff(
     Ok(())
 }
 
+/// The stack the CLI runs on: what Linux and macOS give a main thread.
+/// Windows gives 1 MiB, which the debug build's command dispatch overflows
+/// before it reads an argument.
+const STACK_BYTES: usize = 8 * 1024 * 1024;
+
 fn main() -> ExitCode {
+    let cli = std::thread::Builder::new()
+        .name("main".into())
+        .stack_size(STACK_BYTES)
+        .spawn(cli_main);
+    match cli.map(std::thread::JoinHandle::join) {
+        Ok(Ok(code)) => code,
+        // The panic was reported on its own thread; leave as a panic does.
+        Ok(Err(panic)) => std::panic::resume_unwind(panic),
+        // No thread to be had: the stack the system gave is the only one.
+        Err(_) => cli_main(),
+    }
+}
+
+fn cli_main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
         Some(Command::Revisions { file, json }) => {
@@ -3627,6 +3653,11 @@ mod tests {
         assert!(!out.exists());
         let err = read_document(&doc).expect_err("every command reads through read_document");
         assert!(err.contains("save it as .docx"), "{err}");
+        // The same check names RTF for what it is.
+        let rtf = dir.path().join("c.rtf");
+        std::fs::write(&rtf, b"{\\rtf1\\ansi hello}").expect("rtf");
+        let err = read_document(&rtf).expect_err("RTF must be refused");
+        assert!(err.contains("c.rtf is an RTF file"), "{err}");
     }
 
     #[test]

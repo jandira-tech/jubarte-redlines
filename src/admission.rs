@@ -145,6 +145,9 @@ pub enum AdmissionErrorKind {
     InvalidPackage,
     /// An XML part is malformed or nests too deep (`INVALID_XML`).
     InvalidXml,
+    /// A Word 97-2003 `.doc`, or an encrypted document of any Word version:
+    /// an OLE compound file, which only Word reads (`LEGACY_DOC`).
+    LegacyDocument,
 }
 
 impl AdmissionErrorKind {
@@ -157,8 +160,73 @@ impl AdmissionErrorKind {
             Self::UnsupportedPackage => "UNSUPPORTED_PACKAGE",
             Self::InvalidPackage => "INVALID_PACKAGE",
             Self::InvalidXml => "INVALID_XML",
+            Self::LegacyDocument => "LEGACY_DOC",
         }
     }
+
+    /// Every kind, in code order.
+    pub const ALL: [Self; 6] = [
+        Self::InputLimit,
+        Self::DuplicatePart,
+        Self::UnsupportedPackage,
+        Self::InvalidPackage,
+        Self::InvalidXml,
+        Self::LegacyDocument,
+    ];
+}
+
+/// A refusal's message with its code first (`CODE: context: detail`): the
+/// comparer's opaque `I/O error: ` wrapper is dropped, any other context
+/// before the code (`document B: `) stays after it. `None` when no
+/// `: `-separated segment of `message` is an admission code. The CLI and
+/// the bindings print refusals through it, so a code reads the same
+/// whatever wrapped it.
+#[must_use]
+pub fn code_first(message: &str) -> Option<String> {
+    let segments: Vec<&str> = message.split(": ").collect();
+    let at = segments.iter().position(|segment| {
+        AdmissionErrorKind::ALL
+            .iter()
+            .any(|kind| kind.code() == *segment)
+    })?;
+    let (before, from) = segments.split_at(at);
+    let mut parts = from.iter().take(1).copied().collect::<Vec<_>>();
+    parts.extend(
+        before
+            .iter()
+            .copied()
+            .filter(|segment| *segment != "I/O error" && !segment.is_empty()),
+    );
+    parts.extend(from.iter().skip(1).copied());
+    Some(parts.join(": "))
+}
+
+/// The first bytes of an OLE compound file: a Word 97-2003 `.doc`, or a
+/// password-encrypted document of any Word version.
+const OLE_MAGIC: &[u8] = b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1";
+
+/// Refuse, by its signature, a file that is a document but not a `.docx`
+/// package: an OLE compound file (`LEGACY_DOC`, with the save-as hint) or
+/// RTF (`UNSUPPORTED_PACKAGE`). [`admit`] runs it before any budget, and
+/// the CLI runs it as it reads a file, so the two give one message.
+///
+/// # Errors
+///
+/// An [`AdmissionError`] naming what the file is instead.
+pub fn sniff(bytes: &[u8]) -> Result<(), AdmissionError> {
+    if bytes.starts_with(OLE_MAGIC) {
+        return Err(AdmissionError::new(
+            AdmissionErrorKind::LegacyDocument,
+            "a Word 97-2003 (.doc) or encrypted document; open it in Word and save it as .docx without a password",
+        ));
+    }
+    if bytes.starts_with(b"{\\rtf") {
+        return Err(AdmissionError::new(
+            AdmissionErrorKind::UnsupportedPackage,
+            "an RTF file, not a .docx package",
+        ));
+    }
+    Ok(())
 }
 
 /// A refused package: the kind and what exactly was refused.
@@ -223,6 +291,8 @@ const OFFICE_DOCUMENT_REL: &[&str] = &[
 /// An [`AdmissionError`] naming the first budget or rule the package breaks.
 pub fn admit(bytes: &[u8], limits: InputLimits) -> Result<AdmittedPackage, AdmissionError> {
     use AdmissionErrorKind as K;
+
+    sniff(bytes)?;
 
     if bytes.len() as u64 > limits.max_compressed_bytes {
         return Err(AdmissionError::new(
@@ -1123,15 +1193,7 @@ mod tests {
     #[test]
     fn error_codes_are_stable() {
         use AdmissionErrorKind as K;
-        let codes: Vec<_> = [
-            K::InputLimit,
-            K::DuplicatePart,
-            K::UnsupportedPackage,
-            K::InvalidPackage,
-            K::InvalidXml,
-        ]
-        .map(K::code)
-        .into();
+        let codes: Vec<_> = K::ALL.map(K::code).into();
         assert_eq!(
             codes,
             [
@@ -1139,10 +1201,68 @@ mod tests {
                 "DUPLICATE_PART",
                 "UNSUPPORTED_PACKAGE",
                 "INVALID_PACKAGE",
-                "INVALID_XML"
+                "INVALID_XML",
+                "LEGACY_DOC"
             ]
         );
         let e = AdmissionError::new(K::InputLimit, "x");
         assert_eq!(e.to_string(), "INPUT_LIMIT: x");
+    }
+
+    #[test]
+    fn an_ole_compound_file_is_legacy_doc_with_a_save_as_hint() {
+        let mut doc = b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1".to_vec();
+        doc.extend_from_slice(&[0u8; 512]);
+        let e = admit(&doc, InputLimits::default()).unwrap_err();
+        assert_eq!(e.kind, AdmissionErrorKind::LegacyDocument);
+        assert_eq!(e.code(), "LEGACY_DOC");
+        assert!(e.message.contains("save it as .docx"), "{}", e.message);
+        // Before the size budget, and under the compare budget too.
+        let tiny = InputLimits {
+            max_compressed_bytes: 1,
+            ..InputLimits::default()
+        };
+        assert_eq!(kind(&doc, tiny), AdmissionErrorKind::LegacyDocument);
+        assert_eq!(
+            kind(&doc, InputLimits::compare()),
+            AdmissionErrorKind::LegacyDocument
+        );
+        assert_eq!(sniff(&doc).unwrap_err().code(), "LEGACY_DOC");
+        assert_eq!(sniff(&docx_with(&[])), Ok(()));
+    }
+
+    #[test]
+    fn rtf_is_unsupported_not_a_zip_error() {
+        let e = admit(b"{\\rtf1\\ansi hello}", InputLimits::default()).unwrap_err();
+        assert_eq!(e.code(), "UNSUPPORTED_PACKAGE");
+        assert!(e.message.contains("RTF"), "{}", e.message);
+        // Only the signature: RTF-looking text after it is not RTF.
+        assert_eq!(sniff(b"PK\x03\x04{\\rtf"), Ok(()));
+    }
+
+    #[test]
+    fn code_first_puts_the_code_first_and_keeps_the_context() {
+        assert_eq!(
+            code_first("INPUT_LIMIT: 10001 ZIP entries").as_deref(),
+            Some("INPUT_LIMIT: 10001 ZIP entries")
+        );
+        // The comparer's opaque wrapper goes; context that names the input
+        // stays, after the code.
+        assert_eq!(
+            code_first("I/O error: INPUT_LIMIT: original document: 10001 ZIP entries").as_deref(),
+            Some("INPUT_LIMIT: original document: 10001 ZIP entries")
+        );
+        assert_eq!(
+            code_first("document B: INVALID_PACKAGE: not a ZIP file").as_deref(),
+            Some("INVALID_PACKAGE: document B: not a ZIP file")
+        );
+        // Only `: ` separates; a colon inside the detail stays.
+        assert_eq!(
+            code_first("I/O error: LEGACY_DOC: at 12:00").as_deref(),
+            Some("LEGACY_DOC: at 12:00")
+        );
+        // Codes are whole segments, never substrings.
+        assert_eq!(code_first("INPUT_LIMITS: x"), None);
+        assert_eq!(code_first("no code here"), None);
     }
 }

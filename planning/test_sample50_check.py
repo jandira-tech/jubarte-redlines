@@ -11,6 +11,8 @@ No jubarte binary, scorer, or sibling checkout is needed.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import sys
@@ -95,25 +97,33 @@ class MainGateTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def _argv(self, *extra: str) -> list[str]:
-        return [
-            "--jubarte", str(self.jubarte), "--scorer", str(self.scorer),
-            "--sample", str(self.sample), "--baseline", str(self.baseline), *extra,
-        ]
+    def _main(self, *extra: str) -> int:
+        """Run main() with its report kept in `self.out` / `self.err`: the
+        verdict lines are asserted on, never printed into a passing run's log."""
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with contextlib.redirect_stderr(err):
+                result = s50.main([
+                    "--jubarte", str(self.jubarte), "--scorer", str(self.scorer),
+                    "--sample", str(self.sample), "--baseline", str(self.baseline), *extra,
+                ])
+        self.out, self.err = out.getvalue(), err.getvalue()
+        return result
 
     def test_missing_binary_exits_two_with_path(self) -> None:
         self.scorer.write_text("x")
-        with mock.patch("sys.stderr") as err:
-            self.assertEqual(s50.main(self._argv()), 2)
-        self.assertIn(str(self.jubarte), "".join(c.args[0] for c in err.write.call_args_list))
+        self.assertEqual(self._main(), 2)
+        self.assertEqual(self.err, f"missing jubarte binary: {self.jubarte}\n")
+        self.assertEqual(self.out, "")
 
     def test_failed_conversion_is_never_blessed(self) -> None:
         self.jubarte.write_text("x")
         self.scorer.write_text("x")
         scored = ({"source__a": {"jaccard": 0.0, "ssim": 0.0, "text_boundary": 0.0}}, ["source__a"])
         with mock.patch.object(s50, "convert_and_score", return_value=scored):
-            self.assertEqual(s50.main(self._argv("--bless")), 1)
-            self.assertEqual(s50.main(self._argv()), 1)
+            for extra in (("--bless",), ()):
+                self.assertEqual(self._main(*extra), 1)
+                self.assertEqual(self.out, "RESULT: REGRESSION — convert failures: ['source__a']\n")
         self.assertFalse(self.baseline.exists(), "a failed run must not write a baseline")
 
     def test_clean_run_blesses_then_compares(self) -> None:
@@ -121,9 +131,23 @@ class MainGateTests(unittest.TestCase):
         self.scorer.write_text("x")
         scored = ({"source__a": {"jaccard": 40.0, "ssim": 0.0, "text_boundary": 0.0}}, [])
         with mock.patch.object(s50, "convert_and_score", return_value=scored):
-            self.assertEqual(s50.main(self._argv("--bless")), 0)
+            self.assertEqual(self._main("--bless"), 0)
+            self.assertEqual(self.out, f"blessed 1 rows, mean J 40.00 -> {self.baseline}\n")
             self.assertEqual(json.loads(self.baseline.read_text())["mean"], 40.0)
-            self.assertEqual(s50.main(self._argv()), 0)
+            self.assertEqual(self._main(), 0)
+            self.assertIn("mean J: baseline 40.00 -> now 40.00 (+0.00)", self.out)
+            self.assertTrue(self.out.endswith("RESULT: OK\n"), self.out)
+
+    def test_a_dropped_row_is_reported_as_a_regression(self) -> None:
+        self.jubarte.write_text("x")
+        self.scorer.write_text("x")
+        scores = [{"jaccard": j, "ssim": 0.0, "text_boundary": 0.0} for j in (40.0, 30.0)]
+        with mock.patch.object(s50, "convert_and_score", return_value=({"source__a": scores[0]}, [])):
+            self.assertEqual(self._main("--bless"), 0)
+        with mock.patch.object(s50, "convert_and_score", return_value=({"source__a": scores[1]}, [])):
+            self.assertEqual(self._main(), 1)
+        self.assertIn("<-- REGRESSION", self.out)
+        self.assertIn("RESULT: REGRESSION — do not keep this change", self.out)
 
 
 if __name__ == "__main__":

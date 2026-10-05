@@ -36,6 +36,9 @@ Where every plan-like document stands, one line each (checked 2026-10-01):
   and v0.10.1 (2026-09-30); see `CHANGELOG.md`.
 - [docs/superpowers/plans/2026-09-26-jubarte-adoption.md](docs/superpowers/plans/2026-09-26-jubarte-adoption.md) —
   adoption bundle; per-phase status banners live inside it.
+- [docs/superpowers/plans/2026-10-02-dependency-trim-and-library-readmes.md](docs/superpowers/plans/2026-10-02-dependency-trim-and-library-readmes.md) —
+  planned: PR A tiny-skia 0.12, PR B vendored OPC, PR C per-library
+  READMEs in the release, optional PR D SHA-256.
 
 ## 1. wasm32 memory ceiling on run-fragmented documents (HIGH)
 
@@ -287,8 +290,8 @@ important first:
   emission and an accept/reject invariant test.
 - [ ] **Operations still to come**: `format_run` (plan 1, Task 8c) emits
   `w:rPrChange`; `insert_image` and `insert_footnote` emit `w:ins` on their
-  runs; `settings`, `watermark` and `fill_control` (plan 3) apply to both
-  copies. Each new `Resolved` variant must be handled in
+  runs; `settings` and `watermark` (plan 3) apply to both copies;
+  `fill_control` is refused under keep for now (§10). Each new `Resolved` variant must be handled in
   `tracked::emit` as well as in `Transaction::apply`.
 - [ ] **WASM**: the WASM edit's diff still uses `patch_redline`, so under
   keep it lists the other party's changes too; use `patch_own_changes` as
@@ -333,12 +336,29 @@ repeatable-sweep item below is what makes these numbers reproducible.
 
 **Important (2026-10-02, merging #314, #318 and this PR):**
 
-- **`main` is red** on `convert_docx_to_pdf::space_for_ul_adds_no_descent_to_wrapped_lines_in_table_cells`
+- **Fixed: `main` was red** on `convert_docx_to_pdf::space_for_ul_adds_no_descent_to_wrapped_lines_in_table_cells`
   ("J and Q sit on separate wrapped lines; off=[709.44, 709.44, 682.56,
-  669.36]") on Linux, macOS, Windows and coverage. The test came in with
-  `1eb0c6c` (#310) and fails on `main` itself (`f816e4b`, run locally),
-  so every PR shows it. #314, #318 and this PR were merged on local gates
-  over it, at Arthur's request. It needs its own fix.
+  669.36]") on Linux, macOS, Windows and coverage. The cause was the
+  machine, not the test: `CJK_DIRS` lists only Word for Mac's folders, so
+  a runner without Word has no East Asian face, and the ideographs shaped
+  to Liberation Sans' `.notdef` (0.75 em), which fitted J and Q on one
+  line. It passes wherever Word for Mac is installed. Blanking `CJK_DIRS`
+  (with `JUBARTE_FONT_INDEX=off`) reproduces the CI numbers exactly. East
+  Asian wide text a face lacks now measures one em, as in every face Word
+  falls back to (`font::tests::an_ideograph_a_face_lacks_still_measures_one_em`).
+  This also fixes CJK line breaks in WASM and on Linux.
+- **Windows font folders (in progress)**: `scan_family_faces` and the East
+  Asian search (`cjk_dirs`) now also read `%WINDIR%\Fonts` and
+  `%LOCALAPPDATA%\Microsoft\Windows\Fonts` on Windows, where Calibri,
+  Cambria, MS Gothic (`msgothic`), YaHei (`msyh`) and Malgun (`malgun`)
+  ship. Before, every installed-font folder was a macOS path, so Windows
+  painted Word's own fonts with open-source substitutes. Windows abbreviates
+  file names (`times.ttf`, `timesbd.ttf`, `cour.ttf`), so these folders also
+  match faces by the family name inside each file; the first lookup reads
+  every `.ttf`/`.otf` there once per process (reading only the `name` table
+  would cut that). Watch the Windows CI job for tests that move with
+  Windows' font versions. Linux's nested `/usr/share/fonts` tree is still
+  unsearched.
 - **`python bindings` failed once** on #312 (`f80566e`):
   `test_mcp_server.py::test_stdio_smoke_initialize_and_list_tools` got no
   `tools/list` reply. It passes locally on `main` (`1ee4c38`) and on #318
@@ -442,3 +462,89 @@ repeatable-sweep item below is what makes these numbers reproducible.
   carried header or footer are not remapped; picture bullets lose the
   picture; `npx jubarte-redlines` has no `append`; `jubarte_wasm.d.ts` gains
   `appendDocuments` only at the next `build-npm.sh`.
+
+## 10. Content controls follow-ups (S14)
+
+Status: OPEN. `fill_control` and the `inspect` `controls` list shipped in
+#298 (2026-10-02). Three known gaps, most important first:
+
+- [ ] **The redline drops the control around a fill** (KNOWN_ISSUES.md #7).
+  The clean copy keeps the `w:sdt`, but the comparer's M390 step
+  (`unwrap_content_controls_in_pure_revisions`, `src/comparer/finalize.rs`)
+  unwraps every control in a paragraph that carries `w:ins` or `w:del`, as
+  Word Compare does. A fill always revises its paragraph, so the redline
+  shows the fill as plain tracked text without the tag, alias or lock.
+  Options: a Word-mode-only exception to M390 for controls whose
+  `w:sdtPr` is unchanged, or re-wrapping the filled runs in the original
+  `w:sdt` after compare. First get Word's own redline of a filled form
+  (fill a control with Track Changes on, and Word Compare of the two
+  copies) and match whichever Word writes. Done when
+  `decision_redline_keeps_the_control_wrapper` in
+  `tests/edit_fill_control.rs` passes and loses its `#[ignore]`.
+- [ ] **Fills are refused under `existing_revisions: "keep"`.** The tracked
+  emitter (`src/edit/tracked.rs`) has no arm for `Resolved::FillControl`,
+  so before the refusal a fill reached the clean copy and the redline
+  showed nothing. `resolve_fill_control` now refuses it with
+  `UNSUPPORTED_STRUCTURE` (test
+  `fills_are_refused_under_keep_until_the_emitter_tracks_them`). To lift
+  it, emit the fill as Word does when you type into a control with Track
+  Changes on: the old content runs in `w:del` and the new run in `w:ins`,
+  inside `w:sdtContent`, so the control survives in the redline. Block-level
+  controls also need the deleted paragraph marks. Checkbox and date state
+  (`w14:checked`, `w:fullDate`) are `w:sdtPr` changes Word does not track;
+  check what Word writes before choosing. Add accept and reject invariant
+  tests, then drop the refusal and the skill's note.
+- [ ] **Checkbox glyphs render blank in PDF and PNG.** Word writes the box
+  (U+2610 unchecked, U+2612 checked) in MS Gothic. Without that font the
+  renderer substitutes Cambria (`jubarte debug FILE --check render` shows
+  `font "MS Gothic" regular → Cambria unknown`), which has no ballot-box
+  glyph, so the box is missing before and after a fill
+  (`examples/agents/fill-form/clean-page-01.png`). Fix in the font
+  substitution: map MS Gothic and MS Mincho to an open font in
+  `assets/fonts/` that covers U+2610 to U+2612, or fall back per glyph when
+  the chosen face lacks a codepoint. Compare with Word's PDF of
+  `examples/agents/fill-form` through `scripts/word_pdf.py`, and add a
+  render test asserting the glyph is drawn.
+  Update 2026-10-02: where MS Gothic is installed (macOS with Office) it
+  now resolves to the real face and the ☒ paints (`jubarte debug` shows
+  `MS-Gothic embedded`); the gap remains on Linux, Windows without the font
+  and WASM, so the per-glyph fallback is still the fix.
+
+## 11. PDF parity follow-ups from 5a6c (2026-10-02)
+
+Status: open. Found while fixing 5a6c's banner, header STYLEREF, WMF
+diagram and VML picture size; each needs a Word probe or a decision first.
+
+- [ ] **A deleted body PAGE field.** Word keeps its cached result, struck
+  and in the author's colour (probe fldrev_p1). We recompute it and paint
+  it black, which `a_revised_page_field_paints_its_number_unmarked` locks
+  from footer evidence (d45aa3d5, 06063858: a deleted footer PAGE is
+  recomputed and painted black). Body and footer may differ; the field
+  needs to know its story before the rule can split.
+- [ ] **Body NUMPAGES, DATE, SECTION and SEQ.** Word recomputes them in
+  the body; we show the cached text (`word_recomputes_field` only
+  unmarks an inserted result).
+- [ ] **An uncached header STYLEREF** (begin/end, no separate) paints
+  nothing in jubarte. 5a6c's `styleref CharPartNo` fields are empty in
+  Word too, so this matches there; probe a body with the style before
+  filling them.
+- [ ] **A patched header STYLEREF after a tab** still measures the cached
+  text for the tab stop. Aligned lines re-lay around the new result (515f
+  "s. 10" on a jc=right cell edge, `a_header_styleref_result_realigns_its_line`);
+  a right or centre tab segment does not.
+- [ ] **An underlined or highlighted patched STYLEREF** keeps the cached
+  result's underline and highlight width: `patch_stylerefs` moves the
+  line's ops but resizes only the text. Probe an underlined, highlighted
+  header STYLEREF whose body text is longer than its cached result.
+- [ ] **A 10pt inline VML picture in a 10pt TNR paragraph**: Word puts the
+  next baseline 1.5pt lower than we do (probe vo3 v_h10, x50); taller
+  pictures match within the 0.24pt baseline grid.
+- [ ] **WMF text runs 4.6% large in Word** (9.51pt where the record says
+  9.09pt at 5a6c's scale) and its second line 0.45pt lower; the x
+  positions match. EMF text is still not painted
+  (`emf_exttextoutw_stays_unpainted_after_mini_365` locks out bitmap
+  digits); painting it as text like WMF is the likely fix, and needs
+  the Strict01 bench rerun.
+- [ ] **5a6c page 5** shows a stray `_` line that Word does not.
+- [ ] **5a6c pages 11 and 13**: a header that Word leaves empty shows
+  "Crown Suits Act 1947" in jubarte (present before this work).

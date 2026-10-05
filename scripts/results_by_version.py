@@ -316,7 +316,7 @@ def harness_docx_to_pdf() -> None:
     for path in sorted(RES.glob('docx_to_pdf*.json')):
         try:
             doc = json.loads(path.read_text())
-        except json.JSONDecodeError, OSError:
+        except (json.JSONDecodeError, OSError):
             continue
         track = doc.get('track') or ''
         clean = 'no_redline' in track

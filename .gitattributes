@@ -1,0 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# The results files name their sample by sha256: no line-end rewriting.
+release_info/** -text

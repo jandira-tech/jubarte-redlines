@@ -32,15 +32,16 @@ def load_rows(sample):
     separator / `..` (it would write outside the work dir) is rejected.
     """
     rows = []
-    for line in open(sample, encoding="utf-8"):
-        if line.startswith("#") or not line.strip():
-            continue
-        s, id_, docx, ref, _j, stratum = line.rstrip("\n").split("\t")
-        if not id_ or id_ in (".", "..") or os.path.basename(id_) != id_ or os.sep in id_ or "/" in id_:
-            raise ValueError(f"sample id must be a plain file stem: {id_!r}")
-        rows.append(dict(set=s, id=id_, stratum=stratum,
-                         docx=os.path.normpath(os.path.join(HERE, docx)),
-                         ref=os.path.normpath(os.path.join(HERE, ref))))
+    with open(sample, encoding="utf-8") as f:
+        for line in f:
+            if line.startswith("#") or not line.strip():
+                continue
+            s, id_, docx, ref, _j, stratum = line.rstrip("\n").split("\t")
+            if not id_ or id_ in (".", "..") or os.path.basename(id_) != id_ or os.sep in id_ or "/" in id_:
+                raise ValueError(f"sample id must be a plain file stem: {id_!r}")
+            rows.append(dict(set=s, id=id_, stratum=stratum,
+                             docx=os.path.normpath(os.path.join(HERE, docx)),
+                             ref=os.path.normpath(os.path.join(HERE, ref))))
     return rows
 
 
@@ -59,9 +60,11 @@ def convert_and_score(rows, jubarte, scorer, workers):
             return {}, failed
         jobs_path, scores_path, scratch = (os.path.join(work, n) for n in ("jobs.json", "scores.json", "scratch"))
         os.makedirs(scratch, exist_ok=True)
-        json.dump(jobs, open(jobs_path, "w"))
+        with open(jobs_path, "w") as f:
+            json.dump(jobs, f)
         subprocess.run([scorer, "--jobs", jobs_path, "--scratch", scratch, "--out", scores_path, "--workers", str(workers)], check=True)
-        raw = json.load(open(scores_path))
+        with open(scores_path) as f:
+            raw = json.load(f)
         raw = raw if isinstance(raw, list) else list(raw.values())
         return {s["stem"]: s for s in raw}, failed
     finally:
@@ -102,11 +105,13 @@ def main(argv=None):
     mean = st.mean(v["jaccard"] for v in cur.values())
 
     if a.bless or not os.path.exists(a.baseline):
-        json.dump(dict(jubarte=os.path.relpath(a.jubarte, JUBARTE), mean=mean, rows=cur), open(a.baseline, "w"), indent=1)
+        with open(a.baseline, "w") as f:
+            json.dump(dict(jubarte=os.path.relpath(a.jubarte, JUBARTE), mean=mean, rows=cur), f, indent=1)
         print(f"blessed {len(cur)} rows, mean J {mean:.2f} -> {a.baseline}")
         return 0
 
-    base = json.load(open(a.baseline))
+    with open(a.baseline) as f:
+        base = json.load(f)
     print(f"{'id':60s} {'set':7s} {'stratum':9s} {'base':>6s} {'now':>6s} {'delta':>6s}")
     worst, regress = 0.0, []
     for r in rows:

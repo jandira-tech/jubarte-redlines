@@ -141,7 +141,7 @@ pub struct ComparisonUnitAtom {
     pub comparison_unit_atom_before: Option<std::sync::Arc<ComparisonUnitAtom>>,
     /// Reconciled ancestor Unids, parallel to `ancestor_elements` (M4.E.2).
     /// PRODUCE-UNID-01: shared, immutable — every atom of a run points at one
-    /// allocation, and atom clones are pointer bumps instead of Vec<String>
+    /// allocation, and atom clones are pointer bumps instead of `Vec<String>`
     /// deep copies.
     pub ancestor_unids: Option<std::sync::Arc<[String]>>,
     /// The `w:del`/`w:ins`/`w:moveFrom`/`w:moveTo` (or `pPr/rPr/{del|ins}`)

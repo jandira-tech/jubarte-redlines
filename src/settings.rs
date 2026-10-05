@@ -357,6 +357,21 @@ mod tests {
     }
 
     #[test]
+    fn each_protection_is_spelled_on_the_wire_as_in_the_xml() {
+        for edit in [
+            ProtectionEdit::None,
+            ProtectionEdit::ReadOnly,
+            ProtectionEdit::Comments,
+            ProtectionEdit::TrackedChanges,
+            ProtectionEdit::Forms,
+        ] {
+            let wire = serde_json::to_string(&edit).unwrap();
+            assert_eq!(wire, format!("\"{}\"", edit.value()), "{edit:?}");
+            assert_eq!(serde_json::from_str::<ProtectionEdit>(&wire).unwrap(), edit);
+        }
+    }
+
+    #[test]
     fn a_child_lands_before_the_first_later_one_and_after_unknown_ones() {
         let (mut dom, doc, root) =
             settings(r#"<w:zoom w:percent="90"/><x:vendor xmlns:x="urn:x"/><w:compat/>"#);

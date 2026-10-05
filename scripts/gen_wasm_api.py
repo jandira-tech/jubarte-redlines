@@ -130,11 +130,14 @@ def main() -> None:
     parser.add_argument("--marker", default="wasm-api", help="gen block marker id")
     args = parser.parse_args()
 
-    block = build_block(open(args.dts, encoding="utf-8").read())
-    text = open(args.file, encoding="utf-8").read()
+    with open(args.dts, encoding="utf-8") as f:
+        block = build_block(f.read())
+    with open(args.file, encoding="utf-8") as f:
+        text = f.read()
     updated = replace_block(text, args.marker, block)
     if updated != text:
-        open(args.file, "w", encoding="utf-8").write(updated)
+        with open(args.file, "w", encoding="utf-8") as f:
+            f.write(updated)
         print(f"gen_wasm_api: updated {args.file} block {args.marker!r}")
     else:
         print(f"gen_wasm_api: {args.file} block {args.marker!r} already current")
