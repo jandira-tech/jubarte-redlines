@@ -67,7 +67,7 @@ pub fn paginate(markdown: &str, pages: &[&str]) -> String {
         let continues_list =
             in_list && (list_item(line) || line.starts_with([' ', '\t'])) && !trimmed.is_empty();
         // A link reference definition is never painted.
-        let text = if definition(trimmed).is_some() {
+        let text = if !fenced && definition(line.trim_end()).is_some() {
             String::new()
         } else {
             visible_text(first_cell(trimmed), &defined)
@@ -263,37 +263,83 @@ fn bracket_end(text: &str) -> Option<usize> {
     None
 }
 
-/// The length of an inline link's destination and title up to its closing
-/// `)` (excluded): a `<...>` destination, or one with balanced parentheses
-/// and backslash escapes.
+/// The length of an inline link's destination and optional title up to
+/// its closing `)` (excluded): a `<...>` destination or one with balanced
+/// parentheses and backslash escapes, then a title in `"..."`, `'...'` or
+/// `(...)`, whose own `)` does not close the link.
 fn destination_len(text: &str) -> Option<usize> {
-    if let Some(inner) = text.strip_prefix('<') {
-        let angle = inner.find('>')?.saturating_add(1);
-        return angle.checked_add(text.get(angle..)?.find(')')?);
-    }
-    let mut depth = 0usize;
-    let mut chars = text.char_indices();
-    while let Some((at, ch)) = chars.next() {
-        match ch {
-            '\\' => {
-                chars.next();
+    let mut at = if let Some(inner) = text.strip_prefix('<') {
+        inner.find('>')?.checked_add(2)?
+    } else {
+        let mut depth = 0usize;
+        let mut end = text.len();
+        let mut chars = text.char_indices();
+        while let Some((at, ch)) = chars.next() {
+            match ch {
+                '\\' => {
+                    chars.next();
+                }
+                '(' => depth = depth.saturating_add(1),
+                ')' if depth == 0 => {
+                    end = at;
+                    break;
+                }
+                ')' => depth = depth.saturating_sub(1),
+                // A destination outside `<>` holds no whitespace: a title
+                // or the closing `)` follows.
+                ch if ch.is_whitespace() => {
+                    end = at;
+                    break;
+                }
+                _ => {}
             }
-            '(' => depth = depth.saturating_add(1),
-            ')' if depth == 0 => return Some(at),
-            ')' => depth = depth.saturating_sub(1),
-            _ => {}
         }
+        end
+    };
+    at = at.checked_add(leading_whitespace(text.get(at..)?))?;
+    let close = match text.get(at..)?.chars().next()? {
+        '"' => Some('"'),
+        '\'' => Some('\''),
+        '(' => Some(')'),
+        _ => None,
+    };
+    if let Some(close) = close {
+        let mut chars = text.get(at..)?.char_indices().skip(1);
+        let end = loop {
+            match chars.next()? {
+                (_, '\\') => {
+                    chars.next();
+                }
+                (offset, ch) if ch == close => break offset,
+                _ => {}
+            }
+        };
+        at = at.checked_add(end)?.checked_add(1)?;
+        at = at.checked_add(leading_whitespace(text.get(at..)?))?;
     }
-    None
+    text.get(at..)?.starts_with(')').then_some(at)
+}
+
+fn leading_whitespace(text: &str) -> usize {
+    text.len().saturating_sub(text.trim_start().len())
 }
 
 /// The label a link reference definition line (`[label]: destination`)
 /// defines, as CommonMark matches labels: case-folded, inner whitespace
 /// collapsed.
 fn definition(line: &str) -> Option<String> {
-    let indent = line.len().saturating_sub(line.trim_start().len());
-    if indent > 3 {
-        return None;
+    // Four columns of indentation (a tab reaches the next stop of four) make
+    // an indented code block.
+    let mut columns = 0usize;
+    for ch in line.chars() {
+        columns = match ch {
+            ' ' => columns.saturating_add(1),
+            '\t' => (columns / 4).saturating_add(1).saturating_mul(4),
+            _ => break,
+        };
+        if columns > 3 {
+            return None;
+        }
     }
     let rest = line.trim_start();
     let end = bracket_end(rest)?;
@@ -307,8 +353,28 @@ fn definition(line: &str) -> Option<String> {
 
 /// The labels `markdown`'s link reference definitions define.
 fn definitions(markdown: &str) -> Vec<String> {
-    let mut labels: Vec<String> = markdown.lines().filter_map(definition).collect();
-    labels.dedup();
+    let mut labels: Vec<String> = Vec::new();
+    // The open code fence's character and length, while inside one.
+    let mut fence: Option<(char, usize)> = None;
+    for line in markdown.lines() {
+        match (fence, fence_run(line.trim())) {
+            (None, Some((ch, len, _))) => {
+                fence = Some((ch, len));
+                continue;
+            }
+            (Some((ch, len)), Some((other, run, true))) if other == ch && run >= len => {
+                fence = None;
+                continue;
+            }
+            _ => {}
+        }
+        if fence.is_none()
+            && let Some(label) = definition(line)
+            && !labels.contains(&label)
+        {
+            labels.push(label);
+        }
+    }
     labels
 }
 
@@ -561,6 +627,37 @@ mod tests {
         assert_eq!(
             paginate(markdown, &pages),
             "<!-- page 1 of 2 -->\n\nIntro.\n\n![Confidential][logo]\n\nBody one.\n\n<!-- page 2 of 2 -->\n\nConfidential notice on page two.\n\n[logo]: logo.png\n"
+        );
+    }
+
+    #[test]
+    fn an_image_title_with_a_parenthesis_does_not_end_the_image() {
+        for line in [
+            "![alt](logo.png \"version ) one\") Body",
+            "![alt](logo.png 'version ) one') Body",
+            "![alt](logo.png (version \\) one)) Body",
+            "![alt](<my logo.png> \"a ) b\") Body",
+        ] {
+            assert_eq!(visible_text(line, &[]), " Body", "{line}");
+        }
+    }
+
+    #[test]
+    fn code_that_looks_like_a_definition_is_not_one() {
+        // Four spaces or a tab make an indented code block, which
+        // CommonMark paints verbatim; up to three spaces is a definition.
+        assert_eq!(definition("    [logo]: logo.png"), None);
+        assert_eq!(definition("\t[logo]: logo.png"), None);
+        assert_eq!(definition("   [logo]: logo.png").as_deref(), Some("logo"));
+        // A definition-shaped line inside a fence defines nothing.
+        assert!(definitions("```\n[logo]: logo.png\n```\n").is_empty());
+        assert!(definitions("~~~~\n[logo]: a\n~~~\n[x]: b\n").is_empty());
+        // The indented code line keeps its page key.
+        let markdown = "Intro.\n\n    [code]: sample text\n\nAfter.\n";
+        let pages = ["Intro.", "[code]: sample text\nAfter."];
+        assert_eq!(
+            paginate(markdown, &pages),
+            "<!-- page 1 of 2 -->\n\nIntro.\n\n<!-- page 2 of 2 -->\n\n    [code]: sample text\n\nAfter.\n"
         );
     }
 

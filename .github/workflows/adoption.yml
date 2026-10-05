@@ -105,11 +105,13 @@ jobs:
       # too: its document through soffice (`*_jubarte_soffice.png`, the
       # `pdf_page_size_*` of soffice's PDF) or another tool's document
       # through jubarte (`*_pandoc_jubarte.png`, `*_docxjs_jubarte.png`).
+      # python-docx is installed above, so its files through jubarte
+      # (`*_pydocx_jubarte.png`) must still be made.
       - name: committed evidence is still produced
         run: |
           git status --porcelain -- examples/adoption
           deleted=$(git ls-files --deleted -- examples/adoption | grep -i jubarte \
-            | grep -viE 'soffice|libreoffice|pandoc|docxjs|pydocx|word|pdf_page_size' || true)
+            | grep -viE 'soffice|libreoffice|pandoc|docxjs|word|pdf_page_size' || true)
           if [ -n "$deleted" ]; then echo "::error::no longer produced: $deleted"; exit 1; fi
           changed=$(git diff --name-only -- examples/adoption | wc -l | tr -d ' ')
           echo "::notice::$changed committed evidence files differ after regeneration (fonts and tool versions vary by runner)"
