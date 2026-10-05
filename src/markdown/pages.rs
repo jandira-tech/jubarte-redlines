@@ -170,13 +170,17 @@ fn letters(text: &str) -> impl Iterator<Item = char> + '_ {
         .flat_map(char::to_lowercase)
 }
 
-/// A Markdown line without what is never painted: link and image targets,
-/// HTML tags and comments, footnote labels and CriticMarkup comments.
+/// A Markdown line without what is never painted: images (alt text and
+/// all), link targets, HTML tags and comments, footnote labels and
+/// CriticMarkup comments. An autolink (`<https://...>`, `<ann@x.com>`)
+/// keeps its text, which the page paints.
 fn visible_text(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
     let mut rest = line;
     while let Some(ch) = rest.chars().next() {
-        let skip = if rest.starts_with("](") {
+        let skip = if rest.starts_with("![") {
+            image_len(rest)
+        } else if rest.starts_with("](") {
             out.push(']');
             rest.find(')').map(|end| end.saturating_add(1))
         } else if rest.starts_with("{>>") {
@@ -184,7 +188,13 @@ fn visible_text(line: &str) -> String {
         } else if rest.starts_with("[^") {
             rest.find(']').map(|end| end.saturating_add(1))
         } else if ch == '<' {
-            rest.find('>').map(|end| end.saturating_add(1))
+            match autolink(rest) {
+                Some(text) => {
+                    out.push_str(text);
+                    Some(text.len().saturating_add(2))
+                }
+                None => rest.find('>').map(|end| end.saturating_add(1)),
+            }
         } else {
             None
         };
@@ -195,6 +205,65 @@ fn visible_text(line: &str) -> String {
         rest = rest.get(step..).unwrap_or("");
     }
     out
+}
+
+/// The length of the inline image `![alt](destination)` that `rest`
+/// opens, an escaped `\]` in the alt text and a `<...>` destination
+/// included; `None` when `rest` does not open one.
+fn image_len(rest: &str) -> Option<usize> {
+    let mut chars = rest.char_indices().skip(2);
+    let close = loop {
+        match chars.next()? {
+            (_, '\\') => {
+                chars.next();
+            }
+            (at, ']') => break at,
+            _ => {}
+        }
+    };
+    let destination = close.checked_add(1)?;
+    let after = rest.get(destination..)?.strip_prefix('(')?;
+    let open = destination.saturating_add(1);
+    let end = if after.starts_with('<') {
+        let angle = after.find('>')?;
+        angle.saturating_add(after.get(angle..)?.find(')')?)
+    } else {
+        after.find(')')?
+    };
+    Some(open.saturating_add(end).saturating_add(1))
+}
+
+/// The text of the CommonMark autolink `rest` opens: `<scheme:...>` (a
+/// scheme of 2 to 32 letters, digits, `+`, `.` or `-`, starting with a
+/// letter) or `<local@domain>`. Raw HTML (`<span>`, `<br/>`) is none.
+fn autolink(rest: &str) -> Option<&str> {
+    let inner = rest.strip_prefix('<')?;
+    let inner = inner.get(..inner.find('>')?)?;
+    if inner.is_empty()
+        || inner
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control() || c == '<')
+    {
+        return None;
+    }
+    let uri = inner.split_once(':').is_some_and(|(scheme, _)| {
+        (2..=32).contains(&scheme.len())
+            && scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+            && scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'))
+    });
+    let email = inner.split_once('@').is_some_and(|(local, domain)| {
+        !local.is_empty()
+            && !domain.is_empty()
+            && local
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || ".!#$%&'*+/=?^_`{|}~-".contains(c))
+            && domain
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.'))
+    });
+    (uri || email).then_some(inner)
 }
 
 /// Where `key` starts in `stream` at or after `from`, within the window.
@@ -340,6 +409,42 @@ mod tests {
         assert_eq!(
             visible_text("See [the site](https://example.com) {++now++}{>>Ann<<}"),
             "See [the site] {++now++}"
+        );
+    }
+
+    #[test]
+    fn an_image_alt_text_is_not_painted_text() {
+        assert_eq!(visible_text("![Confidential](logo.png) Body"), " Body");
+        // An escaped bracket in the alt text, a destination in `<>` with a
+        // space and a parenthesis in it.
+        assert_eq!(
+            visible_text("![a \\] b](<my logo (1).png>) after"),
+            " after"
+        );
+        // A link label is still painted.
+        assert_eq!(visible_text("[Terms](terms.md)"), "[Terms]");
+        // The alt text recurs as body text on page 2: the image must not
+        // pull the page 2 marker up to itself.
+        let markdown = "Intro.\n\n![Confidential](logo.png)\n\nBody one.\n\nConfidential notice on page two.\n";
+        let pages = ["Intro.\nBody one.", "Confidential notice on page two."];
+        assert_eq!(
+            paginate(markdown, &pages),
+            "<!-- page 1 of 2 -->\n\nIntro.\n\n![Confidential](logo.png)\n\nBody one.\n\n<!-- page 2 of 2 -->\n\nConfidential notice on page two.\n"
+        );
+    }
+
+    #[test]
+    fn an_autolink_keeps_its_text_and_html_tags_do_not() {
+        assert_eq!(
+            visible_text("<https://example.com/terms> or <ann@example.com>"),
+            "https://example.com/terms or ann@example.com"
+        );
+        assert_eq!(visible_text("<span class=\"x\">hi</span><br/>"), "hi");
+        let markdown = "First page text.\n\n<https://example.com/terms>\n\nMore.\n";
+        let pages = ["First page text.", "https://example.com/terms\nMore."];
+        assert_eq!(
+            paginate(markdown, &pages),
+            "<!-- page 1 of 2 -->\n\nFirst page text.\n\n<!-- page 2 of 2 -->\n\n<https://example.com/terms>\n\nMore.\n"
         );
     }
 
