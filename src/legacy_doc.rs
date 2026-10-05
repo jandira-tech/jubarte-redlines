@@ -257,11 +257,14 @@ fn document_to_docx(document: &LegacyDocument) -> Result<Vec<u8>> {
     let restyle = styles
         .iter()
         .any(|id| matches!(id.as_str(), "Title" | "Heading7" | "Heading8" | "Heading9"));
-    let empties = document
+    let empties: usize = document
         .blocks
         .iter()
-        .filter(|block| matches!(block, Block::Paragraph(p) if p.text().trim().is_empty()))
-        .count();
+        .filter_map(|block| match block {
+            Block::Paragraph(p) if p.text().trim().is_empty() => Some(placeholder_lines(p)),
+            _ => None,
+        })
+        .sum();
     let header_rows: Vec<usize> = document
         .blocks
         .iter()
@@ -314,8 +317,13 @@ fn empty_placeholder(document: &LegacyDocument) -> String {
         .unwrap_or_default()
 }
 
-/// `body` with the run holding `placeholder` taken out of each of the
-/// `count` empty paragraphs, leaving them empty (with their style).
+/// How many placeholders an empty paragraph is written with: one a line.
+fn placeholder_lines(paragraph: &Paragraph) -> usize {
+    paragraph.text().matches('\n').count().saturating_add(1)
+}
+
+/// `body` with each of the `count` runs holding `placeholder` taken out,
+/// leaving the empty paragraphs with their style and their line breaks.
 fn empty_placeholders(body: &str, placeholder: &str, count: usize) -> Result<String> {
     let run = format!("<w:r><w:t xml:space=\"preserve\">{placeholder}</w:t></w:r>");
     if body.matches(run.as_str()).count() != count {
@@ -427,9 +435,12 @@ fn blocks_to_markdown(document: &LegacyDocument, empty: Option<&str>) -> String 
             let Some(placeholder) = empty else {
                 continue;
             };
+            // One placeholder a line, so the paragraph's line breaks
+            // survive as `w:br` runs between them.
+            let lines = vec![placeholder; placeholder_lines(paragraph)];
             let placeholder = Paragraph {
                 spans: vec![Span {
-                    text: placeholder.to_string(),
+                    text: lines.join("\n"),
                     ..Span::default()
                 }],
                 ..paragraph.clone()
@@ -1441,25 +1452,29 @@ impl Lists {
         let mut lists = Self::default();
         let lst_table = fib_table(table, (fc_lst, lcb_lst), "list table (PlfLst)")?;
         let lfo_table = fib_table(table, (fc_lfo, lcb_lfo), "list override table (PlfLfo)")?;
-        if lst_table.is_none() || lfo_table.is_none() {
-            return Ok(lists);
-        }
-        let (Some(lst), Some(lfo)) = (index(fc_lst), index(fc_lfo)) else {
+        let (Some(lst_table), Some(lfo_table), Some(lst)) = (lst_table, lfo_table, index(fc_lst))
+        else {
             return Ok(lists);
         };
-        let count = u16_at(table, lst).map_or(0, usize::from);
-        // The LVLs follow the LSTF array, nine per list (one for a simple
-        // list), in list order.
+        let short = |what: &str| LegacyDocError::new(format!("the {what} is cut short"));
+        // cLst and the LSTFs lie within the PlfLst's lcb.
+        let count = usize::from(u16_at(lst_table, 0).ok_or_else(|| short("list table (PlfLst)"))?);
+        // The LVLs follow the PlfLst, outside its lcb ([MS-DOC] 2.5.6),
+        // nine per list (one for a simple list), in list order.
         let mut lvl = count
             .saturating_mul(28)
             .saturating_add(lst)
             .saturating_add(2);
+        let lvl_short = || LegacyDocError::new("a list level (LVL) runs past the table stream");
         for i in 0..count {
-            let lstf = lst.saturating_add(2).saturating_add(i.saturating_mul(28));
-            let (Some(lsid), Some(&flags)) =
-                (u32_at(table, lstf), table.get(lstf.saturating_add(26)))
-            else {
-                return Ok(lists);
+            let lstf = i.saturating_mul(28).saturating_add(2);
+            let (Some(lsid), Some(&flags)) = (
+                u32_at(lst_table, lstf),
+                lst_table
+                    .get(lstf.saturating_add(27))
+                    .and(lst_table.get(lstf.saturating_add(26))),
+            ) else {
+                return Err(short("list table (PlfLst)"));
             };
             let levels = if flags & 0x01 != 0 { 1 } else { 9 };
             let mut formats = Vec::with_capacity(levels);
@@ -1469,30 +1484,33 @@ impl Lists {
                     table.get(lvl.saturating_add(24)),
                     table.get(lvl.saturating_add(25)),
                 ) else {
-                    return Ok(lists);
+                    return Err(lvl_short());
                 };
                 formats.push(nfc);
                 let xst = lvl
                     .saturating_add(28)
                     .saturating_add(usize::from(papx))
                     .saturating_add(usize::from(chpx));
-                let Some(cch) = u16_at(table, xst) else {
-                    return Ok(lists);
-                };
+                let cch = u16_at(table, xst).ok_or_else(lvl_short)?;
                 lvl = xst
                     .saturating_add(2)
                     .saturating_add(usize::from(cch).saturating_mul(2));
+                if lvl > table.len() {
+                    return Err(lvl_short());
+                }
             }
             lists.formats.push((lsid.cast_signed(), formats));
         }
-        let overrides = u32_at(table, lfo).and_then(index).unwrap_or(0);
-        for i in 0..overrides.min(table.len() / 16) {
-            let Some(lsid) = u32_at(
-                table,
-                lfo.saturating_add(4).saturating_add(i.saturating_mul(16)),
-            ) else {
-                break;
-            };
+        // lfoMac and the LFOs lie within the PlfLfo's lcb.
+        let overrides = u32_at(lfo_table, 0)
+            .and_then(index)
+            .ok_or_else(|| short("list override table (PlfLfo)"))?;
+        for i in 0..overrides {
+            let lsid = u32_at(lfo_table, i.saturating_mul(16).saturating_add(4))
+                .filter(|_| {
+                    lfo_table.len() >= i.saturating_add(1).saturating_mul(16).saturating_add(4)
+                })
+                .ok_or_else(|| short("list override table (PlfLfo)"))?;
             lists.overrides.push(lsid.cast_signed());
         }
         Ok(lists)
@@ -2256,6 +2274,80 @@ mod tests {
         let len = u32::try_from(table.len()).unwrap();
         let piece = pieces(&table, 0, len).unwrap();
         assert_eq!(piece.first().and_then(|p| p.modifier.bold), Some(false));
+    }
+
+    #[test]
+    fn a_blank_paragraph_keeps_its_line_breaks_in_the_docx() {
+        // A paragraph holding only two line breaks (`\x0B`, or page breaks
+        // read as line breaks) is three lines tall in Word.
+        let document = LegacyDocument {
+            blocks: vec![
+                Block::Paragraph(plain("Before")),
+                Block::Paragraph(plain("\n\n")),
+                Block::Paragraph(plain("After")),
+            ],
+        };
+        assert_eq!(to_markdown(&document), "Before\n\nAfter\n\n");
+        let docx = document_to_docx(&document).unwrap();
+        let package = crate::opc::PartFs::open(&docx).unwrap();
+        let body = package.part_string("word/document.xml").unwrap();
+        let paragraphs: Vec<&str> = body
+            .split("<w:p>")
+            .skip(1)
+            .map(|p| p.split("</w:p>").next().unwrap_or(""))
+            .collect();
+        assert_eq!(
+            paragraphs.get(1).copied(),
+            Some("<w:r><w:br/></w:r><w:r><w:br/></w:r>"),
+            "{body}"
+        );
+        assert!(crate::validate::ring1(&package).is_empty());
+    }
+
+    /// A table stream holding a PlfLfo (one override, naming list 7) at 0,
+    /// then a PlfLst (one simple list, lsid 7) at 20, then, outside the
+    /// PlfLst's `lcb` as [MS-DOC] 2.5.6 puts it, the list's one LVL
+    /// (decimal) unless `lvl` is false.
+    fn lists_table(lvl: bool) -> Vec<u8> {
+        let mut table = Vec::new();
+        table.extend(1u32.to_le_bytes());
+        let mut lfo = vec![0u8; 16];
+        lfo[..4].copy_from_slice(&7u32.to_le_bytes());
+        table.extend(lfo);
+        table.extend(1u16.to_le_bytes());
+        let mut lstf = vec![0u8; 28];
+        lstf[..4].copy_from_slice(&7u32.to_le_bytes());
+        lstf[26] = 0x01;
+        table.extend(lstf);
+        if lvl {
+            table.extend([0u8; 28]);
+            table.extend(0u16.to_le_bytes());
+        }
+        table
+    }
+
+    #[test]
+    fn list_tables_are_read_within_their_fib_ranges() {
+        let (lfo, lst) = ((0, 20), (20, 30));
+        let lists = Lists::new(&lists_table(true), lst, lfo).unwrap();
+        assert_eq!(
+            lists.item(1, 0),
+            Some(ListItem {
+                ordered: true,
+                level: 0
+            })
+        );
+        let legacy = |result: Result<Lists>| {
+            result
+                .map(|_| ())
+                .is_err_and(|e| e.to_string().starts_with("LEGACY_DOC: "))
+        };
+        // A PlfLst whose cLst claims a list its lcb has no room for, a
+        // PlfLfo whose lfoMac claims an override its lcb has no room for,
+        // and an LVL past the end of the stream.
+        assert!(legacy(Lists::new(&lists_table(true), (20, 2), lfo)));
+        assert!(legacy(Lists::new(&lists_table(true), lst, (0, 4))));
+        assert!(legacy(Lists::new(&lists_table(false), lst, lfo)));
     }
 
     #[test]
