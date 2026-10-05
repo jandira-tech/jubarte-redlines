@@ -23,7 +23,9 @@
 //! (`sprmPFInTable`, `sprmPFTtp`) that turn cell and row ends into a table,
 //! and the list override and level (`sprmPIlfo`, `sprmPIlvl`) whose number
 //! format (`PlfLfo` to `PlfLst` to `LVLF.nfc`) makes a bullet or a number.
-//! Bold and italic come from the CHPX pages (`sprmCFBold`, `sprmCFItalic`).
+//! Bold and italic come from the CHPX pages (`sprmCFBold`, `sprmCFItalic`),
+//! then from each piece's property modifier (a `Prm0`, or a `Prm1` naming
+//! one of the Clx's `Prc`s), which [MS-DOC] 2.4.6.2 applies after the CHPX.
 //!
 //! What is read: the main story's text, its paragraphs, Heading 1-9 and
 //! Title styles, bulleted and numbered lists with their levels, bold and
@@ -150,7 +152,10 @@ pub fn is_compound_file(bytes: &[u8]) -> bool {
 ///
 /// [`LegacyDocError`] when the file is not a compound file, holds no
 /// `WordDocument` stream (an encrypted `.docx`, a spreadsheet), predates
-/// Word 97, is encrypted, or its tables point outside their streams.
+/// Word 97, is encrypted, or its tables point outside their streams (the
+/// piece table, the style sheet, the property bin tables and their pages,
+/// the list tables, the section table) or contradict themselves (pieces
+/// that do not cover the main story or run backwards).
 pub fn read(bytes: &[u8]) -> Result<LegacyDocument> {
     let file = CompoundFile::open(bytes)?;
     let word = file.stream("WordDocument").ok_or_else(|| {
@@ -164,26 +169,26 @@ pub fn read(bytes: &[u8]) -> Result<LegacyDocument> {
         .ok_or_else(|| LegacyDocError::new("the table stream the FIB names is missing"))?;
     let pieces = pieces(&table, fib.fc_clx, fib.lcb_clx)?;
     let chars = main_text(&word, &pieces, fib.ccp_text)?;
-    let styles = heading_styles(&table, fib.fc_stshf, fib.lcb_stshf);
+    let styles = heading_styles(&table, fib.fc_stshf, fib.lcb_stshf)?;
     let papx = FkpIndex::new(
         &word,
         &table,
         (fib.fc_plcf_bte_papx, fib.lcb_plcf_bte_papx),
         Fkp::Paragraph,
-    );
+    )?;
     let chpx = FkpIndex::new(
         &word,
         &table,
         (fib.fc_plcf_bte_chpx, fib.lcb_plcf_bte_chpx),
         Fkp::Character,
-    );
-    let lists = Lists::new(&table, fib.plf_lst, fib.plf_lfo);
+    )?;
+    let lists = Lists::new(&table, fib.plf_lst, fib.plf_lfo)?;
     let story = Story {
         papx: &papx,
         chpx: &chpx,
         styles: &styles,
         lists: &lists,
-        section_marks: section_marks(&table, fib.plcf_sed),
+        section_marks: section_marks(&table, fib.plcf_sed)?,
     };
     Ok(LegacyDocument {
         blocks: story.blocks(&chars),
@@ -439,6 +444,21 @@ fn u32_at(bytes: &[u8], offset: usize) -> Option<u32> {
 
 fn index(value: u32) -> Option<usize> {
     usize::try_from(value).ok()
+}
+
+/// A table the FIB names in the table stream (`fc`, `lcb`): `None` when
+/// it is absent (`lcb` 0), an error when it does not fit the stream (a
+/// corrupt file would otherwise convert without its styles, lists or
+/// formatting).
+fn fib_table<'a>(table: &'a [u8], (fc, lcb): (u32, u32), what: &str) -> Result<Option<&'a [u8]>> {
+    if lcb == 0 {
+        return Ok(None);
+    }
+    index(fc)
+        .zip(index(lcb))
+        .and_then(|(from, len)| table.get(from..from.checked_add(len)?))
+        .map(Some)
+        .ok_or_else(|| LegacyDocError::new(format!("the {what} points outside the table stream")))
 }
 
 /// A directory entry: name, type, first sector and size.
@@ -777,7 +797,64 @@ struct Piece {
     /// Byte offset in the WordDocument stream.
     fc: u32,
     compressed: bool,
+    /// The bold and italic the piece's `Prm` sets over its CHPX.
+    modifier: CharModifier,
 }
+
+/// Bold and italic a piece's property modifier sets (`None`: left as the
+/// CHPX has it).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct CharModifier {
+    bold: Option<bool>,
+    italic: Option<bool>,
+}
+
+impl CharModifier {
+    /// Read a character sprm: sprmCFBold or sprmCFItalic with a toggle
+    /// operand. A `0x81` (invert the style's) reads as on, as in the CHPX.
+    fn apply(&mut self, sprm: u16, operand: &[u8]) {
+        let on = matches!(operand.first(), Some(0x01 | 0x81));
+        match sprm {
+            0x0835 => self.bold = Some(on),
+            0x0836 => self.italic = Some(on),
+            _ => {}
+        }
+    }
+
+    /// `props` with this modifier applied ([MS-DOC] 2.4.6.2: the Pcd's
+    /// `Prm` comes after the CHPX's grpprl).
+    fn over(self, props: Props) -> Props {
+        Props {
+            bold: self.bold.unwrap_or(props.bold),
+            italic: self.italic.unwrap_or(props.italic),
+            ..props
+        }
+    }
+}
+
+/// The modifier a Pcd's `Prm` names ([MS-DOC] 2.9.214-216): bit 0 set, a
+/// Prm1 whose bits 1-15 index the Clx's Prcs; clear, a Prm0 whose bits
+/// 1-7 name one sprm (isprm `0x55` sprmCFBold, `0x56` sprmCFItalic) and
+/// bits 8-15 hold its operand.
+fn piece_modifier(prm: u16, prcs: &[&[u8]]) -> Option<CharModifier> {
+    let mut modifier = CharModifier::default();
+    if prm & 1 == 1 {
+        let grpprl = prcs.get(usize::from(prm >> 1))?;
+        for_each_sprm(grpprl, |sprm, operand| modifier.apply(sprm, operand));
+    } else {
+        let sprm = match (prm >> 1) & 0x7F {
+            0x55 => 0x0835,
+            0x56 => 0x0836,
+            _ => return Some(modifier),
+        };
+        let [_, val] = prm.to_le_bytes();
+        modifier.apply(sprm, &[val]);
+    }
+    Some(modifier)
+}
+
+/// Most bytes a Prc's grpprl may hold ([MS-DOC] 2.9.210 PrcData).
+const MAX_PRC_GRPPRL: usize = 0x3FA2;
 
 fn pieces(table: &[u8], fc_clx: u32, lcb_clx: u32) -> Result<Vec<Piece>> {
     let bad = || LegacyDocError::new("the piece table (Clx) is unreadable");
@@ -787,13 +864,18 @@ fn pieces(table: &[u8], fc_clx: u32, lcb_clx: u32) -> Result<Vec<Piece>> {
         .ok_or_else(bad)?;
     let clx = table.get(start..end).ok_or_else(bad)?;
     let mut at = 0usize;
-    // Skip the Prc entries (property modifiers) before the Pcdt.
+    // The Prcs (property modifiers a Pcd's Prm1 names by index) before
+    // the Pcdt.
+    let mut prcs: Vec<&[u8]> = Vec::new();
     while clx.get(at) == Some(&0x01) {
         let size = usize::from(u16_at(clx, at.checked_add(1).ok_or_else(bad)?).ok_or_else(bad)?);
-        at = at
-            .checked_add(3)
-            .and_then(|n| n.checked_add(size))
-            .ok_or_else(bad)?;
+        if size > MAX_PRC_GRPPRL {
+            return Err(bad());
+        }
+        let from = at.checked_add(3).ok_or_else(bad)?;
+        let next = from.checked_add(size).ok_or_else(bad)?;
+        prcs.push(clx.get(from..next).ok_or_else(bad)?);
+        at = next;
     }
     if clx.get(at) != Some(&0x02) {
         return Err(bad());
@@ -822,11 +904,16 @@ fn pieces(table: &[u8], fc_clx: u32, lcb_clx: u32) -> Result<Vec<Piece>> {
         let raw = u32_at(plc, pcd.checked_add(2).ok_or_else(bad)?).ok_or_else(bad)?;
         let compressed = raw & 0x4000_0000 != 0;
         let fc = raw & 0x3FFF_FFFF;
+        let prm = u16_at(plc, pcd.checked_add(6).ok_or_else(bad)?).ok_or_else(bad)?;
+        let modifier = piece_modifier(prm, &prcs).ok_or_else(|| {
+            LegacyDocError::new("a text piece names a property modifier the Clx lacks")
+        })?;
         out.push(Piece {
             cp_start,
             cp_end,
             fc: if compressed { fc / 2 } else { fc },
             compressed,
+            modifier,
         });
     }
     Ok(out)
@@ -855,6 +942,8 @@ struct StoryChar {
     ch: char,
     cp: u32,
     fc: u32,
+    /// The piece's property modifier.
+    modifier: CharModifier,
 }
 
 /// The main story's characters, CP 0 to `ccp_text`.
@@ -867,13 +956,18 @@ fn main_text(word: &[u8], pieces: &[Piece], ccp_text: u32) -> Result<Vec<StoryCh
     let past = || LegacyDocError::new("a text piece points past the WordDocument stream");
     // The pieces run from CP 0 through the main story without a gap, or
     // the document would come out quietly shorter than it is.
+    // The CPs only ever increase ([MS-DOC] 2.8.35): a piece that runs
+    // backwards is corruption, wherever it sits.
+    if pieces.iter().any(|piece| piece.cp_end < piece.cp_start) {
+        return Err(LegacyDocError::new("the piece table's CPs are decreasing"));
+    }
     let mut covered = 0u32;
     for piece in pieces {
         if covered >= ccp_text {
             break;
         }
         // An empty piece (fast-saved files carry them) covers nothing.
-        if piece.cp_end <= piece.cp_start {
+        if piece.cp_end == piece.cp_start {
             continue;
         }
         if piece.cp_start != covered {
@@ -917,7 +1011,12 @@ fn main_text(word: &[u8], pieces: &[Piece], ccp_text: u32) -> Result<Vec<StoryCh
                     (_, unit) => char::from_u32(u32::from(unit)).unwrap_or('\u{FFFD}'),
                 }
             };
-            out.push(StoryChar { ch, cp, fc });
+            out.push(StoryChar {
+                ch,
+                cp,
+                fc,
+                modifier: piece.modifier,
+            });
         }
     }
     Ok(out)
@@ -928,18 +1027,15 @@ fn main_text(word: &[u8], pieces: &[Piece], ccp_text: u32) -> Result<Vec<StoryCh
 // ---------------------------------------------------------------------------
 
 /// Heading level by `istd`: `sti` 1-9 are Heading 1-9 and 62 is Title.
-fn heading_styles(table: &[u8], fc: u32, lcb: u32) -> Vec<Option<u8>> {
-    let Some(stsh) = index(fc)
-        .zip(index(lcb))
-        .and_then(|(from, len)| table.get(from..from.checked_add(len)?))
-    else {
-        return Vec::new();
+fn heading_styles(table: &[u8], fc: u32, lcb: u32) -> Result<Vec<Option<u8>>> {
+    let Some(stsh) = fib_table(table, (fc, lcb), "style sheet (STSH)")? else {
+        return Ok(Vec::new());
     };
     let Some(cb_stshi) = u16_at(stsh, 0).map(usize::from) else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let Some(cstd) = u16_at(stsh, 2).map(usize::from) else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let mut out = Vec::with_capacity(cstd);
     let mut at = cb_stshi.saturating_add(2);
@@ -959,7 +1055,7 @@ fn heading_styles(table: &[u8], fc: u32, lcb: u32) -> Vec<Option<u8>> {
         out.push(level);
         at = at.saturating_add(2).saturating_add(cb_std);
     }
-    out
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -992,13 +1088,14 @@ struct FkpIndex {
 }
 
 impl FkpIndex {
-    fn new(word: &[u8], table: &[u8], (fc, lcb): (u32, u32), kind: Fkp) -> Self {
+    fn new(word: &[u8], table: &[u8], (fc, lcb): (u32, u32), kind: Fkp) -> Result<Self> {
         let mut runs = Vec::new();
-        let Some(plc) = index(fc)
-            .zip(index(lcb))
-            .and_then(|(from, len)| table.get(from..from.checked_add(len)?))
-        else {
-            return Self { runs };
+        let what = match kind {
+            Fkp::Paragraph => "paragraph property bin table (PlcBtePapx)",
+            Fkp::Character => "character property bin table (PlcBteChpx)",
+        };
+        let Some(plc) = fib_table(table, (fc, lcb), what)? else {
+            return Ok(Self { runs });
         };
         let count = plc.len().saturating_sub(4) / 8;
         let pn_base = count.saturating_add(1).saturating_mul(4);
@@ -1006,16 +1103,18 @@ impl FkpIndex {
             let Some(pn) = u32_at(plc, pn_base.saturating_add(i.saturating_mul(4))) else {
                 break;
             };
-            let Some(page) = index(pn & 0x003F_FFFF)
+            let page = index(pn & 0x003F_FFFF)
                 .and_then(|pn| pn.checked_mul(512))
                 .and_then(|from| word.get(from..from.checked_add(512)?))
-            else {
-                continue;
-            };
+                .ok_or_else(|| {
+                    LegacyDocError::new(
+                        "a formatted disk page (FKP) points past the WordDocument stream",
+                    )
+                })?;
             read_fkp(page, kind, &mut runs);
         }
         runs.sort_by_key(|run| run.0);
-        Self { runs }
+        Ok(Self { runs })
     }
 
     fn at(&self, fc: u32) -> Props {
@@ -1164,13 +1263,19 @@ const NFC_BULLET: u8 = 23;
 const NFC_NONE: u8 = 0xFF;
 
 impl Lists {
-    fn new(table: &[u8], (fc_lst, lcb_lst): (u32, u32), (fc_lfo, lcb_lfo): (u32, u32)) -> Self {
+    fn new(
+        table: &[u8],
+        (fc_lst, lcb_lst): (u32, u32),
+        (fc_lfo, lcb_lfo): (u32, u32),
+    ) -> Result<Self> {
         let mut lists = Self::default();
-        if lcb_lst == 0 || lcb_lfo == 0 {
-            return lists;
+        let lst_table = fib_table(table, (fc_lst, lcb_lst), "list table (PlfLst)")?;
+        let lfo_table = fib_table(table, (fc_lfo, lcb_lfo), "list override table (PlfLfo)")?;
+        if lst_table.is_none() || lfo_table.is_none() {
+            return Ok(lists);
         }
         let (Some(lst), Some(lfo)) = (index(fc_lst), index(fc_lfo)) else {
-            return lists;
+            return Ok(lists);
         };
         let count = u16_at(table, lst).map_or(0, usize::from);
         // The LVLs follow the LSTF array, nine per list (one for a simple
@@ -1184,7 +1289,7 @@ impl Lists {
             let (Some(lsid), Some(&flags)) =
                 (u32_at(table, lstf), table.get(lstf.saturating_add(26)))
             else {
-                return lists;
+                return Ok(lists);
             };
             let levels = if flags & 0x01 != 0 { 1 } else { 9 };
             let mut formats = Vec::with_capacity(levels);
@@ -1194,7 +1299,7 @@ impl Lists {
                     table.get(lvl.saturating_add(24)),
                     table.get(lvl.saturating_add(25)),
                 ) else {
-                    return lists;
+                    return Ok(lists);
                 };
                 formats.push(nfc);
                 let xst = lvl
@@ -1202,7 +1307,7 @@ impl Lists {
                     .saturating_add(usize::from(papx))
                     .saturating_add(usize::from(chpx));
                 let Some(cch) = u16_at(table, xst) else {
-                    return lists;
+                    return Ok(lists);
                 };
                 lvl = xst
                     .saturating_add(2)
@@ -1220,7 +1325,7 @@ impl Lists {
             };
             lists.overrides.push(lsid.cast_signed());
         }
-        lists
+        Ok(lists)
     }
 
     fn item(&self, ilfo: u16, ilvl: u8) -> Option<ListItem> {
@@ -1320,7 +1425,7 @@ impl Story<'_> {
                 ch if ch.is_control() => continue,
                 ch => ch,
             };
-            let format = self.chpx.at(story.fc);
+            let format = story.modifier.over(self.chpx.at(story.fc));
             match spans.last_mut() {
                 Some(last) if last.bold == format.bold && last.italic == format.italic => {
                     last.text.push(text);
@@ -1358,19 +1463,16 @@ impl Story<'_> {
 
 /// The CP of each section's last character, the mark that ends it, from
 /// `PlcfSed` ([MS-DOC] 2.8.26): `n + 1` CPs, then `n` 12-byte SEDs.
-fn section_marks(table: &[u8], (fc, lcb): (u32, u32)) -> Vec<u32> {
-    let Some(plc) = index(fc)
-        .zip(index(lcb))
-        .and_then(|(from, len)| table.get(from..from.checked_add(len)?))
-    else {
-        return Vec::new();
+fn section_marks(table: &[u8], (fc, lcb): (u32, u32)) -> Result<Vec<u32>> {
+    let Some(plc) = fib_table(table, (fc, lcb), "section table (PlcfSed)")? else {
+        return Ok(Vec::new());
     };
     let count = plc.len().saturating_sub(4) / 16;
     let mut marks: Vec<u32> = (1..=count)
         .filter_map(|i| u32_at(plc, i.saturating_mul(4))?.checked_sub(1))
         .collect();
     marks.sort_unstable();
-    marks
+    Ok(marks)
 }
 
 /// End a table: a row whose end mark is missing still belongs to it.
@@ -1509,6 +1611,7 @@ mod tests {
             cp_end: 10,
             fc: 0,
             compressed: true,
+            modifier: CharModifier::default(),
         };
         let error = main_text(&word, &[piece], 10).unwrap_err().to_string();
         assert!(error.starts_with("LEGACY_DOC: "), "{error}");
@@ -1564,7 +1667,12 @@ mod tests {
     fn story_chars(text: &str) -> Vec<StoryChar> {
         text.chars()
             .zip(0u32..)
-            .map(|(ch, cp)| StoryChar { ch, cp, fc: cp })
+            .map(|(ch, cp)| StoryChar {
+                ch,
+                cp,
+                fc: cp,
+                modifier: CharModifier::default(),
+            })
             .collect()
     }
 
@@ -1628,6 +1736,7 @@ mod tests {
             cp_end,
             fc,
             compressed: true,
+            modifier: CharModifier::default(),
         };
         for (pieces, case) in [
             (vec![piece(0, 5, 0), piece(7, 10, 7)], "a gap"),
@@ -1653,6 +1762,167 @@ mod tests {
             piece(5, 10, 5),
         ];
         assert_eq!(main_text(&word, &empty, 10).unwrap().len(), 10);
+    }
+
+    #[test]
+    fn a_property_table_outside_its_stream_is_refused_not_dropped() {
+        let table = vec![0u8; 64];
+        let word = vec![0u8; 1024];
+        let legacy = |error: &LegacyDocError| error.to_string().starts_with("LEGACY_DOC: ");
+        // An absent table (no bytes) is fine wherever its offset points.
+        assert!(FkpIndex::new(&word, &table, (9999, 0), Fkp::Paragraph).is_ok());
+        assert!(heading_styles(&table, 9999, 0).is_ok_and(|styles| styles.is_empty()));
+        assert!(section_marks(&table, (9999, 0)).is_ok_and(|marks| marks.is_empty()));
+        assert!(Lists::new(&table, (9999, 0), (9999, 0)).is_ok());
+        for (fc, lcb) in [(60, 12), (9999, 12), (u32::MAX, 12)] {
+            for kind in [Fkp::Paragraph, Fkp::Character] {
+                let result = FkpIndex::new(&word, &table, (fc, lcb), kind).map(|i| i.runs.len());
+                assert!(
+                    result.as_ref().is_err_and(legacy),
+                    "{kind:?} {fc}: {result:?}"
+                );
+            }
+            let styles = heading_styles(&table, fc, lcb);
+            assert!(styles.as_ref().is_err_and(legacy), "STSH {fc}: {styles:?}");
+            let marks = section_marks(&table, (fc, lcb));
+            assert!(marks.as_ref().is_err_and(legacy), "PlcfSed {fc}: {marks:?}");
+            for (lst, lfo) in [((fc, lcb), (0, 4)), ((0, 4), (fc, lcb))] {
+                let lists = Lists::new(&table, lst, lfo).map(|_| ());
+                assert!(lists.as_ref().is_err_and(legacy), "lists {fc}: {lists:?}");
+            }
+        }
+        // A bin table whose one entry names FKP page 5 (bytes 2560..3072)
+        // of a 1024-byte WordDocument stream.
+        let mut plc = vec![0u8; 12];
+        plc[4..8].copy_from_slice(&512u32.to_le_bytes());
+        plc[8..12].copy_from_slice(&5u32.to_le_bytes());
+        for kind in [Fkp::Paragraph, Fkp::Character] {
+            let result = FkpIndex::new(&word, &plc, (0, 12), kind).map(|i| i.runs.len());
+            assert!(result.as_ref().is_err_and(legacy), "{kind:?}: {result:?}");
+        }
+    }
+
+    /// A Clx: one Prc per grpprl, then a Pcdt of compressed pieces, each
+    /// `(cp_start, cp_end, word_offset, prm)`.
+    fn clx(prcs: &[&[u8]], pieces: &[(u32, u32, u32, u16)]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for grpprl in prcs {
+            out.push(0x01);
+            out.extend(u16::try_from(grpprl.len()).unwrap().to_le_bytes());
+            out.extend(*grpprl);
+        }
+        let mut plc = Vec::new();
+        for &(cp_start, ..) in pieces {
+            plc.extend(cp_start.to_le_bytes());
+        }
+        plc.extend(pieces.last().map_or(0, |p| p.1).to_le_bytes());
+        for &(_, _, offset, prm) in pieces {
+            plc.extend([0, 0]);
+            plc.extend((0x4000_0000 | (offset * 2)).to_le_bytes());
+            plc.extend(prm.to_le_bytes());
+        }
+        out.push(0x02);
+        out.extend(u32::try_from(plc.len()).unwrap().to_le_bytes());
+        out.extend(plc);
+        out
+    }
+
+    #[test]
+    fn a_piece_property_modifier_sets_bold_and_italic_over_the_chpx() {
+        // The CHPX makes all ten characters bold. "Hello" carries a Prm1
+        // naming Prc 0 (sprmCFItalic on); "World" a Prm0 with isprm 0x55
+        // (sprmCFBold) and operand 0 (off).
+        let italic: &[u8] = &[0x36, 0x08, 0x01];
+        let prm1 = 1;
+        let prm0_bold_off = 0x55 << 1;
+        let table = clx(&[italic], &[(0, 5, 0, prm1), (5, 10, 5, prm0_bold_off)]);
+        let len = u32::try_from(table.len()).unwrap();
+        let pieces = pieces(&table, 0, len).unwrap();
+        let chars = main_text(b"HelloWorld\r", &pieces, 10).unwrap();
+        let mut chars = chars;
+        chars.push(StoryChar {
+            ch: '\r',
+            cp: 10,
+            fc: 10,
+            modifier: CharModifier::default(),
+        });
+        let bold = Props {
+            bold: true,
+            ..Props::default()
+        };
+        let (papx, chpx) = (
+            FkpIndex { runs: Vec::new() },
+            FkpIndex {
+                runs: vec![(0, 11, bold)],
+            },
+        );
+        let lists = Lists::default();
+        let story = Story {
+            papx: &papx,
+            chpx: &chpx,
+            styles: &[],
+            lists: &lists,
+            section_marks: Vec::new(),
+        };
+        let blocks = story.blocks(&chars);
+        let Some(Block::Paragraph(paragraph)) = blocks.first() else {
+            panic!("{blocks:?}");
+        };
+        let spans: Vec<(&str, bool, bool)> = paragraph
+            .spans
+            .iter()
+            .map(|s| (s.text.as_str(), s.bold, s.italic))
+            .collect();
+        assert_eq!(spans, [("Hello", true, true), ("World", false, false)]);
+    }
+
+    #[test]
+    fn a_property_modifier_the_clx_lacks_is_refused() {
+        // A Prm1 naming Prc 3 of a Clx with none; a Prc longer than the
+        // spec's 0x3FA2 bytes.
+        let table = clx(&[], &[(0, 5, 0, (3 << 1) | 1)]);
+        let len = u32::try_from(table.len()).unwrap();
+        let error = pieces(&table, 0, len).map(|p| p.len()).unwrap_err();
+        assert!(error.to_string().contains("property modifier"), "{error}");
+        let long = vec![0u8; MAX_PRC_GRPPRL + 1];
+        let table = clx(&[&long], &[(0, 5, 0, 0)]);
+        let len = u32::try_from(table.len()).unwrap();
+        assert!(pieces(&table, 0, len).is_err());
+        // A Prm of 0 (Prm0, isprm 0, val 0) changes nothing.
+        let table = clx(&[], &[(0, 5, 0, 0)]);
+        let len = u32::try_from(table.len()).unwrap();
+        let piece = pieces(&table, 0, len).unwrap();
+        assert_eq!(
+            piece.first().map(|p| p.modifier),
+            Some(CharModifier::default())
+        );
+    }
+
+    #[test]
+    fn a_reversed_piece_is_refused_not_read_as_empty() {
+        // CPs [100, 0, 5, 10]: the first piece runs backwards. Taken as
+        // empty, the rest covers 0..10 and the decoder stopped at CP 100,
+        // returning no text at all.
+        let word = b"HelloWorld".to_vec();
+        let piece = |cp_start, cp_end, fc| Piece {
+            cp_start,
+            cp_end,
+            fc,
+            compressed: true,
+            modifier: CharModifier::default(),
+        };
+        let reversed = [piece(100, 0, 0), piece(0, 5, 0), piece(5, 10, 5)];
+        let error = main_text(&word, &reversed, 10).map(|c| c.len());
+        assert!(
+            error
+                .as_ref()
+                .is_err_and(|e| e.to_string().contains("decreasing")),
+            "{error:?}"
+        );
+        // A reversed piece past the main story is refused too: the CPs of
+        // a piece table only ever increase.
+        let late = [piece(0, 10, 0), piece(10, 4, 0)];
+        assert!(main_text(&word, &late, 10).is_err());
     }
 
     #[test]
