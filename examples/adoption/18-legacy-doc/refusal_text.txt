@@ -1,1 +1,1 @@
-error: input.doc is a Word 97-2003 (.doc) or encrypted document; open it in Word and save it as .docx without a password; or convert it first: jubarte convert input.doc -o input.docx
+error: input.doc is a Word 97-2003 (.doc) or encrypted document; open it in Word and save it as .docx without a password; a .doc converts with: jubarte convert input.doc -o input.docx
