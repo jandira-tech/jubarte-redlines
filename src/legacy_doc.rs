@@ -27,10 +27,12 @@
 //! then from each piece's property modifier (a `Prm0`, or a `Prm1` naming
 //! one of the Clx's `Prc`s), which [MS-DOC] 2.4.6.2 applies after the CHPX.
 //!
-//! What is read: the main story's text, its paragraphs, Heading 1-9 and
-//! Title styles, bulleted and numbered lists with their levels, bold and
-//! italic, tables (one level; nested tables are flattened, cell text is
-//! plain), field results (codes dropped), line breaks. What is not: other
+//! What is read: the main story's text, its paragraphs (empty ones too),
+//! Heading 1-9 and Title styles, bulleted and numbered lists with their
+//! levels, bold and italic, tables (one level; nested tables are
+//! flattened, cell text is plain) and which leading rows repeat as a
+//! header (`sprmTTableHeader`), field results (codes dropped), line
+//! breaks. What is not: other
 //! character formatting (font, size, colour, underline), list start
 //! numbers and number styles beyond "numbered", headers and footers, notes,
 //! comments, tracked changes, pictures, page setup (the output is US
@@ -40,7 +42,9 @@
 //!
 //! The text becomes escaped Markdown, and [`crate::markdown::markdown_to_docx`]
 //! writes the package, so the `.docx` is the same Word-valid output that
-//! `jubarte convert draft.md` writes.
+//! `jubarte convert draft.md` writes. What Markdown cannot say is put back
+//! in the package afterwards: Title and Heading 7-9, empty paragraphs, and
+//! tables whose rows do not repeat as a header.
 
 use std::fmt;
 
@@ -88,12 +92,23 @@ type Result<T> = std::result::Result<T, LegacyDocError>;
 pub enum Block {
     /// A paragraph.
     Paragraph(Paragraph),
-    /// A table: rows of cells, each cell's paragraphs as plain text joined
-    /// by spaces.
-    Table(Vec<Vec<String>>),
+    /// A table.
+    Table(Table),
 }
 
-/// A paragraph of the main story.
+/// A table of the main story.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Table {
+    /// Rows of cells, each cell's paragraphs as plain text joined by
+    /// spaces.
+    pub rows: Vec<Vec<String>>,
+    /// How many leading rows Word repeats as a header on each page
+    /// (`sprmTTableHeader`); 0 when the first row is data.
+    pub header_rows: usize,
+}
+
+/// A paragraph of the main story. One with no text (or only spaces) is an
+/// empty paragraph Word keeps, often to space the text out.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Paragraph {
     /// 1-9 for Heading 1-9, 0 for Title.
@@ -214,10 +229,12 @@ pub fn doc_to_docx(bytes: &[u8]) -> Result<Vec<u8>> {
     document_to_docx(&read(bytes)?)
 }
 
-/// The blocks written as a `.docx` through the Markdown writer, then
-/// Title and Heading 7-9 (which Markdown has no heading for) restored.
+/// The blocks written as a `.docx` through the Markdown writer, then what
+/// Markdown cannot say put back: Title and Heading 7-9, empty paragraphs,
+/// and which table rows repeat as headers.
 fn document_to_docx(document: &LegacyDocument) -> Result<Vec<u8>> {
-    let markdown = to_markdown(document);
+    let placeholder = empty_placeholder(document);
+    let markdown = blocks_to_markdown(document, Some(&placeholder));
     let options = crate::markdown::DocxOptions {
         critic: false,
         ..crate::markdown::DocxOptions::default()
@@ -237,72 +254,197 @@ fn document_to_docx(document: &LegacyDocument) -> Result<Vec<u8>> {
             level => format!("Heading{level}"),
         })
         .collect();
-    if styles
+    let restyle = styles
         .iter()
-        .all(|id| !matches!(id.as_str(), "Title" | "Heading7" | "Heading8" | "Heading9"))
-    {
+        .any(|id| matches!(id.as_str(), "Title" | "Heading7" | "Heading8" | "Heading9"));
+    let empties = document
+        .blocks
+        .iter()
+        .filter(|block| matches!(block, Block::Paragraph(p) if p.text().trim().is_empty()))
+        .count();
+    let header_rows: Vec<usize> = document
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            Block::Table(table) => Some(table.header_rows),
+            Block::Paragraph(_) => None,
+        })
+        .collect();
+    if !restyle && empties == 0 && header_rows.iter().all(|&rows| rows == 1) {
         return Ok(docx);
     }
-    restyle_headings(&docx, &styles)
+
+    let mut package = crate::opc::PartFs::open(&docx).map_err(|e| docx_error(&e.to_string()))?;
+    let mut body = package
+        .part_string("word/document.xml")
+        .ok_or_else(|| docx_error("no document part"))?;
+    if restyle {
+        body = restyle_headings(&body, &styles)?;
+    }
+    if empties > 0 {
+        body = empty_placeholders(&body, &placeholder, empties)?;
+    }
+    body = repeat_header_rows(&body, &header_rows)?;
+    package.set_part("word/document.xml", body.into_bytes());
+    if restyle {
+        define_styles(&mut package, &styles)?;
+    }
+    package.to_zip().map_err(|e| docx_error(&e.to_string()))
 }
 
-/// Give the document's heading paragraphs, in order, the styles `styles`
-/// names, and define any the package lacks.
-fn restyle_headings(docx: &[u8], styles: &[String]) -> Result<Vec<u8>> {
+fn docx_error(what: &str) -> LegacyDocError {
+    LegacyDocError::new(format!("writing the .docx: {what}"))
+}
+
+/// A word that stands in for an empty paragraph's text on its way through
+/// the Markdown writer: letters and digits only (nothing to escape, and the
+/// writer drops private-use characters), and in none of the document's text.
+fn empty_placeholder(document: &LegacyDocument) -> String {
+    let texts: Vec<String> = document
+        .blocks
+        .iter()
+        .map(|block| match block {
+            Block::Paragraph(paragraph) => paragraph.text(),
+            Block::Table(table) => table.rows.iter().flatten().cloned().collect(),
+        })
+        .collect();
+    (0u32..)
+        .map(|n| format!("jubarteemptyparagraph{n}"))
+        .find(|candidate| texts.iter().all(|text| !text.contains(candidate.as_str())))
+        .unwrap_or_default()
+}
+
+/// `body` with the run holding `placeholder` taken out of each of the
+/// `count` empty paragraphs, leaving them empty (with their style).
+fn empty_placeholders(body: &str, placeholder: &str, count: usize) -> Result<String> {
+    let run = format!("<w:r><w:t xml:space=\"preserve\">{placeholder}</w:t></w:r>");
+    if body.matches(run.as_str()).count() != count {
+        return Err(docx_error("an empty paragraph the writer did not keep"));
+    }
+    let out = body.replace(run.as_str(), "");
+    if out.contains(placeholder) {
+        return Err(docx_error("an empty paragraph the writer did not keep"));
+    }
+    Ok(out)
+}
+
+/// `body` with each table's first `header_rows` rows (by table, in order)
+/// marked to repeat as a header and the rest not; the writer marks the
+/// first row of every table.
+fn repeat_header_rows(body: &str, header_rows: &[usize]) -> Result<String> {
+    const HEADER: &str = "<w:trPr><w:tblHeader/></w:trPr>";
+    let mut tables = body.split("<w:tbl>");
+    let mut out = tables.next().unwrap_or("").to_string();
+    let mut wanted = header_rows.iter();
+    for table in tables {
+        let &rows = wanted
+            .next()
+            .ok_or_else(|| docx_error("more tables than the document has"))?;
+        out.push_str("<w:tbl>");
+        let mut parts = table.split("<w:tr>");
+        out.push_str(parts.next().unwrap_or(""));
+        for (index, row) in parts.enumerate() {
+            out.push_str("<w:tr>");
+            if index < rows {
+                out.push_str(HEADER);
+            }
+            out.push_str(row.strip_prefix(HEADER).unwrap_or(row));
+        }
+    }
+    if wanted.next().is_some() {
+        return Err(docx_error("fewer tables than the document has"));
+    }
+    Ok(out)
+}
+
+/// `body` with its heading paragraphs, in order, given the styles `styles`
+/// names.
+fn restyle_headings(body: &str, styles: &[String]) -> Result<String> {
     const OPEN: &str = "<w:pStyle w:val=\"Heading";
-    let fail = |what: &str| LegacyDocError::new(format!("writing the .docx: {what}"));
-    let mut package = crate::opc::PartFs::open(docx).map_err(|e| fail(&e.to_string()))?;
-    let body = package
-        .part_string("word/document.xml")
-        .ok_or_else(|| fail("no document part"))?;
     let mut out = String::with_capacity(body.len());
-    let mut rest = body.as_str();
+    let mut rest = body;
     let mut wanted = styles.iter();
     while let Some((before, after)) = rest.split_once(OPEN) {
         out.push_str(before);
         let quote = after
             .find('"')
-            .ok_or_else(|| fail("a broken heading style"))?;
+            .ok_or_else(|| docx_error("a broken heading style"))?;
         let style = wanted
             .next()
-            .ok_or_else(|| fail("more heading paragraphs than headings"))?;
+            .ok_or_else(|| docx_error("more heading paragraphs than headings"))?;
         out.push_str("<w:pStyle w:val=\"");
         out.push_str(style);
         rest = after
             .get(quote..)
-            .ok_or_else(|| fail("a broken heading style"))?;
+            .ok_or_else(|| docx_error("a broken heading style"))?;
     }
     out.push_str(rest);
     if wanted.next().is_some() {
-        return Err(fail("fewer heading paragraphs than headings"));
+        return Err(docx_error("fewer heading paragraphs than headings"));
     }
-    package.set_part("word/document.xml", out.into_bytes());
+    Ok(out)
+}
 
+/// Define in the package's style sheet each of `styles` it lacks.
+fn define_styles(package: &mut crate::opc::PartFs, styles: &[String]) -> Result<()> {
     let mut sheet = package
         .part_string("word/styles.xml")
-        .ok_or_else(|| fail("no styles part"))?;
+        .ok_or_else(|| docx_error("no styles part"))?;
     let mut defined: Vec<&str> = Vec::new();
     for style in styles {
         if defined.contains(&style.as_str()) || sheet.contains(&format!("w:styleId=\"{style}\"")) {
             continue;
         }
         let definition = crate::markdown::xml::style_definition(style)
-            .ok_or_else(|| fail("a heading style without a definition"))?;
+            .ok_or_else(|| docx_error("a heading style without a definition"))?;
         let end = sheet
             .rfind("</w:styles>")
-            .ok_or_else(|| fail("a styles part without its end"))?;
+            .ok_or_else(|| docx_error("a styles part without its end"))?;
         sheet.insert_str(end, &definition);
         defined.push(style);
     }
     package.set_part("word/styles.xml", sheet.into_bytes());
-    package.to_zip().map_err(|e| fail(&e.to_string()))
+    Ok(())
 }
 
-/// The document's blocks as Markdown.
+/// The document's blocks as Markdown. Empty paragraphs are left out:
+/// Markdown has no way to hold one. A GitHub table always has a header
+/// row, so a table's first row is one here whatever
+/// [`Table::header_rows`] says.
 #[must_use]
 pub fn to_markdown(document: &LegacyDocument) -> String {
+    blocks_to_markdown(document, None)
+}
+
+/// The blocks as Markdown; an empty paragraph is left out, or with
+/// `empty`, written as that text (for the `.docx` writer to take out).
+fn blocks_to_markdown(document: &LegacyDocument, empty: Option<&str>) -> String {
     let mut out = String::new();
     for block in &document.blocks {
+        if let Block::Paragraph(paragraph) = block
+            && paragraph.text().trim().is_empty()
+        {
+            let Some(placeholder) = empty else {
+                continue;
+            };
+            let placeholder = Paragraph {
+                spans: vec![Span {
+                    text: placeholder.to_string(),
+                    ..Span::default()
+                }],
+                ..paragraph.clone()
+            };
+            push_block(&mut out, &Block::Paragraph(placeholder));
+            continue;
+        }
+        push_block(&mut out, block);
+    }
+    out
+}
+
+/// One block as Markdown, then a blank line.
+fn push_block(out: &mut String, block: &Block) {
+    {
         match block {
             Block::Paragraph(paragraph) => match (paragraph.heading, paragraph.list) {
                 (Some(level), _) => {
@@ -336,7 +478,7 @@ pub fn to_markdown(document: &LegacyDocument) -> String {
                 }
                 (None, None) => out.push_str(&render_spans(&paragraph.spans)),
             },
-            Block::Table(rows) => {
+            Block::Table(Table { rows, .. }) => {
                 let width = rows.iter().map(Vec::len).max().unwrap_or(0).max(1);
                 for (index, row) in rows.iter().enumerate() {
                     out.push('|');
@@ -360,7 +502,6 @@ pub fn to_markdown(document: &LegacyDocument) -> String {
         }
         out.push_str("\n\n");
     }
-    out
 }
 
 /// Spans as Markdown: `**bold**`, `*italic*`, `***both***`, the markers
@@ -1070,6 +1211,8 @@ struct Props {
     row_end: bool,
     /// List override, 1-based; 0 is none.
     ilfo: u16,
+    /// The row a table-row mark ends repeats as a header.
+    table_header: bool,
     ilvl: u8,
     bold: bool,
     italic: bool,
@@ -1217,6 +1360,8 @@ fn papx_props(page: &[u8], at: usize) -> Option<Props> {
             0x6649 => props.in_table |= u32_at(operand, 0).is_some_and(|depth| depth > 0),
             // sprmPIlfo, sprmPIlvl
             0x460B => props.ilfo = u16_at(operand, 0).unwrap_or(0),
+            // sprmTTableHeader, in the row-end paragraph's PAPX
+            0x3404 => props.table_header = value != 0,
             0x260A => props.ilvl = value,
             _ => {}
         }
@@ -1364,7 +1509,8 @@ impl Story<'_> {
         // Field nesting: true while inside a field's code (before its
         // separator).
         let mut fields: Vec<bool> = Vec::new();
-        let mut rows: Vec<Vec<String>> = Vec::new();
+        // Each finished row and whether it is marked as a header.
+        let mut rows: Vec<(Vec<String>, bool)> = Vec::new();
         let mut row: Vec<String> = Vec::new();
         let mut cell: Vec<String> = Vec::new();
 
@@ -1401,7 +1547,7 @@ impl Story<'_> {
                                 row.push(cell.join(" "));
                                 cell.clear();
                             }
-                            rows.push(std::mem::take(&mut row));
+                            rows.push((std::mem::take(&mut row), props.table_header));
                         } else if story.ch == '\u{07}' {
                             cell.push(text.replace('\n', " "));
                             row.push(cell.join(" ").trim().to_string());
@@ -1445,9 +1591,6 @@ impl Story<'_> {
     }
 
     fn push_paragraph(&self, out: &mut Vec<Block>, props: Props, spans: Vec<Span>) {
-        if spans.iter().all(|span| span.text.trim().is_empty()) {
-            return;
-        }
         let heading = self.styles.get(usize::from(props.istd)).copied().flatten();
         let list = heading
             .is_none()
@@ -1476,12 +1619,19 @@ fn section_marks(table: &[u8], (fc, lcb): (u32, u32)) -> Result<Vec<u32>> {
 }
 
 /// End a table: a row whose end mark is missing still belongs to it.
-fn flush_table(out: &mut Vec<Block>, rows: &mut Vec<Vec<String>>, row: &mut Vec<String>) {
+fn flush_table(out: &mut Vec<Block>, rows: &mut Vec<(Vec<String>, bool)>, row: &mut Vec<String>) {
     if !row.is_empty() {
-        rows.push(std::mem::take(row));
+        rows.push((std::mem::take(row), false));
     }
     if !rows.is_empty() {
-        out.push(Block::Table(std::mem::take(rows)));
+        let rows = std::mem::take(rows);
+        // Only leading rows repeat: a header mark after a data row is
+        // ignored ([MS-DOC] 2.6.3 sprmTTableHeader).
+        let header_rows = rows.iter().take_while(|(_, header)| *header).count();
+        out.push(Block::Table(Table {
+            rows: rows.into_iter().map(|(cells, _)| cells).collect(),
+            header_rows,
+        }));
     }
 }
 
@@ -1536,10 +1686,13 @@ mod tests {
                     heading: Some(1),
                     ..plain("Fees")
                 }),
-                Block::Table(vec![
-                    vec!["Item".into(), "Price".into()],
-                    vec!["Setup | once".into()],
-                ]),
+                Block::Table(Table {
+                    rows: vec![
+                        vec!["Item".into(), "Price".into()],
+                        vec!["Setup | once".into()],
+                    ],
+                    header_rows: 0,
+                }),
             ],
         };
         assert_eq!(
@@ -1800,6 +1953,160 @@ mod tests {
             let result = FkpIndex::new(&word, &plc, (0, 12), kind).map(|i| i.runs.len());
             assert!(result.as_ref().is_err_and(legacy), "{kind:?}: {result:?}");
         }
+    }
+
+    #[test]
+    fn empty_paragraphs_are_kept_in_the_docx_and_left_out_of_markdown() {
+        let (papx, chpx) = (FkpIndex { runs: Vec::new() }, FkpIndex { runs: Vec::new() });
+        let lists = Lists::default();
+        let story = Story {
+            papx: &papx,
+            chpx: &chpx,
+            styles: &[],
+            lists: &lists,
+            section_marks: Vec::new(),
+        };
+        // An empty and a blank (a tab) spacer between two paragraphs.
+        let blocks = story.blocks(&story_chars("Before\r\r\t\rAfter\r"));
+        let texts: Vec<String> = blocks
+            .iter()
+            .map(|b| match b {
+                Block::Paragraph(p) => p.text(),
+                Block::Table(_) => "table".into(),
+            })
+            .collect();
+        assert_eq!(texts, ["Before", "", " ", "After"]);
+        let mut document = LegacyDocument { blocks };
+        assert_eq!(to_markdown(&document), "Before\n\nAfter\n\n");
+        // An empty heading keeps its style too.
+        document.blocks.insert(
+            1,
+            Block::Paragraph(Paragraph {
+                heading: Some(8),
+                ..plain("")
+            }),
+        );
+        let docx = document_to_docx(&document).unwrap();
+        let package = crate::opc::PartFs::open(&docx).unwrap();
+        let body = package.part_string("word/document.xml").unwrap();
+        let paragraphs: Vec<&str> = body
+            .split("<w:p>")
+            .skip(1)
+            .map(|p| p.split("</w:p>").next().unwrap_or(""))
+            .collect();
+        assert_eq!(
+            paragraphs,
+            [
+                "<w:r><w:t xml:space=\"preserve\">Before</w:t></w:r>",
+                "<w:pPr><w:pStyle w:val=\"Heading8\"/></w:pPr>",
+                "",
+                "",
+                "<w:r><w:t xml:space=\"preserve\">After</w:t></w:r>",
+            ],
+            "{body}"
+        );
+        assert!(crate::validate::ring1(&package).is_empty());
+    }
+
+    /// Story characters for one table: `|` ends a cell, `/` ends a row
+    /// that `header` (by row) marks or not, `\r` a paragraph after it.
+    fn table_story(cells: &str, header: &[bool]) -> Vec<Block> {
+        let text: String = cells
+            .chars()
+            .map(|c| match c {
+                '|' | '/' => '\u{07}',
+                c => c,
+            })
+            .collect();
+        let chars = story_chars(&text);
+        let in_table = Props {
+            in_table: true,
+            ..Props::default()
+        };
+        let mut row = 0usize;
+        let runs = cells
+            .chars()
+            .zip(0u32..)
+            .map(|(c, fc)| {
+                let props = match c {
+                    '/' => {
+                        row += 1;
+                        Props {
+                            row_end: true,
+                            table_header: header.get(row - 1).copied().unwrap_or(false),
+                            ..in_table
+                        }
+                    }
+                    '\r' => Props::default(),
+                    _ => in_table,
+                };
+                (fc, fc + 1, props)
+            })
+            .collect();
+        let (papx, chpx) = (FkpIndex { runs }, FkpIndex { runs: Vec::new() });
+        let lists = Lists::default();
+        Story {
+            papx: &papx,
+            chpx: &chpx,
+            styles: &[],
+            lists: &lists,
+            section_marks: Vec::new(),
+        }
+        .blocks(&chars)
+    }
+
+    #[test]
+    fn a_row_end_papx_reads_sprm_t_table_header() {
+        // A PAPX at byte 2: cb 6 (11 grpprl bytes), istd 0, then
+        // sprmPFInTable 1, sprmPFTtp 1 and sprmTTableHeader as given.
+        let papx = |header: u8| {
+            let mut page = vec![0u8; 512];
+            page[2] = 6;
+            page[3..14].copy_from_slice(&[
+                0x00, 0x00, 0x16, 0x24, 0x01, 0x17, 0x24, 0x01, 0x04, 0x34, header,
+            ]);
+            papx_props(&page, 2).unwrap()
+        };
+        let row = papx(1);
+        assert!(row.in_table && row.row_end && row.table_header, "{row:?}");
+        assert!(!papx(0).table_header);
+    }
+
+    #[test]
+    fn only_rows_marked_as_headers_repeat_as_headers() {
+        let cells = "a|b|/c|d|/e|f|/\r";
+        let header_rows = |header: &[bool]| match table_story(cells, header).first() {
+            Some(Block::Table(table)) => table.header_rows,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(header_rows(&[false, false, false]), 0);
+        assert_eq!(header_rows(&[true, true, false]), 2);
+        // A header row after a data row is ignored ([MS-DOC] 2.6.3).
+        assert_eq!(header_rows(&[false, true, false]), 0);
+        let Some(Block::Table(table)) = table_story(cells, &[]).into_iter().next() else {
+            panic!("no table");
+        };
+        assert_eq!(table.rows, [["a", "b"], ["c", "d"], ["e", "f"]]);
+
+        let repeated = |header_rows: usize| {
+            let document = LegacyDocument {
+                blocks: vec![Block::Table(Table {
+                    header_rows,
+                    ..table.clone()
+                })],
+            };
+            let docx = document_to_docx(&document).unwrap();
+            let package = crate::opc::PartFs::open(&docx).unwrap();
+            assert!(crate::validate::ring1(&package).is_empty());
+            let body = package.part_string("word/document.xml").unwrap();
+            body.split("<w:tr>")
+                .skip(1)
+                .map(|row| row.starts_with("<w:trPr><w:tblHeader/></w:trPr>"))
+                .collect::<Vec<bool>>()
+        };
+        assert_eq!(repeated(0), [false, false, false]);
+        assert_eq!(repeated(1), [true, false, false]);
+        assert_eq!(repeated(2), [true, true, false]);
     }
 
     /// A Clx: one Prc per grpprl, then a Pcdt of compressed pieces, each

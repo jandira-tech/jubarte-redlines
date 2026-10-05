@@ -24,8 +24,9 @@ minimum works; the plan lists what is still missing), **plan** (not started),
   x.doc` exited 1; no reader existed in `src/`.
 - Now: `jubarte convert old.doc` writes `old.docx` (`-t md` and PDF/PNG
   through it), from `src/legacy_doc.rs`: OLE compound file, FIB, piece
-  table, PAPX (styles, tables, lists), CHPX (bold, italic), STSH (Heading
-  1-9, Title), PlfLst/PlfLfo (bullet or number per level). Every other
+  table, PAPX (styles, tables, lists, header rows), CHPX and the piece
+  table's property modifiers (bold, italic), STSH (Heading 1-9, Title),
+  PlfLst/PlfLfo (bullet or number per level). Every other
   command still refuses the file and names the convert step. Example:
   [`18-legacy-doc`](../../examples/adoption/18-legacy-doc/); tests:
   `tests/legacy_doc_convert.rs`, `tests/adoption.rs`.
@@ -154,3 +155,7 @@ A skill that needs LibreOffice's pixels keeps LibreOffice.
 | `.doc` Title and Heading 7, 8 and 9 came out of `.docx` conversion as Heading 1 and Heading 6. | 01 | **done**: the `.docx` keeps Title and Heading 7-9 (`tests/fixtures/legacy/styles.doc`, opened in Word). Markdown output still writes `#` and `######`: CommonMark has no Title and stops at six levels. |
 | `paginate` now ignores fence-like text inside a paragraph, a title quoted in the paragraph before it, and the gaps of a loose list (adversarial review, R2). | 06 | **done**: unit tests in `src/markdown/pages.rs`. |
 | A `.doc` to `.docx` run ignored `--report`, `--font-report` and `--fail-on-substitution`. | 01 | **done**: refused for Word and Markdown output, as `--pages` without `--png` is. |
+| A `.doc` lost the bold or italic a piece's property modifier (`Prm0`, or a `Prm1` naming a `Prc`) sets over its CHPX. | 01 | **done**: applied after the CHPX ([MS-DOC] 2.4.6.2); unit tests in `src/legacy_doc.rs`. No fixture carries a `Prc` yet: LibreOffice never writes one, and Word writes them only on fast save. |
+| A `.doc`'s empty paragraphs (spacers, a paragraph holding only a page break) were dropped, so the `.docx` came out tighter than Word's. | 01 | **done** for `.docx` output: kept, with their style. Markdown output still leaves them out (it cannot hold one). Ring-1 valid; not yet opened in Word. |
+| Every table of a `.doc` came out with its first row repeating as a header (`w:tblHeader`), whatever the source said. | 01 | **done** for `.docx` output: only the leading rows marked with `sprmTTableHeader` repeat. Markdown output still makes the first row a header: a GitHub table must have one. Ring-1 valid; not yet opened in Word. |
+| A `.doc` whose style sheet, property bin tables, FKP pages, list tables or section table point outside their stream, or whose piece table runs backwards, converted without them (or empty). | 01 | **done**: refused with `LEGACY_DOC`, as a piece past the stream already was. |

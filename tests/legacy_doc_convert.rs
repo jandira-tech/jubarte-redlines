@@ -36,9 +36,11 @@ fn outline(blocks: &[Block]) -> Vec<String> {
                 ),
                 (None, None) => format!("P {}", p.text()),
             },
-            Block::Table(rows) => format!(
+            Block::Table(table) => format!(
                 "T {}",
-                rows.iter()
+                table
+                    .rows
+                    .iter()
                     .map(|r| r.join("|"))
                     .collect::<Vec<_>>()
                     .join(";")
@@ -101,7 +103,8 @@ fn bold_and_italic_runs_are_kept() {
 fn a_section_break_ends_its_paragraph() {
     // breaks.doc (make_breaks.py, exported by LibreOffice): LibreOffice
     // writes the page breaks as paragraph splits and the section break as
-    // a section mark.
+    // a section mark. The paragraph that held only a page break comes out
+    // empty, and is kept: Word keeps it too.
     let doc = std::fs::read(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/legacy/breaks.doc"),
     )
@@ -111,6 +114,7 @@ fn a_section_break_ends_its_paragraph() {
         [
             "P Before the break",
             "P after the break, same paragraph.",
+            "P ",
             "P Last paragraph of section one.",
             "P First paragraph of section two.",
         ]
