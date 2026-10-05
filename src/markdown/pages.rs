@@ -326,10 +326,11 @@ fn normalize_label(label: &str) -> String {
 fn autolink(rest: &str) -> Option<&str> {
     let inner = rest.strip_prefix('<')?;
     let inner = inner.get(..inner.find('>')?)?;
+    // CommonMark forbids only ASCII controls, ASCII space and `<` here.
     if inner.is_empty()
         || inner
             .chars()
-            .any(|c| c.is_whitespace() || c.is_control() || c == '<')
+            .any(|c| c.is_ascii_control() || matches!(c, ' ' | '<'))
     {
         return None;
     }
@@ -570,6 +571,13 @@ mod tests {
             "https://example.com/terms or ann@example.com"
         );
         assert_eq!(visible_text("<span class=\"x\">hi</span><br/>", &[]), "hi");
+        // A URI autolink forbids only ASCII controls, ASCII space and angle
+        // brackets: an ideographic space is part of the link.
+        assert_eq!(
+            visible_text("<ab:\u{3000}terms> x", &[]),
+            "ab:\u{3000}terms x"
+        );
+        assert_eq!(visible_text("<ab: terms> x", &[]), " x");
         let markdown = "First page text.\n\n<https://example.com/terms>\n\nMore.\n";
         let pages = ["First page text.", "https://example.com/terms\nMore."];
         assert_eq!(

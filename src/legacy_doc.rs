@@ -953,13 +953,27 @@ struct CharModifier {
 impl CharModifier {
     /// Read a character sprm: sprmCFBold or sprmCFItalic with a toggle
     /// operand. A `0x81` (invert the style's) reads as on, as in the CHPX.
-    fn apply(&mut self, sprm: u16, operand: &[u8]) {
-        let on = matches!(operand.first(), Some(0x01 | 0x81));
-        match sprm {
-            0x0835 => self.bold = Some(on),
-            0x0836 => self.italic = Some(on),
-            _ => {}
-        }
+    ///
+    /// # Errors
+    ///
+    /// A bold or italic sprm whose operand is missing (a truncated grpprl)
+    /// or is none of the four ToggleOperand values ([MS-DOC] 2.9.327).
+    fn apply(&mut self, sprm: u16, operand: &[u8]) -> Result<()> {
+        let slot = match sprm {
+            0x0835 => &mut self.bold,
+            0x0836 => &mut self.italic,
+            _ => return Ok(()),
+        };
+        *slot = Some(match operand {
+            [0x01 | 0x81] => true,
+            [0x00 | 0x80] => false,
+            _ => {
+                return Err(LegacyDocError::new(
+                    "a text piece's property modifier has a bold or italic toggle that is missing or invalid",
+                ));
+            }
+        });
+        Ok(())
     }
 
     /// `props` with this modifier applied ([MS-DOC] 2.4.6.2: the Pcd's
@@ -977,21 +991,34 @@ impl CharModifier {
 /// Prm1 whose bits 1-15 index the Clx's Prcs; clear, a Prm0 whose bits
 /// 1-7 name one sprm (isprm `0x55` sprmCFBold, `0x56` sprmCFItalic) and
 /// bits 8-15 hold its operand.
-fn piece_modifier(prm: u16, prcs: &[&[u8]]) -> Option<CharModifier> {
+///
+/// # Errors
+///
+/// A Prm1 past the Clx's Prcs, or a bold or italic toggle that
+/// [`CharModifier::apply`] refuses.
+fn piece_modifier(prm: u16, prcs: &[&[u8]]) -> Result<CharModifier> {
     let mut modifier = CharModifier::default();
     if prm & 1 == 1 {
-        let grpprl = prcs.get(usize::from(prm >> 1))?;
-        for_each_sprm(grpprl, |sprm, operand| modifier.apply(sprm, operand));
+        let grpprl = prcs.get(usize::from(prm >> 1)).ok_or_else(|| {
+            LegacyDocError::new("a text piece names a property modifier the Clx lacks")
+        })?;
+        let mut result = Ok(());
+        for_each_sprm(grpprl, |sprm, operand| {
+            if result.is_ok() {
+                result = modifier.apply(sprm, operand);
+            }
+        });
+        result?;
     } else {
         let sprm = match (prm >> 1) & 0x7F {
             0x55 => 0x0835,
             0x56 => 0x0836,
-            _ => return Some(modifier),
+            _ => return Ok(modifier),
         };
         let [_, val] = prm.to_le_bytes();
-        modifier.apply(sprm, &[val]);
+        modifier.apply(sprm, &[val])?;
     }
-    Some(modifier)
+    Ok(modifier)
 }
 
 /// Most bytes a Prc's grpprl may hold ([MS-DOC] 2.9.210 PrcData).
@@ -1046,9 +1073,7 @@ fn pieces(table: &[u8], fc_clx: u32, lcb_clx: u32) -> Result<Vec<Piece>> {
         let compressed = raw & 0x4000_0000 != 0;
         let fc = raw & 0x3FFF_FFFF;
         let prm = u16_at(plc, pcd.checked_add(6).ok_or_else(bad)?).ok_or_else(bad)?;
-        let modifier = piece_modifier(prm, &prcs).ok_or_else(|| {
-            LegacyDocError::new("a text piece names a property modifier the Clx lacks")
-        })?;
+        let modifier = piece_modifier(prm, &prcs)?;
         out.push(Piece {
             cp_start,
             cp_end,
@@ -2203,6 +2228,34 @@ mod tests {
             piece.first().map(|p| p.modifier),
             Some(CharModifier::default())
         );
+    }
+
+    #[test]
+    fn a_property_modifier_with_a_missing_or_invalid_toggle_is_refused() {
+        // A Prc whose grpprl ends after sprmCFBold's two bytes, one whose
+        // operand is outside the four ToggleOperand values, and a Prm0
+        // sprmCFBold with val 0x05.
+        for (prcs, prm, case) in [
+            (vec![vec![0x35u8, 0x08]], 1u16, "truncated"),
+            (vec![vec![0x35, 0x08, 0x05]], 1, "invalid Prc operand"),
+            (vec![], (0x05 << 8) | (0x55 << 1), "invalid Prm0 val"),
+        ] {
+            let prcs: Vec<&[u8]> = prcs.iter().map(Vec::as_slice).collect();
+            let table = clx(&prcs, &[(0, 5, 0, prm)]);
+            let len = u32::try_from(table.len()).unwrap();
+            let error = pieces(&table, 0, len).map(|p| p.len());
+            assert!(
+                error
+                    .as_ref()
+                    .is_err_and(|e| e.to_string().contains("toggle")),
+                "{case}: {error:?}"
+            );
+        }
+        // 0x80 ("as the style") is valid and, as in the CHPX, reads as off.
+        let table = clx(&[&[0x35, 0x08, 0x80]], &[(0, 5, 0, 1)]);
+        let len = u32::try_from(table.len()).unwrap();
+        let piece = pieces(&table, 0, len).unwrap();
+        assert_eq!(piece.first().and_then(|p| p.modifier.bold), Some(false));
     }
 
     #[test]
