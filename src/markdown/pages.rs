@@ -41,6 +41,7 @@ pub fn paginate(markdown: &str, pages: &[&str]) -> String {
         .enumerate()
         .flat_map(|(page, text)| letters(text).map(move |ch| (ch, page)))
         .collect();
+    let defined = definitions(markdown);
     let mut out = String::with_capacity(markdown.len().saturating_add(total.saturating_mul(24)));
     out.push_str(&marker(1, total));
     let mut cursor = 0usize;
@@ -65,7 +66,12 @@ pub fn paginate(markdown: &str, pages: &[&str]) -> String {
         let row = trimmed.starts_with('|');
         let continues_list =
             in_list && (list_item(line) || line.starts_with([' ', '\t'])) && !trimmed.is_empty();
-        let text = visible_text(first_cell(trimmed));
+        // A link reference definition is never painted.
+        let text = if definition(trimmed).is_some() {
+            String::new()
+        } else {
+            visible_text(first_cell(trimmed), &defined)
+        };
         let line_letters: Vec<char> = letters(&text).collect();
         let key = line_letters
             .get(..line_letters.len().min(KEY_CHARS))
@@ -174,12 +180,12 @@ fn letters(text: &str) -> impl Iterator<Item = char> + '_ {
 /// all), link targets, HTML tags and comments, footnote labels and
 /// CriticMarkup comments. An autolink (`<https://...>`, `<ann@x.com>`)
 /// keeps its text, which the page paints.
-fn visible_text(line: &str) -> String {
+fn visible_text(line: &str, defined: &[String]) -> String {
     let mut out = String::with_capacity(line.len());
     let mut rest = line;
     while let Some(ch) = rest.chars().next() {
         let skip = if rest.starts_with("![") {
-            image_len(rest)
+            image_len(rest, defined)
         } else if rest.starts_with("](") {
             out.push(']');
             rest.find(')').map(|end| end.saturating_add(1))
@@ -207,30 +213,111 @@ fn visible_text(line: &str) -> String {
     out
 }
 
-/// The length of the inline image `![alt](destination)` that `rest`
-/// opens, an escaped `\]` in the alt text and a `<...>` destination
-/// included; `None` when `rest` does not open one.
-fn image_len(rest: &str) -> Option<usize> {
-    let mut chars = rest.char_indices().skip(2);
-    let close = loop {
-        match chars.next()? {
-            (_, '\\') => {
+/// The length of the image `rest` opens: inline (`![alt](destination)`,
+/// brackets balanced in the alt text, parentheses in the destination,
+/// backslash escapes and a `<...>` destination honoured), or a full,
+/// collapsed or shortcut reference (`![alt][label]`, `![alt][]`, `![alt]`)
+/// whose label `defined` holds. `None` when `rest` opens no image: an
+/// undefined reference is text CommonMark paints.
+fn image_len(rest: &str, defined: &[String]) -> Option<usize> {
+    let alt_end = bracket_end(rest.get(1..)?)?.checked_add(1)?;
+    let after = rest.get(alt_end..)?;
+    if let Some(destination) = after.strip_prefix('(') {
+        let len = destination_len(destination)?;
+        // `(`, the destination, `)`.
+        return alt_end.checked_add(len)?.checked_add(2);
+    }
+    let alt = rest.get(2..alt_end.checked_sub(1)?)?;
+    let (label, len) = match after.strip_prefix('[') {
+        Some(reference) => {
+            let close = reference.find(']')?;
+            let label = reference.get(..close)?;
+            // `![alt][]` is labelled by its alt text.
+            let label = if label.trim().is_empty() { alt } else { label };
+            (label, close.checked_add(2)?)
+        }
+        None => (alt, 0),
+    };
+    defined
+        .contains(&normalize_label(label))
+        .then(|| alt_end.saturating_add(len))
+}
+
+/// The length of the bracketed text `text` opens (`[` first), through its
+/// matching `]`, with nested brackets balanced and backslash escapes.
+fn bracket_end(text: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut chars = text.char_indices();
+    chars.next().filter(|&(_, c)| c == '[')?;
+    while let Some((at, ch)) = chars.next() {
+        match ch {
+            '\\' => {
                 chars.next();
             }
-            (at, ']') => break at,
+            '[' => depth = depth.saturating_add(1),
+            ']' if depth == 0 => return at.checked_add(1),
+            ']' => depth = depth.saturating_sub(1),
             _ => {}
         }
-    };
-    let destination = close.checked_add(1)?;
-    let after = rest.get(destination..)?.strip_prefix('(')?;
-    let open = destination.saturating_add(1);
-    let end = if after.starts_with('<') {
-        let angle = after.find('>')?;
-        angle.saturating_add(after.get(angle..)?.find(')')?)
-    } else {
-        after.find(')')?
-    };
-    Some(open.saturating_add(end).saturating_add(1))
+    }
+    None
+}
+
+/// The length of an inline link's destination and title up to its closing
+/// `)` (excluded): a `<...>` destination, or one with balanced parentheses
+/// and backslash escapes.
+fn destination_len(text: &str) -> Option<usize> {
+    if let Some(inner) = text.strip_prefix('<') {
+        let angle = inner.find('>')?.saturating_add(1);
+        return angle.checked_add(text.get(angle..)?.find(')')?);
+    }
+    let mut depth = 0usize;
+    let mut chars = text.char_indices();
+    while let Some((at, ch)) = chars.next() {
+        match ch {
+            '\\' => {
+                chars.next();
+            }
+            '(' => depth = depth.saturating_add(1),
+            ')' if depth == 0 => return Some(at),
+            ')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The label a link reference definition line (`[label]: destination`)
+/// defines, as CommonMark matches labels: case-folded, inner whitespace
+/// collapsed.
+fn definition(line: &str) -> Option<String> {
+    let indent = line.len().saturating_sub(line.trim_start().len());
+    if indent > 3 {
+        return None;
+    }
+    let rest = line.trim_start();
+    let end = bracket_end(rest)?;
+    let label = rest.get(1..end.checked_sub(1)?)?;
+    if label.trim().is_empty() || label.starts_with('^') {
+        return None;
+    }
+    let after = rest.get(end..)?.strip_prefix(':')?;
+    (!after.trim().is_empty()).then(|| normalize_label(label))
+}
+
+/// The labels `markdown`'s link reference definitions define.
+fn definitions(markdown: &str) -> Vec<String> {
+    let mut labels: Vec<String> = markdown.lines().filter_map(definition).collect();
+    labels.dedup();
+    labels
+}
+
+fn normalize_label(label: &str) -> String {
+    label
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 /// The text of the CommonMark autolink `rest` opens: `<scheme:...>` (a
@@ -407,22 +494,25 @@ mod tests {
     #[test]
     fn ignores_link_targets_and_critic_comments() {
         assert_eq!(
-            visible_text("See [the site](https://example.com) {++now++}{>>Ann<<}"),
+            visible_text(
+                "See [the site](https://example.com) {++now++}{>>Ann<<}",
+                &[]
+            ),
             "See [the site] {++now++}"
         );
     }
 
     #[test]
     fn an_image_alt_text_is_not_painted_text() {
-        assert_eq!(visible_text("![Confidential](logo.png) Body"), " Body");
+        assert_eq!(visible_text("![Confidential](logo.png) Body", &[]), " Body");
         // An escaped bracket in the alt text, a destination in `<>` with a
         // space and a parenthesis in it.
         assert_eq!(
-            visible_text("![a \\] b](<my logo (1).png>) after"),
+            visible_text("![a \\] b](<my logo (1).png>) after", &[]),
             " after"
         );
         // A link label is still painted.
-        assert_eq!(visible_text("[Terms](terms.md)"), "[Terms]");
+        assert_eq!(visible_text("[Terms](terms.md)", &[]), "[Terms]");
         // The alt text recurs as body text on page 2: the image must not
         // pull the page 2 marker up to itself.
         let markdown = "Intro.\n\n![Confidential](logo.png)\n\nBody one.\n\nConfidential notice on page two.\n";
@@ -434,12 +524,52 @@ mod tests {
     }
 
     #[test]
+    fn an_image_with_nested_brackets_or_parentheses_is_dropped_whole() {
+        // Balanced brackets in the alt text, balanced parentheses in the
+        // destination (jubarte's own image_markdown leaves `(` and `)` in a
+        // file name).
+        assert_eq!(
+            visible_text("![Confidential [notice]](logo.png) Body", &[]),
+            " Body"
+        );
+        assert_eq!(visible_text("![alt](my_(logo).png) Body", &[]), " Body");
+        assert_eq!(visible_text("![alt](a\\)b.png) Body", &[]), " Body");
+    }
+
+    #[test]
+    fn a_reference_image_is_dropped_only_when_its_label_is_defined() {
+        let defined = definitions("Text.\n\n[Logo]:  logo.png\n[other]: x.png \"t\"\n");
+        assert_eq!(defined, ["logo", "other"]);
+        // Full, collapsed and shortcut references to a defined label.
+        assert_eq!(
+            visible_text("![Confidential][logo] Body", &defined),
+            " Body"
+        );
+        assert_eq!(visible_text("![Logo][] Body", &defined), " Body");
+        assert_eq!(visible_text("![logo] Body", &defined), " Body");
+        // An undefined label is not an image: CommonMark paints the text.
+        assert_eq!(
+            visible_text("![Confidential][missing] Body", &defined),
+            "![Confidential][missing] Body"
+        );
+        assert_eq!(visible_text("![nothing] Body", &defined), "![nothing] Body");
+        // The definition line itself is not painted, and the image's alt
+        // text must not pull the page 2 marker up to it.
+        let markdown = "Intro.\n\n![Confidential][logo]\n\nBody one.\n\nConfidential notice on page two.\n\n[logo]: logo.png\n";
+        let pages = ["Intro.\nBody one.", "Confidential notice on page two."];
+        assert_eq!(
+            paginate(markdown, &pages),
+            "<!-- page 1 of 2 -->\n\nIntro.\n\n![Confidential][logo]\n\nBody one.\n\n<!-- page 2 of 2 -->\n\nConfidential notice on page two.\n\n[logo]: logo.png\n"
+        );
+    }
+
+    #[test]
     fn an_autolink_keeps_its_text_and_html_tags_do_not() {
         assert_eq!(
-            visible_text("<https://example.com/terms> or <ann@example.com>"),
+            visible_text("<https://example.com/terms> or <ann@example.com>", &[]),
             "https://example.com/terms or ann@example.com"
         );
-        assert_eq!(visible_text("<span class=\"x\">hi</span><br/>"), "hi");
+        assert_eq!(visible_text("<span class=\"x\">hi</span><br/>", &[]), "hi");
         let markdown = "First page text.\n\n<https://example.com/terms>\n\nMore.\n";
         let pages = ["First page text.", "https://example.com/terms\nMore."];
         assert_eq!(
