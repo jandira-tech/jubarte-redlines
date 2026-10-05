@@ -100,18 +100,32 @@ jobs:
       # Rasters and replaced-tool outputs depend on the runner's fonts and
       # tool versions, so regenerated evidence is not byte-compared. A
       # script that stops writing a committed jubarte file fails here, and
-      # what changed is listed for the reviewer. A replaced tool's file may
-      # be gone because the tool is absent, and some of those name jubarte
-      # too: its document through soffice (`*_jubarte_soffice.png`, the
-      # `pdf_page_size_*` of soffice's PDF) or another tool's document
-      # through jubarte (`*_pandoc_jubarte.png`, `*_docxjs_jubarte.png`).
-      # python-docx is installed above, so its files through jubarte
-      # (`*_pydocx_jubarte.png`) must still be made.
+      # what changed is listed for the reviewer. Some jubarte-named files
+      # need a replaced tool too: jubarte's document through soffice
+      # (`*_jubarte_soffice.png`, `pdf_page_size_*`), jubarte's PDF read by
+      # pdffonts, another tool's document through jubarte (`*_pandoc_*`,
+      # `*_docxjs_*`). Such a file may be missing only when a tool that
+      # makes it is absent on this runner.
       - name: committed evidence is still produced
         run: |
           git status --porcelain -- examples/adoption
-          deleted=$(git ls-files --deleted -- examples/adoption | grep -i jubarte \
-            | grep -viE 'soffice|libreoffice|pandoc|docxjs|word|pdf_page_size' || true)
-          if [ -n "$deleted" ]; then echo "::error::no longer produced: $deleted"; exit 1; fi
+          needs() {
+            case "$1" in
+              *soffice*|*libreoffice*) echo soffice pdftoppm ;;
+              *pdf_page_size_*) echo soffice pdfinfo ;;
+              *fonts_jubarte_pdf*) echo pdffonts ;;
+              *pandoc*) echo pandoc ;;
+              *docxjs*) echo bun ;;
+            esac
+          }
+          deleted=""
+          for file in $(git ls-files --deleted -- examples/adoption | grep -i jubarte || true); do
+            excused=0
+            for tool in $(needs "$file"); do
+              command -v "$tool" >/dev/null || excused=1
+            done
+            [ "$excused" = 1 ] || deleted="$deleted $file"
+          done
+          if [ -n "$deleted" ]; then echo "::error::no longer produced:$deleted"; exit 1; fi
           changed=$(git diff --name-only -- examples/adoption | wc -l | tr -d ' ')
           echo "::notice::$changed committed evidence files differ after regeneration (fonts and tool versions vary by runner)"
