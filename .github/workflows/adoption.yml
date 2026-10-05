@@ -8,8 +8,10 @@ name: adoption
 # jubarte replaces. This workflow keeps them honest: tests/adoption.rs runs
 # every row's jubarte command, and each examples/adoption/*/run.sh
 # regenerates its side-by-side outputs. Replaced tools (soffice, pdftoppm,
-# pandoc, python-docx, bun) run when the runner has them and are skipped
-# otherwise; the jubarte side always runs. Actions are pinned as in ci.yml.
+# pandoc, bun) run when the runner has them and are skipped otherwise; the
+# jubarte side always runs. python-docx is installed, not probed: several
+# examples build their input documents with it, so without it the jubarte
+# side has nothing to run on. Actions are pinned as in ci.yml.
 
 on:
   push:
@@ -58,12 +60,21 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - run: cargo build --release --bin jubarte
+      # The examples' input generators (make_input.py and the like) import
+      # python-docx under `set -e`; 1.2.0 is the version the committed
+      # evidence records (examples/adoption/*/versions.txt). A venv first on
+      # PATH makes it the `python3` every run.sh calls.
+      - name: python-docx for the examples' input generators
+        run: |
+          uv venv "$RUNNER_TEMP/adoption-py"
+          uv pip install --python "$RUNNER_TEMP/adoption-py" python-docx==1.2.0
+          echo "$RUNNER_TEMP/adoption-py/bin" >> "$GITHUB_PATH"
       - name: which replaced tools this runner has
         run: |
           for tool in soffice pdftoppm pdfinfo pdffonts pandoc bun uvx; do
             if command -v "$tool" >/dev/null; then echo "$tool: $(command -v "$tool")"; else echo "$tool: absent (its side is skipped)"; fi
           done
-          python3 -c 'import docx; print("python-docx", docx.__version__)' || echo "python-docx: absent (its side is skipped)"
+          python3 -c 'import docx; print("python-docx", docx.__version__)'
       - name: run every example
         env:
           JUBARTE: ${{ github.workspace }}/target/release/jubarte
@@ -88,13 +99,17 @@ jobs:
           exit "$missing"
       # Rasters and replaced-tool outputs depend on the runner's fonts and
       # tool versions, so regenerated evidence is not byte-compared. A
-      # script that stops writing a committed jubarte file fails here (a
-      # replaced tool's file may be gone because the tool is absent), and
-      # what changed is listed for the reviewer.
+      # script that stops writing a committed jubarte file fails here, and
+      # what changed is listed for the reviewer. A replaced tool's file may
+      # be gone because the tool is absent, and some of those name jubarte
+      # too: its document through soffice (`*_jubarte_soffice.png`, the
+      # `pdf_page_size_*` of soffice's PDF) or another tool's document
+      # through jubarte (`*_pandoc_jubarte.png`, `*_docxjs_jubarte.png`).
       - name: committed evidence is still produced
         run: |
           git status --porcelain -- examples/adoption
-          deleted=$(git ls-files --deleted -- examples/adoption | grep -i jubarte || true)
+          deleted=$(git ls-files --deleted -- examples/adoption | grep -i jubarte \
+            | grep -viE 'soffice|libreoffice|pandoc|docxjs|pydocx|word|pdf_page_size' || true)
           if [ -n "$deleted" ]; then echo "::error::no longer produced: $deleted"; exit 1; fi
           changed=$(git diff --name-only -- examples/adoption | wc -l | tr -d ' ')
           echo "::notice::$changed committed evidence files differ after regeneration (fonts and tool versions vary by runner)"
