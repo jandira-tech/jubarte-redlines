@@ -41,7 +41,9 @@ pub fn paginate(markdown: &str, pages: &[&str]) -> String {
         .enumerate()
         .flat_map(|(page, text)| letters(text).map(move |ch| (ch, page)))
         .collect();
-    let defined = definitions(markdown);
+    let (defined, definition_spans) = reference_definitions(markdown);
+    // Byte offset of the line being read.
+    let mut offset = 0usize;
     let mut out = String::with_capacity(markdown.len().saturating_add(total.saturating_mul(24)));
     out.push_str(&marker(1, total));
     let mut cursor = 0usize;
@@ -67,7 +69,12 @@ pub fn paginate(markdown: &str, pages: &[&str]) -> String {
         let continues_list =
             in_list && (list_item(line) || line.starts_with([' ', '\t'])) && !trimmed.is_empty();
         // A link reference definition is never painted.
-        let text = if !fenced && definition(line.trim_end()).is_some() {
+        let line_end = offset.saturating_add(line.len());
+        let defines = definition_spans
+            .iter()
+            .any(|span| span.start < line_end && offset < span.end);
+        offset = line_end;
+        let text = if defines {
             String::new()
         } else {
             visible_text(first_cell(trimmed), &defined)
@@ -324,58 +331,27 @@ fn leading_whitespace(text: &str) -> usize {
     text.len().saturating_sub(text.trim_start().len())
 }
 
-/// The label a link reference definition line (`[label]: destination`)
-/// defines, as CommonMark matches labels: case-folded, inner whitespace
-/// collapsed.
-fn definition(line: &str) -> Option<String> {
-    // Four columns of indentation (a tab reaches the next stop of four) make
-    // an indented code block.
-    let mut columns = 0usize;
-    for ch in line.chars() {
-        columns = match ch {
-            ' ' => columns.saturating_add(1),
-            '\t' => (columns / 4).saturating_add(1).saturating_mul(4),
-            _ => break,
-        };
-        if columns > 3 {
-            return None;
-        }
+/// The labels of `markdown`'s link reference definitions and the byte
+/// ranges they take, as pulldown-cmark (with the extensions jubarte's
+/// writer reads) parses them: a definition never interrupts a paragraph,
+/// nothing may follow its title, and a footnote is not one. Labels are
+/// sorted, case-folded and whitespace-collapsed.
+fn reference_definitions(markdown: &str) -> (Vec<String>, Vec<std::ops::Range<usize>>) {
+    let parser = pulldown_cmark::Parser::new_ext(markdown, super::write::parser_options());
+    let mut labels = Vec::new();
+    let mut spans = Vec::new();
+    for (label, definition) in parser.reference_definitions().iter() {
+        labels.push(normalize_label(label));
+        spans.push(definition.span.clone());
     }
-    let rest = line.trim_start();
-    let end = bracket_end(rest)?;
-    let label = rest.get(1..end.checked_sub(1)?)?;
-    if label.trim().is_empty() || label.starts_with('^') {
-        return None;
-    }
-    let after = rest.get(end..)?.strip_prefix(':')?;
-    (!after.trim().is_empty()).then(|| normalize_label(label))
+    labels.sort();
+    labels.dedup();
+    (labels, spans)
 }
 
-/// The labels `markdown`'s link reference definitions define.
+#[cfg(test)]
 fn definitions(markdown: &str) -> Vec<String> {
-    let mut labels: Vec<String> = Vec::new();
-    // The open code fence's character and length, while inside one.
-    let mut fence: Option<(char, usize)> = None;
-    for line in markdown.lines() {
-        match (fence, fence_run(line.trim())) {
-            (None, Some((ch, len, _))) => {
-                fence = Some((ch, len));
-                continue;
-            }
-            (Some((ch, len)), Some((other, run, true))) if other == ch && run >= len => {
-                fence = None;
-                continue;
-            }
-            _ => {}
-        }
-        if fence.is_none()
-            && let Some(label) = definition(line)
-            && !labels.contains(&label)
-        {
-            labels.push(label);
-        }
-    }
-    labels
+    reference_definitions(markdown).0
 }
 
 fn normalize_label(label: &str) -> String {
@@ -646,9 +622,9 @@ mod tests {
     fn code_that_looks_like_a_definition_is_not_one() {
         // Four spaces or a tab make an indented code block, which
         // CommonMark paints verbatim; up to three spaces is a definition.
-        assert_eq!(definition("    [logo]: logo.png"), None);
-        assert_eq!(definition("\t[logo]: logo.png"), None);
-        assert_eq!(definition("   [logo]: logo.png").as_deref(), Some("logo"));
+        assert!(definitions("    [logo]: logo.png\n").is_empty());
+        assert!(definitions("\t[logo]: logo.png\n").is_empty());
+        assert_eq!(definitions("   [logo]: logo.png\n"), ["logo"]);
         // A definition-shaped line inside a fence defines nothing.
         assert!(definitions("```\n[logo]: logo.png\n```\n").is_empty());
         assert!(definitions("~~~~\n[logo]: a\n~~~\n[x]: b\n").is_empty());
@@ -658,6 +634,29 @@ mod tests {
         assert_eq!(
             paginate(markdown, &pages),
             "<!-- page 1 of 2 -->\n\nIntro.\n\n<!-- page 2 of 2 -->\n\n    [code]: sample text\n\nAfter.\n"
+        );
+    }
+
+    #[test]
+    fn only_what_commonmark_reads_as_a_definition_is_one() {
+        // Text after the title, a definition-shaped line that would
+        // interrupt a paragraph, and a footnote: all painted.
+        assert!(definitions("[foo]: /url \"title\" trailing\n").is_empty());
+        assert!(definitions("Some text\n[bar]: /baz\n").is_empty());
+        assert!(definitions("Text[^1].\n\n[^1]: The note.\n").is_empty());
+        // A definition right after another one is a definition.
+        assert_eq!(definitions("[a]: /x\n[B]: /y\n"), ["a", "b"]);
+        // The painted line keeps its key: it is on page 2.
+        let markdown = "Intro.\n\nSome text\n[bar]: /baz on page two\n\nAfter.\n";
+        let pages = ["Intro.\nSome text", "[bar]: /baz on page two\nAfter."];
+        let out = paginate(markdown, &pages);
+        assert!(out.contains("<!-- page 2 of 2 -->\n\nAfter."), "{out}");
+        let markdown = "Intro.\n\n[foo]: /url \"title\" trailing words\n\nAfter.\n";
+        let pages = ["Intro.", "[foo]: /url \"title\" trailing words\nAfter."];
+        assert!(
+            paginate(markdown, &pages).contains("<!-- page 2 of 2 -->\n\n[foo]: /url"),
+            "{}",
+            paginate(markdown, &pages)
         );
     }
 
