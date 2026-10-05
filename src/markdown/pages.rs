@@ -41,7 +41,7 @@ pub fn paginate(markdown: &str, pages: &[&str]) -> String {
         .enumerate()
         .flat_map(|(page, text)| letters(text).map(move |ch| (ch, page)))
         .collect();
-    let (defined, definition_spans) = reference_definitions(markdown);
+    let unpainted = unpainted(markdown);
     // Byte offset of the line being read.
     let mut offset = 0usize;
     let mut out = String::with_capacity(markdown.len().saturating_add(total.saturating_mul(24)));
@@ -55,6 +55,8 @@ pub fn paginate(markdown: &str, pages: &[&str]) -> String {
     // marker before the next item would split the list in two.
     let mut in_list = false;
     for line in markdown.split_inclusive('\n') {
+        let line_offset = offset;
+        offset = offset.saturating_add(line.len());
         let trimmed = line.trim();
         let fenced = fence.is_some();
         match (fence, fence_run(trimmed)) {
@@ -68,17 +70,8 @@ pub fn paginate(markdown: &str, pages: &[&str]) -> String {
         let row = trimmed.starts_with('|');
         let continues_list =
             in_list && (list_item(line) || line.starts_with([' ', '\t'])) && !trimmed.is_empty();
-        // A link reference definition is never painted.
-        let line_end = offset.saturating_add(line.len());
-        let defines = definition_spans
-            .iter()
-            .any(|span| span.start < line_end && offset < span.end);
-        offset = line_end;
-        let text = if defines {
-            String::new()
-        } else {
-            visible_text(first_cell(trimmed), &defined)
-        };
+        let painted = mask(line, line_offset, &unpainted);
+        let text = visible_text(first_cell(painted.trim()));
         let line_letters: Vec<char> = letters(&text).collect();
         let key = line_letters
             .get(..line_letters.len().min(KEY_CHARS))
@@ -187,13 +180,11 @@ fn letters(text: &str) -> impl Iterator<Item = char> + '_ {
 /// all), link targets, HTML tags and comments, footnote labels and
 /// CriticMarkup comments. An autolink (`<https://...>`, `<ann@x.com>`)
 /// keeps its text, which the page paints.
-fn visible_text(line: &str, defined: &[String]) -> String {
+fn visible_text(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
     let mut rest = line;
     while let Some(ch) = rest.chars().next() {
-        let skip = if rest.starts_with("![") {
-            image_len(rest, defined)
-        } else if rest.starts_with("](") {
+        let skip = if rest.starts_with("](") {
             out.push(']');
             rest.find(')').map(|end| end.saturating_add(1))
         } else if rest.starts_with("{>>") {
@@ -220,146 +211,72 @@ fn visible_text(line: &str, defined: &[String]) -> String {
     out
 }
 
-/// The length of the image `rest` opens: inline (`![alt](destination)`,
-/// brackets balanced in the alt text, parentheses in the destination,
-/// backslash escapes and a `<...>` destination honoured), or a full,
-/// collapsed or shortcut reference (`![alt][label]`, `![alt][]`, `![alt]`)
-/// whose label `defined` holds. `None` when `rest` opens no image: an
-/// undefined reference is text CommonMark paints.
-fn image_len(rest: &str, defined: &[String]) -> Option<usize> {
-    let alt_end = bracket_end(rest.get(1..)?)?.checked_add(1)?;
-    let after = rest.get(alt_end..)?;
-    if let Some(destination) = after.strip_prefix('(') {
-        let len = destination_len(destination)?;
-        // `(`, the destination, `)`.
-        return alt_end.checked_add(len)?.checked_add(2);
-    }
-    let alt = rest.get(2..alt_end.checked_sub(1)?)?;
-    let (label, len) = match after.strip_prefix('[') {
-        Some(reference) => {
-            let close = reference.find(']')?;
-            let label = reference.get(..close)?;
-            // `![alt][]` is labelled by its alt text.
-            let label = if label.trim().is_empty() { alt } else { label };
-            (label, close.checked_add(2)?)
-        }
-        None => (alt, 0),
-    };
-    defined
-        .contains(&normalize_label(label))
-        .then(|| alt_end.saturating_add(len))
-}
-
-/// The length of the bracketed text `text` opens (`[` first), through its
-/// matching `]`, with nested brackets balanced and backslash escapes.
-fn bracket_end(text: &str) -> Option<usize> {
-    let mut depth = 0usize;
-    let mut chars = text.char_indices();
-    chars.next().filter(|&(_, c)| c == '[')?;
-    while let Some((at, ch)) = chars.next() {
-        match ch {
-            '\\' => {
-                chars.next();
-            }
-            '[' => depth = depth.saturating_add(1),
-            ']' if depth == 0 => return at.checked_add(1),
-            ']' => depth = depth.saturating_sub(1),
-            _ => {}
-        }
-    }
-    None
-}
-
-/// The length of an inline link's destination and optional title up to
-/// its closing `)` (excluded): a `<...>` destination or one with balanced
-/// parentheses and backslash escapes, then a title in `"..."`, `'...'` or
-/// `(...)`, whose own `)` does not close the link.
-fn destination_len(text: &str) -> Option<usize> {
-    let mut at = if let Some(inner) = text.strip_prefix('<') {
-        inner.find('>')?.checked_add(2)?
-    } else {
-        let mut depth = 0usize;
-        let mut end = text.len();
-        let mut chars = text.char_indices();
-        while let Some((at, ch)) = chars.next() {
-            match ch {
-                '\\' => {
-                    chars.next();
-                }
-                '(' => depth = depth.saturating_add(1),
-                ')' if depth == 0 => {
-                    end = at;
-                    break;
-                }
-                ')' => depth = depth.saturating_sub(1),
-                // A destination outside `<>` holds no whitespace: a title
-                // or the closing `)` follows.
-                ch if ch.is_whitespace() => {
-                    end = at;
-                    break;
-                }
-                _ => {}
-            }
-        }
-        end
-    };
-    at = at.checked_add(leading_whitespace(text.get(at..)?))?;
-    let close = match text.get(at..)?.chars().next()? {
-        '"' => Some('"'),
-        '\'' => Some('\''),
-        '(' => Some(')'),
-        _ => None,
-    };
-    if let Some(close) = close {
-        let mut chars = text.get(at..)?.char_indices().skip(1);
-        let end = loop {
-            match chars.next()? {
-                (_, '\\') => {
-                    chars.next();
-                }
-                (offset, ch) if ch == close => break offset,
-                _ => {}
-            }
-        };
-        at = at.checked_add(end)?.checked_add(1)?;
-        at = at.checked_add(leading_whitespace(text.get(at..)?))?;
-    }
-    text.get(at..)?.starts_with(')').then_some(at)
-}
-
-fn leading_whitespace(text: &str) -> usize {
-    text.len().saturating_sub(text.trim_start().len())
-}
-
-/// The labels of `markdown`'s link reference definitions and the byte
-/// ranges they take, as pulldown-cmark (with the extensions jubarte's
-/// writer reads) parses them: a definition never interrupts a paragraph,
-/// nothing may follow its title, and a footnote is not one. Labels are
-/// sorted, case-folded and whitespace-collapsed.
-fn reference_definitions(markdown: &str) -> (Vec<String>, Vec<std::ops::Range<usize>>) {
+/// The byte ranges of `markdown` that are never painted, as pulldown-cmark
+/// (with the extensions jubarte's writer reads) parses them: images (alt
+/// text, destination and title, inline or by reference) and link reference
+/// definitions. A definition never interrupts a paragraph, nothing may
+/// follow its title, and a footnote is not one.
+fn unpainted(markdown: &str) -> Vec<std::ops::Range<usize>> {
     let parser = pulldown_cmark::Parser::new_ext(markdown, super::write::parser_options());
-    let mut labels = Vec::new();
-    let mut spans = Vec::new();
-    for (label, definition) in parser.reference_definitions().iter() {
-        labels.push(normalize_label(label));
-        spans.push(definition.span.clone());
-    }
-    labels.sort();
-    labels.dedup();
-    (labels, spans)
+    let mut ranges: Vec<std::ops::Range<usize>> = parser
+        .reference_definitions()
+        .iter()
+        .map(|(_, definition)| definition.span.clone())
+        .collect();
+    ranges.extend(parser.into_offset_iter().filter_map(|(event, range)| {
+        matches!(
+            event,
+            pulldown_cmark::Event::Start(pulldown_cmark::Tag::Image { .. })
+        )
+        .then(|| {
+            // A collapsed reference's range stops before its `[]`.
+            let collapsed = markdown
+                .get(range.end..)
+                .is_some_and(|rest| rest.starts_with("[]"));
+            range.start..range.end.saturating_add(if collapsed { 2 } else { 0 })
+        })
+    }));
+    ranges
 }
 
+/// `line` (which starts at byte `offset` of the document) without the
+/// characters `unpainted` covers.
+fn mask(line: &str, offset: usize, unpainted: &[std::ops::Range<usize>]) -> String {
+    let end = offset.saturating_add(line.len());
+    let ranges: Vec<&std::ops::Range<usize>> = unpainted
+        .iter()
+        .filter(|range| range.start < end && offset < range.end)
+        .collect();
+    if ranges.is_empty() {
+        return line.to_string();
+    }
+    line.char_indices()
+        .filter(|&(at, _)| {
+            let at = offset.saturating_add(at);
+            !ranges.iter().any(|range| range.contains(&at))
+        })
+        .map(|(_, ch)| ch)
+        .collect()
+}
+
+/// The labels the document's link reference definitions define.
 #[cfg(test)]
 fn definitions(markdown: &str) -> Vec<String> {
-    reference_definitions(markdown).0
+    let parser = pulldown_cmark::Parser::new_ext(markdown, super::write::parser_options());
+    let mut labels: Vec<String> = parser
+        .reference_definitions()
+        .iter()
+        .map(|(label, _)| label.to_lowercase())
+        .collect();
+    labels.sort();
+    labels
 }
 
-fn normalize_label(label: &str) -> String {
-    label
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase()
+/// The page text of `markdown`'s first line, as `paginate` keys it.
+#[cfg(test)]
+fn line_text(markdown: &str) -> String {
+    let line = markdown.split_inclusive('\n').next().unwrap_or("");
+    visible_text(mask(line, 0, &unpainted(markdown)).trim_end_matches('\n'))
 }
 
 /// The text of the CommonMark autolink `rest` opens: `<scheme:...>` (a
@@ -537,25 +454,19 @@ mod tests {
     #[test]
     fn ignores_link_targets_and_critic_comments() {
         assert_eq!(
-            visible_text(
-                "See [the site](https://example.com) {++now++}{>>Ann<<}",
-                &[]
-            ),
+            visible_text("See [the site](https://example.com) {++now++}{>>Ann<<}"),
             "See [the site] {++now++}"
         );
     }
 
     #[test]
     fn an_image_alt_text_is_not_painted_text() {
-        assert_eq!(visible_text("![Confidential](logo.png) Body", &[]), " Body");
+        assert_eq!(line_text("![Confidential](logo.png) Body"), " Body");
         // An escaped bracket in the alt text, a destination in `<>` with a
         // space and a parenthesis in it.
-        assert_eq!(
-            visible_text("![a \\] b](<my logo (1).png>) after", &[]),
-            " after"
-        );
+        assert_eq!(line_text("![a \\] b](<my logo (1).png>) after"), " after");
         // A link label is still painted.
-        assert_eq!(visible_text("[Terms](terms.md)", &[]), "[Terms]");
+        assert_eq!(line_text("[Terms](terms.md)"), "[Terms]");
         // The alt text recurs as body text on page 2: the image must not
         // pull the page 2 marker up to itself.
         let markdown = "Intro.\n\n![Confidential](logo.png)\n\nBody one.\n\nConfidential notice on page two.\n";
@@ -572,30 +483,36 @@ mod tests {
         // destination (jubarte's own image_markdown leaves `(` and `)` in a
         // file name).
         assert_eq!(
-            visible_text("![Confidential [notice]](logo.png) Body", &[]),
+            line_text("![Confidential [notice]](logo.png) Body"),
             " Body"
         );
-        assert_eq!(visible_text("![alt](my_(logo).png) Body", &[]), " Body");
-        assert_eq!(visible_text("![alt](a\\)b.png) Body", &[]), " Body");
+        assert_eq!(line_text("![alt](my_(logo).png) Body"), " Body");
+        assert_eq!(line_text("![alt](a\\)b.png) Body"), " Body");
     }
 
     #[test]
     fn a_reference_image_is_dropped_only_when_its_label_is_defined() {
-        let defined = definitions("Text.\n\n[Logo]:  logo.png\n[other]: x.png \"t\"\n");
-        assert_eq!(defined, ["logo", "other"]);
+        let defs = "[Logo]:  logo.png\n[other]: x.png \"t\"\n";
+        assert_eq!(definitions(&format!("Text.\n\n{defs}")), ["logo", "other"]);
         // Full, collapsed and shortcut references to a defined label.
         assert_eq!(
-            visible_text("![Confidential][logo] Body", &defined),
+            line_text(&format!("{}\n\n{defs}", "![Confidential][logo] Body")),
             " Body"
         );
-        assert_eq!(visible_text("![Logo][] Body", &defined), " Body");
-        assert_eq!(visible_text("![logo] Body", &defined), " Body");
+        assert_eq!(
+            line_text(&format!("{}\n\n{defs}", "![Logo][] Body")),
+            " Body"
+        );
+        assert_eq!(line_text(&format!("{}\n\n{defs}", "![logo] Body")), " Body");
         // An undefined label is not an image: CommonMark paints the text.
         assert_eq!(
-            visible_text("![Confidential][missing] Body", &defined),
+            line_text(&format!("{}\n\n{defs}", "![Confidential][missing] Body")),
             "![Confidential][missing] Body"
         );
-        assert_eq!(visible_text("![nothing] Body", &defined), "![nothing] Body");
+        assert_eq!(
+            line_text(&format!("{}\n\n{defs}", "![nothing] Body")),
+            "![nothing] Body"
+        );
         // The definition line itself is not painted, and the image's alt
         // text must not pull the page 2 marker up to it.
         let markdown = "Intro.\n\n![Confidential][logo]\n\nBody one.\n\nConfidential notice on page two.\n\n[logo]: logo.png\n";
@@ -614,8 +531,19 @@ mod tests {
             "![alt](logo.png (version \\) one)) Body",
             "![alt](<my logo.png> \"a ) b\") Body",
         ] {
-            assert_eq!(visible_text(line, &[]), " Body", "{line}");
+            assert_eq!(line_text(line), " Body", "{line}");
         }
+    }
+
+    #[test]
+    fn escaped_closers_inside_an_image_do_not_end_it() {
+        // An escaped `>` in an angle-bracket destination, an escaped `]`
+        // in a reference label.
+        assert_eq!(line_text("![alt](<foo\\>bar>) Body"), " Body");
+        assert_eq!(
+            line_text("![alt][foo\\]bar] Body\n\n[foo\\]bar]: image.png\n"),
+            " Body"
+        );
     }
 
     #[test]
@@ -663,17 +591,14 @@ mod tests {
     #[test]
     fn an_autolink_keeps_its_text_and_html_tags_do_not() {
         assert_eq!(
-            visible_text("<https://example.com/terms> or <ann@example.com>", &[]),
+            line_text("<https://example.com/terms> or <ann@example.com>"),
             "https://example.com/terms or ann@example.com"
         );
-        assert_eq!(visible_text("<span class=\"x\">hi</span><br/>", &[]), "hi");
+        assert_eq!(line_text("<span class=\"x\">hi</span><br/>"), "hi");
         // A URI autolink forbids only ASCII controls, ASCII space and angle
         // brackets: an ideographic space is part of the link.
-        assert_eq!(
-            visible_text("<ab:\u{3000}terms> x", &[]),
-            "ab:\u{3000}terms x"
-        );
-        assert_eq!(visible_text("<ab: terms> x", &[]), " x");
+        assert_eq!(line_text("<ab:\u{3000}terms> x"), "ab:\u{3000}terms x");
+        assert_eq!(line_text("<ab: terms> x"), " x");
         let markdown = "First page text.\n\n<https://example.com/terms>\n\nMore.\n";
         let pages = ["First page text.", "https://example.com/terms\nMore."];
         assert_eq!(
