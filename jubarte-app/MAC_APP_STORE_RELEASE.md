@@ -10,14 +10,14 @@ Everything is automated by two scripts. To ship a new build:
 
 ```bash
 # 1. Bump the version — Apple rejects a re-used version number
-bun run bump <x.y.z>   # package.json, src-tauri/tauri.conf.json,
+pnpm bump <x.y.z>   # package.json, src-tauri/tauri.conf.json,
                        # src-tauri/Cargo.toml, src/index.html — all four
 
 # 2. Build → sign → package → upload, one command
-bun run publish:mac   # ./scripts/publish-mac-app-store.sh
+pnpm publish:mac   # ./scripts/publish-mac-app-store.sh
 
 # 3. Wait a few minutes for Apple to finish processing, then check
-bun run asc:status    # PROCESSING → VALID means it's ready to attach
+pnpm asc:status    # PROCESSING → VALID means it's ready to attach
 ```
 
 `publish:mac` runs the full pipeline: compile Rust + the Swift StoreKit lib →
@@ -33,7 +33,7 @@ debugging.
 
 ## After the upload — finish in App Store Connect
 
-Once `bun run asc:status` shows the new build as **VALID**, open
+Once `pnpm asc:status` shows the new build as **VALID**, open
 [App Store Connect](https://appstoreconnect.apple.com/apps/6790926615):
 
 1. **Attach the build** — macOS version under "Prepare for Submission" →
@@ -49,7 +49,10 @@ Once `bun run asc:status` shows the new build as **VALID**, open
 
 One-time (already done, re-check only if you move the worker): App Information →
 App Store Server Notifications → Production + Sandbox URLs both set to
-`https://jubarte.pro/notifications`.
+`https://jubarte.pro/notifications`. That one path is a route of
+`jubarte-verify-worker` (`verify-worker/wrangler.jsonc`); the rest of
+jubarte.pro is the `jubarte-site` worker. Without that route the site answers
+405 and Apple's notifications are lost.
 
 ## One-time setup (already done, kept here for reference)
 
@@ -160,7 +163,7 @@ pkgutil --check-signature /tmp/jubarte-pkg-out/Jubarte.pkg
 
 ## Step 4 — Bump the version before every new submission
 
-Apple rejects re-uploading the same build/version number. `bun run bump <x.y.z>`
+Apple rejects re-uploading the same build/version number. `pnpm bump <x.y.z>`
 (`scripts/bump-version.mjs`) rewrites all four places the version is hard-coded,
 keeping them in sync:
 

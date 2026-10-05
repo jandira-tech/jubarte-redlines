@@ -1,5 +1,7 @@
-//! Free-tier quota: every install gets [`FREE_LIMIT`] redlines for free; after
-//! that, `create_redline` requires an active subscription.
+//! Free-tier quota: every install gets [`FREE_LIMIT`] free uses, each a redline
+//! or a PDF the user takes (opens, shows in Finder or saves: `take_result`);
+//! after that, taking one requires an active subscription. Making a preview
+//! (`create_redline`, `convert_document`) spends nothing.
 //!
 //! The count is persisted in the app data dir (inside the App Sandbox
 //! container). Like every client-side gate this is a deterrent, not DRM — the
@@ -11,15 +13,15 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
-/// How many redlines an install may produce before the subscription gate.
+/// How many results an install may take before the subscription gate.
 pub const FREE_LIMIT: u32 = 5;
 
-/// Marker error returned by `create_redline` when the free allowance is spent
+/// Marker error returned by `take_result` when the free allowance is spent
 /// and no subscription is active. The frontend matches on this exact string to
 /// open the paywall instead of showing an error toast.
 pub const FREE_LIMIT_ERR: &str = "FREE_LIMIT_REACHED";
 
-/// Managed state: the persisted number of redlines produced so far.
+/// Managed state: the persisted number of results taken so far.
 pub struct Quota(pub Mutex<u32>);
 
 #[derive(Serialize)]

@@ -15,6 +15,9 @@ def load_module_from_path(name: str, path: Path) -> ModuleType:
     if spec is None or spec.loader is None:
         sys.exit(f"cannot load {path}")
     mod = importlib.util.module_from_spec(spec)
+    # As an import would: the module's own code (dataclasses, pickling) looks
+    # itself up in sys.modules while it runs.
+    sys.modules[name] = mod
     spec.loader.exec_module(mod)
     return mod
 

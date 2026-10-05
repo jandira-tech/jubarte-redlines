@@ -11,7 +11,7 @@ Word. This repository is **not** open source; the comparison engine it embeds
 | **Visibility** | Private (`arthrod/jubarte-app`) |
 | **License** | Proprietary — see [LICENSE](LICENSE) |
 | **Engine** | AGPL-3.0 `jubarte-redlines` (`jubarte::`) via path dep on this checkout |
-| **MSRV** | 1.88 (edition 2024) |
+| **MSRV** | 1.90 (edition 2024) |
 
 ## Repository layout
 
@@ -34,17 +34,28 @@ in `src-tauri/Cargo.toml`, so a checkout of the monorepo builds as-is.
   falling back to `cp:lastModifiedBy`) — editable, so the tracked changes are
   attributed to whoever produced the modified version
 - Swap original ↔ modified instantly
-- Two-pane live preview: insertions / deletions / moves with a legend and
-  revision-count chips
+- Two-pane live preview: insertions underlined in blue, deletions struck in
+  red, moves in green (double-struck where they left, double-underlined where
+  they landed), with revision-count chips that wear the same marks
 - Open in Word / Show in Finder / Save a copy
-- Finder "Open with… → Jubarte": select two `.docx` files and both slots fill
-  (older file becomes the original), then the redline runs automatically
-- **Five free redlines per install, then an annual subscription** (StoreKit 2):
+- **Convert to PDF**: a second tab takes one `.docx` and writes a PDF through
+  the engine's layout (`jubarte::convert`), tracked changes in red, blue and
+  green or as Word prints them; the PDF shows in the window, opens in Preview,
+  reveals in Finder or saves anywhere
+- **Redline or convert from Finder**: select two `.docx` files, right-click →
+  **Compare with Jubarte** (at the top of the menu), **Quick Actions → Redline
+  with Jubarte**, **Open With → Jubarte**, or drop both on the Dock icon. Both
+  slots fill (the older file becomes the original) and the redline runs.
+  Right-click one `.docx` (or three or more) for **Convert to PDF with
+  Jubarte**, a PDF of each — see [Finder](#finder)
+- **Five free uses per install (a redline or a PDF each, counted when the user
+  opens, shows in Finder or saves it; a preview is free), then an annual
+  subscription** (StoreKit 2):
   the quota is counted and enforced in Rust
   ([`src-tauri/src/quota.rs`](src-tauri/src/quota.rs)), the paywall lives in
   [`src/paywall.js`](src/paywall.js), and the entitlement is verified
   server-side
-- **Mac App Store distribution**: `bun run publish:mac`
+- **Mac App Store distribution**: `pnpm publish:mac`
   ([`scripts/publish-mac-app-store.sh`](scripts/publish-mac-app-store.sh))
   builds, signs and uploads the `.pkg` in one command — see
   [`MAC_APP_STORE_RELEASE.md`](MAC_APP_STORE_RELEASE.md)
@@ -57,6 +68,54 @@ Three sibling packages live in this checkout beside the app:
   backend, the authoritative entitlement record the app checks
 - [`jubarte-site/`](jubarte-site/) — the `jubarte.pro` marketing Worker,
   hosting the Terms and Privacy pages the paywall links to
+
+## Finder
+
+Four Finder entry points share one hand-off
+([`src-tauri/src/finder.rs`](src-tauri/src/finder.rs)): the paths are queued in
+Rust, the window is brought forward and told to drain the queue, so a launch
+that races the webview still runs each request exactly once.
+
+- **Redline with Jubarte** and **Convert to PDF with Jubarte** are macOS
+  Services declared under `NSServices` in
+  [`src-tauri/Info.plist`](src-tauri/Info.plist) and provided by
+  [`src-tauri/src/finder_service.rs`](src-tauri/src/finder_service.rs). Each
+  hands over the files with what it asked for (`finder::Intent`), so the
+  window switches to the matching tab. They accept `.docx` only
+  (`NSSendFileTypes`) and are enabled by default (empty `NSRequiredContext`).
+  Services cannot filter on how many files are selected, so both items show
+  for any `.docx` selection: Convert makes a PDF of each file, one after
+  another; Redline with one file fills the original slot. If a fresh install
+  does not show them yet, macOS has not re-read the services cache: open
+  Jubarte once, or run `/System/Library/CoreServices/pbs -update`.
+- **Compare with Jubarte** and **Convert to PDF with Jubarte** at the top of
+  the right-click menu come from a Finder Sync extension
+  ([`src-tauri/finder-sync/`](src-tauri/finder-sync/)), the way Araxis Merge
+  adds its own item. It counts the selection: exactly two `.docx` show
+  Compare, any other number Convert, and anything else (a folder, a `.pdf`,
+  a `~$` lock file) shows nothing. The choice lives in
+  [`FinderSyncMenu.swift`](src-tauri/finder-sync/FinderSyncMenu.swift), tested
+  by `FinderSyncMenuTests.swift`. A click calls the matching service above, so
+  the sandboxed extension needs no file access of its own and the app gets
+  the files exactly as from the Services menu.
+  [`scripts/build-finder-sync.sh`](scripts/build-finder-sync.sh) runs those
+  tests, builds the universal `.appex`, places it in `Contents/PlugIns` of a
+  built `Jubarte.app` and signs inside out. If the items do not show, turn
+  the extension on under **System Settings → General → Login Items &
+  Extensions**, or run `pluginkit -e use -i com.jandira.jubarte.finder` and
+  relaunch Finder. An App Store build needs its own
+  App ID and provisioning profile for `com.jandira.jubarte.finder`, passed as
+  the script's third argument.
+- **Open With → Jubarte** and a drop on the Dock icon arrive as
+  `RunEvent::Opened`. The `.docx` association has `LSHandlerRank=Alternate`, so
+  Word stays the double-click default.
+
+Without a service's intent, one file fills the next empty slot (or the
+Convert slot) and two fill both and run at once. Word's `~$name.docx` lock
+files are ignored. The services are AppKit glue, so they are checked by hand:
+[`scripts/finder-service-smoke.swift`](scripts/finder-service-smoke.swift)
+invokes one exactly as Finder does (`swift scripts/finder-service-smoke.swift
+A.docx B.docx`, or `--convert A.docx` for the PDF service).
 
 ## Stack
 
@@ -75,8 +134,8 @@ committed (binary), `publish = false`. CI lives in
 From `jubarte-app/` in the monorepo checkout:
 
 ```sh
-bun install
-bun run dev        # tauri dev
+pnpm install
+pnpm dev        # tauri dev
 ```
 
 Before opening a PR:
@@ -96,7 +155,7 @@ line-coverage gate (≥ 80%) on the free-quota business logic.
 ## Build (signed)
 
 ```sh
-bun run build      # tauri build → the signed .app
+pnpm build      # tauri build → the signed .app
 ```
 
 Signing uses the keychain identity configured in `src-tauri/tauri.conf.json`
@@ -126,7 +185,7 @@ Run from the bundle directory:
 cd src-tauri/target/release/bundle
 IDENTITY="Developer ID Application: Jandira Technologies, LLC (NW99N2W6TA)"
 APP="macos/Jubarte.app"
-DMG="dmg/Jubarte_$(jq -r .version ../../../tauri.conf.json)_aarch64.dmg"  # the built version
+DMG="dmg/Jubarte_0.10.1_aarch64.dmg"          # match the built version
 
 # 1. Notarize the .app (zip → submit → staple).
 ditto -c -k --keepParent "$APP" Jubarte.zip
@@ -173,7 +232,7 @@ bump the **minor**, fixes bump the **patch**). The version is hard-coded in four
 places, kept in sync by one helper:
 
 ```sh
-bun run bump 0.3.0
+pnpm bump 0.3.0
 ```
 
 That rewrites all four:
@@ -189,9 +248,9 @@ The bump script deliberately does **not** touch the CHANGELOG — you write that
 
 Release flow:
 
-1. `bun run bump <x.y.z>` — bump all four version strings.
+1. `pnpm bump <x.y.z>` — bump all four version strings.
 2. Add a dated section to [`CHANGELOG.md`](CHANGELOG.md) (Added / Changed / Fixed).
-3. `bun run publish:mac` — build, sign, package and upload the `.pkg` in one
+3. `pnpm publish:mac` — build, sign, package and upload the `.pkg` in one
    command (see [`MAC_APP_STORE_RELEASE.md`](MAC_APP_STORE_RELEASE.md); Apple
    rejects a re-used version number, hence step 1).
 4. Attach the build and submit for review in App Store Connect.
@@ -203,5 +262,5 @@ The whale lives in `assets/whale.svg` (hero, inlined into `src/index.html`)
 and `assets/icon.svg` (app icon). After editing:
 
 ```sh
-bun run icons      # re-render PNG + regenerate src-tauri/icons/*
+pnpm icons      # re-render PNG + regenerate src-tauri/icons/*
 ```

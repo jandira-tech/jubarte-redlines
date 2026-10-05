@@ -11,23 +11,24 @@ Run with:
     uv run --with pytest,cryptography pytest scripts/test_asc_new_version.py -q
 """
 
-import sys
 from pathlib import Path
-
-SCRIPTS = Path(__file__).resolve().parent
-if str(SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS))
+from types import ModuleType
 
 from asc_loader import load_module_from_path
+
+SCRIPTS = Path(__file__).resolve().parent
+
 
 MOD_PATH = SCRIPTS / "asc-new-version.py"
 
 
-def load_script():
+def load_script() -> ModuleType:
     return load_module_from_path("asc_new_version_under_test", MOD_PATH)
 
 
-def build(build_id, build_number, train_id, state="VALID"):
+def build(
+    build_id: str, build_number: str | None, train_id: str, state: str = "VALID"
+) -> dict:
     return {
         "id": build_id,
         "type": "builds",
@@ -40,7 +41,7 @@ def build(build_id, build_number, train_id, state="VALID"):
     }
 
 
-def train(train_id, version, platform):
+def train(train_id: str, version: str, platform: str) -> dict:
     return {
         "id": train_id,
         "type": "preReleaseVersions",
@@ -48,7 +49,7 @@ def train(train_id, version, platform):
     }
 
 
-def payload(*builds, included):
+def payload(*builds: dict, included: list[dict]) -> dict:
     return {"data": list(builds), "included": list(included)}
 
 

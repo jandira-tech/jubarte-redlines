@@ -28,6 +28,16 @@ PLATFORM = "MAC_OS"
 DO_SUBMIT = "--submit" in sys.argv
 
 
+def listing_gaps_for(version):
+    """What data/facts.jsonl says still stands between `version` and review:
+    the App Store text and screenshots reviewed for it, its drafts applied
+    (scripts/facts.py listing VERSION prints the checklist)."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import facts
+
+    return facts.listing_gaps(facts.current(facts.read()), version)
+
+
 def step(msg):
     print(f"\n\033[1;34m▸ {msg}\033[0m")
 
@@ -59,6 +69,13 @@ def submission_holds_version(sub_id):
 
 
 def main(version_string, build_id):
+    gaps = listing_gaps_for(version_string)
+    if gaps and DO_SUBMIT:
+        raise SystemExit(f"App Store listing not reviewed for {version_string}: " + "; ".join(gaps)
+                         + f" (uv run scripts/facts.py listing {version_string})")
+    for gap in gaps:
+        print(f"  ! {gap} (a --submit run stops here)")
+
     step(f"1/7  Point version {VERSION_ID} at {version_string}")
     mutate("PATCH", f"/appStoreVersions/{VERSION_ID}", {
         "data": {"type": "appStoreVersions", "id": VERSION_ID,

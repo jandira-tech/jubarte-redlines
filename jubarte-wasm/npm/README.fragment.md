@@ -20,8 +20,8 @@ per-operation report.
 Everything runs in-process — no Word, no LibreOffice, no server round-trip.
 Ships prebuilt binaries for **Node** (CommonJS, auto-initializing) and the
 **browser / bundlers** (ES module with explicit init), each in two flavors:
-the **full** build (compare + PDF, ~10 MB wasm) and a **slim** build
-(everything except PDF rendering, ~2.4 MB wasm) for
+the **full** build (compare + PDF, ~13 MB wasm) and a **slim** build
+(everything except PDF rendering, ~3.9 MB wasm) for
 bundle-size-sensitive deployments.
 
 ## Install
@@ -70,7 +70,7 @@ You can also pass the wasm source yourself: `await init({ module_or_path: url })
 
 If you don't need PDF rendering, the slim entry points drop `docxToPdf` /
 `pdfPageCount` — and with them the PDF engine and its embedded
-Carlito/Liberation fonts — shrinking the wasm from ~10 MB to ~2.4 MB.
+Carlito/Liberation fonts — shrinking the wasm from ~13 MB to ~3.9 MB.
 Redline output carries the same parts and revisions as the full build.
 
 ```js
