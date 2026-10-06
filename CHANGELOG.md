@@ -17,6 +17,10 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [0.11.3] - 2026-10-06
 
+> **Summary.** jubarte convert reads a Word 97-2003 .doc (text, headings, lists, bold and italic, tables) and marks each page in Markdown output (<!-- page N of M -->); --timeout bounds a conversion. PDFs set OMML math in Cambria Math as Word does. The font report counts a face guessed from a name's class as substituted, and a repeated identical relationship Id opens repaired. MSRV is Rust 1.94. On two 600-item samples scored against Word's own output: redlines mean 72.06 (Docxodus 65.15), counting as 0 the 23 redlines Word 16.115 crashes opening (KNOWN_ISSUES #8); PDFs mean 79.14 (LibreOffice 54.61), no failed document.
+>
+> **Docs.** README.md, docs/rust.md and the four registry READMEs state MSRV 1.94. docs/rust.md, docs/python.md and docs/javascript.md carry generated CLI and API references. docs/adoption/ and examples/adoption/ are new: one page per agent skill jubarte replaces, each row with runnable evidence; the .doc rows read released. KNOWN_ISSUES.md #8 records the Word 16.115 crash.
+
 ### Added
 
 - `jubarte convert old.doc` reads a Word 97-2003 `.doc`: it reads the OLE
