@@ -49089,3 +49089,55 @@ fn a_double_cell_border_takes_three_strokes_of_room() {
         "Word's LEAD-to-NEXT pitch under a double sz=6 rule is 23.28, got {double_pitch}"
     );
 }
+
+#[test]
+fn a_label_wider_than_its_hang_tabs_the_text_to_the_next_stop() {
+    // Word 16 probes wl1006 and la1006 (2026-10-06): under left 720 /
+    // hanging 360 a short label's text starts at the indent (108), while
+    // "XXXVIII)" and "AAA)" run past it and their suffix tab carries the
+    // text to the next default stop, 144. jubarte painted the text at the
+    // indent, over the label.
+    let lvl = |id: u32, fmt: &str, start: u32| {
+        format!(
+            "<w:abstractNum w:abstractNumId=\"{id}\">\
+               <w:lvl w:ilvl=\"0\"><w:start w:val=\"{start}\"/><w:numFmt w:val=\"{fmt}\"/>\
+                 <w:lvlText w:val=\"%1)\"/>\
+                 <w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/></w:pPr></w:lvl>\
+             </w:abstractNum>"
+        )
+    };
+    let numbering = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           {}{}{}\
+           <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+           <w:num w:numId=\"2\"><w:abstractNumId w:val=\"1\"/></w:num>\
+           <w:num w:numId=\"3\"><w:abstractNumId w:val=\"2\"/></w:num>\
+         </w:numbering>",
+        lvl(0, "upperRoman", 1),
+        lvl(1, "upperRoman", 38),
+        lvl(2, "upperLetter", 53),
+    );
+    let para = |num: u32, text: &str| {
+        format!(
+            "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"{num}\"/></w:numPr></w:pPr>\
+               <w:r><w:t>{text}</w:t></w:r></w:p>"
+        )
+    };
+    let body = format!(
+        "{}{}{}<w:sectPr/>",
+        para(1, "q"),
+        para(2, "w"),
+        para(3, "u")
+    );
+    let pdf = docx_to_pdf(&numbering_docx(&body, Some(&numbering))).expect("convert wide labels");
+    let (narrow, _) = glyph_xy(&pdf, "q");
+    for glyph in ["w", "u"] {
+        let (x, _) = glyph_xy(&pdf, glyph);
+        assert!(
+            (x - narrow - 36.0).abs() < 0.5,
+            "{glyph}'s text at {x}, want the next default stop {} (indent {narrow} + 36)",
+            narrow + 36.0
+        );
+    }
+}

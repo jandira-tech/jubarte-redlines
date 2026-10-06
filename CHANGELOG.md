@@ -15,6 +15,14 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+### Added
+
+- `fields update` writes `NUMPAGES`, `PAGEREF` and `SEQ` results in
+  `\* roman` and `\* alphabetic` as Word does: the switch's first letter
+  picks the case, letters past z repeat (aa, bb, ...), and a `SEQ`
+  identifier with either format keeps counting. Other formats still keep
+  the cached result.
+
 ### Changed
 
 - The desktop app is no longer tracked here: it is its own repository
@@ -29,6 +37,12 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Fixed
 
+- PDF: list labels past z repeat the letter as Word does (z, aa, bb, ...,
+  ZZ, AAA), where jubarte counted on like spreadsheet columns (aa, ab, ac,
+  AZ, BA).
+- PDF: a list label wider than its hanging indent sends the text to the
+  next tab stop, as Word does, instead of painting the text over the
+  label.
 - `scripts/release.sh` step 11 runs `gh release download` with no terminal
   attached and keeps gh's error. Under `script` (the 0.11.3 run's log
   wrapper), gh's progress display queried the terminal and failed, and the

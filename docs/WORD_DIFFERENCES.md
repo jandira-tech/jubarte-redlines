@@ -235,10 +235,11 @@ The other 3 of the 32 are not differences:
   counting as 1 (RW1, KB2, JW2R2, RW3R3). A resolved comment
   (`w15:done`) is faded: text BFBFBF, stroke in the author's tint, fill
   16 % of that, the range under the pale fill.
-- **Status.** Copied under `RevisionStyle::Word`; bracket ticks at the
-  range ends and a comment's own run formatting (one corpus document
-  sets 12pt Verdana bold inside a comment) are not painted yet. The
-  bench's r4/r5 probe documents (tracking on, no revisions) show a black
+- **Status.** Copied under `RevisionStyle::Word`, bracket ticks at the
+  range ends included. A comment's own run formatting (one corpus
+  document sets 12pt Verdana bold inside a comment) is not painted yet:
+  the balloon shows its text in the Balloon Text size. The bench's r4/r5
+  probe documents (tracking on, no revisions) show a black
   changed-line bar beside the commented paragraph; three real documents
   with tracking on and live balloons show none, so no bar is drawn.
 
@@ -269,7 +270,13 @@ The other 3 of the 32 are not differences:
   - `PAGEREF \p`; `REF` with `\n`, `\r`, `\w`, `\p`, `\t`, `\d`, or a
     bookmark that spans paragraphs; `SEQ \s` and every later field of that
     identifier;
-  - number formats other than Arabic (`\* roman`, `\#`, `\@`);
+  - number formats other than Arabic, `\* roman` and `\* alphabetic`:
+    `Ordinal`, `CardText`, `Hex`, `\#` and `\@`. A `PAGEREF` whose page
+    is labelled by its section ("iii", "2-1") is formatted only as
+    Arabic. The two that are written follow Word 16 (probe nf1006,
+    2026-10-06): the switch's first letter picks the case (`\* Roman`
+    XIV, `\* rOMAN` xiv), letters past z repeat (27 aa, 28 bb, 53 aaa),
+    Roman numerals past 3999 add Ms (4000 MMMM), and 0 is one space;
   - a `PAGEREF` to a bookmark outside any paragraph or in a header, which
     the layout does not page. A `PAGEREF` to a bookmark the document lacks
     gets Word's "Error! Bookmark not defined.", and a `REF` Word's "Error!

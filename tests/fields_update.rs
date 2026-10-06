@@ -263,7 +263,7 @@ fn numpages_in_a_footer_and_in_a_simple_field() {
         + PAGE_BREAK
         + "<w:p><w:r><w:t>Two</w:t></w:r></w:p>"
         + PAGE_BREAK
-        + &format!("<w:p>{}</w:p>", field("NUMPAGES \\* roman", Some("i")));
+        + &format!("<w:p>{}</w:p>", field("NUMPAGES \\* CardText", Some("i")));
     let updated = update_fields(&docx_with_sect(
         &body,
         &[Part {
@@ -323,5 +323,41 @@ fn field_marks_sharing_one_run_are_split_and_refreshed() {
     assert!(
         xml.contains(r#"<w:r><w:rPr><w:i /></w:rPr><w:instrText>"#),
         "{xml}"
+    );
+}
+
+#[test]
+fn roman_and_letter_formats_are_written() {
+    // Three pages; a bookmark on the third.
+    let body = String::new()
+        + r#"<w:p><w:r><w:t xml:space="preserve">Of </w:t></w:r>"#
+        + &field(r"NUMPAGES \* ROMAN \* MERGEFORMAT", Some("9"))
+        + r#"</w:p><w:p><w:r><w:t xml:space="preserve">Annex </w:t></w:r>"#
+        + &field(r"SEQ Annex \* ALPHABETIC", Some("?"))
+        + r#"</w:p>"#
+        + PAGE_BREAK
+        + r#"<w:p><w:r><w:t xml:space="preserve">Annex </w:t></w:r>"#
+        + &field(r"SEQ Annex \* ALPHABETIC", Some("?"))
+        + r#"</w:p>"#
+        + PAGE_BREAK
+        + r#"<w:p><w:bookmarkStart w:id="0" w:name="end"/><w:r><w:t>End</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#
+        + r#"<w:p><w:r><w:t xml:space="preserve">See page </w:t></w:r>"#
+        + &field(r"PAGEREF end \* roman", Some("9"))
+        + r#"<w:r><w:t xml:space="preserve">; mixed </w:t></w:r>"#
+        + &field(r"PAGEREF end \* Roman", Some("?"))
+        + r#"<w:r><w:t xml:space="preserve">, </w:t></w:r>"#
+        + &field(r"PAGEREF end \* rOMAN", Some("?"))
+        + r#"</w:p>"#;
+    let updated = update_fields(&docx(&body)).unwrap();
+    assert_word_valid_package(&updated.docx);
+    let texts = texts(&updated.docx);
+    assert!(texts.contains(&"Of III".to_string()), "{texts:?}");
+    assert!(texts.contains(&"Annex A".to_string()), "{texts:?}");
+    assert!(texts.contains(&"Annex B".to_string()), "{texts:?}");
+    assert!(
+        // A mixed-case switch takes its first letter's case (Word 16 probe
+        // nf1006: "Roman" XIV, "rOMAN" xiv).
+        texts.contains(&"See page iii; mixed III, iii".to_string()),
+        "{texts:?}"
     );
 }
