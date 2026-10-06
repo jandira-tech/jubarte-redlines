@@ -464,16 +464,28 @@ fn push_block(out: &mut String, block: &Block) {
                     // A heading's bold is its style's, and Markdown cannot
                     // unbold a heading; a toggle that inverts the style
                     // (`0x81`) would otherwise read as bold.
-                    let spans: Vec<Span> = paragraph
-                        .spans
-                        .iter()
-                        .map(|span| Span {
-                            text: span.text.replace('\n', " "),
-                            bold: false,
-                            ..span.clone()
-                        })
-                        .collect();
-                    out.push_str(&render_spans(&spans));
+                    // A heading is one Markdown line: its manual line breaks
+                    // go in as `<br>`, which the `.docx` writer turns back
+                    // into `w:br` (an empty heading's one placeholder a line
+                    // included).
+                    let mut lines: Vec<Vec<Span>> = vec![Vec::new()];
+                    for span in &paragraph.spans {
+                        for (index, text) in span.text.split('\n').enumerate() {
+                            if index > 0 {
+                                lines.push(Vec::new());
+                            }
+                            if let Some(line) = lines.last_mut() {
+                                line.push(Span {
+                                    text: text.to_string(),
+                                    bold: false,
+                                    ..span.clone()
+                                });
+                            }
+                        }
+                    }
+                    let rendered: Vec<String> =
+                        lines.iter().map(|line| render_spans(line)).collect();
+                    out.push_str(&rendered.join("<br>"));
                 }
                 (None, Some(item)) => {
                     // Four spaces a level nests under a bullet ("- ", content
@@ -1158,13 +1170,16 @@ fn main_text(word: &[u8], pieces: &[Piece], ccp_text: u32) -> Result<Vec<StoryCh
         ));
     }
     let mut out = Vec::new();
+    // A high surrogate waiting for its low half, which may open the next
+    // Unicode piece (a supplementary character split between two pieces).
+    // Without one it is a replacement mark at its own position.
+    let mut pending_high: Option<(u16, StoryChar)> = None;
     for piece in pieces {
         if piece.cp_start >= ccp_text {
             break;
         }
         let end = piece.cp_end.min(ccp_text);
         let width: u32 = if piece.compressed { 1 } else { 2 };
-        let mut pending_high: Option<u16> = None;
         for cp in piece.cp_start..end {
             let fc = cp
                 .checked_sub(piece.cp_start)
@@ -1172,30 +1187,37 @@ fn main_text(word: &[u8], pieces: &[Piece], ccp_text: u32) -> Result<Vec<StoryCh
                 .and_then(|n| n.checked_add(piece.fc))
                 .ok_or_else(past)?;
             let offset = index(fc).ok_or_else(past)?;
+            let here = StoryChar {
+                ch: '\u{FFFD}',
+                cp,
+                fc,
+                modifier: piece.modifier,
+            };
             let ch = if piece.compressed {
+                out.extend(pending_high.take().map(|(_, lone)| lone));
                 cp1252(*word.get(offset).ok_or_else(past)?)
             } else {
                 let unit = u16_at(word, offset).ok_or_else(past)?;
                 match (pending_high.take(), unit) {
-                    (None, 0xD800..=0xDBFF) => {
-                        pending_high = Some(unit);
-                        continue;
-                    }
-                    (Some(high), 0xDC00..=0xDFFF) => char::decode_utf16([high, unit])
+                    (Some(high), 0xDC00..=0xDFFF) => char::decode_utf16([high.0, unit])
                         .next()
                         .and_then(std::result::Result::ok)
                         .unwrap_or('\u{FFFD}'),
-                    (_, unit) => char::from_u32(u32::from(unit)).unwrap_or('\u{FFFD}'),
+                    (lone, 0xD800..=0xDBFF) => {
+                        out.extend(lone.map(|(_, lone)| lone));
+                        pending_high = Some((unit, here));
+                        continue;
+                    }
+                    (lone, unit) => {
+                        out.extend(lone.map(|(_, lone)| lone));
+                        char::from_u32(u32::from(unit)).unwrap_or('\u{FFFD}')
+                    }
                 }
             };
-            out.push(StoryChar {
-                ch,
-                cp,
-                fc,
-                modifier: piece.modifier,
-            });
+            out.push(StoryChar { ch, ..here });
         }
     }
+    out.extend(pending_high.map(|(_, lone)| lone));
     Ok(out)
 }
 
@@ -1354,9 +1376,9 @@ fn for_each_sprm(grpprl: &[u8], mut each: impl FnMut(u16, &[u8])) {
                 u16_at(grpprl, operand).and_then(|n| usize::from(n).checked_add(1))
             }
             _ => match grpprl.get(operand) {
-                // sprmPChgTabs's long form (a count of 255) has its own
-                // layout: stop reading this group. Any other 255 is a count.
-                Some(255) if sprm == 0xC615 => None,
+                // sprmPChgTabs's long form (a count of 255) sizes itself
+                // ([MS-DOC] 2.9.188). Any other 255 is a count.
+                Some(255) if sprm == 0xC615 => chg_tabs_long_size(grpprl, operand),
                 None => None,
                 Some(&n) => usize::from(n).checked_add(1),
             },
@@ -1367,6 +1389,22 @@ fn for_each_sprm(grpprl: &[u8], mut each: impl FnMut(u16, &[u8])) {
         each(sprm, grpprl.get(operand..next).unwrap_or(&[]));
         at = next;
     }
+}
+
+/// The bytes of a long-form sprmPChgTabs operand at `operand`, its 255
+/// included: `cb = cTabsDel * 4 + cTabsAdd * 3 + 2` bytes follow it
+/// ([MS-DOC] 2.9.188 PChgTabsOperand). `None` when the operand is cut short.
+fn chg_tabs_long_size(grpprl: &[u8], operand: usize) -> Option<usize> {
+    let deleted = usize::from(*grpprl.get(operand.checked_add(1)?)?);
+    let added_at = operand
+        .checked_add(2)?
+        .checked_add(deleted.checked_mul(4)?)?;
+    let added = usize::from(*grpprl.get(added_at)?);
+    let size = deleted
+        .checked_mul(4)?
+        .checked_add(added.checked_mul(3)?)?
+        .checked_add(3)?;
+    (operand.checked_add(size)? <= grpprl.len()).then_some(size)
 }
 
 fn papx_props(page: &[u8], at: usize) -> Option<Props> {
@@ -1924,6 +1962,51 @@ mod tests {
         assert_eq!(texts, ["aoneb"]);
     }
 
+    /// A supplementary character split across two Unicode pieces is one
+    /// character, as Word reads it; a lone high surrogate is a replacement
+    /// mark, never dropped.
+    #[test]
+    fn a_surrogate_pair_spans_pieces_and_a_lone_half_is_marked() {
+        // "a😀b" in UTF-16LE, its pair split between the pieces, which sit
+        // apart in the stream (4 filler bytes between them).
+        let mut word = Vec::new();
+        for unit in [0x0061u16, 0xD83D] {
+            word.extend_from_slice(&unit.to_le_bytes());
+        }
+        word.extend_from_slice(&[0xEE; 4]);
+        for unit in [0xDE00u16, 0x0062, 0xD83D] {
+            word.extend_from_slice(&unit.to_le_bytes());
+        }
+        let piece = |cp_start, cp_end, fc| Piece {
+            cp_start,
+            cp_end,
+            fc,
+            compressed: false,
+            modifier: CharModifier::default(),
+        };
+        let text = |ccp| {
+            main_text(&word, &[piece(0, 2, 0), piece(2, 5, 8)], ccp)
+                .unwrap()
+                .iter()
+                .map(|c| c.ch)
+                .collect::<String>()
+        };
+        assert_eq!(text(4), "a😀b");
+        // The story ends on a high surrogate: Word shows a replacement mark.
+        assert_eq!(text(5), "a😀b\u{FFFD}");
+        // A high surrogate before a letter is a mark, and the letter stays.
+        let lone: Vec<u8> = [0xD83Du16, 0x0063]
+            .iter()
+            .flat_map(|u| u.to_le_bytes())
+            .collect();
+        let chars: String = main_text(&lone, &[piece(0, 2, 0)], 2)
+            .unwrap()
+            .iter()
+            .map(|c| c.ch)
+            .collect();
+        assert_eq!(chars, "\u{FFFD}c");
+    }
+
     #[test]
     fn a_piece_table_that_does_not_cover_the_story_is_refused() {
         let word = b"HelloWorld".to_vec();
@@ -2304,6 +2387,42 @@ mod tests {
         assert!(crate::validate::ring1(&package).is_empty());
     }
 
+    /// A heading's manual line breaks stay breaks in the `.docx`, as Word
+    /// draws them, and a heading holding only breaks converts like any
+    /// blank paragraph instead of being refused.
+    #[test]
+    fn a_heading_keeps_its_line_breaks_in_the_docx() {
+        let heading = |text: &str| Paragraph {
+            heading: Some(1),
+            ..plain(text)
+        };
+        let document = LegacyDocument {
+            blocks: vec![
+                Block::Paragraph(heading("Part one\nThe parties")),
+                Block::Paragraph(heading("\n\n")),
+                Block::Paragraph(plain("After")),
+            ],
+        };
+        let docx = document_to_docx(&document).unwrap();
+        let package = crate::opc::PartFs::open(&docx).unwrap();
+        let body = package.part_string("word/document.xml").unwrap();
+        let paragraphs: Vec<&str> = body
+            .split("<w:p>")
+            .skip(1)
+            .map(|p| p.split("</w:p>").next().unwrap_or(""))
+            .collect();
+        assert!(
+            paragraphs[0].contains("Part one</w:t></w:r><w:r><w:br/></w:r>"),
+            "{body}"
+        );
+        assert!(
+            paragraphs[1].ends_with("<w:r><w:br/></w:r><w:r><w:br/></w:r>"),
+            "{body}"
+        );
+        assert!(paragraphs[1].contains("Heading1"), "{body}");
+        assert!(crate::validate::ring1(&package).is_empty());
+    }
+
     /// A table stream holding a PlfLfo (one override, naming list 7) at 0,
     /// then a PlfLst (one simple list, lsid 7) at 20, then, outside the
     /// PlfLst's `lcb` as [MS-DOC] 2.5.6 puts it, the list's one LVL
@@ -2473,8 +2592,25 @@ mod tests {
         let mut seen = Vec::new();
         for_each_sprm(&grpprl, |sprm, _| seen.push(sprm));
         assert_eq!(seen, [0xC600, 0x2416]);
+        // sprmPChgTabs's long form sizes itself ([MS-DOC] 2.9.188): 255,
+        // then cTabs deleted (4 bytes each), then cTabs added (3 bytes
+        // each). The group goes on after it: here sprmCFBold.
         let mut seen = Vec::new();
-        for_each_sprm(&[0x15, 0xC6, 255, 0, 0], |sprm, _| seen.push(sprm));
+        for_each_sprm(&[0x15, 0xC6, 255, 0, 0], |sprm, operand| {
+            seen.push((sprm, operand.len()));
+        });
+        assert_eq!(seen, [(0xC615, 3)]);
+        let long = [
+            0x15, 0xC6, 255, 1, 0x10, 0x00, 0x20, 0x00, 1, 0x30, 0x00, 0x00, 0x35, 0x08, 0x01,
+        ];
+        let mut seen = Vec::new();
+        for_each_sprm(&long, |sprm, operand| seen.push((sprm, operand.to_vec())));
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        assert_eq!(seen[0].1.len(), 10);
+        assert_eq!(seen[1], (0x0835, vec![0x01]));
+        // A long form cut short stops the group, as any short operand does.
+        let mut seen = Vec::new();
+        for_each_sprm(&[0x15, 0xC6, 255, 2, 0, 0], |sprm, _| seen.push(sprm));
         assert!(seen.is_empty(), "{seen:?}");
     }
 
