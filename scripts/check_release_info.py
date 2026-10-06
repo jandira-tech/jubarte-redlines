@@ -21,7 +21,7 @@ file's real sha256, with every tool's n equal to the sample's row count,
 failures within 0..n, mean/median within 0..100, and jubarte's version,
 40-hex commit and 64-hex binary sha256; JSONL records that are objects with
 a non-empty string key, website_data holding the five keys
-scripts/check_release_facts.py reads for a release.
+the app's scripts/check_release_facts.py reads for a release.
 
 The sha256 columns name files that live in the BENCH repository, so without
 --bench-root they are format-checked only. With --bench-root DIR (release.sh
@@ -99,9 +99,9 @@ KEY_COLUMN = {"sample_redline": "key", "sample_conversion": "stem"}
 # tool name → the results JSONs' tools block must carry these, numeric.
 AGGREGATES = ("n", "failures", "mean", "median")
 JUBARTE = "jubarte"
-# The keys scripts/check_release_facts.py reads to call a release done (its
-# problems() refuses the release while any of these is absent from
-# jubarte-app/data/facts.jsonl). website_data drafts them; a record marked
+# The keys the app's scripts/check_release_facts.py reads to call a release
+# done (its problems() refuses the release while any of these is absent from
+# the app's data/facts.jsonl). website_data drafts them; a record marked
 # "pending": true (a placeholder the site step fills) counts as present.
 FACTS_KEYS = ("engine.version", "engine.released", "release.history",
               "release.archives", "release.wheels")
@@ -333,7 +333,7 @@ def check_jsonl(path: Path, required: tuple[str, ...] = ()) -> list[str]:
         problems.append(f"{path.name} holds no records")
     for key in required:
         if key not in keys:
-            problems.append(f"{path.name}: no record keyed {key} — scripts/check_release_facts.py reads it")
+            problems.append(f"{path.name}: no record keyed {key} — the app's scripts/check_release_facts.py reads it")
     return problems
 
 

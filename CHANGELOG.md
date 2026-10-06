@@ -15,6 +15,18 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+### Changed
+
+- The desktop app is no longer tracked here: it is its own repository
+  (arthrod/jubarte-app), cloned untracked at `jubarte-app/` or named by
+  `JUBARTE_APP_DIR`. `scripts/release.sh` no longer bumps or commits the
+  app's files. It runs the app's `scripts/release-engine.sh` instead,
+  with `--preflight` at step 0 and in full as step 13: jubarte.pro, the
+  app's facts, and its version files on a `release/vX.Y.Z` pull request.
+  Step 14 is folded into it. `release_downstream.sh`, `check_site_live.py`
+  and `check_release_facts.py` moved to the app with their tests. The
+  app's CI builds the app, and the app has its own Dependabot config.
+
 ## [0.11.3] - 2026-10-06
 
 > **Summary.** jubarte convert reads a Word 97-2003 .doc (text, headings, lists, bold and italic, tables) and marks each page in Markdown output (<!-- page N of M -->); --timeout bounds a conversion. PDFs set OMML math in Cambria Math as Word does. The font report counts a face guessed from a name's class as substituted, and a repeated identical relationship Id opens repaired. MSRV is Rust 1.94. On two 600-item samples scored against Word's own output: redlines mean 72.06 (Docxodus 65.15), counting as 0 the 23 redlines Word 16.115 crashes opening (KNOWN_ISSUES #8); PDFs mean 79.14 (LibreOffice 54.61), no failed document.

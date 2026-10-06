@@ -141,10 +141,10 @@ that is what you want to prove; `scripts/release.sh` passes neither.
 
 ## 5. `website_data_….jsonl` — the website facts this release moves
 
-One record per line, in the shape of `jubarte-app/data/facts.jsonl`
+One record per line, in the shape of the app repository's `data/facts.jsonl`
 (`{"id","ts","key","value","source"}`, an optional `"pending": true` marks
-a placeholder the site step fills). The keys `scripts/check_release_facts.py`
-reads to call a release done must all be present: `engine.version`,
+a placeholder the site step fills). The keys the app's
+`scripts/check_release_facts.py` reads to call a release done must all be present: `engine.version`,
 `engine.released`, `release.archives`, `release.wheels`, `release.history`
 beside the bench's own `bench.generated`, `bench.version`, `bench.tables`,
 `bench.headlines`, `bench.states`, `bench.home_groups`, `bench.method`.

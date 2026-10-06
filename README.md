@@ -977,7 +977,7 @@ src/
 
 jubarte-python/           PyO3 / maturin Python package
 jubarte-wasm/             wasm-bindgen / npm package
-jubarte-app/              Tauri desktop shell
+jubarte-app/              Tauri desktop shell: its own repository (arthrod/jubarte-app), cloned here untracked
 examples/                 examples and profiling tools
 tests/                    integration tests, goldens and corpus
 docs/                     compatibility and engineering documentation
