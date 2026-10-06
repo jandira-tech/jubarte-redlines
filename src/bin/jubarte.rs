@@ -952,7 +952,7 @@ struct PageOptions {
     move_comments: bool,
     /// Keep only the pages a tracked change touches. The whole document is
     /// laid out first, so page numbers stay the document's; a document
-    /// without changes keeps its first page.
+    /// without changes keeps its first page. --pages counts the kept pages.
     #[arg(long)]
     changed_only: bool,
 }
@@ -2312,6 +2312,16 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), String> {
         } else {
             Format::Docx
         });
+    if matches!(to, Format::Docx | Format::Md) {
+        for (given, flag) in [
+            (job.page.move_comments, "--move-comments"),
+            (job.page.changed_only, "--changed-only"),
+        ] {
+            if given {
+                return Err(format!("{flag} applies to PDF or PNG output only"));
+            }
+        }
+    }
     let output = match (job.output, to) {
         (Some(path), _) => Some(path.to_path_buf()),
         (None, Format::Md) => None,
@@ -2496,6 +2506,8 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
             (job.report.is_some(), "--report"),
             (job.font_report.is_some(), "--font-report"),
             (job.fail_on_substitution, "--fail-on-substitution"),
+            (job.page.move_comments, "--move-comments"),
+            (job.page.changed_only, "--changed-only"),
         ] {
             if given {
                 return Err(format!("{flag} applies to PDF or PNG output only").into());

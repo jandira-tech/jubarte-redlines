@@ -344,3 +344,33 @@ fn end_placement_without_comments_adds_no_page() {
     let docx = docx_with(r#"<w:p><w:r><w:t>Plain</w:t></w:r></w:p>"#, &[]);
     assert_eq!(texts(&rendered(&docx, options)).len(), 1);
 }
+
+#[test]
+fn the_page_flags_are_refused_where_nothing_is_laid_out() {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("comment_placement_refusals");
+    std::fs::create_dir_all(&dir).unwrap();
+    let old = dir.join("old.docx");
+    let new = dir.join("new.docx");
+    std::fs::write(&old, four_pages(false)).unwrap();
+    std::fs::write(&new, four_pages(true)).unwrap();
+    for flag in ["--move-comments", "--changed-only"] {
+        let convert = Command::new(env!("CARGO_BIN_EXE_jubarte"))
+            .args(["convert", "--force", "-t", "md", flag])
+            .arg(&new)
+            .output()
+            .unwrap();
+        assert!(!convert.status.success(), "convert -t md {flag}");
+        let stderr = String::from_utf8_lossy(&convert.stderr);
+        assert!(stderr.contains(flag), "{stderr}");
+        let diff = Command::new(env!("CARGO_BIN_EXE_jubarte"))
+            .args(["diff", "--force", flag, "-o"])
+            .arg(dir.join("redline.docx"))
+            .arg(&old)
+            .arg(&new)
+            .output()
+            .unwrap();
+        assert!(!diff.status.success(), "diff -o .docx {flag}");
+        let stderr = String::from_utf8_lossy(&diff.stderr);
+        assert!(stderr.contains(flag), "{stderr}");
+    }
+}

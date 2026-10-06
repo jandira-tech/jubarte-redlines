@@ -356,7 +356,9 @@ pub struct PageText {
 /// not a saved `docProps/app.xml` figure.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RenderReport {
-    /// Pages laid out.
+    /// Pages written: every page laid out, less those
+    /// `PdfOptions::changed_only` drops, plus a `CommentPlacement::End`
+    /// listing.
     pub page_count: usize,
     /// Per-page painted text.
     pub pages: Vec<PageText>,
