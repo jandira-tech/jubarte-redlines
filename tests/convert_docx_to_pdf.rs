@@ -1608,7 +1608,10 @@ fn a_floating_table_in_column_one_leaves_column_two_alone() {
                 .1
         })
         .collect();
-    let widest = ys.windows(2).map(|w| w[0] - w[1]).fold(0.0_f32, f32::max);
+    let widest = ys
+        .array_windows()
+        .map(|[first, second]| first - second)
+        .fold(0.0_f32, f32::max);
     assert!(widest < 40.0, "column two steps line by line; ys={ys:?}");
 }
 
@@ -4031,9 +4034,9 @@ fn a_bordered_shaded_paragraph_fills_its_box() {
     );
     // The pair: one unbroken band, as tall as Word's.
     let pair = &bands[1..];
-    for w in pair.windows(2) {
+    for [first, second] in pair.array_windows() {
         assert!(
-            (w[0].1 - (w[1].1 + w[1].3)).abs() < 0.05,
+            (first.1 - (second.1 + second.3)).abs() < 0.05,
             "no gap inside the pair's band: {bands:?}"
         );
     }
@@ -10445,7 +10448,9 @@ mod front_float_stacking {
             })
             .collect();
         assert!(
-            positions.windows(2).all(|pair| pair[0] < pair[1]),
+            positions
+                .array_windows()
+                .all(|[first, second]| first < second),
             "expected paint order {markers:?}; positions={positions:?}"
         );
     }
@@ -11063,9 +11068,9 @@ fn text_box_paragraphs_keep_the_larger_of_after_and_before_and_no_outer_auto_spa
     let plain = line_baselines_between(&pdf, 324.0, 540.0);
     for (name, ys) in [("auto", &auto), ("plain", &plain)] {
         assert_eq!(ys.len(), 3, "{name}: three lines; ys={ys:?}");
-        for pair in ys.windows(2) {
+        for [first, second] in ys.array_windows() {
             assert!(
-                (pair[1] - pair[0] - 26.0).abs() <= 0.6,
+                (second - first - 26.0).abs() <= 0.6,
                 "{name}: a 12pt line + max(after, before) 14pt apart; ys={ys:?}"
             );
         }
@@ -19061,8 +19066,8 @@ fn official_file_146_cambria_body_uses_word_auto_leading() {
     ys.sort_by(|a, b| b.partial_cmp(a).unwrap());
     ys.dedup();
     let gaps: Vec<f32> = ys
-        .windows(2)
-        .map(|w| w[0] - w[1])
+        .array_windows()
+        .map(|[first, second]| first - second)
         .filter(|g| (10.0..14.5).contains(g))
         .collect();
     // The body pitch is the most frequent gap; cell and table edges add
@@ -22738,7 +22743,7 @@ fn grid_table4_firstrow_shared_vertical_stays_stacked_after_mini_sharededge() {
     .expect("convert GridTable4 stacked vertical");
     let keys = accent_dark_vertical_keys(&accent_dark_hairlines(&pdf));
     assert!(
-        keys.windows(2).any(|pair| pair[0] == pair[1]),
+        keys.array_windows().any(|[first, second]| first == second),
         "mini shared-edge skip was ITT-neg; keep firstRow left+right stacked; keys={keys:?}"
     );
 }
@@ -22750,7 +22755,7 @@ fn official_potpourri_gridtable_shared_vertical_stays_stacked_after_mini_sharede
     assert_eq!(pdf_page_count(&pdf), 5, "Word potpourri is 5pp");
     let keys = accent_dark_vertical_keys(&accent_dark_hairlines(&pdf));
     assert!(
-        keys.windows(2).any(|pair| pair[0] == pair[1]),
+        keys.array_windows().any(|[first, second]| first == second),
         "mini shared-edge skip was ITT-neg (comments-lots −0.16); keep stacked; keys={keys:?}"
     );
 }
@@ -22792,7 +22797,7 @@ fn tblborders_shared_vertical_stays_stacked_after_mini_inside() {
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert tblBorders lattice");
     let keys = black_vertical_keys(&pdf);
     assert!(
-        keys.windows(2).any(|pair| pair[0] == pair[1]),
+        keys.array_windows().any(|[first, second]| first == second),
         "mini insideV skip was redline ITT-neg; keep left+right stacked; keys={keys:?}"
     );
 }
@@ -31806,7 +31811,10 @@ fn table_tr_height_at_least_single_line_matches_soffice_row() {
         ys.len() >= 5,
         "4 rows must stroke 5 unique horizontal rules, ys={ys:?}"
     );
-    let gaps: Vec<f32> = ys.windows(2).map(|w| w[0] - w[1]).collect();
+    let gaps: Vec<f32> = ys
+        .array_windows()
+        .map(|[first, second]| first - second)
+        .collect();
     for gap in &gaps {
         assert!(
             (gap - 25.92).abs() < 0.25,
@@ -33987,7 +33995,10 @@ fn table_grid_line240_single_row_is_tighter_than_line276_chrome() {
         ys.len() >= 4,
         "3 rows must stroke 4 unique horizontal rules, ys={ys:?}"
     );
-    let gaps: Vec<f32> = ys.windows(2).map(|w| w[0] - w[1]).collect();
+    let gaps: Vec<f32> = ys
+        .array_windows()
+        .map(|[first, second]| first - second)
+        .collect();
     for gap in &gaps {
         assert!(
             (12.8..=14.2).contains(gap),
@@ -36753,7 +36764,8 @@ fn official_strict01_nested_list_indents_ilvl() {
         .map(|xs| xs[0])
         .collect();
     assert!(
-        mins.windows(2).any(|w| (w[1] - w[0]).abs() > 12.0),
+        mins.array_windows()
+            .any(|[first, second]| (second - first).abs() > 12.0),
         "Strict01 page 1 must nest ilvl 1 (~18pt) under ilvl 0; mins={mins:?}"
     );
 }
@@ -36846,7 +36858,10 @@ fn official_strict01_valax_ticks_use_word_plot_dy() {
         (y0 - 324.5).abs() > 2.0,
         "must not keep plot_y=cat+legend+6; y0={y0}"
     );
-    let gaps: Vec<f32> = ys.windows(2).map(|w| w[1] - w[0]).collect();
+    let gaps: Vec<f32> = ys
+        .array_windows()
+        .map(|[first, second]| second - first)
+        .collect();
     let mean_dy = gaps.iter().sum::<f32>() / gaps.len() as f32;
     assert!(
         (26.0..=30.0).contains(&mean_dy),
@@ -38006,11 +38021,12 @@ fn georgia_run_embeds_georgia_not_times() {
 #[test]
 fn omml_f_nobar_paints_n_over_k() {
     // Strict01 noBar binomial: Word stacks n over k (no bar). Linear
-    // n/k (mini 359) was ITT-neg. Not oMathPara center.
+    // n/k (mini 359) was ITT-neg. Upright runs (m:sty p) keep the
+    // letters in WinAnsi text, where italic ones are math italics.
     let body = "<w:p><m:oMath xmlns:m=\"http://schemas.openxmlformats.org/officeDocument/2006/math\">\
          <m:f><m:fPr><m:type m:val=\"noBar\"/></m:fPr>\
-           <m:num><m:r><m:t>n</m:t></m:r></m:num>\
-           <m:den><m:r><m:t>k</m:t></m:r></m:den>\
+           <m:num><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>n</m:t></m:r></m:num>\
+           <m:den><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>k</m:t></m:r></m:den>\
          </m:f>\
        </m:oMath></w:p><w:sectPr/>";
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert noBar stack");
@@ -38041,41 +38057,47 @@ fn omml_f_nobar_paints_n_over_k() {
 }
 
 #[test]
-fn omml_d_and_f_stay_flattened_after_mini_359() {
-    // Linear m:d parens + m:f noBar n/k (mini 359) was Word-shaped
-    // but ITT-neg vs Quartz stacked noBar: Strict01 family −0.0049.
-    // Keep flatten x+a / nk. Not oMathPara center.
+fn omml_d_paints_parens_and_f_nobar_no_slash() {
+    // Word's PDF of math_all_objects draws "(𝑥 + 𝑦)": m:d paints its
+    // parentheses. A noBar fraction stacks n over k with no slash (mini
+    // 359's linear n/k was not Word's).
     let body = "<w:p><m:oMath xmlns:m=\"http://schemas.openxmlformats.org/officeDocument/2006/math\">\
-         <m:d><m:e><m:r><m:t>x</m:t></m:r><m:r><m:t>+</m:t></m:r><m:r><m:t>a</m:t></m:r></m:e></m:d>\
-         <m:r><m:t>=</m:t></m:r>\
+         <m:d><m:e><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>x</m:t></m:r><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>+</m:t></m:r><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>a</m:t></m:r></m:e></m:d>\
+         <m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>=</m:t></m:r>\
          <m:f><m:fPr><m:type m:val=\"noBar\"/></m:fPr>\
-           <m:num><m:r><m:t>n</m:t></m:r></m:num>\
-           <m:den><m:r><m:t>k</m:t></m:r></m:den>\
+           <m:num><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>n</m:t></m:r></m:num>\
+           <m:den><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>k</m:t></m:r></m:den>\
          </m:f>\
        </m:oMath></w:p><w:sectPr/>";
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert omml d/f lock");
     let hay = String::from_utf8_lossy(&pdf);
     let text = pdf_winansi_text(&pdf);
+    // pdf_winansi_text drops an escaped "(" opening a literal; the
+    // painted literals are the evidence.
     assert!(
-        text.contains("x+a") && text.contains("nk"),
-        "flatten must keep x+a and nk; text={text:?}"
+        hay.contains("(\\() Tj")
+            && hay.contains("(\\)) Tj")
+            && text.contains("x+a")
+            && text.contains("nk"),
+        "m:d paints its parentheses around x+a; text={text:?}"
     );
     assert!(
-        !hay.contains("(\\()") && !hay.contains("(\\))") && !text.contains("n/k"),
-        "mini 359 linear parens/slash ITT-neg; text={text:?}"
+        !text.contains("n/k"),
+        "noBar has no slash; text={text:?} {}",
+        hay.len()
     );
 }
 
 #[test]
 fn omml_nary_paints_sum_and_scripts() {
     // Strict01 ∑_{k=0}^{n}: naryPr/chr was dropped and sub/sup sat on
-    // the baseline. Not oMathPara center (ITT-neg).
+    // the baseline.
     let body = "<w:p><m:oMath xmlns:m=\"http://schemas.openxmlformats.org/officeDocument/2006/math\">\
          <m:nary>\
            <m:naryPr><m:chr m:val=\"∑\"/></m:naryPr>\
-           <m:sub><m:r><m:t>k=0</m:t></m:r></m:sub>\
-           <m:sup><m:r><m:t>n</m:t></m:r></m:sup>\
-           <m:e><m:r><m:t>x</m:t></m:r></m:e>\
+           <m:sub><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>k=0</m:t></m:r></m:sub>\
+           <m:sup><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>n</m:t></m:r></m:sup>\
+           <m:e><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>x</m:t></m:r></m:e>\
          </m:nary>\
        </m:oMath></w:p><w:sectPr/>";
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert omml nary");
@@ -38096,11 +38118,10 @@ fn omml_nary_paints_sum_and_scripts() {
 fn omml_ssup_paints_superscript_not_baseline() {
     // Strict01 binomial uses m:sSup (x^k). convert flattens m:t into
     // baseline runs ("xk"). Word paints the sup at ~65% size, raised.
-    // Not oMathPara center (mini OMML-center ITT-neg).
     let body = "<w:p><m:oMath xmlns:m=\"http://schemas.openxmlformats.org/officeDocument/2006/math\">\
          <m:sSup>\
-           <m:e><m:r><m:t>x</m:t></m:r></m:e>\
-           <m:sup><m:r><m:t>2</m:t></m:r></m:sup>\
+           <m:e><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>x</m:t></m:r></m:e>\
+           <m:sup><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>2</m:t></m:r></m:sup>\
          </m:sSup>\
        </m:oMath></w:p><w:sectPr/>";
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert omml sSup");
@@ -38442,26 +38463,26 @@ fn official_strict01_w14_effect_paras_stay_unpainted_as_body() {
 }
 
 #[test]
-fn omml_cambria_math_stays_calibri_after_mini_360() {
-    // Cambria Math FaceId + m:r rPr (mini 360) was Word-faithful on
-    // Strict01 (+0.002) but ITT-neg NR mean −0.003 (file_100/115/185/196
-    // −0.048). Keep flatten onto Calibri. Not linear m:d/m:f (359).
+fn omml_math_text_is_drawn_in_cambria_math_like_word() {
+    // Word's PDF of math_matrix_tests (corpus 6c0ad6c8ef) embeds
+    // CambriaMath for every equation. The mini 360 lock kept Calibri on a
+    // score dip measured against Quartz PDFs, not Word's.
+    let installed = std::path::Path::new(
+        "/Applications/Microsoft Word.app/Contents/Resources/DFonts/Cambria.ttc",
+    )
+    .is_file();
     let body = "<w:p><m:oMath xmlns:m=\"http://schemas.openxmlformats.org/officeDocument/2006/math\">\
-         <m:r><w:rPr><w:rFonts w:ascii=\"Cambria Math\" w:hAnsi=\"Cambria Math\"/>\
-           <w:sz w:val=\"22\"/></w:rPr><m:t>x</m:t></m:r>\
+         <m:r><w:rPr><w:sz w:val=\"22\"/></w:rPr><m:t>x</m:t></m:r>\
        </m:oMath></w:p><w:sectPr/>";
-    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert Cambria Math lock");
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert Cambria Math");
     let hay = String::from_utf8_lossy(&pdf);
-    assert!(
-        !hay.contains("/CambriaMath") && !hay.contains("/Cambria-Math"),
-        "mini 360 CambriaMath embed ITT-neg; tail {}",
-        &hay[hay.len().saturating_sub(320)..]
-    );
-    assert!(
-        hay.contains("/Calibri") || hay.contains("/Carlito"),
-        "flatten must stay paragraph Calibri; tail {}",
-        &hay[hay.len().saturating_sub(280)..]
-    );
+    if installed {
+        assert!(
+            hay.contains("/CambriaMath"),
+            "math text must embed CambriaMath; tail {}",
+            &hay[hay.len().saturating_sub(320)..]
+        );
+    }
 }
 
 #[test]
@@ -41397,13 +41418,8 @@ fn a_justified_underline_runs_through_the_stretched_spaces() {
     }
     assert!(first_line.len() > 3, "underline pieces on the first line");
     first_line.sort_by(|a, b| a.0.total_cmp(&b.0));
-    for pair in first_line.windows(2) {
-        assert!(
-            pair[1].0 - pair[0].1 < 0.05,
-            "gap {:?} -> {:?}",
-            pair[0],
-            pair[1]
-        );
+    for [first, second] in first_line.array_windows() {
+        assert!(second.0 - first.1 < 0.05, "gap {first:?} -> {second:?}");
     }
 }
 
@@ -45915,8 +45931,8 @@ fn a_cell_line_takes_the_height_of_its_own_runs() {
         ys.len() >= 4,
         "the small text wraps over several lines: {ys:?}"
     );
-    for pair in ys[1..].windows(2) {
-        let step = pair[0] - pair[1];
+    for [first, second] in ys[1..].array_windows() {
+        let step = first - second;
         assert!(
             step < 16.0,
             "an 11pt line under the 36pt word steps about 13.4pt, not the big line's: {ys:?}"
@@ -46979,9 +46995,9 @@ fn contextual_spacing_drops_the_space_between_same_style_paragraphs_in_a_cell() 
         .iter()
         .map(|g| pdf_tj_xy(&hay, g).first().expect("title line").1)
         .collect();
-    for w in ys.windows(2) {
+    for [first, second] in ys.array_windows() {
         assert!(
-            (w[0] - w[1] - 20.0).abs() < 0.3,
+            (first - second - 20.0).abs() < 0.3,
             "20pt line pitch, no space: {ys:?}"
         );
     }
@@ -47272,7 +47288,11 @@ fn an_autofit_grid_too_wide_shrinks_between_longest_words_and_grid_widths() {
     .map(|w| pdf_glyph_text_xy(&pdf, w).map_or(f32::NAN, |p| p.0))
     .collect();
     let word = [72.5, 168.7, 263.3, 371.8, 417.8, 463.7];
-    let widths = |xs: &[f32]| xs.windows(2).map(|p| p[1] - p[0]).collect::<Vec<f32>>();
+    let widths = |xs: &[f32]| {
+        xs.array_windows()
+            .map(|[first, second]| second - first)
+            .collect::<Vec<f32>>()
+    };
     assert!(
         (got[0] - word[0]).abs() < 0.5
             && widths(&got)
@@ -47458,7 +47478,10 @@ fn a_bracket_beside_another_bracket_takes_half_an_em() {
     );
     let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("bracket pairs");
     let xs = pdf_hex_glyph_xs(&pdf);
-    let gaps: Vec<f32> = xs.windows(2).map(|w| w[1] - w[0]).collect();
+    let gaps: Vec<f32> = xs
+        .array_windows()
+        .map(|[first, second]| second - first)
+        .collect();
     let word = [
         12.0, 6.0, 12.0, 12.0, 6.0, 12.0, 12.0, 6.0, 12.0, 12.0, 12.0, 12.0,
     ];

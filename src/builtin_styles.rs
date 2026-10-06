@@ -407,7 +407,7 @@ mod tests {
 
     #[test]
     fn built_in_names_match_in_any_case() {
-        assert!(BUILT_IN.windows(2).all(|w| w[0] < w[1]));
+        assert!(BUILT_IN.array_windows().all(|[a, b]| a < b));
         for name in [
             "Normal",
             "normal",

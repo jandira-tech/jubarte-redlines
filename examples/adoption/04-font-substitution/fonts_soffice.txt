@@ -1,0 +1,5 @@
+name                                 type              encoding         emb sub uni object ID
+------------------------------------ ----------------- ---------------- --- --- --- ---------
+BAAAAA+FrankRuhlHofshi-Bold          Type 1            Builtin          yes yes yes     19  0
+CAAAAA+LinuxLibertineG               TrueType          WinAnsi          yes yes yes     24  0
+DAAAAA+Carlito                       TrueType          WinAnsi          yes yes yes     14  0

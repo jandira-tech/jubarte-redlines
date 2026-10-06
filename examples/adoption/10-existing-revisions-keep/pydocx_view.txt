@@ -1,0 +1,5 @@
+fees paragraph as python-docx sees it:
+  'Client shall pay Contractor the fees stated in each Statement of Work, net  days from the invoice date. Late payments accrue interest at  percent per month.'
+  their inserted 'thirty' visible in p.text: False
+  their deleted 'forty-five' visible in p.text: False
+python-docx: 2 edits applied -> keep_pydocx.docx

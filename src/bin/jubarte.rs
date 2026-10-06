@@ -186,16 +186,20 @@ enum Command {
         selection: Selection,
     },
     /// Convert a .docx to PDF and/or PNG pages (independent of LibreOffice),
-    /// or Markdown to .docx, PDF or PNG, with CriticMarkup as tracked changes.
+    /// or Markdown to .docx, PDF or PNG, with CriticMarkup as tracked changes,
+    /// or a Word 97-2003 .doc to .docx (text, headings, lists, bold, italic and tables).
     #[command(after_help = "EXAMPLES:\n  \
         jubarte convert contract.docx                   PDF, Word-style layout\n  \
         jubarte convert draft.md                        draft.docx, CriticMarkup as tracked changes\n  \
         jubarte convert draft.md -o draft.pdf           the changes painted in a PDF\n  \
         jubarte convert draft.md --reference-doc house.docx -o draft.docx\n  \
         jubarte convert draft.md -t md --track-changes accept   the text with every change accepted\n  \
+        jubarte convert contract.docx -t md             Markdown with <!-- page N of M --> lines\n  \
+        jubarte convert old.doc                         old.docx (text, headings, lists, tables)\n  \
         jubarte convert notes.md --no-critic            {++ and the other delimiters as text")]
     Convert {
-        /// The document to convert: .docx, or Markdown (.md, .markdown).
+        /// The document to convert: .docx, Markdown (.md, .markdown), or a
+        /// Word 97-2003 .doc (read into a .docx first).
         #[arg(value_name = "FILE")]
         file: PathBuf,
         /// Output path [default: <stem>.pdf next to a .docx, <stem>.docx next
@@ -253,6 +257,11 @@ enum Command {
         /// 0 ok, 1 error, 4 a requested font was substituted.
         #[arg(long)]
         fail_on_substitution: bool,
+        /// Give up after this many seconds: exit 124 (as `timeout(1)`) with
+        /// nothing more written. An output being written at that moment
+        /// may be left partial.
+        #[arg(long, value_name = "SECONDS", value_parser = parse_timeout)]
+        timeout: Option<std::time::Duration>,
     },
     /// Compare two documents, Word or Markdown: the changed paragraphs as a
     /// patch on stdout, each change `[-old-]{+new+}` in its paragraph, and
@@ -564,7 +573,7 @@ enum Command {
         /// The document (.docx).
         #[arg(value_name = "FILE")]
         file: PathBuf,
-        /// One JSON object per finding.
+        /// JSON Lines: one object per finding, nothing when there is none.
         #[arg(long)]
         json: bool,
         /// Write the repaired package here; remaining findings still exit 2.
@@ -971,6 +980,10 @@ struct MarkdownArgs {
     /// (one-inch margins either way); a reference's page setup wins.
     #[arg(long, value_enum, value_name = "SIZE", default_value_t = Page::Letter)]
     page: Page,
+    /// Word to Markdown: leave out the `<!-- page N of M -->` lines, and the
+    /// layout pass that places them.
+    #[arg(long)]
+    no_page_markers: bool,
 }
 
 /// `--page`.
@@ -1197,6 +1210,35 @@ struct ConvertJob<'a> {
     pages: Option<&'a [usize]>,
     /// Exit [`EXIT_FONT_SUBSTITUTED`] when a requested font was substituted.
     fail_on_substitution: bool,
+}
+
+/// `convert --timeout`: the deadline passed.
+const EXIT_TIMEOUT: i32 = 124;
+
+/// `--timeout`: positive seconds, fractions allowed.
+fn parse_timeout(value: &str) -> Result<std::time::Duration, String> {
+    let seconds: f64 = value
+        .parse()
+        .map_err(|_| format!("'{value}' is not a number of seconds"))?;
+    if !(seconds.is_finite() && seconds > 0.0) {
+        return Err(format!(
+            "'{value}': the timeout must be a finite number of seconds above 0"
+        ));
+    }
+    std::time::Duration::try_from_secs_f64(seconds).map_err(|e| format!("'{value}': {e}"))
+}
+
+/// Exit [`EXIT_TIMEOUT`] once `limit` has passed, whatever the main thread
+/// is doing (layout of a pathological document cannot be interrupted).
+fn arm_timeout(limit: std::time::Duration) {
+    std::thread::spawn(move || {
+        std::thread::sleep(limit);
+        eprintln!(
+            "error: timed out after {}s (--timeout)",
+            limit.as_secs_f64()
+        );
+        std::process::exit(EXIT_TIMEOUT);
+    });
 }
 
 /// `convert --fail-on-substitution`: the outputs were written, but a
@@ -2079,8 +2121,25 @@ impl<'p> Input<'p> {
 /// the bindings run too).
 fn read_document(path: &Path) -> Result<Vec<u8>, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
-    jubarte::admission::sniff(&bytes)
-        .map_err(|refused| format!("{} is {}", path.display(), refused.message))?;
+    jubarte::admission::sniff(&bytes).map_err(|refused| {
+        // Only a .doc that converts gets the hint; an encrypted document
+        // or another OLE file would be sent to a command that fails.
+        let hint = if jubarte::legacy_doc::read(&bytes).is_ok() {
+            format!(
+                "; a .doc converts with: jubarte convert {} -o {}",
+                path.display(),
+                path.with_extension("docx").display()
+            )
+        } else {
+            String::new()
+        };
+        format!(
+            "{}: {} is {}{hint}",
+            refused.code(),
+            path.display(),
+            refused.message
+        )
+    })?;
     Ok(bytes)
 }
 
@@ -2311,20 +2370,97 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), String> {
 }
 
 /// `convert`, for every pair of formats it takes.
+/// `markdown` (read from `docx`) with `<!-- page N of M -->` lines: the
+/// document is laid out as its PDF would be, with its changes kept,
+/// accepted or rejected as the Markdown has them, and each block found on
+/// its page. When layout fails the Markdown is written without markers and
+/// stderr says why.
+fn paginated(
+    docx: &[u8],
+    markdown: &str,
+    track_changes: TrackChanges,
+    revisions: jubarte::convert::RevisionStyle,
+) -> String {
+    let resolved = match track_changes {
+        TrackChanges::All => Ok(std::borrow::Cow::Borrowed(docx)),
+        TrackChanges::Accept => jubarte::document_comparer::accept_revisions(docx)
+            .map(std::borrow::Cow::Owned)
+            .map_err(|e| format!("accepting the changes failed: {e:?}")),
+        TrackChanges::Reject => jubarte::document_comparer::reject_revisions(docx)
+            .map(std::borrow::Cow::Owned)
+            .map_err(|e| format!("rejecting the changes failed: {e:?}")),
+    };
+    let rendered = resolved.and_then(|bytes| {
+        jubarte::convert::render(
+            &bytes,
+            jubarte::convert::PdfOptions {
+                revisions,
+                ..jubarte::convert::PdfOptions::default()
+            },
+            jubarte::convert::RenderRequest::default(),
+        )
+        .map_err(|e| format!("layout failed: {e}"))
+    });
+    match rendered {
+        Ok(rendered) => {
+            let pages: Vec<&str> = rendered
+                .report
+                .pages
+                .iter()
+                .map(|p| p.text.as_str())
+                .collect();
+            jubarte::markdown::paginate(markdown, &pages)
+        }
+        Err(e) => {
+            eprintln!("warning: no page markers: {e}");
+            markdown.to_string()
+        }
+    }
+}
+
 fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), ConvertFailure> {
-    let bytes = read_document(job.file)?;
-    let from = Format::of_input(markdown.from, job.file, &bytes);
+    let raw =
+        std::fs::read(job.file).map_err(|e| format!("reading {}: {e}", job.file.display()))?;
+    // A Word 97-2003 `.doc` is read into a `.docx` first; everything after
+    // sees that package. An encrypted document is still refused.
+    let legacy = jubarte::legacy_doc::is_compound_file(&raw);
+    let bytes = if legacy {
+        jubarte::legacy_doc::doc_to_docx(&raw).map_err(|e| format!("convert failed: {e}"))?
+    } else {
+        jubarte::admission::sniff(&raw)
+            .map_err(|refused| format!("{} is {}", job.file.display(), refused.message))?;
+        raw
+    };
+    let from = if legacy {
+        Format::Docx
+    } else {
+        Format::of_input(markdown.from, job.file, &bytes)
+    };
     let to = markdown
         .to
         .or_else(|| (job.pdf || job.png).then_some(Format::Pdf))
         .or_else(|| job.output.and_then(Format::of_path))
         .unwrap_or(match from {
             Format::Md => Format::Docx,
+            _ if legacy => Format::Docx,
             _ => Format::Pdf,
         });
     if job.pages.is_some() && to != Format::Png && !job.png {
         return Err("--pages selects PNG pages; add --png".into());
     }
+    // Word and Markdown output lay nothing out, so these would be ignored.
+    if matches!(to, Format::Docx | Format::Md) {
+        for (given, flag) in [
+            (job.report.is_some(), "--report"),
+            (job.font_report.is_some(), "--font-report"),
+            (job.fail_on_substitution, "--fail-on-substitution"),
+        ] {
+            if given {
+                return Err(format!("{flag} applies to PDF or PNG output only").into());
+            }
+        }
+    }
+    let converted = legacy.then_some(bytes.as_slice());
     let pdf_job = |bytes: Option<&[u8]>, to: Format| {
         let mut rendered = ConvertJob { bytes, ..*job };
         if to == Format::Png && !job.png {
@@ -2334,7 +2470,7 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
     };
     match (from, to) {
         (Format::Docx, Format::Pdf | Format::Png) => match markdown.track_changes {
-            TrackChanges::All => pdf_job(None, to),
+            TrackChanges::All => pdf_job(converted, to),
             // The pages of the document with every change accepted or rejected.
             choice => {
                 let resolve = if choice == TrackChanges::Accept {
@@ -2357,16 +2493,26 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
                 },
             )
             .map_err(|e| format!("convert failed: {e}"))?;
+            let text = if markdown.no_page_markers {
+                read.markdown
+            } else {
+                paginated(
+                    &bytes,
+                    &read.markdown,
+                    markdown.track_changes,
+                    job.revisions,
+                )
+            };
             match job.output {
                 Some(output) => {
                     ensure_writable(output, job.force)?;
-                    std::fs::write(output, &read.markdown)
+                    std::fs::write(output, &text)
                         .map_err(|e| format!("writing {}: {e}", output.display()))?;
-                    println!("wrote {} ({} bytes)", output.display(), read.markdown.len());
+                    println!("wrote {} ({} bytes)", output.display(), text.len());
                     Ok(())
                 }
                 None => {
-                    print!("{}", read.markdown);
+                    print!("{text}");
                     Ok(())
                 }
             }
@@ -2375,6 +2521,17 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
             let resolve = match markdown.track_changes {
                 TrackChanges::Accept => jubarte::document_comparer::accept_revisions,
                 TrackChanges::Reject => jubarte::document_comparer::reject_revisions,
+                // The `.doc` read as it is.
+                TrackChanges::All if legacy => {
+                    let output = job
+                        .output
+                        .map_or_else(|| job.file.with_extension("docx"), Path::to_path_buf);
+                    ensure_writable(&output, job.force)?;
+                    std::fs::write(&output, &bytes)
+                        .map_err(|e| format!("writing {}: {e}", output.display()))?;
+                    println!("wrote {} ({} bytes)", output.display(), bytes.len());
+                    return Ok(());
+                }
                 TrackChanges::All => {
                     return Err(format!(
                         "{} is already Word: give --track-changes accept or reject, or another --to",
@@ -2676,7 +2833,11 @@ fn cli_main() -> ExitCode {
             markdown,
             pages: page_spec,
             fail_on_substitution,
+            timeout,
         }) => {
+            if let Some(limit) = timeout {
+                arm_timeout(limit);
+            }
             let style = match revision_style(revisions, revision_palette.as_deref()) {
                 Ok(style) => style,
                 Err(e) => return exit_code(Err(e)),

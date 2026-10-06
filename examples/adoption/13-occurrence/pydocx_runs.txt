@@ -1,0 +1,11 @@
+runs before:
+  'The Advisor shall store the Records in a secure facility. ' bold=None
+  'The Advisor' bold=True
+  ' ' bold=True
+  'shall tag' bold=True
+  ' each Record with its classification level before storage.' bold=None
+  ' ' bold=None
+  'The Advisor shall log every access in the access register.' bold=None
+runs after:
+  'The Advisor shall store the Records in a secure facility. The Custodian shall tag each Record with its classification level before storage. The Advisor shall log every access in the access register.' bold=None
+replaced occurrence 2 of 3; every run is now a single plain run

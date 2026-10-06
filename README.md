@@ -21,7 +21,7 @@ or PNG — from Rust, Python, Node/browser, or the CLI.
 [![docs.rs](https://docs.rs/jubarte-redlines/badge.svg)](https://docs.rs/jubarte-redlines)
 [![PyPI](https://img.shields.io/pypi/v/jubarte-redlines.svg)](https://pypi.org/project/jubarte-redlines/)
 [![npm](https://img.shields.io/npm/v/jubarte-wasm.svg)](https://www.npmjs.com/package/jubarte-wasm)
-[![MSRV](https://img.shields.io/badge/MSRV-1.88-blue)](./Cargo.toml)
+[![MSRV](https://img.shields.io/badge/MSRV-1.94-blue)](./Cargo.toml)
 [![license](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](./LICENSE)
 [![Socket Badge](https://badge.socket.dev/cargo/package/jubarte-redlines/0.11.2)](https://badge.socket.dev/cargo/package/jubarte-redlines/0.11.2)
 
@@ -231,7 +231,7 @@ The default crate features include the CLI, fast allocator and self-update
 support. Library-only consumers can disable defaults and opt into features
 deliberately.
 
-MSRV: **Rust 1.88**.
+MSRV: **Rust 1.94**.
 
 ### Python
 
@@ -334,7 +334,7 @@ Python wheel, the npm CLI) is in the [per-surface guides](#documentation).
 | `jubarte changes` | List each tracked change with the id `accept --id`, `reject --id` and edit plans take |
 | `jubarte accept` | Accept tracked changes (package-wide) and write the result: every change, or those --id/--author/--kind select (the rest stay tracked) |
 | `jubarte reject` | Reject tracked changes (package-wide) and write the result: every change, or those --id/--author/--kind select (the rest stay tracked) |
-| `jubarte convert` | Convert a .docx to PDF and/or PNG pages (independent of LibreOffice), or Markdown to .docx, PDF or PNG, with CriticMarkup as tracked changes |
+| `jubarte convert` | Convert a .docx to PDF and/or PNG pages (independent of LibreOffice), or Markdown to .docx, PDF or PNG, with CriticMarkup as tracked changes, or a Word 97-2003 .doc to .docx (text, headings, lists, bold, italic and tables) |
 | `jubarte diff` | Compare two documents, Word or Markdown: the changed paragraphs as a patch on stdout, each change `[-old-]{+new+}` in its paragraph, and with --output a Word redline (.docx), CriticMarkup (.md) or a PDF with the changes painted |
 | `jubarte inspect` | Read a .docx: body paragraphs with ids, style, formatting spans and limitations, plus package facts |
 | `jubarte text` | Print the body as Markdown with a `[body:p:N]` id before every paragraph: the coordinates an edit plan uses |
@@ -489,7 +489,7 @@ revision by that author (`UNTRACKED_EDIT`, `FOREIGN_AUTHOR`).
 
 | Option | Purpose |
 |---|---|
-| `--json` | One JSON object per finding |
+| `--json` | JSON Lines: one object per finding, nothing when there is none |
 | `--repair FILE` | Write the repaired package; remaining findings still exit 2 |
 | `--original FILE` | Audit tracked edits against this original (needs `--author`) |
 | `--author NAME` | The author every change must carry |
@@ -846,7 +846,7 @@ CI currently includes:
   (`wasm32-unknown-unknown`) and in-process bench bindings
 - all-feature Rust tests on Linux, macOS and Windows
 - source-based code coverage with a line-coverage floor
-- MSRV testing on Rust 1.88 (the all-feature test suite, on Linux)
+- MSRV testing on Rust 1.94 (the all-feature test suite, on Linux)
 - `cargo publish --dry-run`
 - `cargo-deny`
 - REUSE/SPDX checks
@@ -884,7 +884,7 @@ your own environment before choosing an engine.
 | Surface | Supported/tested target |
 |---|---|
 | Rust / CLI | CI tests Linux, macOS and Windows |
-| Rust toolchain | Rust 1.88+ |
+| Rust toolchain | Rust 1.94+ |
 | Python | CPython 3.10+ |
 | Python release wheels | macOS x86_64/arm64, manylinux_2_28 x86_64/arm64, musllinux_1_2 x86_64/arm64, Windows x86_64 (abi3, CPython 3.10+) |
 | Node | Node 18+ |
@@ -895,10 +895,12 @@ Release assets can vary by tag. Check the
 [release page](https://github.com/jandira-tech/jubarte-redlines/releases)
 before scripting a binary download.
 
-Legacy binary `.doc` files are not supported: a `.doc`, or an encrypted
-document of any Word version, is refused with `LEGACY_DOC` and the hint to
-save it as `.docx` without a password, and RTF with `UNSUPPORTED_PACKAGE`.
-Convert them to `.docx` first.
+A Word 97-2003 `.doc` converts to `.docx` with the native binary's
+`jubarte convert old.doc` (or `jubarte::legacy_doc::doc_to_docx` in Rust):
+text, headings, lists, bold, italic and tables. Every other command, and
+the Python and JavaScript packages (the npm command line too), refuse a `.doc` (or an encrypted document of any Word
+version) with `LEGACY_DOC` and the hint to save it as `.docx` without a
+password, and RTF with `UNSUPPORTED_PACKAGE`. Convert them to `.docx` first.
 
 ## Troubleshooting
 

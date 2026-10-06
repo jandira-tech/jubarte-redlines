@@ -1,0 +1,16 @@
+3c3
+< [body:p:1] This letter confirms the consulting engagement between Jandira Technologies, LLC ("the Company") and Northwind Traders Ltd. (the "Client"), starting on 16 March 2026.
+---
+> [body:p:1 Normal] This letter confirms the consulting engagement between Jandira Technologies, LLC ("the Company") and Northwind Traders Ltd. (the "Client"), starting on 16 March 2026.
+7c7
+< [body:p:3] The Company will provide document-automation consulting up to fifteen days per month, remotely, with one on-site day per quarter.
+---
+> [body:p:3 Normal] The Company will provide document-automation consulting up to fifteen days per month, remotely, with one on-site day per quarter.
+11c11
+< [body:p:5] The fee is 1,100 USD per day, invoiced monthly, payable net thirty (30) days.
+---
+> [body:p:5 Normal] The fee is 1,100 USD per day, invoiced monthly, payable net thirty (30) days.
+15c15
+< [body:p:7] Either party may end this letter on twenty days' written notice to the address in the signature block.
+---
+> [body:p:7 Normal] Either party may end this letter on twenty days' written notice to the address in the signature block.

@@ -650,13 +650,18 @@ pub(super) fn numbering(
 
 /// The definition of a style this writer uses, for a document that lacks it.
 pub(crate) fn style_definition(id: &str) -> Option<String> {
-    const HEADINGS: [(&str, &str); 6] = [
+    // Heading 7-9 and Title are not written from Markdown; a `.doc`
+    // converted through it restores them (`legacy_doc`).
+    const HEADINGS: [(&str, &str); 9] = [
         ("32", ""),
         ("28", ""),
         ("24", ""),
         ("22", "<w:i/><w:iCs/>"),
         ("22", ""),
         ("22", "<w:i/><w:iCs/>"),
+        ("22", ""),
+        ("22", "<w:i/><w:iCs/>"),
+        ("22", ""),
     ];
     let paragraph = |id: &str, name: &str, body: &str| {
         format!(
@@ -691,7 +696,8 @@ pub(crate) fn style_definition(id: &str) -> Option<String> {
                      <w:name w:val=\"No List\"/><w:uiPriority w:val=\"99\"/><w:semiHidden/>\
                      <w:unhideWhenUsed/></w:style>"
             .to_string(),
-        "Heading1" | "Heading2" | "Heading3" | "Heading4" | "Heading5" | "Heading6" => {
+        "Heading1" | "Heading2" | "Heading3" | "Heading4" | "Heading5" | "Heading6"
+        | "Heading7" | "Heading8" | "Heading9" => {
             let level: usize = id[7..].parse().ok()?;
             let (size, extra) = HEADINGS[level - 1];
             format!(
@@ -703,6 +709,14 @@ pub(crate) fn style_definition(id: &str) -> Option<String> {
                 level - 1
             )
         }
+        "Title" => paragraph(
+            "Title",
+            "Title",
+            "<w:next w:val=\"Normal\"/><w:uiPriority w:val=\"10\"/><w:qFormat/><w:pPr>\
+             <w:spacing w:after=\"80\" w:line=\"240\" w:lineRule=\"auto\"/><w:contextualSpacing/>\
+             </w:pPr><w:rPr><w:spacing w:val=\"-10\"/><w:kern w:val=\"28\"/>\
+             <w:sz w:val=\"56\"/><w:szCs w:val=\"56\"/></w:rPr>",
+        ),
         "Quote" => paragraph(
             "Quote",
             "Quote",
@@ -792,6 +806,8 @@ mod tests {
             "NoList",
             "Heading1",
             "Heading6",
+            "Heading9",
+            "Title",
             "Quote",
             "ListParagraph",
             "SourceCode",
@@ -806,7 +822,7 @@ mod tests {
             let definition = style_definition(id).unwrap();
             assert!(definition.contains(&format!("w:styleId=\"{id}\"")), "{id}");
         }
-        assert!(style_definition("Heading7").is_none());
+        assert!(style_definition("Heading10").is_none());
         assert!(style_definition("Unknown").is_none());
     }
 

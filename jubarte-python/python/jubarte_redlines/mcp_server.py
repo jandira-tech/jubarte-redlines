@@ -30,7 +30,7 @@ except ImportError as exc:  # pragma: no cover - exercised only without the extr
         "jubarte-mcp needs the MCP SDK: pip install 'jubarte-redlines[mcp]'"
     ) from exc
 
-from ._native import JubarteError
+from ._native import JubarteError, __version__
 from .document import Document, EditPlanError, capabilities
 from .models import CompareOptions
 
@@ -49,8 +49,8 @@ INSTRUCTIONS = (
     "docx_comments and docx_audit (available when the engine build has them)."
 )
 
-_READ = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
-_WRITE = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
+_READ = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
+_WRITE = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False)
 
 
 def _plain(value: Any) -> Any:
@@ -65,7 +65,7 @@ def _plain(value: Any) -> Any:
 def build_server(*, root: Path) -> MCPServer:
     """An MCP server whose tools only touch files under ``root``."""
     root = Path(root).expanduser().resolve()
-    mcp = MCPServer("jubarte", instructions=INSTRUCTIONS)
+    mcp = MCPServer("jubarte", instructions=INSTRUCTIONS, version=__version__)
 
     def contained(path: str) -> Path:
         # resolve() follows symlinks, so a link pointing out of root is refused.
@@ -305,7 +305,7 @@ def build_server(*, root: Path) -> MCPServer:
         if (base is None) != (author is None):
             raise ToolError("original and author go together")
         findings = list(engine(doc.validate))
-        if base is not None:
+        if base is not None and author is not None:
             findings.extend(engine(lambda: doc.audit_tracked(base, author=author)))
         return _plain(findings)
 

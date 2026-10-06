@@ -23,7 +23,10 @@
 //! Each integration-test file is its own binary, so it may install a process global
 //! allocator without disturbing the library (which stays 100% safe).
 
-#![allow(unsafe_code)]
+#![expect(
+    unsafe_code,
+    reason = "a counting global allocator is an unsafe impl GlobalAlloc; the library itself stays unsafe-free"
+)]
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::fmt::Write as _;

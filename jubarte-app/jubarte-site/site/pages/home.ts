@@ -47,7 +47,7 @@ const SURFACES = [
     tag: "Rust",
     title: "The library crate",
     cmd: "cargo add jubarte-redlines \\\n  --no-default-features",
-    note: "Import path is jubarte::. No unsafe. MSRV 1.88, edition 2024.",
+    note: "Import path is jubarte::. No unsafe. MSRV 1.94, edition 2024.",
   },
   {
     id: "python",
@@ -216,7 +216,7 @@ ${CAPS.map(
 
 <section class="band paper-band">
 <div class="wrap band-pad">
-<div class="section-head mb-44"><h2>Same core, wherever you run</h2><span>Rust 1.88 · CPython ≥ 3.10 · Node ≥ 18</span></div>
+<div class="section-head mb-44"><h2>Same core, wherever you run</h2><span>Rust 1.94 · CPython ≥ 3.10 · Node ≥ 18</span></div>
 <div class="installer">
 <div class="tabs installer-tabs" role="tablist" aria-label="Install jubarte">
 ${SURFACES.map(

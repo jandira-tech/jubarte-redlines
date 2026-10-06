@@ -1,0 +1,10 @@
+what	bytes	size
+LibreOffice (libreoffice-writer-nogui, no recommends): soffice for render, accept, .doc	391623887	392 MB
+LibreOffice (libreoffice, apt default)	1753407600	1753 MB
+Poppler (poppler-utils): pdftoppm	25104041	25 MB
+pandoc	200271775	200 MB
+Node.js + npm + docx (docx-js)	233081849	233 MB
+Python 3 + pip + python-docx (with lxml)	71631443	72 MB
+python-docx (with lxml), Python already present	14733063	15 MB
+jubarte 0.11.2 release binary (linux-x86_64)	35871639	36 MB
+jubarte 0.11.2 wheel (pip), Python already present	22123928	22 MB

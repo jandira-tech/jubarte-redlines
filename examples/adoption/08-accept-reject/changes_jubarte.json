@@ -1,0 +1,9 @@
+{"id":"body:rev:1","kind":"insertion","target":"text","author":"Ann","date":"1970-01-01T00:00:00Z","text":"16"}
+{"id":"body:rev:2","kind":"deletion","target":"text","author":"Ann","date":"1970-01-01T00:00:00Z","text":"2"}
+{"id":"body:rev:3","kind":"insertion","target":"text","author":"Ann","date":"1970-01-01T00:00:00Z","text":"fifteen"}
+{"id":"body:rev:4","kind":"deletion","target":"text","author":"Ann","date":"1970-01-01T00:00:00Z","text":"ten"}
+{"id":"body:rev:5","kind":"insertion","target":"text","author":"Ann","date":"1970-01-01T00:00:00Z","text":"1,100"}
+{"id":"body:rev:6","kind":"deletion","target":"text","author":"Ann","date":"1970-01-01T00:00:00Z","text":"900"}
+{"id":"body:rev:7","kind":"deletion","target":"text","author":"Ann","date":"1970-01-01T00:00:00Z","text":"other "}
+{"id":"body:rev:8","kind":"insertion","target":"text","author":"Ann","date":"1970-01-01T00:00:00Z","text":"in the signature block"}
+{"id":"body:rev:9","kind":"deletion","target":"text","author":"Ann","date":"1970-01-01T00:00:00Z","text":"listed below"}

@@ -391,7 +391,10 @@ fn patch_options(
 /// side is compared as `compare_documents` does, with them.
 #[pyfunction]
 #[pyo3(signature = (old, new, *, old_name, new_name, author, date, columns = 72, critic = false))]
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the parameters are the Python keyword API of diff_json"
+)]
 fn diff_json(
     py: Python<'_>,
     old: Side<'_>,

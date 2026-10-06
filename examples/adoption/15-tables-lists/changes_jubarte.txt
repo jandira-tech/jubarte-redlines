@@ -1,0 +1,27 @@
+body:rev:1	formatting	properties	Reviewer	"Signed offer letter on file"
+body:rev:2	formatting	properties	Reviewer	"Payroll direct deposit form"
+body:rev:3	formatting	properties	Reviewer	"Badge photo uploaded"
+body:rev:4	formatting	properties	Reviewer	"Complete the safety module"
+body:rev:5	formatting	properties	Reviewer	"Book the week-one introductions"
+body:rev:6	insertion	table_row	Reviewer	""
+body:rev:7	insertion	paragraph_mark	Reviewer	""	inside body:rev:6
+body:rev:8	insertion	text	Reviewer	"Step"	inside body:rev:6
+body:rev:9	insertion	paragraph_mark	Reviewer	""	inside body:rev:6
+body:rev:10	insertion	text	Reviewer	"Owner"	inside body:rev:6
+body:rev:11	insertion	paragraph_mark	Reviewer	""	inside body:rev:6
+body:rev:12	insertion	text	Reviewer	"Week"	inside body:rev:6
+body:rev:13	insertion	table_row	Reviewer	""
+body:rev:14	insertion	paragraph_mark	Reviewer	""	inside body:rev:13
+body:rev:15	insertion	text	Reviewer	"Laptop and accounts"	inside body:rev:13
+body:rev:16	insertion	paragraph_mark	Reviewer	""	inside body:rev:13
+body:rev:17	insertion	text	Reviewer	"IT"	inside body:rev:13
+body:rev:18	insertion	paragraph_mark	Reviewer	""	inside body:rev:13
+body:rev:19	insertion	text	Reviewer	"1"	inside body:rev:13
+body:rev:20	insertion	table_row	Reviewer	""
+body:rev:21	insertion	paragraph_mark	Reviewer	""	inside body:rev:20
+body:rev:22	insertion	text	Reviewer	"Team introductions"	inside body:rev:20
+body:rev:23	insertion	paragraph_mark	Reviewer	""	inside body:rev:20
+body:rev:24	insertion	text	Reviewer	"Manager"	inside body:rev:20
+body:rev:25	insertion	paragraph_mark	Reviewer	""	inside body:rev:20
+body:rev:26	insertion	text	Reviewer	"1"	inside body:rev:20
+26 change(s)
