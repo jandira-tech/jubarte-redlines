@@ -111,11 +111,11 @@ fn del_mark_sits_on_its_own_deleted_content() {
     let paras = body_paras(&xml);
 
     // Invariant: the late-mark split shape must not exist anywhere.
-    for w in paras.windows(2) {
+    for [first, second] in paras.array_windows() {
         assert!(
-            !(del_only_live_mark(&w[0]) && mark_del(&w[1]) && contentless(&w[1])),
+            !(del_only_live_mark(first) && mark_del(second) && contentless(second)),
             "deletion mark stranded one slot late after: {}",
-            &w[0][..w[0].len().min(300)]
+            &first[..first.len().min(300)]
         );
     }
 

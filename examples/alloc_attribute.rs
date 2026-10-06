@@ -20,7 +20,10 @@
 //! cargo run --release --example alloc_attribute --no-default-features
 //! ```
 
-#![allow(unsafe_code)]
+#![expect(
+    unsafe_code,
+    reason = "a counting global allocator is an unsafe impl GlobalAlloc; the library itself stays unsafe-free"
+)]
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::backtrace::Backtrace;

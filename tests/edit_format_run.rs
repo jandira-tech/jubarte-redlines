@@ -99,7 +99,10 @@ fn format_run_splits_the_run_and_formats_only_the_range() {
             .unwrap_or_else(|| panic!("{n} in {rpr}"))
     })
     .collect();
-    assert!(order.windows(2).all(|w| w[0] < w[1]), "{order:?}");
+    assert!(
+        order.array_windows().all(|[first, second]| first < second),
+        "{order:?}"
+    );
 
     let redline_xml = part_string(&result.redline, "word/document.xml").unwrap();
     assert!(redline_xml.contains("<w:rPrChange"), "{redline_xml}");

@@ -668,7 +668,12 @@ fn markdown_page_markers_count_the_pdf_pages() {
                 .ok()
         })
         .collect();
-    assert!(numbers.windows(2).all(|w| w[0] < w[1]), "{numbers:?}");
+    assert!(
+        numbers
+            .array_windows()
+            .all(|[first, second]| first < second),
+        "{numbers:?}"
+    );
     // The markers are comments: the Markdown converts back to the same text.
     std::fs::write(dir.path().join("back.md"), &markdown).unwrap();
     ok(&["convert", "back.md", "-o", "back.docx"], dir.path());

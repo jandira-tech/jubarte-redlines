@@ -35,7 +35,7 @@ API reference: [docs.rs/jubarte-redlines](https://docs.rs/jubarte-redlines)
 | `perf-profile` | no | profiling instrumentation |
 
 Library consumers should disable defaults and opt in deliberately. MSRV:
-**Rust 1.88** (`#![warn(missing_docs)]` is enforced; every public item is
+**Rust 1.94** (`#![warn(missing_docs)]` is enforced; every public item is
 documented).
 
 ## Sixty seconds

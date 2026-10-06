@@ -911,7 +911,7 @@ mod tests {
             CompressionMethod::Stored,
         );
         let at = bytes
-            .windows(2)
+            .array_windows()
             .position(|w| w == b"Hi")
             .expect("stored text");
         bytes[at] = b'X';

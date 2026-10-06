@@ -487,14 +487,16 @@ pub(crate) fn complete_from_original_chain(
         }
     }
     let said = slot_values(dom, old);
+    // A toggle a restored ancestor turns on is the ancestor's to give back
+    // (R30), not this record's.
+    let toggled_elsewhere = |s: &Slot, owner: &Option<NodeId>| {
+        s.ns == W::URI
+            && XOR_TOGGLES.contains(&s.local.as_str())
+            && owner.is_some_and(|o| o != a_style && recorded(o))
+    };
     let mut slots: Vec<Slot> = effective
         .iter()
-        .filter(|(s, (owner, _, _))| {
-            !said.contains_key(*s)
-                && !(s.ns == W::URI
-                    && XOR_TOGGLES.contains(&s.local.as_str())
-                    && owner.is_some_and(|o| o != a_style && recorded(o)))
-        })
+        .filter(|(s, (owner, _, _))| !said.contains_key(*s) && !toggled_elsewhere(s, owner))
         .map(|(s, _)| s.clone())
         .collect();
     slots.sort();

@@ -93,7 +93,10 @@ fn an_existing_settings_part_keeps_its_children_and_takes_the_new_ones_in_order(
             at("<w:updateFields/>"),
             at("<w:compat/>"),
         ];
-        assert!(order.windows(2).all(|w| w[0] < w[1]), "{xml}");
+        assert!(
+            order.array_windows().all(|[first, second]| first < second),
+            "{xml}"
+        );
     }
 }
 
