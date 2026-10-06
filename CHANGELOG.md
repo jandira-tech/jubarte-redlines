@@ -15,6 +15,8 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+## [0.11.3] - 2026-10-06
+
 ### Added
 
 - `jubarte convert old.doc` reads a Word 97-2003 `.doc`: it reads the OLE
@@ -114,6 +116,13 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   Word script logs were not kept.
 - The adoption workflow also runs on changes to `tests/common/`,
   `Cargo.toml` and `Cargo.lock`.
+
+### Known issues
+
+- Microsoft Word 16.115 (installed on the bench 2026-10-05) crashes opening
+  23 of this release's 600 benchmark redlines, so they score 0 in
+  `release_info/`. 22 are byte-identical to the 0.11.2 redlines the previous
+  Word opened on 2026-10-03; the cause is not found yet (KNOWN_ISSUES.md #8).
 
 ## [0.11.2] - 2026-10-03
 
@@ -2816,6 +2825,7 @@ measured Q0 performance stack) plus release tooling (`VERSIONING.md`,
 - See [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the covering tests are marked
   `#[ignore]` with matching reasons.
 
+[0.11.3]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.11.3
 [0.11.2]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.11.2
 [0.11.0]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.11.0
 [0.10.1]: https://github.com/jandira-tech/jubarte-redlines/releases/tag/v0.10.1

@@ -47,13 +47,13 @@ Exit codes: `0` done, `1` error, `2` usage error or `validate` findings
 | `comment.py` + pasted markers | a `comment` operation (`find` + `text`), or a `comment` field on `replace`, `insert`, `insert_paragraph` and `delete_paragraph`; the engine places the anchors. Threads: `reply_comment`, `resolve_comment` (resolve or reopen), `edit_comment`, `delete_comment` (with its replies and anchors), `through` for a comment over several paragraphs, and `jubarte comments FILE --json` to read every thread back. An edit that writes comments also writes `commentsExtended.xml`, `commentsIds.xml` and `commentsExtensible.xml`. | released |
 | docx-js for prose | `jubarte convert draft.md -o draft.docx [--reference-doc house.docx]`, with CriticMarkup becoming tracked changes and comments. `--page letter` (the default) or `--page a4` addresses docx-js's silent A4. | released |
 | Repeated anchors | an `occurrence` field (1-based) to pick the Nth match instead of a longer anchor; without it a repeated anchor is refused `AMBIGUOUS_ANCHOR` with the count. | released |
-| Legacy `.doc` | `jubarte convert old.doc` writes `old.docx`: text, Heading 1-9 and Title, bulleted and numbered lists, bold and italic, tables. Fonts, headers, footers, notes, pictures and page setup are not read yet ([plans.md](plans.md) §1). | main |
+| Legacy `.doc` | `jubarte convert old.doc` writes `old.docx`: text, Heading 1-9 and Title, bulleted and numbered lists, bold and italic, tables. Fonts, headers, footers, notes, pictures and page setup are not read yet ([plans.md](plans.md) §1). | released |
 | Calling it as tools instead of a command line | `uvx --from 'jubarte-redlines[mcp]' jubarte-mcp --root .` serves `docx_text`, `docx_inspect`, `docx_edit`, `docx_render`, `docx_compare`, `docx_changes`, `docx_accept`, `docx_reject` and more as MCP tools, every path confined to `--root`; see [mcp.md](mcp.md). | released |
 
 ## 3. What you lose, or keep
 
 - **Legacy `.doc`, beyond the basics.** `jubarte convert old.doc` reads
-  the text, headings, lists, bold, italic and tables (main). Keep `soffice
+  the text, headings, lists, bold, italic and tables (released). Keep `soffice
   --convert-to docx` for a `.doc` whose fonts, headers, footers, notes,
   pictures or page setup matter; [plans.md](plans.md) §1 lists those steps.
   Encrypted and Word 6/95 files are still refused with `LEGACY_DOC`.

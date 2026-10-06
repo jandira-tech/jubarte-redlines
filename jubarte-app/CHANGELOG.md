@@ -10,6 +10,33 @@ a new version.
 
 ## [Unreleased]
 
+## [0.11.3] — 2026-10-06
+
+### Added
+- **Compare and Convert from Finder's right-click menu.** "Compare with
+  Jubarte" appears for two selected `.docx` files and "Convert to PDF with
+  Jubarte" for one or more, at the top of the menu. Each runs the app's
+  existing Finder service with the selection, so the sandboxed app reads
+  the files without a temporary entitlement exception.
+
+### Fixed
+- **The app bar moves the window from anywhere but Settings.** It took only
+  presses on the bar's own background; the title and version covered most
+  of it.
+
+### Changed
+- **Engine upgraded to jubarte-redlines 0.11.3**:
+  - **Math in exported PDFs follows Word.** Equations are set in Cambria
+    Math with italic letters, display equations are centred, and brackets
+    and separators are drawn where Word draws them.
+  - **The font report no longer passes a guessed face as a match.** A font
+    placed on an installed face only by its name's class counts as
+    substituted.
+  - **A package that repeats a relationship Id** with an identical
+    relationship opens (the repeat is dropped and reported); two different
+    relationships under one Id are refused, as Word refuses them.
+  On the release's two 600-item samples, scored against Word's own output: redlines mean 72.06 (Docxodus 65.15), counting as 0 the 23 redlines Word 16.115 crashes opening; PDFs mean 79.14 (LibreOffice 54.61) with no failed document.
+
 ## [0.11.2] — 2026-10-03
 
 ### Changed
