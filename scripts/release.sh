@@ -320,8 +320,28 @@ ghrel_has()   { gh release view "$TAG" >/dev/null 2>&1; }
 # The release carries every advertised wheel and the sdist. release.yml
 # creates the release first and attaches its assets after (0.11.2: step 11
 # found the release, then no wheel, and died minutes before they arrived).
-ghrel_wheels() { gh release view "$TAG" --json assets -q '.assets[].name' 2>/dev/null \
+ghrel_wheels() { gh release view "$TAG" --json assets -q '.assets[].name' </dev/null 2>/dev/null \
                    | python3 scripts/check_release_artifacts.py - --version "$VER" --sdist >/dev/null 2>&1; }
+# The CI wheels and sdist of $TAG into dist/pypi. gh gets no terminal: under
+# one (0.11.3 ran inside `script` for its log) the download's progress
+# display queried it (OSC 11, cursor position) and failed while the release
+# held all seven wheels, and the discarded error read as "no wheels". gh's
+# own words are kept, and a release that lists its whole set but would not
+# hand it over stops the run: a one-platform local wheel never stands in.
+download_ci_wheels() {
+  local err=dist/pypi-download.err
+  if gh release download "$TAG" --pattern 'jubarte_redlines-*' \
+      --dir dist/pypi --clobber </dev/null >/dev/null 2>"$err" \
+     && ls dist/pypi/*.whl >/dev/null 2>&1; then
+    rm -f "$err"
+    return 0
+  fi
+  echo "  ! gh release download $TAG failed:" >&2
+  sed 's/^/      /' "$err" >&2
+  ghrel_wheels \
+    && die "the $TAG release lists every wheel, but gh would not download them (above) — fix that (gh auth status, the network) and rerun; no local wheel stands in for them"
+  return 1
+}
 # A registry answers a fresh upload late: PyPI's project listing (0.11.2:
 # missing seconds after `uv publish`, listed a minute later), crates.io's
 # index, npm's view. Asks up to 12 times, 10 s apart.
@@ -1024,9 +1044,7 @@ else
   rm -rf dist/pypi; mkdir -p dist/pypi
   got_wheels=0
   if [ "$NO_WAIT" = 0 ]; then
-    if gh release download "$TAG" --pattern 'jubarte_redlines-*' \
-        --dir dist/pypi --clobber 2>/dev/null \
-       && ls dist/pypi/*.whl >/dev/null 2>&1; then
+    if download_ci_wheels; then
       got_wheels=1
     else
       echo "  ! CI wheels unavailable — falling back to a local wheel build" >&2
