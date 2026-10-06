@@ -1,0 +1,7 @@
+Traceback (most recent call last):
+  File "<string>", line 2, in <module>
+    d = docx.Document(sys.argv[1])
+  File "/opt/homebrew/lib/python3.14/site-packages/docx/api.py", line 30, in Document
+    raise ValueError(tmpl % (docx, document_part.content_type))
+ValueError: file 'broken_c_no_ct_override.docx' is not a Word file, content type is 'application/xml'
+exit=1

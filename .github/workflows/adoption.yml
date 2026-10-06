@@ -1,0 +1,132 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: AGPL-3.0-only
+
+name: adoption
+
+# The adoption pages (docs/adoption/) make one claim per row about what
+# jubarte replaces. This workflow keeps them honest: tests/adoption.rs runs
+# every row's jubarte command, and each examples/adoption/*/run.sh
+# regenerates its side-by-side outputs. Replaced tools (soffice, pdftoppm,
+# pandoc, bun) run when the runner has them and are skipped otherwise; the
+# jubarte side always runs. python-docx is installed, not probed: several
+# examples build their input documents with it, so without it the jubarte
+# side has nothing to run on. Actions are pinned as in ci.yml.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "src/**"
+      - "tests/adoption.rs"
+      - "tests/legacy_doc_convert.rs"
+      - "tests/fixtures/legacy/**"
+      - "examples/adoption/**"
+      - "jubarte-python/**"
+      - "docs/adoption/**"
+      - ".github/workflows/adoption.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  claims:
+    name: adoption claims (tests/adoption.rs)
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: one test per adoption-page row, and the .doc reader
+        run: cargo test --release --test adoption --test legacy_doc_convert --test legacy_doc
+
+  examples:
+    name: side-by-side examples (examples/adoption)
+    runs-on: self-hosted
+    needs: claims
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - run: cargo build --release --bin jubarte
+      # The examples' input generators (make_input.py and the like) import
+      # python-docx under `set -e`; 1.2.0 is the version the committed
+      # evidence records (examples/adoption/*/versions.txt). A venv first on
+      # PATH makes it the `python3` every run.sh calls.
+      - name: python-docx for the examples' input generators
+        run: |
+          uv venv "$RUNNER_TEMP/adoption-py"
+          uv pip install --python "$RUNNER_TEMP/adoption-py" python-docx==1.2.0
+          echo "$RUNNER_TEMP/adoption-py/bin" >> "$GITHUB_PATH"
+      - name: which replaced tools this runner has
+        run: |
+          for tool in soffice pdftoppm pdfinfo pdffonts pandoc bun uvx; do
+            if command -v "$tool" >/dev/null; then echo "$tool: $(command -v "$tool")"; else echo "$tool: absent (its side is skipped)"; fi
+          done
+          python3 -c 'import docx; print("python-docx", docx.__version__)'
+      - name: run every example
+        env:
+          JUBARTE: ${{ github.workspace }}/target/release/jubarte
+          # 17-mcp serves this checkout's Python package, not the PyPI release.
+          JUBARTE_MCP_FROM: jubarte-redlines[mcp] @ ${{ github.workspace }}/jubarte-python
+        run: |
+          failed=0
+          for script in examples/adoption/*/run.sh; do
+            echo "::group::$script"
+            if bash "$script"; then echo "ok: $script"; else echo "::error file=$script::exited $?"; failed=1; fi
+            echo "::endgroup::"
+          done
+          exit "$failed"
+      - name: every folder still has its README and jubarte output
+        run: |
+          missing=0
+          for dir in examples/adoption/*/; do
+            [ -f "$dir/README.md" ] || { echo "::error::$dir has no README.md"; missing=1; }
+            [ -f "$dir/run.sh" ] || { echo "::error::$dir has no run.sh"; missing=1; }
+            ls "$dir" | grep -qi jubarte || { echo "::error::$dir has no jubarte output"; missing=1; }
+          done
+          exit "$missing"
+      # Rasters and replaced-tool outputs depend on the runner's fonts and
+      # tool versions, so regenerated evidence is not byte-compared. A
+      # script that stops writing a committed jubarte file fails here, and
+      # what changed is listed for the reviewer. Some jubarte-named files
+      # need a replaced tool too: jubarte's document through soffice
+      # (`*_jubarte_soffice.png`, `pdf_page_size_*`), jubarte's PDF read by
+      # pdffonts, another tool's document through jubarte (`*_pandoc_*`,
+      # `*_docxjs_*`). Such a file may be missing only when a tool that
+      # makes it is absent on this runner.
+      - name: committed evidence is still produced
+        run: |
+          git status --porcelain -- examples/adoption
+          # Every tool a file's name involves, not the first match: a
+          # `*_pandoc_soffice*` file needs pandoc as well as soffice.
+          needs() {
+            case "$1" in *soffice*|*libreoffice*) echo soffice pdftoppm ;; esac
+            # 14's run.sh: soffice and pdftoppm open the branch, pdfinfo writes it.
+            case "$1" in *pdf_page_size_*) echo soffice pdftoppm pdfinfo ;; esac
+            case "$1" in *fonts_jubarte_pdf*) echo pdffonts ;; esac
+            case "$1" in *pandoc*) echo pandoc ;; esac
+            case "$1" in *docxjs*) echo bun ;; esac
+          }
+          deleted=""
+          for file in $(git ls-files --deleted -- examples/adoption | grep -i jubarte || true); do
+            excused=0
+            for tool in $(needs "$file"); do
+              command -v "$tool" >/dev/null || excused=1
+            done
+            [ "$excused" = 1 ] || deleted="$deleted $file"
+          done
+          if [ -n "$deleted" ]; then echo "::error::no longer produced:$deleted"; exit 1; fi
+          changed=$(git diff --name-only -- examples/adoption | wc -l | tr -d ' ')
+          echo "::notice::$changed committed evidence files differ after regeneration (fonts and tool versions vary by runner)"

@@ -1,0 +1,13 @@
+--- a/v1.docx
++++ b/v2.docx	Reviewer	2026-10-04T12:00:00Z
+@@ -[body:p:3] @@
+[-Work begins on 2 February 2026 and ends on 30 June 2026.
+
+Invoices are payable within thirty days of receipt.
+
+Either party may terminate with two weeks' written notice.-]
+
+@@ [body:p:4] @@
+{+Work begins on 9 February 2026 and ends on 30 June 2026.
+
+Invoices are payable within fifteen days of receipt.+}

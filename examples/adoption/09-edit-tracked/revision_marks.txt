@@ -1,0 +1,4 @@
+== w:ins / w:del elements in word/document.xml ==
+edit_pydocx.docx: 0 matches
+review/redline.docx:    3 <w:del 
+   1 <w:ins 

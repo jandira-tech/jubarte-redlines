@@ -1,0 +1,39 @@
+[body:p:0 Heading1] Services Agreement
+
+[body:p:1 Normal] This Agreement is made between **Acme Corp** and *Beta LLC*.
+
+[body:p:2 Heading2] 1. Fees
+
+[body:p:3 Normal] The fee is $1,000 per month [net 30] and #2 applies; use a_b * c.
+
+[body:p:4 Normal] Item
+
+[body:p:5 Normal] Price
+
+[body:p:6 Normal] Notes
+
+[body:p:7 Normal] Setup
+
+[body:p:8 Normal] 500
+
+[body:p:9 Normal] one-off
+
+[body:p:10 Normal] Support
+
+[body:p:11 Normal] 100
+
+[body:p:12 Normal] monthly
+
+[body:p:13 Heading2] 2. Term
+
+[body:p:14 ListParagraph] First bullet
+
+[body:p:15 ListParagraph] Nested bullet
+
+[body:p:16 ListParagraph] Second bullet
+
+[body:p:17 ListParagraph] Notice in writing
+
+[body:p:18 ListParagraph] Cure within ***ten*** days
+
+[body:p:19 Normal] The term is twelve months.

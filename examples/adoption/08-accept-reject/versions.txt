@@ -1,0 +1,2 @@
+jubarte: jubarte 0.11.2
+soffice: LibreOffice 26.8.0.3 bce0998afefdbc355585ca324285661a2170ba77

@@ -1,0 +1,5 @@
+pp_before-1.png vs pp_after-1.png: 17368 px differ (3.58%), bbox [72, 591, 536, 693]
+page 1: exit=1
+pp_before-2.png vs pp_after-2.png: 11567 px differ (2.39%), bbox [72, 72, 529, 169]
+page 2: exit=1
+soffice-side overall exit=1 (0 same, 1 a page differs)

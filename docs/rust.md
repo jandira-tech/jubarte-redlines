@@ -145,7 +145,7 @@ Commands:
   changes       List each tracked change with the id `accept --id`, `reject --id` and edit plans take
   accept        Accept tracked changes (package-wide) and write the result: every change, or those --id/--author/--kind select (the rest stay tracked)
   reject        Reject tracked changes (package-wide) and write the result: every change, or those --id/--author/--kind select (the rest stay tracked)
-  convert       Convert a .docx to PDF and/or PNG pages (independent of LibreOffice), or Markdown to .docx, PDF or PNG, with CriticMarkup as tracked changes
+  convert       Convert a .docx to PDF and/or PNG pages (independent of LibreOffice), or Markdown to .docx, PDF or PNG, with CriticMarkup as tracked changes, or a Word 97-2003 .doc to .docx (text, headings, lists, bold, italic and tables)
   diff          Compare two documents, Word or Markdown: the changed paragraphs as a patch on stdout, each change `[-old-]{+new+}` in its paragraph, and with --output a Word redline (.docx), CriticMarkup (.md) or a PDF with the changes painted
   inspect       Read a .docx: body paragraphs with ids, style, formatting spans and limitations, plus package facts
   text          Print the body as Markdown with a `[body:p:N]` id before every paragraph: the coordinates an edit plan uses
@@ -302,13 +302,13 @@ Options:
 
 ```text
 $ jubarte convert --help
-Convert a .docx to PDF and/or PNG pages (independent of LibreOffice), or Markdown to .docx, PDF or PNG, with CriticMarkup as tracked changes
+Convert a .docx to PDF and/or PNG pages (independent of LibreOffice), or Markdown to .docx, PDF or PNG, with CriticMarkup as tracked changes, or a Word 97-2003 .doc to .docx (text, headings, lists, bold, italic and tables)
 
 Usage: jubarte convert [OPTIONS] <FILE>
 
 Arguments:
   <FILE>
-          The document to convert: .docx, or Markdown (.md, .markdown)
+          The document to convert: .docx, Markdown (.md, .markdown), or a Word 97-2003 .doc (read into a .docx first)
 
 Options:
   -o, --output <FILE>
@@ -406,11 +406,17 @@ Options:
           
           [default: letter]
 
+      --no-page-markers
+          Word to Markdown: leave out the `<!-- page N of M -->` lines, and the layout pass that places them
+
       --pages <SPEC>
           Rasterize only these pages, counted from 1: `3`, `1-3,7`. Layout still runs over the whole document. Needs PNG output
 
       --fail-on-substitution
           Exit 4 when a requested font was substituted (listed on stderr and in --report). Every output is still written. Exit status: 0 ok, 1 error, 4 a requested font was substituted
+
+      --timeout <SECONDS>
+          Give up after this many seconds: exit 124 (as `timeout(1)`) with nothing more written. An output being written at that moment may be left partial
 
   -h, --help
           Print help (see a summary with '-h')
@@ -421,6 +427,8 @@ EXAMPLES:
   jubarte convert draft.md -o draft.pdf           the changes painted in a PDF
   jubarte convert draft.md --reference-doc house.docx -o draft.docx
   jubarte convert draft.md -t md --track-changes accept   the text with every change accepted
+  jubarte convert contract.docx -t md             Markdown with <!-- page N of M --> lines
+  jubarte convert old.doc                         old.docx (text, headings, lists, tables)
   jubarte convert notes.md --no-critic            {++ and the other delimiters as text
 ```
 

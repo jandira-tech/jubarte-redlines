@@ -437,8 +437,11 @@ def test_stdio_smoke_initialize_and_list_tools(tmp_path: Path) -> None:
         proc.stdin.write("".join(json.dumps(m) + "\n" for m in messages))
         proc.stdin.flush()
         listed = None
+        initialized = None
         for line in proc.stdout:
             reply = json.loads(line) if line.strip() else {}
+            if reply.get("id") == 1:
+                initialized = reply
             if reply.get("id") == 2:
                 listed = reply
                 break
@@ -452,6 +455,10 @@ def test_stdio_smoke_initialize_and_list_tools(tmp_path: Path) -> None:
             proc.kill()
     assert listed is not None, f"no tools/list reply; stderr: {stderr}"
     assert {t["name"] for t in listed["result"]["tools"]} == TOOLS
+    assert initialized is not None
+    import jubarte_redlines
+
+    assert initialized["result"]["serverInfo"] == {"name": "jubarte", "version": jubarte_redlines.__version__}
     assert "Traceback" not in stderr
 
 

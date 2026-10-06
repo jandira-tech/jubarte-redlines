@@ -66,7 +66,9 @@ pub(super) fn read(markdown: &str, options: &DocxOptions<'_>) -> Document {
     writer.finish()
 }
 
-fn parser_options() -> Options {
+/// The Markdown extensions jubarte reads, for the writer and for
+/// [`super::pages`].
+pub(super) fn parser_options() -> Options {
     Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
         | Options::ENABLE_STRIKETHROUGH

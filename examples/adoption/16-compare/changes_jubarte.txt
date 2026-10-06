@@ -1,0 +1,11 @@
+body:rev:1	deletion	paragraph_mark	Reviewer	""
+body:rev:2	deletion	text	Reviewer	"Work begins on 2 February 2026 and ends on 30 June 2026."
+body:rev:3	deletion	paragraph_mark	Reviewer	""
+body:rev:4	deletion	text	Reviewer	"Invoices are payable within thirty days of receipt."
+body:rev:5	deletion	paragraph_mark	Reviewer	""
+body:rev:6	deletion	text	Reviewer	"Either party may terminate with two weeks' written notice."
+body:rev:7	insertion	paragraph_mark	Reviewer	""
+body:rev:8	insertion	text	Reviewer	"Work begins on 9 February 2026 and ends on 30 June 2026."
+body:rev:9	insertion	paragraph_mark	Reviewer	""
+body:rev:10	insertion	text	Reviewer	"Invoices are payable within fifteen days of receipt."
+10 change(s)

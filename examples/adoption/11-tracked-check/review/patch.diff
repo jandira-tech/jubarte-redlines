@@ -1,0 +1,7 @@
+--- a/input.docx
++++ b/input.docx	Dana Reyes	2026-03-02T10:00:00Z
+@@ [body:p:5] @@
+The Company will invoice the Client monthly. The fee is [-nine-]{+one
+thousand one+} hundred USD per day, payable net thirty (30) days. [-The
+pilot phase is billed-]{+Late payments accrue interest+} at [-half
+rate.-]{+one percent per month.+}

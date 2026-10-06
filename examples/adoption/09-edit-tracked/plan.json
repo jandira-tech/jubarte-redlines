@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "source_sha256": "1c41e562028e36e4ba3ad042b26b17d9551e07f1eee65f8f8772bba7305de215",
+  "author": "Reviewer",
+  "date": "2026-10-04T12:00:00Z",
+  "operations": [
+    {
+      "id": "pay-term",
+      "kind": "replace",
+      "paragraph": { "starts_with": "Client shall pay all invoices" },
+      "find": "within thirty days of receipt",
+      "replacement": "within fifteen days of receipt"
+    },
+    {
+      "id": "drop-term",
+      "kind": "delete_paragraph",
+      "paragraph": { "starts_with": "This Agreement begins on January 1, 2026" }
+    }
+  ]
+}

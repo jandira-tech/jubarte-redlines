@@ -1,0 +1,4 @@
+  UNTRACKED_EDIT	word/document.xml#body:p:5	body:p:5 differs after rejecting Dana Reyes's changes: "The Company will invoice the Client monthly. The fee is one thousand one hundred USD per day, payable net thirty (30) days. Late payments accrue interest at one percent per month." vs "The Company will invoice the Client monthly. The fee is one thousand one hundred USD per day, payable net thirty (30) days. Late payments accrue interest at one percent per month. All amounts are exclusive of VAT."
+1 finding(s), 0 Word-fatal
+validate hand_edited exit=2
+validate hand_edited --json exit=2
