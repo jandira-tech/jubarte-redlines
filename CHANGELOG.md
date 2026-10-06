@@ -15,6 +15,18 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+### Changed
+
+- The desktop app is no longer tracked here: it is its own repository
+  (arthrod/jubarte-app), cloned untracked at `jubarte-app/` or named by
+  `JUBARTE_APP_DIR`. `scripts/release.sh` no longer bumps or commits the
+  app's files. It runs the app's `scripts/release-engine.sh` instead,
+  with `--preflight` at step 0 and in full as step 13: jubarte.pro, the
+  app's facts, and its version files on a `release/vX.Y.Z` pull request.
+  Step 14 is folded into it. `release_downstream.sh`, `check_site_live.py`
+  and `check_release_facts.py` moved to the app with their tests. The
+  app's CI builds the app, and the app has its own Dependabot config.
+
 ### Fixed
 
 - `scripts/release.sh` step 11 runs `gh release download` with no terminal

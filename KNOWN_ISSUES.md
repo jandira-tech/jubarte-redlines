@@ -35,7 +35,9 @@ opens, each variant alone in Word, then fix the writer with a test.
 
 **Alert:** GitHub reports one moderate vulnerability, `glib` ≥0.15 <0.20
 ("Unsoundness in `Iterator` and `DoubleEndedIterator` impls for
-`glib::VariantStrIter`") in `jubarte-app/src-tauri/Cargo.lock`.
+`glib::VariantStrIter`") in the desktop app's `src-tauri/Cargo.lock`
+(the app is its own repository now, arthrod/jubarte-app, so the alert
+lives there).
 
 **Why it stays open:** glib is only there through `gtk` 0.18, which Tauri 2
 uses for its Linux webview. gtk-rs/gtk3-rs was archived in March 2024, so no

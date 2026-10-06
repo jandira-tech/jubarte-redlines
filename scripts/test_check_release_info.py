@@ -36,7 +36,7 @@ D64 = "d" * 64  # the candidate binary's sha256
 
 REDLINE_HEADER = "key,base,base_sha256,next,next_sha256,docx,docx_sha256,pdf,pdf_sha256,state,id,sets,oracle,oracle_pdf,oracle_pdf_sha256,docxodus_pdf,docxodus_pdf_sha256,jubarte_docx,jubarte_docx_sha256,jubarte_pdf,jubarte_pdf_sha256"
 CONVERSION_HEADER = "state,stem,docx,docx_sha256,word_pdf,word_pdf_sha256,jubarte_pdf,jubarte_pdf_sha256,soffice_pdf,soffice_pdf_sha256"
-# the five keys scripts/check_release_facts.py reads to call a release done
+# the five keys the app's scripts/check_release_facts.py reads to call a release done
 FACTS_KEYS = ("engine.version", "engine.released", "release.history",
               "release.archives", "release.wheels")
 
@@ -411,7 +411,7 @@ class SixFiles(unittest.TestCase):
         path.write_text("".join(json.dumps(r) + "\n" for r in kept))
         r = self.check()
         self.assertEqual(r.returncode, 1, r.stderr)
-        self.assertIn("no record keyed release.wheels — scripts/check_release_facts.py reads it", r.stderr)
+        self.assertIn("no record keyed release.wheels — the app's scripts/check_release_facts.py reads it", r.stderr)
         # the five keys it reads, pending placeholders included, are enough
         path.write_text("".join(json.dumps({"key": k, "pending": True}) + "\n" for k in FACTS_KEYS))
         r = self.check()

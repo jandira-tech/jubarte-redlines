@@ -24,8 +24,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import check_site_live
-
 HERE = Path(__file__).resolve().parent
 RELEASE_SH = HERE / "release.sh"
 DOCS_FLAG = "--how-readme-and-other-docs-were-updated"
@@ -205,20 +203,18 @@ class Lessons0101(unittest.TestCase):
         s1 = step(1)
         self.assertNotIn("--no-deps", s1)
         self.assertIn("cargo update --offline", s1)
-        for d in ("jubarte-wasm", "jubarte-rust-inproc", "jubarte-app/src-tauri"):
+        for d in ("jubarte-wasm", "jubarte-rust-inproc"):
             self.assertIn(d, s1)
 
-    def test_the_desktop_app_follows_the_engine_version(self) -> None:
-        # tests/release_metadata.rs failed on main: jubarte-app stayed 0.10.0.
-        s1 = step(1)
-        for f in (
-            "jubarte-app/package.json",
-            "jubarte-app/src-tauri/tauri.conf.json",
-            "jubarte-app/src-tauri/Cargo.toml",
-            "jubarte-app/src/index.html",
-        ):
-            self.assertIn(f, s1)
-        self.assertIn("jubarte-app/CHANGELOG.md", step(2))
+    def test_the_desktop_app_is_released_by_its_own_repository(self) -> None:
+        # tests/release_metadata.rs failed on main when jubarte-app stayed
+        # 0.10.0. The app is its own repository now: this script touches none
+        # of its files and runs its scripts/release-engine.sh instead.
+        for n in (1, 2, 8):
+            code = [line for line in step(n).splitlines() if not line.lstrip().startswith("#")]
+            self.assertFalse([line for line in code if "jubarte-app/" in line], n)
+        self.assertIn("app_release --preflight", step(0))
+        self.assertIn("app_release", step(13))
 
     def test_a_resume_keeps_the_wasm_build_it_already_committed(self) -> None:
         # A resumed run rebuilt the package with a later ENGINE_COMMIT than
@@ -314,8 +310,8 @@ class Repairs0112(unittest.TestCase):
         s1 = step(1)
         self.assertIn('grep -q "^version = \\"$VER\\"$"', s1)
         self.assertIn("half-bumped", s1)
-        for f in ("jubarte-python/Cargo.toml", "jubarte-app/src-tauri/tauri.conf.json",
-                  "gemini-extension.json", "jubarte-app/src/index.html"):
+        for f in ("jubarte-python/Cargo.toml", "jubarte-wasm/npm/package.json",
+                  "gemini-extension.json", "README.md"):
             self.assertIn(f, s1)
         # the release commit carries the two crate manifests step 1 now bumps
         s8 = step(8)
@@ -370,103 +366,55 @@ class Repairs0112(unittest.TestCase):
         self.assertIn("format-checked only", s3)  # the no-bench branch says what is not proven
 
     def test_nothing_the_release_commit_stages_is_ignored(self) -> None:
-        # A "jubarte-app/" line in .gitignore made `git add` refuse the
-        # vendored app's version files, tracked as they are, and step 8
-        # would have stopped before the release commit.
+        # A "jubarte-app/" line in .gitignore once made `git add` refuse the
+        # then-vendored app's version files, and step 8 would have stopped
+        # before the release commit. Nothing it stages may be ignored, and
+        # the app (untracked since) is no part of it.
         s8 = step(8)
         start = s8.index("git add Cargo.toml")
         staged = s8[start:s8.index("git commit", start)].replace("\\\n", " ").split()[2:]
-        self.assertIn("jubarte-app/src-tauri/Cargo.toml", staged)
+        self.assertIn("jubarte-wasm/Cargo.toml", staged)
+        self.assertFalse([f for f in staged if f.startswith("jubarte-app/")], staged)
         run = subprocess.run(["git", "check-ignore", "--no-index", *staged],
                              cwd=HERE.parent, capture_output=True, text=True)
         self.assertEqual(run.stdout, "", "the release commit stages paths .gitignore ignores")
 
 
-DOWNSTREAM_SH = HERE / "release_downstream.sh"
+class AppStep(unittest.TestCase):
+    """The desktop app is its own repository (arthrod/jubarte-app), cloned
+    untracked at jubarte-app/ or named by JUBARTE_APP_DIR. Its
+    scripts/release-engine.sh is the app's whole part of a release (the site,
+    its facts, its version files, the printed App Store and bench commands)
+    and is tested there; here, only that this script runs it, and when."""
 
+    def test_step_0_runs_the_app_preflight_before_anything_changes(self) -> None:
+        text = RELEASE_SH.read_text()
+        call = "app_release --preflight"
+        self.assertLess(text.index('say "0. Preflight"'), text.index(call))
+        self.assertLess(text.index(call), text.index('say "1. '))
+        s0 = step(0)
+        self.assertIn('APP_REPO=${JUBARTE_APP_DIR:-jubarte-app}', s0)
+        self.assertIn('"$APP_REPO/scripts/release-engine.sh" "$VER" --engine-dir "$PWD"', s0)
+        self.assertIn("git clone https://github.com/arthrod/jubarte-app", s0)
 
-class Downstream(unittest.TestCase):
-    """Step 12: jubarte.pro, the jubarte-app commit, the App Store and the
-    benchmark. Each case runs a copy of release_downstream.sh in a throwaway
-    folder with --no-site, so nothing is deployed, pushed or uploaded."""
+    def test_step_13_runs_it_after_verify_and_is_the_last_step(self) -> None:
+        text = RELEASE_SH.read_text()
+        self.assertLess(text.index('say "12. Verify'), text.index('say "13. App'))
+        self.assertIn("app_release \\", step(13))
+        self.assertNotIn('say "14. ', text)
 
-    def setUp(self) -> None:
-        self.tmp = Path(tempfile.mkdtemp(prefix="downstream_sh_"))
-        (self.tmp / "scripts").mkdir()
-        shutil.copy(DOWNSTREAM_SH, self.tmp / "scripts" / "release_downstream.sh")
+    def test_nothing_here_still_calls_the_moved_scripts(self) -> None:
+        text = RELEASE_SH.read_text()
+        for gone in ("release_downstream.sh", "scripts/check_release_facts.py",
+                     "scripts/check_site_live.py"):
+            self.assertNotIn(gone, text.replace("jubarte-app/scripts/", ""), gone)
+            self.assertFalse((HERE / Path(gone).name).exists(), gone)
 
-    def tearDown(self) -> None:
-        shutil.rmtree(self.tmp, ignore_errors=True)
-
-    def run_downstream(self, *args: str) -> subprocess.CompletedProcess[str]:
-        # The gates run these tests inside a release, where JUBARTE_APP_DIR
-        # names the real app checkout: the copy must never be handed it.
-        env = {k: v for k, v in os.environ.items()
-               if k not in ("JUBARTE_APP_DIR", "JUBARTE_SITE_NO_DEPLOY")}
-        return subprocess.run(
-            ["bash", str(self.tmp / "scripts" / "release_downstream.sh"), *args],
-            capture_output=True, text=True, timeout=60, env=env,
-        )
-
-    def app_repo(self, branch: str) -> Path:
-        app = self.tmp / "jubarte-app"
-        app.mkdir()
-        git = ["git", "-C", str(app)]
-        subprocess.run([*git, "init", "-q", "-b", branch], check=True)
-        (app / "package.json").write_text('{"version": "0.10.2"}\n')
-        return app
-
-    def test_needs_a_release_version(self) -> None:
-        for args in ((), ("0.10",), ("v0.10.2",), ("0.10.2", "--bogus")):
-            self.assertEqual(self.run_downstream(*args).returncode, 2, args)
-
-    def test_stops_without_an_app_folder(self) -> None:
-        r = self.run_downstream("0.10.2", "--no-site")
-        self.assertEqual(r.returncode, 1, r.stderr)
-        self.assertIn("no jubarte-app/", r.stderr)
-
-    def test_an_app_folder_that_is_no_checkout_is_left_alone(self) -> None:
-        (self.tmp / "jubarte-app").mkdir()
-        r = self.run_downstream("0.10.2", "--no-site")
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("not its own checkout", r.stdout)
-
-    def test_an_app_off_main_is_listed_not_committed(self) -> None:
-        app = self.app_repo("feature")
-        r = self.run_downstream("0.10.2", "--no-site")
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("not main", r.stdout)
-        self.assertIn("package.json", r.stdout)
-        log = subprocess.run(["git", "-C", str(app), "log"], capture_output=True, text=True)
-        self.assertNotEqual(log.returncode, 0, "no commit was made")
-
-    def test_prints_the_app_store_and_bench_commands_without_running_them(self) -> None:
-        (self.tmp / "jubarte-app").mkdir()
-        out = self.run_downstream("0.10.2", "--no-site").stdout
-        self.assertIn("not uploaded (pass --app)", out)
-        self.assertIn("asc-new-version.py 0.10.2 --apply", out)
-        self.assertIn("Submit for Review", out)
-        self.assertIn("jubarte_release_info 0.10.2", out)
-        self.assertIn("scripts/release_jubarte.py 0.10.2", out)
-        self.assertIn("scripts/release.sh bench 0.10.2 --redline-tool jubarte-0.10.2", out)
-
-    def test_release_runs_it_after_verify(self) -> None:
-        s13 = RELEASE_SH.read_text().split('say "13. ', 1)[1]
-        self.assertIn('scripts/release_downstream.sh "$VER"', s13)
-        self.assertLess(
-            RELEASE_SH.read_text().index('say "12. Verify'),
-            RELEASE_SH.read_text().index('say "13. Downstream'),
-        )
-
-    def test_the_site_step_runs_the_site_release(self) -> None:
-        text = DOWNSTREAM_SH.read_text()
-        # Checked without a deploy first; the deploy is its own, later call.
-        self.assertLess(text.index('site release "$VER" --no-deploy'),
-                        text.index('site deploy "$VER"'))
-        # The upload is opt-in and review is never submitted from here.
-        self.assertIn('if [ "$APP" = 1 ]', text)
-        self.assertNotIn("--submit", text)
-
+    def test_the_app_is_not_tracked_here(self) -> None:
+        tracked = subprocess.run(["git", "ls-files", "jubarte-app"], cwd=HERE.parent,
+                                 capture_output=True, text=True, check=True).stdout
+        self.assertEqual(tracked, "")
+        self.assertIn("/jubarte-app/", (HERE.parent / ".gitignore").read_text().splitlines())
 
 
 class PushMain(unittest.TestCase):
@@ -579,709 +527,12 @@ esac
         result = self.push_main()
         self.assertNotEqual(result.returncode, 0)
 
-    def test_both_release_scripts_go_through_it(self) -> None:
-        for name in ("release.sh", "release_downstream.sh"):
-            text = (HERE / name).read_text()
-            self.assertIn("scripts/push_main.sh", text, name)
-            self.assertIn("push_main ", text, name)
-            self.assertNotIn("git push origin main", text, name)
-            self.assertNotIn("git push -q origin HEAD:main", text, name)
-
-
-SITE_LIVE_PY = HERE / "check_site_live.py"
-
-# The figures of a release, as its two results JSONs carry them (shrunk to
-# what the live check reads), and the benchmark page that prints them.
-EVIDENCE = {
-    "conversion": {
-        "jubarte": {"version": "jubarte 9.9.9", "n": 600, "failures": 0,
-                    "mean": 78.7687, "median": 80.8474},
-        "soffice": {"version": "LibreOffice 26.8.0.3", "n": 600, "failures": 4,
-                    "mean": 54.0623, "median": 47.7343},
-    },
-    "redline": {
-        "jubarte": {"version": "jubarte 9.9.9", "n": 1600, "failures": 0,
-                    "mean": 76.7059, "median": 84.2774},
-        "docxodus": {"version": "Docxodus 12.6.5 (C#)", "n": 1600, "failures": 23,
-                     "mean": 69.2382, "median": 78.8939},
-    },
-}
-STAMP = "10-03-26_19-45"
-
-
-def write_evidence(folder: Path, version: str = "9.9.9", evidence: dict | None = None) -> None:
-    folder.mkdir(parents=True, exist_ok=True)
-    for kind, tools in (evidence or EVIDENCE).items():
-        doc = {"release": version, "stamp": STAMP, "tools": tools}
-        (folder / f"results_{kind}_{version}_{STAMP}.json").write_text(json.dumps(doc))
-
-
-def bench_row(rank: int, name: str, pin: str, note: str, cells: tuple[str, ...]) -> str:
-    """One tool's row as the site's benchmark page writes it."""
-    spans = "".join(f'<span class="num" role="cell">{c}</span>\n' for c in cells)
-    return (f'<div class="t-row bench-cols" role="row">\n<span role="cell">{rank}</span>\n'
-            f'<div class="tool" role="rowheader"><div class="tool-name">{name}</div>'
-            f'<div class="tool-pin">{pin}</div></div>\n'
-            f'<div class="bar-cell" role="cell"><div class="bar"><div style="width:99.99%"></div></div>'
-            f'<span class="bar-note">{note}</span></div>\n{spans}</div>\n')
-
-
-def bench_page(conversion_median: str = "80.85", order: tuple[int, int] = (0, 1)) -> str:
-    """jubarte.pro/benchmark for EVIDENCE: a section per sample table, a
-    role="row" per tool. `conversion_median` is what jubarte's conversion row
-    prints; `order` swaps the two conversion rows' figures."""
-    conv = [(conversion_median, "78.77", "600", "0"), ("47.73", "54.06", "600", "4")]
-    head = '<div class="t-row head" role="row"><span role="columnheader">#</span></div>\n'
-    return (
-        "<!doctype html><html><body><main>\n"
-        '<p class="headline-v"><span>80.85</span></p>\n'
-        '<section class="mt-72" id="redlines-sample">\n<h2>Redlines — 600-pair sample</h2>\n' + head
-        + bench_row(1, "jubarte-9.9.9 †", "jubarte 9.9.9", "= 100: 61 · ≥ 90: 131",
-                    ("84.28", "76.71", "1,600", "0"))
-        + bench_row(2, "docxodus", "Docxodus 12.6.5 (C#)", "= 100: 41 · ≥ 90: 99",
-                    ("78.89", "69.24", "1,600", "23"))
-        + '</section>\n<section class="mt-72" id="conversion-sample">\n<h2>DOCX → PDF</h2>\n' + head
-        + bench_row(1, "jubarte †", "jubarte 9.9.9", "[80.29, 81.67]", conv[order[0]])
-        + bench_row(2, "soffice", "LibreOffice 26.8.0.3", "[47.31, 48.15]", conv[order[1]])
-        + "</section>\n</main></body></html>\n"
-    )
-
-
-class SiteLive(unittest.TestCase):
-    """scripts/check_site_live.py: jubarte.pro/benchmark must print the
-    figures of the release's two results JSONs. A stub `curl` serves the
-    page; nothing is fetched."""
-
-    def setUp(self) -> None:
-        self.tmp = Path(tempfile.mkdtemp(prefix="site_live_"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
-        self.info = self.tmp / "release_info"
-        write_evidence(self.info)
-
-    def differences(self, page: str) -> list[str]:
-        rows, problems = check_site_live.expected(self.info, "9.9.9")
-        self.assertEqual(problems, [])
-        return check_site_live.differences(page, rows)
-
-    def test_a_page_that_prints_the_figures_passes(self) -> None:
-        self.assertEqual(self.differences(bench_page()), [])
-
-    def test_a_wrong_median_is_named_with_what_the_row_says(self) -> None:
-        found = self.differences(bench_page(conversion_median="80.90"))
-        self.assertEqual(len(found), 1, found)
-        self.assertIn("conversion-sample / jubarte 9.9.9", found[0])
-        self.assertIn("median 80.85", found[0])
-        self.assertIn("80.90", found[0])
-
-    def test_another_tools_figures_do_not_pass_for_this_one(self) -> None:
-        found = "\n".join(self.differences(bench_page(order=(1, 0))))
-        self.assertIn("conversion-sample / jubarte 9.9.9", found)
-        self.assertIn("conversion-sample / LibreOffice 26.8.0.3", found)
-
-    def test_a_page_of_the_previous_release_fails_on_every_row_of_ours(self) -> None:
-        found = "\n".join(self.differences(bench_page().replace("jubarte 9.9.9", "jubarte 9.9.8")))
-        self.assertIn("conversion-sample / jubarte 9.9.9: no row of the page names it", found)
-        self.assertIn("redlines-sample / jubarte 9.9.9: no row of the page names it", found)
-
-    def test_a_page_without_the_table_says_so(self) -> None:
-        found = self.differences("<html><body>maintenance</body></html>")
-        self.assertIn('the page has no section id="conversion-sample"', found)
-        self.assertIn('the page has no section id="redlines-sample"', found)
-
-    def test_figures_read_as_the_page_prints_them(self) -> None:
-        # JavaScript's toFixed(2) and toLocaleString("en-US"): a half rounds
-        # up, a float that only looks like a half does not, thousands group.
-        self.assertEqual(check_site_live.fixed2(80.125), "80.13")
-        self.assertEqual(check_site_live.fixed2(1.005), "1.00")
-        self.assertEqual(check_site_live.fixed2(96), "96.00")
-        self.assertEqual(check_site_live.grouped(1600), "1,600")
-        self.assertEqual(check_site_live.grouped(600), "600")
-
-    def test_missing_or_doubled_evidence_is_a_problem_not_a_pass(self) -> None:
-        _, problems = check_site_live.expected(self.info, "9.9.8")
-        self.assertEqual(len(problems), 2, problems)
-        self.assertIn("results_conversion_9.9.8_*.json", problems[0])
-        (self.info / "results_redline_9.9.9_10-04-26_09-00.json").write_text("{}")
-        _, problems = check_site_live.expected(self.info, "9.9.9")
-        self.assertTrue(any("2 stamps" in p for p in problems), problems)
-
-    # --- the command, with a stub curl --------------------------------------
-
-    def cli(self, *args: str, pages: tuple[str, ...] = ()) -> subprocess.CompletedProcess[str]:
-        """Runs the script; the n-th curl call is served pages[n] (the last
-        one from then on)."""
-        bin_dir = self.tmp / "bin"
-        bin_dir.mkdir(exist_ok=True)
-        for n, page in enumerate(pages):
-            (self.tmp / f"page{n}.html").write_text(page)
-        (bin_dir / "curl").write_text(
-            '#!/bin/sh\necho "curl $*" >> "$CALLS"\n'
-            'n=$(($(wc -l < "$CALLS") - 1))\n'
-            'while [ ! -f "$PAGES/page$n.html" ]; do n=$((n - 1)); done\n'
-            'cat "$PAGES/page$n.html"\n')
-        (bin_dir / "curl").chmod(0o755)
-        self.calls = self.tmp / "calls.log"
-        self.calls.write_text("")
-        env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
-               "CALLS": str(self.calls), "PAGES": str(self.tmp)}
-        return subprocess.run(
-            ["python3", str(SITE_LIVE_PY), "9.9.9", "--release-info", str(self.info), *args],
-            capture_output=True, text=True, timeout=60, env=env)
-
-    def test_the_live_page_is_fetched_and_passes(self) -> None:
-        r = self.cli(pages=(bench_page(),))
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("https://jubarte.pro/benchmark?release=9.9.9", self.calls.read_text())
-        self.assertEqual(self.calls.read_text().count("curl "), 1)
-
-    def test_it_waits_for_the_deploy_to_spread(self) -> None:
-        r = self.cli("--tries", "3", "--wait", "0",
-                     pages=(bench_page(conversion_median="80.90"), bench_page()))
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self.calls.read_text().count("curl "), 2)
-
-    def test_a_page_that_never_shows_the_figures_fails_loudly(self) -> None:
-        r = self.cli("--tries", "2", "--wait", "0", pages=(bench_page(conversion_median="80.90"),))
-        self.assertEqual(r.returncode, 1, r.stderr)
-        self.assertIn("conversion-sample / jubarte 9.9.9", r.stderr)
-        self.assertIn("does not show", r.stderr)
-        self.assertEqual(self.calls.read_text().count("curl "), 2)
-
-    def test_a_built_page_is_read_without_a_fetch(self) -> None:
-        built = self.tmp / "benchmark.html"
-        built.write_text(bench_page())
-        r = self.cli("--page", str(built))
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self.calls.read_text(), "")
-        built.write_text(bench_page(conversion_median="80.90"))
-        self.assertEqual(self.cli("--page", str(built)).returncode, 1)
-
-    def test_no_evidence_exits_2_without_fetching(self) -> None:
-        shutil.rmtree(self.info)
-        r = self.cli(pages=(bench_page(),))
-        self.assertEqual(r.returncode, 2, r.stderr)
-        self.assertEqual(self.calls.read_text(), "")
-
-
-class DownstreamSite(unittest.TestCase):
-    """The site step of release_downstream.sh, run for real from a release
-    worktree: its jubarte-app/ is the vendored snapshot (no site in it), the
-    app repository is a separate checkout with its own origin. A stand-in
-    jubarte-site/scripts/release.sh keeps the real one's kinds, order and
-    refusals; pnpm, wrangler, curl, npm, node, uv and gh are stubs first on
-    PATH that log each call — nothing is installed, deployed or fetched."""
-
-    SITE_RELEASE = """#!/usr/bin/env bash
-# Stand-in for the app repository's jubarte-site/scripts/release.sh, with the
-# two kinds release_downstream.sh runs:
-#   scripts/release.sh release x.y.z --no-deploy
-#   scripts/release.sh deploy x.y.z
-set -euo pipefail
-cd "$(dirname "$0")/.."
-echo "site $* (ENGINE=${ENGINE:-} CHANGELOG=${CHANGELOG:-})" >> "$CALLS"
-case "$1" in
-  release)
-    [ "${3:-}" = --no-deploy ] || exit 9
-    # facts.py appends only the values that changed
-    grep -F "\\"value\\":\\"$2\\"" ../data/facts.jsonl >/dev/null \\
-      || printf '{"key":"engine.version","value":"%s"}\\n' "$2" >> ../data/facts.jsonl
-    pnpm test
-    pnpm lint
-    pnpm typecheck
-    ;;
-  deploy)
-    [ -z "$(git status --porcelain --untracked-files=no -- . ../data)" ] \\
-      || { echo "uncommitted changes" >&2; exit 1; }
-    pnpm run deploy
-    ;;
-  *) exit 2 ;;
-esac
-"""
-    PNPM = """#!/bin/sh
-echo "pnpm $*" >> "$CALLS"
-[ "${PNPM_FAIL:-}" = "$1" ] && exit 1
-# `pnpm test` builds the site before it tests it.
-[ "$1" = test ] && mkdir -p public && cp "$BUILT_PAGE" public/benchmark.html
-exit 0
-"""
-    CURL = '#!/bin/sh\necho "curl $*" >> "$CALLS"\ncat "$LIVE_PAGE"\n'
-    LOGGED = '#!/bin/sh\necho "{name} $*" >> "$CALLS"\n'
-    SUBJECT = "chore(site): jubarte.pro on v9.9.9"
-
-    def setUp(self) -> None:
-        self.tmp = Path(tempfile.mkdtemp(prefix="downstream_site_"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
-        self.engine = self.tmp / "engine"
-        self.origin = self.tmp / "app-origin.git"
-        self.app = self.tmp / "app"
-        self.calls = self.tmp / "calls.log"
-        self.gh_log = self.tmp / "gh.log"
-        self.built = self.tmp / "built.html"
-        self.live = self.tmp / "live.html"
-        for f in (self.calls, self.gh_log):
-            f.write_text("")
-        for f in (self.built, self.live):
-            f.write_text(bench_page())
-
-        # the release worktree of the engine
-        (self.engine / "scripts").mkdir(parents=True)
-        for name in ("release_downstream.sh", "push_main.sh", "check_site_live.py"):
-            shutil.copy(HERE / name, self.engine / "scripts" / name)
-        (self.engine / "jubarte-app").mkdir()
-        (self.engine / "jubarte-app" / "package.json").write_text('{"version": "9.9.9"}\n')
-        (self.engine / "CHANGELOG.md").write_text("## [9.9.9] - 2026-10-09\n")
-        write_evidence(self.engine / "release_info")
-
-        bin_dir = self.tmp / "bin"
-        bin_dir.mkdir()
-        stubs = {"gh": PushMain.GH, "pnpm": self.PNPM, "curl": self.CURL}
-        for name in ("wrangler", "npm", "node", "uv"):
-            stubs[name] = self.LOGGED.format(name=name)
-        for name, body in stubs.items():
-            (bin_dir / name).write_text(body)
-            (bin_dir / name).chmod(0o755)
-        self.env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
-                    "CALLS": str(self.calls), "GH_LOG": str(self.gh_log),
-                    "ORIGIN": str(self.origin), "BUILT_PAGE": str(self.built),
-                    "LIVE_PAGE": str(self.live), "JUBARTE_APP_DIR": str(self.app),
-                    "SITE_LIVE_TRIES": "2", "SITE_LIVE_WAIT_SECONDS": "0",
-                    "PUSH_MAIN_RETRY_SECONDS": "0",
-                    "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
-                    "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com"}
-        self.env.pop("JUBARTE_SITE_NO_DEPLOY", None)
-
-        # the app repository: an origin, and the checkout the release is given
-        self.git("init", "-q", "--bare", str(self.origin), cwd=self.tmp)
-        self.git("symbolic-ref", "HEAD", "refs/heads/main", cwd=self.origin)
-        self.git("clone", "-q", str(self.origin), str(self.app), cwd=self.tmp)
-        self.git("checkout", "-q", "-b", "main")
-        site = self.app / "jubarte-site"
-        (site / "scripts").mkdir(parents=True)
-        (site / "scripts" / "release.sh").write_text(self.SITE_RELEASE)
-        (site / "scripts" / "release.sh").chmod(0o755)
-        (site / "package.json").write_text('{"name": "jubarte-site"}\n')
-        (self.app / "data").mkdir()
-        (self.app / "data" / "facts.jsonl").write_text('{"key":"engine.version","value":"9.9.8"}\n')
-        (self.app / "README.md").write_text("the app\n")
-        (self.app / ".gitignore").write_text("node_modules/\npublic/\n")
-        # what a checkout that can build the site holds, untracked
-        (site / "node_modules").mkdir()
-        (site / "public" / "fixtures").mkdir(parents=True)
-        self.git("add", "-A")
-        self.git("commit", "-q", "-m", "base")
-        self.git("push", "-q", "origin", "main")
-        self.base = self.git("rev-parse", "HEAD")
-
-    def git(self, *args: str, cwd: Path | None = None) -> str:
-        return subprocess.run(["git", *args], cwd=cwd or self.app, env=self.env,
-                              capture_output=True, text=True, check=True).stdout.strip()
-
-    def run_downstream(self, *args: str, **env: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            ["bash", str(self.engine / "scripts" / "release_downstream.sh"), "9.9.9", *args],
-            capture_output=True, text=True, timeout=120, env={**self.env, **env})
-
-    def origin_main(self) -> str:
-        return self.git("rev-parse", "main", cwd=self.origin)
-
-    def called(self) -> str:
-        return self.calls.read_text()
-
-    def facts(self) -> str:
-        return (self.app / "data" / "facts.jsonl").read_text()
-
-    def assert_nothing_deployed(self) -> None:
-        for call in ("site deploy", "pnpm run deploy", "wrangler", "curl"):
-            self.assertNotIn(call, self.called())
-
-    def protect_main(self) -> None:
-        hook = self.origin / "hooks" / "pre-receive"
-        hook.write_text(PushMain.HOOK)
-        hook.chmod(0o755)
-
-    # --- where the app checkout comes from ----------------------------------
-
-    def test_a_release_worktree_says_what_to_pass(self) -> None:
-        env = {k: v for k, v in self.env.items() if k != "JUBARTE_APP_DIR"}
-        r = subprocess.run(
-            ["bash", str(self.engine / "scripts" / "release_downstream.sh"), "9.9.9"],
-            capture_output=True, text=True, timeout=60, env=env)
-        self.assertEqual(r.returncode, 1, r.stderr)
-        self.assertIn("vendored snapshot", r.stderr)
-        self.assertIn("JUBARTE_APP_DIR=", r.stderr)
-        self.assertIn("--app-dir", r.stderr)
-        self.assertEqual(self.called(), "")
-        self.assertEqual(self.origin_main(), self.base)
-
-    def test_a_named_folder_that_is_not_the_app_is_refused(self) -> None:
-        r = self.run_downstream(JUBARTE_APP_DIR=str(self.engine / "jubarte-app"))
-        self.assertEqual(r.returncode, 1, r.stderr)
-        self.assertIn("not a checkout of the app repository", r.stderr)
-        self.assertEqual(self.called(), "")
-
-    def test_the_named_checkout_is_released_from_a_release_worktree(self) -> None:
-        r = self.run_downstream()
-        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
-        engine = self.engine.resolve()
-        self.assertEqual(self.called().splitlines(), [
-            f"site release 9.9.9 --no-deploy (ENGINE={engine} CHANGELOG={engine}/CHANGELOG.md)",
-            "pnpm test", "pnpm lint", "pnpm typecheck",
-            f"site deploy 9.9.9 (ENGINE={engine} CHANGELOG={engine}/CHANGELOG.md)",
-            "pnpm run deploy",
-            "curl -fsSL https://jubarte.pro/benchmark?release=9.9.9",
-        ])
-        # the facts are committed in the app repository, and on its main
-        self.assertEqual(self.git("log", "-1", "--format=%s"), self.SUBJECT)
-        self.assertEqual(self.git("show", "--name-only", "--format=", "HEAD"), "data/facts.jsonl")
-        self.assertEqual(self.origin_main(), self.git("rev-parse", "HEAD"))
-        self.assertEqual(self.git("status", "--porcelain"), "")
-        self.assertEqual(self.gh_log.read_text(), "")
-        self.assertIn("jubarte.pro/benchmark shows", r.stdout)
-
-    def test_the_flag_names_the_checkout_too(self) -> None:
-        env = {k: v for k, v in self.env.items() if k != "JUBARTE_APP_DIR"}
-        r = subprocess.run(
-            ["bash", str(self.engine / "scripts" / "release_downstream.sh"), "9.9.9",
-             "--app-dir", str(self.app)],
-            capture_output=True, text=True, timeout=120, env=env)
-        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
-        self.assertEqual(self.git("log", "-1", "--format=%s"), self.SUBJECT)
-
-    # --- once, and in order --------------------------------------------------
-
-    def test_the_records_are_merged_once_and_only_once(self) -> None:
-        self.assertEqual(self.run_downstream().returncode, 0)
-        facts, head = self.facts(), self.origin_main()
-        self.assertEqual(facts.count('"9.9.9"'), 1)
-        again = self.run_downstream()
-        self.assertEqual(again.returncode, 0, again.stderr + again.stdout)
-        self.assertEqual(self.facts(), facts)
-        self.assertEqual(self.origin_main(), head)
-        self.assertEqual(self.git("log", "--format=%s").count(self.SUBJECT), 1)
-        self.assertIn("nothing to commit", again.stdout)
-
-    def test_a_failing_check_stops_before_the_commit_and_the_deploy(self) -> None:
-        r = self.run_downstream(PNPM_FAIL="lint")
-        self.assertEqual(r.returncode, 1, r.stdout)
-        self.assertIn("site checks failed", r.stderr)
-        self.assertIn("rerun scripts/release_downstream.sh 9.9.9", r.stderr)
-        self.assertIn("pnpm lint", self.called())
-        self.assert_nothing_deployed()
-        self.assertEqual(self.git("rev-parse", "HEAD"), self.base)
-        self.assertEqual(self.origin_main(), self.base)
-
-    def test_a_built_page_without_the_figures_stops_before_the_commit_and_the_deploy(self) -> None:
-        self.built.write_text(bench_page(conversion_median="80.90"))
-        r = self.run_downstream()
-        self.assertEqual(r.returncode, 1, r.stdout)
-        self.assertIn("conversion-sample / jubarte 9.9.9", r.stderr)
-        self.assertIn("built benchmark page", r.stderr)
-        self.assert_nothing_deployed()
-        self.assertEqual(self.origin_main(), self.base)
-
-    def test_no_deploy_does_everything_else_and_says_so(self) -> None:
-        for how in ({"args": ("--no-deploy",)}, {"env": {"JUBARTE_SITE_NO_DEPLOY": "1"}}):
-            with self.subTest(how=how):
-                self.calls.write_text("")
-                r = self.run_downstream(*how.get("args", ()), **how.get("env", {}))
-                self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
-                self.assertIn("pnpm typecheck", self.called())
-                self.assert_nothing_deployed()
-                self.assertIn("not deployed (--no-deploy)", r.stdout)
-                self.assertIn("scripts/release_downstream.sh 9.9.9", r.stdout)
-                self.assertEqual(self.git("log", "-1", "--format=%s"), self.SUBJECT)
-                self.assertEqual(self.origin_main(), self.git("rev-parse", "HEAD"))
-
-    def test_the_live_check_fails_on_a_mismatch(self) -> None:
-        self.live.write_text(bench_page(conversion_median="80.90"))
-        r = self.run_downstream()
-        self.assertEqual(r.returncode, 1, r.stdout)
-        self.assertIn("conversion-sample / jubarte 9.9.9", r.stderr)
-        self.assertIn("median 80.85", r.stderr)
-        self.assertIn("jubarte.pro/benchmark does not show", r.stderr)
-        self.assertIn("python3 scripts/check_site_live.py 9.9.9", r.stderr)
-        # it was deployed, and asked SITE_LIVE_TRIES times
-        self.assertIn("pnpm run deploy", self.called())
-        self.assertEqual(self.called().count("curl "), 2)
-
-    def test_a_failed_deploy_names_the_step_and_the_rerun(self) -> None:
-        r = self.run_downstream(PNPM_FAIL="run")
-        self.assertEqual(r.returncode, 1, r.stdout)
-        self.assertIn("the deploy failed", r.stderr)
-        self.assertIn("rerun scripts/release_downstream.sh 9.9.9", r.stderr)
-        self.assertNotIn("curl", self.called())
-        # the facts are on main already: the rerun only deploys
-        self.assertEqual(self.origin_main(), self.git("rev-parse", "HEAD"))
-        again = self.run_downstream()
-        self.assertEqual(again.returncode, 0, again.stderr + again.stdout)
-        self.assertEqual(self.git("log", "--format=%s").count(self.SUBJECT), 1)
-
-    # --- reaching the app's main ---------------------------------------------
-
-    def test_a_main_that_wants_a_pull_request_gets_the_facts_through_one(self) -> None:
-        self.protect_main()
-        r = self.run_downstream()
-        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
-        gh = self.gh_log.read_text()
-        self.assertIn("pr create --base main --head chore/site-v9.9.9", gh)
-        self.assertIn("pr merge chore/site-v9.9.9 --merge", gh)
-        parents = self.git("rev-list", "--parents", "-n", "1", "main", cwd=self.origin).split()
-        self.assertEqual(len(parents), 3)
-        self.assertEqual(self.git("log", "-1", "--format=%s", parents[2]), self.SUBJECT)
-        # the checkout is what main holds, and that is what was deployed
-        self.assertEqual(self.git("rev-parse", "HEAD"), self.origin_main())
-        self.assertLess(self.called().index("site release"), self.called().index("site deploy"))
-
-    def test_a_main_that_takes_neither_way_deploys_nothing(self) -> None:
-        self.protect_main()
-        r = self.run_downstream(ORIGIN=str(self.tmp / "nowhere.git"))  # the stub's merge fails
-        self.assertEqual(r.returncode, 1, r.stdout)
-        self.assertIn("did not reach the app's main", r.stderr)
-        self.assert_nothing_deployed()
-        self.assertEqual(self.origin_main(), self.base)
-
-    def test_a_rerun_pushes_the_commit_an_earlier_run_left_behind(self) -> None:
-        self.protect_main()
-        self.assertEqual(self.run_downstream(ORIGIN=str(self.tmp / "nowhere.git")).returncode, 1)
-        self.assertEqual(self.git("log", "-1", "--format=%s"), self.SUBJECT)
-        r = self.run_downstream()
-        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
-        self.assertEqual(self.git("rev-parse", "HEAD"), self.origin_main())
-        self.assertIn("pnpm run deploy", self.called())
-
-    # --- a checkout the release must not deploy from --------------------------
-
-    def refused(self, needle: str) -> None:
-        r = self.run_downstream()
-        self.assertEqual(r.returncode, 1, r.stdout)
-        self.assertIn(needle, r.stderr)
-        self.assertEqual(self.called(), "")
-        self.assertEqual(self.origin_main(), self.base)
-
-    def test_an_app_checkout_off_main_is_refused(self) -> None:
-        self.git("checkout", "-q", "-b", "release/v9.9.9")
-        self.refused("is on release/v9.9.9, not main")
-
-    def test_an_app_checkout_with_other_changes_is_refused(self) -> None:
-        (self.app / "README.md").write_text("edited\n")
-        self.refused("README.md")
-
-    def test_an_app_checkout_behind_its_origin_is_refused(self) -> None:
-        other = self.tmp / "other"
-        self.git("clone", "-q", str(self.origin), str(other), cwd=self.tmp)
-        (other / "new").write_text("new\n")
-        self.git("add", "new", cwd=other)
-        self.git("commit", "-q", "-m", "someone else's", cwd=other)
-        self.git("push", "-q", "origin", "HEAD:main", cwd=other)
-        self.base = self.origin_main()
-        self.refused("behind its origin's main")
-
-    def test_an_app_checkout_with_unpushed_commits_is_refused(self) -> None:
-        (self.app / "new").write_text("new\n")
-        self.git("add", "new")
-        self.git("commit", "-q", "-m", "local work")
-        self.refused("local work")
-
-    def test_a_checkout_that_cannot_build_the_site_is_refused(self) -> None:
-        shutil.rmtree(self.app / "jubarte-site" / "public")
-        self.refused("fixtures")
-
-    def test_an_older_site_script_is_refused(self) -> None:
-        script = self.app / "jubarte-site" / "scripts" / "release.sh"
-        script.write_text("#!/usr/bin/env bash\n# scripts/release.sh engine x.y.z\nexit 2\n")
-        self.git("commit", "-q", "-am", "an older site")
-        self.git("push", "-q", "origin", "main")
-        self.base = self.origin_main()
-        self.refused("update it")
-
-    def test_a_resumed_run_takes_the_changes_an_earlier_one_left(self) -> None:
-        self.assertEqual(self.run_downstream(PNPM_FAIL="typecheck").returncode, 1)
-        self.assertIn("M data/facts.jsonl", self.git("status", "--porcelain"))
-        r = self.run_downstream()
-        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
-        self.assertEqual(self.facts().count('"9.9.9"'), 1)
-        self.assertEqual(self.origin_main(), self.git("rev-parse", "HEAD"))
-
-    # --- before the release publishes anything --------------------------------
-
-    def test_preflight_checks_the_checkout_and_runs_nothing(self) -> None:
-        r = self.run_downstream("--preflight")
-        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
-        self.assertIn(str(self.app), r.stdout)
-        self.assertEqual(self.called(), "")
-        self.assertEqual(self.git("rev-parse", "HEAD"), self.base)
-        self.git("checkout", "-q", "-b", "feature")
-        self.assertEqual(self.run_downstream("--preflight").returncode, 1)
-
-    def test_release_runs_the_preflight_before_it_changes_anything(self) -> None:
+    def test_the_release_goes_through_it(self) -> None:
         text = RELEASE_SH.read_text()
-        call = 'scripts/release_downstream.sh "$VER" --preflight'
-        self.assertIn(call, text)
-        self.assertLess(text.index('say "0. Preflight"'), text.index(call))
-        self.assertLess(text.index(call), text.index('say "1. '))
-
-
-REAL_APP = os.environ.get("JUBARTE_SITE_TEST_APP", "")
-
-
-@unittest.skipUnless(
-    REAL_APP and shutil.which("node") and shutil.which("uv"),
-    "JUBARTE_SITE_TEST_APP=<an app repository checkout> runs the two repositories together",
-)
-class DownstreamRealSite(unittest.TestCase):
-    """The same step with the app repository's own scripts: its site release
-    script, sync-release, sync-bench, check-bench and facts.py run for real
-    (node, uv) on a throwaway copy of that checkout, against this checkout's
-    release_info. The page the stub `pnpm test` builds and the stub `curl`
-    serves is rendered by the site's own benchmark template, so the live
-    check reads the markup jubarte.pro really prints. Still nothing is
-    installed, deployed or fetched: pnpm, wrangler, npm, gh and curl are stubs."""
-
-    GH = PushMain.GH.replace('case "$1 $2" in', """case "$1 $2" in
-  "release view")
-    case "$*" in
-      *'.assets[].name'*) cat "$ASSETS.txt" ;;
-      *) cat "$ASSETS.json" ;;
-    esac ;;""")
-    PNPM = """#!/bin/sh
-echo "pnpm $*" >> "$CALLS"
-[ "${PNPM_FAIL:-}" = "$1" ] && exit 1
-# `pnpm test` builds the site first; the benchmark page is all the check reads.
-[ "$1" = test ] && node --input-type=module -e '
-import { mkdirSync, writeFileSync } from "node:fs";
-import { benchmarkPage } from "./site/pages/benchmark.ts";
-mkdirSync("public", { recursive: true });
-writeFileSync("public/benchmark.html", benchmarkPage({ bench: "convert", id: "c-1" }).body);'
-exit 0
-"""
-    FILES = ("data/facts.jsonl", "scripts/facts.py", "jubarte-site/package.json",
-             "jubarte-site/pnpm-workspace.yaml", "jubarte-site/scripts/release.sh",
-             "jubarte-site/scripts/sync-bench.ts", "jubarte-site/scripts/sync-release.ts",
-             "jubarte-site/scripts/check-bench.ts", "jubarte-site/test/fixtures/RESULTS.md")
-
-    def setUp(self) -> None:
-        import re
-
-        import check_release_artifacts
-
-        self.tmp = Path(tempfile.mkdtemp(prefix="downstream_real_"))
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
-        root = HERE.parent
-        found = sorted((root / "release_info").glob("website_data_*.jsonl"))
-        self.assertEqual(len(found), 1, "one release's evidence in release_info/")
-        self.ver = re.match(r"website_data_(\d+\.\d+\.\d+)_", found[0].name).group(1)
-        self.engine = self.tmp / "engine"
-        self.origin = self.tmp / "app-origin.git"
-        self.app = self.tmp / "app"
-        self.calls = self.tmp / "calls.log"
-        self.gh_log = self.tmp / "gh.log"
-        for f in (self.calls, self.gh_log):
-            f.write_text("")
-
-        (self.engine / "scripts").mkdir(parents=True)
-        for name in ("release_downstream.sh", "push_main.sh", "check_site_live.py",
-                     "check_release_facts.py", "check_release_artifacts.py"):
-            shutil.copy(HERE / name, self.engine / "scripts" / name)
-        shutil.copytree(root / "release_info", self.engine / "release_info")
-        shutil.copy(root / "CHANGELOG.md", self.engine / "CHANGELOG.md")
-        (self.engine / "jubarte-app").mkdir()
-
-        bin_dir = self.tmp / "bin"
-        bin_dir.mkdir()
-        stubs = {"gh": self.GH, "pnpm": self.PNPM,
-                 # the download page for the site's own check, else the benchmark page
-                 "curl": '#!/bin/sh\necho "curl $*" >> "$CALLS"\ncase "$*" in\n'
-                         f'  */download*) echo "<h2>Engine: jubarte-redlines {self.ver}</h2>" ;;\n'
-                         '  *) cat "$LIVE_PAGE" ;;\nesac\n',
-                 "npm": f'#!/bin/sh\n[ "$1" = view ] && echo {self.ver}\nexit 0\n',
-                 "wrangler": '#!/bin/sh\necho "wrangler $*" >> "$CALLS"\n'}
-        for name, body in stubs.items():
-            (bin_dir / name).write_text(body)
-            (bin_dir / name).chmod(0o755)
-        v = self.ver
-        assets = [f"jubarte-{v}-{t}" for t in (
-            "linux-x86_64.tar.gz", "linux-aarch64.tar.gz", "macos-aarch64.tar.gz",
-            "macos-x86_64.tar.gz", "windows-x86_64.zip")]
-        assets += [f"jubarte_redlines-{v}-cp310-abi3-{tag}.whl"
-                   for tag in check_release_artifacts.REQUIRED_WHEEL_TAGS]
-        assets += [f"jubarte_redlines-{v}.tar.gz", "SHA256SUMS.txt"]
-        (self.tmp / "assets.txt").write_text("\n".join(assets) + "\n")
-        (self.tmp / "assets.json").write_text(json.dumps([{"name": a, "size": 1} for a in assets]))
-        self.env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
-                    "CALLS": str(self.calls), "GH_LOG": str(self.gh_log),
-                    "ORIGIN": str(self.origin), "ASSETS": str(self.tmp / "assets"),
-                    "LIVE_PAGE": str(self.app / "jubarte-site" / "public" / "benchmark.html"),
-                    "JUBARTE_APP_DIR": str(self.app),
-                    "SITE_LIVE_TRIES": "2", "SITE_LIVE_WAIT_SECONDS": "0",
-                    "LIVE_TRIES": "2", "LIVE_WAIT_SECONDS": "0",
-                    "PUSH_MAIN_RETRY_SECONDS": "0",
-                    "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
-                    "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com"}
-        self.env.pop("JUBARTE_SITE_NO_DEPLOY", None)
-
-        self.git("init", "-q", "--bare", str(self.origin), cwd=self.tmp)
-        self.git("symbolic-ref", "HEAD", "refs/heads/main", cwd=self.origin)
-        self.git("clone", "-q", str(self.origin), str(self.app), cwd=self.tmp)
-        self.git("checkout", "-q", "-b", "main")
-        real = Path(REAL_APP)
-        for rel in self.FILES:
-            (self.app / rel).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy(real / rel, self.app / rel)
-        for folder in ("site", "src"):
-            shutil.copytree(real / "jubarte-site" / folder, self.app / "jubarte-site" / folder)
-        (self.app / ".gitignore").write_text("node_modules/\npublic/\n")
-        (self.app / "jubarte-site" / "node_modules").mkdir()
-        (self.app / "jubarte-site" / "public" / "fixtures").mkdir(parents=True)
-        self.git("add", "-A")
-        self.git("commit", "-q", "-m", "base")
-        self.git("push", "-q", "origin", "main")
-        self.base = self.git("rev-parse", "HEAD")
-
-    def git(self, *args: str, cwd: Path | None = None) -> str:
-        return subprocess.run(["git", *args], cwd=cwd or self.app, env=self.env,
-                              capture_output=True, text=True, check=True).stdout.strip()
-
-    def run_downstream(self, *args: str, **env: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            ["bash", str(self.engine / "scripts" / "release_downstream.sh"), self.ver, *args],
-            capture_output=True, text=True, timeout=300, env={**self.env, **env})
-
-    def test_the_release_lands_on_the_apps_main_once_and_step_14_passes(self) -> None:
-        r = self.run_downstream()
-        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
-        self.assertIn(f"shows the {self.ver} figures", r.stdout)
-        self.assertIn("pnpm run deploy", self.calls.read_text())
-        head = self.git("rev-parse", "HEAD")
-        self.assertNotEqual(head, self.base)
-        self.assertEqual(self.git("rev-parse", "main", cwd=self.origin), head)
-        self.assertEqual(self.git("status", "--porcelain", "--untracked-files=no"), "")
-        facts = (self.app / "data" / "facts.jsonl").read_text()
-        # step 14, as release.sh runs it: the app checkout from the environment
-        step14 = subprocess.run(
-            ["python3", str(self.engine / "scripts" / "check_release_facts.py"), self.ver],
-            capture_output=True, text=True, env=self.env)
-        self.assertEqual(step14.returncode, 0, step14.stderr)
-
-        again = self.run_downstream()
-        self.assertEqual(again.returncode, 0, again.stderr + again.stdout)
-        self.assertEqual((self.app / "data" / "facts.jsonl").read_text(), facts)
-        self.assertEqual(self.git("rev-parse", "HEAD"), head)
-        self.assertEqual(self.git("rev-parse", "main", cwd=self.origin), head)
-
-    def test_evidence_the_site_does_not_print_is_not_committed_or_deployed(self) -> None:
-        # A results file that says something else than website_data: the
-        # site's own proof refuses it, before the commit and the deploy.
-        doc = next((self.engine / "release_info").glob("results_conversion_*.json"))
-        data = json.loads(doc.read_text())
-        data["tools"]["soffice"]["failures"] += 1
-        doc.write_text(json.dumps(data))
-        r = self.run_downstream()
-        self.assertEqual(r.returncode, 1, r.stdout)
-        self.assertIn("site checks failed", r.stderr)
-        self.assertNotIn("deploy", self.calls.read_text())
-        self.assertNotIn("curl", self.calls.read_text())
-        self.assertEqual(self.git("rev-parse", "HEAD"), self.base)
-        self.assertEqual(self.git("rev-parse", "main", cwd=self.origin), self.base)
+        self.assertIn("scripts/push_main.sh", text)
+        self.assertIn("push_main ", text)
+        self.assertNotIn("git push origin main", text)
+        self.assertNotIn("git push -q origin HEAD:main", text)
 
 
 class Header(unittest.TestCase):
@@ -1803,7 +1054,7 @@ class Checklist(unittest.TestCase):
 
     def test_item_8_app_repository_release_files(self) -> None:
         self.kw("facts.jsonl")
-        self.kw("vendored")  # the stale snapshot that is never the app to build
+        self.kw("app-at-main")  # the app builds against the engine at the tag
 
     def test_item_9_credentials_and_human_steps(self) -> None:
         self.kw("UV_PUBLISH_TOKEN")
@@ -1831,7 +1082,7 @@ class Checklist(unittest.TestCase):
 
     def test_item_11_the_app_checkout_is_named_and_checked_first(self) -> None:
         self.kw("JUBARTE_APP_DIR")
-        self.kw("scripts/release_downstream.sh 0.11.3 --preflight")
+        self.kw("jubarte-app/scripts/release-engine.sh 0.11.3 --engine-dir . --preflight")
 
     def test_item_12_mac_app_store(self) -> None:
         self.kw("App Store")

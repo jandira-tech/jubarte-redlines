@@ -93,4 +93,7 @@ Claude outputs/
 /fuzz/target/
 /fuzz/Cargo.lock
 .env
-jubarte-app/.impeccable/
+
+# The desktop app is its own repository (arthrod/jubarte-app), cloned here
+# untracked: scripts/release.sh runs its scripts/release-engine.sh.
+/jubarte-app/

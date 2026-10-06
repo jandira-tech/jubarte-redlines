@@ -3,7 +3,8 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Sourced by scripts/release.sh and scripts/release_downstream.sh.
+# Sourced by scripts/release.sh (the app repository keeps its own copy for
+# its scripts/release-engine.sh).
 #
 #   push_main BRANCH TITLE BODY
 #

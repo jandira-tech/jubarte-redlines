@@ -8,8 +8,9 @@
 //!
 //! These do not re-test `convert::docx_to_pdf` itself (unchanged in this
 //! diff) — only the new/edited files: fonts, licenses, `REUSE.toml`,
-//! `Cargo.toml`, `Cargo.lock`, `CHANGELOG.md`, and `jubarte-app`'s
-//! `package.json` / `CHANGELOG.md`.
+//! `Cargo.toml`, `Cargo.lock` and `CHANGELOG.md`. The desktop app's version
+//! and CHANGELOG are its own repository's (arthrod/jubarte-app), checked by
+//! its scripts/release-engine.sh before an engine release publishes.
 
 use std::fs;
 use std::path::PathBuf;
@@ -408,29 +409,6 @@ fn root_changelog_orders_the_new_version_above_the_previous_one() {
     assert!(
         idx_071 < idx_070,
         "0.7.1 changelog entry must be listed above the older 0.7.0 entry"
-    );
-}
-
-#[test]
-fn jubarte_app_package_json_version_matches_crate_version() {
-    let package_json = read("jubarte-app/package.json");
-    let needle = format!("\"version\": \"{EXPECTED_VERSION}\"");
-    assert!(
-        package_json.contains(&needle),
-        "jubarte-app/package.json version is not {EXPECTED_VERSION}"
-    );
-}
-
-#[test]
-fn jubarte_app_changelog_documents_the_engine_bump() {
-    let changelog = read("jubarte-app/CHANGELOG.md");
-    assert!(
-        changelog.contains(&format!("[{EXPECTED_VERSION}]")),
-        "jubarte-app/CHANGELOG.md is missing a [{EXPECTED_VERSION}] section"
-    );
-    assert!(
-        changelog.contains(&format!("jubarte-redlines {EXPECTED_VERSION}")),
-        "jubarte-app/CHANGELOG.md does not mention the jubarte-redlines {EXPECTED_VERSION} engine bump"
     );
 }
 

@@ -22,8 +22,8 @@ All products under `jubarte*` share **Semantic Versioning**
 |---|---|---|---|
 | **jubarte-redlines** (this repo) | crates.io crate + CLI `jubarte` | `Cargo.toml` `[package].version`, `CHANGELOG.md` | `scripts/release.sh x.y.z …` (calls `bump-version.mjs`) |
 | **jubarte-redlines** npm CLI (`jubarte-wasm/cli/`) | npm package `jubarte-redlines` (the `npx jubarte-redlines` runner) | `jubarte-wasm/cli/package.json` | `scripts/release.sh` (publishes it with the engine version) |
-| **jubarte-app** (`jubarte-app/` — a plain tracked directory in this repo that also carries its own nested `.git`; there is no `.gitmodules`) | Mac App Store / Tauri shell | `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `src/index.html`, `CHANGELOG.md` | `scripts/release.sh` step 1 (the engine's version); step 13 (`scripts/release_downstream.sh`) commits them on `release/vx.y.z` in the app's repository; `release_downstream.sh x.y.z --app` uploads the App Store build |
-| **jubarte-site** (`jubarte-app/jubarte-site/`) | jubarte.pro (Cloudflare Worker) | `site/data/release.ts`, `package.json` (`jubarte-wasm`), `pnpm-workspace.yaml` | `scripts/release.sh` step 13: `jubarte-site/scripts/release.sh engine x.y.z` (download page, demo engine, deploy); benchmark figures follow with `release.sh bench x.y.z` after neurotic_docx_bench's release flow writes the engine's `release_info/` files |
+| **jubarte-app** ([arthrod/jubarte-app](https://github.com/arthrod/jubarte-app), its own repository, cloned untracked at `jubarte-app/` or named by `JUBARTE_APP_DIR`) | Mac App Store / Tauri shell | `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `src/index.html`, `CHANGELOG.md` | `scripts/release.sh` step 13 runs the app's `scripts/release-engine.sh x.y.z`, which commits them on `release/vx.y.z` in the app's repository; its `--app` uploads the App Store build |
+| **jubarte-site** (`jubarte-app/jubarte-site/`) | jubarte.pro (Cloudflare Worker) | `site/data/release.ts`, `package.json` (`jubarte-wasm`), `pnpm-workspace.yaml` | `scripts/release.sh` step 13, through the app's `scripts/release-engine.sh`: `jubarte-site/scripts/release.sh release x.y.z` (download page, demo engine, figures, deploy); benchmark figures follow with `release.sh bench x.y.z` after neurotic_docx_bench's release flow writes the engine's `release_info/` files |
 
 `jubarte-app` depends on the engine via:
 
@@ -182,8 +182,8 @@ it on the release's own binary. `scripts/check_release_info.py` is the gate
 (`$NEUROTIC_DOCX_BENCH` or `../neurotic_docx_bench`) it also passes
 `--bench-root` and verifies every sha256 column against the real file —
 without one the columns are format-checked only, and the script says so.
-The files ship in the release commit. `scripts/release_downstream.sh`
-prints these commands in its Benchmark section.
+The files ship in the release commit. The app repository's
+`scripts/release-engine.sh` prints these commands in its Benchmark section.
 
 ### Before you run it
 
@@ -257,8 +257,8 @@ crates.io answers 403 to a request with no User-Agent, so always pass `-A`.
 
 ## Step-by-step: cut an app release (jubarte-app)
 
-An engine release already moves the app's version (see above). For an
-app-only release:
+An engine release already moves the app's version (see above: its
+`scripts/release-engine.sh`). For an app-only release, in the app repository:
 
 1. Point path dep at the engine commit/tag you intend to ship.  
 2. `bun run bump 0.3.1` (syncs package / Cargo / tauri.conf / app-bar).  

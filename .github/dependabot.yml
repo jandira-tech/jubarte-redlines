@@ -12,7 +12,6 @@ updates:
       - "/jubarte-python"
       - "/jubarte-wasm"
       - "/jubarte-rust-inproc"
-      - "/jubarte-app/src-tauri"
     schedule:
       interval: "weekly"
     # Minor and patch bumps arrive as one pull request per directory per

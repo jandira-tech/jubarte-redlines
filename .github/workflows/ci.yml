@@ -63,12 +63,8 @@ jobs:
       - name: clippy jubarte-wasm (wasm32-unknown-unknown)
         working-directory: jubarte-wasm
         run: cargo clippy --all-features --target wasm32-unknown-unknown -- -D warnings
-      # TODO(ci): jubarte-app/src-tauri is not linted here. Tauri 2 on Linux
-      # needs system GTK/WebKit development packages (libwebkit2gtk-4.1-dev,
-      # libgtk-3-dev, …) before `cargo clippy` can even check the crate, and
-      # the app ships separately with its own fmt + clippy run on macOS
-      # (jubarte-app/.github/workflows/ci.yml). Add an apt step here only if
-      # that job stops covering it.
+      # The desktop app is its own repository (arthrod/jubarte-app): its CI
+      # lints, tests and builds it against this engine.
 
   test:
     name: test (${{ matrix.os }})
@@ -232,7 +228,6 @@ jobs:
       - run: python3 scripts/test_check_release_info.py
       - run: python3 scripts/test_library_readmes.py
       - run: python3 scripts/test_check_release_artifacts.py
-      - run: python3 scripts/test_check_release_facts.py
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
       - run: python3 scripts/test_bump_version.py
       - run: python3 scripts/test_gemini_extension.py
