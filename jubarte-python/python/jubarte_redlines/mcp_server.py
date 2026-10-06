@@ -49,8 +49,8 @@ INSTRUCTIONS = (
     "docx_comments and docx_audit (available when the engine build has them)."
 )
 
-_READ = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
-_WRITE = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
+_READ = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
+_WRITE = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False)
 
 
 def _plain(value: Any) -> Any:
@@ -305,7 +305,7 @@ def build_server(*, root: Path) -> MCPServer:
         if (base is None) != (author is None):
             raise ToolError("original and author go together")
         findings = list(engine(doc.validate))
-        if base is not None:
+        if base is not None and author is not None:
             findings.extend(engine(lambda: doc.audit_tracked(base, author=author)))
         return _plain(findings)
 
