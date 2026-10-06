@@ -147,6 +147,42 @@ fn probe_dangling_rid_fails() {
     );
 }
 
+/// Word refuses a package that repeats a relationship Id (docxide case8's
+/// fontTable rels: "unreadable content" in Word 16). Opening keeps one copy
+/// of an identical repeat, but the finding stays, so `validate` still says
+/// the source is not Word-valid.
+#[test]
+fn probe_duplicate_rid_fails() {
+    let doc = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+            xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <w:body>
+    <w:p><w:hyperlink r:id="rId7"><w:r><w:t>x</w:t></w:r></w:hyperlink></w:p>
+    <w:sectPr/>
+  </w:body>
+</w:document>"#;
+    let link = r#"<Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://a.example/" TargetMode="External"/>"#;
+    let bytes = zip_with_parts(&[
+        ("word/document.xml", doc),
+        (
+            "word/_rels/document.xml.rels",
+            &format!(
+                r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{link}{link}</Relationships>"#
+            ),
+        ),
+    ]);
+    let findings = jubarte::validate::validate(&bytes).expect("an identical repeat opens");
+    assert!(
+        findings.iter().any(|f| f.code == "DUPLICATE_RID"),
+        "expected DUPLICATE_RID, got: {findings:?}"
+    );
+    // `repair` writes the one kept copy: the finding moves to `repaired`.
+    let repaired = jubarte::validate::repair(&bytes).expect("repairable");
+    assert!(repaired.repaired.iter().any(|f| f.code == "DUPLICATE_RID"));
+    assert!(!repaired.remaining.iter().any(|f| f.code == "DUPLICATE_RID"));
+    assert_word_valid_package(&repaired.docx);
+}
+
 #[test]
 fn probe_duplicate_revision_id_fails() {
     let doc = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
