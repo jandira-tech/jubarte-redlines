@@ -19,6 +19,7 @@
 //! | Edit a document as tracked changes | [`edit::apply_plan`] / [`edit::apply_plan_json`] with an [`edit::EditPlan`]: rewrite, insert, tables, lists, run formatting, footnotes, images, page setup, content controls, watermark, redact, settings |
 //! | Read a document the way an edit addresses it | [`inspect::paragraphs`], [`inspect::summary`], [`inspect::stories`], [`inspect::controls`], [`inspect::inspect_json`], [`inspect::markdown`] |
 //! | Render to PDF or PNG | [`convert::docx_to_pdf`], [`convert::docx_to_pdf_with`] and [`convert::PdfOptions`] (revision marks: [`convert::RevisionStyle`]), [`convert::docx_to_png`]; page-by-page differences with [`convert::diff_render`] |
+//! | Convert a Word 97-2003 `.doc` | [`legacy_doc::doc_to_docx`], [`legacy_doc::doc_to_markdown`]: text, headings and tables |
 //! | Markdown in and out | [`markdown::markdown_to_docx`] (CriticMarkup becomes tracked changes and comments), [`markdown::docx_to_markdown`], [`markdown::diff_markdown`], [`markdown::redline`] |
 //! | Check that Word will open it, and repair it | [`validate::validate`], [`validate::repair`], [`validate::audit_tracked`]; triage with [`debug::report`] |
 //! | Accessibility, style and structure findings | [`audit::audit_report`] |
@@ -115,6 +116,7 @@ pub mod edit;
 pub mod fields;
 /// Read-only paragraph/package views and the Markdown projection for agents.
 pub mod inspect;
+pub mod legacy_doc;
 pub mod markdown;
 /// Markup simplification (PowerTools `MarkupSimplifier` port).
 pub mod markup_simplifier;

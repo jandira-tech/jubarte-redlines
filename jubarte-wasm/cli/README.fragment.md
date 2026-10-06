@@ -23,8 +23,9 @@ npx jubarte-redlines --help
 
 `redline` is an alias of `compare`. `inspect` (paragraph ids and package
 facts) and `capabilities` (what this build can do) are also available. The
-commands, flags, messages and exit codes match `uvx jubarte-redlines` (Python)
+command set, messages and exit codes match `uvx jubarte-redlines` (Python)
 and the `jubarte` binary (Rust): 0 success, 1 error, 2 usage, 3 edit plan
-refused. PNG pages and `--date` need the Python or Rust build.
+refused; flags differ per surface, and the render-side/PDF-producing ones
+(including PNG pages and `--date`) need the Python or Rust build.
 
 Inputs are `.docx`: save a Word 97-2003 `.doc` as `.docx` first.

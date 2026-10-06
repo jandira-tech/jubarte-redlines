@@ -8,11 +8,23 @@ from __future__ import annotations
 
 import base64
 import json
+import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from types import MappingProxyType
-from typing import Literal, TypedDict
+from typing import TYPE_CHECKING, Literal, TypedDict
+
+if TYPE_CHECKING:
+    # typing.NotRequired is 3.11+; the native row shapes below need it only
+    # statically (``from __future__ import annotations`` keeps every
+    # annotation a string at runtime, so 3.10 never imports it).
+    if sys.version_info >= (3, 11):
+        from typing import NotRequired
+    else:
+        from typing_extensions import NotRequired
+
+    from .document import Document
 
 RevisionKind = Literal["Inserted", "Deleted", "Moved", "FormatChanged"]
 RevisionStyle = Literal["conventional", "word", "custom"]
@@ -193,19 +205,33 @@ class Change:
     inside: str | None
 
 
+class _ChangeRow(TypedDict):
+    """One row of the native ``changes`` JSON, keys as the engine emits them."""
+
+    id: str
+    kind: ChangeKind
+    target: str
+    author: NotRequired[str]
+    date: NotRequired[str]
+    text: str
+    move_name: NotRequired[str]
+    move_side: NotRequired[Literal["from", "to"]]
+    inside: NotRequired[str]
+
+
 def _decode_changes(payload: str) -> tuple[Change, ...]:
-    rows: list[dict[str, object]] = json.loads(payload)
+    rows: list[_ChangeRow] = json.loads(payload)
     return tuple(
         Change(
-            id=row["id"],  # type: ignore[arg-type]
-            kind=row["kind"],  # type: ignore[arg-type]
-            target=row["target"],  # type: ignore[arg-type]
-            author=row.get("author"),  # type: ignore[arg-type]
-            date=row.get("date"),  # type: ignore[arg-type]
-            text=row["text"],  # type: ignore[arg-type]
-            move_name=row.get("move_name"),  # type: ignore[arg-type]
-            move_side=row.get("move_side"),  # type: ignore[arg-type]
-            inside=row.get("inside"),  # type: ignore[arg-type]
+            id=row["id"],
+            kind=row["kind"],
+            target=row["target"],
+            author=row.get("author"),
+            date=row.get("date"),
+            text=row["text"],
+            move_name=row.get("move_name"),
+            move_side=row.get("move_side"),
+            inside=row.get("inside"),
         )
         for row in rows
     )
@@ -237,21 +263,37 @@ class Comment:
     after: str
 
 
+class _CommentRow(TypedDict):
+    """One row of the native ``comments`` JSON, keys as the engine emits them."""
+
+    id: int
+    author: str
+    initials: NotRequired[str]
+    date: NotRequired[str]
+    text: str
+    parent: NotRequired[int]
+    done: bool
+    paragraph: NotRequired[str]
+    anchor_text: str
+    before: str
+    after: str
+
+
 def _decode_comments(payload: str) -> tuple[Comment, ...]:
-    rows: list[dict[str, object]] = json.loads(payload)
+    rows: list[_CommentRow] = json.loads(payload)
     return tuple(
         Comment(
-            id=row["id"],  # type: ignore[arg-type]
-            author=row["author"],  # type: ignore[arg-type]
-            initials=row.get("initials"),  # type: ignore[arg-type]
-            date=row.get("date"),  # type: ignore[arg-type]
-            text=row["text"],  # type: ignore[arg-type]
-            parent=row.get("parent"),  # type: ignore[arg-type]
-            done=row["done"],  # type: ignore[arg-type]
-            paragraph=row.get("paragraph"),  # type: ignore[arg-type]
-            anchor_text=row["anchor_text"],  # type: ignore[arg-type]
-            before=row["before"],  # type: ignore[arg-type]
-            after=row["after"],  # type: ignore[arg-type]
+            id=row["id"],
+            author=row["author"],
+            initials=row.get("initials"),
+            date=row.get("date"),
+            text=row["text"],
+            parent=row.get("parent"),
+            done=row["done"],
+            paragraph=row.get("paragraph"),
+            anchor_text=row["anchor_text"],
+            before=row["before"],
+            after=row["after"],
         )
         for row in rows
     )
@@ -433,7 +475,32 @@ class Snapshot:
         return hits[0]
 
 
-def _decode_paragraph(p: dict[str, object]) -> Paragraph:
+class _SpanRow(TypedDict):
+    """One span of the native ``inspect`` snapshot's run formatting."""
+
+    start: int
+    end: int
+    bold: bool
+    italic: bool
+    underline: bool
+    highlight: str | None
+
+
+class _ParagraphRow(TypedDict):
+    """One paragraph row of the native ``inspect`` snapshot."""
+
+    index: int
+    id: str
+    text: str
+    style: str | None
+    numbered: bool
+    in_table: bool
+    page_break: bool
+    runs: list[_SpanRow]
+    limitations: list[str]
+
+
+def _decode_paragraph(p: _ParagraphRow) -> Paragraph:
     return Paragraph(
         index=p["index"],
         id=p["id"],
@@ -638,9 +705,9 @@ class EditPlan:
             wire[side] = {key: list(value) for key, value in selection.items()}
         return replace(self, resolve_revisions=wire or None)
 
-    def for_document(self, document: object) -> EditPlan:
+    def for_document(self, document: Document | str) -> EditPlan:
         """Bind to ``document`` (a ``Document`` or a snapshot's hash string)."""
-        digest = document if isinstance(document, str) else document.sha256()  # type: ignore[attr-defined]
+        digest = document if isinstance(document, str) else document.sha256()
         return replace(self, source_sha256=digest)
 
     def replace(
@@ -1222,8 +1289,22 @@ class EditReport:
         return _native.report_jsonl(self._json)
 
 
-def _decode_outcomes(rows: list[dict[str, object]]) -> tuple[EditOutcome, ...]:
-    return tuple(EditOutcome(**row) for row in rows)  # type: ignore[arg-type]
+class _EditOutcomeRow(TypedDict):
+    """One operation row of the edit report JSON, as the engine emits it."""
+
+    id: str
+    kind: str
+    status: Literal["ok", "failed", "skipped"]
+    paragraph: NotRequired[str]
+    matches: int
+    context: NotRequired[str]
+    comment_id: NotRequired[int]
+    code: NotRequired[str]
+    message: NotRequired[str]
+
+
+def _decode_outcomes(rows: list[_EditOutcomeRow]) -> tuple[EditOutcome, ...]:
+    return tuple(EditOutcome(**row) for row in rows)
 
 
 def _decode_report(payload: str) -> EditReport:
@@ -1261,7 +1342,17 @@ class FieldUpdate:
     new: str
 
 
-def _decode_field_updates(rows: Sequence[Mapping[str, str]]) -> tuple[FieldUpdate, ...]:
+class _FieldUpdateRow(TypedDict):
+    """One row of the edit report's ``fields``, as the engine emits it."""
+
+    kind: str
+    code: str
+    paragraph: str
+    old: str
+    new: str
+
+
+def _decode_field_updates(rows: Sequence[_FieldUpdateRow]) -> tuple[FieldUpdate, ...]:
     return tuple(FieldUpdate(**row) for row in rows)
 
 
@@ -1453,18 +1544,29 @@ class Repaired:
     """Output of ``Document.repair``: the repaired document, the findings it
     fixed and the ones it could not."""
 
-    document: object
+    document: Document
     repaired: tuple[Finding, ...]
     remaining: tuple[Finding, ...]
 
 
-def _decode_findings(rows: list[dict[str, object]]) -> tuple[Finding, ...]:
+class _FindingRow(TypedDict):
+    """One row of the native validate/repair/audit-tracked JSON."""
+
+    code: str
+    part: str
+    path: str
+    message: str
+    word_fatal: bool
+    repairable: bool
+
+
+def _decode_findings(rows: list[_FindingRow]) -> tuple[Finding, ...]:
     return tuple(
         Finding(
-            code=row["code"],  # type: ignore[arg-type]
-            part=row["part"],  # type: ignore[arg-type]
-            path=row["path"],  # type: ignore[arg-type]
-            message=row["message"],  # type: ignore[arg-type]
+            code=row["code"],
+            part=row["part"],
+            path=row["path"],
+            message=row["message"],
             word_fatal=bool(row["word_fatal"]),
             repairable=bool(row["repairable"]),
         )

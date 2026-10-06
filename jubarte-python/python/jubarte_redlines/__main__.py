@@ -38,7 +38,7 @@ from pathlib import Path
 
 from . import __version__, capabilities
 from .document import Document, EditPlanError, diff_render
-from .models import PdfOptions
+from .models import Finding, PdfOptions, RevisionStyle
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -82,7 +82,8 @@ def _write(path: Path, data: bytes | str) -> None:
 
 
 def _pdf_options(args: argparse.Namespace) -> PdfOptions:
-    revisions = getattr(args, "revisions", "conventional")
+    default_revisions: RevisionStyle = "conventional"
+    revisions: RevisionStyle = getattr(args, "revisions", default_revisions)
     palette = getattr(args, "revision_palette", None)
     compress = getattr(args, "compress", False)
     if revisions == "custom" and palette is None:
@@ -254,10 +255,10 @@ def cmd_convert(args: argparse.Namespace) -> int:
         # Markdown goes to Word unless a PDF or PNG is asked for.
         wants_render = args.pdf or args.png or (args.output is not None and args.output.suffix.lower() != ".docx")
         if not wants_render:
-            output = args.output or args.file.with_suffix(".docx")
-            _ensure_writable(output, args.force)
-            _write(output, doc.to_bytes())
-            print(f"wrote {output} ({len(doc.to_bytes())} bytes)")
+            docx_out = args.output or args.file.with_suffix(".docx")
+            _ensure_writable(docx_out, args.force)
+            _write(docx_out, doc.to_bytes())
+            print(f"wrote {docx_out} ({len(doc.to_bytes())} bytes)")
             return EXIT_OK
     else:
         doc = _read(args.file)
@@ -422,9 +423,9 @@ def cmd_reject(args: argparse.Namespace) -> int:
     return _resolution(args, accept=False)
 
 
-def _print_findings(findings: Sequence[object], as_json: bool) -> None:
+def _print_findings(findings: Sequence[Finding], as_json: bool) -> None:
     for finding in findings:
-        row = asdict(finding)  # type: ignore[call-overload]
+        row = asdict(finding)
         if as_json:
             print(json.dumps(row, ensure_ascii=False))
             continue
@@ -434,7 +435,7 @@ def _print_findings(findings: Sequence[object], as_json: bool) -> None:
 
 def cmd_validate(args: argparse.Namespace) -> int:
     doc = _read(args.file)
-    findings: list[object] = []
+    findings: list[Finding] = []
     if args.repair is not None:
         _ensure_writable(args.repair, args.force)
         repaired = doc.repair()
@@ -448,7 +449,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
         findings.extend(doc.audit_tracked(_read(args.original), author=args.author))
     _print_findings(findings, args.json)
     if not args.json:
-        fatal = sum(1 for f in findings if asdict(f)["word_fatal"])  # type: ignore[call-overload]
+        fatal = sum(1 for f in findings if asdict(f)["word_fatal"])
         print(f"{len(findings)} finding(s), {fatal} Word-fatal" if findings else "no findings")
     return EXIT_FINDINGS if findings else EXIT_OK
 

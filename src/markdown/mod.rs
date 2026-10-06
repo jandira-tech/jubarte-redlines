@@ -33,6 +33,7 @@ mod critic;
 mod diff;
 mod from_docx;
 pub(crate) mod package;
+mod pages;
 mod patch;
 mod redline;
 mod unified;
@@ -40,6 +41,7 @@ mod write;
 pub(crate) mod xml;
 
 pub use diff::diff_markdown;
+pub use pages::paginate;
 pub use patch::{Patched, apply_markdown};
 pub use redline::{RedlineOptions, Source, redline};
 pub use unified::{

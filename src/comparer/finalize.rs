@@ -3928,8 +3928,7 @@ pub fn rotate_ins_mark_del_only_paragraph(dom: &mut Dom, root: NodeId) {
             .filter(|&k| dom.name_is(k, &W::p()))
             .collect();
         let mut acted = false;
-        for w in kids.windows(3) {
-            let (p0, p1, p2) = (w[0], w[1], w[2]);
+        for &[p0, p1, p2] in kids.array_windows() {
             // Pi: MARK-DEL, children = ins+ then del+, nothing else.
             if !para_mark_revision(dom, p0, &W::del()) {
                 continue;
@@ -4071,8 +4070,7 @@ pub fn restamp_stranded_del_mark_onto_del_only_paragraph(dom: &mut Dom, root: No
             .filter(|&k| dom.name_is(k, &W::p()))
             .collect();
         let mut acted = false;
-        for w in kids.windows(2) {
-            let (p0, p1) = (w[0], w[1]);
+        for &[p0, p1] in kids.array_windows() {
             // p0: live mark, bare pPr (no properties at all), children all
             // w:del blocks with real deleted text.
             if para_mark_revision(dom, p0, &W::del()) || para_mark_revision(dom, p0, &W::ins()) {
@@ -10964,8 +10962,7 @@ pub fn repair_borrowed_sentence_period(
         return;
     };
     let kids: Vec<NodeId> = dom.elements(body, None);
-    for w in kids.windows(2) {
-        let (prev, next) = (w[0], w[1]);
+    for &[prev, next] in kids.array_windows() {
         if !dom.name_is(prev, &W::p()) || !dom.name_is(next, &W::p()) {
             continue;
         }
@@ -13277,9 +13274,9 @@ fn drop_duplicate_normal_style(dom: &mut Dom, root: NodeId) {
         let duplicated = paragraphs[..index].iter().any(|&earlier| {
             markup_text(dom, earlier).trim() == trimmed
                 && has_deleted_mark(dom, earlier)
-                && !dom
+                && dom
                     .element(earlier, &W::p_pr())
-                    .is_some_and(|ppr| dom.element(ppr, &style_name).is_some())
+                    .is_none_or(|ppr| dom.element(ppr, &style_name).is_none())
         });
         if duplicated {
             dom.remove(ppr);

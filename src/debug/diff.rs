@@ -1314,7 +1314,7 @@ impl Walker<'_> {
         };
         let diff_lines: Vec<&str> = order.iter().copied().filter(|l| differs(l)).collect();
         let show_absent = !block && !absent.is_empty();
-        if diff_lines.is_empty() && !show_absent && !(self.full && !order.is_empty()) {
+        if diff_lines.is_empty() && !show_absent && (!self.full || order.is_empty()) {
             return None;
         }
         let mut out = format!("{}\n", path.join(" › "));

@@ -242,7 +242,7 @@ pub fn patch_markdown(old: &str, new: &str, options: &PatchOptions) -> Patch {
 }
 
 /// A Markdown document whose CriticMarkup holds the changes (as
-/// [`diff_markdown`] or [`docx_to_markdown`](super::docx_to_markdown) write
+/// [`diff_markdown`] or [`docx_to_markdown`] write
 /// it) as a patch. `{>>Name (date)<<}` right after a change is that change's
 /// author and date; `{>>Name (date): text<<}` is a comment by `Name`; any
 /// other comment, and every change without an author, is the owner's.

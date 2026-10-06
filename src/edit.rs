@@ -3455,11 +3455,9 @@ impl<'p> Transaction<'p> {
         }
         for list in ranges.values_mut() {
             list.sort_by_key(|&(s, e, i)| (s, e, i));
-            for pair in list.windows(2) {
-                let (s0, e0, _) = pair[0];
-                let (s1, _, i1) = pair[1];
+            for &[(s0, e0, _), (s1, e1, i1)] in list.array_windows() {
                 let strictly_inside = s1 > s0 && s1 < e0;
-                let same_start_nonempty = s1 == s0 && e0 > s0 && pair[1].1 > s1;
+                let same_start_nonempty = s1 == s0 && e0 > s0 && e1 > s1;
                 if strictly_inside || same_start_nonempty {
                     return Err(self.conflict(i1, "overlaps an earlier edit's text range"));
                 }

@@ -1579,8 +1579,7 @@ fn segment_region(
                 // otherwise re-run with them suppressed so a crossing chain wins.
                 let in_final =
                     |ua: &Unit, ub: &Unit| member_l(ua.start) == lpl && member_r(ub.start) == lpr;
-                let bigram = picked.windows(2).any(|w| {
-                    let ((a0, b0), (a1, b1)) = (w[0], w[1]);
+                let bigram = picked.array_windows().any(|&[(a0, b0), (a1, b1)]| {
                     a1 == a0 + 1
                         && b1 == b0 + 1
                         && in_final(&ul[a0], &ur[b0])

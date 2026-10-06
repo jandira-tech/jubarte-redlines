@@ -25,7 +25,8 @@
 //! | `MC_UNBOUND_PREFIX` | yes | when the prefix is a conventional one |
 //! | `MISSING_CONTENT_TYPE`, `OVERRIDE_WITHOUT_PART`, `MALFORMED_XML` | yes | no |
 //! | `DANGLING_RELATIONSHIP` | yes | yes: the attribute is dropped |
-//! | `DUPLICATE_RID`, `MISSING_REL_TARGET` | yes | no |
+//! | `DUPLICATE_RID` | yes | an identical repeat is kept once on open; two relationships under one Id are refused |
+//! | `MISSING_REL_TARGET` | yes | no |
 //! | `PICTURE_BULLET_UNDEFINED` | yes | no |
 //! | `DUPLICATE_REVISION_ID`, `DUPLICATE_DOCPR_ID` | no (leads) | yes: renumbered |
 //! | `PARA_ID_OUT_OF_RANGE` | yes | yes: renumbered |
@@ -111,11 +112,13 @@ pub fn traits(code: &str) -> (bool, bool) {
         | "MOVEFROM_WITH_DELTEXT"
         | "BOOKMARK_IN_SINGLE_VALUE_CONTROL"
         | "COMMENT_ANCHOR_ORPHAN"
-        | "CELL_WITHOUT_PARAGRAPH" => (true, true),
+        | "CELL_WITHOUT_PARAGRAPH"
+        // Only an identical repeat is reported (two relationships under one
+        // Id are refused on open), and opening already keeps it once.
+        | "DUPLICATE_RID" => (true, true),
         "MISSING_CONTENT_TYPE"
         | "OVERRIDE_WITHOUT_PART"
         | "MALFORMED_XML"
-        | "DUPLICATE_RID"
         | "MISSING_REL_TARGET"
         | "PICTURE_BULLET_UNDEFINED"
         | "COMMENT_WITHOUT_ANCHOR"
@@ -359,6 +362,21 @@ fn check_content_types_and_xml(pkg: &PartFs, out: &mut Vec<Finding>) {
 /// Every `r:id` / `r:embed` / `r:link` in a part resolves in that part's `.rels`;
 /// no duplicate rIds; no dangling internal targets.
 fn check_relationship_integrity(pkg: &PartFs, out: &mut Vec<Finding>) {
+    // Opening kept one copy of each identical repeat; the source still
+    // repeats it, which Word refuses (docxide case8).
+    for (part, id) in pkg.repaired_duplicate_ids() {
+        let owner = if part.is_empty() {
+            "_rels/.rels"
+        } else {
+            part.as_str()
+        };
+        out.push(Finding::new(
+            "DUPLICATE_RID",
+            owner,
+            "",
+            format!("duplicate rId '{id}' in relationships of '{owner}' (identical; one kept)"),
+        ));
+    }
     for name in pkg.parts() {
         if !name.ends_with(".xml") || name.ends_with(".rels") {
             continue;
