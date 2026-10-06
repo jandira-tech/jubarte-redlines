@@ -15,6 +15,64 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+### Added
+
+- `jubarte convert old.doc` reads a Word 97-2003 `.doc`: it reads the OLE
+  compound file and the Word 97 piece table into text, paragraphs, Title
+  and Heading 1-9, one-level tables (header rows kept), field results,
+  bold and italic runs, and bulleted and numbered lists with their
+  nesting. The default output is `.docx`; `-t md`, PDF and PNG go through
+  the converted package. Encrypted, Word 6/95 and non-Word compound files
+  stay `LEGACY_DOC`, and malformed structure is refused, never guessed: a
+  reversed, gapped or truncated piece table, a table outside its stream,
+  a repeated FAT sector, an invalid bold/italic toggle. The other commands
+  still refuse a `.doc`, now with the convert command in the hint.
+- `jubarte convert FILE -t md` writes `<!-- page N of M -->` before the
+  first block of each page. The page comes from laying the document out
+  and matching each block's opening text on the painted pages.
+  `--no-page-markers` opts out. The markers are HTML comments, so the
+  Markdown converts back unchanged. Block keys come from pulldown-cmark
+  (images, link reference definitions, autolinks, escaped pipes, literal
+  angle brackets), and a marker never splits a loose list or a fenced
+  block.
+- `jubarte convert --timeout SECONDS` exits 124 (`timeout(1)`'s status)
+  once the limit passes.
+- docs/rust.md, docs/python.md and docs/javascript.md carry generated CLI
+  and API references (`scripts/gen_docs.sh`). A docs CI job fails on
+  drift, and `release.sh` regenerates them.
+- docs/adoption/ and examples/adoption/: one page per agent skill (Anthropic
+  `docx`, OpenAI `doc`, MCP) that jubarte replaces. Each row has
+  side-by-side evidence with a `run.sh`, a test in `tests/adoption.rs`, a
+  plan for every gap, and the measured disk each skill's container drops.
+  The `adoption` workflow runs it all.
+
+### Fixed
+
+- Convert, math: OMML text is set in Cambria Math with letters from the
+  mathematical italic block (`m:sty p`/`b` upright, `m:nor` ordinary text).
+  A display equation is centred unless its `m:jc` says otherwise. `m:d`
+  draws its delimiters and separators, and they follow the script
+  placement. Math is found under any namespace prefix. A face that lacks
+  a letter keeps the whole run in ASCII italic. Math text drops the
+  paragraph's hAnsi face. Deleted text counts toward a display
+  paragraph. On the 29 corpus documents with a display equation, against
+  Word's PDFs: jaccard +0.030 [+0.0005, +0.070], text_boundary +0.056
+  [+0.008, +0.116] against 0.11.2; the 116-document control without
+  OMML is byte-identical.
+- Font report: a family placed on an installed face by its name's class
+  ("Fake Serif Pro" on Times, Helvetica on Arial) was reported as an
+  explicit match, so `--fail-on-substitution` passed. It is now `generic`
+  and counts as substituted; metric twins (Carlito, Caladea, Liberation,
+  Arimo, Tinos, Cousine) still count as their family, and a trailing
+  "PS MT" is not a substitution. Layout is unchanged.
+- Package: a relationship Id repeated with an identical relationship is
+  kept once on open and reported as a repaired `DUPLICATE_RID`. Two
+  different relationships under one Id are refused. Word refuses both.
+- Command line: converting to `.docx` or Markdown refuses `--report`,
+  `--font-report` and `--fail-on-substitution` instead of ignoring them.
+  A page-marker warning names the step that failed, and `--timeout` must
+  be finite.
+
 ### Changed
 
 - MSRV is Rust 1.94 (was 1.88), for the library, the CLI and the Python
