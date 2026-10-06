@@ -96,7 +96,7 @@ What this folder caught, and what changed: on the first run (jubarte at
 `be8deece`) `Georgia Pro` and the invented `Fake Serif Pro` passed with
 `substituted: false`, because the font report called a family placed on an
 installed face by its name ("Pro" ignored, "Serif" read as Times) an
-explicit match. Since `0d64af4a` on this branch such a family is reported
+explicit match. Since `67dbbd61` on this branch such a family is reported
 `generic` and counts as substituted; the metric twins (Carlito for
 Calibri, Caladea for Cambria, Liberation, Arimo, Tinos, Cousine) still
 count as their family. What is drawn did not change, only the report.

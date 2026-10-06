@@ -8,9 +8,9 @@ task done by the tool a provider's Word skill runs today and by jubarte,
 with real outputs side by side (`render_page_1_soffice.png` next to
 `render_page_1_jubarte.png`, `read_pandoc.md` next to `read_jubarte.md`).
 Each folder has a `run.sh` that regenerates every output, and a README
-whose verdict says plainly where jubarte is worse. Folders 07 and 16 also
-hold Microsoft Word's own answer, made once through the
-`neurotic_docx_bench` Word scripts.
+whose verdict says plainly where jubarte is worse. Folder 16 also holds
+Microsoft Word's own answer, made once through the `neurotic_docx_bench`
+Word scripts; 07's Word check is recorded in its README.
 
 ```bash
 JUBARTE=$(command -v jubarte) bash examples/adoption/01-render-png/run.sh
@@ -46,5 +46,7 @@ LibreOffice 26.8, poppler 26.09, pandoc 3.11, python-docx 1.2.0, docx-js
 
 What jubarte cannot do yet, and the plan for each:
 [`docs/adoption/plans.md`](../../docs/adoption/plans.md).
-`tests/adoption.rs` runs every row's jubarte command;
+`tests/adoption.rs` runs the jubarte command of every row that has one
+(00 measures install size; 17's MCP server is tested in
+`jubarte-python/tests/test_mcp_server.py`);
 `.github/workflows/adoption.yml` runs that file and every `run.sh`.

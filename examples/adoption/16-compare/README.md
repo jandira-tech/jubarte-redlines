@@ -76,7 +76,8 @@ What Microsoft Word's own Compare does with the same pair settles how
 coarse this should be. On 2026-10-04 `neurotic_docx_bench/scripts/word_redline.py`
 compared `v1.docx` with `v2.docx` in Word 16 (macOS), and
 `check_redline_identity.py` confirmed the output is that pair
-(`redline_word.docx`, `changes_word.jsonl`).
+(`redline_word.docx`, `changes_word.jsonl`). The two scripts' logs were
+not kept; the outputs are the evidence.
 Word's redline holds the same ten revisions as jubarte's, in the same
 order:
 

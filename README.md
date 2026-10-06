@@ -489,7 +489,7 @@ revision by that author (`UNTRACKED_EDIT`, `FOREIGN_AUTHOR`).
 
 | Option | Purpose |
 |---|---|
-| `--json` | One JSON object per finding |
+| `--json` | JSON Lines: one object per finding, nothing when there is none |
 | `--repair FILE` | Write the repaired package; remaining findings still exit 2 |
 | `--original FILE` | Audit tracked edits against this original (needs `--author`) |
 | `--author NAME` | The author every change must carry |

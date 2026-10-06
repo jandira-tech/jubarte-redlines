@@ -31,6 +31,31 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   `#[expect(..., reason = ...)]`, which fails once a suppression is no
   longer needed. `tests/common` keeps `allow(dead_code)`: each test binary
   uses part of it.
+- Every CLI command but `convert` refuses a `.doc` (and any other
+  admission refusal) leading with its code, `LEGACY_DOC: old.doc is …`, as
+  the library and Python already report it; the convert hint follows.
+- `validate --json` is described as JSON Lines in its help: one object per
+  finding, nothing when there is none.
+
+### Docs
+
+- The adoption pages say what is true today. Python's `convert` is a
+  subset of the CLI's (no `--timeout`, `--fail-on-substitution` or `-t`),
+  and exit 2 also means `validate` findings. The npm CLI needs Node 18.3+,
+  and crates.io builds need Rust 1.94+ from 0.11.3. The `body:rev:`
+  limitation is that id-less revisions share the id, not that `--id`
+  cannot select it. The MCP feature-gate note no longer reads as pending,
+  and Gemini CLI issue #20298 is closed as not planned. Two claims now
+  match what is tested: folder 16 alone holds Word's own answer, and
+  `tests/adoption.rs` runs the rows that have a jubarte command.
+- Example evidence: 14's table matches its committed page sizes (soffice
+  painted the size-less pandoc file at Letter, not A4). 00 measures the
+  14 MB download it quotes (`download_jubarte.tsv`). 07 names its validate
+  output `.jsonl`, and finds the validator inside the checkout, not at a
+  path on one machine. 04 cites the commit on this branch, and 16 says its
+  Word script logs were not kept.
+- The adoption workflow also runs on changes to `tests/common/`,
+  `Cargo.toml` and `Cargo.lock`.
 
 ## [0.11.2] - 2026-10-03
 

@@ -890,7 +890,7 @@ Arguments:
   <FILE>  The document (.docx)
 
 Options:
-      --json             One JSON object per finding
+      --json             JSON Lines: one object per finding, nothing when there is none
       --repair <FILE>    Write the repaired package here; remaining findings still exit 2
       --original <FILE>  Audit tracked edits: every text change against ORIGINAL must be a revision by --author
       --author <NAME>    The author every change must carry (with --original)

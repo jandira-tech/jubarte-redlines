@@ -20,6 +20,9 @@ on:
     paths:
       - "src/**"
       - "tests/adoption.rs"
+      - "tests/common/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - "tests/legacy_doc_convert.rs"
       - "tests/fixtures/legacy/**"
       - "examples/adoption/**"
