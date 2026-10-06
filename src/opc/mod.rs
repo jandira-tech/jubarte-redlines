@@ -56,6 +56,39 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 /// Exactly one leading slash: callers build `/{part}` from names that may
 /// already be absolute, and a `//word/…` part name is invalid OPC.
+/// Keeps one of each relationship `rels` repeats identically (same Id,
+/// type, target and mode), returning the repaired Ids; refuses two
+/// different relationships under one Id. Word reads neither as valid, and
+/// only the first is a repair that cannot guess wrong.
+fn drop_repeated_relationships(rels: &mut Relationships) -> Result<Vec<String>, OpcError> {
+    let mut seen: HashMap<&str, &Relationship> = HashMap::new();
+    let mut repaired: Vec<String> = Vec::new();
+    let mut keep = Vec::with_capacity(rels.items.len());
+    for item in &rels.items {
+        match seen.get(item.id.as_str()) {
+            None => {
+                seen.insert(&item.id, item);
+                keep.push(true);
+            }
+            Some(first) => {
+                if first.rel_type != item.rel_type
+                    || first.target != item.target
+                    || first.target_mode != item.target_mode
+                {
+                    return Err(OpcError::InvalidRelationship);
+                }
+                if !repaired.contains(&item.id) {
+                    repaired.push(item.id.clone());
+                }
+                keep.push(false);
+            }
+        }
+    }
+    let mut keep = keep.into_iter();
+    rels.items.retain(|_| keep.next().unwrap_or(true));
+    Ok(repaired)
+}
+
 fn norm(name: &str) -> String {
     format!("/{}", name.trim_start_matches('/'))
 }
@@ -221,6 +254,9 @@ pub struct PartFs {
     /// Each source zip entry's position, so `to_zip` writes the package back
     /// in the source's order rather than the hash maps' run-to-run order.
     source_order: HashMap<String, usize>,
+    /// `(part, Id)` of each relationship the source repeated identically and
+    /// [`PartFs::open`] kept once (`""` is the package's own relationships).
+    repaired_duplicate_ids: Vec<(String, String)>,
 }
 
 impl PartFs {
@@ -232,6 +268,24 @@ impl PartFs {
         pkg.part_rels.values_mut().for_each(unescape_relationships);
         unescape_content_types(&mut pkg.content_types.defaults);
         unescape_content_types(&mut pkg.content_types.overrides);
+        let mut repaired_duplicate_ids: Vec<(String, String)> =
+            drop_repeated_relationships(&mut pkg.package_rels)?
+                .into_iter()
+                .map(|id| (String::new(), id))
+                .collect();
+        let mut owners: Vec<&String> = pkg.part_rels.keys().collect();
+        owners.sort();
+        let owners: Vec<String> = owners.into_iter().cloned().collect();
+        for owner in owners {
+            if let Some(rels) = pkg.part_rels.get_mut(&owner) {
+                let part = owner.trim_start_matches('/').to_string();
+                repaired_duplicate_ids.extend(
+                    drop_repeated_relationships(rels)?
+                        .into_iter()
+                        .map(|id| (part.clone(), id)),
+                );
+            }
+        }
         let source_order = ZipArchive::new(Cursor::new(bytes))
             .map(|zip| {
                 (0..zip.len())
@@ -239,7 +293,19 @@ impl PartFs {
                     .collect()
             })
             .unwrap_or_default();
-        Ok(PartFs { pkg, source_order })
+        Ok(PartFs {
+            pkg,
+            source_order,
+            repaired_duplicate_ids,
+        })
+    }
+
+    /// `(part, Id)` of each relationship the source repeated identically,
+    /// kept once on open (`""`: the package's own relationships). Word
+    /// refuses such a package; `validate` reports these as `DUPLICATE_RID`.
+    #[must_use]
+    pub fn repaired_duplicate_ids(&self) -> &[(String, String)] {
+        &self.repaired_duplicate_ids
     }
 
     /// `PartFS.partBytes(name)` — raw bytes of a part.
@@ -590,6 +656,71 @@ mod tests {
             z.finish().unwrap();
         }
         PartFs::open(&buf).unwrap()
+    }
+
+    /// A package whose `word/_rels/document.xml.rels` holds `rels`.
+    fn package_with_document_rels(rels: &str) -> Vec<u8> {
+        let mut buf = Vec::new();
+        {
+            let mut z = ZipWriter::new(Cursor::new(&mut buf));
+            let opt = SimpleFileOptions::default();
+            let parts: [(&str, String); 4] = [
+                ("[Content_Types].xml", r#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/></Types>"#.to_string()),
+                ("_rels/.rels", format!(r#"<Relationships xmlns="{RELS_NS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#)),
+                ("word/document.xml", "<w:document/>".to_string()),
+                ("word/_rels/document.xml.rels", format!(r#"<Relationships xmlns="{RELS_NS}">{rels}</Relationships>"#)),
+            ];
+            for (name, xml) in parts {
+                z.start_file(name, opt).unwrap();
+                z.write_all(xml.as_bytes()).unwrap();
+            }
+            z.finish().unwrap();
+        }
+        buf
+    }
+
+    /// Word refuses a package that repeats a relationship Id in one part
+    /// (docxide case8's fontTable rels, opened in Word 16: unreadable).
+    /// The same relationship twice is repaired by keeping one, and the
+    /// repair is recorded for `validate`; two relationships under one Id
+    /// are ambiguous and refused.
+    #[test]
+    fn a_repeated_relationship_id_is_repaired_when_identical_and_refused_otherwise() {
+        let font = |id: &str, target: &str| {
+            format!(
+                r#"<Relationship Id="{id}" Type="{HYPERLINK}" Target="{target}" TargetMode="External"/>"#
+            )
+        };
+        let same = package_with_document_rels(&format!(
+            "{}{}{}",
+            font("rId1", "https://a.example/"),
+            font("rId2", "https://b.example/"),
+            font("rId1", "https://a.example/")
+        ));
+        let fs = PartFs::open(&same).unwrap();
+        let rels = fs.read_rels_for("word/document.xml").unwrap();
+        let ids: Vec<&str> = rels.items.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, ["rId1", "rId2"]);
+        assert_eq!(
+            fs.repaired_duplicate_ids(),
+            [("word/document.xml".to_string(), "rId1".to_string())]
+        );
+        let conflict = package_with_document_rels(&format!(
+            "{}{}",
+            font("rId1", "https://a.example/"),
+            font("rId1", "https://other.example/")
+        ));
+        assert!(matches!(
+            PartFs::open(&conflict),
+            Err(OpcError::InvalidRelationship)
+        ));
+        let clean = package_with_document_rels(&font("rId1", "https://a.example/"));
+        assert!(
+            PartFs::open(&clean)
+                .unwrap()
+                .repaired_duplicate_ids()
+                .is_empty()
+        );
     }
 
     #[test]
