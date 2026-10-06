@@ -699,10 +699,7 @@ impl<'a> CompoundFile<'a> {
         // (or looping) DIFAT.
         let mut sorted = fat_locations.clone();
         sorted.sort_unstable();
-        if sorted
-            .windows(2)
-            .any(|pair| matches!(pair, [a, b] if a == b))
-        {
+        if sorted.array_windows().any(|[a, b]| a == b) {
             return Err(LegacyDocError::new("a FAT sector is listed twice"));
         }
         let mut fat = Vec::with_capacity(fat_locations.len().saturating_mul(per_difat));

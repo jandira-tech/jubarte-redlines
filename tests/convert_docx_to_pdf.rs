@@ -1608,7 +1608,10 @@ fn a_floating_table_in_column_one_leaves_column_two_alone() {
                 .1
         })
         .collect();
-    let widest = ys.windows(2).map(|w| w[0] - w[1]).fold(0.0_f32, f32::max);
+    let widest = ys
+        .array_windows()
+        .map(|[first, second]| first - second)
+        .fold(0.0_f32, f32::max);
     assert!(widest < 40.0, "column two steps line by line; ys={ys:?}");
 }
 
@@ -4031,9 +4034,9 @@ fn a_bordered_shaded_paragraph_fills_its_box() {
     );
     // The pair: one unbroken band, as tall as Word's.
     let pair = &bands[1..];
-    for w in pair.windows(2) {
+    for [first, second] in pair.array_windows() {
         assert!(
-            (w[0].1 - (w[1].1 + w[1].3)).abs() < 0.05,
+            (first.1 - (second.1 + second.3)).abs() < 0.05,
             "no gap inside the pair's band: {bands:?}"
         );
     }
@@ -10445,7 +10448,9 @@ mod front_float_stacking {
             })
             .collect();
         assert!(
-            positions.windows(2).all(|pair| pair[0] < pair[1]),
+            positions
+                .array_windows()
+                .all(|[first, second]| first < second),
             "expected paint order {markers:?}; positions={positions:?}"
         );
     }
@@ -11063,9 +11068,9 @@ fn text_box_paragraphs_keep_the_larger_of_after_and_before_and_no_outer_auto_spa
     let plain = line_baselines_between(&pdf, 324.0, 540.0);
     for (name, ys) in [("auto", &auto), ("plain", &plain)] {
         assert_eq!(ys.len(), 3, "{name}: three lines; ys={ys:?}");
-        for pair in ys.windows(2) {
+        for [first, second] in ys.array_windows() {
             assert!(
-                (pair[1] - pair[0] - 26.0).abs() <= 0.6,
+                (second - first - 26.0).abs() <= 0.6,
                 "{name}: a 12pt line + max(after, before) 14pt apart; ys={ys:?}"
             );
         }
@@ -19061,8 +19066,8 @@ fn official_file_146_cambria_body_uses_word_auto_leading() {
     ys.sort_by(|a, b| b.partial_cmp(a).unwrap());
     ys.dedup();
     let gaps: Vec<f32> = ys
-        .windows(2)
-        .map(|w| w[0] - w[1])
+        .array_windows()
+        .map(|[first, second]| first - second)
         .filter(|g| (10.0..14.5).contains(g))
         .collect();
     // The body pitch is the most frequent gap; cell and table edges add
@@ -22738,7 +22743,7 @@ fn grid_table4_firstrow_shared_vertical_stays_stacked_after_mini_sharededge() {
     .expect("convert GridTable4 stacked vertical");
     let keys = accent_dark_vertical_keys(&accent_dark_hairlines(&pdf));
     assert!(
-        keys.windows(2).any(|pair| pair[0] == pair[1]),
+        keys.array_windows().any(|[first, second]| first == second),
         "mini shared-edge skip was ITT-neg; keep firstRow left+right stacked; keys={keys:?}"
     );
 }
@@ -22750,7 +22755,7 @@ fn official_potpourri_gridtable_shared_vertical_stays_stacked_after_mini_sharede
     assert_eq!(pdf_page_count(&pdf), 5, "Word potpourri is 5pp");
     let keys = accent_dark_vertical_keys(&accent_dark_hairlines(&pdf));
     assert!(
-        keys.windows(2).any(|pair| pair[0] == pair[1]),
+        keys.array_windows().any(|[first, second]| first == second),
         "mini shared-edge skip was ITT-neg (comments-lots −0.16); keep stacked; keys={keys:?}"
     );
 }
@@ -22792,7 +22797,7 @@ fn tblborders_shared_vertical_stays_stacked_after_mini_inside() {
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert tblBorders lattice");
     let keys = black_vertical_keys(&pdf);
     assert!(
-        keys.windows(2).any(|pair| pair[0] == pair[1]),
+        keys.array_windows().any(|[first, second]| first == second),
         "mini insideV skip was redline ITT-neg; keep left+right stacked; keys={keys:?}"
     );
 }
@@ -31806,7 +31811,10 @@ fn table_tr_height_at_least_single_line_matches_soffice_row() {
         ys.len() >= 5,
         "4 rows must stroke 5 unique horizontal rules, ys={ys:?}"
     );
-    let gaps: Vec<f32> = ys.windows(2).map(|w| w[0] - w[1]).collect();
+    let gaps: Vec<f32> = ys
+        .array_windows()
+        .map(|[first, second]| first - second)
+        .collect();
     for gap in &gaps {
         assert!(
             (gap - 25.92).abs() < 0.25,
@@ -33987,7 +33995,10 @@ fn table_grid_line240_single_row_is_tighter_than_line276_chrome() {
         ys.len() >= 4,
         "3 rows must stroke 4 unique horizontal rules, ys={ys:?}"
     );
-    let gaps: Vec<f32> = ys.windows(2).map(|w| w[0] - w[1]).collect();
+    let gaps: Vec<f32> = ys
+        .array_windows()
+        .map(|[first, second]| first - second)
+        .collect();
     for gap in &gaps {
         assert!(
             (12.8..=14.2).contains(gap),
@@ -36753,7 +36764,8 @@ fn official_strict01_nested_list_indents_ilvl() {
         .map(|xs| xs[0])
         .collect();
     assert!(
-        mins.windows(2).any(|w| (w[1] - w[0]).abs() > 12.0),
+        mins.array_windows()
+            .any(|[first, second]| (second - first).abs() > 12.0),
         "Strict01 page 1 must nest ilvl 1 (~18pt) under ilvl 0; mins={mins:?}"
     );
 }
@@ -36846,7 +36858,10 @@ fn official_strict01_valax_ticks_use_word_plot_dy() {
         (y0 - 324.5).abs() > 2.0,
         "must not keep plot_y=cat+legend+6; y0={y0}"
     );
-    let gaps: Vec<f32> = ys.windows(2).map(|w| w[1] - w[0]).collect();
+    let gaps: Vec<f32> = ys
+        .array_windows()
+        .map(|[first, second]| second - first)
+        .collect();
     let mean_dy = gaps.iter().sum::<f32>() / gaps.len() as f32;
     assert!(
         (26.0..=30.0).contains(&mean_dy),
@@ -41403,13 +41418,8 @@ fn a_justified_underline_runs_through_the_stretched_spaces() {
     }
     assert!(first_line.len() > 3, "underline pieces on the first line");
     first_line.sort_by(|a, b| a.0.total_cmp(&b.0));
-    for pair in first_line.windows(2) {
-        assert!(
-            pair[1].0 - pair[0].1 < 0.05,
-            "gap {:?} -> {:?}",
-            pair[0],
-            pair[1]
-        );
+    for [first, second] in first_line.array_windows() {
+        assert!(second.0 - first.1 < 0.05, "gap {first:?} -> {second:?}");
     }
 }
 
@@ -45921,8 +45931,8 @@ fn a_cell_line_takes_the_height_of_its_own_runs() {
         ys.len() >= 4,
         "the small text wraps over several lines: {ys:?}"
     );
-    for pair in ys[1..].windows(2) {
-        let step = pair[0] - pair[1];
+    for [first, second] in ys[1..].array_windows() {
+        let step = first - second;
         assert!(
             step < 16.0,
             "an 11pt line under the 36pt word steps about 13.4pt, not the big line's: {ys:?}"
@@ -46985,9 +46995,9 @@ fn contextual_spacing_drops_the_space_between_same_style_paragraphs_in_a_cell() 
         .iter()
         .map(|g| pdf_tj_xy(&hay, g).first().expect("title line").1)
         .collect();
-    for w in ys.windows(2) {
+    for [first, second] in ys.array_windows() {
         assert!(
-            (w[0] - w[1] - 20.0).abs() < 0.3,
+            (first - second - 20.0).abs() < 0.3,
             "20pt line pitch, no space: {ys:?}"
         );
     }
@@ -47278,7 +47288,11 @@ fn an_autofit_grid_too_wide_shrinks_between_longest_words_and_grid_widths() {
     .map(|w| pdf_glyph_text_xy(&pdf, w).map_or(f32::NAN, |p| p.0))
     .collect();
     let word = [72.5, 168.7, 263.3, 371.8, 417.8, 463.7];
-    let widths = |xs: &[f32]| xs.windows(2).map(|p| p[1] - p[0]).collect::<Vec<f32>>();
+    let widths = |xs: &[f32]| {
+        xs.array_windows()
+            .map(|[first, second]| second - first)
+            .collect::<Vec<f32>>()
+    };
     assert!(
         (got[0] - word[0]).abs() < 0.5
             && widths(&got)
@@ -47464,7 +47478,10 @@ fn a_bracket_beside_another_bracket_takes_half_an_em() {
     );
     let pdf = docx_to_pdf(&minimal_docx_body(&body)).expect("bracket pairs");
     let xs = pdf_hex_glyph_xs(&pdf);
-    let gaps: Vec<f32> = xs.windows(2).map(|w| w[1] - w[0]).collect();
+    let gaps: Vec<f32> = xs
+        .array_windows()
+        .map(|[first, second]| second - first)
+        .collect();
     let word = [
         12.0, 6.0, 12.0, 12.0, 6.0, 12.0, 12.0, 6.0, 12.0, 12.0, 12.0, 12.0,
     ];

@@ -44,8 +44,7 @@ pub(super) fn carry_vanishing_section_references(
                 Resolution::Reject => paragraph_mark_is_inserted_or_moved_to(dom, p),
             })
     };
-    for pair in sections.windows(2) {
-        let (from, to) = (pair[0], pair[1]);
+    for &[from, to] in sections.array_windows() {
         if !vanishing(dom, from) || !references(dom, to).is_empty() {
             continue;
         }

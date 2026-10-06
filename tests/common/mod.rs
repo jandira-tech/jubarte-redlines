@@ -19,6 +19,8 @@
 //! onto the `xmllinq` arena DOM once that exists. XML/`.rels` parts are
 //! canonicalized; all other parts are compared byte-for-byte.
 
+// Each test binary compiles this module and uses only part of it, so an
+// `expect` would go unfulfilled in some binaries; `allow` is the right level.
 #![allow(dead_code)]
 
 pub mod docx;

@@ -25347,8 +25347,8 @@ impl<'a> Layout<'a> {
         }
         if let Some(pieces) = script_pieces(&run.style, text) {
             let gaps: f32 = pieces
-                .windows(2)
-                .map(|w| self.script_gap_pt(run, w[0], w[1]))
+                .array_windows()
+                .map(|&[a, b]| self.script_gap_pt(run, a, b))
                 .sum();
             return pieces
                 .iter()
@@ -28518,12 +28518,12 @@ impl<'a> Layout<'a> {
                         )
                     })
                     .collect();
-                for pair in pts.windows(2) {
+                for &[(x1, y1), (x2, y2)] in pts.array_windows() {
                     self.current().ops.push(Op::Line {
-                        x1: pair[0].0,
-                        y1: pair[0].1,
-                        x2: pair[1].0,
-                        y2: pair[1].1,
+                        x1,
+                        y1,
+                        x2,
+                        y2,
                         width: 1.5,
                         color,
                     });
@@ -44596,7 +44596,7 @@ mod comments_spacing_tests {
             })
             .collect();
         assert!(
-            seq.windows(2).any(|w| w[0] && w[1]),
+            seq.array_windows().any(|&[a, b]| a && b),
             "empty section 2 is two consecutive section breaks; seq={seq:?}"
         );
     }
