@@ -573,7 +573,7 @@ enum Command {
         /// The document (.docx).
         #[arg(value_name = "FILE")]
         file: PathBuf,
-        /// One JSON object per finding.
+        /// JSON Lines: one object per finding, nothing when there is none.
         #[arg(long)]
         json: bool,
         /// Write the repaired package here; remaining findings still exit 2.
@@ -2133,7 +2133,12 @@ fn read_document(path: &Path) -> Result<Vec<u8>, String> {
         } else {
             String::new()
         };
-        format!("{} is {}{hint}", path.display(), refused.message)
+        format!(
+            "{}: {} is {}{hint}",
+            refused.code(),
+            path.display(),
+            refused.message
+        )
     })?;
     Ok(bytes)
 }
