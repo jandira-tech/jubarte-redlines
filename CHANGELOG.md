@@ -27,6 +27,15 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   and `check_release_facts.py` moved to the app with their tests. The
   app's CI builds the app, and the app has its own Dependabot config.
 
+### Fixed
+
+- `scripts/release.sh` step 11 runs `gh release download` with no terminal
+  attached and keeps gh's error. Under `script` (the 0.11.3 run's log
+  wrapper), gh's progress display queried the terminal and failed, and the
+  discarded error read as "no wheels" while the release held all seven. A
+  release that lists every wheel but will not download them now stops the
+  run instead of falling back to a single local wheel.
+
 ## [0.11.3] - 2026-10-06
 
 > **Summary.** jubarte convert reads a Word 97-2003 .doc (text, headings, lists, bold and italic, tables) and marks each page in Markdown output (<!-- page N of M -->); --timeout bounds a conversion. PDFs set OMML math in Cambria Math as Word does. The font report counts a face guessed from a name's class as substituted, and a repeated identical relationship Id opens repaired. MSRV is Rust 1.94. On two 600-item samples scored against Word's own output: redlines mean 72.06 (Docxodus 65.15), counting as 0 the 23 redlines Word 16.115 crashes opening (KNOWN_ISSUES #8); PDFs mean 79.14 (LibreOffice 54.61), no failed document.

@@ -802,6 +802,94 @@ class ReleaseWait(unittest.TestCase):
         self.assertIn("has not finished", r.stderr)
 
 
+class WheelDownload(unittest.TestCase):
+    """0.11.3: step 11 ran inside `script` (for its log), so gh had a
+    terminal; the download's progress display queried it, failed, and the
+    discarded error read as "no wheels" while the release held all seven.
+    The stub gh fails the same way whenever its stdin or stdout is a
+    terminal, and the run gets one (a pty), as the release did."""
+
+    GH = r"""#!/bin/bash
+case "$*" in
+  "release download"*)
+    if [ -t 0 ] || [ -t 1 ]; then echo "error querying terminal: OSC 11" >&2; exit 1; fi
+    [ -z "${DLFAIL:-}" ] || { echo "HTTP 502: Bad Gateway" >&2; exit 1; }
+    dir=$(echo "$*" | sed 's/.*--dir \([^ ]*\).*/\1/')
+    : > "$dir/jubarte_redlines-9.9.9-cp310-abi3-win_amd64.whl" ;;
+  "release view v9.9.9 --json assets"*)
+    [ -z "${NOWHEELS:-}" ] || { echo jubarte-9.9.9-macos-aarch64.tar.gz; exit 0; }
+    for t in macosx_10_12_x86_64 macosx_11_0_arm64 manylinux_2_28_x86_64 \
+             manylinux_2_28_aarch64 musllinux_1_2_x86_64 musllinux_1_2_aarch64 win_amd64; do
+      echo "jubarte_redlines-9.9.9-cp310-abi3-$t.whl"
+    done
+    echo jubarte_redlines-9.9.9.tar.gz ;;
+  *) echo "unexpected gh $*" >&2; exit 9 ;;
+esac
+"""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="wheeldl-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        (self.tmp / "bin").mkdir()
+        (self.tmp / "bin" / "gh").write_text(self.GH)
+        (self.tmp / "bin" / "gh").chmod(0o755)
+        (self.tmp / "dist" / "pypi").mkdir(parents=True)
+        (self.tmp / "scripts").mkdir()
+        shutil.copy(HERE / "check_release_artifacts.py", self.tmp / "scripts")
+
+    def download(self, **env: str) -> tuple[int, str]:
+        """Runs download_ci_wheels with a terminal on stdin, stdout and
+        stderr; returns its exit status and everything it printed."""
+        import pty
+
+        functions = shell_functions("ghrel_wheels", "download_ci_wheels")
+        script = (
+            "set -euo pipefail\nTAG=v9.9.9; VER=9.9.9\n"
+            'die() { echo "ERROR: $*" >&2; exit 1; }\n'
+            f"{functions}\n"
+            'if download_ci_wheels; then echo GOT; else echo NONE; fi\n'
+        )
+        full = dict(os.environ, PATH=f"{self.tmp / 'bin'}:{os.environ['PATH']}", **env)
+        main, sub = pty.openpty()
+        proc = subprocess.Popen(["bash", "-c", script], cwd=self.tmp, env=full,
+                                stdin=sub, stdout=sub, stderr=sub)
+        os.close(sub)
+        out = b""
+        while True:
+            try:
+                chunk = os.read(main, 4096)
+            except OSError:  # Linux: EIO once the child side closes
+                break
+            if not chunk:
+                break
+            out += chunk
+        os.close(main)
+        return proc.wait(timeout=60), out.decode(errors="replace")
+
+    def test_the_download_gets_no_terminal(self) -> None:
+        code, out = self.download()
+        self.assertEqual(code, 0, out)
+        self.assertIn("GOT", out)
+        self.assertNotIn("OSC 11", out)
+
+    def test_a_failed_download_of_a_whole_release_stops_and_says_why(self) -> None:
+        code, out = self.download(DLFAIL="1")
+        self.assertEqual(code, 1, out)
+        self.assertIn("HTTP 502: Bad Gateway", out)  # gh's own words are kept
+        self.assertIn("lists every wheel, but gh would not download them", out)
+        self.assertNotIn("GOT", out)
+
+    def test_a_release_without_its_wheels_falls_through_to_the_consent_check(self) -> None:
+        code, out = self.download(DLFAIL="1", NOWHEELS="1")
+        self.assertEqual(code, 0, out)
+        self.assertIn("NONE", out)
+        self.assertIn("HTTP 502: Bad Gateway", out)
+
+    def test_step_11_downloads_through_it(self) -> None:
+        self.assertIn("if download_ci_wheels; then", step(11))
+        self.assertNotIn("gh release download", step(11))
+
+
 class RegistryLag(unittest.TestCase):
     """0.11.2: step 12 called PyPI missing seconds after `uv publish`; the
     project listing named 0.11.2 a minute later."""
