@@ -1,0 +1,15 @@
+[body:p:0 Heading1] Consulting Agreement (short form)
+
+[body:p:1] This Agreement is made between Jandira Technologies, LLC (the "Company") and Northwind Traders Ltd. (the "Client") on 2 March 2026.
+
+[body:p:2 Heading2] Services
+
+[body:p:3] The Company will advise the Client on document automation: pipeline design, template review, and acceptance testing of the generated documents.
+
+[body:p:4 Heading2] Fees
+
+[body:p:5] The Company will invoice the Client monthly. The fee is one thousand one hundred USD per day, payable net thirty (30) days. Late payments accrue interest at one percent per month.
+
+[body:p:6 Heading2] Term
+
+[body:p:7] Either party may end this Agreement on twenty days' written notice.

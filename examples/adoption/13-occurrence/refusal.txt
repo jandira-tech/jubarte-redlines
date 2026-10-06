@@ -1,0 +1,4 @@
+{"at":"body:p:3","code":"AMBIGUOUS_ANCHOR","ev":"op","i":1,"id":"which-hit","matches":3,"message":"\"The Advisor shall\" occurs 3 times in the paragraph; set \"occurrence\" to 1..=3","op":"replace","status":"failed"}
+{"code":"AMBIGUOUS_ANCHOR","ev":"summary","message":"\"The Advisor shall\" occurs 3 times in the paragraph; set \"occurrence\" to 1..=3","operation":"which-hit","status":"failed"}
+error: plan refused: AMBIGUOUS_ANCHOR (which-hit): "The Advisor shall" occurs 3 times in the paragraph; set "occurrence" to 1..=3
+exit code: 3 (a refused plan writes nothing and exits 3)

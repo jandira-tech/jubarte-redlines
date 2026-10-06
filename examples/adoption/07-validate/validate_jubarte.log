@@ -1,0 +1,3 @@
+broken_a_no_ins_id: exit=0
+broken_b_dangling_rid: exit=2
+broken_c_no_ct_override: exit=1

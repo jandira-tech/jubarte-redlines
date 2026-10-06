@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import uno
+ModuleNotFoundError: No module named 'uno'
+uno: FAILED with /opt/homebrew/bin/python3 (exit 1)
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+ModuleNotFoundError: No module named 'uno'
+uno: FAILED with /usr/bin/python3 (exit 1)
+uno: FAILED with /Applications/LibreOffice.app/Contents/Resources/python (exit 137)

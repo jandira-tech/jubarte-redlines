@@ -1,0 +1,12 @@
+# LibreOffice Compare through UNO, attempted 2026-10-04T19:32:39Z
+LibreOffice 26.8.0.3 bce0998afefdbc355585ca324285661a2170ba77
+trying: /Applications/LibreOffice.app/Contents/Resources/python -c 'import uno' (UNO bridge smoke test)
+exit=137
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+system python3 import uno exit=1
+exit 137 = SIGKILL: macOS killed LibreOffice's bundled Python before it
+could run (gatekeeper/quarantine on the homebrew cask). Removing the
+quarantine attribute is a system change this folder does not make. The
+system python3 has no uno module. Compare through UNO: not attempted
+further here; pandoc's plain diff is the only working substitute.

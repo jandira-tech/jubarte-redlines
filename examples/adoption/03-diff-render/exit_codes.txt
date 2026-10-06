@@ -1,0 +1,2 @@
+soffice+pdftoppm+pixel_diff exit=1
+jubarte diff-render exit=5 (0 same, 5 a page differs)

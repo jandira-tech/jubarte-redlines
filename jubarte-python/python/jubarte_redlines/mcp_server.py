@@ -30,7 +30,7 @@ except ImportError as exc:  # pragma: no cover - exercised only without the extr
         "jubarte-mcp needs the MCP SDK: pip install 'jubarte-redlines[mcp]'"
     ) from exc
 
-from ._native import JubarteError
+from ._native import JubarteError, __version__
 from .document import Document, EditPlanError, capabilities
 from .models import CompareOptions
 
@@ -65,7 +65,7 @@ def _plain(value: Any) -> Any:
 def build_server(*, root: Path) -> MCPServer:
     """An MCP server whose tools only touch files under ``root``."""
     root = Path(root).expanduser().resolve()
-    mcp = MCPServer("jubarte", instructions=INSTRUCTIONS)
+    mcp = MCPServer("jubarte", instructions=INSTRUCTIONS, version=__version__)
 
     def contained(path: str) -> Path:
         # resolve() follows symlinks, so a link pointing out of root is refused.

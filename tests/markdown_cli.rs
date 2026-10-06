@@ -221,8 +221,17 @@ fn convert_writes_word_back_as_critic_markup() {
     ok(&jubarte(&["convert", "draft.md"], dir.path()));
     let critic = "Payment is due in {~~30~>45~~}{>>Redline (1970-01-01T00:00:00Z)<<} days.\
                   {>>Redline (1970-01-01T00:00:00Z): Agreed on the call.<<}\n";
+    // By default the Markdown names its pages; the text after the marker is
+    // exactly what --no-page-markers writes.
     assert_eq!(
         ok(&jubarte(&["convert", "draft.docx", "-t", "md"], dir.path())),
+        format!("<!-- page 1 of 1 -->\n\n{critic}")
+    );
+    assert_eq!(
+        ok(&jubarte(
+            &["convert", "draft.docx", "-t", "md", "--no-page-markers"],
+            dir.path()
+        )),
         critic
     );
     for (choice, text) in [("accept", "45"), ("reject", "30")] {
@@ -233,6 +242,7 @@ fn convert_writes_word_back_as_critic_markup() {
                     "draft.docx",
                     "-t",
                     "md",
+                    "--no-page-markers",
                     "--track-changes",
                     choice
                 ],
@@ -242,7 +252,13 @@ fn convert_writes_word_back_as_critic_markup() {
         );
     }
     let stdout = ok(&jubarte(
-        &["convert", "draft.docx", "-o", "back.md"],
+        &[
+            "convert",
+            "draft.docx",
+            "-o",
+            "back.md",
+            "--no-page-markers",
+        ],
         dir.path(),
     ));
     assert!(stdout.contains("wrote back.md"), "{stdout}");
@@ -587,8 +603,11 @@ fn inputs_are_told_apart_by_extension_then_by_their_bytes() {
     ));
     std::fs::copy(dir.path().join("notes.docx"), dir.path().join("notes.bin")).unwrap();
     assert!(
-        ok(&jubarte(&["convert", "notes.bin", "-t", "md"], dir.path()))
-            .starts_with("Notes {++added++}"),
+        ok(&jubarte(
+            &["convert", "notes.bin", "-t", "md", "--no-page-markers"],
+            dir.path()
+        ))
+        .starts_with("Notes {++added++}"),
         "a .bin holding a zip reads as Word"
     );
     assert_eq!(

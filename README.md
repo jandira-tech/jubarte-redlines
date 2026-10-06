@@ -334,7 +334,7 @@ Python wheel, the npm CLI) is in the [per-surface guides](#documentation).
 | `jubarte changes` | List each tracked change with the id `accept --id`, `reject --id` and edit plans take |
 | `jubarte accept` | Accept tracked changes (package-wide) and write the result: every change, or those --id/--author/--kind select (the rest stay tracked) |
 | `jubarte reject` | Reject tracked changes (package-wide) and write the result: every change, or those --id/--author/--kind select (the rest stay tracked) |
-| `jubarte convert` | Convert a .docx to PDF and/or PNG pages (independent of LibreOffice), or Markdown to .docx, PDF or PNG, with CriticMarkup as tracked changes |
+| `jubarte convert` | Convert a .docx to PDF and/or PNG pages (independent of LibreOffice), or Markdown to .docx, PDF or PNG, with CriticMarkup as tracked changes, or a Word 97-2003 .doc to .docx (text, headings, lists, bold, italic and tables) |
 | `jubarte diff` | Compare two documents, Word or Markdown: the changed paragraphs as a patch on stdout, each change `[-old-]{+new+}` in its paragraph, and with --output a Word redline (.docx), CriticMarkup (.md) or a PDF with the changes painted |
 | `jubarte inspect` | Read a .docx: body paragraphs with ids, style, formatting spans and limitations, plus package facts |
 | `jubarte text` | Print the body as Markdown with a `[body:p:N]` id before every paragraph: the coordinates an edit plan uses |
@@ -895,10 +895,12 @@ Release assets can vary by tag. Check the
 [release page](https://github.com/jandira-tech/jubarte-redlines/releases)
 before scripting a binary download.
 
-Legacy binary `.doc` files are not supported: a `.doc`, or an encrypted
-document of any Word version, is refused with `LEGACY_DOC` and the hint to
-save it as `.docx` without a password, and RTF with `UNSUPPORTED_PACKAGE`.
-Convert them to `.docx` first.
+A Word 97-2003 `.doc` converts to `.docx` with the native binary's
+`jubarte convert old.doc` (or `jubarte::legacy_doc::doc_to_docx` in Rust):
+text, headings, lists, bold, italic and tables. Every other command, and
+the Python and JavaScript packages (the npm command line too), refuse a `.doc` (or an encrypted document of any Word
+version) with `LEGACY_DOC` and the hint to save it as `.docx` without a
+password, and RTF with `UNSUPPORTED_PACKAGE`. Convert them to `.docx` first.
 
 ## Troubleshooting
 
