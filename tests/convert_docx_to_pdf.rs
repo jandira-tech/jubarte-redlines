@@ -38021,11 +38021,12 @@ fn georgia_run_embeds_georgia_not_times() {
 #[test]
 fn omml_f_nobar_paints_n_over_k() {
     // Strict01 noBar binomial: Word stacks n over k (no bar). Linear
-    // n/k (mini 359) was ITT-neg. Not oMathPara center.
+    // n/k (mini 359) was ITT-neg. Upright runs (m:sty p) keep the
+    // letters in WinAnsi text, where italic ones are math italics.
     let body = "<w:p><m:oMath xmlns:m=\"http://schemas.openxmlformats.org/officeDocument/2006/math\">\
          <m:f><m:fPr><m:type m:val=\"noBar\"/></m:fPr>\
-           <m:num><m:r><m:t>n</m:t></m:r></m:num>\
-           <m:den><m:r><m:t>k</m:t></m:r></m:den>\
+           <m:num><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>n</m:t></m:r></m:num>\
+           <m:den><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>k</m:t></m:r></m:den>\
          </m:f>\
        </m:oMath></w:p><w:sectPr/>";
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert noBar stack");
@@ -38056,41 +38057,47 @@ fn omml_f_nobar_paints_n_over_k() {
 }
 
 #[test]
-fn omml_d_and_f_stay_flattened_after_mini_359() {
-    // Linear m:d parens + m:f noBar n/k (mini 359) was Word-shaped
-    // but ITT-neg vs Quartz stacked noBar: Strict01 family −0.0049.
-    // Keep flatten x+a / nk. Not oMathPara center.
+fn omml_d_paints_parens_and_f_nobar_no_slash() {
+    // Word's PDF of math_all_objects draws "(𝑥 + 𝑦)": m:d paints its
+    // parentheses. A noBar fraction stacks n over k with no slash (mini
+    // 359's linear n/k was not Word's).
     let body = "<w:p><m:oMath xmlns:m=\"http://schemas.openxmlformats.org/officeDocument/2006/math\">\
-         <m:d><m:e><m:r><m:t>x</m:t></m:r><m:r><m:t>+</m:t></m:r><m:r><m:t>a</m:t></m:r></m:e></m:d>\
-         <m:r><m:t>=</m:t></m:r>\
+         <m:d><m:e><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>x</m:t></m:r><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>+</m:t></m:r><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>a</m:t></m:r></m:e></m:d>\
+         <m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>=</m:t></m:r>\
          <m:f><m:fPr><m:type m:val=\"noBar\"/></m:fPr>\
-           <m:num><m:r><m:t>n</m:t></m:r></m:num>\
-           <m:den><m:r><m:t>k</m:t></m:r></m:den>\
+           <m:num><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>n</m:t></m:r></m:num>\
+           <m:den><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>k</m:t></m:r></m:den>\
          </m:f>\
        </m:oMath></w:p><w:sectPr/>";
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert omml d/f lock");
     let hay = String::from_utf8_lossy(&pdf);
     let text = pdf_winansi_text(&pdf);
+    // pdf_winansi_text drops an escaped "(" opening a literal; the
+    // painted literals are the evidence.
     assert!(
-        text.contains("x+a") && text.contains("nk"),
-        "flatten must keep x+a and nk; text={text:?}"
+        hay.contains("(\\() Tj")
+            && hay.contains("(\\)) Tj")
+            && text.contains("x+a")
+            && text.contains("nk"),
+        "m:d paints its parentheses around x+a; text={text:?}"
     );
     assert!(
-        !hay.contains("(\\()") && !hay.contains("(\\))") && !text.contains("n/k"),
-        "mini 359 linear parens/slash ITT-neg; text={text:?}"
+        !text.contains("n/k"),
+        "noBar has no slash; text={text:?} {}",
+        hay.len()
     );
 }
 
 #[test]
 fn omml_nary_paints_sum_and_scripts() {
     // Strict01 ∑_{k=0}^{n}: naryPr/chr was dropped and sub/sup sat on
-    // the baseline. Not oMathPara center (ITT-neg).
+    // the baseline.
     let body = "<w:p><m:oMath xmlns:m=\"http://schemas.openxmlformats.org/officeDocument/2006/math\">\
          <m:nary>\
            <m:naryPr><m:chr m:val=\"∑\"/></m:naryPr>\
-           <m:sub><m:r><m:t>k=0</m:t></m:r></m:sub>\
-           <m:sup><m:r><m:t>n</m:t></m:r></m:sup>\
-           <m:e><m:r><m:t>x</m:t></m:r></m:e>\
+           <m:sub><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>k=0</m:t></m:r></m:sub>\
+           <m:sup><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>n</m:t></m:r></m:sup>\
+           <m:e><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>x</m:t></m:r></m:e>\
          </m:nary>\
        </m:oMath></w:p><w:sectPr/>";
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert omml nary");
@@ -38111,11 +38118,10 @@ fn omml_nary_paints_sum_and_scripts() {
 fn omml_ssup_paints_superscript_not_baseline() {
     // Strict01 binomial uses m:sSup (x^k). convert flattens m:t into
     // baseline runs ("xk"). Word paints the sup at ~65% size, raised.
-    // Not oMathPara center (mini OMML-center ITT-neg).
     let body = "<w:p><m:oMath xmlns:m=\"http://schemas.openxmlformats.org/officeDocument/2006/math\">\
          <m:sSup>\
-           <m:e><m:r><m:t>x</m:t></m:r></m:e>\
-           <m:sup><m:r><m:t>2</m:t></m:r></m:sup>\
+           <m:e><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>x</m:t></m:r></m:e>\
+           <m:sup><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>2</m:t></m:r></m:sup>\
          </m:sSup>\
        </m:oMath></w:p><w:sectPr/>";
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert omml sSup");
@@ -38457,26 +38463,26 @@ fn official_strict01_w14_effect_paras_stay_unpainted_as_body() {
 }
 
 #[test]
-fn omml_cambria_math_stays_calibri_after_mini_360() {
-    // Cambria Math FaceId + m:r rPr (mini 360) was Word-faithful on
-    // Strict01 (+0.002) but ITT-neg NR mean −0.003 (file_100/115/185/196
-    // −0.048). Keep flatten onto Calibri. Not linear m:d/m:f (359).
+fn omml_math_text_is_drawn_in_cambria_math_like_word() {
+    // Word's PDF of math_matrix_tests (corpus 6c0ad6c8ef) embeds
+    // CambriaMath for every equation. The mini 360 lock kept Calibri on a
+    // score dip measured against Quartz PDFs, not Word's.
+    let installed = std::path::Path::new(
+        "/Applications/Microsoft Word.app/Contents/Resources/DFonts/Cambria.ttc",
+    )
+    .is_file();
     let body = "<w:p><m:oMath xmlns:m=\"http://schemas.openxmlformats.org/officeDocument/2006/math\">\
-         <m:r><w:rPr><w:rFonts w:ascii=\"Cambria Math\" w:hAnsi=\"Cambria Math\"/>\
-           <w:sz w:val=\"22\"/></w:rPr><m:t>x</m:t></m:r>\
+         <m:r><w:rPr><w:sz w:val=\"22\"/></w:rPr><m:t>x</m:t></m:r>\
        </m:oMath></w:p><w:sectPr/>";
-    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert Cambria Math lock");
+    let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert Cambria Math");
     let hay = String::from_utf8_lossy(&pdf);
-    assert!(
-        !hay.contains("/CambriaMath") && !hay.contains("/Cambria-Math"),
-        "mini 360 CambriaMath embed ITT-neg; tail {}",
-        &hay[hay.len().saturating_sub(320)..]
-    );
-    assert!(
-        hay.contains("/Calibri") || hay.contains("/Carlito"),
-        "flatten must stay paragraph Calibri; tail {}",
-        &hay[hay.len().saturating_sub(280)..]
-    );
+    if installed {
+        assert!(
+            hay.contains("/CambriaMath"),
+            "math text must embed CambriaMath; tail {}",
+            &hay[hay.len().saturating_sub(320)..]
+        );
+    }
 }
 
 #[test]
