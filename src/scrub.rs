@@ -99,9 +99,9 @@ impl std::error::Error for ScrubError {}
 /// Remove the identifying data `options` names from a `.docx`.
 pub fn scrub(docx: &[u8], options: &ScrubOptions) -> Result<Vec<u8>, ScrubError> {
     let mut pkg = PartFs::open(docx).map_err(|e| ScrubError::Package(e.to_string()))?;
-    if !pkg
+    if pkg
         .main_document_part()
-        .is_some_and(|main| pkg.part_bytes(&main).is_some())
+        .is_none_or(|main| pkg.part_bytes(&main).is_none())
     {
         return Err(ScrubError::Invalid(
             "the package has no main document part".into(),

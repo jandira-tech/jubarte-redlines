@@ -21,7 +21,7 @@ or PNG — from Rust, Python, Node/browser, or the CLI.
 [![docs.rs](https://docs.rs/jubarte-redlines/badge.svg)](https://docs.rs/jubarte-redlines)
 [![PyPI](https://img.shields.io/pypi/v/jubarte-redlines.svg)](https://pypi.org/project/jubarte-redlines/)
 [![npm](https://img.shields.io/npm/v/jubarte-wasm.svg)](https://www.npmjs.com/package/jubarte-wasm)
-[![MSRV](https://img.shields.io/badge/MSRV-1.88-blue)](./Cargo.toml)
+[![MSRV](https://img.shields.io/badge/MSRV-1.94-blue)](./Cargo.toml)
 [![license](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](./LICENSE)
 [![Socket Badge](https://badge.socket.dev/cargo/package/jubarte-redlines/0.11.2)](https://badge.socket.dev/cargo/package/jubarte-redlines/0.11.2)
 
@@ -231,7 +231,7 @@ The default crate features include the CLI, fast allocator and self-update
 support. Library-only consumers can disable defaults and opt into features
 deliberately.
 
-MSRV: **Rust 1.88**.
+MSRV: **Rust 1.94**.
 
 ### Python
 
@@ -846,7 +846,7 @@ CI currently includes:
   (`wasm32-unknown-unknown`) and in-process bench bindings
 - all-feature Rust tests on Linux, macOS and Windows
 - source-based code coverage with a line-coverage floor
-- MSRV testing on Rust 1.88 (the all-feature test suite, on Linux)
+- MSRV testing on Rust 1.94 (the all-feature test suite, on Linux)
 - `cargo publish --dry-run`
 - `cargo-deny`
 - REUSE/SPDX checks
@@ -884,7 +884,7 @@ your own environment before choosing an engine.
 | Surface | Supported/tested target |
 |---|---|
 | Rust / CLI | CI tests Linux, macOS and Windows |
-| Rust toolchain | Rust 1.88+ |
+| Rust toolchain | Rust 1.94+ |
 | Python | CPython 3.10+ |
 | Python release wheels | macOS x86_64/arm64, manylinux_2_28 x86_64/arm64, musllinux_1_2 x86_64/arm64, Windows x86_64 (abi3, CPython 3.10+) |
 | Node | Node 18+ |

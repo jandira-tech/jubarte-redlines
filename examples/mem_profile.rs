@@ -27,7 +27,10 @@
 
 // The library denies unsafe crate-wide (Cargo `[lints]`); a counting global
 // allocator is inherently unsafe. Scope the allow to this diagnostic example.
-#![allow(unsafe_code)]
+#![expect(
+    unsafe_code,
+    reason = "a counting global allocator is an unsafe impl GlobalAlloc; the library itself stays unsafe-free"
+)]
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};

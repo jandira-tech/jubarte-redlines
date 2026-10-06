@@ -15,6 +15,23 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+### Changed
+
+- MSRV is Rust 1.94 (was 1.88), for the library, the CLI and the Python
+  binding. The MSRV-aware resolver had been holding `aes` at 0.9.2 and
+  `rdocx-opc` at 0.1.0 (their next releases need 1.89 and 1.93; the WASM
+  build already patched rdocx-opc 0.1.2). 1.94 also brings
+  `slice::array_windows` and `str::floor_char_boundary`, which replace
+  hand-rolled pair indexing and char-boundary loops. The CI MSRV job runs
+  the all-feature suite on 1.94.
+- The code is clippy-clean on 1.94 as well as on current stable: six
+  boolean expressions 1.94's `nonminimal_bool` flagged are rewritten
+  (`is_none_or`, a named pair test, a named toggle closure), and the lint
+  suppressions left in examples, tests and the Python binding are
+  `#[expect(..., reason = ...)]`, which fails once a suppression is no
+  longer needed. `tests/common` keeps `allow(dead_code)`: each test binary
+  uses part of it.
+
 ## [0.11.2] - 2026-10-03
 
 > **Summary.** A changed paragraph is marked word by word or replaced whole by Word's own rule (the kept characters against 15 % of the longer side), measured in 1,178 Word comparisons. jubarte convert paints comments as Word's balloons (resolved ones faded, ranges bracketed) and follows Word's PDF more closely in headers, table rows inside content controls, footnotes, justified lines and embedded fonts. The CLI runs on Windows debug builds. Every release now ships its benchmark evidence in release_info/. On two 600-item samples scored against Word's own output: redlines mean 76.71 (Docxodus 69.24), PDFs mean 78.77 (LibreOffice 54.06), no failed item.

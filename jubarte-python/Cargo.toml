@@ -11,7 +11,7 @@
 name = "jubarte-python"
 version = "0.11.2"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.94"
 publish = false
 description = "PyO3 bindings for jubarte-redlines: Word-mode DOCX redline compare, accept/reject/list revisions, DOCX→PDF"
 license = "AGPL-3.0-only"
