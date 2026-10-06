@@ -394,8 +394,10 @@ pub struct RenderRequest {
     /// Rasterize every page to PNG at this resolution.
     pub png_dpi: Option<f32>,
     /// Zero-based pages to rasterize (any order, repeats ignored); `None`
-    /// rasterizes every page. Layout and the report always cover the whole
-    /// document. An index at or past the page count is
+    /// rasterizes every page. Layout always covers the whole document; the
+    /// report covers every page written, which `PdfOptions::changed_only`
+    /// narrows and `CommentPlacement::End` extends, and so do these
+    /// indices. An index at or past the page count is
     /// [`ConvertError::PageOutOfRange`].
     pub pages: Option<Vec<usize>>,
 }
@@ -7610,6 +7612,8 @@ fn mark_comment_anchors(runs: &mut Vec<TextRun>) {
         style.caps = false;
         style.small_caps = false;
         style.hidden = false;
+        // An effect run Word leaves unpainted must not hide the marker.
+        style.effect_skip = false;
         let mut run = TextRun::new(text, style);
         run.comments = notes
             .into_iter()
@@ -7651,13 +7655,9 @@ fn list_comments_at_end(fonts: &Fonts, sheet: &StyleSheet, pages: &mut Vec<Page>
     let mut listed: Vec<(usize, PdfComment)> = Vec::new();
     for page in pages.iter_mut() {
         let mut notes = std::mem::take(&mut page.comments);
-        // Top of the page first (y grows upward), left to right on a line.
-        notes.sort_by(|a, b| {
-            b.top
-                .partial_cmp(&a.top)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then(a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal))
-        });
+        // Document order: the labels number the references as the body
+        // reads, columns and all ("3", then its replies "3R2", "3R3").
+        notes.sort_by_key(|note| label_order(&note.label));
         listed.extend(notes.into_iter().map(|note| (page.number, note)));
     }
     if listed.is_empty() {
@@ -7719,6 +7719,16 @@ fn list_comments_at_end(fonts: &Fonts, sheet: &StyleSheet, pages: &mut Vec<Page>
     pages.extend(out);
 }
 
+/// A balloon label's place in reading order: `"3R2"` is `(3, 2)`, `"3"`
+/// is `(3, 1)`; an unnumbered label sorts last.
+fn label_order(label: &str) -> (usize, usize) {
+    let (thread, reply) = label.split_once('R').unwrap_or((label, "1"));
+    (
+        thread.parse().unwrap_or(usize::MAX),
+        reply.parse().unwrap_or(usize::MAX),
+    )
+}
+
 /// `text`'s paragraphs broken greedily into lines `width` wide; a word
 /// wider than a line has one to itself.
 fn wrap_words(fonts: &Fonts, face: FaceRef, text: &str, size: f32, width: f32) -> Vec<String> {
@@ -7727,8 +7737,11 @@ fn wrap_words(fonts: &Fonts, face: FaceRef, text: &str, size: f32, width: f32) -
     for para in text.split('\n') {
         let mut line = String::new();
         let mut used = 0.0f32;
-        for word in para.split_whitespace() {
-            let w = advance(fonts, face, word, size);
+        for word in para
+            .split_whitespace()
+            .flat_map(|word| break_word(fonts, face, word, size, width))
+        {
+            let w = advance(fonts, face, &word, size);
             if !line.is_empty() && used + space + w > width {
                 lines.push(std::mem::take(&mut line));
                 used = 0.0;
@@ -7737,12 +7750,30 @@ fn wrap_words(fonts: &Fonts, face: FaceRef, text: &str, size: f32, width: f32) -
                 line.push(' ');
                 used += space;
             }
-            line.push_str(word);
+            line.push_str(&word);
             used += w;
         }
         lines.push(line);
     }
     lines
+}
+
+/// `word` in pieces no wider than `width`, a character at least each.
+fn break_word(fonts: &Fonts, face: FaceRef, word: &str, size: f32, width: f32) -> Vec<String> {
+    if advance(fonts, face, word, size) <= width {
+        return vec![word.to_string()];
+    }
+    let mut pieces = Vec::new();
+    let mut piece = String::new();
+    for ch in word.chars() {
+        piece.push(ch);
+        if piece.chars().count() > 1 && advance(fonts, face, &piece, size) > width {
+            piece.pop();
+            pieces.push(std::mem::replace(&mut piece, ch.to_string()));
+        }
+    }
+    pieces.push(piece);
+    pieces
 }
 
 /// Word's comment balloons, painted into the markup pane the way its Save
@@ -26238,6 +26269,7 @@ impl<'a> Layout<'a> {
         let last_ink = joined.rfind(|c: char| !is_wrap_space(c));
         let mut idx = 0usize;
         for run in line {
+            let start = x;
             let mut word = String::new();
             for ch in run.text.chars() {
                 if ch == ' ' {
@@ -26263,6 +26295,9 @@ impl<'a> Layout<'a> {
             if !word.is_empty() {
                 x = self.paint_run(&TextRun::new(word, run.style.clone()), x, y);
             }
+            // The pieces are new runs without the run's comments: place
+            // them over the run's stretched extent.
+            self.place_run_comments(run, start, y, x - start);
         }
     }
 

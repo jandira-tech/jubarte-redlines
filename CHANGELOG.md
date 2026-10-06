@@ -29,6 +29,8 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   the pages a change bar marks are kept, so page numbers and "Page N of M"
   stay the document's. A document without body changes keeps its first
   page. With `--move-comments`, only the kept pages' comments are listed.
+- `PdfOptions` has two more public fields (`comments`, `changed_only`): a
+  struct literal that names every field needs `..PdfOptions::default()`.
 
 ### Changed
 
@@ -43,6 +45,9 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   app's CI builds the app, and the app has its own Dependabot config.
 
 ### Fixed
+
+- A comment anchored in a justified line lost its balloon: the stretched
+  line repaints its words as new runs, which dropped the run's comments.
 
 - `scripts/release.sh` step 11 runs `gh release download` with no terminal
   attached and keeps gh's error. Under `script` (the 0.11.3 run's log

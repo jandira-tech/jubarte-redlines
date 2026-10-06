@@ -9,7 +9,7 @@ mod common;
 
 use std::process::Command;
 
-use common::docx::{Part, docx_with};
+use common::docx::{Part, docx_with, docx_with_sect_pr};
 use jubarte::convert::{CommentPlacement, PdfOptions, RenderRequest, Rendered, render};
 
 const COMMENTS_CT: &str =
@@ -373,4 +373,154 @@ fn the_page_flags_are_refused_where_nothing_is_laid_out() {
         let stderr = String::from_utf8_lossy(&diff.stderr);
         assert!(stderr.contains(flag), "{stderr}");
     }
+}
+
+const COMMENT_XML: &str = r#"<w:comment w:id="1" w:author="Jane Roe" w:initials="JR"><w:p><w:r><w:t>Justified note</w:t></w:r></w:p></w:comment>"#;
+
+fn comments_part(inner: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">{inner}</w:comments>"#
+    )
+}
+
+fn with_comments(body: &str, inner: &str) -> Vec<u8> {
+    let xml = comments_part(inner);
+    docx_with(
+        body,
+        &[Part {
+            name: "word/comments.xml",
+            content_type: COMMENTS_CT,
+            rel_type: COMMENTS_REL,
+            xml: &xml,
+        }],
+    )
+}
+
+#[test]
+fn a_comment_inside_a_justified_line_keeps_its_balloon_and_its_listing() {
+    let words = "stretch ".repeat(40);
+    let body = format!(
+        r#"<w:p><w:pPr><w:jc w:val="both"/></w:pPr><w:r><w:t xml:space="preserve">Lead words </w:t></w:r><w:commentRangeStart w:id="1"/><w:r><w:t xml:space="preserve">commented span </w:t></w:r><w:commentRangeEnd w:id="1"/><w:r><w:commentReference w:id="1"/></w:r><w:r><w:t xml:space="preserve">{words}</w:t></w:r></w:p>"#
+    );
+    let docx = with_comments(&body, COMMENT_XML);
+    let margin = texts(&rendered(&docx, PdfOptions::default())).concat();
+    assert!(margin.contains("Commented [JR1]"), "{margin:?}");
+    let end = texts(&rendered(
+        &docx,
+        PdfOptions {
+            comments: CommentPlacement::End,
+            ..PdfOptions::default()
+        },
+    ));
+    assert!(end.last().unwrap().contains("Justified note"), "{end:?}");
+}
+
+#[test]
+fn a_marker_after_an_unpainted_effect_run_still_carries_its_comment() {
+    let body = r#"<w:p><w:commentRangeStart w:id="1"/><w:r><w:t xml:space="preserve">Plain </w:t></w:r><w:r><w:rPr><w14:reflection xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"/></w:rPr><w:t>Echo</w:t></w:r><w:commentRangeEnd w:id="1"/><w:r><w:commentReference w:id="1"/></w:r></w:p>"#;
+    let docx = with_comments(body, COMMENT_XML);
+    let pages = texts(&rendered(
+        &docx,
+        PdfOptions {
+            comments: CommentPlacement::End,
+            ..PdfOptions::default()
+        },
+    ));
+    assert_eq!(pages.len(), 2, "{pages:?}");
+    assert!(pages[0].contains("[JR1]"), "{pages:?}");
+    assert!(pages[1].contains("Justified note"), "{pages:?}");
+}
+
+#[test]
+fn an_insertion_running_over_a_page_break_keeps_both_pages() {
+    let filler = "Filler line words. ".repeat(12);
+    let mut body = String::new();
+    for _ in 0..30 {
+        body.push_str(&format!(r#"<w:p><w:r><w:t>{filler}</w:t></w:r></w:p>"#));
+    }
+    let inserted = "Inserted words run long. ".repeat(200);
+    body.push_str(&format!(
+        r#"<w:p><w:ins w:id="5" w:author="Rev" w:date="2026-01-01T00:00:00Z"><w:r><w:t>{inserted}</w:t></w:r></w:ins></w:p>"#
+    ));
+    body.push_str(PAGE_BREAK);
+    body.push_str(r#"<w:p><w:r><w:t>Untouched tail page</w:t></w:r></w:p>"#);
+    let docx = docx_with(&body, &[]);
+    let all = texts(&rendered(&docx, PdfOptions::default()));
+    let changed = texts(&rendered(
+        &docx,
+        PdfOptions {
+            changed_only: true,
+            ..PdfOptions::default()
+        },
+    ));
+    let spanned: Vec<&String> = all
+        .iter()
+        .filter(|p| p.contains("Inserted words"))
+        .collect();
+    assert!(
+        spanned.len() >= 2,
+        "the insertion spans pages: {}",
+        all.len()
+    );
+    assert_eq!(
+        changed.len(),
+        spanned.len(),
+        "every page it spans, and no other"
+    );
+    assert!(changed.iter().all(|p| p.contains("Inserted words")));
+}
+
+#[test]
+fn an_overlong_word_in_a_comment_is_broken_to_the_line() {
+    let word = "x".repeat(400);
+    let body = r#"<w:p><w:commentRangeStart w:id="1"/><w:r><w:t>Anchor</w:t></w:r><w:commentRangeEnd w:id="1"/><w:r><w:commentReference w:id="1"/></w:r></w:p>"#;
+    let inner = format!(
+        r#"<w:comment w:id="1" w:author="Jane Roe" w:initials="JR"><w:p><w:r><w:t>{word}</w:t></w:r></w:p></w:comment>"#
+    );
+    let pages = texts(&rendered(
+        &with_comments(body, &inner),
+        PdfOptions {
+            comments: CommentPlacement::End,
+            ..PdfOptions::default()
+        },
+    ));
+    let listing = pages.last().unwrap();
+    let pieces: Vec<&str> = listing.lines().filter(|l| l.starts_with('x')).collect();
+    assert!(pieces.len() >= 3, "{listing:?}");
+    assert_eq!(pieces.concat(), word, "nothing lost in the breaks");
+}
+
+#[test]
+fn comments_are_listed_in_document_order_across_columns() {
+    let filler: String = (0..12)
+        .map(|_| r#"<w:p><w:r><w:t>Column one filler line</w:t></w:r></w:p>"#)
+        .collect();
+    let body = format!(
+        r#"{filler}<w:p><w:commentRangeStart w:id="1"/><w:r><w:t>Low in column one</w:t></w:r><w:commentRangeEnd w:id="1"/><w:r><w:commentReference w:id="1"/></w:r></w:p><w:p><w:r><w:br w:type="column"/></w:r></w:p><w:p><w:commentRangeStart w:id="2"/><w:r><w:t>Top of column two</w:t></w:r><w:commentRangeEnd w:id="2"/><w:r><w:commentReference w:id="2"/></w:r></w:p>"#
+    );
+    let inner = r#"<w:comment w:id="1" w:author="Jane Roe" w:initials="JR"><w:p><w:r><w:t>Column one note</w:t></w:r></w:p></w:comment><w:comment w:id="2" w:author="Jane Roe" w:initials="JR"><w:p><w:r><w:t>Column two note</w:t></w:r></w:p></w:comment>"#;
+    let xml = comments_part(inner);
+    let docx = docx_with_sect_pr(
+        &body,
+        &[Part {
+            name: "word/comments.xml",
+            content_type: COMMENTS_CT,
+            rel_type: COMMENTS_REL,
+            xml: &xml,
+        }],
+        r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/><w:cols w:num="2" w:space="720"/></w:sectPr>"#,
+    );
+    let pages = texts(&rendered(
+        &docx,
+        PdfOptions {
+            comments: CommentPlacement::End,
+            ..PdfOptions::default()
+        },
+    ));
+    assert_eq!(pages.len(), 2, "{pages:?}");
+    let listing = &pages[1];
+    let one = listing.find("Column one note").unwrap();
+    let two = listing.find("Column two note").unwrap();
+    assert!(one < two, "{listing:?}");
 }
