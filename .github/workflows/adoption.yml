@@ -109,15 +109,15 @@ jobs:
       - name: committed evidence is still produced
         run: |
           git status --porcelain -- examples/adoption
+          # Every tool a file's name involves, not the first match: a
+          # `*_pandoc_soffice*` file needs pandoc as well as soffice.
           needs() {
-            case "$1" in
-              *soffice*|*libreoffice*) echo soffice pdftoppm ;;
-              # 14's run.sh: soffice and pdftoppm open the branch, pdfinfo writes it.
-              *pdf_page_size_*) echo soffice pdftoppm pdfinfo ;;
-              *fonts_jubarte_pdf*) echo pdffonts ;;
-              *pandoc*) echo pandoc ;;
-              *docxjs*) echo bun ;;
-            esac
+            case "$1" in *soffice*|*libreoffice*) echo soffice pdftoppm ;; esac
+            # 14's run.sh: soffice and pdftoppm open the branch, pdfinfo writes it.
+            case "$1" in *pdf_page_size_*) echo soffice pdftoppm pdfinfo ;; esac
+            case "$1" in *fonts_jubarte_pdf*) echo pdffonts ;; esac
+            case "$1" in *pandoc*) echo pandoc ;; esac
+            case "$1" in *docxjs*) echo bun ;; esac
           }
           deleted=""
           for file in $(git ls-files --deleted -- examples/adoption | grep -i jubarte || true); do
