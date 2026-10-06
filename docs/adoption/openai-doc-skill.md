@@ -52,7 +52,7 @@ included), `3` edit plan refused (nothing written).
 | python-docx run formatting, footnotes, images, page setup | structural plan operations | released |
 | Comparing two versions | `jubarte a.docx b.docx -o redline.docx --author "Name"` | released |
 | Accept or reject | `jubarte accept FILE -o OUT` / `reject`, all at once or per change (`--id`, `--author`, `--kind`) | released |
-| Legacy `.doc` (LibreOffice in the install section) | `jubarte convert old.doc` writes `old.docx`: text, headings, lists, bold, italic, tables ([plans.md](plans.md) §1 for the rest) | main |
+| Legacy `.doc` (LibreOffice in the install section) | `jubarte convert old.doc` writes `old.docx`: text, headings, lists, bold, italic, tables ([plans.md](plans.md) §1 for the rest) | released |
 | Calling it as tools instead of a command line | `uvx --from 'jubarte-redlines[mcp]' jubarte-mcp --root .` serves `docx_text`, `docx_inspect`, `docx_edit`, `docx_render`, `docx_compare`, `docx_changes`, `docx_accept`, `docx_reject` and more as MCP tools, every path confined to `--root`; see [mcp.md](mcp.md). | released |
 
 ## 3. What you lose, or keep
@@ -69,7 +69,7 @@ included), `3` edit plan refused (nothing written).
   documents; jubarte's skill says so to the agent. Matching LibreOffice's
   layout is not a goal ([plans.md](plans.md) §4).
 - **Legacy `.doc`, beyond the basics.** `jubarte convert old.doc` reads
-  text, headings, lists, bold, italic and tables (main); keep LibreOffice
+  text, headings, lists, bold, italic and tables (released); keep LibreOffice
   for fonts, headers, footers, notes, pictures and page setup.
 - **License.** jubarte is AGPL-3.0-only and runs as a separate program your
   skill calls.

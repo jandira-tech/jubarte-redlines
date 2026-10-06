@@ -12,6 +12,25 @@ Engine defects and unresolved design conflicts.
 
 ## Open
 
+### 8. Word 16.115 crashes opening 23 benchmark redlines — **OPEN, cause unknown**
+
+**Seen:** the 0.11.3 release evidence (2026-10-06). Word 16.115, installed on
+the bench on 2026-10-05, dies ("Connection is invalid (-609)") opening 23 of
+the 600 jubarte redlines of `release_info/sample_redline_0.11.3_*.csv`. Each
+crashed in the batch export and again on a one-at-a-time retry; 21 crashed
+again after a Word restart, and 6 also when opened alone under a fresh name.
+They score 0 in the release's results.
+
+**What is known:** 22 of the 23 are byte-identical to the 0.11.2 redlines that
+the previous Word opened and exported on 2026-10-03, so no 0.11.3 change
+caused them; current Word still cannot open them. Every original opens in
+Word. docx-validate, the OpenXML validator and `jubarte validate` find
+nothing in 10 of them; the findings in the rest come from their originals,
+and the same findings sit in redlines that open.
+
+**Action:** reduce one crasher (file_176 vs file_177) against a redline that
+opens, each variant alone in Word, then fix the writer with a test.
+
 ### 6. Dependabot: glib 0.18.5 in the desktop app (RUSTSEC-2024-0429) — **OPEN, blocked upstream**
 
 **Alert:** GitHub reports one moderate vulnerability, `glib` ≥0.15 <0.20
