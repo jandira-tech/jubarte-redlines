@@ -154,13 +154,28 @@ fn common_prefix(stream: &[(char, usize)], at: usize, line: &[char]) -> usize {
 /// one line per baseline, so cells side by side interleave there and only
 /// the first cell's opening reads as it does in the Markdown.
 fn first_cell(line: &str) -> &str {
-    match line.strip_prefix('|') {
-        Some(row) => row
-            .split('|')
-            .find(|cell| !cell.trim().is_empty())
-            .unwrap_or(""),
-        None => line,
+    let Some(row) = line.strip_prefix('|') else {
+        return line;
+    };
+    // A cell ends at a `|` no backslash escapes (`\|` is a pipe in the text).
+    let mut start = 0;
+    let mut escaped = false;
+    for (at, ch) in row.char_indices() {
+        match ch {
+            '\\' => escaped = !escaped,
+            '|' if !escaped => {
+                let cell = row.get(start..at).unwrap_or("");
+                if !cell.trim().is_empty() {
+                    return cell;
+                }
+                start = at.saturating_add(1);
+            }
+            _ => escaped = false,
+        }
     }
+    row.get(start..)
+        .filter(|cell| !cell.trim().is_empty())
+        .unwrap_or("")
 }
 
 fn marker(page: usize, total: usize) -> String {
@@ -436,6 +451,17 @@ mod tests {
             out,
             "<!-- page 1 of 2 -->\n\n| a | b |\n|---|---|\n| row one | x |\n| row two | y |\n\n<!-- page 2 of 2 -->\n\nAfter.\n"
         );
+    }
+
+    /// A `|` in a cell's text is written `\|` and does not end the cell.
+    #[test]
+    fn an_escaped_pipe_stays_inside_the_first_cell() {
+        assert_eq!(
+            first_cell(r"| Terms \| conditions | x |"),
+            r" Terms \| conditions "
+        );
+        assert_eq!(first_cell(r"| | a\|b |"), r" a\|b ");
+        assert_eq!(first_cell("plain line"), "plain line");
     }
 
     #[test]
