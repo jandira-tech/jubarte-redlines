@@ -593,7 +593,7 @@ fn with_layout<T>(
     // lists it (sd_2750_borderbox lists only Cambria).
     let has_math = std::iter::once(&xml)
         .chain(&stories)
-        .any(|t| t.contains("<m:oMath"));
+        .any(|t| writes_omml(t));
     if has_math {
         family_names.push("Cambria Math".to_string());
         run_faces.push("Cambria Math".to_string());
@@ -629,13 +629,12 @@ fn with_layout<T>(
     }
     let fonts = Fonts::for_document(&embedded);
     font::with_font_table(table, || {
-        let _math = MathAlphanumerics::set(
-            !has_math
-                || fonts
-                    .get(fonts.resolve("Cambria Math", false, false))
-                    .glyph('\u{1D44E}')
-                    != 0,
-        );
+        let _math = MathAlphanumerics::set(if has_math {
+            let face = fonts.get(fonts.resolve("Cambria Math", false, false));
+            MathFace::probe(|c| face.glyph(c) != 0)
+        } else {
+            MathFace::All
+        });
         let core = load_core_dates(&pkg);
         with_core_dates(core, || {
             let mut sheet = load_stylesheet(&pkg);
@@ -10607,10 +10606,12 @@ fn display_math_align(dom: &Dom, para: NodeId) -> Option<Align> {
         .descendants(para, Some(&math_para))
         .into_iter()
         .find(|&m| dom.ancestors(m, Some(&W::p())).first() == Some(&para))?;
-    let own_text = dom
-        .descendants(para, Some(&W::t()))
-        .into_iter()
-        .any(|t| dom.ancestors(t, Some(&math_para)).is_empty() && !element_text(dom, t).is_empty());
+    // Deleted text counts: a markup view paints it beside the equation.
+    let own_text = [W::t(), W::del_text()].iter().any(|name| {
+        dom.descendants(para, Some(name)).into_iter().any(|t| {
+            dom.ancestors(t, Some(&math_para)).is_empty() && !element_text(dom, t).is_empty()
+        })
+    });
     if own_text {
         return None;
     }
@@ -14924,8 +14925,18 @@ fn collect_runs_rec(
             {
                 math_text_style(&mut style);
                 if !upright {
-                    if MATH_ALPHANUMERICS.with(std::cell::Cell::get) {
-                        shown = shown.chars().map(math_italic).collect();
+                    // The whole run maps only if the face draws every
+                    // letter it maps to; else it stays ASCII italic.
+                    let mapped: String = shown.chars().map(math_italic).collect();
+                    let drawn = MATH_ALPHANUMERICS.with(|face| {
+                        let face = face.borrow();
+                        mapped
+                            .chars()
+                            .zip(shown.chars())
+                            .all(|(to, from)| to == from || face.draws(to))
+                    });
+                    if drawn {
+                        shown = mapped;
                     } else {
                         style.italic = true;
                     }
@@ -14950,25 +14961,98 @@ fn collect_runs_rec(
 }
 
 thread_local! {
-    static MATH_ALPHANUMERICS: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+    static MATH_ALPHANUMERICS: std::cell::RefCell<MathFace> =
+        const { std::cell::RefCell::new(MathFace::All) };
 }
 
-/// Whether this conversion's Cambria Math face draws the mathematical
-/// alphanumeric block, for the conversion's lifetime. Without it (no
-/// Cambria Math installed) math letters stay ASCII and are set italic
-/// rather than vanishing as glyphs the face lacks.
-struct MathAlphanumerics(bool);
+/// Which mathematical alphanumerics this conversion's Cambria Math face
+/// draws. Without them (no Cambria Math installed, or an embedded subset
+/// that lacks a letter) math letters stay ASCII and are set italic rather
+/// than vanishing as glyphs the face lacks.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+enum MathFace {
+    #[default]
+    All,
+    Only(std::collections::HashSet<char>),
+}
+
+impl MathFace {
+    /// The face's coverage of every mathematical alphanumeric this
+    /// conversion can map to, from `drawn` (whether the face has a glyph).
+    fn probe(drawn: impl Fn(char) -> bool) -> Self {
+        let targets = ('a'..='z')
+            .chain('A'..='Z')
+            .chain('α'..='ω')
+            .map(math_italic);
+        let covered: std::collections::HashSet<char> = targets.filter(|&c| drawn(c)).collect();
+        if covered.len() == ('a'..='z').chain('A'..='Z').chain('α'..='ω').count() {
+            Self::All
+        } else {
+            Self::Only(covered)
+        }
+    }
+
+    fn draws(&self, c: char) -> bool {
+        match self {
+            Self::All => true,
+            Self::Only(covered) => covered.contains(&c),
+        }
+    }
+}
+
+/// Sets [`MathFace`] for the conversion's lifetime, restoring the previous
+/// one on drop.
+struct MathAlphanumerics(MathFace);
 
 impl MathAlphanumerics {
-    fn set(available: bool) -> Self {
-        Self(MATH_ALPHANUMERICS.with(|slot| slot.replace(available)))
+    fn set(face: MathFace) -> Self {
+        Self(MATH_ALPHANUMERICS.with(|slot| slot.replace(face)))
+    }
+
+    #[cfg(test)]
+    fn only<const N: usize>(drawn: [char; N]) -> Self {
+        Self::set(MathFace::Only(drawn.into_iter().collect()))
     }
 }
 
 impl Drop for MathAlphanumerics {
     fn drop(&mut self) {
-        MATH_ALPHANUMERICS.with(|slot| slot.set(self.0));
+        let previous = std::mem::take(&mut self.0);
+        MATH_ALPHANUMERICS.with(|slot| slot.replace(previous));
     }
+}
+
+/// Whether an XML part holds an OMML equation: an `oMath` or `oMathPara`
+/// element under whatever prefix the part binds to the math namespace
+/// (Word writes `m:`, other producers need not).
+fn writes_omml(text: &str) -> bool {
+    const MATH: &str = "\"http://schemas.openxmlformats.org/officeDocument/2006/math\"";
+    let mut prefixes: Vec<String> = Vec::new();
+    let mut rest = text;
+    while let Some(at) = rest.find(MATH) {
+        let head = &rest[..at];
+        if let Some(decl) = head.rfind("xmlns") {
+            match head[decl..].strip_prefix("xmlns").map(str::trim_end) {
+                Some(binding) if binding.trim_end_matches('=').trim_end().is_empty() => {
+                    prefixes.push(String::new());
+                }
+                Some(binding) => {
+                    if let Some(prefix) = binding
+                        .strip_prefix(':')
+                        .map(|p| p.trim_end_matches('=').trim_end())
+                        .filter(|p| !p.is_empty() && !p.contains(char::is_whitespace))
+                    {
+                        prefixes.push(format!("{prefix}:"));
+                    }
+                }
+                None => {}
+            }
+        }
+        rest = &rest[at + MATH.len()..];
+    }
+    prefixes
+        .iter()
+        .any(|prefix| text.contains(&format!("<{prefix}oMath")))
 }
 
 /// An `m:d`: its `begChr`, its `m:e` items with `sepChr` between them,
@@ -15001,6 +15085,11 @@ fn collect_math_delimiter(
         }
         let mut style = ctx.base.clone();
         math_text_style(&mut style);
+        // Inside a script or a stacked fraction the delimiters move with
+        // their contents.
+        if ctx.math_vert != VertAlign::Baseline {
+            style.vert = ctx.math_vert;
+        }
         if mark != RevMark::None {
             apply_rev(&mut style, mark, ctx.authors.color(author));
         }
@@ -15047,6 +15136,7 @@ fn math_run_upright(dom: &Dom, r: NodeId) -> Option<bool> {
 /// math_matrix_tests embeds CambriaMath with a = U+1D44E).
 fn math_text_style(style: &mut RunStyle) {
     style.family = "Cambria Math".to_string();
+    style.family_hansi = None;
     style.family_ea = None;
     style.family_cs = None;
     style.italic = false;
@@ -36423,7 +36513,7 @@ mod field_tests {
         // A face without the mathematical alphanumeric block drew nothing
         // for U+1D44E (sd_2750_borderbox lost every math letter); without
         // Cambria Math the letters keep their ASCII code points, italic.
-        let _none = MathAlphanumerics::set(false);
+        let _none = MathAlphanumerics::set(MathFace::Only(std::collections::HashSet::new()));
         let runs = math_runs(r#"<w:p><m:oMath><m:r><m:t>ab2</m:t></m:r></m:oMath></w:p>"#);
         let run = runs.iter().find(|r| !r.text.is_empty()).expect("math run");
         assert_eq!(run.text, "ab2");
@@ -36431,6 +36521,74 @@ mod field_tests {
         drop(_none);
         let runs = math_runs(r#"<w:p><m:oMath><m:r><m:t>a</m:t></m:r></m:oMath></w:p>"#);
         assert_eq!(runs[0].text, "\u{1D44E}", "the flag is restored");
+    }
+
+    #[test]
+    fn omml_is_found_under_any_prefix() {
+        // The namespace, not the producer's prefix, makes an equation.
+        let math = "http://schemas.openxmlformats.org/officeDocument/2006/math";
+        assert!(writes_omml(&format!(
+            r#"<w:document xmlns:m="{math}"><m:oMath/></w:document>"#
+        )));
+        assert!(writes_omml(&format!(
+            r#"<w:document xmlns:mth="{math}"><mth:oMathPara/></w:document>"#
+        )));
+        assert!(writes_omml(&format!(r#"<oMath xmlns="{math}"/>"#)));
+        assert!(!writes_omml(
+            r#"<w:document xmlns:m="urn:other"><m:oMath/></w:document>"#
+        ));
+        assert!(!writes_omml(&format!(r#"<w:document xmlns:m="{math}"/>"#)));
+    }
+
+    #[test]
+    fn omml_letters_a_subset_face_lacks_stay_ascii_italic() {
+        // An embedded Cambria Math subset may draw some math letters and
+        // not others: a run with a letter it lacks keeps ASCII italic
+        // rather than losing that glyph.
+        let _subset = MathAlphanumerics::only(['\u{1D44E}']);
+        let runs = math_runs(
+            r#"<w:p><m:oMath><m:r><m:t>ab</m:t></m:r><m:r><m:t>a</m:t></m:r></m:oMath></w:p>"#,
+        );
+        let texts: Vec<(&str, bool)> = runs
+            .iter()
+            .filter(|r| !r.text.is_empty())
+            .map(|r| (r.text.as_str(), r.style.italic))
+            .collect();
+        assert_eq!(texts, [("ab", true), ("\u{1D44E}", false)]);
+    }
+
+    #[test]
+    fn omml_text_drops_the_inherited_hansi_face() {
+        // A base whose hAnsi face differs (defaults can set one): the hAnsi
+        // split would move U+1D44E off Cambria Math onto a face without
+        // the block.
+        let xml = r#"<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">
+<w:body><w:p><m:oMath><m:r><m:t>a</m:t></m:r><m:d><m:e><m:r><m:t>b</m:t></m:r></m:e></m:d></m:oMath></w:p></w:body></w:document>"#;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).expect("root");
+        let para = dom.descendants(root, Some(&W::p()))[0];
+        let mut base = Defaults::word().run;
+        base.family_hansi = Some("Georgia".into());
+        let runs = collect_runs(&dom, para, &base, &ThemeFonts::default());
+        for run in runs.iter().filter(|r| !r.text.is_empty()) {
+            assert_eq!(run.style.family, "Cambria Math", "{:?}", run.text);
+            assert_eq!(run.style.family_hansi, None, "{:?}", run.text);
+        }
+    }
+
+    #[test]
+    fn omml_delimiters_take_the_script_placement() {
+        // An m:d inside a superscript is raised with its contents.
+        let runs = math_runs(
+            r#"<w:p><m:oMath><m:sSup><m:e><m:r><m:t>x</m:t></m:r></m:e><m:sup><m:d><m:e><m:r><m:t>n</m:t></m:r></m:e></m:d></m:sup></m:sSup></m:oMath></w:p>"#,
+        );
+        for text in ["(", "\u{1D45B}", ")"] {
+            let run = runs.iter().find(|r| r.text == text).expect(text);
+            assert!(run.style.vert == VertAlign::Super, "{text}");
+        }
     }
 
     #[test]
@@ -36499,6 +36657,13 @@ mod field_tests {
             align(&format!("<w:p>{eq}</w:p>")),
             None,
             "inline math is not display"
+        );
+        // Deleted text is painted in a markup view: the paragraph is mixed.
+        assert_eq!(
+            align(&format!(
+                r#"<w:p><w:del w:id="1" w:author="A"><w:r><w:delText>Let</w:delText></w:r></w:del><m:oMathPara>{eq}</m:oMathPara></w:p>"#
+            )),
+            None
         );
     }
 
