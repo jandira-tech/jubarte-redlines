@@ -31,7 +31,7 @@ const CHANNELS = [
   },
   {
     tag: "Rust crate",
-    req: "MSRV 1.88 · edition 2024",
+    req: "MSRV 1.94 · edition 2024",
     title: "Library",
     cmd: "cargo add jubarte-redlines \\\n  --no-default-features",
     note: 'Import path is <span class="code-inline">jubarte::</span>. Default features add the CLI, mimalloc and self-update; library consumers opt in deliberately. <span class="code-inline">unsafe_code = "deny"</span>.',

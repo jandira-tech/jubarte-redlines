@@ -43,7 +43,7 @@ print("OPEN OK, paragraphs:", [p.text for p in d.paragraphs])' "$f"
 
   # The replacement: jubarte validate, structured findings.
   rc=0
-  "$JUBARTE" validate "$f" --json > "validate_jubarte_${stem}.json" 2>&1 || rc=$?
+  "$JUBARTE" validate "$f" --json > "validate_jubarte_${stem}.jsonl" 2>&1 || rc=$?
   echo "${stem}: exit=${rc}" >> validate_jubarte.log
 
   # The repair option, then a re-validation of what it wrote.
@@ -59,7 +59,7 @@ print("OPEN OK, paragraphs:", [p.text for p in d.paragraphs])' "$f"
 
   # The .NET Open XML SDK validator the repository uses at release, when its
   # prebuilt binary is present (it is not built by this script).
-  VALIDATOR="/Users/arthrod/temp/T/jr-adopt/tools/validate-docx/bin/Release/net8.0/validate-docx"
+  VALIDATOR="$(cd ../../.. && pwd)/tools/validate-docx/bin/Release/net8.0/validate-docx"
   if [ -x "$VALIDATOR" ]; then
     "$VALIDATOR" "$f" > "validate_ooxml_${stem}.log" 2>&1 || echo "exit=$?" >> "validate_ooxml_${stem}.log"
   else

@@ -23,7 +23,7 @@ pip install 'jubarte-redlines[mcp]' && jubarte-mcp --root .
 | `docx_capabilities` | | the engine's capability manifest |
 | `docx_text` | `path` | Markdown with a `[body:p:N]` id before each paragraph |
 | `docx_inspect` | `path` | the engine snapshot (`summary`, `paragraphs`, `stories`) |
-| `docx_edit` | `path`, `plan`, `out_dir`, `pdf=false`, `png_dpi=null`, `overwrite=false` | paths of `clean.docx`, `redline.docx`, `patch.diff`, `report.json` (and `redline.pdf`, `redline-page-NN.png`), plus the report |
+| `docx_edit` | `path`, `plan`, `out_dir`, `pdf=false`, `png_dpi=null`, `overwrite=false` | paths of `clean.docx`, `redline.docx`, `patch.diff`, `report.json` (and `redline.pdf`, `redline-page-NN.png`), plus the report (the CLI writes the same report as `report.jsonl`) |
 | `docx_render` | `path`, `out_dir`, `dpi=96`, `pages=null`, `pdf=false`, `overwrite=false` | paths of `page-NN.png` (and `render.pdf`), page count, page text, fonts |
 | `docx_compare` | `original`, `modified`, `out`, `author`, `date=null`, `overwrite=false` | `out` and the change list |
 | `docx_changes` | `path` | every tracked change, with the id accept and reject select by |
@@ -33,8 +33,8 @@ pip install 'jubarte-redlines[mcp]' && jubarte-mcp --root .
 | `docx_audit` | `path`, `rules=null` (rule sets `a11y`, `style`, `structure` or codes) | accessibility, style and structure findings, each with its paragraph id |
 
 `docx_validate`, `docx_comments` and `docx_audit` are part of the tool
-contract now. Until the engine build has the matching `Document` method they
-return an error saying the build lacks the feature.
+contract. An engine build without the matching `Document` method returns an
+error saying the build lacks the feature.
 
 Read tools carry the MCP `readOnlyHint`, so a host that asks before writes
 (Codex's `default_tools_approval_mode = "writes"`) only asks for the tools
@@ -133,8 +133,9 @@ enterprise and API-key users stay on Gemini CLI.
 
 Gemini CLI issue
 [#20298](https://github.com/google-gemini/gemini-cli/issues/20298) (opened
-2026-02-25) reports that Gemini CLI treats `.docx` as binary and proposes an
-extension for reading and editing it.
+2026-02-25) reported that Gemini CLI treats `.docx` as binary and proposed an
+extension for reading and editing it; it was closed as not planned on
+2026-05-08.
 
 ## Other docx MCP servers
 

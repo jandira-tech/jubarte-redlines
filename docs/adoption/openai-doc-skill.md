@@ -33,9 +33,11 @@ and ask the user when those cannot be installed.
 
 ## 2. The replacement, step by step
 
-Commands as `jubarte`; `python -m jubarte_redlines` takes the same
-subcommands (compare is `compare A B` there). Exit codes: `0` done, `1`
-error, `2` usage error, `3` edit plan refused (nothing written).
+Commands as `jubarte`; `python -m jubarte_redlines` takes a subset of the
+same subcommands (compare is `compare A B` there, and its `convert` has no
+`--timeout`, `--fail-on-substitution` or `-t/--to` yet). Exit codes: `0`
+done, `1` error, `2` usage error or `validate` findings (warnings
+included), `3` edit plan refused (nothing written).
 
 | Today | jubarte | Status |
 |---|---|---|

@@ -14,7 +14,7 @@ cd "$(dirname "$0")"
 out=sizes_jubarte_vs_replaced.tsv
 if [ "${JUBARTE_MEASURE_SIZES:-0}" != 1 ] || ! command -v docker >/dev/null; then
   echo "skip measuring (set JUBARTE_MEASURE_SIZES=1 with Docker); committed results:"
-  cat "$out"
+  cat "$out" download_jubarte.tsv
   exit 0
 fi
 version=${JUBARTE_VERSION:-0.11.2}
@@ -54,3 +54,10 @@ row "python-docx (with lxml), Python already present" "python3 python3-pip" "$pi
 row "jubarte $version release binary (linux-x86_64)" "" "curl -fsSL https://github.com/jandira-tech/jubarte-redlines/releases/download/v$version/jubarte-$version-linux-x86_64.tar.gz | tar -xz -C /usr/local/bin"
 row "jubarte $version wheel (pip), Python already present" "python3 python3-pip" "$pip jubarte-redlines==$version"
 mv "$out.new" "$out"
+
+# The release tarball's download size: the Content-Length of the asset the
+# binary row above installs, after GitHub's redirect.
+url="https://github.com/jandira-tech/jubarte-redlines/releases/download/v$version/jubarte-$version-linux-x86_64.tar.gz"
+bytes=$(curl -fsSLI "$url" | awk 'tolower($1)=="content-length:"{n=$2} END{print n}' | tr -d '\r')
+printf 'what\tbytes\tsize\njubarte %s release tarball (linux-x86_64) download\t%s\t%s MB\n' \
+  "$version" "$bytes" "$(( (bytes + 500000) / 1000000 ))" > download_jubarte.tsv

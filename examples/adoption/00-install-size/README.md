@@ -7,7 +7,8 @@ Each row is a fresh `ubuntu:24.04` (linux/amd64) container. The size is
 the bytes `du -sxb /` counts after the install minus before, with the apt
 lists and the apt, pip and npm caches removed. The pip rows start from an
 image that already has Python and pip, so they count the package alone.
-Measured on 2026-10-04 ([`sizes_jubarte_vs_replaced.tsv`](sizes_jubarte_vs_replaced.tsv)):
+Measured on 2026-10-04 ([`sizes_jubarte_vs_replaced.tsv`](sizes_jubarte_vs_replaced.tsv);
+the download size on 2026-10-05, [`download_jubarte.tsv`](download_jubarte.tsv)):
 
 | Install | Size |
 |---|---|

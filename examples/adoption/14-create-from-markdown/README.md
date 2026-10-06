@@ -55,14 +55,14 @@ jubarte convert create_pandoc.docx --png --dpi 72 --pages 1
 
 | Producer | `<w:pgSz>` in its document.xml | soffice rendered | jubarte rendered |
 |---|---|---|---|
-| pandoc | **none** — the sectPr names no page size | A4 (595.3 × 841.9 pt) | Letter (612 × 792 px at 72 dpi) |
+| pandoc | **none** — the sectPr names no page size | Letter (612 × 792 pt) | Letter (612 × 792 px at 72 dpi) |
 | docx-js (no page size set) | `w:w="11906" w:h="16838"` = **A4** | A4 | A4 |
 | jubarte `--page letter` | `w:w="12240" w:h="15840"` = Letter | Letter | Letter |
 
 The pandoc row is the interesting one: the file names no page size at
-all, so the renderer decides. On this machine LibreOffice defaulted to
-A4 while jubarte defaulted to Letter — the same pandoc file paints at
-two different sizes depending on who opens it. docx-js commits to A4
+all, so the renderer decides. On this machine LibreOffice and jubarte
+both defaulted to Letter (`pdf_page_size_pandoc.txt`); a LibreOffice
+whose locale defaults to A4 would paint the same file at A4. docx-js commits to A4
 silently unless the script sets a size (the footgun, confirmed here).
 jubarte's default is Letter and `--page a4` switches it explicitly.
 

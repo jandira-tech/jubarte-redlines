@@ -49,8 +49,8 @@ jubarte validate broken_b_dangling_rid.docx --repair repaired_broken_b_dangling_
 | `jubarte validate --repair` | writes a copy, 0 findings repaired | repairs the dangling reference; re-validation: no findings | refuses, writes nothing, exit 1 |
 
 Full evidence: `open_python_docx_*.log`, `convert_soffice_*.log` (with the
-PDF text extracted), `validate_jubarte_*.json`, `validate_jubarte.log`
-(exit codes), `repair_jubarte_*.log`, and the repaired files.
+PDF text extracted), `validate_jubarte_*.jsonl` (JSON Lines: one object
+per finding, empty when there is none), `validate_jubarte.log` (exit codes), `repair_jubarte_*.log`, and the repaired files.
 
 ## Verdict
 

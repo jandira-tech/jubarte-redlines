@@ -27,7 +27,7 @@ Runnable evidence:
 
 | Folder | What it checks |
 |---|---|
-| [`examples/adoption/`](../../examples/adoption/) | One folder per row of the pages: the replaced tool's output (soffice, pdftoppm, pandoc, python-docx, docx-js, LibreOffice's accept macro) beside jubarte's, with a `run.sh` that regenerates both and a verdict that says where jubarte is worse. `tests/adoption.rs` checks every row's jubarte command; `.github/workflows/adoption.yml` runs both. |
+| [`examples/adoption/`](../../examples/adoption/) | One folder per row of the pages: the replaced tool's output (soffice, pdftoppm, pandoc, python-docx, docx-js, LibreOffice's accept macro) beside jubarte's, with a `run.sh` that regenerates both and a verdict that says where jubarte is worse. `tests/adoption.rs` checks the jubarte command of every row that has one (17's MCP server is tested in `jubarte-python/tests/test_mcp_server.py`); `.github/workflows/adoption.yml` runs both. |
 | [`examples/agents/accept-spacer-paragraph/`](../../examples/agents/accept-spacer-paragraph/) | The accept case Anthropic's skill warns about, run through `jubarte accept` and LibreOffice side by side. On 2026-10-02 both gave the same result on every case; the README says so. |
 | [`examples/agents/acme-letter/`](../../examples/agents/acme-letter/) | A 170-line hand-written XML redline replaced by one twelve-operation edit plan. |
 | [`examples/agents/comment-thread/`](../../examples/agents/comment-thread/) | Ann comments, Bob replies to two comments and resolves the third: two bound edit plans, then `jubarte comments` reads the thread back. Outputs are byte-for-byte reproducible. |
@@ -39,8 +39,7 @@ Runnable evidence:
 - **main**: merged, not yet released. Install from source or wait for the
   next release.
 - **pending**: open work in the provider-adoption plans
-  (`docs/superpowers/plans/2026-10-02-provider-adoption-*.md`); the page
-  names the suggestion (S1 to S19) and its branch.
+  (`docs/superpowers/plans/2026-10-02-provider-adoption-*.md`).
 
 No page states a benchmark number. The plans call for the six-task agent
 evaluation of
