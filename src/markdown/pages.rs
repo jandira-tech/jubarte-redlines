@@ -197,7 +197,10 @@ fn visible_text(line: &str) -> String {
                     out.push_str(text);
                     Some(text.len().saturating_add(2))
                 }
-                None => rest.find('>').map(|end| end.saturating_add(1)),
+                None if rest.starts_with("<!--") => {
+                    rest.find("-->").map(|end| end.saturating_add(3))
+                }
+                None => html_tag_len(rest),
             }
         } else {
             None
@@ -209,6 +212,83 @@ fn visible_text(line: &str) -> String {
         rest = rest.get(step..).unwrap_or("");
     }
     out
+}
+
+/// HTML elements a Markdown line may carry: the writer's own (`br`, `sup`,
+/// `sub`) and the inline and block elements an author writes. Any other
+/// name in angle brackets (`<Draft>`, a placeholder in Word text) is text
+/// the page paints.
+const HTML_ELEMENTS: [&str; 52] = [
+    "a",
+    "abbr",
+    "b",
+    "bdi",
+    "bdo",
+    "big",
+    "blockquote",
+    "br",
+    "center",
+    "cite",
+    "code",
+    "col",
+    "colgroup",
+    "data",
+    "dd",
+    "del",
+    "details",
+    "dfn",
+    "div",
+    "dl",
+    "dt",
+    "em",
+    "font",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "hr",
+    "i",
+    "img",
+    "ins",
+    "kbd",
+    "li",
+    "mark",
+    "ol",
+    "p",
+    "pre",
+    "q",
+    "s",
+    "samp",
+    "small",
+    "span",
+    "strong",
+    "sub",
+    "summary",
+    "sup",
+    "table",
+    "u",
+    "ul",
+    "wbr",
+];
+
+/// The length of the HTML tag `rest` opens (`<sup>`, `</span>`,
+/// `<br/>`, `<span class="x">`), if its name is one of [`HTML_ELEMENTS`].
+fn html_tag_len(rest: &str) -> Option<usize> {
+    let body = rest.strip_prefix('<')?;
+    let body = body.strip_prefix('/').unwrap_or(body);
+    let name_len = body
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+        .unwrap_or(body.len());
+    let name = body.get(..name_len)?;
+    let after = body.get(name_len..)?;
+    if !after.starts_with(|c: char| c.is_ascii_whitespace() || c == '/' || c == '>')
+        || !HTML_ELEMENTS.contains(&name.to_ascii_lowercase().as_str())
+    {
+        return None;
+    }
+    rest.find('>').map(|end| end.saturating_add(1))
 }
 
 /// The byte ranges of `markdown` that are never painted, as pulldown-cmark
@@ -598,12 +678,29 @@ mod tests {
         // A URI autolink forbids only ASCII controls, ASCII space and angle
         // brackets: an ideographic space is part of the link.
         assert_eq!(line_text("<ab:\u{3000}terms> x"), "ab:\u{3000}terms x");
-        assert_eq!(line_text("<ab: terms> x"), " x");
+        // Not an autolink and not a tag (a tag name holds no `:` or space):
+        // CommonMark renders it as text, and the page paints it.
+        assert_eq!(line_text("<ab: terms> x"), "<ab: terms> x");
         let markdown = "First page text.\n\n<https://example.com/terms>\n\nMore.\n";
         let pages = ["First page text.", "https://example.com/terms\nMore."];
         assert_eq!(
             paginate(markdown, &pages),
             "<!-- page 1 of 2 -->\n\nFirst page text.\n\n<!-- page 2 of 2 -->\n\n<https://example.com/terms>\n\nMore.\n"
+        );
+    }
+
+    /// Word text in angle brackets reaches the Markdown as it is (the writer
+    /// escapes only CriticMarkup), and the page paints it: only HTML the
+    /// writer or an author could mean (`<sup>`, `<br>`, comments) is unpainted.
+    #[test]
+    fn literal_angle_bracket_text_keys_its_block() {
+        assert_eq!(line_text("<Draft> Agreement"), "<Draft> Agreement");
+        assert_eq!(line_text("x<sup>2</sup> <!-- note --> y"), "x2  y");
+        let markdown = "Intro.\n\n<Draft> Agreement opens page two.\n\nEnd.\n";
+        let pages = ["Intro.", "<Draft> Agreement opens page two.\nEnd."];
+        assert_eq!(
+            paginate(markdown, &pages),
+            "<!-- page 1 of 2 -->\n\nIntro.\n\n<!-- page 2 of 2 -->\n\n<Draft> Agreement opens page two.\n\nEnd.\n"
         );
     }
 
