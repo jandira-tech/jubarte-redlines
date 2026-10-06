@@ -248,6 +248,9 @@ enum Command {
         /// Formats and Markdown reading.
         #[command(flatten)]
         markdown: MarkdownArgs,
+        /// Comment placement and page selection.
+        #[command(flatten)]
+        page: PageOptions,
         /// Rasterize only these pages, counted from 1: `3`, `1-3,7`. Layout
         /// still runs over the whole document. Needs PNG output.
         #[arg(long, value_name = "SPEC")]
@@ -337,6 +340,9 @@ enum Command {
         /// Marks for --revisions custom (see `convert --help`).
         #[arg(long, value_name = "SPEC")]
         revision_palette: Option<String>,
+        /// Comment placement and page selection in PDF or PNG output.
+        #[command(flatten)]
+        page: PageOptions,
     },
     /// Read a .docx: body paragraphs with ids, style, formatting spans and
     /// limitations, plus package facts.
@@ -936,6 +942,35 @@ impl From<TrackChanges> for jubarte::markdown::TrackChanges {
     }
 }
 
+/// Where a PDF's comments go and which pages it keeps (`convert`, `diff`).
+#[derive(clap::Args, Clone, Copy, Debug, Default)]
+struct PageOptions {
+    /// List the comments after the last page instead of in balloons beside
+    /// the text. The commented text keeps its tint and a `[JR1]` marker,
+    /// and the pages keep their own width.
+    #[arg(long)]
+    move_comments: bool,
+    /// Keep only the pages a tracked change touches. The whole document is
+    /// laid out first, so page numbers stay the document's; a document
+    /// without changes keeps its first page.
+    #[arg(long)]
+    changed_only: bool,
+}
+
+impl PageOptions {
+    fn apply(self, options: jubarte::convert::PdfOptions) -> jubarte::convert::PdfOptions {
+        jubarte::convert::PdfOptions {
+            comments: if self.move_comments {
+                jubarte::convert::CommentPlacement::End
+            } else {
+                jubarte::convert::CommentPlacement::Margin
+            },
+            changed_only: self.changed_only,
+            ..options
+        }
+    }
+}
+
 /// `convert`'s format and Markdown flags.
 #[derive(clap::Args, Debug)]
 struct MarkdownArgs {
@@ -1210,6 +1245,8 @@ struct ConvertJob<'a> {
     pages: Option<&'a [usize]>,
     /// Exit [`EXIT_FONT_SUBSTITUTED`] when a requested font was substituted.
     fail_on_substitution: bool,
+    /// Comment placement and page selection.
+    page: PageOptions,
 }
 
 /// `convert --timeout`: the deadline passed.
@@ -1313,10 +1350,11 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), ConvertFailure> {
         Some(bytes) => bytes.to_vec(),
         None => read_document(job.file)?,
     };
-    let options = jubarte::convert::PdfOptions {
+    let options = job.page.apply(jubarte::convert::PdfOptions {
         compress: job.compress,
         revisions: job.revisions,
-    };
+        ..jubarte::convert::PdfOptions::default()
+    });
     let rendered = jubarte::convert::render(
         &bytes,
         options,
@@ -1760,6 +1798,7 @@ fn run_edit(job: &EditJob<'_>) -> Result<(), (u8, String)> {
     let options = jubarte::convert::PdfOptions {
         compress: true,
         revisions: job.revisions,
+        ..jubarte::convert::PdfOptions::default()
     };
     let request = jubarte::convert::RenderRequest {
         pdf: job.pdf,
@@ -2245,6 +2284,8 @@ struct DiffJob<'a> {
     critic: bool,
     resource_path: Option<&'a Path>,
     revisions: jubarte::convert::RevisionStyle,
+    /// Comment placement and page selection in PDF or PNG output.
+    page: PageOptions,
     /// Print the patch, wrapped at these columns; `None` for `--format
     /// critic`.
     patch: Option<usize>,
@@ -2363,6 +2404,7 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), String> {
             report: None,
             pages: None,
             fail_on_substitution: false,
+            page: job.page,
         })
         .map_err(|f| f.message),
         (Format::Docx, None) => unreachable!("a Word output always has a path"),
@@ -2834,6 +2876,7 @@ fn cli_main() -> ExitCode {
             pages: page_spec,
             fail_on_substitution,
             timeout,
+            page,
         }) => {
             if let Some(limit) = timeout {
                 arm_timeout(limit);
@@ -2860,6 +2903,7 @@ fn cli_main() -> ExitCode {
                 report: report.as_deref(),
                 pages: selected.as_deref(),
                 fail_on_substitution,
+                page,
             };
             return convert_exit_code(run_convert_any(&job, &markdown));
         }
@@ -2881,6 +2925,7 @@ fn cli_main() -> ExitCode {
             resource_path,
             revisions,
             revision_palette,
+            page,
         }) => {
             let style = match revision_style(revisions, revision_palette.as_deref()) {
                 Ok(style) => style,
@@ -2904,6 +2949,7 @@ fn cli_main() -> ExitCode {
                 critic,
                 resource_path: resource_path.as_deref(),
                 revisions: style,
+                page,
                 patch: (format == PatchFormat::Patch).then_some(columns),
             }));
         }
@@ -3751,6 +3797,7 @@ mod tests {
             report: None,
             pages: None,
             fail_on_substitution: false,
+            page: PageOptions::default(),
         })
         .expect_err("report over the PDF must be refused");
         assert!(
@@ -3773,6 +3820,7 @@ mod tests {
             report: None,
             pages: None,
             fail_on_substitution: false,
+            page: PageOptions::default(),
         })
         .expect_err("report over the input must be refused");
         assert!(
@@ -3842,6 +3890,7 @@ mod tests {
             report: None,
             pages: None,
             fail_on_substitution: true,
+            page: PageOptions::default(),
         })
         .expect_err("a substituted font fails the run");
         assert_eq!(err.code, EXIT_FONT_SUBSTITUTED);
@@ -3880,6 +3929,7 @@ mod tests {
             report: None,
             pages: None,
             fail_on_substitution: false,
+            page: PageOptions::default(),
         })
         .expect("convert");
         assert!(pdf.exists());
@@ -4092,6 +4142,7 @@ mod tests {
             report: None,
             pages,
             fail_on_substitution: false,
+            page: PageOptions::default(),
         }
     }
 

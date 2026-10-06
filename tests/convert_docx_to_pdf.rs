@@ -39529,6 +39529,7 @@ fn compress_option_deflates_streams_and_default_leaves_them_plain() {
         PdfOptions {
             compress: true,
             revisions: RevisionStyle::Word,
+            ..PdfOptions::default()
         },
     )
     .expect("convert");
@@ -39566,6 +39567,7 @@ fn deflated_streams_inflate_back_to_the_plain_bytes() {
         PdfOptions {
             compress: true,
             revisions: RevisionStyle::Word,
+            ..PdfOptions::default()
         },
     )
     .expect("convert");

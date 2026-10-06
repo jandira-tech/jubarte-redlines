@@ -43,6 +43,7 @@ fn pdf_options(
     Ok(jubarte::convert::PdfOptions {
         compress,
         revisions,
+        ..jubarte::convert::PdfOptions::default()
     })
 }
 

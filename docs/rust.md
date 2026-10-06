@@ -409,6 +409,12 @@ Options:
       --no-page-markers
           Word to Markdown: leave out the `<!-- page N of M -->` lines, and the layout pass that places them
 
+      --move-comments
+          List the comments after the last page instead of in balloons beside the text. The commented text keeps its tint and a `[JR1]` marker, and the pages keep their own width
+
+      --changed-only
+          Keep only the pages a tracked change touches. The whole document is laid out first, so page numbers stay the document's; a document without changes keeps its first page
+
       --pages <SPEC>
           Rasterize only these pages, counted from 1: `3`, `1-3,7`. Layout still runs over the whole document. Needs PNG output
 
@@ -525,6 +531,12 @@ Options:
 
       --revision-palette <SPEC>
           Marks for --revisions custom (see `convert --help`)
+
+      --move-comments
+          List the comments after the last page instead of in balloons beside the text. The commented text keeps its tint and a `[JR1]` marker, and the pages keep their own width
+
+      --changed-only
+          Keep only the pages a tracked change touches. The whole document is laid out first, so page numbers stay the document's; a document without changes keeps its first page
 
   -h, --help
           Print help (see a summary with '-h')

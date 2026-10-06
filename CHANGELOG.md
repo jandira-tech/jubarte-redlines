@@ -15,6 +15,21 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+### Added
+
+- `convert --move-comments` (also on `diff`; library:
+  `PdfOptions::comments = CommentPlacement::End`): the comments leave the
+  balloon pane and are listed after the last page, each with its marker,
+  author and page. The page keeps its own width, the commented text keeps
+  its tint, and a superscript `[JR1]` in the author's ink marks where each
+  comment is anchored (a reply rides on its thread's marker). The default
+  stays Word's balloons beside the text.
+- `convert --changed-only` (also on `diff`; library:
+  `PdfOptions::changed_only`): the whole document is laid out, then only
+  the pages a change bar marks are kept, so page numbers and "Page N of M"
+  stay the document's. A document without body changes keeps its first
+  page. With `--move-comments`, only the kept pages' comments are listed.
+
 ### Changed
 
 - The desktop app is no longer tracked here: it is its own repository

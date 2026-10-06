@@ -181,6 +181,12 @@ pub(crate) struct Page {
     /// Laid out turned a quarter for vertical text (`tbRl`): the writer
     /// turns it back and stands CJK glyphs upright.
     pub vertical: bool,
+    /// A body change bar is on the page: a tracked change touches it
+    /// (`PdfOptions::changed_only` keeps such pages).
+    pub changed: bool,
+    /// The page's number in the whole document, from 1: kept when
+    /// `PdfOptions::changed_only` drops pages around it.
+    pub number: usize,
 }
 
 impl Page {
@@ -194,6 +200,8 @@ impl Page {
             markup_pane: false,
             margin_r: 0.0,
             vertical: false,
+            changed: false,
+            number: 0,
         }
     }
 }

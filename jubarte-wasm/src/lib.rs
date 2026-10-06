@@ -208,6 +208,7 @@ pub fn docx_to_pdf(
     let options = jubarte::convert::PdfOptions {
         compress: compress.unwrap_or(false),
         revisions,
+        ..jubarte::convert::PdfOptions::default()
     };
     jubarte::convert::docx_to_pdf_with(docx, options).map_err(js_err)
 }
