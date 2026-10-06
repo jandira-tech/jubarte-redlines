@@ -816,9 +816,9 @@ fn raster_emf(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
             if w <= 0 {
                 return;
             }
-            for pair in pts.windows(2) {
-                let a = px(xf, pair[0].0, pair[0].1);
-                let b = px(xf, pair[1].0, pair[1].1);
+            for &[(ax, ay), (bx, by)] in pts.array_windows() {
+                let a = px(xf, ax, ay);
+                let b = px(xf, bx, by);
                 canvas.stroke_line(a.0, a.1, b.0, b.1, pen, w);
             }
         };

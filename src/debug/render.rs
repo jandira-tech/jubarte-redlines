@@ -602,8 +602,8 @@ fn paragraph(dom: &Dom, p: NodeId, styles: &StyleBook, tally: &mut Tally, out: &
     // the pair.
     let mut order: Vec<char> = Vec::new();
     revision_order(dom, p, &mut order);
-    for w in order.windows(2) {
-        match (w[0], w[1]) {
+    for &[a, b] in order.array_windows() {
+        match (a, b) {
             ('D', 'I') => tally.add("revisions del→ins".to_string(), &text),
             ('I', 'D') => tally.add("revisions ins→del".to_string(), &text),
             _ => {}

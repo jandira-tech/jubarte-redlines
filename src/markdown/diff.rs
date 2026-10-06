@@ -675,14 +675,14 @@ fn take(
     let (moved_old, moved_new, kept) = if whole {
         (old_text, new_text, None)
     } else if into_next {
-        let cut = floor(&old_text, old_text.len() - length);
+        let cut = old_text.floor_char_boundary(old_text.len() - length);
         (
             old_text[cut..].to_string(),
             old_text[cut..].to_string(),
             Some(old_text[..cut].to_string()),
         )
     } else {
-        let cut = ceil(&old_text, length);
+        let cut = old_text.ceil_char_boundary(length);
         (
             old_text[..cut].to_string(),
             old_text[..cut].to_string(),
@@ -710,20 +710,6 @@ fn take(
             true
         }
     }
-}
-
-fn floor(text: &str, mut at: usize) -> usize {
-    while !text.is_char_boundary(at) {
-        at -= 1;
-    }
-    at
-}
-
-fn ceil(text: &str, mut at: usize) -> usize {
-    while !text.is_char_boundary(at) {
-        at += 1;
-    }
-    at
 }
 
 /// Lines only in one version. Lines that continue the paragraph written

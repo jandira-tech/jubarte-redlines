@@ -7197,7 +7197,7 @@ fn detect_unrelated_sources_word_mode_inner(
         let long_mt = long_multitable_x_short_table_free_mesh(dom, cu1, cu2, n1, n2);
         let free_mesh_demos = !stamped_pair
             && (parallel_sectioned_demos(dom, cu1, cu2)
-                || (short_ooxml_property_demo(dom, cu1) && short_ooxml_property_demo(dom, cu2))
+                || short_ooxml_property_demos(dom, cu1, cu2)
                 || (titles_share_last_sig(dom, cu1, cu2) && n1 <= 50 && n2 <= 50)
                 || ooxml_x_short_table_demo(dom, cu1, cu2)
                 // M351: OOXML property × short table-free prose (bold_vals×
@@ -7512,7 +7512,7 @@ fn detect_unrelated_sources_word_mode_inner(
             && short_demos_share_first_title_token(dom, cu1, cu2, n1, n2)
             && !titles_share_last_sig(dom, cu1, cu2)
             && !parallel_sectioned_demos(dom, cu1, cu2)
-            && !(short_ooxml_property_demo(dom, cu1) && short_ooxml_property_demo(dom, cu2))
+            && !short_ooxml_property_demos(dom, cu1, cu2)
             && !ooxml_x_short_table_demo(dom, cu1, cu2)
             && !ooxml_x_short_prose_demo(dom, cu1, cu2, n1, n2)
             && !both_tables_unrelated_free_mesh(dom, cu1, cu2, n1, n2)
@@ -7546,8 +7546,7 @@ fn detect_unrelated_sources_word_mode_inner(
                 // enough (M324). Short OOXML property testers share only short
                 // phrases ("Sample text" ≈ 2/~620 ≈ 0.003) — use 0 so Step G
                 // keeps those pure-word runs (bold_vals×color Word MIX≥11).
-                let short_prop =
-                    short_ooxml_property_demo(dom, cu1) && short_ooxml_property_demo(dom, cu2);
+                let short_prop = short_ooxml_property_demos(dom, cu1, cu2);
                 let ooxml_tbl = ooxml_x_short_table_demo(dom, cu1, cu2);
                 let both_tbl = both_tables_unrelated_free_mesh(dom, cu1, cu2, n1, n2);
                 let cell_tbl = short_cell_table_x_long_table_doc(dom, cu1, cu2, n1, n2);
@@ -7970,8 +7969,7 @@ fn junction_seam(
     // seam — Word free-meshes line-by-line (MIX≥15); seam pure-I/Ds (~10).
     let both_tables = has_table(cu1) && has_table(cu2);
     let parallel_sections = parallel_sectioned_demos(dom, cu1, cu2);
-    let short_prop_demos =
-        short_ooxml_property_demo(dom, cu1) && short_ooxml_property_demo(dom, cu2);
+    let short_prop_demos = short_ooxml_property_demos(dom, cu1, cu2);
     let last_sig_titles = titles_share_last_sig(dom, cu1, cu2) && n1 <= 50 && n2 <= 50;
     let ooxml_tbl = ooxml_x_short_table_demo(dom, cu1, cu2);
     if let (Some(first_a), Some(last_b)) = (cu1.first(), cu2.last())
@@ -8311,6 +8309,11 @@ fn long_multitable_x_short_table_free_mesh(
         &para_text_tokens_from_units(dom, cu2),
     );
     body_j + 1e-12 < 0.10
+}
+
+/// Both sides are short OOXML property-tester demos.
+fn short_ooxml_property_demos(dom: &Dom, cu1: &[ComparisonUnit], cu2: &[ComparisonUnit]) -> bool {
+    short_ooxml_property_demo(dom, cu1) && short_ooxml_property_demo(dom, cu2)
 }
 
 /// Short OOXML property-tester demos (bold_vals×color, highlight×italic): titles
