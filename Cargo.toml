@@ -10,7 +10,7 @@
 name = "jubarte-redlines"
 version = "0.11.2"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.94"
 authors = ["Jandira Technologies, LLC"]
 license = "AGPL-3.0-only"
 description = "Word-faithful DOCX redline engine — compare two Word documents into a tracked-changes document that opens cleanly in Microsoft Word; list, accept, or reject revisions"
