@@ -19,9 +19,11 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 - `fields update` writes `NUMPAGES`, `PAGEREF` and `SEQ` results in
   `\* roman` and `\* alphabetic` as Word does: the switch's first letter
-  picks the case, letters past z repeat (aa, bb, ...), and a `SEQ`
-  identifier with either format keeps counting. Other formats still keep
-  the cached result.
+  picks the case, letters past z repeat (aa, bb, ...), the last `\*`
+  switch wins, and past 780 in letters or 32767 in Roman numerals the
+  result is Word's "Error! Number cannot be represented in specified
+  format." A `SEQ` identifier with either format keeps counting. Other
+  formats still keep the cached result.
 
 ### Changed
 
@@ -39,7 +41,9 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 - PDF: list labels past z repeat the letter as Word does (z, aa, bb, ...,
   ZZ, AAA), where jubarte counted on like spreadsheet columns (aa, ab, ac,
-  AZ, BA).
+  AZ, BA). Past 780 letter labels start again at "a", and past 32767
+  Roman ones at "I", as in Word; a huge list start no longer builds a
+  label millions of characters long.
 - PDF: a list label wider than its hanging indent sends the text to the
   next tab stop, as Word does, instead of painting the text over the
   label.

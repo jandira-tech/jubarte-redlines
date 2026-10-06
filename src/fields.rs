@@ -507,6 +507,9 @@ fn only_switches(code: &Code, known: &[&str]) -> bool {
 }
 
 /// A number format a `\*` switch asks for, among those written here.
+/// Word's result for a number its `\*` format cannot write.
+const UNREPRESENTABLE: &str = "Error! Number cannot be represented in specified format.";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NumberFormat {
     Arabic,
@@ -520,10 +523,15 @@ impl NumberFormat {
     /// `n` in this format, as Word writes it (probe nf1006, 2026-10-06):
     /// past `z` the letter repeats (27 "aa", 53 "aaa"), past 3999 the M's
     /// do (4000 "MMMM"), and zero is a single space in Roman and letters.
+    /// Past 780 in letters or 32767 in Roman numerals Word writes
+    /// `UNREPRESENTABLE` (probes bn1006 and bn1006b).
     fn write(self, n: u32) -> Option<String> {
+        use crate::convert::{ALPHA_LABEL_MAX, ROMAN_LABEL_MAX};
         Some(match self {
             Self::Arabic => n.to_string(),
             Self::Roman(_) | Self::Alpha(_) if n == 0 => " ".to_string(),
+            Self::Roman(_) if n > ROMAN_LABEL_MAX => UNREPRESENTABLE.to_string(),
+            Self::Alpha(_) if n > ALPHA_LABEL_MAX => UNREPRESENTABLE.to_string(),
             Self::Roman(upper) => crate::convert::roman_label(n, upper),
             Self::Alpha(upper) => crate::convert::alpha_label(n, upper),
         })
@@ -536,7 +544,10 @@ impl NumberFormat {
 /// switch's first letter picks the case: `Roman` and `ROMAN` are upper,
 /// `roman` and `rOMAN` lower (Word 16 probe nf1006, 2026-10-06).
 fn number_format(code: &Code) -> Option<NumberFormat> {
-    let mut format = NumberFormat::Arabic;
+    // The last format switch wins (Word 16 probe bn1006: "\* CardText
+    // \* roman" and "\* Bogus \* roman" are both "i"); one we do not
+    // write keeps the cached result.
+    let mut format = Some(NumberFormat::Arabic);
     for (switch, arg) in &code.switches {
         if switch != "*" {
             continue;
@@ -544,14 +555,14 @@ fn number_format(code: &Code) -> Option<NumberFormat> {
         let arg = arg.as_deref()?;
         let upper = arg.starts_with(|c: char| c.is_ascii_uppercase());
         format = match arg.to_ascii_lowercase().as_str() {
-            "roman" => NumberFormat::Roman(upper),
-            "alphabetic" => NumberFormat::Alpha(upper),
-            "arabic" => NumberFormat::Arabic,
+            "roman" => Some(NumberFormat::Roman(upper)),
+            "alphabetic" => Some(NumberFormat::Alpha(upper)),
+            "arabic" => Some(NumberFormat::Arabic),
             "mergeformat" | "charformat" => format,
-            _ => return None,
+            _ => None,
         };
     }
-    Some(format)
+    format
 }
 
 /// Whether every switch of `code` other than `\*` is in `known`.
@@ -1558,6 +1569,47 @@ mod tests {
         );
         assert_eq!(NumberFormat::Roman(false).write(0).as_deref(), Some(" "));
         assert_eq!(NumberFormat::Alpha(false).write(0).as_deref(), Some(" "));
+        // Word 16 probes bn1006 / bn1006b (2026-10-06): letters reach 780
+        // (thirty z's) and Roman 32767; past them Word writes its error.
+        assert_eq!(
+            NumberFormat::Alpha(false).write(780).as_deref(),
+            Some("z".repeat(30).as_str())
+        );
+        for (format, n) in [
+            (NumberFormat::Alpha(false), 781),
+            (NumberFormat::Alpha(true), u32::MAX),
+            (NumberFormat::Roman(true), 32768),
+            (NumberFormat::Roman(false), u32::MAX),
+        ] {
+            assert_eq!(
+                format.write(n).as_deref(),
+                Some(UNREPRESENTABLE),
+                "{format:?} {n}"
+            );
+        }
+        assert!(
+            NumberFormat::Roman(true)
+                .write(32767)
+                .is_some_and(|r| r.ends_with("MMDCCLXVII"))
+        );
+    }
+
+    #[test]
+    fn the_last_format_switch_wins() {
+        // bn1006: an earlier switch gives way to a later one, "\* CardText
+        // \* roman" i and "\* Bogus \* roman" i; a format we do not
+        // write last ("\* roman \* CardText" one) keeps the cache.
+        let format = |code: &str| number_format(&parse_code(code, &[]));
+        assert_eq!(
+            format(" NUMPAGES \\* CardText \\* roman "),
+            Some(NumberFormat::Roman(false))
+        );
+        assert_eq!(
+            format(" NUMPAGES \\* Bogus \\* roman \\* MERGEFORMAT "),
+            Some(NumberFormat::Roman(false))
+        );
+        assert_eq!(format(" NUMPAGES \\* roman \\* CardText "), None);
+        assert_eq!(format(" NUMPAGES \\* CardText \\* MERGEFORMAT "), None);
     }
 
     #[test]

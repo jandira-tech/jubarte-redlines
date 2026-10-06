@@ -6163,20 +6163,29 @@ fn korean_legal_label(n: u32) -> String {
     }
 }
 
+/// The last letter label Word writes, thirty z's.
+pub(crate) const ALPHA_LABEL_MAX: u32 = 26 * 30;
+/// The last Roman numeral Word writes.
+pub(crate) const ROMAN_LABEL_MAX: u32 = 32767;
+
 /// `lowerLetter` / `upperLetter` and `\* alphabetic`: past z Word repeats
 /// the letter, 27 "aa", 28 "bb", 53 "aaa" (Word 16 probes la1006 and
-/// nf1006, 2026-10-06). Zero counts as 1.
+/// nf1006, 2026-10-06). Past thirty z's (780) a list label starts again
+/// at "a" (probe bn1006b). Zero counts as 1.
 pub(crate) fn alpha_label(n: u32, upper: bool) -> String {
-    let n = n.max(1) - 1;
+    let n = (n.max(1) - 1) % ALPHA_LABEL_MAX;
     let ch = char::from(b'a' + (n % 26) as u8);
     let ch = if upper { ch.to_ascii_uppercase() } else { ch };
     std::iter::repeat_n(ch, (n / 26) as usize + 1).collect()
 }
 
-pub(crate) fn roman_label(mut n: u32, upper: bool) -> String {
+/// Past 3999 Word adds M's (4000 "MMMM"); past 32767 a list label starts
+/// again at "I", 100000 "MDCXCIX" (Word 16 probe bn1006b, 2026-10-06).
+pub(crate) fn roman_label(n: u32, upper: bool) -> String {
     if n == 0 {
         return "0".into();
     }
+    let mut n = (n - 1) % ROMAN_LABEL_MAX + 1;
     const MAP: &[(u32, &str)] = &[
         (1000, "m"),
         (900, "cm"),
@@ -45154,6 +45163,22 @@ mod regression_tests {
         let upper: Vec<String> = [52, 53, 54].map(|n| alpha_label(n, true)).into();
         assert_eq!(upper, ["ZZ", "AAA", "BBB"]);
         assert_eq!(alpha_label(702, false), "z".repeat(27));
+    }
+
+    #[test]
+    fn list_letters_and_roman_numerals_wrap_as_word_does() {
+        // Word 16 probe bn1006b (2026-10-06): lowerLetter counts to thirty
+        // z's at 780, then 781 is "a" again and 100000 "ddddddd";
+        // upperRoman reaches 32767, then 32768 is "I" and 100000 "MDCXCIX".
+        assert_eq!(alpha_label(780, false), "z".repeat(30));
+        assert_eq!(alpha_label(781, false), "a");
+        assert_eq!(alpha_label(1561, false), "a");
+        assert_eq!(alpha_label(100_000, false), "ddddddd");
+        assert!(alpha_label(u32::MAX, true).len() <= 30);
+        assert!(roman_label(32767, true).ends_with("MMDCCLXVII"));
+        assert_eq!(roman_label(32768, true), "I");
+        assert_eq!(roman_label(100_000, true), "MDCXCIX");
+        assert!(roman_label(u32::MAX, false).len() < 64);
     }
 
     fn with_revision_style(style: RevisionStyle, test: impl FnOnce()) {

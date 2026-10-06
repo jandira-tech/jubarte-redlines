@@ -190,6 +190,9 @@ fn pagerefs_distinguish_undefined_bookmarks_from_unpaged_ones() {
         + PAGE_BREAK
         + &format!("<w:p>{}</w:p>", field("PAGEREF target \\h", Some("9")))
         + &format!("<w:p>{}</w:p>", field("PAGEREF missing", Some("9")))
+        // Word reports the missing bookmark whatever the format, one it
+        // cannot write too (Word 16 probe bn1006, 2026-10-06).
+        + &format!("<w:p>{}</w:p>", field(r"PAGEREF missing \* CardText", Some("9")))
         // Defined, but outside any paragraph: the layout cannot page it.
         + r#"<w:bookmarkStart w:id="2" w:name="loose"/><w:bookmarkEnd w:id="2"/>"#
         + &format!("<w:p>{}</w:p>", field("PAGEREF loose", Some("cached")))
@@ -200,7 +203,13 @@ fn pagerefs_distinguish_undefined_bookmarks_from_unpaged_ones() {
     let texts = texts(&updated.docx);
     assert_eq!(
         &texts[2..],
-        ["1", BOOKMARK_NOT_DEFINED, "cached", "above"],
+        [
+            "1",
+            BOOKMARK_NOT_DEFINED,
+            BOOKMARK_NOT_DEFINED,
+            "cached",
+            "above"
+        ],
         "{texts:?}"
     );
     let first = &updated.fields[0];

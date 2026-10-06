@@ -270,7 +270,8 @@ The other 3 of the 32 are not differences:
     identifier;
   - the number formats `\* Ordinal`, `\* CardText`, `\* Hex`, `\#` and
     `\@`, and any format on a `PAGEREF` whose page is labelled by its
-    section ("iii", "2-1");
+    section ("iii", "2-1"). A last `\*` switch Word does not know gets
+    Word's "Error! Unknown switch argument.";
   - a `PAGEREF` to a bookmark outside any paragraph or in a header, which
     the layout does not page. A `PAGEREF` to a bookmark the document lacks
     gets Word's "Error! Bookmark not defined.", and a `REF` Word's "Error!
