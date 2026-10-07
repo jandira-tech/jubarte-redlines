@@ -772,6 +772,13 @@ fn png_page_bounds_use_the_output_count_after_filtering_and_listing() {
             if requested == count && page_count == count),
             "{err:?}"
         );
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "page {} is out of range: the output has {count} pages",
+                count + 1
+            )
+        );
     }
 }
 

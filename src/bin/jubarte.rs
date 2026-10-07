@@ -4197,7 +4197,7 @@ mod tests {
         let err = run_convert(&convert_job(&docx, &out, Some(&[5]))).expect_err("page 6 of 3");
         assert!(
             err.message
-                .contains("page 6 is out of range: the document has 3 pages"),
+                .contains("page 6 is out of range: the output has 3 pages"),
             "{}",
             err.message
         );

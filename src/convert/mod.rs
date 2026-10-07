@@ -57,11 +57,13 @@ pub enum ConvertError {
     /// A PNG resolution outside `1..=MAX_PNG_DPI`, or a page too large to
     /// rasterize at the requested one.
     Raster(String),
-    /// [`RenderRequest::pages`] named a page the layout did not produce.
+    /// [`RenderRequest::pages`] named a page the output does not have.
     PageOutOfRange {
         /// The zero-based index asked for.
         requested: usize,
-        /// Pages the layout produced.
+        /// Pages written: the layout's, narrowed by
+        /// `PdfOptions::changed_only` and extended by the listing pages of
+        /// `CommentPlacement::End`.
         page_count: usize,
     },
 }
@@ -78,7 +80,7 @@ impl fmt::Display for ConvertError {
                 page_count,
             } => write!(
                 f,
-                "page {} is out of range: the document has {page_count} page{}",
+                "page {} is out of range: the output has {page_count} page{}",
                 requested + 1,
                 if *page_count == 1 { "" } else { "s" }
             ),
@@ -255,13 +257,50 @@ thread_local! {
 }
 
 /// Run `f` with `options` as the conversion in progress's.
+/// The options restored on drop, so a panicking conversion that a caller
+/// catches (Python's `PanicException`) leaves none of its own behind.
 fn with_options<T>(options: PdfOptions, f: impl FnOnce() -> T) -> T {
-    let revisions = REVISIONS.with(|r| r.replace(options.revisions));
-    let plan = PAGE_PLAN.with(|p| p.replace((options.comments, options.changed_only)));
-    let result = f();
-    REVISIONS.with(|r| r.set(revisions));
-    PAGE_PLAN.with(|p| p.set(plan));
-    result
+    struct Restore(RevisionStyle, (CommentPlacement, bool));
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            REVISIONS.with(|r| r.set(self.0));
+            PAGE_PLAN.with(|p| p.set(self.1));
+        }
+    }
+    let _restore = Restore(
+        REVISIONS.with(|r| r.replace(options.revisions)),
+        PAGE_PLAN.with(|p| p.replace((options.comments, options.changed_only))),
+    );
+    f()
+}
+
+#[cfg(test)]
+mod with_options_tests {
+    use super::*;
+
+    #[test]
+    fn a_panicking_conversion_restores_the_options() {
+        // A Python caller gets PanicException and converts again on the
+        // same thread: the failed call's options must not stay in force.
+        let options = PdfOptions {
+            revisions: RevisionStyle::Word,
+            comments: CommentPlacement::End,
+            changed_only: true,
+            ..PdfOptions::default()
+        };
+        let caught = std::panic::catch_unwind(|| {
+            with_options(options, || panic!("layout failed"));
+        });
+        assert!(caught.is_err());
+        assert!(matches!(
+            REVISIONS.with(std::cell::Cell::get),
+            RevisionStyle::Conventional
+        ));
+        assert_eq!(
+            PAGE_PLAN.with(std::cell::Cell::get),
+            (CommentPlacement::Margin, false)
+        );
+    }
 }
 
 /// `CommentPlacement::End` is in force.
