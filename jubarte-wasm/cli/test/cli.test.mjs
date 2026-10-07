@@ -8,6 +8,7 @@
 import { test, before } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -108,6 +109,23 @@ test("text, inspect, capabilities and convert", () => {
   assert.equal(png.code, 1);
   assert.match(png.err, /PNG pages need the Python or Rust build/);
   assert.match(run("convert", tracked, "--revisions", "custom").err, /--revisions custom needs --revision-palette/);
+});
+
+test("convert --move-comments and --changed-only", () => {
+  const pages = (r) => {
+    assert.equal(r.code, 0, r.err);
+    return Number(/, (\d+) pages?\)/.exec(r.out)[1]);
+  };
+  const out = path.join(tmp, "flags.pdf");
+  assert.equal(pages(run("convert", tracked, "-o", out, "--force")), 1);
+  assert.equal(pages(run("convert", tracked, "-o", out, "--force", "--move-comments")), 2, "the comments get a page after the last");
+  // A long redline whose one change is on its first page.
+  const wasm = createRequire(bin)("jubarte-wasm");
+  const long = Array.from({ length: 120 }, (_, i) => `Paragraph ${i}.`).join("\n\n");
+  const redline = path.join(tmp, "long.docx");
+  fs.writeFileSync(redline, wasm.compareDocuments(wasm.markdownToDocx(long), wasm.markdownToDocx(long.replace("Paragraph 0.", "Paragraph zero.")), "Ann"));
+  assert.ok(pages(run("convert", redline, "-o", out, "--force")) > 1);
+  assert.equal(pages(run("convert", redline, "-o", out, "--force", "--changed-only")), 1);
 });
 
 test("edit writes the bundle, and a refused plan exits 3", () => {

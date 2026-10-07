@@ -171,6 +171,8 @@ const COMMANDS = {
       png: { type: "boolean", help: "not in this build: use uvx jubarte-redlines or the jubarte binary" },
       compress: { type: "boolean", help: "deflate PDF streams" },
       ...REVISION_FLAGS,
+      "move-comments": { type: "boolean", help: "list the comments after the last page instead of in balloons beside the text" },
+      "changed-only": { type: "boolean", help: "keep only the pages a tracked change touches" },
     },
     run(_, [file], o) {
       if (o.png) throw new CliError("PNG pages need the Python or Rust build (uvx jubarte-redlines convert --png)");
@@ -178,7 +180,7 @@ const COMMANDS = {
       const output = o.output ?? path.join(path.dirname(file), `${stem(file)}.pdf`);
       const docx = read(file);
       ensureWritable(output, o.force);
-      const pdf = wasm.docxToPdf(docx, Boolean(o.compress), o.revisions, palette);
+      const pdf = wasm.docxToPdf(docx, Boolean(o.compress), o.revisions, palette, Boolean(o["move-comments"]), Boolean(o["changed-only"]));
       write(output, pdf);
       console.log(`wrote ${output} (${pdf.length} bytes, ${plural(wasm.pdfPageCount(pdf), "page")})`);
     },

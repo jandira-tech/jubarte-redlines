@@ -192,6 +192,10 @@ pub fn get_revisions(docx: &[u8], input_limits_json: Option<String>) -> Result<S
 /// `revisions` (optional, default `"conventional"`) paints tracked changes:
 /// `"conventional"`, `"word"` (Microsoft Word's markup) or `"custom"` with
 /// `revisionPalette` (`"deleted=#AA0000:strike,..."`).
+/// `moveComments` (optional, default `false`) lists the comments after the
+/// last page instead of in balloons beside the text; `changedOnly`
+/// (optional, default `false`) keeps only the pages a tracked change
+/// touches (a document without changes keeps its first page).
 #[cfg(feature = "pdf")]
 #[wasm_bindgen(js_name = docxToPdf)]
 pub fn docx_to_pdf(
@@ -199,6 +203,8 @@ pub fn docx_to_pdf(
     compress: Option<bool>,
     revisions: Option<String>,
     revision_palette: Option<String>,
+    move_comments: Option<bool>,
+    changed_only: Option<bool>,
 ) -> Result<Vec<u8>, JsValue> {
     let revisions = jubarte::convert::RevisionStyle::from_choice(
         revisions.as_deref().unwrap_or("conventional"),
@@ -208,7 +214,12 @@ pub fn docx_to_pdf(
     let options = jubarte::convert::PdfOptions {
         compress: compress.unwrap_or(false),
         revisions,
-        ..jubarte::convert::PdfOptions::default()
+        comments: if move_comments.unwrap_or(false) {
+            jubarte::convert::CommentPlacement::End
+        } else {
+            jubarte::convert::CommentPlacement::Margin
+        },
+        changed_only: changed_only.unwrap_or(false),
     };
     jubarte::convert::docx_to_pdf_with(docx, options).map_err(js_err)
 }
@@ -788,6 +799,41 @@ mod tests {
             jubarte::comments::list_comments(&dropped.docx())
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    #[cfg(feature = "pdf")]
+    #[test]
+    fn docx_to_pdf_moves_comments_and_keeps_changed_pages() {
+        let plan = jubarte::edit::EditPlan::from_json(
+            r#"{"schema_version":1,"author":"Ann","operations":[{"kind":"comment","paragraph":"body:p:0","text":"Too low"}]}"#,
+        )
+        .unwrap();
+        let noted = jubarte::edit::apply_plan(&word("The cap is 10.\n"), &plan)
+            .unwrap()
+            .clean;
+        let pages = |pdf: Vec<u8>| pdf_page_count(&pdf);
+        assert_eq!(
+            pages(docx_to_pdf(&noted, None, None, None, None, None).unwrap()),
+            1
+        );
+        assert_eq!(
+            pages(docx_to_pdf(&noted, None, None, None, Some(true), None).unwrap()),
+            2,
+            "the comments are listed on a page after the last"
+        );
+        let long: String = (0..120).map(|i| format!("Paragraph {i}.\n\n")).collect();
+        let red = jubarte::document_comparer::compare_documents(
+            &word(&long),
+            &word(&long.replacen("Paragraph 0.", "Paragraph zero.", 1)),
+            "Ann",
+        )
+        .unwrap();
+        let whole = pages(docx_to_pdf(&red, None, None, None, None, None).unwrap());
+        assert!(whole > 1, "{whole} pages");
+        assert_eq!(
+            pages(docx_to_pdf(&red, None, None, None, None, Some(true)).unwrap()),
+            1
         );
     }
 
