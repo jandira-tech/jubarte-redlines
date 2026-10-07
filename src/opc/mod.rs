@@ -360,7 +360,7 @@ impl PartFs {
     /// `zip` crate default level 6. Level 1 skips `longest_match` (the
     /// largest WASM self-time frame, 26% of the deflate cluster per the W5
     /// profile) while producing content-identical decompressed bytes — Word
-    /// opens any deflate level. ZIP-LEVEL-01 (WASM_PERF_PLAN.md).
+    /// opens any deflate level. ZIP-LEVEL-01 (docs/WASM_PERF_PLAN.md).
     ///
     /// Every entry is dated 1980-01-01 00:00, as Office dates its own, so the
     /// same input writes the same bytes.

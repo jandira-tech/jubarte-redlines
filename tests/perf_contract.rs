@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! P0-LAB-01 contract tests — durable lab pieces from LCS_PERF_PLAN.md.
+//! P0-LAB-01 contract tests — durable lab pieces from docs/LCS_PERF_PLAN.md.
 //!
 //! Drives the **shipped** surfaces:
 //!   - `jubarte::perf` counters/snapshot/JSON

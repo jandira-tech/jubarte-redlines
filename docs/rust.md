@@ -1001,5 +1001,5 @@ Rules (code, set, severity):
 Curated sections are hand-maintained — keep them short and point at docs.rs
 for the full API.
 
-See also: [CHANGELOG](../CHANGELOG.md), [VERSIONING](../VERSIONING.md),
+See also: [CHANGELOG](../CHANGELOG.md), [VERSIONING](VERSIONING.md),
 [docs/api/](api/) snapshots.

@@ -749,7 +749,7 @@ doc comments). Per-release copies are snapshotted in
 them into `npm/` and stamps `ENGINE_COMMIT.txt`; `node jubarte-wasm/npm-smoke.mjs`
 smoke-tests the assembly. Publishing happens through `scripts/release.sh`
 (`jubarte-wasm` first, then `jubarte-redlines`); the package version tracks
-the embedded engine version. Details: [VERSIONING](../VERSIONING.md).
+the embedded engine version. Details: [VERSIONING](VERSIONING.md).
 
 ## Keeping this page current
 

@@ -859,7 +859,7 @@ and still trigger Word repair behavior.
 See:
 
 - [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md)
-- [`VERSIONING.md`](VERSIONING.md)
+- [`docs/VERSIONING.md`](docs/VERSIONING.md)
 - [`docs/bench_classes.md`](docs/bench_classes.md)
 
 ## Benchmarks

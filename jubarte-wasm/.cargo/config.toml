@@ -7,12 +7,12 @@
 # flags, so a bare `wasm-pack build` — no env var — is the only invocation that
 # guarantees BOTH flags below land in the artifact.
 #
-#   +simd128           : SIMD baseline (W2, retained; WASM_PERF_PLAN.md).
+#   +simd128           : SIMD baseline (W2, retained; docs/WASM_PERF_PLAN.md).
 #   -zstack-size=8 MiB : 8 MB shadow stack. The wasm32 default is 1 MB, which
 #                        was the first OOM suspect on deep recursion (the LCS
 #                        divide-and-conquer recurses per residual). 8 MB is a
 #                        defensive floor; it does NOT lift the 4 GiB linear-
-#                        memory ceiling (see TODO §1 / WASM_PERF_PLAN.md — a real
+#                        memory ceiling (see docs/TODO.md §1 / docs/WASM_PERF_PLAN.md — a real
 #                        run-fragmented diff peaks ~11.6 GiB, ~2.9x over 4 GiB).
 #
 # wasm-opt flags (-O3, SIMD, bulk-memory, …) live in Cargo.toml
