@@ -90,7 +90,13 @@ def _pdf_options(args: argparse.Namespace) -> PdfOptions:
         raise CliError("--revisions custom needs --revision-palette")
     if revisions != "custom" and palette is not None:
         raise CliError("--revision-palette needs --revisions custom")
-    return PdfOptions(compress=compress, revisions=revisions, revision_palette=palette)
+    return PdfOptions(
+        compress=compress,
+        revisions=revisions,
+        revision_palette=palette,
+        move_comments=getattr(args, "move_comments", False),
+        changed_only=getattr(args, "changed_only", False),
+    )
 
 
 def _png_name(stem: str, index: int, count: int) -> str:
@@ -255,6 +261,9 @@ def cmd_convert(args: argparse.Namespace) -> int:
         # Markdown goes to Word unless a PDF or PNG is asked for.
         wants_render = args.pdf or args.png or (args.output is not None and args.output.suffix.lower() != ".docx")
         if not wants_render:
+            for given, flag in ((args.move_comments, "--move-comments"), (args.changed_only, "--changed-only")):
+                if given:
+                    raise CliError(f"{flag} applies to PDF or PNG output only")
             docx_out = args.output or args.file.with_suffix(".docx")
             _ensure_writable(docx_out, args.force)
             _write(docx_out, doc.to_bytes())
@@ -514,6 +523,8 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     p.add_argument("--report", type=Path, metavar="FILE", help="JSON page report ({page_count, pages, fonts})")
     _add_revision_flags(p)
     p.add_argument("--pages", metavar="SPEC", help="rasterize only these pages, counted from 1: 3, 1-3,7 (needs --png)")
+    p.add_argument("--move-comments", action="store_true", help="list the comments after the last page instead of in balloons beside the text")
+    p.add_argument("--changed-only", action="store_true", help="keep only the pages a tracked change touches (--pages counts the kept pages)")
     # Markdown input (.md, .markdown): written as Word (<stem>.docx), or rendered with --pdf, --png or -o FILE.pdf.
     p.add_argument("--page", choices=["letter", "a4"], default="letter", help="Markdown: page size without --reference-doc")
     p.add_argument("--reference-doc", type=Path, metavar="FILE", help="Markdown: take styles and page setup from this .docx")

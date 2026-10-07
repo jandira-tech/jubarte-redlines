@@ -265,6 +265,8 @@ class Document:
             compress=options.compress,
             revisions=options.revisions,
             revision_palette=options.revision_palette,
+            move_comments=options.move_comments,
+            changed_only=options.changed_only,
         )
 
     # -- agent surface -----------------------------------------------------
@@ -364,6 +366,8 @@ class Document:
                 dpi=float(dpi),
                 revisions=options.revisions,
                 revision_palette=options.revision_palette,
+                move_comments=options.move_comments,
+                changed_only=options.changed_only,
             )
         )
 
@@ -389,6 +393,8 @@ class Document:
             revisions=options.revisions,
             revision_palette=options.revision_palette,
             pages=None if pages is None else _zero_based(pages),
+            move_comments=options.move_comments,
+            changed_only=options.changed_only,
         )
         return Rendered(pdf=pdf_bytes, pngs=tuple(pngs), report=_decode_render_report(report))
 
