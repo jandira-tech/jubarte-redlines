@@ -344,7 +344,7 @@ Mirrors `jubarte::inspect::markdown`.
 ### `docxToPdf`
 
 ```typescript
-docxToPdf(docx: Uint8Array, compress?: boolean | null, revisions?: string | null, revision_palette?: string | null): Uint8Array
+docxToPdf(docx: Uint8Array, compress?: boolean | null, revisions?: string | null, revision_palette?: string | null, move_comments?: boolean | null, changed_only?: boolean | null): Uint8Array
 ```
 
 Render a DOCX package (bytes) → PDF bytes (Word-style layout).
@@ -358,6 +358,10 @@ never layout metrics.
 `revisions` (optional, default `"conventional"`) paints tracked changes:
 `"conventional"`, `"word"` (Microsoft Word's markup) or `"custom"` with
 `revisionPalette` (`"deleted=#AA0000:strike,..."`).
+`moveComments` (optional, default `false`) lists the comments after the
+last page instead of in balloons beside the text; `changedOnly`
+(optional, default `false`) keeps only the pages a tracked change
+touches (a document without changes keeps its first page).
 
 ### `editReportJsonl`
 
@@ -708,6 +712,8 @@ DOCX to PDF
       --compress                           deflate PDF streams
       --revisions REVISIONS                how tracked changes are painted: conventional, word or custom [default: conventional]
       --revision-palette REVISION_PALETTE  marks for --revisions custom, e.g. deleted=#AA0000:strike,...
+      --move-comments                      list the comments after the last page instead of in balloons beside the text
+      --changed-only                       keep only the pages a tracked change touches
 ```
 
 #### `jubarte-redlines edit`

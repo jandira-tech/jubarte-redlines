@@ -144,6 +144,7 @@ usage: jubarte-redlines convert [-h] [-o OUTPUT] [--force] [--pdf] [--png]
                                 [--report FILE]
                                 [--revisions {conventional,word,custom}]
                                 [--revision-palette SPEC] [--pages SPEC]
+                                [--move-comments] [--changed-only]
                                 [--page {letter,a4}] [--reference-doc FILE]
                                 [--track-changes {all,accept,reject}]
                                 [--no-critic] [-a AUTHOR] [-d DATE]
@@ -170,6 +171,10 @@ options:
                         deleted=#AA0000:strike,...
   --pages SPEC          rasterize only these pages, counted from 1: 3, 1-3,7
                         (needs --png)
+  --move-comments       list the comments after the last page instead of in
+                        balloons beside the text
+  --changed-only        keep only the pages a tracked change touches (--pages
+                        counts the kept pages)
   --page {letter,a4}    Markdown: page size without --reference-doc
   --reference-doc FILE  Markdown: take styles and page setup from this .docx
   --track-changes {all,accept,reject}
@@ -481,7 +486,7 @@ output. `input_limits` overrides the admission budget key by key
 ### `docx_to_pdf`
 
 ```python
-docx_to_pdf(docx, compress=False, revisions='conventional', revision_palette=None)
+docx_to_pdf(docx, compress=False, revisions='conventional', revision_palette=None, move_comments=False, changed_only=False)
 ```
 
 Render a DOCX package (bytes) → PDF bytes (Word-style layout).
@@ -491,7 +496,10 @@ smaller but no longer plain text. `revisions` paints tracked changes:
 `"conventional"` (red struck deletions, blue underlined insertions, green
 moves double-struck and double-underlined), `"word"` (Microsoft Word's
 markup) or `"custom"` with
-`revision_palette="deleted=#AA0000:strike,..."`.
+`revision_palette="deleted=#AA0000:strike,..."`. `move_comments=True`
+lists the comments after the last page instead of in balloons beside the
+text; `changed_only=True` keeps only the pages a tracked change touches
+(a document without changes keeps its first page).
 
 ### `get_revisions`
 
@@ -974,10 +982,17 @@ PdfOptions(
     compress: bool = False,
     revisions: RevisionStyle = 'conventional',
     revision_palette: str | None = None,
+    move_comments: bool = False,
+    changed_only: bool = False,
 )
 ```
 
 PDF options with the same defaults as the current byte API.
+
+``move_comments`` lists the comments after the last page instead of in
+balloons beside the text; ``changed_only`` keeps only the pages a tracked
+change touches. Both mirror the binary's flags and apply to PDF and PNG
+output; ``diff_render`` ignores them.
 
 ### `Revision`
 
