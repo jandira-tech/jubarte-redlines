@@ -199,8 +199,12 @@ export function documentMarkdown(docx: Uint8Array): string;
  * `revisions` (optional, default `"conventional"`) paints tracked changes:
  * `"conventional"`, `"word"` (Microsoft Word's markup) or `"custom"` with
  * `revisionPalette` (`"deleted=#AA0000:strike,..."`).
+ * `moveComments` (optional, default `false`) lists the comments after the
+ * last page instead of in balloons beside the text; `changedOnly`
+ * (optional, default `false`) keeps only the pages a tracked change
+ * touches (a document without changes keeps its first page).
  */
-export function docxToPdf(docx: Uint8Array, compress?: boolean | null, revisions?: string | null, revision_palette?: string | null): Uint8Array;
+export function docxToPdf(docx: Uint8Array, compress?: boolean | null, revisions?: string | null, revision_palette?: string | null, move_comments?: boolean | null, changed_only?: boolean | null): Uint8Array;
 
 /**
  * The JSON-lines form of a report (`load`, one `op` per operation,
@@ -361,7 +365,7 @@ export interface InitOutput {
     readonly compareDocuments: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
     readonly diffDocuments: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => void;
     readonly documentMarkdown: (a: number, b: number, c: number) => void;
-    readonly docxToPdf: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
+    readonly docxToPdf: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
     readonly editReportJsonl: (a: number, b: number, c: number) => void;
     readonly editoutput_clean: (a: number, b: number) => void;
     readonly editoutput_json: (a: number, b: number) => void;
