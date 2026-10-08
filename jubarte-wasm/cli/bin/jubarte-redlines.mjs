@@ -127,7 +127,7 @@ const COMMANDS = {
         if (to === "md") data = wasm.diffDocumentsCritic(a, b, author, date);
         if (["docx", "pdf"].includes(to)) {
           data = wasm.redlineDocuments(a, b, author, date);
-          if (to === "pdf") data = wasm.docxToPdf(data, false, o.revisions, paletteOf(o));
+          if (to === "pdf") data = wasm.docxToPdf(data, false, o.revisions, paletteOf(o), Boolean(o.move_comments), Boolean(o.changed_only));
         }
         write(output, data);
       }
@@ -192,6 +192,9 @@ const COMMANDS = {
       if (isMarkdown(file)) {
         docx = wasm.markdownToDocx(docx.toString("utf8"), JSON.stringify({ page: o.page, author: o.author, date: o.date, critic: !o.no_critic, track_changes: o.track_changes }), o.reference_doc == null ? undefined : read(o.reference_doc));
         if (!o.pdf && (o.to === "docx" || (o.to == null && (o.output == null || path.extname(o.output).toLowerCase() === ".docx")))) {
+          if (o.move_comments || o.changed_only) {
+            throw new CliError("--move-comments / --changed-only applies to PDF or PNG output only");
+          }
           const output = o.output ?? path.join(path.dirname(file), `${stem(file)}.docx`);
           ensureWritable(output, o.force);
           write(output, docx);

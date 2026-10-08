@@ -292,7 +292,7 @@ test("explicit Markdown input and UTF-8 BOM share native text behavior", () => {
 });
 
 
-test("diff PDF forwards page options and Markdown refuses render-only options (integration)", () => {
+test("diff PDF forwards page options (integration)", () => {
   const wasm = createRequire(bin)("jubarte-wasm");
   const long = Array.from({ length: 120 }, (_, i) => `Paragraph ${i}.`).join("\n\n");
   const a = path.join(tmp, "page-options-old.md"), b = path.join(tmp, "page-options-new.md");
@@ -309,6 +309,9 @@ test("diff PDF forwards page options and Markdown refuses render-only options (i
   const moved = run("diff", tracked, tracked, "-o", end, "--move-comments");
   assert.equal(moved.code, 0, moved.err);
   assert.equal(wasm.pdfPageCount(fs.readFileSync(end)), 2);
+});
+
+test("Markdown refuses render-only options (integration)", () => {
   const source = path.join(tmp, "page-options-draft.md");
   fs.writeFileSync(source, "# Draft\n");
   for (const flag of ["--move-comments", "--changed-only"]) {
