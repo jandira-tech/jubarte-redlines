@@ -132,6 +132,7 @@ pub mod scrub;
 pub mod settings;
 /// ISO Strict → Transitional package normalization.
 pub mod strict_translation;
+pub mod text_diff;
 pub mod unid;
 /// `jubarte self-update`: install a GitHub release, only when asked.
 #[cfg(feature = "self-update")]
