@@ -57,4 +57,10 @@ test("paragraph patches and CriticMarkup remain separate APIs", () => {
   assert.equal(paragraph.hunks[0].at, "line:1");
   assert.match(paragraph.text, /\[-30-\]\{\+45\+\}/);
   assert.equal(wasm.diffDocumentsCritic(old, next), "Due in {~~30~>45~~} days.\n");
+  const redline = wasm.redlineDocuments(old, next, "Legal", "2026-09-30T14:05:00Z");
+  const revisions = JSON.parse(wasm.getRevisions(redline));
+  assert.ok(revisions.length > 0 && revisions.every((r) => r.author === "Legal" && r.date === "2026-09-30T14:05:00Z"));
+  assert.match(wasm.documentMarkdownWithChanges(redline, "accept"), /45/);
+  assert.doesNotMatch(wasm.documentMarkdownWithChanges(redline, "accept"), /30|\[body:p:/);
+  assert.match(wasm.documentMarkdownWithChanges(redline, "reject"), /30/);
 });

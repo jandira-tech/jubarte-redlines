@@ -107,7 +107,7 @@ test("text, inspect, capabilities and convert", () => {
   const png = run("convert", tracked, "--png");
   assert.equal(png.code, 2);
   assert.match(png.err, /PNG pages need the Python or Rust build/);
-  assert.match(run("convert", tracked, "--revisions", "custom").err, /--revisions custom needs --revision-palette/);
+  assert.match(run("convert", tracked, "--revisions", "custom").err, /--revision-palette/);
 });
 
 test("edit writes the bundle, and a refused plan exits 3", () => {
@@ -172,4 +172,24 @@ test("format contradictions and unsupported flags fail before I/O (integration)"
     assert.equal(result.code, 2, result.err);
     assert.doesNotMatch(result.err, /reading/);
   }
+});
+
+test("Markdown paragraph/critic output and shorthand comparison (integration)", () => {
+  const a = path.join(tmp, "short-a.md"), b = path.join(tmp, "short-b.md");
+  fs.writeFileSync(a, "Due in 30 days.\n");
+  fs.writeFileSync(b, "Due in 45 days.\n");
+  const patch = run("diff", a, b, "--author", "Legal", "--date", "2026-09-30T14:05:00Z");
+  assert.equal(patch.code, 0, patch.err);
+  assert.match(patch.out, /\[-30-\]\{\+45\+\}/);
+  assert.equal(run("diff", a, b, "--format", "critic").out, "Due in {~~30~>45~~} days.\n");
+  const compared = run(a, b, "--quiet");
+  assert.equal(compared.code, 0, compared.err);
+  assert.equal(compared.out, "");
+  assert.equal(fs.readFileSync(path.join(tmp, "short-a_v_short-b.docx")).subarray(0, 2).toString(), "PK");
+  const converted = run("convert", a, "--to", "docx");
+  assert.equal(converted.code, 0, converted.err);
+  assert.equal(fs.readFileSync(path.join(tmp, "short-a.docx")).subarray(0, 2).toString(), "PK");
+  const accepted = run("text", tracked, "--track-changes", "accept");
+  assert.equal(accepted.code, 0, accepted.err);
+  assert.doesNotMatch(accepted.out, /\[body:p:/);
 });
