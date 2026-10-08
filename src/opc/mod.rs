@@ -248,6 +248,51 @@ enum ZipEntry<'a> {
     Part(&'a [u8]),
 }
 
+// RUSTSEC-2026-0194: rdocx-opc still uses quick-xml 0.37, whose
+// duplicate-attribute check is quadratic. Scan with our fixed parser first,
+// without duplicate checks, and bound the list before the upstream parser.
+// 256 also matches quick-xml's default namespace declaration limit.
+fn check_opc_attributes(xml: &[u8]) -> Result<(), OpcError> {
+    let mut reader = quick_xml::Reader::from_reader(xml);
+    loop {
+        match reader.read_event().map_err(refused)? {
+            quick_xml::events::Event::Start(tag) | quick_xml::events::Event::Empty(tag) => {
+                for (index, attr) in tag.attributes().with_checks(false).enumerate() {
+                    if index >= 256 {
+                        return Err(refused(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "OPC metadata element exceeds 256 attributes",
+                        )));
+                    }
+                    attr.map_err(refused)?;
+                }
+            }
+            quick_xml::events::Event::Eof => return Ok(()),
+            _ => {}
+        }
+    }
+}
+
+fn check_package_metadata(bytes: &[u8], limit: u64) -> Result<(), OpcError> {
+    let mut archive = ZipArchive::new(Cursor::new(bytes))?;
+    for index in 0..archive.len() {
+        let entry = archive.by_index(index)?;
+        if entry.name() != "[Content_Types].xml" && !entry.name().ends_with(".rels") {
+            continue;
+        }
+        let mut xml = Vec::new();
+        entry.take(limit.saturating_add(1)).read_to_end(&mut xml)?;
+        if u64::try_from(xml.len()).unwrap_or(u64::MAX) > limit {
+            return Err(refused(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "OPC metadata exceeds part byte budget",
+            )));
+        }
+        check_opc_attributes(&xml)?;
+    }
+    Ok(())
+}
+
 /// Thin adapter over `rdocx_opc::OpcPackage`. Port-equivalent of `PartFS`.
 pub struct PartFs {
     pkg: OpcPackage,
@@ -278,6 +323,10 @@ pub(crate) fn resolve_rel_target(source_part: &str, rel_target: &str) -> String 
 impl PartFs {
     /// Open a `.docx`/OPC package from raw bytes.
     pub fn open(bytes: &[u8]) -> Result<Self, OpcError> {
+        check_package_metadata(
+            bytes,
+            crate::admission::InputLimits::compare().max_part_bytes,
+        )?;
         let mut pkg = OpcPackage::from_reader(Cursor::new(bytes.to_vec()))?;
         reparse_explicitly_closed(&mut pkg, bytes);
         unescape_relationships(&mut pkg.package_rels);
@@ -344,6 +393,7 @@ impl PartFs {
     /// Unparseable relationship XML is kept raw, as before.
     pub fn set_part(&mut self, name: &str, data: Vec<u8>) {
         if let Some(owner) = rels_path_to_part_name(name)
+            && check_opc_attributes(&data).is_ok()
             && let Ok(mut rels) = Relationships::from_xml(&data)
         {
             unescape_relationships(&mut rels);
@@ -376,7 +426,7 @@ impl PartFs {
     /// `zip` crate default level 6. Level 1 skips `longest_match` (the
     /// largest WASM self-time frame, 26% of the deflate cluster per the W5
     /// profile) while producing content-identical decompressed bytes — Word
-    /// opens any deflate level. ZIP-LEVEL-01 (WASM_PERF_PLAN.md).
+    /// opens any deflate level. ZIP-LEVEL-01 (docs/WASM_PERF_PLAN.md).
     ///
     /// Every entry is dated 1980-01-01 00:00, as Office dates its own, so the
     /// same input writes the same bytes.
@@ -637,6 +687,41 @@ impl PartFs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn opc_attribute_budget_bounds_upstream_duplicate_checks() {
+        let attrs = |count| {
+            (0..count)
+                .map(|i| format!(" a{i}=\"x\""))
+                .collect::<String>()
+        };
+        for close in ["/>", "></Relationship>"] {
+            let at_limit = format!("<Relationship{}{close}", attrs(256));
+            assert!(check_opc_attributes(at_limit.as_bytes()).is_ok());
+            let over_limit = format!("<Relationship{}{close}", attrs(257));
+            assert!(check_opc_attributes(over_limit.as_bytes()).is_err());
+            let bytes = package_with_document_rels(&over_limit);
+            assert!(PartFs::open(&bytes).is_err());
+        }
+        assert!(check_opc_attributes(b"<Relationship broken/>").is_err());
+        assert!(check_opc_attributes(b"<Relationship").is_err());
+        let bytes = package_with_document_rels(
+            "<Relationship Id=\"rId1\" Type=\"test\" Target=\"a.xml\"/>",
+        );
+        assert!(PartFs::open(&bytes).is_ok());
+        assert!(check_package_metadata(&bytes, 32).is_err());
+        assert!(check_package_metadata(b"not a zip", 32).is_err());
+
+        // Content types are also parsed by upstream, before relationships.
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        writer
+            .start_file("[Content_Types].xml", SimpleFileOptions::default())
+            .unwrap();
+        write!(writer, "<Types{}/>", attrs(257)).unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+        let err = check_package_metadata(&bytes, 4096).unwrap_err();
+        assert!(err.to_string().contains("256 attributes"));
+    }
 
     const RELS_NS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
     const HYPERLINK: &str =

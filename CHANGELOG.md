@@ -24,6 +24,15 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   and `--full-lines` control the view. Long lines use a 70-character window
   around the first change. Text output creates no implicit Word file.
 
+### Security
+
+- Bound OPC metadata to 256 attributes per element before rdocx-opc's
+  quick-xml 0.37 duplicate checks (RUSTSEC-2026-0194 denial of service).
+  Oversized metadata is now refused. The dependency itself remains affected;
+  direct use of its re-exported parser is outside this mitigation.
+- Add contribution and private vulnerability-reporting policies, daily
+  dependency/history-secret checks, mandatory release security checks and
+  an OpenSSF criterion evidence ledger.
 
 ### Changed
 
@@ -32,7 +41,6 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   `redline`) is discoverable alongside the existing two-file shorthand.
 - Python extensions avoid symbol stripping that can corrupt macOS
   Mach-O metadata and prevent startup.
-
 
 - The desktop app is no longer tracked here: it is its own repository
   (arthrod/jubarte-app), cloned untracked at `jubarte-app/` or named by

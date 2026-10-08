@@ -84,7 +84,7 @@ shell needs a store build that embeds the new engine.
 
 6. **Commit + tag** — done by `release.sh`; shown for reference only.
    ```bash
-   git add Cargo.toml CHANGELOG.md VERSIONING.md scripts/bump-version.mjs
+   git add Cargo.toml CHANGELOG.md docs/VERSIONING.md scripts/bump-version.mjs
    git commit -m "chore(release): v0.2.0"
    git tag -a v0.2.0 -m "v0.2.0"
    # push when ready: git push && git push --tags

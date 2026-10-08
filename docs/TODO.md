@@ -15,14 +15,14 @@
 
 Where every plan-like document stands, one line each (checked 2026-10-01):
 
-- [planning/plan.md](planning/plan.md) — executed except Steps 0c–0f and the
+- [planning/plan.md](../planning/plan.md) — executed except Steps 0c–0f and the
   sample50 move; that residue is backlog §4.
-- [planning/xml_parts_plan.md](planning/xml_parts_plan.md) — §3.1–3.3 largely
+- [planning/xml_parts_plan.md](../planning/xml_parts_plan.md) — §3.1–3.3 largely
   executed; §3.4 (drawing placement) partial.
-- [planning/redline_assessment.md](planning/redline_assessment.md) — 2026-09-05
+- [planning/redline_assessment.md](../planning/redline_assessment.md) — 2026-09-05
   analysis snapshot; §5 Q7 settled (the publish gate is now enforced,
   `VERSIONING.md`/`scripts/release.sh`), Q1–Q6 undecided.
-- [planning/report.md](planning/report.md) — 2026-09-05/09-06 numbers snapshot;
+- [planning/report.md](../planning/report.md) — 2026-09-05/09-06 numbers snapshot;
   the converter has been rewritten since — re-measure before quoting.
 - [LCS_PERF_PLAN.md](LCS_PERF_PLAN.md) — frozen ledger (2026-07-15); the Q0/Q1
   quality ratchet, ABBA matrix and dead-ends doctrine still bind.
@@ -32,11 +32,11 @@ Where every plan-like document stands, one line each (checked 2026-10-01):
 - [SCHEMA_ORACLE_PLAN.md](SCHEMA_ORACLE_PLAN.md) — living; W1/W2 shipped, W3 open.
 - [CSHARP_MARKDOWN_PROJECTION_MAPPING.md](CSHARP_MARKDOWN_PROJECTION_MAPPING.md) —
   active study; §4 decisions pending.
-- [docs/goals/0.10.0.md](docs/goals/0.10.0.md) — released: v0.10.0 (2026-09-28)
+- [docs/goals/0.10.0.md](goals/0.10.0.md) — released: v0.10.0 (2026-09-28)
   and v0.10.1 (2026-09-30); see `CHANGELOG.md`.
-- [docs/superpowers/plans/2026-09-26-jubarte-adoption.md](docs/superpowers/plans/2026-09-26-jubarte-adoption.md) —
+- [docs/superpowers/plans/2026-09-26-jubarte-adoption.md](superpowers/plans/2026-09-26-jubarte-adoption.md) —
   adoption bundle; per-phase status banners live inside it.
-- [docs/superpowers/plans/2026-10-02-dependency-trim-and-library-readmes.md](docs/superpowers/plans/2026-10-02-dependency-trim-and-library-readmes.md) —
+- [docs/superpowers/plans/2026-10-02-dependency-trim-and-library-readmes.md](superpowers/plans/2026-10-02-dependency-trim-and-library-readmes.md) —
   planned: PR A tiny-skia 0.12, PR B vendored OPC, PR C per-library
   READMEs in the release, optional PR D SHA-256.
 
@@ -129,7 +129,7 @@ Open levers (deep-structural — HIGH blast radius, need supervision):
   children/attrs, or a columnar node store) moves it. Very high blast radius.
 - [ ] **planning/plan.md residue: Steps 0c–0f (external corpus corrections) +
   move sample50 into tools/ (ex-planning/plan.md)** — the follow-ups
-  [planning/plan.md](planning/plan.md) leaves open: correct the external
+  [planning/plan.md](../planning/plan.md) leaves open: correct the external
   neurotic README/bench artifacts (0c–0f, several outward-facing) and move
   `planning/sample50_{check.py,tsv,baseline.json}` into `tools/`.
 

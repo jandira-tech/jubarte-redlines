@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! Plan Step 8: every convert `mini` comment site (and the named Word-device
-//! / heading-gap helpers) must appear in `TUNING_AUDIT.md` with class a|b|c
+//! / heading-gap helpers) must appear in `docs/TUNING_AUDIT.md` with class a|b|c
 //! and a disposition.
 
 use std::collections::HashMap;
@@ -144,11 +144,11 @@ fn tuning_audit_covers_every_mini_comment_site() {
         !sites.is_empty(),
         "expected mini comment sites under src/convert"
     );
-    let path = root.join("TUNING_AUDIT.md");
+    let path = root.join("docs/TUNING_AUDIT.md");
     let body = fs::read_to_string(&path).unwrap_or_default();
     assert!(
         path.is_file() && !body.is_empty(),
-        "TUNING_AUDIT.md must exist at crate root (plan Step 8)"
+        "docs/TUNING_AUDIT.md must exist (plan Step 8)"
     );
     let (by_line, rows) = audit_table(&body);
     let mut missing = Vec::new();
@@ -230,7 +230,7 @@ fn helper_problems(root: &Path, rows: &[AuditRow]) -> Vec<String> {
 #[test]
 fn tuning_audit_starts_with_word_device_and_heading_gap() {
     let root = crate_root();
-    let body = fs::read_to_string(root.join("TUNING_AUDIT.md")).unwrap_or_default();
+    let body = fs::read_to_string(root.join("docs/TUNING_AUDIT.md")).unwrap_or_default();
     assert!(
         !body.is_empty(),
         "TUNING_AUDIT.md must exist (plan Step 8 starts with word_device_* and heading gap)"
@@ -245,7 +245,7 @@ fn helper_rows_reject_prose_only_reclassified_and_misfiled_helpers() {
     // #109: substring needles passed with the word_device_pt row deleted
     // (the intro prose names it) and with it reclassified.
     let root = crate_root();
-    let full = fs::read_to_string(root.join("TUNING_AUDIT.md")).unwrap_or_default();
+    let full = fs::read_to_string(root.join("docs/TUNING_AUDIT.md")).unwrap_or_default();
     let without = |needle: &str| {
         full.lines()
             .filter(|l| !(l.trim_start().starts_with('|') && l.contains(needle)))
