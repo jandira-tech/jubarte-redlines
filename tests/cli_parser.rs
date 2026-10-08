@@ -365,3 +365,24 @@ fn page_errors_explain_the_invalid_item() {
         );
     }
 }
+
+#[test]
+fn pdf_page_options_are_shared_and_rejected_for_text_outputs() {
+    for args in [
+        vec!["convert", "a.docx", "--move-comments", "--changed-only"],
+        vec!["diff", "a.docx", "b.docx", "-o", "out.pdf", "--move-comments", "--changed-only"],
+    ] {
+        let result = parse(&args, &[]);
+        assert_eq!(result["exit_code"], 0, "{result}");
+        assert_eq!(result["args"]["move_comments"], true, "{result}");
+        assert_eq!(result["args"]["changed_only"], true, "{result}");
+    }
+    for flag in ["--move-comments", "--changed-only"] {
+        for args in [
+            vec!["convert", "a.docx", "-t", "md", flag],
+            vec!["diff", "a.docx", "b.docx", "--format", "github", flag],
+        ] {
+            assert_eq!(parse(&args, &[])["exit_code"], 2, "{args:?}");
+        }
+    }
+}

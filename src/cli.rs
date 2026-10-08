@@ -230,6 +230,7 @@ pub enum Command {
         revision_palette: Option<String>,
         /// Comment placement and page selection in PDF or PNG output.
         #[command(flatten)]
+        #[serde(flatten)]
         page: PageOptions,
         /// Formats and Markdown reading.
         #[command(flatten)]
@@ -349,6 +350,7 @@ pub enum Command {
         revision_palette: Option<String>,
         /// Comment placement and page selection in PDF or PNG output.
         #[command(flatten)]
+        #[serde(flatten)]
         page: PageOptions,
     },
     /// Inspect document facts, paragraphs, styles and tables.
@@ -920,7 +922,7 @@ impl From<TrackChanges> for crate::markdown::TrackChanges {
 }
 
 /// Where a PDF's comments go and which pages it keeps (`convert`, `diff`).
-#[derive(clap::Args, Clone, Copy, Debug, Default)]
+#[derive(clap::Args, Clone, Copy, Debug, Default, Serialize)]
 pub struct PageOptions {
     /// List the comments after the last page instead of in balloons beside
     /// the text. The commented text keeps its tint and a `[JR1]` marker,
@@ -935,6 +937,7 @@ pub struct PageOptions {
 }
 
 impl PageOptions {
+    /// Apply comment placement and page filtering to the renderer options.
     pub fn apply(self, options: crate::convert::PdfOptions) -> crate::convert::PdfOptions {
         crate::convert::PdfOptions {
             comments: if self.move_comments {
@@ -942,7 +945,7 @@ impl PageOptions {
             } else {
                 crate::convert::CommentPlacement::Margin
             },
-            pub changed_only: self.changed_only,
+            changed_only: self.changed_only,
             ..options
         }
     }
@@ -1261,6 +1264,8 @@ fn validate_matches(
             }
             for flag in [
                 "columns",
+                "move_comments",
+                "changed_only",
                 "revisions",
                 "revision_palette",
                 "reference_doc",
@@ -1299,6 +1304,8 @@ fn validate_matches(
             for flag in [
                 "pdf",
                 "png",
+                "move_comments",
+                "changed_only",
                 "compress",
                 "report",
                 "font_report",
