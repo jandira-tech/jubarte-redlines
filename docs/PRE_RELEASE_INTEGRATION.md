@@ -41,17 +41,50 @@ integration test fails before adding text-output rejection and passes afterward.
 
 ## Validation
 
-Validation results are recorded after the integrated suite completes.
+| Session | Result | Line coverage | Branch coverage |
+| --- | --- | --- | --- |
+| Rust library, binary and all 434 integration targets | 4,572 passed; 5 existing ignored | 92.74% | 78.05% |
+| Python consumer and MCP tests | 454 passed; 3 capability-absence cases skipped because the capabilities exist | 97.33% | 93.66% |
+| npm API and CLI integration tests | 29 passed | 92.41% of CLI source | 80.32% of CLI source |
+
+The established Rust 80% line coverage floor passed. Rust ran in sequential
+coverage batches with fresh initial profiles; every integration target is
+accounted for. After a target ran, its executable could be reduced to LLVM
+coverage sections to fit local disk space. A representative export was verified
+identical before and after that reduction. All mappings and profiles remained
+available through the combined JSON/LCOV report. Reports and session logs are
+saved under `/tmp/jubarte-prerelease-audit/`.
+
+Native and Python `--help` smoke checks passed. Rebuilt full/slim Node and browser
+WASM packages passed public API startup checks. The package engine stamp is
+`5d15fd13d521d849459e31480e710fd13e77a476`, a clean committed source build; the later
+npm host fix changes CLI JavaScript, not the Rust/WASM engine.
+
 The full run exposed the WIP style regression: Normal cascade recreated the
 inherited-only BodyText history. Eligibility is now frozen from the original and
 revised style trees, live metrics are normalized, and only new redundant records
-are removed. The regression also verifies accepted Times New Roman inheritance
-and rejected Arial inheritance; inbound history and identical-declaration cascades
-remain protected.
-The five deterministic PDF review regressions and shared CLI page-option regression
-passed after their red runs. The same-style RTL fixture uses injected bundled font
-bytes to avoid installed font lookups.
+are removed. The regression verifies accepted Times New Roman inheritance and
+rejected Arial inheritance; inbound history and identical-declaration cascades
+remain protected. All 40 tests in that suite passed.
 
+Three old CLI tests now expect the shared parser's usage-error exit code 2 for
+invalid rendering flags, non-PNG page selection and zero DPI. Error-message and
+no-output checks were preserved and strengthened; runtime I/O errors still exit
+1. Clap's invalid-value diagnostic is checked directly rather than assuming it
+includes a Usage line.
+
+The five deterministic PDF review regressions passed after their red runs. The
+RTL fixture injects bundled font bytes to avoid installed font lookups. The npm
+regressions independently reproduced ignored PDF diff options and silently
+accepted render-only Markdown flags, then passed with the forwarding and guard
+fixes. Existing ignored Rust cases are the performance-timing test and the four
+already documented picture/tab, thesis line metrics, paragraph end-mark and
+content-control wrapper limitations.
+
+Formatting passed for the root and all three binding crates. Root clippy with
+all targets/features and `-D warnings` passed after the test edits; Python,
+in-process native and WASM target lint checks also passed.
+`scripts/gen_docs.sh --check` passed. REUSE lint passed for all 2,190 files.
 
 ## Per-comment gate: PRs 374, 375, 377 and 380
 
@@ -85,8 +118,8 @@ Reconciliation: implement 13 + push back 45 + duplicate-linked 25 = 83. Implemen
 | 374 | inline | 4200649785 | sourcery-ai[bot] | implement | Already implemented: PageOutOfRange page_count docs describe selectable output; Display says output has N pages. png_page_bounds_use_the_output_count_after_filtering_and_listing pins message/count. |
 | 374 | inline | 4201856280 | arthrod | duplicate-of-#4200649770 | Reply on canonical claim 4200649770; verified against source/test evidence in its ledger entry. Human implementation or push-back report agrees with current source; provenance only. |
 | 374 | inline | 4201856412 | arthrod | duplicate-of-#4200649785 | Reply on canonical claim 4200649785; verified against source/test evidence in its ledger entry. Human implementation or push-back report agrees with current source; provenance only. |
-| 374 | inline | 4216554951 | coderabbitai[bot] | implement | Fixed in the integrated source: explicit comment_marker flag excludes synthetic text from run_word_count, document_bookmark_texts and note_style_hit; justified paint pieces preserve it. synthetic_comment_markers_do_not_enter_field_sources passed parent coverage green. Both wrapping merge guards now preserve classification; wrapping_keeps_synthetic_marker_classification_separate failed for the correct merge assertion before these follow-up edits and awaits parent green. |
-| 374 | inline | 4216554960 | coderabbitai[bot] | implement | Fixed in the integrated source: listing_faces uses existing ink_face fallback; listing_width and paint_listing_line share its segmentation. comment_listing_uses_loaded_script_fallback_for_paint_and_width passed parent coverage green with deterministic document-local embedded font fixture. Follow-up coalesces same-style fragments and keeps neutral spaces with the script face; a_script_listing_phrase_keeps_spaces_and_word_order_when_shaping failed on neutral-space segmentation before this fix and awaits parent green. Measurements use coalesced strings exactly as painted; glyph coverage of installed CJK fonts is integration-only. |
+| 374 | inline | 4216554951 | coderabbitai[bot] | implement | Fixed in the integrated source: explicit comment_marker flag excludes synthetic text from run_word_count, document_bookmark_texts and note_style_hit; justified paint pieces preserve it. synthetic_comment_markers_do_not_enter_field_sources passed parent coverage green. Both wrapping merge guards now preserve classification; wrapping_keeps_synthetic_marker_classification_separate failed for the correct merge assertion before these follow-up edits and passed coverage green. |
+| 374 | inline | 4216554960 | coderabbitai[bot] | implement | Fixed in the integrated source: listing_faces uses existing ink_face fallback; listing_width and paint_listing_line share its segmentation. comment_listing_uses_loaded_script_fallback_for_paint_and_width passed parent coverage green with deterministic document-local embedded font fixture. Follow-up coalesces same-style fragments and keeps neutral spaces with the script face; a_script_listing_phrase_keeps_spaces_and_word_order_when_shaping failed on neutral-space segmentation before this fix and passed coverage green. Measurements use coalesced strings exactly as painted; glyph coverage of installed CJK fonts is integration-only. |
 | 374 | inline | 4216554966 | coderabbitai[bot] | implement | Fixed in the integrated source: styled labels/author attribution wrap with wrap_listing_runs, shared fallback measurements, full heading fit accounting and overflow pagination. long_comment_attributions_wrap_and_preserve_printable_page_bounds passed parent coverage green; preserves full author and page label. |
 | 374 | comments | 6025533537 | chatgpt-codex-connector[bot] | push back | Provider billing/usage limitation only; no code finding. Account purchase/admin changes are outside merge scope; proceed with local evidence. |
 | 374 | comments | 6025533919 | qodo-code-review[bot] | push back | Provider billing/usage limitation only; no code finding. Account purchase/admin changes are outside merge scope; proceed with local evidence. |

@@ -151,7 +151,9 @@ fn the_cli_honours_pages_for_png_output_and_refuses_it_for_other_formats() {
             "--pages".as_ref(),
             "1".as_ref(),
         ]);
-        assert_eq!(out.status.code(), Some(1), "-t {to}: {out:?}");
+        assert_eq!(out.status.code(), Some(2), "-t {to}: {out:?}");
+        assert!(out.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&out.stderr).contains("Usage:"));
         assert!(
             String::from_utf8_lossy(&out.stderr).contains("--pages"),
             "-t {to}: {out:?}"
