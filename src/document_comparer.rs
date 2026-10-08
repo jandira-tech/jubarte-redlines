@@ -1556,6 +1556,103 @@ fn own_style_props(
     own
 }
 
+/// Freeze the style blocks whose declared difference is only inherited.
+/// Read the original A tree and revised B tree before output parents change.
+/// Inbound records are never eligible for removal. Identical declarations
+/// keep the established Normal cascade (including partial language slots).
+fn inherited_only_style_changes(
+    dom: &Dom,
+    out_root: NodeId,
+    a_root: NodeId,
+    b_root: NodeId,
+) -> std::collections::HashSet<(NodeId, &'static str)> {
+    let by_id = |root| -> std::collections::HashMap<String, NodeId> {
+        dom.elements(root, Some(&W::name("style")))
+            .into_iter()
+            .filter_map(|style| {
+                Some((
+                    dom.attribute(style, &W::name("styleId"))?.to_string(),
+                    style,
+                ))
+            })
+            .collect()
+    };
+    let by_key = |root| -> std::collections::HashMap<(String, String), NodeId> {
+        let mut index = std::collections::HashMap::new();
+        for style in dom.elements(root, Some(&W::name("style"))) {
+            if let Some(key) = style_match_key(dom, style) {
+                index.entry(key).or_insert(style);
+            }
+        }
+        index
+    };
+    let a_ids = by_id(a_root);
+    let b_ids = by_id(b_root);
+    let a_keys = by_key(a_root);
+    let b_keys = by_key(b_root);
+    let normal = find_normal_style(dom, out_root);
+    let mut suppressed = std::collections::HashSet::new();
+    for style in dom.elements(out_root, Some(&W::name("style"))) {
+        if Some(style) == normal {
+            continue;
+        }
+        let Some(key) = style_match_key(dom, style) else {
+            continue;
+        };
+        let (Some(&a_style), Some(&b_style)) = (a_keys.get(&key), b_keys.get(&key)) else {
+            continue;
+        };
+        for (local, defaults, change) in [
+            ("pPr", "pPrDefault", "pPrChange"),
+            ("rPr", "rPrDefault", "rPrChange"),
+        ] {
+            let inbound = [style, a_style, b_style].into_iter().any(|source| {
+                dom.element(source, &W::name(local))
+                    .is_some_and(|block| dom.element(block, &W::name(change)).is_some())
+            });
+            if inbound
+                || declared_props_signature(dom, a_style, local)
+                    == declared_props_signature(dom, b_style, local)
+                || effective_style_props(dom, a_root, &a_ids, a_style, local, defaults)
+                    == effective_style_props(dom, b_root, &b_ids, b_style, local, defaults)
+            {
+                continue;
+            }
+            if own_style_props(dom, a_root, &a_ids, a_style, local, defaults)
+                == own_style_props(dom, b_root, &b_ids, b_style, local, defaults)
+            {
+                suppressed.insert((style, local));
+            }
+        }
+    }
+    suppressed
+}
+
+/// Remove newly synthesized inherited-only history after live metrics have
+/// been normalized. The cascade record must remain available until then:
+/// metric resolution uses tracked styles to replace obsolete A declarations.
+fn remove_inherited_only_style_records(
+    dom: &mut Dom,
+    suppressed: &std::collections::HashSet<(NodeId, &'static str)>,
+) -> bool {
+    let mut changed = false;
+    for &(style, local) in suppressed {
+        let change = if local == "pPr" {
+            "pPrChange"
+        } else {
+            "rPrChange"
+        };
+        if let Some(record) = dom
+            .element(style, &W::name(local))
+            .and_then(|block| dom.element(block, &W::name(change)))
+        {
+            dom.remove(record);
+            changed = true;
+        }
+    }
+    changed
+}
+
 /// [`effective_style_props`] from `start` up its `basedOn` chain; `None`
 /// resolves the docDefaults alone.
 fn effective_chain_props(
@@ -2028,6 +2125,7 @@ fn merge_revised_style_definitions(
     b_root: NodeId,
     settings: &WmlComparerSettings,
     a_declared_keys: &std::collections::HashSet<(String, String)>,
+    inherited_only: &std::collections::HashSet<(NodeId, &'static str)>,
 ) -> bool {
     let style_nm = W::name("style");
     let style_id = W::name("styleId");
@@ -2085,9 +2183,7 @@ fn merge_revised_style_definitions(
             // nothing (c719b900f0's Body Text repeats Normal's Arial). Word
             // records no change there, and its Reject All of one writes
             // values of its own onto the style.
-            if own_style_props(dom, out_root, &out_by_id, style, local, default_local)
-                == own_style_props(dom, b_root, &b_by_id, b_style, local, default_local)
-            {
+            if inherited_only.contains(&(style, local)) {
                 continue;
             }
             // Already tracked (an inbound stylesheet with pending redline, or an
@@ -7072,9 +7168,22 @@ fn compare_documents_impl(
             // original defines it, without a change record (51 of 51 accept
             // pairs), whatever Normal and the docDefaults become under it:
             // the passes below only see it to be put back.
+            let a_styles = pkg1.part_string("word/styles.xml").and_then(|xml| {
+                let doc = sd.parse_xdocument(&xml);
+                sd.root(doc)
+            });
+            let inherited_only = a_styles.map_or_else(std::collections::HashSet::new, |a_root| {
+                inherited_only_style_changes(&sd, or, a_root, br)
+            });
             let only_a = styles_the_revision_lacks(&mut sd, or, br);
-            let mut changed =
-                merge_revised_style_definitions(&mut sd, or, br, settings, &a_declared_keys);
+            let mut changed = merge_revised_style_definitions(
+                &mut sd,
+                or,
+                br,
+                settings,
+                &a_declared_keys,
+                &inherited_only,
+            );
             changed |= merge_normal_style_spacing(&mut sd, or, br, settings);
             // M-PAG mechanism 2b / M71: rewrite Normal rPr to B's effective
             // metrics when they differ. Formerly gated on header/footer→Normal
@@ -7106,13 +7215,10 @@ fn compare_documents_impl(
             changed |= complete_root_style_change_records(&mut sd, or, settings);
             // Below the roots, the record carries what the original's chain
             // gave the style, which Reject All would otherwise read as built-in.
-            let a_styles = pkg1.part_string("word/styles.xml").and_then(|xml| {
-                let doc = sd.parse_xdocument(&xml);
-                sd.root(doc)
-            });
             if let Some(a_root) = a_styles {
                 changed |= complete_based_style_change_records(&mut sd, or, a_root);
             }
+            changed |= remove_inherited_only_style_records(&mut sd, &inherited_only);
             changed |= restore_styles(&mut sd, or, only_a);
             // M483: re-cache themed color hexes against the shipped theme —
             // must run AFTER the merge writes B's blocks (their w:val hexes

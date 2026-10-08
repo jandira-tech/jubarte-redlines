@@ -2212,4 +2212,23 @@ fn a_style_restating_its_parent_records_no_change_of_its_own() {
         .find(|s| s.contains(r#"w:styleId="Normal""#))
         .unwrap();
     assert!(normal.contains("rPrChange"), "{normal}");
+    // Removing duplicate history must not leave the old explicit Arial
+    // overriding the revised Normal's font.
+    assert!(!body_text.contains("<w:rFonts"), "{body_text}");
+    let live_normal = normal.split("<w:rPrChange").next().unwrap();
+    assert!(
+        live_normal.contains(r#"w:ascii="Times New Roman""#),
+        "{normal}"
+    );
+    for (pkg, font) in [
+        (accept_revisions(&redline).unwrap(), "Times New Roman"),
+        (reject_revisions(&redline).unwrap(), "Arial"),
+    ] {
+        assert_word_valid_package(&pkg);
+        let body = style_xml(&pkg, "BodyText");
+        assert!(!body.contains("<w:rFonts"), "inherits {font}: {body}");
+        assert!(!body.contains("rPrChange"), "{body}");
+        let normal = style_xml(&pkg, "Normal");
+        assert!(normal.contains(&format!(r#"w:ascii="{font}""#)), "{normal}");
+    }
 }
