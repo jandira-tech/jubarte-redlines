@@ -447,6 +447,16 @@ Options:
           Write a JSON font-resolution report (`[{requested, step, physical, bold,
           italic, synthetic, substituted}, …]`) for this document (plan Step 2f)
 
+      --move-comments
+          List the comments after the last page instead of in balloons beside the text.
+          The commented text keeps its tint and a `[JR1]` marker, and the pages keep
+          their own width
+
+      --changed-only
+          Keep only the pages a tracked change touches. The whole document is laid out
+          first, so page numbers stay the document's; a document without changes keeps
+          its first page. --pages counts the kept pages
+
       --track-changes <CHOICE>
           Keep tracked changes (all), or write the document with every change accepted
           or rejected (pandoc's flag): CriticMarkup in Markdown, Word's revisions in a
@@ -493,12 +503,6 @@ Options:
       --no-page-markers
           Word to Markdown: leave out the `<!-- page N of M -->` lines, and the layout
           pass that places them
-
-      --move-comments
-          List the comments after the last page instead of in balloons beside the text. The commented text keeps its tint and a `[JR1]` marker, and the pages keep their own width
-
-      --changed-only
-          Keep only the pages a tracked change touches. The whole document is laid out first, so page numbers stay the document's; a document without changes keeps its first page. --pages counts the kept pages
 
       --pages <SPEC>
           Rasterize only these pages, counted from 1: `3`, `1-3,7`. Layout still runs
@@ -595,6 +599,16 @@ Arguments:
           The new document: .docx or Markdown
 
 Options:
+      --move-comments
+          List the comments after the last page instead of in balloons beside the text.
+          The commented text keeps its tint and a `[JR1]` marker, and the pages keep
+          their own width
+
+      --changed-only
+          Keep only the pages a tracked change touches. The whole document is laid out
+          first, so page numbers stay the document's; a document without changes keeps
+          its first page. --pages counts the kept pages
+
   -h, --help
           Print help (see a summary with '-h')
 
@@ -707,16 +721,6 @@ Revision marks:
 
 Examples:
   jubarte diff old.docx new.docx --format github   Git/GitHub patch on stdout
-      --move-comments
-          List the comments after the last page instead of in balloons beside the text. The commented text keeps its tint and a `[JR1]` marker, and the pages keep their own width
-
-      --changed-only
-          Keep only the pages a tracked change touches. The whole document is laid out first, so page numbers stay the document's; a document without changes keeps its first page. --pages counts the kept pages
-
-  -h, --help
-          Print help (see a summary with '-h')
-
-EXAMPLES:
   jubarte diff old.md new.md                       the patch on stdout
   jubarte diff old.md new.md --format critic       CriticMarkup on stdout, as pandiff
   jubarte diff old.md new.md -o changes.docx       Word tracked changes

@@ -347,6 +347,16 @@ Options:
           Write a JSON font-resolution report (`[{requested, step, physical, bold,
           italic, synthetic, substituted}, …]`) for this document (plan Step 2f)
 
+      --move-comments
+          List the comments after the last page instead of in balloons beside the text.
+          The commented text keeps its tint and a `[JR1]` marker, and the pages keep
+          their own width
+
+      --changed-only
+          Keep only the pages a tracked change touches. The whole document is laid out
+          first, so page numbers stay the document's; a document without changes keeps
+          its first page. --pages counts the kept pages
+
       --track-changes <CHOICE>
           Keep tracked changes (all), or write the document with every change accepted
           or rejected (pandoc's flag): CriticMarkup in Markdown, Word's revisions in a
@@ -489,6 +499,16 @@ Arguments:
           The new document: .docx or Markdown
 
 Options:
+      --move-comments
+          List the comments after the last page instead of in balloons beside the text.
+          The commented text keeps its tint and a `[JR1]` marker, and the pages keep
+          their own width
+
+      --changed-only
+          Keep only the pages a tracked change touches. The whole document is laid out
+          first, so page numbers stay the document's; a document without changes keeps
+          its first page. --pages counts the kept pages
+
   -h, --help
           Print help (see a summary with '-h')
 

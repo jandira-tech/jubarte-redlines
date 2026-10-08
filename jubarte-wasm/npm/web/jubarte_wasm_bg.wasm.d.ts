@@ -21,7 +21,7 @@ export const diffDocumentsUnified: (a: number, b: number, c: number, d: number, 
 export const diffDocumentsView: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const documentMarkdown: (a: number, b: number, c: number) => void;
 export const documentMarkdownWithChanges: (a: number, b: number, c: number, d: number, e: number) => void;
-export const docxToPdf: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
+export const docxToPdf: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
 export const editReportJsonl: (a: number, b: number, c: number) => void;
 export const editoutput_clean: (a: number, b: number) => void;
 export const editoutput_json: (a: number, b: number) => void;
