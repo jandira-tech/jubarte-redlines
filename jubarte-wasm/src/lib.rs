@@ -402,6 +402,133 @@ fn side(bytes: &[u8]) -> Result<jubarte::markdown::Source<'_>, JsValue> {
         .map_err(|e| js_err(format!("a side is neither a .docx nor UTF-8 Markdown: {e}")))
 }
 
+/// Explicit input kinds supplied by the shared CLI or API caller.
+#[derive(Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum SideFormat {
+    Docx,
+    Md,
+}
+
+fn typed_side(
+    bytes: &[u8],
+    format: Option<SideFormat>,
+) -> Result<jubarte::markdown::Source<'_>, String> {
+    let format = format.unwrap_or(if bytes.starts_with(b"PK\x03\x04") {
+        SideFormat::Docx
+    } else {
+        SideFormat::Md
+    });
+    match format {
+        SideFormat::Docx => {
+            if !bytes.starts_with(b"PK\x03\x04") {
+                return Err("invalid DOCX: expected a ZIP package".to_string());
+            }
+            Ok(jubarte::markdown::Source::Docx(bytes))
+        }
+        SideFormat::Md => std::str::from_utf8(bytes)
+            .map(jubarte::markdown::Source::Markdown)
+            .map_err(|e| format!("invalid UTF-8 Markdown: {e}")),
+    }
+}
+
+#[derive(Default, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum ViewFormat {
+    #[default]
+    Github,
+    Word,
+    Normal,
+    Context,
+    SideBySide,
+}
+
+impl From<ViewFormat> for jubarte::text_diff::TextFormat {
+    fn from(format: ViewFormat) -> Self {
+        match format {
+            ViewFormat::Github => Self::Github,
+            ViewFormat::Word => Self::Word,
+            ViewFormat::Normal => Self::Normal,
+            ViewFormat::Context => Self::Context,
+            ViewFormat::SideBySide => Self::SideBySide,
+        }
+    }
+}
+
+fn default_context() -> u32 {
+    3
+}
+
+fn deserialize_context<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
+    <u32 as serde::Deserialize>::deserialize(deserializer).map_err(|e| {
+        serde::de::Error::custom(format!(
+            "context must be an integer in the u32 range (0..4294967295): {e}"
+        ))
+    })
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ViewOptions {
+    #[serde(default)]
+    format: ViewFormat,
+    old_name: Option<String>,
+    new_name: Option<String>,
+    #[serde(default = "default_context", deserialize_with = "deserialize_context")]
+    context: u32,
+    #[serde(default)]
+    accept_changes: bool,
+    #[serde(default)]
+    full_lines: bool,
+    old_format: Option<SideFormat>,
+    new_format: Option<SideFormat>,
+}
+
+fn document_view(old: &[u8], new: &[u8], options_json: Option<&str>) -> Result<String, String> {
+    let options: ViewOptions = serde_json::from_str(options_json.unwrap_or("{}"))
+        .map_err(|e| format!("invalid diff view options: {e}"))?;
+    let (old, new) = (
+        typed_side(old, options.old_format)?,
+        typed_side(new, options.new_format)?,
+    );
+    let name = |given: Option<String>, source: &jubarte::markdown::Source<'_>, default: &str| {
+        given.unwrap_or_else(|| match source {
+            jubarte::markdown::Source::Docx(_) => format!("{default}.docx"),
+            jubarte::markdown::Source::Markdown(_) => format!("{default}.md"),
+        })
+    };
+    let defaults = jubarte::text_diff::TextOptions::default();
+    let options = jubarte::text_diff::TextOptions {
+        unified: jubarte::text_diff::UnifiedOptions {
+            old_name: name(options.old_name, &old, "old"),
+            new_name: name(options.new_name, &new, "new"),
+            context: options.context as usize,
+        },
+        format: options.format.into(),
+        accept_changes: options.accept_changes,
+        window: if options.full_lines {
+            None
+        } else {
+            defaults.window
+        },
+    };
+    jubarte::text_diff::diff_documents_view(old, new, &options)
+}
+
+/// Document review view. `optionsJson` is a strict camelCase object with
+/// `format` (github, word, normal, context, side-by-side), `oldName`,
+/// `newName`, `context` (u32), `acceptChanges`, `fullLines`, `oldFormat`
+/// and `newFormat` (docx/md). Defaults use the core display window; Word
+/// always accepts both inputs' revisions before creating new CriticMarkup.
+#[wasm_bindgen(js_name = diffDocumentsView)]
+pub fn diff_documents_view(
+    old: &[u8],
+    new: &[u8],
+    options_json: Option<String>,
+) -> Result<String, JsValue> {
+    document_view(old, new, options_json.as_deref()).map_err(js_err)
+}
+
 /// Complete, unwrapped document snapshots as a Git text patch. `context`
 /// is validated before wasm-bindgen can coerce booleans or wrap u32 values.
 #[wasm_bindgen(js_name = diffDocumentsUnified, skip_typescript)]

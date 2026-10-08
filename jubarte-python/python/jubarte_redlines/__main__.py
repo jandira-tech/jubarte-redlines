@@ -63,7 +63,28 @@ def _read(path: Path) -> Document:
         raise CliError(f"reading {path}: {exc}") from exc
     if doc.to_bytes().startswith(OLE_MAGIC):
         raise CliError(f"{path} is a Word 97-2003 (.doc) or encrypted document; open it in Word and save it as .docx without a password")
+    if not doc.to_bytes().startswith(b"PK\x03\x04"):
+        raise CliError(f"reading {path}: invalid DOCX (expected a ZIP package)")
     return doc
+
+
+def _read_side(path: Path, force_kind: str | None) -> bytes | str:
+    """CLI format metadata wins; unknown suffixes use the core ZIP sniff rule."""
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        raise CliError(f"reading {path}: {exc}") from exc
+    if data.startswith(OLE_MAGIC):
+        raise CliError(f"{path} is a Word 97-2003 (.doc) or encrypted document; open it in Word and save it as .docx without a password")
+    kind = force_kind or ("docx" if data.startswith(b"PK\x03\x04") else "md")
+    if kind == "docx":
+        if not data.startswith(b"PK\x03\x04"):
+            raise CliError(f"reading {path}: invalid DOCX (expected a ZIP package)")
+        return data
+    try:
+        return data.decode("utf-8")
+    except UnicodeError as exc:
+        raise CliError(f"reading {path}: invalid UTF-8 Markdown: {exc}") from exc
 
 
 def _ensure_writable(path: Path, force: bool) -> None:
@@ -354,16 +375,16 @@ def cmd_diff_render(args: argparse.Namespace) -> int:
 
 
 def cmd_compare(args: argparse.Namespace) -> int:
-    from .document import _side, diff
+    from .document import diff
 
-    original = _side(args.original, "old")[0] if args.original.suffix.lower() in (".md", ".markdown") else _read(args.original).to_bytes()
-    modified = _side(args.modified, "new")[0] if args.modified.suffix.lower() in (".md", ".markdown") else _read(args.modified).to_bytes()
+    original = _read_side(args.original, args.old_format)
+    modified = _read_side(args.modified, args.new_format)
     output: Path = args.output or args.original.with_name(f"{args.original.stem}_v_{args.modified.stem}.docx")
     _ensure_writable(output, args.force)
     from . import _native
 
     redline = (diff(original, modified, format="critic", author=args.author, date=args.date).text
-               if output.suffix.lower() in (".md", ".markdown") else
+               if args.output_format == "md" else
                _native.redline_documents(original, modified, author=args.author, date=args.date))
     _write(output, redline)
     if not args.quiet:
@@ -373,26 +394,35 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
 def cmd_diff(args: argparse.Namespace) -> int:
     from . import _native
-    from .document import diff, _side, _default_author
+    from .document import diff, _decode_diff, _default_author
     from datetime import datetime, timezone
 
-    github = args.format == "github"
+    view = args.format in ("github", "word", "normal", "context", "side-by-side")
     output = args.output
-    both_markdown = all(path.suffix.lower() in (".md", ".markdown") for path in (args.old, args.new))
-    to = args.to or (output.suffix.lower().lstrip(".") if output else ("md" if both_markdown else "docx"))
-    if to in ("markdown", "mdown", "mkd", "mkdn"):
-        to = "md"
-    if not github and output is None and to != "md":
+    old = _read_side(args.old, args.old_format)
+    new = _read_side(args.new, args.new_format)
+    both_markdown = isinstance(old, str) and isinstance(new, str)
+    to = args.to or args.output_format or ("md" if both_markdown else "docx")
+    if not view and output is None and to != "md":
         output = args.old.with_name(f"{args.old.stem}_v_{args.new.stem}.{'pdf' if to == 'png' else to}")
     if output is not None:
         _ensure_writable(output, args.force)
     # Unified snapshots are pure: no git author lookup or wall-clock default.
-    author = args.author if args.author is not None else ("Redline" if github else _default_author())
-    date = args.date if args.date is not None else ("" if github else datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
-    result = diff(args.old, args.new, format=args.format, context=args.context, columns=args.columns, author=author, date=date)
+    author = args.author if args.author is not None else ("Redline" if view else _default_author())
+    date = args.date if args.date is not None else ("" if view else datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    if view:
+        text = _native.diff_view(old, new, format=args.format, old_name=str(args.old), new_name=str(args.new),
+                                 context=args.context, accept_changes=args.accept_changes, full_lines=args.full_lines)
+        if output is not None:
+            _write(output, text)
+            print(f"wrote {output} ({len(text.encode('utf-8'))} bytes)", file=sys.stderr)
+        else:
+            sys.stdout.write(text)
+        return EXIT_OK
+    result = _decode_diff(_native.diff_json(old, new, old_name=args.old.name, new_name=args.new.name,
+                                            author=author, date=date, columns=args.columns, critic=args.format == "critic"))
     data: str | bytes = result.text
-    if not github and output is not None:
-        (old, _), (new, _) = _side(args.old, "old"), _side(args.new, "new")
+    if output is not None:
         if to == "md":
             data = diff(old, new, format="critic", author=author, date=date).text
         elif to in ("docx", "pdf", "png"):
