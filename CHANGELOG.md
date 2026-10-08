@@ -15,7 +15,21 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+### Added
+
+- `diff --format github` (aliases `unified` and `text`) prints complete
+  unified text patches of Word or Markdown documents, with configurable
+  context and explicit text output. Existing revision marks and all story
+  text remain visible; no implicit DOCX is created for this format. Python
+  `diff` and WASM `diffDocumentsUnified` expose the same formatter.
+
+
 ### Changed
+
+- CLI commands, help, aliases, defaults and usage validation now share a
+  clap-derived schema across native, Python and WASM. `compare` (alias
+  `redline`) is discoverable alongside the existing two-file shorthand.
+
 
 - The desktop app is no longer tracked here: it is its own repository
   (arthrod/jubarte-app), cloned untracked at `jubarte-app/` or named by

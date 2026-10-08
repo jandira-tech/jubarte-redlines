@@ -52,6 +52,9 @@ def test_cli_git_diff_stdout_and_explicit_text_output(tmp_path, capsys, format):
     assert not (tmp_path / "a_v_b.docx").exists()
     assert main(["diff", str(a), str(b), "--format", format, "-o", str(out)]) == 0
     assert out.read_text() == patch
+    streams = capsys.readouterr()
+    assert streams.out == ""
+    assert "wrote" in streams.err
 
 
 @pytest.mark.integration

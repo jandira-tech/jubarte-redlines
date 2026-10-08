@@ -17,7 +17,7 @@
 use pyo3::create_exception;
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
-use pyo3::types::PyBytes;
+use pyo3::types::{PyBool, PyBytes, PyInt};
 
 create_exception!(
     jubarte_redlines,
@@ -356,6 +356,84 @@ impl Side<'_> {
 /// as JSON (`[{"at", "removed", "text"}]`, empty for CriticMarkup).
 type Diffed = (String, String);
 
+/// Python integers only: PyO3's u32 extraction otherwise accepts bool.
+struct Context(u32);
+
+impl FromPyObject<'_, '_> for Context {
+    type Error = PyErr;
+
+    fn extract(obj: Borrowed<'_, '_, PyAny>) -> PyResult<Self> {
+        let invalid = || {
+            pyo3::exceptions::PyValueError::new_err(
+                "context must be an integer in the u32 range (0..4294967295)",
+            )
+        };
+        if obj.is_instance_of::<PyBool>() || !obj.is_instance_of::<PyInt>() {
+            return Err(invalid());
+        }
+        obj.extract::<u32>().map(Self).map_err(|_| invalid())
+    }
+}
+
+/// Complete document text as a Git unified patch; no redline is constructed.
+#[pyfunction]
+#[pyo3(signature = (old, new, *, old_name = "old.docx", new_name = "new.docx", context = Context(3)))]
+fn diff_unified(
+    py: Python<'_>,
+    old: Side<'_>,
+    new: Side<'_>,
+    old_name: &str,
+    new_name: &str,
+    context: Context,
+) -> PyResult<String> {
+    let options = jubarte::text_diff::UnifiedOptions {
+        old_name: old_name.to_string(),
+        new_name: new_name.to_string(),
+        context: context.0 as usize,
+    };
+    let (old, new) = (old.source(), new.source());
+    py.detach(|| jubarte::text_diff::diff_documents(old, new, &options))
+        .map_err(err)
+}
+
+/// Pure shared clap parser. Arguments exclude argv0; no host I/O is done.
+#[pyfunction]
+#[pyo3(signature = (arguments, program = "jubarte-redlines", supported = None))]
+fn parse_cli_json(arguments: Vec<String>, program: &str, supported: Option<Vec<String>>) -> String {
+    jubarte::cli::parse_json(&arguments, program, &supported.unwrap_or_default())
+}
+
+/// Word or Markdown sides as a Word tracked-changes document.
+#[pyfunction]
+#[pyo3(signature = (old, new, *, author, date))]
+fn redline_documents(
+    py: Python<'_>,
+    old: Side<'_>,
+    new: Side<'_>,
+    author: &str,
+    date: &str,
+) -> PyResult<Py<PyBytes>> {
+    let (old, new) = (old.source(), new.source());
+    let settings = jubarte::comparer::WmlComparerSettings {
+        author_for_revisions: author.to_string(),
+        date_time_for_revisions: date.to_string(),
+        ..Default::default()
+    };
+    let bytes = py
+        .detach(|| {
+            jubarte::markdown::redline(
+                old,
+                new,
+                &jubarte::markdown::RedlineOptions {
+                    settings,
+                    ..Default::default()
+                },
+            )
+        })
+        .map_err(err)?;
+    Ok(PyBytes::new(py, &bytes).unbind())
+}
+
 fn diffed(patch: &jubarte::markdown::Patch, columns: usize) -> PyResult<Diffed> {
     let hunks: Vec<serde_json::Value> = patch
         .hunks
@@ -483,10 +561,26 @@ fn inspect_json(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
         .map_err(err)
 }
 
-/// Body paragraphs as Markdown with `[body:p:N]` ids.
+/// Body paragraphs with ids, or Markdown with a tracked-change selection.
 #[pyfunction]
-fn markdown(py: Python<'_>, docx: &[u8]) -> PyResult<String> {
-    py.detach(|| jubarte::inspect::markdown(docx)).map_err(err)
+#[pyo3(signature = (docx, track_changes = None))]
+fn markdown(py: Python<'_>, docx: &[u8], track_changes: Option<&str>) -> PyResult<String> {
+    let Some(choice) = track_changes else {
+        return py.detach(|| jubarte::inspect::markdown(docx)).map_err(err);
+    };
+    let choice = jubarte::markdown::TrackChanges::parse(choice)
+        .ok_or_else(|| err("track_changes must be all, accept or reject"))?;
+    py.detach(|| {
+        jubarte::markdown::docx_to_markdown(
+            docx,
+            &jubarte::markdown::MarkdownOptions {
+                track_changes: choice,
+                extract_media: None,
+            },
+        )
+        .map(|read| read.markdown)
+    })
+    .map_err(err)
 }
 
 /// Apply an edit plan (JSON) → `(ok, clean | None, redline | None, json)`.
@@ -736,6 +830,9 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(report_jsonl, m)?)?;
     m.add_function(wrap_pyfunction!(capabilities_json, m)?)?;
     m.add_function(wrap_pyfunction!(diff_json, m)?)?;
+    m.add_function(wrap_pyfunction!(diff_unified, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_cli_json, m)?)?;
+    m.add_function(wrap_pyfunction!(redline_documents, m)?)?;
     m.add_function(wrap_pyfunction!(redline_diff_json, m)?)?;
     m.add_function(wrap_pyfunction!(list_comments_json, m)?)?;
     m.add_function(wrap_pyfunction!(append_json, m)?)?;

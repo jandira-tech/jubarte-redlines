@@ -113,7 +113,7 @@ tiny-skia = "0.12" # DOCX→PNG page raster over the layout display list
 pulldown-cmark = { version = "0.13", default-features = false } # Markdown → DOCX (`jubarte::markdown`); CommonMark + GFM tables/footnotes
 similar = { version = "3", default-features = false, features = ["text"] } # Markdown and Git/GitHub unified text diffs
 foldhash = "0.2" # the XML name interner's hasher: well mixed low bits for short, similar names, unlike SipHash (slow) or FNV (clustered)
-clap = { version = "4.5", features = ["derive"], optional = true }
+clap = { version = "4.5", features = ["derive", "string"], optional = true }
 # CLI-only global allocator. The redline pipeline is ~41% allocation self-time
 # (xmllinq node clone/drop churn, measured via samply on the RFP17 fixtures);
 # mimalloc cuts that per-alloc cost with zero behaviour change. Kept out of the

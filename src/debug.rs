@@ -1946,28 +1946,119 @@ fn listing_lines(pkg: &Package, check: Check, opts: &Options) -> PartLines {
 /// A complete text snapshot for unified diffs, with no report clipping.
 /// Header/footer roles are stable when Word renumbers their ZIP parts.
 pub(crate) fn document_text(bytes: &[u8]) -> Result<String, String> {
-    crate::admission::admit(bytes, crate::admission::InputLimits::default())
+    let admitted = crate::admission::admit(bytes, crate::admission::InputLimits::default())
         .map_err(|e| e.to_string())?;
     let pkg = Package::open(bytes)?;
-    // The diagnostic parser tolerates broken XML for triage; a comparison
-    // must instead refuse it, so damaged input cannot look like no changes.
-    for entry in &pkg.entries {
-        if entry.name.ends_with(".xml") || entry.name.ends_with(".rels") {
-            let xml = decode_xml(&entry.data)
-                .ok_or_else(|| format!("{}: unsupported XML encoding", entry.name))?;
-            crate::xmllinq::parse::validate_xml(&xml)
-                .map_err(|e| format!("{}: {e}", entry.name))?;
+    let parse = |entry: &Entry| -> Result<(Dom, NodeId), String> {
+        let xml = decode_xml(&entry.data)
+            .ok_or_else(|| format!("{}: unsupported XML encoding", entry.name))?;
+        crate::xmllinq::parse::validate_xml(&xml).map_err(|e| format!("{}: {e}", entry.name))?;
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let root = dom
+            .root(doc)
+            .ok_or_else(|| format!("{}: missing XML root", entry.name))?;
+        Ok((dom, root))
+    };
+    let types_entry = pkg
+        .entries
+        .iter()
+        .find(|e| e.name == "[Content_Types].xml")
+        .ok_or("missing content types")?;
+    let (types, root) = parse(types_entry)?;
+    let mut overrides = HashMap::new();
+    let mut defaults = HashMap::new();
+    for node in types.elements(root, None) {
+        let kind = attr(&types, node, "ContentType");
+        if local(&types, node) == "Override" {
+            overrides.insert(
+                attr(&types, node, "PartName")
+                    .trim_start_matches('/')
+                    .to_string(),
+                kind,
+            );
+        } else if local(&types, node) == "Default" {
+            defaults.insert(attr(&types, node, "Extension").to_ascii_lowercase(), kind);
         }
     }
+    let word_name = |dom: &Dom, node: NodeId, name: &str| {
+        dom.name(node).is_some_and(|n| {
+            n.local_name() == name
+                && matches!(
+                    n.namespace_name(),
+                    "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                        | "http://purl.oclc.org/ooxml/wordprocessingml/main"
+                )
+        })
+    };
     let roles = story_roles(&pkg);
-    let parts = listing_lines(&pkg, Check::Text, &Options::default());
-    let mut named = BTreeMap::new();
-    for (part, (lines, _)) in parts {
-        let name = roles.get(&part).cloned().unwrap_or(part);
-        named.insert(name, lines);
+    let mut parts = BTreeMap::new();
+    for entry in &pkg.entries {
+        let kind = overrides
+            .get(&entry.name)
+            .or_else(|| {
+                entry
+                    .name
+                    .rsplit_once('.')
+                    .and_then(|(_, ext)| defaults.get(&ext.to_ascii_lowercase()))
+            })
+            .map(String::as_str)
+            .unwrap_or("");
+        let main = entry.name == admitted.main_part;
+        let xml = main
+            || entry.name.ends_with(".xml")
+            || entry.name.ends_with(".rels")
+            || kind.ends_with("+xml")
+            || matches!(kind, "application/xml" | "text/xml");
+        if !xml {
+            continue;
+        }
+        let (dom, root) = parse(entry)?;
+        if main
+            && (!word_name(&dom, root, "document")
+                || !dom
+                    .elements(root, None)
+                    .into_iter()
+                    .any(|n| word_name(&dom, n, "body")))
+        {
+            return Err(format!(
+                "{}: expected a Word document root and body",
+                entry.name
+            ));
+        }
+        let expected = kind
+            .strip_prefix("application/vnd.openxmlformats-officedocument.wordprocessingml.")
+            .and_then(|k| match k {
+                "header+xml" => Some("hdr"),
+                "footer+xml" => Some("ftr"),
+                "footnotes+xml" => Some("footnotes"),
+                "endnotes+xml" => Some("endnotes"),
+                "comments+xml" => Some("comments"),
+                _ => None,
+            });
+        if expected.is_some_and(|name| !word_name(&dom, root, name)) {
+            return Err(format!("{}: expected a Word story root", entry.name));
+        }
+        // Main parts are resolved by admission; unrelated document-shaped
+        // custom XML is not a second body. Other Word stories keep debug's view.
+        if !main
+            && (local(&dom, root) == "document"
+                || !TEXT_PARTS.iter().any(|name| word_name(&dom, root, name)))
+        {
+            continue;
+        }
+        let name = if main {
+            "body".to_string()
+        } else {
+            roles
+                .get(&entry.name)
+                .cloned()
+                .unwrap_or_else(|| entry.name.clone())
+        };
+        parts.insert(name, text_lines(&dom, root, false).0);
     }
     let mut out = String::new();
-    for (part, lines) in named {
+    for (part, lines) in parts {
         let _ = writeln!(out, "[{part}]");
         for line in lines {
             let _ = writeln!(out, "{line}");

@@ -65,11 +65,11 @@ def run_help(runner: list[str], args: list[str]) -> str:
 
 
 def discover_sections(text: str) -> list[str]:
-    """Subcommand names from a ``Commands:``/``commands:`` help section."""
+    """Subcommand names from a ``Commands:``/``Tasks:`` help section."""
     names: list[str] = []
     in_section = False
     for line in text.splitlines():
-        if line.strip() in ("Commands:", "commands:"):
+        if line.strip() in ("Commands:", "commands:", "Tasks:", "tasks:"):
             in_section = True
             continue
         if not in_section:
@@ -159,7 +159,7 @@ def command_summaries(text: str) -> list[tuple[str, str]]:
     rows: list[tuple[str, str]] = []
     in_section = False
     for line in text.splitlines():
-        if line.strip() in ("Commands:", "commands:"):
+        if line.strip() in ("Commands:", "commands:", "Tasks:", "tasks:"):
             in_section = True
             continue
         if not in_section:

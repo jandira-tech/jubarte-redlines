@@ -135,3 +135,73 @@ fn malformed_or_undecodable_xml_cannot_look_like_equal_content() {
         );
     }
 }
+
+#[test]
+fn main_document_root_and_body_are_required() {
+    let a = docx(&para("Valid"));
+    for xml in [
+        "<bogus>Old</bogus>".to_string(),
+        format!("<w:document xmlns:w=\"{W_NS}\"/>"),
+        "<x:document xmlns:x=\"urn:wrong\"><x:body/></x:document>".to_string(),
+    ] {
+        let broken = replace_entry(&a, "word/document.xml", xml.as_bytes());
+        assert!(document_text(Source::Docx(&broken)).is_err(), "{xml}");
+    }
+}
+
+#[test]
+fn declared_main_and_header_parts_need_not_have_xml_extensions() {
+    let main_xml = format!(
+        "<w:document xmlns:w=\"{W_NS}\"><w:body>{}</w:body></w:document>",
+        para("Actual main before")
+    );
+    let header_xml = format!(
+        "<w:hdr xmlns:w=\"{W_NS}\">{}</w:hdr>",
+        para("Header before")
+    );
+    let a = docx_with(
+        &para("Orphan main"),
+        &[
+            Part {
+                name: "word/main.dat",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+                rel_type: "",
+                xml: &main_xml,
+            },
+            Part {
+                name: "word/header.dat",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+                rel_type: "",
+                xml: &header_xml,
+            },
+        ],
+    );
+    let rels = common::docx::part_string(&a, "_rels/.rels")
+        .unwrap()
+        .replace("word/document.xml", "word/main.dat");
+    let a = replace_entry(&a, "_rels/.rels", rels.as_bytes());
+    let b = replace_entry(
+        &a,
+        "word/main.dat",
+        main_xml.replace("before", "after").as_bytes(),
+    );
+    let b = replace_entry(
+        &b,
+        "word/header.dat",
+        header_xml.replace("before", "after").as_bytes(),
+    );
+    let patch = compare(&a, &b);
+    assert!(
+        patch.contains("Actual main before") && patch.contains("Actual main after"),
+        "{patch}"
+    );
+    assert!(
+        patch.contains("Header before") && patch.contains("Header after"),
+        "{patch}"
+    );
+    assert!(
+        !document_text(Source::Docx(&a))
+            .unwrap()
+            .contains("Orphan main")
+    );
+}

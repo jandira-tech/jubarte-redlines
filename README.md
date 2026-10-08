@@ -177,9 +177,34 @@ npx jubarte-redlines redline a.docx b.docx -o redline.docx
 Both runners speak the shared command set — `compare`/`redline`,
 `revisions`, `changes`, `accept`, `reject`, `inspect`, `text`, `edit`,
 `convert`, `capabilities` — but not the whole binary surface: the Python
-wheel has no `diff`, `debug` or `self-update`, and the npm CLI, which
-mirrors the Python one, renders no PNG pages and takes no `--date`
+wheel and npm CLI now include `diff` and share the Rust clap parser for
+help, defaults, aliases and usage errors. Native-only tasks such as
+`debug` and `self-update` remain in the binary. The npm CLI renders no PNG
+pages
 ([`jubarte-wasm/cli/README.md`](jubarte-wasm/cli/README.md)).
+
+For a GitHub-style text review of two Word documents:
+
+```sh
+jubarte diff a.docx b.docx --format github
+jubarte diff a.docx b.docx --format github --context 5 -o changes.patch
+uvx jubarte-redlines diff a.docx b.docx --format github
+npx jubarte-redlines diff a.docx b.docx --format github
+```
+
+`github` (also `unified` or `text`) prints a standard unified patch with
+`diff --git`, file headers, hunk ranges and context. It compares the complete
+`debug -c text` view, including existing revision marks and story text in
+headers, footers, notes, comments, tables and text boxes. It never clips a
+paragraph or limits the number of changes, and does not create an implicit
+DOCX. Header/footer part renumbering is paired by section role. This is a
+patch of extracted **text**, for review; it cannot patch a binary DOCX.
+Formatting and media differences belong to `compare`, `debug` or `diff-render`.
+
+CriticMarkup keeps its existing role: representing a document's current
+content with its tracked marks and comments. `github` gives a separate
+comparison of those contents; it does not accept, reject or reinterpret the
+marks. See [text diff details](docs/TEXT_DIFF.md).
 
 > **Unreleased (on main, ships with the next release).** The runner
 > one-liners above, plus a Markdown pipeline beside Word: `jubarte diff`

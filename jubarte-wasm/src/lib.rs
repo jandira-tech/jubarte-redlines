@@ -250,6 +250,22 @@ pub fn document_markdown(docx: &[u8]) -> Result<String, JsValue> {
     jubarte::inspect::markdown(docx).map_err(js_err)
 }
 
+/// Markdown without paragraph ids, with tracked changes kept or resolved.
+#[wasm_bindgen(js_name = documentMarkdownWithChanges)]
+pub fn document_markdown_with_changes(docx: &[u8], track_changes: &str) -> Result<String, JsValue> {
+    let choice = jubarte::markdown::TrackChanges::parse(track_changes)
+        .ok_or_else(|| js_err("track_changes must be all, accept or reject"))?;
+    jubarte::markdown::docx_to_markdown(
+        docx,
+        &jubarte::markdown::MarkdownOptions {
+            track_changes: choice,
+            extract_media: None,
+        },
+    )
+    .map(|read| read.markdown)
+    .map_err(js_err)
+}
+
 /// What [`applyEditPlan`](apply_edit_plan) and
 /// [`previewEditPlan`](preview_edit_plan) return. A refused plan is data, not
 /// an exception, so every operation's outcome stays readable.
@@ -386,6 +402,112 @@ fn side(bytes: &[u8]) -> Result<jubarte::markdown::Source<'_>, JsValue> {
         .map_err(|e| js_err(format!("a side is neither a .docx nor UTF-8 Markdown: {e}")))
 }
 
+/// Complete, unwrapped document snapshots as a Git text patch. `context`
+/// is validated before wasm-bindgen can coerce booleans or wrap u32 values.
+#[wasm_bindgen(js_name = diffDocumentsUnified, skip_typescript)]
+pub fn diff_documents_unified(
+    old: &[u8],
+    new: &[u8],
+    old_name: Option<String>,
+    new_name: Option<String>,
+    context: JsValue,
+) -> Result<String, JsValue> {
+    let context = if context.is_undefined() {
+        3
+    } else {
+        let number = context
+            .as_f64()
+            .filter(|number| {
+                number.is_finite()
+                    && number.fract() == 0.0
+                    && (0.0..=f64::from(u32::MAX)).contains(number)
+            })
+            .ok_or_else(|| js_err("context must be an integer in the u32 range (0..4294967295)"))?;
+        number as u32
+    };
+    let (old, new) = (side(old)?, side(new)?);
+    let name = |given: Option<String>, source: &jubarte::markdown::Source<'_>, default: &str| {
+        given.unwrap_or_else(|| match source {
+            jubarte::markdown::Source::Docx(_) => format!("{default}.docx"),
+            jubarte::markdown::Source::Markdown(_) => format!("{default}.md"),
+        })
+    };
+    let options = jubarte::text_diff::UnifiedOptions {
+        old_name: name(old_name, &old, "old"),
+        new_name: name(new_name, &new, "new"),
+        context: context as usize,
+    };
+    jubarte::text_diff::diff_documents(old, new, &options).map_err(js_err)
+}
+
+#[wasm_bindgen(typescript_custom_section)]
+const UNIFIED_TYPES: &str = r#"
+export function diffDocumentsUnified(old: Uint8Array, new: Uint8Array, oldName?: string, newName?: string, context?: number): string;
+"#;
+
+/// Shared clap parsing, with no filesystem, clock or process access.
+#[wasm_bindgen(js_name = parseCli)]
+pub fn parse_cli(
+    arguments_json: &str,
+    program: Option<String>,
+    supported_json: Option<String>,
+) -> Result<String, JsValue> {
+    let arguments: Vec<String> = serde_json::from_str(arguments_json).map_err(js_err)?;
+    let supported: Vec<String> =
+        serde_json::from_str(supported_json.as_deref().unwrap_or("[]")).map_err(js_err)?;
+    Ok(jubarte::cli::parse_json(
+        &arguments,
+        program.as_deref().unwrap_or("jubarte-redlines"),
+        &supported,
+    ))
+}
+
+/// The complete document as CriticMarkup; existing paragraph patches stay separate.
+#[wasm_bindgen(js_name = diffDocumentsCritic)]
+pub fn diff_documents_critic(
+    old: &[u8],
+    new: &[u8],
+    author: Option<String>,
+    date: Option<String>,
+) -> Result<String, JsValue> {
+    let (old, new) = (side(old)?, side(new)?);
+    let mut options = jubarte::markdown::RedlineOptions::default();
+    if let Some(author) = author {
+        options.settings.author_for_revisions = author;
+    }
+    if let Some(date) = date {
+        options.settings.date_time_for_revisions = date;
+    }
+    match (old, new) {
+        (jubarte::markdown::Source::Markdown(old), jubarte::markdown::Source::Markdown(new)) => {
+            Ok(jubarte::markdown::diff_markdown(old, new))
+        }
+        _ => jubarte::markdown::redline(old, new, &options)
+            .and_then(|docx| jubarte::markdown::docx_to_markdown(&docx, &Default::default()))
+            .map(|read| read.markdown)
+            .map_err(js_err),
+    }
+}
+
+/// DOCX/Markdown comparison written as a Word redline, for host CLI I/O.
+#[wasm_bindgen(js_name = redlineDocuments)]
+pub fn redline_documents(
+    old: &[u8],
+    new: &[u8],
+    author: &str,
+    date: &str,
+) -> Result<Vec<u8>, JsValue> {
+    let options = jubarte::markdown::RedlineOptions {
+        settings: jubarte::comparer::WmlComparerSettings {
+            author_for_revisions: author.to_string(),
+            date_time_for_revisions: date.to_string(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    jubarte::markdown::redline(side(old)?, side(new)?, &options).map_err(js_err)
+}
+
 /// The changes from `old` to `new` as a patch, JSON `{"text", "hunks":
 /// [{"at", "removed", "text"}]}`: only the changed paragraphs, each whole,
 /// with `[-old-]{+new+}` changes and CriticMarkup comments, at its
@@ -420,13 +542,15 @@ pub fn diff_documents(
         author,
         date,
     );
-    let patch = jubarte::markdown::patch_documents(
-        old,
-        new,
-        &jubarte::markdown::RedlineOptions::default(),
-        &options,
-    )
-    .map_err(js_err)?;
+    let redline = jubarte::markdown::RedlineOptions {
+        settings: jubarte::comparer::WmlComparerSettings {
+            author_for_revisions: author.to_string(),
+            date_time_for_revisions: date.to_string(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let patch = jubarte::markdown::patch_documents(old, new, &redline, &options).map_err(js_err)?;
     let hunks: Vec<serde_json::Value> = patch
         .hunks
         .iter()

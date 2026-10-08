@@ -101,6 +101,8 @@ mod builtin_styles;
 pub mod capabilities;
 /// Tracked changes one at a time: list, accept or reject a selection.
 pub mod changes;
+#[cfg(feature = "cli")]
+pub mod cli;
 pub mod comments;
 /// Core WmlComparer engine (atomize → LCS → produce → finalize).
 pub mod comparer;
