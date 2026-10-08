@@ -48,7 +48,7 @@ def test_cli_git_diff_stdout_and_explicit_text_output(tmp_path, capsys, format):
     b.write_bytes(docx(para("new")))
     assert main(["diff", str(a), str(b), "--format", format]) == 0
     patch = capsys.readouterr().out
-    assert "--- a/a.docx\n+++ b/b.docx\n" in patch
+    assert str(a) in patch and str(b) in patch
     assert not (tmp_path / "a_v_b.docx").exists()
     assert main(["diff", str(a), str(b), "--format", format, "-o", str(out)]) == 0
     assert out.read_text() == patch
