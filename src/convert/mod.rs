@@ -2973,6 +2973,10 @@ fn next_tab_stop(x: f32, origin: f32, stops: &[TabStop], default_tab: f32) -> Ta
     }
 }
 
+/// How far a list label may pass the indent before its suffix tab moves
+/// the text to the next stop: past rounding, not a real overrun.
+const LABEL_OVERRUN: f32 = 0.05;
+
 fn next_tab_x(x: f32, origin: f32, stops: &[TabStop], default_tab: f32) -> f32 {
     next_tab_stop(x, origin, stops, default_tab).pos
 }
@@ -6252,25 +6256,29 @@ fn korean_legal_label(n: u32) -> String {
     }
 }
 
-fn alpha_label(mut n: u32, upper: bool) -> String {
-    if n == 0 {
-        n = 1;
-    }
-    let mut out = String::new();
-    while n > 0 {
-        n -= 1;
-        let ch = b'a' + (n % 26) as u8;
-        let ch = if upper { ch.to_ascii_uppercase() } else { ch };
-        out.insert(0, ch as char);
-        n /= 26;
-    }
-    out
+/// The last letter label Word writes, thirty z's.
+pub(crate) const ALPHA_LABEL_MAX: u32 = 26 * 30;
+/// The last Roman numeral Word writes.
+pub(crate) const ROMAN_LABEL_MAX: u32 = 32767;
+
+/// `lowerLetter` / `upperLetter` and `\* alphabetic`: past z Word repeats
+/// the letter, 27 "aa", 28 "bb", 53 "aaa" (Word 16 probes la1006 and
+/// nf1006, 2026-10-06). Past thirty z's (780) a list label starts again
+/// at "a" (probe bn1006b). Zero counts as 1.
+pub(crate) fn alpha_label(n: u32, upper: bool) -> String {
+    let n = (n.max(1) - 1) % ALPHA_LABEL_MAX;
+    let ch = char::from(b'a' + (n % 26) as u8);
+    let ch = if upper { ch.to_ascii_uppercase() } else { ch };
+    std::iter::repeat_n(ch, (n / 26) as usize + 1).collect()
 }
 
-fn roman_label(mut n: u32, upper: bool) -> String {
+/// Past 3999 Word adds M's (4000 "MMMM"); past 32767 a list label starts
+/// again at "I", 100000 "MDCXCIX" (Word 16 probe bn1006b, 2026-10-06).
+pub(crate) fn roman_label(n: u32, upper: bool) -> String {
     if n == 0 {
         return "0".into();
     }
+    let mut n = (n - 1) % ROMAN_LABEL_MAX + 1;
     const MAP: &[(u32, &str)] = &[
         (1000, "m"),
         (900, "cm"),
@@ -24695,7 +24703,13 @@ impl<'a> Layout<'a> {
                 };
                 self.paint_run(mark, mx, baseline);
                 let mut end = mx + self.run_width_pt(mark, mark.text.trim_end());
-                if style.list_jc_right && end >= x {
+                // A left label past the indent tabs its text on as well
+                // (`marker_overrun_stop`).
+                let overrun = !style.list_jc_right
+                    && style.indent_first < 0.0
+                    && mark.text.ends_with('\t')
+                    && end > x + LABEL_OVERRUN;
+                if (style.list_jc_right && end >= x) || overrun {
                     x = self.advance_tab(end, baseline, 0.0, 0.0, &mark.style);
                 }
                 let mut gap_style = &mark.style;
@@ -25130,7 +25144,10 @@ impl<'a> Layout<'a> {
             // 284-twip stop under a 709-twip hang starts "I." text 14.2pt
             // in) or, failing one, the indent where the body starts.
             let start = marker
-                .and_then(|m| self.marker_gutter_stop(m, style, indent))
+                .and_then(|m| {
+                    self.marker_gutter_stop(m, style, indent)
+                        .or_else(|| self.marker_overrun_stop(m, style, indent))
+                })
                 .unwrap_or(indent);
             let first_width = width + (indent - start);
             // The tab after a label in the hanging gutter lands on the
@@ -25647,6 +25664,19 @@ impl<'a> Layout<'a> {
             .filter(|t| t.pos > end + 0.01 && t.pos < indent - 0.01)
             .map(|t| t.pos)
             .reduce(f32::min)
+    }
+
+    /// Where a label that runs past the indent sends its text: its suffix
+    /// tab goes on to the next stop, a default one at 144 for "XXXVIII)"
+    /// and "AAA)" under left 720 / hanging 360 (Word 16 probes wl1006 and
+    /// la1006, 2026-10-06).
+    fn marker_overrun_stop(&self, mark: &TextRun, style: &ParaStyle, indent: f32) -> Option<f32> {
+        if style.list_jc_right || style.indent_first >= 0.0 || !mark.text.ends_with('\t') {
+            return None;
+        }
+        let end = indent + style.indent_first + self.run_width_pt(mark, mark.text.trim_end());
+        (end > indent + LABEL_OVERRUN)
+            .then(|| next_tab_x(end, 0.0, &self.tab_stops, self.page.default_tab))
     }
 
     fn run_width_pt(&self, run: &TextRun, text: &str) -> f32 {
@@ -45434,6 +45464,36 @@ mod regression_tests {
         let widths = table_col_widths(&[50.0, 50.0], &geom, 100.0);
         assert!((widths[0] - 40.0).abs() < 0.001);
         assert!((widths[1] - 60.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn letters_past_z_repeat_the_letter_as_word_does() {
+        // Word 16 probes la1006 (lowerLetter from 26, upperLetter from 52)
+        // and nf1006 (SEQ \* alphabetic), 2026-10-06: z) aa) bb) cc),
+        // ZZ) AAA) BBB); 702 is twenty-seven z's.
+        let lower: Vec<String> = [1, 26, 27, 28, 29, 53]
+            .map(|n| alpha_label(n, false))
+            .into();
+        assert_eq!(lower, ["a", "z", "aa", "bb", "cc", "aaa"]);
+        let upper: Vec<String> = [52, 53, 54].map(|n| alpha_label(n, true)).into();
+        assert_eq!(upper, ["ZZ", "AAA", "BBB"]);
+        assert_eq!(alpha_label(702, false), "z".repeat(27));
+    }
+
+    #[test]
+    fn list_letters_and_roman_numerals_wrap_as_word_does() {
+        // Word 16 probe bn1006b (2026-10-06): lowerLetter counts to thirty
+        // z's at 780, then 781 is "a" again and 100000 "ddddddd";
+        // upperRoman reaches 32767, then 32768 is "I" and 100000 "MDCXCIX".
+        assert_eq!(alpha_label(780, false), "z".repeat(30));
+        assert_eq!(alpha_label(781, false), "a");
+        assert_eq!(alpha_label(1561, false), "a");
+        assert_eq!(alpha_label(100_000, false), "ddddddd");
+        assert!(alpha_label(u32::MAX, true).len() <= 30);
+        assert!(roman_label(32767, true).ends_with("MMDCCLXVII"));
+        assert_eq!(roman_label(32768, true), "I");
+        assert_eq!(roman_label(100_000, true), "MDCXCIX");
+        assert!(roman_label(u32::MAX, false).len() < 64);
     }
 
     fn with_revision_style(style: RevisionStyle, test: impl FnOnce()) {

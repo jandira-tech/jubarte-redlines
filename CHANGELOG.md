@@ -45,6 +45,14 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   In JavaScript they are `docxToPdf`'s two trailing arguments and
   `npx jubarte-redlines convert --move-comments / --changed-only`.
 
+- `fields update` writes `NUMPAGES`, `PAGEREF` and `SEQ` results in
+  `\* roman` and `\* alphabetic` as Word does: the switch's first letter
+  picks the case, letters past z repeat (aa, bb, ...), the last `\*`
+  switch wins, and past 780 in letters or 32767 in Roman numerals the
+  result is Word's "Error! Number cannot be represented in specified
+  format." A `SEQ` identifier with either format keeps counting. Other
+  formats still keep the cached result.
+
 ### Security
 
 - Bound OPC metadata to 256 attributes per element before rdocx-opc's
@@ -78,6 +86,14 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 - A comment anchored in a justified line lost its balloon: the stretched
   line repaints its words as new runs, which dropped the run's comments.
 
+- PDF: list labels past z repeat the letter as Word does (z, aa, bb, ...,
+  ZZ, AAA), where jubarte counted on like spreadsheet columns (aa, ab, ac,
+  AZ, BA). Past 780 letter labels start again at "a", and past 32767
+  Roman ones at "I", as in Word; a huge list start no longer builds a
+  label millions of characters long.
+- PDF: a list label wider than its hanging indent sends the text to the
+  next tab stop, as Word does, instead of painting the text over the
+  label.
 - `scripts/release.sh` step 11 runs `gh release download` with no terminal
   attached and keeps gh's error. Under `script` (the 0.11.3 run's log
   wrapper), gh's progress display queried the terminal and failed, and the

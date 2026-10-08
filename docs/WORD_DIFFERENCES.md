@@ -78,9 +78,7 @@ The other 3 of the 32 are not differences:
 
 - **Paragraph formatting (`w:pPrChange`).** Word records the change in 8
   pairs where we record none, and we record it in 4 pairs where Word
-  doesn't. We no longer record one on a paragraph whose properties did not
-  change (a story's last paragraph with a few words revised, an unchanged
-  justified paragraph); Word never does.
+  doesn't.
 - **Table formatting (`w:tblPrChange`, `w:tblGridChange`).** We record more
   than Word does (5 pairs).
 - **Row and cell formatting (`w:trPrChange`, `w:tcPrChange`).** Word records
@@ -235,10 +233,11 @@ The other 3 of the 32 are not differences:
   counting as 1 (RW1, KB2, JW2R2, RW3R3). A resolved comment
   (`w15:done`) is faded: text BFBFBF, stroke in the author's tint, fill
   16 % of that, the range under the pale fill.
-- **Status.** Copied under `RevisionStyle::Word`; bracket ticks at the
-  range ends and a comment's own run formatting (one corpus document
-  sets 12pt Verdana bold inside a comment) are not painted yet. The
-  bench's r4/r5 probe documents (tracking on, no revisions) show a black
+- **Status.** Copied under `RevisionStyle::Word`. A comment's own run
+  formatting (one corpus document sets 12pt Verdana bold inside a
+  comment) is not painted yet: the balloon shows its text in the Balloon
+  Text size. The bench's r4/r5
+  probe documents (tracking on, no revisions) show a black
   changed-line bar beside the commented paragraph; three real documents
   with tracking on and live balloons show none, so no bar is drawn.
 
@@ -269,7 +268,10 @@ The other 3 of the 32 are not differences:
   - `PAGEREF \p`; `REF` with `\n`, `\r`, `\w`, `\p`, `\t`, `\d`, or a
     bookmark that spans paragraphs; `SEQ \s` and every later field of that
     identifier;
-  - number formats other than Arabic (`\* roman`, `\#`, `\@`);
+  - the number formats `\* Ordinal`, `\* CardText`, `\* Hex`, `\#` and
+    `\@`, and any format on a `PAGEREF` whose page is labelled by its
+    section ("iii", "2-1"). A last `\*` switch Word does not know gets
+    Word's "Error! Unknown switch argument.";
   - a `PAGEREF` to a bookmark outside any paragraph or in a header, which
     the layout does not page. A `PAGEREF` to a bookmark the document lacks
     gets Word's "Error! Bookmark not defined.", and a `REF` Word's "Error!
@@ -335,8 +337,7 @@ These are in Word's own redlines, so jubarte producing them is not a bug
   then the whole old TOC;
 - two paragraphs joined into one laid out as the first paragraph's mark
   deleted and only the separator inserted, with the second paragraph's
-  words left unchanged (checked in Word 16 on 2026-09-28; jubarte matches
-  this in both modes since 0.10.0).
+  words left unchanged (checked in Word 16 on 2026-09-28).
 
 Word's redlines never contain a complex field whose begin and end are in
 different revision states, or crossed fields. jubarte never emits either.

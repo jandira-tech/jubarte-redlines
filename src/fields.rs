@@ -492,7 +492,8 @@ fn parse_code(code: &str, with_arg: &[&str]) -> Code {
 }
 
 /// Whether every switch of `code` is in `known` (a `\*` switch passes only
-/// with a format this module writes: `MERGEFORMAT`, `CHARFORMAT`, `Arabic`).
+/// with `MERGEFORMAT`, `CHARFORMAT` or `Arabic`: a text result such as
+/// `REF`'s takes no number format).
 fn only_switches(code: &Code, known: &[&str]) -> bool {
     code.switches
         .iter()
@@ -503,6 +504,81 @@ fn only_switches(code: &Code, known: &[&str]) -> bool {
             }),
             other => known.contains(&other),
         })
+}
+
+/// A number format a `\*` switch asks for, among those written here.
+/// Word's result for a number its `\*` format cannot write.
+const UNREPRESENTABLE: &str = "Error! Number cannot be represented in specified format.";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NumberFormat {
+    Arabic,
+    /// `roman` (false) or `ROMAN` (true).
+    Roman(bool),
+    /// `alphabetic` (false) or `ALPHABETIC` (true).
+    Alpha(bool),
+}
+
+impl NumberFormat {
+    /// `n` in this format, as Word writes it (probe nf1006, 2026-10-06):
+    /// past `z` the letter repeats (27 "aa", 53 "aaa"), past 3999 the M's
+    /// do (4000 "MMMM"), and zero is a single space in Roman and letters.
+    /// Past 780 in letters or 32767 in Roman numerals Word writes
+    /// `UNREPRESENTABLE` (probes bn1006 and bn1006b).
+    fn write(self, n: u32) -> Option<String> {
+        use crate::convert::{ALPHA_LABEL_MAX, ROMAN_LABEL_MAX};
+        Some(match self {
+            Self::Arabic => n.to_string(),
+            Self::Roman(_) | Self::Alpha(_) if n == 0 => " ".to_string(),
+            Self::Roman(_) if n > ROMAN_LABEL_MAX => UNREPRESENTABLE.to_string(),
+            Self::Alpha(_) if n > ALPHA_LABEL_MAX => UNREPRESENTABLE.to_string(),
+            Self::Roman(upper) => crate::convert::roman_label(n, upper),
+            Self::Alpha(upper) => crate::convert::alpha_label(n, upper),
+        })
+    }
+}
+
+/// The number format `code`'s `\*` switches ask for (the last one wins;
+/// `MERGEFORMAT` and `CHARFORMAT` format nothing), or `None` when one asks
+/// for a format not written here (`Ordinal`, `CardText`, `Hex`, ...). The
+/// switch's first letter picks the case: `Roman` and `ROMAN` are upper,
+/// `roman` and `rOMAN` lower (Word 16 probe nf1006, 2026-10-06).
+fn number_format(code: &Code) -> Option<NumberFormat> {
+    // The last format switch wins (Word 16 probe bn1006: "\* CardText
+    // \* roman" and "\* Bogus \* roman" are both "i"); one we do not
+    // write keeps the cached result.
+    let mut format = Some(NumberFormat::Arabic);
+    for (switch, arg) in &code.switches {
+        if switch != "*" {
+            continue;
+        }
+        let arg = arg.as_deref()?;
+        let upper = arg.starts_with(|c: char| c.is_ascii_uppercase());
+        format = match arg.to_ascii_lowercase().as_str() {
+            "roman" => Some(NumberFormat::Roman(upper)),
+            "alphabetic" => Some(NumberFormat::Alpha(upper)),
+            "arabic" => Some(NumberFormat::Arabic),
+            "mergeformat" | "charformat" => format,
+            _ => None,
+        };
+    }
+    format
+}
+
+/// Whether every switch of `code` other than `\*` is in `known`.
+fn plain_switches(code: &Code, known: &[&str]) -> bool {
+    code.switches
+        .iter()
+        .all(|(switch, _)| switch == "*" || known.contains(&switch.as_str()))
+}
+
+/// A page label in `code`'s number format. A label that is not a plain
+/// number (a section's "iii" or "2-1") is written only unformatted.
+fn format_page(label: &str, code: &Code) -> Option<String> {
+    match number_format(code)? {
+        NumberFormat::Arabic => Some(label.to_string()),
+        format => format.write(label.parse().ok()?),
+    }
 }
 
 // ── results ───────────────────────────────────────────────────────────────
@@ -517,8 +593,10 @@ fn results_for(story: &Story, fields: &[Field], context: &Context<'_>) -> HashMa
             "REF" => reference(&story.dom, story.root, &field.code, context),
             "NUMPAGES" => {
                 let code = parse_code(&field.code, &[]);
-                (code.args.is_empty() && only_switches(&code, &[]))
-                    .then(|| context.facts.page_count.to_string())
+                (code.args.is_empty() && plain_switches(&code, &[]))
+                    .then(|| number_format(&code))
+                    .flatten()
+                    .and_then(|format| format.write(context.facts.page_count as u32))
             }
             "SEQ" if story.body => sequence(&field.code, &mut seq),
             _ => None,
@@ -535,7 +613,7 @@ fn pageref(code: &str, context: &Context<'_>) -> Option<String> {
     let [name] = code.args.as_slice() else {
         return None;
     };
-    if !only_switches(&code, &["h"]) {
+    if !plain_switches(&code, &["h"]) {
         return None;
     }
     if !context.defined.contains(name) {
@@ -543,7 +621,8 @@ fn pageref(code: &str, context: &Context<'_>) -> Option<String> {
     }
     // Defined but not paged (outside any paragraph, or in a header): the
     // cached result stays.
-    context.facts.bookmark_pages.get(name).cloned()
+    let label = context.facts.bookmark_pages.get(name)?;
+    format_page(label, &code)
 }
 
 fn reference(dom: &Dom, root: NodeId, code: &str, context: &Context<'_>) -> Option<String> {
@@ -567,7 +646,9 @@ fn sequence(code: &str, counters: &mut HashMap<String, Option<u32>>) -> Option<S
     let parsed = parse_code(code, &["r", "s"]);
     let ident = parsed.args.first()?.clone();
     let counter = counters.entry(ident).or_insert(Some(0));
-    if parsed.args.len() != 1 || !only_switches(&parsed, &["c", "n", "r", "h"]) {
+    let format = number_format(&parsed);
+    if parsed.args.len() != 1 || !plain_switches(&parsed, &["c", "n", "r", "h"]) || format.is_none()
+    {
         *counter = None;
     }
     let mut value = (*counter)?;
@@ -587,11 +668,11 @@ fn sequence(code: &str, counters: &mut HashMap<String, Option<u32>>) -> Option<S
     }
     *counter = Some(value);
     let hidden = parsed.switches.iter().any(|(switch, _)| switch == "h");
-    Some(if hidden {
-        String::new()
+    if hidden {
+        Some(String::new())
     } else {
-        value.to_string()
-    })
+        format?.write(value)
+    }
 }
 
 /// The text a bookmark spans, when it lies within one paragraph.
@@ -1424,6 +1505,150 @@ mod tests {
         assert!(!only_switches(&parse_code(" NUMPAGES \\* roman", &[]), &[]));
         assert_eq!(field_kind("  pageref x"), "PAGEREF");
         assert_eq!(field_kind(""), "");
+    }
+
+    #[test]
+    fn number_formats_write_roman_and_letters() {
+        let format = |code: &str| number_format(&parse_code(code, &[]));
+        assert_eq!(format(" NUMPAGES "), Some(NumberFormat::Arabic));
+        assert_eq!(
+            format(" NUMPAGES \\* MERGEFORMAT "),
+            Some(NumberFormat::Arabic)
+        );
+        assert_eq!(
+            format(" NUMPAGES \\* roman "),
+            Some(NumberFormat::Roman(false))
+        );
+        assert_eq!(
+            format(" NUMPAGES \\* ROMAN \\* MERGEFORMAT "),
+            Some(NumberFormat::Roman(true))
+        );
+        assert_eq!(
+            format(" SEQ x \\* alphabetic "),
+            Some(NumberFormat::Alpha(false))
+        );
+        assert_eq!(
+            format(" SEQ x \\* ALPHABETIC "),
+            Some(NumberFormat::Alpha(true))
+        );
+        // Word 16 probe nf1006 (2026-10-06): the switch's first letter
+        // picks the case, "Roman" XIV and "rOMAN" xiv.
+        assert_eq!(
+            format(" NUMPAGES \\* Roman "),
+            Some(NumberFormat::Roman(true))
+        );
+        assert_eq!(
+            format(" NUMPAGES \\* rOMAN "),
+            Some(NumberFormat::Roman(false))
+        );
+        assert_eq!(
+            format(" SEQ x \\* Alphabetic "),
+            Some(NumberFormat::Alpha(true))
+        );
+        assert_eq!(
+            format(" SEQ x \\* aLPHABETIC "),
+            Some(NumberFormat::Alpha(false))
+        );
+        // Formats not written here keep the cached result.
+        assert_eq!(format(" NUMPAGES \\* CardText "), None);
+        assert_eq!(NumberFormat::Roman(false).write(14).as_deref(), Some("xiv"));
+        assert_eq!(
+            NumberFormat::Roman(true).write(1999).as_deref(),
+            Some("MCMXCIX")
+        );
+        assert_eq!(NumberFormat::Alpha(false).write(3).as_deref(), Some("c"));
+        assert_eq!(NumberFormat::Alpha(true).write(26).as_deref(), Some("Z"));
+        assert_eq!(NumberFormat::Arabic.write(0).as_deref(), Some("0"));
+        // nf1006: past z the letter repeats, past 3999 the M's do, and
+        // zero is a single space in both.
+        assert_eq!(NumberFormat::Alpha(false).write(27).as_deref(), Some("aa"));
+        assert_eq!(NumberFormat::Alpha(true).write(53).as_deref(), Some("AAA"));
+        assert_eq!(
+            NumberFormat::Roman(true).write(4000).as_deref(),
+            Some("MMMM")
+        );
+        assert_eq!(NumberFormat::Roman(false).write(0).as_deref(), Some(" "));
+        assert_eq!(NumberFormat::Alpha(false).write(0).as_deref(), Some(" "));
+        // Word 16 probes bn1006 / bn1006b (2026-10-06): letters reach 780
+        // (thirty z's) and Roman 32767; past them Word writes its error.
+        assert_eq!(
+            NumberFormat::Alpha(false).write(780).as_deref(),
+            Some("z".repeat(30).as_str())
+        );
+        for (format, n) in [
+            (NumberFormat::Alpha(false), 781),
+            (NumberFormat::Alpha(true), u32::MAX),
+            (NumberFormat::Roman(true), 32768),
+            (NumberFormat::Roman(false), u32::MAX),
+        ] {
+            assert_eq!(
+                format.write(n).as_deref(),
+                Some(UNREPRESENTABLE),
+                "{format:?} {n}"
+            );
+        }
+        assert!(
+            NumberFormat::Roman(true)
+                .write(32767)
+                .is_some_and(|r| r.ends_with("MMDCCLXVII"))
+        );
+    }
+
+    #[test]
+    fn the_last_format_switch_wins() {
+        // bn1006: an earlier switch gives way to a later one, "\* CardText
+        // \* roman" i and "\* Bogus \* roman" i; a format we do not
+        // write last ("\* roman \* CardText" one) keeps the cache.
+        let format = |code: &str| number_format(&parse_code(code, &[]));
+        assert_eq!(
+            format(" NUMPAGES \\* CardText \\* roman "),
+            Some(NumberFormat::Roman(false))
+        );
+        assert_eq!(
+            format(" NUMPAGES \\* Bogus \\* roman \\* MERGEFORMAT "),
+            Some(NumberFormat::Roman(false))
+        );
+        assert_eq!(format(" NUMPAGES \\* roman \\* CardText "), None);
+        assert_eq!(format(" NUMPAGES \\* CardText \\* MERGEFORMAT "), None);
+    }
+
+    #[test]
+    fn a_numbered_sequence_keeps_counting_in_its_format() {
+        let mut counters = HashMap::new();
+        let mut next = |code: &str| sequence(code, &mut counters);
+        assert_eq!(next(" SEQ Annex \\* ALPHABETIC ").as_deref(), Some("A"));
+        assert_eq!(next(" SEQ Annex \\* ALPHABETIC ").as_deref(), Some("B"));
+        assert_eq!(next(" SEQ Annex \\* roman ").as_deref(), Some("iii"));
+        assert_eq!(next(" SEQ Annex ").as_deref(), Some("4"));
+        assert_eq!(next(" SEQ Annex \\* Ordinal "), None);
+        assert_eq!(next(" SEQ Annex "), None);
+        let mut counters = HashMap::new();
+        let mut next = |code: &str| sequence(code, &mut counters);
+        assert_eq!(
+            next(" SEQ Big \\r 28 \\* alphabetic ").as_deref(),
+            Some("bb")
+        );
+    }
+
+    #[test]
+    fn a_page_reference_formats_a_numeric_page() {
+        assert_eq!(
+            format_page("7", &parse_code(" PAGEREF x \\* roman ", &[])).as_deref(),
+            Some("vii")
+        );
+        assert_eq!(
+            format_page("7", &parse_code(" PAGEREF x \\h ", &[])).as_deref(),
+            Some("7")
+        );
+        // A page labelled by its section ("iii", "2-1") has no number to format.
+        assert_eq!(
+            format_page("2-1", &parse_code(" PAGEREF x \\* ROMAN ", &[])),
+            None
+        );
+        assert_eq!(
+            format_page("2-1", &parse_code(" PAGEREF x ", &[])).as_deref(),
+            Some("2-1")
+        );
     }
 
     #[test]
