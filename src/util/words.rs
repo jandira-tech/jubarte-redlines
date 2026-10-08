@@ -107,6 +107,7 @@ pub fn word_tokens(text: &str) -> Vec<&str> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

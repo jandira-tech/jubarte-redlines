@@ -445,6 +445,7 @@ fn resolve_with_policy(markdown: &str, accept: bool, remove_deleted_lines: bool)
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

@@ -1341,6 +1341,7 @@ fn set_section_type(dom: &mut Dom, sect: NodeId, section_break: SectionBreak) {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

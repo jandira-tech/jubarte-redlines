@@ -1437,6 +1437,7 @@ fn style_definition(id: &str) -> Option<String> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use std::io::{Cursor, Write};
 
@@ -1702,5 +1703,173 @@ mod tests {
         );
         assert_eq!(style_definition("TOC10"), None);
         assert_eq!(style_definition("Normal"), None);
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod boundary_coverage_tests {
+    use super::*;
+
+    fn document(content: &str) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(r#"<w:body xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">{content}</w:body>"#));
+        let root = dom.root(doc).unwrap();
+        (dom, root)
+    }
+
+    #[test]
+    fn outline_ranges_reject_each_invalid_endpoint() {
+        for range in ["0-1", "1-10", "9-1", "1-x", "x-1", "-1", "1-", "256-256"] {
+            assert_eq!(
+                toc_levels(&parse_code(&format!(r#"TOC \o "{range}""#), &["o"])),
+                None,
+                "{range}"
+            );
+        }
+        for (range, expected) in [("1-9", 1..=9), ("9", 9..=9), (" 2 - 4 ", 2..=4)] {
+            assert_eq!(
+                toc_levels(&parse_code(&format!(r#"TOC \o "{range}""#), &["o"])),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn missing_switch_arguments_never_consume_the_next_switch() {
+        let code = parse_code(r#"TOC \o \h \@ \z \* \u"#, &["o"]);
+        assert!(code.args.is_empty());
+        assert_eq!(
+            code.switches,
+            ["o", "h", "@", "z", "*", "u"].map(|s| (s.to_string(), None))
+        );
+        assert_eq!(number_format(&code), None);
+        assert!(!only_switches(&code, &["o", "h", "@", "z", "u"]));
+        assert!(plain_switches(&code, &["o", "h", "@", "z", "u"]));
+        assert_eq!(
+            code_words("REF \"unterminated bookmark"),
+            vec!["REF", "unterminated bookmark"]
+        );
+        assert_eq!(code_words("REF \"\""), vec!["REF", ""]);
+    }
+
+    #[test]
+    fn formatted_pages_keep_section_labels_only_for_arabic() {
+        for label in ["iii", "2-1", "", "-1", "4294967296"] {
+            assert_eq!(
+                format_page(label, &parse_code("PAGEREF x", &[])),
+                Some(label.into())
+            );
+            assert_eq!(
+                format_page(label, &parse_code(r"PAGEREF x \* roman", &[])),
+                None
+            );
+        }
+        assert_eq!(
+            format_page("12", &parse_code(r"PAGEREF x \* rOMAN", &[])),
+            Some("xii".into())
+        );
+        assert_eq!(
+            format_page("12", &parse_code(r"PAGEREF x \* Roman", &[])),
+            Some("XII".into())
+        );
+        assert_eq!(
+            format_page("12", &parse_code(r"PAGEREF x \* Bogus", &[])),
+            None
+        );
+    }
+
+    #[test]
+    fn invalid_sequences_poison_only_their_own_identifier() {
+        for bad in [
+            r"SEQ Figure extra",
+            r"SEQ Figure \r",
+            r"SEQ Figure \r -1",
+            r"SEQ Figure \r 4294967296",
+            r"SEQ Figure \* Hex",
+            r"SEQ Figure \z",
+        ] {
+            let mut counters = HashMap::new();
+            assert_eq!(sequence("SEQ Figure", &mut counters), Some("1".into()));
+            assert_eq!(sequence(bad, &mut counters), None, "{bad}");
+            assert_eq!(sequence(r"SEQ Figure \r 2", &mut counters), None);
+            assert_eq!(sequence("SEQ Table", &mut counters), Some("1".into()));
+            assert_eq!(counters.get("Figure"), Some(&None));
+        }
+    }
+
+    #[test]
+    fn bookmark_names_skip_taken_names_and_keep_existing_toc_bookmarks() {
+        let (mut dom, body) = document(
+            r#"<w:p><w:bookmarkStart w:id="7" w:name="_Toc100000001"/><w:bookmarkEnd w:id="7"/></w:p><w:p><w:pPr/><w:r><w:t>new</w:t></w:r></w:p><w:p><w:bookmarkStart w:id="bad" w:name="ordinary"/><w:r><w:t>other</w:t></w:r></w:p>"#,
+        );
+        let paras = dom.elements(body, Some(&W::p()));
+        let mut namer = BookmarkNamer::new(&dom, body);
+        assert_eq!(namer.ensure(&mut dom, paras[0]), "_Toc100000001");
+        assert_eq!(namer.ensure(&mut dom, paras[1]), "_Toc100000002");
+        assert_eq!(namer.ensure(&mut dom, paras[2]), "_Toc100000003");
+        let children = dom.elements(paras[1], None);
+        assert!(dom.name_is(children[0], &W::p_pr()));
+        assert!(dom.name_is(children[1], &W::name("bookmarkStart")));
+        assert_eq!(dom.attribute(children[1], &W::id()), Some("8"));
+        assert!(dom.name_is(*children.last().unwrap(), &W::name("bookmarkEnd")));
+        assert_eq!(
+            dom.attribute(*children.last().unwrap(), &W::id()),
+            Some("8")
+        );
+        assert_eq!(
+            bookmark_text(&dom, body, "_Toc100000002"),
+            Some("new".into())
+        );
+        assert_eq!(
+            bookmark_text(&dom, body, "_Toc100000003"),
+            Some("other".into())
+        );
+        assert_eq!(namer.ensure(&mut dom, paras[1]), "_Toc100000002");
+    }
+
+    #[test]
+    fn section_text_width_defaults_each_malformed_attribute_and_clamps_small_boxes() {
+        for (content, expected) in [
+            ("", 9360),
+            (
+                r#"<w:sectPr><w:pgSz w:w="bad"/><w:pgMar w:left="bad" w:right="bad" w:gutter="bad"/></w:sectPr>"#,
+                9360,
+            ),
+            (
+                r#"<w:sectPr><w:pgSz w:w="10000"/><w:pgMar w:left="1000" w:right="2000" w:gutter="500"/></w:sectPr>"#,
+                6500,
+            ),
+            (
+                r#"<w:sectPr><w:pgSz w:w="100"/><w:pgMar w:left="0" w:right="0"/></w:sectPr>"#,
+                720,
+            ),
+        ] {
+            let (dom, body) = document(content);
+            assert_eq!(text_width(&dom, body), expected);
+        }
+    }
+
+    #[test]
+    fn explicit_outline_overrides_named_style_but_invalid_values_fall_back() {
+        let names = HashMap::from([("Local".into(), "heading 3".into())]);
+        let (dom, body) = document(
+            r#"<w:p><w:pPr><w:pStyle w:val="Local"/><w:outlineLvl w:val="0"/></w:pPr><w:r><w:t>  first</w:t><w:tab/><w:t>second  </w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Heading2"/><w:outlineLvl w:val="9"/></w:pPr><w:r><w:t>fallback</w:t></w:r></w:p><w:p><w:pPr><w:outlineLvl w:val="bad"/></w:pPr><w:r><w:t>omitted</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t> </w:t></w:r></w:p>"#,
+        );
+        let projected = |outline| {
+            headings(&dom, body, &names, &(1..=9), outline)
+                .iter()
+                .map(|h| (h.level, h.text.clone()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            projected(true),
+            vec![(1, "first second".into()), (2, "fallback".into())]
+        );
+        assert_eq!(
+            projected(false),
+            vec![(3, "first second".into()), (2, "fallback".into())]
+        );
+        assert!(headings(&dom, body, &names, &(4..=9), true).is_empty());
     }
 }

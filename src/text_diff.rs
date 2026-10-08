@@ -566,6 +566,7 @@ pub fn diff_documents(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use crate::markdown::{DocxOptions, markdown_to_docx};

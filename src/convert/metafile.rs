@@ -15,6 +15,7 @@ const MAX_SIDE: usize = 384;
 const WHITE: [u8; 3] = [255, 255, 255];
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn rasterize(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     render(bytes).map(|(w, h, rgb, _)| (w, h, rgb))
 }
@@ -1082,6 +1083,7 @@ fn read_emf_points(data: &[u8], off: usize, size: usize, pts16: bool) -> Option<
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod hostile_input_tests {
     //! CR PR#4 review: crafted WMF/EMF must terminate quickly without
     //! panicking — coordinate spans and record sizes are attacker-chosen.
@@ -1169,6 +1171,7 @@ mod hostile_input_tests {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod emf_text_tests {
     //! Strict01 OLE previews (image2.emf / image3.emf) store the Excel
     //! grid as EMR_EXTTEXTOUTW digits. Skipping those records leaves
@@ -1246,6 +1249,7 @@ mod emf_text_tests {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod emf_path_tests {
     //! fixtures_500 000ebd12: the Riksdag header logo is an EMF of filled
     //! Bézier paths (BEGINPATH … POLYBEZIERTO16 … FILLPATH) under a
@@ -1430,6 +1434,7 @@ mod emf_path_tests {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod wmf_object_tests {
     //! English corpus b88ac900: the kennel logo's clipart is a placeable
     //! WMF of META_POLYPOLYGON records selecting brushes by 0-based
@@ -1615,5 +1620,175 @@ mod wmf_object_tests {
             texts[2].family, "Times New Roman",
             "RESTOREDC brings the font back"
         );
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod coverage_boundary_tests {
+    use super::*;
+
+    fn pixel(c: &Canvas, x: usize, y: usize) -> &[u8] {
+        &c.px[(y * c.w + x) * 3..(y * c.w + x) * 3 + 3]
+    }
+
+    #[test]
+    fn clipping_never_changes_pixels_outside_the_intersection() {
+        let mut c = Canvas::new(4, 4);
+        for (x, y) in [(-1, 1), (1, -1), (4, 1), (1, 4)] {
+            c.put(x, y, [0, 0, 0]);
+        }
+        assert!(c.px.iter().all(|v| *v == 255));
+        c.fill_rect(-2, -2, 4, 4, [3, 4, 5]);
+        for y in 0..4 {
+            for x in 0..4 {
+                let expected = if x < 2 && y < 2 { [3, 4, 5] } else { WHITE };
+                assert_eq!(pixel(&c, x, y), expected);
+            }
+        }
+        let c = Canvas::new(0, 0);
+        assert_eq!(c.finish(), (1, 1, vec![255; 3]));
+    }
+
+    #[test]
+    fn winding_rule_fills_nested_same_direction_figures_and_even_odd_keeps_a_hole() {
+        let outer = vec![(1, 1), (10, 1), (10, 10), (1, 10)];
+        let inner = vec![(3, 3), (8, 3), (8, 8), (3, 8)];
+        for (winding, expected) in [(true, [0, 0, 0]), (false, WHITE)] {
+            let mut c = Canvas::new(12, 12);
+            c.fill_path(&[outer.clone(), inner.clone()], [0, 0, 0], winding);
+            assert_eq!(pixel(&c, 5, 5), expected);
+            assert_eq!(pixel(&c, 2, 2), [0, 0, 0]);
+            assert_eq!(pixel(&c, 0, 0), WHITE);
+        }
+        let mut c = Canvas::new(12, 12);
+        let mut reversed = inner;
+        reversed.reverse();
+        c.fill_path(&[outer, reversed], [0, 0, 0], true);
+        assert_eq!(pixel(&c, 5, 5), WHITE);
+        c.fill_path(&[vec![], vec![(1, 1)]], [0, 0, 0], true);
+        assert_eq!(pixel(&c, 0, 0), WHITE);
+    }
+
+    #[test]
+    fn map_handles_zero_and_reflected_extents() {
+        let mut map = Map {
+            org_x: 10.0,
+            org_y: 20.0,
+            ext_x: 0.0,
+            ext_y: 0.0,
+            w: 40.0,
+            h: 80.0,
+        };
+        assert_eq!(map.map(13, 24), (3, 4));
+        assert_eq!(map.pen_px(100), 1);
+        map.ext_x = -20.0;
+        map.ext_y = -40.0;
+        assert_eq!(map.map(13, 24), (-6, -8));
+        assert_eq!(map.pen_px(2), 4);
+        assert_eq!(map.pen_px(-2), 1);
+        for (input, expected) in [
+            ((0, 0), (1, 1)),
+            ((100, 50), (100, 50)),
+            ((-50, -100), (50, 100)),
+            ((i32::MIN, 1), (MAX_SIDE, 1)),
+            ((1, i32::MIN), (1, MAX_SIDE)),
+        ] {
+            assert_eq!(sized_canvas(input.0, input.1), expected);
+        }
+    }
+
+    #[test]
+    fn device_transform_only_scales_anisotropic_and_isotropic_modes() {
+        let mut xf = Xform {
+            mode: 1,
+            win_org: (10.0, 20.0),
+            win_ext: (2.0, 4.0),
+            vp_org: (3.0, 5.0),
+            vp_ext: (6.0, 8.0),
+        };
+        for mode in [1, 7, 8] {
+            xf.mode = mode;
+            assert_eq!(xf.dev(12, 24), if mode == 1 { (5, 9) } else { (9, 13) });
+        }
+        xf.win_ext.0 = 0.0;
+        assert_eq!(xf.dev(12, 24), (5, 9));
+        xf.win_ext = (2.0, 0.0);
+        assert_eq!(xf.dev(12, 24), (5, 9));
+    }
+
+    #[test]
+    fn truncated_integer_reads_and_point_records_are_bounded_by_the_record() {
+        assert_eq!(read_u16(&[0x34, 0x12], 0), Some(0x1234));
+        assert_eq!(read_i16(&[0xff, 0xff], 0), Some(-1));
+        assert_eq!(read_u32(&[1, 2, 3, 4], 0), Some(0x04030201));
+        assert_eq!(read_i32(&[0xff; 4], 0), Some(-1));
+        assert_eq!(read_u16(&[0], 0), None);
+        assert_eq!(read_i16(&[], 0), None);
+        assert_eq!(read_u32(&[0; 3], 0), None);
+        assert_eq!(read_i32(&[0; 4], 1), None);
+        assert_eq!(read_emf_points(&[], 0, 28, false), None);
+        for short in [false, true] {
+            let mut d = vec![0; 28];
+            d[24..28].copy_from_slice(&2u32.to_le_bytes());
+            if short {
+                d.extend_from_slice(&(-2i16).to_le_bytes());
+                d.extend_from_slice(&3i16.to_le_bytes());
+            } else {
+                d.extend_from_slice(&(-2i32).to_le_bytes());
+                d.extend_from_slice(&3i32.to_le_bytes());
+            }
+            assert_eq!(read_emf_points(&d, 0, d.len(), short), Some(vec![(-2, 3)]));
+            assert_eq!(read_emf_points(&d[..28], 0, d.len(), short), None);
+        }
+    }
+
+    #[test]
+    fn font_records_preserve_cell_height_and_limit_unterminated_face_names() {
+        assert_eq!(WmfFont::parse(&[0; 17], 0), None);
+        let mut d = vec![0; 18];
+        d[..2].copy_from_slice(&(-12i16).to_le_bytes());
+        d[8..10].copy_from_slice(&700i16.to_le_bytes());
+        d[10] = 1;
+        d.extend_from_slice(b"Arial\0ignored");
+        let font = WmfFont::parse(&d, 0).unwrap();
+        assert_eq!(
+            (font.height, font.weight, font.italic, font.face.as_str()),
+            (-12, 700, true, "Arial")
+        );
+        d.truncate(18);
+        d.extend_from_slice(&[b'X'; 40]);
+        assert_eq!(WmfFont::parse(&d, 0).unwrap().face, "X".repeat(32));
+        assert_eq!(ansi_text(&[b'A', 0x80, 0x91, 0x92, 0x97, 0xff]), "A€‘’—ÿ");
+        assert_eq!(colorref(0xff123456), [0x56, 0x34, 0x12]);
+    }
+
+    #[test]
+    fn stock_gdi_objects_change_only_the_selected_tool() {
+        for (id, expected_brush, expected_pen) in [
+            (0, WHITE, [4, 5, 6]),
+            (4, [0; 3], [4, 5, 6]),
+            (5, WHITE, [4, 5, 6]),
+            (6, [1, 2, 3], WHITE),
+            (7, [1, 2, 3], [0; 3]),
+            (99, [1, 2, 3], [4, 5, 6]),
+        ] {
+            let (mut brush, mut pen) = ([1, 2, 3], [4, 5, 6]);
+            apply_stock(0x80000000 | id, &mut brush, &mut pen);
+            assert_eq!((brush, pen), (expected_brush, expected_pen));
+        }
+    }
+
+    #[test]
+    fn format_detection_refuses_truncated_headers_without_guessing() {
+        assert_eq!(render(&[]), None);
+        let mut wmf = vec![0; 22];
+        wmf[..4].copy_from_slice(&PLACEABLE_KEY);
+        assert!(looks_like_wmf(&wmf));
+        assert_eq!(render(&wmf), None);
+        let mut emf = vec![0; 44];
+        emf[40..44].copy_from_slice(EMF_SIGNATURE);
+        assert!(looks_like_emf(&emf));
+        assert_eq!(render(&emf), None);
     }
 }

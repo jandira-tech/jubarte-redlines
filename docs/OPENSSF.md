@@ -61,7 +61,7 @@ in this review; a CPE is optional, and none is invented.
 | build_floss_tools | Evidence: Rust/Cargo/LLVM; Microsoft Word is an oracle for separate fidelity integration runs, not a build dependency. |
 | test | Evidence: public Rust suite, CI and CONTRIBUTING commands. |
 | test_invocation | Evidence: standard `cargo test --all-features`; coverage invocation documented. |
-| test_most | Review: CI enforces ≥80% lines. Line coverage does not prove most branches/input fields; inspect measured branch results and coverage gaps. |
+| test_most | Review: CI enforces ≥95% production lines and ≥90% production branches using exact covered/count totals. Coverage does not prove input-field completeness; inspect measured results and assertions. |
 | test_continuous_integration | Evidence: .github/workflows/ci.yml on main pushes/PRs. |
 | test_policy | Fixed public contributor policy: tests for major new behavior and regressions. |
 | tests_are_added | Evidence: recent source changes include colocated tests and tests/input_admission.rs; this change adds the OPC attribute-budget regression. Review major-change PRs, not just a policy statement. |

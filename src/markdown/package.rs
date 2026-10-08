@@ -725,6 +725,7 @@ fn default_template(page: PageSize) -> Result<Vec<u8>, std::io::Error> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

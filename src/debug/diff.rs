@@ -1576,6 +1576,7 @@ fn lcs_ops(a: &[&str], b: &[&str]) -> Vec<(Option<usize>, Option<usize>)> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use std::io::{Cursor, Write};
@@ -2228,5 +2229,269 @@ mod tests {
         ]);
         let out = run(&[("A", &a), ("B", &b)], &DiffOptions::default());
         assert!(!out.contains("section 2 default header"), "{out}");
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod boundary_coverage_tests {
+    use super::*;
+
+    fn with_build(fragment: &str, raw: bool, f: impl FnOnce(&mut Build<'_>, NodeId)) {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(r#"<root xmlns:w="{W_NS}" xmlns:r="{R_NS}" xmlns:mc="{MC_NS}" xmlns:x="urn:custom">{fragment}</root>"#));
+        let root = dom.root(doc).unwrap();
+        let filter = Filter {
+            style: None,
+            para: None,
+        };
+        let names = HashMap::from([("Heading1".into(), "Heading 1".into())]);
+        let targets = HashMap::from([("rId1".into(), "https://example.test/".into())]);
+        let mut build = Build {
+            dom: &dom,
+            raw,
+            filter: &filter,
+            style_names: &names,
+            targets: &targets,
+            paras: 0,
+            tables: 0,
+        };
+        let node = dom.elements(root, None)[0];
+        f(&mut build, node);
+    }
+
+    #[test]
+    fn toggle_normalization_distinguishes_boolean_values_from_numeric_properties() {
+        for (property, value, normalized) in [
+            ("b", "true", "b"),
+            ("b", "on", "b"),
+            ("b", "1", "b"),
+            ("b", "false", "b=0"),
+            ("b", "off", "b=0"),
+            ("sz", "1", "sz=1"),
+            ("sz", "12", "sz=12"),
+        ] {
+            let fragment = format!("<w:{property} w:val=\"{value}\"/>");
+            with_build(&fragment, false, |build, node| {
+                assert_eq!(build.item(node), normalized);
+            });
+            with_build(&fragment, true, |build, node| {
+                assert_eq!(build.item(node), format!("{property}<{W_NS}>={value}"));
+            });
+        }
+        with_build(
+            "<x:custom x:kind=\"1\">text</x:custom>",
+            false,
+            |build, node| {
+                assert_eq!(build.item(node), "custom<urn:custom>(kind=1) \"text\"");
+            },
+        );
+        with_build("<w:b><w:proofErr/></w:b>", false, |build, node| {
+            assert_eq!(build.item(node), "b");
+        });
+    }
+
+    #[test]
+    fn relationship_attributes_resolve_targets_without_inventing_missing_targets() {
+        for (raw, expected) in [
+            (false, "→https://example.test/"),
+            (true, "rId1→https://example.test/"),
+        ] {
+            with_build("<w:hyperlink r:id=\"rId1\"/>", raw, |build, node| {
+                assert_eq!(build.attrs(node), [("id".into(), expected.into())]);
+            });
+        }
+        with_build("<w:hyperlink r:id=\"missing\"/>", true, |build, node| {
+            assert_eq!(build.attrs(node), [("id".into(), "missing".into())]);
+        });
+        with_build("<w:hyperlink r:id=\"missing\"/>", false, |build, node| {
+            assert!(build.attrs(node).is_empty());
+        });
+        with_build(
+            "<w:headerReference r:id=\"rId1\"/>",
+            false,
+            |build, node| assert!(build.attrs(node).is_empty()),
+        );
+        with_build("<w:pStyle w:val=\"Heading1\"/>", false, |build, node| {
+            assert_eq!(build.item(node), "pStyle=\"Heading 1\"");
+        });
+    }
+
+    #[test]
+    fn noisy_metadata_drops_only_save_artifacts_and_raw_keeps_it() {
+        for (element, namespace, attribute, expected_noise) in [
+            ("p", W_NS, "rsidR", true),
+            ("p", MC_NS, "Ignorable", true),
+            ("p", "urn:custom", "paraId", true),
+            ("p", W_NS, "paraId", false),
+            ("ins", W_NS, "id", true),
+            ("pPrChange", W_NS, "id", true),
+            ("bookmarkStart", W_NS, "id", true),
+            ("docPr", "", "id", true),
+            ("cNvPr", "", "id", true),
+            ("ins", W_NS, "author", true),
+            ("rPrChange", W_NS, "date", true),
+            ("comment", W_NS, "initials", true),
+            ("Relationship", "", "Id", true),
+            ("p", W_NS, "val", false),
+        ] {
+            with_build("<w:p/>", false, |build, _| {
+                assert_eq!(
+                    build.noise(element, &XName::get(attribute, namespace)),
+                    expected_noise
+                );
+            });
+            with_build("<w:p/>", true, |build, _| {
+                assert!(!build.noise(element, &XName::get(attribute, namespace)));
+            });
+        }
+        for (parent, name, expected) in [
+            ("p", "proofErr", true),
+            ("sdtPr", "id", true),
+            ("pPr", "id", false),
+            ("coreProperties", "modified", true),
+            ("coreProperties", "title", false),
+            ("Properties", "Words", true),
+            ("Properties", "custom", false),
+        ] {
+            with_build("<w:p/>", false, |build, _| {
+                assert_eq!(build.noise_element(parent, name), expected);
+            });
+            with_build("<w:p/>", true, |build, _| {
+                assert!(!build.noise_element(parent, name));
+            });
+        }
+    }
+
+    #[test]
+    fn run_projection_preserves_field_delimiters_breaks_and_old_formatting() {
+        let fragment = "<w:r><w:rPr><w:b/><w:rPrChange><w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr><w:fldChar w:fldCharType=\"begin\"/><w:instrText>CODE</w:instrText><w:fldChar w:fldCharType=\"separate\"/><w:t>result</w:t><w:fldChar w:fldCharType=\"end\"/><w:fldChar w:fldCharType=\"unknown\"/><w:tab/><w:ptab/><w:br w:type=\"page\"/><w:br/><w:cr/><w:noBreakHyphen/><w:softHyphen/><w:annotationRef/></w:r>";
+        with_build(fragment, false, |build, node| {
+            let mut segments = Vec::new();
+            build.run(node, "del", &mut segments, &mut Vec::new());
+            assert_eq!(segments.len(), 1);
+            assert_eq!(segments[0].rev, "del");
+            assert_eq!(segments[0].fmt, "b was{i}");
+            assert_eq!(segments[0].text, "{CODE|result}⇥⇥⤓↵↵‑¬[annotationRef]");
+        });
+    }
+
+    #[test]
+    fn empty_property_blocks_and_change_records_are_distinct() {
+        for raw in [false, true] {
+            with_build("<w:pPr/>", raw, |build, node| {
+                assert_eq!(build.block(node).is_some(), raw);
+            });
+            with_build("<w:pPrChange/>", raw, |build, node| {
+                assert_eq!(build.change(node).unwrap().lines, ["(empty)"]);
+            });
+        }
+        with_build(
+            "<w:sdt><w:sdtPr><w:alias w:val=\"Alias\"/></w:sdtPr><w:sdtContent><w:p/></w:sdtContent></w:sdt>",
+            false,
+            |build, node| assert_eq!(build.sdt(node).label, "sdt \"Alias\""),
+        );
+        with_build(
+            "<w:footnote w:type=\"separator\"><w:p/></w:footnote>",
+            false,
+            |build, node| assert_eq!(build.note(node).label, "footnote separator"),
+        );
+        with_build(
+            "<w:comment w:type=\"normal\"><w:p><w:r><w:t>note</w:t></w:r></w:p></w:comment>",
+            false,
+            |build, node| assert_eq!(build.note(node).label, "comment \"note\""),
+        );
+    }
+
+    #[test]
+    fn hunk_distinguishes_empty_blocks_absence_and_multiplicity() {
+        let mut a = N::new("p", "a".into(), "paragraph".into());
+        a.lines = vec!["same".into()];
+        let mut b = N::new("p", "a".into(), "paragraph".into());
+        b.lines = vec!["same".into(), "same".into()];
+        let walker = Walker {
+            labels: &["A", "B", "C"],
+            filtered: false,
+            full: false,
+        };
+        let (output, differs) = walker
+            .hunk(
+                &[Some(&a), Some(&b), None],
+                &[true; 3],
+                &["paragraph".into()],
+            )
+            .unwrap();
+        assert!(differs);
+        assert!(output.contains("(absent) [C]"));
+        assert!(output.contains("B×2"));
+        assert!(
+            walker
+                .hunk(&[Some(&a), Some(&a)], &[true; 2], &[])
+                .is_none()
+        );
+        a.lines.clear();
+        a.block = true;
+        assert!(walker.hunk(&[Some(&a), None], &[true; 2], &[]).is_none());
+        let full = Walker {
+            labels: &["A", "B"],
+            filtered: false,
+            full: true,
+        };
+        b.lines = vec!["same".into()];
+        assert!(!full.hunk(&[Some(&b), Some(&b)], &[true; 2], &[]).unwrap().1);
+        let filtered = Walker {
+            labels: &["A", "B"],
+            filtered: true,
+            full: false,
+        };
+        let mut hunks = Vec::new();
+        filtered.walk(
+            &[Some(&b), None],
+            &[true; 2],
+            &mut Vec::new(),
+            false,
+            &mut hunks,
+        );
+        assert!(hunks.is_empty());
+        b.hit = true;
+        filtered.walk(
+            &[Some(&b), None],
+            &[true; 2],
+            &mut Vec::new(),
+            false,
+            &mut hunks,
+        );
+        assert_eq!(hunks.len(), 1);
+    }
+
+    #[test]
+    fn large_greedy_alignment_preserves_every_source_position_and_only_matches_equal_keys() {
+        let a = (0..2003)
+            .map(|i| if i % 2 == 0 { "left" } else { "shared" })
+            .collect::<Vec<_>>();
+        let b = (0..2002)
+            .map(|i| if i % 2 == 0 { "shared" } else { "right" })
+            .collect::<Vec<_>>();
+        let operations = lcs_ops(&a, &b);
+        assert_eq!(
+            operations
+                .iter()
+                .filter_map(|(i, _)| *i)
+                .collect::<Vec<_>>(),
+            (0..a.len()).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            operations
+                .iter()
+                .filter_map(|(_, j)| *j)
+                .collect::<Vec<_>>(),
+            (0..b.len()).collect::<Vec<_>>()
+        );
+        let matched = operations
+            .iter()
+            .filter_map(|(i, j)| Some((*i.as_ref()?, *j.as_ref()?)))
+            .collect::<Vec<_>>();
+        assert_eq!(matched.len(), 1001);
+        assert!(matched.iter().all(|&(i, j)| a[i] == b[j]));
     }
 }

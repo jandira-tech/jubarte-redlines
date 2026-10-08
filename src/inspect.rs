@@ -1104,6 +1104,7 @@ fn merge_spans(text: &str, formats: Vec<(usize, usize, Format)>) -> Vec<Span> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

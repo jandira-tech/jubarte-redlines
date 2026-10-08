@@ -82,6 +82,7 @@
 //! [`comparer::WmlComparerSettings::powertools_faithful`] skips the
 //! mode-specific passes.
 //!
+#![cfg_attr(all(coverage_nightly, test), feature(coverage_attribute))]
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 //! ## Provenance

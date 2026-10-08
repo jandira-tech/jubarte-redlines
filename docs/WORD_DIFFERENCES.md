@@ -290,6 +290,24 @@ The other 3 of the 32 are not differences:
   that has to read right without one: a generated report, a TOC
   placeholder, a PDF made headless.
 
+### 12. Revised content controls (Compare, M390)
+
+Word comparison mode (`jubarte A B`, the default) removes `w:sdt` wrappers
+and their `w:sdtPr` metadata from paragraphs carrying inserted or deleted
+content. The displayed text and tracked changes remain. Accept All and
+Reject All therefore recover that text without the removed control's tag,
+alias, lock or nesting. Controls in unchanged paragraphs keep their wrappers.
+This reproduces the existing Word reference case `missing_sectpr × fields_test`,
+pinned by `tests/m390_fields_test_unwraps_sdts.rs`; `KNOWN_ISSUES.md` item 7
+records the same limitation for form fills.
+
+PowerTools faithful mode (`--mode powertools`) skips M390 and can preserve
+control ancestry around the recovered source text. The deterministic nested
+control regressions in `tests/compare_boundary_matrix.rs` check both modes:
+Word's explicit flattening and faithful mode's original/revised ID, tag and
+alias ancestry. Use faithful mode when retaining revised form controls matters;
+for `fill_control`, the clean edit output also retains the control.
+
 ## Accept All / Reject All: where Word's result is worse (not copied yet)
 
 `jubarte accept` / `jubarte reject` (and per-change accept/reject) follow

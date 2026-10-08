@@ -228,6 +228,7 @@ impl Sha1Keyed {
     /// collision (distinct hashes sharing a key) that the 128-bit fingerprint
     /// compare must still reject. Test builds only, so no caller can mint a stale key.
     #[cfg(test)]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     pub(crate) fn with_colliding_key(hash: String, key: u64) -> Self {
         Self {
             key,
@@ -507,6 +508,7 @@ pub struct WmlComparerRevision {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod sha1_keyed_tests {
     use super::Sha1Keyed;
     use crate::util::sha1::{fnv1a_64, fnv1a_128};

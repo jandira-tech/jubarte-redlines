@@ -321,3 +321,107 @@ test("Markdown refuses render-only options (integration)", () => {
   }
   assert.ok(!fs.existsSync(path.join(tmp, "page-options-draft.docx")));
 });
+
+test("I/O failures report the operation and leave no output (integration)", () => {
+  const missing = run("text", "absent.docx");
+  assert.equal(missing.code, 1);
+  assert.match(missing.err, /reading absent\.docx:/);
+  assert.equal(missing.out, "");
+  const unwritable = path.join(tmp, "missing-parent", "accepted.docx");
+  const failure = run("accept", tracked, "-o", unwritable);
+  assert.equal(failure.code, 1);
+  assert.match(failure.err, /writing .*accepted\.docx:/);
+  assert.equal(failure.out, "");
+  assert.ok(!fs.existsSync(unwritable));
+});
+
+test("legacy revisions and tracked text projections retain their contracts (integration)", () => {
+  const revisions = run("revisions", tracked);
+  assert.equal(revisions.code, 0, revisions.err);
+  assert.match(revisions.out, /Deleted\tBo Chen\t/);
+  assert.match(revisions.out, /\d+ revision\(s\)\n$/);
+  for (const mode of ["accept", "reject"]) {
+    const text = run("text", tracked, "--track-changes", mode);
+    assert.equal(text.code, 0, text.err);
+    assert.ok(text.out.length > 0);
+    const output = path.join(tmp, `project-${mode}.pdf`);
+    const pdf = run("convert", tracked, "--track-changes", mode, "-o", output);
+    assert.equal(pdf.code, 0, pdf.err);
+    assert.equal(fs.readFileSync(output).subarray(0, 5).toString(), "%PDF-");
+  }
+});
+
+test("Markdown conversion supports a reference, inferred output and PDF (integration)", () => {
+  const source = path.join(tmp, "reference-draft.md");
+  fs.writeFileSync(source, "# Draft\n\nA clause.\n");
+  const docx = run("convert", source, "--reference-doc", untracked);
+  assert.equal(docx.code, 0, docx.err);
+  assert.match(docx.out, /reference-draft\.docx/);
+  assert.match(run("text", path.join(tmp, "reference-draft.docx")).out, /A clause\./);
+  const pdf = run("convert", source, "--pdf");
+  assert.equal(pdf.code, 0, pdf.err);
+  assert.equal(fs.readFileSync(path.join(tmp, "reference-draft.pdf")).subarray(0, 5).toString(), "%PDF-");
+});
+
+test("comparison infers Markdown output and sniffs unknown input suffixes (integration)", () => {
+  const markdown = path.join(tmp, "compare-output.md");
+  const result = run("compare", path.join(pair, "base.docx"), path.join(pair, "next.docx"), "-o", markdown);
+  assert.equal(result.code, 0, result.err);
+  assert.ok(fs.readFileSync(markdown, "utf8").includes("{~~"));
+  const a = copy(path.join(pair, "base.docx"), "sniff-a.bin");
+  const b = copy(path.join(pair, "next.docx"), "sniff-b.bin");
+  const inferred = run("diff", a, b);
+  assert.equal(inferred.code, 0, inferred.err);
+  assert.equal(fs.readFileSync(path.join(tmp, "sniff-a_v_sniff-b.docx")).subarray(0, 4).toString("hex"), "504b0304");
+});
+
+test("edit previews write nothing and quiet application still writes its report (integration)", () => {
+  const plan = path.join(tmp, "coverage-edit-plan.json");
+  const paragraph = JSON.parse(run("inspect", untracked, "--json").out).paragraphs.find((p) => p.text.length > 3);
+  fs.writeFileSync(plan, JSON.stringify({ schema_version: 1, author: "Legal", date: "2026-01-02T03:04:05Z", operations: [{ id: "replace", kind: "replace", paragraph: { index: paragraph.index }, find: paragraph.text.split(" ")[0], replacement: "Readers" }] }));
+  const dir = path.join(tmp, "coverage-preview");
+  const preview = run("edit", untracked, "--plan", plan, "--out-dir", dir, "--dry-run");
+  assert.equal(preview.code, 0, preview.err);
+  assert.match(preview.out, /"ev":"summary"/);
+  assert.ok(!fs.existsSync(dir));
+  const applied = run("edit", untracked, "--plan", plan, "--out-dir", dir, "--quiet");
+  assert.equal(applied.code, 0, applied.err);
+  assert.equal(applied.out, "");
+  assert.ok(fs.readFileSync(path.join(dir, "report.jsonl"), "utf8").includes('"ev":"save"'));
+  const own = run("edit", tracked, "--plan", plan, "--out-dir", path.dirname(tracked), "--force");
+  assert.equal(own.code, 1);
+  assert.match(own.err, /input's own directory/);
+  const badPlan = path.join(tmp, "malformed-plan.json");
+
+  const invalid = run("edit", tracked, "--plan", badPlan, "--out-dir", path.join(tmp, "bad-plan-output"));
+  assert.equal(invalid.code, 1);
+  assert.match(invalid.err, /reading .*malformed-plan\.json/);
+});
+
+test("unsupported host options are rejected before input I/O (integration)", () => {
+  const comparison = [
+    ["--powertools-faithful"], ["--detail-threshold", "0.1"], ["--no-paragraph-merge"],
+  ];
+  for (const flags of comparison) {
+    const result = run("compare", "missing-a.docx", "missing-b.docx", ...flags);
+    assert.equal(result.code, 2, `${flags}: ${result.err}`);
+    assert.match(result.err, /not supported/);
+    assert.doesNotMatch(result.err, /reading/);
+  }
+  for (const flags of [["--from", "docx"], ["--resource-path", "."], ["--fail-on-substitution"], ["--no-page-markers"], ["--dpi", "120"], ["--pages", "1"], ["--report", "report.json"], ["--font-report", "fonts.json"], ["--to", "md"], ["-o", "output.md"], ["--to", "docx"], ["-o", "output.docx"]]) {
+    const result = run("convert", "missing.docx", ...flags);
+    assert.equal(result.code, 2, `${flags}: ${result.err}`);
+    assert.doesNotMatch(result.err, /reading/);
+  }
+  for (const flags of [["--pdf"], ["--png"], ["--dpi", "120"], ["--revisions", "word"]]) {
+    const result = run("edit", "missing.docx", "--plan", "missing.json", "--out-dir", "missing-dir", ...flags);
+    assert.equal(result.code, 2, `${flags}: ${result.err}`);
+    assert.match(result.err, /not supported/);
+    assert.doesNotMatch(result.err, /reading/);
+  }
+  for (const flags of [["--reference-doc", "missing.docx"], ["--critic"]]) {
+    const result = run("diff", "missing-a.docx", "missing-b.docx", ...flags);
+    assert.equal(result.code, 2, `${flags}: ${result.err}`);
+    assert.doesNotMatch(result.err, /reading/);
+  }
+});

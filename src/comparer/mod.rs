@@ -556,6 +556,9 @@ pub fn try_compare_bodies_faithful_with_notes(
     // is safe.
     let body1 = crate::revision_processor::accept_revisions_document(dom, body1);
     let body2 = crate::revision_processor::accept_revisions_document(dom, body2);
+    // M392 restores only the revised source's uniquely identified two-blank
+    // pretable layout; capture it before atomization consumes the body.
+    let revised_two_blank_table_titles = finalize::revised_two_blank_table_titles(dom, body2);
 
     // M122: re-stamp CorrelatedSHA1Hash on the **post-accept** trees. Accept
     // rebuilds elements and was leaving ComparisonUnits with correlated=None
@@ -756,6 +759,16 @@ pub fn try_compare_bodies_faithful_with_notes(
         )?;
     }
     let root = finalize::conjoin_paragraph_marks(dom, root, settings);
+    if !settings.merge_replaced_paragraphs {
+        finalize::merged_closing_carrier_takes_source_properties(
+            dom,
+            root,
+            closing_pprs.0,
+            closing_pprs.1,
+            settings,
+            &mut id,
+        );
+    }
     finalize::fix_up_revision_ids(dom, &[root]);
     // C# produce path (:1893): order property-container children per the
     // standard — runs before the saved sectPr is moved in, like the oracle
@@ -872,7 +885,13 @@ pub fn try_compare_bodies_faithful_with_notes(
             finalize::fold_whitespace_pure_ins_into_following_pure_del(dom, root);
         }
         // M392: restore empty pure-I spacers before short pure-D title (file_36).
-        finalize::ensure_empty_pure_i_before_short_title_del(dom, root, settings, &mut id);
+        finalize::ensure_empty_pure_i_before_short_title_del(
+            dom,
+            root,
+            &revised_two_blank_table_titles,
+            settings,
+            &mut id,
+        );
         // M85a: empty pure-ins before trailing pure-del residual (file_49),
         // unless the revision's closing mark is paired: then they are its own.
         if !revised_close_paired {
@@ -1006,7 +1025,13 @@ pub fn try_compare_bodies_faithful_with_notes(
             finalize::fold_whitespace_pure_ins_into_following_pure_del(dom, root);
         }
         // M392: restore empty pure-I spacers before short pure-D title (file_36).
-        finalize::ensure_empty_pure_i_before_short_title_del(dom, root, settings, &mut id);
+        finalize::ensure_empty_pure_i_before_short_title_del(
+            dom,
+            root,
+            &revised_two_blank_table_titles,
+            settings,
+            &mut id,
+        );
         if !revised_close_paired {
             finalize::strip_empty_pure_ins_before_trailing_pure_dels(dom, root);
         }

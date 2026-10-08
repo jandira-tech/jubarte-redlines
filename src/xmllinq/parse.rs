@@ -482,6 +482,7 @@ fn check_attributes(start: &quick_xml::events::BytesStart<'_>) -> Result<(), Str
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod checked_xml_tests {
     use super::{Dom, parse_xdocument, validate_xml};
 

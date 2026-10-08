@@ -792,6 +792,7 @@ pub fn serialize_document(dom: &Dom, doc: NodeId) -> String {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use crate::xmllinq::{Dom, XNamespace};

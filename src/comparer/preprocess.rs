@@ -1323,6 +1323,7 @@ pub fn hash_block_level_content(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod escape_xml_tests {
     use super::{escape_xml_attr, escape_xml_text};
 

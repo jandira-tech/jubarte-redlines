@@ -636,6 +636,7 @@ fn paint_comment(pixmap: &mut Pixmap, note: &PdfComment, ts: Transform) {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use crate::convert::font::FaceId;

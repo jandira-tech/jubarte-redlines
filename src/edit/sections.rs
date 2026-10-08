@@ -510,6 +510,7 @@ pub(super) fn targets_overlap(a: &Targets, b: &Targets) -> bool {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
