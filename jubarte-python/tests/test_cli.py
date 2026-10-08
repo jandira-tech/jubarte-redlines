@@ -60,7 +60,7 @@ def test_the_console_script_redlines_two_documents(tmp_path: Path) -> None:
     assert run.returncode == 0, run.stderr
     assert out.read_bytes()[:2] == b"PK"
     usage = subprocess.run([script, "--help"], capture_output=True, text=True)
-    assert usage.stdout.startswith("usage: jubarte-redlines "), usage.stdout
+    assert "Usage: jubarte-redlines " in usage.stdout, usage.stdout
 
 
 def test_redline_is_compare(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

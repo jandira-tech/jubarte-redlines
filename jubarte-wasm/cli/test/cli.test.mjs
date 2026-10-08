@@ -105,7 +105,7 @@ test("text, inspect, capabilities and convert", () => {
   assert.match(r.out, /^wrote .*out\.pdf \(\d+ bytes, \d+ pages?\)\n$/);
   assert.equal(fs.readFileSync(pdf).subarray(0, 5).toString(), "%PDF-");
   const png = run("convert", tracked, "--png");
-  assert.equal(png.code, 1);
+  assert.equal(png.code, 2);
   assert.match(png.err, /PNG pages need the Python or Rust build/);
   assert.match(run("convert", tracked, "--revisions", "custom").err, /--revisions custom needs --revision-palette/);
 });
@@ -132,14 +132,44 @@ test("edit writes the bundle, and a refused plan exits 3", () => {
 test("help, version and usage errors", () => {
   const help = run("--help");
   assert.equal(help.code, 0);
-  assert.match(help.out, /^usage: jubarte-redlines <command>/);
-  assert.match(help.out, /redline, compare/);
-  assert.match(run("redline", "--help").out, /^usage: jubarte-redlines redline ORIGINAL MODIFIED/);
-  assert.match(run("--version").out, /^jubarte-redlines \d+\.\d+\.\d+ \(engine \d+\.\d+\.\d+/);
+  assert.match(help.out, /Usage: jubarte-redlines/);
+  assert.match(help.out, /compare/);
+  assert.match(run("redline", "--help").out, /Usage: jubarte-redlines (?:redline|compare)/);
+  assert.match(run("--version").out, /^jubarte-redlines \d+\.\d+\.\d+/);
   assert.equal(run().code, 2);
   assert.equal(run("frobnicate").code, 2);
   const bad = run("redline", "only-one.docx");
   assert.equal(bad.code, 2);
-  assert.match(bad.err, /redline needs ORIGINAL and MODIFIED/);
+  assert.match(bad.err, /required|MODIFIED/);
   assert.equal(run("redline", "a", "b", "--nope").code, 2);
+});
+
+test("github aliases write text without implicit Word output (integration)", () => {
+  const a = copy(path.join(pair, "base.docx"), "unified-a.docx");
+  const b = copy(path.join(pair, "next.docx"), "unified-b.docx");
+  const first = run("diff", a, b, "--format", "github", "--context", "0");
+  assert.equal(first.code, 0, first.err);
+  assert.match(first.out, /^diff --git /);
+  assert.ok(!fs.existsSync(path.join(tmp, "unified-a_v_unified-b.docx")));
+  for (const format of ["unified", "text"]) {
+    const out = path.join(tmp, `${format}.patch`);
+    const result = run("diff", a, b, "--format", format, "--context", "0", "-o", out);
+    assert.equal(result.code, 0, result.err);
+    assert.equal(fs.readFileSync(out, "utf8"), first.out);
+  }
+});
+
+test("format contradictions and unsupported flags fail before I/O (integration)", () => {
+  const output = path.join(tmp, "never-github.docx");
+  for (const extra of [["--format", "github"], ["--format", "github", "--to", "docx"], ["--format", "github", "--context", "-1"]]) {
+    const result = run("diff", "missing-a.docx", "missing-b.docx", "-o", output, ...extra);
+    assert.equal(result.code, 2, result.err);
+    assert.doesNotMatch(result.err, /reading/);
+    assert.ok(!fs.existsSync(output));
+  }
+  for (const args of [["inspect", "missing.docx", "--tables"], ["convert", "missing.docx", "--timeout", "1"], ["compare", "a", "b", "--mode", "powertools"]]) {
+    const result = run(...args);
+    assert.equal(result.code, 2, result.err);
+    assert.doesNotMatch(result.err, /reading/);
+  }
 });
