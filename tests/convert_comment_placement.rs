@@ -221,8 +221,8 @@ fn changed_only_without_changes_keeps_the_first_page() {
 
 #[test]
 fn cli_convert_takes_move_comments_and_changed_only() {
-    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("comment_placement_cli");
-    std::fs::create_dir_all(&dir).unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
     let input = dir.join("four.docx");
     std::fs::write(&input, four_pages(true)).unwrap();
     let output = dir.join("four.pdf");

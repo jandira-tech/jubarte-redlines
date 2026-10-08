@@ -1658,6 +1658,8 @@ struct TextRun {
     field: FieldKind,
     rev: bool,
     comments: Vec<CommentNote>,
+    /// Display-only comment anchor; never source text for document fields.
+    comment_marker: bool,
     /// `PAGEREF _Toc…` bookmark. Cached `w:t` is a first-pass guess;
     /// Word Save-as-PDF patches it from the bookmark’s layout page.
     pageref: Option<String>,
@@ -1742,6 +1744,7 @@ impl TextRun {
             field: FieldKind::None,
             rev: false,
             comments: Vec::new(),
+            comment_marker: false,
             rule: None,
             footnote_id: None,
             note_ref: false,
@@ -7662,6 +7665,7 @@ fn mark_comment_anchors(runs: &mut Vec<TextRun>) {
         // An effect run Word leaves unpainted must not hide the marker.
         style.effect_skip = false;
         let mut run = TextRun::new(text, style);
+        run.comment_marker = true;
         run.comments = notes
             .into_iter()
             .map(|note| CommentNote {
@@ -7702,8 +7706,7 @@ fn list_comments_at_end(fonts: &Fonts, sheet: &StyleSheet, pages: &mut Vec<Page>
     let mut listed: Vec<(usize, PdfComment)> = Vec::new();
     for page in pages.iter_mut() {
         let mut notes = std::mem::take(&mut page.comments);
-        // Document order: the labels number the references as the body
-        // reads, columns and all ("3", then its replies "3R2", "3R3").
+        // Reference labels retain document order across columns and replies.
         notes.sort_by_key(|note| label_order(&note.label));
         listed.extend(notes.into_iter().map(|note| (page.number, note)));
     }
@@ -7715,55 +7718,180 @@ fn list_comments_at_end(fonts: &Fonts, sheet: &StyleSheet, pages: &mut Vec<Page>
         .rev()
         .find(|p| !p.vertical)
         .map_or((612.0, 792.0), |p| (p.width, p.height));
-    let family = sheet.defaults.run.family.as_str();
-    let bold = fonts.resolve(family, true, false);
-    let regular = fonts.resolve(family, false, false);
-    let line_width = width - 2.0 * MARGIN;
+    let mut regular = sheet.defaults.run.clone();
+    regular.size = SIZE;
+    regular.bold = false;
+    regular.italic = false;
+    let mut bold = regular.clone();
+    bold.bold = true;
+    let line_width = (width - 2.0 * MARGIN).max(1.0);
     let mut out = vec![Page::new(width, height)];
-    let mut y = height - MARGIN - fonts.get(bold).ascent_pt(HEADING);
-    let put = |out: &mut Vec<Page>, face: FaceRef, size: f32, x: f32, y: f32, text: &str, color| {
-        let glyphs = fonts
-            .get(face)
-            .shape_kern(text, size, true)
-            .iter()
-            .map(|(g, _)| *g)
-            .collect();
-        let page = out.last_mut().expect("a comments page");
-        page.ops
-            .push(Op::text(face, size, x, y, glyphs, color, text));
-    };
-    put(&mut out, bold, HEADING, MARGIN, y, "Comments", [0.0; 3]);
+    let bold_face = ink_face(fonts, &bold, "Comments");
+    let mut y = height - MARGIN - fonts.get(bold_face).ascent_pt(HEADING);
+    let mut title = bold.clone();
+    title.size = HEADING;
+    title.color = [0.0; 3];
+    paint_listing_line(
+        fonts,
+        out.last_mut().unwrap(),
+        &[TextRun::new("Comments", title)],
+        MARGIN,
+        y,
+    );
     y -= HEADING * PITCH + GAP;
     let pitch = SIZE * PITCH;
     for (number, note) in &listed {
-        let label = format!("[{}{}] ", note.initials, note.label);
+        let label = format!("[{}{}]", note.initials, note.label);
         let by = if note.resolved {
             format!("{}, page {number} (resolved)", note.author)
         } else {
             format!("{}, page {number}", note.author)
         };
-        let lines = wrap_words(fonts, regular, &note.contents, SIZE, line_width - INDENT);
-        // A comment starts a page when its heading and first line do not fit.
-        if y - pitch < MARGIN {
+        let mut label_style = bold.clone();
+        label_style.color = note.color;
+        let mut author_style = regular.clone();
+        author_style.color = [0.35; 3];
+        let headings = wrap_listing_runs(
+            fonts,
+            &[
+                TextRun::new(label, label_style),
+                TextRun::new(by, author_style),
+            ],
+            line_width,
+        );
+        let mut contents_style = regular.clone();
+        contents_style.color = if note.resolved { [0.5; 3] } else { [0.0; 3] };
+        let lines = wrap_listing_runs(
+            fonts,
+            &[TextRun::new(&note.contents, contents_style)],
+            (line_width - INDENT).max(1.0),
+        );
+        // Keep the entire heading and first content line together when
+        // that group fits a page; very long headings can span pages.
+        let needed = headings.len() as f32 * pitch;
+        let fresh_y = height - MARGIN - fonts.get(bold_face).ascent_pt(SIZE);
+        if y - needed < MARGIN && fresh_y - needed >= MARGIN {
             out.push(Page::new(width, height));
-            y = height - MARGIN - fonts.get(bold).ascent_pt(SIZE);
+            y = fresh_y;
         }
-        put(&mut out, bold, SIZE, MARGIN, y, &label, note.color);
-        let by_x = MARGIN + advance(fonts, bold, &label, SIZE);
-        put(&mut out, regular, SIZE, by_x, y, &by, [0.35; 3]);
-        y -= pitch;
-        let ink = if note.resolved { [0.5; 3] } else { [0.0; 3] };
-        for line in &lines {
+        for (heading, x) in headings
+            .iter()
+            .map(|line| (line, MARGIN))
+            .chain(lines.iter().map(|line| (line, MARGIN + INDENT)))
+        {
             if y < MARGIN {
                 out.push(Page::new(width, height));
-                y = height - MARGIN - fonts.get(regular).ascent_pt(SIZE);
+                y = fresh_y;
             }
-            put(&mut out, regular, SIZE, MARGIN + INDENT, y, line, ink);
+            paint_listing_line(fonts, out.last_mut().unwrap(), heading, x, y);
             y -= pitch;
         }
         y -= GAP;
     }
     pages.extend(out);
+}
+
+/// Contiguous text using the same script-aware face. Measurement and
+/// painting share these pieces so a fallback never changes the wrap width.
+fn listing_faces<'a>(fonts: &Fonts, style: &RunStyle, text: &'a str) -> Vec<(FaceRef, &'a str)> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut previous = None;
+    for (at, ch) in text.char_indices() {
+        let mut bytes = [0; 4];
+        let face = ink_face(fonts, style, ch.encode_utf8(&mut bytes));
+        if previous.is_some_and(|before| before != face) {
+            out.push((previous.unwrap(), &text[start..at]));
+            start = at;
+        }
+        previous = Some(face);
+    }
+    if let Some(face) = previous {
+        out.push((face, &text[start..]));
+    }
+    out
+}
+
+/// Width in the exact faces used by the comment listing painter.
+fn listing_width(fonts: &Fonts, style: &RunStyle, text: &str) -> f32 {
+    listing_faces(fonts, style, text)
+        .iter()
+        .map(|(face, piece)| advance(fonts, *face, piece, style.size))
+        .sum()
+}
+
+/// Paint a listing line preserving label ink and author/body styles.
+fn paint_listing_line(fonts: &Fonts, page: &mut Page, runs: &[TextRun], mut x: f32, y: f32) {
+    for run in runs {
+        for (face, text) in listing_faces(fonts, &run.style, &run.text) {
+            let glyphs = fonts
+                .get(face)
+                .shape_kern(text, run.style.size, true)
+                .iter()
+                .map(|(glyph, _)| *glyph)
+                .collect();
+            page.ops.push(Op::text(
+                face,
+                run.style.size,
+                x,
+                y,
+                glyphs,
+                run.style.color,
+                text,
+            ));
+            x += advance(fonts, face, text, run.style.size);
+        }
+    }
+}
+
+/// Word wrapping for styled listing text, including unbroken tokens.
+/// Existing loaded faces supply both the split decisions and final ink.
+fn wrap_listing_runs(fonts: &Fonts, runs: &[TextRun], width: f32) -> Vec<Vec<TextRun>> {
+    let mut lines = Vec::new();
+    let mut line = Vec::new();
+    let mut used = 0.0;
+    for run in runs {
+        for (paragraph, text) in run.text.split('\n').enumerate() {
+            if paragraph != 0 {
+                lines.push(std::mem::take(&mut line));
+                used = 0.0;
+            }
+            for word in text.split_whitespace() {
+                let mut pieces = Vec::new();
+                let mut start = 0;
+                let mut end = 0;
+                for (at, ch) in word.char_indices() {
+                    let next = at + ch.len_utf8();
+                    if at > start && listing_width(fonts, &run.style, &word[start..next]) > width {
+                        pieces.push(&word[start..at]);
+                        start = at;
+                    }
+                    end = next;
+                }
+                pieces.push(&word[start..end]);
+                for (index, piece) in pieces.iter().enumerate() {
+                    let space = if !line.is_empty() && index == 0 {
+                        " "
+                    } else {
+                        ""
+                    };
+                    let gap = listing_width(fonts, &run.style, space);
+                    let w = listing_width(fonts, &run.style, piece);
+                    if !line.is_empty() && used + gap + w > width {
+                        lines.push(std::mem::take(&mut line));
+                        used = 0.0;
+                    } else if !space.is_empty() {
+                        line.push(TextRun::new(space, run.style.clone()));
+                        used += gap;
+                    }
+                    line.push(TextRun::new(*piece, run.style.clone()));
+                    used += w;
+                }
+            }
+        }
+    }
+    lines.push(line);
+    lines
 }
 
 /// A balloon label's place in reading order: `"3R2"` is `(3, 2)`, `"3"`
@@ -7774,53 +7902,6 @@ fn label_order(label: &str) -> (usize, usize) {
         thread.parse().unwrap_or(usize::MAX),
         reply.parse().unwrap_or(usize::MAX),
     )
-}
-
-/// `text`'s paragraphs broken greedily into lines `width` wide; a word
-/// wider than a line has one to itself.
-fn wrap_words(fonts: &Fonts, face: FaceRef, text: &str, size: f32, width: f32) -> Vec<String> {
-    let space = advance(fonts, face, " ", size);
-    let mut lines = Vec::new();
-    for para in text.split('\n') {
-        let mut line = String::new();
-        let mut used = 0.0f32;
-        for word in para
-            .split_whitespace()
-            .flat_map(|word| break_word(fonts, face, word, size, width))
-        {
-            let w = advance(fonts, face, &word, size);
-            if !line.is_empty() && used + space + w > width {
-                lines.push(std::mem::take(&mut line));
-                used = 0.0;
-            }
-            if !line.is_empty() {
-                line.push(' ');
-                used += space;
-            }
-            line.push_str(&word);
-            used += w;
-        }
-        lines.push(line);
-    }
-    lines
-}
-
-/// `word` in pieces no wider than `width`, a character at least each.
-fn break_word(fonts: &Fonts, face: FaceRef, word: &str, size: f32, width: f32) -> Vec<String> {
-    if advance(fonts, face, word, size) <= width {
-        return vec![word.to_string()];
-    }
-    let mut pieces = Vec::new();
-    let mut piece = String::new();
-    for ch in word.chars() {
-        piece.push(ch);
-        if piece.chars().count() > 1 && advance(fonts, face, &piece, size) > width {
-            piece.pop();
-            pieces.push(std::mem::replace(&mut piece, ch.to_string()));
-        }
-    }
-    pieces.push(piece);
-    pieces
 }
 
 /// Word's comment balloons, painted into the markup pane the way its Save
@@ -11454,7 +11535,7 @@ fn document_bookmark_texts(blocks: &[Block]) -> HashMap<String, String> {
         }
         let text: String = runs
             .iter()
-            .filter(|r| r.pageref.is_none() && r.ref_name.is_none())
+            .filter(|r| !r.comment_marker && r.pageref.is_none() && r.ref_name.is_none())
             .map(|r| r.text.as_str())
             .collect();
         for name in own {
@@ -11547,7 +11628,7 @@ fn resolve_cell_fields(blocks: &mut [Block]) {
 
 fn run_word_count(runs: &[TextRun]) -> u32 {
     runs.iter()
-        .filter(|r| r.field != FieldKind::NumWords)
+        .filter(|r| !r.comment_marker && r.field != FieldKind::NumWords)
         .map(|r| r.text.split_whitespace().filter(|w| !w.is_empty()).count() as u32)
         .sum()
 }
@@ -26334,6 +26415,11 @@ impl<'a> Layout<'a> {
     /// Paint `line` word by word, each space before its last ink widened
     /// by `pad`.
     fn paint_stretched(&mut self, line: &[TextRun], mut x: f32, y: f32, pad: f32) {
+        let piece = |run: &TextRun, text: String| {
+            let mut out = TextRun::new(text, run.style.clone());
+            out.comment_marker = run.comment_marker;
+            out
+        };
         let joined: String = line.iter().map(|r| r.text.as_str()).collect();
         let last_ink = joined.rfind(|c: char| !is_wrap_space(c));
         let mut idx = 0usize;
@@ -26343,13 +26429,9 @@ impl<'a> Layout<'a> {
             for ch in run.text.chars() {
                 if ch == ' ' {
                     if !word.is_empty() {
-                        x = self.paint_run(
-                            &TextRun::new(std::mem::take(&mut word), run.style.clone()),
-                            x,
-                            y,
-                        );
+                        x = self.paint_run(&piece(run, std::mem::take(&mut word)), x, y);
                     }
-                    x = self.paint_run(&TextRun::new(" ", run.style.clone()), x, y);
+                    x = self.paint_run(&piece(run, " ".into()), x, y);
                     if last_ink.is_some_and(|end| idx < end) {
                         // Word's underline and strike run through the
                         // stretched space, not only its natural width.
@@ -26362,7 +26444,7 @@ impl<'a> Layout<'a> {
                 idx += ch.len_utf8();
             }
             if !word.is_empty() {
-                x = self.paint_run(&TextRun::new(word, run.style.clone()), x, y);
+                x = self.paint_run(&piece(run, word), x, y);
             }
             // The pieces are new runs without the run's comments: place
             // them over the run's stretched extent.
@@ -31367,6 +31449,9 @@ impl<'a> Layout<'a> {
     /// pages it spans; a character style's hit is a stretch of adjacent
     /// runs in it.
     fn note_style_hit(&mut self, run: &TextRun) {
+        if run.comment_marker {
+            return;
+        }
         let page = self.pages.len().saturating_sub(1);
         let serial = self.para_serial;
         let keys = [
@@ -45593,5 +45678,156 @@ mod regression_tests {
                 assert!(!style.underline && !style.strike);
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod comment_listing_review_tests {
+    use super::*;
+
+    fn sheet() -> StyleSheet {
+        StyleSheet {
+            defaults: Defaults::word(),
+            by_id: HashMap::new(),
+            tables: HashMap::new(),
+            theme: ThemeFonts::default(),
+            latent: true,
+            default_table: true,
+        }
+    }
+
+    fn note(author: &str, contents: &str) -> PdfComment {
+        PdfComment {
+            id: "1".into(),
+            x: 0.0,
+            y: 0.0,
+            w: 0.0,
+            h: 0.0,
+            top: 0.0,
+            bottom: 0.0,
+            contents: contents.into(),
+            author: author.into(),
+            initials: "JR".into(),
+            label: "1".into(),
+            color: [0.8, 0.0, 0.0],
+            resolved: false,
+        }
+    }
+
+    #[test]
+    fn synthetic_comment_markers_do_not_enter_field_sources() {
+        let mut host = TextRun::new("Hello", default_run_style());
+        host.comments.push(CommentNote {
+            id: "1".into(),
+            author: "Jane".into(),
+            initials: "JR".into(),
+            label: "1".into(),
+            color: [0.8, 0.0, 0.0],
+            after: true,
+            resolved: false,
+            text: "Note".into(),
+        });
+        let mut runs = vec![host];
+        mark_comment_anchors(&mut runs);
+        assert_eq!(run_word_count(&runs), 1);
+        let block = Block::Paragraph {
+            runs: runs.clone(),
+            style: Defaults::word().para,
+            list: false,
+            images: Vec::new(),
+            boxes: Vec::new(),
+            bookmarks: vec!["Here".into()],
+        };
+        assert_eq!(document_bookmark_texts(&[block])["Here"], "Hello");
+        let fonts = Fonts::new();
+        let mut layout = Layout::new(&fonts, Defaults::word().page, HfChrome::default(), 15);
+        layout.last_style_id = "Heading1".into();
+        for run in &runs {
+            layout.note_style_hit(run);
+        }
+        assert_eq!(layout.style_hits[0][0].text, "Hello");
+        layout.style_hits = Default::default();
+        layout.paint_stretched(&runs, 72.0, 700.0, 2.0);
+        assert_eq!(layout.style_hits[0][0].text, "Hello");
+        assert!(runs.iter().any(|run| run.text == "[JR1]"));
+    }
+
+    #[test]
+    fn comment_listing_uses_loaded_script_fallback_for_paint_and_width() {
+        // Inject a deterministic document-local face in the dependency's
+        // own font catalogue; no installed font or filesystem lookup.
+        let mut fonts = Fonts::new();
+        fonts.insert_embedded(
+            font::CJK_FALLBACK,
+            false,
+            false,
+            FaceId::SansRegular.bytes(),
+        );
+        let fallback = fonts
+            .cjk_glyph_fallback(false, None)
+            .expect("loaded fallback");
+        let mut pages = vec![Page::new(240.0, 300.0)];
+        pages[0]
+            .comments
+            .push(note("Jane", "中文中文中文中文中文中文中文中文中文中文"));
+        list_comments_at_end(&fonts, &sheet(), &mut pages);
+        let mut painted = 0;
+        for page in &pages[1..] {
+            for op in &page.ops {
+                if let Op::Text {
+                    face,
+                    text,
+                    size,
+                    x,
+                    ..
+                } = op
+                    && text.chars().any(is_cjk)
+                {
+                    assert_eq!(*face, fallback);
+                    assert!(*x + advance(&fonts, *face, text, *size) <= page.width - 72.0 + 0.01);
+                    painted += text.chars().count();
+                }
+            }
+        }
+        assert_eq!(painted, 20);
+    }
+
+    #[test]
+    fn long_comment_attributions_wrap_and_preserve_printable_page_bounds() {
+        let fonts = Fonts::new();
+        let mut pages = vec![Page::new(240.0, 230.0)];
+        let author = "An exceptionally long author attribution that needs several lines";
+        pages[0].comments.push(note(author, "First content line"));
+        list_comments_at_end(&fonts, &sheet(), &mut pages);
+        let mut all = String::new();
+        for page in &pages[1..] {
+            for op in &page.ops {
+                if let Op::Text {
+                    face,
+                    text,
+                    size,
+                    x,
+                    y,
+                    ..
+                } = op
+                {
+                    assert!(
+                        *x + advance(&fonts, *face, text, *size) <= page.width - 72.0 + 0.01,
+                        "{text}"
+                    );
+                    assert!(*y >= 72.0, "{text}");
+                    all.push_str(text);
+                    all.push(' ');
+                }
+            }
+        }
+        assert!(
+            pages.len() > 2,
+            "heading and contents must spill onto a fresh listing page"
+        );
+        let all = all.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(all.contains("First content"));
+        assert!(all.contains(author));
+        assert!(all.contains("page 1"));
     }
 }
