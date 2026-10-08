@@ -21,6 +21,56 @@ const OLD: &str = "# Terms\n\nPayment is due in 30 days.\n\n- Delivery\n- Warran
 const NEW: &str = "# Terms\n\nPayment is due in 45 days.\n\n- Delivery\n- Returns\n- Warranty\n";
 const DRAFT: &str = "Payment is due in {~~30~>45~~} days.{>>Agreed on the call.<<}\n";
 
+#[test]
+fn github_diff_is_text_only_for_docx_and_mixed_inputs() {
+    let dir = tempfile::tempdir().unwrap();
+    seed(dir.path(), &[("old.md", OLD), ("new.md", NEW)]);
+    for (input, output) in [("old.md", "old.docx"), ("new.md", "new.docx")] {
+        ok(&jubarte(&["convert", input, "-o", output], dir.path()));
+    }
+    for (old, new) in [("old.md", "new.md"), ("old.docx", "new.docx"), ("old.docx", "new.md")] {
+        let out = jubarte(&["diff", old, new, "--format", "github", "--context", "0"], dir.path());
+        let patch = ok(&out);
+        assert!(patch.starts_with("diff --git "), "{patch}");
+        assert!(patch.contains("@@ ") && patch.contains("45 days"), "{patch}");
+        assert!(out.stderr.is_empty(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert!(!dir.path().join("old_v_new.docx").exists());
+    }
+}
+
+#[test]
+fn github_file_output_has_no_stdout_and_preserves_no_clobber() {
+    let dir = tempfile::tempdir().unwrap();
+    seed(dir.path(), &[("old.md", OLD), ("new.md", NEW)]);
+    let args = ["diff", "old.md", "new.md", "--format", "unified", "-o", "changes.patch"];
+    let out = jubarte(&args, dir.path());
+    assert!(ok(&out).is_empty());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("wrote changes.patch"));
+    let patch = std::fs::read_to_string(dir.path().join("changes.patch")).unwrap();
+    assert!(patch.starts_with("diff --git "));
+    let refused = jubarte(&args, dir.path());
+    assert_eq!(refused.status.code(), Some(1));
+    assert!(refused.stdout.is_empty());
+    assert!(failed(&refused).contains("already exists"));
+    assert_eq!(std::fs::read_to_string(dir.path().join("changes.patch")).unwrap(), patch);
+    assert!(ok(&jubarte(&[&args[..], &["--force"]].concat(), dir.path())).is_empty());
+}
+
+#[test]
+fn github_render_outputs_fail_before_input_io() {
+    let dir = tempfile::tempdir().unwrap();
+    for extra in [vec!["--to", "docx"], vec!["--to", "pdf"], vec!["-o", "out.png"]] {
+        let args = [vec!["diff", "missing.docx", "also-missing.docx", "--format", "github"], extra].concat();
+        let out = jubarte(&args, dir.path());
+        assert_eq!(out.status.code(), Some(2));
+        let stderr = failed(&out);
+        assert!(stderr.contains("Usage:"), "{stderr}");
+        assert!(!stderr.contains("reading"), "{stderr}");
+        assert!(out.stdout.is_empty());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+}
+
 fn jubarte(args: &[&str], dir: &Path) -> Output {
     Command::new(BIN)
         .args(args)
@@ -632,13 +682,13 @@ fn inputs_are_told_apart_by_extension_then_by_their_bytes() {
     let stderr = failed(&jubarte(&["convert", "bad.md"], dir.path()));
     assert!(stderr.contains("must be UTF-8"), "{stderr}");
     let stderr = failed(&jubarte(&["convert", "plain.txt", "-f", "pdf"], dir.path()));
-    assert!(stderr.contains("not inputs"), "{stderr}");
+    assert!(stderr.contains("invalid value") && stderr.contains("--from"), "{stderr}");
     let stderr = failed(&jubarte(
         &["diff", "plain.txt", "NOTES", "-f", "png"],
         dir.path(),
     ));
     assert!(
-        stderr.contains("plain.txt: PDF and PNG are not inputs"),
+        stderr.contains("invalid value") && stderr.contains("--from"),
         "{stderr}"
     );
 }

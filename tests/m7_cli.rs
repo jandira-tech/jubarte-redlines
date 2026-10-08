@@ -57,6 +57,27 @@ fn default_output_name_in_original_dir_and_loadable() {
 }
 
 #[test]
+fn compare_and_redline_alias_execute_the_native_comparer() {
+    let dir = tmpdir();
+    let (a, b) = seed(dir.path());
+    for command in ["compare", "redline"] {
+        let output = dir.path().join(format!("{command}.docx"));
+        let result = Command::new(BIN)
+            .arg(command)
+            .arg(&a)
+            .arg(&b)
+            .arg("-o")
+            .arg(&output)
+            .arg("--quiet")
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+        assert!(result.stdout.is_empty());
+        assert_loadable(&output);
+    }
+}
+
+#[test]
 fn explicit_flags_output_author_and_quiet() {
     let dir = tmpdir();
     let (a, b) = seed(dir.path());
@@ -130,7 +151,8 @@ fn missing_input_file_errors() {
 fn missing_arguments_exit_code_2() {
     let out = Command::new(BIN).arg(ORIG).output().unwrap();
     assert_eq!(out.status.code(), Some(2), "missing MODIFIED → usage error");
-    assert!(String::from_utf8_lossy(&out.stderr).contains("missing MODIFIED"));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("<MODIFIED>") && stderr.contains("Usage:"), "{stderr}");
 }
 
 #[test]

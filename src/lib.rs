@@ -117,6 +117,8 @@ pub mod fields;
 /// Read-only paragraph/package views and the Markdown projection for agents.
 pub mod inspect;
 pub mod legacy_doc;
+#[cfg(feature = "cli")]
+pub mod cli;
 pub mod markdown;
 /// Markup simplification (PowerTools `MarkupSimplifier` port).
 pub mod markup_simplifier;
