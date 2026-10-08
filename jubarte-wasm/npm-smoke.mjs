@@ -146,4 +146,16 @@ const b = slim.compareDocuments(original, modified, "smoke");
 assert.equal(a.length, b.length, "slim and full redlines hold the same parts");
 assert.equal(slim.getRevisions(b), full.getRevisions(a), "slim and full redlines carry identical revisions");
 
-console.log("npm-smoke: all checks passed (full + slim)");
+// Exercise the browser ESM packaging with the same synchronous WebAssembly
+// initialization a bundler can use. No DOM is needed for document APIs.
+for (const target of ["web", "web-slim"]) {
+  const mod = await import(`./npm/${target}/jubarte_wasm.js`);
+  mod.initSync({ module: readFileSync(new URL(`./npm/${target}/jubarte_wasm_bg.wasm`, import.meta.url)) });
+  const bytes = (text) => new TextEncoder().encode(text);
+  assert.equal(mod.diffDocumentsView(bytes("keep\nclause\n"), bytes("keep\n{--clause--}\n"),
+    '{"format":"normal","acceptChanges":true}'), "2d1\n< clause\n", `${target}: accepted clause address`);
+  assert.equal(mod.diffDocumentsView(bytes("Due 30 days.\n"), bytes("Due 45 days.\n"),
+    '{"format":"word"}'), "Due {~~30~>45~~} days.\n", `${target}: word review`);
+  assert.equal(JSON.parse(mod.parseCli('["diff","a.docx","b.docx","--format","github"]')).exit_code, 0);
+}
+console.log("npm-smoke: all checks passed (Node full/slim + browser ESM full/slim)");

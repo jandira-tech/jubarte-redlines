@@ -133,3 +133,11 @@ test("shared parser emits adapter format metadata and new view switches", () => 
   assert.equal(parsed.args.accept_changes, true);
   assert.equal(parsed.args.full_lines, true);
 });
+
+
+test("accepting a whole Markdown clause removes its line address", () => {
+  assert.equal(wasm.diffDocumentsView(bytes("keep\nclause\n"), bytes("keep\n{--clause--}\n"),
+    '{"format":"normal","acceptChanges":true}'), "2d1\n< clause\n");
+  assert.equal(wasm.diffDocumentsView(bytes("keep\n"), bytes("keep\n{--clause--}\n"),
+    '{"format":"word"}'), "");
+});

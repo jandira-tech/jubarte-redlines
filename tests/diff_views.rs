@@ -443,3 +443,26 @@ fn relative_header_targets_keep_stable_roles_across_renames() {
         ""
     );
 }
+
+#[test]
+fn accepting_wholly_deleted_markdown_clauses_removes_their_line_addresses() {
+    let mut opts = options(TextFormat::Normal);
+    opts.accept_changes = true;
+    assert_eq!(
+        diff_text_view("keep\nclause\n", "keep\n{--clause--}\n", &opts),
+        "2d1\n< clause\n"
+    );
+    assert_eq!(
+        diff_text_view("keep\nclause\n", "keep\n  {--clause--}\n", &opts),
+        "2d1\n< clause\n"
+    );
+    assert_eq!(
+        diff_text_view("keep\nclause\n", "keep\n{--clause\ncontinued--}\n", &opts),
+        "2d1\n< clause\n"
+    );
+    assert_eq!(diff_text_view("keep\n\n", "keep\n\n", &opts), "");
+    assert_eq!(
+        diff_text_view("beforeafter\n", "before{--gone--}after\n", &opts),
+        ""
+    );
+}

@@ -168,3 +168,10 @@ def test_explicit_markdown_input_and_bom_share_native_text_behavior(tmp_path, ca
     b.write_text("Due 45 days.\n", encoding="utf-8")
     assert main(["diff", str(a), str(b), "--from", "md", "--format", "word", "--full-lines"]) == 0
     assert capsys.readouterr().out == "Due {~~30~>45~~} days.\n"
+
+
+def test_accepting_whole_markdown_clause_removes_line():
+    result = jubarte.diff("keep\nclause\n", "keep\n{--clause--}\n",
+                          format="normal", accept_changes=True)
+    assert result.text == "2d1\n< clause\n"
+    assert jubarte.diff("keep\n", "keep\n{--clause--}\n", format="word").text == ""

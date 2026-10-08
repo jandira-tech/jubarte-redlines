@@ -82,7 +82,7 @@ def _read_side(path: Path, force_kind: str | None) -> bytes | str:
             raise CliError(f"reading {path}: invalid DOCX (expected a ZIP package)")
         return data
     try:
-        return data.decode("utf-8")
+        return data.decode("utf-8-sig")
     except UnicodeError as exc:
         raise CliError(f"reading {path}: invalid UTF-8 Markdown: {exc}") from exc
 

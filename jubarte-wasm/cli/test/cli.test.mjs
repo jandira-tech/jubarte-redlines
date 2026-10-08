@@ -252,7 +252,7 @@ test("CLI accepts both revision histories and word always accepts (integration)"
   assert.equal(accepted.out, "");
   const word = run("diff", a, b, "--format", "word");
   assert.equal(word.code, 0, word.err);
-  assert.ok(word.out.includes("45") && !word.out.includes("30") && !word.out.includes("60"));
+  assert.equal(word.out, "");
 });
 
 test("unknown output suffix defaults to Word for Word inputs (integration)", () => {

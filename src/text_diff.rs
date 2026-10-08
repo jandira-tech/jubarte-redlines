@@ -106,7 +106,7 @@ pub fn diff_documents_view(
 
 fn accepted_text(text: &str, accept: bool) -> std::borrow::Cow<'_, str> {
     if accept {
-        crate::markdown::resolve_critic(text, crate::markdown::TrackChanges::Accept).into()
+        crate::markdown::accepted_clauses(text).into()
     } else {
         text.into()
     }

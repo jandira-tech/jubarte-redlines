@@ -131,6 +131,11 @@ pub fn resolve_critic(markdown: &str, track_changes: TrackChanges) -> String {
     }
 }
 
+/// Accepted text snapshots remove wholly deleted clause lines.
+pub(crate) fn accepted_clauses(markdown: &str) -> String {
+    critic::accept_clauses(markdown)
+}
+
 /// Reads an image a Markdown document names, by the path it names.
 pub type ImageLoader<'a> = &'a dyn Fn(&str) -> Option<Vec<u8>>;
 
