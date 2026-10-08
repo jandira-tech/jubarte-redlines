@@ -12,7 +12,7 @@ from docx_fixture import docx, para
 def test_git_patch_aliases_keep_complete_lines_and_all_hunks(format):
     old = "".join(f"old {i} {'é' * 300}\nseparator {i}\n" for i in range(8))
     new = old.replace("old ", "new ")
-    result = jubarte.diff(old, new, format=format, context=0)
+    result = jubarte.diff(old, new, format=format, context=0, full_lines=True)
     assert result.hunks == ()
     assert result.text.startswith("diff --git a/old.md b/new.md\n--- a/old.md\n+++ b/new.md\n")
     assert result.text.count("@@ -") == 8
@@ -33,7 +33,7 @@ def test_docx_preserves_existing_marks_and_header_story():
     old = jubarte.from_markdown("Due in {~~30~>45~~} days.\n")
     new = jubarte.from_markdown("Due in {~~30~>60~~} days.\n")
     patch = old.diff(new, format="github", context=0).text
-    assert "[-30-]{+45+}" in patch and "[-30-]{+60+}" in patch
+    assert "{~~30~>45~~}" in patch and "{~~30~>60~~}" in patch
     patch = jubarte.diff(docx(para("same"), header="OLD HEADER"), docx(para("same"), header="NEW HEADER"), format="github").text
     assert "OLD HEADER" in patch and "NEW HEADER" in patch
 

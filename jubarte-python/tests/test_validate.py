@@ -75,7 +75,9 @@ def test_validate_command_exit_codes_and_repair(tmp_path: Path, capsys: pytest.C
     assert main(["validate", str(fixed)]) == 0
     assert main(["validate", str(broken), "--repair", str(fixed)]) == 1
     assert "already exists" in capsys.readouterr().err
-    assert main(["validate", str(broken), "--original", str(clean)]) == 2
+    with pytest.raises(SystemExit) as exit:
+        main(["validate", str(broken), "--original", str(clean)])
+    assert exit.value.code == 2
     assert "--author" in capsys.readouterr().err
     assert main(["validate", str(tmp_path / "missing.docx")]) == 1
 

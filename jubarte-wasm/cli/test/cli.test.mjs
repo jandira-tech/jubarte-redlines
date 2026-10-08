@@ -193,3 +193,72 @@ test("Markdown paragraph/critic output and shorthand comparison (integration)", 
   assert.equal(accepted.code, 0, accepted.err);
   assert.doesNotMatch(accepted.out, /\[body:p:/);
 });
+
+test("all views write only the requested text file with status on stderr (integration)", () => {
+  const a = path.join(tmp, "view-old.txt"), b = path.join(tmp, "view-new.md");
+  fs.writeFileSync(a, "Due in 30 days.\n");
+  fs.writeFileSync(b, "Due in 45 days.\n");
+  for (const format of ["github", "unified", "text", "word", "normal", "context", "side-by-side"]) {
+    const stdout = run("diff", a, b, "--format", format, "--full-lines", "-U", "0");
+    assert.equal(stdout.code, 0, stdout.err);
+    assert.ok(stdout.out.includes("30") && stdout.out.includes("45"));
+    if (format === "github") assert.ok(stdout.out.includes(a) && stdout.out.includes(b));
+    const out = path.join(tmp, `view-${format}.patch`);
+    const saved = run("diff", a, b, "--format", format, "--full-lines", "-U", "0", "-o", out);
+    assert.equal(saved.code, 0, saved.err);
+    assert.equal(saved.out, "");
+    assert.match(saved.err, /wrote/);
+    assert.equal(fs.readFileSync(out, "utf8"), stdout.out);
+  }
+  assert.ok(!fs.existsSync(path.join(tmp, "view-old_v_view-new.docx")));
+});
+
+test("patch output txt inference and unknown suffix fallback match native (integration)", () => {
+  const a = path.join(tmp, "inference-old.md"), b = path.join(tmp, "inference-new.md");
+  fs.writeFileSync(a, "Due in 30 days.\n");
+  fs.writeFileSync(b, "Due in 45 days.\n");
+  for (const suffix of ["txt", "unknown"]) {
+    const out = path.join(tmp, `inference.${suffix}`), result = run("diff", a, b, "-o", out);
+    assert.equal(result.code, 0, result.err);
+    assert.equal(fs.readFileSync(out, "utf8"), "Due in {~~30~>45~~} days.\n");
+    assert.match(result.out, /\[-30-\]\{\+45\+\}/);
+  }
+});
+
+test("declared docx UTF-8 never silently compares as Markdown (integration)", () => {
+  const a = path.join(tmp, "pretend.docx"), b = path.join(tmp, "pretend-new.md");
+  fs.writeFileSync(a, "UTF-8 masquerading as DOCX\n");
+  fs.writeFileSync(b, "new\n");
+  for (const format of ["patch", "critic", "github", "word", "normal", "context", "side-by-side"]) {
+    const result = run("diff", a, b, "--format", format);
+    assert.equal(result.code, 1, result.err);
+    assert.equal(result.out, "");
+    assert.ok(!fs.existsSync(path.join(tmp, "pretend_v_pretend-new.docx")));
+  }
+  const out = path.join(tmp, "pretend-redline.docx");
+  assert.equal(run("compare", a, b, "-o", out).code, 1);
+  assert.ok(!fs.existsSync(out));
+});
+
+test("CLI accepts both revision histories and word always accepts (integration)", () => {
+  const a = path.join(tmp, "history-old.md"), b = path.join(tmp, "history-new.md");
+  fs.writeFileSync(a, "Due in {~~30~>45~~} days.\n");
+  fs.writeFileSync(b, "Due in {~~60~>45~~} days.\n");
+  const preserved = run("diff", a, b, "--format", "github");
+  assert.equal(preserved.code, 0, preserved.err);
+  assert.ok(preserved.out.includes("30") && preserved.out.includes("60"));
+  const accepted = run("diff", a, b, "--format", "github", "--accept-changes");
+  assert.equal(accepted.code, 0, accepted.err);
+  assert.equal(accepted.out, "");
+  const word = run("diff", a, b, "--format", "word");
+  assert.equal(word.code, 0, word.err);
+  assert.ok(word.out.includes("45") && !word.out.includes("30") && !word.out.includes("60"));
+});
+
+test("unknown output suffix defaults to Word for Word inputs (integration)", () => {
+  const out = path.join(tmp, "word-fallback.unknown");
+  const result = run("diff", path.join(pair, "base.docx"), path.join(pair, "next.docx"), "-o", out);
+  assert.equal(result.code, 0, result.err);
+  assert.equal(fs.readFileSync(out).subarray(0, 4).toString("hex"), "504b0304");
+  assert.ok(result.out.length > 0);
+});
