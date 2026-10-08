@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-only
 
-# Tag-driven release: push `vX.Y.Z` (see VERSIONING.md) and this builds the
+# Tag-driven release: push `vX.Y.Z` (see docs/VERSIONING.md) and this builds the
 # `jubarte` CLI for the five desktop targets and attaches the archives to a
 # GitHub release named `jubarte vX.Y.Z`, with the matching CHANGELOG.md
 # section as the release notes.

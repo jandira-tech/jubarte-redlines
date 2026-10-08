@@ -8,7 +8,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 The files here (`*.api.txt`, `*.json.gz`, `*.d.ts`) are generated per
 release by [`scripts/api_snapshot.py`](../../scripts/api_snapshot.py) as
-part of the release process (see [VERSIONING.md](../../VERSIONING.md)) and
+part of the release process (see [VERSIONING.md](../VERSIONING.md)) and
 pinned to the tag named in each filename.
 
 HEAD is expected to drift ahead of the newest snapshot. As of 2026-10-01,
