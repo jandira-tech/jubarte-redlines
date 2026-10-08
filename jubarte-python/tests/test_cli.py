@@ -19,6 +19,8 @@ from jubarte_redlines.__main__ import main
 
 from docx_fixture import docx, para
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture
 def letter(tmp_path: Path) -> Path:

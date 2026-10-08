@@ -100,6 +100,7 @@ def test_capabilities_report_both() -> None:
 # -- CLI -----------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_cli_convert_pages_names_files_by_page_number(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     src = tmp_path / "in.docx"
     src.write_bytes(pages("A", "B", "C"))
@@ -120,6 +121,7 @@ def test_cli_convert_pages_names_files_by_page_number(tmp_path: Path, capsys: py
         (["--png", "--pages", "9"], "page 9 is out of range"),
     ],
 )
+@pytest.mark.integration
 def test_cli_convert_pages_errors(tmp_path: Path, capsys: pytest.CaptureFixture[str], argv: list[str], why: str) -> None:
     src = tmp_path / "in.docx"
     src.write_bytes(pages("A", "B", "C"))
@@ -133,6 +135,7 @@ def test_cli_convert_pages_errors(tmp_path: Path, capsys: pytest.CaptureFixture[
     assert sorted(p.name for p in tmp_path.iterdir()) == ["in.docx"]
 
 
+@pytest.mark.integration
 def test_cli_diff_render_exit_codes_and_files(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     a = tmp_path / "a.docx"
     b = tmp_path / "b.docx"

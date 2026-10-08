@@ -88,6 +88,7 @@ def test_a_reference_wins_over_page_with_a_warning() -> None:
     assert "Template text." not in doc.markdown()
 
 
+@pytest.mark.integration
 def test_cli_convert_writes_markdown_as_a_docx_beside_it(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     source = tmp_path / "draft.md"
     source.write_text(DRAFT, encoding="utf-8")
@@ -103,6 +104,7 @@ def test_cli_convert_writes_markdown_as_a_docx_beside_it(tmp_path: Path, capsys:
     assert "already exists" in capsys.readouterr().err
 
 
+@pytest.mark.integration
 def test_cli_convert_renders_markdown_to_pdf_and_resolves_changes(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     source = tmp_path / "draft.markdown"
     source.write_text(DRAFT, encoding="utf-8")
@@ -119,6 +121,7 @@ def test_cli_convert_renders_markdown_to_pdf_and_resolves_changes(tmp_path: Path
     assert [p.text for p in doc.inspect().paragraphs] == [DRAFT.strip()]
 
 
+@pytest.mark.integration
 def test_cli_convert_takes_a_reference_doc_and_reports_its_warning(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     source = tmp_path / "draft.md"
     source.write_text("Body.\n", encoding="utf-8")
@@ -130,6 +133,7 @@ def test_cli_convert_takes_a_reference_doc_and_reports_its_warning(tmp_path: Pat
     assert page_width(out.read_bytes()) == "12240"
 
 
+@pytest.mark.integration
 def test_cli_convert_reports_a_missing_markdown_file(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     missing = tmp_path / "missing.md"
     assert main(["convert", str(missing)]) == 1
