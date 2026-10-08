@@ -7799,7 +7799,13 @@ fn listing_faces<'a>(fonts: &Fonts, style: &RunStyle, text: &'a str) -> Vec<(Fac
     let mut previous = None;
     for (at, ch) in text.char_indices() {
         let mut bytes = [0; 4];
-        let face = ink_face(fonts, style, ch.encode_utf8(&mut bytes));
+        let face = if ch.is_whitespace() {
+            // Neutral spaces share their script's shaping face, retaining
+            // the ordering and kerning of a whole RTL phrase.
+            previous.unwrap_or_else(|| ink_face(fonts, style, ch.encode_utf8(&mut bytes)))
+        } else {
+            ink_face(fonts, style, ch.encode_utf8(&mut bytes))
+        };
         if previous.is_some_and(|before| before != face) {
             out.push((previous.unwrap(), &text[start..at]));
             start = at;
@@ -7847,14 +7853,24 @@ fn paint_listing_line(fonts: &Fonts, page: &mut Page, runs: &[TextRun], mut x: f
 /// Word wrapping for styled listing text, including unbroken tokens.
 /// Existing loaded faces supply both the split decisions and final ink.
 fn wrap_listing_runs(fonts: &Fonts, runs: &[TextRun], width: f32) -> Vec<Vec<TextRun>> {
+    let append = |line: &mut Vec<TextRun>, text: &str, style: &RunStyle| {
+        if text.is_empty() {
+            return;
+        }
+        if let Some(last) = line.last_mut()
+            && style_eq(&last.style, style)
+        {
+            last.text.push_str(text);
+        } else {
+            line.push(TextRun::new(text, style.clone()));
+        }
+    };
     let mut lines = Vec::new();
     let mut line = Vec::new();
-    let mut used = 0.0;
     for run in runs {
         for (paragraph, text) in run.text.split('\n').enumerate() {
             if paragraph != 0 {
                 lines.push(std::mem::take(&mut line));
-                used = 0.0;
             }
             for word in text.split_whitespace() {
                 let mut pieces = Vec::new();
@@ -7870,22 +7886,23 @@ fn wrap_listing_runs(fonts: &Fonts, runs: &[TextRun], width: f32) -> Vec<Vec<Tex
                 }
                 pieces.push(&word[start..end]);
                 for (index, piece) in pieces.iter().enumerate() {
-                    let space = if !line.is_empty() && index == 0 {
-                        " "
-                    } else {
-                        ""
-                    };
-                    let gap = listing_width(fonts, &run.style, space);
-                    let w = listing_width(fonts, &run.style, piece);
-                    if !line.is_empty() && used + gap + w > width {
-                        lines.push(std::mem::take(&mut line));
-                        used = 0.0;
-                    } else if !space.is_empty() {
-                        line.push(TextRun::new(space, run.style.clone()));
-                        used += gap;
+                    let mut candidate = line.clone();
+                    if !line.is_empty() && index == 0 {
+                        append(&mut candidate, " ", &run.style);
                     }
-                    line.push(TextRun::new(*piece, run.style.clone()));
-                    used += w;
+                    append(&mut candidate, piece, &run.style);
+                    // Measure the coalesced text, including neutral spaces,
+                    // in exactly the same script faces as final painting.
+                    let used: f32 = candidate
+                        .iter()
+                        .map(|part| listing_width(fonts, &part.style, &part.text))
+                        .sum();
+                    if !line.is_empty() && used > width {
+                        lines.push(std::mem::take(&mut line));
+                        append(&mut line, piece, &run.style);
+                    } else {
+                        line = candidate;
+                    }
                 }
             }
         }
@@ -32815,6 +32832,7 @@ fn wrap_runs_segment(
                     if let Some(last) = lines.last_mut().and_then(|line| line.last_mut())
                         && style_eq(&last.style, &run.style)
                         && last.field == run.field
+                        && last.comment_marker == run.comment_marker
                         && last.pageref.is_none()
                         && last.ref_name.is_none()
                         && last.footnote_id.is_none()
@@ -32853,6 +32871,7 @@ fn wrap_runs_segment(
                 // A field result stays its own run: a PAGE field's is
                 // repainted per page (d45aa3d5's "Page" + PAGE footer box).
                 && last.field == run.field
+                        && last.comment_marker == run.comment_marker
                 && last.pageref.is_none()
                 && run.pageref.is_none()
                 && last.ref_name.is_none()
@@ -45685,6 +45704,17 @@ mod regression_tests {
 mod comment_listing_review_tests {
     use super::*;
 
+    fn fonts() -> Fonts<'static> {
+        let mut fonts = Fonts::new();
+        // Use the dependency's embedded catalogue to bypass every system
+        // font override: unit tests must not read installed font files.
+        for face in FaceId::all() {
+            let key = face.key();
+            fonts.insert_embedded(&key.family, key.bold, key.italic, face.bytes());
+        }
+        fonts
+    }
+
     fn sheet() -> StyleSheet {
         StyleSheet {
             defaults: Defaults::word(),
@@ -45739,7 +45769,7 @@ mod comment_listing_review_tests {
             bookmarks: vec!["Here".into()],
         };
         assert_eq!(document_bookmark_texts(&[block])["Here"], "Hello");
-        let fonts = Fonts::new();
+        let fonts = fonts();
         let mut layout = Layout::new(&fonts, Defaults::word().page, HfChrome::default(), 15);
         layout.last_style_id = "Heading1".into();
         for run in &runs {
@@ -45753,10 +45783,62 @@ mod comment_listing_review_tests {
     }
 
     #[test]
+    fn wrapping_keeps_synthetic_marker_classification_separate() {
+        let mut style = default_run_style();
+        style.vert = VertAlign::Super;
+        let host = TextRun::new("Hello ", style.clone());
+        let mut marker = TextRun::new("[JR1]", style);
+        marker.comment_marker = true;
+        let lines = wrap_runs(&fonts(), &[host, marker], 300.0, 300.0, false);
+        assert_eq!(
+            lines[0].len(),
+            2,
+            "display-only text must not merge with field sources"
+        );
+        assert!(!lines[0][0].comment_marker);
+        assert!(lines[0][1].comment_marker);
+        assert_eq!(run_word_count(&lines[0]), 1);
+    }
+
+    #[test]
+    fn a_script_listing_phrase_keeps_spaces_and_word_order_when_shaping() {
+        let mut fonts = fonts();
+        // A private embedded family bypasses catalogue system overrides.
+        fonts.insert_embedded("Review Latin", false, false, FaceId::CarlitoRegular.bytes());
+        let mut style = default_run_style();
+        style.family = "Review Latin".into();
+        style.family_cs = None;
+        style.size = 10.0;
+        let phrase = "שלום עולם";
+        let fallback = ink_face(&fonts, &style, phrase);
+        assert_ne!(fallback, fonts.resolve(&style.family, false, false));
+        let pieces = listing_faces(&fonts, &style, phrase);
+        assert_eq!(
+            pieces,
+            vec![(fallback, phrase)],
+            "neutral spaces stay with the script face"
+        );
+        let lines = wrap_listing_runs(&fonts, &[TextRun::new(phrase, style)], 400.0);
+        assert_eq!(lines[0].len(), 1, "coalesce words for shaping and kerning");
+        let mut page = Page::new(612.0, 792.0);
+        paint_listing_line(&fonts, &mut page, &lines[0], 72.0, 700.0);
+        let shaped: Vec<u16> = fonts
+            .get(fallback)
+            .shape_kern(phrase, 10.0, true)
+            .iter()
+            .map(|(glyph, _)| *glyph)
+            .collect();
+        assert!(
+            matches!(&page.ops[0], Op::Text { text, glyphs, .. } if text == phrase && glyphs == &shaped)
+        );
+        assert_eq!(page.ops.len(), 1);
+    }
+
+    #[test]
     fn comment_listing_uses_loaded_script_fallback_for_paint_and_width() {
         // Inject a deterministic document-local face in the dependency's
         // own font catalogue; no installed font or filesystem lookup.
-        let mut fonts = Fonts::new();
+        let mut fonts = fonts();
         fonts.insert_embedded(
             font::CJK_FALLBACK,
             false,
@@ -45794,8 +45876,9 @@ mod comment_listing_review_tests {
 
     #[test]
     fn long_comment_attributions_wrap_and_preserve_printable_page_bounds() {
-        let fonts = Fonts::new();
+        let fonts = fonts();
         let mut pages = vec![Page::new(240.0, 230.0)];
+        pages[0].number = 1;
         let author = "An exceptionally long author attribution that needs several lines";
         pages[0].comments.push(note(author, "First content line"));
         list_comments_at_end(&fonts, &sheet(), &mut pages);

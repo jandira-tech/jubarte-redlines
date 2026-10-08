@@ -370,7 +370,15 @@ fn page_errors_explain_the_invalid_item() {
 fn pdf_page_options_are_shared_and_rejected_for_text_outputs() {
     for args in [
         vec!["convert", "a.docx", "--move-comments", "--changed-only"],
-        vec!["diff", "a.docx", "b.docx", "-o", "out.pdf", "--move-comments", "--changed-only"],
+        vec![
+            "diff",
+            "a.docx",
+            "b.docx",
+            "-o",
+            "out.pdf",
+            "--move-comments",
+            "--changed-only",
+        ],
     ] {
         let result = parse(&args, &[]);
         assert_eq!(result["exit_code"], 0, "{result}");
@@ -381,6 +389,8 @@ fn pdf_page_options_are_shared_and_rejected_for_text_outputs() {
         for args in [
             vec!["convert", "a.docx", "-t", "md", flag],
             vec!["diff", "a.docx", "b.docx", "--format", "github", flag],
+            vec!["diff", "a.docx", "b.docx", "-o", "out.docx", flag],
+            vec!["diff", "a.md", "b.md", flag],
         ] {
             assert_eq!(parse(&args, &[])["exit_code"], 2, "{args:?}");
         }

@@ -1222,6 +1222,23 @@ fn validate_matches(
         ));
     }
     if name == "diff" {
+        let output_format = args.get_one::<Format>("to").copied().or_else(|| {
+            args.get_one::<PathBuf>("output")
+                .and_then(|path| Format::of_path(path))
+        });
+        if !matches!(output_format, Some(Format::Pdf | Format::Png)) {
+            for flag in ["move_comments", "changed_only"] {
+                if args.get_flag(flag) {
+                    return Err(error(
+                        &mut task,
+                        &format!(
+                            "--{} applies to PDF or PNG output only",
+                            flag.replace('_', "-")
+                        ),
+                    ));
+                }
+            }
+        }
         let format = *args
             .get_one::<PatchFormat>("format")
             .expect("default format");
