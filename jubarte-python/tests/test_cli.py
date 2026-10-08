@@ -238,7 +238,9 @@ def test_convert_refuses_report_aliases_without_modifying_files(letter, tmp_path
 def test_invalid_png_dpi_leaves_no_partial_outputs(letter, tmp_path, capsys):
     output = tmp_path / "result.pdf"
     report = tmp_path / "report.json"
-    assert main(["convert", str(letter), "--pdf", "--png", "--dpi", "0", "-o", str(output), "--report", str(report)]) == 1
+    with pytest.raises(SystemExit) as exit:
+        main(["convert", str(letter), "--pdf", "--png", "--dpi", "0", "-o", str(output), "--report", str(report)])
+    assert exit.value.code == 2
     assert "dpi" in capsys.readouterr().err
     assert not output.exists()
     assert not report.exists()

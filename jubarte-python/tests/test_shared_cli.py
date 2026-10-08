@@ -67,7 +67,39 @@ def test_diff_usage_errors_precede_io(tmp_path, capsys, extra):
 
 @pytest.mark.integration
 def test_unsupported_native_flags_precede_io(tmp_path):
-    for argv in (["inspect", "missing.docx", "--tables"], ["compare", "a", "b", "--mode", "powertools"], ["convert", "missing.docx", "--timeout", "1"]):
+    for argv in (["inspect", "missing.docx", "--tables"], ["compare", "a", "b", "--mode", "powertools"], ["compare", "a", "b", "--detail-threshold", "0"], ["convert", "missing.docx", "--timeout", "1"]):
         with pytest.raises(SystemExit) as exit:
             main(argv)
         assert exit.value.code == 2
+
+
+@pytest.mark.integration
+def test_paragraph_critic_default_word_output_and_compare_shorthand(tmp_path, capsys):
+    a, b = (tmp_path / name for name in ("before.md", "after.md"))
+    a.write_text("Due in 30 days.\n")
+    b.write_text("Due in 45 days.\n")
+    assert main(["diff", str(a), str(b), "--author", "Legal", "--date", "2026-09-30T14:05:00Z"]) == 0
+    assert "[-30-]{+45+}" in capsys.readouterr().out
+    assert main(["diff", str(a), str(b), "--format", "critic"]) == 0
+    assert capsys.readouterr().out == "Due in {~~30~>45~~} days.\n"
+    assert main([str(a), str(b), "--quiet"]) == 0
+    word = tmp_path / "before_v_after.docx"
+    assert word.read_bytes().startswith(b"PK")
+    assert capsys.readouterr().out == ""
+    assert main(["diff", str(word), str(word)]) == 0
+    assert (tmp_path / "before_v_after_v_before_v_after.docx").read_bytes().startswith(b"PK")
+
+
+@pytest.mark.integration
+def test_text_track_changes_modes_and_convert_output(tmp_path, capsys):
+    import jubarte_redlines as jubarte
+
+    source = tmp_path / "tracked.docx"
+    source.write_bytes(jubarte.from_markdown("Due in {~~30~>45~~} days.\n").to_bytes())
+    for mode, text in (("all", "{~~30~>45~~}"), ("accept", "45"), ("reject", "30")):
+        assert main(["text", str(source), "--track-changes", mode]) == 0
+        out = capsys.readouterr().out
+        assert text in out and "[body:p:" not in out
+    out = tmp_path / "changes.pdf"
+    assert main(["diff", str(source), str(source), "-o", str(out)]) == 0
+    assert out.read_bytes().startswith(b"%PDF-")
