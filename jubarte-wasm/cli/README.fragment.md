@@ -29,3 +29,19 @@ refused; flags differ per surface, and the render-side/PDF-producing ones
 (including PNG pages and `--date`) need the Python or Rust build.
 
 Inputs are `.docx`: save a Word 97-2003 `.doc` as `.docx` first.
+
+## Text comparisons
+
+```sh
+jubarte-redlines diff a.docx b.docx --format github
+jubarte-redlines diff a.docx b.docx --format github -U0 --accept-changes
+jubarte-redlines diff a.docx b.docx --format word
+```
+
+Line views (`github`, `normal`, `context`, `side-by-side`) retain each input’s
+tracked marks. Word comparison accepts **all changes in both inputs first**,
+then creates fresh CriticMarkup; earlier revision provenance disappears.
+`critic` remains a representation of document content with its marks.
+Long lines use a 70-character review window; `--full-lines` shows all text.
+Text views support DOCX and Markdown and write stdout or an explicit `-o` text
+file. CLI help and usage errors come from the shared clap-derived grammar.

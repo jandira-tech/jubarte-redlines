@@ -61,7 +61,7 @@ def run_help(runner: list[str], args: list[str]) -> str:
             f"error: `{joined} --help` exited {proc.returncode}: "
             f"{proc.stderr.strip()[:400]}"
         )
-    return proc.stdout.rstrip("\n")
+    return "\n".join(line.rstrip() for line in proc.stdout.splitlines()).rstrip("\n")
 
 
 def discover_sections(text: str) -> list[str]:

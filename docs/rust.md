@@ -185,12 +185,12 @@ Compare options:
 
   -a, --author <NAME>
           Author name recorded on the revisions
-          
+
           [default: Redline]
 
   -d, --date <ISO8601>
           Revision timestamp (ISO 8601); pinned for reproducible output
-          
+
           [default: 1970-01-01T00:00:00Z]
 
       --force
@@ -210,7 +210,7 @@ Compare options:
             paragraphs merged, Word's alignment passes
           - powertools: Open-Xml-PowerTools: coarse paragraph fallback (threshold 0.15),
             no Word alignment passes
-          
+
           [default: word]
 
       --powertools-faithful
@@ -260,12 +260,12 @@ Options:
 
   -a, --author <NAME>
           Author name recorded on the revisions
-          
+
           [default: Redline]
 
   -d, --date <ISO8601>
           Revision timestamp (ISO 8601); pinned for reproducible output
-          
+
           [default: 1970-01-01T00:00:00Z]
 
       --force
@@ -285,7 +285,7 @@ Options:
             paragraphs merged, Word's alignment passes
           - powertools: Open-Xml-PowerTools: coarse paragraph fallback (threshold 0.15),
             no Word alignment passes
-          
+
           [default: word]
 
       --powertools-faithful
@@ -456,7 +456,7 @@ Options:
           - all:    Keep them: CriticMarkup becomes Word tracked changes and comments
           - accept: Accept every change
           - reject: Reject every change
-          
+
           [default: all]
 
       --no-critic
@@ -472,12 +472,12 @@ Options:
 
   -a, --author <NAME>
           Markdown to Word: author of the tracked changes and comments
-          
+
           [default: Redline]
 
   -d, --date <ISO8601>
           Markdown to Word: their date (ISO 8601); pinned for reproducible output
-          
+
           [default: 1970-01-01T00:00:00Z]
 
       --page <SIZE>
@@ -487,7 +487,7 @@ Options:
           Possible values:
           - letter: US Letter, 8.5 by 11 inches
           - a4:     ISO A4, 210 by 297 mm
-          
+
           [default: letter]
 
       --no-page-markers
@@ -513,7 +513,7 @@ Options:
 Rendering:
       --dpi <DPI>
           PNG resolution in dots per inch (1-1200)
-          
+
           [default: 96]
 
 Revision marks:
@@ -527,7 +527,7 @@ Revision marks:
           - conventional: Red strike, blue underline, green double marks for moves
           - word:         Microsoft Word's own markup
           - custom:       --revision-palette
-          
+
           [default: conventional]
 
       --revision-palette <SPEC>
@@ -612,12 +612,12 @@ Review:
             >)
           - context:      Context diff with old/new ranges and !, + and - prefixes
           - side-by-side: Old and new lines in parallel columns, with |, < and > markers
-          
+
           [default: patch]
 
   -U, --context <LINES>
           Unchanged lines around GitHub or context hunks; -U0 shows changes only
-          
+
           [default: 3]
 
       --accept-changes
@@ -632,7 +632,7 @@ Review:
 Paragraph patch:
       --columns <N>
           Wrap the patch's lines at this many columns; 0 does not wrap
-          
+
           [default: 72]
 
 Formats:
@@ -648,7 +648,7 @@ Formats:
 
   -f, --from <FORMAT>
           Input format of both documents [default: from each file]
-          
+
           [possible values: docx, md, markdown]
 
 Word redline:
@@ -667,7 +667,7 @@ Word redline:
             paragraphs merged, Word's alignment passes
           - powertools: Open-Xml-PowerTools: coarse paragraph fallback (threshold 0.15),
             no Word alignment passes
-          
+
           [default: word]
 
       --detail-threshold <RATIO>
@@ -693,7 +693,7 @@ Revision marks:
           - conventional: Red strike, blue underline, green double marks for moves
           - word:         Microsoft Word's own markup
           - custom:       --revision-palette
-          
+
           [default: conventional]
 
       --revision-palette <SPEC>
@@ -800,7 +800,7 @@ Options:
 Rendering:
       --dpi <DPI>
           PNG resolution in dots per inch (1-1200)
-          
+
           [default: 96]
 
 Revision marks:
@@ -811,7 +811,7 @@ Revision marks:
           - conventional: Red strike, blue underline, green double marks for moves
           - word:         Microsoft Word's own markup
           - custom:       --revision-palette
-          
+
           [default: conventional]
 
       --revision-palette <SPEC>
@@ -932,12 +932,12 @@ Options:
 
   -n, --limit <N>
           Examples per finding kind
-          
+
           [default: 5]
 
   -C, --context <N>
           text/xml/runs of two files: common lines shown around each change
-          
+
           [default: 0]
 
   -h, --help
@@ -1076,7 +1076,7 @@ Options:
           - continuous: Each document continues on the same page (a continuous section
             break with --keep-sections)
           - none:       Nothing between the documents (continuous with --keep-sections)
-          
+
           [default: next-page]
 
       --keep-sections

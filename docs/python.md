@@ -58,7 +58,8 @@ Tasks:
   diff          Review differences as GitHub, word, normal, context or side-by-side text
   inspect       Inspect document facts, paragraphs, styles and tables
   text          Read Markdown with edit IDs `[body:p:N]`, or with tracked marks
-  edit          Apply a JSON edit plan; write clean copy, redline and report (refusal: exit 3)
+  edit          Apply a JSON edit plan; write clean copy, redline and report (refusal:
+                exit 3)
   capabilities  What this binary can do, for agents choosing an operation
   diff-render   Compare rendered pages pixel by pixel (different pages: exit 5)
   comments      List comments, threads and the text they annotate
@@ -80,16 +81,17 @@ Compare options:
           Modified document (overrides the positional MODIFIED)
 
   -o, --output <FILE>
-          Output path [default: <original-dir>/<original>_v_<modified>.docx]. A `.md` output writes the changes as CriticMarkup (both documents Markdown)
+          Output path [default: <original-dir>/<original>_v_<modified>.docx]. A `.md`
+          output writes the changes as CriticMarkup (both documents Markdown)
 
   -a, --author <NAME>
           Author name recorded on the revisions
-          
+
           [default: Redline]
 
   -d, --date <ISO8601>
           Revision timestamp (ISO 8601); pinned for reproducible output
-          
+
           [default: 1970-01-01T00:00:00Z]
 
       --force
@@ -105,9 +107,11 @@ Compare options:
           Compare like Microsoft Word or Open-Xml-PowerTools
 
           Possible values:
-          - word:       Microsoft Word Compare's layout: word-level detail, replaced paragraphs merged, Word's alignment passes
-          - powertools: Open-Xml-PowerTools: coarse paragraph fallback (threshold 0.15), no Word alignment passes
-          
+          - word:       Microsoft Word Compare's layout: word-level detail, replaced
+            paragraphs merged, Word's alignment passes
+          - powertools: Open-Xml-PowerTools: coarse paragraph fallback (threshold 0.15),
+            no Word alignment passes
+
           [default: word]
 
       --powertools-faithful
@@ -151,16 +155,17 @@ Options:
           Modified document (overrides the positional MODIFIED)
 
   -o, --output <FILE>
-          Output path [default: <original-dir>/<original>_v_<modified>.docx]. A `.md` output writes the changes as CriticMarkup (both documents Markdown)
+          Output path [default: <original-dir>/<original>_v_<modified>.docx]. A `.md`
+          output writes the changes as CriticMarkup (both documents Markdown)
 
   -a, --author <NAME>
           Author name recorded on the revisions
-          
+
           [default: Redline]
 
   -d, --date <ISO8601>
           Revision timestamp (ISO 8601); pinned for reproducible output
-          
+
           [default: 1970-01-01T00:00:00Z]
 
       --force
@@ -176,9 +181,11 @@ Options:
           Compare like Microsoft Word or Open-Xml-PowerTools
 
           Possible values:
-          - word:       Microsoft Word Compare's layout: word-level detail, replaced paragraphs merged, Word's alignment passes
-          - powertools: Open-Xml-PowerTools: coarse paragraph fallback (threshold 0.15), no Word alignment passes
-          
+          - word:       Microsoft Word Compare's layout: word-level detail, replaced
+            paragraphs merged, Word's alignment passes
+          - powertools: Open-Xml-PowerTools: coarse paragraph fallback (threshold 0.15),
+            no Word alignment passes
+
           [default: word]
 
       --powertools-faithful
@@ -310,11 +317,14 @@ Usage: jubarte-redlines convert [OPTIONS] <FILE>
 
 Arguments:
   <FILE>
-          The document to convert: .docx, Markdown (.md, .markdown), or a Word 97-2003 .doc (read into a .docx first)
+          The document to convert: .docx, Markdown (.md, .markdown), or a Word 97-2003
+          .doc (read into a .docx first)
 
 Options:
   -o, --output <FILE>
-          Output path [default: <stem>.pdf next to a .docx, <stem>.docx next to Markdown; Markdown output goes to stdout]. PNG pages are named <stem>-page-NN.png beside it
+          Output path [default: <stem>.pdf next to a .docx, <stem>.docx next to
+          Markdown; Markdown output goes to stdout]. PNG pages are named
+          <stem>-page-NN.png beside it
 
       --force
           Overwrite the output file if it already exists
@@ -329,60 +339,73 @@ Options:
           Write a JSON page report (`{page_count, pages:[{index,text}], fonts}`)
 
       --compress
-          Deflate the PDF's streams (`/FlateDecode`). Much smaller output; the trade is that the page content is no longer plain text, so it cannot be read with `strings` or `grep`
+          Deflate the PDF's streams (`/FlateDecode`). Much smaller output; the trade is
+          that the page content is no longer plain text, so it cannot be read with
+          `strings` or `grep`
 
       --font-report <FILE>
-          Write a JSON font-resolution report (`[{requested, step, physical, bold, italic, synthetic, substituted}, …]`) for this document (plan Step 2f)
+          Write a JSON font-resolution report (`[{requested, step, physical, bold,
+          italic, synthetic, substituted}, …]`) for this document (plan Step 2f)
 
       --track-changes <CHOICE>
-          Keep tracked changes (all), or write the document with every change accepted or rejected (pandoc's flag): CriticMarkup in Markdown, Word's revisions in a .docx. With --to md, the Markdown itself is resolved
+          Keep tracked changes (all), or write the document with every change accepted
+          or rejected (pandoc's flag): CriticMarkup in Markdown, Word's revisions in a
+          .docx. With --to md, the Markdown itself is resolved
 
           Possible values:
           - all:    Keep them: CriticMarkup becomes Word tracked changes and comments
           - accept: Accept every change
           - reject: Reject every change
-          
+
           [default: all]
 
       --no-critic
           Markdown: read `{++`, `{--` and the other CriticMarkup delimiters as text
 
       --reference-doc <FILE>
-          Markdown to Word: take styles, numbering, page setup, headers and footers from this .docx (pandoc's --reference-doc)
+          Markdown to Word: take styles, numbering, page setup, headers and footers from
+          this .docx (pandoc's --reference-doc)
 
       --resource-path <DIR>
-          Markdown to Word: where images are found [default: the Markdown file's directory]
+          Markdown to Word: where images are found [default: the Markdown file's
+          directory]
 
   -a, --author <NAME>
           Markdown to Word: author of the tracked changes and comments
-          
+
           [default: Redline]
 
   -d, --date <ISO8601>
           Markdown to Word: their date (ISO 8601); pinned for reproducible output
-          
+
           [default: 1970-01-01T00:00:00Z]
 
       --page <SIZE>
-          Markdown to Word: the page size when there is no --reference-doc (one-inch margins either way); a reference's page setup wins
+          Markdown to Word: the page size when there is no --reference-doc (one-inch
+          margins either way); a reference's page setup wins
 
           Possible values:
           - letter: US Letter, 8.5 by 11 inches
           - a4:     ISO A4, 210 by 297 mm
-          
+
           [default: letter]
 
       --no-page-markers
-          Word to Markdown: leave out the `<!-- page N of M -->` lines, and the layout pass that places them
+          Word to Markdown: leave out the `<!-- page N of M -->` lines, and the layout
+          pass that places them
 
       --pages <SPEC>
-          Rasterize only these pages, counted from 1: `3`, `1-3,7`. Layout still runs over the whole document. Needs PNG output
+          Rasterize only these pages, counted from 1: `3`, `1-3,7`. Layout still runs
+          over the whole document. Needs PNG output
 
       --fail-on-substitution
-          Exit 4 when a requested font was substituted (listed on stderr and in --report). Every output is still written. Exit status: 0 ok, 1 error, 4 a requested font was substituted
+          Exit 4 when a requested font was substituted (listed on stderr and in
+          --report). Every output is still written. Exit status: 0 ok, 1 error, 4 a
+          requested font was substituted
 
       --timeout <SECONDS>
-          Give up after this many seconds: exit 124 (as `timeout(1)`) with nothing more written. An output being written at that moment may be left partial
+          Give up after this many seconds: exit 124 (as `timeout(1)`) with nothing more
+          written. An output being written at that moment may be left partial
 
   -h, --help
           Print help (see a summary with '-h')
@@ -390,50 +413,63 @@ Options:
 Rendering:
       --dpi <DPI>
           PNG resolution in dots per inch (1-1200)
-          
+
           [default: 96]
 
 Revision marks:
       --revisions <REVISIONS>
-          How tracked changes are painted: `conventional` (deletions red struck through, insertions blue underlined, moves green: double-struck where they left, double-underlined where they landed), `word` (what Microsoft Word's Save as PDF paints), or `custom` (see --revision-palette)
+          How tracked changes are painted: `conventional` (deletions red struck through,
+          insertions blue underlined, moves green: double-struck where they left,
+          double-underlined where they landed), `word` (what Microsoft Word's Save as
+          PDF paints), or `custom` (see --revision-palette)
 
           Possible values:
           - conventional: Red strike, blue underline, green double marks for moves
           - word:         Microsoft Word's own markup
           - custom:       --revision-palette
-          
+
           [default: conventional]
 
       --revision-palette <SPEC>
-          Marks for --revisions custom: `kind=#RRGGBB[:lines],...` with kinds deleted, inserted, moved-from, moved-to and lines strike, double-strike, underline, double-underline, plain. Kinds left out keep their conventional mark
+          Marks for --revisions custom: `kind=#RRGGBB[:lines],...` with kinds deleted,
+          inserted, moved-from, moved-to and lines strike, double-strike, underline,
+          double-underline, plain. Kinds left out keep their conventional mark
 
 Formats:
   -f, --from <FORMAT>
-          Input format [default: from the file: .md and .markdown are Markdown, a zip is Word]
+          Input format [default: from the file: .md and .markdown are Markdown, a zip is
+          Word]
 
           Possible values:
           - docx: Word (.docx)
-          - md:   Markdown: CommonMark with GitHub tables, task lists and footnotes, and CriticMarkup
+          - md:   Markdown: CommonMark with GitHub tables, task lists and footnotes, and
+            CriticMarkup
           - pdf:  PDF, laid out as Word does
           - png:  PNG pages
 
   -t, --to <FORMAT>
-          Output format [default: from --output, else pdf for Word and docx for Markdown]
+          Output format [default: from --output, else pdf for Word and docx for
+          Markdown]
 
           Possible values:
           - docx: Word (.docx)
-          - md:   Markdown: CommonMark with GitHub tables, task lists and footnotes, and CriticMarkup
+          - md:   Markdown: CommonMark with GitHub tables, task lists and footnotes, and
+            CriticMarkup
           - pdf:  PDF, laid out as Word does
           - png:  PNG pages
 
 Examples:
   jubarte convert contract.docx                   PDF, Word-style layout
-  jubarte convert draft.md                        draft.docx, CriticMarkup as tracked changes
+  jubarte convert draft.md                        draft.docx, CriticMarkup as tracked
+  changes
   jubarte convert draft.md -o draft.pdf           the changes painted in a PDF
   jubarte convert draft.md --reference-doc house.docx -o draft.docx
-  jubarte convert draft.md -t md --track-changes accept   the text with every change accepted
-  jubarte convert contract.docx -t md             Markdown with <!-- page N of M --> lines
-  jubarte convert old.doc                         old.docx (text, headings, lists, tables)
+  jubarte convert draft.md -t md --track-changes accept   the text with every change
+  accepted
+  jubarte convert contract.docx -t md             Markdown with <!-- page N of M -->
+  lines
+  jubarte convert old.doc                         old.docx (text, headings, lists,
+  tables)
   jubarte convert notes.md --no-critic            {++ and the other delimiters as text
 ```
 
@@ -453,31 +489,35 @@ Arguments:
           The new document: .docx or Markdown
 
 Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+Review:
   -o, --output <FILE>
-          Output path; its extension picks the format (.md, .docx, .pdf, .png) [default: none for two Markdown documents, else <old>_v_<new>.docx next to OLD]. GitHub defaults to stdout; Text views write only a .patch, .diff, .txt or .md file. Patch/critic also print the patch
+          Write to FILE. Text views default to stdout and write only text. Patch/critic
+          infer Word, Markdown, PDF or PNG from the extension
 
       --format <FORMAT>
-          What goes to stdout: `patch` (the changed paragraphs, with their ids), `critic` (current document text with tracked marks), or `github` (GitHub lines), `word` (fresh word changes after accepting ALL input changes), `normal`, `context`, or `side-by-side`. Text views preserve input marks except word; --accept-changes accepts them explicitly. Long lines show 70 characters around the change
+          Choose the review view; word accepts ALL input changes first
 
           Possible values:
-          - patch:        The changed paragraphs, as `git diff --word-diff` with CriticMarkup comments and highlights
+          - patch:        The changed paragraphs, as `git diff --word-diff` with
+            CriticMarkup comments and highlights
           - critic:       CriticMarkup: current document text with tracked marks
-          - github:       Git/GitHub unified text; preserves each document's tracked marks
-          - word:         Fresh word-level CriticMarkup after accepting ALL changes in both inputs
-          - normal:       Normal diff with line addresses and no context (a/d/c, < and >)
+          - github:       Git/GitHub unified text; preserves each document's tracked
+            marks
+          - word:         Fresh word-level CriticMarkup after accepting ALL changes in
+            both inputs
+          - normal:       Normal diff with line addresses and no context (a/d/c, < and
+            >)
           - context:      Context diff with old/new ranges and !, + and - prefixes
           - side-by-side: Old and new lines in parallel columns, with |, < and > markers
-          
-          [default: patch]
 
-      --columns <N>
-          Wrap the patch's lines at this many columns; 0 does not wrap
-          
-          [default: 72]
+          [default: patch]
 
   -U, --context <LINES>
           Unchanged lines around GitHub or context hunks; -U0 shows changes only
-          
+
           [default: 3]
 
       --accept-changes
@@ -489,8 +529,32 @@ Options:
       --force
           Overwrite the output file if it already exists
 
+Paragraph patch:
+      --columns <N>
+          Wrap the patch's lines at this many columns; 0 does not wrap
+
+          [default: 72]
+
+Formats:
+  -t, --to <FORMAT>
+          Output format, when --output does not say
+
+          Possible values:
+          - docx: Word (.docx)
+          - md:   Markdown: CommonMark with GitHub tables, task lists and footnotes, and
+            CriticMarkup
+          - pdf:  PDF, laid out as Word does
+          - png:  PNG pages
+
+  -f, --from <FORMAT>
+          Input format of both documents [default: from each file]
+
+          [possible values: docx, md, markdown]
+
+Word redline:
   -a, --author <NAME>
-          Who made the changes: the patch's owner and the revisions' author [default: `git config user.name`, else Redline]
+          Who made the changes: the patch's owner and the revisions' author [default:
+          `git config user.name`, else Redline]
 
   -d, --date <ISO8601>
           When (ISO 8601) [default: now]; pin it for reproducible output
@@ -499,40 +563,27 @@ Options:
           Whose redline to reproduce (see `jubarte --help`)
 
           Possible values:
-          - word:       Microsoft Word Compare's layout: word-level detail, replaced paragraphs merged, Word's alignment passes
-          - powertools: Open-Xml-PowerTools: coarse paragraph fallback (threshold 0.15), no Word alignment passes
-          
+          - word:       Microsoft Word Compare's layout: word-level detail, replaced
+            paragraphs merged, Word's alignment passes
+          - powertools: Open-Xml-PowerTools: coarse paragraph fallback (threshold 0.15),
+            no Word alignment passes
+
           [default: word]
 
       --detail-threshold <RATIO>
           LCS detail threshold (see `jubarte --help`)
 
       --reference-doc <FILE>
-          Two Markdown documents written as Word take styles, page setup, headers and footers from this .docx
+          Two Markdown documents written as Word take styles, page setup, headers and
+          footers from this .docx
 
       --critic
-          Read CriticMarkup in the Markdown documents as tracked changes (Word output). By default a document compared is text
+          Read CriticMarkup in the Markdown documents as tracked changes (Word output).
+          By default a document compared is text
 
       --resource-path <DIR>
-          Where images named by the Markdown are found [default: each Markdown file's directory]
-
-  -h, --help
-          Print help (see a summary with '-h')
-
-Formats:
-  -t, --to <FORMAT>
-          Output format, when --output does not say
-
-          Possible values:
-          - docx: Word (.docx)
-          - md:   Markdown: CommonMark with GitHub tables, task lists and footnotes, and CriticMarkup
-          - pdf:  PDF, laid out as Word does
-          - png:  PNG pages
-
-  -f, --from <FORMAT>
-          Input format of both documents [default: from each file]
-          
-          [possible values: docx, md, markdown]
+          Where images named by the Markdown are found [default: each Markdown file's
+          directory]
 
 Revision marks:
       --revisions <REVISIONS>
@@ -542,7 +593,7 @@ Revision marks:
           - conventional: Red strike, blue underline, green double marks for moves
           - word:         Microsoft Word's own markup
           - custom:       --revision-palette
-          
+
           [default: conventional]
 
       --revision-palette <SPEC>
@@ -574,8 +625,11 @@ Arguments:
   <FILE>  The document (.docx) to read
 
 Options:
-      --json    Emit the snapshot as JSON (`schema_version`, `source_sha256`, `summary`, `paragraphs`, `stories`, `tables`) instead of a human summary
-      --tables  Print each body table as a grid instead of the paragraphs: a `table N: ROWSxCOLS header_rows=H widths=W,...` line, then one line per row of tab-separated `ids=text` cells
+      --json    Emit the snapshot as JSON (`schema_version`, `source_sha256`, `summary`,
+                `paragraphs`, `stories`, `tables`) instead of a human summary
+      --tables  Print each body table as a grid instead of the paragraphs: a `table N:
+                ROWSxCOLS header_rows=H widths=W,...` line, then one line per row of
+                tab-separated `ids=text` cells
   -h, --help    Print help
 ```
 
@@ -593,7 +647,9 @@ Arguments:
 
 Options:
       --track-changes <CHOICE>
-          Print the document as Markdown with its tracked changes as CriticMarkup (all), or with every change accepted or rejected, like `convert --to md`. The output then has no `[body:p:N]` ids
+          Print the document as Markdown with its tracked changes as CriticMarkup (all),
+          or with every change accepted or rejected, like `convert --to md`. The output
+          then has no `[body:p:N]` ids
 
           Possible values:
           - all:    Keep them: CriticMarkup becomes Word tracked changes and comments
@@ -644,7 +700,7 @@ Options:
 Rendering:
       --dpi <DPI>
           PNG resolution in dots per inch (1-1200)
-          
+
           [default: 96]
 
 Revision marks:
@@ -655,7 +711,7 @@ Revision marks:
           - conventional: Red strike, blue underline, green double marks for moves
           - word:         Microsoft Word's own markup
           - custom:       --revision-palette
-          
+
           [default: conventional]
 
       --revision-palette <SPEC>
@@ -688,19 +744,23 @@ Arguments:
   <B>  The document after
 
 Options:
-      --out-dir <DIR>  Write the changed pages' PNGs and diff.json here (created if missing)
+      --out-dir <DIR>  Write the changed pages' PNGs and diff.json here (created if
+                       missing)
       --json           Print diff.json to stdout instead of one line per changed page
       --no-overlay     Skip the diff-page-NN.png overlays
       --force          Overwrite files already in --out-dir
   -h, --help           Print help
 
 Rendering:
-      --dpi <DPI>  Raster resolution of both sides in dots per inch (1-1200) [default: 100]
+      --dpi <DPI>  Raster resolution of both sides in dots per inch (1-1200) [default:
+                   100]
 
 Examples:
   jubarte diff-render before.docx after.docx                  changed pages on stdout
-  jubarte diff-render before.docx after.docx --out-dir diff   PNGs of the changed pages and diff.json
-  jubarte diff-render a.docx b.docx --json                    the diff.json document on stdout
+  jubarte diff-render before.docx after.docx --out-dir diff   PNGs of the changed pages
+  and diff.json
+  jubarte diff-render a.docx b.docx --json                    the diff.json document on
+  stdout
 
 With --out-dir, each page that differs is written as a-page-NN.png,
 b-page-NN.png and diff-page-NN.png (b's page with the changed pixels
@@ -739,8 +799,10 @@ Arguments:
 
 Options:
       --json             JSON Lines: one object per finding, nothing when there is none
-      --repair <FILE>    Write the repaired package here; remaining findings still exit 2
-      --original <FILE>  Audit tracked edits: every text change against ORIGINAL must be a revision by --author
+      --repair <FILE>    Write the repaired package here; remaining findings still exit
+                         2
+      --original <FILE>  Audit tracked edits: every text change against ORIGINAL must be
+                         a revision by --author
       --author <NAME>    The author every change must carry (with --original)
       --force            Replace an existing --repair output
   -h, --help             Print help
