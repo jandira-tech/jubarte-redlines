@@ -290,3 +290,31 @@ test("explicit Markdown input and UTF-8 BOM share native text behavior", () => {
   assert.equal(result.code, 0, result.err);
   assert.equal(result.out, "Due {~~30~>45~~} days.\n");
 });
+
+
+test("diff PDF forwards page options and Markdown refuses render-only options (integration)", () => {
+  const wasm = createRequire(bin)("jubarte-wasm");
+  const long = Array.from({ length: 120 }, (_, i) => `Paragraph ${i}.`).join("\n\n");
+  const a = path.join(tmp, "page-options-old.md"), b = path.join(tmp, "page-options-new.md");
+  fs.writeFileSync(a, long);
+  fs.writeFileSync(b, long.replace("Paragraph 0.", "Paragraph zero."));
+  const all = path.join(tmp, "diff-all.pdf"), kept = path.join(tmp, "diff-kept.pdf");
+  for (const [output, flags] of [[all, []], [kept, ["--changed-only"]]]) {
+    const result = run("diff", a, b, "-o", output, ...flags);
+    assert.equal(result.code, 0, result.err);
+  }
+  assert.ok(wasm.pdfPageCount(fs.readFileSync(all)) > 1);
+  assert.equal(wasm.pdfPageCount(fs.readFileSync(kept)), 1);
+  const end = path.join(tmp, "diff-end.pdf");
+  const moved = run("diff", tracked, tracked, "-o", end, "--move-comments");
+  assert.equal(moved.code, 0, moved.err);
+  assert.equal(wasm.pdfPageCount(fs.readFileSync(end)), 2);
+  const source = path.join(tmp, "page-options-draft.md");
+  fs.writeFileSync(source, "# Draft\n");
+  for (const flag of ["--move-comments", "--changed-only"]) {
+    const result = run("convert", source, flag);
+    assert.equal(result.code, 1, result.err);
+    assert.match(result.err, /applies to PDF or PNG output only/);
+  }
+  assert.ok(!fs.existsSync(path.join(tmp, "page-options-draft.docx")));
+});
