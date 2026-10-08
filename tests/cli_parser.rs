@@ -286,3 +286,82 @@ fn palette_and_timeout_defaults_are_platform_neutral() {
         assert_eq!(parse(&args, &[])["exit_code"], 2);
     }
 }
+
+#[test]
+fn text_views_options_and_host_metadata_share_clap() {
+    for format in ["github", "word", "normal", "context", "side-by-side"] {
+        let result = parse(
+            &[
+                "diff",
+                "a.docx",
+                "b.txt",
+                "--format",
+                format,
+                "-U0",
+                "--accept-changes",
+                "--full-lines",
+                "-o",
+                "review.txt",
+            ],
+            &[],
+        );
+        assert_eq!(result["exit_code"], 0, "{result}");
+        assert_eq!(result["args"]["context"], 0);
+        assert_eq!(result["args"]["accept_changes"], true);
+        assert_eq!(result["args"]["full_lines"], true);
+        assert_eq!(result["args"]["old_format"], "docx");
+        assert_eq!(result["args"]["new_format"], "md");
+        assert_eq!(result["args"]["output_format"], "md");
+    }
+    let compared = parse(&["compare", "a.txt", "b.markdown", "-o", "out.md"], &[]);
+    assert_eq!(compared["args"]["old_format"], "md");
+    assert_eq!(compared["args"]["new_format"], "md");
+    assert_eq!(compared["args"]["output_format"], "md");
+    for args in [
+        vec!["--format", "critic", "--full-lines"],
+        vec!["--format", "patch", "--accept-changes"],
+        vec!["--format", "word", "--to", "docx"],
+        vec!["--format", "github", "--context", "4294967296"],
+        vec!["--from", "pdf"],
+    ] {
+        assert_eq!(
+            parse(&[vec!["diff", "a", "b"], args].concat(), &[])["exit_code"],
+            2
+        );
+    }
+    let result = parse(
+        &[
+            "diff",
+            "a.docx",
+            "b.docx",
+            "--from",
+            "md",
+            "--format",
+            "patch",
+            "-o",
+            "unknown.ext",
+        ],
+        &[],
+    );
+    assert_eq!(result["args"]["old_format"], "md");
+    assert_eq!(result["args"]["new_format"], "md");
+    assert!(result["args"]["output_format"].is_null());
+}
+
+#[test]
+fn page_errors_explain_the_invalid_item() {
+    for (pages, phrase) in [
+        ("x", "is not a page number"),
+        ("+1", "is not a page number"),
+        ("0", "pages are counted from 1"),
+        ("1,,2", "empty item in page selection"),
+        ("3-1", "runs backwards"),
+    ] {
+        let result = parse(&["convert", "a", "--png", "--pages", pages], &[]);
+        assert_eq!(result["exit_code"], 2);
+        assert!(
+            result["text"].as_str().unwrap().contains(phrase),
+            "{result}"
+        );
+    }
+}

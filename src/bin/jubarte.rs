@@ -1283,13 +1283,13 @@ struct DiffJob<'a> {
 }
 
 /// Unified text diff uses the shared core directly, with no redline/render pass.
-fn run_github_diff(
+fn run_text_diff(
     old_path: &Path,
     new_path: &Path,
     output: Option<&Path>,
     from: Option<Format>,
     force: bool,
-    context: usize,
+    options: &jubarte::text_diff::TextOptions,
 ) -> Result<(), String> {
     if let Some(path) = output {
         ensure_writable(path, force)?;
@@ -1306,15 +1306,7 @@ fn run_github_diff(
         Format::of_input(from, new_path, &new_bytes),
         new_bytes,
     )?;
-    let patch = jubarte::text_diff::diff_documents(
-        old.source(),
-        new.source(),
-        &jubarte::text_diff::UnifiedOptions {
-            old_name: old_path.display().to_string(),
-            new_name: new_path.display().to_string(),
-            context,
-        },
-    )?;
+    let patch = jubarte::text_diff::diff_documents_view(old.source(), new.source(), options)?;
     if let Some(path) = output {
         std::fs::write(path, &patch).map_err(|e| format!("writing {}: {e}", path.display()))?;
         eprintln!("wrote {} ({} bytes)", path.display(), patch.len());
@@ -1950,6 +1942,8 @@ fn cli_main() -> ExitCode {
             format,
             columns,
             context,
+            accept_changes,
+            full_lines,
             force,
             author,
             date,
@@ -1961,14 +1955,33 @@ fn cli_main() -> ExitCode {
             revisions,
             revision_palette,
         }) => {
-            if format == PatchFormat::Github {
-                return exit_code(run_github_diff(
+            if format.is_text_view() {
+                use jubarte::text_diff::{TextFormat, TextOptions, UnifiedOptions};
+                let style = match format {
+                    PatchFormat::Github => TextFormat::Github,
+                    PatchFormat::Word => TextFormat::Word,
+                    PatchFormat::Normal => TextFormat::Normal,
+                    PatchFormat::Context => TextFormat::Context,
+                    PatchFormat::SideBySide => TextFormat::SideBySide,
+                    PatchFormat::Patch | PatchFormat::Critic => unreachable!("text view"),
+                };
+                let options = TextOptions {
+                    unified: UnifiedOptions {
+                        old_name: old.display().to_string(),
+                        new_name: new.display().to_string(),
+                        context,
+                    },
+                    format: style,
+                    accept_changes,
+                    window: (!full_lines).then_some(70),
+                };
+                return exit_code(run_text_diff(
                     &old,
                     &new,
                     output.as_deref(),
                     from,
                     force,
-                    context,
+                    &options,
                 ));
             }
             let style = match revision_style(revisions, revision_palette.as_deref()) {

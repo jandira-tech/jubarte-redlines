@@ -402,6 +402,133 @@ fn side(bytes: &[u8]) -> Result<jubarte::markdown::Source<'_>, JsValue> {
         .map_err(|e| js_err(format!("a side is neither a .docx nor UTF-8 Markdown: {e}")))
 }
 
+/// Explicit input kinds supplied by the shared CLI or API caller.
+#[derive(Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum SideFormat {
+    Docx,
+    Md,
+}
+
+fn typed_side(
+    bytes: &[u8],
+    format: Option<SideFormat>,
+) -> Result<jubarte::markdown::Source<'_>, String> {
+    let format = format.unwrap_or(if bytes.starts_with(b"PK\x03\x04") {
+        SideFormat::Docx
+    } else {
+        SideFormat::Md
+    });
+    match format {
+        SideFormat::Docx => {
+            if !bytes.starts_with(b"PK\x03\x04") {
+                return Err("invalid DOCX: expected a ZIP package".to_string());
+            }
+            Ok(jubarte::markdown::Source::Docx(bytes))
+        }
+        SideFormat::Md => std::str::from_utf8(bytes)
+            .map(jubarte::markdown::Source::Markdown)
+            .map_err(|e| format!("invalid UTF-8 Markdown: {e}")),
+    }
+}
+
+#[derive(Default, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum ViewFormat {
+    #[default]
+    Github,
+    Word,
+    Normal,
+    Context,
+    SideBySide,
+}
+
+impl From<ViewFormat> for jubarte::text_diff::TextFormat {
+    fn from(format: ViewFormat) -> Self {
+        match format {
+            ViewFormat::Github => Self::Github,
+            ViewFormat::Word => Self::Word,
+            ViewFormat::Normal => Self::Normal,
+            ViewFormat::Context => Self::Context,
+            ViewFormat::SideBySide => Self::SideBySide,
+        }
+    }
+}
+
+fn default_context() -> u32 {
+    3
+}
+
+fn deserialize_context<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
+    <u32 as serde::Deserialize>::deserialize(deserializer).map_err(|e| {
+        serde::de::Error::custom(format!(
+            "context must be an integer in the u32 range (0..4294967295): {e}"
+        ))
+    })
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ViewOptions {
+    #[serde(default)]
+    format: ViewFormat,
+    old_name: Option<String>,
+    new_name: Option<String>,
+    #[serde(default = "default_context", deserialize_with = "deserialize_context")]
+    context: u32,
+    #[serde(default)]
+    accept_changes: bool,
+    #[serde(default)]
+    full_lines: bool,
+    old_format: Option<SideFormat>,
+    new_format: Option<SideFormat>,
+}
+
+fn document_view(old: &[u8], new: &[u8], options_json: Option<&str>) -> Result<String, String> {
+    let options: ViewOptions = serde_json::from_str(options_json.unwrap_or("{}"))
+        .map_err(|e| format!("invalid diff view options: {e}"))?;
+    let (old, new) = (
+        typed_side(old, options.old_format)?,
+        typed_side(new, options.new_format)?,
+    );
+    let name = |given: Option<String>, source: &jubarte::markdown::Source<'_>, default: &str| {
+        given.unwrap_or_else(|| match source {
+            jubarte::markdown::Source::Docx(_) => format!("{default}.docx"),
+            jubarte::markdown::Source::Markdown(_) => format!("{default}.md"),
+        })
+    };
+    let defaults = jubarte::text_diff::TextOptions::default();
+    let options = jubarte::text_diff::TextOptions {
+        unified: jubarte::text_diff::UnifiedOptions {
+            old_name: name(options.old_name, &old, "old"),
+            new_name: name(options.new_name, &new, "new"),
+            context: options.context as usize,
+        },
+        format: options.format.into(),
+        accept_changes: options.accept_changes,
+        window: if options.full_lines {
+            None
+        } else {
+            defaults.window
+        },
+    };
+    jubarte::text_diff::diff_documents_view(old, new, &options)
+}
+
+/// Document review view. `optionsJson` is a strict camelCase object with
+/// `format` (github, word, normal, context, side-by-side), `oldName`,
+/// `newName`, `context` (u32), `acceptChanges`, `fullLines`, `oldFormat`
+/// and `newFormat` (docx/md). Defaults use the core display window; Word
+/// always accepts both inputs' revisions before creating new CriticMarkup.
+#[wasm_bindgen(js_name = diffDocumentsView)]
+pub fn diff_documents_view(
+    old: &[u8],
+    new: &[u8],
+    options_json: Option<String>,
+) -> Result<String, JsValue> {
+    document_view(old, new, options_json.as_deref()).map_err(js_err)
+}
+
 /// Complete, unwrapped document snapshots as a Git text patch. `context`
 /// is validated before wasm-bindgen can coerce booleans or wrap u32 values.
 #[wasm_bindgen(js_name = diffDocumentsUnified, skip_typescript)]
@@ -846,6 +973,70 @@ pub fn audit_document(docx: &[u8], rules: Option<String>) -> Result<String, JsVa
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn document_views_validate_options_and_formats_without_js_coercions() {
+        let old = b"Due in 30 days.\n";
+        let new = b"Due in 60 days.\n";
+        for format in ["github", "word", "normal", "context", "side-by-side"] {
+            let options = serde_json::json!({"format": format, "context": 0, "fullLines": true, "oldName": "before.md", "newName": "after.md", "oldFormat": "md", "newFormat": "md"}).to_string();
+            let text = document_view(old, new, Some(&options)).unwrap();
+            assert!(text.contains("30") && text.contains("60"), "{text}");
+        }
+        assert!(
+            document_view(old, new, None)
+                .unwrap()
+                .contains("diff --git")
+        );
+        for value in ["true", "false", "-1", "1.5", "4294967296", "null", "\"3\""] {
+            assert!(
+                document_view(old, new, Some(&format!("{{\"context\":{value}}}")))
+                    .unwrap_err()
+                    .contains("context")
+            );
+        }
+        for options in [
+            "{",
+            "null",
+            "[]",
+            "{\"format\":\"critic\"}",
+            "{\"typo\":1}",
+            "{\"acceptChanges\":null}",
+            "{\"oldFormat\":\"txt\"}",
+        ] {
+            assert!(document_view(old, new, Some(options)).is_err(), "{options}");
+        }
+        assert!(document_view(old, new, Some("{\"context\":4294967295}")).is_ok());
+    }
+
+    #[test]
+    fn document_view_typed_sources_preserve_or_accept_docx_histories() {
+        let old = word("Due in {~~30~>45~~} days.\n");
+        let new = word("Due in {~~60~>45~~} days.\n");
+        let marked = document_view(
+            &old,
+            &new,
+            Some(r#"{"oldFormat":"docx","newFormat":"docx"}"#),
+        )
+        .unwrap();
+        assert!(marked.contains("{--30--}{++45++}") && marked.contains("{--60--}{++45++}"));
+        for options in [r#"{"acceptChanges":true}"#, r#"{"format":"word"}"#] {
+            assert_eq!(document_view(&old, &new, Some(options)).unwrap(), "");
+        }
+        for options in [r#"{"oldFormat":"docx"}"#, r#"{"newFormat":"docx"}"#] {
+            assert!(
+                document_view(b"plain", b"text", Some(options))
+                    .unwrap_err()
+                    .contains("DOCX")
+            );
+        }
+        assert!(
+            document_view(&[255], b"text", Some(r#"{"oldFormat":"md"}"#))
+                .unwrap_err()
+                .contains("UTF-8")
+        );
+        assert!(document_view(b"plain", &[255], Some(r#"{"newFormat":"md"}"#)).is_err());
+    }
 
     #[test]
     fn append_documents_puts_b_after_a_and_reads_options() {

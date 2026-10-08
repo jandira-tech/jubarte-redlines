@@ -396,6 +396,66 @@ fn diff_unified(
         .map_err(err)
 }
 
+/// A document review view, with the core display window by default.
+#[pyfunction]
+#[pyo3(signature = (old, new, *, format = "github", context = Context(3), **view))]
+fn diff_view(
+    py: Python<'_>,
+    old: Side<'_>,
+    new: Side<'_>,
+    format: &str,
+    context: Context,
+    view: Option<&Bound<'_, pyo3::types::PyDict>>,
+) -> PyResult<String> {
+    use jubarte::text_diff::{TextFormat, TextOptions, UnifiedOptions};
+    let mut old_name = "old.docx".to_string();
+    let mut new_name = "new.docx".to_string();
+    let mut accept_changes = false;
+    let mut full_lines = false;
+    if let Some(view) = view {
+        for (key, value) in view.iter() {
+            let key: String = key.extract()?;
+            match key.as_str() {
+                "old_name" => old_name = value.extract()?,
+                "new_name" => new_name = value.extract()?,
+                "accept_changes" => accept_changes = value.extract()?,
+                "full_lines" => full_lines = value.extract()?,
+                _ => {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                        "unexpected keyword argument '{key}'"
+                    )));
+                }
+            }
+        }
+    }
+    let format = match format {
+        "github" | "unified" | "text" => TextFormat::Github,
+        "word" => TextFormat::Word,
+        "normal" => TextFormat::Normal,
+        "context" => TextFormat::Context,
+        "side-by-side" => TextFormat::SideBySide,
+        _ => {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "format must be github, word, normal, context or side-by-side",
+            ));
+        }
+    };
+    let defaults = TextOptions::default();
+    let options = TextOptions {
+        unified: UnifiedOptions {
+            old_name,
+            new_name,
+            context: context.0 as usize,
+        },
+        format,
+        accept_changes,
+        window: if full_lines { None } else { defaults.window },
+    };
+    let (old, new) = (old.source(), new.source());
+    py.detach(|| jubarte::text_diff::diff_documents_view(old, new, &options))
+        .map_err(err)
+}
+
 /// Pure shared clap parser. Arguments exclude argv0; no host I/O is done.
 #[pyfunction]
 #[pyo3(signature = (arguments, program = "jubarte-redlines", supported = None))]
@@ -831,6 +891,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(capabilities_json, m)?)?;
     m.add_function(wrap_pyfunction!(diff_json, m)?)?;
     m.add_function(wrap_pyfunction!(diff_unified, m)?)?;
+    m.add_function(wrap_pyfunction!(diff_view, m)?)?;
     m.add_function(wrap_pyfunction!(parse_cli_json, m)?)?;
     m.add_function(wrap_pyfunction!(redline_documents, m)?)?;
     m.add_function(wrap_pyfunction!(redline_diff_json, m)?)?;

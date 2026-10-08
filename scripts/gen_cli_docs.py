@@ -12,7 +12,7 @@ widths. Run through ``scripts/gen_docs.sh``; CI fails when the committed block
 drifts from the real one.
 
 Used for all three runners of the shared command set — the Rust ``jubarte``
-binary (clap), the Python wheel's ``jubarte-redlines`` (argparse) and the npm
+binary (clap), the Python wheel's ``jubarte-redlines`` (shared clap) and the npm
 ``jubarte-redlines`` CLI — so one page per surface can quote the exact flags
 the installed runner accepts.
 """
@@ -76,6 +76,10 @@ def discover_sections(text: str) -> list[str]:
             continue
         if not line.strip() or not line.startswith("  "):
             break
+        # Clap wraps long descriptions on deeper-indented continuation rows.
+        # Those words are prose, not additional command names.
+        if line.startswith("   "):
+            continue
         match = _NAME_LIST.match(line.strip())
         if not match:
             break

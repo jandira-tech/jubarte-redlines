@@ -42,4 +42,5 @@ serde_json = "1" # structured results cross the boundary as engine-produced JSON
 opt-level = 3
 lto = true
 codegen-units = 1
-strip = "symbols"
+# Symbol stripping can corrupt Mach-O LINKEDIT alignment on macOS.
+strip = "none"

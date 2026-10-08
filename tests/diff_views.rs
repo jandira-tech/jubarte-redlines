@@ -42,10 +42,8 @@ fn accepting_marks_omits_unchanged_fee_and_counts_accepted_lines() {
     opts.accept_changes = true;
     let out = diff_text_view(&old, &new, &opts);
     assert!(!out.contains("Fee:"), "{out}");
-    assert!(
-        out.contains("-2. Interest: 6%.\n+2. Interest: 5%.\n"),
-        "{out}"
-    );
+    assert!(out.contains("-2. Interest: 6%.\n"), "{out}");
+    assert!(out.contains("+2. Interest: 5%.\n"), "{out}");
     assert!(!out.contains("8%"));
     let out = diff_text_view("{--gone\n--}kept\n", "kept\nadded\n", &opts);
     assert!(out.contains("@@ -1,0 +2 @@\n+added\n"), "{out}");
@@ -295,5 +293,153 @@ fn all_hunks_are_kept_and_context_windows_start_at_zero() {
     assert!(
         out.contains(&format!(" {}…\n", "same ".repeat(14))),
         "{out}"
+    );
+}
+
+#[test]
+fn accepted_views_validate_original_xml_and_handle_strict_and_utf16() {
+    let marked = |deleted: &str| {
+        format!(
+            "<w:p><w:del><w:r><w:delText>{deleted}</w:delText></w:r></w:del><w:ins><w:r><w:t>same</w:t></w:r></w:ins></w:p>"
+        )
+    };
+    for strict in [false, true] {
+        for utf16 in [false, true] {
+            let build = |deleted: &str| {
+                let bytes = docx(&marked(deleted));
+                let xml = common::docx::part_string(&bytes, "word/document.xml").unwrap();
+                let xml = if strict {
+                    xml.replace(
+                        common::docx::W_NS,
+                        "http://purl.oclc.org/ooxml/wordprocessingml/main",
+                    )
+                } else {
+                    xml
+                };
+                let data = if utf16 {
+                    [
+                        vec![255, 254],
+                        xml.encode_utf16().flat_map(u16::to_le_bytes).collect(),
+                    ]
+                    .concat()
+                } else {
+                    xml.into_bytes()
+                };
+                common::docx::replace_entry(&bytes, "word/document.xml", &data)
+            };
+            let mut opts = options(TextFormat::Word);
+            assert_eq!(
+                diff_documents_view(
+                    Source::Docx(&build("old")),
+                    Source::Docx(&build("older")),
+                    &opts
+                )
+                .unwrap(),
+                ""
+            );
+            opts.format = TextFormat::Github;
+            opts.accept_changes = true;
+            assert_eq!(
+                diff_documents_view(
+                    Source::Docx(&build("old")),
+                    Source::Docx(&build("older")),
+                    &opts
+                )
+                .unwrap(),
+                ""
+            );
+        }
+    }
+    let bytes = docx(&marked("&bogus;"));
+    assert!(
+        diff_documents_view(
+            Source::Docx(&bytes),
+            Source::Docx(&bytes),
+            &options(TextFormat::Word)
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn literal_marks_and_backslashes_never_hide_a_later_word_change() {
+    let old = common::docx::docx(&common::docx::para(&format!(
+        "{{++literal++}} {}Due 30 days.",
+        "same ".repeat(60)
+    )));
+    let new = common::docx::docx(&common::docx::para(&format!(
+        "{{++literal++}} {}Due 45 days.",
+        "same ".repeat(60)
+    )));
+    let mut opts = options(TextFormat::Word);
+    opts.window = Some(70);
+    let view = diff_documents_view(Source::Docx(&old), Source::Docx(&new), &opts).unwrap();
+    assert!(
+        view.contains("30") && view.contains("45") && view.contains('…'),
+        "{view}"
+    );
+    let marked =
+        docx(r"<w:p><w:r><w:t>C:\</w:t></w:r><w:ins><w:r><w:t>folder\</w:t></w:r></w:ins></w:p>");
+    let output = diff_documents_view(
+        Source::Markdown(""),
+        Source::Docx(&marked),
+        &options(TextFormat::Github),
+    )
+    .unwrap();
+    assert!(output.contains(r"C:\\{++folder\\++}"), "{output}");
+}
+
+#[test]
+fn relative_header_targets_keep_stable_roles_across_renames() {
+    use common::docx::{Part, W_NS, docx_with_sect, part_string, replace_entry};
+    let header = format!("<w:hdr xmlns:w=\"{W_NS}\">{}</w:hdr>", para("Same header"));
+    let build = |file: &str| {
+        let name = format!("headers/{file}.xml");
+        let bytes = docx_with_sect(
+            &para("Same body"),
+            &[Part {
+                name: &name,
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+                xml: &header,
+            }],
+            r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+        );
+        let rels = part_string(&bytes, "word/_rels/document.xml.rels")
+            .unwrap()
+            .replace(
+                &format!("Target=\"{name}\""),
+                &format!("Target=\"../{name}\""),
+            );
+        replace_entry(&bytes, "word/_rels/document.xml.rels", rels.as_bytes())
+    };
+    let escaped_build = |file: &str| {
+        let bytes = build(file);
+        let types = part_string(&bytes, "[Content_Types].xml")
+            .unwrap()
+            .replace("&amp;", "&amp;amp;");
+        let bytes = replace_entry(&bytes, "[Content_Types].xml", types.as_bytes());
+        let rels = part_string(&bytes, "word/_rels/document.xml.rels")
+            .unwrap()
+            .replace("&amp;", "&amp;amp;");
+        replace_entry(&bytes, "word/_rels/document.xml.rels", rels.as_bytes())
+    };
+    assert_eq!(
+        diff_documents_view(
+            Source::Docx(&escaped_build("header&amp;")),
+            Source::Docx(&escaped_build("renamed&amp;")),
+            &TextOptions::default()
+        )
+        .unwrap(),
+        ""
+    );
+    assert_eq!(
+        diff_documents_view(
+            Source::Docx(&build("header1")),
+            Source::Docx(&build("header9")),
+            &TextOptions::default()
+        )
+        .unwrap(),
+        ""
     );
 }

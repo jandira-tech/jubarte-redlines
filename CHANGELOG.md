@@ -17,11 +17,12 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ### Added
 
-- `diff --format github` (aliases `unified` and `text`) prints complete
-  unified text patches of Word or Markdown documents, with configurable
-  context and explicit text output. Existing revision marks and all story
-  text remain visible; no implicit DOCX is created for this format. Python
-  `diff` and WASM `diffDocumentsUnified` expose the same formatter.
+- Document text diff views: `github` (`unified`, `text`), `word`, `normal`,
+  `context` and `side-by-side`, across Rust, Python and WASM. Line views
+  preserve existing CriticMarkup; word diff accepts all changes in both
+  documents before making fresh marks. `--accept-changes`, `-U`/`--context`
+  and `--full-lines` control the view. Long lines use a 70-character window
+  around the first change. Text output creates no implicit Word file.
 
 
 ### Changed
@@ -29,6 +30,8 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 - CLI commands, help, aliases, defaults and usage validation now share a
   clap-derived schema across native, Python and WASM. `compare` (alias
   `redline`) is discoverable alongside the existing two-file shorthand.
+- Python extensions avoid symbol stripping that can corrupt macOS
+  Mach-O metadata and prevent startup.
 
 
 - The desktop app is no longer tracked here: it is its own repository

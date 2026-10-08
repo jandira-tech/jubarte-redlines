@@ -727,7 +727,7 @@ fn inputs_are_told_apart_by_extension_then_by_their_bytes() {
         dir.path(),
     ));
     assert!(
-        stderr.contains("plain.txt: PDF and PNG are not inputs"),
+        stderr.contains("invalid value 'png'") && stderr.contains("docx, md, markdown"),
         "{stderr}"
     );
 }
@@ -820,4 +820,67 @@ fn diff_takes_a_reference_and_can_read_critic_markup() {
         stderr.contains("needs both documents in Markdown"),
         "{stderr}"
     );
+}
+
+#[test]
+fn text_diff_views_accept_history_only_when_requested() {
+    let dir = tempfile::tempdir().unwrap();
+    seed(
+        dir.path(),
+        &[
+            ("a.md", "Fee {--old--}{++same++}.\nDue 30 days.\n"),
+            ("b.md", "Fee same.\nDue 60 days.\n"),
+        ],
+    );
+    let args = ["diff", "a.md", "b.md", "--format", "word", "--full-lines"];
+    let text = ok(&jubarte(&args, dir.path()));
+    assert!(
+        (text.contains("{--30--}{++60++}") || text.contains("{~~30~>60~~}")),
+        "{text}"
+    );
+    assert!(!text.contains("old") && !text.contains("Fee"), "{text}");
+    assert!(!dir.path().join("a_v_b.docx").exists());
+    let normal = ok(&jubarte(
+        &[
+            "diff",
+            "a.md",
+            "b.md",
+            "--format",
+            "normal",
+            "--accept-changes",
+            "--full-lines",
+        ],
+        dir.path(),
+    ));
+    assert_eq!(normal, "2c2\n< Due 30 days.\n---\n> Due 60 days.\n");
+    let context = ok(&jubarte(
+        &["diff", "a.md", "b.md", "--format", "context", "-U0"],
+        dir.path(),
+    ));
+    assert!(context.contains("! Fee {--old--}{++same++}."), "{context}");
+    let side = ok(&jubarte(
+        &["diff", "a.md", "b.md", "--format", "side-by-side"],
+        dir.path(),
+    ));
+    assert!(side.contains('|') && side.contains("{--old--}"), "{side}");
+}
+
+#[test]
+fn github_display_clips_around_unicode_change_and_full_lines_restores_content() {
+    let dir = tempfile::tempdir().unwrap();
+    let old = format!("{}old{}\n", "é".repeat(120), "Z".repeat(120));
+    let new = old.replace("old", "new");
+    seed(dir.path(), &[("a.md", &old), ("b.md", &new)]);
+    let base = ["diff", "a.md", "b.md", "--format", "github"];
+    let clipped = ok(&jubarte(&base, dir.path()));
+    assert!(
+        clipped.contains('…') && clipped.contains("old") && clipped.contains("new"),
+        "{clipped}"
+    );
+    assert!(!clipped.contains(&"é".repeat(100)));
+    let full = ok(&jubarte(
+        &[&base[..], &["--full-lines"]].concat(),
+        dir.path(),
+    ));
+    assert!(full.contains(&old) && full.contains(&new), "{full}");
 }

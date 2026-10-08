@@ -37,7 +37,7 @@ class CliError extends Error {}
 /** A host capability mismatch; rejected before file I/O, exit 2. */
 class UsageError extends Error {}
 
-function read(file) {
+function read(file, forceKind) {
   let bytes;
   try {
     bytes = fs.readFileSync(file);
@@ -46,6 +46,18 @@ function read(file) {
   }
   if (bytes.subarray(0, OLE_MAGIC.length).equals(OLE_MAGIC)) {
     throw new CliError(`${file} is a Word 97-2003 (.doc) or encrypted document; open it in Word and save it as .docx without a password`);
+  }
+  // Ask the same clap parser for declared input metadata on other commands.
+  // Its format grammar stays in the core; unknown suffixes use ZIP sniffing.
+  if (forceKind === undefined) {
+    const parsed = JSON.parse(wasm.parseCli(JSON.stringify(["diff", "--", file, file])));
+    forceKind = parsed.args.old_format;
+  }
+  if (forceKind === "docx" && !bytes.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]))) {
+    throw new CliError(`reading ${file}: invalid DOCX (expected a ZIP package)`);
+  }
+  if (forceKind !== "docx" && bytes.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf]))) {
+    return bytes.subarray(3);
   }
   return bytes;
 }
@@ -76,9 +88,9 @@ const COMMANDS = {
   compare: {
     run(name, [original, modified], o) {
       const output = o.output ?? path.join(path.dirname(original), `${stem(original)}_v_${stem(modified)}.docx`);
-      const [a, b] = [read(original), read(modified)];
+      const [a, b] = [read(original, o.old_format), read(modified, o.new_format)];
       ensureWritable(output, o.force);
-      const redline = [".md", ".markdown"].includes(path.extname(output).toLowerCase())
+      const redline = o.output_format === "md"
         ? wasm.diffDocumentsCritic(a, b, o.author, o.date)
         : wasm.redlineDocuments(a, b, o.author, o.date);
       write(output, redline);
@@ -87,23 +99,33 @@ const COMMANDS = {
   },
   diff: {
     run(_, [old, next], o) {
-      const github = o.format === "github";
+      const view = ["github", "word", "normal", "context", "side-by-side"].includes(o.format);
+      const a = read(old, o.old_format), b = read(next, o.new_format);
+      const kind = (declared, bytes) => declared ?? (bytes.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04])) ? "docx" : "md");
+      const oldFormat = kind(o.old_format, a), newFormat = kind(o.new_format, b);
       let output = o.output;
-      let to = o.to ?? (output ? path.extname(output).slice(1).toLowerCase() : isMarkdown(old) && isMarkdown(next) ? "md" : "docx");
-      if (["markdown", "mdown", "mkd", "mkdn"].includes(to)) to = "md";
-      if (!github && output == null && to !== "md") output = path.join(path.dirname(old), `${stem(old)}_v_${stem(next)}.${to}`);
+      const to = o.to ?? o.output_format ?? (oldFormat === "md" && newFormat === "md" ? "md" : "docx");
+      if (!view && output == null && to !== "md") output = path.join(path.dirname(old), `${stem(old)}_v_${stem(next)}.${to}`);
       if (output != null) ensureWritable(output, o.force);
-      const a = read(old), b = read(next);
-      const author = o.author ?? (github ? "Redline" : defaultAuthor());
-      const date = o.date ?? (github ? "" : new Date().toISOString().replace(/\.\d{3}Z$/, "Z"));
-      const text = github
-        ? wasm.diffDocumentsUnified(a, b, path.basename(old), path.basename(next), o.context)
-        : o.format === "critic" ? wasm.diffDocumentsCritic(a, b, author, date)
-          : JSON.parse(wasm.diffDocuments(a, b, author, date, o.columns, path.basename(old), path.basename(next))).text;
+      if (view) {
+        const text = wasm.diffDocumentsView(a, b, JSON.stringify({
+          format: o.format, oldName: old, newName: next, context: o.context,
+          acceptChanges: o.accept_changes, fullLines: o.full_lines, oldFormat, newFormat,
+        }));
+        if (output != null) {
+          write(output, text);
+          console.error(`wrote ${output} (${Buffer.byteLength(text, "utf8")} bytes)`);
+        } else process.stdout.write(text);
+        return;
+      }
+      const author = o.author ?? defaultAuthor();
+      const date = o.date ?? new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+      const text = o.format === "critic" ? wasm.diffDocumentsCritic(a, b, author, date)
+        : JSON.parse(wasm.diffDocuments(a, b, author, date, o.columns, path.basename(old), path.basename(next))).text;
       if (output != null) {
         let data = text;
-        if (!github && to === "md") data = wasm.diffDocumentsCritic(a, b, author, date);
-        if (!github && ["docx", "pdf"].includes(to)) {
+        if (to === "md") data = wasm.diffDocumentsCritic(a, b, author, date);
+        if (["docx", "pdf"].includes(to)) {
           data = wasm.redlineDocuments(a, b, author, date);
           if (to === "pdf") data = wasm.docxToPdf(data, false, o.revisions, paletteOf(o));
         }
@@ -292,7 +314,7 @@ function validateHost(name, o) {
   }
   if (name === "inspect" && o.tables) reject("tables");
   if (["convert", "diff"].includes(name)) {
-    for (const flag of ["from", "resource_path", "timeout", "fail_on_substitution", "no_page_markers"]) {
+    for (const flag of [...(name === "convert" ? ["from"] : []), "resource_path", "timeout", "fail_on_substitution", "no_page_markers"]) {
       if (o[flag] != null && o[flag] !== false) reject(flag);
     }
     if (o.png || o.to === "png" || path.extname(o.output ?? "").toLowerCase() === ".png") {

@@ -33,7 +33,7 @@ def test_docx_preserves_existing_marks_and_header_story():
     old = jubarte.from_markdown("Due in {~~30~>45~~} days.\n")
     new = jubarte.from_markdown("Due in {~~30~>60~~} days.\n")
     patch = old.diff(new, format="github", context=0).text
-    assert "{~~30~>45~~}" in patch and "{~~30~>60~~}" in patch
+    assert "{--30--}{++45++}" in patch and "{--30--}{++60++}" in patch
     patch = jubarte.diff(docx(para("same"), header="OLD HEADER"), docx(para("same"), header="NEW HEADER"), format="github").text
     assert "OLD HEADER" in patch and "NEW HEADER" in patch
 

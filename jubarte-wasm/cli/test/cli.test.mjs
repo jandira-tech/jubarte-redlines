@@ -239,3 +239,36 @@ test("declared docx UTF-8 never silently compares as Markdown (integration)", ()
   assert.equal(run("compare", a, b, "-o", out).code, 1);
   assert.ok(!fs.existsSync(out));
 });
+
+test("CLI accepts both revision histories and word always accepts (integration)", () => {
+  const a = path.join(tmp, "history-old.md"), b = path.join(tmp, "history-new.md");
+  fs.writeFileSync(a, "Due in {~~30~>45~~} days.\n");
+  fs.writeFileSync(b, "Due in {~~60~>45~~} days.\n");
+  const preserved = run("diff", a, b, "--format", "github");
+  assert.equal(preserved.code, 0, preserved.err);
+  assert.ok(preserved.out.includes("30") && preserved.out.includes("60"));
+  const accepted = run("diff", a, b, "--format", "github", "--accept-changes");
+  assert.equal(accepted.code, 0, accepted.err);
+  assert.equal(accepted.out, "");
+  const word = run("diff", a, b, "--format", "word");
+  assert.equal(word.code, 0, word.err);
+  assert.ok(word.out.includes("45") && !word.out.includes("30") && !word.out.includes("60"));
+});
+
+test("unknown output suffix defaults to Word for Word inputs (integration)", () => {
+  const out = path.join(tmp, "word-fallback.unknown");
+  const result = run("diff", path.join(pair, "base.docx"), path.join(pair, "next.docx"), "-o", out);
+  assert.equal(result.code, 0, result.err);
+  assert.equal(fs.readFileSync(out).subarray(0, 4).toString("hex"), "504b0304");
+  assert.ok(result.out.length > 0);
+});
+
+
+test("explicit Markdown input and UTF-8 BOM share native text behavior", () => {
+  const a = path.join(tmp, "declared-old.docx"), b = path.join(tmp, "declared-new.docx");
+  fs.writeFileSync(a, "\ufeffDue 30 days.\n");
+  fs.writeFileSync(b, "Due 45 days.\n");
+  const result = run("diff", a, b, "--from", "md", "--format", "word", "--full-lines");
+  assert.equal(result.code, 0, result.err);
+  assert.equal(result.out, "Due {~~30~>45~~} days.\n");
+});

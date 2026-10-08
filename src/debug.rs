@@ -1445,7 +1445,7 @@ fn numbering_lines(dom: &Dom, root: NodeId) -> (Vec<String>, usize) {
 /// `text`: one line per paragraph, table and row of a story part, indented
 /// by table and text box depth; with `props`, the `runs` view. Returns the
 /// lines and the paragraph count.
-fn text_lines(dom: &Dom, root: NodeId, props: bool) -> (Vec<String>, usize) {
+fn text_lines(dom: &Dom, root: NodeId, props: bool, critic: bool) -> (Vec<String>, usize) {
     fn mark(dom: &Dom, n: NodeId, props: &str) -> &'static str {
         let Some(pr) = dom.nodes(n).into_iter().find(|&c| local(dom, c) == props) else {
             return " ";
@@ -1517,6 +1517,7 @@ fn text_lines(dom: &Dom, root: NodeId, props: bool) -> (Vec<String>, usize) {
         out: Vec<String>,
         paras: usize,
         props: bool,
+        critic: bool,
     }
     fn nested(dom: &Dom, n: NodeId, depth: usize, w: &mut Walk) {
         for c in dom.nodes(n) {
@@ -1539,6 +1540,14 @@ fn text_lines(dom: &Dom, root: NodeId, props: bool) -> (Vec<String>, usize) {
                         .iter()
                         .map(|(k, f, t)| {
                             let f = f.as_ref().map(|f| format!("«{f}»")).unwrap_or_default();
+                            if w.critic {
+                                let t = crate::text_diff::critic_literal(t);
+                                return match k {
+                                    1 => format!("{{++{t}++}}"),
+                                    2 => format!("{{--{t}--}}"),
+                                    _ => t,
+                                };
+                            }
                             match k {
                                 1 => format!("{{+{f}{t}+}}"),
                                 2 => format!("[-{f}{t}-]"),
@@ -1574,6 +1583,7 @@ fn text_lines(dom: &Dom, root: NodeId, props: bool) -> (Vec<String>, usize) {
         out: Vec::new(),
         paras: 0,
         props,
+        critic,
     };
     walk(dom, root, 0, &mut w);
     (w.out, w.paras)
@@ -1838,7 +1848,7 @@ fn story_roles_all(pkg: &Package) -> HashMap<String, Vec<String>> {
     let Some(main) = rel_targets("_rels/.rels")
         .into_iter()
         .find(|(_, t, _)| t.ends_with("/officeDocument"))
-        .map(|(_, _, target)| target.trim_start_matches('/').to_string())
+        .map(|(_, _, target)| crate::opc::resolve_rel_target("", &target))
     else {
         return roles;
     };
@@ -1846,11 +1856,7 @@ fn story_roles_all(pkg: &Package) -> HashMap<String, Vec<String>> {
     let targets: HashMap<String, String> = rel_targets(&format!("{dir}/_rels/{file}.rels"))
         .into_iter()
         .map(|(id, _, target)| {
-            let part = match target.strip_prefix('/') {
-                Some(absolute) => absolute.to_string(),
-                None if dir.is_empty() => target,
-                None => format!("{dir}/{target}"),
-            };
+            let part = crate::opc::resolve_rel_target(&main, &target);
             (id, part)
         })
         .collect();
@@ -1931,7 +1937,10 @@ fn listing_lines(pkg: &Package, check: Check, opts: &Options) -> PartLines {
             continue;
         }
         if TEXT_PARTS.contains(&local(&dom, root).as_str()) {
-            map.insert(e.name.clone(), text_lines(&dom, root, check == Check::Runs));
+            map.insert(
+                e.name.clone(),
+                text_lines(&dom, root, check == Check::Runs, false),
+            );
         }
     }
     if let Some(g) = opts.grep.as_deref() {
@@ -1946,6 +1955,20 @@ fn listing_lines(pkg: &Package, check: Check, opts: &Options) -> PartLines {
 /// A complete text snapshot for unified diffs, with no report clipping.
 /// Header/footer roles are stable when Word renumbers their ZIP parts.
 pub(crate) fn document_text(bytes: &[u8]) -> Result<String, String> {
+    document_text_with_critic(bytes, false)
+}
+
+/// The complete snapshot with revision spans rendered at their XML source.
+pub(crate) fn document_text_with_critic(bytes: &[u8], critic: bool) -> Result<String, String> {
+    document_text_view(bytes, critic, false)
+}
+
+/// Validated document snapshot with an explicit revision policy.
+pub(crate) fn document_text_view(
+    bytes: &[u8],
+    critic: bool,
+    accept: bool,
+) -> Result<String, String> {
     let admitted = crate::admission::admit(bytes, crate::admission::InputLimits::default())
         .map_err(|e| e.to_string())?;
     let pkg = Package::open(bytes)?;
@@ -2013,7 +2036,7 @@ pub(crate) fn document_text(bytes: &[u8]) -> Result<String, String> {
         if !xml {
             continue;
         }
-        let (dom, root) = parse(entry)?;
+        let (mut dom, mut root) = parse(entry)?;
         if main
             && (!word_name(&dom, root, "document")
                 || !dom
@@ -2055,7 +2078,31 @@ pub(crate) fn document_text(bytes: &[u8]) -> Result<String, String> {
                 .cloned()
                 .unwrap_or_else(|| entry.name.clone())
         };
-        parts.insert(name, text_lines(&dom, root, false).0);
+        if accept {
+            // Revision transforms use Transitional Word names. Normalize
+            // element and attribute names only, preserving literal URI text.
+            const STRICT: &str = "http://purl.oclc.org/ooxml/wordprocessingml/main";
+            const WORD: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+            let mut nodes = dom.descendants(root, None);
+            nodes.push(root);
+            for node in nodes {
+                if let Some(n) = dom.name(node).filter(|n| n.namespace_name() == STRICT) {
+                    dom.set_name(node, crate::xmllinq::XName::get(n.local_name(), WORD));
+                }
+                for (n, value) in dom.attributes(node) {
+                    if n.namespace_name() == STRICT {
+                        dom.set_attribute_value(node, &n, None);
+                        dom.set_attribute_value(
+                            node,
+                            &crate::xmllinq::XName::get(n.local_name(), WORD),
+                            Some(&value),
+                        );
+                    }
+                }
+            }
+            root = crate::revision_processor::accept_revisions_for_part_content(&mut dom, root);
+        }
+        parts.insert(name, text_lines(&dom, root, false, critic).0);
     }
     let mut out = String::new();
     for (part, lines) in parts {

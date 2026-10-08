@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
     about = "Read, edit, compare and render Word documents",
     long_about = None,
     styles = styles(),
+    term_width = 88,
     args_conflicts_with_subcommands = true,
     subcommand_negates_reqs = true,
     arg_required_else_help = true,
@@ -247,7 +248,7 @@ pub enum Command {
         #[serde(serialize_with = "serialize_timeout")]
         timeout: Option<std::time::Duration>,
     },
-    /// Compare Word or Markdown as an inline patch, CriticMarkup or GitHub diff.
+    /// Review differences as GitHub, word, normal, context or side-by-side text.
     #[command(after_help = "Examples:\n  \
         jubarte diff old.docx new.docx --format github   Git/GitHub patch on stdout\n  \
         jubarte diff old.md new.md                       the patch on stdout\n  \
@@ -266,23 +267,25 @@ pub enum Command {
         /// The new document: .docx or Markdown.
         #[arg(value_name = "NEW")]
         new: PathBuf,
-        /// Output path; its extension picks the format (.md, .docx, .pdf,
-        /// .png) [default: none for two Markdown documents, else
-        /// <old>_v_<new>.docx next to OLD]. GitHub defaults to stdout;
-        /// -o writes only a .patch, .diff or .txt file. Other formats also print the patch.
-        #[arg(short = 'o', long, value_name = "FILE")]
+        /// Write to FILE. Text views default to stdout and write only text.
+        /// Patch/critic infer Word, Markdown, PDF or PNG from the extension.
+        #[arg(short = 'o', long, value_name = "FILE", help_heading = "Review")]
         output: Option<PathBuf>,
-        /// What goes to stdout: `patch` (the changed paragraphs, with their
-        /// ids), `critic` (current document text with tracked marks), or
-        /// `github` (a standard Git/GitHub unified text patch).
-        #[arg(long, value_enum, value_name = "FORMAT", default_value_t = PatchFormat::Patch)]
+        /// Choose the review view; word accepts ALL input changes first.
+        #[arg(long, value_enum, value_name = "FORMAT", default_value_t = PatchFormat::Patch, help_heading = "Review")]
         format: PatchFormat,
         /// Wrap the patch's lines at this many columns; 0 does not wrap.
-        #[arg(long, value_name = "N", default_value_t = crate::markdown::DEFAULT_COLUMNS)]
+        #[arg(long, value_name = "N", default_value_t = crate::markdown::DEFAULT_COLUMNS, help_heading = "Paragraph patch")]
         columns: usize,
-        /// Unchanged lines around each GitHub hunk (GitHub format only).
-        #[arg(long, value_name = "LINES", default_value_t = 3, value_parser = parse_context)]
+        /// Unchanged lines around GitHub or context hunks; -U0 shows changes only.
+        #[arg(short = 'U', long, value_name = "LINES", default_value_t = 3, value_parser = parse_context, help_heading = "Review")]
         context: usize,
+        /// Accept both documents' changes before comparing. Word format always does this.
+        #[arg(long, help_heading = "Review")]
+        accept_changes: bool,
+        /// Show complete lines instead of a 70-character window around changes.
+        #[arg(long, help_heading = "Review")]
+        full_lines: bool,
         /// Output format, when --output does not say.
         #[arg(
             short = 't',
@@ -302,32 +305,37 @@ pub enum Command {
         )]
         from: Option<Format>,
         /// Overwrite the output file if it already exists.
-        #[arg(long)]
+        #[arg(long, help_heading = "Review")]
         force: bool,
         /// Who made the changes: the patch's owner and the revisions'
         /// author [default: `git config user.name`, else Redline].
-        #[arg(short = 'a', long, value_name = "NAME")]
+        #[arg(short = 'a', long, value_name = "NAME", help_heading = "Word redline")]
         author: Option<String>,
         /// When (ISO 8601) [default: now]; pin it for reproducible output.
-        #[arg(short = 'd', long, value_name = "ISO8601")]
+        #[arg(
+            short = 'd',
+            long,
+            value_name = "ISO8601",
+            help_heading = "Word redline"
+        )]
         date: Option<String>,
         /// Whose redline to reproduce (see `jubarte --help`).
-        #[arg(long, value_enum, value_name = "MODE", default_value_t = CompareMode::Word)]
+        #[arg(long, value_enum, value_name = "MODE", default_value_t = CompareMode::Word, help_heading = "Word redline")]
         mode: CompareMode,
         /// LCS detail threshold (see `jubarte --help`).
-        #[arg(long, value_name = "RATIO", value_parser = parse_threshold)]
+        #[arg(long, value_name = "RATIO", value_parser = parse_threshold, help_heading = "Word redline")]
         detail_threshold: Option<f64>,
         /// Two Markdown documents written as Word take styles, page setup,
         /// headers and footers from this .docx.
-        #[arg(long, value_name = "FILE")]
+        #[arg(long, value_name = "FILE", help_heading = "Word redline")]
         reference_doc: Option<PathBuf>,
         /// Read CriticMarkup in the Markdown documents as tracked changes
         /// (Word output). By default a document compared is text.
-        #[arg(long)]
+        #[arg(long, help_heading = "Word redline")]
         critic: bool,
         /// Where images named by the Markdown are found [default: each
         /// Markdown file's directory].
-        #[arg(long, value_name = "DIR")]
+        #[arg(long, value_name = "DIR", help_heading = "Word redline")]
         resource_path: Option<PathBuf>,
         /// How tracked changes are painted in PDF or PNG output (see
         /// `convert --help`).
@@ -809,9 +817,24 @@ pub enum PatchFormat {
     Patch,
     /// CriticMarkup: current document text with tracked marks.
     Critic,
-    /// Full Git/GitHub unified text patch; no Word document is created.
+    /// Git/GitHub unified text; preserves each document's tracked marks.
     #[value(alias = "unified", alias = "text")]
     Github,
+    /// Fresh word-level CriticMarkup after accepting ALL changes in both inputs.
+    Word,
+    /// Normal diff with line addresses and no context (a/d/c, < and >).
+    Normal,
+    /// Context diff with old/new ranges and !, + and - prefixes.
+    Context,
+    /// Old and new lines in parallel columns, with |, < and > markers.
+    SideBySide,
+}
+
+impl PatchFormat {
+    /// Whether this format compares document snapshots without constructing a redline.
+    pub fn is_text_view(self) -> bool {
+        !matches!(self, Self::Patch | Self::Critic)
+    }
 }
 
 /// `jubarte --mode` (compare).
@@ -1101,16 +1124,27 @@ fn parse_palette(value: &str) -> Result<String, String> {
 // a potentially enormous list of page indices.
 fn validate_pages(value: &str) -> Result<String, String> {
     let page = |s: &str| {
-        s.trim()
+        let s = s.trim();
+        if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(format!("'{s}' is not a page number"));
+        }
+        let n = s
             .parse::<usize>()
-            .ok()
-            .filter(|n| *n > 0)
-            .ok_or_else(|| "pages must be positive numbers counted from 1".to_string())
+            .map_err(|_| format!("'{s}' is not a page number"))?;
+        if n == 0 {
+            Err("pages are counted from 1".to_string())
+        } else {
+            Ok(n)
+        }
     };
     for item in value.split(',') {
+        let item = item.trim();
+        if item.is_empty() {
+            return Err("empty item in page selection".into());
+        }
         if let Some((first, last)) = item.split_once('-') {
             if page(first)? > page(last)? {
-                return Err("page ranges must run forwards".into());
+                return Err(format!("'{item}' runs backwards"));
             }
         } else {
             page(item)?;
@@ -1150,9 +1184,22 @@ fn validate_matches(
         ));
     }
     if name == "diff" {
-        let github = args.get_one::<PatchFormat>("format") == Some(&PatchFormat::Github);
-        if !github && args.value_source("context") == Some(ValueSource::CommandLine) {
-            return Err(error(&mut task, "--context requires --format github"));
+        let format = *args
+            .get_one::<PatchFormat>("format")
+            .expect("default format");
+        let github = format.is_text_view();
+        if !github {
+            for flag in ["context", "accept_changes", "full_lines"] {
+                if args.value_source(flag) == Some(ValueSource::CommandLine) {
+                    return Err(error(
+                        &mut task,
+                        &format!(
+                            "--{} requires a text diff format (github, word, normal, context or side-by-side)",
+                            flag.replace('_', "-")
+                        ),
+                    ));
+                }
+            }
         }
         if github {
             if args
@@ -1161,17 +1208,20 @@ fn validate_matches(
             {
                 return Err(error(
                     &mut task,
-                    "--format github writes text; --to must be md (markdown)",
+                    "this diff format writes text; --to must be md (markdown)",
                 ));
             }
             if args.get_one::<PathBuf>("output").is_some_and(|path| {
                 !path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
-                    matches!(e.to_ascii_lowercase().as_str(), "patch" | "diff" | "txt")
+                    matches!(
+                        e.to_ascii_lowercase().as_str(),
+                        "patch" | "diff" | "txt" | "md" | "markdown"
+                    )
                 })
             }) {
                 return Err(error(
                     &mut task,
-                    "--format github output must end in .patch, .diff or .txt",
+                    "text diff output must end in .patch, .diff, .txt or .md",
                 ));
             }
             for flag in [
@@ -1190,7 +1240,7 @@ fn validate_matches(
                     return Err(error(
                         &mut task,
                         &format!(
-                            "--{} does not apply to --format github",
+                            "--{} does not apply to this text diff format",
                             flag.replace('_', "-")
                         ),
                     ));
@@ -1262,6 +1312,20 @@ fn compare_json(compare: &CompareArgs) -> serde_json::Value {
     args["modified"] =
         serde_json::to_value(compare.modified.as_ref().or(compare.modified_pos.as_ref()))
             .expect("UTF-8 path");
+    let input_format = |path: Option<&PathBuf>| {
+        path.and_then(|p| Format::of_path(p))
+            .filter(|f| matches!(f, Format::Docx | Format::Md))
+    };
+    args["old_format"] = serde_json::to_value(input_format(
+        compare.original.as_ref().or(compare.original_pos.as_ref()),
+    ))
+    .expect("format");
+    args["new_format"] = serde_json::to_value(input_format(
+        compare.modified.as_ref().or(compare.modified_pos.as_ref()),
+    ))
+    .expect("format");
+    args["output_format"] =
+        serde_json::to_value(compare.output.as_deref().and_then(Format::of_path)).expect("format");
     args
 }
 
@@ -1295,6 +1359,7 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
         .about("Read, edit, compare and render Word documents")
         .color(clap::ColorChoice::Never)
         .styles(styles())
+        .term_width(88)
         .subcommand_help_heading("Tasks")
         .arg_required_else_help(true)
         .subcommands(
@@ -1335,6 +1400,29 @@ pub fn parse_json(arguments: &[String], program: &str, supported: &[String]) -> 
             let mut value = serde_json::to_value(&task).expect("UTF-8 CLI arguments");
             if let Command::Compare(compare) = &task {
                 value["args"] = compare_json(compare);
+            }
+            if let Command::Diff {
+                old,
+                new,
+                output,
+                to,
+                from,
+                ..
+            } = &task
+            {
+                let input_format = |path: &Path| {
+                    from.or_else(|| {
+                        Format::of_path(path).filter(|f| matches!(f, Format::Docx | Format::Md))
+                    })
+                };
+                value["args"]["old_format"] =
+                    serde_json::to_value(input_format(old)).expect("format");
+                value["args"]["new_format"] =
+                    serde_json::to_value(input_format(new)).expect("format");
+                value["args"]["output_format"] = serde_json::to_value(
+                    to.or_else(|| output.as_deref().and_then(Format::of_path)),
+                )
+                .expect("format");
             }
             value["exit_code"] = 0.into();
             Ok(value.to_string())

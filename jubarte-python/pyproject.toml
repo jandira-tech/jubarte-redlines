@@ -56,8 +56,8 @@ Issues = "https://github.com/jandira-tech/jubarte-redlines/issues"
 [tool.maturin]
 module-name = "jubarte_redlines._native"
 python-source = "python"
-# Cargo release profiles strip once; a second platform strip can produce
-# an invalid Mach-O LINKEDIT string pool on macOS.
+# Leave native extension symbols intact: macOS symbol stripping can
+# produce an invalid Mach-O LINKEDIT string pool and prevent import.
 strip = false
 # The sdist vendors the engine checkout (path dep on ".."); keep sibling
 # adapters, local build output, and app junk out of it.

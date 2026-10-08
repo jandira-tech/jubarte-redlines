@@ -89,10 +89,13 @@ test("word view always accepts both histories and other views accept on request"
   const next = wasm.markdownToDocx("Due in {~~60~>45~~} days.\n");
   for (const format of ["github", "normal", "context", "side-by-side"]) {
     assert.ok(wasm.diffDocumentsView(old, next, JSON.stringify({ format })));
-    assert.equal(wasm.diffDocumentsView(old, next, JSON.stringify({ format, acceptChanges: true })), "");
+    const clean = wasm.markdownToDocx("Due in 45 days.\n");
+    const accepted = wasm.diffDocumentsView(old, next, JSON.stringify({ format, acceptChanges: true }));
+    assert.equal(accepted, wasm.diffDocumentsView(clean, clean, JSON.stringify({ format })));
+    assert.ok(!accepted.includes("30") && !accepted.includes("60"));
   }
   const word = wasm.diffDocumentsView(old, next, '{"format":"word"}');
-  assert.ok(word.includes("45") && !word.includes("30") && !word.includes("60"));
+  assert.equal(word, "");
   assert.doesNotMatch(word, /\{(?:~~|\+\+|--)/);
   const changed = wasm.diffDocumentsView(old, wasm.markdownToDocx("Due in {~~60~>90~~} days.\n"), '{"format":"word"}');
   assert.ok(changed.includes("{~~45~>90~~}") && !changed.includes("30") && !changed.includes("60"));
