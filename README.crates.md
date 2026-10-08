@@ -49,6 +49,16 @@ Word-style review workflows without automating Microsoft Word or LibreOffice.
 [jandira-tech.github.io/neurotic_docx_bench](https://jandira-tech.github.io/neurotic_docx_bench/)**
 · tables: [neurotic_docx_bench RESULTS.md](https://github.com/jandira-tech/neurotic_docx_bench/blob/main/RESULTS.md)
 
+## Feedback and contributions
+
+Report bugs and request enhancements in the public
+[issue tracker](https://github.com/jandira-tech/jubarte-redlines/issues), which
+also archives reports and responses. English reports are welcome. See
+[CONTRIBUTING.md](https://github.com/jandira-tech/jubarte-redlines/blob/v0.11.3/CONTRIBUTING.md) for pull requests, coding requirements,
+building and tests, and [SECURITY.md](https://github.com/jandira-tech/jubarte-redlines/blob/v0.11.3/SECURITY.md) for private vulnerability
+reports. The [OpenSSF evidence review](https://github.com/jandira-tech/jubarte-redlines/blob/v0.11.3/docs/OPENSSF.md) tracks the criteria
+and outstanding maintainer attestations.
+
 ## Quick start
 
 Install the CLI:

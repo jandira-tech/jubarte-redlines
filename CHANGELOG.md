@@ -15,6 +15,16 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
 
 ## [Unreleased]
 
+### Security
+
+- Bound OPC metadata to 256 attributes per element before rdocx-opc's
+  quick-xml 0.37 duplicate checks (RUSTSEC-2026-0194 denial of service).
+  Oversized metadata is now refused. The dependency itself remains affected;
+  direct use of its re-exported parser is outside this mitigation.
+- Add contribution and private vulnerability-reporting policies, daily
+  dependency/history-secret checks, mandatory release security checks and
+  an OpenSSF criterion evidence ledger.
+
 ### Changed
 
 - The desktop app is no longer tracked here: it is its own repository
