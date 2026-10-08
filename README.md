@@ -15,6 +15,7 @@ Compare two Word documents into native tracked changes, inspect or resolve
 changes programmatically, apply validated edit plans, and render DOCX to PDF
 or PNG — from Rust, Python, Node/browser, or the CLI.
 
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15267/badge)](https://www.bestpractices.dev/projects/15267)
 [![CI](https://github.com/jandira-tech/jubarte-redlines/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jandira-tech/jubarte-redlines/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/jandira-tech/jubarte-redlines/branch/main/graph/badge.svg)](https://codecov.io/gh/jandira-tech/jubarte-redlines)
 [![crates.io](https://img.shields.io/crates/v/jubarte-redlines.svg)](https://crates.io/crates/jubarte-redlines)
@@ -47,6 +48,16 @@ Word-style review workflows without automating Microsoft Word or LibreOffice.
 **Live benchmark, every page against Microsoft Word:
 [jandira-tech.github.io/neurotic_docx_bench](https://jandira-tech.github.io/neurotic_docx_bench/)**
 · tables: [neurotic_docx_bench RESULTS.md](https://github.com/jandira-tech/neurotic_docx_bench/blob/main/RESULTS.md)
+
+## Feedback and contributions
+
+Report bugs and request enhancements in the public
+[issue tracker](https://github.com/jandira-tech/jubarte-redlines/issues), which
+also archives reports and responses. English reports are welcome. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for pull requests, coding requirements,
+building and tests, and [SECURITY.md](SECURITY.md) for private vulnerability
+reports. The [OpenSSF evidence review](docs/OPENSSF.md) tracks the criteria
+and outstanding maintainer attestations.
 
 ## Quick start
 

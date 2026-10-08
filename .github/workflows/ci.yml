@@ -225,6 +225,11 @@ jobs:
       - run: python3 scripts/test_convert_sweep.py
       - run: python3 planning/test_sample50_check.py
       - run: python3 scripts/test_release_sh.py
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: OpenSSF attestation script tests with coverage
+        run: |
+          uv run --with coverage coverage run --branch --include='scripts/openssf_attest.py' scripts/test_openssf_attest.py
+          uv run --with coverage coverage report --fail-under=90
       - run: python3 scripts/test_check_release_info.py
       - run: python3 scripts/test_library_readmes.py
       - run: python3 scripts/test_check_release_artifacts.py

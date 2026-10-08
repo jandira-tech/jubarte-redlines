@@ -306,3 +306,32 @@ fn wml_document_exposes_its_input_bytes_read_only() {
     let wml = WmlDocument::from_bytes(ORIGINAL).expect("open");
     assert_eq!(wml.bytes(), ORIGINAL);
 }
+
+/// The public document API must reject oversized OPC attributes before the
+/// old dependency's quadratic duplicate check, while admitting the boundary.
+#[test]
+fn document_open_bounds_opc_metadata_attributes() {
+    for count in [256, 257] {
+        let attributes = (3..count)
+            .map(|index| format!(" a{index}=\"x\""))
+            .collect::<String>();
+        let xml = format!(
+            "<Relationships><Relationship Id=\"rId9\" Type=\"urn:test\" Target=\"document.xml\"{attributes}/></Relationships>"
+        );
+        let bytes = package(|writer, options| {
+            writer
+                .start_file("word/_rels/document.xml.rels", options)
+                .unwrap();
+            writer.write_all(xml.as_bytes()).unwrap();
+        });
+        let result = WmlDocument::from_bytes(&bytes);
+        if count == 256 {
+            assert!(result.is_ok());
+        } else {
+            let Err(err) = result else {
+                panic!("oversized attributes admitted")
+            };
+            assert!(err.to_string().contains("256 attributes"), "{err}");
+        }
+    }
+}
