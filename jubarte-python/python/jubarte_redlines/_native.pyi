@@ -29,12 +29,16 @@ def docx_to_pdf(
     compress: bool = False,
     revisions: str = "conventional",
     revision_palette: str | None = None,
+    move_comments: bool = False,
+    changed_only: bool = False,
 ) -> bytes: ...
 def docx_to_png(
     docx: bytes,
     dpi: float = 96.0,
     revisions: str = "conventional",
     revision_palette: str | None = None,
+    move_comments: bool = False,
+    changed_only: bool = False,
 ) -> list[bytes]: ...
 def render(
     docx: bytes,
@@ -44,6 +48,8 @@ def render(
     revisions: str = "conventional",
     revision_palette: str | None = None,
     pages: list[int] | None = None,
+    move_comments: bool = False,
+    changed_only: bool = False,
 ) -> tuple[bytes | None, list[bytes], str]: ...
 def diff_render_json(
     a: bytes,

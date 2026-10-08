@@ -33,17 +33,31 @@ fn err(e: impl std::fmt::Display) -> PyErr {
     JubarteError::new_err(jubarte::admission::code_first(&message).unwrap_or(message))
 }
 
+/// Where a PDF's comments go and which pages it keeps: the binary's
+/// `--move-comments` and `--changed-only`.
+#[derive(Clone, Copy, Default)]
+struct PageChoice {
+    move_comments: bool,
+    changed_only: bool,
+}
+
 fn pdf_options(
     compress: bool,
     revisions: &str,
     revision_palette: Option<&str>,
+    page: PageChoice,
 ) -> PyResult<jubarte::convert::PdfOptions> {
     let revisions = jubarte::convert::RevisionStyle::from_choice(revisions, revision_palette)
         .map_err(JubarteError::new_err)?;
     Ok(jubarte::convert::PdfOptions {
         compress,
         revisions,
-        ..jubarte::convert::PdfOptions::default()
+        comments: if page.move_comments {
+            jubarte::convert::CommentPlacement::End
+        } else {
+            jubarte::convert::CommentPlacement::Margin
+        },
+        changed_only: page.changed_only,
     })
 }
 
@@ -200,17 +214,26 @@ fn get_revisions_json(
 /// `"conventional"` (red struck deletions, blue underlined insertions, green
 /// moves double-struck and double-underlined), `"word"` (Microsoft Word's
 /// markup) or `"custom"` with
-/// `revision_palette="deleted=#AA0000:strike,..."`.
+/// `revision_palette="deleted=#AA0000:strike,..."`. `move_comments=True`
+/// lists the comments after the last page instead of in balloons beside the
+/// text; `changed_only=True` keeps only the pages a tracked change touches
+/// (a document without changes keeps its first page).
 #[pyfunction]
-#[pyo3(signature = (docx, compress = false, revisions = "conventional", revision_palette = None))]
+#[pyo3(signature = (docx, compress = false, revisions = "conventional", revision_palette = None, move_comments = false, changed_only = false))]
 fn docx_to_pdf(
     py: Python<'_>,
     docx: &[u8],
     compress: bool,
     revisions: &str,
     revision_palette: Option<&str>,
+    move_comments: bool,
+    changed_only: bool,
 ) -> PyResult<Py<PyBytes>> {
-    let options = pdf_options(compress, revisions, revision_palette)?;
+    let page = PageChoice {
+        move_comments,
+        changed_only,
+    };
+    let options = pdf_options(compress, revisions, revision_palette, page)?;
     let out = py
         .detach(|| jubarte::convert::docx_to_pdf_with(docx, options))
         .map_err(err)?;
@@ -218,16 +241,23 @@ fn docx_to_pdf(
 }
 
 /// Rasterize every page to PNG at `dpi` → list of PNG bytes, page order.
+/// `move_comments` and `changed_only` as in `docx_to_pdf`.
 #[pyfunction]
-#[pyo3(signature = (docx, dpi = 96.0, revisions = "conventional", revision_palette = None))]
+#[pyo3(signature = (docx, dpi = 96.0, revisions = "conventional", revision_palette = None, move_comments = false, changed_only = false))]
 fn docx_to_png(
     py: Python<'_>,
     docx: &[u8],
     dpi: f32,
     revisions: &str,
     revision_palette: Option<&str>,
+    move_comments: bool,
+    changed_only: bool,
 ) -> PyResult<Vec<Py<PyBytes>>> {
-    let options = pdf_options(false, revisions, revision_palette)?;
+    let page = PageChoice {
+        move_comments,
+        changed_only,
+    };
+    let options = pdf_options(false, revisions, revision_palette, page)?;
     let pages = py
         .detach(|| jubarte::convert::docx_to_png(docx, options, dpi))
         .map_err(err)?;
@@ -249,9 +279,15 @@ type EditOutcome = (bool, Option<Py<PyBytes>>, Option<Py<PyBytes>>, String);
 ///
 /// `report_json` is `{"page_count", "pages": [{"index", "text"}], "fonts": [...]}`.
 /// `pages` (zero-based) rasterizes only those pages, ascending and without
-/// repeats; the report still covers every page.
+/// repeats; the report still covers every page. `move_comments` and
+/// `changed_only` as in `docx_to_pdf`; with `changed_only` the report and
+/// `pages` count the kept pages.
 #[pyfunction]
-#[pyo3(signature = (docx, pdf = true, png_dpi = None, compress = false, revisions = "conventional", revision_palette = None, pages = None))]
+#[pyo3(signature = (docx, pdf = true, png_dpi = None, compress = false, revisions = "conventional", revision_palette = None, pages = None, move_comments = false, changed_only = false))]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a Python signature of keyword arguments with defaults, as the binary's flags"
+)]
 fn render(
     docx: &Bound<'_, PyBytes>,
     pdf: bool,
@@ -260,8 +296,14 @@ fn render(
     revisions: &str,
     revision_palette: Option<&str>,
     pages: Option<Vec<usize>>,
+    move_comments: bool,
+    changed_only: bool,
 ) -> PyResult<Rendered> {
-    let options = pdf_options(compress, revisions, revision_palette)?;
+    let page = PageChoice {
+        move_comments,
+        changed_only,
+    };
+    let options = pdf_options(compress, revisions, revision_palette, page)?;
     let request = jubarte::convert::RenderRequest {
         pdf,
         png_dpi,
@@ -312,7 +354,7 @@ fn diff_render_json(
 ) -> PyResult<RenderDiffOut> {
     let options = jubarte::convert::DiffOptions {
         dpi,
-        pdf: pdf_options(false, revisions, revision_palette)?,
+        pdf: pdf_options(false, revisions, revision_palette, PageChoice::default())?,
         overlay,
     };
     let diff = py

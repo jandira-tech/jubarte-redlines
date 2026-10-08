@@ -933,7 +933,7 @@ output. `input_limits` overrides the admission budget key by key
 ### `docx_to_pdf`
 
 ```python
-docx_to_pdf(docx, compress=False, revisions='conventional', revision_palette=None)
+docx_to_pdf(docx, compress=False, revisions='conventional', revision_palette=None, move_comments=False, changed_only=False)
 ```
 
 Render a DOCX package (bytes) → PDF bytes (Word-style layout).
@@ -943,7 +943,10 @@ smaller but no longer plain text. `revisions` paints tracked changes:
 `"conventional"` (red struck deletions, blue underlined insertions, green
 moves double-struck and double-underlined), `"word"` (Microsoft Word's
 markup) or `"custom"` with
-`revision_palette="deleted=#AA0000:strike,..."`.
+`revision_palette="deleted=#AA0000:strike,..."`. `move_comments=True`
+lists the comments after the last page instead of in balloons beside the
+text; `changed_only=True` keeps only the pages a tracked change touches
+(a document without changes keeps its first page).
 
 ### `get_revisions`
 
@@ -1433,10 +1436,17 @@ PdfOptions(
     compress: bool = False,
     revisions: RevisionStyle = 'conventional',
     revision_palette: str | None = None,
+    move_comments: bool = False,
+    changed_only: bool = False,
 )
 ```
 
 PDF options with the same defaults as the current byte API.
+
+``move_comments`` lists the comments after the last page instead of in
+balloons beside the text; ``changed_only`` keeps only the pages a tracked
+change touches. Both mirror the binary's flags and apply to PDF and PNG
+output; ``diff_render`` ignores them.
 
 ### `Revision`
 

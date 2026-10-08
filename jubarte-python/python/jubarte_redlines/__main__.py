@@ -111,7 +111,13 @@ def _pdf_options(args: argparse.Namespace) -> PdfOptions:
         raise CliError("--revisions custom needs --revision-palette")
     if revisions != "custom" and palette is not None:
         raise CliError("--revision-palette needs --revisions custom")
-    return PdfOptions(compress=compress, revisions=revisions, revision_palette=palette)
+    return PdfOptions(
+        compress=compress,
+        revisions=revisions,
+        revision_palette=palette,
+        move_comments=getattr(args, "move_comments", False),
+        changed_only=getattr(args, "changed_only", False),
+    )
 
 
 def _png_name(stem: str, index: int, count: int) -> str:
@@ -278,6 +284,9 @@ def cmd_convert(args: argparse.Namespace) -> int:
         # Markdown goes to Word unless a PDF or PNG is asked for.
         wants_render = args.pdf or args.png or (args.to != "docx" and args.output is not None and args.output.suffix.lower() != ".docx")
         if not wants_render:
+            for given, flag in ((args.move_comments, "--move-comments"), (args.changed_only, "--changed-only")):
+                if given:
+                    raise CliError(f"{flag} applies to PDF or PNG output only")
             docx_out = args.output or args.file.with_suffix(".docx")
             _ensure_writable(docx_out, args.force)
             _write(docx_out, doc.to_bytes())

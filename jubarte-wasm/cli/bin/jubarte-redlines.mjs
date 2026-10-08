@@ -205,7 +205,7 @@ const COMMANDS = {
       }
       const output = o.output ?? path.join(path.dirname(file), `${stem(file)}.pdf`);
       ensureWritable(output, o.force);
-      const pdf = wasm.docxToPdf(docx, Boolean(o.compress), o.revisions, palette);
+      const pdf = wasm.docxToPdf(docx, Boolean(o.compress), o.revisions, palette, Boolean(o.move_comments), Boolean(o.changed_only));
       write(output, pdf);
       console.log(`wrote ${output} (${pdf.length} bytes, ${plural(wasm.pdfPageCount(pdf), "page")})`);
     },

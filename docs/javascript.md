@@ -378,7 +378,7 @@ Markdown without paragraph ids, with tracked changes kept or resolved.
 ### `docxToPdf`
 
 ```typescript
-docxToPdf(docx: Uint8Array, compress?: boolean | null, revisions?: string | null, revision_palette?: string | null): Uint8Array
+docxToPdf(docx: Uint8Array, compress?: boolean | null, revisions?: string | null, revision_palette?: string | null, move_comments?: boolean | null, changed_only?: boolean | null): Uint8Array
 ```
 
 Render a DOCX package (bytes) → PDF bytes (Word-style layout).
@@ -392,6 +392,10 @@ never layout metrics.
 `revisions` (optional, default `"conventional"`) paints tracked changes:
 `"conventional"`, `"word"` (Microsoft Word's markup) or `"custom"` with
 `revisionPalette` (`"deleted=#AA0000:strike,..."`).
+`moveComments` (optional, default `false`) lists the comments after the
+last page instead of in balloons beside the text; `changedOnly`
+(optional, default `false`) keeps only the pages a tracked change
+touches (a document without changes keeps its first page).
 
 ### `editReportJsonl`
 

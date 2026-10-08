@@ -865,13 +865,19 @@ exports.documentMarkdownWithChanges = documentMarkdownWithChanges;
  * `revisions` (optional, default `"conventional"`) paints tracked changes:
  * `"conventional"`, `"word"` (Microsoft Word's markup) or `"custom"` with
  * `revisionPalette` (`"deleted=#AA0000:strike,..."`).
+ * `moveComments` (optional, default `false`) lists the comments after the
+ * last page instead of in balloons beside the text; `changedOnly`
+ * (optional, default `false`) keeps only the pages a tracked change
+ * touches (a document without changes keeps its first page).
  * @param {Uint8Array} docx
  * @param {boolean | null} [compress]
  * @param {string | null} [revisions]
  * @param {string | null} [revision_palette]
+ * @param {boolean | null} [move_comments]
+ * @param {boolean | null} [changed_only]
  * @returns {Uint8Array}
  */
-function docxToPdf(docx, compress, revisions, revision_palette) {
+function docxToPdf(docx, compress, revisions, revision_palette, move_comments, changed_only) {
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
         const ptr0 = passArray8ToWasm0(docx, wasm.__wbindgen_export2);
@@ -880,7 +886,7 @@ function docxToPdf(docx, compress, revisions, revision_palette) {
         var len1 = WASM_VECTOR_LEN;
         var ptr2 = isLikeNone(revision_palette) ? 0 : passStringToWasm0(revision_palette, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
         var len2 = WASM_VECTOR_LEN;
-        wasm.docxToPdf(retptr, ptr0, len0, isLikeNone(compress) ? 0xFFFFFF : compress ? 1 : 0, ptr1, len1, ptr2, len2);
+        wasm.docxToPdf(retptr, ptr0, len0, isLikeNone(compress) ? 0xFFFFFF : compress ? 1 : 0, ptr1, len1, ptr2, len2, isLikeNone(move_comments) ? 0xFFFFFF : move_comments ? 1 : 0, isLikeNone(changed_only) ? 0xFFFFFF : changed_only ? 1 : 0);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);

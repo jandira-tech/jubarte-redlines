@@ -38,6 +38,12 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   page. With `--move-comments`, only the kept pages' comments are listed.
 - `PdfOptions` has two more public fields (`comments`, `changed_only`): a
   struct literal that names every field needs `..PdfOptions::default()`.
+- Python and JavaScript take both options. In Python they are
+  `PdfOptions(move_comments=…, changed_only=…)` for `Document.to_pdf`,
+  `to_png` and `render`, keyword arguments of `docx_to_pdf`, and
+  `python -m jubarte_redlines convert --move-comments / --changed-only`.
+  In JavaScript they are `docxToPdf`'s two trailing arguments and
+  `npx jubarte-redlines convert --move-comments / --changed-only`.
 
 ### Security
 
