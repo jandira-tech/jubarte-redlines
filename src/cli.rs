@@ -228,6 +228,9 @@ pub enum Command {
         /// keep their conventional mark.
         #[arg(long, value_name = "SPEC", value_parser = parse_palette, requires = "revisions", help_heading = "Revision marks")]
         revision_palette: Option<String>,
+        /// Comment placement and page selection in PDF or PNG output.
+        #[command(flatten)]
+        page: PageOptions,
         /// Formats and Markdown reading.
         #[command(flatten)]
         #[serde(flatten)]
@@ -344,6 +347,9 @@ pub enum Command {
         /// Marks for --revisions custom (see `convert --help`).
         #[arg(long, value_name = "SPEC", value_parser = parse_palette, requires = "revisions", help_heading = "Revision marks")]
         revision_palette: Option<String>,
+        /// Comment placement and page selection in PDF or PNG output.
+        #[command(flatten)]
+        page: PageOptions,
     },
     /// Inspect document facts, paragraphs, styles and tables.
     Inspect {
@@ -909,6 +915,35 @@ impl From<TrackChanges> for crate::markdown::TrackChanges {
             TrackChanges::All => Self::All,
             TrackChanges::Accept => Self::Accept,
             TrackChanges::Reject => Self::Reject,
+        }
+    }
+}
+
+/// Where a PDF's comments go and which pages it keeps (`convert`, `diff`).
+#[derive(clap::Args, Clone, Copy, Debug, Default)]
+pub struct PageOptions {
+    /// List the comments after the last page instead of in balloons beside
+    /// the text. The commented text keeps its tint and a `[JR1]` marker,
+    /// and the pages keep their own width.
+    #[arg(long)]
+    pub move_comments: bool,
+    /// Keep only the pages a tracked change touches. The whole document is
+    /// laid out first, so page numbers stay the document's; a document
+    /// without changes keeps its first page. --pages counts the kept pages.
+    #[arg(long)]
+    pub changed_only: bool,
+}
+
+impl PageOptions {
+    pub fn apply(self, options: crate::convert::PdfOptions) -> crate::convert::PdfOptions {
+        crate::convert::PdfOptions {
+            comments: if self.move_comments {
+                crate::convert::CommentPlacement::End
+            } else {
+                crate::convert::CommentPlacement::Margin
+            },
+            pub changed_only: self.changed_only,
+            ..options
         }
     }
 }

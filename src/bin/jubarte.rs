@@ -258,6 +258,8 @@ struct ConvertJob<'a> {
     pages: Option<&'a [usize]>,
     /// Exit [`EXIT_FONT_SUBSTITUTED`] when a requested font was substituted.
     fail_on_substitution: bool,
+    /// Comment placement and page selection.
+    page: PageOptions,
 }
 
 /// `convert --timeout`: the deadline passed.
@@ -348,10 +350,11 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), ConvertFailure> {
         Some(bytes) => bytes.to_vec(),
         None => read_document(job.file)?,
     };
-    let options = jubarte::convert::PdfOptions {
+    let options = job.page.apply(jubarte::convert::PdfOptions {
         compress: job.compress,
         revisions: job.revisions,
-    };
+        ..jubarte::convert::PdfOptions::default()
+    });
     let rendered = jubarte::convert::render(
         &bytes,
         options,
@@ -795,6 +798,7 @@ fn run_edit(job: &EditJob<'_>) -> Result<(), (u8, String)> {
     let options = jubarte::convert::PdfOptions {
         compress: true,
         revisions: job.revisions,
+        ..jubarte::convert::PdfOptions::default()
     };
     let request = jubarte::convert::RenderRequest {
         pdf: job.pdf,
@@ -1277,6 +1281,8 @@ struct DiffJob<'a> {
     critic: bool,
     resource_path: Option<&'a Path>,
     revisions: jubarte::convert::RevisionStyle,
+    /// Comment placement and page selection in PDF or PNG output.
+    page: PageOptions,
     /// Print the patch, wrapped at these columns; `None` for `--format
     /// critic`.
     patch: Option<usize>,
@@ -1340,6 +1346,16 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), String> {
         } else {
             Format::Docx
         });
+    if matches!(to, Format::Docx | Format::Md) {
+        for (given, flag) in [
+            (job.page.move_comments, "--move-comments"),
+            (job.page.changed_only, "--changed-only"),
+        ] {
+            if given {
+                return Err(format!("{flag} applies to PDF or PNG output only"));
+            }
+        }
+    }
     let output = match (job.output, to) {
         (Some(path), _) => Some(path.to_path_buf()),
         (None, Format::Md) => None,
@@ -1432,6 +1448,7 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), String> {
             report: None,
             pages: None,
             fail_on_substitution: false,
+            page: job.page,
         })
         .map_err(|f| f.message),
         (Format::Docx, None) => unreachable!("a Word output always has a path"),
@@ -1523,6 +1540,8 @@ fn run_convert_any(job: &ConvertJob<'_>, markdown: &MarkdownArgs) -> Result<(), 
             (job.report.is_some(), "--report"),
             (job.font_report.is_some(), "--font-report"),
             (job.fail_on_substitution, "--fail-on-substitution"),
+            (job.page.move_comments, "--move-comments"),
+            (job.page.changed_only, "--changed-only"),
         ] {
             if given {
                 return Err(format!("{flag} applies to PDF or PNG output only").into());
@@ -1904,6 +1923,7 @@ fn cli_main() -> ExitCode {
             pages: page_spec,
             fail_on_substitution,
             timeout,
+            page,
         }) => {
             if let Some(limit) = timeout {
                 arm_timeout(limit);
@@ -1930,6 +1950,7 @@ fn cli_main() -> ExitCode {
                 report: report.as_deref(),
                 pages: selected.as_deref(),
                 fail_on_substitution,
+                page,
             };
             return convert_exit_code(run_convert_any(&job, &markdown));
         }
@@ -1954,6 +1975,7 @@ fn cli_main() -> ExitCode {
             resource_path,
             revisions,
             revision_palette,
+            page,
         }) => {
             if format.is_text_view() {
                 use jubarte::text_diff::{TextFormat, TextOptions, UnifiedOptions};
@@ -2006,6 +2028,7 @@ fn cli_main() -> ExitCode {
                 critic,
                 resource_path: resource_path.as_deref(),
                 revisions: style,
+                page,
                 patch: (format == PatchFormat::Patch).then_some(columns),
             }));
         }
@@ -2828,6 +2851,7 @@ mod tests {
             report: None,
             pages: None,
             fail_on_substitution: false,
+            page: PageOptions::default(),
         })
         .expect_err("report over the PDF must be refused");
         assert!(
@@ -2850,6 +2874,7 @@ mod tests {
             report: None,
             pages: None,
             fail_on_substitution: false,
+            page: PageOptions::default(),
         })
         .expect_err("report over the input must be refused");
         assert!(
@@ -2919,6 +2944,7 @@ mod tests {
             report: None,
             pages: None,
             fail_on_substitution: true,
+            page: PageOptions::default(),
         })
         .expect_err("a substituted font fails the run");
         assert_eq!(err.code, EXIT_FONT_SUBSTITUTED);
@@ -2957,6 +2983,7 @@ mod tests {
             report: None,
             pages: None,
             fail_on_substitution: false,
+            page: PageOptions::default(),
         })
         .expect("convert");
         assert!(pdf.exists());
@@ -3169,6 +3196,7 @@ mod tests {
             report: None,
             pages,
             fail_on_substitution: false,
+            page: PageOptions::default(),
         }
     }
 
@@ -3211,7 +3239,7 @@ mod tests {
         let err = run_convert(&convert_job(&docx, &out, Some(&[5]))).expect_err("page 6 of 3");
         assert!(
             err.message
-                .contains("page 6 is out of range: the document has 3 pages"),
+                .contains("page 6 is out of range: the output has 3 pages"),
             "{}",
             err.message
         );

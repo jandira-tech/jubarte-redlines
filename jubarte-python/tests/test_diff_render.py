@@ -50,7 +50,7 @@ def test_pages_must_be_page_numbers(bad: list[object]) -> None:
 
 
 def test_a_page_past_the_end_is_an_engine_error() -> None:
-    with pytest.raises(JubarteError, match="page 4 is out of range: the document has 3 pages"):
+    with pytest.raises(JubarteError, match="page 4 is out of range: the output has 3 pages"):
         Document.from_bytes(pages("A", "B", "C")).render(pdf=False, png_dpi=20, pages=[4])
 
 

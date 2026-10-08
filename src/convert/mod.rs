@@ -57,11 +57,13 @@ pub enum ConvertError {
     /// A PNG resolution outside `1..=MAX_PNG_DPI`, or a page too large to
     /// rasterize at the requested one.
     Raster(String),
-    /// [`RenderRequest::pages`] named a page the layout did not produce.
+    /// [`RenderRequest::pages`] named a page the output does not have.
     PageOutOfRange {
         /// The zero-based index asked for.
         requested: usize,
-        /// Pages the layout produced.
+        /// Pages written: the layout's, narrowed by
+        /// `PdfOptions::changed_only` and extended by the listing pages of
+        /// `CommentPlacement::End`.
         page_count: usize,
     },
 }
@@ -78,7 +80,7 @@ impl fmt::Display for ConvertError {
                 page_count,
             } => write!(
                 f,
-                "page {} is out of range: the document has {page_count} page{}",
+                "page {} is out of range: the output has {page_count} page{}",
                 requested + 1,
                 if *page_count == 1 { "" } else { "s" }
             ),
@@ -248,6 +250,62 @@ thread_local! {
     /// The conversion in progress's `PdfOptions::revisions`.
     static REVISIONS: std::cell::Cell<RevisionStyle> =
         const { std::cell::Cell::new(RevisionStyle::Conventional) };
+    /// The conversion in progress's `PdfOptions::comments` and
+    /// `PdfOptions::changed_only`.
+    static PAGE_PLAN: std::cell::Cell<(CommentPlacement, bool)> =
+        const { std::cell::Cell::new((CommentPlacement::Margin, false)) };
+}
+
+/// Run `f` with `options` as the conversion in progress's.
+/// The options restored on drop, so a panicking conversion that a caller
+/// catches (Python's `PanicException`) leaves none of its own behind.
+fn with_options<T>(options: PdfOptions, f: impl FnOnce() -> T) -> T {
+    struct Restore(RevisionStyle, (CommentPlacement, bool));
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            REVISIONS.with(|r| r.set(self.0));
+            PAGE_PLAN.with(|p| p.set(self.1));
+        }
+    }
+    let _restore = Restore(
+        REVISIONS.with(|r| r.replace(options.revisions)),
+        PAGE_PLAN.with(|p| p.replace((options.comments, options.changed_only))),
+    );
+    f()
+}
+
+#[cfg(test)]
+mod with_options_tests {
+    use super::*;
+
+    #[test]
+    fn a_panicking_conversion_restores_the_options() {
+        // A Python caller gets PanicException and converts again on the
+        // same thread: the failed call's options must not stay in force.
+        let options = PdfOptions {
+            revisions: RevisionStyle::Word,
+            comments: CommentPlacement::End,
+            changed_only: true,
+            ..PdfOptions::default()
+        };
+        let caught = std::panic::catch_unwind(|| {
+            with_options(options, || panic!("layout failed"));
+        });
+        assert!(caught.is_err());
+        assert!(matches!(
+            REVISIONS.with(std::cell::Cell::get),
+            RevisionStyle::Conventional
+        ));
+        assert_eq!(
+            PAGE_PLAN.with(std::cell::Cell::get),
+            (CommentPlacement::Margin, false)
+        );
+    }
+}
+
+/// `CommentPlacement::End` is in force.
+fn comments_at_end() -> bool {
+    PAGE_PLAN.with(|p| p.get().0 == CommentPlacement::End)
 }
 
 /// Convert a `.docx` package into a PDF (`%PDF` header, one or more pages).
@@ -266,6 +324,25 @@ pub struct PdfOptions {
     /// How tracked changes are painted (default: the conventional
     /// red/blue/green redline marks).
     pub revisions: RevisionStyle,
+    /// Where comments go: in balloons beside the text (the default, as
+    /// Word prints them) or listed after the last page.
+    pub comments: CommentPlacement,
+    /// Lay the whole document out, then keep only the pages a tracked
+    /// change touches (a change bar marks the page). Page numbers stay the
+    /// document's. A document without changes keeps its first page.
+    pub changed_only: bool,
+}
+
+/// Where a converted PDF puts the document's comments.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CommentPlacement {
+    /// Balloons in a pane beside the page, joined to the commented text,
+    /// as Word's Save as PDF prints them.
+    #[default]
+    Margin,
+    /// The page keeps its own width: the commented text keeps its tint and
+    /// a `[JR1]` marker, and the comments are listed after the last page.
+    End,
 }
 
 /// Rendered PDF plus the distinct font resolutions for this document.
@@ -298,10 +375,7 @@ pub fn docx_to_pdf_report(docx: &[u8], options: PdfOptions) -> Result<ConvertedP
 }
 
 fn docx_to_pdf_inner(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, ConvertError> {
-    let previous = REVISIONS.with(|r| r.replace(options.revisions));
-    let result = docx_to_pdf_body(docx, options);
-    REVISIONS.with(|r| r.set(previous));
-    result
+    with_options(options, || docx_to_pdf_body(docx, options))
 }
 
 fn docx_to_pdf_body(docx: &[u8], options: PdfOptions) -> Result<Vec<u8>, ConvertError> {
@@ -321,7 +395,9 @@ pub struct PageText {
 /// not a saved `docProps/app.xml` figure.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RenderReport {
-    /// Pages laid out.
+    /// Pages written: every page laid out, less those
+    /// `PdfOptions::changed_only` drops, plus a `CommentPlacement::End`
+    /// listing.
     pub page_count: usize,
     /// Per-page painted text.
     pub pages: Vec<PageText>,
@@ -357,8 +433,10 @@ pub struct RenderRequest {
     /// Rasterize every page to PNG at this resolution.
     pub png_dpi: Option<f32>,
     /// Zero-based pages to rasterize (any order, repeats ignored); `None`
-    /// rasterizes every page. Layout and the report always cover the whole
-    /// document. An index at or past the page count is
+    /// rasterizes every page. Layout always covers the whole document; the
+    /// report covers every page written, which `PdfOptions::changed_only`
+    /// narrows and `CommentPlacement::End` extends, and so do these
+    /// indices. An index at or past the page count is
     /// [`ConvertError::PageOutOfRange`].
     pub pages: Option<Vec<usize>>,
 }
@@ -398,39 +476,38 @@ pub fn render(
         )));
     }
     let (result, font_report) = font::with_font_report(|| {
-        let previous = REVISIONS.with(|r| r.replace(options.revisions));
-        let result = with_pages(docx, |fonts, pages| {
-            let selected = selected_pages(wanted, pages.len());
-            let pdf = (want_pdf && selected.is_ok()).then(|| pdf::emit(fonts, pages, options));
-            let pngs: Result<Vec<Vec<u8>>, ConvertError> = match (png_dpi, selected) {
-                (_, Err(err)) => Err(err),
-                (Some(dpi), Ok(selected)) => selected
-                    .into_iter()
-                    .map(|i| {
-                        raster::paint_page(fonts, &pages[i], dpi)
-                            .map(|pixmap| raster::encode_png(&pixmap))
-                            .ok_or_else(|| {
-                                ConvertError::Raster(format!(
-                                    "page {} is too large to rasterize at {dpi} dpi",
-                                    i + 1
-                                ))
-                            })
+        with_options(options, || {
+            with_pages(docx, |fonts, pages| {
+                let selected = selected_pages(wanted, pages.len());
+                let pdf = (want_pdf && selected.is_ok()).then(|| pdf::emit(fonts, pages, options));
+                let pngs: Result<Vec<Vec<u8>>, ConvertError> = match (png_dpi, selected) {
+                    (_, Err(err)) => Err(err),
+                    (Some(dpi), Ok(selected)) => selected
+                        .into_iter()
+                        .map(|i| {
+                            raster::paint_page(fonts, &pages[i], dpi)
+                                .map(|pixmap| raster::encode_png(&pixmap))
+                                .ok_or_else(|| {
+                                    ConvertError::Raster(format!(
+                                        "page {} is too large to rasterize at {dpi} dpi",
+                                        i + 1
+                                    ))
+                                })
+                        })
+                        .collect(),
+                    (None, Ok(_)) => Ok(Vec::new()),
+                };
+                let texts = pages
+                    .iter()
+                    .enumerate()
+                    .map(|(index, page)| PageText {
+                        index,
+                        text: raster::page_text(fonts, page),
                     })
-                    .collect(),
-                (None, Ok(_)) => Ok(Vec::new()),
-            };
-            let texts = pages
-                .iter()
-                .enumerate()
-                .map(|(index, page)| PageText {
-                    index,
-                    text: raster::page_text(fonts, page),
-                })
-                .collect();
-            (pdf, pngs, pages.len(), texts)
-        });
-        REVISIONS.with(|r| r.set(previous));
-        result
+                    .collect();
+                (pdf, pngs, pages.len(), texts)
+            })
+        })
     });
     let (pdf, pngs, page_count, pages) = result?;
     let pngs = pngs?;
@@ -502,11 +579,11 @@ pub(crate) struct LayoutFacts {
 
 /// Lay `docx` out as the default convert does and report its page facts.
 pub(crate) fn layout_facts(docx: &[u8]) -> Result<LayoutFacts, ConvertError> {
-    let options = PdfOptions::default();
-    let previous = REVISIONS.with(|r| r.replace(options.revisions));
-    let result = with_layout(docx, |_, _, facts| facts.clone());
-    REVISIONS.with(|r| r.set(previous));
-    result
+    // Every page, whatever the caller's conversion asks for: the facts
+    // are the whole document's.
+    with_options(PdfOptions::default(), || {
+        with_layout(docx, |_, _, facts| facts.clone())
+    })
 }
 
 /// The shared layout pipeline: open, resolve fonts, lay out, then hand the
@@ -648,7 +725,13 @@ fn with_layout<T>(
             // deletions with w:trackRevisions, with or without formatting
             // changes, keep the full page (English redline e1de10f3 was
             // shrunk on a 100/100 count).
-            let balloons = word_balloon_comments(&pkg, &main, &dom, body);
+            // Comments listed at the end bring no pane: the page keeps its
+            // width (table cell marks still do).
+            let balloons = if comments_at_end() {
+                Some(HashSet::new())
+            } else {
+                word_balloon_comments(&pkg, &main, &dom, body)
+            };
             if document_has_balloons(&pkg, &main, balloons.as_ref()) {
                 sheet.defaults.page.balloon_gutter = 144.0;
             }
@@ -678,7 +761,17 @@ fn with_layout<T>(
             };
             let (mut pages, facts) =
                 layout_with_facts(&fonts, &page, &hf, &blocks, compat_mode, footnotes);
-            paint_comment_balloons(&fonts, &sheet, &mut pages);
+            for (i, page) in pages.iter_mut().enumerate() {
+                page.number = i + 1;
+            }
+            if PAGE_PLAN.with(|p| p.get().1) {
+                keep_changed_pages(&mut pages);
+            }
+            if comments_at_end() {
+                list_comments_at_end(&fonts, &sheet, &mut pages);
+            } else {
+                paint_comment_balloons(&fonts, &sheet, &mut pages);
+            }
             Ok(emit(&fonts, &pages, &facts))
         })
     })
@@ -7513,6 +7606,215 @@ fn balloon_tint(color: [f32; 3]) -> [f32; 3] {
     )
 }
 
+/// `PdfOptions::changed_only`: the pages a body change bar marks, or the
+/// first page when no change touches the body.
+fn keep_changed_pages(pages: &mut Vec<Page>) {
+    if pages.iter().any(|p| p.changed) {
+        pages.retain(|p| p.changed);
+    } else {
+        pages.truncate(1);
+    }
+}
+
+/// `CommentPlacement::End`: a `[JR1]` superscript in the author's ink
+/// where comments are anchored, carrying them, so the line reflows around
+/// it as around Word's inline comment marks. A reply ("1R2") rides on its
+/// thread's marker, and is listed under it.
+fn mark_comment_anchors(runs: &mut Vec<TextRun>) {
+    if runs.iter().all(|r| r.comments.is_empty()) {
+        return;
+    }
+    let marker = |notes: Vec<CommentNote>, host: &RunStyle| {
+        let is_reply = |n: &CommentNote| n.label.contains('R');
+        let shown: Vec<&CommentNote> = if notes.iter().all(is_reply) {
+            notes.iter().collect()
+        } else {
+            notes.iter().filter(|n| !is_reply(n)).collect()
+        };
+        let text: String = shown
+            .iter()
+            .map(|n| format!("[{}{}]", n.initials, n.label))
+            .collect();
+        let mut style = host.clone();
+        style.vert = VertAlign::Super;
+        style.color = shown.first().map_or(style.color, |n| n.color);
+        style.color_auto = false;
+        style.underline = false;
+        style.underline_double = false;
+        style.underline_wave = false;
+        style.strike = false;
+        style.strike_double = false;
+        style.highlight = None;
+        style.highlight_marker = false;
+        style.tint = None;
+        style.tint_id = None;
+        style.caps = false;
+        style.small_caps = false;
+        style.hidden = false;
+        // An effect run Word leaves unpainted must not hide the marker.
+        style.effect_skip = false;
+        let mut run = TextRun::new(text, style);
+        run.comments = notes
+            .into_iter()
+            .map(|note| CommentNote {
+                after: true,
+                ..note
+            })
+            .collect();
+        run
+    };
+    let mut out = Vec::with_capacity(runs.len() + 2);
+    for mut run in runs.drain(..) {
+        let (after, before): (Vec<_>, Vec<_>) = std::mem::take(&mut run.comments)
+            .into_iter()
+            .partition(|n| n.after);
+        if !before.is_empty() {
+            out.push(marker(before, &run.style));
+        }
+        let host = run.style.clone();
+        out.push(run);
+        if !after.is_empty() {
+            out.push(marker(after, &host));
+        }
+    }
+    *runs = out;
+}
+
+/// `CommentPlacement::End`: the comments of the pages kept, taken off
+/// them and listed on pages of their own after the last one, in reading
+/// order: `[JR1] Author, page N` in the author's ink, then the comment's
+/// text, in the document's default face.
+fn list_comments_at_end(fonts: &Fonts, sheet: &StyleSheet, pages: &mut Vec<Page>) {
+    const MARGIN: f32 = 72.0;
+    const HEADING: f32 = 14.0;
+    const SIZE: f32 = 10.0;
+    const INDENT: f32 = 18.0;
+    const PITCH: f32 = 1.25;
+    const GAP: f32 = 8.0;
+    let mut listed: Vec<(usize, PdfComment)> = Vec::new();
+    for page in pages.iter_mut() {
+        let mut notes = std::mem::take(&mut page.comments);
+        // Document order: the labels number the references as the body
+        // reads, columns and all ("3", then its replies "3R2", "3R3").
+        notes.sort_by_key(|note| label_order(&note.label));
+        listed.extend(notes.into_iter().map(|note| (page.number, note)));
+    }
+    if listed.is_empty() {
+        return;
+    }
+    let (width, height) = pages
+        .iter()
+        .rev()
+        .find(|p| !p.vertical)
+        .map_or((612.0, 792.0), |p| (p.width, p.height));
+    let family = sheet.defaults.run.family.as_str();
+    let bold = fonts.resolve(family, true, false);
+    let regular = fonts.resolve(family, false, false);
+    let line_width = width - 2.0 * MARGIN;
+    let mut out = vec![Page::new(width, height)];
+    let mut y = height - MARGIN - fonts.get(bold).ascent_pt(HEADING);
+    let put = |out: &mut Vec<Page>, face: FaceRef, size: f32, x: f32, y: f32, text: &str, color| {
+        let glyphs = fonts
+            .get(face)
+            .shape_kern(text, size, true)
+            .iter()
+            .map(|(g, _)| *g)
+            .collect();
+        let page = out.last_mut().expect("a comments page");
+        page.ops
+            .push(Op::text(face, size, x, y, glyphs, color, text));
+    };
+    put(&mut out, bold, HEADING, MARGIN, y, "Comments", [0.0; 3]);
+    y -= HEADING * PITCH + GAP;
+    let pitch = SIZE * PITCH;
+    for (number, note) in &listed {
+        let label = format!("[{}{}] ", note.initials, note.label);
+        let by = if note.resolved {
+            format!("{}, page {number} (resolved)", note.author)
+        } else {
+            format!("{}, page {number}", note.author)
+        };
+        let lines = wrap_words(fonts, regular, &note.contents, SIZE, line_width - INDENT);
+        // A comment starts a page when its heading and first line do not fit.
+        if y - pitch < MARGIN {
+            out.push(Page::new(width, height));
+            y = height - MARGIN - fonts.get(bold).ascent_pt(SIZE);
+        }
+        put(&mut out, bold, SIZE, MARGIN, y, &label, note.color);
+        let by_x = MARGIN + advance(fonts, bold, &label, SIZE);
+        put(&mut out, regular, SIZE, by_x, y, &by, [0.35; 3]);
+        y -= pitch;
+        let ink = if note.resolved { [0.5; 3] } else { [0.0; 3] };
+        for line in &lines {
+            if y < MARGIN {
+                out.push(Page::new(width, height));
+                y = height - MARGIN - fonts.get(regular).ascent_pt(SIZE);
+            }
+            put(&mut out, regular, SIZE, MARGIN + INDENT, y, line, ink);
+            y -= pitch;
+        }
+        y -= GAP;
+    }
+    pages.extend(out);
+}
+
+/// A balloon label's place in reading order: `"3R2"` is `(3, 2)`, `"3"`
+/// is `(3, 1)`; an unnumbered label sorts last.
+fn label_order(label: &str) -> (usize, usize) {
+    let (thread, reply) = label.split_once('R').unwrap_or((label, "1"));
+    (
+        thread.parse().unwrap_or(usize::MAX),
+        reply.parse().unwrap_or(usize::MAX),
+    )
+}
+
+/// `text`'s paragraphs broken greedily into lines `width` wide; a word
+/// wider than a line has one to itself.
+fn wrap_words(fonts: &Fonts, face: FaceRef, text: &str, size: f32, width: f32) -> Vec<String> {
+    let space = advance(fonts, face, " ", size);
+    let mut lines = Vec::new();
+    for para in text.split('\n') {
+        let mut line = String::new();
+        let mut used = 0.0f32;
+        for word in para
+            .split_whitespace()
+            .flat_map(|word| break_word(fonts, face, word, size, width))
+        {
+            let w = advance(fonts, face, &word, size);
+            if !line.is_empty() && used + space + w > width {
+                lines.push(std::mem::take(&mut line));
+                used = 0.0;
+            }
+            if !line.is_empty() {
+                line.push(' ');
+                used += space;
+            }
+            line.push_str(&word);
+            used += w;
+        }
+        lines.push(line);
+    }
+    lines
+}
+
+/// `word` in pieces no wider than `width`, a character at least each.
+fn break_word(fonts: &Fonts, face: FaceRef, word: &str, size: f32, width: f32) -> Vec<String> {
+    if advance(fonts, face, word, size) <= width {
+        return vec![word.to_string()];
+    }
+    let mut pieces = Vec::new();
+    let mut piece = String::new();
+    for ch in word.chars() {
+        piece.push(ch);
+        if piece.chars().count() > 1 && advance(fonts, face, &piece, size) > width {
+            piece.pop();
+            pieces.push(std::mem::replace(&mut piece, ch.to_string()));
+        }
+    }
+    pieces.push(piece);
+    pieces
+}
+
 /// Word's comment balloons, painted into the markup pane the way its Save
 /// as PDF paints them (466 balloons of 152 corpus documents, 2026-10-03).
 /// The chrome is measured in page units (the pane's `cm` scales the page
@@ -13968,6 +14270,9 @@ fn collect_runs_in(
     };
     collect_runs_rec(&mut ctx, node, RevMark::None, "", &mut runs);
     flush_pending_comments(&mut ctx, &mut runs);
+    if comments_at_end() {
+        mark_comment_anchors(&mut runs);
+    }
     if let Some(open) = bag.open {
         *open.borrow_mut() = ctx.open.clone();
     }
@@ -24711,6 +25016,9 @@ impl<'a> Layout<'a> {
         let Some((page, col, top)) = self.rev_bar else {
             return;
         };
+        if !self.in_chrome {
+            self.current().changed = true;
+        }
         let top = if (page, col) == (self.pages.len(), self.col_i) {
             top
         } else {
@@ -26000,6 +26308,7 @@ impl<'a> Layout<'a> {
         let last_ink = joined.rfind(|c: char| !is_wrap_space(c));
         let mut idx = 0usize;
         for run in line {
+            let start = x;
             let mut word = String::new();
             for ch in run.text.chars() {
                 if ch == ' ' {
@@ -26025,6 +26334,9 @@ impl<'a> Layout<'a> {
             if !word.is_empty() {
                 x = self.paint_run(&TextRun::new(word, run.style.clone()), x, y);
             }
+            // The pieces are new runs without the run's comments: place
+            // them over the run's stretched extent.
+            self.place_run_comments(run, start, y, x - start);
         }
     }
 
@@ -29651,6 +29963,9 @@ impl<'a> Layout<'a> {
                     .iter()
                     .any(|c| c.paras.iter().any(|p| p.style.fmt_rev) || c.runs().any(|r| r.rev))
                 {
+                    if !self.in_chrome {
+                        self.current().changed = true;
+                    }
                     self.paint_rev_bar(self.rev_bar_x(), self.y, y_top);
                 }
             }

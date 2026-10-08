@@ -465,6 +465,8 @@ jubarte convert FILE.docx [OPTIONS]
 | `--force` | Replace existing output |
 | `--fail-on-substitution` | Exit 4 when a requested font was substituted |
 | `--pages SPEC` | Only these pages, for example `1-3,7` |
+| `--move-comments` | List comments after the last page; the text keeps its tint and a `[JR1]` marker |
+| `--changed-only` | Keep only the pages a tracked change touches (page numbers stay the document's) |
 | `-f, --from` / `-t, --to` | `docx`, `md`, `pdf` or `png`: Markdown in (CriticMarkup becomes tracked changes) or out ([`docs/MARKDOWN.md`](docs/MARKDOWN.md)) |
 
 Examples:

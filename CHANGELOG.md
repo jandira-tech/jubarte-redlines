@@ -24,6 +24,21 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   and `--full-lines` control the view. Long lines use a 70-character window
   around the first change. Text output creates no implicit Word file.
 
+- `convert --move-comments` (also on `diff`; library:
+  `PdfOptions::comments = CommentPlacement::End`): the comments leave the
+  balloon pane and are listed after the last page, each with its marker,
+  author and page. The page keeps its own width, the commented text keeps
+  its tint, and a superscript `[JR1]` in the author's ink marks where each
+  comment is anchored (a reply rides on its thread's marker). The default
+  stays Word's balloons beside the text.
+- `convert --changed-only` (also on `diff`; library:
+  `PdfOptions::changed_only`): the whole document is laid out, then only
+  the pages a change bar marks are kept, so page numbers and "Page N of M"
+  stay the document's. A document without body changes keeps its first
+  page. With `--move-comments`, only the kept pages' comments are listed.
+- `PdfOptions` has two more public fields (`comments`, `changed_only`): a
+  struct literal that names every field needs `..PdfOptions::default()`.
+
 ### Security
 
 - Bound OPC metadata to 256 attributes per element before rdocx-opc's
@@ -53,6 +68,9 @@ See [VERSIONING.md](VERSIONING.md) for the release codemod and cross-repo steps.
   app's CI builds the app, and the app has its own Dependabot config.
 
 ### Fixed
+
+- A comment anchored in a justified line lost its balloon: the stretched
+  line repaints its words as new runs, which dropped the run's comments.
 
 - `scripts/release.sh` step 11 runs `gh release download` with no terminal
   attached and keeps gh's error. Under `script` (the 0.11.3 run's log
