@@ -127,3 +127,41 @@ project 15267. Live badge answers and repository settings were not edited.
   find no leaks. REUSE lint, workflow YAML parsing, Bash syntax and whitespace
   checks pass.
 - Hosted CI and release-candidate fuzzing are not claimed as executed locally.
+
+## Interactive maintainer attestations
+
+From the repository root, run:
+
+```sh
+python3 scripts/openssf_attest.py
+```
+
+The script asks your name, then walks through 17 remaining attestations one at
+a time. Enter accepts the displayed status and justification; you can choose
+`met`, `unmet`, `?`, or `n/a` where permitted. `skip` defers an item and `quit`
+(or Ctrl-C) stops. Knowledge criteria suggest Met only for the displayed
+personal confirmations; historical and unmeasured claims default to Unknown.
+The password-storage criterion suggests N/A only if its displayed scope is true.
+No answer is accepted without your input, and positive/N/A answers require a
+justification. Keep private reports and credentials out of saved justifications.
+
+Each completed answer is saved to `out/openssf-attestations.json` (ignored by
+Git). Run again to resume; `--review` revisits saved answers, and `--show` prints
+answers for copying into the badge form. `--list` previews all questions without
+saving. You may use `--output PATH` for another answer file. An assessment has a
+fixed date: on a later day, pass its original `--date YYYY-MM-DD` to resume or
+use a fresh output file for a new assessment. Nothing is uploaded or submitted.
+
+Verification: six deterministic interaction/local-persistence integration tests
+pass. Coverage: 99.14% lines, 98.00% branches of `scripts/openssf_attest.py`.
+CLI `--help` and question-preview smoke checks pass.
+
+## Maintainer answers recorded on 2026-10-07
+
+Arthur Souza Rodrigues completed the interactive review. The
+[dated answer file](openssf-attestations-2026-10-07.json) preserves all 17
+answers and justifications exactly as entered, including Unknown and Unmet
+answers. These are maintainer attestations, not additional automated
+verification. They have not been submitted to the badge site. The earlier
+criterion review remains the technical evidence and limitations for evaluating
+these answers.
