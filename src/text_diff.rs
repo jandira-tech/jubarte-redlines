@@ -8,6 +8,9 @@
 //! patches for review; they do not patch the binary DOCX package.
 
 use crate::markdown::Source;
+use similar::{ChangeTag, DiffOp, DiffTag, TextDiff};
+use std::fmt::Write as _;
+use std::ops::Range;
 
 /// Names in the patch headers and the number of unchanged context lines.
 #[derive(Clone, Debug)]
@@ -28,6 +31,485 @@ impl Default for UnifiedOptions {
             context: 3,
         }
     }
+}
+
+/// Presentation of a document's line changes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TextFormat {
+    /// Git headers and unified hunks, keeping the snapshots' tracked marks.
+    #[default]
+    Github,
+    /// Accept both inputs, then show fresh word-level CriticMarkup only.
+    Word,
+    /// Traditional `a`, `d`, `c` line addresses, without context.
+    Normal,
+    /// Traditional two-sided context blocks.
+    Context,
+    /// Aligned replacement, insertion and deletion rows, without numbers.
+    SideBySide,
+}
+
+/// Review presentation options; the raw unified patch APIs remain unclipped.
+#[derive(Clone, Debug)]
+pub struct TextOptions {
+    /// Snapshot labels and surrounding unchanged lines.
+    pub unified: UnifiedOptions,
+    /// Output presentation; defaults to GitHub unified hunks.
+    pub format: TextFormat,
+    /// Accept existing revisions before comparison (always true in Word mode).
+    pub accept_changes: bool,
+    /// Unicode scalar window per line; `None` preserves complete lines.
+    pub window: Option<usize>,
+}
+
+impl Default for TextOptions {
+    fn default() -> Self {
+        Self {
+            unified: UnifiedOptions::default(),
+            format: TextFormat::Github,
+            accept_changes: false,
+            window: Some(70),
+        }
+    }
+}
+
+/// Compare text snapshots in the requested review presentation.
+///
+/// Existing CriticMarkup stays inside the changed lines unless acceptance is
+/// requested. Word mode always accepts both inputs and emits only changed
+/// lines with newly generated CriticMarkup. Clipping happens after comparison,
+/// so it cannot hide a hunk or change its line ranges.
+pub fn diff_text_view(old: &str, new: &str, options: &TextOptions) -> String {
+    let accept = options.accept_changes || options.format == TextFormat::Word;
+    let old = accepted_text(old, accept);
+    let new = accepted_text(new, accept);
+    render_view(&old, &new, options)
+}
+
+/// Compare complete DOCX or Markdown snapshots in a review presentation.
+///
+/// DOCX revision acceptance runs on the package before text extraction, so
+/// removed paragraphs and table rows cannot contribute phantom line numbers.
+/// Preserved revisions are rendered directly as proper CriticMarkup; the raw
+/// [`document_text`] API retains its legacy debug snapshot notation.
+pub fn diff_documents_view(
+    old: Source<'_>,
+    new: Source<'_>,
+    options: &TextOptions,
+) -> Result<String, String> {
+    let accept = options.accept_changes || options.format == TextFormat::Word;
+    let old = view_snapshot(old, accept)?;
+    let new = view_snapshot(new, accept)?;
+    Ok(render_view(&old, &new, options))
+}
+
+fn accepted_text(text: &str, accept: bool) -> std::borrow::Cow<'_, str> {
+    if accept {
+        crate::markdown::resolve_critic(text, crate::markdown::TrackChanges::Accept).into()
+    } else {
+        text.into()
+    }
+}
+
+fn view_snapshot(source: Source<'_>, accept: bool) -> Result<String, String> {
+    match source {
+        Source::Markdown(text) => Ok(accepted_text(text, accept).into_owned()),
+        Source::Docx(bytes) => {
+            if accept {
+                let bytes =
+                    crate::document_comparer::accept_revisions(bytes).map_err(|e| e.to_string())?;
+                crate::debug::document_text_with_critic(&bytes, true)
+            } else {
+                crate::debug::document_text_with_critic(bytes, true)
+            }
+        }
+    }
+}
+
+fn render_view(old: &str, new: &str, options: &TextOptions) -> String {
+    if old == new {
+        return String::new();
+    }
+    if options.format == TextFormat::Github && options.window.is_none() {
+        return diff_text(old, new, &options.unified);
+    }
+    let diff = TextDiff::from_lines(old, new);
+    let context = options
+        .unified
+        .context
+        .min(diff.old_len().max(diff.new_len()));
+    match options.format {
+        TextFormat::Github => github_view(&diff, options, context),
+        TextFormat::Normal => normal_view(&diff, options),
+        TextFormat::Context => context_view(&diff, options, context),
+        TextFormat::Word | TextFormat::SideBySide => rows_view(&diff, options, context),
+    }
+}
+
+fn line(text: &str) -> &str {
+    let text = text.strip_suffix('\n').unwrap_or(text);
+    text.strip_suffix('\r').unwrap_or(text)
+}
+
+/// Window offsets and widths count Unicode scalars, never UTF-8 bytes.
+fn clip(text: &str, changed_at: usize, window: Option<usize>) -> String {
+    let Some(width) = window else {
+        return text.to_string();
+    };
+    let len = text.chars().count();
+    if len <= width {
+        return text.to_string();
+    }
+    let start = changed_at.saturating_sub(width / 2).min(len);
+    let end = start.saturating_add(width).min(len);
+    let mut out = String::new();
+    if start > 0 {
+        out.push('…');
+    }
+    out.extend(text.chars().skip(start).take(end - start));
+    if end < len {
+        out.push('…');
+    }
+    out
+}
+
+fn first_difference(old: &str, new: &str) -> usize {
+    old.chars()
+        .zip(new.chars())
+        .take_while(|(a, b)| a == b)
+        .count()
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Row {
+    Pair(usize, usize),
+    Delete(usize),
+    Insert(usize),
+}
+
+/// Use the upstream word diff to align similar clauses within a replacement.
+/// A bounded search avoids quadratic work for large, wholly rewritten hunks.
+/// Equal-sized unrelated tails still pair by position, as standard diff does.
+fn replacement_rows(old: &[&str], new: &[&str]) -> Vec<Row> {
+    if old.len().saturating_mul(new.len()) > 400 {
+        return positional_rows(old.len(), new.len());
+    }
+    let old_words: Vec<_> = old.iter().map(|text| matching_words(text)).collect();
+    let new_words: Vec<_> = new.iter().map(|text| matching_words(text)).collect();
+    let mut rows = Vec::new();
+    let mut next = 0;
+    for (i, a) in old_words.iter().enumerate() {
+        let mut best = None;
+        let mut score = 0.3;
+        for (j, b) in new_words.iter().enumerate().skip(next) {
+            let ratio = TextDiff::from_slices(a, b).ratio();
+            if ratio > score {
+                score = ratio;
+                best = Some(j);
+            }
+        }
+        // A later old clause may be a much stronger match for this new row.
+        if let Some(j) = best {
+            let stronger = old_words
+                .iter()
+                .skip(i + 1)
+                .any(|a| TextDiff::from_slices(a, &new_words[j]).ratio() > score);
+            if stronger {
+                rows.push(Row::Delete(i));
+                continue;
+            }
+        }
+        let best = best
+            .or_else(|| (old.len() - i == new.len() - next && next < new.len()).then_some(next));
+        if let Some(j) = best {
+            rows.extend((next..j).map(Row::Insert));
+            rows.push(Row::Pair(i, j));
+            next = j + 1;
+        } else {
+            rows.push(Row::Delete(i));
+        }
+    }
+    rows.extend((next..new.len()).map(Row::Insert));
+    rows
+}
+
+fn matching_words(text: &str) -> Vec<&str> {
+    crate::util::word_tokens(text)
+        .into_iter()
+        .filter(|t| t.chars().any(char::is_alphanumeric))
+        .collect()
+}
+
+fn positional_rows(old_len: usize, new_len: usize) -> Vec<Row> {
+    let paired = old_len.min(new_len);
+    (0..paired)
+        .map(|i| Row::Pair(i, i))
+        .chain((paired..old_len).map(Row::Delete))
+        .chain((paired..new_len).map(Row::Insert))
+        .collect()
+}
+
+fn op_lines<'a>(diff: &'a TextDiff<'_, '_, str>, op: &DiffOp) -> (Vec<&'a str>, Vec<&'a str>) {
+    let old = op
+        .old_range()
+        .map(|i| line(&diff.old_lookup()[i]))
+        .collect();
+    let new = op
+        .new_range()
+        .map(|i| line(&diff.new_lookup()[i]))
+        .collect();
+    (old, new)
+}
+
+fn op_windows(
+    diff: &TextDiff<'_, '_, str>,
+    op: &DiffOp,
+    window: Option<usize>,
+) -> (Vec<String>, Vec<String>) {
+    let (old, new) = op_lines(diff, op);
+    let mut old_starts = vec![0; old.len()];
+    let mut new_starts = vec![0; new.len()];
+    if op.tag() == DiffTag::Replace {
+        for row in replacement_rows(&old, &new) {
+            if let Row::Pair(i, j) = row {
+                let at = first_difference(old[i], new[j]);
+                old_starts[i] = at;
+                new_starts[j] = at;
+            }
+        }
+    }
+    let olds = old
+        .iter()
+        .zip(old_starts)
+        .map(|(text, at)| clip(text, at, window))
+        .collect();
+    let news = new
+        .iter()
+        .zip(new_starts)
+        .map(|(text, at)| clip(text, at, window))
+        .collect();
+    (olds, news)
+}
+
+fn github_view(diff: &TextDiff<'_, '_, str>, options: &TextOptions, context: usize) -> String {
+    let old_name = git_path("a", &options.unified.old_name);
+    let new_name = git_path("b", &options.unified.new_name);
+    let mut out = format!("diff --git {old_name} {new_name}\n--- {old_name}\n+++ {new_name}\n");
+    for ops in diff.grouped_ops(context) {
+        let _ = writeln!(out, "{}", similar::udiff::UnifiedHunkHeader::new(&ops));
+        for op in &ops {
+            let (old, new) = op_windows(diff, op, options.window);
+            for change in diff.iter_changes(op) {
+                let text = match change.tag() {
+                    ChangeTag::Equal | ChangeTag::Delete => {
+                        &old[change.old_index().unwrap() - op.old_range().start]
+                    }
+                    ChangeTag::Insert => &new[change.new_index().unwrap() - op.new_range().start],
+                };
+                let _ = writeln!(out, "{}{text}", change.tag());
+                if change.missing_newline() {
+                    out.push_str("\\ No newline at end of file\n");
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Nonempty ranges use inclusive, one-based addresses; empty ones name the
+/// preceding line (including line zero for an insertion at the beginning).
+fn address(range: &Range<usize>) -> String {
+    match range.len() {
+        0 => range.start.to_string(),
+        1 => range.end.to_string(),
+        _ => format!("{},{}", range.start + 1, range.end),
+    }
+}
+
+fn normal_view(diff: &TextDiff<'_, '_, str>, options: &TextOptions) -> String {
+    let mut out = String::new();
+    for op in diff.ops().iter().filter(|op| op.tag() != DiffTag::Equal) {
+        let letter = match op.tag() {
+            DiffTag::Insert => 'a',
+            DiffTag::Delete => 'd',
+            _ => 'c',
+        };
+        let _ = writeln!(
+            out,
+            "{}{letter}{}",
+            address(&op.old_range()),
+            address(&op.new_range())
+        );
+        let (old, new) = op_windows(diff, op, options.window);
+        for text in old {
+            let _ = writeln!(out, "< {text}");
+        }
+        if op.tag() == DiffTag::Replace {
+            out.push_str("---\n");
+        }
+        for text in new {
+            let _ = writeln!(out, "> {text}");
+        }
+    }
+    out
+}
+
+fn context_view(diff: &TextDiff<'_, '_, str>, options: &TextOptions, context: usize) -> String {
+    // Reuse Git quoting for labels, dropping only the synthetic side prefix.
+    let label = |name: &str| git_path("", name).replacen('/', "", 1);
+    let mut out = format!(
+        "*** {}\n--- {}\n",
+        label(&options.unified.old_name),
+        label(&options.unified.new_name)
+    );
+    for ops in diff.grouped_ops(context) {
+        let Some(first) = ops.first() else { continue };
+        let last = ops.last().unwrap();
+        let olds = first.old_range().start..last.old_range().end;
+        let news = first.new_range().start..last.new_range().end;
+        out.push_str("***************\n");
+        let _ = writeln!(out, "*** {} ****", address(&olds));
+        let windows: Vec<_> = ops
+            .iter()
+            .map(|op| op_windows(diff, op, options.window))
+            .collect();
+        for (op, (old, _)) in ops.iter().zip(&windows) {
+            let prefix = match op.tag() {
+                DiffTag::Equal => "  ",
+                DiffTag::Replace => "! ",
+                _ => "- ",
+            };
+            for text in old {
+                let _ = writeln!(out, "{prefix}{text}");
+            }
+        }
+        let _ = writeln!(out, "--- {} ----", address(&news));
+        for (op, (_, new)) in ops.iter().zip(&windows) {
+            let prefix = match op.tag() {
+                DiffTag::Equal => "  ",
+                DiffTag::Replace => "! ",
+                _ => "+ ",
+            };
+            for text in new {
+                let _ = writeln!(out, "{prefix}{text}");
+            }
+        }
+    }
+    out
+}
+
+fn first_critic(text: &str) -> usize {
+    text.char_indices()
+        .enumerate()
+        .find_map(|(scalar, (byte, _))| {
+            let rest = &text[byte..];
+            let token = ["{++", "{--", "{~~"]
+                .iter()
+                .any(|mark| rest.starts_with(mark));
+            let escaped = text[..byte]
+                .bytes()
+                .rev()
+                .take_while(|b| *b == b'\\')
+                .count()
+                % 2
+                == 1;
+            (token && !escaped).then_some(scalar)
+        })
+        .unwrap_or(0)
+}
+
+/// Reuse the CriticMarkup renderer's literal escaping without treating a
+/// document snapshot's clause numbers or table pipes as Markdown structure.
+fn critic_literal(text: &str) -> String {
+    crate::markdown::diff_markdown(text, text)
+}
+
+fn word_change(old: &str, new: &str) -> String {
+    let rendered = crate::markdown::diff_markdown(old, new);
+    // The existing renderer groups phrases, numbers and formatting. Its
+    // Markdown block rules intentionally keep a new list marker, though;
+    // snapshots also need to mark changed clause numbers and literal pipes.
+    if crate::markdown::resolve_critic(&rendered, crate::markdown::TrackChanges::Accept) == new
+        && crate::markdown::resolve_critic(&rendered, crate::markdown::TrackChanges::Reject) == old
+    {
+        return rendered;
+    }
+    let old_tokens = crate::util::word_tokens(old);
+    let new_tokens = crate::util::word_tokens(new);
+    let diff = TextDiff::from_slices(&old_tokens, &new_tokens);
+    let mut out = String::new();
+    for op in diff.ops() {
+        let a = old_tokens[op.old_range()].concat();
+        let b = new_tokens[op.new_range()].concat();
+        match op.tag() {
+            DiffTag::Equal => out.push_str(&critic_literal(&a)),
+            DiffTag::Delete => {
+                let _ = write!(out, "{{--{}--}}", critic_literal(&a));
+            }
+            DiffTag::Insert => {
+                let _ = write!(out, "{{++{}++}}", critic_literal(&b));
+            }
+            DiffTag::Replace => {
+                let _ = write!(
+                    out,
+                    "{{~~{}~>{}~~}}",
+                    critic_literal(&a),
+                    critic_literal(&b)
+                );
+            }
+        }
+    }
+    out
+}
+
+fn rows_view(diff: &TextDiff<'_, '_, str>, options: &TextOptions, context: usize) -> String {
+    let word = options.format == TextFormat::Word;
+    let mut out = String::new();
+    for ops in diff.grouped_ops(if word { 0 } else { context }) {
+        for op in &ops {
+            let (old, new) = op_lines(diff, op);
+            if op.tag() == DiffTag::Equal {
+                if !word {
+                    for text in old {
+                        let text = clip(text, 0, options.window);
+                        let _ = writeln!(out, "{text}   {text}");
+                    }
+                }
+                continue;
+            }
+            for row in replacement_rows(&old, &new) {
+                let (a, b) = match row {
+                    Row::Pair(i, j) => (old[i], new[j]),
+                    Row::Delete(i) => (old[i], ""),
+                    Row::Insert(j) => ("", new[j]),
+                };
+                if word {
+                    let text = word_change(a, b);
+                    let at = first_critic(&text);
+                    let _ = writeln!(out, "{}", clip(&text, at, options.window));
+                } else {
+                    match row {
+                        Row::Pair(..) => {
+                            let at = first_difference(a, b);
+                            let _ = writeln!(
+                                out,
+                                "{} | {}",
+                                clip(a, at, options.window),
+                                clip(b, at, options.window)
+                            );
+                        }
+                        Row::Delete(..) => {
+                            let _ = writeln!(out, "{} <", clip(a, 0, options.window));
+                        }
+                        Row::Insert(..) => {
+                            let _ = writeln!(out, " > {}", clip(b, 0, options.window));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Complete textual snapshot, preserving existing tracked marks.
@@ -108,6 +590,101 @@ mod tests {
         markdown_to_docx(text, &DocxOptions::default())
             .unwrap()
             .docx
+    }
+
+    #[test]
+    fn review_windows_count_scalars_and_allow_unbounded_and_zero_width() {
+        assert_eq!(clip("é界xyz", 3, Some(2)), "…xy…");
+        assert_eq!(clip("é界xyz", 0, Some(2)), "é界…");
+        assert_eq!(clip("é界xyz", 5, Some(2)), "…z");
+        assert_eq!(clip("é界xyz", 3, None), "é界xyz");
+        assert_eq!(clip("short", 100, Some(70)), "short");
+        assert_eq!(clip("abc", 0, Some(0)), "…");
+        assert_eq!(clip("abc", 1, Some(0)), "……");
+        assert_eq!(clip("", 0, Some(0)), "");
+        assert_eq!(first_difference("é界", "é中"), 1);
+        assert_eq!(first_difference("same", "same suffix"), 4);
+    }
+
+    #[test]
+    fn replacement_alignment_handles_inserted_and_deleted_clauses_and_large_blocks() {
+        assert_eq!(
+            replacement_rows(
+                &["Payment 30 days", "Security assets"],
+                &["Prepayment allowed", "Payment 60 days", "Security property"]
+            ),
+            [Row::Insert(0), Row::Pair(0, 1), Row::Pair(1, 2)]
+        );
+        assert_eq!(
+            replacement_rows(
+                &["Payment 60 days", "Payment 30 days"],
+                &["Payment 60 days"]
+            ),
+            [Row::Pair(0, 0), Row::Delete(1)]
+        );
+        assert_eq!(
+            replacement_rows(&["Payment stale", "Payment 30 days"], &["Payment 60 days"]),
+            [Row::Delete(0), Row::Pair(1, 0)]
+        );
+        assert_eq!(replacement_rows(&["a"], &["b"]), [Row::Pair(0, 0)]);
+        assert_eq!(replacement_rows(&["a"], &[]), [Row::Delete(0)]);
+        assert_eq!(replacement_rows(&[], &["b"]), [Row::Insert(0)]);
+        let rows = replacement_rows(&vec!["old"; 21], &vec!["new"; 22]);
+        assert_eq!(rows.len(), 22);
+        assert_eq!(rows.last(), Some(&Row::Insert(21)));
+    }
+
+    #[test]
+    fn word_changes_preserve_literal_syntax_and_changed_clause_numbers() {
+        assert_eq!(word_change("1. Terms", "2. Terms"), "{~~1~>2~~}. Terms");
+        assert_eq!(
+            word_change("pay 30 days", "pay 60 days"),
+            "pay {~~30~>60~~} days"
+        );
+        assert_eq!(word_change("", "new"), "{++new++}");
+        assert_eq!(word_change("old", ""), "{--old--}");
+        assert_eq!(word_change("same", "same"), "same");
+        assert_eq!(first_critic("é {~~x~>y~~}"), 2);
+        assert_eq!(first_critic(r"\{++literal++} {--old--}"), 15);
+        assert_eq!(first_critic("no tokens"), 0);
+        assert_eq!(
+            critic_literal("{+literal+}[-literal-]"),
+            "{+literal+}[-literal-]"
+        );
+        assert_eq!(critic_literal("{++literal++}"), r"\{++literal++\}");
+    }
+
+    #[test]
+    fn review_context_and_unterminated_github_lines_use_original_coordinates() {
+        let options = TextOptions {
+            window: Some(70),
+            ..Default::default()
+        };
+        assert_eq!(
+            diff_text_view("a", "b", &options),
+            diff_text("a", "b", &options.unified)
+        );
+        let options = TextOptions {
+            format: TextFormat::SideBySide,
+            ..options
+        };
+        assert_eq!(
+            diff_text_view("same\nold\nend\n", "same\nnew\nend\n", &options),
+            "same   same\nold | new\nend   end\n"
+        );
+        let options = TextOptions {
+            format: TextFormat::Context,
+            unified: UnifiedOptions {
+                old_name: "old\nfile".into(),
+                new_name: "new file".into(),
+                context: 0,
+            },
+            ..options
+        };
+        assert!(
+            diff_text_view("a\n", "b\n", &options)
+                .starts_with("*** \"old\\nfile\"\n--- \"new file\"\n")
+        );
     }
 
     #[test]

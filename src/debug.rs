@@ -1445,7 +1445,7 @@ fn numbering_lines(dom: &Dom, root: NodeId) -> (Vec<String>, usize) {
 /// `text`: one line per paragraph, table and row of a story part, indented
 /// by table and text box depth; with `props`, the `runs` view. Returns the
 /// lines and the paragraph count.
-fn text_lines(dom: &Dom, root: NodeId, props: bool) -> (Vec<String>, usize) {
+fn text_lines(dom: &Dom, root: NodeId, props: bool, critic: bool) -> (Vec<String>, usize) {
     fn mark(dom: &Dom, n: NodeId, props: &str) -> &'static str {
         let Some(pr) = dom.nodes(n).into_iter().find(|&c| local(dom, c) == props) else {
             return " ";
@@ -1517,6 +1517,7 @@ fn text_lines(dom: &Dom, root: NodeId, props: bool) -> (Vec<String>, usize) {
         out: Vec<String>,
         paras: usize,
         props: bool,
+        critic: bool,
     }
     fn nested(dom: &Dom, n: NodeId, depth: usize, w: &mut Walk) {
         for c in dom.nodes(n) {
@@ -1539,6 +1540,14 @@ fn text_lines(dom: &Dom, root: NodeId, props: bool) -> (Vec<String>, usize) {
                         .iter()
                         .map(|(k, f, t)| {
                             let f = f.as_ref().map(|f| format!("«{f}»")).unwrap_or_default();
+                            if w.critic {
+                                let t = crate::markdown::diff_markdown(t, t);
+                                return match k {
+                                    1 => format!("{{++{t}++}}"),
+                                    2 => format!("{{--{t}--}}"),
+                                    _ => t,
+                                };
+                            }
                             match k {
                                 1 => format!("{{+{f}{t}+}}"),
                                 2 => format!("[-{f}{t}-]"),
@@ -1574,6 +1583,7 @@ fn text_lines(dom: &Dom, root: NodeId, props: bool) -> (Vec<String>, usize) {
         out: Vec::new(),
         paras: 0,
         props,
+        critic,
     };
     walk(dom, root, 0, &mut w);
     (w.out, w.paras)
@@ -1931,7 +1941,10 @@ fn listing_lines(pkg: &Package, check: Check, opts: &Options) -> PartLines {
             continue;
         }
         if TEXT_PARTS.contains(&local(&dom, root).as_str()) {
-            map.insert(e.name.clone(), text_lines(&dom, root, check == Check::Runs));
+            map.insert(
+                e.name.clone(),
+                text_lines(&dom, root, check == Check::Runs, false),
+            );
         }
     }
     if let Some(g) = opts.grep.as_deref() {
@@ -1946,6 +1959,11 @@ fn listing_lines(pkg: &Package, check: Check, opts: &Options) -> PartLines {
 /// A complete text snapshot for unified diffs, with no report clipping.
 /// Header/footer roles are stable when Word renumbers their ZIP parts.
 pub(crate) fn document_text(bytes: &[u8]) -> Result<String, String> {
+    document_text_with_critic(bytes, false)
+}
+
+/// The complete snapshot with revision spans rendered at their XML source.
+pub(crate) fn document_text_with_critic(bytes: &[u8], critic: bool) -> Result<String, String> {
     let admitted = crate::admission::admit(bytes, crate::admission::InputLimits::default())
         .map_err(|e| e.to_string())?;
     let pkg = Package::open(bytes)?;
@@ -2055,7 +2073,7 @@ pub(crate) fn document_text(bytes: &[u8]) -> Result<String, String> {
                 .cloned()
                 .unwrap_or_else(|| entry.name.clone())
         };
-        parts.insert(name, text_lines(&dom, root, false).0);
+        parts.insert(name, text_lines(&dom, root, false, critic).0);
     }
     let mut out = String::new();
     for (part, lines) in parts {
