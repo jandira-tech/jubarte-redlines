@@ -304,6 +304,22 @@ pub struct PartFs {
     repaired_duplicate_ids: Vec<(String, String)>,
 }
 
+/// Canonical target resolution shared by package APIs and text story labels.
+pub(crate) fn resolve_rel_target(source_part: &str, rel_target: &str) -> String {
+    let joined = OpcPackage::resolve_rel_target(&norm(source_part), rel_target);
+    let mut segments: Vec<&str> = Vec::new();
+    for seg in joined.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            s => segments.push(s),
+        }
+    }
+    segments.join("/")
+}
+
 impl PartFs {
     /// Open a `.docx`/OPC package from raw bytes.
     pub fn open(bytes: &[u8]) -> Result<Self, OpcError> {
@@ -468,21 +484,10 @@ impl PartFs {
     /// absolute target ("/word/footer1.xml") was later re-prefixed into a
     /// "//word/…" relationship, and "word/../customXml/item1.xml" named no part.
     pub fn resolve_rel_target(&self, source_part: &str, rel_target: &str) -> String {
-        // The relationships reader keeps the Target attribute as written, so
-        // "image1.jpg&amp;ehk=…" names the part "image1.jpg&ehk=…".
+        // PartFs receives raw relationship attributes; DOM consumers already
+        // decoded XML entities and call the pure resolver directly.
         let target = crate::xmllinq::parse::unescape_xml_text(rel_target);
-        let joined = OpcPackage::resolve_rel_target(&norm(source_part), &target);
-        let mut segments: Vec<&str> = Vec::new();
-        for seg in joined.split('/') {
-            match seg {
-                "" | "." => {}
-                ".." => {
-                    segments.pop();
-                }
-                s => segments.push(s),
-            }
-        }
-        segments.join("/")
+        resolve_rel_target(source_part, &target)
     }
 
     /// `contentTypeFor(part)`.

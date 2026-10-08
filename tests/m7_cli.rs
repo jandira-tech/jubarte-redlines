@@ -130,7 +130,11 @@ fn missing_input_file_errors() {
 fn missing_arguments_exit_code_2() {
     let out = Command::new(BIN).arg(ORIG).output().unwrap();
     assert_eq!(out.status.code(), Some(2), "missing MODIFIED → usage error");
-    assert!(String::from_utf8_lossy(&out.stderr).contains("missing MODIFIED"));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("<MODIFIED>") && stderr.contains("Usage:"),
+        "{stderr}"
+    );
 }
 
 #[test]
