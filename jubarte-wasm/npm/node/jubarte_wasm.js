@@ -1509,6 +1509,34 @@ function __wbg_get_imports() {
                 wasm.__wbindgen_export(deferred0_0, deferred0_1, 1);
             }
         },
+        __wbg_getUTCDate_3a2d5b5ab12ed75b: function(arg0) {
+            const ret = getObject(arg0).getUTCDate();
+            return ret;
+        },
+        __wbg_getUTCFullYear_73494f858b1a97cf: function(arg0) {
+            const ret = getObject(arg0).getUTCFullYear();
+            return ret;
+        },
+        __wbg_getUTCHours_674184914a683e3f: function(arg0) {
+            const ret = getObject(arg0).getUTCHours();
+            return ret;
+        },
+        __wbg_getUTCMinutes_2cbcb785a0d2e614: function(arg0) {
+            const ret = getObject(arg0).getUTCMinutes();
+            return ret;
+        },
+        __wbg_getUTCMonth_441e536ac640bfab: function(arg0) {
+            const ret = getObject(arg0).getUTCMonth();
+            return ret;
+        },
+        __wbg_getUTCSeconds_4e4f4b1e03334a24: function(arg0) {
+            const ret = getObject(arg0).getUTCSeconds();
+            return ret;
+        },
+        __wbg_new_0_72d020f0c63443d4: function() {
+            const ret = new Date();
+            return addHeapObject(ret);
+        },
         __wbg_new_227d7c05414eb861: function() {
             const ret = new Error();
             return addHeapObject(ret);
