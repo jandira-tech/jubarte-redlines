@@ -2301,3 +2301,103 @@ mod literal_revision_repair_contract_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod paragraph_id_collision_owner_tests {
+    use super::*;
+
+    fn snapshot(pkg: &PartFs) -> Vec<(String, Vec<u8>)> {
+        let mut names = pkg.parts();
+        names.sort();
+        names
+            .into_iter()
+            .map(|name| {
+                let bytes = pkg.part_bytes(&name).unwrap().to_vec();
+                (name, bytes)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn paragraph_id_collision_repair_preserves_all_owners_and_shared_references() {
+        for old_id in ["00000000", "80000000", "80000001", "FFFFFFFF"] {
+            let mut pkg =
+                PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+            let document = format!(
+                r#"<w:document xmlns:w="{}" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"><w:body><w:p w14:paraId="00000001" w14:textId="00000002"><w:pPr><w:spacing w:after="80"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>existing ids</w:t></w:r></w:p><w:p w14:paraId="7FFFFFFF"><w:r><w:t>upper existing id</w:t></w:r></w:p><w:p w14:paraId="{old_id}" w14:textId="{old_id}"><w:pPr><w:keepNext/><w:pPrChange w:id="51" w:author="Source" w:date="2026-10-09T00:00:00Z"><w:pPr><w:spacing w:before="120"/></w:pPr></w:pPrChange></w:pPr><w:r><w:rPr><w:i/><w:color w:val="123456"/></w:rPr><w:t>ação τέλος</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body></w:document>"#,
+                W::URI
+            );
+            pkg.set_part("word/document.xml", document.as_bytes().to_vec());
+            let refs = format!(
+                r#"<w15:commentsEx xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml"><w15:commentEx w15:paraId="{old_id}" w15:paraIdParent="{old_id}" w15:done="0"/></w15:commentsEx>"#
+            );
+            pkg.set_part("word/commentsExtended.xml", refs.as_bytes().to_vec());
+            pkg.add_content_type_override(
+                "/word/commentsExtended.xml",
+                "application/vnd.ms-word.commentsExtended+xml",
+            );
+            pkg.add_document_relationship(
+                "word/document.xml",
+                "http://schemas.microsoft.com/office/2011/relationships/commentsExtended",
+                "commentsExtended.xml",
+            );
+            let before = snapshot(&pkg);
+            let mut expected = before.clone();
+            for (name, bytes) in &mut expected {
+                if name == "word/document.xml" || name == "word/commentsExtended.xml" {
+                    *bytes = String::from_utf8(bytes.clone())
+                        .unwrap()
+                        .replace(&format!("=\"{old_id}\""), "=\"00000003\"")
+                        .into_bytes();
+                }
+            }
+            renumber_out_of_range_para_ids(&mut pkg);
+            assert_eq!(
+                snapshot(&pkg),
+                expected,
+                "{old_id}: only the out-of-range shared id changes"
+            );
+            renumber_out_of_range_para_ids(&mut pkg);
+            assert_eq!(
+                snapshot(&pkg),
+                expected,
+                "{old_id}: a repeat preserves every part byte"
+            );
+            assert_ne!(before, expected);
+        }
+    }
+
+    #[test]
+    fn dangling_relationship_repair_keeps_empty_known_and_nonrelationship_owners() {
+        let source = format!(
+            r#"<w:document xmlns:w="{}" xmlns:r="{}" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><w:body><w:p><w:pPr><w:spacing w:after="80"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:drawing><a:blip r:embed="missing" r:link="known"/></w:drawing><w:t>owned</w:t></w:r><w:hyperlink r:id="known"><w:r><w:t>keep</w:t></w:r></w:hyperlink><w:hyperlink r:id=""><w:r><w:t>empty reference</w:t></w:r></w:hyperlink><w:hyperlink r:id="missing"><w:r><w:t>attribute removed, text kept</w:t></w:r></w:hyperlink><w:ins w:id="52" w:author="Source" w:date="2026-10-09T00:00:00Z"><w:r><w:t>tracked source</w:t></w:r></w:ins></w:p><w:altChunk r:id="missing"/><w:sectPr><w:headerReference w:type="default" r:id="missing"/><w:footerReference w:type="default" r:id="known"/><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body></w:document>"#,
+            W::URI,
+            R::URI
+        );
+        let expected = source
+            .replace(r#" r:embed="missing""#, "")
+            .replace(r#"<w:hyperlink r:id="missing">"#, "<w:hyperlink>")
+            .replace(r#"<w:altChunk r:id="missing"/>"#, "")
+            .replace(
+                r#"<w:headerReference w:type="default" r:id="missing"/>"#,
+                "",
+            );
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&source);
+        let root = dom.root(doc).unwrap();
+        let mut expected_dom = Dom::new();
+        let expected_doc = expected_dom.parse_xdocument(&expected);
+        let ids = HashSet::from(["known".to_string()]);
+        drop_dangling_relationship_attributes(&mut dom, root, &ids);
+        assert_eq!(
+            dom.serialize_document(doc),
+            expected_dom.serialize_document(expected_doc)
+        );
+        drop_dangling_relationship_attributes(&mut dom, root, &ids);
+        assert_eq!(
+            dom.serialize_document(doc),
+            expected_dom.serialize_document(expected_doc)
+        );
+    }
+}

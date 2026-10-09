@@ -2495,3 +2495,107 @@ mod boundary_coverage_tests {
         assert!(matched.iter().all(|&(i, j)| a[i] == b[j]));
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod raw_source_projection_contract_tests {
+    use super::*;
+
+    fn with_source(source: &str, raw: bool, check: impl FnOnce(&mut Build<'_>, NodeId)) {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(
+            r#"<w:document xmlns:w="{W_NS}"><w:body>{source}</w:body></w:document>"#
+        ));
+        let before = dom.serialize_document(doc);
+        let root = dom.root(doc).unwrap();
+        let body = dom.elements(root, None)[0];
+        let node = dom.elements(body, None)[0];
+        let filter = Filter {
+            style: None,
+            para: None,
+        };
+        let names = HashMap::new();
+        let targets = HashMap::new();
+        let mut build = Build {
+            dom: &dom,
+            raw,
+            filter: &filter,
+            style_names: &names,
+            targets: &targets,
+            paras: 0,
+            tables: 0,
+        };
+        check(&mut build, node);
+        assert_eq!(dom.serialize_document(doc), before);
+    }
+
+    #[test]
+    fn recorded_run_properties_and_saved_page_breaks_keep_exact_raw_source_projection() {
+        let source = r#"<w:p><w:r><w:rPr><w:rPrChange w:id="51" w:author="Owner" w:date="2026-10-09T00:00:00Z"><w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr><w:t>ação</w:t><w:lastRenderedPageBreak/><w:t>τέλος</w:t></w:r></w:p>"#;
+        for raw in [false, true] {
+            with_source(source, raw, |build, node| {
+                let mut segments = Vec::new();
+                let mut boxes = Vec::new();
+                let run = build.dom.elements(node, Some(&XName::get("r", W_NS)))[0];
+                build.run(run, "del", &mut segments, &mut boxes);
+                let actual = segments
+                    .into_iter()
+                    .map(|s| (s.rev, s.fmt, s.text, s.text_run))
+                    .collect::<Vec<_>>();
+                let text = if raw {
+                    "ação[lastRenderedPageBreak]τέλος"
+                } else {
+                    "açãoτέλος"
+                };
+                assert_eq!(
+                    actual,
+                    vec![("del".into(), "was{i}".into(), text.into(), true)]
+                );
+                assert!(boxes.is_empty());
+            });
+        }
+    }
+
+    #[test]
+    fn inline_content_controls_preserve_each_source_run_format_and_range_marker() {
+        let source = r#"<w:p><w:pPr><w:spacing w:after="80"/></w:pPr><w:bookmarkStart w:id="7" w:name="owned"/><w:sdt><w:sdtPr><w:alias w:val="Review"/><w:tag w:val="owner"/></w:sdtPr><w:sdtContent><w:r><w:rPr><w:b/></w:rPr><w:t>ação</w:t></w:r><w:r><w:rPr><w:i/></w:rPr><w:t>τέλος</w:t></w:r></w:sdtContent></w:sdt><w:bookmarkEnd w:id="7"/></w:p>"#;
+        for raw in [false, true] {
+            with_source(source, raw, |build, node| {
+                let mut segments = Vec::new();
+                let mut boxes = Vec::new();
+                build.segments(node, "", &mut segments, &mut boxes);
+                let actual = segments
+                    .into_iter()
+                    .map(|s| (s.rev, s.fmt, s.text, s.text_run))
+                    .collect::<Vec<_>>();
+                let mut expected = vec![
+                    ("".into(), "".into(), "⟨bookmark owned⟩".into(), false),
+                    ("".into(), "b".into(), "ação".into(), true),
+                    ("".into(), "i".into(), "τέλος".into(), true),
+                ];
+                if raw {
+                    expected.push(("".into(), "".into(), "⟨bookmarkEnd(id=7)⟩".into(), false));
+                }
+                assert_eq!(actual, expected);
+                assert!(boxes.is_empty());
+            });
+        }
+    }
+
+    #[test]
+    fn large_reordered_key_alignment_discards_only_positions_already_crossed() {
+        let mut a = vec!["x", "y", "x"];
+        let mut b = vec!["y", "x", "x"];
+        a.extend(std::iter::repeat_n("left", 2001));
+        b.extend(std::iter::repeat_n("right", 2001));
+        let mut expected = vec![
+            (None, Some(0)),
+            (Some(0), Some(1)),
+            (Some(1), None),
+            (Some(2), Some(2)),
+        ];
+        expected.extend((3..a.len()).map(|i| (Some(i), None)));
+        expected.extend((3..b.len()).map(|j| (None, Some(j))));
+        assert_eq!(lcs_ops(&a, &b), expected);
+    }
+}

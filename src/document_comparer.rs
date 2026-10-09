@@ -5273,14 +5273,7 @@ fn adopt_revised_header_footer(
                         // rel target is part-dir-relative; a renamed copy
                         // stays in the same directory
                         if t_out != t {
-                            rel_target_out = t_out.rsplit('/').next().unwrap_or(&t_out).to_string();
-                            if let Some((tdir, _)) = t.rsplit_once('/')
-                                && let Some((pdir, _)) = part.rsplit_once('/')
-                                && tdir != pdir
-                            {
-                                let sub = tdir.strip_prefix(&format!("{pdir}/")).unwrap_or(tdir);
-                                rel_target_out = format!("{sub}/{rel_target_out}");
-                            }
+                            rel_target_out = crate::opc::relative_rel_target(&part, &t_out);
                         }
                         if let Some(ext) = t_out.rsplit('.').next() {
                             // case-insensitive: real packages carry .PNG/.Jpg
@@ -5319,9 +5312,11 @@ fn adopt_revised_header_footer(
                 ));
             }
             rels_xml.push_str("</Relationships>");
-            let base = part.rsplit('/').next().unwrap_or(&part);
-            let dir = part.rsplit_once('/').map(|(d, _)| d).unwrap_or("word");
-            out.set_part(&format!("{dir}/_rels/{base}.rels"), rels_xml.into_bytes());
+            let rels_part = match part.rsplit_once('/') {
+                Some((dir, base)) => format!("{dir}/_rels/{base}.rels"),
+                None => format!("_rels/{part}.rels"),
+            };
+            out.set_part(&rels_part, rels_xml.into_bytes());
         }
 
         // rel from the output main + reference element in the final sectPr
@@ -9737,6 +9732,357 @@ mod coverage_boundary_tests {
     }
 
     #[test]
+    fn final_header_footer_adoption_respects_existing_body_owners_and_cached_donor_parts() {
+        for (kind, local) in [("header", "hdr"), ("footer", "ftr")] {
+            for slot in ["default", "first", "even"] {
+                for occupied in [false, true] {
+                    for cached in 0..3 {
+                        let part = format!("word/{kind}B.xml");
+                        let original_part = format!("word/{kind}A.xml");
+                        let reference = format!("{kind}Reference");
+                        let content_type = format!(
+                            "application/vnd.openxmlformats-officedocument.wordprocessingml.{kind}+xml"
+                        );
+                        let donor_xml = xml(
+                            local,
+                            "<w:p><w:pPr><w:spacing w:after='180'/><w:rPr><w:b/></w:rPr></w:pPr><w:r><w:rPr><w:color w:val='123456'/></w:rPr><w:t>Donor authored story</w:t><w:tab/></w:r></w:p>",
+                        );
+                        let original_xml = xml(
+                            local,
+                            "<w:p><w:r><w:rPr><w:i/></w:rPr><w:t>Original independent story</w:t></w:r></w:p>",
+                        );
+                        let mut donor = package("<w:body><w:p/><w:sectPr/></w:body>");
+                        let mut out = package("<w:body><w:p/><w:sectPr/></w:body>");
+                        for pkg in [&mut donor, &mut out] {
+                            pkg.add_content_type_override("/word/document.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml");
+                        }
+                        donor.set_part(&part, donor_xml.as_bytes().to_vec());
+                        donor.add_content_type_override(&format!("/{part}"), &content_type);
+                        let donor_id = donor.add_document_relationship(
+                            MAIN,
+                            &format!("{REL}{kind}"),
+                            &format!("{kind}B.xml"),
+                        );
+                        donor.set_part(MAIN, xml("document", &format!("<w:body><w:p><w:r><w:t>Donor body</w:t></w:r></w:p><w:sectPr><w:{reference} w:type='{slot}' r:id='{donor_id}'/><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body>")).into_bytes());
+                        out.set_part(&original_part, original_xml.as_bytes().to_vec());
+                        out.add_content_type_override(&format!("/{original_part}"), &content_type);
+                        let original_id = out.add_document_relationship(
+                            MAIN,
+                            &format!("{REL}{kind}"),
+                            &format!("{kind}A.xml"),
+                        );
+                        if cached != 0 {
+                            out.set_part(
+                                &part,
+                                if cached == 1 {
+                                    donor_xml.as_bytes()
+                                } else {
+                                    original_xml.as_bytes()
+                                }
+                                .to_vec(),
+                            );
+                            out.add_content_type_override(&format!("/{part}"), &content_type);
+                        }
+                        let mid = if occupied {
+                            format!(
+                                "<w:p><w:pPr><w:spacing w:before='120'/><w:sectPr><w:{reference} w:type='{slot}' r:id='{original_id}'/><w:pgSz w:w='15840' w:h='12240' w:orient='landscape'/></w:sectPr></w:pPr><w:r><w:t>Original mid-section owner</w:t></w:r></w:p>"
+                            )
+                        } else {
+                            "<w:p><w:r><w:t>Original body owner</w:t></w:r></w:p>".to_owned()
+                        };
+                        out.set_part(MAIN, xml("document", &format!("<w:body>{mid}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body>")).into_bytes());
+                        let snapshot = |pkg: &PartFs| {
+                            pkg.parts()
+                                .into_iter()
+                                .map(|name| (name.clone(), pkg.part_bytes(&name).unwrap().to_vec()))
+                                .collect::<std::collections::BTreeMap<_, _>>()
+                        };
+                        let donor_before = snapshot(&donor);
+                        let out_before = snapshot(&out);
+                        let mut dom = Dom::new();
+                        let result = root(&mut dom, &out.part_string(MAIN).unwrap());
+                        let root_before = dom.serialize_element(result);
+                        let expected_root = dom.clone_subtree(result);
+                        adopt_revised_header_footer(
+                            &mut dom,
+                            result,
+                            &donor,
+                            &mut out,
+                            MAIN,
+                            &settings(),
+                        );
+                        assert_eq!(snapshot(&donor), donor_before);
+                        assert_eq!(
+                            out.part_bytes(&original_part),
+                            Some(original_xml.as_bytes())
+                        );
+                        let final_section = child(&dom, child(&dom, result, "body"), "sectPr");
+                        let adopted = !(occupied && cached != 0);
+                        let refs = dom.elements(final_section, Some(&W::name(&reference)));
+                        assert_eq!(
+                            refs.len(),
+                            usize::from(adopted),
+                            "{kind}/{slot} occupied={occupied} cached={cached}"
+                        );
+                        if !adopted {
+                            assert_eq!(
+                                snapshot(&out),
+                                out_before,
+                                "pre-existing body owner and packaged donor basename are authoritative"
+                            );
+                            assert_eq!(dom.serialize_element(result), root_before);
+                        } else {
+                            let rid = dom.attribute(refs[0], &R::name("id")).unwrap().to_owned();
+                            assert_eq!(dom.attribute(refs[0], &W::name("type")), Some(slot));
+                            let expected_reference = dom.new_element(W::name(&reference));
+                            dom.set_attribute_value(
+                                expected_reference,
+                                &W::name("type"),
+                                Some(slot),
+                            );
+                            dom.set_attribute_value(expected_reference, &R::name("id"), Some(&rid));
+                            let expected_section =
+                                child(&dom, child(&dom, expected_root, "body"), "sectPr");
+                            dom.add_first(expected_section, expected_reference);
+                            assert_eq!(
+                                dom.serialize_element(result),
+                                dom.serialize_element(expected_root),
+                                "complete original body, mid-section ownership and final geometry stay exact apart from the one adopted reference"
+                            );
+                            let rels = out.read_rels_for(MAIN).unwrap();
+                            let rel = rels.items.iter().find(|r| r.id == rid).unwrap();
+                            assert_eq!(rel.rel_type, format!("{REL}{kind}"));
+                            let target = out.resolve_rel_target(MAIN, &rel.target);
+                            assert_eq!(
+                                target,
+                                if cached == 2 {
+                                    format!("word/redlineB_{kind}B.xml")
+                                } else {
+                                    part.clone()
+                                }
+                            );
+                            assert_eq!(
+                                out.content_type_for(&target).as_deref(),
+                                Some(content_type.as_str())
+                            );
+                            for (name, bytes) in &out_before {
+                                if name != "word/_rels/document.xml.rels"
+                                    && name != "[Content_Types].xml"
+                                {
+                                    assert_eq!(
+                                        out.part_bytes(name),
+                                        Some(bytes.as_slice()),
+                                        "pre-existing source owner {name} cannot be overwritten"
+                                    );
+                                }
+                            }
+                            let (mut story_dom, story_root) = part_root(&out, &target);
+                            assert_eq!(
+                                !story_dom
+                                    .descendants(story_root, Some(&W::ins()))
+                                    .is_empty(),
+                                cached != 1,
+                                "only newly adopted content is tracked"
+                            );
+                            let accepted = crate::revision_processor::accept_revisions_document(
+                                &mut story_dom,
+                                story_root,
+                            );
+                            let expected = root(&mut story_dom, &donor_xml);
+                            assert_eq!(
+                                story_dom.serialize_element(accepted),
+                                story_dom.serialize_element(expected),
+                                "exact donor payload, run/paragraph properties and tab preserved"
+                            );
+                            if occupied {
+                                let mid_refs = dom
+                                    .descendants(result, Some(&W::name(&reference)))
+                                    .into_iter()
+                                    .filter(|&n| {
+                                        dom.attribute(n, &R::name("id"))
+                                            == Some(original_id.as_str())
+                                    })
+                                    .count();
+                                assert_eq!(mid_refs, 1);
+                            }
+                        }
+                        let once = (snapshot(&out), dom.serialize_element(result));
+                        adopt_revised_header_footer(
+                            &mut dom,
+                            result,
+                            &donor,
+                            &mut out,
+                            MAIN,
+                            &settings(),
+                        );
+                        assert_eq!(
+                            (snapshot(&out), dom.serialize_element(result)),
+                            once,
+                            "no duplicate relationship, reference or history"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn disabling_default_neutralizers_preserve_tracked_history_at_inheritance_limit() {
+        // The merged live chain is A's context, while the revised defaults
+        // disable kerning and ligatures. Only Leaf was redefined. Its history
+        // is not a live declaration, even when it names those same properties.
+        for count in [11, 12, 13] {
+            for kind in ["paragraph", "character"] {
+                for normal_declares in [false, true] {
+                    let declarations = "<w:kern w:val='7'/><w14:ligatures w14:val='all'/>";
+                    let history = "<w:rPrChange w:id='91' w:author='Original style owner' w:date='2001-02-03T04:05:06Z'><w:rPr><w:color w:val='654321'/><w:kern w:val='8'/><w14:ligatures w14:val='standardContextual'/></w:rPr></w:rPrChange>";
+                    let mut ancestors = String::new();
+                    for i in 0..count - 1 {
+                        let based = if i == 0 {
+                            String::new()
+                        } else {
+                            format!("<w:basedOn w:val='Parent{}'/>", i - 1)
+                        };
+                        let props = if i == 0 {
+                            format!("<w:rPr>{declarations}</w:rPr>")
+                        } else {
+                            String::new()
+                        };
+                        ancestors.push_str(&format!("<w:style w:type='{kind}' w:styleId='Parent{i}'><w:name w:val='Source parent {i}'/>{based}{props}</w:style>"));
+                    }
+                    let normal_props = if normal_declares { declarations } else { "" };
+                    let prefix = format!(
+                        "<w:docDefaults><w:rPrDefault><w:rPr><w:kern w:val='2'/><w14:ligatures w14:val='standardContextual'/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:type='paragraph' w:default='1' w:styleId='Normal'><w:name w:val='Normal'/><w:rPr>{normal_props}</w:rPr></w:style>{ancestors}"
+                    );
+                    let leaf = |neutralizers: &str| {
+                        format!(
+                            "<w:style w:type='{kind}' w:styleId='Leaf'><w:name w:val='Revised leaf'/><w:basedOn w:val='Parent{}'/><w:rPr><w:color w:val='123456'/>{neutralizers}{history}</w:rPr></w:style>",
+                            count - 2
+                        )
+                    };
+                    let authored = xml("styles", &format!("{prefix}{}", leaf("")));
+                    let revised = xml(
+                        "styles",
+                        "<w:docDefaults><w:rPrDefault><w:rPr><w:kern w:val='0'/><w14:ligatures w14:val='none'/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:type='paragraph' w:default='1' w:styleId='Normal'><w:name w:val='Normal'/></w:style><w:style w:type='{kind}' w:styleId='Leaf'><w:name w:val='Revised leaf'/><w:rPr><w:color w:val='123456'/></w:rPr></w:style>",
+                    );
+                    let mut dom = Dom::new();
+                    let out = root(&mut dom, &authored);
+                    let donor = root(&mut dom, &revised);
+                    let donor_before = dom.serialize_element(donor);
+                    let source_copy = dom.clone_subtree(out);
+                    let source_before = dom.serialize_element(source_copy);
+                    // Twelve includes Leaf itself. A declaration at the
+                    // thirteenth style lies beyond this established cap.
+                    let added = count == 13 && !(kind == "character" && normal_declares);
+                    let neutralizers = if added {
+                        "<w:kern w:val='0'/><w14:ligatures w14:val='none'/>"
+                    } else {
+                        ""
+                    };
+                    let expected = root(
+                        &mut dom,
+                        &xml("styles", &format!("{prefix}{}", leaf(neutralizers))),
+                    );
+                    assert_eq!(
+                        bake_bothsides_dd_disabling_neutralizers(&mut dom, out, donor),
+                        added,
+                        "count={count} kind={kind} normal={normal_declares}"
+                    );
+                    assert_eq!(
+                        dom.serialize_element(out),
+                        dom.serialize_element(expected),
+                        "complete style ownership count={count} kind={kind} normal={normal_declares}"
+                    );
+                    assert_eq!(dom.serialize_element(donor), donor_before);
+                    assert_eq!(dom.serialize_element(source_copy), source_before);
+                    let once = dom.serialize_element(out);
+                    assert!(!bake_bothsides_dd_disabling_neutralizers(
+                        &mut dom, out, donor
+                    ));
+                    assert_eq!(
+                        dom.serialize_element(out),
+                        once,
+                        "no duplicate live or historical declarations"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn normal_cascade_preserves_partial_spacing_owners_without_inventing_metrics() {
+        for line in [false, true] {
+            for rule in [false, true] {
+                for live in [
+                    "",
+                    " w:after='100'",
+                    " w:after='100' w:line='360' w:lineRule='exact'",
+                ] {
+                    let inherited = format!(
+                        " w:after='200'{}{}",
+                        if line { " w:line='276'" } else { "" },
+                        if rule { " w:lineRule='auto'" } else { "" }
+                    );
+                    let normal = format!(
+                        "<w:style w:type='paragraph' w:default='1' w:styleId='Normal'><w:name w:val='Normal'/><w:pPr><w:spacing w:after='180'/><w:pPrChange w:id='51' w:author='Prior Normal owner' w:date='2000-01-02T03:04:05Z'><w:pPr><w:spacing{inherited}/></w:pPr></w:pPrChange></w:pPr></w:style>"
+                    );
+                    let live_spacing = if live.is_empty() {
+                        String::new()
+                    } else {
+                        format!("<w:spacing{live}/>")
+                    };
+                    let history_spacing = if live.is_empty() {
+                        format!("<w:spacing{inherited}/>")
+                    } else if live.contains("w:line=") {
+                        live_spacing.clone()
+                    } else {
+                        format!(
+                            "<w:spacing{live}{}{}/>",
+                            if line { " w:line='276'" } else { "" },
+                            if rule { " w:lineRule='auto'" } else { "" }
+                        )
+                    };
+                    let leaf = |history: &str| {
+                        format!(
+                            "<w:style w:type='paragraph' w:styleId='BodyText'><w:name w:val='Body Text'/><w:basedOn w:val='Normal'/><w:pPr><w:keepNext/>{live_spacing}{history}</w:pPr><w:rPr><w:color w:val='123456'/></w:rPr></w:style>"
+                        )
+                    };
+                    let authored = xml("styles", &format!("{normal}{}", leaf("")));
+                    let expected_history = format!(
+                        "<w:pPrChange w:id='52' w:author='Boundary author' w:date='2001-02-03T04:05:06Z'><w:pPr><w:keepNext/>{history_spacing}</w:pPr></w:pPrChange>"
+                    );
+                    let mut dom = Dom::new();
+                    let out = root(&mut dom, &authored);
+                    let original = dom.clone_subtree(out);
+                    let before = dom.serialize_element(original);
+                    let expected = root(
+                        &mut dom,
+                        &xml("styles", &format!("{normal}{}", leaf(&expected_history))),
+                    );
+                    assert!(cascade_normal_change_to_based_styles(
+                        &mut dom,
+                        out,
+                        &settings()
+                    ));
+                    assert_eq!(
+                        dom.serialize_element(out),
+                        dom.serialize_element(expected),
+                        "line={line} rule={rule} live={live}; complete live/history owner"
+                    );
+                    assert_eq!(dom.serialize_element(original), before);
+                    let once = dom.serialize_element(out);
+                    assert!(!cascade_normal_change_to_based_styles(
+                        &mut dom,
+                        out,
+                        &settings()
+                    ));
+                    assert_eq!(dom.serialize_element(out), once);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn header_adoption_preserves_colliding_media_and_uses_correct_content_types() {
         for (ext, mime) in [
             ("PNG", "image/png"),
@@ -11707,6 +12053,288 @@ mod namespace_declared_default_property_owner_tests {
                 before,
                 "all authored namespace declarations and source property values remain unchanged"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod adopted_story_relationship_owner_tests {
+    use super::*;
+    const MAIN: &str = "word/document.xml";
+    const REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/";
+
+    fn signature(dom: &Dom, node: NodeId) -> String {
+        if (dom.name_is(node, &W::r_pr()) || dom.name_is(node, &W::p_pr()))
+            && dom.nodes(node).is_empty()
+            && dom
+                .attributes(node)
+                .iter()
+                .all(|(name, _)| dom.is_namespace_declaration(name))
+        {
+            return String::new();
+        }
+        let mut attrs = dom
+            .attributes(node)
+            .into_iter()
+            .filter(|(name, _)| !dom.is_namespace_declaration(name))
+            .map(|(name, value)| (format!("{name:?}"), value))
+            .collect::<Vec<_>>();
+        attrs.sort();
+        let children = dom
+            .nodes(node)
+            .into_iter()
+            .map(|child| {
+                let s = signature(dom, child);
+                if s.is_empty() {
+                    String::new()
+                } else {
+                    format!("{}:{s}", s.len())
+                }
+            })
+            .collect::<String>();
+        format!(
+            "{:?}:{attrs:?}:{:?}:{children}",
+            dom.name(node),
+            dom.text_value(node)
+        )
+    }
+    fn parsed(xml: &str) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).unwrap();
+        (dom, root)
+    }
+    fn empty_main() -> String {
+        format!(
+            "<w:document xmlns:w='{}' xmlns:r='{}'><w:body><w:p><w:r><w:t>Body source remains owned</w:t></w:r></w:p><w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>",
+            W::URI,
+            R::URI
+        )
+    }
+    #[test]
+    fn adopted_root_and_nested_stories_keep_colliding_media_relationships_resolvable() {
+        let images =
+            PartFs::open(include_bytes!("../tests/fixtures/relids/image_doc.docx")).unwrap();
+        let revised_image = images.part_bytes("word/media/image1.png").unwrap().to_vec();
+        let original_package = PartFs::open(include_bytes!(
+            "../tests/fixtures/word_probes/keep_next_picture_kn_1001.docx"
+        ))
+        .unwrap();
+        let original_image = original_package
+            .part_bytes("word/media/image1.png")
+            .unwrap()
+            .to_vec();
+        assert_ne!(revised_image, original_image);
+        for directory in ["", "word/", "stories/"] {
+            for media in [
+                "image.png",
+                "assets/owned.png",
+                "stories/owned.png",
+                "word/media/owned.png",
+            ] {
+                for footer in [false, true] {
+                    for collision in [false, true] {
+                        let kind = if footer { "footer" } else { "header" };
+                        let root_name = if footer { "ftr" } else { "hdr" };
+                        let part = format!("{directory}owned-{kind}.xml");
+                        let mut source =
+                            PartFs::open(include_bytes!("../tests/fixtures/relids/image_doc.docx"))
+                                .unwrap();
+                        source.set_part(MAIN, empty_main().into_bytes());
+                        source.set_part(media, revised_image.clone());
+                        source.add_content_type_default("png", "image/png");
+                        let image_id = source.add_document_relationship(
+                            &part,
+                            &format!("{REL}image"),
+                            &crate::opc::relative_rel_target(&part, media),
+                        );
+                        let header_xml = format!(
+                            "<w:{root_name} xmlns:w='{}' xmlns:r='{}' xmlns:v='urn:schemas-microsoft-com:vml'><w:p><w:pPr><w:spacing w:after='80'/></w:pPr><w:r><w:rPr><w:b/><w:color w:val='123456'/></w:rPr><w:pict><v:rect id='authored-image' style='width:10pt;height:10pt'><v:imagedata r:id='{image_id}'/></v:rect></w:pict></w:r></w:p></w:{root_name}>",
+                            W::URI,
+                            R::URI
+                        );
+                        source.set_part(&part, header_xml.clone().into_bytes());
+                        source.add_content_type_override(&format!("/{part}"), &format!("application/vnd.openxmlformats-officedocument.wordprocessingml.{kind}+xml"));
+                        let ref_id = source.add_document_relationship(
+                            MAIN,
+                            &format!("{REL}{kind}"),
+                            &crate::opc::relative_rel_target(MAIN, &part),
+                        );
+                        source.set_part(MAIN,empty_main().replace("<w:pgSz",&format!("<w:{kind}Reference w:type='default' r:id='{ref_id}'/><w:pgSz")).into_bytes());
+                        let snapshot = source
+                            .parts()
+                            .into_iter()
+                            .map(|name| {
+                                let bytes = source.part_bytes(&name).unwrap().to_vec();
+                                (name, bytes)
+                            })
+                            .collect::<Vec<_>>();
+                        let source_rels = format!("{:?}", source.read_rels_for(&part).unwrap());
+                        let mut out =
+                            PartFs::open(include_bytes!("../tests/fixtures/relids/image_doc.docx"))
+                                .unwrap();
+                        out.set_part(MAIN, empty_main().into_bytes());
+                        if collision {
+                            out.set_part(media, original_image.clone());
+                        } else {
+                            out.remove_part(media);
+                        }
+                        let (mut dom, root) = parsed(&empty_main());
+                        let settings = WmlComparerSettings::default();
+                        adopt_revised_header_footer(
+                            &mut dom, root, &source, &mut out, MAIN, &settings,
+                        );
+                        let body = dom.element(root, &W::body()).unwrap();
+                        let section = dom.element(body, &W::sect_pr()).unwrap();
+                        let refs =
+                            dom.elements(section, Some(&W::name(&format!("{kind}Reference"))));
+                        assert_eq!(refs.len(), 1);
+                        let rid = dom.attribute(refs[0], &R::name("id")).unwrap();
+                        let main_rels = out.read_rels_for(MAIN).unwrap();
+                        let relationship = main_rels.items.iter().find(|r| r.id == rid).unwrap();
+                        let adopted = out.resolve_rel_target(MAIN, &relationship.target);
+                        assert_eq!(adopted, part);
+                        let owned_rels=out.read_rels_for(&adopted).unwrap_or_else(||panic!("lost owning relationships part={part} media={media} collision={collision}"));
+                        let image = owned_rels.items.iter().find(|r| r.id == image_id).unwrap();
+                        assert_eq!(image.rel_type, format!("{REL}image"));
+                        assert_eq!(image.target_mode, None);
+                        let copied = out.resolve_rel_target(&adopted, &image.target);
+                        assert_eq!(
+                            out.part_bytes(&copied),
+                            Some(revised_image.as_slice()),
+                            "part={part} media={media} collision={collision} target={}",
+                            image.target
+                        );
+                        if collision {
+                            assert_ne!(copied, media);
+                            assert_eq!(out.part_bytes(media), Some(original_image.as_slice()));
+                        } else {
+                            assert_eq!(copied, media);
+                        }
+                        let (mut header_dom, header_root) =
+                            parsed(&out.part_string(&adopted).unwrap());
+                        let accepted = crate::revision_processor::accept_revisions_document(
+                            &mut header_dom,
+                            header_root,
+                        );
+                        let (source_dom, source_root) = parsed(&header_xml);
+                        assert_eq!(
+                            signature(&header_dom, accepted),
+                            signature(&source_dom, source_root)
+                        );
+                        assert_eq!(
+                            format!("{:?}", source.read_rels_for(&part).unwrap()),
+                            source_rels
+                        );
+                        for (name, bytes) in &snapshot {
+                            assert_eq!(
+                                source.part_bytes(name),
+                                Some(bytes.as_slice()),
+                                "source mutated {name}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod word_style_line_owned_boundary_tests {
+    use super::*;
+    fn parse(xml: &str) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let document = dom.parse_xdocument(xml);
+        let root = dom.root(document).unwrap();
+        (dom, root)
+    }
+    fn semantic(dom: &Dom, node: NodeId) -> String {
+        let mut attrs = dom
+            .attributes(node)
+            .into_iter()
+            .filter(|(name, _)| !dom.is_namespace_declaration(name))
+            .map(|(name, value)| (format!("{name:?}"), value))
+            .collect::<Vec<_>>();
+        attrs.sort();
+        let children = dom
+            .nodes(node)
+            .into_iter()
+            .map(|child| {
+                let value = semantic(dom, child);
+                format!("{}:{value}", value.len())
+            })
+            .collect::<String>();
+        format!(
+            "{:?}:{attrs:?}:{:?}:{children}",
+            dom.name(node),
+            dom.text_value(node)
+        )
+    }
+    #[test]
+    fn word_single_line_style_propagation_keeps_authored_history_and_unrelated_properties() {
+        for line in [None, Some("240"), Some("276")] {
+            for before in [None, Some("0"), Some("120")] {
+                if line.is_none() && before.is_some() {
+                    continue;
+                }
+                let eligible = line == Some("240") && before.is_none_or(|before| before == "0");
+                let styles = |normalized: bool| {
+                    let normal_spacing = match line {
+                        Some(line) => format!(
+                            "<w:spacing {}w:after='0' w:line='{line}' w:lineRule='auto'/>",
+                            before
+                                .map(|v| format!("w:before='{v}' "))
+                                .unwrap_or_default()
+                        ),
+                        None => String::new(),
+                    };
+                    let normal_ppr = if line.is_some() {
+                        format!("<w:pPr>{normal_spacing}</w:pPr>")
+                    } else {
+                        String::new()
+                    };
+                    let line_attrs = if normalized {
+                        " w:line='240' w:lineRule='auto'"
+                    } else {
+                        ""
+                    };
+                    let generated_spacing = if normalized {
+                        "<w:spacing w:after='0' w:line='240' w:lineRule='auto'/>"
+                    } else {
+                        ""
+                    };
+                    let title_ppr = if normalized {
+                        format!("<w:pPr>{generated_spacing}</w:pPr>")
+                    } else {
+                        String::new()
+                    };
+                    format!(
+                        "<w:styles xmlns:w='{}'><w:style w:type='paragraph' w:default='1' w:styleId='Normal'><w:name w:val='Normal'/>{normal_ppr}<w:rPr><w:rFonts w:ascii='Calibri'/></w:rPr></w:style><w:style w:type='paragraph' w:styleId='Heading1'><w:name w:val='heading 1'/><w:basedOn w:val='Normal'/><w:pPr><w:spacing w:before='180' w:after='80'{line_attrs}/><w:ind w:left='120'/></w:pPr><w:rPr><w:b/></w:rPr></w:style><w:style w:type='paragraph' w:styleId='Title'><w:name w:val='Title'/>{title_ppr}<w:rPr><w:i/><w:color w:val='123456'/></w:rPr></w:style><w:style w:type='paragraph' w:styleId='ListParagraph'><w:name w:val='List Paragraph'/><w:basedOn w:val='Normal'/><w:pPr>{generated_spacing}<w:ind w:left='720'/><w:contextualSpacing/><w:pPrChange w:id='71' w:author='Original layout owner' w:date='2026-10-01T12:00:00Z'><w:pPr><w:spacing w:before='120' w:after='180' w:line='276' w:lineRule='auto'/><w:ind w:left='360'/></w:pPr></w:pPrChange></w:pPr><w:rPr><w:lang w:val='en-US'/></w:rPr></w:style><w:style w:type='paragraph' w:styleId='Heading2'><w:name w:val='heading 2'/><w:pPr><w:ind w:left='240'/></w:pPr></w:style><w:style w:type='paragraph' w:styleId='Heading3'><w:name w:val='heading 3'/><w:pPr><w:spacing w:after='80' w:line='276' w:lineRule='exact'/></w:pPr></w:style><w:style w:styleId='Heading4'><w:name w:val='heading 4'/><w:pPr><w:spacing w:after='80'{line_attrs}/></w:pPr></w:style><w:style w:type='paragraph' w:styleId='Heading5'><w:name w:val='heading 5'/><w:rPr><w:b/></w:rPr></w:style><w:style w:type='character' w:styleId='HighlightedStyle'><w:name w:val='Highlighted Style'/><w:rPr><w:highlight w:val='yellow'/></w:rPr></w:style><w:style w:type='paragraph' w:styleId='Unrelated'><w:name w:val='Unrelated'/><w:pPr><w:spacing w:line='360' w:lineRule='exact'/></w:pPr></w:style></w:styles>",
+                        W::URI
+                    )
+                };
+                let (mut dom, root) = parse(&styles(false));
+                let history = dom.descendants(root, Some(&W::p_pr_change()))[0];
+                let authored_history = semantic(&dom, history);
+                let (oracle, expected) = parse(&styles(eligible));
+                assert_eq!(
+                    normalize_word_paragraph_style_line(&mut dom, root),
+                    eligible,
+                    "line={line:?} before={before:?}"
+                );
+                assert_eq!(
+                    semantic(&dom, root),
+                    semantic(&oracle, expected),
+                    "line={line:?} before={before:?}"
+                );
+                assert_eq!(dom.descendants(root, Some(&W::p_pr_change())), [history]);
+                assert_eq!(semantic(&dom, history), authored_history);
+                assert!(!normalize_word_paragraph_style_line(&mut dom, root));
+                assert_eq!(semantic(&dom, root), semantic(&oracle, expected));
+            }
         }
     }
 }

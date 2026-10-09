@@ -1039,17 +1039,22 @@ fn find_note_defs(
         (notes.en_before, notes.en_after)
     };
     match status {
-        S::Equal => Ok(NoteDefs {
+        // Run-property changes retain a paired reference: compare both owned
+        // definitions while the body keeps its formatting history.
+        S::Equal | S::FormatChanged => Ok(NoteDefs {
             before: Some(def(part(root_before, "before")?, before_id)?),
             after: Some(def(part(root_after, "after")?, after_id)?),
         }),
-        S::Inserted => Ok(NoteDefs {
+        // A moved reference keeps its body move status. Its definition is
+        // owned by the destination or source package, just like inserted or
+        // deleted content; it must never resolve through the opposite part.
+        S::Inserted | S::MovedDestination => Ok(NoteDefs {
             before: None,
             after: Some(def(part(root_after, "after")?, after_id)?),
         }),
         // The before-part lookup is keyed by the reference's own id, which
         // for a Deleted atom is the before-document element (C# :3210).
-        S::Deleted => Ok(NoteDefs {
+        S::Deleted | S::MovedSource => Ok(NoteDefs {
             before: Some(def(part(root_before, "before")?, after_id)?),
             after: None,
         }),
@@ -1136,7 +1141,7 @@ pub fn process_footnote_endnote(
         )?;
 
         match status {
-            CorrelationStatus::Equal => {
+            CorrelationStatus::Equal | CorrelationStatus::FormatChanged => {
                 let (Some(def_before), Some(def_after)) = (defs.before, defs.after) else {
                     continue;
                 };
@@ -1158,11 +1163,17 @@ pub fn process_footnote_endnote(
                 let fncus2 = units::get_comparison_unit_list(dom, &fncal2, settings);
                 if !(fncus1.is_empty() && fncus2.is_empty()) {
                     // C# calls Lcs directly — no DetectUnrelatedSources
-                    // pre-check in the nested path (:3060), and no move /
-                    // format-change detection either.
+                    // pre-check or move detection in the nested path (:3060).
+                    // Faithful mode also retains its omission of format history;
+                    // Word mode records changed properties on shared note runs.
                     let seqs = lcs::lcs(dom, fncus1, fncus2, settings);
                     lcs_table::mark_rows_as_deleted_or_inserted(dom, settings, &seqs, id_gen);
                     let mut flat = produce::flatten_to_comparison_unit_atom_list(dom, &seqs);
+                    if settings.merge_replaced_paragraphs {
+                        super::formatchg::detect_format_changes_in_atom_list(
+                            dom, &mut flat, settings,
+                        );
+                    }
                     let new_content =
                         produce_note_redline(dom, &mut flat, is_footnote, true, settings, id_gen)
                             .ok_or_else(|| RectifyError::MissingNoteDef {
@@ -1171,7 +1182,7 @@ pub fn process_footnote_endnote(
                     replace_nodes(dom, def_after, new_content);
                 }
             }
-            CorrelationStatus::Inserted => {
+            CorrelationStatus::Inserted | CorrelationStatus::MovedDestination => {
                 let Some(def_after) = defs.after else {
                     continue;
                 };
@@ -1194,7 +1205,7 @@ pub fn process_footnote_endnote(
                     replace_nodes(dom, def_after, new_content);
                 }
             }
-            CorrelationStatus::Deleted => {
+            CorrelationStatus::Deleted | CorrelationStatus::MovedSource => {
                 // C# (:3210) — the before-part lookup is keyed by the local
                 // var misnamed `afterId` (correct for Deleted: ContentElement
                 // IS the before-document element). FAITHFUL-BUG: the footnote
@@ -1750,6 +1761,293 @@ mod coverage_custom_note_owner_boundaries {
                         fixed,
                         "fixup must be idempotent"
                     );
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod moved_reference_definition_owner_tests {
+    use super::*;
+
+    #[test]
+    fn moved_note_lookups_use_only_the_reference_source_or_destination_part() {
+        for footnote in [false, true] {
+            let mut dom = Dom::new();
+            let (local, plural) = if footnote {
+                ("footnote", "footnotes")
+            } else {
+                ("endnote", "endnotes")
+            };
+            let parse = |dom: &mut Dom, id, text, colour| {
+                let doc = dom.parse_xdocument(&format!("<w:{plural} xmlns:w='{}'><w:{local} w:id='{id}'><w:p><w:pPr><w:spacing w:after='180'/></w:pPr><w:r><w:rPr><w:color w:val='{colour}'/></w:rPr><w:t>{text}</w:t><w:tab/></w:r></w:p></w:{local}></w:{plural}>", W::URI));
+                dom.root(doc).unwrap()
+            };
+            // Actual disjoint preprocessing ranges for start=23.
+            let before = parse(&mut dom, "1023", "Original source payload", "123456");
+            let after = parse(&mut dom, "2023", "Revised destination payload", "654321");
+            let before_def = dom.elements(before, Some(&W::name(local)))[0];
+            let after_def = dom.elements(after, Some(&W::name(local)))[0];
+            let notes = if footnote {
+                super::super::NotesContext {
+                    fn_before: Some(before),
+                    fn_after: Some(after),
+                    ..Default::default()
+                }
+            } else {
+                super::super::NotesContext {
+                    en_before: Some(before),
+                    en_after: Some(after),
+                    ..Default::default()
+                }
+            };
+            let frozen = (dom.serialize_element(before), dom.serialize_element(after));
+            let source = find_note_defs(
+                &dom,
+                &notes,
+                footnote,
+                super::super::CorrelationStatus::MovedSource,
+                None,
+                Some("1023"),
+            )
+            .unwrap();
+            assert_eq!(source.before, Some(before_def));
+            assert_eq!(source.after, None);
+            let destination = find_note_defs(
+                &dom,
+                &notes,
+                footnote,
+                super::super::CorrelationStatus::MovedDestination,
+                None,
+                Some("2023"),
+            )
+            .unwrap();
+            assert_eq!(destination.before, None);
+            assert_eq!(destination.after, Some(after_def));
+            let formatted = find_note_defs(
+                &dom,
+                &notes,
+                footnote,
+                super::super::CorrelationStatus::FormatChanged,
+                Some("1023"),
+                Some("2023"),
+            )
+            .unwrap();
+            assert_eq!(formatted.before, Some(before_def));
+            assert_eq!(formatted.after, Some(after_def));
+            for (before_id, after_id) in [("2023", "2023"), ("1023", "1023")] {
+                let missing = if before_id == "2023" {
+                    before_id
+                } else {
+                    after_id
+                };
+                assert!(
+                    matches!(
+                        find_note_defs(&dom,&notes,footnote,super::super::CorrelationStatus::FormatChanged,Some(before_id),Some(after_id)),
+                        Err(RectifyError::MissingNoteDef { id }) if id == missing
+                    ),
+                    "formatted references require each package's own definition"
+                );
+            }
+            // A real source reference cannot borrow a matching destination
+            // definition, or vice versa, when its own definition is absent.
+            for (status, id) in [
+                (super::super::CorrelationStatus::MovedSource, "2023"),
+                (super::super::CorrelationStatus::MovedDestination, "1023"),
+            ] {
+                assert!(
+                    matches!(find_note_defs(&dom,&notes,footnote,status,None,Some(id)),Err(RectifyError::MissingNoteDef { id: missing }) if missing == id)
+                );
+            }
+            assert_eq!(
+                (dom.serialize_element(before), dom.serialize_element(after)),
+                frozen,
+                "lookup preserves every owned note ID/payload/format"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod paired_note_format_history_tests {
+    use super::*;
+    use crate::comparer::atoms::ComparisonUnitAtom;
+    use crate::comparer::{CorrelationStatus, NotesContext};
+    use crate::revision_processor::{accept_revisions_document, reject_revisions_document};
+    use std::sync::Arc;
+
+    fn parse(dom: &mut Dom, xml: &str) -> NodeId {
+        let doc = dom.parse_xdocument(&format!("<w:root xmlns:w='{}'>{xml}</w:root>", W::URI));
+        dom.elements(dom.root(doc).unwrap(), None)[0]
+    }
+    fn signature(dom: &Dom, node: NodeId) -> String {
+        let mut attrs = dom
+            .attributes(node)
+            .into_iter()
+            .filter(|(name, _)| !dom.is_namespace_declaration(name))
+            .map(|(name, value)| (format!("{name:?}"), value))
+            .collect::<Vec<_>>();
+        attrs.sort();
+        let children = dom
+            .nodes(node)
+            .into_iter()
+            .map(|child| {
+                let value = signature(dom, child);
+                format!("{}:{value}", value.len())
+            })
+            .collect::<String>();
+        format!(
+            "{:?}:{attrs:?}:{:?}:{children}",
+            dom.name(node),
+            dom.text_value(node)
+        )
+    }
+    fn events(dom: &Dom, root: NodeId) -> Vec<(String, String)> {
+        let mut events = Vec::new();
+        for p in dom.elements(root, Some(&W::p())) {
+            events.push((
+                "paragraph".into(),
+                signature(dom, dom.element(p, &W::p_pr()).unwrap()),
+            ));
+            for run in dom.elements(p, Some(&W::r())) {
+                let properties = signature(dom, dom.element(run, &W::r_pr()).unwrap());
+                for child in dom.elements(run, None) {
+                    if dom.name_is(child, &W::r_pr()) {
+                        continue;
+                    }
+                    if dom.name_is(child, &W::t()) {
+                        events.extend(
+                            dom.value(child)
+                                .chars()
+                                .map(|character| (format!("text:{character}"), properties.clone())),
+                        );
+                    } else {
+                        events.push((signature(dom, child), properties.clone()));
+                    }
+                }
+            }
+            events.push(("end paragraph".into(), String::new()));
+        }
+        events
+    }
+    #[test]
+    fn paired_note_content_format_history_respects_word_and_faithful_modes() {
+        for kind in ["footnote", "endnote"] {
+            for word in [false, true] {
+                for detect in [false, true] {
+                    for status in [CorrelationStatus::Equal, CorrelationStatus::FormatChanged] {
+                        let mut dom = Dom::new();
+                        let marker_style = if kind == "footnote" {
+                            "FootnoteReference"
+                        } else {
+                            "EndnoteReference"
+                        };
+                        let old_props = "<w:rPr><w:rFonts w:ascii='Calibri' w:hAnsi='Calibri'/><w:color w:val='123456'/><w:sz w:val='22'/><w:lang w:val='en-US'/></w:rPr>";
+                        let new_props = old_props
+                            .replace("</w:rFonts>", "</w:rFonts><w:b/>")
+                            .replace("/><w:color", "/><w:b/><w:color");
+                        let note = |id, prefix: &str, props: &str| {
+                            format!(
+                                "<w:{kind}s><w:{kind} w:id='{id}'><w:p><w:pPr><w:spacing w:after='180'/></w:pPr><w:r><w:rPr><w:rStyle w:val='{marker_style}'/></w:rPr><w:{kind}Ref/></w:r><w:r>{props}<w:t>{prefix} authored note payload</w:t><w:tab/></w:r></w:p></w:{kind}></w:{kind}s>"
+                            )
+                        };
+                        let before = parse(&mut dom, &note(1023, "Original", old_props));
+                        let after = parse(&mut dom, &note(2023, "Revised", &new_props));
+                        let def_name = W::name(kind);
+                        let old_def = dom.element(before, &def_name).unwrap();
+                        let new_def = dom.element(after, &def_name).unwrap();
+                        let old_events = events(&dom, old_def);
+                        let revised_events = events(&dom, new_def);
+                        let frozen_before = signature(&dom, before);
+                        let before_ref =
+                            parse(&mut dom, &format!("<w:{kind}Reference w:id='1023'/>"));
+                        let after_ref =
+                            parse(&mut dom, &format!("<w:{kind}Reference w:id='2023'/>"));
+                        let mut atom = ComparisonUnitAtom::new(
+                            after_ref,
+                            Arc::from([after_ref]),
+                            "paired-note",
+                        );
+                        atom.content_element_before = Some(before_ref);
+                        atom.correlation_status = status;
+                        let mut notes = if kind == "footnote" {
+                            NotesContext {
+                                fn_before: Some(before),
+                                fn_after: Some(after),
+                                ..Default::default()
+                            }
+                        } else {
+                            NotesContext {
+                                en_before: Some(before),
+                                en_after: Some(after),
+                                ..Default::default()
+                            }
+                        };
+                        let settings = WmlComparerSettings {
+                            merge_replaced_paragraphs: word,
+                            detect_format_changes: detect,
+                            ..Default::default()
+                        };
+                        let mut id = 31;
+                        process_footnote_endnote(&mut dom, &[atom], &mut notes, &settings, &mut id)
+                            .unwrap();
+                        finalize_notes_part(&mut dom, after, &settings, &mut id);
+                        let redline = dom.element(after, &def_name).unwrap();
+                        let history = dom.descendants(redline, Some(&W::r_pr_change()));
+                        assert_eq!(
+                            !history.is_empty(),
+                            word && detect,
+                            "{kind} word={word} detect={detect} status={status:?}"
+                        );
+                        for &change in &history {
+                            assert_eq!(
+                                dom.attribute(change, &W::author()),
+                                Some(settings.author_for_revisions.as_str())
+                            );
+                            assert_eq!(
+                                dom.attribute(change, &W::date()),
+                                Some(settings.date_time_for_revisions.as_str())
+                            );
+                        }
+                        let accept_input = dom.clone_subtree(redline);
+                        let accepted = accept_revisions_document(&mut dom, accept_input);
+                        let rejected = reject_revisions_document(&mut dom, redline);
+                        assert_eq!(events(&dom, accepted), revised_events);
+                        let mut rejected_expected = old_events.clone();
+                        if !(word && detect) {
+                            // C#'s nested mini-compare does not track formatting:
+                            // changed text owns its source properties, shared
+                            // suffix and tab retain the revised run properties.
+                            let shared_start = 2 + "Original".chars().count();
+                            // Bind the revised content rPr independently, not
+                            // the canonical reference-marker run's formatting.
+                            let revised_content_props = &revised_events[3].1;
+                            for event in &mut rejected_expected[shared_start..] {
+                                if event.0 != "end paragraph" {
+                                    event.1 = revised_content_props.clone();
+                                }
+                            }
+                        }
+                        assert_eq!(
+                            events(&dom, rejected),
+                            rejected_expected,
+                            "{kind} word={word} detect={detect} status={status:?}"
+                        );
+                        // Preprocess stamps block identities/hashes on the
+                        // original tree. Compare the complete authored tree
+                        // after the same scratch cleanup used by the pipeline.
+                        let clean_before = dom.clone_subtree(before);
+                        crate::comparer::finalize::remove_powertools_scratch_markup(
+                            &mut dom,
+                            clean_before,
+                        );
+                        assert_eq!(signature(&dom, clean_before), frozen_before);
+                        assert_eq!(dom.attribute(old_def, &W::id()), Some("1023"));
+                        assert_eq!(dom.attribute(new_def, &W::id()), Some("2023"));
+                    }
                 }
             }
         }

@@ -2306,12 +2306,28 @@ fn scan_family_faces(family: &str, user: Option<&Path>) -> (SourcedFaces, Vec<Pa
 /// still answer only to their own family name. Parent names come from the
 /// cache's own listing, never from the document.
 fn cloud_font_dirs(family: &str) -> Vec<(PathBuf, bool)> {
-    let Some(home) = std::env::var_os("HOME") else {
+    let home = std::env::var_os("HOME");
+    cloud_font_dirs_with(
+        family,
+        home.as_deref().map(Path::new),
+        &sorted_dir_listing,
+        &Path::is_dir,
+        &cloud_folder_names,
+    )
+}
+
+fn cloud_font_dirs_with(
+    family: &str,
+    home: Option<&Path>,
+    listing: &impl Fn(&Path) -> Arc<Vec<PathBuf>>,
+    is_dir: &impl Fn(&Path) -> bool,
+    folder_names: &impl Fn(&Path) -> Arc<FolderNames>,
+) -> Vec<(PathBuf, bool)> {
+    let Some(home) = home else {
         return Vec::new();
     };
-    let home = Path::new(&home);
     let own = cloud_font_dir(home, family);
-    if let Some(dir) = own.as_ref().filter(|d| d.is_dir()) {
+    if let Some(dir) = own.as_ref().filter(|d| is_dir(d)) {
         return vec![(dir.clone(), true)];
     }
     let mut out: Vec<(PathBuf, bool)> = own.map(|dir| (dir, true)).into_iter().collect();
@@ -2320,7 +2336,7 @@ fn cloud_font_dirs(family: &str) -> Vec<(PathBuf, bool)> {
         return out;
     };
     let want = fold_family(family);
-    for dir in sorted_dir_listing(&root).iter() {
+    for dir in listing(&root).iter() {
         let Some(name) = dir.file_name().and_then(|n| n.to_str()) else {
             continue;
         };
@@ -2330,12 +2346,12 @@ fn cloud_font_dirs(family: &str) -> Vec<(PathBuf, bool)> {
         }
     }
     let latin = want.chars().filter(char::is_ascii_alphanumeric).count() >= 3;
-    if !latin && out.iter().all(|(d, _)| !d.is_dir()) {
+    if !latin && out.iter().all(|(d, _)| !is_dir(d)) {
         // Word files a family under its English name and answers to its
         // localized one too: 华文仿宋 lives in CloudFonts/STFangsong/, whose
         // name table carries 华文仿宋 for zh-CN (fixtures_500 004599833e).
         out.extend(
-            cloud_folder_names(&root)
+            folder_names(&root)
                 .iter()
                 .filter(|(_, names)| names.contains(&want))
                 .map(|(dir, _)| (dir.clone(), true)),
@@ -2356,12 +2372,26 @@ fn cloud_folder_names(root: &Path) -> Arc<FolderNames> {
     if let Some(hit) = CACHE.lock().ok().and_then(|c| c.get(root).cloned()) {
         return hit;
     }
+    let out = cloud_folder_names_with(root, &sorted_dir_listing, &Path::is_dir, &|file| {
+        fs::read(file).ok()
+    });
+    let out = Arc::new(out);
+    if let Ok(mut cache) = CACHE.lock() {
+        cache.insert(root.to_path_buf(), Arc::clone(&out));
+    }
+    out
+}
+
+fn cloud_folder_names_with(
+    root: &Path,
+    listing: &impl Fn(&Path) -> Arc<Vec<PathBuf>>,
+    is_dir: &impl Fn(&Path) -> bool,
+    read: &impl Fn(&Path) -> Option<Vec<u8>>,
+) -> FolderNames {
     let mut out = Vec::new();
-    for dir in sorted_dir_listing(root).iter().filter(|d| d.is_dir()) {
+    for dir in listing(root).iter().filter(|d| is_dir(d)) {
         let mut names = Vec::new();
-        let first = sorted_dir_listing(dir)
-            .iter()
-            .find_map(|file| fs::read(file).ok());
+        let first = listing(dir).iter().find_map(|file| read(file));
         if let Some(bytes) = first
             && let Ok(face) = ttf_parser::Face::parse(&bytes, 0)
         {
@@ -2374,10 +2404,6 @@ fn cloud_folder_names(root: &Path) -> Arc<FolderNames> {
         names.sort();
         names.dedup();
         out.push((dir.clone(), names));
-    }
-    let out = Arc::new(out);
-    if let Ok(mut cache) = CACHE.lock() {
-        cache.insert(root.to_path_buf(), Arc::clone(&out));
     }
     out
 }
@@ -7022,5 +7048,189 @@ mod memory_discovery_policy_contract_tests {
             ]
         );
         assert_eq!(fs.bytes[&Path::new(dir).join("Carlito.ttc")], ttc);
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod cloud_font_memory_owner_tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::collections::{BTreeMap, HashSet};
+
+    #[test]
+    fn cloud_folder_selection_preserves_own_parent_and_localized_source_owners() {
+        let home = Path::new("/memory/cloud-owner");
+        let root = home.join("Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts");
+        let own = root.join("Script MT Bold");
+        let entries = Arc::new(vec![
+            root.join("Sc"),
+            root.join("Script"),
+            root.join("Script MT"),
+            own.clone(),
+            root.join("Unrelated"),
+        ]);
+        let scans = RefCell::new(Vec::new());
+        let listing = |path: &Path| {
+            scans.borrow_mut().push(path.to_path_buf());
+            Arc::clone(&entries)
+        };
+        let names = |_: &Path| Arc::new(Vec::new());
+        let no_dirs = |_: &Path| false;
+        assert_eq!(
+            cloud_font_dirs_with("Script MT Bold", Some(home), &listing, &no_dirs, &names),
+            vec![
+                (own.clone(), true),
+                (root.join("Script"), true),
+                (root.join("Script MT"), true)
+            ]
+        );
+        assert_eq!(*scans.borrow(), vec![root.clone()]);
+        scans.borrow_mut().clear();
+        assert_eq!(
+            cloud_font_dirs_with(
+                "Script MT Bold",
+                Some(home),
+                &listing,
+                &|path| path == own,
+                &names
+            ),
+            vec![(own, true)]
+        );
+        assert!(scans.borrow().is_empty());
+        assert!(
+            cloud_font_dirs_with("Script MT Bold", None, &listing, &no_dirs, &names).is_empty()
+        );
+        assert!(scans.borrow().is_empty());
+        let local_own = root.join("华文仿宋");
+        let local_names = Arc::new(vec![
+            (
+                root.join("STFangsong"),
+                vec!["华文仿宋".into(), "stfangsong".into()],
+            ),
+            (root.join("Other"), vec!["different".into()]),
+        ]);
+        let names_scans = RefCell::new(Vec::new());
+        let local_lookup = |path: &Path| {
+            names_scans.borrow_mut().push(path.to_path_buf());
+            Arc::clone(&local_names)
+        };
+        assert_eq!(
+            cloud_font_dirs_with("华文仿宋", Some(home), &listing, &no_dirs, &local_lookup),
+            vec![(local_own.clone(), true), (root.join("STFangsong"), true)]
+        );
+        assert_eq!(*names_scans.borrow(), vec![root.clone()]);
+        names_scans.borrow_mut().clear();
+        assert_eq!(
+            cloud_font_dirs_with(
+                "华文仿宋",
+                Some(home),
+                &listing,
+                &|path| path == local_own,
+                &local_lookup
+            ),
+            vec![(local_own, true)]
+        );
+        assert!(names_scans.borrow().is_empty());
+        assert!(
+            cloud_font_dirs_with(
+                "Script MT Bold",
+                Some(home),
+                &listing,
+                &no_dirs,
+                &local_lookup
+            )
+            .iter()
+            .all(|(p, whole)| *whole && p.starts_with(&root))
+        );
+        assert!(
+            names_scans.borrow().is_empty(),
+            "Latin family lookup never searches localized name records"
+        );
+    }
+
+    #[test]
+    fn cloud_name_scan_uses_first_readable_font_and_keeps_each_folder_source() {
+        let root = PathBuf::from("/memory/cloud-owner/fonts");
+        let empty = root.join("Empty");
+        let invalid = root.join("Invalid");
+        let denied = root.join("ReadDenied");
+        let valid = root.join("Valid");
+        let mono = root.join("ValidMono");
+        let ignored = root.join("plain-file");
+        let folders = vec![
+            empty.clone(),
+            invalid.clone(),
+            denied.clone(),
+            valid.clone(),
+            mono.clone(),
+            ignored.clone(),
+        ];
+        let dirs = HashSet::from([
+            empty.clone(),
+            invalid.clone(),
+            denied.clone(),
+            valid.clone(),
+            mono.clone(),
+        ]);
+        let listing = BTreeMap::from([
+            (root.clone(), folders.clone()),
+            (empty.clone(), vec![]),
+            (
+                invalid.clone(),
+                vec![invalid.join("bad.ttf"), invalid.join("later.ttf")],
+            ),
+            (
+                denied.clone(),
+                vec![denied.join("unreadable.ttf"), denied.join("readable.ttf")],
+            ),
+            (valid.clone(), vec![valid.join("face.ttf")]),
+            (mono.clone(), vec![mono.join("face.ttf")]),
+        ]);
+        let carlito = include_bytes!("../../assets/fonts/Carlito-Regular.ttf").to_vec();
+        let mono_bytes = include_bytes!("../../assets/fonts/LiberationMono-Regular.ttf").to_vec();
+        let bytes = BTreeMap::from([
+            (invalid.join("bad.ttf"), vec![0, 1, 2]),
+            (invalid.join("later.ttf"), carlito.clone()),
+            (denied.join("readable.ttf"), carlito.clone()),
+            (valid.join("face.ttf"), carlito),
+            (mono.join("face.ttf"), mono_bytes),
+        ]);
+        let frozen = bytes.clone();
+        let reads = RefCell::new(Vec::new());
+        let scan = cloud_folder_names_with(
+            &root,
+            &|p| Arc::new(listing.get(p).cloned().unwrap_or_default()),
+            &|p| dirs.contains(p),
+            &|p| {
+                reads.borrow_mut().push(p.to_path_buf());
+                bytes.get(p).cloned()
+            },
+        );
+        assert_eq!(
+            scan,
+            vec![
+                (empty, vec![]),
+                (invalid.clone(), vec![]),
+                (denied.clone(), vec!["carlito".into()]),
+                (valid.clone(), vec!["carlito".into()]),
+                (mono.clone(), vec!["liberationmono".into()])
+            ]
+        );
+        assert_eq!(
+            *reads.borrow(),
+            vec![
+                invalid.join("bad.ttf"),
+                denied.join("unreadable.ttf"),
+                denied.join("readable.ttf"),
+                valid.join("face.ttf"),
+                mono.join("face.ttf")
+            ]
+        );
+        assert_eq!(
+            bytes, frozen,
+            "font name extraction retains every owned font byte"
+        );
+        assert_eq!(listing[&root], folders, "no folder is reordered or renamed");
     }
 }

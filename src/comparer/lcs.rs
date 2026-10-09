@@ -20277,6 +20277,102 @@ mod coverage_real_source_route_matrix_tests {
     }
 
     #[test]
+    fn table_routes_distinguish_authored_math_content_from_missing_lexical_titles() {
+        for long_route in [false, true] {
+            for table_count in [3usize, 4] {
+                for lexical_sides in 0..4 {
+                    for word in [false, true] {
+                        for reverse in [false, true] {
+                            let settings = WmlComparerSettings {
+                                merge_replaced_paragraphs: word,
+                                ..WmlComparerSettings::default()
+                            };
+                            let story = |revised: bool| {
+                                let (groups, tables) = if long_route {
+                                    if revised { (4, 1) } else { (32, table_count) }
+                                } else if revised {
+                                    (11, 1)
+                                } else {
+                                    (10, table_count)
+                                };
+                                let lexical = lexical_sides & if revised { 2 } else { 1 } != 0;
+                                let math = |index| {
+                                    format!(
+                                        "<w:p><w:pPr><w:spacing w:after='180'/><w:jc w:val='center'/></w:pPr><m:oMath><m:r><m:rPr><m:sty m:val='p'/></m:rPr><w:rPr><w:rFonts w:ascii='Cambria Math' w:hAnsi='Cambria Math'/></w:rPr><m:t>{}equation{index}</m:t></m:r></m:oMath></w:p>",
+                                        if revised { "revised" } else { "original" }
+                                    )
+                                };
+                                let mut xml = String::new();
+                                for index in 0..groups - tables {
+                                    if index == 0 && lexical {
+                                        xml.push_str(&paragraph(
+                                            if revised {
+                                                "Revised violet inventory"
+                                            } else {
+                                                "Original copper archive"
+                                            },
+                                            "BodyText",
+                                            None,
+                                            revised,
+                                        ));
+                                    } else {
+                                        xml.push_str(&math(index));
+                                    }
+                                }
+                                for index in 0..tables {
+                                    xml.push_str(&format!("<w:tbl><w:tblPr><w:tblW w:w='2400' w:type='dxa'/></w:tblPr><w:tblGrid><w:gridCol w:w='2400'/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w='2400' w:type='dxa'/></w:tcPr>{}</w:tc></w:tr></w:tbl>", math(index + groups)));
+                                }
+                                xml
+                            };
+                            let a = story(false);
+                            let b = story(true);
+                            let mut dom = Dom::new();
+                            let left = source(&mut dom, if reverse { &b } else { &a }, &settings);
+                            let right = source(&mut dom, if reverse { &a } else { &b }, &settings);
+                            let n1 = contentful_group_sha1s(&dom, &left).len();
+                            let n2 = contentful_group_sha1s(&dom, &right).len();
+                            assert_eq!(
+                                (n1, n2),
+                                if long_route {
+                                    if reverse { (4, 32) } else { (32, 4) }
+                                } else if reverse {
+                                    (11, 10)
+                                } else {
+                                    (10, 11)
+                                }
+                            );
+                            let expected = (frozen(&mut dom, &left), frozen(&mut dom, &right));
+                            let classified = if long_route {
+                                long_multitable_x_short_table_free_mesh(&dom, &left, &right, n1, n2)
+                            } else {
+                                both_tables_unrelated_free_mesh(&dom, &left, &right, n1, n2)
+                            };
+                            assert_eq!(
+                                classified,
+                                table_count == 4 && lexical_sides == 3,
+                                "actual math content counts do not invent a lexical title"
+                            );
+                            assert_eq!(
+                                (frozen(&mut dom, &left), frozen(&mut dom, &right)),
+                                expected,
+                                "classification preserves all equation/paragraph/cell owners"
+                            );
+                            let label = format!(
+                                "math table long={long_route} tables={table_count} lexical={lexical_sides} Word={word} reverse={reverse}"
+                            );
+                            let out = step_h(&mut dom, &left, &right, &settings);
+                            assert_owned(&mut dom, &out, &expected, &label);
+                            let resolved = resolve_correlated_sequences(&mut dom, out, &settings);
+                            assert!(resolved.iter().all(|seq| seq.correlation_status != CorrelationStatus::Unknown));
+                            assert_owned(&mut dom, &resolved, &expected, &label);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn structured_property_table_guards_preserve_actual_source_geometry() {
         exercise_structured_caller_guards(0);
     }
@@ -20334,4 +20430,181 @@ mod coverage_real_source_route_matrix_tests {
     family_test!(multiple_table_source_windows, "multitable");
     family_test!(sectioned_source_windows, "sectioned");
     family_test!(statistics_source_windows, "statistics");
+
+    #[test]
+    fn authored_filename_and_common_run_boundaries_keep_complete_source_ownership() {
+        // These are real source tokens, never PT stamps or invented helper
+        // states. A retained filename can require LCS even in an otherwise
+        // unrelated large document; thresholds govern genuine shared runs.
+        for stamp in ["file_contract", "archive.docx", "archive.doc", "archive"] {
+            for common_words in [1, 4, 12] {
+                for word in [false, true] {
+                    for threshold in [0.0, 0.15, 1.0] {
+                        let settings = WmlComparerSettings {
+                            merge_replaced_paragraphs: word,
+                            detail_threshold: threshold,
+                            ..WmlComparerSettings::default()
+                        };
+                        let story = |revised: bool| {
+                            let owner = if revised { "violet" } else { "copper" };
+                            let title = format!("{stamp} {owner} independently authored title");
+                            let mut body = paragraph(&title, "Title", None, revised);
+                            for index in 0..16 {
+                                let tokens = (0..20)
+                                    .map(|token| format!("{owner}clause{index:02}word{token:02}"))
+                                    .collect::<Vec<_>>()
+                                    .join(" ");
+                                let common = if index == 7 {
+                                    (0..common_words)
+                                        .map(|token| format!("sharedclause{token:02}"))
+                                        .collect::<Vec<_>>()
+                                        .join(" ")
+                                } else {
+                                    String::new()
+                                };
+                                let text = format!("{tokens} {common}");
+                                body.push_str(&paragraph(&text, "BodyText", None, revised));
+                            }
+                            body
+                        };
+                        let a = story(false);
+                        let b = story(true);
+                        for reverse in [false, true] {
+                            let (a, b) = if reverse { (&b, &a) } else { (&a, &b) };
+                            let mut dom = Dom::new();
+                            let left = source(&mut dom, a, &settings);
+                            let right = source(&mut dom, b, &settings);
+                            let expected = (frozen(&mut dom, &left), frozen(&mut dom, &right));
+                            let label = format!(
+                                "stamp={stamp} common={common_words} Word={word} threshold={threshold} reverse={reverse}"
+                            );
+                            let detected = if word {
+                                detect_unrelated_sources_word_mode(
+                                    &mut dom, &left, &right, &settings,
+                                )
+                                .map(|(sequences, _)| sequences)
+                            } else {
+                                detect_unrelated_sources(&left, &right)
+                            };
+                            if let Some(sequences) = detected {
+                                assert_owned(
+                                    &mut dom,
+                                    &sequences,
+                                    &expected,
+                                    &format!("detector {label}"),
+                                );
+                            }
+                            let sequences = step_h(&mut dom, &left, &right, &settings);
+                            assert_owned(
+                                &mut dom,
+                                &sequences,
+                                &expected,
+                                &format!("block {label}"),
+                            );
+                            let words_a = flatten_groups_one_level(&left);
+                            let words_b = flatten_groups_one_level(&right);
+                            let expected_words =
+                                (frozen(&mut dom, &words_a), frozen(&mut dom, &words_b));
+                            let sequences = step_h(&mut dom, &words_a, &words_b, &settings);
+                            assert_owned(
+                                &mut dom,
+                                &sequences,
+                                &expected_words,
+                                &format!("word {label}"),
+                            );
+                            assert_eq!(frozen(&mut dom, &left), expected.0, "original {label}");
+                            assert_eq!(frozen(&mut dom, &right), expected.1, "revised {label}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn source_memo_header_lifetimes_and_legal_size_boundaries_preserve_owned_order() {
+        for count in [14, 15, 120, 121] {
+            for ending in ["header", "salutation", "body"] {
+                let mut memo = String::new();
+                let mut prose = String::new();
+                for index in 0..count {
+                    let label = if index + 1 == count && ending == "salutation" {
+                        "Dear"
+                    } else if index + 1 == count && ending == "body" {
+                        "originalbody"
+                    } else if index % 2 == 0 {
+                        "TO"
+                    } else {
+                        "FROM"
+                    };
+                    let text = format!(
+                        "{label} originalopening{index} clause{index} terms{index} originaldetail{index} originalscope{index} originalparties{index} originalrecord{index} originalclosing{index}"
+                    );
+                    memo.push_str(&paragraph(&text, "MemoHeader", None, false));
+                    let text = format!(
+                        "revisedopening{index} clause{index} terms{index} reviseddetail{index} revisedscope{index} revisedparties{index} revisedrecord{index} revisedclosing{index}"
+                    );
+                    prose.push_str(&paragraph(&text, "LegalBody", None, true));
+                }
+                for reverse in [false, true] {
+                    let settings = WmlComparerSettings::default();
+                    let mut dom = Dom::new();
+                    let memo_units = source(&mut dom, &memo, &settings);
+                    let prose_units = source(&mut dom, &prose, &settings);
+                    let expected_cut = match ending {
+                        "salutation" => count,
+                        "body" => count - 1,
+                        "header" => count.min(12),
+                        _ => unreachable!(),
+                    };
+                    assert!(looks_like_memo_doc(&dom, &memo_units));
+                    assert!(!looks_like_memo_doc(&dom, &prose_units));
+                    assert_eq!(memo_header_cut(&dom, &memo_units), Some(expected_cut));
+                    let (left, right) = if reverse {
+                        (&prose_units, &memo_units)
+                    } else {
+                        (&memo_units, &prose_units)
+                    };
+                    let expected = (frozen(&mut dom, left), frozen(&mut dom, right));
+                    let label = format!("memo count={count} ending={ending} reverse={reverse}");
+                    if let Some(out) =
+                        detect_unrelated_sources_word_mode_inner(&mut dom, left, right, &settings)
+                    {
+                        assert_owned(&mut dom, &out, &expected, &label);
+                        if (15..=120).contains(&count) {
+                            let statuses = out
+                                .iter()
+                                .map(|sequence| sequence.correlation_status)
+                                .collect::<Vec<_>>();
+                            let expected_statuses = if reverse {
+                                vec![CorrelationStatus::Inserted, CorrelationStatus::Deleted]
+                            } else if expected_cut == count {
+                                vec![CorrelationStatus::Deleted, CorrelationStatus::Inserted]
+                            } else {
+                                vec![
+                                    CorrelationStatus::Deleted,
+                                    CorrelationStatus::Inserted,
+                                    CorrelationStatus::Deleted,
+                                ]
+                            };
+                            assert_eq!(statuses, expected_statuses, "{label}");
+                            if !reverse {
+                                assert_eq!(
+                                    frozen(&mut dom, out[0].com_units_1.as_deref().unwrap()),
+                                    frozen(&mut dom, &memo_units[..expected_cut])
+                                );
+                            }
+                        }
+                    } else {
+                        assert!(
+                            !(15..=120).contains(&count),
+                            "validated legal route declined: {label}"
+                        );
+                    }
+                    assert_eq!(frozen(&mut dom, left), expected.0);
+                    assert_eq!(frozen(&mut dom, right), expected.1);
+                }
+            }
+        }
+    }
 }

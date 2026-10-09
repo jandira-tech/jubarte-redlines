@@ -1253,3 +1253,144 @@ mod tracked_source_property_boundary_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod public_adjacent_run_replacement_owner_tests {
+    use super::*;
+    use crate::edit::deeper_boundary_fixture::docx;
+
+    fn tree(dom: &Dom, node: NodeId) -> String {
+        if !dom.is_element(node) {
+            return dom.text_value(node).unwrap_or_default().into();
+        }
+        let mut attrs = dom
+            .attributes(node)
+            .into_iter()
+            .filter(|(n, _)| {
+                n.namespace_name() != "http://www.w3.org/2000/xmlns/" && n.local_name() != "xmlns"
+            })
+            .collect::<Vec<_>>();
+        attrs.sort_by_key(|(n, v)| {
+            (
+                n.namespace_name().to_owned(),
+                n.local_name().to_owned(),
+                v.clone(),
+            )
+        });
+        format!(
+            "{:?}{attrs:?}[{}]",
+            dom.name(node),
+            dom.nodes(node)
+                .into_iter()
+                .map(|n| tree(dom, n))
+                .collect::<Vec<_>>()
+                .join("|")
+        )
+    }
+    fn source_events(bytes: &[u8]) -> Vec<String> {
+        let pkg = crate::opc::PartFs::open(bytes).unwrap();
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&pkg.part_string("/word/document.xml").unwrap());
+        let root = dom.root(doc).unwrap();
+        let body = dom.element(root, &W::body()).unwrap();
+        let mut out = Vec::new();
+        for child in dom.elements(body, None) {
+            if !dom.name_is(child, &W::p()) {
+                out.push(tree(&dom, child));
+                continue;
+            }
+            out.push("paragraph".into());
+            for node in dom.elements(child, None) {
+                if !dom.name_is(node, &W::r()) {
+                    out.push(tree(&dom, node));
+                    continue;
+                }
+                let props = dom
+                    .element(node, &W::r_pr())
+                    .map(|n| tree(&dom, n))
+                    .unwrap_or_default();
+                for content in dom.elements(node, None) {
+                    if dom.name_is(content, &W::r_pr()) {
+                        continue;
+                    }
+                    if dom.name_is(content, &W::t()) {
+                        out.extend(dom.value(content).chars().map(|ch| format!("{ch}:{props}")));
+                    } else {
+                        out.push(format!("{}:{props}", tree(&dom, content)));
+                    }
+                }
+            }
+            out.push("end paragraph".into());
+        }
+        out
+    }
+    #[test]
+    fn public_keep_replacement_across_adjacent_unicode_runs_restores_every_source_owner() {
+        let ppr = "<w:pPr><w:spacing w:before='120' w:after='80'/><w:ind w:left='180'/></w:pPr>";
+        let first = "<w:rPr><w:b/><w:color w:val='123456'/><w:sz w:val='22'/></w:rPr>";
+        for second in [
+            first,
+            "<w:rPr><w:i/><w:color w:val='654321'/><w:sz w:val='28'/></w:rPr>",
+        ] {
+            for split_text in [false, true] {
+                let lhs = if split_text {
+                    "<w:t>αfirst</w:t><w:t>part</w:t>"
+                } else {
+                    "<w:t>αfirstpart</w:t>"
+                };
+                let body = format!(
+                    "<w:p>{ppr}<w:r>{first}{lhs}</w:r><w:r>{second}<w:t>secondΖ</w:t></w:r><w:r><w:rPr><w:u w:val='single'/></w:rPr><w:tab/><w:t>tail</w:t><w:br/></w:r></w:p>"
+                );
+                let source = docx(&body);
+                let frozen = source.clone();
+                let plan = r#"{"schema_version":1,"author":"Source owner","date":"2001-02-03T04:05:06Z","existing_revisions":"keep","operations":[{"kind":"replace","paragraph":"body:p:0","find":"firstpartsecond","replacement":"owned replacement"}]}"#;
+                let out = crate::edit::apply_plan_json(&source, plan).unwrap();
+                let expected = docx(&format!(
+                    "<w:p>{ppr}<w:r>{first}<w:t>αowned replacement</w:t></w:r><w:r>{second}<w:t>Ζ</w:t></w:r><w:r><w:rPr><w:u w:val='single'/></w:rPr><w:tab/><w:t>tail</w:t><w:br/></w:r></w:p>"
+                ));
+                let accepted = crate::changes::accept_changes(
+                    &out.redline,
+                    &crate::changes::ChangeFilter::default(),
+                )
+                .unwrap();
+                let rejected = crate::changes::reject_changes(
+                    &out.redline,
+                    &crate::changes::ChangeFilter::default(),
+                )
+                .unwrap();
+                assert_eq!(
+                    source_events(&rejected),
+                    source_events(&source),
+                    "all rejected glyphs/properties/controls/section owners"
+                );
+                assert_eq!(
+                    source_events(&accepted),
+                    source_events(&expected),
+                    "replacement inherits first deleted source format only"
+                );
+                assert_eq!(source_events(&out.clean), source_events(&expected));
+                assert_eq!(source, frozen);
+                let changes = crate::changes::list_changes(&out.redline).unwrap();
+                assert_eq!(
+                    changes
+                        .iter()
+                        .map(|c| (c.kind, c.text.as_str(), c.author.as_deref()))
+                        .collect::<Vec<_>>(),
+                    [
+                        (
+                            ChangeKind::Deletion,
+                            "firstpartsecond",
+                            Some("Source owner")
+                        ),
+                        (
+                            ChangeKind::Insertion,
+                            "owned replacement",
+                            Some("Source owner")
+                        )
+                    ]
+                );
+            }
+        }
+    }
+}

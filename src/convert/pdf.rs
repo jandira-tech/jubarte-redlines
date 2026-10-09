@@ -2757,4 +2757,187 @@ mod residual_byte_and_geometry_contract_tests {
         assert!(tail.ends_with(&format!("startxref\n{xref}\n%%EOF\n")));
         assert_eq!(objects, before);
     }
+
+    #[test]
+    fn repeated_image_objects_share_only_identical_encoded_samples_and_alpha_owners() {
+        let mut jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 90)
+            .encode(
+                &[0, 0, 0, 127, 64, 32, 255, 255, 255],
+                3,
+                1,
+                image::ExtendedColorType::Rgb8,
+            )
+            .unwrap();
+        let jpeg_before = jpeg.clone();
+        let pixels_a = vec![0, 1, 127, 128, 254, 255];
+        let pixels_b = vec![255, 254, 128, 127, 1, 0];
+        let alpha = vec![64, 192];
+        let mut pages = Vec::new();
+        for page_number in 1..=2 {
+            let mut page = Page::new(200.0, 300.0);
+            page.number = page_number;
+            for x in [10.0, 50.0] {
+                page.ops.push(Op::Jpeg {
+                    x,
+                    y: 20.0,
+                    dw: 30.0,
+                    dh: 10.0,
+                    width: 3,
+                    height: 1,
+                    bytes: jpeg.clone(),
+                    components: 3,
+                    crop: None,
+                    rotate_deg: 0.0,
+                    oval: false,
+                });
+            }
+            for (x, pixels) in [(90.0, &pixels_a), (130.0, &pixels_b)] {
+                page.ops.push(Op::Rgb {
+                    x,
+                    y: 20.0,
+                    dw: 30.0,
+                    dh: 10.0,
+                    width: 2,
+                    height: 1,
+                    bytes: pixels.clone(),
+                    alpha: Some(alpha.clone()),
+                    crop: None,
+                    rotate_deg: 0.0,
+                    oval: false,
+                });
+            }
+            pages.push(page);
+        }
+        for compress in [false, true] {
+            let bytes = emit(
+                &bundled_fonts(),
+                &pages,
+                PdfOptions {
+                    compress,
+                    ..PdfOptions::default()
+                },
+            );
+            // Decode actual object boundaries through the writer's xref offsets;
+            // binary image/font streams must never be parsed as text objects.
+            let xref = bytes.windows(6).rposition(|w| w == b"\nxref\n").unwrap() + 1;
+            let tail = std::str::from_utf8(&bytes[xref..]).unwrap();
+            let count: usize = tail
+                .lines()
+                .nth(1)
+                .unwrap()
+                .split_whitespace()
+                .nth(1)
+                .unwrap()
+                .parse()
+                .unwrap();
+            let offsets = tail
+                .lines()
+                .skip(3)
+                .take(count - 1)
+                .map(|row| row[..10].parse::<usize>().unwrap())
+                .collect::<Vec<_>>();
+            let mut objects = Vec::new();
+            for (i, &start) in offsets.iter().enumerate() {
+                let end = offsets.get(i + 1).copied().unwrap_or(xref);
+                let head = format!("{} 0 obj\n", i + 1);
+                assert_eq!(&bytes[start..start + head.len()], head.as_bytes());
+                let complete = &bytes[start + head.len()..end];
+                objects.push(complete.strip_suffix(b"\nendobj\n").unwrap());
+            }
+            let image_ids = objects
+                .iter()
+                .enumerate()
+                .filter(|(_, obj)| obj.windows(15).any(|w| w == b"/Subtype /Image"))
+                .map(|(i, _)| i + 1)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                image_ids.len(),
+                4,
+                "one shared JPEG, one shared mask, two distinct RGB samples"
+            );
+            let mut resources = Vec::new();
+            let mut paints = Vec::new();
+            for object in &objects {
+                let dictionary = String::from_utf8_lossy(object);
+                if dictionary.contains("/Type /Page ") {
+                    let mut ids = Vec::new();
+                    for name in ["Im1", "Im2", "Im3", "Im4"] {
+                        ids.push(
+                            dictionary
+                                .split(&format!("/{name} "))
+                                .nth(1)
+                                .unwrap()
+                                .split_whitespace()
+                                .next()
+                                .unwrap()
+                                .parse::<usize>()
+                                .unwrap(),
+                        );
+                    }
+                    assert_eq!(ids[0], ids[1]);
+                    assert_ne!(ids[0], ids[2]);
+                    assert_ne!(ids[2], ids[3]);
+                    resources.push(ids);
+                }
+                if dictionary.contains("\nstream\n")
+                    && !dictionary.contains("/Subtype /Image")
+                    && !dictionary.contains("/Length1 ")
+                    && !dictionary.contains("/CMap")
+                {
+                    let decoded = stream(object);
+                    if decoded.windows(4).any(|w| w == b"/Im1") {
+                        paints.push(String::from_utf8(decoded).unwrap());
+                    }
+                }
+            }
+            assert_eq!(resources.len(), 2);
+            assert_eq!(resources[0], resources[1]);
+            let ids = &resources[0];
+            assert_eq!(stream(objects[ids[0] - 1]), jpeg);
+            assert_eq!(stream(objects[ids[2] - 1]), pixels_a);
+            assert_eq!(stream(objects[ids[3] - 1]), pixels_b);
+            let mask_id = |object: &[u8]| {
+                String::from_utf8_lossy(object)
+                    .split("/SMask ")
+                    .nth(1)
+                    .unwrap()
+                    .split_whitespace()
+                    .next()
+                    .unwrap()
+                    .parse::<usize>()
+                    .unwrap()
+            };
+            let mask_a = mask_id(objects[ids[2] - 1]);
+            let mask_b = mask_id(objects[ids[3] - 1]);
+            assert_eq!(mask_a, mask_b);
+            assert_eq!(stream(objects[mask_a - 1]), alpha);
+            assert_eq!(paints.len(), 2);
+            for paint in paints {
+                for (n, x) in [(1, 10), (2, 50), (3, 90), (4, 130)] {
+                    assert!(
+                        paint.contains(&format!("q 30.00 0 0 10.00 {x}.00 20.00 cm /Im{n} Do Q\n"))
+                    );
+                }
+                assert_eq!(paint.matches(" Do Q\n").count(), 4);
+            }
+        }
+        assert_eq!(jpeg, jpeg_before);
+        for page in pages {
+            for (i, op) in page.ops.iter().enumerate() {
+                match op {
+                    Op::Jpeg { bytes, .. } => assert_eq!(bytes, &jpeg),
+                    Op::Rgb {
+                        bytes,
+                        alpha: plane,
+                        ..
+                    } => {
+                        assert_eq!(bytes, if i == 2 { &pixels_a } else { &pixels_b });
+                        assert_eq!(plane.as_ref(), Some(&alpha));
+                    }
+                    _ => panic!("authored image operation changed"),
+                }
+            }
+        }
+    }
 }

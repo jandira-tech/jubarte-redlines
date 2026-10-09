@@ -25822,6 +25822,1061 @@ mod coverage_real_revision_merge_matrix_tests {
     family_test!(page_break_gap_source_views, "break");
     family_test!(math_gap_source_views, "math");
     family_test!(field_gap_source_views, "field");
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct OrganicSourceSnapshot {
+        owned: SourceView,
+        annotations: Vec<String>,
+        controls: Vec<String>,
+        row_properties: Vec<String>,
+        empty_paragraph_properties: Vec<String>,
+        comments: Vec<crate::comments::CommentRecord>,
+    }
+
+    fn organic_source_snapshot(bytes: &[u8]) -> OrganicSourceSnapshot {
+        let package = crate::opc::PartFs::open(bytes).expect("memory package");
+        let mut dom = Dom::new();
+        let document =
+            dom.parse_xdocument(&package.part_string("word/document.xml").expect("main part"));
+        let root = dom.root(document).expect("document");
+        remove_powertools_scratch_markup(&mut dom, root);
+        let owned = projected(&mut dom, root, true);
+        let mut annotations = Vec::new();
+        let mut characters = 0usize;
+        let mut ids = HashMap::<(String, String), usize>::new();
+        for node in dom.descendants(root, None) {
+            if dom.name_is(node, &W::t()) {
+                characters += dom.value_str(node).chars().count();
+            }
+            let name = dom.name(node).expect("element");
+            let family = match name.local_name() {
+                "bookmarkStart" | "bookmarkEnd" => "bookmark",
+                "commentRangeStart" | "commentRangeEnd" | "commentReference" => "comment",
+                _ => continue,
+            };
+            if name.namespace_name() != W::URI {
+                continue;
+            }
+            let original_id = dom.attribute(node, &W::id()).expect("range ID").to_owned();
+            let next = ids.keys().filter(|(scope, _)| scope == family).count();
+            let owner = *ids.entry((family.into(), original_id)).or_insert(next);
+            let mut attrs = dom
+                .attributes(node)
+                .into_iter()
+                .filter(|(name, _)| *name != W::id() && !dom.is_namespace_declaration(name))
+                .collect::<Vec<_>>();
+            attrs.sort_by(|a, b| {
+                (a.0.namespace_name(), a.0.local_name())
+                    .cmp(&(b.0.namespace_name(), b.0.local_name()))
+            });
+            annotations.push(format!("{name:?}@{characters}/owner={owner}/{attrs:?}"));
+        }
+        // Independent ranges may exchange lexical order at the same offset.
+        // Exact namespace, character boundary, owner, attributes and
+        // multiplicity fully specify their authored spans.
+        annotations.sort();
+        let controls = dom
+            .descendants(root, None)
+            .into_iter()
+            .filter(|&node| {
+                dom.name_is(node, &W::sdt_pr()) || dom.name_is(node, &W::name("sdtEndPr"))
+            })
+            .map(|node| dom.serialize_element(node))
+            .collect();
+        let row_properties = dom
+            .descendants(root, Some(&W::tr_pr()))
+            .into_iter()
+            .map(|node| dom.serialize_element(node))
+            .collect();
+        let empty_paragraph_properties = dom
+            .descendants(root, Some(&W::p()))
+            .into_iter()
+            .filter(|&p| para_has_no_text(&dom, p))
+            .map(|p| {
+                dom.element(p, &W::p_pr())
+                    .map(|properties| dom.serialize_element(properties))
+                    .unwrap_or_default()
+            })
+            .collect();
+        let mut comments = crate::comments::list_comments(bytes).expect("valid anchored comments");
+        for comment in &mut comments {
+            // M35 permits ID renumbering; MIX/control normalization can change
+            // a paragraph ordinal. Exact character-offset markers, anchor text,
+            // context, provenance, thread state and contents remain asserted.
+            comment.id = 0;
+            comment.paragraph = None;
+        }
+        OrganicSourceSnapshot {
+            owned,
+            annotations,
+            controls,
+            row_properties,
+            empty_paragraph_properties,
+            comments,
+        }
+    }
+
+    fn organic_paragraph(text: &str, profile: usize, index: usize, revised: bool) -> String {
+        let style = if profile == 1 && index.is_multiple_of(3) {
+            "Heading1"
+        } else if profile == 2 || (profile == 1 && index % 3 == 1) {
+            "ListParagraph"
+        } else {
+            "BodyText"
+        };
+        let heading = if style == "Heading1" {
+            "<w:keepNext/>"
+        } else {
+            ""
+        };
+        let outline = if style == "Heading1" {
+            "<w:outlineLvl w:val='0'/>"
+        } else {
+            ""
+        };
+        let num = if style == "ListParagraph" {
+            format!(
+                "<w:numPr><w:ilvl w:val='{}'/><w:numId w:val='9'/></w:numPr>",
+                usize::from(profile == 2 && index % 2 == 1)
+            )
+        } else {
+            String::new()
+        };
+        let before = 120 + 40 * (index % 4) + usize::from(revised) * 20;
+        let left = if revised { 540 } else { 360 };
+        // Both sides author a semantic justification override. The shared
+        // pPrChange projector legitimately omits schema-default left/start,
+        // including faithful mode; testing redundant carrier spelling would
+        // mistake that established projection for lost source formatting.
+        let jc = if profile == 1 && index % 2 == 1 {
+            "right"
+        } else {
+            "center"
+        };
+        let decoration = if revised { "<w:i/>" } else { "<w:b/>" };
+        let color = if revised { "654321" } else { "123456" };
+        format!(
+            "<w:p><w:pPr><w:pStyle w:val='{style}'/>{heading}{num}<w:spacing w:before='{before}' w:after='80'/><w:ind w:left='{left}'/><w:jc w:val='{jc}'/>{outline}</w:pPr><w:r><w:rPr><w:rFonts w:ascii='Calibri' w:hAnsi='Calibri'/>{decoration}<w:color w:val='{color}'/><w:sz w:val='22'/><w:lang w:val='en-US'/></w:rPr><w:t xml:space='preserve'>{text}</w:t></w:r></w:p>"
+        )
+    }
+
+    fn wholesale_boundary_package(fragment: &str) -> Vec<u8> {
+        // Reuse the upstream memory package and actual style/numbering parts,
+        // but author a whole story with no equal header or closing anchor.
+        let base = organic_package("", "body", false, false);
+        let mut package = crate::opc::PartFs::open(&base).expect("upstream memory package");
+        package.set_part("word/document.xml", format!("<w:document xmlns:w='{}' xmlns:m='{}'><w:body>{fragment}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/><w:pgMar w:top='720' w:right='900' w:bottom='720' w:left='900'/></w:sectPr></w:body></w:document>",W::URI,M::URI).into_bytes());
+        package.to_zip().expect("literal whole-story package")
+    }
+
+    fn wholesale_boundary_paragraph(text: &str, properties: &str, side: &str) -> String {
+        let color = if side == "original" {
+            "123456"
+        } else {
+            "654321"
+        };
+        let emphasis = if side == "original" {
+            "<w:b/>"
+        } else {
+            "<w:i/>"
+        };
+        format!(
+            "<w:p><w:pPr>{properties}</w:pPr><w:r><w:rPr><w:rFonts w:ascii='Calibri' w:hAnsi='Calibri'/>{emphasis}<w:color w:val='{color}'/><w:sz w:val='22'/><w:lang w:val='en-US'/></w:rPr><w:t xml:space='preserve'>{text}</w:t></w:r></w:p>"
+        )
+    }
+
+    // These packages intentionally omit organic_package's equal anchors. Their
+    // whole-story D/I replacement boundary reaches Word's final-pair guards.
+    // Full source formatting is checked in faithful mode. Word's independently
+    // owned chars/run formats/nontext/geometry remain exact; documented M88,
+    // M98b/M435 paragraph-property adoption is not a source-pPr round trip.
+    #[test]
+    fn whole_story_title_label_heading_and_list_boundaries_keep_source_ownership() {
+        type BoundaryCase = (
+            &'static str,
+            usize,
+            usize,
+            &'static str,
+            &'static str,
+            &'static str,
+            &'static str,
+        );
+        const LIST: &str = "<w:numPr><w:ilvl w:val='0'/><w:numId w:val='9'/></w:numPr>";
+        const LIST_STYLE: &str = "<w:pStyle w:val='ListParagraph'/><w:numPr><w:ilvl w:val='0'/><w:numId w:val='9'/></w:numPr>";
+        const HEADING: &str = "<w:pStyle w:val='Heading1'/>";
+        const SPACING: &str = "<w:spacing w:before='120' w:after='240'/>";
+        const CENTER: &str = "<w:jc w:val='center'/>";
+        let cases: &[BoundaryCase] = &[
+            (
+                "sole-short-residual",
+                1,
+                3,
+                "Ouch",
+                "Violet revised contractual responsibilities survive forever",
+                "",
+                "",
+            ),
+            (
+                "sole-two-word-residual",
+                1,
+                3,
+                "Amber obligation",
+                "Violet revised contractual responsibilities survive forever",
+                "",
+                "",
+            ),
+            ("sole-short-carrier", 1, 3, "Ouch", "Violet owners", "", ""),
+            (
+                "sole-two-insertions",
+                1,
+                2,
+                "Ouch",
+                "Violet revised contractual responsibilities survive forever",
+                "",
+                "",
+            ),
+            (
+                "cover-three-paragraphs",
+                1,
+                3,
+                "Amber original contractual obligations remain binding forever",
+                "Prepared for violet counsel",
+                "",
+                "",
+            ),
+            (
+                "cover-four-paragraphs",
+                1,
+                4,
+                "Amber original contractual obligations remain binding forever",
+                "Prepared for violet counsel",
+                "",
+                "",
+            ),
+            (
+                "cover-email",
+                1,
+                4,
+                "Amber original contractual obligations remain binding forever",
+                "violet@example.test",
+                "",
+                "",
+            ),
+            (
+                "cover-year",
+                1,
+                4,
+                "Amber original contractual obligations remain binding forever",
+                "Violet 2040",
+                "",
+                "",
+            ),
+            (
+                "cover-agreement",
+                1,
+                4,
+                "Amber original contractual obligations remain binding forever",
+                "Violet agreement",
+                "",
+                "",
+            ),
+            (
+                "cover-alpha-stub",
+                1,
+                4,
+                "Amber original contractual obligations remain binding forever",
+                "x",
+                "",
+                "",
+            ),
+            (
+                "alpha-one-carrier",
+                2,
+                1,
+                "Amber original unrelated manuscript narrative",
+                "x",
+                "",
+                "",
+            ),
+            (
+                "alpha-two-carriers",
+                2,
+                2,
+                "Amber original unrelated manuscript narrative",
+                "x",
+                "",
+                "",
+            ),
+            (
+                "alpha-three-carriers",
+                2,
+                3,
+                "Amber original unrelated manuscript narrative",
+                "x",
+                "",
+                "",
+            ),
+            (
+                "long-base-short-label",
+                2,
+                3,
+                "Amber original scholarly manuscript explains unrelated customary duties clearly",
+                "Violet",
+                "",
+                "",
+            ),
+            (
+                "demo-intro-short-label",
+                2,
+                3,
+                "This document demonstrates amber scholarly manuscript customary duties clearly",
+                "Violet",
+                "",
+                "",
+            ),
+            (
+                "ooxml-intro-five-labels",
+                2,
+                5,
+                "This document demonstrates amber OOXML sample manuscript customary duties clearly",
+                "Violet",
+                "",
+                "",
+            ),
+            (
+                "ooxml-intro-four-labels",
+                2,
+                4,
+                "This document demonstrates amber OOXML sample manuscript customary duties clearly",
+                "Violet",
+                "",
+                "",
+            ),
+            (
+                "heading-one-word",
+                2,
+                3,
+                "Generalities",
+                "Violet revised contractual responsibilities survive forever",
+                HEADING,
+                "",
+            ),
+            (
+                "heading-two-words",
+                2,
+                3,
+                "Amber generalities",
+                "Violet revised contractual responsibilities survive forever",
+                HEADING,
+                "",
+            ),
+            (
+                "heading-long-title",
+                2,
+                3,
+                "Amber original scholarly manuscript headings explain contractual duties clearly",
+                "Violet revised contractual responsibilities survive forever",
+                HEADING,
+                "",
+            ),
+            (
+                "short-label-heading",
+                2,
+                3,
+                "Generalities",
+                "x",
+                HEADING,
+                "",
+            ),
+            (
+                "single-revised-two-word-title",
+                2,
+                1,
+                "Amber owners",
+                "Violet counsel",
+                "",
+                "",
+            ),
+            (
+                "single-revised-four-word-title",
+                2,
+                1,
+                "Amber original manuscript owners",
+                "Violet counsel",
+                "",
+                "",
+            ),
+            (
+                "short-list-pair",
+                2,
+                2,
+                "Amber owners",
+                "Violet counsel",
+                LIST_STYLE,
+                LIST,
+            ),
+            (
+                "short-list-carrier-four-words",
+                2,
+                2,
+                "Amber owners",
+                "Violet revised counsel owners",
+                LIST_STYLE,
+                LIST,
+            ),
+            (
+                "uniform-list-three",
+                2,
+                3,
+                "Amber owners",
+                "test",
+                LIST_STYLE,
+                LIST,
+            ),
+            (
+                "uniform-list-two",
+                2,
+                2,
+                "Amber owners",
+                "test",
+                LIST_STYLE,
+                LIST,
+            ),
+            (
+                "uniform-list-long-old",
+                2,
+                3,
+                "Amber original manuscript owners",
+                "test",
+                LIST_STYLE,
+                LIST,
+            ),
+            (
+                "heading-list-adoption",
+                2,
+                2,
+                "Amber confidentiality obligations",
+                "Violet counsel",
+                HEADING,
+                LIST_STYLE,
+            ),
+            (
+                "spacing-center-adoption",
+                2,
+                2,
+                "Amber original manuscript owners",
+                "Violet counsel",
+                SPACING,
+                CENTER,
+            ),
+            (
+                "demo-nine-insertions",
+                2,
+                9,
+                "Amber Font Size Demo",
+                "Violet revised contractual responsibilities survive forever",
+                "",
+                "",
+            ),
+            (
+                "demo-ten-insertions",
+                2,
+                10,
+                "Amber Font Size Demo",
+                "Violet revised contractual responsibilities survive forever",
+                "",
+                "",
+            ),
+        ];
+        let mut failures = Vec::new();
+        let mut comparisons = 0usize;
+        for &(label, old_count, new_count, first_old, last_new, old_props, new_props) in cases {
+            let original_fragment = (0..old_count).map(|index| {
+                let text = if index == 0 { first_old.to_string() } else { format!("Amber former manuscript owner clause {index} expressly preserves archival obligations") };
+                wholesale_boundary_paragraph(&text,old_props,"original")
+            }).collect::<String>();
+            let revised_fragment = (0..new_count).map(|index| {
+                let text = if index + 1 == new_count { last_new.to_string() } else if label.starts_with("uniform-list") { "test".to_string() } else { format!("Violet next instrument counsel provision {index} binds revised delivery responsibilities") };
+                wholesale_boundary_paragraph(&text,new_props,"revised")
+            }).collect::<String>();
+            let a = wholesale_boundary_package(&original_fragment);
+            let b = wholesale_boundary_package(&revised_fragment);
+            let original = organic_source_snapshot(&a);
+            let revised = organic_source_snapshot(&b);
+            for word in [false, true] {
+                let settings = WmlComparerSettings {
+                    author_for_revisions: "Whole story boundary editor".to_string(),
+                    date_time_for_revisions: DATE.to_string(),
+                    ..if word {
+                        WmlComparerSettings::default()
+                    } else {
+                        WmlComparerSettings::powertools_faithful()
+                    }
+                };
+                let compared =
+                    crate::document_comparer::compare_documents_with_settings(&a, &b, &settings)
+                        .expect("real clean whole-story comparison");
+                comparisons += 1;
+                let package = crate::opc::PartFs::open(&compared).expect("compared memory package");
+                let mut dom = Dom::new();
+                let document = dom
+                    .parse_xdocument(&package.part_string("word/document.xml").expect("main part"));
+                let root = dom.root(document).expect("document");
+                for name in ["ins", "del", "rPrChange", "pPrChange"] {
+                    for node in dom.descendants(root, Some(&W::name(name))) {
+                        assert_eq!(
+                            dom.attribute(node, &W::author()),
+                            Some("Whole story boundary editor"),
+                            "{label}/word={word}/{name} author"
+                        );
+                        assert_eq!(
+                            dom.attribute(node, &W::date()),
+                            Some(DATE),
+                            "{label}/word={word}/{name} date"
+                        );
+                        assert!(
+                            dom.attribute(node, &W::id())
+                                .is_some_and(|id| id.parse::<u32>().is_ok()),
+                            "{label}/word={word}/{name} id"
+                        );
+                    }
+                }
+                assert!(
+                    !dom.descendants(root, Some(&W::ins())).is_empty(),
+                    "new source is tracked {label}/word={word}"
+                );
+                assert!(
+                    !dom.descendants(root, Some(&W::del())).is_empty(),
+                    "old source is tracked {label}/word={word}"
+                );
+                for (accept, expected) in [(false, &original), (true, &revised)] {
+                    let projection = if accept {
+                        crate::document_comparer::accept_revisions(&compared)
+                    } else {
+                        crate::document_comparer::reject_revisions(&compared)
+                    }
+                    .expect("whole-story source projection");
+                    let actual = organic_source_snapshot(&projection);
+                    let matches = if word {
+                        actual
+                            .owned
+                            .formatted_characters
+                            .iter()
+                            .map(|(c, _, r)| (c, r))
+                            .eq(expected
+                                .owned
+                                .formatted_characters
+                                .iter()
+                                .map(|(c, _, r)| (c, r)))
+                            && actual.owned.nontext_payloads == expected.owned.nontext_payloads
+                            && actual.owned.table_geometry == expected.owned.table_geometry
+                            && actual.annotations == expected.annotations
+                            && actual.controls == expected.controls
+                            && actual.row_properties == expected.row_properties
+                            && actual.comments == expected.comments
+                    } else {
+                        actual == *expected
+                    };
+                    if !matches {
+                        failures.push(format!(
+                            "{label}/word={word}/accept={accept}: {}",
+                            compact_source_difference(&actual.owned, &expected.owned)
+                        ));
+                    }
+                    let repeated = if accept {
+                        crate::document_comparer::accept_revisions(&projection)
+                    } else {
+                        crate::document_comparer::reject_revisions(&projection)
+                    }
+                    .expect("repeat source projection");
+                    assert_eq!(
+                        organic_source_snapshot(&repeated),
+                        actual,
+                        "repeat {label}/word={word}/accept={accept}"
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            comparisons, 64,
+            "all thirty-two literal boundaries in both modes"
+        );
+        assert!(
+            failures.is_empty(),
+            "{} whole-story ownership failures:\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
+    }
+
+    fn organic_table(revised_geometry: bool, profile: usize) -> String {
+        organic_table_with_rows(revised_geometry, revised_geometry, profile)
+    }
+
+    fn organic_table_with_rows(
+        revised_geometry: bool,
+        revised_rows: bool,
+        profile: usize,
+    ) -> String {
+        let width = if revised_geometry { 2400 } else { 1800 };
+        let rows = if revised_rows { 2 } else { 1 };
+        let mut contents = String::new();
+        for row in 0..rows {
+            let cells = (0..2)
+                .map(|column| {
+                    let text = format!("Stable table cell owner row{row} column{column}");
+                    format!(
+                        "<w:tc><w:tcPr><w:tcW w:w='{width}' w:type='dxa'/></w:tcPr>{}</w:tc>",
+                        organic_paragraph(&text, profile, row + column + 8, false)
+                    )
+                })
+                .collect::<String>();
+            contents.push_str(&format!(
+                "<w:tr><w:trPr><w:trHeight w:val='260' w:hRule='atLeast'/></w:trPr>{cells}</w:tr>"
+            ));
+        }
+        format!(
+            "<w:tbl><w:tblPr><w:tblW w:w='{}' w:type='dxa'/><w:tblLook w:val='04A0' w:firstRow='1' w:lastRow='0' w:firstColumn='1' w:lastColumn='0' w:noHBand='0' w:noVBand='1'/></w:tblPr><w:tblGrid><w:gridCol w:w='{width}'/><w:gridCol w:w='{width}'/></w:tblGrid>{contents}</w:tbl>",
+            width * 2
+        )
+    }
+
+    fn organic_package(fragment: &str, scope: &str, dense: bool, comments: bool) -> Vec<u8> {
+        let bookmark_start = "<w:bookmarkStart w:id='6' w:name='StableOwnedBookmark'/>";
+        let bookmark_end = "<w:bookmarkEnd w:id='6'/>";
+        let comment_start = if comments {
+            "<w:commentRangeStart w:id='0'/>"
+        } else {
+            ""
+        };
+        let comment_end = if comments {
+            "<w:commentRangeEnd w:id='0'/><w:r><w:commentReference w:id='0'/></w:r>"
+        } else {
+            ""
+        };
+        let head = format!(
+            "<w:p><w:pPr><w:pStyle w:val='BodyText'/></w:pPr>{bookmark_start}{comment_start}<w:r><w:rPr><w:rFonts w:ascii='Calibri' w:hAnsi='Calibri'/><w:sz w:val='22'/></w:rPr><w:t>Stable authored comment and bookmark anchor</w:t></w:r>{comment_end}{bookmark_end}</w:p>"
+        );
+        let field = "<w:p><w:pPr><w:pStyle w:val='BodyText'/></w:pPr><w:r><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText xml:space='preserve'> PAGE </w:instrText></w:r><w:r><w:fldChar w:fldCharType='separate'/></w:r><w:r><w:t>7</w:t></w:r><w:r><w:fldChar w:fldCharType='end'/></w:r><w:r><w:br/></w:r></w:p>";
+        let anchors = if dense {
+            (0..4).map(|i| organic_paragraph(&format!("Common contractual anchor clause {i} preserves signed deliverables for both parties permanently"), 0, i + 20, false)).collect::<String>()
+        } else {
+            String::new()
+        };
+        let closing =
+            organic_paragraph("Inner scope closing anchor remains unchanged", 0, 30, false);
+        let contents = format!("{head}{field}{anchors}{fragment}{closing}");
+        let body = match scope {
+            "body" => contents,
+            "tc" => format!(
+                "<w:tbl><w:tblPr><w:tblW w:w='7200' w:type='dxa'/><w:tblLook w:val='04A0' w:firstRow='1' w:lastRow='0' w:firstColumn='1' w:lastColumn='0' w:noHBand='0' w:noVBand='1'/></w:tblPr><w:tblGrid><w:gridCol w:w='7200'/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w='7200' w:type='dxa'/></w:tcPr>{contents}</w:tc></w:tr></w:tbl>{}",
+                organic_paragraph("Outer story closing anchor remains unchanged", 0, 31, false)
+            ),
+            "sdtContent" => format!(
+                "<w:sdt><w:sdtPr><w:alias w:val='Owned contractual clauses'/><w:tag w:val='organic-source-owner'/><w:id w:val='42'/><w:richText/></w:sdtPr><w:sdtEndPr><w:color w:val='234567'/></w:sdtEndPr><w:sdtContent>{contents}</w:sdtContent></w:sdt>{}",
+                organic_paragraph("Outer story closing anchor remains unchanged", 0, 31, false)
+            ),
+            _ => panic!("scope"),
+        };
+        let mut package =
+            crate::opc::PartFs::open(include_bytes!("../../tests/fixtures/relids/image_doc.docx"))
+                .expect("bundled upstream package fixture");
+        package.set_part("word/document.xml", format!("<w:document xmlns:w='{}'><w:body>{body}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/><w:pgMar w:top='720' w:right='900' w:bottom='720' w:left='900'/></w:sectPr></w:body></w:document>", W::URI).into_bytes());
+        package.set_part("word/styles.xml", format!("<w:styles xmlns:w='{}'><w:style w:type='paragraph' w:default='1' w:styleId='Normal'><w:name w:val='Normal'/></w:style><w:style w:type='paragraph' w:styleId='BodyText'><w:name w:val='Body Text'/><w:pPr><w:jc w:val='left'/></w:pPr></w:style><w:style w:type='paragraph' w:styleId='Heading1'><w:name w:val='heading 1'/><w:pPr><w:keepNext/><w:outlineLvl w:val='0'/></w:pPr></w:style><w:style w:type='paragraph' w:styleId='ListParagraph'><w:name w:val='List Paragraph'/><w:pPr><w:spacing w:after='40'/></w:pPr></w:style></w:styles>", W::URI).into_bytes());
+        let levels = (0..2).map(|level| format!("<w:lvl w:ilvl='{level}'><w:start w:val='1'/><w:numFmt w:val='decimal'/><w:lvlText w:val='%{}.'/><w:lvlJc w:val='left'/></w:lvl>", level + 1)).collect::<String>();
+        package.set_part("word/numbering.xml", format!("<w:numbering xmlns:w='{}'><w:abstractNum w:abstractNumId='1'><w:multiLevelType w:val='multilevel'/>{levels}</w:abstractNum><w:num w:numId='9'><w:abstractNumId w:val='1'/></w:num></w:numbering>", W::URI).into_bytes());
+        package.add_content_type_override(
+            "/word/numbering.xml",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml",
+        );
+        package.add_document_relationship(
+            "word/document.xml",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering",
+            "numbering.xml",
+        );
+        if comments {
+            package.set_part("word/comments.xml", format!("<w:comments xmlns:w='{}'><w:comment w:id='0' w:author='Source comment owner' w:initials='SO' w:date='2025-01-01T00:00:00Z'><w:p><w:r><w:t>Unchanged authored interpretation</w:t></w:r></w:p></w:comment></w:comments>", W::URI).into_bytes());
+            package.add_content_type_override(
+                "/word/comments.xml",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+            );
+            package.add_document_relationship(
+                "word/document.xml",
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+                "comments.xml",
+            );
+        }
+        package.to_zip().expect("memory package")
+    }
+
+    /// These literal clean packages exercise heterogeneous organic production
+    /// paths rather than supplying private D/I intermediate states. Faithful
+    /// mode owns full source formats and metadata. Word's M98b spacing/M390
+    /// control transformations retain their existing exact goldens; its common
+    /// contract here is ordered chars/rPr, nontext, geometry and annotations.
+    #[test]
+    fn organic_heterogeneous_public_packages_preserve_owned_sources_across_modes() {
+        let mut failures = Vec::new();
+        let mut reported_boundaries = std::collections::HashSet::new();
+        let mut failure_count = 0usize;
+        let mut cases = 0usize;
+        for family in [
+            "prose",
+            "list-labels",
+            "cover",
+            "wrap",
+            "moved-clauses",
+            "interposed-table",
+            "changed-table",
+        ] {
+            for profile in 0..3 {
+                let texts_a: Vec<String> = match family {
+                    "list-labels" => vec!["Lvl 1 a".into(), "Lvl 1 b".into(), "Lvl 2 i".into(), "Lvl 2 ii".into(), "Lvl 3 z".into()],
+                    "cover" => vec!["Original confidentiality obligations bind the parties permanently".into(), "Former mutual agreement remains enforceable".into()],
+                    "wrap" => (0..4).map(|i| format!("Original wrap clause {i} ") + &"Let us tightly wrap this complete contractual passage ".repeat(5)).collect(),
+                    _ => (0..5).map(|i| format!("Original clause {i} shall preserve signed records and deliver the completed report within thirty days after the request")).collect(),
+                };
+                let old = texts_a
+                    .iter()
+                    .enumerate()
+                    .map(|(i, text)| organic_paragraph(text, profile, i, false))
+                    .collect::<Vec<_>>();
+                let new: Vec<String> = match family {
+                    "moved-clauses" => [3, 0, 4, 1, 2].into_iter().map(|i| old[i].clone()).collect::<Vec<_>>(),
+                    "list-labels" => ["a ", "b ", "3"].into_iter().enumerate().map(|(i, text)| organic_paragraph(text, profile, i + 4, true)).collect(),
+                    "cover" => ["Revised engagement overview", "Scope of signed deliverables", "New approval arrangements", "Confidential project title", "Prepared for client January 2040"].into_iter().enumerate().map(|(i, text)| organic_paragraph(text, profile, i + 3, true)).collect(),
+                    "wrap" => ["ONE", "b"].into_iter().enumerate().map(|(i, text)| organic_paragraph(text, profile, i + 2, true)).collect(),
+                    _ => (0..4).map(|i| organic_paragraph(&format!("Revised clause {i} shall preserve signed records and deliver the approved report within forty days after the request"), profile, i + 2, true)).collect(),
+                };
+                let a_fragment = if family == "interposed-table" {
+                    old[..2].concat() + &organic_table(false, profile) + &old[2..].concat()
+                } else if family == "changed-table" {
+                    old.concat() + &organic_table(false, profile)
+                } else {
+                    old.concat()
+                };
+                let b_fragment = if family == "interposed-table" {
+                    new[..1].concat() + &organic_table(false, profile) + &new[1..].concat()
+                } else if family == "changed-table" {
+                    new.concat() + &organic_table(true, profile)
+                } else {
+                    new.concat()
+                };
+                // The legacy C# ReconstructElement copies one matched table's
+                // tblPr/grid without table-level history. M-TBL supplies that
+                // history only in Word mode. Faithful fixtures still change
+                // row ownership and full paragraph/run formats, with identical
+                // table width/grid; Word retains the actual geometry change.
+                // Every mode retains its strict complete literal source oracle.
+                let faithful_b_fragment = if family == "changed-table" {
+                    new.concat() + &organic_table_with_rows(false, true, profile)
+                } else {
+                    b_fragment.clone()
+                };
+                for scope in ["body", "tc", "sdtContent"] {
+                    for dense in [false, true] {
+                        let a = organic_package(&a_fragment, scope, dense, profile != 0);
+                        let b = organic_package(&b_fragment, scope, dense, profile != 0);
+                        let faithful_b =
+                            organic_package(&faithful_b_fragment, scope, dense, profile != 0);
+                        for reversed in [false, true] {
+                            for word_mode in [false, true] {
+                                let source_b = if word_mode { &b } else { &faithful_b };
+                                let (a, b) = if reversed {
+                                    (source_b, &a)
+                                } else {
+                                    (&a, source_b)
+                                };
+                                let original = organic_source_snapshot(a);
+                                let revised = organic_source_snapshot(b);
+                                for detect_moves in [false, true] {
+                                    cases += 1;
+                                    let mut settings = if word_mode {
+                                        WmlComparerSettings::default()
+                                    } else {
+                                        WmlComparerSettings::powertools_faithful()
+                                    };
+                                    settings.author_for_revisions =
+                                        "Organic boundary editor".into();
+                                    settings.date_time_for_revisions = DATE.into();
+                                    settings.detect_moves = detect_moves;
+                                    let coordinate = format!(
+                                        "{family}/profile={profile}/scope={scope}/dense={dense}/reversed={reversed}/word={word_mode}/moves={detect_moves}"
+                                    );
+                                    let compared = match crate::document_comparer::compare_documents_with_settings(a, b, &settings) {
+                                        Ok(compared) => compared,
+                                        Err(error) => { failure_count += 1; if failures.len() < 24 { failures.push(format!("{coordinate}: comparison error {error}")); } continue; }
+                                    };
+                                    let compared_package = crate::opc::PartFs::open(&compared)
+                                        .expect("compared package");
+                                    let mut compared_dom = Dom::new();
+                                    let compared_document = compared_dom.parse_xdocument(
+                                        &compared_package
+                                            .part_string("word/document.xml")
+                                            .expect("compared main part"),
+                                    );
+                                    let compared_root = compared_dom
+                                        .root(compared_document)
+                                        .expect("compared document");
+                                    let provenance_valid = compared_dom
+                                        .descendants(compared_root, None)
+                                        .into_iter()
+                                        .filter(|&node| {
+                                            compared_dom.name(node).is_some_and(|name| {
+                                                name.namespace_name() == W::URI
+                                                    && matches!(
+                                                        name.local_name(),
+                                                        "ins"
+                                                            | "del"
+                                                            | "moveFrom"
+                                                            | "moveTo"
+                                                            | "rPrChange"
+                                                            | "pPrChange"
+                                                            | "trPrChange"
+                                                            | "tcPrChange"
+                                                            | "tblPrChange"
+                                                            | "sectPrChange"
+                                                    )
+                                            })
+                                        })
+                                        .all(|node| {
+                                            compared_dom.attribute(node, &W::author())
+                                                == Some("Organic boundary editor")
+                                                && compared_dom.attribute(node, &W::date())
+                                                    == Some(DATE)
+                                                && compared_dom
+                                                    .attribute(node, &W::id())
+                                                    .is_some_and(|id| id.parse::<u32>().is_ok())
+                                        });
+                                    if !provenance_valid {
+                                        failure_count += 1;
+                                        if failures.len() < 24 {
+                                            failures.push(format!("{coordinate}: synthesized history has wrong configured provenance or ID"));
+                                        }
+                                    }
+                                    for (accept, expected) in [(false, &original), (true, &revised)]
+                                    {
+                                        let projection = if accept {
+                                            crate::document_comparer::accept_revisions(&compared)
+                                        } else {
+                                            crate::document_comparer::reject_revisions(&compared)
+                                        }
+                                        .expect("public projection");
+                                        let actual = organic_source_snapshot(&projection);
+                                        let matches = if word_mode {
+                                            actual
+                                                .owned
+                                                .formatted_characters
+                                                .iter()
+                                                .map(|(c, _, r)| (c, r))
+                                                .eq(expected
+                                                    .owned
+                                                    .formatted_characters
+                                                    .iter()
+                                                    .map(|(c, _, r)| (c, r)))
+                                                && actual.owned.nontext_payloads
+                                                    == expected.owned.nontext_payloads
+                                                && actual.owned.table_geometry
+                                                    == expected.owned.table_geometry
+                                                && actual.annotations == expected.annotations
+                                                && actual.row_properties == expected.row_properties
+                                                && actual.comments == expected.comments
+                                        } else {
+                                            actual == *expected
+                                        };
+                                        if !matches {
+                                            failure_count += 1;
+                                            let boundary = format!(
+                                                "{family}/profile={profile}/scope={scope}/word={word_mode}/accept={accept}"
+                                            );
+                                            if reported_boundaries.insert(boundary) {
+                                                failures.push(format!("{coordinate}/accept={accept}: {}; annotations={}, controls={}, rows={}, empty-paragraphs={}, comments={}", compact_source_difference(&actual.owned, &expected.owned), actual.annotations == expected.annotations, actual.controls == expected.controls, actual.row_properties == expected.row_properties, actual.empty_paragraph_properties == expected.empty_paragraph_properties, actual.comments == expected.comments));
+                                            }
+                                        }
+                                        let repeated = if accept {
+                                            crate::document_comparer::accept_revisions(&projection)
+                                        } else {
+                                            crate::document_comparer::reject_revisions(&projection)
+                                        }
+                                        .expect("repeat public projection");
+                                        if organic_source_snapshot(&repeated) != actual {
+                                            failure_count += 1;
+                                            if failures.len() < 24 {
+                                                failures.push(format!("{coordinate}/accept={accept}: projection repeat changes source ownership"));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            cases, 1008,
+            "all heterogeneous family/property/scope/correlation/direction/move/mode boundaries executed"
+        );
+        assert_eq!(
+            failure_count,
+            0,
+            "{failure_count} source contract failures across {cases} comparisons; first failures:\n{}",
+            failures.join("\n")
+        );
+    }
+
+    fn literal_legacy_table_geometry(
+        table_width: u32,
+        grid_width: u32,
+        cell_width: u32,
+        rows: usize,
+    ) -> Vec<String> {
+        let cells =
+            format!("<w:tc><w:tcPr><w:tcW w:w='{cell_width}' w:type='dxa'/></w:tcPr><w:p/></w:tc>")
+                .repeat(2);
+        let mut dom = Dom::new();
+        let document=dom.parse_xdocument(&format!("<w:tbl xmlns:w='{}'><w:tblPr><w:tblW w:w='{table_width}' w:type='dxa'/><w:tblLook w:val='04A0' w:firstRow='1' w:lastRow='0' w:firstColumn='1' w:lastColumn='0' w:noHBand='0' w:noVBand='1'/></w:tblPr><w:tblGrid><w:gridCol w:w='{grid_width}'/><w:gridCol w:w='{grid_width}'/></w:tblGrid>{}</w:tbl>",W::URI,format!("<w:tr>{cells}</w:tr>").repeat(rows)));
+        let root = dom
+            .root(document)
+            .expect("independent literal table geometry oracle");
+        dom.descendants(root, None)
+            .into_iter()
+            .filter(|&node| {
+                [W::tbl_pr(), W::name("tblGrid"), W::tc_pr()]
+                    .iter()
+                    .any(|name| dom.name_is(node, name))
+            })
+            .map(|node| dom.serialize_element(node))
+            .collect()
+    }
+
+    #[test]
+    fn public_word_paired_table_width_and_grid_changes_restore_both_authored_geometries() {
+        let a = organic_package(&organic_table(false, 0), "body", false, false);
+        let b = organic_package(&organic_table(true, 0), "body", false, false);
+        for reversed in [false, true] {
+            let (a, b) = if reversed { (&b, &a) } else { (&a, &b) };
+            let settings = WmlComparerSettings {
+                author_for_revisions: "Paired table geometry editor".to_string(),
+                date_time_for_revisions: DATE.to_string(),
+                ..WmlComparerSettings::default()
+            };
+            let compared =
+                crate::document_comparer::compare_documents_with_settings(a, b, &settings)
+                    .expect("clean public Word table comparison");
+            let package = crate::opc::PartFs::open(&compared).expect("memory compared package");
+            let mut dom = Dom::new();
+            let document =
+                dom.parse_xdocument(&package.part_string("word/document.xml").expect("main part"));
+            let root = dom.root(document).expect("document");
+            for name in ["tblPrChange", "tblGridChange"] {
+                let history = dom.descendants(root, Some(&W::name(name)));
+                assert_eq!(history.len(), 1, "one exact table history {name}");
+                let change = history[0];
+                assert!(
+                    dom.attribute(change, &W::id())
+                        .is_some_and(|id| id.parse::<u32>().is_ok())
+                );
+                if name == "tblPrChange" {
+                    assert_eq!(
+                        dom.attribute(change, &W::author()),
+                        Some("Paired table geometry editor")
+                    );
+                    assert_eq!(dom.attribute(change, &W::date()), Some(DATE));
+                } else {
+                    // CT_TblGridChange declares id only, not CT_TrackChange provenance.
+                    assert!(dom.attribute(change, &W::author()).is_none());
+                    assert!(dom.attribute(change, &W::date()).is_none());
+                }
+            }
+            for accept in [false, true] {
+                let expected = organic_source_snapshot(if accept { b } else { a });
+                let projection = if accept {
+                    crate::document_comparer::accept_revisions(&compared)
+                } else {
+                    crate::document_comparer::reject_revisions(&compared)
+                }
+                .expect("public Word table projection");
+                let actual = organic_source_snapshot(&projection);
+                assert!(
+                    actual == expected,
+                    "Word reversed={reversed}/accept={accept}: complete authored source: {}",
+                    compact_source_difference(&actual.owned, &expected.owned)
+                );
+                let repeated = if accept {
+                    crate::document_comparer::accept_revisions(&projection)
+                } else {
+                    crate::document_comparer::reject_revisions(&projection)
+                }
+                .expect("repeat Word projection");
+                assert_eq!(organic_source_snapshot(&repeated), actual);
+            }
+        }
+    }
+
+    // WmlComparer v10.0.0 ReconstructElement (6731-6751) copies the matched
+    // ancestor's table properties/grid without an old table-level history.
+    // PowerTools mode preserves this limitation: rejecting restores source
+    // rows/cell properties/text, but keeps the revised table width and grid.
+    // Word's M-TBL history is tested separately with exact A/B source oracles.
+    #[test]
+    fn public_faithful_paired_table_geometry_has_an_exact_legacy_omission_golden() {
+        let a = organic_package(&organic_table(false, 0), "body", false, false);
+        let b = organic_package(&organic_table(true, 0), "body", false, false);
+        for reversed in [false, true] {
+            let (a, b) = if reversed { (&b, &a) } else { (&a, &b) };
+            let settings = WmlComparerSettings {
+                author_for_revisions: "Paired table geometry editor".to_string(),
+                date_time_for_revisions: DATE.to_string(),
+                ..WmlComparerSettings::powertools_faithful()
+            };
+            let compared =
+                crate::document_comparer::compare_documents_with_settings(a, b, &settings)
+                    .expect("clean public legacy table comparison");
+            let package = crate::opc::PartFs::open(&compared).expect("memory package");
+            let mut dom = Dom::new();
+            let document =
+                dom.parse_xdocument(&package.part_string("word/document.xml").expect("main part"));
+            let root = dom.root(document).expect("document");
+            for name in ["tblPrChange", "tblGridChange"] {
+                assert!(
+                    dom.descendants(root, Some(&W::name(name))).is_empty(),
+                    "legacy table history stays absent"
+                );
+            }
+            for accept in [false, true] {
+                let mut expected = organic_source_snapshot(if accept { b } else { a });
+                // Literal compatibility output: table-level geometry is B's;
+                // source cell widths and row cardinality still follow projection.
+                let (table_width, grid_width) = if reversed { (3600, 1800) } else { (4800, 2400) };
+                let (cell_width, rows) = match (reversed, accept) {
+                    (false, false) | (true, true) => (1800, 1),
+                    (false, true) | (true, false) => (2400, 2),
+                };
+                expected.owned.table_geometry =
+                    literal_legacy_table_geometry(table_width, grid_width, cell_width, rows);
+                let projection = if accept {
+                    crate::document_comparer::accept_revisions(&compared)
+                } else {
+                    crate::document_comparer::reject_revisions(&compared)
+                }
+                .expect("legacy source projection");
+                let actual = organic_source_snapshot(&projection);
+                assert!(
+                    actual == expected,
+                    "legacy reversed={reversed}/accept={accept}: exact compatibility tree: {}",
+                    compact_source_difference(&actual.owned, &expected.owned)
+                );
+                let repeated = if accept {
+                    crate::document_comparer::accept_revisions(&projection)
+                } else {
+                    crate::document_comparer::reject_revisions(&projection)
+                }
+                .expect("repeat legacy projection");
+                assert_eq!(organic_source_snapshot(&repeated), actual);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -31412,6 +32467,634 @@ mod fragmented_source_label_boundary_tests {
                     free_mesh_wholesale_body_mix(&mut dom, root);
                     assert_eq!(semantic(&dom, root), original, "{coordinate}: repeat");
                     assert_eq!(dom.node_count(), nodes);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod nested_deleted_text_source_ownership_tests {
+    use super::*;
+
+    fn package(body: &str) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let document = dom.parse_xdocument(&format!(
+            "<w:document xmlns:w='{}'><w:body>{body}</w:body></w:document>",
+            W::URI
+        ));
+        let root = dom.root(document).expect("document");
+        (dom, root)
+    }
+    const DATE: &str = "2026-01-02T03:04:05Z";
+    const PROPS: &str =
+        "<w:pPr><w:pStyle w:val='BodyText'/><w:spacing w:after='80'/><w:rPr><w:i/></w:rPr></w:pPr>";
+    const FORMAT: &str = "<w:rPr><w:b/><w:color w:val='123456'/><w:rPrChange w:id='42' w:author='Earlier format owner' w:date='2025-01-01T00:00:00Z'><w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr>";
+    const TAIL: &str = "<w:tbl><w:tblPr><w:tblW w:w='1800' w:type='dxa'/></w:tblPr><w:tblGrid><w:gridCol w:w='1800'/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w='1800' w:type='dxa'/></w:tcPr><w:p><w:r><w:t>Independent live cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr>";
+    fn revision(kind: &str, id: u32, body: &str) -> String {
+        format!(
+            "<w:{kind} w:id='{id}' w:author='Source {kind} owner' w:date='{DATE}'>{body}</w:{kind}>"
+        )
+    }
+    fn field(deleted: bool) -> String {
+        let instruction = if deleted { "delInstrText" } else { "instrText" };
+        let text = if deleted { "delText" } else { "t" };
+        format!(
+            "<w:r><w:fldChar w:fldCharType='begin'/></w:r><w:r>{FORMAT}<w:{instruction} xml:space='preserve'> PAGE </w:{instruction}></w:r><w:r><w:fldChar w:fldCharType='separate'/></w:r><w:r>{FORMAT}<w:{text}>7</w:{text}></w:r><w:r><w:fldChar w:fldCharType='end'/></w:r>"
+        )
+    }
+    #[test]
+    fn outer_deletion_preserves_independently_owned_nested_revision_text_and_fields() {
+        for kind in ["ins", "moveFrom", "moveTo"] {
+            for nested_first in [false, true] {
+                for with_field in [false, true] {
+                    for with_xml_metadata in [false, true] {
+                        let plain =
+                            format!("<w:r>{FORMAT}<w:t xml:space='preserve'>  原é </w:t></w:r>");
+                        let deleted = format!(
+                            "<w:r>{FORMAT}<w:delText xml:space='preserve'>  原é </w:delText></w:r>"
+                        );
+                        let nested_body = format!(
+                            "<w:r>{FORMAT}<w:t xml:space='preserve'> Nested source </w:t></w:r>{}",
+                            if with_field {
+                                field(false)
+                            } else {
+                                String::new()
+                            }
+                        );
+                        let nested_revision = revision(kind, 31, &nested_body);
+                        let nested = if kind == "ins" {
+                            nested_revision
+                        } else {
+                            format!(
+                                "<w:{kind}RangeStart w:id='41' w:name='OwnedMove' w:author='Move range owner' w:date='{DATE}'/>{nested_revision}<w:{kind}RangeEnd w:id='41'/>"
+                            )
+                        };
+                        let metadata = if with_xml_metadata {
+                            "<!--Authored source comment--><?owned source?>"
+                        } else {
+                            ""
+                        };
+                        let own_field = if with_field {
+                            field(false)
+                        } else {
+                            String::new()
+                        };
+                        let renamed_field = if with_field {
+                            field(true)
+                        } else {
+                            String::new()
+                        };
+                        let body = if nested_first {
+                            format!("{metadata}{nested}{plain}{own_field}")
+                        } else {
+                            format!("{plain}{own_field}{metadata}{nested}")
+                        };
+                        let expected_body = if nested_first {
+                            format!("{metadata}{nested}{deleted}{renamed_field}")
+                        } else {
+                            format!("{deleted}{renamed_field}{metadata}{nested}")
+                        };
+                        let input =
+                            format!("<w:p>{PROPS}{}</w:p>{TAIL}", revision("del", 30, &body));
+                        let expected = format!(
+                            "<w:p>{PROPS}{}</w:p>{TAIL}",
+                            revision("del", 30, &expected_body)
+                        );
+                        let (mut dom, root) = package(&input);
+                        let (expected_dom, expected_root) = package(&expected);
+                        let nodes = dom.node_count();
+                        enforce_deleted_text_kinds(&mut dom, root);
+                        let coordinate = format!(
+                            "nested={kind}/first={nested_first}/field={with_field}/xml-metadata={with_xml_metadata}"
+                        );
+                        assert_eq!(
+                            dom.serialize_element(root),
+                            expected_dom.serialize_element(expected_root),
+                            "{coordinate}: complete source ownership"
+                        );
+                        assert_eq!(dom.node_count(), nodes, "{coordinate}: renaming only");
+                        let once = dom.serialize_element(root);
+                        enforce_deleted_text_kinds(&mut dom, root);
+                        assert_eq!(dom.serialize_element(root), once, "{coordinate}: repeat");
+                        assert_eq!(dom.node_count(), nodes);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod ladder_suffix_source_boundary_tests {
+    use super::*;
+    const DATE: &str = "2026-01-02T03:04:05Z";
+    const FORMAT: &str = "<w:rPr><w:b/><w:color w:val='123456'/></w:rPr>";
+    const OTHER: &str = "<w:rPr><w:i/><w:color w:val='654321'/></w:rPr>";
+    const PROPS: &str = "<w:pPr><w:pStyle w:val='BodyText'/><w:spacing w:after='80'/></w:pPr>";
+    fn xml(body: &str) -> String {
+        format!(
+            "<w:document xmlns:w='{}'><w:body>{body}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>",
+            W::URI
+        )
+    }
+    fn package(body: &str) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let document = dom.parse_xdocument(&xml(body));
+        let root = dom.root(document).expect("document");
+        (dom, root)
+    }
+    fn carrier(paragraph: &str, cell: bool) -> String {
+        if cell {
+            format!(
+                "<w:tbl><w:tblPr><w:tblW w:w='1800' w:type='dxa'/></w:tblPr><w:tblGrid><w:gridCol w:w='1800'/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w='1800' w:type='dxa'/></w:tcPr>{paragraph}</w:tc></w:tr></w:tbl>"
+            )
+        } else {
+            paragraph.to_owned()
+        }
+    }
+    #[test]
+    fn public_ladder_restores_suffix_author_at_unicode_and_run_boundaries() {
+        // Each expected prefix/suffix run is authored literally, independently
+        // of the splitting algorithm. XML space is needed only on actual
+        // leading/trailing whitespace, including after a new split boundary.
+        for (name, prefix, suffix, combined, prefix_runs, suffix_runs) in [
+            (
+                "Unicode within one leaf",
+                "Préfix ",
+                "尾",
+                format!("<w:r>{FORMAT}<w:t>Préfix 尾</w:t></w:r>"),
+                format!("<w:r>{FORMAT}<w:t xml:space='preserve'>Préfix </w:t></w:r>"),
+                format!("<w:r>{FORMAT}<w:t>尾</w:t></w:r>"),
+            ),
+            (
+                "multiple suffix leaves in same source run",
+                "Préfix ",
+                "尾 second",
+                format!(
+                    "<w:r>{FORMAT}<w:t xml:space='preserve'>Préfix </w:t><w:t>尾</w:t><w:t xml:space='preserve'> second</w:t></w:r>"
+                ),
+                format!("<w:r>{FORMAT}<w:t xml:space='preserve'>Préfix </w:t></w:r>"),
+                format!("<w:r>{FORMAT}<w:t>尾</w:t><w:t xml:space='preserve'> second</w:t></w:r>"),
+            ),
+            (
+                "different owned run properties",
+                "Préfix ",
+                "尾",
+                format!(
+                    "<w:r>{FORMAT}<w:t xml:space='preserve'>Préfix </w:t></w:r><w:r>{OTHER}<w:t>尾</w:t></w:r>"
+                ),
+                format!("<w:r>{FORMAT}<w:t xml:space='preserve'>Préfix </w:t></w:r>"),
+                format!("<w:r>{OTHER}<w:t>尾</w:t></w:r>"),
+            ),
+            (
+                "multiple suffix leaves in an independently moved run",
+                "Préfix ",
+                "尾 second",
+                format!(
+                    "<w:r>{FORMAT}<w:t xml:space='preserve'>Préfix </w:t></w:r><w:r>{OTHER}<w:t>尾</w:t><w:t xml:space='preserve'> second</w:t></w:r>"
+                ),
+                format!("<w:r>{FORMAT}<w:t xml:space='preserve'>Préfix </w:t></w:r>"),
+                format!("<w:r>{OTHER}<w:t>尾</w:t><w:t xml:space='preserve'> second</w:t></w:r>"),
+            ),
+            (
+                "combining-character boundary without whitespace",
+                "é\u{300}",
+                "Tail",
+                format!("<w:r>{FORMAT}<w:t>é\u{300}Tail</w:t></w:r>"),
+                format!("<w:r>{FORMAT}<w:t>é\u{300}</w:t></w:r>"),
+                format!("<w:r>{FORMAT}<w:t>Tail</w:t></w:r>"),
+            ),
+        ] {
+            for source_has_date in [false, true] {
+                for cell in [false, true] {
+                    let source_date = if source_has_date {
+                        " w:date='2025-12-01T02:03:04Z'"
+                    } else {
+                        ""
+                    };
+                    let expected_date = if source_has_date {
+                        "2025-12-01T02:03:04Z"
+                    } else {
+                        DATE
+                    };
+                    let input_p = format!(
+                        "<w:p>{PROPS}<w:ins w:id='9' w:author='Comparison owner' w:date='{DATE}'>{combined}</w:ins></w:p>"
+                    );
+                    let expected_p = format!(
+                        "<w:p>{PROPS}<w:ins w:id='9' w:author='Comparison owner' w:date='{DATE}'>{prefix_runs}</w:ins><w:ins w:id='10' w:author='Authored suffix owner' w:date='{expected_date}'>{suffix_runs}</w:ins></w:p>"
+                    );
+                    let old_p = format!(
+                        "<w:p>{PROPS}<w:r>{FORMAT}<w:t xml:space='preserve'>{prefix}</w:t></w:r><w:r>{OTHER}<w:t>Original tail</w:t></w:r></w:p>"
+                    );
+                    let new_p = format!(
+                        "<w:p>{PROPS}<w:r>{FORMAT}<w:t xml:space='preserve'>{prefix}</w:t></w:r><w:ins w:id='2' w:author='Authored suffix owner'{source_date}><w:r>{OTHER}<w:t>{suffix}</w:t></w:r></w:ins></w:p>"
+                    );
+                    let input = carrier(&input_p, cell);
+                    let expected = carrier(&expected_p, cell);
+                    let original_xml = xml(&carrier(&old_p, cell));
+                    let revised_xml = xml(&carrier(&new_p, cell));
+                    let settings = WmlComparerSettings {
+                        author_for_revisions: "Configured ladder editor".into(),
+                        date_time_for_revisions: DATE.into(),
+                        ..WmlComparerSettings::default()
+                    };
+                    let sources = LadderSources {
+                        original_xml: &original_xml,
+                        revised_xml: &revised_xml,
+                        settings: &settings,
+                    };
+                    let (mut dom, root) = package(&input);
+                    let (expected_dom, expected_root) = package(&expected);
+                    align_remaining_ladder_rungs(&mut dom, root, &sources);
+                    let coordinate = format!("{name}/source-date={source_has_date}/cell={cell}");
+                    assert_eq!(
+                        dom.serialize_element(root),
+                        expected_dom.serialize_element(expected_root),
+                        "{coordinate}: complete text, format, provenance and geometry"
+                    );
+                    let once = dom.serialize_element(root);
+                    align_remaining_ladder_rungs(&mut dom, root, &sources);
+                    assert_eq!(dom.serialize_element(root), once, "{coordinate}: repeat");
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod reached_word_document_policy_tests {
+    use super::*;
+    struct PolicyCase {
+        name: String,
+        inserted: Vec<(String, bool)>,
+        deleted: Vec<(String, bool)>,
+        fold: bool,
+    }
+    const DATE: &str = "2026-01-02T03:04:05Z";
+    fn paragraph(kind: &str, id: u32, text: &str, numbered: bool, history: bool) -> String {
+        let num = if numbered {
+            "<w:numPr><w:ilvl w:val='0'/><w:numId w:val='7'/></w:numPr>"
+        } else {
+            ""
+        };
+        let saved = if history {
+            format!(
+                "<w:pPrChange w:id='{}' w:author='Earlier layout owner' w:date='2025-01-01T00:00:00Z'><w:pPr><w:spacing w:after='60'/></w:pPr></w:pPrChange>",
+                id + 100
+            )
+        } else {
+            String::new()
+        };
+        let tag = if kind == "del" { "delText" } else { "t" };
+        format!(
+            "<w:p><w:pPr><w:pStyle w:val='BodyText'/>{num}<w:spacing w:after='80'/><w:rPr><w:{kind} w:id='{}' w:author='Authored mark owner' w:date='{DATE}'/><w:i/></w:rPr>{saved}</w:pPr><w:{kind} w:id='{id}' w:author='Authored {kind} text owner' w:date='{DATE}'><w:r><w:rPr><w:b/><w:color w:val='123456'/></w:rPr><w:{tag}>{text}</w:{tag}></w:r></w:{kind}></w:p>",
+            id + 50
+        )
+    }
+    #[test]
+    fn document_policy_reaches_numbering_relatedness_and_demo_intro_boundaries() {
+        let mut cases = Vec::new();
+        let long_old = ["Established legacy charter obligations remain enforceable"; 10].join(" ");
+        // M428: without either boundary numbering owner, this is a large,
+        // unrelated asymmetric replacement; with both, Word's uniform-list
+        // exception retains a MIX. Neither alternative earlier gate qualifies.
+        for first_old_numbered in [false, true] {
+            for last_new_numbered in [false, true] {
+                cases.push(PolicyCase {
+                    name: format!(
+                        "uniform-list/old-num={first_old_numbered}/new-num={last_new_numbered}"
+                    ),
+                    inserted: vec![
+                        ("Zebra".into(), false),
+                        ("Zebra".into(), false),
+                        ("Zebra".into(), last_new_numbered),
+                    ],
+                    deleted: vec![
+                        ("Num One".into(), first_old_numbered),
+                        (long_old.clone(), false),
+                        (long_old.clone(), false),
+                    ],
+                    fold: first_old_numbered && last_new_numbered,
+                });
+            }
+        }
+        // M413: a title-page boundary itself remains unrelated. An earlier
+        // revised paragraph matching the old clause is independently meaningful
+        // source relatedness and prevents treating the entire gap as wholesale.
+        for earlier_clause_related in [false, true] {
+            let old_clause = "Original obligations bind parties permanently";
+            cases.push(PolicyCase {
+                name: format!("cover/earlier-clause-related={earlier_clause_related}"),
+                inserted: vec![
+                    (
+                        if earlier_clause_related {
+                            old_clause
+                        } else {
+                            "Revised editorial summary"
+                        }
+                        .into(),
+                        false,
+                    ),
+                    ("New appendix overview".into(), false),
+                    ("Updated approval workflow".into(), false),
+                    ("Prepared revised edition".into(), false),
+                ],
+                deleted: vec![
+                    (old_clause.into(), false),
+                    ("Former execution requirements".into(), false),
+                ],
+                fold: earlier_clause_related,
+            });
+        }
+        // M336: Word explicitly folds a short item into its demo introduction.
+        // The unrelated ordinary clause control does not have that exception.
+        for (name, first_old, fold) in [
+            (
+                "demonstrates",
+                "This report demonstrates original sampling procedures",
+                true,
+            ),
+            (
+                "document-prefix",
+                "This document records original sampling procedures",
+                true,
+            ),
+            (
+                "ordinary-clause",
+                "Original clause covers sampling procedures completely",
+                false,
+            ),
+        ] {
+            cases.push(PolicyCase {
+                name: format!("intro/{name}"),
+                inserted: vec![
+                    ("Alpha".into(), false),
+                    ("Beta".into(), false),
+                    ("Zebra".into(), false),
+                ],
+                deleted: vec![
+                    (first_old.into(), false),
+                    (long_old.clone(), false),
+                    (long_old.clone(), false),
+                ],
+                fold,
+            });
+        }
+        for case in cases {
+            for history in [false, true] {
+                for in_cell in [false, true] {
+                    let mut paragraphs = String::new();
+                    for (index, (text, numbered)) in case.inserted.iter().enumerate() {
+                        paragraphs.push_str(&paragraph(
+                            "ins",
+                            index as u32 + 1,
+                            text,
+                            *numbered,
+                            history,
+                        ));
+                    }
+                    for (index, (text, numbered)) in case.deleted.iter().enumerate() {
+                        paragraphs.push_str(&paragraph(
+                            "del",
+                            index as u32 + 20,
+                            text,
+                            *numbered,
+                            history,
+                        ));
+                    }
+                    let content = if in_cell {
+                        format!(
+                            "<w:tbl><w:tblPr><w:tblW w:w='1800' w:type='dxa'/></w:tblPr><w:tblGrid><w:gridCol w:w='1800'/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w='1800' w:type='dxa'/></w:tcPr>{paragraphs}</w:tc></w:tr></w:tbl>"
+                        )
+                    } else {
+                        paragraphs
+                    };
+                    let source = format!(
+                        "<w:document xmlns:w='{}'><w:body>{content}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>",
+                        W::URI
+                    );
+                    let mut dom = Dom::new();
+                    let document = dom.parse_xdocument(&source);
+                    let root = dom.root(document).expect("document");
+                    let body = dom.element(root, &W::body()).expect("body");
+                    let container = if in_cell {
+                        dom.descendants(body, Some(&W::tc()))[0]
+                    } else {
+                        body
+                    };
+                    let p = dom.elements(container, Some(&W::p()));
+                    let (inss, dels) = p.split_at(case.inserted.len());
+                    let before = dom.serialize_element(root);
+                    let nodes = dom.node_count();
+                    let coordinate = format!("{}/history={history}/cell={in_cell}", case.name);
+                    for _ in 0..2 {
+                        assert_eq!(
+                            should_fold_multi_del_at_document_scale(
+                                &dom,
+                                container,
+                                *inss.last().expect("new boundary"),
+                                dels[0],
+                                inss,
+                                dels
+                            ),
+                            case.fold,
+                            "{coordinate}: recorded Word policy"
+                        );
+                        assert_eq!(
+                            dom.serialize_element(root),
+                            before,
+                            "{coordinate}: entire authored source remains unchanged"
+                        );
+                        assert_eq!(dom.node_count(), nodes, "{coordinate}: read-only policy");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod mid_list_optional_source_property_tests {
+    use super::*;
+    const DATE: &str = "2026-01-02T03:04:05Z";
+    const SPACING: &str = "<w:spacing w:line='240' w:lineRule='auto'/>";
+    const DEL_MARK: &str =
+        "<w:del w:id='12' w:author='Original mark owner' w:date='2025-01-01T00:00:00Z'/>";
+    const HISTORY: &str = "<w:pPrChange w:id='13' w:author='Original layout owner' w:date='2025-01-01T00:00:00Z'><w:pPr><w:spacing w:after='80'/></w:pPr></w:pPrChange>";
+    const END: &str = "<w:p><w:pPr><w:pStyle w:val='BodyText'/><w:spacing w:line='240' w:lineRule='auto'/><w:jc w:val='both'/><w:rPr><w:del w:id='22' w:author='Terminal mark owner' w:date='2025-01-01T00:00:00Z'/><w:rFonts w:ascii='Arial'/><w:sz w:val='24'/></w:rPr></w:pPr><w:del w:id='23' w:author='Terminal text owner' w:date='2025-01-01T00:00:00Z'><w:r><w:delText>Terminal source formatting remains authored</w:delText></w:r></w:del></w:p><w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr>";
+    fn package(body: &str) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let document = dom.parse_xdocument(&format!(
+            "<w:document xmlns:w='{}'><w:body>{body}</w:body></w:document>",
+            W::URI
+        ));
+        let root = dom.root(document).expect("document");
+        (dom, root)
+    }
+    /// M376 removes copied list layout from a middle prose deletion. Optional
+    /// source jc/rPr/pPr may legitimately be absent; terminal/list/history
+    /// owners remain exact. This phase's Word carrier contract is literal.
+    #[test]
+    fn list_layout_cleanup_handles_absent_optional_properties_without_inventing_owners() {
+        let donor = format!(
+            "<w:p><w:pPr><w:pStyle w:val='ListParagraph'/><w:numPr><w:ilvl w:val='0'/><w:numId w:val='7'/></w:numPr>{SPACING}<w:rPr><w:ins w:id='1' w:author='Revised list mark owner' w:date='{DATE}'/><w:b/></w:rPr></w:pPr><w:ins w:id='2' w:author='Revised list text owner' w:date='{DATE}'><w:r><w:rPr><w:b/></w:rPr><w:t>Revised authored list item</w:t></w:r></w:ins></w:p>"
+        );
+        let body = "<w:del w:id='11' w:author='Original prose owner' w:date='2025-01-01T00:00:00Z'><w:r><w:rPr><w:i/><w:color w:val='654321'/></w:rPr><w:delText>Original independent prose</w:delText></w:r></w:del>";
+        for (rpr_name, original_rpr, expected_rpr) in [
+            ("absent", String::new(), String::new()),
+            (
+                "source mark only",
+                format!("<w:rPr>{DEL_MARK}</w:rPr>"),
+                format!("<w:rPr>{DEL_MARK}</w:rPr>"),
+            ),
+            (
+                "mark with copied scalar formats",
+                format!("<w:rPr>{DEL_MARK}<w:rFonts w:ascii='Arial'/><w:sz w:val='24'/></w:rPr>"),
+                format!("<w:rPr>{DEL_MARK}</w:rPr>"),
+            ),
+            (
+                "formats without a revised paragraph mark",
+                "<w:rPr><w:rFonts w:ascii='Arial'/><w:sz w:val='24'/></w:rPr>".into(),
+                "<w:rPr/>".into(),
+            ),
+        ] {
+            for jc in [
+                None,
+                Some("both"),
+                Some("distribute"),
+                Some("center"),
+                Some("right"),
+            ] {
+                for history in [false, true] {
+                    let jc_xml = jc
+                        .map(|value| format!("<w:jc w:val='{value}'/>"))
+                        .unwrap_or_default();
+                    let saved = if history { HISTORY } else { "" };
+                    let keep_jc = if matches!(jc, Some("both" | "distribute")) {
+                        ""
+                    } else {
+                        &jc_xml
+                    };
+                    let input = format!(
+                        "{donor}<w:p><w:pPr><w:pStyle w:val='BodyText'/>{SPACING}{jc_xml}{original_rpr}{saved}</w:pPr>{body}</w:p>{END}"
+                    );
+                    let expected = format!(
+                        "{donor}<w:p><w:pPr><w:pStyle w:val='BodyText'/>{keep_jc}{expected_rpr}{saved}</w:pPr>{body}</w:p>{END}"
+                    );
+                    let (mut dom, root) = package(&input);
+                    let (expected_dom, expected_root) = package(&expected);
+                    strip_list_layout_from_mid_pure_del(&mut dom, root);
+                    let coordinate = format!("rPr={rpr_name}/jc={jc:?}/history={history}");
+                    assert_eq!(
+                        dom.serialize_element(root),
+                        expected_dom.serialize_element(expected_root),
+                        "{coordinate}: complete Word phase source ownership"
+                    );
+                    let once = dom.serialize_element(root);
+                    strip_list_layout_from_mid_pure_del(&mut dom, root);
+                    assert_eq!(dom.serialize_element(root), once, "{coordinate}: repeat");
+                }
+            }
+        }
+        // A middle body-only deletion has no paragraph-property carrier to
+        // clean. It must remain absent, rather than acquiring empty formatting.
+        let input = format!("{donor}<w:p>{body}</w:p>{END}");
+        let (mut dom, root) = package(&input);
+        let before = dom.serialize_element(root);
+        let nodes = dom.node_count();
+        strip_list_layout_from_mid_pure_del(&mut dom, root);
+        assert_eq!(dom.serialize_element(root), before);
+        assert_eq!(dom.node_count(), nodes);
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod live_opaque_row_source_boundary_tests {
+    use super::*;
+
+    // Nontext source owners are real content, even when their cached result
+    // is empty. No row lifetime can be inferred from its revised peer cell.
+    #[test]
+    fn unchanged_opaque_cell_owners_prevent_row_lifetime_synthesis_without_text_caches() {
+        let payloads = [
+            (
+                "object",
+                "<w:r><w:object w:dxaOrig='240' w:dyaOrig='240'><v:shape id='OwnedObject' style='width:12pt;height:12pt'/></w:object></w:r>",
+            ),
+            (
+                "picture",
+                "<w:r><w:pict><v:rect id='OwnedRectangle' style='width:12pt;height:12pt' fillcolor='#123456'/></w:pict></w:r>",
+            ),
+            (
+                "alternate",
+                "<mc:AlternateContent><mc:Choice Requires='v'><w:r><w:pict><v:rect id='OwnedChoice' style='width:12pt;height:12pt'/></w:pict></w:r></mc:Choice><mc:Fallback><w:r><w:pict><v:rect id='OwnedFallback' style='width:12pt;height:12pt'/></w:pict></w:r></mc:Fallback></mc:AlternateContent>",
+            ),
+            (
+                "uncached-field",
+                "<w:fldSimple w:instr=' PAGE ' w:dirty='1'/>",
+            ),
+        ];
+        for (kind, payload) in payloads {
+            for direction in ["ins", "del"] {
+                for history in [false, true] {
+                    for control in [false, true] {
+                        let old = if history {
+                            "<w:trPrChange w:id='10' w:author='Prior row editor' w:date='2025-01-01T00:00:00Z'><w:trPr><w:trHeight w:val='220' w:hRule='atLeast'/></w:trPr></w:trPrChange>"
+                        } else {
+                            ""
+                        };
+                        let text = if direction == "ins" { "t" } else { "delText" };
+                        let table = format!(
+                            "<w:tbl><w:tblPr><w:tblW w:w='2400' w:type='dxa'/></w:tblPr><w:tblGrid><w:gridCol w:w='1200'/><w:gridCol w:w='1200'/></w:tblGrid><w:tr><w:trPr><w:trHeight w:val='260' w:hRule='atLeast'/>{old}</w:trPr><w:tc><w:tcPr><w:tcW w:w='1200' w:type='dxa'/></w:tcPr><w:p><w:pPr><w:pStyle w:val='BodyText'/><w:spacing w:before='120' w:after='80'/><w:jc w:val='center'/></w:pPr>{payload}</w:p></w:tc><w:tc><w:tcPr><w:tcW w:w='1200' w:type='dxa'/></w:tcPr><w:p><w:pPr><w:rPr><w:{direction} w:id='11' w:author='Source change owner' w:date='2026-01-01T00:00:00Z'/></w:rPr></w:pPr><w:{direction} w:id='12' w:author='Source change owner' w:date='2026-01-01T00:00:00Z'><w:r><w:rPr><w:b/><w:color w:val='654321'/></w:rPr><w:{text}>Independently revised peer cell</w:{text}></w:r></w:{direction}></w:p></w:tc></w:tr></w:tbl>"
+                        );
+                        let body = if control {
+                            format!(
+                                "<w:sdt><w:sdtPr><w:tag w:val='Row source control'/><w:id w:val='42'/><w:richText/></w:sdtPr><w:sdtContent>{table}</w:sdtContent></w:sdt>"
+                            )
+                        } else {
+                            table
+                        };
+                        let mut dom = Dom::new();
+                        let doc=dom.parse_xdocument(&format!("<w:document xmlns:w='{}' xmlns:v='urn:schemas-microsoft-com:vml' xmlns:mc='http://schemas.openxmlformats.org/markup-compatibility/2006'><w:body>{body}<w:p/><w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>",W::URI));
+                        let root = dom.root(doc).expect("valid tracked row source");
+                        let before = dom.serialize_element(root);
+                        let nodes = dom.node_count();
+                        let mut next_id = 100;
+                        mark_fully_revised_rows(
+                            &mut dom,
+                            root,
+                            &WmlComparerSettings::default(),
+                            &mut next_id,
+                        );
+                        assert_eq!(
+                            dom.serialize_element(root),
+                            before,
+                            "{kind}/{direction}/history={history}/control={control}: complete source owners and property history"
+                        );
+                        assert_eq!(dom.node_count(), nodes);
+                        assert_eq!(next_id, 100, "no synthesized history or lifetime");
+                        let row = dom.descendants(root, Some(&W::name("tr")))[0];
+                        let row_properties = dom
+                            .element(row, &W::name("trPr"))
+                            .expect("authored row properties");
+                        assert!(dom.element(row_properties, &W::ins()).is_none());
+                        assert!(dom.element(row_properties, &W::del()).is_none());
+                        mark_fully_revised_rows(
+                            &mut dom,
+                            root,
+                            &WmlComparerSettings::default(),
+                            &mut next_id,
+                        );
+                        assert_eq!(dom.serialize_element(root), before);
+                        assert_eq!(dom.node_count(), nodes);
+                        assert_eq!(next_id, 100);
+                    }
                 }
             }
         }

@@ -1165,7 +1165,8 @@ pub fn coalesce_recurse(
                     CorrelationStatus::Deleted
                     | CorrelationStatus::Inserted
                     | CorrelationStatus::MovedSource
-                    | CorrelationStatus::MovedDestination => {
+                    | CorrelationStatus::MovedDestination
+                    | CorrelationStatus::FormatChanged => {
                         for gcc in gc {
                             let dup = dom.new_element(aname.clone());
                             for (an, av) in dom.attributes(ancestor) {
@@ -2574,6 +2575,137 @@ mod coverage_ruby_math_ownership {
                     assert_eq!(semantic(&dom, math), before_second);
                     assert_eq!(id, 32);
                 }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod nontext_run_format_history_tests {
+    use super::*;
+    use crate::comparer::atoms::FormatChangeInfo;
+    use crate::comparer::finalize::mark_content_transform;
+    use crate::revision_processor::{accept_revisions_document, reject_revisions_document};
+    use std::sync::Arc;
+
+    fn signature(dom: &Dom, node: NodeId) -> String {
+        let mut attrs = dom
+            .attributes(node)
+            .into_iter()
+            .filter(|(name, _)| !dom.is_namespace_declaration(name))
+            .map(|(name, value)| (format!("{name:?}"), value))
+            .collect::<Vec<_>>();
+        attrs.sort();
+        let children = dom
+            .nodes(node)
+            .into_iter()
+            .map(|child| {
+                let value = signature(dom, child);
+                format!("{}:{value}", value.len())
+            })
+            .collect::<String>();
+        format!(
+            "{:?}:{attrs:?}:{:?}:{children}",
+            dom.name(node),
+            dom.text_value(node)
+        )
+    }
+
+    #[test]
+    fn changed_nontext_run_payload_keeps_complete_original_and_revised_properties() {
+        for leaf in [
+            "<w:footnoteReference w:id='1023'/>",
+            "<w:endnoteReference w:id='2023'/>",
+            "<w:tab/>",
+            "<w:br w:type='textWrapping' w:clear='all'/>",
+            "<w:instrText xml:space='preserve'> DATE \\@ yyyy </w:instrText>",
+            "<w:fldChar w:fldCharType='begin' w:fldLock='1'/>",
+        ] {
+            for old_empty in [false, true] {
+                let mut dom = Dom::new();
+                let doc = dom.parse_xdocument(&format!(
+                    "<w:p xmlns:w='{}'><w:r><w:rPr><w:rFonts w:ascii='Calibri' w:hAnsi='Calibri'/><w:b/><w:color w:val='123456'/><w:sz w:val='22'/><w:lang w:val='en-US'/></w:rPr>{leaf}</w:r></w:p>", W::URI));
+                let paragraph = dom.root(doc).unwrap();
+                let run = dom.element(paragraph, &W::r()).unwrap();
+                let new_props = dom.element(run, &W::r_pr()).unwrap();
+                let payload = dom
+                    .elements(run, None)
+                    .into_iter()
+                    .find(|&child| !dom.name_is(child, &W::r_pr()))
+                    .unwrap();
+                let old_doc = dom.parse_xdocument(&format!(
+                    "<w:rPr xmlns:w='{}'>{}</w:rPr>", W::URI,
+                    if old_empty { "" } else { "<w:rFonts w:ascii='Cambria' w:hAnsi='Cambria'/><w:i/><w:color w:val='654321'/><w:sz w:val='24'/><w:lang w:val='fr-FR'/>" }));
+                let old_props = dom.root(old_doc).unwrap();
+                let before = signature(&dom, old_props);
+                let after = signature(&dom, new_props);
+                let payload_before = signature(&dom, payload);
+                let mut atom = ComparisonUnitAtom::new(
+                    payload,
+                    Arc::from([paragraph, run, payload]),
+                    "owned-leaf",
+                );
+                atom.ancestor_unids = Some(Arc::from(["p".into(), "r".into(), "leaf".into()]));
+                atom.correlation_status = CorrelationStatus::FormatChanged;
+                atom.format_change = Some(FormatChangeInfo {
+                    old_run_properties: (!old_empty).then_some(old_props),
+                    new_run_properties: Some(new_props),
+                    old_para_properties: None,
+                    changed_properties: vec!["runFormatting".into()],
+                });
+                let settings = WmlComparerSettings::default();
+                let mut id = 61;
+                let rebuilt = coalesce_recurse(&mut dom, &[&atom], 0, &settings, &mut id);
+                assert_eq!(rebuilt.len(), 1);
+                let marked = mark_content_transform(&mut dom, rebuilt[0], &settings, &mut id);
+                assert_eq!(marked.len(), 1);
+                let redline = marked[0];
+                let changes = dom.descendants(redline, Some(&W::r_pr_change()));
+                assert_eq!(changes.len(), 1, "leaf={leaf}, old_empty={old_empty}");
+                let history = changes[0];
+                assert_eq!(
+                    dom.attribute(history, &W::author()),
+                    Some(settings.author_for_revisions.as_str())
+                );
+                assert_eq!(
+                    dom.attribute(history, &W::date()),
+                    Some(settings.date_time_for_revisions.as_str())
+                );
+                assert_eq!(
+                    signature(&dom, dom.element(history, &W::r_pr()).unwrap()),
+                    before
+                );
+                // Match the complete producer pipeline: scratch carriers are
+                // internal to finalization, never authored payload attributes.
+                crate::comparer::finalize::remove_powertools_scratch_markup(&mut dom, redline);
+                let accepted_input = dom.clone_subtree(redline);
+                let accepted = accept_revisions_document(&mut dom, accepted_input);
+                let rejected = reject_revisions_document(&mut dom, redline);
+                for (projection, props) in [(accepted, &after), (rejected, &before)] {
+                    let runs = dom.descendants(projection, Some(&W::r()));
+                    assert_eq!(runs.len(), 1);
+                    let rpr = dom.element(runs[0], &W::r_pr()).unwrap();
+                    assert_eq!(
+                        signature(&dom, rpr),
+                        *props,
+                        "leaf={leaf}, old_empty={old_empty}"
+                    );
+                    let children = dom
+                        .elements(runs[0], None)
+                        .into_iter()
+                        .filter(|&child| !dom.name_is(child, &W::r_pr()))
+                        .collect::<Vec<_>>();
+                    assert_eq!(children.len(), 1);
+                    assert_eq!(signature(&dom, children[0]), payload_before);
+                    assert!(
+                        dom.descendants(projection, Some(&W::r_pr_change()))
+                            .is_empty()
+                    );
+                }
+                assert_eq!(signature(&dom, old_props), before);
+                assert_eq!(signature(&dom, new_props), after);
+                assert_eq!(signature(&dom, payload), payload_before);
             }
         }
     }

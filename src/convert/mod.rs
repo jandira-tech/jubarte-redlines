@@ -17450,7 +17450,7 @@ fn parse_chart_with(xml: &str, theme: &ThemeFonts) -> Option<ChartData> {
     let mut indexed = Vec::new();
     let mut x_indexed = Vec::new();
     let mut n_cats = 0usize;
-    for ser in descendants_local(&dom, host, "ser") {
+    for (idx, ser) in descendants_local(&dom, host, "ser").into_iter().enumerate() {
         if cats.is_empty() {
             if let Some(cat) = descendants_local(&dom, ser, "cat").into_iter().next() {
                 cats = chart_pts(&dom, cat);
@@ -17458,8 +17458,6 @@ fn parse_chart_with(xml: &str, theme: &ThemeFonts) -> Option<ChartData> {
                 cats = chart_pts(&dom, xval);
             }
         }
-        let idx = names.len();
-        names.push(chart_ser_name(&dom, ser, idx));
         let val = descendants_local(&dom, ser, "yVal")
             .into_iter()
             .next()
@@ -17470,6 +17468,7 @@ fn parse_chart_with(xml: &str, theme: &ThemeFonts) -> Option<ChartData> {
                 .filter_map(|s| s.parse().ok())
                 .collect();
             if !nums.is_empty() {
+                names.push(chart_ser_name(&dom, ser, idx));
                 colors.push(chart_ser_color(&dom, ser, idx, theme));
                 series.push(nums);
                 let (pts, count) = chart_pts_indexed(&dom, val);
@@ -61590,6 +61589,2433 @@ mod field_group_coordinate_contract_tests {
             assert_eq!(paths[0].subpaths[0].pts, vec![(0.0, 0.0), (40.0, 20.0)]);
             assert!(!paths[0].subpaths[0].closed);
             assert_eq!(dom.serialize_element(root), unchanged);
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod chart_cache_and_diagram_threshold_contract_tests {
+    use super::*;
+
+    fn dom(fragment: &str) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(
+            r#"<a:root xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart">{fragment}</a:root>"#
+        ));
+        let root = dom.root(doc).unwrap();
+        (dom, root)
+    }
+
+    #[test]
+    fn malformed_chart_points_do_not_erase_valid_sparse_indexed_peers() {
+        // idx and count errors deliberately probe tolerant chart-cache input.
+        // The cache also contains an absent v and an invalid numeric v; neither
+        // is an indexed numeric point, while string category data stays intact.
+        for (count, expected_count) in [
+            ("", 0),
+            ("<c:ptCount/>", 0),
+            ("<c:ptCount val='invalid'/>", 0),
+            ("<c:ptCount val='9'/>", 9),
+        ] {
+            let (dom, root) = dom(&format!(
+                "<c:numLit>{count}<c:pt idx='0'/><c:pt idx='1'><c:v>invalid</c:v></c:pt><c:pt idx='6'><c:v> 2.5 </c:v></c:pt><c:pt idx='invalid'><c:v>-3</c:v></c:pt><c:pt><c:v>4</c:v></c:pt></c:numLit>"
+            ));
+            let before = dom.serialize_element(root);
+            let cache = descendants_local(&dom, root, "numLit")[0];
+            assert_eq!(
+                chart_pts_indexed(&dom, cache),
+                (vec![(6, 2.5), (3, -3.0), (4, 4.0)], expected_count)
+            );
+            assert_eq!(chart_pts(&dom, cache), ["invalid", " 2.5 ", "-3", "4"]);
+            assert_eq!(dom.serialize_element(root), before);
+        }
+    }
+
+    #[test]
+    fn automatic_chart_title_and_series_name_skip_blank_cached_nodes() {
+        for (names, expected_name, expected_title) in [
+            (
+                "<c:tx><c:v> </c:v><c:v>\t</c:v><c:v> Owned </c:v></c:tx>",
+                " Owned ",
+                " Owned ",
+            ),
+            (
+                "<c:tx><c:v> </c:v><c:v>\t</c:v></c:tx>",
+                "Series 1",
+                "Series 1",
+            ),
+            ("", "Series 1", "Series 1"),
+        ] {
+            let (dom, root) = dom(&format!(
+                "<c:chart><c:title><c:tx><a:t> </a:t><c:v>\t</c:v></c:tx></c:title><c:plotArea><c:barChart><c:ser>{names}<c:val><c:numLit><c:pt idx='0'><c:v>2</c:v></c:pt></c:numLit></c:val></c:ser></c:barChart></c:plotArea></c:chart>"
+            ));
+            let before = dom.serialize_element(root);
+            let ser = descendants_local(&dom, root, "ser")[0];
+            assert_eq!(chart_ser_name(&dom, ser, 0), expected_name);
+            assert_eq!(chart_title(&dom, root), expected_title);
+            assert_eq!(dom.serialize_element(root), before);
+        }
+        let (dom, root) = dom(
+            "<c:chart><c:title><c:tx><a:t> </a:t><c:v> Exact title </c:v></c:tx></c:title></c:chart>",
+        );
+        assert_eq!(chart_title(&dom, root), " Exact title ");
+    }
+
+    fn package(drawing: &str) -> PartFs {
+        use std::io::{Cursor, Write};
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for (name, payload) in [
+            (
+                "[Content_Types].xml",
+                "<Types xmlns='http://schemas.openxmlformats.org/package/2006/content-types'><Default Extension='xml' ContentType='application/xml'/></Types>",
+            ),
+            (
+                "word/_rels/document.xml.rels",
+                "<Relationships xmlns='http://schemas.openxmlformats.org/package/2006/relationships'><Relationship Id='drawing' Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/diagramDrawing' Target='drawing.xml'/></Relationships>",
+            ),
+            ("word/drawing.xml", drawing),
+        ] {
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(payload.as_bytes()).unwrap();
+        }
+        PartFs::open(&zip.finish().unwrap().into_inner()).unwrap()
+    }
+
+    fn shape(w: i32, h: i32, fill: &str, line: &str) -> String {
+        format!(
+            "<a:sp><a:spPr><a:xfrm><a:off x='127000' y='254000'/><a:ext cx='{w}' cy='{h}'/></a:xfrm>{fill}{line}<a:prstGeom prst='roundRect'/></a:spPr><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t> </a:t></a:r><a:r><a:t>Owned</a:t></a:r><a:r><a:t>label</a:t></a:r></a:p></a:txBody></a:sp>"
+        )
+    }
+
+    #[test]
+    fn smartart_width_and_height_thresholds_decline_only_the_sub_eight_point_dimension() {
+        let red = "<a:solidFill><a:srgbClr val='FF0000'/></a:solidFill>";
+        for (w, h, expected_extent) in [
+            (100330, 101600, None),
+            (101600, 100330, None),
+            (100330, 100330, None),
+            (101600, 101600, Some((8.0, 8.0))),
+            (127000, 101600, Some((10.0, 8.0))),
+            (101600, 127000, Some((8.0, 10.0))),
+        ] {
+            let drawing = format!(
+                r#"<a:root xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">{}</a:root>"#,
+                shape(w, h, red, "")
+            );
+            let pkg = package(&drawing);
+            let (host, root) = dom("");
+            let host_before = host.serialize_element(root);
+            let out = load_diag_shapes(
+                &pkg,
+                "word/document.xml",
+                &host,
+                root,
+                &ThemeFonts::default(),
+            );
+            if let Some((expected_w, expected_h)) = expected_extent {
+                let out = out.unwrap();
+                assert_eq!(out.len(), 1);
+                let s = &out[0];
+                assert_eq!((s.x, s.y, s.w, s.h), (10.0, 20.0, expected_w, expected_h));
+                assert_eq!(
+                    (s.fill, s.stroke, s.label.as_str(), s.round),
+                    (Some([1.0, 0.0, 0.0]), None, "Owned label", true)
+                );
+            } else {
+                assert!(out.is_none());
+            }
+            assert_eq!(
+                pkg.part_string("word/drawing.xml").as_deref(),
+                Some(drawing.as_str())
+            );
+            assert_eq!(host.serialize_element(root), host_before);
+        }
+    }
+
+    #[test]
+    fn smartart_near_white_fill_and_stroke_boundaries_preserve_complete_shape_records() {
+        for (fill_color, stroke_color, width, expected_fill, expected_stroke) in [
+            ("F2F2F2", None, "", Some([242.0 / 255.0; 3]), None),
+            ("F3F3F3", None, "", None, None),
+            ("FFF2FF", None, "", Some([1.0, 242.0 / 255.0, 1.0]), None),
+            ("FFFFF2", None, "", Some([1.0, 1.0, 242.0 / 255.0]), None),
+            (
+                "FFFFFF",
+                Some("0000FF"),
+                "",
+                Some([1.0; 3]),
+                Some(([0.0, 0.0, 1.0], 1.0)),
+            ),
+            (
+                "FFFFFF",
+                Some("0000FF"),
+                " w='invalid'",
+                Some([1.0; 3]),
+                Some(([0.0, 0.0, 1.0], 1.0)),
+            ),
+            (
+                "FFFFFF",
+                Some("F2F2F2"),
+                " w='25400'",
+                Some([1.0; 3]),
+                Some(([242.0 / 255.0; 3], 2.0)),
+            ),
+            ("FFFFFF", Some("F3F3F3"), " w='25400'", None, None),
+        ] {
+            let fill = format!("<a:solidFill><a:srgbClr val='{fill_color}'/></a:solidFill>");
+            let line = stroke_color
+                .map(|c| {
+                    format!("<a:ln{width}><a:solidFill><a:srgbClr val='{c}'/></a:solidFill></a:ln>")
+                })
+                .unwrap_or_default();
+            let drawing = format!(
+                r#"<a:root xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">{}</a:root>"#,
+                shape(127000, 254000, &fill, &line)
+            );
+            let pkg = package(&drawing);
+            let (host, root) = dom("");
+            let out = load_diag_shapes(
+                &pkg,
+                "word/document.xml",
+                &host,
+                root,
+                &ThemeFonts::default(),
+            );
+            if expected_fill.is_some() || expected_stroke.is_some() {
+                let out = out.unwrap();
+                assert_eq!(out.len(), 1);
+                let s = &out[0];
+                assert_eq!((s.x, s.y, s.w, s.h), (10.0, 20.0, 10.0, 20.0));
+                assert_eq!(
+                    (s.fill, s.stroke, s.label.as_str(), s.round),
+                    (expected_fill, expected_stroke, "Owned label", true)
+                );
+            } else {
+                assert!(out.is_none());
+            }
+            assert_eq!(
+                pkg.part_string("word/drawing.xml").as_deref(),
+                Some(drawing.as_str())
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod chart_series_cache_owner_regression_tests {
+    use super::*;
+
+    #[test]
+    fn skipped_empty_series_cache_does_not_assign_its_name_to_later_values() {
+        for empty in [
+            "<c:numLit><c:ptCount val='0'/></c:numLit>",
+            "<c:numLit><c:ptCount val='1'/><c:pt idx='0'><c:v>invalid</c:v></c:pt></c:numLit>",
+        ] {
+            let xml = format!(
+                r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:title><c:tx><c:v>Ownership</c:v></c:tx></c:title><c:plotArea><c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:v>Empty original</c:v></c:tx><c:val>{empty}</c:val></c:ser><c:ser><c:idx val="1"/><c:order val="1"/><c:tx><c:v>Owned values</c:v></c:tx><c:spPr><a:solidFill><a:srgbClr val="0000FF"/></a:solidFill></c:spPr><c:cat><c:strLit><c:ptCount val="1"/><c:pt idx="0"><c:v>Category</c:v></c:pt></c:strLit></c:cat><c:val><c:numLit><c:ptCount val="1"/><c:pt idx="0"><c:v>7</c:v></c:pt></c:numLit></c:val></c:ser></c:barChart></c:plotArea><c:legend><c:legendPos val="b"/></c:legend></c:chart></c:chartSpace>"#
+            );
+            // The zero-length cache is legal. The second case deliberately
+            // exercises tolerant rejection of a malformed numeric cache.
+            let chart = parse_chart_with(&xml, &ThemeFonts::default()).unwrap();
+            assert_eq!(chart.title, "Ownership");
+            assert_eq!(chart.names, ["Owned values"]);
+            assert_eq!(chart.series, [vec![7.0]]);
+            assert_eq!(chart.indexed, [vec![(0, 7.0)]]);
+            assert_eq!(chart.x_indexed, [Vec::<(usize, f32)>::new()]);
+            assert_eq!(chart.cats, ["Category"]);
+            assert_eq!(chart.n_cats, 1);
+            assert_eq!(chart.colors, [[0.0, 0.0, 1.0]]);
+            assert!(chart.legend && matches!(chart.kind, ChartKind::Bar));
+            assert_eq!(chart.x_scaling, (None, None));
+            assert_eq!(chart.y_scaling, (None, None));
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod cell_picture_owned_room_contract_tests {
+    use super::*;
+
+    fn dom(fragment: &str) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(r#"<w:root xmlns:w="{}" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:wp14="http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">{fragment}</w:root>"#, W::URI));
+        let root = dom.root(doc).unwrap();
+        (dom, root)
+    }
+    fn fonts() -> Fonts<'static> {
+        let mut fonts = Fonts::new();
+        fonts.insert_embedded("Memory Mono", false, false, FaceId::MonoRegular.bytes());
+        fonts
+    }
+    fn para(text: &str) -> CellPara {
+        let mut run = Defaults::word().run;
+        run.family = "Memory Mono".into();
+        run.size = 12.0;
+        let mut style = Defaults::word().para;
+        style.before = 2.0;
+        style.after = 3.0;
+        style.line_exact = Some(20.0);
+        style.indent_left = 0.0;
+        style.indent_right = 0.0;
+        style.indent_first = 0.0;
+        CellPara {
+            runs: vec![TextRun::new(text, run)],
+            images: Vec::new(),
+            boxes: Vec::new(),
+            style,
+            bookmarks: vec!["OwnedCell".into()],
+            blank_bookmarks: vec!["EmptyCell".into()],
+            continued: false,
+            vertical: false,
+            squeeze: Squeeze::NONE,
+            hang_spaces: false,
+        }
+    }
+    fn picture(w: f32, h: f32) -> LaidImage {
+        // Parse real shape defaults, then use the production image wrapper.
+        let (dom, root) = dom(
+            "<w:p><w:r><w:drawing><wp:inline><wp:extent cx='254000' cy='254000'/><a:graphic><a:graphicData><wps:wsp><wps:spPr><a:prstGeom prst='rect'/><a:solidFill><a:srgbClr val='00FF00'/></a:solidFill><a:ln><a:noFill/></a:ln></wps:spPr></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>",
+        );
+        let p = dom.element(root, &W::p()).unwrap();
+        let mut boxes =
+            collect_textboxes(None, &dom, p, &Defaults::word().run, &ThemeFonts::default());
+        assert_eq!(boxes.len(), 1);
+        let mut b = boxes.remove(0);
+        b.w = w;
+        b.h = h;
+        text_box_image(b, [0.0; 4])
+    }
+    fn slot(
+        h_frame: &str,
+        v_frame: &str,
+        col_x: i32,
+        drop: i32,
+        extra: &str,
+        wrap: &str,
+    ) -> ImageSlot {
+        let h_position = if extra.contains("pctPosHOffset") {
+            extra.to_string()
+        } else {
+            format!("<wp:posOffset>{col_x}</wp:posOffset>")
+        };
+        let v_position = if extra.contains("pctPosVOffset") {
+            extra.to_string()
+        } else {
+            format!("<wp:posOffset>{drop}</wp:posOffset>")
+        };
+        let (dom, root) = dom(&format!(
+            "<w:drawing><wp:anchor distR='50800' distB='63500'><wp:positionH relativeFrom='{h_frame}'>{h_position}</wp:positionH><wp:positionV relativeFrom='{v_frame}'>{v_position}</wp:positionV>{wrap}</wp:anchor></w:drawing>"
+        ));
+        let before = dom.serialize_element(root);
+        let parsed = drawing_slot(&dom, dom.element(root, &W::drawing()).unwrap());
+        assert_eq!(dom.serialize_element(root), before);
+        parsed
+    }
+    fn assert_source(para: &CellPara, text: &str) {
+        assert_eq!(
+            para.runs
+                .iter()
+                .map(|r| r.text.as_str())
+                .collect::<String>(),
+            text
+        );
+        assert_eq!(para.bookmarks, ["OwnedCell"]);
+        assert_eq!(para.blank_bookmarks, ["EmptyCell"]);
+        assert_eq!(
+            (para.style.before, para.style.after, para.style.line_exact),
+            (2.0, 3.0, Some(20.0))
+        );
+    }
+
+    #[test]
+    fn square_cell_float_room_and_vertical_reach_have_independent_literal_thresholds() {
+        let fonts = fonts();
+        for (col, drop, room, expected, height) in [
+            (25400, 127000, 60.0, Some((26.0, 45.0)), 45.0),
+            (25400, 127000, 44.0, Some((26.0, 45.0)), 45.0),
+            (25400, 127000, 43.0, None, 65.0),
+            (25400, 241300, 60.0, Some((26.0, 54.0)), 54.0),
+            (25400, 254000, 60.0, None, 55.0),
+            (25400, -127000, 60.0, Some((26.0, 35.0)), 35.0),
+        ] {
+            let mut para = para("AB");
+            let mut image = picture(20.0, 30.0);
+            image.slot = slot(
+                "column",
+                "paragraph",
+                col,
+                drop,
+                "",
+                "<wp:wrapSquare wrapText='bothSides'/>",
+            );
+            para.images.push(image);
+            assert_eq!(cell_side_float(&fonts, &para, room), expected);
+            assert_eq!(cell_para_height(&fonts, &para, room), height);
+            assert_source(&para, "AB");
+            assert_eq!(cell_image_wh(&para.images[0]), (20.0, 30.0));
+        }
+    }
+
+    #[test]
+    fn page_and_percentage_positions_exclude_cell_owned_float_without_losing_extent() {
+        for (h, v, extra, owned) in [
+            ("column", "paragraph", "", true),
+            ("page", "paragraph", "", false),
+            ("column", "page", "", false),
+            (
+                "column",
+                "paragraph",
+                "<wp14:pctPosHOffset>25000</wp14:pctPosHOffset>",
+                false,
+            ),
+            (
+                "column",
+                "paragraph",
+                "<wp14:pctPosVOffset>25000</wp14:pctPosVOffset>",
+                false,
+            ),
+        ] {
+            let mut image = picture(20.0, 30.0);
+            image.slot = slot(
+                h,
+                v,
+                25400,
+                127000,
+                extra,
+                "<wp:wrapSquare wrapText='bothSides'/>",
+            );
+            assert_eq!(cell_holds_image(&image), owned);
+            assert_eq!(cell_image_wh(&image), (20.0, 30.0));
+            let mut para = para("AB");
+            para.images.push(image);
+            assert_eq!(
+                cell_side_float(&fonts(), &para, 60.0),
+                owned.then_some((26.0, 45.0))
+            );
+            assert_source(&para, "AB");
+        }
+        let inline = picture(20.0, 30.0);
+        assert!(cell_holds_image(&inline));
+    }
+
+    #[test]
+    fn cell_overlay_wrap_and_behind_flags_preserve_text_without_claiming_room() {
+        let fonts = fonts();
+        for (wrap, behind, expected_side, height, takes_room) in [
+            (
+                "<wp:wrapSquare wrapText='bothSides'/>",
+                false,
+                Some((26.0, 45.0)),
+                45.0,
+                true,
+            ),
+            (
+                "<wp:wrapSquare wrapText='bothSides'/>",
+                true,
+                None,
+                25.0,
+                false,
+            ),
+            ("<wp:wrapNone/>", false, None, 25.0, false),
+            ("<wp:wrapTopAndBottom/>", false, None, 65.0, true),
+        ] {
+            let mut para = para("AB");
+            let mut image = picture(20.0, 30.0);
+            image.slot = slot("column", "paragraph", 25400, 127000, "", wrap);
+            image.behind = behind;
+            para.images.push(image);
+            let (align, offset, drop, room) = cell_image_place(&para.images[0], Align::Right);
+            assert!(align == Align::Left);
+            assert_eq!((offset, drop, room), (Some(2.0), 10.0, takes_room));
+            assert_eq!(cell_side_float(&fonts, &para, 60.0), expected_side);
+            assert_eq!(cell_para_height(&fonts, &para, 60.0), height);
+            assert_source(&para, "AB");
+        }
+    }
+
+    #[test]
+    fn leading_cell_icon_requires_first_source_position_and_both_icon_dimensions() {
+        for (w, h, lead_chars, align, text, expected) in [
+            (48.0, 24.0, 0, Align::Left, "AB", true),
+            (49.0, 24.0, 0, Align::Left, "AB", false),
+            (48.0, 25.0, 0, Align::Left, "AB", false),
+            (48.0, 24.0, 1, Align::Left, "AB", false),
+            (48.0, 24.0, 0, Align::Center, "AB", false),
+            (48.0, 24.0, 0, Align::Right, "AB", false),
+            (48.0, 24.0, 0, Align::Left, " ", false),
+        ] {
+            let mut para = para(text);
+            para.style.align = align;
+            let mut image = picture(w, h);
+            image.lead_chars = lead_chars;
+            para.images.push(image);
+            assert_eq!(cell_lead_picture(&para).is_some(), expected);
+            if expected {
+                assert!(std::ptr::eq(
+                    cell_lead_picture(&para).unwrap(),
+                    &para.images[0]
+                ));
+            }
+            assert_eq!(cell_image_wh(&para.images[0]), (w, h));
+            assert_source(&para, text);
+        }
+    }
+
+    fn raw_mono_single(size: f32) -> f32 {
+        let face = ttf_parser::Face::parse(FaceId::MonoRegular.bytes(), 0).unwrap();
+        f32::from(face.ascender() - face.descender() + face.line_gap()) * size
+            / f32::from(face.units_per_em())
+    }
+    fn close(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() < 0.001,
+            "actual={actual}, expected={expected}"
+        );
+    }
+
+    #[test]
+    fn cell_list_marker_lifts_once_while_exact_and_minimum_spacing_retain_authored_boxes() {
+        let fonts = fonts();
+        let mut source = para("Body");
+        let mut marker = source.runs[0].with_text("1. ");
+        marker.list_marker = true;
+        marker.style.size = 24.0;
+        source.runs.insert(0, marker);
+        let raw = ttf_parser::Face::parse(FaceId::MonoRegular.bytes(), 0).unwrap();
+        let body_line = raw_mono_single(12.0);
+        let marker_up = raw_mono_single(24.0)
+            - f32::from(raw.descender()).abs() * 24.0 / f32::from(raw.units_per_em());
+        let body_descent = f32::from(raw.descender()).abs() * 12.0 / f32::from(raw.units_per_em());
+        let natural = body_line.max(marker_up + body_descent);
+        for (exact, minimum, multiple, expected) in [
+            (None, None, 1.0, natural),
+            (None, None, 1.5, body_line * 1.5 + natural - body_line),
+            (Some(20.0), None, 1.5, 20.0),
+            (None, Some(100.0), 1.5, 100.0),
+            (None, Some(1.0), 1.5, natural),
+        ] {
+            source.style.line_exact = exact;
+            source.style.line_at_least = minimum;
+            source.style.line_mult = multiple;
+            let (size, height) = cell_runs_line_box(&fonts, &source.runs, &source.style);
+            assert_eq!(size, 24.0);
+            close(height, expected);
+            assert_eq!(source.runs[0].text, "1. ");
+            assert!(source.runs[0].list_marker);
+            assert_eq!(source.runs[1].text, "Body");
+            assert!(!source.runs[1].list_marker);
+            assert_eq!(source.bookmarks, ["OwnedCell"]);
+        }
+    }
+
+    #[test]
+    fn picture_only_auto_multiple_uses_mark_face_and_declines_exact_minimum_or_unit_spacing() {
+        let fonts = fonts();
+        let mut source = para(" ");
+        source.images.push(picture(20.0, 30.0));
+        for explicit_mark in [false, true] {
+            source.style.mark_run = explicit_mark.then(|| {
+                let mut style = source.runs[0].style.clone();
+                style.size = 24.0;
+                std::rc::Rc::new(style)
+            });
+            for (exact, minimum, multiple, expected) in [
+                (
+                    None,
+                    None,
+                    1.5,
+                    0.5 * raw_mono_single(if explicit_mark { 24.0 } else { 12.0 }),
+                ),
+                (Some(20.0), None, 1.5, 0.0),
+                (None, Some(40.0), 1.5, 0.0),
+                (None, None, 1.0, 0.0),
+                (None, None, 0.8, 0.0),
+            ] {
+                source.style.line_exact = exact;
+                source.style.line_at_least = minimum;
+                source.style.line_mult = multiple;
+                assert!(cell_para_is_image_only(&source));
+                close(picture_line_leading(&fonts, &source), expected);
+                close(cell_para_text_h(&fonts, &source, 60.0), expected);
+                close(cell_para_height(&fonts, &source, 60.0), 35.0 + expected);
+                assert_eq!(cell_image_wh(&source.images[0]), (20.0, 30.0));
+                assert_eq!(source.runs[0].text, " ");
+                assert_eq!(source.bookmarks, ["OwnedCell"]);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod style_hit_and_following_line_contract_tests {
+    use super::*;
+    fn fonts() -> Fonts<'static> {
+        let mut fonts = Fonts::new();
+        fonts.insert_embedded("Memory Mono", false, false, FaceId::MonoRegular.bytes());
+        fonts
+    }
+    fn run(text: &str) -> TextRun {
+        let mut style = Defaults::word().run;
+        style.family = "Memory Mono".into();
+        style.size = 12.0;
+        TextRun::new(text, style)
+    }
+    fn paragraph(runs: Vec<TextRun>) -> Block {
+        let mut style = Defaults::word().para;
+        style.line_exact = Some(20.0);
+        style.before = 2.0;
+        style.after = 3.0;
+        style.widow_control = false;
+        Block::Paragraph {
+            runs,
+            style,
+            list: false,
+            images: Vec::new(),
+            boxes: Vec::new(),
+            bookmarks: vec!["Owned".into()],
+        }
+    }
+    fn page() -> PageSetup {
+        let mut p = Defaults::word().page;
+        p.width = 300.0;
+        p.height = 300.0;
+        p.margin_l = 24.0;
+        p.margin_r = 24.0;
+        p.margin_t = 24.0;
+        p.margin_b = 24.0;
+        p.header = 0.0;
+        p
+    }
+    fn close(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() < 0.001,
+            "actual={actual}, expected={expected}"
+        );
+    }
+    fn raw_mono_width(text: &str) -> f32 {
+        let f = ttf_parser::Face::parse(FaceId::MonoRegular.bytes(), 0).unwrap();
+        text.chars()
+            .map(|c| {
+                f32::from(f.glyph_hor_advance(f.glyph_index(c).unwrap()).unwrap()) * 12.0
+                    / f32::from(f.units_per_em())
+            })
+            .sum()
+    }
+
+    #[test]
+    fn absent_styleref_body_hit_retains_both_cached_result_segments_and_their_ink() {
+        let fonts = fonts();
+        for last in [false, true] {
+            let target = std::rc::Rc::new(StyleRef {
+                id: "MissingStyle".into(),
+                last,
+            });
+            let mut a = run("AA");
+            a.style.color = [1.0, 0.0, 0.0];
+            a.styleref = Some(target.clone());
+            let mut b = run("BB");
+            b.style.color = [0.0, 0.0, 1.0];
+            b.styleref = Some(target.clone());
+            let header = vec![a, b];
+            let chrome = HfChrome {
+                header: header.clone(),
+                ..Default::default()
+            };
+            let body = paragraph(vec![run("Body")]);
+            let (pages, facts) = layout_with_facts(
+                &fonts,
+                &page(),
+                &chrome,
+                &[body],
+                15,
+                FootnoteCatalog::default(),
+            );
+            assert_eq!(pages.len(), 1);
+            assert_eq!(facts.bookmark_pages["Owned"], "1");
+            let texts = pages[0]
+                .ops
+                .iter()
+                .filter_map(|op| match op {
+                    Op::Text {
+                        text,
+                        x,
+                        y,
+                        size,
+                        color,
+                        face,
+                        glyphs,
+                        ..
+                    } => Some((text.as_str(), *x, *y, *size, *color, *face, glyphs)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(texts.iter().map(|r| r.0).collect::<String>(), "AABBBody");
+            let aa = texts.iter().find(|r| r.0 == "AA").unwrap();
+            let bb = texts.iter().find(|r| r.0 == "BB").unwrap();
+            close(aa.1, 24.0);
+            close(bb.1, 24.0 + raw_mono_width("AA"));
+            assert_eq!(aa.2, bb.2);
+            assert_eq!(
+                (aa.3, aa.4, bb.3, bb.4),
+                (12.0, [1.0, 0.0, 0.0], 12.0, [0.0, 0.0, 1.0])
+            );
+            assert!(matches!(aa.5, FaceRef::Embedded(_)) && matches!(bb.5, FaceRef::Embedded(_)));
+            let raw = ttf_parser::Face::parse(FaceId::MonoRegular.bytes(), 0).unwrap();
+            assert_eq!(aa.6, &vec![raw.glyph_index('A').unwrap().0; 2]);
+            assert_eq!(bb.6, &vec![raw.glyph_index('B').unwrap().0; 2]);
+            assert_eq!(header[0].text, "AA");
+            assert_eq!(header[1].text, "BB");
+            assert!(std::rc::Rc::ptr_eq(
+                header[0].styleref.as_ref().unwrap(),
+                &target
+            ));
+            assert!(std::rc::Rc::ptr_eq(
+                header[1].styleref.as_ref().unwrap(),
+                &target
+            ));
+        }
+    }
+
+    #[test]
+    fn following_paragraph_keep_and_widow_options_claim_only_their_owned_line_count() {
+        let fonts = fonts();
+        for (keep, widow, counts) in [
+            (false, false, [1usize, 1, 1, 1, 1, 1]),
+            (false, true, [1, 1, 2, 3, 2, 2]),
+            (true, false, [1, 1, 2, 3, 4, 10]),
+            (true, true, [1, 1, 2, 3, 4, 10]),
+        ] {
+            for (lines, retained) in [0, 1, 2, 3, 4, 10].into_iter().zip(counts) {
+                let mut source = paragraph(vec![run("Owned lines")]);
+                let Block::Paragraph { style, .. } = &mut source else {
+                    unreachable!()
+                };
+                style.keep_lines = keep;
+                style.widow_control = widow;
+                close(
+                    keep_next_follow_pt(&fonts, 100.0, &source, 0.0, lines),
+                    2.0 + 20.0 * retained as f32,
+                );
+                let Block::Paragraph {
+                    runs,
+                    style,
+                    bookmarks,
+                    ..
+                } = &source
+                else {
+                    unreachable!()
+                };
+                assert_eq!(runs[0].text, "Owned lines");
+                assert_eq!((style.keep_lines, style.widow_control), (keep, widow));
+                assert_eq!(bookmarks, &["Owned"]);
+            }
+        }
+    }
+
+    #[test]
+    fn keep_lines_claims_zero_for_single_line_and_exact_height_for_a_real_wrapped_paragraph() {
+        let fonts = fonts();
+        let mut source = paragraph(vec![run("A\nB\nC")]);
+        let Block::Paragraph { runs, style, .. } = &mut source else {
+            unreachable!()
+        };
+        for keep in [false, true] {
+            style.keep_lines = keep;
+            close(
+                keep_lines_need_pt(&fonts, runs, style, 100.0, 0.0),
+                if keep { 60.0 } else { 0.0 },
+            );
+            close(
+                keep_lines_need_pt(&fonts, &[run("A")], style, 100.0, 0.0),
+                0.0,
+            );
+            assert_eq!(runs[0].text, "A\nB\nC");
+        }
+    }
+
+    #[test]
+    fn compatibility_at_least_grid_switch_changes_only_body_paragraphs_with_authored_minimum() {
+        for mode in [12, 14, 15, 16] {
+            let mut blocks = vec![
+                paragraph(vec![run("Minimum")]),
+                paragraph(vec![run("Exact")]),
+                Block::ColumnBreak,
+            ];
+            let Block::Paragraph { style, .. } = &mut blocks[0] else {
+                unreachable!()
+            };
+            style.line_exact = None;
+            style.line_at_least = Some(20.0);
+            style.snap_to_grid = true;
+            let Block::Paragraph { style, .. } = &mut blocks[1] else {
+                unreachable!()
+            };
+            style.snap_to_grid = true;
+            at_least_off_grid(&mut blocks, mode);
+            for (index, label, snaps) in [(0, "Minimum", mode < 15), (1, "Exact", true)] {
+                let Block::Paragraph {
+                    runs,
+                    style,
+                    bookmarks,
+                    ..
+                } = &blocks[index]
+                else {
+                    unreachable!()
+                };
+                assert_eq!(runs[0].text, label);
+                assert_eq!(style.snap_to_grid, snaps);
+                assert_eq!(bookmarks, &["Owned"]);
+                assert_eq!(style.line_at_least, (index == 0).then_some(20.0));
+                assert_eq!(style.line_exact, (index == 1).then_some(20.0));
+            }
+            assert!(matches!(blocks[2], Block::ColumnBreak));
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod encoded_picture_effect_contract_tests {
+    use super::*;
+    fn package() -> PartFs {
+        use std::io::{Cursor, Write};
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        zip.start_file(
+            "[Content_Types].xml",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        zip.write_all(
+            br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>"#,
+        )
+        .unwrap();
+        PartFs::open(&zip.finish().unwrap().into_inner()).unwrap()
+    }
+    fn duotone_dom() -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(r#"<a:blip xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:duotone><a:srgbClr val="FF0000"/><a:srgbClr val="00FF00"/></a:duotone></a:blip>"#);
+        let root = dom.root(doc).unwrap();
+        (dom, root)
+    }
+    fn header(components: u8) -> Vec<u8> {
+        // Deliberately incomplete encoded payload: a readable SOF advertises
+        // geometry, but no Huffman tables or image scan follows it.
+        vec![0xFF, 0xD8, 0xFF, 0xC0, 0, 8, 8, 0, 3, 0, 5, components]
+    }
+    fn assert_reserved(kind: &ImageKind) {
+        assert!(matches!(kind, ImageKind::Reserve));
+    }
+
+    #[test]
+    fn encoded_jpeg_header_retains_literal_geometry_even_when_pixel_scan_is_unreadable() {
+        for components in [1, 3, 4] {
+            let bytes = header(components);
+            let unchanged = bytes.clone();
+            assert_eq!(jpeg_info(&bytes), Some((5, 3, components)));
+            let Some(ImageKind::Jpeg {
+                width,
+                height,
+                bytes: retained,
+                components: actual,
+            }) = decode_image(bytes.clone())
+            else {
+                panic!("readable JPEG geometry retains the encoded source")
+            };
+            assert_eq!((width, height, actual), (5, 3, components));
+            assert_eq!(retained, unchanged);
+            assert_eq!(bytes, unchanged);
+        }
+    }
+
+    #[test]
+    fn undecodable_jpeg_effects_reserve_the_picture_instead_of_fabricating_pixel_data() {
+        let bytes = header(3);
+        let (dom, blip) = duotone_dom();
+        let before = dom.serialize_element(blip);
+        let pkg = package();
+        assert_reserved(&washed_out(decode_image(bytes.clone()).unwrap()));
+        assert_reserved(&soften_edges(
+            decode_image(bytes.clone()).unwrap(),
+            0.25,
+            0.25,
+        ));
+        assert_reserved(&duotone_image(
+            decode_image(bytes.clone()).unwrap(),
+            &dom,
+            blip,
+            &pkg,
+        ));
+        assert_eq!(bytes, header(3));
+        assert_eq!(dom.serialize_element(blip), before);
+    }
+
+    #[test]
+    fn incomplete_or_wrong_jpeg_magic_never_manufactures_geometry_or_image_data() {
+        for bytes in [
+            vec![0xFF, 0, 0, 0],
+            vec![0xFF, 0xD8, 0, 0],
+            vec![0xFF, 0xD8, 0xFF, 0xC0, 0, 8, 8, 0, 3, 0, 5],
+            vec![0xFF, 0xD8, 0xFF, 0xE0, 0, 255, 0, 0, 0, 0, 0, 0],
+        ] {
+            let before = bytes.clone();
+            assert!(decode_image(bytes.clone()).is_none());
+            assert_eq!(jpeg_info(&bytes), None);
+            assert_eq!(bytes, before);
+        }
+    }
+
+    fn black_jpeg() -> Vec<u8> {
+        let image = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            3,
+            3,
+            image::Rgb([0, 0, 0]),
+        ));
+        let mut output = std::io::Cursor::new(Vec::new());
+        image
+            .write_to(&mut output, image::ImageFormat::Jpeg)
+            .unwrap();
+        output.into_inner()
+    }
+    fn assert_rgb(kind: ImageKind, expected_bytes: &[u8], expected_alpha: Option<&[u8]>) {
+        let ImageKind::Rgb {
+            width,
+            height,
+            bytes,
+            alpha,
+        } = kind
+        else {
+            panic!("successful pixel effect retains an RGB image")
+        };
+        assert_eq!((width, height), (3, 3));
+        assert_eq!(bytes, expected_bytes);
+        assert_eq!(alpha.as_deref(), expected_alpha);
+    }
+
+    #[test]
+    fn real_memory_jpeg_effects_have_complete_literal_pixels_and_alpha() {
+        let bytes = black_jpeg();
+        let before = bytes.clone();
+        assert_eq!(jpeg_info(&bytes), Some((3, 3, 3)));
+        assert_rgb(
+            washed_out(decode_image(bytes.clone()).unwrap()),
+            &[207; 27],
+            None,
+        );
+        assert_rgb(
+            soften_edges(decode_image(bytes.clone()).unwrap(), 0.4, 0.4),
+            &[0; 27],
+            Some(&[106, 106, 106, 106, 255, 106, 106, 106, 106]),
+        );
+        let (dom, blip) = duotone_dom();
+        let xml_before = dom.serialize_element(blip);
+        let pkg = package();
+        let red = [255, 0, 0].repeat(9);
+        assert_rgb(
+            duotone_image(decode_image(bytes.clone()).unwrap(), &dom, blip, &pkg),
+            &red,
+            None,
+        );
+        assert_eq!(bytes, before);
+        assert_eq!(dom.serialize_element(blip), xml_before);
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod chart_admitted_series_owner_boundaries {
+    use super::*;
+
+    #[test]
+    fn skipping_empty_series_keeps_source_color_indices_and_owned_names_across_chart_kinds() {
+        let theme = ThemeFonts {
+            colors: HashMap::from([
+                ("accent1".into(), [1.0, 0.0, 0.0]),
+                ("accent2".into(), [0.0, 1.0, 0.0]),
+                ("accent3".into(), [0.0, 0.0, 1.0]),
+                ("accent4".into(), [1.0, 1.0, 0.0]),
+            ]),
+            ..ThemeFonts::default()
+        };
+        for kind in [
+            "barChart",
+            "lineChart",
+            "areaChart",
+            "scatterChart",
+            "radarChart",
+        ] {
+            for named in [false, true] {
+                for empty_at in [0, 1, 2] {
+                    let mut series = String::new();
+                    let mut names = Vec::new();
+                    let mut colors = Vec::new();
+                    let mut values = Vec::new();
+                    for index in 0..3 {
+                        let title = if named {
+                            format!("<c:tx><c:v>Owner {index}</c:v></c:tx>")
+                        } else {
+                            String::new()
+                        };
+                        let cache = if index == empty_at {
+                            "<c:numLit><c:ptCount val='0'/></c:numLit>".to_string()
+                        } else {
+                            format!(
+                                "<c:numLit><c:ptCount val='1'/><c:pt idx='0'><c:v>{}</c:v></c:pt></c:numLit>",
+                                index + 1
+                            )
+                        };
+                        let value_tag = if kind == "scatterChart" {
+                            "yVal"
+                        } else {
+                            "val"
+                        };
+                        series.push_str(&format!("<c:ser><c:idx val='{index}'/><c:order val='{index}'/>{title}<c:cat><c:strLit><c:ptCount val='1'/><c:pt idx='0'><c:v>Category</c:v></c:pt></c:strLit></c:cat><c:{value_tag}>{cache}</c:{value_tag}></c:ser>"));
+                        if index != empty_at {
+                            names.push(if named {
+                                format!("Owner {index}")
+                            } else {
+                                format!("Series {}", index + 1)
+                            });
+                            colors.push(match index {
+                                0 => [1.0, 0.0, 0.0],
+                                1 => [0.0, 1.0, 0.0],
+                                _ => [0.0, 0.0, 1.0],
+                            });
+                            values.push(vec![(index + 1) as f32]);
+                        }
+                    }
+                    let source = format!(
+                        r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart><c:plotArea><c:{kind}>{series}</c:{kind}><c:valAx><c:axPos val="b"/><c:scaling><c:min val="0"/><c:max val="4"/></c:scaling></c:valAx><c:valAx><c:axPos val="l"/><c:scaling><c:min val="1"/><c:max val="5"/></c:scaling></c:valAx></c:plotArea></c:chart></c:chartSpace>"#
+                    );
+                    let chart = parse_chart_with(&source, &theme).unwrap();
+                    assert_eq!(chart.names, names, "{kind}/{named}/{empty_at}");
+                    assert_eq!(
+                        chart.colors, colors,
+                        "source indices own default palette slots"
+                    );
+                    assert_eq!(chart.series, values);
+                    assert_eq!(
+                        chart.indexed,
+                        values.iter().map(|v| vec![(0, v[0])]).collect::<Vec<_>>()
+                    );
+                    assert_eq!(chart.x_indexed, vec![vec![], vec![]]);
+                    assert_eq!(chart.cats, ["Category"]);
+                    assert_eq!(chart.n_cats, 1);
+                    assert_eq!(chart.title, "");
+                    assert!(!chart.legend);
+                    assert_eq!(chart.x_scaling, (Some(0.0), Some(4.0)));
+                    assert_eq!(chart.y_scaling, (Some(1.0), Some(5.0)));
+                    let right_kind = matches!(
+                        (kind, &chart.kind),
+                        ("barChart", ChartKind::Bar)
+                            | ("lineChart", ChartKind::Line)
+                            | ("areaChart", ChartKind::Area)
+                            | ("scatterChart", ChartKind::Scatter)
+                            | ("radarChart", ChartKind::Radar)
+                    );
+                    assert!(right_kind);
+                    assert_eq!(parse_chart_with(&source, &theme).unwrap().names, names);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod automatic_column_source_matrix_tests {
+    use super::*;
+    fn fonts() -> Fonts<'static> {
+        let mut fonts = Fonts::new();
+        for face in FaceId::all() {
+            let key = face.key();
+            fonts.insert_embedded(&key.family, key.bold, key.italic, face.bytes());
+        }
+        fonts.insert_embedded("Memory Mono", false, false, FaceId::MonoRegular.bytes());
+        fonts
+    }
+    fn package() -> PartFs {
+        use std::io::{Cursor, Write};
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        zip.start_file(
+            "[Content_Types].xml",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        zip.write_all(
+            br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>"#,
+        )
+        .unwrap();
+        PartFs::open(&zip.finish().unwrap().into_inner()).unwrap()
+    }
+    fn parsed(source: &str) -> (Dom, NodeId, Vec<Block>, PageSetup) {
+        let pkg = package();
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(
+            r#"<w:document xmlns:w="{}"><w:body>{source}</w:body></w:document>"#,
+            W::URI
+        ));
+        let root = dom.root(doc).unwrap();
+        let body = dom.element(root, &W::body()).unwrap();
+        let mut defaults = Defaults::word();
+        defaults.run.family = "Memory Mono".into();
+        defaults.run.size = 12.0;
+        let sheet = StyleSheet {
+            defaults,
+            by_id: HashMap::new(),
+            tables: HashMap::new(),
+            theme: ThemeFonts::default(),
+            latent: true,
+            default_table: true,
+        };
+        let sects = live_sect_prs(&dom, body);
+        let page = load_page_setup(&dom, body, &sheet.defaults.page);
+        let ctx = WalkCtx {
+            pkg: &pkg,
+            main: "word/document.xml",
+            sheet: &sheet,
+            sects: &sects,
+            authors: RefCell::new(AuthorColors::default()),
+            comments: HashMap::new(),
+            open_comments: RefCell::new(Vec::new()),
+        };
+        let mut blocks = Vec::new();
+        walk_container(
+            &ctx,
+            &dom,
+            body,
+            &mut Numbering::default(),
+            &mut blocks,
+            &mut EndnoteBag::load(&pkg, "word/document.xml"),
+        );
+        (dom, root, blocks, page)
+    }
+    fn paras(count: usize, fill: bool, auto_grid: bool) -> String {
+        (0..count).map(|i| format!("<w:p><w:pPr><w:spacing w:before='0' w:after='0' w:line='{}' w:lineRule='{}'/><w:widowControl w:val='0'/>{}</w:pPr><w:bookmarkStart w:id='{i}' w:name='L{i:02}'/><w:r><w:rPr><w:color w:val='FF0000'/></w:rPr><w:t>L{i:02}</w:t></w:r><w:bookmarkEnd w:id='{i}'/></w:p>", if auto_grid {240} else {400}, if auto_grid {"auto"} else {"exact"}, if fill {"<w:shd w:fill='00FF00'/>"} else {""})).collect()
+    }
+    fn close(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() < 0.001,
+            "actual={actual}, expected={expected}"
+        );
+    }
+    fn mono_prefix_width(text: &str, chars: usize) -> f32 {
+        let raw = ttf_parser::Face::parse(FaceId::MonoRegular.bytes(), 0).unwrap();
+        text.chars()
+            .take(chars)
+            .map(|c| {
+                f32::from(raw.glyph_hor_advance(raw.glyph_index(c).unwrap()).unwrap()) * 12.0
+                    / f32::from(raw.units_per_em())
+            })
+            .sum()
+    }
+    fn mono_grid_drop() -> f32 {
+        let f = ttf_parser::Face::parse(FaceId::MonoRegular.bytes(), 0).unwrap();
+        let units = f32::from(f.units_per_em());
+        let natural_units =
+            f32::from(f.ascender()) - f32::from(f.descender()) + f32::from(f.line_gap());
+        let os2 = f.tables().os2.unwrap();
+        let win_up = f32::from(os2.windows_ascender());
+        // ttf-parser exposes usWinDescent as a negative signed descender.
+        // The independent bundled-font table values are stable fixture data.
+        assert_eq!(
+            (f.units_per_em(), f.ascender(), f.descender(), f.line_gap()),
+            (2048, 1705, -615, 0)
+        );
+        assert_eq!(
+            (os2.windows_ascender(), os2.windows_descender()),
+            (1705, -615)
+        );
+        let win_total = win_up + f32::from(os2.windows_descender()).abs();
+        let ascent_units = if win_total > natural_units {
+            natural_units - f32::from(f.descender()).abs()
+        } else {
+            win_up + natural_units - win_total
+        };
+        let natural = natural_units * 12.0 / units;
+        ascent_units * 12.0 / units + (20.0 - natural) / 2.0
+    }
+
+    #[test]
+    fn automatic_overflow_consumes_each_authored_column_before_opening_the_next_page() {
+        let fonts = fonts();
+        for (num, width, starts) in [
+            (1, 120, vec![19.92]),
+            (2, 220, vec![19.92, 119.92]),
+            (3, 320, vec![19.92, 119.92, 219.92]),
+        ] {
+            for fill in [false, true] {
+                for auto_grid in [false, true] {
+                    for numbered in [false, true] {
+                        let count = num * 5 + 3;
+                        let source = format!(
+                            "{}<w:sectPr><w:pgSz w:w='{}' w:h='2800'/><w:pgMar w:top='400' w:bottom='400' w:left='400' w:right='400' w:header='0' w:footer='0'/><w:cols w:num='{num}' w:space='400'/>{}{}</w:sectPr>",
+                            paras(count, fill, auto_grid),
+                            width * 20,
+                            if auto_grid {
+                                "<w:docGrid w:type='lines' w:linePitch='400'/>"
+                            } else {
+                                ""
+                            },
+                            if numbered {
+                                "<w:lnNumType w:countBy='2' w:start='1' w:distance='360' w:restart='continuous'/>"
+                            } else {
+                                ""
+                            }
+                        );
+                        let (dom, root, blocks, page) = parsed(&source);
+                        let before = dom.serialize_element(root);
+                        assert_eq!(
+                            (page.width, page.height, page.col_count, page.col_space),
+                            (width as f32, 140.0, num as u8, 20.0)
+                        );
+                        assert_eq!(page.grid_pitch, if auto_grid { 20.0 } else { 0.0 });
+                        let (pages, facts) = layout_with_facts(
+                            &fonts,
+                            &page,
+                            &HfChrome::default(),
+                            &blocks,
+                            15,
+                            FootnoteCatalog::default(),
+                        );
+                        assert_eq!(pages.len(), 2);
+                        assert_eq!(facts.page_count, 2);
+                        let case = format!(
+                            "columns={num}, fill={fill}, grid={auto_grid}, numbered={numbered}"
+                        );
+                        let mut seen = Vec::new();
+                        let mut numbers: Vec<String> = Vec::new();
+                        let mut counter_at = 0;
+                        for (pi, p) in pages.iter().enumerate() {
+                            assert_eq!((p.width, p.height), (width as f32, 140.0));
+                            let mut shades = Vec::new();
+                            for op in &p.ops {
+                                match op {
+                                    Op::Text {
+                                        text,
+                                        x,
+                                        y,
+                                        size,
+                                        color,
+                                        face,
+                                        glyphs,
+                                        ..
+                                    } if *color == [1.0, 0.0, 0.0] => {
+                                        let index = seen.len() / 3;
+                                        let offset = seen.len() % 3;
+                                        let source_label = format!("L{index:02}");
+                                        assert_eq!(
+                                            text,
+                                            &source_label.chars().nth(offset).unwrap().to_string()
+                                        );
+                                        let local = index % (num * 5);
+                                        let col = local / 5;
+                                        let row = local % 5;
+                                        let drop = if auto_grid { mono_grid_drop() } else { 16.0 };
+                                        let expected_x =
+                                            starts[col] + mono_prefix_width(&source_label, offset);
+                                        let expected_y = 120.0 - row as f32 * 20.0 - drop;
+                                        assert!(
+                                            (*x - expected_x).abs() < 0.001,
+                                            "{case}, body={source_label}, glyph={offset}, x={x}, expected={expected_x}"
+                                        );
+                                        assert!(
+                                            (*y - expected_y).abs() < 0.001,
+                                            "{case}, body={source_label}, glyph={offset}, y={y}, expected={expected_y}"
+                                        );
+                                        assert_eq!((*size, *color), (12.0, [1.0, 0.0, 0.0]));
+                                        assert!(matches!(face, FaceRef::Embedded(_)));
+                                        let raw =
+                                            ttf_parser::Face::parse(FaceId::MonoRegular.bytes(), 0)
+                                                .unwrap();
+                                        assert_eq!(
+                                            glyphs,
+                                            &text
+                                                .chars()
+                                                .map(|c| raw.glyph_index(c).unwrap().0)
+                                                .collect::<Vec<_>>()
+                                        );
+                                        assert_eq!(pi, index / (num * 5));
+                                        assert_eq!(
+                                            facts.bookmark_pages[&source_label],
+                                            (pi + 1).to_string()
+                                        );
+                                        seen.push(text.clone());
+                                    }
+                                    Op::Text { text, y, .. } => {
+                                        assert!(numbered);
+                                        let label = seen.len() / 3;
+                                        assert_eq!(label % 2, 0);
+                                        if counter_at != label {
+                                            numbers.push(String::new());
+                                            counter_at = label;
+                                        }
+                                        let partial = numbers.last_mut().unwrap();
+                                        let expected = label.to_string();
+                                        assert_eq!(
+                                            text,
+                                            &expected
+                                                .chars()
+                                                .nth(partial.len())
+                                                .unwrap()
+                                                .to_string()
+                                        );
+                                        partial.push_str(text);
+                                        let expected_y = 120.0
+                                            - ((label - 1) % 5) as f32 * 20.0
+                                            - if auto_grid { mono_grid_drop() } else { 16.0 };
+                                        assert!(
+                                            (*y - expected_y).abs() < 0.001,
+                                            "{case}, counter={label}, glyph={text}, y={y}, expected={expected_y}"
+                                        );
+                                    }
+                                    Op::FillRect { x, y, w, h, color }
+                                        if *color == [0.0, 1.0, 0.0] =>
+                                    {
+                                        shades.push((*x, *y, *w, *h));
+                                    }
+                                    _ => panic!("unexpected non-source rendering operation"),
+                                }
+                            }
+                            let first = pi * num * 5;
+                            let on_page = (count - first).min(num * 5);
+                            assert_eq!(shades.len(), if fill { on_page } else { 0 });
+                            if fill {
+                                for (local, &(x, y, w, h)) in shades.iter().enumerate() {
+                                    close(x, starts[local / 5] + 0.08);
+                                    close(y, 100.0 - (local % 5) as f32 * 20.0);
+                                    assert_eq!((w, h), (80.0, 20.0));
+                                }
+                            }
+                        }
+                        assert_eq!(
+                            seen,
+                            (0..count)
+                                .flat_map(|i| format!("L{i:02}")
+                                    .chars()
+                                    .map(|c| c.to_string())
+                                    .collect::<Vec<_>>())
+                                .collect::<Vec<_>>()
+                        );
+                        assert_eq!(
+                            numbers,
+                            if numbered {
+                                (2..=count)
+                                    .step_by(2)
+                                    .map(|n| n.to_string())
+                                    .collect::<Vec<_>>()
+                            } else {
+                                Vec::new()
+                            }
+                        );
+                        assert_eq!(dom.serialize_element(root), before);
+                        assert_eq!(blocks.len(), count);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn continuous_custom_columns_start_below_the_existing_source_and_overflow_from_that_top() {
+        let fonts = fonts();
+        for (first_width, gap, second_width, second_x) in
+            [(60, 10, 110, 89.92), (100, 30, 50, 149.92)]
+        {
+            for fill in [false, true] {
+                let source = format!(
+                    "<w:p><w:pPr><w:spacing w:before='0' w:after='0' w:line='400' w:lineRule='exact'/><w:widowControl w:val='0'/><w:sectPr><w:pgSz w:w='4400' w:h='2800'/><w:pgMar w:top='400' w:bottom='400' w:left='400' w:right='400' w:header='0' w:footer='0'/><w:cols w:num='1'/></w:sectPr></w:pPr><w:r><w:t>Lead</w:t></w:r></w:p>{}<w:sectPr><w:type w:val='continuous'/><w:pgSz w:w='4400' w:h='2800'/><w:pgMar w:top='400' w:bottom='400' w:left='400' w:right='400' w:header='0' w:footer='0'/><w:cols w:num='2' w:equalWidth='0'><w:col w:w='{}' w:space='{}'/><w:col w:w='{}' w:space='0'/></w:cols></w:sectPr>",
+                    paras(10, fill, false),
+                    first_width * 20,
+                    gap * 20,
+                    second_width * 20
+                );
+                let (dom, root, blocks, page) = parsed(&source);
+                let before = dom.serialize_element(root);
+                assert_eq!(page.col_count, 1);
+                assert_eq!(
+                    blocks
+                        .iter()
+                        .filter(|b| matches!(b, Block::SectionCols { .. }))
+                        .count(),
+                    1
+                );
+                let (pages, facts) = layout_with_facts(
+                    &fonts,
+                    &page,
+                    &HfChrome::default(),
+                    &blocks,
+                    15,
+                    FootnoteCatalog::default(),
+                );
+                assert_eq!(pages.len(), 2);
+                let mut labels = Vec::new();
+                let mut lead_seen = String::new();
+                let mut shades = Vec::new();
+                for (pi, p) in pages.iter().enumerate() {
+                    assert_eq!((p.width, p.height), (220.0, 140.0));
+                    for op in &p.ops {
+                        match op {
+                            Op::Text {
+                                text,
+                                x,
+                                y,
+                                size,
+                                color,
+                                face,
+                                glyphs,
+                                ..
+                            } if *color == [0.0; 3] => {
+                                assert_eq!(pi, 0);
+                                assert_eq!(
+                                    text,
+                                    &"Lead".chars().nth(lead_seen.len()).unwrap().to_string()
+                                );
+                                close(*x, 19.92 + mono_prefix_width("Lead", lead_seen.len()));
+                                close(*y, 104.0);
+                                assert_eq!(*size, 12.0);
+                                assert!(matches!(face, FaceRef::Embedded(_)));
+                                let raw = ttf_parser::Face::parse(FaceId::MonoRegular.bytes(), 0)
+                                    .unwrap();
+                                assert_eq!(
+                                    glyphs,
+                                    &vec![raw.glyph_index(text.chars().next().unwrap()).unwrap().0]
+                                );
+                                lead_seen.push_str(text);
+                            }
+                            Op::Text {
+                                text,
+                                x,
+                                y,
+                                size,
+                                color,
+                                face,
+                                glyphs,
+                                ..
+                            } => {
+                                let index = labels.len() / 3;
+                                let offset = labels.len() % 3;
+                                let source_label = format!("L{index:02}");
+                                assert_eq!(
+                                    text,
+                                    &source_label.chars().nth(offset).unwrap().to_string()
+                                );
+                                let (expected_page, expected_x, expected_y) = if index < 4 {
+                                    (0, 19.92, 84.0 - index as f32 * 20.0)
+                                } else if index < 8 {
+                                    (0, second_x, 84.0 - (index - 4) as f32 * 20.0)
+                                } else {
+                                    (1, 19.92, 104.0 - (index - 8) as f32 * 20.0)
+                                };
+                                assert_eq!(pi, expected_page);
+                                close(*x, expected_x + mono_prefix_width(&source_label, offset));
+                                close(*y, expected_y);
+                                assert_eq!((*size, *color), (12.0, [1.0, 0.0, 0.0]));
+                                assert!(matches!(face, FaceRef::Embedded(_)));
+                                let raw = ttf_parser::Face::parse(FaceId::MonoRegular.bytes(), 0)
+                                    .unwrap();
+                                assert_eq!(
+                                    glyphs,
+                                    &text
+                                        .chars()
+                                        .map(|c| raw.glyph_index(c).unwrap().0)
+                                        .collect::<Vec<_>>()
+                                );
+                                assert_eq!(
+                                    facts.bookmark_pages[&source_label],
+                                    (pi + 1).to_string()
+                                );
+                                labels.push(text.clone());
+                            }
+                            Op::FillRect { x, y, w, h, color } if *color == [0.0, 1.0, 0.0] => {
+                                shades.push((pi, *x, *y, *w, *h));
+                            }
+                            _ => panic!("only authored source text and shading paint"),
+                        }
+                    }
+                }
+                assert_eq!(
+                    labels,
+                    (0..10)
+                        .flat_map(|i| format!("L{i:02}")
+                            .chars()
+                            .map(|c| c.to_string())
+                            .collect::<Vec<_>>())
+                        .collect::<Vec<_>>()
+                );
+                assert_eq!(lead_seen, "Lead");
+                assert_eq!(shades.len(), if fill { 10 } else { 0 });
+                if fill {
+                    for (index, &(pi, x, y, w, h)) in shades.iter().enumerate() {
+                        let (expected_page, expected_x, expected_y, expected_width) = if index < 4 {
+                            (0, 20.0, 80.0 - index as f32 * 20.0, first_width as f32)
+                        } else if index < 8 {
+                            (
+                                0,
+                                second_x + 0.08,
+                                80.0 - (index - 4) as f32 * 20.0,
+                                second_width as f32,
+                            )
+                        } else {
+                            (
+                                1,
+                                20.0,
+                                100.0 - (index - 8) as f32 * 20.0,
+                                first_width as f32,
+                            )
+                        };
+                        assert_eq!(pi, expected_page);
+                        close(x, expected_x);
+                        close(y, expected_y);
+                        assert_eq!((w, h), (expected_width, 20.0));
+                    }
+                }
+                assert_eq!(dom.serialize_element(root), before);
+            }
+        }
+    }
+    #[test]
+    fn authored_vertical_center_moves_complete_flow_and_keeps_alignment_and_trailing_spaces() {
+        let fonts = fonts();
+        let raw = ttf_parser::Face::parse(FaceId::MonoRegular.bytes(), 0).unwrap();
+        let upem = f32::from(raw.units_per_em());
+        let label_width: f32 = "L00"
+            .chars()
+            .map(|c| {
+                f32::from(raw.glyph_hor_advance(raw.glyph_index(c).unwrap()).unwrap()) * 12.0 / upem
+            })
+            .sum();
+        for count in [1, 3, 5, 6] {
+            for valign in ["top", "center", "both"] {
+                for align in ["left", "center", "right", "both"] {
+                    for fill in [false, true] {
+                        for indent in [0, 10] {
+                            let mut body = paras(count, fill, false);
+                            body = body.replace("<w:pPr>", &format!("<w:pPr><w:jc w:val='{align}'/><w:ind w:left='{}' w:right='100'/>", indent * 20));
+                            // Preserve an authored trailing space, which hangs beyond the
+                            // aligned measure and must survive in source and painted text.
+                            for n in 0..count {
+                                body = body.replace(
+                                    &format!("<w:t>L{n:02}</w:t>"),
+                                    &format!("<w:t xml:space='preserve'>L{n:02} </w:t>"),
+                                );
+                            }
+                            let source = format!(
+                                "{body}<w:sectPr><w:pgSz w:w='2400' w:h='2800'/><w:pgMar w:top='400' w:bottom='400' w:left='400' w:right='400' w:header='0' w:footer='0'/><w:vAlign w:val='{valign}'/></w:sectPr>"
+                            );
+                            let (dom, root, blocks, page) = parsed(&source);
+                            let before = dom.serialize_element(root);
+                            assert_eq!(page.valign_center, valign != "top");
+                            let (pages, facts) = layout_with_facts(
+                                &fonts,
+                                &page,
+                                &HfChrome::default(),
+                                &blocks,
+                                15,
+                                FootnoteCatalog::default(),
+                            );
+                            assert_eq!(pages.len(), if count > 5 { 2 } else { 1 });
+                            let room = 75.0 - indent as f32;
+                            let extra = match align {
+                                "center" => (room - label_width) / 2.0,
+                                "right" => room - label_width,
+                                _ => 0.0,
+                            };
+                            // 20pt is 83 1/3 device quanta: the nearest 0.24pt origin is 19.92pt.
+                            // The centered box includes the complete 20pt line boxes;
+                            // a full first page has no spare height to distribute.
+                            let shift = if valign != "top" && count < 5 {
+                                -(100.0 - count as f32 * 20.0) / 2.0
+                            } else {
+                                0.0
+                            };
+                            let mut painted = Vec::new();
+                            let mut fills = Vec::new();
+                            for (pi, p) in pages.iter().enumerate() {
+                                assert_eq!((p.width, p.height), (120.0, 140.0));
+                                for op in &p.ops {
+                                    match op {
+                                        Op::Text {
+                                            text,
+                                            x,
+                                            y,
+                                            size,
+                                            color,
+                                            face,
+                                            glyphs,
+                                            ..
+                                        } => {
+                                            let n = painted.len() / 4;
+                                            let offset = painted.len() % 4;
+                                            let source_label = format!("L{n:02} ");
+                                            assert_eq!(
+                                                text,
+                                                &source_label
+                                                    .chars()
+                                                    .nth(offset)
+                                                    .unwrap()
+                                                    .to_string()
+                                            );
+                                            assert_eq!(pi, n / 5);
+                                            close(
+                                                *x,
+                                                19.92
+                                                    + indent as f32
+                                                    + extra
+                                                    + mono_prefix_width(&source_label, offset),
+                                            );
+                                            close(
+                                                *y,
+                                                104.0 - (n % 5) as f32 * 20.0
+                                                    + if pi == 0 { shift } else { 0.0 },
+                                            );
+                                            assert_eq!((*size, *color), (12.0, [1.0, 0.0, 0.0]));
+                                            assert!(matches!(face, FaceRef::Embedded(_)));
+                                            assert_eq!(
+                                                glyphs,
+                                                &text
+                                                    .chars()
+                                                    .map(|c| raw.glyph_index(c).unwrap().0)
+                                                    .collect::<Vec<_>>()
+                                            );
+                                            assert_eq!(
+                                                facts.bookmark_pages[&format!("L{n:02}")],
+                                                (pi + 1).to_string()
+                                            );
+                                            painted.push(text.clone());
+                                        }
+                                        Op::FillRect { x, y, w, h, color }
+                                            if *color == [0.0, 1.0, 0.0] =>
+                                        {
+                                            fills.push((pi, *x, *y, *w, *h));
+                                        }
+                                        _ => {
+                                            panic!("only authored text and shading reach this page")
+                                        }
+                                    }
+                                }
+                            }
+                            assert_eq!(
+                                painted,
+                                (0..count)
+                                    .flat_map(|n| format!("L{n:02} ")
+                                        .chars()
+                                        .map(|c| c.to_string())
+                                        .collect::<Vec<_>>())
+                                    .collect::<Vec<_>>()
+                            );
+                            assert_eq!(fills.len(), if fill { count } else { 0 });
+                            for (n, &(pi, x, y, w, h)) in fills.iter().enumerate() {
+                                assert_eq!(pi, n / 5);
+                                close(x, 20.0 + indent as f32);
+                                close(
+                                    y,
+                                    100.0 - (n % 5) as f32 * 20.0
+                                        + if pi == 0 { shift } else { 0.0 },
+                                );
+                                assert_eq!((w, h), (room, 20.0));
+                            }
+                            assert_eq!(dom.serialize_element(root), before);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn source_keep_next_carries_only_the_authored_widow_tail_when_compatibility_allows_it() {
+        let fonts = fonts();
+        let raw = ttf_parser::Face::parse(FaceId::MonoRegular.bytes(), 0).unwrap();
+        for line_count in [1, 2, 4] {
+            for follower in [false, true] {
+                for compat in [14, 15] {
+                    for keep_lines in [false, true] {
+                        for widow in [false, true] {
+                            for fill in [false, true] {
+                                let line_text = (0..line_count)
+                                    .map(|n| {
+                                        format!(
+                                            "{}<w:t>K{n}</w:t>",
+                                            if n == 0 { "" } else { "<w:br/>" }
+                                        )
+                                    })
+                                    .collect::<String>();
+                                let target = format!(
+                                    "<w:p><w:pPr><w:keepNext/><w:keepLines w:val='{}'/><w:widowControl w:val='{}'/><w:spacing w:before='0' w:after='0' w:line='400' w:lineRule='exact'/>{}</w:pPr><w:bookmarkStart w:id='99' w:name='OwnedKeep'/><w:r><w:rPr><w:color w:val='FF0000'/></w:rPr>{line_text}</w:r><w:bookmarkEnd w:id='99'/></w:p>",
+                                    u8::from(keep_lines),
+                                    u8::from(widow),
+                                    if fill { "<w:shd w:fill='00FF00'/>" } else { "" }
+                                );
+                                let follower_xml = if follower {
+                                    "<w:p><w:pPr><w:widowControl w:val='0'/><w:spacing w:before='0' w:after='0' w:line='400' w:lineRule='exact'/></w:pPr><w:r><w:rPr><w:color w:val='FF0000'/></w:rPr><w:t>Follow</w:t></w:r></w:p>"
+                                } else {
+                                    ""
+                                };
+                                let source = format!(
+                                    "{}{target}{follower_xml}<w:sectPr><w:pgSz w:w='2400' w:h='2800'/><w:pgMar w:top='400' w:bottom='400' w:left='400' w:right='400' w:header='0' w:footer='0'/></w:sectPr>",
+                                    paras(1, false, false)
+                                );
+                                let (dom, root, blocks, page) = parsed(&source);
+                                let before = dom.serialize_element(root);
+                                let Block::Paragraph {
+                                    style, bookmarks, ..
+                                } = &blocks[1]
+                                else {
+                                    panic!("authored paragraph")
+                                };
+                                assert!(style.keep_next);
+                                assert_eq!(
+                                    (style.keep_lines, style.widow_control),
+                                    (keep_lines, widow)
+                                );
+                                assert_eq!(bookmarks, &["OwnedKeep"]);
+                                let carries = line_count == 4 && follower;
+                                let first_lines = if !carries {
+                                    line_count
+                                } else if compat < 15 || keep_lines {
+                                    0
+                                } else if widow {
+                                    2
+                                } else {
+                                    3
+                                };
+                                let mut expected_glyphs = Vec::new();
+                                let mut add_line = |source: &str, page: usize, row: usize| {
+                                    for (offset, c) in source.chars().enumerate() {
+                                        expected_glyphs.push((
+                                            c.to_string(),
+                                            page,
+                                            row,
+                                            19.92 + mono_prefix_width(source, offset),
+                                        ));
+                                    }
+                                };
+                                add_line("L00", 0, 0);
+                                for n in 0..line_count {
+                                    let (page, row) = if n < first_lines {
+                                        (0, n + 1)
+                                    } else {
+                                        (1, n - first_lines)
+                                    };
+                                    add_line(&format!("K{n}"), page, row);
+                                }
+                                if follower {
+                                    let (page, row) = if carries {
+                                        (1, line_count - first_lines)
+                                    } else {
+                                        (0, 1 + line_count)
+                                    };
+                                    add_line("Follow", page, row);
+                                }
+                                let (pages, facts) = layout_with_facts(
+                                    &fonts,
+                                    &page,
+                                    &HfChrome::default(),
+                                    &blocks,
+                                    compat,
+                                    FootnoteCatalog::default(),
+                                );
+                                assert_eq!(pages.len(), if carries { 2 } else { 1 });
+                                let mut painted = Vec::new();
+                                let mut shades = Vec::new();
+                                for (pi, p) in pages.iter().enumerate() {
+                                    assert_eq!((p.width, p.height), (120.0, 140.0));
+                                    for op in &p.ops {
+                                        match op {
+                                            Op::Text {
+                                                text,
+                                                x,
+                                                y,
+                                                size,
+                                                color,
+                                                face,
+                                                glyphs,
+                                                ..
+                                            } => {
+                                                let (expected_text, expected_page, row, expected_x) =
+                                                    &expected_glyphs[painted.len()];
+                                                assert_eq!(text, expected_text);
+                                                assert_eq!(
+                                                    pi, *expected_page,
+                                                    "lines={line_count} follower={follower} compat={compat} keep={keep_lines} widow={widow} text={text}"
+                                                );
+                                                close(*x, *expected_x);
+                                                close(*y, 104.0 - *row as f32 * 20.0);
+                                                assert_eq!(
+                                                    (*size, *color),
+                                                    (12.0, [1.0, 0.0, 0.0])
+                                                );
+                                                assert!(matches!(face, FaceRef::Embedded(_)));
+                                                assert_eq!(
+                                                    glyphs,
+                                                    &text
+                                                        .chars()
+                                                        .map(|c| raw.glyph_index(c).unwrap().0)
+                                                        .collect::<Vec<_>>()
+                                                );
+                                                painted.push(text.clone());
+                                            }
+                                            Op::FillRect { x, y, w, h, color }
+                                                if *color == [0.0, 1.0, 0.0] =>
+                                            {
+                                                shades.push((pi, *x, *y, *w, *h));
+                                            }
+                                            _ => panic!(
+                                                "only complete authored source text and its shading paint"
+                                            ),
+                                        }
+                                    }
+                                }
+                                let mut expected = vec!["L00".to_string()];
+                                expected.extend((0..line_count).map(|n| format!("K{n}")));
+                                if follower {
+                                    expected.push("Follow".into());
+                                }
+                                assert_eq!(
+                                    painted,
+                                    expected_glyphs
+                                        .iter()
+                                        .map(|record| record.0.clone())
+                                        .collect::<Vec<_>>()
+                                );
+                                assert_eq!(painted.concat(), expected.concat());
+                                assert_eq!(
+                                    facts.bookmark_pages["OwnedKeep"],
+                                    if carries { "2" } else { "1" }
+                                );
+                                assert_eq!(facts.bookmark_pages["L00"], "1");
+                                assert_eq!(shades.len(), if fill { line_count } else { 0 });
+                                for (n, &(pi, x, y, w, h)) in shades.iter().enumerate() {
+                                    let (expected_page, row) = if n < first_lines {
+                                        (0, n + 1)
+                                    } else {
+                                        (1, n - first_lines)
+                                    };
+                                    assert_eq!(pi, expected_page);
+                                    assert_eq!((x, w, h), (20.0, 80.0, 20.0));
+                                    close(y, 100.0 - row as f32 * 20.0);
+                                }
+                                assert_eq!(dom.serialize_element(root), before);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn source_bidi_leading_neutrals_keep_literal_mirrored_visual_glyphs_and_owned_measure() {
+        let mut fonts = fonts();
+        fonts.insert_embedded("Memory Mono", true, false, FaceId::MonoBold.bytes());
+        // Literal Unicode bidi paragraph expectations: leading neutral signs
+        // resolve against the paragraph's RTL boundary; Latin/digit units
+        // keep their internal order and bracket glyphs mirror together.
+        for (logical, visual) in [
+            ("-AB", "AB-"),
+            ("--AB", "AB--"),
+            ("!AB", "AB!"),
+            ("(AB)", "(AB)"),
+            ("12-AB", "AB-12"),
+            ("--אב", "בא--"),
+        ] {
+            for bold in [false, true] {
+                let source = format!(
+                    "<w:p><w:pPr><w:bidi/><w:spacing w:before='0' w:after='0' w:line='400' w:lineRule='exact'/></w:pPr><w:bookmarkStart w:id='21' w:name='OwnedBidi'/><w:r><w:rPr>{}<w:color w:val='FF0000'/></w:rPr><w:t>{logical}</w:t></w:r><w:bookmarkEnd w:id='21'/></w:p><w:sectPr><w:pgSz w:w='2400' w:h='2800'/><w:pgMar w:top='400' w:bottom='400' w:left='400' w:right='400' w:header='0' w:footer='0'/></w:sectPr>",
+                    if bold { "<w:b/>" } else { "" }
+                );
+                let (dom, root, blocks, page) = parsed(&source);
+                let before = dom.serialize_element(root);
+                let Block::Paragraph {
+                    runs,
+                    style,
+                    bookmarks,
+                    ..
+                } = &blocks[0]
+                else {
+                    panic!("source RTL paragraph")
+                };
+                assert_eq!(
+                    runs.iter().map(|run| run.text.as_str()).collect::<String>(),
+                    logical
+                );
+                assert!(style.bidi);
+                assert!(matches!(style.align, Align::Right));
+                assert_eq!(bookmarks, &["OwnedBidi"]);
+                assert_eq!(
+                    (
+                        runs[0].style.family.as_str(),
+                        runs[0].style.bold,
+                        runs[0].style.size
+                    ),
+                    ("Memory Mono", bold, 12.0)
+                );
+                let (pages, facts) = layout_with_facts(
+                    &fonts,
+                    &page,
+                    &HfChrome::default(),
+                    &blocks,
+                    15,
+                    FootnoteCatalog::default(),
+                );
+                assert_eq!(pages.len(), 1);
+                assert_eq!(facts.bookmark_pages["OwnedBidi"], "1");
+                let raw = ttf_parser::Face::parse(
+                    if bold {
+                        FaceId::MonoBold.bytes()
+                    } else {
+                        FaceId::MonoRegular.bytes()
+                    },
+                    0,
+                )
+                .unwrap();
+                let width = |text: &str| {
+                    text.chars()
+                        .map(|c| {
+                            f32::from(raw.glyph_hor_advance(raw.glyph_index(c).unwrap()).unwrap())
+                                * 12.0
+                                / f32::from(raw.units_per_em())
+                        })
+                        .sum::<f32>()
+                };
+                let start = 99.92 - width(visual);
+                let expected_face = fonts.resolve("Memory Mono", bold, false);
+                let mut painted = String::new();
+                for op in &pages[0].ops {
+                    let Op::Text {
+                        text,
+                        x,
+                        y,
+                        size,
+                        color,
+                        face,
+                        glyphs,
+                        ..
+                    } = op
+                    else {
+                        panic!("only owned RTL source text paints")
+                    };
+                    let c = visual.chars().nth(painted.chars().count()).unwrap();
+                    assert_eq!(text, &c.to_string(), "logical={logical}, bold={bold}");
+                    close(*x, start + width(&painted));
+                    close(*y, 104.0);
+                    assert_eq!(
+                        (*size, *color, *face),
+                        (12.0, [1.0, 0.0, 0.0], expected_face)
+                    );
+                    assert_eq!(glyphs, &vec![raw.glyph_index(c).unwrap().0]);
+                    painted.push_str(text);
+                }
+                assert_eq!(painted, visual);
+                assert_eq!(
+                    runs.iter().map(|run| run.text.as_str()).collect::<String>(),
+                    logical
+                );
+                assert_eq!(dom.serialize_element(root), before);
+            }
+        }
+    }
+
+    #[test]
+    fn first_cell_field_resolves_its_own_target_without_replacing_adjacent_source_text() {
+        let mut fonts = fonts();
+        fonts.insert_embedded("Memory Mono", true, false, FaceId::MonoBold.bytes());
+        for (instruction, cached, resolved, shown, page_target, ref_target, copy, bold) in [
+            (
+                "PAGEREF L00",
+                "9",
+                "9",
+                "1",
+                Some("L00"),
+                None,
+                false,
+                false,
+            ),
+            (
+                "PAGEREF Gone",
+                "9",
+                "Error! Bookmark not defined.",
+                "Error! Bookmark not defined.",
+                Some("Gone"),
+                None,
+                false,
+                true,
+            ),
+            (
+                "REF L00",
+                "9",
+                "Owner words",
+                "Owner words",
+                None,
+                Some("L00"),
+                true,
+                false,
+            ),
+            (
+                "REF Gone",
+                "9",
+                "Error! Reference source not found.",
+                "Error! Reference source not found.",
+                None,
+                Some("Gone"),
+                true,
+                true,
+            ),
+            (
+                "REF L00 \\n",
+                "9",
+                "9",
+                "9",
+                None,
+                Some("L00"),
+                false,
+                false,
+            ),
+            ("NUMWORDS", "999", "3", "3", None, None, false, false),
+        ] {
+            let source = format!(
+                "{}<w:tbl><w:tblPr><w:tblW w:w='8000' w:type='dxa'/><w:tblLayout w:type='fixed'/><w:tblBorders><w:top w:val='nil'/><w:left w:val='nil'/><w:bottom w:val='nil'/><w:right w:val='nil'/><w:insideH w:val='nil'/><w:insideV w:val='nil'/></w:tblBorders><w:tblCellMar><w:top w:w='0' w:type='dxa'/><w:left w:w='0' w:type='dxa'/><w:bottom w:w='0' w:type='dxa'/><w:right w:w='0' w:type='dxa'/></w:tblCellMar></w:tblPr><w:tblGrid><w:gridCol w:w='8000'/></w:tblGrid><w:tr><w:trPr><w:trHeight w:val='400' w:hRule='exact'/></w:trPr><w:tc><w:tcPr><w:tcW w:w='8000' w:type='dxa'/></w:tcPr><w:p><w:pPr><w:spacing w:before='0' w:after='0' w:line='400' w:lineRule='exact'/><w:widowControl w:val='0'/></w:pPr><w:bookmarkStart w:id='88' w:name='CellOwner'/><w:fldSimple w:instr='{instruction}'><w:r><w:rPr><w:color w:val='0000FF'/></w:rPr><w:t>{cached}</w:t></w:r></w:fldSimple><w:r><w:rPr><w:color w:val='FF0000'/></w:rPr><w:t xml:space='preserve'> Tail</w:t></w:r><w:bookmarkEnd w:id='88'/></w:p></w:tc></w:tr></w:tbl><w:sectPr><w:pgSz w:w='8800' w:h='3600'/><w:pgMar w:top='400' w:bottom='400' w:left='400' w:right='400' w:header='0' w:footer='0'/></w:sectPr>",
+                paras(1, false, false).replace("<w:t>L00</w:t>", "<w:t>Owner words</w:t>")
+            );
+            let (dom, root, mut blocks, page) = parsed(&source);
+            let before = dom.serialize_element(root);
+            let expected_field = if instruction == "NUMWORDS" {
+                FieldKind::NumWords
+            } else {
+                FieldKind::None
+            };
+            let Block::Table { rows, .. } = &blocks[1] else {
+                panic!("source table")
+            };
+            let original = &rows[0][0].paras[0];
+            assert_eq!(original.bookmarks, ["CellOwner"]);
+            assert_eq!(
+                original
+                    .runs
+                    .iter()
+                    .map(|run| run.text.as_str())
+                    .collect::<String>(),
+                format!("{cached} Tail")
+            );
+            assert_eq!(original.runs[0].pageref.as_deref(), page_target);
+            assert_eq!(original.runs[0].ref_name.as_deref(), ref_target);
+            assert_eq!(original.runs[0].ref_copy_text, copy);
+            assert!(original.runs[0].field == expected_field);
+            resolve_cell_fields(&mut blocks);
+            let Block::Table { rows, cols, .. } = &blocks[1] else {
+                panic!("resolved source table")
+            };
+            assert_eq!(cols, &[400.0]);
+            let cell = &rows[0][0];
+            assert_eq!(
+                (cell.pad_l, cell.pad_r, cell.pad_t, cell.pad_b),
+                (0.0, 0.0, 0.0, 0.0)
+            );
+            let para = &cell.paras[0];
+            assert_eq!(
+                para.runs
+                    .iter()
+                    .map(|run| run.text.as_str())
+                    .collect::<String>(),
+                format!("{resolved} Tail")
+            );
+            assert_eq!(para.bookmarks, ["CellOwner"]);
+            assert_eq!(para.style.line_exact, Some(20.0));
+            let field = &para.runs[0];
+            assert_eq!(field.text, resolved);
+            assert_eq!(
+                (
+                    field.style.family.as_str(),
+                    field.style.size,
+                    field.style.color,
+                    field.style.bold
+                ),
+                ("Memory Mono", 12.0, [0.0, 0.0, 1.0], bold)
+            );
+            assert_eq!(field.pageref.as_deref(), page_target);
+            assert_eq!(field.ref_name.as_deref(), ref_target);
+            assert_eq!(field.ref_copy_text, copy);
+            assert!(field.field == expected_field);
+            assert_eq!(para.runs[1].text, " Tail");
+            assert_eq!(
+                (
+                    para.runs[1].style.size,
+                    para.runs[1].style.color,
+                    para.runs[1].style.bold
+                ),
+                (12.0, [1.0, 0.0, 0.0], false)
+            );
+            assert!(para.runs[1].field == FieldKind::None);
+            assert!(para.runs[1].pageref.is_none() && para.runs[1].ref_name.is_none());
+            let snapshot = para
+                .runs
+                .iter()
+                .map(|r| {
+                    (
+                        r.text.clone(),
+                        r.pageref.clone(),
+                        r.ref_name.clone(),
+                        r.ref_copy_text,
+                        r.style.bold,
+                        r.style.color,
+                    )
+                })
+                .collect::<Vec<_>>();
+            resolve_cell_fields(&mut blocks);
+            let Block::Table { rows, .. } = &blocks[1] else {
+                panic!("idempotent source table")
+            };
+            assert_eq!(
+                rows[0][0].paras[0]
+                    .runs
+                    .iter()
+                    .map(|r| (
+                        r.text.clone(),
+                        r.pageref.clone(),
+                        r.ref_name.clone(),
+                        r.ref_copy_text,
+                        r.style.bold,
+                        r.style.color
+                    ))
+                    .collect::<Vec<_>>(),
+                snapshot
+            );
+            let (pages, facts) = layout_with_facts(
+                &fonts,
+                &page,
+                &HfChrome::default(),
+                &blocks,
+                15,
+                FootnoteCatalog::default(),
+            );
+            assert_eq!(pages.len(), 1);
+            assert_eq!((pages[0].width, pages[0].height), (440.0, 180.0));
+            assert_eq!(facts.bookmark_pages["L00"], "1");
+            assert_eq!(facts.bookmark_pages["CellOwner"], "1");
+            let regular = ttf_parser::Face::parse(FaceId::MonoRegular.bytes(), 0).unwrap();
+            let field_font = ttf_parser::Face::parse(
+                if bold {
+                    FaceId::MonoBold.bytes()
+                } else {
+                    FaceId::MonoRegular.bytes()
+                },
+                0,
+            )
+            .unwrap();
+            let width = |font: &ttf_parser::Face<'_>, text: &str| {
+                text.chars()
+                    .map(|c| {
+                        f32::from(
+                            font.glyph_hor_advance(font.glyph_index(c).unwrap())
+                                .unwrap(),
+                        ) * 12.0
+                            / f32::from(font.units_per_em())
+                    })
+                    .sum::<f32>()
+            };
+            // PDF y grows upward: 180 - top margin 20 - exact baseline
+            // depth 16 = 144; the next authored 20-point line is at 124.
+            let mut source_text = String::new();
+            let mut field_text = String::new();
+            let mut tail_text = String::new();
+            for op in &pages[0].ops {
+                let Op::Text {
+                    text,
+                    x,
+                    y,
+                    size,
+                    color,
+                    face,
+                    glyphs,
+                    ..
+                } = op
+                else {
+                    panic!("borderless source paints only its text: {instruction}")
+                };
+                assert_eq!(*size, 12.0);
+                assert!(matches!(face, FaceRef::Embedded(_)));
+                if *color == [0.0, 0.0, 1.0] {
+                    assert_eq!(
+                        text,
+                        &shown[field_text.len()..field_text.len() + text.len()]
+                    );
+                    close(*x, 19.92 + width(&field_font, &field_text));
+                    close(*y, 124.0);
+                    assert_eq!(
+                        glyphs,
+                        &text
+                            .chars()
+                            .map(|c| field_font.glyph_index(c).unwrap().0)
+                            .collect::<Vec<_>>()
+                    );
+                    field_text.push_str(text);
+                } else {
+                    assert_eq!(*color, [1.0, 0.0, 0.0]);
+                    let (expected, built, start, baseline) = if (*y - 144.0).abs() < 0.001 {
+                        ("Owner words", &mut source_text, 19.92, 144.0)
+                    } else {
+                        (
+                            " Tail",
+                            &mut tail_text,
+                            19.92 + width(&field_font, shown),
+                            124.0,
+                        )
+                    };
+                    assert_eq!(
+                        text,
+                        &expected[built.len()..built.len() + text.len()],
+                        "instruction={instruction}, source={expected:?}, x={x}, y={y}, painted={:?}",
+                        pages[0]
+                            .ops
+                            .iter()
+                            .filter_map(|op| match op {
+                                Op::Text { x, y, text, .. } => Some((*x, *y, text.as_str())),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                    );
+                    close(*x, start + width(&regular, built));
+                    close(*y, baseline);
+                    assert_eq!(
+                        glyphs,
+                        &text
+                            .chars()
+                            .map(|c| regular.glyph_index(c).unwrap().0)
+                            .collect::<Vec<_>>()
+                    );
+                    built.push_str(text);
+                }
+            }
+            assert_eq!(source_text, "Owner words");
+            assert_eq!(field_text, shown);
+            assert_eq!(tail_text, " Tail");
+            assert_eq!(dom.serialize_element(root), before);
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod chrome_collector_source_boundary_tests {
+    use super::*;
+
+    fn sheet() -> StyleSheet {
+        StyleSheet {
+            defaults: Defaults::word(),
+            by_id: HashMap::new(),
+            tables: HashMap::new(),
+            theme: ThemeFonts::default(),
+            latent: true,
+            default_table: true,
+        }
+    }
+
+    fn source(local: &str, paragraphs: &str) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let document = dom.parse_xdocument(&format!(
+            "<w:{local} xmlns:w='{}'>{paragraphs}</w:{local}>",
+            W::URI
+        ));
+        let root = dom.root(document).expect("literal chrome story");
+        (dom, root)
+    }
+
+    fn collected_without_mutation(dom: &Dom, root: NodeId) -> Vec<TextRun> {
+        let before = dom.serialize_element(root);
+        let nodes = dom.node_count();
+        let runs = collect_hf_runs(dom, root, &sheet(), 400.0);
+        assert_eq!(dom.serialize_element(root), before);
+        assert_eq!(dom.node_count(), nodes);
+        let repeat = collect_hf_runs(dom, root, &sheet(), 400.0);
+        assert_eq!(
+            runs.iter().map(|r| r.text.as_str()).collect::<Vec<_>>(),
+            repeat.iter().map(|r| r.text.as_str()).collect::<Vec<_>>()
+        );
+        assert_eq!(runs.len(), repeat.len());
+        for (a, b) in runs.iter().zip(&repeat) {
+            assert_eq!(
+                (
+                    a.style.size,
+                    a.style.color,
+                    a.style.bold,
+                    a.frame_right,
+                    a.frame_center,
+                    a.rev,
+                    a.ends_line,
+                    a.para_gap
+                ),
+                (
+                    b.style.size,
+                    b.style.color,
+                    b.style.bold,
+                    b.frame_right,
+                    b.frame_center,
+                    b.rev,
+                    b.ends_line,
+                    b.para_gap
+                )
+            );
+            assert!(a.field == b.field);
+        }
+        runs
+    }
+
+    #[test]
+    fn real_chrome_frames_keep_source_styles_while_waiting_for_empty_or_live_lines() {
+        for local in ["hdr", "ftr"] {
+            for align in ["right", "center"] {
+                for destination in ["empty", "text", "end"] {
+                    let frame = format!(
+                        "<w:p><w:pPr><w:framePr w:hAnchor='margin' w:vAnchor='text' w:xAlign='{align}'/></w:pPr><w:r><w:rPr><w:rFonts w:ascii='Calibri' w:hAnsi='Calibri'/><w:b/><w:color w:val='123456'/><w:sz w:val='40'/></w:rPr><w:t>Framed owner</w:t></w:r></w:p>"
+                    );
+                    let follow = match destination {
+                        "empty" => "<w:p/>",
+                        "text" => {
+                            "<w:p><w:r><w:rPr><w:sz w:val='28'/></w:rPr><w:t>Following owner</w:t></w:r></w:p>"
+                        }
+                        _ => "",
+                    };
+                    let (dom, root) = source(local, &(frame + follow));
+                    let runs = collected_without_mutation(&dom, root);
+                    let expected = if destination == "text" {
+                        vec!["Following owner", "Framed owner"]
+                    } else {
+                        vec!["Framed owner"]
+                    };
+                    assert_eq!(
+                        runs.iter().map(|r| r.text.as_str()).collect::<Vec<_>>(),
+                        expected,
+                        "{local}/{align}/{destination}"
+                    );
+                    let framed = runs.last().expect("authored frame text");
+                    assert_eq!(framed.style.size, 20.0);
+                    assert_eq!(
+                        framed.style.color,
+                        [18.0 / 255.0, 52.0 / 255.0, 86.0 / 255.0]
+                    );
+                    assert!(framed.style.bold);
+                    assert_eq!(
+                        (framed.frame_right, framed.frame_center),
+                        (align == "right", align == "center")
+                    );
+                    assert!(!framed.rev);
+                    assert!(framed.field == FieldKind::None);
+                    assert_eq!(framed.hf_para.is_some(), destination != "end");
+                    if destination == "text" {
+                        assert_eq!(runs[0].style.size, 14.0);
+                        assert!(!runs[0].frame_right && !runs[0].frame_center);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn uncached_chrome_fields_are_real_line_content_for_following_left_absolute_tabs() {
+        for local in ["hdr", "ftr"] {
+            for (name, kind) in [
+                ("PAGE", FieldKind::Page),
+                ("NUMPAGES", FieldKind::NumPages),
+                ("NUMWORDS", FieldKind::NumWords),
+            ] {
+                for alignment in ["", " w:alignment='left'"] {
+                    let xml = format!(
+                        "<w:p><w:r><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText xml:space='preserve'> {name} </w:instrText></w:r><w:r><w:fldChar w:fldCharType='separate'/></w:r><w:r><w:rPr><w:sz w:val='30'/></w:rPr><w:fldChar w:fldCharType='end'/></w:r><w:r>\n<w:rPr><w:rFonts w:ascii='Calibri'/><w:color w:val='234567'/><w:sz w:val='24'/></w:rPr>\n<w:ptab{alignment} w:relativeTo='margin'/>\n<w:t>Following label</w:t>\n</w:r></w:p>"
+                    );
+                    let (dom, root) = source(local, &xml);
+                    let runs = collected_without_mutation(&dom, root);
+                    assert_eq!(
+                        runs.iter().map(|r| r.text.as_str()).collect::<Vec<_>>(),
+                        ["", "\n", "Following label"],
+                        "{local}/{name}/{alignment}"
+                    );
+                    assert!(runs[0].field == kind);
+                    assert_eq!(runs[0].style.size, 15.0);
+                    assert!(runs[1].field == FieldKind::None && runs[2].field == FieldKind::None);
+                    assert_eq!(runs[1].style.size, 12.0);
+                    assert_eq!(runs[2].style.size, 12.0);
+                    assert_eq!(
+                        runs[2].style.color,
+                        [35.0 / 255.0, 69.0 / 255.0, 103.0 / 255.0]
+                    );
+                    assert!(
+                        runs.iter()
+                            .all(|r| !r.rev && !r.frame_center && !r.frame_right)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn stacked_contextual_empty_chrome_lines_keep_their_authored_mark_sizes_and_gap_owners() {
+        for local in ["hdr", "ftr"] {
+            for contextual in [false, true] {
+                for before in [80, 400] {
+                    let context = if contextual {
+                        "<w:contextualSpacing/>"
+                    } else {
+                        ""
+                    };
+                    let xml = format!(
+                        "<w:p><w:pPr><w:spacing w:before='100' w:after='200'/>{context}<w:rPr><w:sz w:val='32'/></w:rPr></w:pPr></w:p><w:p><w:pPr><w:spacing w:before='{before}' w:after='60'/>{context}<w:rPr><w:sz w:val='24'/></w:rPr></w:pPr></w:p>"
+                    );
+                    let (dom, root) = source(local, &xml);
+                    let runs = collected_without_mutation(&dom, root);
+                    assert_eq!(
+                        runs.iter().map(|r| r.text.as_str()).collect::<Vec<_>>(),
+                        [HF_LINE_BREAK, HF_LINE_BREAK]
+                    );
+                    assert_eq!((runs[0].style.size, runs[1].style.size), (16.0, 12.0));
+                    assert_eq!(runs[0].para_gap, 15.0);
+                    let second = if contextual || before == 80 {
+                        3.0
+                    } else {
+                        13.0
+                    };
+                    assert_eq!(
+                        runs[1].para_gap, second,
+                        "{local}/context={contextual}/before={before}"
+                    );
+                    assert!(runs.iter().all(|r| r.hf_para.is_some() && !r.rev));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn chrome_visible_source_excludes_original_move_streams_and_keeps_real_page_break_lines() {
+        for local in ["hdr", "ftr"] {
+            for deleted in ["del", "moveFrom"] {
+                for preserve in [false, true] {
+                    for page in [false, true] {
+                        let (dom, root) = source(
+                            local,
+                            &format!(
+                                "<w:p><w:r><w:t xml:space='preserve'> </w:t></w:r><w:r><w:br{}/></w:r><w:{deleted} w:id='17' w:author='Original owner' w:date='2025-01-01T00:00:00Z'><w:r><w:delText>Original cache must not become a live header label</w:delText></w:r></w:{deleted}><w:ins w:id='18' w:author='Revised owner' w:date='2026-01-01T00:00:00Z'><w:r><w:t>Owned label</w:t></w:r></w:ins></w:p>",
+                                if page { " w:type='page'" } else { "" }
+                            ),
+                        );
+                        let before = dom.serialize_element(root);
+                        let nodes = dom.node_count();
+                        let shown = visible_text(&dom, root, RevMark::None, preserve);
+                        assert_eq!(
+                            shown,
+                            if preserve {
+                                " \nOwned label"
+                            } else {
+                                "\nOwned label"
+                            }
+                        );
+                        assert_eq!(visible_text(&dom, root, RevMark::None, preserve), shown);
+                        assert_eq!(dom.serialize_element(root), before);
+                        assert_eq!(dom.node_count(), nodes);
+                    }
+                }
+            }
         }
     }
 }

@@ -1508,3 +1508,37 @@ mod source_paragraph_promotion_boundary_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod public_lexical_empty_move_boundary_tests {
+    use super::*;
+    #[test]
+    fn public_jaccard_handles_empty_and_separator_only_sources_without_nonfinite_scores() {
+        for insensitive in [false, true] {
+            let settings = WmlComparerSettings {
+                case_insensitive: insensitive,
+                ..Default::default()
+            };
+            for (left, right, expected) in [
+                ("", "", 0.0),
+                (" \t\n", "clause", 0.0),
+                ("clause", " \t\n", 0.0),
+                ("-;", "clause", 0.0),
+                ("clause", "-;", 0.0),
+                ("-;", ";-", 0.0),
+                ("clause report", "clause report", 1.0),
+                ("CLAUSE", "clause", if insensitive { 1.0 } else { 0.0 }),
+                ("Straße", "STRASSE", if insensitive { 1.0 } else { 0.0 }),
+            ] {
+                let score = jaccard(left, right, &settings);
+                assert!(score.is_finite());
+                assert_eq!(
+                    score, expected,
+                    "left={left:?} right={right:?} insensitive={insensitive}"
+                );
+                assert_eq!(score, jaccard(right, left, &settings));
+            }
+        }
+    }
+}
