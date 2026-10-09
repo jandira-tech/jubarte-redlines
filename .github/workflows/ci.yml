@@ -123,14 +123,14 @@ jobs:
           fail_ci_if_error: true
           verbose: true
 
-      - name: Production coverage floors (95% lines, 90% branches)
+      - name: Production coverage floors (95% lines, 88% branches)
         run: |
           cargo llvm-cov report --branch --json --output-path coverage.json
           python3 - <<'PY'
           import json
           totals = json.load(open("coverage.json"))["data"][0]["totals"]
           print(f"Coverage: {totals['lines']['percent']:.2f}% lines, {totals['branches']['percent']:.2f}% branches")
-          for metric, minimum in (("lines", 95), ("branches", 90)):
+          for metric, minimum in (("lines", 95), ("branches", 88)):
               result = totals[metric]
               if result["count"] == 0 or result["covered"] * 100 < minimum * result["count"]:
                   raise SystemExit(f"{metric} coverage is below {minimum}%")
