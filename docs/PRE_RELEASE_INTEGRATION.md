@@ -52,8 +52,8 @@ coverage batches with fresh initial profiles; every integration target is
 accounted for. After a target ran, its executable could be reduced to LLVM
 coverage sections to fit local disk space. A representative export was verified
 identical before and after that reduction. All mappings and profiles remained
-available through the combined JSON/LCOV report. Reports and session logs are
-saved under `/tmp/jubarte-prerelease-audit/`.
+available through the combined JSON/LCOV report. Reports and session logs were
+kept locally by the integrator.
 
 Native and Python `--help` smoke checks passed. Rebuilt full/slim Node and browser
 WASM packages passed public API startup checks. The package engine stamp is
@@ -210,7 +210,7 @@ After parent ran the three new deterministic regressions under coverage and conf
 - 4216554966: `wrap_listing_runs` wraps both bold labels and gray author attribution, splits oversized tokens, and preserves body paragraph breaks. Page-fit logic accounts for full heading height plus first content baseline, and oversized headings continue onto new pages. Regression `long_comment_attributions_wrap_and_preserve_printable_page_bounds` pins width, baseline, pagination, and content retention.
 - 5453648416/tempdir: existing CLI integration test now holds `tempfile::tempdir()` for its input/output lifetime. No redundant new test added.
 
-Formatting performed with `/Users/arthrod/.cargo/bin/rustfmt --edition 2024` on owned files. Parent owns green coverage, full verification, smoke test, commit, and publication. Earlier evidence naming `wrap_words`/`break_word` refers to original already-addressed PR374 code; this fix replaces them with `wrap_listing_runs` using script-aware measurement.
+Formatting performed with `rustfmt --edition 2024` on owned files. Parent owns green coverage, full verification, smoke test, commit, and publication. Earlier evidence naming `wrap_words`/`break_word` refers to original already-addressed PR374 code; this fix replaces them with `wrap_listing_runs` using script-aware measurement.
 
 ## Follow-up source audit
 

@@ -1,7 +1,7 @@
 /* tslint:disable */
 /* eslint-disable */
 
-export function diffDocumentsUnified(old: Uint8Array, new: Uint8Array, oldName?: string, newName?: string, context?: number): string;
+export function diffDocumentsUnified(old: Uint8Array, _new: Uint8Array, oldName?: string, newName?: string, context?: number): string;
 
 
 
