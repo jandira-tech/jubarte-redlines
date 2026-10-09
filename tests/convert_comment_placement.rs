@@ -660,6 +660,84 @@ fn changed_only_keeps_revised_table_cells() {
     assert!(!pages[0].contains("Untouched"), "{pages:?}");
 }
 
+/// The pages `--changed-only` keeps of `docx`.
+fn changed_only_pages(docx: &[u8]) -> Vec<String> {
+    texts(&rendered(
+        docx,
+        PdfOptions {
+            changed_only: true,
+            ..PdfOptions::default()
+        },
+    ))
+}
+
+/// `revised` (body XML whose revision is in no text run) on a page between
+/// two untouched ones.
+fn between_untouched_pages(revised: &str) -> String {
+    format!(
+        r#"<w:p><w:r><w:t>Untouched first</w:t></w:r></w:p>{PAGE_BREAK}{revised}{PAGE_BREAK}<w:p><w:r><w:t>Untouched last</w:t></w:r></w:p>"#
+    )
+}
+
+/// A 1x1 opaque PNG.
+const PIXEL_PNG: &[u8] = &[
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+    0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08, 0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00,
+    0x00, 0x03, 0x01, 0x01, 0x00, 0x18, 0xDD, 0x8D, 0xB0, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
+    0x44, 0xAE, 0x42, 0x60, 0x82,
+];
+
+fn one_row_table(tr_pr: &str, tc_pr: &str, text: &str) -> String {
+    format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="8640"/></w:tblGrid><w:tr>{tr_pr}<w:tc><w:tcPr><w:tcW w:w="8640" w:type="dxa"/>{tc_pr}</w:tcPr><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#
+    )
+}
+
+#[test]
+fn changed_only_keeps_tracked_row_insertions_and_deletions() {
+    for mark in ["ins", "del"] {
+        let tr_pr = format!(
+            r#"<w:trPr><w:{mark} w:id="1" w:author="Rev" w:date="2026-01-01T00:00:00Z"/></w:trPr>"#
+        );
+        let body = between_untouched_pages(&one_row_table(&tr_pr, "", "Row text"));
+        let pages = changed_only_pages(&docx_with(&body, &[]));
+        assert_eq!(pages.len(), 1, "{mark}: {pages:?}");
+        assert!(pages[0].contains("Row text"), "{mark}: {pages:?}");
+    }
+}
+
+#[test]
+fn changed_only_keeps_tracked_cell_deletions() {
+    let tc_pr = r#"<w:cellDel w:id="1" w:author="Rev" w:date="2026-01-01T00:00:00Z"/>"#;
+    let body = between_untouched_pages(&one_row_table("", tc_pr, "Cell text"));
+    let pages = changed_only_pages(&docx_with(&body, &[]));
+    assert_eq!(pages.len(), 1, "{pages:?}");
+    assert!(pages[0].contains("Cell text"), "{pages:?}");
+}
+
+#[test]
+fn changed_only_keeps_a_page_whose_only_revision_is_a_picture() {
+    // 36pt square, embedded as rIdX0 (the first extra part's relationship).
+    let drawing = r#"<w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><wp:extent cx="457200" cy="457200"/><wp:docPr id="1" name="Picture 1"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="1" name="pixel.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rIdX0"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="457200" cy="457200"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>"#;
+    let body = between_untouched_pages(&format!(
+        r#"<w:p><w:r><w:t>Picture page</w:t></w:r><w:ins w:id="1" w:author="Rev" w:date="2026-01-01T00:00:00Z"><w:r>{drawing}</w:r></w:ins></w:p>"#
+    ));
+    let docx = docx_with(
+        &body,
+        &[Part {
+            name: "word/media/pixel.png",
+            content_type: "image/png",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+            xml: "",
+        }],
+    );
+    let docx = common::docx::replace_entry(&docx, "word/media/pixel.png", PIXEL_PNG);
+    let pages = changed_only_pages(&docx);
+    assert_eq!(pages.len(), 1, "{pages:?}");
+    assert!(pages[0].contains("Picture page"), "{pages:?}");
+}
+
 #[test]
 fn unchanged_fallback_does_not_list_comments_from_discarded_pages() {
     let pages = texts(&rendered(

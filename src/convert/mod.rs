@@ -11002,7 +11002,9 @@ fn para_base(
     if let Some(align) = display_math_align(dom, para) {
         pstyle.align = align;
     }
-    pstyle.fmt_rev = para_formatting_changed(dom, para) || para_mark_revised(dom, para);
+    pstyle.fmt_rev = para_formatting_changed(dom, para)
+        || para_mark_revised(dom, para)
+        || para_object_revised(dom, para);
     rstyle.auto_space_de_off = pstyle.auto_space_de_off;
     rstyle.auto_space_dn_off = pstyle.auto_space_dn_off;
     (pstyle, rstyle)
@@ -11194,6 +11196,26 @@ fn para_mark_revised(dom: &Dom, para: NodeId) -> bool {
                 .into_iter()
                 .any(|c| rev_mark_of(dom, c).is_some())
         })
+}
+
+/// A picture, drawing or embedded object of the paragraph sits in a
+/// tracked insertion, deletion or move: no text run carries that revision,
+/// yet Word bars its line.
+fn para_object_revised(dom: &Dom, para: NodeId) -> bool {
+    ["drawing", "pict", "object"].into_iter().any(|name| {
+        descendants_local(dom, para, name)
+            .into_iter()
+            .any(|object| {
+                dom.ancestors(object, None)
+                    .into_iter()
+                    .take_while(|&a| a != para)
+                    .any(|a| {
+                        ["ins", "del", "moveTo", "moveFrom"]
+                            .into_iter()
+                            .any(|rev| local_name_is(dom, a, rev))
+                    })
+            })
+    })
 }
 
 /// The paragraph's `v:rect o:hr="t"` (not a Fallback copy), if any.
@@ -13179,6 +13201,14 @@ fn table_block(
         if row_has_cell_del {
             cells.push(deleted_cells_stamp(&sheet.defaults.run));
         }
+        // A tracked row insertion or deletion, or a deleted cell, is a
+        // revision of the row: Word bars it, and `changed_only` keeps its
+        // page, though no run in it is revised.
+        if row_has_cell_del || row_is_revised(dom, row) {
+            for para in cells.iter_mut().flat_map(|c| c.paras.iter_mut()) {
+                para.style.fmt_rev = true;
+            }
+        }
         if !cells.is_empty() {
             raw_rows.push(cells);
             let (h, exact) = row_height_spec(dom, row);
@@ -13924,6 +13954,13 @@ fn column_prefs(raw_rows: &[Vec<RawCell>], grid: &[f32], fixed: bool) -> Vec<Pre
         }
     }
     pref
+}
+
+/// `w:trPr` holds a tracked row insertion or deletion.
+fn row_is_revised(dom: &Dom, row: NodeId) -> bool {
+    direct_named(dom, row, "trPr").is_some_and(|pr| {
+        direct_named(dom, pr, "ins").is_some() || direct_named(dom, pr, "del").is_some()
+    })
 }
 
 pub(crate) fn cell_is_deleted(dom: &Dom, cell: NodeId) -> bool {
@@ -24795,7 +24832,20 @@ impl<'a> Layout<'a> {
                 Align::Center => leftover / 2.0,
                 Align::Right => leftover,
             };
-            let fill = measure - (line_w - trail).max(0.0);
+            // A label past the indent tabs line one on to the next stop
+            // (`marker_overrun_stop`), as its wrap did: justification
+            // stretches the line to the margin from there, not from the
+            // indent.
+            let overrun = match marker {
+                Some(mark)
+                    if line_i == 0 && self.marker_gutter_stop(mark, style, indent).is_none() =>
+                {
+                    self.marker_overrun_stop(mark, style, indent)
+                        .map_or(0.0, |stop| stop - indent)
+                }
+                _ => 0.0,
+            };
+            let fill = measure - overrun - (line_w - trail).max(0.0);
             // A justified line Word kept by squeezing its spaces paints them
             // narrower, even on the paragraph's last line (00044aa0).
             let squeeze_line = fill < -0.05

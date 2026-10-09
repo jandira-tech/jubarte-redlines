@@ -21061,7 +21061,12 @@ fn tcprchange_gridspan_does_not_pad_extra_columns() {
          <w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/>\
            <w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>";
     let pdf = docx_to_pdf(&minimal_docx_body(body)).expect("convert tcPrChange gridSpan");
-    let xs = pdf_vertical_rule_xs(&pdf);
+    // The table's own rules: the deleted cells' change bar sits in the
+    // margin, left of the table at 72.
+    let xs: Vec<f32> = pdf_vertical_rule_xs(&pdf)
+        .into_iter()
+        .filter(|x| *x > 70.0)
+        .collect();
     let unique: Vec<i32> = {
         let mut u: Vec<i32> = xs.iter().map(|x| (*x / 8.0).round() as i32).collect();
         u.sort();
@@ -49089,6 +49094,48 @@ fn a_double_cell_border_takes_three_strokes_of_room() {
     assert!(
         (double_pitch - 23.25).abs() < 0.3,
         "Word's LEAD-to-NEXT pitch under a double sz=6 rule is 23.28, got {double_pitch}"
+    );
+}
+
+#[test]
+fn a_justified_line_after_a_wide_label_ends_at_the_margin() {
+    // "XXXVIII)" under left 720 / hanging 360 tabs its text on to 144
+    // (wl1006). The first line wraps to the width left after that stop,
+    // and justification must stretch it to the same right edge as the
+    // next line, not to the width it had from the indent (PR #381).
+    let numbering = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:numbering xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+           <w:abstractNum w:abstractNumId=\"0\">\
+             <w:lvl w:ilvl=\"0\"><w:start w:val=\"38\"/><w:numFmt w:val=\"upperRoman\"/>\
+               <w:lvlText w:val=\"%1)\"/>\
+               <w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/></w:pPr></w:lvl>\
+           </w:abstractNum>\
+           <w:num w:numId=\"1\"><w:abstractNumId w:val=\"0\"/></w:num>\
+         </w:numbering>";
+    let words = vec!["ab"; 90].join(" ");
+    let body = format!(
+        "<w:p><w:pPr><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr>\
+           <w:jc w:val=\"both\"/></w:pPr><w:r><w:t>{words}</w:t></w:r></w:p><w:sectPr/>"
+    );
+    let pdf = docx_to_pdf(&numbering_docx(&body, Some(numbering))).expect("convert");
+    let hay = String::from_utf8_lossy(&pdf);
+    let bs = pdf_cm_tj_xy(&hay, "b");
+    let line_end = |y: f32| {
+        bs.iter()
+            .filter(|(_, by)| (by - y).abs() < 0.5)
+            .map(|(x, _)| *x)
+            .fold(f32::MIN, f32::max)
+    };
+    let first_y = bs[0].1;
+    let second_y = bs
+        .iter()
+        .map(|(_, y)| *y)
+        .find(|y| (y - first_y).abs() > 1.0)
+        .expect("a second line");
+    let (first, second) = (line_end(first_y), line_end(second_y));
+    assert!(
+        (first - second).abs() < 0.5,
+        "line one ends at {first}, line two at {second}: both reach the margin"
     );
 }
 
