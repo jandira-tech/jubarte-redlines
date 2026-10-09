@@ -58854,4 +58854,1751 @@ mod rendering_uncovered_contract_tests {
             }
         }
     }
+    #[test]
+    fn chrome_border_bands_preserve_each_authored_edge_across_continuation_lines() {
+        let fonts = embedded_fonts();
+        for edges in 0u8..16 {
+            for fill in [false, true] {
+                for above in [false, true] {
+                    for next in [false, true] {
+                        let edge = |bit, name: &str| {
+                            if edges & bit != 0 {
+                                format!(
+                                    "<w:{name} w:val='single' w:sz='8' w:space='2' w:color='FF0000'/>"
+                                )
+                            } else {
+                                String::new()
+                            }
+                        };
+                        let (dom, root) = xml(&format!(
+                            "<w:p><w:pPr><w:ind w:left='200' w:right='400'/><w:pBdr>{}{}{}{}</w:pBdr>{}</w:pPr><w:r><w:t>Band</w:t></w:r></w:p>",
+                            edge(1, "top"),
+                            edge(2, "bottom"),
+                            edge(4, "left"),
+                            edge(8, "right"),
+                            if fill { "<w:shd w:fill='0000FF'/>" } else { "" }
+                        ));
+                        let p = dom.element(root, &W::p()).unwrap();
+                        let (style, _) = para_base(&dom, p, &sheet(), None);
+                        let mut lay = Layout::new(&fonts, compact_page(), HfChrome::default(), 15);
+                        lay.hf_line_fill(
+                            &style,
+                            above.then_some(&style),
+                            next.then_some(&style),
+                            200.0,
+                            20.0,
+                        );
+                        let left = if edges & 12 == 0 {
+                            34.0
+                        } else {
+                            32.56 - if edges & 4 != 0 { 2.0 } else { 0.0 }
+                        };
+                        let right = if edges & 12 == 0 {
+                            256.0
+                        } else {
+                            257.44 + if edges & 8 != 0 { 2.0 } else { 0.0 }
+                        };
+                        let upper = if edges & 1 != 0 && !above { 2.0 } else { 0.0 };
+                        let lower = if edges & 2 != 0 && !next { 2.0 } else { 0.0 };
+                        let mut expected = Vec::new();
+                        if fill {
+                            expected.push((
+                                left,
+                                180.0 - lower,
+                                right - left,
+                                20.0 + upper + lower,
+                                [0.0, 0.0, 1.0],
+                            ));
+                        }
+                        let top = 200.0 + if edges & 1 != 0 && !above { 3.0 } else { 0.0 };
+                        let bottom = 180.0 - if edges & 2 != 0 && !next { 3.0 } else { 0.0 };
+                        if edges & 4 != 0 {
+                            expected.push((left - 1.0, bottom, 1.0, top - bottom, [1.0, 0.0, 0.0]));
+                        }
+                        if edges & 8 != 0 {
+                            expected.push((right, bottom, 1.0, top - bottom, [1.0, 0.0, 0.0]));
+                        }
+                        assert_eq!(lay.pages[0].ops.len(), expected.len());
+                        for (op, (x, y, w, h, color)) in lay.pages[0].ops.iter().zip(expected) {
+                            let Op::FillRect {
+                                x: ax,
+                                y: ay,
+                                w: aw,
+                                h: ah,
+                                color: ac,
+                            } = op
+                            else {
+                                panic!("band is a rectangle")
+                            };
+                            for (a, e) in [(*ax, x), (*ay, y), (*aw, w), (*ah, h)] {
+                                assert!(
+                                    (a - e).abs() < 0.001,
+                                    "edges={edges}, fill={fill}, above={above}, next={next}: {a}/{e}"
+                                );
+                            }
+                            assert_eq!(*ac, color);
+                        }
+                        assert_eq!(w_text(&dom, p), "Band");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn chrome_framed_fields_keep_independent_center_right_and_body_coordinates() {
+        let fonts = embedded_fonts();
+        let face = fonts.get(fonts.resolve("Arial", false, false));
+        for center in [false, true] {
+            for body in [false, true] {
+                for align in [Align::Left, Align::Center, Align::Right] {
+                    let (dom, root) = xml(&format!(
+                        "<w:p><w:r><w:rPr><w:rFonts w:ascii='Arial'/><w:sz w:val='20'/></w:rPr><w:t>Page</w:t></w:r></w:p>{}",
+                        if body {
+                            "<w:p><w:r><w:rPr><w:rFonts w:ascii='Arial'/><w:sz w:val='20'/></w:rPr><w:t>Body</w:t></w:r></w:p>"
+                        } else {
+                            ""
+                        }
+                    ));
+                    let mut runs = collect_hf_runs(&dom, root, &sheet(), 252.0);
+                    runs.retain(|r| r.text != HF_LINE_BREAK);
+                    assert_eq!(run_text(&runs), if body { "PageBody" } else { "Page" });
+                    runs[0].frame_center = center;
+                    runs[0].frame_right = !center;
+                    let mut lay = Layout::new(&fonts, compact_page(), HfChrome::default(), 15);
+                    lay.draw_line_of_runs(&runs, 250.0, align);
+                    let ink = lay.pages[0]
+                        .ops
+                        .iter()
+                        .filter_map(|o| {
+                            if let Op::Text { text, x, y, .. } = o {
+                                Some((text.as_str(), *x, *y))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    let expected = if body { "PageBody" } else { "Page" };
+                    assert_eq!(ink.iter().map(|r| r.0).collect::<String>(), expected);
+                    assert_eq!(
+                        ink.iter().map(|r| r.0).collect::<Vec<_>>(),
+                        if body {
+                            vec!["P", "a", "g", "e", "Body"]
+                        } else {
+                            vec!["P", "a", "g", "e"]
+                        }
+                    );
+                    let width = face.width_pt("Page", 10.0);
+                    let frame_x = if center {
+                        24.0 + (252.0 - width) / 2.0
+                    } else {
+                        276.0 - width
+                    };
+                    for (i, glyph) in ink[..4].iter().enumerate() {
+                        assert!(
+                            (glyph.1 - frame_x - face.width_pt(&"Page"[..i], 10.0)).abs() < 0.001
+                        );
+                    }
+                    assert!(ink.iter().all(|r| r.2 == 250.0));
+                    if body {
+                        let width = face.width_pt("Body", 10.0);
+                        let x = match align {
+                            Align::Left => 24.0,
+                            Align::Center => 24.0 + (252.0 - width) / 2.0,
+                            Align::Right => 276.0 - width,
+                            _ => unreachable!(),
+                        };
+                        assert_eq!(ink[4].0, "Body");
+                        assert!((ink[4].1 - x).abs() < 0.001);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn footnote_part_routes_structural_types_and_preserves_authored_separator_and_spacing() {
+        for declaration in [false, true] {
+            for with_separator in [false, true] {
+                let mut pkg = package();
+                if declaration {
+                    pkg.set_part("word/_rels/document.xml.rels",br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="notes" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="notes/custom.xml"/></Relationships>"#.to_vec());
+                }
+                let note = |id: &str, kind: &str, text: &str| {
+                    format!(
+                        "<w:footnote {id} {kind}><w:p><w:pPr><w:spacing w:before='40' w:after='60' w:line='400' w:lineRule='exact'/><w:ind w:left='200'/></w:pPr><w:r><w:rPr><w:rFonts w:ascii='Arial'/><w:sz w:val='20'/><w:b/></w:rPr><w:t>{text}</w:t><w:br w:type='page'/></w:r></w:p></w:footnote>"
+                    )
+                };
+                let content = format!(
+                    "<w:footnotes xmlns:w='{}'>{}{}{}{}{}{}{}</w:footnotes>",
+                    W::URI,
+                    note("w:id='7'", "", "Owned"),
+                    note("", "", "Missing"),
+                    note("w:id='-2'", "w:type='continuationSeparator'", "Ignored"),
+                    note("w:id='-3'", "w:type='continuationNotice'", "Ignored"),
+                    "<w:footnote w:id='9'/>",
+                    "<w:footnote w:id='10'><w:tbl/></w:footnote>",
+                    if with_separator {
+                        note("", "w:type='separator'", "Rule")
+                    } else {
+                        String::new()
+                    }
+                );
+                pkg.set_part(
+                    if declaration {
+                        "word/notes/custom.xml"
+                    } else {
+                        "word/footnotes.xml"
+                    },
+                    content.into_bytes(),
+                );
+                let (notes, separator) = load_footnotes(&pkg, "word/document.xml", &sheet());
+                assert_eq!(notes.len(), 1);
+                let p = &notes["7"][0];
+                assert_eq!(run_text(&p.runs), "Owned");
+                assert!(
+                    p.runs
+                        .iter()
+                        .all(|r| r.style.bold && r.style.size == 10.0 && r.style.family == "Arial")
+                );
+                assert_eq!(
+                    (
+                        p.style.before,
+                        p.style.after,
+                        p.style.indent_left,
+                        p.style.line_exact
+                    ),
+                    (2.0, 3.0, 10.0, Some(20.0))
+                );
+                assert_eq!(separator.len(), 1);
+                if with_separator {
+                    assert_eq!(run_text(&separator[0].runs), "Rule");
+                    assert_eq!(separator[0].style.line_exact, Some(20.0));
+                } else {
+                    assert_eq!(run_text(&separator[0].runs), "");
+                    assert!(separator[0].runs[0].strut && separator[0].runs[0].note_rule);
+                    assert_eq!(
+                        (
+                            separator[0].style.before,
+                            separator[0].style.after,
+                            separator[0].style.line_mult
+                        ),
+                        (0.0, 0.0, 1.0)
+                    );
+                }
+            }
+        }
+        let (notes, separator) = load_footnotes(&package(), "word/document.xml", &sheet());
+        assert!(notes.is_empty() && separator.is_empty());
+    }
+
+    #[test]
+    fn footnote_reservation_claims_once_and_note_paint_preserves_line_and_indent_geometry() {
+        let fonts = embedded_fonts();
+        let face = fonts.get(fonts.resolve("Arial", false, false));
+        for separator in [false, true] {
+            for display in [false, true] {
+                let (dom, root) = xml(
+                    "<w:p><w:pPr><w:spacing w:before='40' w:after='60' w:line='400' w:lineRule='exact'/><w:ind w:left='200'/></w:pPr><w:r><w:rPr><w:rFonts w:ascii='Arial'/><w:sz w:val='20'/></w:rPr><w:t>Owned note</w:t></w:r></w:p>",
+                );
+                let p = dom.element(root, &W::p()).unwrap();
+                let (style, base) = para_base(&dom, p, &sheet(), None);
+                let note = FootnotePara {
+                    runs: collect_runs(&dom, p, &base, &ThemeFonts::default()),
+                    style,
+                };
+                let mut lay = Layout::new(&fonts, compact_page(), HfChrome::default(), 15);
+                lay.footnotes.notes.insert("7".into(), vec![note.clone()]);
+                if separator {
+                    lay.footnotes.separator.push(note.clone());
+                }
+                if display {
+                    lay.footnotes.display.insert("7".into(), "4".into());
+                }
+                assert_eq!(lay.note_height("7", 252.0), 25.0);
+                assert_eq!(lay.note_height("missing", 252.0), 10.0);
+                let mut reference = TextRun::new("1", base.clone());
+                reference.footnote_id = Some("7".into());
+                let before = lay.body_floor;
+                let sep = if separator {
+                    25.0
+                } else {
+                    fonts.get(FaceId::CarlitoRegular).single_line_pt(11.0)
+                };
+                assert!((lay.added_footnote_h(&[reference.clone()]) - 25.0 - sep).abs() < 0.001);
+                lay.claim_line_footnotes(&[reference.clone(), reference.clone()]);
+                assert_eq!(lay.page_fn_ids, ["7"]);
+                assert!((lay.body_floor - before - 25.0 - sep).abs() < 0.001);
+                assert_eq!(lay.added_footnote_h(&[reference]), 0.0);
+                assert_eq!(lay.paint_one_footnote("missing", 200.0, 252.0), 200.0);
+                let end = lay.paint_one_footnote("7", 200.0, 252.0);
+                assert!((end - 175.0).abs() < 0.001);
+                let ink = lay.pages[0]
+                    .ops
+                    .iter()
+                    .filter_map(|op| {
+                        if let Op::Text { text, x, y, .. } = op {
+                            Some((text.as_str(), *x, *y))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(ink.iter().map(|r| r.0).collect::<String>(), "Owned note");
+                assert_eq!(ink.len(), "Owned note".len());
+                for (i, glyph) in ink.iter().enumerate() {
+                    assert_eq!(glyph.0, &"Owned note"[i..i + 1]);
+                    assert!(
+                        (glyph.1 - 34.0 - face.width_pt(&"Owned note"[..i], 10.0)).abs() < 0.001
+                    );
+                    assert!((glyph.2 - (198.0 - face.ascent_pt(10.0))).abs() < 0.001);
+                }
+                assert_eq!(run_text(&note.runs), "Owned note");
+            }
+        }
+    }
+
+    #[test]
+    fn table_mark_visibility_and_hide_mark_preserve_bookmarked_empty_tail_ownership() {
+        for hidden in [false, true] {
+            for hide in [false, true] {
+                for bookmarked in [false, true] {
+                    for rule in [false, true] {
+                        let source = format!(
+                            "<w:tbl><w:tblGrid><w:gridCol w:w='4000'/></w:tblGrid><w:tr><w:tc><w:tcPr>{}</w:tcPr>{}<w:p><w:pPr><w:spacing w:line='400' w:lineRule='exact'/>{}{}</w:pPr>{}</w:p></w:tc></w:tr></w:tbl>",
+                            if hide { "<w:hideMark/>" } else { "" },
+                            cell_paragraph("Owned", ""),
+                            if hidden {
+                                "<w:rPr><w:vanish/></w:rPr>"
+                            } else {
+                                ""
+                            },
+                            if rule {
+                                "<w:pBdr><w:bottom w:val='single' w:sz='8' w:color='FF0000'/></w:pBdr>"
+                            } else {
+                                ""
+                            },
+                            if bookmarked {
+                                "<w:bookmarkStart w:id='8' w:name='Tail'/><w:bookmarkEnd w:id='8'/>"
+                            } else {
+                                ""
+                            }
+                        );
+                        let Block::Table { rows, .. } = parsed_table(&source) else {
+                            panic!("visibility table")
+                        };
+                        let cell = &rows[0][0];
+                        assert_eq!(run_text(&cell.paras[0].runs), "Owned");
+                        assert_eq!(cell.hide_mark, hide);
+                        // Hidden paragraphs retain zero-height carriers;
+                        // hideMark removes only an unbookmarked empty tail.
+                        let names = cell
+                            .paras
+                            .iter()
+                            .flat_map(|p| p.bookmarks.iter().chain(p.blank_bookmarks.iter()))
+                            .cloned()
+                            .collect::<Vec<_>>();
+                        assert_eq!(
+                            names,
+                            if bookmarked {
+                                vec!["Tail".to_string()]
+                            } else {
+                                vec![]
+                            }
+                        );
+                        let tail_kept = !hide || bookmarked;
+                        assert_eq!(cell.paras.len(), if tail_kept { 2 } else { 1 });
+                        if tail_kept {
+                            let tail = &cell.paras[1];
+                            assert_eq!(
+                                tail.style.line_exact,
+                                Some(if hidden && !rule { 0.0 } else { 20.0 })
+                            );
+                            if rule {
+                                assert_eq!(
+                                    tail.style.border_bottom,
+                                    Some(([1.0, 0.0, 0.0], 1.0, 0.0))
+                                );
+                                assert!(
+                                    tail.runs
+                                        .iter()
+                                        .any(|r| r.rule == Some(([1.0, 0.0, 0.0], 1.0)))
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn table_run_size_and_font_follow_named_style_chain_and_direct_run_ownership() {
+        for named in [false, true] {
+            for named_size in [false, true] {
+                for based_on in [false, true] {
+                    for direct in [false, true] {
+                        let styles = format!(
+                            "<w:style w:type='paragraph' w:default='1' w:styleId='Normal'><w:rPr><w:sz w:val='24'/><w:rFonts w:ascii='Times New Roman'/></w:rPr></w:style><w:style w:type='paragraph' w:styleId='Named'>{}<w:rPr>{}</w:rPr></w:style><w:style w:type='table' w:styleId='Grid'><w:rPr><w:sz w:val='28'/><w:rFonts w:ascii='Arial'/></w:rPr></w:style>",
+                            if based_on {
+                                "<w:basedOn w:val='Normal'/>"
+                            } else {
+                                ""
+                            },
+                            if named_size { "<w:sz w:val='36'/>" } else { "" }
+                        );
+                        let sheet = matrix_styles(&styles);
+                        let (dom, root) = xml(&format!(
+                            "<w:tbl><w:tblPr><w:tblStyle w:val='Grid'/></w:tblPr><w:tblGrid><w:gridCol w:w='4000'/></w:tblGrid><w:tr><w:tc><w:p><w:pPr>{}</w:pPr><w:r>{}<w:t>Font ownership</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+                            if named {
+                                "<w:pStyle w:val='Named'/>"
+                            } else {
+                                ""
+                            },
+                            if direct {
+                                "<w:rPr><w:sz w:val='40'/><w:rFonts w:ascii='Courier New'/></w:rPr>"
+                            } else {
+                                ""
+                            }
+                        ));
+                        let Block::Table { rows, .. } = table_block(
+                            &dom,
+                            dom.element(root, &W::tbl()).unwrap(),
+                            &sheet,
+                            &mut Numbering::default(),
+                            &mut AuthorColors::default(),
+                            &HashMap::new(),
+                            None,
+                        ) else {
+                            panic!("font table")
+                        };
+                        let runs = &rows[0][0].paras[0].runs;
+                        assert_eq!(run_text(runs), "Font ownership");
+                        let size = if direct {
+                            20.0
+                        } else if named && named_size {
+                            18.0
+                        } else if named && based_on {
+                            12.0
+                        } else {
+                            14.0
+                        };
+                        let family = if direct {
+                            "Courier New"
+                        } else if named && based_on {
+                            "Times New Roman"
+                        } else if named {
+                            "Arial"
+                        } else {
+                            "Times New Roman"
+                        };
+                        assert!(
+                            runs.iter()
+                                .all(|r| r.style.size == size && r.style.family == family),
+                            "named={named}, size={named_size}, based={based_on}, direct={direct}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn endnote_format_merges_section_and_settings_attributes_independently() {
+        for section_format in [None, Some("upperRoman"), Some("decimal")] {
+            for section_start in [None, Some("4"), Some("bad")] {
+                for settings in [false, true] {
+                    let mut pkg = package();
+                    if settings {
+                        pkg.set_part("word/settings.xml",format!("<w:settings xmlns:w='{}'><w:endnotePr><w:numFmt w:val='upperLetter'/><w:numStart w:val='3'/></w:endnotePr></w:settings>",W::URI).into_bytes());
+                    }
+                    let (dom, root) = xml(&format!(
+                        "<w:sectPr><w:endnotePr>{}{}</w:endnotePr></w:sectPr>",
+                        section_format
+                            .map(|v| format!("<w:numFmt w:val='{v}'/>"))
+                            .unwrap_or_default(),
+                        section_start
+                            .map(|v| format!("<w:numStart w:val='{v}'/>"))
+                            .unwrap_or_default()
+                    ));
+                    let sect = dom.element(root, &W::sect_pr()).unwrap();
+                    let result = endnote_num_format(&pkg, &dom, &[sect]);
+                    let start = if section_start == Some("4") {
+                        4
+                    } else if settings {
+                        3
+                    } else {
+                        1
+                    };
+                    assert_eq!(result.1, start);
+                    let expected = match section_format {
+                        Some("upperRoman") => {
+                            if start == 4 {
+                                "IV"
+                            } else if start == 3 {
+                                "III"
+                            } else {
+                                "I"
+                            }
+                        }
+                        Some("decimal") => {
+                            if start == 4 {
+                                "4"
+                            } else if start == 3 {
+                                "3"
+                            } else {
+                                "1"
+                            }
+                        }
+                        _ => {
+                            if settings {
+                                if start == 4 { "D" } else { "C" }
+                            } else if start == 4 {
+                                "iv"
+                            } else {
+                                "i"
+                            }
+                        }
+                    };
+                    assert_eq!(format_num(result.0, result.1), expected);
+                    let (default_dom, default_root) = xml("<w:sectPr/>");
+                    let default = endnote_num_format(
+                        &pkg,
+                        &default_dom,
+                        &[default_dom.element(default_root, &W::sect_pr()).unwrap()],
+                    );
+                    assert_eq!(
+                        format_num(default.0, default.1),
+                        if settings { "C" } else { "i" }
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn endnote_bag_observes_reference_order_once_and_flushes_only_authored_section_end() {
+        for section_end in [false, true] {
+            for separator in [false, true] {
+                let mut pkg = package();
+                pkg.set_part("word/endnotes.xml",format!("<w:endnotes xmlns:w='{}'>{}<w:endnote w:id='7'><w:p><w:r><w:endnoteRef/></w:r><w:r><w:t>Seven</w:t></w:r></w:p></w:endnote><w:endnote w:id='8'><w:p><w:r><w:endnoteRef/></w:r><w:r><w:t>Eight</w:t></w:r></w:p></w:endnote><w:endnote w:type='continuationNotice' w:id='-2'><w:p><w:r><w:t>Ignored</w:t></w:r></w:p></w:endnote><w:endnote><w:p><w:r><w:t>No id</w:t></w:r></w:p></w:endnote></w:endnotes>",W::URI,if separator {"<w:endnote w:type='separator' w:id='-1'><w:p><w:r><w:t>Rule</w:t></w:r></w:p></w:endnote>"} else {""}).into_bytes());
+                let sheet = sheet();
+                let ctx = WalkCtx {
+                    pkg: &pkg,
+                    main: "word/document.xml",
+                    sheet: &sheet,
+                    sects: &[],
+                    authors: RefCell::new(AuthorColors::default()),
+                    comments: HashMap::new(),
+                    open_comments: RefCell::new(Vec::new()),
+                };
+                let (dom, root) = xml(&format!(
+                    "<w:p><w:r><w:endnoteReference w:id='8'/><w:endnoteReference w:id='7'/><w:endnoteReference w:id='8'/><w:endnoteReference/><w:endnoteReference w:id='99'/></w:r></w:p><w:sectPr><w:endnotePr><w:pos w:val='{}'/></w:endnotePr></w:sectPr>",
+                    if section_end { "sectEnd" } else { "docEnd" }
+                ));
+                let mut bag = EndnoteBag::load(&pkg, "word/document.xml");
+                assert_eq!(bag.by_id.len(), 2);
+                let p = dom.element(root, &W::p()).unwrap();
+                bag.observe_para(&dom, p);
+                bag.observe_para(&dom, p);
+                assert_eq!(bag.pending, ["8", "7", "99"]);
+                let mut blocks = Vec::new();
+                let mut numbering = Numbering::default();
+                bag.flush_if_sect_end(
+                    &ctx,
+                    &dom,
+                    dom.element(root, &W::sect_pr()).unwrap(),
+                    &mut numbering,
+                    &mut blocks,
+                );
+                if !section_end {
+                    assert!(blocks.is_empty());
+                    assert_eq!(bag.pending, ["8", "7", "99"]);
+                }
+                bag.emit_remaining(&ctx, &mut numbering, &mut blocks);
+                let count = blocks.len();
+                assert_eq!(count, if separator { 3 } else { 2 });
+                number_endnote_refs(&mut blocks, (NumFmt::UpperRoman, 4));
+                let mut text = String::new();
+                let mut ids = Vec::new();
+                visit_runs_mut(&mut blocks, |r| {
+                    text.push_str(&r.text);
+                    if let Some(id) = &r.endnote_id {
+                        ids.push((id.clone(), r.text.clone()));
+                    }
+                });
+                assert_eq!(
+                    text,
+                    if separator {
+                        "RuleIVEightVSeven"
+                    } else {
+                        "IVEightVSeven"
+                    }
+                );
+                assert_eq!(ids, [("8".into(), "IV".into()), ("7".into(), "V".into())]);
+                bag.emit_remaining(&ctx, &mut numbering, &mut blocks);
+                assert_eq!(blocks.len(), count);
+                assert!(bag.pending.is_empty());
+            }
+        }
+    }
+    #[test]
+    fn hansi_script_boundaries_keep_owned_fields_and_east_asian_punctuation_face() {
+        for east in [false, true] {
+            for hansi in [false, true] {
+                for text in ["", "   ", "é  A", "Aé 漢ع\n", "é—α €漢"] {
+                    let mut style = Defaults::word().run;
+                    style.family = "Arial".into();
+                    style.family_hansi = hansi.then(|| "Times New Roman".into());
+                    style.hint = if east {
+                        FontHint::EastAsia
+                    } else {
+                        FontHint::Default
+                    };
+                    style.bold = true;
+                    style.color = [1.0, 0.0, 0.0];
+                    style.size = 13.0;
+                    let mut run = TextRun::new(text, style);
+                    run.ref_name = Some("Owned".into());
+                    run.pageref = Some("Page".into());
+                    run.footnote_id = Some("7".into());
+                    run.endnote_id = Some("8".into());
+                    run.rev = true;
+                    let mut plain = TextRun::new("Tail", Defaults::word().run);
+                    plain.style.family = "Courier New".into();
+                    let parts = split_hansi_runs(vec![run, plain]);
+                    assert_eq!(run_text(&parts), format!("{text}Tail"));
+                    let owned = &parts[..parts.len() - 1];
+                    assert!(owned.iter().all(|r| r.ref_name.as_deref() == Some("Owned")
+                        && r.pageref.as_deref() == Some("Page")
+                        && r.footnote_id.as_deref() == Some("7")
+                        && r.endnote_id.as_deref() == Some("8")
+                        && r.rev
+                        && r.style.bold
+                        && r.style.color == [1.0, 0.0, 0.0]
+                        && r.style.size == 13.0));
+                    let chars = owned
+                        .iter()
+                        .flat_map(|r| {
+                            r.text
+                                .chars()
+                                .filter(|c| *c != ' ')
+                                .map(move |c| (c, r.style.family.as_str()))
+                        })
+                        .collect::<Vec<_>>();
+                    let expected = text
+                        .chars()
+                        .filter(|c| *c != ' ')
+                        .map(|c| {
+                            let high = matches!(c, 'é' | 'α') || !east && matches!(c, '—' | '€');
+                            (
+                                c,
+                                if hansi && high {
+                                    "Times New Roman"
+                                } else {
+                                    "Arial"
+                                },
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    assert_eq!(chars, expected, "east={east}, hansi={hansi}, text={text:?}");
+                    let tail = parts.last().unwrap();
+                    assert_eq!(
+                        (tail.text.as_str(), tail.style.family.as_str()),
+                        ("Tail", "Courier New")
+                    );
+                    assert!(tail.ref_name.is_none() && !tail.rev);
+                }
+            }
+        }
+    }
+    #[test]
+    fn cell_exact_row_alignment_and_fill_keep_literal_source_coordinates() {
+        let fonts = embedded_fonts();
+        let face = fonts.get(fonts.resolve("Arial", false, false));
+        let text_width = face.width_pt("AA", 10.0);
+        for table_align in ["left", "center", "right"] {
+            for text_align in ["left", "center", "right"] {
+                for vertical in ["top", "center", "bottom"] {
+                    for fill in [false, true] {
+                        for exact in [false, true] {
+                            let source = format!(
+                                "<w:tbl><w:tblPr><w:tblLayout w:type='fixed'/><w:tblW w:type='dxa' w:w='4000'/><w:jc w:val='{table_align}'/><w:tblCellMar><w:top w:w='0' w:type='dxa'/><w:bottom w:w='0' w:type='dxa'/><w:left w:w='0' w:type='dxa'/><w:right w:w='0' w:type='dxa'/></w:tblCellMar></w:tblPr><w:tblGrid><w:gridCol w:w='4000'/></w:tblGrid><w:tr><w:trPr><w:trHeight w:val='1200' w:hRule='{}'/></w:trPr><w:tc><w:tcPr><w:vAlign w:val='{vertical}'/>{}</w:tcPr>{}</w:tc></w:tr></w:tbl>",
+                                if exact { "exact" } else { "atLeast" },
+                                if fill { "<w:shd w:fill='00FF00'/>" } else { "" },
+                                cell_paragraph("AA", &format!("<w:jc w:val='{text_align}'/>"))
+                            );
+                            let Block::Table {
+                                cols,
+                                rows,
+                                style,
+                                borders,
+                                geom,
+                            } = parsed_table(&source)
+                            else {
+                                panic!("aligned cell")
+                            };
+                            assert_eq!(geom.row_min, [60.0]);
+                            assert_eq!(geom.row_exact, [exact]);
+                            assert_eq!(cell_text(&rows[0][0]), "AA");
+                            let mut lay =
+                                Layout::new(&fonts, compact_page(), HfChrome::default(), 15);
+                            lay.emit_table(&cols, &rows, &style, borders, &geom);
+                            assert_eq!(lay.pages.len(), 1);
+                            assert!((lay.y - 216.0).abs() < 0.001);
+                            let ink = lay.pages[0]
+                                .ops
+                                .iter()
+                                .filter_map(|o| {
+                                    if let Op::Text { text, x, y, .. } = o {
+                                        Some((text.as_str(), *x, *y))
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect::<Vec<_>>();
+                            assert_eq!(ink.iter().map(|i| i.0).collect::<String>(), "AA");
+                            let origin = match table_align {
+                                "center" => 50.0,
+                                "right" => 76.0,
+                                _ => 24.0,
+                            };
+                            // Cell ink starts on Word's 0.24pt device grid,
+                            // while the authored table background stays unsnapped.
+                            let text_edge = match table_align {
+                                "center" => 49.92,
+                                "right" => 76.08,
+                                _ => 24.0,
+                            };
+                            let text_x = text_edge
+                                + match text_align {
+                                    "center" => (200.0 - text_width) / 2.0,
+                                    "right" => 200.0 - text_width,
+                                    _ => 0.0,
+                                };
+                            let text_y = 260.0
+                                - match vertical {
+                                    "center" => 20.0,
+                                    "bottom" => 40.0,
+                                    _ => 0.0,
+                                };
+                            assert!(
+                                (ink[0].1 - text_x).abs() < 0.001,
+                                "{table_align}/{text_align}/{vertical}/{exact}"
+                            );
+                            assert!(ink.iter().all(|i| (i.2 - text_y).abs() < 0.001));
+                            let greens = lay.pages[0]
+                                .ops
+                                .iter()
+                                .filter_map(|o| {
+                                    if let Op::FillRect { x, y, w, h, color } = o {
+                                        (*color == [0.0, 1.0, 0.0]).then_some((*x, *y, *w, *h))
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect::<Vec<_>>();
+                            if fill {
+                                assert!(greens.iter().any(|(x, y, w, h)| (*x - origin).abs()
+                                    < 0.001
+                                    && (*y - 216.0).abs() < 0.001
+                                    && (*w - 200.0).abs() < 0.001
+                                    && (*h - 60.0).abs() < 0.001));
+                            } else {
+                                assert!(greens.is_empty());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn real_run_decorations_clip_the_authored_line_and_keep_exact_underline_strike_geometry() {
+        let fonts = embedded_fonts();
+        for underline in [None, Some("single"), Some("double"), Some("wave")] {
+            for strike in [None, Some("strike"), Some("dstrike")] {
+                for clip in [None, Some(40.0), Some(19.0)] {
+                    let (dom, root) = xml(&format!(
+                        "<w:r><w:rPr><w:rFonts w:ascii='Arial'/><w:sz w:val='20'/><w:color w:val='FF0000'/>{}{}</w:rPr><w:t>AA</w:t></w:r>",
+                        underline
+                            .map(|u| format!("<w:u w:val='{u}'/>"))
+                            .unwrap_or_default(),
+                        strike.map(|s| format!("<w:{s}/>")).unwrap_or_default()
+                    ));
+                    let runs =
+                        collect_runs(&dom, root, &Defaults::word().run, &ThemeFonts::default());
+                    let style = &runs[0].style;
+                    let mut lay = Layout::new(&fonts, compact_page(), HfChrome::default(), 15);
+                    lay.clip_right = clip;
+                    lay.decorate_run(20.0, 100.0, 40.0, style);
+                    let width = if clip == Some(19.0) {
+                        0.0
+                    } else if clip.is_some() {
+                        20.0
+                    } else {
+                        40.0
+                    };
+                    let mut ys = Vec::new();
+                    if width > 0.0 {
+                        if underline == Some("single") || underline == Some("double") {
+                            ys.push(98.5);
+                            if underline == Some("double") {
+                                ys.push(97.1);
+                            }
+                        }
+                        if strike == Some("strike") {
+                            ys.push(102.5);
+                        }
+                        if strike == Some("dstrike") {
+                            ys.extend([101.9, 103.1]);
+                        }
+                    }
+                    let rects = lay.pages[0]
+                        .ops
+                        .iter()
+                        .filter_map(|o| {
+                            if let Op::FillRect { x, y, w, h, color } = o {
+                                Some((*x, *y, *w, *h, *color))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    assert_eq!(rects.len(), ys.len());
+                    for ((x, y, w, h, c), ey) in rects.into_iter().zip(ys) {
+                        assert_eq!(x, 20.0);
+                        assert!((y - ey).abs() < 0.001);
+                        assert_eq!(w, width);
+                        assert!((h - 0.6).abs() < 0.001);
+                        assert_eq!(c, [1.0, 0.0, 0.0]);
+                    }
+                    let waves = lay.pages[0]
+                        .ops
+                        .iter()
+                        .filter_map(|o| {
+                            if let Op::Line {
+                                x1,
+                                y1,
+                                x2,
+                                y2,
+                                width,
+                                color,
+                            } = o
+                            {
+                                Some((*x1, *y1, *x2, *y2, *width, *color))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    if underline == Some("wave") && width > 0.0 {
+                        assert!(!waves.is_empty());
+                        assert_eq!(waves[0].0, 20.0);
+                        assert!((waves.last().unwrap().2 - (20.0 + width)).abs() < 0.001);
+                        assert!(waves.iter().all(|(x1, y1, x2, y2, w, c)| *x1 >= 20.0
+                            && *x2 <= 20.0 + width + 0.001
+                            && *y1 >= 97.899
+                            && *y1 <= 99.701
+                            && *y2 >= 97.899
+                            && *y2 <= 99.701
+                            && *w == 0.6
+                            && *c == [1.0, 0.0, 0.0]));
+                    } else {
+                        assert!(waves.is_empty());
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn narrow_and_tracked_line_fit_keeps_word_boundaries_and_every_field_owner() {
+        let fonts = embedded_fonts();
+        let face = fonts.get(fonts.resolve("Arial", false, false));
+        let w = face.width_pt("W", 10.0);
+        let space = face.width_pt(" ", 10.0);
+        for ownership in 0..8 {
+            for narrow in [false, true] {
+                let mut style = Defaults::word().run;
+                style.family = "Arial".into();
+                style.size = 10.0;
+                style.kern_half = 0;
+                let mut run = TextRun::new("W W W", style.clone());
+                match ownership {
+                    1 => run.ref_name = Some("Ref".into()),
+                    2 => run.pageref = Some("Page".into()),
+                    3 => run.footnote_id = Some("7".into()),
+                    4 => run.endnote_id = Some("8".into()),
+                    5 => run.char_style = Some(std::rc::Rc::from("Owned")),
+                    6 => run.comment_marker = true,
+                    7 => run.field = FieldKind::NumWords,
+                    _ => {}
+                }
+                let fit = LineFit {
+                    narrow: if narrow { (1, w + space) } else { (0, 0.0) },
+                    char_break: true,
+                    ..LineFit::default()
+                };
+                let lines = wrap_runs_segment(
+                    &fonts,
+                    std::slice::from_ref(&run),
+                    2.0 * w + space + 0.01,
+                    2.0 * w + space + 0.01,
+                    false,
+                    None,
+                    fit,
+                );
+                let text = lines.iter().map(|l| run_text(l)).collect::<Vec<_>>();
+                assert_eq!(
+                    text,
+                    if narrow {
+                        vec!["W ", "W W"]
+                    } else {
+                        vec!["W W ", "W"]
+                    }
+                );
+                assert_eq!(text.concat(), run.text);
+                for part in lines.iter().flatten() {
+                    assert_eq!(part.ref_name, run.ref_name);
+                    assert_eq!(part.pageref, run.pageref);
+                    assert_eq!(part.footnote_id, run.footnote_id);
+                    assert_eq!(part.endnote_id, run.endnote_id);
+                    assert_eq!(part.char_style, run.char_style);
+                    assert_eq!(part.comment_marker, run.comment_marker);
+                    assert!(part.field == run.field);
+                    assert_eq!(part.style.size, 10.0);
+                    assert_eq!(part.style.family, "Arial");
+                }
+            }
+        }
+        for hang in [false, true] {
+            let mut style = Defaults::word().run;
+            style.family = "Arial".into();
+            style.size = 10.0;
+            let run = TextRun::new("W  W", style);
+            let lines = wrap_runs_segment(
+                &fonts,
+                &[run],
+                space * 0.75,
+                space * 0.75,
+                false,
+                None,
+                LineFit {
+                    hang_spaces: hang,
+                    char_break: true,
+                    ..LineFit::default()
+                },
+            );
+            assert_eq!(
+                lines.iter().map(|l| run_text(l)).collect::<String>(),
+                "W  W"
+            );
+            assert_eq!(lines.len(), if hang { 2 } else { 3 });
+        }
+    }
+
+    #[test]
+    fn mono_and_proportional_compression_paint_complete_text_at_the_requested_endpoint() {
+        let fonts = embedded_fonts();
+        for family in ["Arial", "Courier New"] {
+            for text in ["A", "AB", "AB CD", "AB CD EF"] {
+                for removal in [0.1, 1.5] {
+                    let mut style = Defaults::word().run;
+                    style.family = family.into();
+                    style.size = 10.0;
+                    style.kern_half = 0;
+                    let run = TextRun::new(text, style);
+                    let face = fonts.get(fonts.resolve(family, false, false));
+                    let natural = face.width_pt(text, 10.0);
+                    let mut lay = Layout::new(&fonts, compact_page(), HfChrome::default(), 15);
+                    lay.paint_compressed(std::slice::from_ref(&run), 24.0, 200.0, -removal);
+                    let ink = lay.pages[0]
+                        .ops
+                        .iter()
+                        .filter_map(|o| {
+                            if let Op::Text {
+                                text,
+                                x,
+                                y,
+                                face,
+                                size,
+                                ..
+                            } = o
+                            {
+                                Some((text.as_str(), *x, *y, *face, *size))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    assert_eq!(ink.iter().map(|r| r.0).collect::<String>(), text);
+                    // Word paints 10pt outlines at 42ppem (10.08pt), but
+                    // keeps authored 10pt advances for line layout.
+                    assert!(
+                        ink.iter()
+                            .all(|r| r.2 == 200.0 && (r.4 - 10.08).abs() < 0.001)
+                    );
+                    let last = ink.last().unwrap();
+                    let end = last.1 + fonts.get(last.3).width_pt(last.0, 10.0);
+                    let expected = 24.0 + natural - if text.len() < 2 { 0.0 } else { removal };
+                    assert!(
+                        (end - expected).abs() < 0.002,
+                        "{family}/{text}/{removal}: {end}/{expected}"
+                    );
+                    assert_eq!(run.style.track, 0.0);
+                    assert_eq!(run.text, text);
+                }
+            }
+        }
+    }
+    #[test]
+    fn chrome_image_rows_retain_each_pixel_owner_and_authored_edge_spacing() {
+        for footer in [false, true] {
+            for count in [1usize, 2, 3] {
+                for measure in [40.0_f32, 80.0, 120.0] {
+                    for automatic in [false, true] {
+                        for tab in [false, true] {
+                            let mut pkg = pixel_package();
+                            // PartFs indexes .rels in its relationship store;
+                            // author the same memory relationship for this story.
+                            let rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="pixels" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/pixels.png"/></Relationships>"#.to_vec();
+                            let path = if footer {
+                                "word/footer1.xml"
+                            } else {
+                                "word/header1.xml"
+                            };
+                            pkg.set_part(
+                                if footer {
+                                    "word/_rels/footer1.xml.rels"
+                                } else {
+                                    "word/_rels/header1.xml.rels"
+                                },
+                                rels,
+                            );
+                            let pic = picture_fragment(
+                                r#"<wp:inline><wp:extent cx="508000" cy="254000"/>"#,
+                                "",
+                            );
+                            let fixture = format!(
+                                r#"<w:p><w:pPr><w:spacing w:before="120" w:beforeAutospacing="{}" w:after="60" w:line="400" w:lineRule="exact"/><w:rPr><w:rFonts w:ascii="Arial"/><w:sz w:val="20"/></w:rPr></w:pPr>{}{}</w:p>"#,
+                                if automatic { "1" } else { "0" },
+                                pic.repeat(count),
+                                if tab { "<w:r><w:tab/></w:r>" } else { "" }
+                            );
+                            let (dom, root) = drawing_dom(&fixture);
+                            let source = dom.serialize_element(root);
+                            let chrome_source = source
+                                .replace("<w:root", if footer { "<w:ftr" } else { "<w:hdr" })
+                                .replace("</w:root>", if footer { "</w:ftr>" } else { "</w:hdr>" });
+                            let part = chrome_part_xml(
+                                &pkg,
+                                path,
+                                &chrome_source,
+                                if footer { "footer" } else { "header" },
+                                &sheet(),
+                                measure,
+                            );
+                            assert_eq!(part.images.len(), count);
+                            assert!(part.tables.is_empty() && part.boxes.is_empty());
+                            let per_row = (measure / 40.0) as usize;
+                            for (i, image) in part.images.iter().enumerate() {
+                                assert_eq!((image.w, image.h), (40.0, 20.0));
+                                assert!(matches!(image.slot, ImageSlot::Flow));
+                                assert!(image.chrome_flow && image.chrome_lead);
+                                assert!(!image.chrome_under_text && !image.chrome_under_table);
+                                assert_eq!(image.chrome_para, 1);
+                                assert_eq!(image.chrome_after, 3.0);
+                                assert_eq!(
+                                    image.chrome_drop,
+                                    (i / per_row) as f32 * 20.0 + if automatic { 0.0 } else { 6.0 }
+                                );
+                                assert_eq!(image.chrome_drop_tab.is_some(), i >= per_row);
+                                assert_eq!(
+                                    image.chrome_tab_line.is_some(),
+                                    tab && measure == 40.0 && i == 0
+                                );
+                                if let Some((mark, wrapped)) = &image.chrome_drop_tab {
+                                    assert_eq!(mark.family, "Arial");
+                                    assert_eq!(mark.size, 10.0);
+                                    assert_eq!(*wrapped, tab && measure == 40.0);
+                                }
+                                assert_eq!(image.crop, Some([0.25, 0.0, 0.25, 0.0]));
+                                assert_eq!(image.rotate_deg, 90.0);
+                                assert!(image.oval);
+                                let ImageKind::Rgb {
+                                    width,
+                                    height,
+                                    bytes,
+                                    alpha,
+                                } = &image.kind
+                                else {
+                                    panic!("owned PNG")
+                                };
+                                assert_eq!((*width, *height), (2, 2));
+                                assert_eq!(
+                                    bytes.as_slice(),
+                                    [255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255]
+                                );
+                                assert_eq!(alpha.as_ref().unwrap().as_slice(), [255, 128, 64, 0]);
+                            }
+                            assert_eq!(dom.serialize_element(root), source);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn chrome_after_text_and_table_images_keep_band_ownership_without_duplicate_cell_images() {
+        for footer in [false, true] {
+            for table in [false, true] {
+                for trailing_text in [false, true] {
+                    for before in [0, 80, 200] {
+                        let mut pkg = pixel_package();
+                        let path = if footer {
+                            "word/footer1.xml"
+                        } else {
+                            "word/header1.xml"
+                        };
+                        let rels = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="pixels" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/pixels.png"/></Relationships>"#.to_vec();
+                        pkg.set_part(
+                            if footer {
+                                "word/_rels/footer1.xml.rels"
+                            } else {
+                                "word/_rels/header1.xml.rels"
+                            },
+                            rels,
+                        );
+                        let pic = picture_fragment(
+                            r#"<wp:inline><wp:extent cx="508000" cy="254000"/>"#,
+                            "",
+                        );
+                        let lead = "<w:p><w:pPr><w:spacing w:before='0' w:after='60' w:line='400' w:lineRule='exact'/></w:pPr><w:r><w:rPr><w:rFonts w:ascii='Arial'/><w:sz w:val='20'/></w:rPr><w:t>Lead</w:t></w:r></w:p>".to_owned();
+                        let lead = if table {
+                            one_cell_table(&lead, "")
+                        } else {
+                            lead
+                        };
+                        let tail = if trailing_text {
+                            cell_paragraph("Tail", "")
+                        } else {
+                            String::new()
+                        };
+                        let fixture = format!(
+                            "{lead}<w:p><w:pPr><w:spacing w:before='{before}' w:after='100' w:line='400' w:lineRule='exact'/></w:pPr>{pic}</w:p>{tail}"
+                        );
+                        let (dom, root) = drawing_dom(&fixture);
+                        let source = dom.serialize_element(root);
+                        let chrome_source = source
+                            .replace("<w:root", if footer { "<w:ftr" } else { "<w:hdr" })
+                            .replace("</w:root>", if footer { "</w:ftr>" } else { "</w:hdr>" });
+                        let part = chrome_part_xml(
+                            &pkg,
+                            path,
+                            &chrome_source,
+                            if footer { "footer" } else { "header" },
+                            &sheet(),
+                            200.0,
+                        );
+                        assert_eq!(part.images.len(), 1);
+                        let img = &part.images[0];
+                        assert_eq!((img.w, img.h), (40.0, 20.0));
+                        assert!(img.chrome_flow);
+                        assert_eq!(img.chrome_under_table, table);
+                        // Table text owns its table; it does not establish a running-text band.
+                        assert_eq!(img.chrome_lead, table);
+                        assert_eq!(img.chrome_under_text, !footer && !table && !trailing_text);
+                        if img.chrome_under_text {
+                            assert_eq!(img.chrome_above, (before as f32 / 20.0 - 3.0).max(0.0));
+                        }
+                        assert_eq!(img.chrome_after, if trailing_text { 0.0 } else { 5.0 });
+                        assert_eq!(part.tables.len(), usize::from(table));
+                        let running = run_text(&part.runs);
+                        assert_eq!(
+                            running.replace(['\n', '\r'], ""),
+                            format!(
+                                "{}{}",
+                                if table { "" } else { "Lead" },
+                                if trailing_text { "Tail" } else { "" }
+                            )
+                        );
+                        assert_eq!(dom.serialize_element(root), source);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn smartart_data_labels_use_only_the_named_relationship_and_preserve_authored_base_style() {
+        for location in [
+            "diagrams/data.xml",
+            "../customXml/data.xml",
+            "/customXml/data.xml",
+        ] {
+            for shape_attrs in ["r:dm='data'", "r:dm='missing'", ""] {
+                for labels in [
+                    "<a:t>One</a:t><a:t> </a:t><a:t>Two</a:t>",
+                    "<a:t>  One  </a:t><a:t>Two</a:t>",
+                    "<a:t> </a:t>",
+                ] {
+                    let mut pkg = package();
+                    pkg.set_part("word/_rels/document.xml.rels",format!(r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="data" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/diagramData" Target="{location}"/></Relationships>"#).into_bytes());
+                    let target = pkg.resolve_rel_target("word/document.xml", location);
+                    let rich_labels = labels.replace("</a:t><a:t>", "</a:t></a:r><a:r><a:t>");
+                    let payload = format!(
+                        r#"<dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><dgm:ptLst><dgm:pt modelId="0" type="node"><dgm:t><a:bodyPr/><a:lstStyle/><a:p><a:r>{rich_labels}</a:r></a:p></dgm:t></dgm:pt></dgm:ptLst><dgm:cxnLst/></dgm:dataModel>"#
+                    );
+                    pkg.set_part(&target, payload.as_bytes().to_vec());
+                    let mut dom = Dom::new();
+                    let doc=dom.parse_xdocument(&format!(r#"<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram"><dgm:relIds {shape_attrs}/></a:graphicData></a:graphic>"#));
+                    let root = dom.root(doc).unwrap();
+                    let mut base = Defaults::word().run;
+                    base.family = "Arial".into();
+                    base.size = 14.0;
+                    base.bold = true;
+                    base.italic = true;
+                    base.color = [0.0, 0.0, 1.0];
+                    let runs =
+                        diagram_label_runs(Some((&pkg, "word/document.xml")), &dom, root, &base);
+                    let expected = if shape_attrs != "r:dm='data'" || labels == "<a:t> </a:t>" {
+                        ""
+                    } else if labels.contains("  One  ") {
+                        "  One  \nTwo"
+                    } else {
+                        "One\nTwo"
+                    };
+                    assert_eq!(run_text(&runs), expected);
+                    assert!(runs.iter().all(|r| r.style.family == "Arial"
+                        && r.style.size == 14.0
+                        && r.style.bold
+                        && r.style.italic
+                        && r.style.color == [0.0, 0.0, 1.0]
+                        && !r.rev));
+                    assert_eq!(pkg.part_string(&target).as_deref(), Some(payload.as_str()));
+                    assert!(diagram_label_runs(None, &dom, root, &base).is_empty());
+                }
+            }
+        }
+    }
+    #[test]
+    fn repeated_table_headers_keep_authored_row_text_height_and_top_baselines_on_every_page() {
+        let fonts = embedded_fonts();
+        for repeat in [false, true] {
+            for cant_split in [false, true] {
+                for rows_count in [3usize, 4, 5] {
+                    for alignment in ["top", "center", "bottom"] {
+                        let header = format!(
+                            "<w:tr><w:trPr>{}<w:trHeight w:val='400' w:hRule='exact'/></w:trPr><w:tc>{}</w:tc></w:tr>",
+                            if repeat { "<w:tblHeader/>" } else { "" },
+                            cell_paragraph("Header", "")
+                        );
+                        let mut body = String::new();
+                        for i in 1..=rows_count {
+                            body.push_str(&format!("<w:tr><w:trPr><w:trHeight w:val='1600' w:hRule='exact'/>{}</w:trPr><w:tc><w:tcPr><w:vAlign w:val='{alignment}'/></w:tcPr>{}</w:tc></w:tr>",if cant_split {"<w:cantSplit/>"} else {""},cell_paragraph(&format!("Row{i}"),"")));
+                        }
+                        let fragment = format!(
+                            "<w:tbl><w:tblPr><w:tblLayout w:type='fixed'/><w:tblCellMar><w:top w:w='0'/><w:bottom w:w='0'/><w:left w:w='0'/><w:right w:w='0'/></w:tblCellMar></w:tblPr><w:tblGrid><w:gridCol w:w='4000'/></w:tblGrid>{header}{body}</w:tbl>"
+                        );
+                        let block = parsed_table(&fragment);
+                        let Block::Table {
+                            cols,
+                            rows,
+                            style,
+                            borders,
+                            geom,
+                        } = &block
+                        else {
+                            panic!("table")
+                        };
+                        assert_eq!(rows.len(), rows_count + 1);
+                        assert_eq!(geom.row_min[0], 20.0);
+                        assert!(geom.row_min[1..].iter().all(|h| *h == 80.0));
+                        assert!(geom.row_exact.iter().all(|v| *v));
+                        assert_eq!(rows[0][0].paras[0].runs[0].text, "Header");
+                        let mut lay = Layout::new(&fonts, compact_page(), HfChrome::default(), 15);
+                        lay.emit_table(cols, rows, style, *borders, geom);
+                        // A 252pt body holds the 20pt header and two whole 80pt data rows.
+                        assert_eq!(
+                            lay.pages.len(),
+                            if rows_count == 5 && repeat { 3 } else { 2 }
+                        );
+                        let mut labels = Vec::new();
+                        for (pi, page) in lay.pages.iter().enumerate() {
+                            let ink = page
+                                .ops
+                                .iter()
+                                .filter_map(|op| {
+                                    if let Op::Text { text, x, y, .. } = op {
+                                        Some((text.as_str(), *x, *y))
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect::<Vec<_>>();
+                            let header_here = pi == 0 || repeat;
+                            let start = if pi == 0 {
+                                1
+                            } else if repeat {
+                                pi * 2 + 1
+                            } else {
+                                3
+                            };
+                            let capacity = if header_here { 2 } else { 3 };
+                            let mut expected = if header_here {
+                                "Header".to_owned()
+                            } else {
+                                String::new()
+                            };
+                            for ri in start..=(start + capacity - 1).min(rows_count) {
+                                expected.push_str(&format!("Row{ri}"));
+                            }
+                            assert_eq!(
+                                ink.iter().map(|r| r.0).collect::<String>(),
+                                expected,
+                                "repeat={repeat}, cantSplit={cant_split}, rows={rows_count}, page={pi}"
+                            );
+                            let mut bands: Vec<(String, f32, f32)> = Vec::new();
+                            for (text, x, y) in &ink {
+                                if let Some(last) = bands.last_mut()
+                                    && (last.2 - *y).abs() < 0.001
+                                {
+                                    last.0.push_str(text);
+                                } else {
+                                    bands.push(((*text).to_owned(), *x, *y));
+                                }
+                            }
+                            assert_eq!(
+                                bands.len(),
+                                usize::from(header_here) + (rows_count - start + 1).min(capacity)
+                            );
+                            if header_here {
+                                let h = &bands[0];
+                                assert_eq!(h.0, "Header");
+                                assert_eq!(h.1, 24.0);
+                                assert!((h.2 - 260.0).abs() < 0.002);
+                            }
+                            for ri in start..=(start + capacity - 1).min(rows_count) {
+                                let label = format!("Row{ri}");
+                                let r = &bands[usize::from(header_here) + ri - start];
+                                assert_eq!(r.0, label);
+                                let top = 276.0
+                                    - if header_here { 20.0 } else { 0.0 }
+                                    - (ri - start) as f32 * 80.0;
+                                let slack = match alignment {
+                                    "center" => 30.0,
+                                    "bottom" => 60.0,
+                                    _ => 0.0,
+                                };
+                                assert_eq!(r.1, 24.0);
+                                assert!(
+                                    (r.2 - (top - 16.0 - slack)).abs() < 0.002,
+                                    "{label}, {alignment}: {}",
+                                    r.2
+                                );
+                                labels.push(label);
+                            }
+                        }
+                        assert_eq!(
+                            labels,
+                            (1..=rows_count)
+                                .map(|i| format!("Row{i}"))
+                                .collect::<Vec<_>>()
+                        );
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn bounded_named_style_inheritance_keeps_nearest_properties_and_stops_only_beyond_limit() {
+        // Acyclic authored chains are legal. The renderer's bounded traversal admits
+        // the ancestor at depth twelve, but not one thirteen links away.
+        for depth in [12usize, 13] {
+            let mut styles = String::new();
+            for i in 0..=depth {
+                let based = if i < depth {
+                    format!("<w:basedOn w:val='S{}'/>", i + 1)
+                } else {
+                    String::new()
+                };
+                let ppr = if i == depth {
+                    "<w:numPr><w:ilvl w:val='2'/><w:numId w:val='4'/></w:numPr><w:ind w:left='200'/>"
+                } else if i == 0 {
+                    "<w:spacing w:after='60'/>"
+                } else {
+                    ""
+                };
+                let rpr = if i == depth {
+                    "<w:rPr><w:b/><w:color w:val='FF0000'/></w:rPr>"
+                } else {
+                    ""
+                };
+                styles.push_str(&format!("<w:style w:type='paragraph' w:styleId='S{i}'>{based}<w:pPr>{ppr}</w:pPr>{rpr}</w:style>"));
+            }
+            let sheet = matrix_styles(&styles);
+            let named = &sheet.by_id["S0"];
+            assert_eq!(named.run.bold, depth == 12);
+            assert_eq!(
+                named.run.color,
+                if depth == 12 {
+                    [1.0, 0.0, 0.0]
+                } else {
+                    sheet.defaults.run.color
+                }
+            );
+            assert_eq!(named.para.indent_left, if depth == 12 { 10.0 } else { 0.0 });
+            assert_eq!(named.para.after, 3.0);
+            assert_eq!(
+                named.num_id.as_deref(),
+                if depth == 12 { Some("4") } else { None }
+            );
+            assert_eq!(named.ilvl, if depth == 12 { 2 } else { 0 });
+            // Nearer direct declarations remain effective in either bounded chain.
+            let (dom, root) = xml(
+                "<w:p><w:pPr><w:pStyle w:val='S0'/><w:ind w:left='400'/></w:pPr><w:r><w:t>Owned</w:t></w:r></w:p>",
+            );
+            let p = dom.element(root, &W::p()).unwrap();
+            let (para, run) = para_base(&dom, p, &sheet, None);
+            assert_eq!(para.indent_left, 20.0);
+            assert_eq!(para.after, 3.0);
+            assert_eq!(run.bold, depth == 12);
+            assert_eq!(
+                run_text(&collect_runs(&dom, p, &run, &sheet.theme)),
+                "Owned"
+            );
+        }
+    }
+
+    #[test]
+    fn absent_theme_faces_fall_back_to_authored_display_cache_and_hansi_without_losing_slots() {
+        for slot in ["majorAscii", "minorAscii", "majorBidi", "minorBidi"] {
+            for populated in [false, true] {
+                for hansi in [false, true] {
+                    let mut theme = ThemeFonts::default();
+                    if populated {
+                        theme.major = Some("Times New Roman".into());
+                        theme.minor = Some("Courier New".into());
+                        theme.major_cs = Some("Arial".into());
+                        theme.minor_cs = Some("Tahoma".into());
+                    }
+                    let (dom, root) = xml(&format!(
+                        "<w:rFonts {} w:asciiTheme='{slot}' w:eastAsia='SimSun' w:cs='Arial'/>",
+                        if hansi {
+                            "w:hAnsi='Verdana'"
+                        } else {
+                            "w:ascii='Cached Display'"
+                        }
+                    ));
+                    let fonts = dom.element(root, &W::name("rFonts")).unwrap();
+                    let mut style = Defaults::word().run;
+                    style.family = "Original".into();
+                    apply_rfonts(&dom, fonts, &mut style, &theme);
+                    let expected = if populated {
+                        match slot {
+                            "majorAscii" => "Times New Roman",
+                            "minorAscii" => "Courier New",
+                            "majorBidi" => "Arial",
+                            _ => "Tahoma",
+                        }
+                    } else if hansi {
+                        "Verdana"
+                    } else {
+                        "Cached Display"
+                    };
+                    assert_eq!(style.family, expected, "{slot}/{populated}/{hansi}");
+                    assert_eq!(style.family_ea.as_deref(), Some("SimSun"));
+                    assert_eq!(style.family_cs.as_deref(), Some("Arial"));
+                    if hansi {
+                        assert_eq!(
+                            style.family_hansi.as_deref(),
+                            if populated { Some("Verdana") } else { None }
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fixed_layout_precedes_nowrap_and_preferred_width_owns_the_auto_layout_override() {
+        for fixed in [false, true] {
+            for width in [
+                "<w:tcW w:type='auto' w:w='0'/>",
+                "<w:tcW w:type='dxa' w:w='0'/>",
+                "<w:tcW w:type='dxa' w:w='800'/>",
+                "<w:tcW w:type='pct' w:w='2500'/>",
+            ] {
+                for no_wrap in [false, true] {
+                    let source = format!(
+                        "<w:tbl><w:tblPr><w:tblLayout w:type='{}'/></w:tblPr><w:tblGrid><w:gridCol w:w='800'/></w:tblGrid><w:tr><w:tc><w:tcPr>{width}{}</w:tcPr>{}</w:tc></w:tr></w:tbl>",
+                        if fixed { "fixed" } else { "autofit" },
+                        if no_wrap { "<w:noWrap/>" } else { "" },
+                        cell_paragraph("A long source phrase", "")
+                    );
+                    let (dom, root) = xml(&source);
+                    let tbl = dom.element(root, &W::tbl()).unwrap();
+                    let tc = dom.descendants(tbl, Some(&W::tc()))[0];
+                    let unchanged = dom.serialize_element(root);
+                    let preferred = width.contains("800") || width.contains("2500");
+                    assert_eq!(fixed_width_cell(&dom, tbl, tc), fixed || preferred);
+                    assert_eq!(cell_nowrap(&dom, tc), no_wrap);
+                    let Block::Table { rows, .. } = parsed_table(&source) else {
+                        panic!("table")
+                    };
+                    assert_eq!(rows[0][0].nowrap, no_wrap && !fixed && !preferred);
+                    assert_eq!(cell_text(&rows[0][0]), "A long source phrase");
+                    assert_eq!(dom.serialize_element(root), unchanged);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rtl_table_mirroring_keeps_source_cells_but_swaps_grid_margins_rules_and_alignment() {
+        for rtl in [false, true] {
+            for align in ["left", "center", "right"] {
+                let source = format!(
+                    "<w:tbl><w:tblPr><w:tblLayout w:type='fixed'/><w:jc w:val='{align}'/>{}<w:tblBorders><w:left w:val='single' w:sz='8'/><w:right w:val='nil'/></w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w='800'/><w:gridCol w:w='1600'/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcMar><w:left w:w='100'/><w:right w:w='200'/></w:tcMar></w:tcPr>{}</w:tc><w:tc>{}</w:tc></w:tr></w:tbl>",
+                    if rtl { "<w:bidiVisual/>" } else { "" },
+                    cell_paragraph("First", ""),
+                    cell_paragraph("Second", "")
+                );
+                let Block::Table {
+                    cols,
+                    rows,
+                    style,
+                    borders,
+                    geom,
+                } = parsed_table(&source)
+                else {
+                    panic!("table")
+                };
+                assert_eq!(geom.rtl, rtl);
+                assert_eq!(
+                    cols,
+                    if rtl {
+                        vec![80.0, 40.0]
+                    } else {
+                        vec![40.0, 80.0]
+                    }
+                );
+                assert_eq!(
+                    rows[0].iter().map(cell_text).collect::<Vec<_>>(),
+                    if rtl {
+                        vec!["Second", "First"]
+                    } else {
+                        vec!["First", "Second"]
+                    }
+                );
+                assert_eq!(rows[0].iter().map(|c| c.col).collect::<Vec<_>>(), [0, 1]);
+                let first = &rows[0][usize::from(rtl)];
+                assert_eq!(
+                    (first.pad_l, first.pad_r),
+                    if rtl { (10.0, 5.0) } else { (5.0, 10.0) }
+                );
+                let border = borders.unwrap();
+                assert_eq!((border.left, border.right), (!rtl, rtl));
+                assert!(
+                    style.align
+                        == match (align, rtl) {
+                            ("left", true) | ("right", false) => Align::Right,
+                            ("center", _) => Align::Center,
+                            _ => Align::Left,
+                        }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn page_border_sub_half_point_minimum_keeps_all_authored_edge_metadata() {
+        for size in [2, 3, 4, 8] {
+            let (dom, root) = xml(&format!(
+                "<w:pgBorders w:offsetFrom='page' w:display='firstPage' w:zOrder='back'><w:top w:val='double' w:sz='{size}' w:space='6' w:color='FF0000'/><w:bottom w:val='nil'/></w:pgBorders>"
+            ));
+            let pb = dom.element(root, &W::name("pgBorders")).unwrap();
+            let parsed = parse_pg_borders(&dom, pb);
+            let top = parsed.top.unwrap();
+            assert_eq!(top.width, if size < 4 { 0.24 } else { size as f32 / 8.0 });
+            assert_eq!(top.color, [1.0, 0.0, 0.0]);
+            assert_eq!(top.space, 6.0);
+            assert_eq!(top.line, BorderLine::Double);
+            assert!(parsed.from_page && parsed.back);
+            assert!(matches!(parsed.display, BorderDisplay::FirstPage));
+            assert!(parsed.bottom.is_none() && parsed.left.is_none() && parsed.right.is_none());
+        }
+    }
+
+    #[test]
+    fn chart_title_hides_only_explicit_auto_deleted_values_and_uses_complete_source_title() {
+        for deleted in [None, Some("0"), Some("1"), Some("true")] {
+            let fragment = format!(
+                "<c:chartSpace><c:chart>{}<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Source title</a:t></a:r></a:p></c:rich></c:tx></c:title><c:plotArea><c:barChart><c:barDir val='col'/><c:grouping val='clustered'/><c:ser><c:idx val='0'/><c:order val='0'/><c:tx><c:v>Owned series</c:v></c:tx><c:val><c:numLit><c:ptCount val='1'/><c:pt idx='0'><c:v>2</c:v></c:pt></c:numLit></c:val></c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>",
+                deleted
+                    .map(|v| format!("<c:autoTitleDeleted val='{v}'/>"))
+                    .unwrap_or_default()
+            );
+            let (dom, root) = drawing_dom(&fragment);
+            let unchanged = dom.serialize_element(root);
+            assert_eq!(
+                chart_title(&dom, root),
+                if matches!(deleted, Some("1" | "true")) {
+                    ""
+                } else {
+                    "Source title"
+                }
+            );
+            assert_eq!(dom.serialize_element(root), unchanged);
+        }
+    }
+
+    #[test]
+    fn empty_chart_cache_declines_rendering_and_named_color_fallback_preserves_nonempty_series() {
+        for state in [0, 1, 2, 3] {
+            let points = match state {
+                0 => "",
+                1 => "<c:pt idx='0'><c:v>not-a-number</c:v></c:pt>",
+                2 => "<c:pt idx='0'/>",
+                _ => "<c:pt idx='0'><c:v>2</c:v></c:pt>",
+            };
+            let raw = format!(
+                r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:barChart><c:barDir val='col'/><c:grouping val='clustered'/><c:ser><c:idx val='0'/><c:order val='0'/><c:tx><c:v>Source</c:v></c:tx><c:spPr><a:solidFill><a:srgbClr val="invalid"/></a:solidFill></c:spPr><c:val><c:numLit><c:formatCode>General</c:formatCode><c:ptCount val="{}"/>{points}</c:numLit></c:val></c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>"#,
+                usize::from(state != 0)
+            );
+            // Empty caches are legal; other states deliberately exercise the
+            // parser's tolerant handling of malformed cache values/absent v.
+            let chart = parse_chart_with(&raw, &ThemeFonts::default());
+            if state < 3 {
+                assert!(chart.is_none());
+            } else {
+                let chart = chart.unwrap();
+                assert_eq!(chart.series, [vec![2.0]]);
+                assert_eq!(chart.names, ["Source"]);
+                assert_eq!(chart.colors, [[79.0 / 255.0, 129.0 / 255.0, 189.0 / 255.0]]);
+            }
+        }
+    }
+
+    #[test]
+    fn styleref_zero_and_multidigit_arguments_remain_literal_style_identities() {
+        let sheet = matrix_styles(
+            "<w:style w:type='paragraph' w:styleId='Zero'><w:name w:val='0'/></w:style><w:style w:type='paragraph' w:styleId='Twelve'><w:name w:val='12'/></w:style><w:style w:type='paragraph' w:styleId='One'><w:name w:val='Heading 1'/></w:style>",
+        );
+        for (arg, id) in [("0", "Zero"), ("12", "Twelve"), ("1", "One")] {
+            for last in [false, true] {
+                let found = styleref_target(
+                    &format!("STYLEREF {arg}{}", if last { " \\l" } else { "" }),
+                    Some(&sheet.by_id),
+                )
+                .unwrap();
+                assert_eq!(found.id, id);
+                assert_eq!(found.last, last);
+            }
+        }
+    }
+    #[test]
+    fn literal_boolean_table_look_changes_band_origin_without_changing_owned_paragraphs() {
+        let sheet = matrix_styles(
+            "<w:style w:type='table' w:styleId='Bands'><w:tblStylePr w:type='firstRow'><w:tcPr><w:shd w:fill='FF0000'/></w:tcPr></w:tblStylePr><w:tblStylePr w:type='band1Horz'><w:tcPr><w:shd w:fill='00FF00'/></w:tcPr></w:tblStylePr><w:tblStylePr w:type='band2Horz'><w:tcPr><w:shd w:fill='0000FF'/></w:tcPr></w:tblStylePr></w:style>",
+        );
+        for first in [None, Some("false"), Some("true"), Some("1")] {
+            for bands_off in [false, true] {
+                let attrs = first
+                    .map(|v| format!("w:firstRow='{v}'"))
+                    .unwrap_or_default();
+                let fragment = format!(
+                    "<w:tbl><w:tblPr><w:tblLook {attrs} w:firstColumn='true' w:noHBand='{}'/></w:tblPr><w:tblGrid><w:gridCol w:w='2000'/></w:tblGrid><w:tr><w:tc>{}</w:tc></w:tr></w:tbl>",
+                    if bands_off { "true" } else { "false" },
+                    cell_paragraph("Owned", "")
+                );
+                let (dom, root) = xml(&fragment);
+                let table = dom.element(root, &W::tbl()).unwrap();
+                let unchanged = dom.serialize_element(root);
+                let look = table_look(&dom, table);
+                let paragraph = dom.descendants(table, Some(&W::p()))[0];
+                assert_eq!(
+                    run_text(&collect_runs(
+                        &dom,
+                        paragraph,
+                        &sheet.defaults.run,
+                        &sheet.theme
+                    )),
+                    "Owned"
+                );
+                assert_eq!(dom.serialize_element(root), unchanged);
+                let header = first != Some("false");
+                assert_eq!(look.first_row, header);
+                assert!(look.first_col);
+                assert_eq!(look.no_h_band, bands_off);
+                let def = &sheet.tables["Bands"];
+                let red = Some([1.0, 0.0, 0.0]);
+                let green = Some([0.0, 1.0, 0.0]);
+                let blue = Some([0.0, 0.0, 1.0]);
+                let expected = match (header, bands_off) {
+                    (true, true) => [red, None, None, None],
+                    (true, false) => [red, green, blue, green],
+                    (false, true) => [None; 4],
+                    (false, false) => [green, blue, green, blue],
+                };
+                assert_eq!(
+                    (0..4)
+                        .map(|r| row_band_fill(def, &look, r))
+                        .collect::<Vec<_>>(),
+                    expected
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn bookmark_source_text_excludes_owned_ref_and_pageref_cached_results_independently() {
+        for reference in [false, true] {
+            for page_reference in [false, true] {
+                let source = format!(
+                    "<w:p><w:bookmarkStart w:id='1' w:name='Target'/><w:r><w:t>Target text</w:t></w:r><w:bookmarkEnd w:id='1'/></w:p><w:p><w:bookmarkStart w:id='2' w:name='Owner'/><w:r><w:t>A</w:t></w:r>{}{}<w:r><w:t>B</w:t></w:r><w:bookmarkEnd w:id='2'/></w:p>",
+                    if reference {
+                        "<w:fldSimple w:instr='REF Target'><w:r><w:t>cached</w:t></w:r></w:fldSimple>"
+                    } else {
+                        ""
+                    },
+                    if page_reference {
+                        "<w:fldSimple w:instr='PAGEREF Target'><w:r><w:t>42</w:t></w:r></w:fldSimple>"
+                    } else {
+                        ""
+                    }
+                );
+                let (blocks, _) = walk_memory(&source);
+                let texts = document_bookmark_texts(&blocks);
+                assert_eq!(texts.len(), 2);
+                assert_eq!(texts["Target"], "Target text");
+                assert_eq!(texts["Owner"], "AB");
+                let Block::Paragraph { runs, .. } = &blocks[1] else {
+                    panic!("owner")
+                };
+                assert_eq!(
+                    runs.iter()
+                        .filter(|r| r.ref_name.as_deref() == Some("Target"))
+                        .count(),
+                    usize::from(reference)
+                );
+                assert_eq!(
+                    runs.iter()
+                        .filter(|r| r.pageref.as_deref() == Some("Target"))
+                        .count(),
+                    usize::from(page_reference)
+                );
+                assert_eq!(
+                    run_text(runs),
+                    format!(
+                        "A{}{}B",
+                        if reference { "cached" } else { "" },
+                        if page_reference { "42" } else { "" }
+                    )
+                );
+            }
+        }
+    }
 }

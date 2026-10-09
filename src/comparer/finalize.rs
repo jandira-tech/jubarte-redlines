@@ -26887,3 +26887,3849 @@ mod closing_authored_section_boundary_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod finalizer_distinct_boundary_contract_tests {
+    use super::*;
+
+    const DATE: &str = "2026-01-02T03:04:05Z";
+    const FORMAT: &str = "<w:rPr><w:b/><w:color w:val='123456'/><w:lang w:val='en-US'/></w:rPr>";
+    const TABLE: &str = "<w:tbl><w:tblPr><w:tblW w:w='1800' w:type='dxa'/></w:tblPr><w:tblGrid><w:gridCol w:w='1800'/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w='1800' w:type='dxa'/></w:tcPr><w:p><w:r><w:t>Independent table payload</w:t></w:r></w:p></w:tc></w:tr></w:tbl>";
+    fn settings() -> WmlComparerSettings {
+        WmlComparerSettings {
+            author_for_revisions: "Boundary editor".into(),
+            date_time_for_revisions: DATE.into(),
+            ..WmlComparerSettings::default()
+        }
+    }
+    fn package(body: &str) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let document=dom.parse_xdocument(&format!("<w:document xmlns:w='{}' xmlns:pt='{}' xmlns:r='{}'><w:body>{body}</w:body></w:document>", W::URI, PT::URI, R::URI));
+        let root = dom.root(document).unwrap();
+        (dom, root)
+    }
+    fn semantic(dom: &Dom, node: NodeId) -> String {
+        if !dom.is_element(node) {
+            return format!("text:{:?}", dom.text_value(node));
+        }
+        let mut attrs = dom
+            .attributes(node)
+            .into_iter()
+            .filter(|(name, _)| !dom.is_namespace_declaration(name))
+            .map(|(name, value)| {
+                (
+                    name.namespace_name().to_owned(),
+                    name.local_name().to_owned(),
+                    value,
+                )
+            })
+            .collect::<Vec<_>>();
+        attrs.sort();
+        format!(
+            "{:?}{attrs:?}[{}]",
+            dom.name(node),
+            dom.nodes(node)
+                .into_iter()
+                .map(|child| semantic(dom, child))
+                .collect::<String>()
+        )
+    }
+    fn expected(dom: &Dom, root: NodeId, body: &str, label: &str) {
+        let (oracle, oracle_root) = package(body);
+        assert_eq!(
+            semantic(dom, root),
+            semantic(&oracle, oracle_root),
+            "{label}"
+        );
+    }
+    fn run(kind: &str, text: &str) -> String {
+        let leaf = if kind == "del" { "delText" } else { "t" };
+        let r = format!("<w:r>{FORMAT}<w:{leaf} xml:space='preserve'>{text}</w:{leaf}></w:r>");
+        if kind == "live" {
+            r
+        } else {
+            format!("<w:{kind} w:id='17' w:author='Source editor' w:date='{DATE}'>{r}</w:{kind}>")
+        }
+    }
+    fn para(kind: &str, text: &str, props: &str) -> String {
+        format!("<w:p><w:pPr>{props}</w:pPr>{}</w:p>", run(kind, text))
+    }
+    fn marked(kind: &str, text: &str, props: &str) -> String {
+        {
+            let mark = format!(
+                "<w:rPr><w:{kind} w:id='18' w:author='Source editor' w:date='{DATE}'/></w:rPr>"
+            );
+            let properties = if props.contains("<w:pPrChange") {
+                props.replacen("<w:pPrChange", &(mark + "<w:pPrChange"), 1)
+            } else {
+                format!("{props}{mark}")
+            };
+            para(kind, text, &properties)
+        }
+    }
+    fn stable(dom: &mut Dom, root: NodeId, transform: impl Fn(&mut Dom, NodeId)) {
+        let once = semantic(dom, root);
+        transform(dom, root);
+        assert_eq!(
+            semantic(dom, root),
+            once,
+            "second application must preserve established ownership"
+        );
+    }
+
+    #[test]
+    fn explicit_default_direction_is_removed_only_from_inserted_layout() {
+        for status in ["ins", "del", "live"] {
+            for (style, kept_style) in [
+                ("Normal", false),
+                ("NORMAL", false),
+                ("BodyText", true),
+                ("", true),
+            ] {
+                for (value, kept_bidi) in [
+                    (Some("0"), false),
+                    (Some("FALSE"), false),
+                    (Some("false"), false),
+                    (Some("1"), true),
+                    (Some("true"), true),
+                    (None, true),
+                ] {
+                    let style_xml = if style.is_empty() {
+                        String::new()
+                    } else {
+                        format!("<w:pStyle w:val='{style}'/>")
+                    };
+                    let bidi = value
+                        .map(|value| format!("<w:bidi w:val='{value}'/>"))
+                        .unwrap_or_else(|| "<w:bidi/>".to_string());
+                    let own =
+                        "<w:spacing w:after='80'/><w:ind w:left='120'/><w:contextualSpacing/>";
+                    let history = format!(
+                        "<w:pPrChange w:id='11' w:author='Prior editor' w:date='{DATE}'><w:pPr><w:jc w:val='right'/></w:pPr></w:pPrChange>"
+                    );
+                    let source = para(
+                        status,
+                        "Owned directional text",
+                        &format!("{style_xml}{bidi}{own}{history}"),
+                    ) + TABLE;
+                    let (mut dom, root) = package(&source);
+                    strip_redundant_normal_pstyle_and_bidi(&mut dom, root);
+                    let expected_style = if status == "ins" && !kept_style {
+                        ""
+                    } else {
+                        &style_xml
+                    };
+                    let expected_bidi = if status == "ins" && !kept_bidi {
+                        ""
+                    } else {
+                        &bidi
+                    };
+                    let oracle = para(
+                        status,
+                        "Owned directional text",
+                        &format!("{expected_style}{expected_bidi}{own}{history}"),
+                    ) + TABLE;
+                    expected(&dom, root, &oracle, &format!("{status}/{style}/{value:?}"));
+                    stable(&mut dom, root, strip_redundant_normal_pstyle_and_bidi);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn demo_spacing_respects_authored_metrics_history_and_source_defaults() {
+        // Expected outcomes are Word's recorded restatement versus authored
+        // metric contracts (M352/M358/M391/M67), not a generated gate oracle.
+        let metrics = [
+            ("line='276'", true),
+            ("line='276' after='200' lineRule='auto'", true),
+            ("line='275'", false),
+            ("line='276' after='201'", false),
+            ("line='276' before='1'", false),
+            ("line='276' lineRule='exact'", false),
+        ];
+        for status in ["ins", "del", "live"] {
+            for default in [None, Some("276"), Some("240")] {
+                for (attrs, restatement) in metrics {
+                    for old_same in [false, true] {
+                        let sp = format!("<w:spacing w:{}/>", attrs.replace(" ", " w:"));
+                        let old_sp = if old_same {
+                            sp.clone()
+                        } else {
+                            "<w:spacing w:line='360' w:lineRule='exact'/>".to_string()
+                        };
+                        let history = format!(
+                            "<w:pPrChange w:id='11' w:author='Prior editor' w:date='{DATE}'><w:pPr><w:keepNext/>{old_sp}</w:pPr></w:pPrChange>"
+                        );
+                        let source = para(
+                            status,
+                            "Several independently authored words",
+                            &format!("{sp}{history}"),
+                        ) + TABLE;
+                        let (mut dom, root) = package(&source);
+                        strip_redundant_demo_default_spacing(&mut dom, root, (default, default));
+                        let removed = restatement && default != Some("240");
+                        let old = if removed && old_same { "" } else { &old_sp };
+                        let expected_history = format!(
+                            "<w:pPrChange w:id='11' w:author='Prior editor' w:date='{DATE}'><w:pPr><w:keepNext/>{old}</w:pPr></w:pPrChange>"
+                        );
+                        let live = if removed { "" } else { &sp };
+                        expected(
+                            &dom,
+                            root,
+                            &(para(
+                                status,
+                                "Several independently authored words",
+                                &format!("{live}{expected_history}"),
+                            ) + TABLE),
+                            "demo source/metric/history boundary",
+                        );
+                        stable(&mut dom, root, |d, r| {
+                            strip_redundant_demo_default_spacing(d, r, (default, default));
+                        });
+                    }
+                }
+            }
+        }
+        for (text, props, kept) in [
+            ("PARTIES", "<w:spacing w:line='276'/>", true),
+            ("", "<w:spacing w:line='276'/>", true),
+            (
+                "Product line",
+                "<w:spacing w:line='276'/><w:ind w:right='-30'/>",
+                true,
+            ),
+            (
+                "PARTIES",
+                "<w:pStyle w:val='Title'/><w:spacing w:line='276'/>",
+                false,
+            ),
+        ] {
+            let (mut dom, root) = package(&para("ins", text, props));
+            strip_redundant_demo_default_spacing(&mut dom, root, (None, None));
+            assert_eq!(
+                dom.descendants(root, Some(&W::spacing_el())).len(),
+                usize::from(kept)
+            );
+            assert_eq!(dom.value(root), text);
+        }
+    }
+
+    #[test]
+    fn an_equal_alignment_change_is_attributed_once_and_never_claims_source_history() {
+        for status in ["live", "ins", "del"] {
+            for source_owns in [false, true] {
+                for obstruction in [
+                    "",
+                    "<w:rPr><w:b/></w:rPr>",
+                    "<w:pPrChange w:id='9' w:author='Prior editor'><w:pPr><w:jc w:val='left'/></w:pPr></w:pPrChange>",
+                ] {
+                    let props =
+                        format!("<w:jc w:val='right'/><w:spacing w:after='80'/>{obstruction}");
+                    let source = para(status, "Alignment ownership", &props) + TABLE;
+                    let (mut dom, root) = package(&source);
+                    let mut original = HashSet::new();
+                    if source_owns {
+                        original.insert(("Alignment ownership".into(), "right".into()));
+                    }
+                    let mut next = 42;
+                    ensure_empty_pprchange_on_eq_with_live_jc(
+                        &mut dom,
+                        root,
+                        &original,
+                        &settings(),
+                        &mut next,
+                    );
+                    let added = status == "live" && !source_owns && obstruction.is_empty();
+                    let history = if added {
+                        format!(
+                            "<w:pPrChange w:id='42' w:author='Boundary editor' w:date='{DATE}'><w:pPr/></w:pPrChange>"
+                        )
+                    } else {
+                        String::new()
+                    };
+                    expected(
+                        &dom,
+                        root,
+                        &(para(status, "Alignment ownership", &format!("{props}{history}"))
+                            + TABLE),
+                        "equal alignment attribution",
+                    );
+                    assert_eq!(next, 42 + u32::from(added));
+                    let once = semantic(&dom, root);
+                    ensure_empty_pprchange_on_eq_with_live_jc(
+                        &mut dom,
+                        root,
+                        &original,
+                        &settings(),
+                        &mut next,
+                    );
+                    assert_eq!(semantic(&dom, root), once);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_final_empty_spacing_history_has_one_source_owner() {
+        for content in [
+            "",
+            "<w:r><w:t>Authored content</w:t></w:r>",
+            "<w:ins w:id='7'><w:r><w:t>Inserted content</w:t></w:r></w:ins>",
+        ] {
+            for other in [
+                "",
+                "<w:keepNext/>",
+                "<w:pPrChange w:id='9' w:author='Prior editor'><w:pPr><w:spacing w:after='400'/></w:pPr></w:pPrChange>",
+            ] {
+                for same_revised in [false, true] {
+                    let spacing = "<w:spacing w:before='120' w:after='80'/>";
+                    let p = format!("<w:p><w:pPr>{spacing}<w:rPr/>{other}</w:pPr>{content}</w:p>");
+                    let body =
+                        format!("{TABLE}{p}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr>");
+                    let (mut dom, root) = package(&body);
+                    let attrs = vec![
+                        (W::URI.into(), "after".into(), "80".into()),
+                        (W::URI.into(), "before".into(), "120".into()),
+                    ];
+                    let mut next = 42;
+                    trailing_empty_spacing_to_pprchange(
+                        &mut dom,
+                        root,
+                        same_revised.then_some(attrs.as_slice()),
+                        &settings(),
+                        &mut next,
+                    );
+                    let added = content.is_empty() && other.is_empty() && !same_revised;
+                    let oracle = if added {
+                        format!(
+                            "{TABLE}<w:p><w:pPr><w:pPrChange w:id='42' w:author='Boundary editor' w:date='{DATE}'><w:pPr>{spacing}</w:pPr></w:pPrChange></w:pPr></w:p><w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr>"
+                        )
+                    } else {
+                        body
+                    };
+                    expected(&dom, root, &oracle, "final empty spacing source ownership");
+                    assert_eq!(next, 42 + u32::from(added));
+                    let once = semantic(&dom, root);
+                    trailing_empty_spacing_to_pprchange(
+                        &mut dom,
+                        root,
+                        same_revised.then_some(attrs.as_slice()),
+                        &settings(),
+                        &mut next,
+                    );
+                    assert_eq!(semantic(&dom, root), once);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn preexisting_insertions_keep_innermost_provenance_across_real_wrappers() {
+        for wrapper in ["plain", "hyperlink", "sdt", "smartTag"] {
+            for outer_author in [None, Some("Outer editor")] {
+                for outer_date in [None, Some(DATE)] {
+                    let provenance = format!(
+                        "{}{}",
+                        outer_author
+                            .map(|a| format!(" w:author='{a}'"))
+                            .unwrap_or_default(),
+                        outer_date
+                            .map(|d| format!(" w:date='{d}'"))
+                            .unwrap_or_default()
+                    );
+                    let own = format!("<w:r>{FORMAT}<w:t>Outer owned text</w:t></w:r>");
+                    let inner = format!(
+                        "<w:ins w:id='21' w:author='Inner editor' w:date='{DATE}'><w:r>{FORMAT}<w:t>Inner owned text</w:t></w:r></w:ins>"
+                    );
+                    let deletion = format!(
+                        "<w:del w:id='22' w:author='Earlier editor' w:date='{DATE}'><w:r>{FORMAT}<w:delText>Historical deletion</w:delText></w:r></w:del>"
+                    );
+                    let payload = format!("{own}{inner}{deletion}");
+                    let wrapped = match wrapper {
+                        "hyperlink" => format!("<w:hyperlink r:id='rId7'>{payload}</w:hyperlink>"),
+                        "sdt" => format!(
+                            "<w:sdt><w:sdtPr><w:tag w:val='Owned clause'/><w:id w:val='31'/></w:sdtPr><w:sdtContent>{payload}</w:sdtContent></w:sdt>"
+                        ),
+                        "smartTag" => format!(
+                            "<w:smartTag w:uri='urn:contract' w:element='clause'>{payload}</w:smartTag>"
+                        ),
+                        _ => payload,
+                    };
+                    let source = format!(
+                        "<w:p><w:pPr><w:keepNext/><w:rPr><w:ins w:id='18'{provenance}/></w:rPr></w:pPr><w:ins w:id='20'{provenance}>{wrapped}</w:ins></w:p>{TABLE}"
+                    );
+                    let (mut dom, root) = package(&source);
+                    let body = dom.element(root, &W::body()).unwrap();
+                    let table_before = semantic(&dom, dom.element(body, &W::tbl()).unwrap());
+                    flatten_tracked_insertions_stamped(&mut dom, body);
+                    let runs = dom.descendants(root, Some(&W::r()));
+                    for &r in &runs {
+                        let text = dom.value(r);
+                        if text == "Outer owned text" || text == "Inner owned text" {
+                            assert_eq!(dom.attribute(r, &PT::name("PreIns")), Some("1"));
+                            assert_eq!(
+                                dom.attribute(r, &PT::name("PreInsAuthor")),
+                                if text == "Inner owned text" {
+                                    Some("Inner editor")
+                                } else {
+                                    outer_author
+                                }
+                            );
+                            assert_eq!(
+                                dom.attribute(r, &PT::name("PreInsDate")),
+                                if text == "Inner owned text" {
+                                    Some(DATE)
+                                } else {
+                                    outer_date
+                                }
+                            );
+                            expected_run_format(&dom, r);
+                        } else {
+                            assert!(dom.attribute(r, &PT::name("PreIns")).is_none());
+                        }
+                    }
+                    assert_eq!(dom.descendants(root, Some(&W::ins())).len(), 0);
+                    let historical = dom.descendants(root, Some(&W::del()))[0];
+                    assert_eq!(
+                        dom.attribute(historical, &W::author()),
+                        Some("Earlier editor")
+                    );
+                    assert_eq!(dom.value(historical), "Historical deletion");
+                    assert_eq!(
+                        semantic(&dom, dom.element(body, &W::tbl()).unwrap()),
+                        table_before
+                    );
+                    stable(&mut dom, root, |d, r| {
+                        let body = d.element(r, &W::body()).unwrap();
+                        flatten_tracked_insertions_stamped(d, body);
+                    });
+                }
+            }
+        }
+    }
+    fn expected_run_format(dom: &Dom, run: NodeId) {
+        let (oracle, root) = package(&format!("<w:p><w:r>{FORMAT}<w:t>x</w:t></w:r></w:p>"));
+        assert_eq!(
+            semantic(dom, dom.element(run, &W::r_pr()).unwrap()),
+            semantic(&oracle, oracle.descendants(root, Some(&W::r_pr()))[0])
+        );
+    }
+
+    #[test]
+    fn a_pending_insertion_splits_deleted_siblings_without_stealing_their_payloads() {
+        for placement in [0usize, 1, 2] {
+            for outer in ["del", "ins", "live"] {
+                for metadata in [false, true] {
+                    let mut runs = Vec::new();
+                    for index in 0..3 {
+                        let stamp = if index == placement {
+                            format!(
+                                " pt:PreIns='1'{}",
+                                if metadata {
+                                    format!(
+                                        " pt:PreInsAuthor='Original editor' pt:PreInsDate='{DATE}'"
+                                    )
+                                } else {
+                                    String::new()
+                                }
+                            )
+                        } else {
+                            String::new()
+                        };
+                        let leaf = if outer == "del" { "delText" } else { "t" };
+                        runs.push(format!(
+                            "<w:r{stamp}>{FORMAT}<w:{leaf}>Source payload {index}</w:{leaf}></w:r>"
+                        ));
+                    }
+                    let content = runs.concat();
+                    let content = if outer == "live" {
+                        content
+                    } else {
+                        format!(
+                            "<w:{outer} w:id='17' w:author='Comparison editor' w:date='{DATE}'>{content}</w:{outer}>"
+                        )
+                    };
+                    let (mut dom, root) = package(&format!(
+                        "<w:p><w:pPr><w:keepNext/></w:pPr>{content}</w:p>{TABLE}"
+                    ));
+                    let mut next = 42;
+                    convert_stamped_preins(&mut dom, root, &settings(), &mut next);
+                    let ordered = dom
+                        .descendants(root, Some(&W::r()))
+                        .into_iter()
+                        .filter(|&r| dom.value(r).starts_with("Source payload"))
+                        .collect::<Vec<_>>();
+                    assert_eq!(ordered.len(), 3);
+                    for (index, &r) in ordered.iter().enumerate() {
+                        assert_eq!(dom.value(r), format!("Source payload {index}"));
+                        expected_run_format(&dom, r);
+                        let parent = dom.parent(r).unwrap();
+                        if index == placement {
+                            assert!(dom.name_is(parent, &W::ins()));
+                            assert_eq!(
+                                dom.attribute(parent, &W::author()),
+                                Some(if metadata {
+                                    "Original editor"
+                                } else if outer == "ins" {
+                                    "Comparison editor"
+                                } else {
+                                    "Boundary editor"
+                                })
+                            );
+                            assert_eq!(dom.attribute(parent, &W::date()), Some(DATE));
+                            assert!(dom.descendants(r, Some(&W::del_text())).is_empty());
+                            assert!(
+                                dom.attributes(r)
+                                    .iter()
+                                    .all(|(name, _)| name.namespace_name() != PT::URI)
+                            );
+                        } else if outer == "del" {
+                            assert!(dom.name_is(parent, &W::del()));
+                            assert_eq!(
+                                dom.attribute(parent, &W::author()),
+                                Some("Comparison editor")
+                            );
+                        }
+                    }
+                    let once = semantic(&dom, root);
+                    let end = next;
+                    convert_stamped_preins(&mut dom, root, &settings(), &mut next);
+                    assert_eq!(semantic(&dom, root), once);
+                    assert_eq!(next, end);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn move_simplification_changes_only_lifetime_names_and_range_markers() {
+        for direction in ["moveFrom", "moveTo"] {
+            for nested in [false, true] {
+                for metadata in [false, true] {
+                    let attrs = if metadata {
+                        format!(" w:id='17' w:author='Move editor' w:date='{DATE}'")
+                    } else {
+                        " w:id='17' w:author='Move editor'".into()
+                    };
+                    let leaf = if direction == "moveFrom" {
+                        "delText"
+                    } else {
+                        "t"
+                    };
+                    let payload = format!(
+                        "<w:r w:rsidR='00112233'>{FORMAT}<w:{leaf} xml:space='preserve'> Moved source payload </w:{leaf}></w:r>"
+                    );
+                    let wrapper = if nested {
+                        format!(
+                            "<w:smartTag w:uri='urn:contract' w:element='clause'>{payload}</w:smartTag>"
+                        )
+                    } else {
+                        payload
+                    };
+                    let markers = "<w:moveFromRangeStart w:id='17' w:name='MoveClause'/><w:moveFromRangeEnd w:id='17'/><w:moveToRangeStart w:id='18' w:name='MoveClause'/><w:moveToRangeEnd w:id='18'/>";
+                    let input = format!(
+                        "<w:p w:rsidP='AABBCCDD'><w:pPr><w:keepNext/><w:spacing w:after='80'/></w:pPr>{markers}<w:{direction}{attrs}>{wrapper}</w:{direction}><w:r><w:t>Untouched anchor</w:t></w:r></w:p>{TABLE}"
+                    );
+                    let (mut dom, root) = package(&input);
+                    let before = semantic(&dom, root);
+                    let result = simplify_move_markup_to_del_ins(&mut dom, root);
+                    let lifetime = if direction == "moveFrom" {
+                        "del"
+                    } else {
+                        "ins"
+                    };
+                    let oracle = format!(
+                        "<w:p w:rsidP='AABBCCDD'><w:pPr><w:keepNext/><w:spacing w:after='80'/></w:pPr><w:{lifetime}{attrs}>{wrapper}</w:{lifetime}><w:r><w:t>Untouched anchor</w:t></w:r></w:p>{TABLE}"
+                    );
+                    expected(
+                        &dom,
+                        result,
+                        &oracle,
+                        "move lifetime conversion preserves complete descendants and geometry",
+                    );
+                    assert_eq!(
+                        semantic(&dom, root),
+                        before,
+                        "functional transform does not consume its input"
+                    );
+                    let second = simplify_move_markup_to_del_ins(&mut dom, result);
+                    assert_eq!(semantic(&dom, second), semantic(&dom, result));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn equal_shared_labels_cannot_cross_opaque_or_historical_run_ownership() {
+        let old = "<w:del w:id='17' w:author='Source editor'><w:r><w:rPr><w:b/></w:rPr><w:delText>Lvl 1 – a</w:delText></w:r></w:del>";
+        let plain = "<w:ins w:id='19' w:author='Source editor'><w:r><w:rPr><w:b/></w:rPr><w:t>a </w:t></w:r></w:ins>";
+        for obstacle in [
+            "nested-hyperlink",
+            "nested-control",
+            "foreign-property",
+            "historical-property",
+            "drawing",
+            "tab",
+            "break",
+            "intermediate-live",
+            "alternating-lifetimes",
+            "different-property-untracked",
+            "trailing-original-space",
+            "different-casing",
+            "long-label",
+            "nonmatching-label",
+            "short-original",
+        ] {
+            let mut inserted = plain.to_string();
+            let mut deleted = old.to_string();
+            let mut tracking = true;
+            match obstacle {
+                "nested-hyperlink"=>inserted=format!("<w:hyperlink r:id='rId7'>{plain}</w:hyperlink>"),
+                "nested-control"=>inserted=format!("<w:sdt><w:sdtPr><w:tag w:val='Protected label'/><w:id w:val='31'/></w:sdtPr><w:sdtContent>{plain}</w:sdtContent></w:sdt>"),
+                "foreign-property"=>inserted=plain.replace("<w:b/>","<x:metadata xmlns:x='urn:contract' x:owner='A'/>") ,
+                "historical-property"=>inserted=plain.replace("<w:b/>","<w:rPrChange w:id='7' w:author='Prior editor'><w:rPr><w:i/></w:rPr></w:rPrChange>"),
+                "drawing"=>inserted=plain.replace("<w:t>","<w:drawing><wp:inline xmlns:wp='http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing'><wp:extent cx='127000' cy='127000'/><wp:docPr id='41' name='Owned graphic'/><a:graphic xmlns:a='http://schemas.openxmlformats.org/drawingml/2006/main'><a:graphicData uri='urn:boundary-graphic'/></a:graphic></wp:inline></w:drawing><w:t>"),
+                "tab"=>inserted=plain.replace("<w:t>","<w:tab/><w:t>"),
+                "break"=>inserted=plain.replace("<w:t>","<w:br/><w:t>"),
+                "intermediate-live"=>inserted=plain.to_string()+"<w:r><w:t>Authored anchor</w:t></w:r>",
+                "alternating-lifetimes"=>inserted=plain.to_string()+&old.replace("Lvl 1 – a","Original prefix ")+plain,
+                "different-property-untracked"=>{inserted=plain.replace("<w:b/>","<w:i/>");tracking=false;},
+                "trailing-original-space"=>deleted=old.replace("Lvl 1 – a","Lvl 1 – a "),
+                "different-casing"=>deleted=old.replace("Lvl 1 – a","Lvl 1 – A"),
+                "long-label"=>{inserted=plain.replace("a ","item ");deleted=old.replace("Lvl 1 – a","Lvl 1 – item");},
+                "nonmatching-label"=>deleted=old.replace("Lvl 1 – a","Lvl 1 – b"),
+                "short-original"=>deleted=old.replace("Lvl 1 – a","Item a"),
+                _=>unreachable!(),
+            }
+            let body = format!(
+                "<w:p><w:pPr><w:keepNext/><w:rPr><w:del w:id='11' w:author='Paragraph owner'/></w:rPr></w:pPr>{inserted}{deleted}</w:p>{TABLE}"
+            );
+            let (mut dom, root) = package(&body);
+            let p = dom.descendants(root, Some(&W::p()))[0];
+            let before = semantic(&dom, root);
+            let mut configured = settings();
+            configured.detect_format_changes = tracking;
+            mesh_short_label_shared_eq_with_settings(&mut dom, p, &configured);
+            assert_eq!(
+                semantic(&dom, root),
+                before,
+                "opaque or unmatched label owner must remain unchanged: {obstacle}"
+            );
+        }
+    }
+
+    #[test]
+    fn whitespace_layout_before_a_deleted_block_is_not_empty_content() {
+        // Each preserved fixture corresponds to a documented Word exception:
+        // layout payloads, inserted structures after a blank, short-title
+        // spacers, and three-blank title-page/wholesale runs.
+        for payload in [
+            "<w:br w:type='page'/>",
+            "<w:drawing><wp:inline xmlns:wp='http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing'><wp:extent cx='127000' cy='127000'/><wp:docPr id='41' name='Owned graphic'/><a:graphic xmlns:a='http://schemas.openxmlformats.org/drawingml/2006/main'><a:graphicData uri='urn:boundary-graphic'/></a:graphic></wp:inline></w:drawing>",
+            "<w:pict><v:rect xmlns:v='urn:schemas-microsoft-com:vml' id='OwnedRect' style='width:12pt;height:12pt'/></w:pict>",
+            "<w:object><v:shape xmlns:v='urn:schemas-microsoft-com:vml' id='OwnedObject' style='width:12pt;height:12pt'/></w:object>",
+        ] {
+            let spacer = format!(
+                "<w:p><w:pPr><w:spacing w:after='80'/><w:rPr><w:ins w:id='3' w:author='Layout editor'/></w:rPr></w:pPr><w:ins w:id='4' w:author='Layout editor'><w:r>{FORMAT}{payload}</w:r></w:ins></w:p>"
+            );
+            let deleted = marked(
+                "del",
+                "Original substantive contract obligation remains valid",
+                "<w:pStyle w:val='BodyText'/>",
+            );
+            let input = spacer + &deleted + TABLE;
+            let (mut dom, root) = package(&input);
+            let before = semantic(&dom, root);
+            fold_whitespace_pure_ins_into_following_pure_del(&mut dom, root);
+            assert_eq!(
+                semantic(&dom, root),
+                before,
+                "layout {payload} must keep independent lifetime and source properties"
+            );
+        }
+        for fixture in [
+            "inserted-block-after",
+            "short-title",
+            "wholesale-three-blanks",
+            "title-three-blanks",
+        ] {
+            let blank = "<w:p><w:pPr><w:spacing w:after='80'/><w:rPr><w:ins w:id='3' w:author='Layout editor'/></w:rPr></w:pPr></w:p>";
+            let input = match fixture {
+                "inserted-block-after" => {
+                    blank.to_owned()
+                        + &marked(
+                            "del",
+                            "Original substantive contract obligation remains valid",
+                            "",
+                        )
+                        + &marked("ins", "Later inserted structure", "")
+                        + TABLE
+                }
+                "short-title" => {
+                    blank.to_owned()
+                        + &marked("del", "Contract Review", "<w:pStyle w:val='Title'/>")
+                        + TABLE
+                }
+                "wholesale-three-blanks" => {
+                    blank.repeat(3)
+                        + &marked(
+                            "del",
+                            "Original substantive contract obligation remains valid",
+                            "",
+                        )
+                        + TABLE
+                }
+                _ => {
+                    marked("ins", "Revised cover date", "")
+                        + &blank.repeat(3)
+                        + &marked(
+                            "del",
+                            "Original substantive contract obligation remains valid",
+                            "",
+                        )
+                        + TABLE
+                }
+            };
+            let (mut dom, root) = package(&input);
+            let before = semantic(&dom, root);
+            fold_whitespace_pure_ins_into_following_pure_del(&mut dom, root);
+            assert_eq!(semantic(&dom, root), before, "{fixture}");
+        }
+    }
+
+    #[test]
+    fn list_layout_contamination_does_not_erase_real_list_or_terminal_ownership() {
+        let list_space = "<w:spacing w:after='0' w:line='240' w:lineRule='auto'/>";
+        for donor in [true, false] {
+            for structure in [
+                "",
+                "<w:pStyle w:val='ListParagraph'/>",
+                "<w:numPr><w:ilvl w:val='1'/><w:numId w:val='7'/></w:numPr>",
+                "<w:pStyle w:val='BodyText'/>",
+            ] {
+                for alignment in ["both", "distribute", "center", "right"] {
+                    let donor_props = if donor {
+                        list_space
+                    } else {
+                        "<w:spacing w:line='360' w:lineRule='exact'/>"
+                    };
+                    let first = marked("ins", "List donor", donor_props);
+                    let props = format!("{structure}{list_space}<w:jc w:val='{alignment}'/>");
+                    let mid = marked("del", "Independent original paragraph", &props);
+                    let last = marked("del", "Terminal original paragraph", &props);
+                    let (mut dom, root) = package(&(first.clone() + &mid + &last));
+                    strip_list_layout_from_mid_pure_del(&mut dom, root);
+                    let protected = !donor
+                        || structure.contains("ListParagraph")
+                        || structure.contains("numPr");
+                    let middle = if protected {
+                        mid
+                    } else {
+                        marked(
+                            "del",
+                            "Independent original paragraph",
+                            &format!(
+                                "{structure}{}",
+                                if alignment == "both" || alignment == "distribute" {
+                                    String::new()
+                                } else {
+                                    format!("<w:jc w:val='{alignment}'/>")
+                                }
+                            ),
+                        )
+                    };
+                    expected(
+                        &dom,
+                        root,
+                        &(first + &middle + &last),
+                        "list contamination versus authored structure/terminal carrier",
+                    );
+                    stable(&mut dom, root, strip_list_layout_from_mid_pure_del);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn faithful_merged_closing_carrier_records_both_complete_property_sources() {
+        for tracking in [false, true] {
+            for lifetime in ["del", "ins", "live"] {
+                for content in ["both", "original", "revised"] {
+                    for same in [false, true] {
+                        let old_props =
+                            "<w:pStyle w:val='BodyText'/><w:keepNext/><w:spacing w:after='80'/>";
+                        let new_props = if same {
+                            old_props
+                        } else {
+                            "<w:pStyle w:val='Heading1'/><w:keepLines/><w:spacing w:before='240'/>"
+                        };
+                        let mark = if lifetime == "live" {
+                            String::new()
+                        } else {
+                            format!(
+                                "<w:rPr><w:{lifetime} w:id='18' w:author='Source editor'/></w:rPr>"
+                            )
+                        };
+                        let texts = match content {
+                            "both" => {
+                                run("ins", "Revised owned payload")
+                                    + &run("del", "Original owned payload")
+                            }
+                            "original" => run("del", "Original owned payload"),
+                            _ => run("ins", "Revised owned payload"),
+                        };
+                        let input = format!(
+                            "{TABLE}<w:p><w:pPr>{old_props}{mark}</w:pPr>{texts}</w:p><w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr>"
+                        );
+                        let (mut dom, root) = package(&input);
+                        let source=dom.parse_xdocument(&format!("<w:source xmlns:w='{}'><w:pPr>{old_props}</w:pPr><w:pPr>{new_props}</w:pPr></w:source>",W::URI));
+                        let source_root = dom.root(source).unwrap();
+                        let property_sources = dom.elements(source_root, Some(&W::p_pr()));
+                        let before = semantic(&dom, source_root);
+                        let mut configured = settings();
+                        configured.detect_format_changes = tracking;
+                        let mut next = 42;
+                        merged_closing_carrier_takes_source_properties(
+                            &mut dom,
+                            root,
+                            Some(property_sources[0]),
+                            Some(property_sources[1]),
+                            &configured,
+                            &mut next,
+                        );
+                        let repair = tracking && lifetime == "del" && content == "both" && !same;
+                        let oracle = if repair {
+                            format!(
+                                "{TABLE}<w:p><w:pPr>{mark}{new_props}<w:pPrChange w:id='42' w:author='Boundary editor' w:date='{DATE}'><w:pPr>{old_props}</w:pPr></w:pPrChange></w:pPr>{texts}</w:p><w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr>"
+                            )
+                        } else {
+                            input
+                        };
+                        expected(
+                            &dom,
+                            root,
+                            &oracle,
+                            "faithful closing property owner and setting boundary",
+                        );
+                        assert_eq!(next, 42 + u32::from(repair));
+                        assert_eq!(semantic(&dom, source_root), before);
+                        let once = semantic(&dom, root);
+                        merged_closing_carrier_takes_source_properties(
+                            &mut dom,
+                            root,
+                            Some(property_sources[0]),
+                            Some(property_sources[1]),
+                            &configured,
+                            &mut next,
+                        );
+                        assert_eq!(
+                            semantic(&dom, root),
+                            once,
+                            "saved complete original is not replaced on a second pass"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_short_list_label_uses_only_an_empty_deleted_carrier_with_continuation() {
+        let numbered = "<w:numPr><w:ilvl w:val='0'/><w:numId w:val='7'/></w:numPr>";
+        for (label, folds) in [
+            ("a", true),
+            ("Item two", true),
+            ("Three separate words", false),
+            ("", false),
+        ] {
+            for empty in [true, false] {
+                for continuation in [true, false] {
+                    let first = marked("ins", label, numbered);
+                    let old_props = "<w:spacing w:after='80'/><w:rPr><w:del w:id='18' w:author='Source editor' w:date='2026-01-02T03:04:05Z'/></w:rPr>";
+                    let middle = if empty {
+                        format!("<w:p><w:pPr>{old_props}</w:pPr></w:p>")
+                    } else {
+                        marked("del", "Original owned text", "<w:spacing w:after='80'/>")
+                    };
+                    let last = if continuation {
+                        marked("del", "Later original owned text", "")
+                    } else {
+                        para("live", "Unchanged continuation", "")
+                    };
+                    let input = first.clone() + &middle + &last + TABLE;
+                    let (mut dom, root) = package(&input);
+                    fold_short_list_label_into_empty_pure_del(&mut dom, root);
+                    let oracle = if folds && empty && continuation {
+                        format!(
+                            "<w:p><w:pPr>{old_props}</w:pPr>{}</w:p>{last}{TABLE}",
+                            run("ins", label)
+                        )
+                    } else {
+                        input
+                    };
+                    expected(
+                        &dom,
+                        root,
+                        &oracle,
+                        "short label and independently deleted empty mark",
+                    );
+                    stable(&mut dom, root, fold_short_list_label_into_empty_pure_del);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn historical_legal_numbering_uses_the_donor_id_and_keeps_authored_old_level() {
+        for (text, legal) in [
+            ("14.11Survival obligations", true),
+            (" 3.01Continuation", true),
+            ("Num 4", true),
+            ("Num 4.", true),
+            ("1. Item", false),
+            ("Num A", false),
+            ("Ordinary original paragraph", false),
+        ] {
+            for donor in [true, false] {
+                for protected in [false, true] {
+                    for old_level in [None, Some("2")] {
+                        let source_num =
+                            "<w:numPr><w:ilvl w:val='0'/><w:numId w:val='7'/></w:numPr>";
+                        let source = marked(
+                            "ins",
+                            if donor {
+                                "a"
+                            } else {
+                                "Several revised heading words"
+                            },
+                            source_num,
+                        );
+                        let level = old_level
+                            .map(|level| format!("<w:ilvl w:val='{level}'/>"))
+                            .unwrap_or_default();
+                        let parked = format!(
+                            "<w:pPrChange w:id='11' w:author='Original property editor' w:date='{DATE}'><w:pPr><w:pStyle w:val='StandardL1'/><w:numPr>{level}<w:numId w:val='0'/></w:numPr></w:pPr></w:pPrChange>"
+                        );
+                        let live = if protected {
+                            "<w:pStyle w:val='ListParagraph'/>"
+                        } else {
+                            "<w:keepNext/>"
+                        };
+                        let target = marked("del", text, &format!("{live}{parked}"));
+                        let input = source.clone() + &target + TABLE;
+                        let (mut dom, root) = package(&input);
+                        promote_live_numpr_on_pure_d_from_pprchange(&mut dom, root);
+                        let repaired = donor && legal && !protected;
+                        let oracle = if repaired {
+                            let adopted = format!(
+                                "<w:numPr><w:ilvl w:val='{}'/><w:numId w:val='7'/></w:numPr>",
+                                old_level.unwrap_or("0")
+                            );
+                            source
+                                + &marked("del", text, &format!("{adopted}{live}{parked}"))
+                                + TABLE
+                        } else {
+                            input
+                        };
+                        expected(
+                            &dom,
+                            root,
+                            &oracle,
+                            "legal numbering donor versus parked original properties",
+                        );
+                        stable(&mut dom, root, promote_live_numpr_on_pure_d_from_pprchange);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn list_cluster_reorders_only_the_observed_nested_word_family() {
+        // Literal expected index orders are the Word list-family contract:
+        // source I order and source D order remain individually unchanged.
+        type ListClusterCase<'a> = (&'a [&'a str], &'a [&'a str], &'a [usize], &'a [usize]);
+        let cases: &[ListClusterCase<'_>] = &[
+            (
+                &["Heading", "a", "b"],
+                &["0", "1", "0"],
+                &[0, 3, 4, 1, 2, 5],
+                &[0, 1, 2, 3, 4, 5],
+            ),
+            (
+                &["Heading", "a", "b"],
+                &["0", "2", "0"],
+                &[0, 3, 4, 1, 2, 5],
+                &[0, 1, 2, 3, 4, 5],
+            ),
+            (
+                &["Heading", "a", "b"],
+                &["0", "0", "0"],
+                &[0, 1, 2, 3, 4, 5],
+                &[0, 1, 2, 3, 4, 5],
+            ),
+            (
+                &["Heading", "a", "b"],
+                &["1", "1", "1"],
+                &[0, 1, 2, 3, 4, 5],
+                &[0, 1, 2, 3, 4, 5],
+            ),
+            (
+                &["Heading", "Four separate revised heading words", "b"],
+                &["0", "1", "0"],
+                &[0, 1, 2, 3, 4, 5],
+                &[0, 1, 2, 3, 4, 5],
+            ),
+            (
+                &["test", "test", "test"],
+                &["0", "1", "0"],
+                &[0, 1, 2, 3, 4, 5],
+                &[0, 1, 2, 3, 4, 5],
+            ),
+        ];
+        for &(inserted, levels, order, original) in cases {
+            for blank in [false, true] {
+                let mut blocks = inserted
+                    .iter()
+                    .map(|text| marked("ins", text, "<w:pStyle w:val='ListParagraph'/>"))
+                    .collect::<Vec<_>>();
+                for (index, level) in levels.iter().enumerate() {
+                    blocks.push(marked(
+                        "del",
+                        &format!("Original list item {index}"),
+                        &format!(
+                            "<w:numPr><w:ilvl w:val='{level}'/><w:numId w:val='7'/></w:numPr>"
+                        ),
+                    ));
+                }
+                if blank {
+                    blocks.push("<w:p><w:pPr><w:spacing w:after='80'/></w:pPr></w:p>".into());
+                }
+                let input =
+                    blocks.concat() + "<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr>";
+                let (mut dom, root) = package(&input);
+                let old_lifetimes = dom
+                    .descendants(root, Some(&W::del()))
+                    .into_iter()
+                    .map(|node| semantic(&dom, node))
+                    .collect::<Vec<_>>();
+                let new_lifetimes = dom
+                    .descendants(root, Some(&W::ins()))
+                    .into_iter()
+                    .map(|node| semantic(&dom, node))
+                    .collect::<Vec<_>>();
+                interleave_list_cluster_after_coalesce(&mut dom, root);
+                let indices = if order == original { original } else { order };
+                let mut oracle = indices
+                    .iter()
+                    .map(|&index| blocks[index].as_str())
+                    .collect::<String>();
+                if blank {
+                    oracle.push_str(blocks.last().unwrap());
+                }
+                oracle.push_str("<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr>");
+                expected(
+                    &dom,
+                    root,
+                    &oracle,
+                    "nested Word interleave versus unrelated source family",
+                );
+                assert_eq!(
+                    dom.descendants(root, Some(&W::del()))
+                        .into_iter()
+                        .map(|node| semantic(&dom, node))
+                        .collect::<Vec<_>>(),
+                    old_lifetimes
+                );
+                assert_eq!(
+                    dom.descendants(root, Some(&W::ins()))
+                        .into_iter()
+                        .map(|node| semantic(&dom, node))
+                        .collect::<Vec<_>>(),
+                    new_lifetimes
+                );
+                stable(&mut dom, root, interleave_list_cluster_after_coalesce);
+            }
+        }
+    }
+
+    #[test]
+    fn a_stranded_mark_can_be_copied_without_deleting_its_layout_shell() {
+        for props in [
+            "",
+            "<w:pStyle w:val='BodyText'/>",
+            "<w:spacing w:after='80'/>",
+        ] {
+            for shell_extra in ["", "<w:b/>"] {
+                for shell_content in ["", "<w:r><w:t>Independent live text</w:t></w:r>"] {
+                    let mark = format!(
+                        "<w:rPr>{shell_extra}<w:del w:id='21' w:author='Original mark owner' w:date='{DATE}'/></w:rPr>"
+                    );
+                    let content = para("del", "Original owned paragraph", props);
+                    let shell = format!("<w:p><w:pPr>{mark}</w:pPr>{shell_content}</w:p>");
+                    let input = content.clone() + &shell + TABLE;
+                    let (mut dom, root) = package(&input);
+                    restamp_stranded_del_mark_onto_del_only_paragraph(&mut dom, root);
+                    let oracle =
+                        if props.is_empty() && shell_extra.is_empty() && shell_content.is_empty() {
+                            para("del", "Original owned paragraph", &mark) + &shell + TABLE
+                        } else {
+                            input
+                        };
+                    expected(
+                        &dom,
+                        root,
+                        &oracle,
+                        "stranded pilcrow clone preserves content and source shell",
+                    );
+                    stable(
+                        &mut dom,
+                        root,
+                        restamp_stranded_del_mark_onto_del_only_paragraph,
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_terminal_property_history_replaces_the_mark_but_keeps_its_formats() {
+        for status in ["del", "mix", "ins"] {
+            for history in [false, true] {
+                for format in ["", "<w:b/><w:color w:val='123456'/>"] {
+                    let saved = if history {
+                        format!(
+                            "<w:pPrChange w:id='11' w:author='Original layout owner' w:date='{DATE}'><w:pPr><w:spacing w:after='400'/></w:pPr></w:pPrChange>"
+                        )
+                    } else {
+                        String::new()
+                    };
+                    let mark = format!(
+                        "<w:rPr>{format}<w:del w:id='18' w:author='Original mark owner'/></w:rPr>"
+                    );
+                    let texts = if status == "mix" {
+                        run("ins", "Revised owned text") + &run("del", "Original owned text")
+                    } else {
+                        run(status, "Owned text")
+                    };
+                    let source = format!(
+                        "{TABLE}<w:p><w:pPr><w:keepNext/>{mark}{saved}</w:pPr>{texts}</w:p>"
+                    );
+                    let (mut dom, root) = package(&source);
+                    strip_last_pure_del_mark_when_pprchange(&mut dom, root);
+                    // A pure-I payload with an explicit D mark is MIX and
+                    // owns the same terminal property-history rule.
+                    let eligible = history;
+                    let kept_mark = if eligible {
+                        if format.is_empty() {
+                            String::new()
+                        } else {
+                            format!("<w:rPr>{format}</w:rPr>")
+                        }
+                    } else {
+                        mark
+                    };
+                    expected(
+                        &dom,
+                        root,
+                        &format!(
+                            "{TABLE}<w:p><w:pPr><w:keepNext/>{kept_mark}{saved}</w:pPr>{texts}</w:p>"
+                        ),
+                        "terminal history retains complete current/old formatting",
+                    );
+                    stable(&mut dom, root, strip_last_pure_del_mark_when_pprchange);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn title_page_empty_relocation_is_scoped_to_an_authored_cover_tail() {
+        let blank = format!(
+            "<w:p><w:pPr><w:spacing w:after='80'/><w:rPr><w:ins w:id='18' w:author='Original blank owner' w:date='{DATE}'/></w:rPr></w:pPr></w:p>"
+        );
+        let bare = "<w:p><w:pPr><w:spacing w:after='80'/></w:pPr></w:p>";
+        for (cover, authored_cover) in [
+            ("Prepared for client", true),
+            ("client@example.test", true),
+            ("January release", true),
+            ("November release", true),
+            ("Version 2040", true),
+            ("Revision 2026", true),
+            ("Serial 1234", true),
+            ("Ordinary heading", false),
+        ] {
+            for count in [5usize, 6] {
+                for later_owner in [false, true] {
+                    let anchor = marked("ins", cover, "<w:jc w:val='center'/>");
+                    let deleted = marked("del", "Original cover text", "");
+                    let later = if later_owner {
+                        para("live", "Independent trailing paragraph", "<w:keepNext/>")
+                    } else {
+                        String::new()
+                    };
+                    let input = anchor.clone() + &blank.repeat(count) + &deleted + &later + TABLE;
+                    let (mut dom, root) = package(&input);
+                    relocate_title_page_last_empty_after_pure_dels(&mut dom, root);
+                    let oracle = if authored_cover && count == 6 && !later_owner {
+                        anchor + &blank.repeat(5) + &deleted + bare + TABLE
+                    } else {
+                        input
+                    };
+                    expected(
+                        &dom,
+                        root,
+                        &oracle,
+                        "cover-only blank relocation retains independently owned trailing layout",
+                    );
+                    stable(
+                        &mut dom,
+                        root,
+                        relocate_title_page_last_empty_after_pure_dels,
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_short_title_mesh_cannot_consume_foreign_revision_provenance_or_unrelated_titles() {
+        for (inserted, deleted) in [
+            ("Distinct revised violet harbor", "Original quartz meadow"),
+            ("This document and document repeats", "Original document"),
+            (
+                "Long revised title has seven separate words",
+                "Original document",
+            ),
+        ] {
+            for foreign in [false, true] {
+                let old = run("del", deleted);
+                let new = run("ins", inserted);
+                let old = if foreign {
+                    old.replace("Source editor", "Earlier editor")
+                } else {
+                    old
+                };
+                // These are distinct nonmatching, repeated-token, and
+                // long-title guards; the observed M377 positive shape stays
+                // covered by the existing fixture tests.
+                let input = format!("<w:p><w:pPr><w:keepNext/></w:pPr>{new}{old}</w:p>{TABLE}");
+                let (mut dom, root) = package(&input);
+                let before = semantic(&dom, root);
+                free_mesh_shared_title_token_in_mix(&mut dom, root);
+                assert_eq!(
+                    semantic(&dom, root),
+                    before,
+                    "{inserted}/{deleted}, foreign={foreign}"
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod finalizer_remaining_source_boundary_tests {
+    use super::*;
+
+    const DATE: &str = "2026-01-02T03:04:05Z";
+    const PROPS: &str = "<w:pStyle w:val='BodyText'/><w:spacing w:before='120' w:after='240'/><w:ind w:left='360'/>";
+    const FORMAT: &str = "<w:rPr><w:b/><w:color w:val='123456'/><w:lang w:val='en-US'/></w:rPr>";
+    const TABLE: &str = "<w:tbl><w:tblPr><w:tblW w:w='1800' w:type='dxa'/></w:tblPr><w:tblGrid><w:gridCol w:w='1800'/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w='1800' w:type='dxa'/></w:tcPr><w:p><w:r><w:t>Independent table payload</w:t></w:r></w:p></w:tc></w:tr></w:tbl>";
+
+    fn package(body: &str) -> (Dom, NodeId, NodeId) {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(
+            "<w:document xmlns:w='{}' xmlns:pt='{}'><w:body>{body}</w:body></w:document>",
+            W::URI,
+            PT::URI
+        ));
+        let root = dom.root(doc).expect("document");
+        let body = dom.element(root, &W::body()).expect("body");
+        (dom, root, body)
+    }
+    fn semantic(dom: &Dom, node: NodeId) -> String {
+        if !dom.is_element(node) {
+            return format!("text:{:?}", dom.text_value(node));
+        }
+        let mut attrs = dom
+            .attributes(node)
+            .into_iter()
+            .filter(|(name, _)| !dom.is_namespace_declaration(name))
+            .map(|(name, value)| {
+                (
+                    name.namespace_name().to_owned(),
+                    name.local_name().to_owned(),
+                    value,
+                )
+            })
+            .collect::<Vec<_>>();
+        attrs.sort();
+        format!(
+            "{:?}{attrs:?}[{}]",
+            dom.name(node),
+            dom.nodes(node)
+                .into_iter()
+                .map(|child| semantic(dom, child))
+                .collect::<String>()
+        )
+    }
+    fn run(kind: &str, text: &str, author: &str, date: &str) -> String {
+        let tag = if kind == "del" { "delText" } else { "t" };
+        let run = format!("<w:r>{FORMAT}<w:{tag} xml:space='preserve'>{text}</w:{tag}></w:r>");
+        if kind == "live" {
+            run
+        } else {
+            format!("<w:{kind} w:id='17' w:author='{author}' w:date='{date}'>{run}</w:{kind}>")
+        }
+    }
+    fn para(kind: &str, text: &str, props: &str) -> String {
+        format!(
+            "<w:p><w:pPr>{props}</w:pPr>{}</w:p>",
+            run(kind, text, "Boundary editor", DATE)
+        )
+    }
+    fn marked(
+        kind: &str,
+        text: &str,
+        props: &str,
+        mark_author: &str,
+        mark_date: &str,
+        body_author: &str,
+        body_date: &str,
+    ) -> String {
+        format!(
+            "<w:p><w:pPr>{props}<w:rPr><w:{kind} w:id='18' w:author='{mark_author}' w:date='{mark_date}'/></w:rPr></w:pPr>{}</w:p>",
+            run(kind, text, body_author, body_date)
+        )
+    }
+    fn assert_body(dom: &Dom, body: NodeId, expected: &str, label: &str) {
+        let (want, _, wb) = package(expected);
+        let actual = semantic(dom, body);
+        let expected = semantic(&want, wb);
+        if actual != expected {
+            let first = actual
+                .chars()
+                .zip(expected.chars())
+                .position(|(a, b)| a != b)
+                .unwrap_or_else(|| actual.chars().count().min(expected.chars().count()));
+            let context = |text: &str| {
+                text.chars()
+                    .skip(first.saturating_sub(64))
+                    .take(240)
+                    .collect::<String>()
+            };
+            panic!(
+                "{label}: complete source tree differs at character {first}; actual length {}, expected length {}; actual context {:?}; expected context {:?}",
+                actual.len(),
+                expected.len(),
+                context(&actual),
+                context(&expected)
+            );
+        }
+    }
+    fn words(prefix: &str, count: usize) -> String {
+        (0..count)
+            .map(|n| format!("{prefix}{n}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    // The public Word policy distinguishes local edits from wholesale gaps.
+    // These literals pin its recorded list/cover/wrap exceptions and numeric
+    // document-share boundaries; every decision is read-only on full source DOM.
+    #[test]
+    fn document_scale_folds_preserve_authored_sources_and_observed_word_exceptions() {
+        let list = "<w:pStyle w:val='ListParagraph'/><w:numPr><w:ilvl w:val='0'/><w:numId w:val='7'/></w:numPr>";
+        let numbered = "<w:numPr><w:ilvl w:val='0'/><w:numId w:val='7'/></w:numPr>";
+        type SourceFoldCase = (
+            String,
+            Vec<(String, String)>,
+            Vec<(String, String)>,
+            usize,
+            bool,
+        );
+        let mut cases: Vec<SourceFoldCase> = Vec::new();
+        for fingerprint in [
+            "Prepared by Dana",
+            "dana@example.test",
+            "March 2041",
+            "January 2041",
+            "February 2041",
+            "April 2041",
+            "June 2041",
+            "July 2041",
+            "August 2041",
+            "September 2041",
+            "October 2041",
+            "November 2041",
+            "December 2041",
+            "2040",
+            "Agreement",
+        ] {
+            for count in [3, 4] {
+                let mut ins = (0..count - 1)
+                    .map(|n| (words(&format!("revised{n}"), 3), PROPS.to_string()))
+                    .collect::<Vec<_>>();
+                ins.push((fingerprint.to_string(), PROPS.to_string()));
+                let del = vec![
+                    (
+                        "Original obligations bind the parties permanently".to_string(),
+                        PROPS.to_string(),
+                    ),
+                    (
+                        "Earlier signature obligations".to_string(),
+                        PROPS.to_string(),
+                    ),
+                ];
+                cases.push((
+                    format!("cover/{fingerprint}/{count}"),
+                    ins,
+                    del,
+                    0,
+                    count == 3,
+                ));
+            }
+        }
+        for (iw, dw, filler, want, label) in [
+            (6, 33, 0, true, "gap39"),
+            (6, 34, 0, false, "gap40"),
+            (9, 36, 29, false, "share-above60"),
+            (9, 36, 30, true, "share60"),
+            (9, 36, 31, true, "share-below60"),
+            (10, 39, 0, true, "ratio-below4"),
+            (10, 40, 0, false, "ratio4"),
+        ] {
+            let mut ins = Vec::new();
+            let mut del = Vec::new();
+            for n in 0..3 {
+                let i = iw / 3 + usize::from(n < iw % 3);
+                let d = dw / 3 + usize::from(n < dw % 3);
+                ins.push((words(&format!("next{n}"), i), PROPS.to_string()));
+                del.push((words(&format!("base{n}"), d), PROPS.to_string()));
+            }
+            cases.push((label.to_string(), ins, del, filler, want));
+        }
+        for obstruction in [
+            "none",
+            "no-last-number",
+            "few-base-lists",
+            "long-next",
+            "long-base",
+            "related",
+            "balanced",
+        ] {
+            let mut ins = vec![
+                ("Revised melon".to_string(), list.to_string()),
+                ("Revised peach".to_string(), list.to_string()),
+            ];
+            let count = if obstruction == "balanced" { 3 } else { 4 };
+            let mut del = (0..count)
+                .map(|n| (format!("Original berry{n}"), numbered.to_string()))
+                .collect::<Vec<_>>();
+            match obstruction {
+                "no-last-number" => ins[1].1 = PROPS.to_string(),
+                "few-base-lists" => {
+                    for p in del.iter_mut().skip(1) {
+                        p.1 = PROPS.to_string();
+                    }
+                }
+                "long-next" => ins[0].0 = words("longnext", 13),
+                "long-base" => del[1].0 = words("longbase", 13),
+                "related" => del[1].0 = "Revised melon".to_string(),
+                _ => {}
+            }
+            cases.push((
+                format!("short-lists/{obstruction}"),
+                ins,
+                del,
+                0,
+                obstruction != "none",
+            ));
+        }
+        for (title, want) in [("Contents", false), ("Demonstration", true), ("Demo", true)] {
+            cases.push((
+                format!("label/{title}"),
+                vec![
+                    ("ONE".into(), PROPS.into()),
+                    ("TWO".into(), PROPS.into()),
+                    ("A".into(), PROPS.into()),
+                    ("B".into(), PROPS.into()),
+                ],
+                vec![
+                    (title.into(), PROPS.into()),
+                    ("First chapter".into(), PROPS.into()),
+                    ("Second chapter".into(), PROPS.into()),
+                    ("Last chapter".into(), PROPS.into()),
+                ],
+                0,
+                want,
+            ));
+        }
+        for repeat in [true, false] {
+            let text = if repeat {
+                "Lets tightly wrap this phrase ".repeat(5)
+            } else {
+                words("unique", 25)
+            };
+            cases.push((
+                format!("long-wrap/{repeat}"),
+                vec![(text, PROPS.into())],
+                (0..3)
+                    .map(|n| (words(&format!("basewrap{n}"), 6), PROPS.to_string()))
+                    .collect(),
+                0,
+                !repeat,
+            ));
+        }
+        for (i, d, want) in [(10, 50, false), (9, 50, true), (10, 49, true)] {
+            cases.push((
+                format!("large/{i}/{d}"),
+                (0..i)
+                    .map(|n| (words(&format!("newlarge{n}"), 3), PROPS.to_string()))
+                    .collect(),
+                (0..d)
+                    .map(|n| (words(&format!("oldlarge{n}"), 6), PROPS.to_string()))
+                    .collect(),
+                1000,
+                want,
+            ));
+        }
+        cases.push((
+            "numbered uniform labels".into(),
+            vec![("test".into(), numbered.into()); 4],
+            vec![
+                ("Num 1".into(), numbered.into()),
+                ("Num 2".into(), numbered.into()),
+                ("Num 3".into(), numbered.into()),
+            ],
+            0,
+            true,
+        ));
+        cases.push((
+            "list to short heading".into(),
+            vec![("Citation".into(), list.into()); 4],
+            vec![
+                (
+                    "MUTUAL NONDISCLOSURE AGREEMENT".into(),
+                    "<w:pStyle w:val='Heading1'/>".into()
+                );
+                4
+            ],
+            0,
+            true,
+        ));
+        cases.push((
+            "demo introduction".into(),
+            vec![
+                ("Grapes".into(), PROPS.into()),
+                ("Pears".into(), PROPS.into()),
+                ("Melons".into(), PROPS.into()),
+            ],
+            vec![
+                (
+                    "This document demonstrates practical original layout rules".into(),
+                    PROPS.into()
+                );
+                3
+            ],
+            0,
+            true,
+        ));
+        cases.push((
+            "nonboundary related paragraph".into(),
+            vec![
+                ("shared original phrase".into(), PROPS.into()),
+                ("next unrelated".into(), PROPS.into()),
+                ("next final".into(), PROPS.into()),
+            ],
+            vec![
+                ("base unrelated phrase".into(), PROPS.into()),
+                ("shared original phrase".into(), PROPS.into()),
+                ("base final".into(), PROPS.into()),
+            ],
+            0,
+            true,
+        ));
+        cases.push((
+            "empty original separator".into(),
+            vec![("new section content".into(), PROPS.into()); 3],
+            vec![
+                ("".into(), PROPS.into()),
+                ("old remaining content".into(), PROPS.into()),
+                ("old final content".into(), PROPS.into()),
+            ],
+            0,
+            true,
+        ));
+        for (label, ins, del, filler, want) in cases {
+            let mut xml = String::new();
+            if filler > 0 {
+                xml.push_str(&para("live", &words("unchanged", filler), PROPS));
+            }
+            let offset = usize::from(filler > 0);
+            for (t, p) in &ins {
+                xml.push_str(&para("ins", t, p));
+            }
+            for (t, p) in &del {
+                xml.push_str(&para("del", t, p));
+            }
+            xml.push_str(TABLE);
+            let (dom, root, body) = package(&xml);
+            let ps = dom.elements(body, Some(&W::p()));
+            let inss = &ps[offset..offset + ins.len()];
+            let dels = &ps[offset + ins.len()..];
+            let before = semantic(&dom, root);
+            assert_eq!(
+                should_fold_multi_del_at_document_scale(
+                    &dom,
+                    body,
+                    *inss.last().unwrap(),
+                    dels[0],
+                    inss,
+                    dels
+                ),
+                want,
+                "{label}"
+            );
+            assert_eq!(semantic(&dom, root), before, "decision mutated {label}");
+        }
+    }
+
+    #[test]
+    fn midstream_deleted_blocks_cross_only_payload_that_disappears_on_rejection() {
+        for anchor in [
+            "Tip: Revised usage",
+            "Table of Contents",
+            "1. Revised section",
+            "Ordinary revised section",
+        ] {
+            for prefix_count in [39, 40, 41] {
+                for del_count in [1, 2, 6, 7] {
+                    for barrier in [
+                        "none",
+                        "live",
+                        "matched-table",
+                        "inserted-table",
+                        "mixed-row",
+                    ] {
+                        let mut prefix = vec![para("ins", anchor, PROPS)];
+                        for n in 1..prefix_count {
+                            prefix.push(para(
+                                "ins",
+                                &format!("Revised independent item {n}"),
+                                PROPS,
+                            ));
+                        }
+                        let row_ins = format!(
+                            "<w:trPr><w:ins w:id='31' w:author='Boundary editor' w:date='{DATE}'/></w:trPr>"
+                        );
+                        let inserted_table = TABLE
+                            .replacen("<w:tr>", &format!("<w:tr>{row_ins}"), 1)
+                            .replace(
+                                "<w:r><w:t>Independent table payload</w:t></w:r>",
+                                &run("ins", "Independent table payload", "Boundary editor", DATE),
+                            );
+                        match barrier { "live"=>prefix[20]=para("live","Original live anchor",PROPS), "matched-table"=>prefix[20]=TABLE.into(), "inserted-table"=>prefix[20]=inserted_table.clone(), "mixed-row"=>prefix[20]=inserted_table.replacen("</w:trPr>",&format!("<w:del w:id='32' w:author='Original editor' w:date='{DATE}'/></w:trPr>"),1), _=>{} }
+                        let dels=(0..del_count).map(|n|para("del",if n==0 {"Label"} else {"Original detailed paragraph that remains in the deleted source sequence"},PROPS)).collect::<Vec<_>>();
+                        let xml = prefix.concat()
+                            + &dels.concat()
+                            + "<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr>";
+                        let (mut dom, root, body) = package(&xml);
+                        splice_trailing_short_pure_dels_midstream(&mut dom, root);
+                        let moves = anchor != "Ordinary revised section"
+                            && prefix_count >= 40
+                            && del_count <= 6
+                            && matches!(barrier, "none" | "inserted-table");
+                        let want = if !moves {
+                            xml.clone()
+                        } else if anchor.starts_with("1.") {
+                            prefix[0].clone()
+                                + &dels[0]
+                                + &prefix[1..].concat()
+                                + &dels[1..].concat()
+                                + "<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr>"
+                        } else {
+                            prefix[0].clone()
+                                + &dels.concat()
+                                + &prefix[1..].concat()
+                                + "<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr>"
+                        };
+                        let label = format!("{anchor}/{prefix_count}/{del_count}/{barrier}");
+                        assert_body(&dom, body, &want, &label);
+                        let once = semantic(&dom, root);
+                        splice_trailing_short_pure_dels_midstream(&mut dom, root);
+                        assert_eq!(semantic(&dom, root), once, "repeat {label}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn paired_lifetimes_require_complete_matching_comparison_provenance() {
+        for side in [0, 1] {
+            for obstruction in [
+                "none",
+                "foreign-mark",
+                "foreign-body",
+                "body-date",
+                "mark-date",
+                "missing-mark",
+                "opposite-mark",
+                "missing-body",
+                "missing-properties",
+                "missing-mark-properties",
+            ] {
+                let mut ps = Vec::new();
+                for (n, kind) in ["del", "ins"].into_iter().enumerate() {
+                    let bad = n == side;
+                    let ma = if bad && obstruction == "foreign-mark" {
+                        "Legacy editor"
+                    } else {
+                        "Boundary editor"
+                    };
+                    let ba = if bad && obstruction == "foreign-body" {
+                        "Legacy editor"
+                    } else {
+                        "Boundary editor"
+                    };
+                    let md = if bad && obstruction == "mark-date" {
+                        "2025-01-02T03:04:05Z"
+                    } else {
+                        DATE
+                    };
+                    let bd = if bad && obstruction == "body-date" {
+                        "2025-01-02T03:04:05Z"
+                    } else {
+                        DATE
+                    };
+                    let mut p = marked(
+                        kind,
+                        if n == 0 {
+                            "Original authored text"
+                        } else {
+                            "Revised authored text"
+                        },
+                        PROPS,
+                        ma,
+                        md,
+                        ba,
+                        bd,
+                    );
+                    if bad {
+                        match obstruction {
+                        "missing-mark"=>p=p.replace(&format!("<w:{kind} w:id='18' w:author='{ma}' w:date='{md}'/>"),""),
+                        "opposite-mark"=>p=p.replacen("</w:rPr></w:pPr>",&format!("<w:{} w:id='19' w:author='Boundary editor' w:date='{DATE}'/></w:rPr></w:pPr>",if kind=="del" {"ins"} else {"del"}),1),
+                        "missing-body"=>p=p.replace(&run(kind,if n==0 {"Original authored text"} else {"Revised authored text"},ba,bd),&run("live","Surviving live source","Boundary editor",DATE)),
+                        "missing-properties"=>{ let start=p.find("<w:pPr>").unwrap(); let end=p.find("</w:pPr>").unwrap() + "</w:pPr>".len(); p.replace_range(start..end,""); },
+                        "missing-mark-properties"=>{ let start=p.find("<w:rPr>").unwrap(); let end=p.find("</w:rPr>").unwrap() + "</w:rPr>".len(); p.replace_range(start..end,""); }, _=>{} }
+                    }
+                    ps.push(p);
+                }
+                let (dom, root, body) = package(&(ps.concat() + TABLE));
+                let p = dom.elements(body, Some(&W::p()));
+                let before = semantic(&dom, root);
+                assert_eq!(
+                    paired_replacement_marks_belong_to_comparer(
+                        &dom,
+                        p[0],
+                        p[1],
+                        "Boundary editor"
+                    ),
+                    obstruction == "none",
+                    "{side}/{obstruction}"
+                );
+                assert_eq!(
+                    semantic(&dom, root),
+                    before,
+                    "source provenance must remain immutable"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn paired_format_equality_is_complete_and_uses_no_production_arena_nodes() {
+        for side in [0, 1] {
+            for obstruction in [
+                "none",
+                "style",
+                "spacing",
+                "indent",
+                "history",
+                "section",
+                "move-from",
+                "move-to",
+                "mark-history",
+                "mark-bold",
+                "missing-mark",
+            ] {
+                let mut ps = Vec::new();
+                for (n, kind) in ["del", "ins"].into_iter().enumerate() {
+                    let props = if n == side {
+                        match obstruction {
+                            "style" => PROPS.replace("BodyText", "Heading1"),
+                            "spacing" => PROPS.replace("240", "241"),
+                            "indent" => PROPS.replace("360", "361"),
+                            _ => PROPS.to_string(),
+                        }
+                    } else {
+                        PROPS.to_string()
+                    };
+                    let mut p = marked(
+                        kind,
+                        if n == 0 {
+                            "Original source"
+                        } else {
+                            "Revised source"
+                        },
+                        &props,
+                        "Boundary editor",
+                        DATE,
+                        "Boundary editor",
+                        DATE,
+                    );
+                    if n == side {
+                        match obstruction {
+                        "history"=>p=p.replacen("</w:pPr>",&format!("<w:pPrChange w:id='29' w:author='Prior editor' w:date='{DATE}'><w:pPr><w:spacing w:after='80'/></w:pPr></w:pPrChange></w:pPr>"),1),
+                        "section"=>p=p.replacen("</w:pPr>","<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:pPr>",1),
+                        "move-from"|"move-to"=>p=p.replacen("</w:rPr></w:pPr>",&format!("<w:{} w:id='29' w:author='Prior editor' w:date='{DATE}'/></w:rPr></w:pPr>",if obstruction=="move-from" {"moveFrom"} else {"moveTo"}),1),
+                        "mark-history"=>p=p.replacen("</w:rPr></w:pPr>",&format!("<w:rPrChange w:id='29' w:author='Prior editor' w:date='{DATE}'><w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr></w:pPr>"),1),
+                        "mark-bold"=>p=p.replacen("<w:rPr>","<w:rPr><w:b/>",1),
+                        "missing-mark"=>p=p.replace(&format!("<w:{kind} w:id='18' w:author='Boundary editor' w:date='{DATE}'/>"),""), _=>{} }
+                    }
+                    ps.push(p);
+                }
+                let (mut dom, root, body) = package(&(ps.concat() + TABLE));
+                let p = dom.elements(body, Some(&W::p()));
+                let before = semantic(&dom, root);
+                let count = dom.node_count();
+                for _ in 0..3 {
+                    assert_eq!(
+                        paired_replacement_has_identical_properties(&mut dom, p[0], p[1]),
+                        obstruction == "none",
+                        "{side}/{obstruction}"
+                    );
+                }
+                assert_eq!(
+                    semantic(&dom, root),
+                    before,
+                    "property comparison must not modify authored format/history"
+                );
+                assert_eq!(
+                    dom.node_count(),
+                    count,
+                    "property probes must not retain orphan DOM allocations"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn two_authored_layout_blanks_are_restored_only_at_the_shared_table_boundary() {
+        let blank1 = "<w:p><w:pPr><w:spacing w:after='80'/><w:rPr><w:b/></w:rPr></w:pPr><w:r><w:rPr><w:lang w:val='en-US'/></w:rPr></w:r></w:p>";
+        let blank2 = "<w:p><w:pPr><w:pStyle w:val='BodyText'/><w:spacing w:after='120'/></w:pPr><w:r><w:rPr><w:i/></w:rPr></w:r></w:p>";
+        for obstruction in [
+            "none",
+            "deleted-table",
+            "inserted-table",
+            "inserted-empty",
+            "nonempty-separator",
+            "no-separator",
+            "no-table",
+            "missing-source-title",
+            "duplicate-source-title",
+            "one-source-blank",
+            "three-source-blanks",
+            "source-blank-section",
+            "long-original",
+            "long-heading",
+            "live-original",
+            "live-revised",
+            "empty-revised",
+        ] {
+            let source_title = para("live", "Revised authored title", PROPS);
+            let mut source = source_title.clone() + blank1 + blank2 + TABLE;
+            match obstruction {
+                "missing-source-title"=>source=source.replace("Revised authored title","Other authored title"),
+                "duplicate-source-title"=>source=source+&source_title,
+                "one-source-blank"=>source=source_title.clone()+blank1+TABLE,
+                "three-source-blanks"=>source=source_title.clone()+blank1+blank2+"<w:p/>"+TABLE,
+                "source-blank-section"=>source=source.replace(blank1,"<w:p><w:pPr><w:spacing w:after='80'/><w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:pPr></w:p>"), _=>{} }
+            let ins = para(
+                if obstruction == "live-revised" {
+                    "live"
+                } else {
+                    "ins"
+                },
+                if obstruction == "empty-revised" {
+                    ""
+                } else {
+                    "Revised authored title"
+                },
+                PROPS,
+            );
+            let del = para(
+                if obstruction == "live-original" {
+                    "live"
+                } else {
+                    "del"
+                },
+                if matches!(obstruction, "long-original" | "long-heading") {
+                    "Original authored heading has many independently retained words"
+                } else {
+                    "Original title"
+                },
+                if obstruction == "long-heading" {
+                    "<w:pStyle w:val='Heading1'/>"
+                } else {
+                    PROPS
+                },
+            );
+            let empty = match obstruction {
+                "inserted-empty" => marked(
+                    "ins",
+                    "",
+                    "",
+                    "Boundary editor",
+                    DATE,
+                    "Boundary editor",
+                    DATE,
+                ),
+                "nonempty-separator" => para("live", "Surviving original separator", PROPS),
+                "no-separator" => String::new(),
+                _ => "<w:p/>".to_string(),
+            };
+            let table = match obstruction {
+                "deleted-table" | "inserted-table" => TABLE.replace(
+                    "<w:p><w:r><w:t>Independent table payload</w:t></w:r></w:p>",
+                    &marked(
+                        if obstruction == "deleted-table" {
+                            "del"
+                        } else {
+                            "ins"
+                        },
+                        "Independent table payload",
+                        PROPS,
+                        "Boundary editor",
+                        DATE,
+                        "Boundary editor",
+                        DATE,
+                    ),
+                ),
+                "no-table" => para("live", "Independent authored tail", PROPS),
+                _ => TABLE.to_string(),
+            };
+            let input = ins.clone() + &del + &empty + &table;
+            let (mut dom, root, body) = package(&input);
+            let source_doc = dom.parse_xdocument(&format!(
+                "<w:document xmlns:w='{}'><w:body>{source}</w:body></w:document>",
+                W::URI
+            ));
+            let source_root = dom.root(source_doc).unwrap();
+            let source_body = dom.element(source_root, &W::body()).unwrap();
+            let source_before = semantic(&dom, source_root);
+            let templates = revised_two_blank_table_titles(&mut dom, source_body);
+            let settings = WmlComparerSettings {
+                author_for_revisions: "Boundary editor".into(),
+                date_time_for_revisions: DATE.into(),
+                ..WmlComparerSettings::default()
+            };
+            let mut id = 50;
+            ensure_empty_pure_i_before_short_title_del(
+                &mut dom, root, &templates, &settings, &mut id,
+            );
+            let restores = matches!(obstruction, "none" | "inserted-table" | "long-heading");
+            let expected = if restores {
+                let mark =
+                    |n| format!("<w:ins w:id='{n}' w:author='Boundary editor' w:date='{DATE}'/>");
+                let first =
+                    blank1.replacen("<w:rPr><w:b/>", &format!("<w:rPr>{}<w:b/>", mark(50)), 1);
+                let second = blank2.replacen(
+                    "</w:pPr>",
+                    &format!("<w:rPr>{}</w:rPr></w:pPr>", mark(51)),
+                    1,
+                );
+                let old_blank = format!(
+                    "<w:p><w:pPr><w:rPr><w:del w:id='52' w:author='Boundary editor' w:date='{DATE}'/></w:rPr></w:pPr></w:p>"
+                );
+                ins + &first + &second + &del + &old_blank + &table
+            } else {
+                input
+            };
+            assert_body(&dom, body, &expected, obstruction);
+            assert_eq!(id, if restores { 53 } else { 50 }, "{obstruction}");
+            assert_eq!(
+                semantic(&dom, source_root),
+                source_before,
+                "cloned source blanks remain authored and untracked"
+            );
+            let once = semantic(&dom, root);
+            ensure_empty_pure_i_before_short_title_del(
+                &mut dom, root, &templates, &settings, &mut id,
+            );
+            assert_eq!(semantic(&dom, root), once, "repeat {obstruction}");
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod finalizer_merge_source_guard_tests {
+    use super::*;
+    const DATE: &str = "2026-01-02T03:04:05Z";
+    const PROPS: &str = "<w:pStyle w:val='BodyText'/><w:spacing w:before='120' w:after='240'/><w:ind w:left='360'/>";
+    const FORMAT: &str = "<w:rPr><w:b/><w:color w:val='123456'/><w:lang w:val='en-US'/></w:rPr>";
+    const TABLE: &str = "<w:tbl><w:tblPr><w:tblW w:w='1800' w:type='dxa'/></w:tblPr><w:tblGrid><w:gridCol w:w='1800'/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w='1800' w:type='dxa'/></w:tcPr><w:p><w:r><w:t>Independent table payload</w:t></w:r></w:p></w:tc></w:tr></w:tbl>";
+
+    fn package(body: &str) -> (Dom, NodeId, NodeId) {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!("<w:document xmlns:w='{}' xmlns:pt='{}' xmlns:r='http://schemas.openxmlformats.org/officeDocument/2006/relationships' xmlns:w14='http://schemas.microsoft.com/office/word/2010/wordml'><w:body>{body}</w:body></w:document>", W::URI, PT::URI));
+        let root = dom.root(doc).expect("document");
+        let body = dom.element(root, &W::body()).expect("body");
+        (dom, root, body)
+    }
+    fn semantic(dom: &Dom, node: NodeId) -> String {
+        if !dom.is_element(node) {
+            return format!("text:{:?}", dom.text_value(node));
+        }
+        let mut attrs = dom
+            .attributes(node)
+            .into_iter()
+            .filter(|(name, _)| !dom.is_namespace_declaration(name))
+            .map(|(name, value)| {
+                (
+                    name.namespace_name().to_owned(),
+                    name.local_name().to_owned(),
+                    value,
+                )
+            })
+            .collect::<Vec<_>>();
+        attrs.sort();
+        format!(
+            "{:?}{attrs:?}[{}]",
+            dom.name(node),
+            dom.nodes(node)
+                .into_iter()
+                .map(|child| semantic(dom, child))
+                .collect::<String>()
+        )
+    }
+    fn run(kind: &str, text: &str, author: &str, date: &str) -> String {
+        let tag = if kind == "del" { "delText" } else { "t" };
+        let run = format!("<w:r>{FORMAT}<w:{tag} xml:space='preserve'>{text}</w:{tag}></w:r>");
+        if kind == "live" {
+            run
+        } else {
+            format!("<w:{kind} w:id='17' w:author='{author}' w:date='{date}'>{run}</w:{kind}>")
+        }
+    }
+    fn para(kind: &str, text: &str, props: &str) -> String {
+        format!(
+            "<w:p><w:pPr>{props}</w:pPr>{}</w:p>",
+            run(kind, text, "Boundary editor", DATE)
+        )
+    }
+    fn marked(
+        kind: &str,
+        text: &str,
+        props: &str,
+        mark_author: &str,
+        mark_date: &str,
+        body_author: &str,
+        body_date: &str,
+    ) -> String {
+        format!(
+            "<w:p><w:pPr>{props}<w:rPr><w:{kind} w:id='18' w:author='{mark_author}' w:date='{mark_date}'/></w:rPr></w:pPr>{}</w:p>",
+            run(kind, text, body_author, body_date)
+        )
+    }
+    fn assert_body(dom: &Dom, body: NodeId, expected: &str, label: &str) {
+        let (want, _, wb) = package(expected);
+        let actual = semantic(dom, body);
+        let expected = semantic(&want, wb);
+        if actual != expected {
+            let first = actual
+                .chars()
+                .zip(expected.chars())
+                .position(|(a, b)| a != b)
+                .unwrap_or_else(|| actual.chars().count().min(expected.chars().count()));
+            let context = |text: &str| {
+                text.chars()
+                    .skip(first.saturating_sub(64))
+                    .take(240)
+                    .collect::<String>()
+            };
+            panic!(
+                "{label}: complete source tree differs at character {first}; actual length {}, expected length {}; actual context {:?}; expected context {:?}",
+                actual.len(),
+                expected.len(),
+                context(&actual),
+                context(&expected)
+            );
+        }
+    }
+    fn words(prefix: &str, count: usize) -> String {
+        (0..count)
+            .map(|n| format!("{prefix}{n}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    // M88 keeps original structural paragraph properties when the new mark
+    // is bare. A field with a textual result follows that same rule. These are phase
+    // contracts: complete authored source history is restored by later passes.
+    #[test]
+    fn related_replacement_selects_the_documented_structural_carrier_without_losing_run_sources() {
+        for case in [
+            "new-structural",
+            "old-structural",
+            "both-bare",
+            "field-heading",
+            "field-new-structural",
+        ] {
+            for fold_boundary in [false, true] {
+                let old_props = match case {
+                    "old-structural" => {
+                        "<w:numPr><w:ilvl w:val='1'/><w:numId w:val='7'/></w:numPr><w:spacing w:after='80'/>"
+                    }
+                    "field-heading" | "field-new-structural" => {
+                        "<w:pStyle w:val='Heading1'/><w:spacing w:after='240'/>"
+                    }
+                    "new-structural" => "<w:pStyle w:val='BodyText'/><w:spacing w:after='80'/>",
+                    _ => "",
+                };
+                let new_props = if matches!(case, "new-structural" | "field-new-structural") {
+                    "<w:pStyle w:val='Heading2'/><w:spacing w:after='120'/><w:ind w:left='360'/>"
+                } else {
+                    ""
+                };
+                let old = marked(
+                    "del",
+                    "Related original heading",
+                    old_props,
+                    "Boundary editor",
+                    DATE,
+                    "Boundary editor",
+                    DATE,
+                )
+                .replacen("<w:rPr>", "<w:rPr><w:i/>", 1);
+                let mut new = marked(
+                    "ins",
+                    "Related revised heading",
+                    new_props,
+                    "Boundary editor",
+                    DATE,
+                    "Boundary editor",
+                    DATE,
+                )
+                .replacen("<w:rPr>", "<w:rPr><w:b/>", 1);
+                if case.starts_with("field-") {
+                    let field = format!(
+                        "<w:r><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText xml:space='preserve'> REF AuthoredHeading </w:instrText></w:r><w:r><w:fldChar w:fldCharType='separate'/></w:r><w:r>{FORMAT}<w:t xml:space='preserve'>Related revised heading</w:t></w:r><w:r><w:fldChar w:fldCharType='end'/></w:r>"
+                    );
+                    new=new.replace(&format!("<w:r>{FORMAT}<w:t xml:space='preserve'>Related revised heading</w:t></w:r>"),&field);
+                }
+                let anchor = para("live", "Independently live source paragraph", PROPS);
+                let input = old.clone() + &new + &anchor + TABLE;
+                let (mut dom, _, body) = package(&input);
+                merge_replaced_in_container(&mut dom, body, "Boundary editor", fold_boundary);
+                let property_source = if matches!(case, "old-structural" | "field-heading") {
+                    &old
+                } else {
+                    &new
+                };
+                let start = property_source.find("<w:pPr>").unwrap();
+                let end = property_source.find("</w:pPr>").unwrap() + "</w:pPr>".len();
+                let old_body =
+                    &old[old.find("</w:pPr>").unwrap() + "</w:pPr>".len()..old.len() - 6];
+                let new_body =
+                    &new[new.find("</w:pPr>").unwrap() + "</w:pPr>".len()..new.len() - 6];
+                let expected = format!(
+                    "<w:p>{}{new_body}{old_body}</w:p>{anchor}{TABLE}",
+                    &property_source[start..end]
+                );
+                assert_body(&dom, body, &expected, &format!("{case}/{fold_boundary}"));
+                let once = semantic(&dom, body);
+                merge_replaced_in_container(&mut dom, body, "Boundary editor", fold_boundary);
+                assert_eq!(semantic(&dom, body), once);
+            }
+        }
+    }
+
+    #[test]
+    fn an_unresolved_field_residue_preserves_m360s_bare_heading_carrier() {
+        for style in ["Heading1", "Title", "BodyText"] {
+            let field = "<w:r><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText xml:space='preserve'> REF AuthoredHeading </w:instrText></w:r><w:r><w:fldChar w:fldCharType='separate'/></w:r><w:r><w:fldChar w:fldCharType='end'/></w:r>";
+            let inserted_body = format!(
+                "<w:ins w:id='17' w:author='Boundary editor' w:date='{DATE}'>{field}</w:ins>"
+            );
+            let old = marked(
+                "del",
+                "Original authored heading",
+                &format!("<w:pStyle w:val='{style}'/><w:spacing w:after='240'/>"),
+                "Boundary editor",
+                DATE,
+                "Boundary editor",
+                DATE,
+            );
+            let new = format!(
+                "<w:p><w:pPr><w:rPr><w:ins w:id='18' w:author='Boundary editor' w:date='{DATE}'/></w:rPr></w:pPr>{inserted_body}</w:p>"
+            );
+            let section = "<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr>";
+            let (mut dom, _, body) = package(&(new + &old + section));
+            merge_replaced_in_container(&mut dom, body, "Boundary editor", true);
+            let end = old.find("</w:pPr>").unwrap() + "</w:pPr>".len();
+            let original_body = &old[end..old.len() - 6];
+            let expected = if style == "BodyText" {
+                format!(
+                    "<w:p>{}{inserted_body}{original_body}</w:p>{section}",
+                    &old[old.find("<w:pPr>").unwrap()..end]
+                )
+            } else {
+                format!("<w:p>{inserted_body}{original_body}</w:p>{section}")
+            };
+            assert_body(&dom, body, &expected, style);
+            let once = semantic(&dom, body);
+            merge_replaced_in_container(&mut dom, body, "Boundary editor", true);
+            assert_eq!(semantic(&dom, body), once);
+        }
+    }
+
+    #[test]
+    fn legal_and_memo_midstory_block_ownership_is_retained_at_exact_boundaries() {
+        for (label, prefix_count, deleted_count, inserted_count, nested, memo, retains) in [
+            ("legal lower", 3, 5, 5, false, false, true),
+            ("legal upper", 20, 5, 5, false, false, true),
+            ("legal prefix below", 2, 5, 5, false, false, false),
+            ("legal prefix above", 21, 5, 5, false, false, false),
+            ("legal deleted below", 3, 4, 5, false, false, false),
+            ("legal inserted below", 3, 5, 4, false, false, false),
+            ("nested first", 1, 2, 2, true, false, true),
+            ("nested without prior owner", 0, 2, 2, true, false, false),
+            ("nested only one deleted", 1, 1, 2, true, false, false),
+            ("nested only one inserted", 1, 2, 1, true, false, false),
+            ("memo lower", 0, 3, 5, false, true, true),
+            ("memo upper", 0, 20, 5, false, true, true),
+            ("memo below", 0, 2, 5, false, true, false),
+            ("memo above", 0, 21, 5, false, true, false),
+            ("memo new below", 0, 3, 4, false, true, false),
+            ("ordinary wholesale", 0, 3, 5, false, false, false),
+        ] {
+            for intervening_live in [false, true] {
+                let prefix = (0..prefix_count)
+                    .map(|n| para("ins", &words(&format!("lead{n}"), 3), PROPS))
+                    .collect::<String>();
+                let barrier = if intervening_live {
+                    para("live", "Original live anchor", PROPS)
+                } else {
+                    String::new()
+                };
+                let dels = (0..deleted_count)
+                    .map(|n| {
+                        let text = if memo && n == 0 {
+                            "Memorandum Original obligations".to_string()
+                        } else {
+                            format!("Original{n} authored{n} clause{n}")
+                        };
+                        para(
+                            "del",
+                            &text,
+                            if nested && n == 0 {
+                                "<w:numPr><w:ilvl w:val='1'/><w:numId w:val='7'/></w:numPr>"
+                            } else {
+                                PROPS
+                            },
+                        )
+                    })
+                    .collect::<String>();
+                let inss = (0..inserted_count)
+                    .map(|n| para("ins", &words(&format!("revised{n}"), 3), PROPS))
+                    .collect::<String>();
+                let input = prefix.clone() + &barrier + &dels + &inss + TABLE;
+                let (mut dom, _, body) = package(&input);
+                merge_replaced_in_container(&mut dom, body, "Boundary editor", false);
+                // A live predecessor is a boundary, not a leading insertion.
+                // Memo's authored headers are first only with no predecessor.
+                let keeps = retains && !intervening_live;
+                let expected = if keeps {
+                    input
+                } else {
+                    prefix + &barrier + &inss + &dels + TABLE
+                };
+                assert_body(
+                    &dom,
+                    body,
+                    &expected,
+                    &format!("{label}/live={intervening_live}"),
+                );
+                let once = semantic(&dom, body);
+                merge_replaced_in_container(&mut dom, body, "Boundary editor", false);
+                assert_eq!(semantic(&dom, body), once, "repeat {label}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_carried_original_insertion_keeps_its_author_and_never_becomes_a_real_deletion() {
+        for hyperlink in [false, true] {
+            for with_bookmarks in [false, true] {
+                for tail in ["live", "table"] {
+                    let old_run = run(
+                        "ins",
+                        "Original pending authored insertion",
+                        "Legacy editor",
+                        "2025-06-07T08:09:10Z",
+                    );
+                    let old_body = if hyperlink {
+                        format!("<w:hyperlink w:anchor='OriginalBookmark'>{old_run}</w:hyperlink>")
+                    } else {
+                        old_run
+                    };
+                    let bookmarks = if with_bookmarks {
+                        (
+                            "<w:bookmarkStart w:id='81' w:name='OriginalBookmark'/>",
+                            "<w:bookmarkEnd w:id='81'/>",
+                        )
+                    } else {
+                        ("", "")
+                    };
+                    let old = format!(
+                        "<w:p><w:pPr>{PROPS}</w:pPr>{}{old_body}{}</w:p>",
+                        bookmarks.0, bookmarks.1
+                    );
+                    let new = marked(
+                        "ins",
+                        "Revised independently owned text",
+                        PROPS,
+                        "Boundary editor",
+                        DATE,
+                        "Boundary editor",
+                        DATE,
+                    );
+                    let after = if tail == "table" {
+                        TABLE.to_string()
+                    } else {
+                        para("live", "Surviving final anchor", PROPS)
+                    };
+                    let input = old.clone() + &new + &after;
+                    let (mut dom, _, body) = package(&input);
+                    merge_replaced_in_container(&mut dom, body, "Boundary editor", false);
+                    assert_body(
+                        &dom,
+                        body,
+                        &(new + &old + &after),
+                        &format!("hyperlink={hyperlink}/bookmarks={with_bookmarks}/{tail}"),
+                    );
+                    let once = semantic(&dom, body);
+                    merge_replaced_in_container(&mut dom, body, "Boundary editor", false);
+                    assert_eq!(semantic(&dom, body), once);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pilcrow_format_equality_includes_nested_fill_payload_but_ignores_source_scratch() {
+        let fill = |colour: &str| {
+            format!(
+                "<w14:textFill><w14:solidFill><w14:srgbClr w14:val='{colour}'/></w14:solidFill></w14:textFill>"
+            )
+        };
+        for (name, old, new, want) in [
+            ("identical", fill("123456"), fill("123456"), true),
+            ("changed fill", fill("123456"), fill("654321"), false),
+            ("removed fill", fill("123456"), String::new(), false),
+            ("added fill", String::new(), fill("123456"), false),
+            (
+                "reordered formats",
+                "<w:b/><w:i/>".into(),
+                "<w:i/><w:b/>".into(),
+                true,
+            ),
+            (
+                "changed scalar",
+                "<w:color w:val='123456'/>".into(),
+                "<w:color w:val='654321'/>".into(),
+                false,
+            ),
+            (
+                "history is source metadata",
+                format!(
+                    "<w:b/><w:rPrChange w:id='19' w:author='Original editor' w:date='{DATE}'><w:rPr><w:i/></w:rPr></w:rPrChange>"
+                ),
+                "<w:b/>".into(),
+                true,
+            ),
+            (
+                "nested history remains historical",
+                format!(
+                    "{}<w:rPrChange w:id='19' w:author='Original editor' w:date='{DATE}'><w:rPr>{}</w:rPr></w:rPrChange>",
+                    fill("123456"),
+                    fill("654321")
+                ),
+                fill("123456"),
+                true,
+            ),
+        ] {
+            let xml = format!(
+                "<w:p><w:pPr><w:rPr pt:Unid='original'>{old}</w:rPr></w:pPr>{}</w:p><w:p><w:pPr><w:rPr pt:Unid='revised'>{new}</w:rPr></w:pPr>{}</w:p>{TABLE}",
+                run(
+                    "live",
+                    "Original full source format",
+                    "Boundary editor",
+                    DATE
+                ),
+                run(
+                    "live",
+                    "Revised full source format",
+                    "Boundary editor",
+                    DATE
+                )
+            );
+            let (mut dom, root, body) = package(&xml);
+            let p = dom.elements(body, Some(&W::p()));
+            let old = dom.element(dom.element(p[0], &W::p_pr()).unwrap(), &W::r_pr());
+            let new = dom.element(dom.element(p[1], &W::p_pr()).unwrap(), &W::r_pr());
+            let before = semantic(&dom, root);
+            assert_eq!(
+                paragraph_mark_properties_equal(&mut dom, old, new),
+                want,
+                "{name}"
+            );
+            assert_eq!(
+                semantic(&dom, root),
+                before,
+                "format equality is source preserving"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod finalizer_reached_predicate_boundary_tests {
+    use super::*;
+    const DATE: &str = "2026-01-02T03:04:05Z";
+    const PROPS: &str = "<w:pStyle w:val='BodyText'/><w:spacing w:before='120' w:after='240'/><w:ind w:left='360'/>";
+    const FORMAT: &str = "<w:rPr><w:b/><w:color w:val='123456'/><w:lang w:val='en-US'/></w:rPr>";
+    const TABLE: &str = "<w:tbl><w:tblPr><w:tblW w:w='1800' w:type='dxa'/></w:tblPr><w:tblGrid><w:gridCol w:w='1800'/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w='1800' w:type='dxa'/></w:tcPr><w:p><w:r><w:t>Independent table payload</w:t></w:r></w:p></w:tc></w:tr></w:tbl>";
+
+    fn package(body: &str) -> (Dom, NodeId, NodeId) {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(
+            "<w:document xmlns:w='{}' xmlns:pt='{}'><w:body>{body}</w:body></w:document>",
+            W::URI,
+            PT::URI
+        ));
+        let root = dom.root(doc).expect("document");
+        let body = dom.element(root, &W::body()).expect("body");
+        (dom, root, body)
+    }
+    fn semantic(dom: &Dom, node: NodeId) -> String {
+        if !dom.is_element(node) {
+            return format!("text:{:?}", dom.text_value(node));
+        }
+        let mut attrs = dom
+            .attributes(node)
+            .into_iter()
+            .filter(|(name, _)| !dom.is_namespace_declaration(name))
+            .map(|(name, value)| {
+                (
+                    name.namespace_name().to_owned(),
+                    name.local_name().to_owned(),
+                    value,
+                )
+            })
+            .collect::<Vec<_>>();
+        attrs.sort();
+        format!(
+            "{:?}{attrs:?}[{}]",
+            dom.name(node),
+            dom.nodes(node)
+                .into_iter()
+                .map(|child| semantic(dom, child))
+                .collect::<String>()
+        )
+    }
+    fn run(kind: &str, text: &str, author: &str, date: &str) -> String {
+        let tag = if kind == "del" { "delText" } else { "t" };
+        let run = format!("<w:r>{FORMAT}<w:{tag} xml:space='preserve'>{text}</w:{tag}></w:r>");
+        if kind == "live" {
+            run
+        } else {
+            format!("<w:{kind} w:id='17' w:author='{author}' w:date='{date}'>{run}</w:{kind}>")
+        }
+    }
+    fn para(kind: &str, text: &str, props: &str) -> String {
+        format!(
+            "<w:p><w:pPr>{props}</w:pPr>{}</w:p>",
+            run(kind, text, "Boundary editor", DATE)
+        )
+    }
+    fn marked(
+        kind: &str,
+        text: &str,
+        props: &str,
+        mark_author: &str,
+        mark_date: &str,
+        body_author: &str,
+        body_date: &str,
+    ) -> String {
+        format!(
+            "<w:p><w:pPr>{props}<w:rPr><w:{kind} w:id='18' w:author='{mark_author}' w:date='{mark_date}'/></w:rPr></w:pPr>{}</w:p>",
+            run(kind, text, body_author, body_date)
+        )
+    }
+    fn assert_body(dom: &Dom, body: NodeId, expected: &str, label: &str) {
+        let (want, _, wb) = package(expected);
+        let actual = semantic(dom, body);
+        let expected = semantic(&want, wb);
+        if actual != expected {
+            let first = actual
+                .chars()
+                .zip(expected.chars())
+                .position(|(a, b)| a != b)
+                .unwrap_or_else(|| actual.chars().count().min(expected.chars().count()));
+            let context = |text: &str| {
+                text.chars()
+                    .skip(first.saturating_sub(64))
+                    .take(240)
+                    .collect::<String>()
+            };
+            panic!(
+                "{label}: complete source tree differs at character {first}; actual length {}, expected length {}; actual context {:?}; expected context {:?}",
+                actual.len(),
+                expected.len(),
+                context(&actual),
+                context(&expected)
+            );
+        }
+    }
+    // Midstory unrelated replacements keep their complete source carriers.
+    // A live source bridge prevents D→I reordering from hiding the later I.
+    // The earlier story-end/relatedness guard already owns these decisions:
+    // changing the long-intro M145 threshold cannot bypass that boundary.
+    // Related text folds with the documented bare mixed mark instead.
+    #[test]
+    fn a_later_revised_block_protects_the_long_intro_checklist_boundary() {
+        for (label, text, original, later_inserted, count, keep) in [
+            (
+                "documented baseline",
+                "Revised contractual responsibilities owners",
+                "HR Onboarding Checklist",
+                true,
+                2,
+                true,
+            ),
+            (
+                "intro one char below",
+                "Revised contractual responsibilities owner",
+                "HR Onboarding Checklist",
+                true,
+                2,
+                true,
+            ),
+            (
+                "no later revised block",
+                "Revised contractual responsibilities owners",
+                "HR Onboarding Checklist",
+                false,
+                2,
+                true,
+            ),
+            (
+                "intro count above",
+                "Revised contractual responsibilities owners",
+                "HR Onboarding Checklist",
+                true,
+                4,
+                true,
+            ),
+            (
+                "original title above five tokens",
+                "Revised contractual responsibilities owners",
+                "Original Human Resources Employee Onboarding Policy Checklist",
+                true,
+                2,
+                true,
+            ),
+            (
+                "original title related",
+                "Revised contractual responsibilities owners",
+                "HR revised checklist",
+                true,
+                2,
+                false,
+            ),
+            (
+                "short checklist cell remains independent",
+                "Revised contractual responsibilities owners",
+                "Checklist",
+                true,
+                2,
+                true,
+            ),
+        ] {
+            if label == "documented baseline" {
+                assert_eq!(text.chars().filter(|c| c.is_alphanumeric()).count(), 40);
+            }
+            if label == "intro one char below" {
+                assert_eq!(text.chars().filter(|c| c.is_alphanumeric()).count(), 39);
+            }
+            let lead = (0..count - 1)
+                .map(|n| {
+                    marked(
+                        "ins",
+                        &format!("Revised introductory paragraph {n}"),
+                        PROPS,
+                        "Boundary editor",
+                        DATE,
+                        "Boundary editor",
+                        DATE,
+                    )
+                })
+                .collect::<String>();
+            let intro = marked(
+                "ins",
+                text,
+                PROPS,
+                "Boundary editor",
+                DATE,
+                "Boundary editor",
+                DATE,
+            );
+            let first = marked(
+                "del",
+                original,
+                PROPS,
+                "Boundary editor",
+                DATE,
+                "Boundary editor",
+                DATE,
+            );
+            let rest = marked(
+                "del",
+                "Original independent responsibilities remain fully attributed",
+                PROPS,
+                "Boundary editor",
+                DATE,
+                "Boundary editor",
+                DATE,
+            );
+            let bridge = para("live", "Independently authored live source bridge", PROPS);
+            let after = if later_inserted {
+                marked(
+                    "ins",
+                    "Revised later independently authored continuation",
+                    PROPS,
+                    "Boundary editor",
+                    DATE,
+                    "Boundary editor",
+                    DATE,
+                )
+            } else {
+                para(
+                    "live",
+                    "Independently authored original continuation",
+                    PROPS,
+                )
+            };
+            let input = lead.clone() + &intro + &first + &rest + &bridge + &after + TABLE;
+            let (mut dom, root, body) = package(&input);
+            merge_replaced_in_container(&mut dom, body, "Boundary editor", true);
+            let expected = if keep {
+                input
+            } else {
+                let merged = format!(
+                    "<w:p><w:pPr>{PROPS}</w:pPr>{}{}</w:p>",
+                    run("ins", text, "Boundary editor", DATE),
+                    run("del", original, "Boundary editor", DATE)
+                );
+                lead + &merged + &rest + &bridge + &after + TABLE
+            };
+            assert_body(&dom, body, &expected, label);
+            let once = semantic(&dom, root);
+            merge_replaced_in_container(&mut dom, body, "Boundary editor", true);
+            assert_eq!(semantic(&dom, root), once, "repeat {label}");
+        }
+    }
+    // The original bookmark prose deliberately includes the inserted label.
+    // Its relatedness defeats the earlier M325 gate, so M365's actual short
+    // label and prose/heading boundary is reached rather than masked.
+    #[test]
+    fn a_short_residual_label_does_not_steal_long_bookmark_or_heading_properties() {
+        for (label, inserted, original, heading, keep) in [
+            (
+                "eight-token bookmark prose",
+                "a",
+                "This document demonstrates a source bookmark paragraph continuation",
+                false,
+                true,
+            ),
+            (
+                "seven-token prose below",
+                "a",
+                "This document demonstrates a source bookmark paragraph",
+                false,
+                false,
+            ),
+            (
+                "seven-token heading",
+                "a",
+                "This document demonstrates a source bookmark paragraph",
+                true,
+                true,
+            ),
+            (
+                "label above two chars",
+                "abc",
+                "This document demonstrates abc source bookmark paragraph continuation",
+                false,
+                false,
+            ),
+            ("heading length below ten", "a", "Heading", true, false),
+            ("short heading source", "a", "Generalities", true, true),
+        ] {
+            let first = marked(
+                "ins",
+                "ONE",
+                PROPS,
+                "Boundary editor",
+                DATE,
+                "Boundary editor",
+                DATE,
+            );
+            let second = marked(
+                "ins",
+                "TWO",
+                PROPS,
+                "Boundary editor",
+                DATE,
+                "Boundary editor",
+                DATE,
+            );
+            let last = marked(
+                "ins",
+                inserted,
+                PROPS,
+                "Boundary editor",
+                DATE,
+                "Boundary editor",
+                DATE,
+            );
+            let old_props = if heading {
+                "<w:pStyle w:val='Heading1'/><w:spacing w:after='240'/>"
+            } else {
+                PROPS
+            };
+            let old = marked(
+                "del",
+                original,
+                old_props,
+                "Boundary editor",
+                DATE,
+                "Boundary editor",
+                DATE,
+            );
+            let tail = marked(
+                "del",
+                "Original independently owned concluding paragraph",
+                PROPS,
+                "Boundary editor",
+                DATE,
+                "Boundary editor",
+                DATE,
+            );
+            let section = "<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr>";
+            let input = first.clone() + &second + &last + &old + &tail + section;
+            let (mut dom, root, body) = package(&input);
+            merge_replaced_in_container(&mut dom, body, "Boundary editor", true);
+            let expected = if keep {
+                input
+            } else {
+                let properties = if heading {
+                    old[old.find("<w:pPr>").unwrap()
+                        ..old.find("</w:pPr>").unwrap() + "</w:pPr>".len()]
+                        .to_string()
+                } else {
+                    format!("<w:pPr>{PROPS}</w:pPr>")
+                };
+                first
+                    + &second
+                    + &format!(
+                        "<w:p>{properties}{}{}</w:p>",
+                        run("ins", inserted, "Boundary editor", DATE),
+                        run("del", original, "Boundary editor", DATE)
+                    )
+                    + &tail
+                    + section
+            };
+            assert_body(&dom, body, &expected, label);
+            let once = semantic(&dom, root);
+            merge_replaced_in_container(&mut dom, body, "Boundary editor", true);
+            assert_eq!(semantic(&dom, root), once, "repeat {label}");
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod public_body_heuristic_story_scope_tests {
+    use super::*;
+
+    fn canonical(dom: &Dom, node: NodeId) -> String {
+        if !dom.is_element(node) {
+            return format!("text:{:?}", dom.text_value(node));
+        }
+        let mut attrs = dom
+            .attributes(node)
+            .into_iter()
+            .filter(|(name, _)| !dom.is_namespace_declaration(name))
+            .map(|(name, value)| {
+                (
+                    name.namespace_name().to_string(),
+                    name.local_name().to_string(),
+                    value,
+                )
+            })
+            .collect::<Vec<_>>();
+        attrs.sort();
+        format!(
+            "{:?}{attrs:?}[{}]",
+            dom.name(node),
+            dom.nodes(node)
+                .into_iter()
+                .map(|c| canonical(dom, c))
+                .collect::<String>()
+        )
+    }
+
+    // These are valid header/footer part roots accepted by the public DOM
+    // helpers, not body-pipeline fixtures. Body page-flow and final-pilcrow
+    // heuristics must not reinterpret their independent story boundaries.
+    #[test]
+    fn public_body_layout_heuristics_preserve_complete_independent_header_and_footer_parts() {
+        type BodyHeuristic = fn(&mut Dom, NodeId);
+        let simple: &[(&str, BodyHeuristic)] = &[
+            (
+                "unwrap_content_controls_in_pure_revisions",
+                unwrap_content_controls_in_pure_revisions,
+            ),
+            (
+                "fold_short_list_label_into_empty_pure_del",
+                fold_short_list_label_into_empty_pure_del,
+            ),
+            (
+                "strip_trailing_bare_empty_after_pure_i_dominant",
+                strip_trailing_bare_empty_after_pure_i_dominant,
+            ),
+            (
+                "promote_live_numpr_on_pure_d_from_pprchange",
+                promote_live_numpr_on_pure_d_from_pprchange,
+            ),
+            (
+                "strip_list_layout_from_mid_pure_del",
+                strip_list_layout_from_mid_pure_del,
+            ),
+            (
+                "free_mesh_shared_title_token_in_mix",
+                free_mesh_shared_title_token_in_mix,
+            ),
+            (
+                "strip_trailing_empty_pure_del_mark",
+                strip_trailing_empty_pure_del_mark,
+            ),
+            (
+                "strip_trailing_empty_pure_ins",
+                strip_trailing_empty_pure_ins,
+            ),
+            (
+                "relocate_title_page_last_empty_after_pure_dels",
+                relocate_title_page_last_empty_after_pure_dels,
+            ),
+            (
+                "strip_empty_pure_ins_before_trailing_pure_dels",
+                strip_empty_pure_ins_before_trailing_pure_dels,
+            ),
+            (
+                "fold_whitespace_pure_ins_into_following_pure_del",
+                fold_whitespace_pure_ins_into_following_pure_del,
+            ),
+            (
+                "rotate_ins_mark_del_only_paragraph",
+                rotate_ins_mark_del_only_paragraph,
+            ),
+            (
+                "restamp_stranded_del_mark_onto_del_only_paragraph",
+                restamp_stranded_del_mark_onto_del_only_paragraph,
+            ),
+            (
+                "split_head_short_title_long_del_mix",
+                split_head_short_title_long_del_mix,
+            ),
+            (
+                "fold_leading_ins_from_mix_into_preceding_pure_del",
+                fold_leading_ins_from_mix_into_preceding_pure_del,
+            ),
+            (
+                "strip_last_pure_del_mark_only_ppr",
+                strip_last_pure_del_mark_only_ppr,
+            ),
+            (
+                "cleanup_spacing_and_default_jc",
+                cleanup_spacing_and_default_jc,
+            ),
+            (
+                "last_pure_del_inherit_prev_jc",
+                last_pure_del_inherit_prev_jc,
+            ),
+            (
+                "strip_empty_pprchange_on_mix_with_live_jc",
+                strip_empty_pprchange_on_mix_with_live_jc,
+            ),
+            ("strip_propertyless_ppr", strip_propertyless_ppr),
+            (
+                "align_word_table_and_comment_chrome",
+                align_word_table_and_comment_chrome,
+            ),
+            (
+                "promote_heading_spacing_from_pprchange_on_last_mix",
+                promote_heading_spacing_from_pprchange_on_last_mix,
+            ),
+            (
+                "strip_last_pure_del_mark_when_pprchange",
+                strip_last_pure_del_mark_when_pprchange,
+            ),
+            (
+                "interleave_list_cluster_after_coalesce",
+                interleave_list_cluster_after_coalesce,
+            ),
+            ("ensure_default_page_size", ensure_default_page_size),
+            (
+                "splice_trailing_short_pure_dels_midstream",
+                splice_trailing_short_pure_dels_midstream,
+            ),
+            (
+                "split_digits_ins_from_mixed_title",
+                split_digits_ins_from_mixed_title,
+            ),
+            (
+                "peel_trailing_ins_from_mix_into_following_pure_del",
+                peel_trailing_ins_from_mix_into_following_pure_del,
+            ),
+            (
+                "restore_short_del_before_long_ins",
+                restore_short_del_before_long_ins,
+            ),
+            (
+                "peel_trailing_del_from_mix_into_following_pure_ins",
+                peel_trailing_del_from_mix_into_following_pure_ins,
+            ),
+            (
+                "restore_echoed_heading_deletions_before_table",
+                restore_echoed_heading_deletions_before_table,
+            ),
+            (
+                "strip_leading_del_echoing_prev_pure_i",
+                strip_leading_del_echoing_prev_pure_i,
+            ),
+            ("free_mesh_wholesale_body_mix", free_mesh_wholesale_body_mix),
+            ("free_mesh_bookended_ins_del", free_mesh_bookended_ins_del),
+            (
+                "peel_trailing_for_word_onto_next_mix",
+                peel_trailing_for_word_onto_next_mix,
+            ),
+        ];
+        type Configured = fn(&mut Dom, NodeId, &WmlComparerSettings, &mut u32);
+        let configured: &[(&str, Configured)] = &[
+            ("trailing_empty_spacing_to_pprchange", |d, r, s, id| {
+                trailing_empty_spacing_to_pprchange(d, r, None, s, id);
+            }),
+            (
+                "merged_closing_carrier_takes_source_properties",
+                |d, r, s, id| {
+                    merged_closing_carrier_takes_source_properties(d, r, None, None, s, id);
+                },
+            ),
+            ("closing_mark_takes_revised_properties", |d, r, s, id| {
+                closing_mark_takes_revised_properties(d, r, None, None, (None, None), s, id);
+            }),
+            (
+                "ensure_empty_pure_i_before_short_title_del",
+                |d, r, s, id| {
+                    ensure_empty_pure_i_before_short_title_del(d, r, &HashMap::new(), s, id);
+                },
+            ),
+            (
+                "last_pure_del_spacing_to_pprchange",
+                last_pure_del_spacing_to_pprchange,
+            ),
+            (
+                "mixed_spacing_to_following_empty",
+                mixed_spacing_to_following_empty,
+            ),
+            (
+                "park_mixed_spacing_onto_trailing_pure_del",
+                park_mixed_spacing_onto_trailing_pure_del,
+            ),
+            (
+                "park_mixed_numpr_onto_trailing_empty_pure_del",
+                park_mixed_numpr_onto_trailing_empty_pure_del,
+            ),
+            ("strip_unrecorded_word_defaults", |d, r, _, _| {
+                strip_unrecorded_word_defaults(d, r, Some("276"));
+            }),
+            (
+                "promote_live_jc_from_pprchange_on_body_mix",
+                |d, r, _, _| promote_live_jc_from_pprchange_on_body_mix(d, r, &HashSet::new()),
+            ),
+            ("residual_short_label_zip_with_settings", |d, r, s, _| {
+                residual_short_label_zip_with_settings(d, r, s);
+            }),
+            (
+                "fold_midstream_demo_title_into_numbered_heading_with_source_properties",
+                |d, r, s, id| {
+                    fold_midstream_demo_title_into_numbered_heading_with_source_properties(
+                        d,
+                        r,
+                        s,
+                        id,
+                        &HashMap::new(),
+                    );
+                },
+            ),
+            (
+                "repair_borrowed_sentence_period",
+                repair_borrowed_sentence_period,
+            ),
+            (
+                "park_jc_on_first_short_title_mix_from_body",
+                park_jc_on_first_short_title_mix_from_body,
+            ),
+            (
+                "ensure_empty_pprchange_on_live_heading_spacing",
+                ensure_empty_pprchange_on_live_heading_spacing,
+            ),
+            (
+                "ensure_empty_pprchange_on_eq_with_live_jc",
+                |d, r, s, id| {
+                    ensure_empty_pprchange_on_eq_with_live_jc(d, r, &HashSet::new(), s, id);
+                },
+            ),
+        ];
+        const FORMAT: &str = "<w:rPr><w:rFonts w:ascii='Georgia' w:hAnsi='Georgia'/><w:b/><w:color w:val='123456'/><w:sz w:val='20'/><w:lang w:val='en-US'/></w:rPr>";
+        for story in ["hdr", "ftr"] {
+            for tracked_formats in [false, true] {
+                let date = "2026-01-02T03:04:05Z";
+                let revision = |kind: &str, text: &str, id: u32| {
+                    format!(
+                        "<w:{kind} w:id='{id}' w:author='Header editor' w:date='{date}'><w:r>{FORMAT}<w:{} xml:space='preserve'>{text}</w:{}></w:r></w:{kind}>",
+                        if kind == "del" { "delText" } else { "t" },
+                        if kind == "del" { "delText" } else { "t" }
+                    )
+                };
+                let props = "<w:pStyle w:val='Header'/><w:spacing w:before='120' w:after='60'/><w:ind w:left='360'/><w:jc w:val='right'/>";
+                let ins = revision("ins", "Revised header title", 11);
+                let del = revision("del", "Original header title", 12);
+                let title = format!(
+                    "<w:p><w:pPr>{props}<w:rPr><w:ins w:id='13' w:author='Header editor' w:date='{date}'/></w:rPr></w:pPr>{ins}</w:p><w:p><w:pPr>{props}<w:rPr><w:del w:id='14' w:author='Header editor' w:date='{date}'/></w:rPr></w:pPr>{del}</w:p>"
+                );
+                let mixed = format!(
+                    "<w:p><w:pPr>{props}<w:pPrChange w:id='15' w:author='Prior editor' w:date='{date}'><w:pPr><w:spacing w:after='80'/><w:jc w:val='center'/></w:pPr></w:pPrChange></w:pPr>{}{}</w:p>",
+                    revision("ins", "Independent revised header continuation", 16),
+                    revision("del", "Independent original header continuation", 17)
+                );
+                let field = format!(
+                    "<w:p><w:pPr>{props}</w:pPr><w:bookmarkStart w:id='81' w:name='HeaderPage'/><w:r><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText xml:space='preserve'> PAGE </w:instrText></w:r><w:r><w:fldChar w:fldCharType='separate'/></w:r><w:r>{FORMAT}<w:t>17</w:t></w:r><w:r><w:fldChar w:fldCharType='end'/></w:r><w:bookmarkEnd w:id='81'/><w:hyperlink w:anchor='HeaderPage'><w:r>{FORMAT}<w:t>Owned page reference</w:t></w:r></w:hyperlink></w:p>"
+                );
+                let table = "<w:tbl><w:tblPr><w:tblW w:w='2400' w:type='dxa'/></w:tblPr><w:tblGrid><w:gridCol w:w='2400'/></w:tblGrid><w:tr><w:trPr><w:cantSplit/></w:trPr><w:tc><w:tcPr><w:tcW w:w='2400' w:type='dxa'/><w:shd w:fill='ABCDEF'/></w:tcPr><w:p><w:pPr><w:spacing w:after='40'/></w:pPr><w:r><w:rPr><w:i/></w:rPr><w:t>Independent header cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>";
+                let blanks = format!(
+                    "<w:p><w:pPr><w:spacing w:after='240'/><w:rPr><w:ins w:id='18' w:author='Header editor' w:date='{date}'/></w:rPr></w:pPr></w:p><w:p><w:pPr><w:spacing w:after='80'/><w:rPr><w:del w:id='19' w:author='Header editor' w:date='{date}'/></w:rPr></w:pPr></w:p><w:p/>"
+                );
+                let xml = format!(
+                    "<w:{story} xmlns:w='{}'>{title}{mixed}{field}{table}{blanks}</w:{story}>",
+                    W::URI
+                );
+                let mut dom = Dom::new();
+                let document = dom.parse_xdocument(&xml);
+                let root = dom.root(document).unwrap();
+                let before = canonical(&dom, root);
+                let count = dom.node_count();
+                for (name, operation) in simple {
+                    operation(&mut dom, root);
+                    assert_eq!(
+                        canonical(&dom, root),
+                        before,
+                        "public {name} must preserve every {story} owner"
+                    );
+                    assert_eq!(
+                        dom.node_count(),
+                        count,
+                        "{name} must not allocate body-only carriers in {story}"
+                    );
+                }
+                let settings = WmlComparerSettings {
+                    author_for_revisions: "Body comparer".to_string(),
+                    date_time_for_revisions: date.to_string(),
+                    detect_format_changes: tracked_formats,
+                    ..WmlComparerSettings::default()
+                };
+                let mut id = 100;
+                for (name, operation) in configured {
+                    operation(&mut dom, root, &settings, &mut id);
+                    assert_eq!(
+                        canonical(&dom, root),
+                        before,
+                        "configured {name} must preserve every {story} owner"
+                    );
+                    assert_eq!(
+                        dom.node_count(),
+                        count,
+                        "{name} must not allocate source history outside the body"
+                    );
+                    assert_eq!(
+                        id, 100,
+                        "{name} must not consume unrelated story revision IDs"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod default_source_property_carrier_tests {
+    use super::*;
+    const DATE: &str = "2026-01-02T03:04:05Z";
+    const FORMAT: &str = "<w:rPr><w:b/><w:color w:val='123456'/><w:lang w:val='en-US'/></w:rPr>";
+    const TABLE: &str = "<w:tbl><w:tblPr><w:tblW w:w='1800' w:type='dxa'/></w:tblPr><w:tblGrid><w:gridCol w:w='1800'/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w='1800' w:type='dxa'/></w:tcPr><w:p><w:r><w:t>Independent table payload</w:t></w:r></w:p></w:tc></w:tr></w:tbl>";
+
+    fn package(body: &str) -> (Dom, NodeId, NodeId) {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(
+            "<w:document xmlns:w='{}' xmlns:pt='{}'><w:body>{body}</w:body></w:document>",
+            W::URI,
+            PT::URI
+        ));
+        let root = dom.root(doc).expect("document");
+        let body = dom.element(root, &W::body()).expect("body");
+        (dom, root, body)
+    }
+    fn semantic(dom: &Dom, node: NodeId) -> String {
+        if !dom.is_element(node) {
+            return format!("text:{:?}", dom.text_value(node));
+        }
+        let mut attrs = dom
+            .attributes(node)
+            .into_iter()
+            .filter(|(name, _)| !dom.is_namespace_declaration(name))
+            .map(|(name, value)| {
+                (
+                    name.namespace_name().to_owned(),
+                    name.local_name().to_owned(),
+                    value,
+                )
+            })
+            .collect::<Vec<_>>();
+        attrs.sort();
+        format!(
+            "{:?}{attrs:?}[{}]",
+            dom.name(node),
+            dom.nodes(node)
+                .into_iter()
+                .map(|child| semantic(dom, child))
+                .collect::<String>()
+        )
+    }
+    fn run(kind: &str, text: &str, author: &str, date: &str) -> String {
+        let tag = if kind == "del" { "delText" } else { "t" };
+        let run = format!("<w:r>{FORMAT}<w:{tag} xml:space='preserve'>{text}</w:{tag}></w:r>");
+        if kind == "live" {
+            run
+        } else {
+            format!("<w:{kind} w:id='17' w:author='{author}' w:date='{date}'>{run}</w:{kind}>")
+        }
+    }
+    fn assert_body(dom: &Dom, body: NodeId, expected: &str, label: &str) {
+        let (want, _, wb) = package(expected);
+        assert_eq!(semantic(dom, body), semantic(&want, wb), "{label}");
+    }
+    fn properties(kind: &str, lifetime: &str) -> String {
+        match kind {
+            "absent" => String::new(),
+            "empty" => "<w:pPr/>".into(),
+            "format" => "<w:pPr><w:rPr><w:b/><w:color w:val='123456'/></w:rPr></w:pPr>".into(),
+            "spacing" => "<w:pPr><w:spacing w:before='120' w:after='240'/></w:pPr>".into(),
+            "heading" => format!(
+                "<w:pPr><w:pStyle w:val='Heading1'/><w:spacing w:after='240'/><w:rPr><w:{lifetime} w:id='18' w:author='Boundary editor' w:date='{DATE}'/></w:rPr></w:pPr>"
+            ),
+            "ins-mark" | "del-mark" => format!(
+                "<w:pPr><w:rPr><w:{} w:id='18' w:author='Boundary editor' w:date='{DATE}'/></w:rPr></w:pPr>",
+                if kind == "ins-mark" { "ins" } else { "del" }
+            ),
+            _ => panic!("unknown authored property fixture"),
+        }
+    }
+
+    // Clean Word paragraphs may omit pPr entirely. A source's own rPr-only
+    // closing carrier likewise has no structural paragraph property. These
+    // are valid inputs, not simulated missing DOM children after detachment.
+    #[test]
+    fn related_one_to_one_pairs_keep_the_exact_default_or_structural_source_carrier() {
+        for old_kind in ["absent", "empty", "format", "spacing", "heading"] {
+            for new_kind in ["absent", "empty", "format", "spacing", "ins-mark"] {
+                let old_props = properties(old_kind, "del");
+                let new_props = properties(new_kind, "ins");
+                let original_body = run(
+                    "del",
+                    "Related original source words",
+                    "Boundary editor",
+                    DATE,
+                );
+                let revised_body = run(
+                    "ins",
+                    "Related revised source words",
+                    "Boundary editor",
+                    DATE,
+                );
+                let old = format!("<w:p>{old_props}{original_body}</w:p>");
+                let new = format!("<w:p>{new_props}{revised_body}</w:p>");
+                let (mut dom, _, body) = package(&(old + &new + TABLE));
+                merge_replaced_in_container(&mut dom, body, "Boundary editor", false);
+                // M88's independent carrier cases: revised structural spacing
+                // owns the mixed p; otherwise old structural spacing/heading
+                // owns it; otherwise the revised default carrier is retained.
+                let expected_properties = match (old_kind, new_kind) {
+                    (_, "spacing") => new_props,
+                    ("spacing" | "heading", _) => old_props,
+                    _ => new_props,
+                };
+                let expected =
+                    format!("<w:p>{expected_properties}{revised_body}{original_body}</w:p>{TABLE}");
+                assert_body(
+                    &dom,
+                    body,
+                    &expected,
+                    &format!("default D/I {old_kind}/{new_kind}"),
+                );
+                let once = semantic(&dom, body);
+                merge_replaced_in_container(&mut dom, body, "Boundary editor", false);
+                assert_eq!(semantic(&dom, body), once);
+            }
+        }
+    }
+
+    // Single-paragraph Word GT closes a wholesale replacement in the last
+    // revised paragraph. Nonheading originals leave that closing mark bare;
+    // M435 retains an authored old heading and its deleted pilcrow instead.
+    #[test]
+    fn a_sole_original_closes_multi_inserted_default_paragraphs_without_inventing_properties() {
+        for original_kind in ["absent", "empty", "spacing", "heading"] {
+            for closing_kind in [
+                "absent", "empty", "format", "spacing", "ins-mark", "del-mark",
+            ] {
+                let old_props = properties(original_kind, "del");
+                let closing_props = properties(closing_kind, "ins");
+                let revised_open = run(
+                    "ins",
+                    "Independently revised opening paragraph",
+                    "Boundary editor",
+                    DATE,
+                );
+                let revised_close = run(
+                    "ins",
+                    "Independently revised final paragraph",
+                    "Boundary editor",
+                    DATE,
+                );
+                let original_body = run(
+                    "del",
+                    "Original independently authored complete paragraph",
+                    "Boundary editor",
+                    DATE,
+                );
+                let lead = format!("<w:p>{}{revised_open}</w:p>", properties("ins-mark", "ins"));
+                let new = format!("<w:p>{closing_props}{revised_close}</w:p>");
+                let old = format!("<w:p>{old_props}{original_body}</w:p>");
+                let section = "<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr>";
+                let (mut dom, _, body) = package(&(old + &lead + &new + section));
+                merge_replaced_in_container(&mut dom, body, "Boundary editor", false);
+                let expected_properties = if original_kind == "heading" {
+                    old_props
+                } else {
+                    match closing_kind {
+                        "absent" | "empty" | "ins-mark" | "del-mark" => String::new(),
+                        _ => closing_props,
+                    }
+                };
+                let expected = format!(
+                    "{lead}<w:p>{expected_properties}{revised_close}{original_body}</w:p>{section}"
+                );
+                assert_body(
+                    &dom,
+                    body,
+                    &expected,
+                    &format!("sole original {original_kind}/{closing_kind}"),
+                );
+                let once = semantic(&dom, body);
+                merge_replaced_in_container(&mut dom, body, "Boundary editor", false);
+                assert_eq!(semantic(&dom, body), once);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod existing_mark_layout_ownership_tests {
+    use super::*;
+    const DATE: &str = "2026-01-02T03:04:05Z";
+    const FORMAT: &str = "<w:rPr><w:b/><w:color w:val='123456'/><w:lang w:val='en-US'/></w:rPr>";
+    const TABLE: &str = "<w:tbl><w:tblPr><w:tblW w:w='1800' w:type='dxa'/></w:tblPr><w:tblGrid><w:gridCol w:w='1800'/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w='1800' w:type='dxa'/></w:tcPr><w:p><w:r><w:t>Independent table payload</w:t></w:r></w:p></w:tc></w:tr></w:tbl>";
+
+    fn package(body: &str) -> (Dom, NodeId, NodeId) {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(
+            "<w:document xmlns:w='{}' xmlns:pt='{}'><w:body>{body}</w:body></w:document>",
+            W::URI,
+            PT::URI
+        ));
+        let root = dom.root(doc).expect("document");
+        let body = dom.element(root, &W::body()).expect("body");
+        (dom, root, body)
+    }
+    fn semantic(dom: &Dom, node: NodeId) -> String {
+        if !dom.is_element(node) {
+            return format!("text:{:?}", dom.text_value(node));
+        }
+        let mut attrs = dom
+            .attributes(node)
+            .into_iter()
+            .filter(|(name, _)| !dom.is_namespace_declaration(name))
+            .map(|(name, value)| {
+                (
+                    name.namespace_name().to_owned(),
+                    name.local_name().to_owned(),
+                    value,
+                )
+            })
+            .collect::<Vec<_>>();
+        attrs.sort();
+        format!(
+            "{:?}{attrs:?}[{}]",
+            dom.name(node),
+            dom.nodes(node)
+                .into_iter()
+                .map(|child| semantic(dom, child))
+                .collect::<String>()
+        )
+    }
+    fn run(kind: &str, text: &str, author: &str, date: &str) -> String {
+        let tag = if kind == "del" { "delText" } else { "t" };
+        let run = format!("<w:r>{FORMAT}<w:{tag} xml:space='preserve'>{text}</w:{tag}></w:r>");
+        if kind == "live" {
+            run
+        } else {
+            format!("<w:{kind} w:id='17' w:author='{author}' w:date='{date}'>{run}</w:{kind}>")
+        }
+    }
+    fn assert_body(dom: &Dom, body: NodeId, expected: &str, label: &str) {
+        let (want, _, wb) = package(expected);
+        let actual = semantic(dom, body);
+        let expected = semantic(&want, wb);
+        if actual != expected {
+            let first = actual
+                .chars()
+                .zip(expected.chars())
+                .position(|(a, b)| a != b)
+                .unwrap_or_else(|| actual.chars().count().min(expected.chars().count()));
+            let context = |x: &str| {
+                x.chars()
+                    .skip(first.saturating_sub(48))
+                    .take(200)
+                    .collect::<String>()
+            };
+            panic!(
+                "{label}: full source tree differs at {first}; actual {:?}, expected {:?}; lengths {}/{}",
+                context(&actual),
+                context(&expected),
+                actual.len(),
+                expected.len()
+            );
+        }
+    }
+    fn mark(kind: &str, id: u32, author: &str, date: Option<&str>) -> String {
+        let date = date.map(|v| format!(" w:date='{v}'")).unwrap_or_default();
+        format!("<w:{kind} w:id='{id}' w:author='{author}'{date}/>")
+    }
+    fn history() -> String {
+        format!(
+            "<w:pPrChange w:id='29' w:author='Prior layout editor' w:date='{DATE}'><w:pPr><w:spacing w:after='50'/><w:jc w:val='center'/></w:pPr></w:pPrChange>"
+        )
+    }
+    fn fresh_history() -> String {
+        format!(
+            "<w:pPrChange w:id='40' w:author='Boundary editor' w:date='{DATE}'><w:pPr/></w:pPrChange>"
+        )
+    }
+    fn settings() -> WmlComparerSettings {
+        WmlComparerSettings {
+            author_for_revisions: "Boundary editor".to_string(),
+            date_time_for_revisions: DATE.to_string(),
+            ..WmlComparerSettings::default()
+        }
+    }
+
+    // Word M221 moves a MIX's spacing to the authored following blank.
+    // An already-authored pilcrow lifetime is authoritative: the metadata
+    // gate must not synthesize a different lifetime or rewrite its owner.
+    #[test]
+    fn moving_mixed_spacing_keeps_existing_inserted_and_deleted_mark_owners() {
+        let spacing = "<w:spacing w:before='400' w:after='120'/>";
+        let format = "<w:b/><w:color w:val='AABBCC'/>";
+        for existing in ["none", "ins", "del"] {
+            for prior_history in [false, true] {
+                for dated in [false, true] {
+                    let old_mark = if existing == "none" {
+                        String::new()
+                    } else {
+                        mark(
+                            existing,
+                            18,
+                            "Original pilcrow editor",
+                            dated.then_some("2025-04-05T06:07:08Z"),
+                        )
+                    };
+                    let mix_body = run("ins", "Revised heading payload", "Boundary editor", DATE)
+                        + &run("del", "Original heading payload", "Boundary editor", DATE);
+                    let mixed = format!(
+                        "<w:p><w:pPr><w:keepNext/>{spacing}<w:rPr>{old_mark}{format}</w:rPr></w:pPr>{mix_body}</w:p>"
+                    );
+                    let original_history = if prior_history {
+                        history()
+                    } else {
+                        String::new()
+                    };
+                    let empty = format!(
+                        "<w:p><w:pPr><w:rPr><w:i/></w:rPr>{original_history}</w:pPr></w:p>"
+                    );
+                    let (mut dom, root, body) = package(&(TABLE.to_string() + &mixed + &empty));
+                    let mut id = 40;
+                    mixed_spacing_to_following_empty(&mut dom, root, &settings(), &mut id);
+                    let added_history = if prior_history {
+                        original_history
+                    } else {
+                        fresh_history()
+                    };
+                    let expected_mark = if existing == "none" {
+                        mark(
+                            "del",
+                            if prior_history { 40 } else { 41 },
+                            "Boundary editor",
+                            Some(DATE),
+                        )
+                    } else {
+                        old_mark
+                    };
+                    let expected_format = if existing == "none" {
+                        format!("{format}{expected_mark}")
+                    } else {
+                        format!("{expected_mark}{format}")
+                    };
+                    let expected = format!(
+                        "{TABLE}<w:p><w:pPr><w:keepNext/><w:rPr>{expected_format}</w:rPr></w:pPr>{mix_body}</w:p><w:p><w:pPr>{spacing}<w:rPr><w:i/></w:rPr>{added_history}</w:pPr></w:p>"
+                    );
+                    assert_body(
+                        &dom,
+                        body,
+                        &expected,
+                        &format!("M221/{existing}/history={prior_history}/date={dated}"),
+                    );
+                    assert_eq!(
+                        id,
+                        40 + u32::from(!prior_history) + u32::from(existing == "none")
+                    );
+                    let once = semantic(&dom, root);
+                    let next = id;
+                    mixed_spacing_to_following_empty(&mut dom, root, &settings(), &mut id);
+                    assert_eq!(semantic(&dom, root), once);
+                    assert_eq!(id, next);
+                }
+            }
+        }
+    }
+
+    // M221's other observed Word shape parks heading spacing on the final
+    // deleted residual. Preserve existing mixed-mark and old-history owners.
+    #[test]
+    fn parking_heading_spacing_keeps_existing_lifetime_and_history_provenance() {
+        let spacing = "<w:spacing w:before='400' w:after='120'/>";
+        let format = "<w:b/><w:color w:val='AABBCC'/>";
+        for existing in ["none", "ins", "del"] {
+            for prior_history in [false, true] {
+                let old_mark = if existing == "none" {
+                    String::new()
+                } else {
+                    mark(
+                        existing,
+                        18,
+                        "Original pilcrow editor",
+                        Some("2025-04-05T06:07:08Z"),
+                    )
+                };
+                let mixed_body = run("ins", "Revised heading payload", "Boundary editor", DATE)
+                    + &run("del", "Original heading payload", "Boundary editor", DATE);
+                let mixed = format!(
+                    "<w:p><w:pPr><w:keepNext/>{spacing}<w:rPr>{old_mark}{format}</w:rPr></w:pPr>{mixed_body}</w:p>"
+                );
+                let first = format!(
+                    "<w:p><w:pPr><w:keepLines/></w:pPr>{}</w:p>",
+                    run("del", "Original first residual", "Boundary editor", DATE)
+                );
+                let original_history = if prior_history {
+                    history()
+                } else {
+                    String::new()
+                };
+                let last_mark = mark(
+                    "del",
+                    20,
+                    "Original residual editor",
+                    Some("2025-04-05T06:07:08Z"),
+                );
+                let last_body = run("del", "Original final residual", "Boundary editor", DATE);
+                let last = format!(
+                    "<w:p><w:pPr><w:rPr>{last_mark}</w:rPr>{original_history}</w:pPr>{last_body}</w:p>"
+                );
+                let (mut dom, root, body) = package(&(TABLE.to_string() + &mixed + &first + &last));
+                let mut id = 40;
+                park_mixed_spacing_onto_trailing_pure_del(&mut dom, root, &settings(), &mut id);
+                let expected_mark = if existing == "none" {
+                    mark(
+                        "del",
+                        if prior_history { 40 } else { 41 },
+                        "Boundary editor",
+                        Some(DATE),
+                    )
+                } else {
+                    old_mark
+                };
+                let expected_history = if prior_history {
+                    original_history
+                } else {
+                    fresh_history()
+                };
+                let expected_format = if existing == "none" {
+                    format!("{format}{expected_mark}")
+                } else {
+                    format!("{expected_mark}{format}")
+                };
+                let expected = format!(
+                    "{TABLE}<w:p><w:pPr><w:keepNext/><w:rPr>{expected_format}</w:rPr></w:pPr>{mixed_body}</w:p>{first}<w:p><w:pPr>{spacing}<w:rPr>{last_mark}</w:rPr>{expected_history}</w:pPr>{last_body}</w:p>"
+                );
+                assert_body(
+                    &dom,
+                    body,
+                    &expected,
+                    &format!("M221 residual/{existing}/history={prior_history}"),
+                );
+                assert_eq!(
+                    id,
+                    40 + u32::from(!prior_history) + u32::from(existing == "none")
+                );
+                let once = semantic(&dom, root);
+                let next = id;
+                park_mixed_spacing_onto_trailing_pure_del(&mut dom, root, &settings(), &mut id);
+                assert_eq!(semantic(&dom, root), once);
+                assert_eq!(id, next);
+            }
+        }
+    }
+
+    #[test]
+    fn alignment_donor_search_crosses_default_property_paragraphs_without_claiming_their_formats() {
+        for default_count in [1, 2] {
+            for table_before_defaults in [false, true] {
+                let donor = format!(
+                    "<w:p><w:pPr><w:spacing w:after='80'/><w:jc w:val='center'/></w:pPr>{}</w:p>",
+                    run(
+                        "live",
+                        "Independent alignment donor",
+                        "Boundary editor",
+                        DATE
+                    )
+                );
+                let defaults = (0..default_count)
+                    .map(|n| {
+                        format!(
+                            "<w:p>{}</w:p>",
+                            run(
+                                "live",
+                                &format!("Independent default source paragraph {n}"),
+                                "Boundary editor",
+                                DATE
+                            )
+                        )
+                    })
+                    .collect::<String>();
+                let table = if table_before_defaults { TABLE } else { "" };
+                let old = history();
+                let mark = mark(
+                    "del",
+                    20,
+                    "Original residual editor",
+                    Some("2025-04-05T06:07:08Z"),
+                );
+                let body_text = run(
+                    "del",
+                    "Original line spacing residual",
+                    "Boundary editor",
+                    DATE,
+                );
+                let last =
+                    format!("<w:p><w:pPr><w:rPr>{mark}</w:rPr>{old}</w:pPr>{body_text}</w:p>");
+                let (mut dom, root, body) = package(&(donor.clone() + table + &defaults + &last));
+                last_pure_del_inherit_prev_jc(&mut dom, root);
+                let expected = donor
+                    + table
+                    + &defaults
+                    + &format!(
+                        "<w:p><w:pPr><w:rPr>{mark}</w:rPr><w:jc w:val='center'/>{old}</w:pPr>{body_text}</w:p>"
+                    );
+                assert_body(
+                    &dom,
+                    body,
+                    &expected,
+                    &format!("default donors {default_count}/table={table_before_defaults}"),
+                );
+                let once = semantic(&dom, root);
+                last_pure_del_inherit_prev_jc(&mut dom, root);
+                assert_eq!(semantic(&dom, root), once);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod interleave_terminal_source_ownership_tests {
+    use super::*;
+    const DATE: &str = "2026-01-02T03:04:05Z";
+    const SECTION: &str = "<w:sectPr><w:pgSz w:w='12240' w:h='15840'/><w:pgMar w:top='720' w:right='900' w:bottom='720' w:left='900'/></w:sectPr>";
+
+    fn package(source: &str) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(
+            "<w:document xmlns:w='{}'><w:body>{source}</w:body></w:document>",
+            W::URI
+        ));
+        let root = dom.root(doc).expect("document");
+        (dom, root)
+    }
+    fn semantic(dom: &Dom, node: NodeId) -> String {
+        if !dom.is_element(node) {
+            return format!("text:{:?}", dom.text_value(node));
+        }
+        let mut attrs = dom
+            .attributes(node)
+            .into_iter()
+            .filter(|(name, _)| !dom.is_namespace_declaration(name))
+            .map(|(name, value)| {
+                (
+                    name.namespace_name().to_owned(),
+                    name.local_name().to_owned(),
+                    value,
+                )
+            })
+            .collect::<Vec<_>>();
+        attrs.sort();
+        format!(
+            "{:?}{attrs:?}[{}]",
+            dom.name(node),
+            dom.nodes(node)
+                .into_iter()
+                .map(|child| semantic(dom, child))
+                .collect::<String>()
+        )
+    }
+    // Empty text is an authored blank paragraph with a revision on its
+    // pilcrow, rather than an empty text node masquerading as a list item.
+    fn owned(kind: &str, text: &str, level: u32, id: u32, history: bool) -> String {
+        let mark =
+            format!("<w:{kind} w:id='{id}' w:author='Source lifetime owner' w:date='{DATE}'/>");
+        let old = if history {
+            format!(
+                "<w:pPrChange w:id='{}' w:author='Earlier format owner' w:date='2025-02-03T04:05:06Z'><w:pPr><w:spacing w:after='60'/></w:pPr></w:pPrChange>",
+                id + 100
+            )
+        } else {
+            String::new()
+        };
+        let body = if text.is_empty() {
+            String::new()
+        } else {
+            let tag = if kind == "del" { "delText" } else { "t" };
+            format!(
+                "<w:{kind} w:id='{}' w:author='Source content owner' w:date='{DATE}'><w:r><w:rPr><w:b/><w:color w:val='123456'/><w:lang w:val='en-US'/></w:rPr><w:{tag} xml:space='preserve'>{text}</w:{tag}></w:r></w:{kind}>",
+                id + 200
+            )
+        };
+        format!(
+            "<w:p><w:pPr><w:pStyle w:val='ListParagraph'/><w:numPr><w:ilvl w:val='{level}'/><w:numId w:val='7'/></w:numPr><w:spacing w:after='80'/><w:rPr>{mark}<w:i/></w:rPr>{old}</w:pPr>{body}</w:p>"
+        )
+    }
+    fn remains_source_owned(blocks: &[String], label: &str) {
+        let input = blocks.concat() + SECTION;
+        let (mut dom, root) = package(&input);
+        let original = semantic(&dom, root);
+        let nodes = dom.node_count();
+        interleave_list_cluster_after_coalesce(&mut dom, root);
+        let actual = semantic(&dom, root);
+        if actual != original {
+            let first = actual
+                .chars()
+                .zip(original.chars())
+                .position(|(a, b)| a != b)
+                .unwrap_or_else(|| actual.chars().count().min(original.chars().count()));
+            let context = |value: &str| {
+                value
+                    .chars()
+                    .skip(first.saturating_sub(40))
+                    .take(160)
+                    .collect::<String>()
+            };
+            panic!(
+                "{label}: complete source differs at {first}, actual {:?}, expected {:?}",
+                context(&actual),
+                context(&original)
+            );
+        }
+        assert_eq!(
+            dom.node_count(),
+            nodes,
+            "{label}: declining a peel allocates no replacement source nodes"
+        );
+        interleave_list_cluster_after_coalesce(&mut dom, root);
+        assert_eq!(
+            semantic(&dom, root),
+            original,
+            "{label}: repeated normalization preserves every property, revision owner and paragraph position"
+        );
+        assert_eq!(dom.node_count(), nodes);
+    }
+
+    #[test]
+    fn terminal_revision_runs_and_incomplete_interleave_keep_all_source_positions() {
+        for history in [false, true] {
+            // These legal terminal streams cannot be peeled into a nested
+            // cluster. The whole source tree, including section and history,
+            // is the independent conservative contract.
+            for (label, kinds) in [
+                ("inserted terminal run", "IIIIII"),
+                ("deleted terminal run after heading", "IDDDDD"),
+                ("incomplete interleave without deleted remainder", "IDDIII"),
+            ] {
+                let blocks: Vec<String> = kinds
+                    .chars()
+                    .enumerate()
+                    .map(|(index, kind)| {
+                        owned(
+                            if kind == 'I' { "ins" } else { "del" },
+                            &format!("Item {index}"),
+                            u32::from(index == 2),
+                            index as u32 + 1,
+                            history,
+                        )
+                    })
+                    .collect();
+                remains_source_owned(&blocks, label);
+            }
+        }
+    }
+
+    #[test]
+    fn an_authored_inserted_blank_is_not_a_short_list_label() {
+        for history in [false, true] {
+            let blocks = vec![
+                owned("ins", "Revised heading", 0, 1, history),
+                owned("ins", "a", 0, 2, history),
+                owned("ins", "", 0, 3, history),
+                owned("del", "Original first item", 0, 4, history),
+                owned("del", "Original nested item", 1, 5, history),
+                owned("del", "Original final item", 0, 6, history),
+            ];
+            remains_source_owned(
+                &blocks,
+                "authored inserted blank owns a pilcrow, not a word label",
+            );
+        }
+    }
+
+    #[test]
+    fn a_deleted_blank_numbered_paragraph_does_not_claim_a_nested_content_cluster() {
+        for history in [false, true] {
+            let blocks = vec![
+                owned("ins", "Revised heading", 0, 1, history),
+                owned("ins", "a", 0, 2, history),
+                owned("ins", "b", 0, 3, history),
+                owned("del", "Original first item", 0, 4, history),
+                owned("del", "", 1, 5, history),
+                owned("del", "Original final item", 0, 6, history),
+            ];
+            remains_source_owned(
+                &blocks,
+                "empty numbered source preserves its own geometry and lifetime without moving other owners",
+            );
+        }
+    }
+    #[test]
+    fn split_inserted_title_fragments_do_not_take_another_authors_pending_revision() {
+        // The short shared-word title is otherwise an eligible Word mesh.
+        // Its second inserted fragment belongs to a different pending edit;
+        // changing that owner is forbidden even when all formats agree.
+        for source_author in ["Earlier title editor", "Imported pending editor"] {
+            for different_fragment in [0usize, 1] {
+                let first_author = if different_fragment == 0 {
+                    source_author
+                } else {
+                    "Comparer editor"
+                };
+                let second_author = if different_fragment == 1 {
+                    source_author
+                } else {
+                    "Comparer editor"
+                };
+                let fragment = |kind: &str, text: &str, id: u32, author: &str| {
+                    let tag = if kind == "del" { "delText" } else { "t" };
+                    format!(
+                        "<w:{kind} w:id='{id}' w:author='{author}' w:date='{DATE}'><w:r><w:rPr><w:b/><w:color w:val='123456'/></w:rPr><w:{tag} xml:space='preserve'>{text}</w:{tag}></w:r></w:{kind}>"
+                    )
+                };
+                let input = format!(
+                    "<w:p><w:pPr><w:pStyle w:val='Title'/><w:spacing w:after='120'/><w:jc w:val='center'/><w:pPrChange w:id='70' w:author='Original layout editor' w:date='2025-02-03T04:05:06Z'><w:pPr><w:spacing w:after='80'/></w:pPr></w:pPrChange></w:pPr>{}{}{}</w:p>{SECTION}",
+                    fragment("ins", "New ", 41, first_author),
+                    fragment("ins", "document", 42, second_author),
+                    fragment("del", "Old document", 43, "Comparer editor")
+                );
+                let (mut dom, root) = package(&input);
+                let source = semantic(&dom, root);
+                let nodes = dom.node_count();
+                free_mesh_shared_title_token_in_mix(&mut dom, root);
+                assert_eq!(
+                    semantic(&dom, root),
+                    source,
+                    "each title revision must retain its original pending owner and exact source format"
+                );
+                assert_eq!(dom.node_count(), nodes);
+                free_mesh_shared_title_token_in_mix(&mut dom, root);
+                assert_eq!(semantic(&dom, root), source);
+                assert_eq!(dom.node_count(), nodes);
+            }
+        }
+    }
+}

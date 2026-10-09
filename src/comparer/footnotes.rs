@@ -1655,3 +1655,103 @@ mod deterministic_note_boundary_tests {
         assert_eq!(names.last().unwrap(), "numIdMacAtCleanup");
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod coverage_custom_note_owner_boundaries {
+    use super::*;
+
+    #[test]
+    fn custom_marker_fixup_moves_only_matching_leaf_and_keeps_all_other_owners() {
+        for note in ["footnoteReference", "endnoteReference"] {
+            for revision in ["ins", "del"] {
+                for boundary in [
+                    "matching",
+                    "opposite",
+                    "ordinary",
+                    "last",
+                    "already",
+                    "matching-no-text",
+                ] {
+                    let leaf = if revision == "del" { "delText" } else { "t" };
+                    let other = if revision == "del" { "ins" } else { "del" };
+                    let already = if boundary == "already" {
+                        format!("<w:{leaf}>*</w:{leaf}>")
+                    } else {
+                        String::new()
+                    };
+                    let donor = format!(
+                        "<w:r><w:rPr><w:i/></w:rPr><w:{leaf}>*</w:{leaf}></w:r><w:r><w:rPr><w:b/></w:rPr><w:{leaf}>unrelated</w:{leaf}></w:r>"
+                    );
+                    let following = match boundary {
+                        "last" => String::new(),
+                        "ordinary" => {
+                            "<w:r><w:rPr><w:u w:val=\"single\"/></w:rPr><w:t>ordinary</w:t></w:r>"
+                                .to_owned()
+                        }
+                        "opposite" => format!(
+                            "<w:{other} w:id=\"12\" w:author=\"Other\" w:date=\"2026-01-01T00:00:00Z\"><w:r><w:t>opposite</w:t></w:r></w:{other}>"
+                        ),
+                        "matching-no-text" => format!(
+                            "<w:{revision} w:id=\"12\" w:author=\"Other\" w:date=\"2026-01-01T00:00:00Z\"><w:r><w:rPr><w:i/></w:rPr><w:tab/></w:r></w:{revision}>"
+                        ),
+                        _ => format!(
+                            "<w:{revision} w:id=\"12\" w:author=\"Other\" w:date=\"2026-01-01T00:00:00Z\">{donor}</w:{revision}>"
+                        ),
+                    };
+                    let mut dom = Dom::new();
+                    let doc = dom.parse_xdocument(&format!("<w:p xmlns:w=\"{}\"><w:pPr><w:spacing w:after=\"240\"/></w:pPr><w:{revision} w:id=\"11\" w:author=\"Owner\" w:date=\"2025-01-01T00:00:00Z\"><w:r><w:rPr><w:color w:val=\"123456\"/></w:rPr><w:{note} w:id=\"42\" w:customMarkFollows=\"1\"/>{already}</w:r></w:{revision}>{following}</w:p>",W::URI));
+                    let root = dom.root(doc).unwrap();
+                    let reference = dom.descendants(root, Some(&W::name(note)))[0];
+                    let run = dom.parent(reference).unwrap();
+                    let owner = dom.parent(run).unwrap();
+                    let run_props = dom.element(run, &W::r_pr()).unwrap();
+                    let frozen_props = dom.serialize_element(run_props);
+                    let frozen_ref = dom.serialize_element(reference);
+                    let before = dom.serialize_element(root);
+                    let sibling = dom.next_element(owner);
+                    let sibling_before = sibling.map(|node| dom.serialize_element(node));
+                    fix_up_footnotes_endnotes_with_custom_markers(&mut dom, root);
+                    assert_eq!(dom.serialize_element(reference), frozen_ref);
+                    assert_eq!(dom.serialize_element(run_props), frozen_props);
+                    assert_eq!(dom.attribute(owner, &W::id()), Some("11"));
+                    assert_eq!(dom.attribute(owner, &W::author()), Some("Owner"));
+                    assert_eq!(
+                        dom.attribute(owner, &W::date()),
+                        Some("2025-01-01T00:00:00Z")
+                    );
+                    if boundary == "matching" {
+                        assert_eq!(dom.value(run), "*");
+                        let sibling = sibling.unwrap();
+                        assert_eq!(dom.attribute(sibling, &W::id()), Some("12"));
+                        assert_eq!(dom.attribute(sibling, &W::author()), Some("Other"));
+                        assert_eq!(dom.value(sibling), "unrelated");
+                        let donor_runs = dom.elements(sibling, Some(&W::r()));
+                        assert_eq!(donor_runs.len(), 2);
+                        assert!(dom.element(donor_runs[0], &W::name(leaf)).is_none());
+                        assert_eq!(dom.descendants(donor_runs[0], Some(&W::name("i"))).len(), 1);
+                        assert_eq!(dom.value(donor_runs[1]), "unrelated");
+                        assert_eq!(dom.descendants(donor_runs[1], Some(&W::name("b"))).len(), 1);
+                    } else {
+                        assert_eq!(
+                            dom.serialize_element(root),
+                            before,
+                            "{note}/{revision}/{boundary}"
+                        );
+                        assert_eq!(
+                            sibling.map(|node| dom.serialize_element(node)),
+                            sibling_before
+                        );
+                    }
+                    let fixed = dom.serialize_element(root);
+                    fix_up_footnotes_endnotes_with_custom_markers(&mut dom, root);
+                    assert_eq!(
+                        dom.serialize_element(root),
+                        fixed,
+                        "fixup must be idempotent"
+                    );
+                }
+            }
+        }
+    }
+}

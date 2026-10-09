@@ -19,7 +19,10 @@ pub(crate) fn expand(xml: &str, load: impl Fn(&str) -> Option<Vec<u8>>) -> Strin
         out.push_str(&rest[..at]);
         let tail = &rest[at..];
         let Some(open_end) = tail.find('>') else {
-            break;
+            // The prefix has already been copied; retain only the unfinished
+            // chunk suffix when this diagnostic input cannot be expanded.
+            out.push_str(tail);
+            return out;
         };
         let open = &tail[..=open_end];
         let end = if open.ends_with("/>") {
@@ -320,10 +323,14 @@ impl Builder {
         let Some(mut para) = self.para.take() else {
             return;
         };
-        if let Some((_, first)) = para.runs.first_mut() {
+        if let Some((_, first)) = para.runs.first_mut()
+            && first != "\n"
+        {
             *first = first.trim_start().to_string();
         }
-        if let Some((_, last)) = para.runs.last_mut() {
+        if let Some((_, last)) = para.runs.last_mut()
+            && last != "\n"
+        {
             *last = last.trim_end().to_string();
         }
         let sink = self.sinks.last_mut().expect("body sink");
@@ -1047,5 +1054,272 @@ mod tests {
                 assert!(!wml.contains("<w:tblBorders>"));
             }
         }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod imported_source_contract_tests {
+    use super::*;
+    use crate::opc::PartFs;
+    use std::io::{Cursor, Write};
+
+    const SPACING: &str = "<w:spacing w:beforeAutospacing=\"1\" w:afterAutospacing=\"1\" w:line=\"240\" w:lineRule=\"auto\"/>";
+    const DEFAULT_RPR: &str = "<w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\" w:cs=\"Times New Roman\"/><w:sz w:val=\"24\"/><w:szCs w:val=\"24\"/></w:rPr>";
+
+    fn plain(text: &str) -> String {
+        format!(
+            "<w:p><w:pPr>{SPACING}</w:pPr><w:r>{DEFAULT_RPR}<w:t xml:space=\"preserve\">{text}</w:t></w:r></w:p>"
+        )
+    }
+
+    fn package(parts: &[(&str, &[u8])]) -> PartFs {
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        zip.start_file(
+            "[Content_Types].xml",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        zip.write_all(br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Default Extension="html" ContentType="text/html"/><Default Extension="mht" ContentType="message/rfc822"/></Types>"#).unwrap();
+        for (name, bytes) in parts {
+            zip.start_file(*name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(bytes).unwrap();
+        }
+        PartFs::open(&zip.finish().unwrap().into_inner()).unwrap()
+    }
+
+    #[test]
+    fn memory_story_chunk_relationships_expand_exactly_without_mutating_package_or_source() {
+        for close in ["/>", "><w:altChunkPr/></w:altChunk>"] {
+            let source = format!(
+                r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body><w:p/><w:altChunk r:id="html"{close}<w:altChunk r:id="missing"/><w:altChunk r:id="mime"/><w:sectPr/></w:body></w:document>"#
+            );
+            let html = b"<p>First &amp; owned</p>";
+            let mht =
+                b"Content-Type: text/html\nContent-Transfer-Encoding: base64\n\nPHA+TGFzdDwvcD4=";
+            let pkg=package(&[("word/document.xml",source.as_bytes()),("word/_rels/document.xml.rels",br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="html" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk" Target="chunks/first.html"/><Relationship Id="mime" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk" Target="../customXml/last.mht"/></Relationships>"#),("word/chunks/first.html",html),("customXml/last.mht",mht)]);
+            let load = |rid: &str| {
+                super::super::rel_target_path(&pkg, "word/document.xml", rid)
+                    .and_then(|target| pkg.part_bytes(&target).map(<[u8]>::to_vec))
+            };
+            let actual = expand(&source, load);
+            let prefix = source.split("<w:altChunk").next().unwrap();
+            assert_eq!(
+                actual,
+                format!(
+                    "{prefix}{}{}<w:sectPr/></w:body></w:document>",
+                    plain("First &amp; owned"),
+                    plain("Last")
+                )
+            );
+            assert_eq!(
+                pkg.part_string("word/document.xml").as_deref(),
+                Some(source.as_str())
+            );
+            assert_eq!(
+                pkg.part_bytes("word/chunks/first.html"),
+                Some(html.as_slice())
+            );
+            assert_eq!(pkg.part_bytes("customXml/last.mht"), Some(mht.as_slice()));
+            assert_eq!(
+                expand(&actual, |_| panic!(
+                    "expanded story has no chunk relationship"
+                )),
+                actual
+            );
+        }
+    }
+
+    #[test]
+    fn quoted_and_unquoted_html_attribute_boundaries_select_only_the_authored_class() {
+        for class in [
+            "class=owned",
+            "class='owned'",
+            "class=\"owned\"",
+            "data-class=wrong class=owned",
+            "data-class=wrong\nclass=owned",
+            "data-class=wrong\tclass=owned",
+            "data-class=wrong\rclass=owned",
+        ] {
+            let source = format!(
+                "<style>.owned {{font-weight:600}} .wrong {{font-style:italic}}</style><p {class}>Owned</p>"
+            );
+            let expected = plain("Owned").replace("<w:sz ", "<w:b/><w:sz ");
+            assert_eq!(html_to_wml(&source), expected, "{class}");
+        }
+        // Explicit malformed-attribute diagnostics: no closing quote declines
+        // the class, and an unquoted attribute stops at HTML's tag terminator.
+        assert_eq!(attr("<p class='unfinished>", "class"), None);
+        assert_eq!(attr("<p class=owned>", "class").as_deref(), Some("owned"));
+        assert_eq!(attr("<p class=owned/>", "class").as_deref(), Some("owned"));
+    }
+
+    #[test]
+    fn css_font_weight_style_and_decoration_have_independent_literal_run_contracts() {
+        for (weight, bold) in [
+            ("bold", true),
+            ("600", true),
+            ("599", false),
+            ("normal", false),
+        ] {
+            for (style, italic) in [("italic", true), ("oblique", true), ("normal", false)] {
+                for (decoration, underline) in [("underline", true), ("none", false)] {
+                    let html = format!(
+                        "<p style='font-weight:{weight};font-style:{style};text-decoration:{decoration}'>Owned</p>"
+                    );
+                    let mut rpr = String::from(
+                        "<w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\" w:cs=\"Times New Roman\"/>",
+                    );
+                    if bold {
+                        rpr.push_str("<w:b/>");
+                    }
+                    if italic {
+                        rpr.push_str("<w:i/>");
+                    }
+                    if underline {
+                        rpr.push_str("<w:u w:val=\"single\"/>");
+                    }
+                    rpr.push_str("<w:sz w:val=\"24\"/><w:szCs w:val=\"24\"/></w:rPr>");
+                    assert_eq!(
+                        html_to_wml(&html),
+                        format!(
+                            "<w:p><w:pPr>{SPACING}</w:pPr><w:r>{rpr}<w:t xml:space=\"preserve\">Owned</w:t></w:r></w:p>"
+                        )
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn css_font_family_empty_fallback_and_numeric_lengths_preserve_owned_text() {
+        for (family, expected) in [
+            ("Arial,serif", "Arial"),
+            ("\"Arial\",serif", "Arial"),
+            ("", "Times New Roman"),
+            ("\"\",serif", "Times New Roman"),
+        ] {
+            let source = format!("<p style='font-family:{family};font-size:16px'>Owned</p>");
+            assert_eq!(
+                html_to_wml(&source),
+                plain("Owned").replace("Times New Roman", expected)
+            );
+        }
+        for (margin, ind) in [("0pt", ""), ("-1pt", ""), ("1pt", "<w:ind w:left=\"20\"/>")] {
+            for (align, jc) in [
+                ("left", ""),
+                ("center", "<w:jc w:val=\"center\"/>"),
+                ("right", "<w:jc w:val=\"right\"/>"),
+            ] {
+                let source =
+                    format!("<p style='margin-left:{margin};text-align:{align}'>Owned</p>");
+                assert_eq!(
+                    html_to_wml(&source),
+                    plain("Owned").replace("</w:pPr>", &format!("{ind}{jc}</w:pPr>"))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn paragraph_whitespace_empty_runs_and_leading_breaks_preserve_exact_imported_payloads() {
+        let empty = format!("<w:p><w:pPr>{SPACING}</w:pPr></w:p>");
+        assert_eq!(
+            html_to_wml("<body> \n\t<p></p><p> </p></body>"),
+            empty.repeat(2)
+        );
+        assert_eq!(
+            html_to_wml("<p> A<b> </b> B </p>"),
+            format!(
+                "<w:p><w:pPr>{SPACING}</w:pPr><w:r>{DEFAULT_RPR}<w:t xml:space=\"preserve\">A</w:t></w:r><w:r>{}<w:t xml:space=\"preserve\"> </w:t></w:r><w:r>{DEFAULT_RPR}<w:t xml:space=\"preserve\">B</w:t></w:r></w:p>",
+                DEFAULT_RPR.replace("<w:sz ", "<w:b/><w:sz ")
+            )
+        );
+        assert_eq!(
+            html_to_wml("<br/> A"),
+            format!(
+                "<w:p><w:pPr>{SPACING}</w:pPr><w:r>{DEFAULT_RPR}<w:br/></w:r><w:r>{DEFAULT_RPR}<w:t xml:space=\"preserve\">A</w:t></w:r></w:p>"
+            )
+        );
+        assert_eq!(
+            html_to_wml("<p>A<br/> B</p>"),
+            format!(
+                "<w:p><w:pPr>{SPACING}</w:pPr><w:r>{DEFAULT_RPR}<w:t xml:space=\"preserve\">A</w:t></w:r><w:r>{DEFAULT_RPR}<w:br/></w:r><w:r>{DEFAULT_RPR}<w:t xml:space=\"preserve\"> B</w:t></w:r></w:p>"
+            )
+        );
+        assert_eq!(
+            html_to_wml("<p>A<br/></p>"),
+            format!(
+                "<w:p><w:pPr>{SPACING}</w:pPr><w:r>{DEFAULT_RPR}<w:t xml:space=\"preserve\">A</w:t></w:r><w:r>{DEFAULT_RPR}<w:br/></w:r></w:p>"
+            )
+        );
+        assert_eq!(
+            html_to_wml("<p><br/></p>"),
+            format!("<w:p><w:pPr>{SPACING}</w:pPr><w:r>{DEFAULT_RPR}<w:br/></w:r></w:p>")
+        );
+        assert_eq!(collapse_ws("A\u{a0}\tB \n"), "A\u{a0} B ");
+    }
+
+    #[test]
+    fn valid_html_declarations_headings_and_self_closed_spans_keep_exact_source_formats() {
+        assert_eq!(
+            html_to_wml("<!DOCTYPE html><?xml version='1.0'?><h2>Heading</h2><p>A<span/>B</p>"),
+            format!(
+                "{}<w:p><w:pPr>{SPACING}</w:pPr><w:r>{DEFAULT_RPR}<w:t xml:space=\"preserve\">A</w:t></w:r><w:r>{DEFAULT_RPR}<w:t xml:space=\"preserve\">B</w:t></w:r></w:p>",
+                plain("Heading").replace("<w:sz ", "<w:b/><w:sz ")
+            )
+        );
+        let malformed = "<p>Kept</p><unfinished";
+        assert_eq!(html_to_wml(malformed), plain("Kept"));
+        assert_eq!(html_to_wml("<p>Kept</p><!-- unfinished"), plain("Kept"));
+        assert_eq!(html_to_wml("<p>Kept</p><>"), plain("Kept"));
+        let unterminated = "<w:body><w:p/><w:altChunk r:id='x'";
+        assert_eq!(
+            expand(unterminated, |_| panic!("unterminated chunk is not loaded")),
+            unterminated
+        );
+    }
+
+    #[test]
+    fn unclosed_html_table_cells_are_finalized_once_with_source_spans_and_empty_cells() {
+        for source in ["<table><tr><td>A<td>B", "<table><tr><td>A</td><td>B</td>"] {
+            let actual = html_to_wml(source);
+            let header = "<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblLayout w:type=\"fixed\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"4680\"/><w:gridCol w:w=\"4680\"/></w:tblGrid><w:tr>";
+            assert_eq!(
+                actual,
+                format!(
+                    "{header}<w:tc><w:tcPr><w:tcW w:w=\"4680\" w:type=\"dxa\"/></w:tcPr>{}</w:tc><w:tc><w:tcPr><w:tcW w:w=\"4680\" w:type=\"dxa\"/></w:tcPr>{}</w:tc></w:tr></w:tbl>",
+                    plain("A"),
+                    plain("B")
+                )
+            );
+        }
+        // A row outside a table is malformed HTML. Its text remains normal
+        // body text; a stray table end must not create a phantom table.
+        assert_eq!(html_to_wml("<tr>Owned</tr></table>"), plain("Owned"));
+    }
+
+    #[test]
+    fn empty_css_selectors_and_unclosed_style_blocks_do_not_steal_later_owned_rules() {
+        let source =
+            "<style>,p {font-weight:600} ; .unused {font-style:italic}</style><p>Owned</p>";
+        assert_eq!(
+            html_to_wml(source),
+            plain("Owned").replace("<w:sz ", "<w:b/><w:sz ")
+        );
+        assert_eq!(
+            collect_between(
+                "<style>p{x:y}</style><STYLE>q{a:b}</STYLE>",
+                "<style",
+                "</style>"
+            )
+            .as_deref(),
+            Some("p{x:y}\nq{a:b}\n")
+        );
+        assert_eq!(
+            collect_between("<style unfinished", "<style", "</style>"),
+            None
+        );
     }
 }

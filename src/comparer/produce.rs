@@ -2426,3 +2426,155 @@ mod reordered_retained_control_identity_regression {
         );
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod coverage_ruby_math_ownership {
+    use super::*;
+    use crate::namespaces::M;
+
+    fn semantic(dom: &Dom, node: NodeId) -> String {
+        let Some(name) = dom.name(node) else {
+            return format!("text:{:?}", dom.text_value(node));
+        };
+        let mut attrs = dom
+            .attributes(node)
+            .into_iter()
+            .filter(|(name, _)| {
+                name.namespace_name() != PT::URI
+                    && name.namespace_name() != "http://www.w3.org/2000/xmlns/"
+            })
+            .map(|(name, value)| {
+                (
+                    format!("{{{}}}{}", name.namespace_name(), name.local_name()),
+                    value.to_owned(),
+                )
+            })
+            .collect::<Vec<_>>();
+        attrs.sort();
+        let mut result = format!(
+            "{{{}}}{} {:?}",
+            name.namespace_name(),
+            name.local_name(),
+            attrs
+        );
+        for child in dom.nodes(node) {
+            let child = semantic(dom, child);
+            result.push_str(&format!("{}:{child}", child.len()));
+        }
+        result
+    }
+
+    #[test]
+    fn ruby_reassembly_retains_reading_base_and_property_owners() {
+        for explicit_format in [false, true] {
+            for text in ["A", "base words", "甲乙"] {
+                let props = if explicit_format {
+                    "<w:rPr><w:i/><w:color w:val=\"123456\"/></w:rPr>"
+                } else {
+                    ""
+                };
+                let xml = format!(
+                    "<w:body xmlns:w=\"{}\"><w:p><w:pPr><w:spacing w:after=\"120\"/></w:pPr><w:r>{props}<w:ruby><w:rubyPr><w:rubyAlign w:val=\"center\"/><w:hps w:val=\"12\"/><w:hpsRaise w:val=\"10\"/><w:hpsBaseText w:val=\"20\"/><w:lid w:val=\"ja-JP\"/></w:rubyPr><w:rt><w:r><w:rPr><w:b/></w:rPr><w:t>reading</w:t></w:r></w:rt><w:rubyBase><w:r>{props}<w:t>{text}</w:t></w:r></w:rubyBase></w:ruby></w:r></w:p></w:body>",
+                    W::URI
+                );
+                let mut dom = Dom::new();
+                let doc = dom.parse_xdocument(&xml);
+                let body = dom.root(doc).unwrap();
+                let original = dom.elements(body, Some(&W::p()))[0];
+                let expected = semantic(&dom, original);
+                let settings = WmlComparerSettings::default();
+                let mut atoms = super::super::atomize::create_comparison_unit_atom_list(
+                    &mut dom, body, &settings,
+                );
+                for atom in &mut atoms {
+                    atom.correlation_status = CorrelationStatus::Equal;
+                }
+                assemble_ancestor_unids(&mut dom, &mut atoms);
+                let mut id = 200;
+                let result = produce_new_wml_markup_from_correlated_sequence(
+                    &mut dom, &atoms, &settings, &mut id,
+                );
+                assert_eq!(result.len(), 1);
+                // Raw coalescing emits the paragraph-mark properties last;
+                // the public producer orders them before serializing the tree.
+                super::super::finalize::move_paragraph_properties_first(&mut dom, result[0]);
+                assert_eq!(dom.value(result[0]), format!("reading{text}"));
+                let reading = dom.descendants(result[0], Some(&W::name("rt")))[0];
+                let base = dom.descendants(result[0], Some(&W::name("rubyBase")))[0];
+                assert_eq!(dom.value(reading), "reading");
+                assert_eq!(dom.value(base), text);
+                assert_eq!(
+                    semantic(&dom, result[0]),
+                    expected,
+                    "format={explicit_format} text={text}"
+                );
+                assert_eq!(id, 200, "equal content must not mint revision IDs");
+            }
+        }
+    }
+
+    #[test]
+    fn existing_math_revisions_keep_attribution_and_new_siblings_are_marked_once() {
+        for existing in ["ins", "del"] {
+            for added in ["ins", "del"] {
+                for explicit_format in [false, true] {
+                    let format = if explicit_format {
+                        "<w:rPr><w:rFonts w:ascii=\"Cambria Math\" w:hAnsi=\"Cambria Math\"/><w:b/></w:rPr>"
+                    } else {
+                        ""
+                    };
+                    let xml = format!(
+                        "<m:oMath xmlns:m=\"{}\" xmlns:w=\"{}\"><m:r><w:{existing} w:id=\"7\" w:author=\"Prior\" w:date=\"2025-01-01T00:00:00Z\"><w:rPr><w:i/></w:rPr><m:t>old</m:t></w:{existing}></m:r><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr>{format}<m:t>new</m:t></m:r><m:f><m:fPr><m:ctrlPr><w:rPr><w:color w:val=\"445566\"/></w:rPr></m:ctrlPr></m:fPr><m:num/><m:den/></m:f></m:oMath>",
+                        M::URI,
+                        W::URI
+                    );
+                    let mut dom = Dom::new();
+                    let doc = dom.parse_xdocument(&xml);
+                    let math = dom.root(doc).unwrap();
+                    let prior = dom.descendants(math, Some(&W::name(existing)))[0];
+                    let frozen = semantic(&dom, prior);
+                    let mut id = 30;
+                    let settings = WmlComparerSettings::default();
+                    mark_math_revisions_internally(
+                        &mut dom,
+                        math,
+                        &W::name(added),
+                        &settings,
+                        &mut id,
+                    );
+                    assert_eq!(semantic(&dom, prior), frozen);
+                    assert_eq!(id, 32, "only live run and control properties get new marks");
+                    let runs = dom.descendants(math, Some(&M::name("r")));
+                    assert_eq!(dom.value(runs[0]), "old");
+                    assert_eq!(dom.value(runs[1]), "new");
+                    let mark = dom.elements(runs[1], Some(&W::name(added)))[0];
+                    assert_eq!(dom.attribute(mark, &W::id()), Some("30"));
+                    assert_eq!(
+                        dom.attribute(mark, &W::author()),
+                        Some(settings.author_for_revisions.as_str())
+                    );
+                    assert_eq!(
+                        dom.attribute(mark, &W::date()),
+                        Some(settings.date_time_for_revisions.as_str())
+                    );
+                    let rpr = dom.elements(mark, Some(&W::r_pr()))[0];
+                    assert_eq!(
+                        dom.descendants(rpr, Some(&W::name("b"))).len(),
+                        usize::from(explicit_format)
+                    );
+                    let before_second = semantic(&dom, math);
+                    mark_math_revisions_internally(
+                        &mut dom,
+                        math,
+                        &W::name(added),
+                        &settings,
+                        &mut id,
+                    );
+                    assert_eq!(semantic(&dom, math), before_second);
+                    assert_eq!(id, 32);
+                }
+            }
+        }
+    }
+}

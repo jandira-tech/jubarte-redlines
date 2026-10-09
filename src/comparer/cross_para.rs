@@ -2116,3 +2116,337 @@ fn emit_segment(
         edits.push((Op::Equal, le - s + t, re - s + t));
     }
 }
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod lexical_pairing_contract_tests {
+    use super::*;
+    use crate::comparer::atoms::ComparisonUnitWord;
+
+    fn tokens(words: &[&str]) -> Vec<Tok> {
+        words
+            .iter()
+            .map(|key| Tok {
+                kind: if key.chars().any(char::is_alphanumeric) {
+                    Kind::Word
+                } else {
+                    Kind::Sep
+                },
+                key: (*key).into(),
+                chars: key.chars().count(),
+                unit: ComparisonUnit::Word(ComparisonUnitWord::new(Vec::new())),
+            })
+            .collect()
+    }
+    fn lexical(words: &[&str]) -> Bag {
+        bag(&tokens(words), true)
+    }
+
+    #[test]
+    fn multiset_similarity_counts_repetitions_and_lexical_evidence_separately() {
+        let a = lexical(&["alpha", "alpha", "the", "42", " ", "!"]);
+        let b = lexical(&["alpha", "the", "the", "84", " "]);
+        assert_eq!(a.word_count, 4);
+        assert_eq!(a.pairing_count, 3);
+        assert_eq!(a.content, ["alpha", "alpha", "42"]);
+        assert_eq!(multiset_intersection(&a.counts, &b.counts), 3);
+        assert!((jaccard(&a, &b) - 3.0 / 8.0).abs() < 1e-12);
+        assert_eq!(pairing_overlap(&a, &b), (2, 0.5));
+        assert_eq!(shared_content_words(&a, &b), 1);
+        assert!(has_pairing_evidence(&a, &b, 2));
+        let empty = lexical(&[]);
+        assert_eq!(jaccard(&empty, &empty), 1.0);
+        assert_eq!(pairing_overlap(&a, &empty), (0, 0.0));
+        assert_eq!(pairing_overlap(&empty, &a), (0, 0.0));
+        let cases = [
+            (vec![], vec!["alpha", "beta"], true),
+            (vec!["alpha"], vec!["beta"], true),
+            (vec!["the", "and"], vec!["with", "from"], false),
+            (vec!["the", "and"], vec!["the", "and"], true),
+            (vec!["alpha", "beta"], vec!["gamma", "delta"], false),
+        ];
+        for (a, b, expected) in cases {
+            assert_eq!(residue_force_pair(&lexical(&a), &lexical(&b)), expected);
+            assert_eq!(residue_force_pair(&lexical(&b), &lexical(&a)), expected);
+        }
+        let split = tokens(&["-ALPHA--β-", "THE", "42"]);
+        assert_eq!(bag(&split, true).content, ["alpha", "β", "42"]);
+        assert!(bag(&split, false).trimmed.contains("ALPHA"));
+    }
+
+    #[test]
+    fn ordered_words_use_sequence_order_and_cap_oversized_windows() {
+        let a = lexical(&["alpha", "beta", "gamma"]);
+        let b = lexical(&["gamma", "beta", "alpha"]);
+        assert_eq!(ordered_content_words(&a, &b), 1);
+        assert_eq!(ordered_content_words(&b, &a), 1);
+        assert_eq!(ordered_content_words(&a, &lexical(&["alpha", "gamma"])), 2);
+        assert_eq!(ordered_content_words(&lexical(&[]), &a), 0);
+        let huge = lexical(&vec!["alpha"; 1001]);
+        assert_eq!(ordered_content_words(&huge, &huge), 0);
+    }
+
+    #[test]
+    fn paragraph_pairs_preserve_non_crossing_unique_ownership() {
+        let vocabulary: [&[&str]; 8] = [
+            &[],
+            &["alpha"],
+            &["beta"],
+            &["alpha", "beta"],
+            &["the", "and"],
+            &["the", "from"],
+            &["alpha", "beta", "gamma", "delta"],
+            &[" ", "!"],
+        ];
+        let sequences: Vec<Vec<Bag>> = (0..8)
+            .flat_map(|a| (0..8).map(move |b| vec![lexical(vocabulary[a]), lexical(vocabulary[b])]))
+            .collect();
+        for left in &sequences {
+            for right in &sequences {
+                let pairs = pair_gap(left, right);
+                assert_eq!(pairs.len(), left.len());
+                let linked: Vec<_> = pairs.iter().flatten().copied().collect();
+                assert!(linked.iter().all(|&r| r < right.len()));
+                assert!(linked.windows(2).all(|w| w[0] < w[1]));
+                assert_eq!(pairs, pair_gap(left, right));
+            }
+        }
+        for words in vocabulary {
+            let one = vec![lexical(words)];
+            assert_eq!(pair_gap(&one, &one), [Some(0)]);
+            assert_eq!(pair_gap(&one, &[]), [None]);
+            assert!(pair_gap(&[], &one).is_empty());
+        }
+        let left = vec![lexical(&["alpha", "beta"]), lexical(&["gamma", "delta"])];
+        let right = vec![lexical(&["alpha", "beta"]), lexical(&["gamma", "delta"])];
+        assert_eq!(pair_gap(&left, &right), [Some(0), Some(1)]);
+        let unrelated = vec![lexical(&["new", "meaning"]), lexical(&["fresh", "phrase"])];
+        assert_eq!(pair_gap(&left, &unrelated), [None, None]);
+    }
+
+    fn projected(edits: &[(Op, usize, usize)], input: &[Tok], original: bool) -> Vec<String> {
+        edits
+            .iter()
+            .filter_map(|&(op, l, r)| {
+                let index = if original {
+                    (op != Op::Insert).then_some(l)
+                } else {
+                    (op != Op::Delete).then_some(r)
+                };
+                index.map(|i| input[i].key.clone())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn punctuation_anchors_require_word_or_retained_terminal_mark() {
+        let vocab: [&[&str]; 9] = [
+            &[],
+            &["!"],
+            &["!", " "],
+            &["alpha", "!"],
+            &["beta", "!"],
+            &["!", "alpha"],
+            &[" ", "alpha", " "],
+            &["alpha", " ", "!", " ", "beta"],
+            &["alpha", "\t", "!"],
+        ];
+        for a in vocab {
+            for b in vocab {
+                for retained in [false, true] {
+                    let (left, right) = (tokens(a), tokens(b));
+                    let edits = token_diff(&left, &right, retained);
+                    assert_eq!(projected(&edits, &left, true), a);
+                    assert_eq!(projected(&edits, &right, false), b);
+                    for &(op, l, r) in &edits {
+                        if op == Op::Equal {
+                            assert_eq!(left[l].key, right[r].key);
+                        }
+                    }
+                    assert_eq!(edits, token_diff(&left, &right, retained));
+                }
+            }
+        }
+        for retained in [false, true] {
+            let left = tokens(&["alpha", "!"]);
+            let right = tokens(&["beta", "!"]);
+            let equals: Vec<_> = token_diff(&left, &right, retained)
+                .into_iter()
+                .filter(|e| e.0 == Op::Equal)
+                .collect();
+            assert_eq!(
+                equals,
+                if retained {
+                    vec![(Op::Equal, 1, 1)]
+                } else {
+                    vec![]
+                }
+            );
+        }
+        let common = tokens(&["alpha", " ", "!", " ", "?"]);
+        assert!(
+            token_diff(&common, &common, false)
+                .iter()
+                .all(|e| e.0 == Op::Equal)
+        );
+    }
+
+    #[test]
+    fn region_coverage_rejects_lost_repeated_or_reordered_payload() {
+        let side = vec![tokens(&["alpha", "beta"])];
+        for mark in [Mark::Equal, Mark::Deleted, Mark::Inserted] {
+            for left in [false, true] {
+                let owns = mark == Mark::Equal
+                    || (left && mark == Mark::Deleted)
+                    || (!left && mark == Mark::Inserted);
+                for (paragraph, start, length, mark_owner) in [
+                    (0, 0, 2, 0),
+                    (1, 0, 2, 0),
+                    (0, 1, 1, 0),
+                    (0, 0, 1, 0),
+                    (0, 0, 2, 1),
+                ] {
+                    let cell = Cell {
+                        left: Some((paragraph, start, length)),
+                        right: Some((paragraph, start, length)),
+                        mark,
+                        mark_left: mark_owner,
+                        mark_right: mark_owner,
+                    };
+                    assert_eq!(
+                        covers(&[cell], &side, left),
+                        owns && paragraph == 0 && start == 0 && length == 2 && mark_owner == 0
+                    );
+                }
+                let blank = Cell {
+                    left: None,
+                    right: None,
+                    mark,
+                    mark_left: 0,
+                    mark_right: 0,
+                };
+                assert_eq!(covers(&[blank], &[tokens(&[])], left), owns);
+            }
+        }
+        let cell = || Cell {
+            left: Some((0, 0, 2)),
+            right: Some((0, 0, 2)),
+            mark: Mark::Equal,
+            mark_left: 0,
+            mark_right: 0,
+        };
+        assert!(!covers(&[cell(), cell()], &side, true));
+        assert!(!covers(&[cell()], &[], false));
+        assert!(covers(&[], &[], true));
+        assert!(!covers(&[], &side, false));
+    }
+
+    #[test]
+    fn compound_anchor_stops_at_paragraph_and_whitespace_boundaries() {
+        for delimiter in ["-", ".", "—"] {
+            let t = tokens(&["right", delimiter, "aligned"]);
+            let flat: Vec<_> = t.iter().collect();
+            let compound = build_units(&flat, &[0, 3], 0, 3);
+            assert_eq!(compound.len(), 1);
+            assert_eq!(compound[0].key, format!("right{delimiter}aligned"));
+            assert_eq!(
+                (compound[0].start, compound[0].len, compound[0].chars),
+                (0, 3, 13)
+            );
+            assert_eq!(
+                (&*compound[0].first, &*compound[0].last),
+                ("right", "aligned")
+            );
+            for boundary in [1, 2] {
+                let split = build_units(&flat, &[0, boundary, 3], 0, 3);
+                assert_eq!(
+                    split.iter().map(|u| u.key.as_str()).collect::<Vec<_>>(),
+                    ["right", "aligned"]
+                );
+            }
+            for member in ["right", "aligned"] {
+                let one = tokens(&[member]);
+                let references: Vec<_> = one.iter().collect();
+                let word = build_units(&references, &[0, 1], 0, 1);
+                let mut sink = Vec::new();
+                unit_match_tokens(&compound[0], &word[0], &mut sink);
+                assert_eq!(sink, [(if member == "right" { 0 } else { 2 }, 0)]);
+                sink.clear();
+                unit_match_tokens(&word[0], &compound[0], &mut sink);
+                assert_eq!(sink, [(0, if member == "right" { 0 } else { 2 })]);
+            }
+            let mut sink = Vec::new();
+            unit_match_tokens(&compound[0], &compound[0], &mut sink);
+            assert_eq!(sink, [(0, 0), (1, 1), (2, 2)]);
+        }
+        for delimiter in [" ", "\t", "\n", "\u{a0}"] {
+            let t = tokens(&["right", delimiter, "aligned"]);
+            let flat: Vec<_> = t.iter().collect();
+            assert_eq!(
+                build_units(&flat, &[0, 3], 0, 3)
+                    .iter()
+                    .map(|u| u.key.as_str())
+                    .collect::<Vec<_>>(),
+                ["right", "aligned"]
+            );
+        }
+        assert_eq!(para_of(&[0, 2, 5], 2, 0), 0);
+        assert_eq!(para_of(&[0, 2, 5], 2, 2), 1);
+        assert_eq!(para_of(&[0, 2, 5], 2, 5), 1);
+    }
+
+    #[test]
+    fn pairing_ceiling_keeps_disjoint_large_gaps_unpaired() {
+        let left: Vec<_> = (0..101).map(|_| lexical(&["alpha", "beta"])).collect();
+        let right: Vec<_> = (0..100).map(|_| lexical(&["gamma", "delta"])).collect();
+        assert_eq!(pair_gap(&left, &right), vec![None; 101]);
+        assert!(!below_parity(1, 3));
+        assert!(below_parity(1, 4));
+        assert!(!below_parity(3, 1));
+        assert!(below_parity(4, 1));
+        assert!(!below_parity(0, 0));
+        assert!(below_parity(0, 1));
+    }
+
+    #[test]
+    fn unit_anchors_weight_characters_and_allow_only_compound_endpoint_overlap() {
+        let build = |words: &[&str]| {
+            let t = tokens(words);
+            let flat: Vec<_> = t.iter().collect();
+            build_units(&flat, &[0, t.len()], 0, t.len())
+        };
+        let compound = build(&["right", "-", "aligned"]);
+        for member in ["right", "aligned", "missing"] {
+            let one = build(&[member]);
+            for weighted in [false, true] {
+                for partial in [false, true] {
+                    let expected = if partial && member != "missing" {
+                        vec![(0, 0)]
+                    } else {
+                        vec![]
+                    };
+                    assert_eq!(
+                        unit_lcs(&compound, &one, weighted, partial, &|_, _| false),
+                        expected
+                    );
+                    assert_eq!(
+                        unit_lcs(&one, &compound, weighted, partial, &|_, _| false),
+                        expected
+                    );
+                    assert!(unit_lcs(&one, &compound, weighted, partial, &|_, _| true).is_empty());
+                }
+            }
+        }
+        let left = build(&["a", " ", "lengthy"]);
+        let right = build(&["lengthy", " ", "a"]);
+        assert_eq!(
+            unit_lcs(&left, &right, true, false, &|_, _| false),
+            [(1, 0)]
+        );
+        assert_eq!(
+            unit_lcs(&left, &right, false, false, &|_, _| false),
+            [(1, 0)]
+        );
+        assert!(unit_lcs(&left, &[], true, true, &|_, _| false).is_empty());
+        assert!(unit_lcs(&[], &right, false, false, &|_, _| false).is_empty());
+    }
+}

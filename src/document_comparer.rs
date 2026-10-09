@@ -164,10 +164,16 @@ fn header_footer_refs_by_section(pkg: &PartFs) -> (usize, Vec<SectionRef>) {
             if let Some(rid) = d.attribute(r, &R::name("id"))
                 && let Some(&tgt) = id_to_target.get(rid)
             {
-                let part = if tgt.starts_with("word/") {
+                let resolved = pkg.resolve_rel_target(&main, tgt);
+                // Prefer the actual OPC target. Historical generators also
+                // wrote package-root Word paths as relative targets; keep
+                // that fallback only when the resolved part is absent.
+                let part = if pkg.part_bytes(&resolved).is_some() {
+                    resolved
+                } else if tgt.starts_with("word/") && pkg.part_bytes(tgt).is_some() {
                     tgt.to_string()
                 } else {
-                    format!("word/{}", tgt.trim_start_matches('/'))
+                    resolved
                 };
                 out.push((section, kind.to_string(), ty, part));
             }
@@ -10100,6 +10106,496 @@ mod coverage_boundary_tests {
             assert_eq!(out.part_bytes("word/media/a.png"), Some([1, 2].as_slice()));
         }
     }
+    #[test]
+    fn normal_run_adoption_preserves_complete_old_properties_and_revised_slot_ownership() {
+        for themed in [false, true] {
+            for direct in [false, true] {
+                for inherited in [false, true] {
+                    for explicit_off in [false, true] {
+                        let mut dom = Dom::new();
+                        let a = root(
+                            &mut dom,
+                            &xml(
+                                "styles",
+                                "<w:docDefaults><w:rPrDefault><w:rPr><w:kern w:val='2'/><w:lang w:val='fr-FR' w:eastAsia='ja-JP' w:bidi='he-IL'/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:type='paragraph' w:default='1' w:styleId='Normal'><w:rPr><w:rFonts w:ascii='Arial' w:hAnsi='Arial' w:eastAsia='MS Mincho' w:cs='Arial'/><w:b/><w:i/><w:color w:val='FF0000'/><w:highlight w:val='yellow'/><w:sz w:val='20'/><w:szCs w:val='22'/></w:rPr></w:style>",
+                            ),
+                        );
+                        let faces = if themed {
+                            "<w:rFonts w:asciiTheme='minorHAnsi' w:hAnsiTheme='majorHAnsi' w:eastAsiaTheme='minorEastAsia' w:cstheme='majorBidi'/>"
+                        } else {
+                            "<w:rFonts w:ascii='Courier New' w:hAnsi='Times New Roman' w:eastAsia='SimSun' w:cs='Tahoma'/>"
+                        };
+                        let props = if explicit_off {
+                            "<w:b w:val='0'/><w:i w:val='0'/><w:color w:val='0000FF'/>"
+                        } else {
+                            "<w:color w:val='0000FF'/>"
+                        };
+                        let b = root(
+                            &mut dom,
+                            &xml(
+                                "styles",
+                                &format!(
+                                    "<w:docDefaults><w:rPrDefault><w:rPr>{}<w:kern w:val='8'/><w:lang w:val='en-US' w:eastAsia='zh-CN' w:bidi='ar-SA'/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:type='paragraph' w:default='1' w:styleId='Normal'><w:rPr>{}<w:sz w:val='24'/><w:szCs w:val='26'/>{}</w:rPr></w:style>",
+                                    if inherited { props } else { "" },
+                                    faces,
+                                    if direct { props } else { "" }
+                                ),
+                            ),
+                        );
+                        let old =
+                            dom.serialize_element(child(&dom, style(&dom, a, "Normal"), "rPr"));
+                        let b_source = dom.serialize_element(b);
+                        assert!(merge_normal_style_rpr(&mut dom, a, b, &settings()));
+                        let rpr = child(&dom, style(&dom, a, "Normal"), "rPr");
+                        let change = child(&dom, rpr, "rPrChange");
+                        assert_revision(&dom, change, "1");
+                        assert_eq!(dom.serialize_element(child(&dom, change, "rPr")), old);
+                        let fonts = child(&dom, rpr, "rFonts");
+                        for (plain, theme, named, themed_name) in [
+                            ("ascii", "asciiTheme", "Courier New", "minorHAnsi"),
+                            ("hAnsi", "hAnsiTheme", "Times New Roman", "majorHAnsi"),
+                            ("eastAsia", "eastAsiaTheme", "SimSun", "minorEastAsia"),
+                            ("cs", "cstheme", "Tahoma", "majorBidi"),
+                        ] {
+                            assert_eq!(
+                                dom.attribute(fonts, &W::name(plain)),
+                                (!themed).then_some(named)
+                            );
+                            assert_eq!(
+                                dom.attribute(fonts, &W::name(theme)),
+                                themed.then_some(themed_name)
+                            );
+                        }
+                        assert_eq!(dom.attribute(child(&dom, rpr, "sz"), &W::val()), Some("24"));
+                        assert_eq!(
+                            dom.attribute(child(&dom, rpr, "szCs"), &W::val()),
+                            Some("26")
+                        );
+                        assert!(dom.element(rpr, &W::name("highlight")).is_none());
+                        for flag in ["b", "i"] {
+                            let e = dom.element(rpr, &W::name(flag));
+                            if explicit_off && (direct || inherited) {
+                                assert_eq!(dom.attribute(e.unwrap(), &W::val()), Some("0"));
+                            } else {
+                                assert!(e.is_none());
+                            }
+                        }
+                        let color = dom.element(rpr, &W::name("color"));
+                        assert_eq!(
+                            color.and_then(|c| dom.attribute(c, &W::val())),
+                            (direct || inherited).then_some("0000FF")
+                        );
+                        assert_eq!(
+                            dom.attribute(child(&dom, rpr, "kern"), &W::val()),
+                            Some("8")
+                        );
+                        let lang = child(&dom, rpr, "lang");
+                        assert_eq!(dom.attribute(lang, &W::val()), Some("en-US"));
+                        assert_eq!(dom.attribute(lang, &W::name("eastAsia")), Some("zh-CN"));
+                        assert_eq!(dom.attribute(lang, &W::name("bidi")), Some("ar-SA"));
+                        assert_eq!(children(&dom, rpr).last().unwrap(), "rPrChange");
+                        assert_eq!(dom.serialize_element(b), b_source);
+                        let before = dom.serialize_element(a);
+                        assert!(!merge_normal_style_rpr(&mut dom, a, b, &settings()));
+                        assert_eq!(dom.serialize_element(a), before);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn theme_cache_recaching_preserves_independent_fill_color_and_tolerated_source_hexes() {
+        for (base, shade, tint, expected) in [
+            ("FF0000", None, None, "FF0000"),
+            ("00FF00", Some("00"), None, "000000"),
+            ("0000FF", None, Some("00"), "FFFFFF"),
+            ("C0C0C0", Some("FF"), None, "C0C0C0"),
+            ("808080", None, Some("FF"), "808080"),
+            ("156082", Some("BF"), None, "0F4761"),
+            ("156082", None, Some("3F"), "B2DEF2"),
+        ] {
+            for fill in [false, true] {
+                for system in [false, true] {
+                    let (element, theme_attr, shade_attr, tint_attr, hex_attr) = if fill {
+                        (
+                            "shd",
+                            "themeFill",
+                            "themeFillShade",
+                            "themeFillTint",
+                            "fill",
+                        )
+                    } else {
+                        ("color", "themeColor", "themeShade", "themeTint", "val")
+                    };
+                    let attrs = format!(
+                        "w:{theme_attr}='accent1' w:{hex_attr}='222222' {} {}",
+                        shade
+                            .map(|s| format!("w:{shade_attr}='{s}'"))
+                            .unwrap_or_default(),
+                        tint.map(|s| format!("w:{tint_attr}='{s}'"))
+                            .unwrap_or_default()
+                    );
+                    let mut dom = Dom::new();
+                    let r = root(
+                        &mut dom,
+                        &xml(
+                            "styles",
+                            &format!(
+                                "<w:style w:type='paragraph' w:styleId='Owned'><w:rPr><w:{element} {attrs}/></w:rPr></w:style>"
+                            ),
+                        ),
+                    );
+                    let source = if system {
+                        format!(
+                            "<a:accent1><a:sysClr val=\"windowText\" lastClr=\"{base}\"/></a:accent1>"
+                        )
+                    } else {
+                        format!("<a:accent1><a:srgbClr val=\"{base}\"/></a:accent1>")
+                    };
+                    assert!(reresolve_theme_color_hexes(&mut dom, r, &source));
+                    let node = dom.descendants(r, Some(&W::name(element)))[0];
+                    assert_eq!(dom.attribute(node, &W::name(hex_attr)), Some(expected));
+                    assert_eq!(dom.attribute(node, &W::name(theme_attr)), Some("accent1"));
+                    assert_eq!(dom.attribute(node, &W::name(shade_attr)), shade);
+                    assert_eq!(dom.attribute(node, &W::name(tint_attr)), tint);
+                    let before = dom.serialize_element(r);
+                    assert!(!reresolve_theme_color_hexes(&mut dom, r, &source));
+                    assert_eq!(dom.serialize_element(r), before);
+                }
+            }
+        }
+        for (cached, expected_change, expected) in [
+            ("FF0000", false, "FF0000"),
+            ("FD0000", false, "FD0000"),
+            ("FC0000", true, "FF0000"),
+            ("auto", false, "auto"),
+            ("invalid", true, "FF0000"),
+        ] {
+            let mut dom = Dom::new();
+            let r = root(
+                &mut dom,
+                &xml(
+                    "styles",
+                    &format!(
+                        "<w:style w:type='paragraph' w:styleId='Owned'><w:rPr><w:color w:themeColor='accent1' w:val='{cached}'/></w:rPr></w:style>"
+                    ),
+                ),
+            );
+            assert_eq!(
+                reresolve_theme_color_hexes(
+                    &mut dom,
+                    r,
+                    "<a:accent1><a:srgbClr val=\"FF0000\"/></a:accent1>"
+                ),
+                expected_change
+            );
+            let c = dom.descendants(r, Some(&W::name("color")))[0];
+            assert_eq!(dom.attribute(c, &W::val()), Some(expected));
+        }
+        for attrs in [
+            "w:themeColor='unknown' w:val='112233'",
+            "w:themeColor='accent2' w:val='112233'",
+            "w:themeColor='accent1'",
+            "w:themeColor='accent1' w:themeShade='ZZ' w:val='112233'",
+        ] {
+            let mut dom = Dom::new();
+            let r = root(
+                &mut dom,
+                &xml(
+                    "styles",
+                    &format!(
+                        "<w:style w:type='paragraph' w:styleId='Owned'><w:rPr><w:color {attrs}/></w:rPr></w:style>"
+                    ),
+                ),
+            );
+            let before = dom.serialize_element(r);
+            assert!(!reresolve_theme_color_hexes(
+                &mut dom,
+                r,
+                "<a:accent1><a:srgbClr val=\"FF0000\"/></a:accent1>"
+            ));
+            assert_eq!(dom.serialize_element(r), before);
+        }
+    }
+
+    #[test]
+    fn header_insertion_wraps_supported_owned_payload_and_retains_noncontent_and_foreign_revisions()
+    {
+        for footer in [false, true] {
+            for ppr in [false, true] {
+                for body in [
+                    "<w:hyperlink w:anchor='Owned'><w:r><w:rPr><w:b/></w:rPr><w:t>Link</w:t></w:r></w:hyperlink>",
+                    "<w:sdt><w:sdtPr><w:tag w:val='Owned'/></w:sdtPr><w:sdtContent><w:r><w:t>Control</w:t></w:r></w:sdtContent></w:sdt>",
+                    "<w:r><w:drawing/></w:r>",
+                    "<w:r><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText> PAGE </w:instrText></w:r><w:r><w:fldChar w:fldCharType='separate'/></w:r><w:r><w:t>4</w:t></w:r><w:r><w:fldChar w:fldCharType='end'/></w:r>",
+                ] {
+                    let mut pkg = package("<w:body/>");
+                    let part = if footer {
+                        "word/footer.xml"
+                    } else {
+                        "word/header.xml"
+                    };
+                    let source = xml(
+                        if footer { "ftr" } else { "hdr" },
+                        &format!(
+                            "<w:p>{}<w:bookmarkStart w:id='7' w:name='Owned'/>{body}<w:bookmarkEnd w:id='7'/></w:p><w:p><w:bookmarkStart w:id='9' w:name='Empty'/><w:bookmarkEnd w:id='9'/></w:p><w:p><w:ins w:id='91' w:author='Foreign' w:date='1999-01-01T00:00:00Z'><w:r><w:t>Inbound</w:t></w:r></w:ins></w:p>",
+                            if ppr {
+                                "<w:pPr><w:jc w:val='right'/><w:rPr><w:i/></w:rPr></w:pPr>"
+                            } else {
+                                ""
+                            }
+                        ),
+                    );
+                    pkg.set_part(part, source.into_bytes());
+                    let (before_dom, before_root) = part_root(&pkg, part);
+                    let ps = before_dom.elements(before_root, Some(&W::p()));
+                    let owned_body = before_dom
+                        .elements(ps[0], None)
+                        .into_iter()
+                        .filter(|n| !before_dom.name_is(*n, &W::p_pr()))
+                        .map(|n| before_dom.serialize_element(n))
+                        .collect::<Vec<_>>();
+                    let foreign = before_dom.serialize_element(ps[2]);
+                    let empty = before_dom.serialize_element(ps[1]);
+                    mark_adopted_hf_content_as_inserted(&mut pkg, part, &settings());
+                    let (dom, r) = part_root(&pkg, part);
+                    let ps = dom.elements(r, Some(&W::p()));
+                    let inserted = child(&dom, ps[0], "ins");
+                    assert_revision(&dom, inserted, "1");
+                    assert_eq!(
+                        dom.elements(inserted, None)
+                            .iter()
+                            .map(|n| dom.serialize_element(*n))
+                            .collect::<Vec<_>>(),
+                        owned_body
+                    );
+                    assert_eq!(dom.serialize_element(ps[1]), empty);
+                    assert_eq!(dom.serialize_element(ps[2]), foreign);
+                    if ppr {
+                        let mark = child(&dom, child(&dom, ps[0], "pPr"), "rPr");
+                        assert_eq!(children(&dom, mark), ["ins", "i"]);
+                        assert_revision(&dom, child(&dom, mark, "ins"), "2");
+                    } else {
+                        assert!(dom.element(ps[0], &W::p_pr()).is_none());
+                    }
+                    let before = pkg.part_string(part).unwrap();
+                    mark_adopted_hf_content_as_inserted(&mut pkg, part, &settings());
+                    assert_eq!(pkg.part_string(part).unwrap(), before);
+                }
+            }
+        }
+    }
+    #[test]
+    fn normal_history_cascade_keeps_own_font_language_and_spacing_slots_and_existing_records() {
+        for own_line in [false, true] {
+            for own_font in [false, true] {
+                for inbound in [false, true] {
+                    let mut dom = Dom::new();
+                    let r = root(
+                        &mut dom,
+                        &xml(
+                            "styles",
+                            &format!(
+                                "<w:style w:type='paragraph' w:styleId='Normal'><w:pPr><w:spacing w:after='0' w:line='240'/><w:pPrChange w:id='17' w:author='Normal editor' w:date='2000-01-01T00:00:00Z'><w:pPr><w:spacing w:after='60' w:line='300' w:lineRule='exact'/></w:pPr></w:pPrChange></w:pPr><w:rPr><w:sz w:val='24'/><w:rPrChange w:id='18' w:author='Normal editor' w:date='2000-01-01T00:00:00Z'><w:rPr><w:rFonts w:ascii='Arial' w:hAnsi='Times New Roman' w:eastAsia='SimSun' w:cs='Tahoma'/><w:sz w:val='20'/><w:lang w:val='fr-FR' w:eastAsia='zh-CN' w:bidi='he-IL'/></w:rPr></w:rPrChange></w:rPr></w:style><w:style w:type='paragraph' w:styleId='Owned'><w:basedOn w:val='Normal'/><w:pPr><w:jc w:val='right'/><w:spacing w:after='90' {}/>{}</w:pPr><w:rPr>{}<w:sz w:val='16'/><w:lang w:val='pl-PL'/>{}</w:rPr></w:style><w:style w:type='character' w:styleId='Character'><w:basedOn w:val='Normal'/><w:rPr><w:b/></w:rPr></w:style><w:style w:type='paragraph' w:styleId='Unrelated'><w:basedOn w:val='Other'/></w:style>",
+                                if own_line {
+                                    "w:line='420' w:lineRule='auto'"
+                                } else {
+                                    ""
+                                },
+                                if inbound {
+                                    "<w:pPrChange w:id='90' w:author='Prior' w:date='1999-01-01T00:00:00Z'><w:pPr><w:keepNext/></w:pPr></w:pPrChange>"
+                                } else {
+                                    ""
+                                },
+                                if own_font {
+                                    "<w:rFonts w:ascii='Courier New'/>"
+                                } else {
+                                    ""
+                                },
+                                if inbound {
+                                    "<w:rPrChange w:id='91' w:author='Prior' w:date='1999-01-01T00:00:00Z'><w:rPr><w:i/></w:rPr></w:rPrChange>"
+                                } else {
+                                    ""
+                                }
+                            ),
+                        ),
+                    );
+                    let normal = dom.serialize_element(style(&dom, r, "Normal"));
+                    let char_before = dom.serialize_element(style(&dom, r, "Character"));
+                    let unrelated = dom.serialize_element(style(&dom, r, "Unrelated"));
+                    let owned = style(&dom, r, "Owned");
+                    let before = dom.serialize_element(owned);
+                    assert_eq!(
+                        cascade_normal_change_to_based_styles(&mut dom, r, &settings()),
+                        !inbound
+                    );
+                    assert_eq!(dom.serialize_element(style(&dom, r, "Normal")), normal);
+                    assert_eq!(
+                        dom.serialize_element(style(&dom, r, "Character")),
+                        char_before
+                    );
+                    assert_eq!(
+                        dom.serialize_element(style(&dom, r, "Unrelated")),
+                        unrelated
+                    );
+                    if inbound {
+                        assert_eq!(dom.serialize_element(owned), before);
+                    } else {
+                        let ppr = child(&dom, owned, "pPr");
+                        let live = child(&dom, ppr, "spacing");
+                        assert_eq!(dom.attribute(live, &W::name("after")), Some("90"));
+                        assert_eq!(
+                            dom.attribute(live, &W::name("line")),
+                            own_line.then_some("420")
+                        );
+                        let pc = child(&dom, ppr, "pPrChange");
+                        assert_revision(&dom, pc, "19");
+                        let old = child(&dom, pc, "pPr");
+                        assert_eq!(
+                            dom.attribute(child(&dom, old, "jc"), &W::val()),
+                            Some("right")
+                        );
+                        let spacing = child(&dom, old, "spacing");
+                        assert_eq!(dom.attribute(spacing, &W::name("after")), Some("90"));
+                        assert_eq!(
+                            dom.attribute(spacing, &W::name("line")),
+                            Some(if own_line { "420" } else { "300" })
+                        );
+                        assert_eq!(
+                            dom.attribute(spacing, &W::name("lineRule")),
+                            Some(if own_line { "auto" } else { "exact" })
+                        );
+                        let rpr = child(&dom, owned, "rPr");
+                        let rc = child(&dom, rpr, "rPrChange");
+                        assert_revision(&dom, rc, "20");
+                        let old = child(&dom, rc, "rPr");
+                        let fonts = child(&dom, old, "rFonts");
+                        assert_eq!(
+                            dom.attribute(fonts, &W::name("ascii")),
+                            Some(if own_font { "Courier New" } else { "Arial" })
+                        );
+                        assert_eq!(
+                            dom.attribute(fonts, &W::name("hAnsi")),
+                            Some("Times New Roman")
+                        );
+                        assert_eq!(dom.attribute(fonts, &W::name("eastAsia")), Some("SimSun"));
+                        assert_eq!(dom.attribute(child(&dom, old, "sz"), &W::val()), Some("16"));
+                        let lang = child(&dom, old, "lang");
+                        assert_eq!(dom.attribute(lang, &W::val()), Some("pl-PL"));
+                        assert_eq!(dom.attribute(lang, &W::name("eastAsia")), Some("zh-CN"));
+                        assert_eq!(dom.attribute(lang, &W::name("bidi")), Some("he-IL"));
+                        assert!(dom.descendants(old, Some(&W::name("rPrChange"))).is_empty());
+                    }
+                    let once = dom.serialize_element(r);
+                    assert!(!cascade_normal_change_to_based_styles(
+                        &mut dom,
+                        r,
+                        &settings()
+                    ));
+                    assert_eq!(dom.serialize_element(r), once);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tracked_change_admission_scans_each_xml_story_and_refuses_binary_or_non_xml_carriers() {
+        // Admission's preflight is intentionally lexical and runs before
+        // schema validation. These synthetic XML roots isolate that contract;
+        // they are not source packages offered to the document comparer.
+        for (local, carrier) in [
+            ("ins", "<w:r><w:t>New</w:t></w:r>"),
+            ("del", "<w:r><w:delText>Old</w:delText></w:r>"),
+            ("moveFrom", "<w:r><w:t>Old</w:t></w:r>"),
+            ("moveTo", "<w:r><w:t>New</w:t></w:r>"),
+            ("rPrChange", "<w:rPr><w:b/></w:rPr>"),
+            ("pPrChange", "<w:pPr><w:keepNext/></w:pPr>"),
+        ] {
+            for story in ["word/header.xml", "word/footnotes.xml", "word/styles.xml"] {
+                let mut pkg =
+                    package("<w:body><w:p><w:r><w:t>Untracked body</w:t></w:r></w:p></w:body>");
+                pkg.set_part(story,xml("root",&format!("<w:{local} w:id='7' w:author='Prior' w:date='1999-01-01T00:00:00Z'>{carrier}</w:{local}>")).into_bytes());
+                let bytes = pkg.to_zip().unwrap();
+                assert!(docx_has_tracked_changes(&bytes), "{story}:{local}");
+                assert_eq!(
+                    PartFs::open(&bytes).unwrap().part_string(story),
+                    pkg.part_string(story)
+                );
+                pkg.remove_part(story);
+                pkg.set_part("word/media/opaque.xml", vec![0xff, 0xfe]);
+                pkg.set_part(
+                    "word/media/source.bin",
+                    format!("<w:{local}/>").into_bytes(),
+                );
+                assert!(!docx_has_tracked_changes(&pkg.to_zip().unwrap()));
+            }
+        }
+    }
+    #[test]
+    fn section_story_references_resolve_actual_opc_targets_before_legacy_word_paths() {
+        for (target, part) in [
+            ("header.xml", "word/header.xml"),
+            ("/word/header.xml", "word/header.xml"),
+            ("../customXml/header.xml", "customXml/header.xml"),
+            ("/customXml/header.xml", "customXml/header.xml"),
+            ("word/header.xml", "word/word/header.xml"),
+        ] {
+            for footer in [false, true] {
+                let kind = if footer { "footer" } else { "header" };
+                let local = if footer { "ftr" } else { "hdr" };
+                let mut pkg = package("<w:body/>");
+                pkg.set_part(
+                    part,
+                    xml(local, "<w:p><w:r><w:t>Owned story</w:t></w:r></w:p>").into_bytes(),
+                );
+                let id = pkg.add_document_relationship(MAIN, &format!("{REL}{kind}"), target);
+                pkg.set_part(MAIN,xml("document",&format!("<w:body><w:p><w:pPr><w:sectPr><w:{kind}Reference w:type='first' r:id='{id}'/></w:sectPr></w:pPr><w:r><w:t>First section</w:t></w:r></w:p><w:sectPr><w:{kind}Reference r:id='{id}'/></w:sectPr></w:body>")).into_bytes());
+                let before = pkg.part_string(MAIN).unwrap();
+                let rels = pkg.read_rels_for(MAIN).unwrap();
+                assert_eq!(pkg.resolve_rel_target(MAIN, &rels.items[0].target), part);
+                let (count, refs) = header_footer_refs_by_section(&pkg);
+                assert_eq!(count, 2);
+                assert_eq!(
+                    refs,
+                    [
+                        (0, kind.to_string(), "first".to_string(), part.to_string()),
+                        (1, kind.to_string(), "default".to_string(), part.to_string())
+                    ]
+                );
+                assert_eq!(
+                    header_footer_refs(&pkg),
+                    [
+                        (kind.to_string(), "first".to_string(), part.to_string()),
+                        (kind.to_string(), "default".to_string(), part.to_string())
+                    ]
+                );
+                assert_eq!(pkg.part_string(MAIN).unwrap(), before);
+                assert_eq!(
+                    pkg.part_string(part).unwrap(),
+                    xml(local, "<w:p><w:r><w:t>Owned story</w:t></w:r></w:p>")
+                );
+            }
+        }
+        // Historical generators wrote a package-root Word path as a
+        // relative target. Retain the compatibility fallback only when the
+        // actual OPC target is absent and the historical part exists.
+        let mut pkg = package("<w:body/>");
+        pkg.set_part("word/header.xml", xml("hdr", "<w:p/>").into_bytes());
+        let id = pkg.add_document_relationship(MAIN, &format!("{REL}header"), "word/header.xml");
+        pkg.set_part(
+            MAIN,
+            xml(
+                "document",
+                &format!("<w:body><w:sectPr><w:headerReference r:id='{id}'/></w:sectPr></w:body>"),
+            )
+            .into_bytes(),
+        );
+        assert_eq!(
+            header_footer_refs(&pkg),
+            [("header".into(), "default".into(), "word/header.xml".into())]
+        );
+    }
 }
 
 #[cfg(test)]
@@ -10600,5 +11096,154 @@ mod coverage_package_source_matrix_tests {
                 final_pkg.part_string("word/styles.xml")
             );
         }
+    }
+}
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod comparer_relationship_contract_tests {
+    use super::*;
+    fn package() -> PartFs {
+        PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap()
+    }
+    #[test]
+    fn referenced_relationship_agreement_requires_matching_type_mode_and_payload_or_external_target()
+     {
+        for (
+            different_type,
+            external_a,
+            external_b,
+            different_target,
+            missing_a,
+            missing_b,
+            different_bytes,
+            agrees,
+        ) in [
+            (false, false, false, false, false, false, false, true),
+            (true, false, false, false, false, false, false, false),
+            (false, false, true, false, false, false, false, false),
+            (false, true, false, false, false, false, false, false),
+            (false, true, true, false, false, false, false, true),
+            (false, true, true, true, false, false, false, false),
+            (false, false, false, true, false, false, false, true),
+            (false, false, false, false, true, false, false, false),
+            (false, false, false, false, false, true, false, false),
+            (false, false, false, false, false, false, true, false),
+        ] {
+            let mut a = package();
+            let mut b = package();
+            let target_a = if external_a {
+                "https://example.invalid/one"
+            } else {
+                "media/one.bin"
+            };
+            let target_b = if external_b {
+                if different_target {
+                    "https://example.invalid/two"
+                } else {
+                    "https://example.invalid/one"
+                }
+            } else if different_target {
+                "media/two.bin"
+            } else {
+                "media/one.bin"
+            };
+            let ty_a = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+            let ty_b = if different_type {
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject"
+            } else {
+                ty_a
+            };
+            let id_a = if external_a {
+                a.add_document_relationship_external("word/document.xml", ty_a, target_a)
+            } else {
+                a.add_document_relationship("word/document.xml", ty_a, target_a)
+            };
+            let id_b = if external_b {
+                b.add_document_relationship_external("word/document.xml", ty_b, target_b)
+            } else {
+                b.add_document_relationship("word/document.xml", ty_b, target_b)
+            };
+            assert_eq!(id_a, id_b);
+            if !external_a && !missing_a {
+                a.set_part("word/media/one.bin", vec![1, 2, 3]);
+            }
+            if !external_b && !missing_b {
+                b.set_part(
+                    if different_target {
+                        "word/media/two.bin"
+                    } else {
+                        "word/media/one.bin"
+                    },
+                    if different_bytes {
+                        vec![3, 2, 1]
+                    } else {
+                        vec![1, 2, 3]
+                    },
+                );
+            }
+            let xml = format!(
+                "<a:blip xmlns:a='http://schemas.openxmlformats.org/drawingml/2006/main' xmlns:r='{}' r:embed='{id_a}'/>",
+                R::URI
+            );
+            let before_a = a.to_zip().unwrap();
+            let before_b = b.to_zip().unwrap();
+            assert_eq!(
+                part_rels_agree((&a, "word/document.xml"), (&b, "word/document.xml"), &xml),
+                agrees,
+                "types={different_type} modes={external_a}/{external_b} targets={different_target} missing={missing_a}/{missing_b} bytes={different_bytes}"
+            );
+            assert_eq!(a.to_zip().unwrap(), before_a);
+            assert_eq!(b.to_zip().unwrap(), before_b);
+        }
+    }
+    #[test]
+    fn repeated_hyperlinks_share_one_carried_relationship_and_keep_independent_source_text_and_format()
+     {
+        let mut a = package();
+        let b = {
+            let mut pkg = package();
+            pkg.add_document_relationship_external(
+                "word/header.xml",
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+                "https://example.invalid/owned",
+            );
+            pkg
+        };
+        let id = &b.read_rels_for("word/header.xml").unwrap().items[0].id;
+        let xml = format!(
+            "<w:hdr xmlns:w='{}' xmlns:r='{}'><w:p><w:hyperlink r:id='{id}'><w:r><w:rPr><w:b/></w:rPr><w:t>First</w:t></w:r></w:hyperlink><w:hyperlink r:id='{id}'><w:r><w:rPr><w:i/></w:rPr><w:t>Second</w:t></w:r></w:hyperlink></w:p></w:hdr>",
+            W::URI,
+            R::URI
+        );
+        let before = b.to_zip().unwrap();
+        let output = carry_revised_part_relationships(
+            &mut a,
+            "word/header.xml",
+            (&b, "word/header.xml"),
+            &xml,
+        )
+        .unwrap();
+        let rels = &a.read_rels_for("word/header.xml").unwrap().items;
+        assert_eq!(rels.len(), 1);
+        assert_eq!(rels[0].target, "https://example.invalid/owned");
+        assert_eq!(rels[0].target_mode.as_deref(), Some("External"));
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&output);
+        let root = dom.root(doc).unwrap();
+        let links = dom.descendants(root, Some(&W::name("hyperlink")));
+        assert_eq!(links.len(), 2);
+        for (i, node) in links.into_iter().enumerate() {
+            assert_eq!(
+                dom.attribute(node, &R::name("id")),
+                Some(rels[0].id.as_str())
+            );
+            assert_eq!(dom.value(node), if i == 0 { "First" } else { "Second" });
+            let pr = dom.descendants(node, Some(&W::r_pr()))[0];
+            assert!(
+                dom.element(pr, &W::name(if i == 0 { "b" } else { "i" }))
+                    .is_some()
+            );
+        }
+        assert_eq!(b.to_zip().unwrap(), before);
     }
 }

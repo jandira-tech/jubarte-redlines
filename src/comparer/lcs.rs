@@ -3291,6 +3291,15 @@ fn group_contents(u: &ComparisonUnit) -> Vec<ComparisonUnit> {
         ComparisonUnit::Word(_) => vec![],
     }
 }
+// Source windows can contain both block groups and standalone opaque words
+// (for example a schema-valid body-level equation between paragraphs). Only
+// expand groups; a non-group unit still owns its complete authored payload.
+fn source_group_contents(unit: &ComparisonUnit) -> Vec<ComparisonUnit> {
+    match unit {
+        ComparisonUnit::Group(group) => group.contents.clone(),
+        ComparisonUnit::Word(_) => vec![unit.clone()],
+    }
+}
 /// Whether the LAST descendant atom across all `units` is a `w:pPr`. None if there
 /// are no atoms at all.
 fn last_atom_overall_is_ppr(dom: &Dom, units: &[ComparisonUnit]) -> Option<bool> {
@@ -5621,7 +5630,7 @@ fn block_groups_fully_disjoint(cu1: &[ComparisonUnit], cu2: &[ComparisonUnit]) -
 /// Flatten one level of groups (H4 shape) so word-level overlap can be scored.
 fn flatten_groups_one_level(cu: &[ComparisonUnit]) -> Vec<ComparisonUnit> {
     if cu.iter().any(|u| matches!(u, ComparisonUnit::Group(_))) {
-        cu.iter().flat_map(group_contents).collect()
+        cu.iter().flat_map(source_group_contents).collect()
     } else {
         cu.to_vec()
     }
@@ -6372,9 +6381,9 @@ fn detect_unrelated_sources_word_mode_inner(
                     }
                     let residual: Vec<ComparisonUnit> = cu2[consumed..].to_vec();
                     let mut left: Vec<ComparisonUnit> =
-                        cu1.iter().flat_map(group_contents).collect();
+                        cu1.iter().flat_map(source_group_contents).collect();
                     let mut right: Vec<ComparisonUnit> =
-                        residual.iter().flat_map(group_contents).collect();
+                        residual.iter().flat_map(source_group_contents).collect();
                     if !left.is_empty()
                         && !right.is_empty()
                         && left.len().saturating_mul(right.len()) <= 100_000
@@ -6657,8 +6666,8 @@ fn detect_unrelated_sources_word_mode_inner(
         && looks_like_fields_html_doc(dom, cu2)
         && (looks_like_short_alpha_list(dom, cu1) || looks_like_short_annotation_doc(dom, cu1))
     {
-        let mut left: Vec<ComparisonUnit> = cu1.iter().flat_map(group_contents).collect();
-        let mut right: Vec<ComparisonUnit> = cu2.iter().flat_map(group_contents).collect();
+        let mut left: Vec<ComparisonUnit> = cu1.iter().flat_map(source_group_contents).collect();
+        let mut right: Vec<ComparisonUnit> = cu2.iter().flat_map(source_group_contents).collect();
         if !left.is_empty() && !right.is_empty() && left.len().saturating_mul(right.len()) <= 50_000
         {
             rehash_words_by_text_content(dom, &mut left);
@@ -6897,9 +6906,12 @@ fn detect_unrelated_sources_word_mode_inner(
                 }
                 return Some(out);
             }
-            let mut left: Vec<ComparisonUnit> = base_rest.iter().flat_map(group_contents).collect();
-            let mut right: Vec<ComparisonUnit> =
-                residual_rest.iter().flat_map(group_contents).collect();
+            let mut left: Vec<ComparisonUnit> =
+                base_rest.iter().flat_map(source_group_contents).collect();
+            let mut right: Vec<ComparisonUnit> = residual_rest
+                .iter()
+                .flat_map(source_group_contents)
+                .collect();
             if !left.is_empty()
                 && !right.is_empty()
                 && left.len().saturating_mul(right.len()) <= 100_000
@@ -6993,9 +7005,12 @@ fn detect_unrelated_sources_word_mode_inner(
                 }
                 // Also pure-I empties between peeled titles if present on next.
                 // Free-mesh residual next with all base.
-                let mut left: Vec<ComparisonUnit> = cu1.iter().flat_map(group_contents).collect();
-                let mut right: Vec<ComparisonUnit> =
-                    cu2[peel_r..].iter().flat_map(group_contents).collect();
+                let mut left: Vec<ComparisonUnit> =
+                    cu1.iter().flat_map(source_group_contents).collect();
+                let mut right: Vec<ComparisonUnit> = cu2[peel_r..]
+                    .iter()
+                    .flat_map(source_group_contents)
+                    .collect();
                 if !left.is_empty()
                     && !right.is_empty()
                     && left.len().saturating_mul(right.len()) <= 50_000
@@ -7408,10 +7423,14 @@ fn detect_unrelated_sources_word_mode_inner(
                     for u in &cu1[..left_cut] {
                         out.push(CorrelatedSequence::deleted(vec![u.clone()]));
                     }
-                    let mut left: Vec<ComparisonUnit> =
-                        cu1[left_cut..].iter().flat_map(group_contents).collect();
-                    let mut right: Vec<ComparisonUnit> =
-                        cu2[right_cut..].iter().flat_map(group_contents).collect();
+                    let mut left: Vec<ComparisonUnit> = cu1[left_cut..]
+                        .iter()
+                        .flat_map(source_group_contents)
+                        .collect();
+                    let mut right: Vec<ComparisonUnit> = cu2[right_cut..]
+                        .iter()
+                        .flat_map(source_group_contents)
+                        .collect();
                     if !left.is_empty()
                         && !right.is_empty()
                         && left.len().saturating_mul(right.len()) <= 600_000
@@ -7454,11 +7473,11 @@ fn detect_unrelated_sources_word_mode_inner(
                         let right_end = cut(&right_boundaries, i + 1, cu2.len());
                         let mut left: Vec<ComparisonUnit> = cu1[left_start..left_end]
                             .iter()
-                            .flat_map(group_contents)
+                            .flat_map(source_group_contents)
                             .collect();
                         let mut right: Vec<ComparisonUnit> = cu2[right_start..right_end]
                             .iter()
-                            .flat_map(group_contents)
+                            .flat_map(source_group_contents)
                             .collect();
                         rehash_words_by_text_content(dom, &mut left);
                         rehash_words_by_text_content(dom, &mut right);
@@ -7486,9 +7505,9 @@ fn detect_unrelated_sources_word_mode_inner(
                         residual_has_sample(left_res) && residual_has_sample(right_res);
                     if both_sample && !left_res.is_empty() && !right_res.is_empty() {
                         let mut left: Vec<ComparisonUnit> =
-                            left_res.iter().flat_map(group_contents).collect();
+                            left_res.iter().flat_map(source_group_contents).collect();
                         let mut right: Vec<ComparisonUnit> =
-                            right_res.iter().flat_map(group_contents).collect();
+                            right_res.iter().flat_map(source_group_contents).collect();
                         if left.len().saturating_mul(right.len()) <= 600_000 {
                             rehash_words_by_text_content(dom, &mut left);
                             rehash_words_by_text_content(dom, &mut right);
@@ -7548,10 +7567,14 @@ fn detect_unrelated_sources_word_mode_inner(
                 for u in &cu1[..peel_l] {
                     out.push(CorrelatedSequence::deleted(vec![u.clone()]));
                 }
-                let mut left: Vec<ComparisonUnit> =
-                    cu1[peel_l..].iter().flat_map(group_contents).collect();
-                let mut right: Vec<ComparisonUnit> =
-                    cu2[peel_r..].iter().flat_map(group_contents).collect();
+                let mut left: Vec<ComparisonUnit> = cu1[peel_l..]
+                    .iter()
+                    .flat_map(source_group_contents)
+                    .collect();
+                let mut right: Vec<ComparisonUnit> = cu2[peel_r..]
+                    .iter()
+                    .flat_map(source_group_contents)
+                    .collect();
                 if !left.is_empty()
                     && !right.is_empty()
                     && left.len().saturating_mul(right.len()) <= 600_000
@@ -7599,8 +7622,10 @@ fn detect_unrelated_sources_word_mode_inner(
         // (MIX≈14 vs Word≈25). large_related remains for M318 legal prose only
         // (memo×nda is not free_mesh_demos).
         if free_mesh_demos {
-            let mut left: Vec<ComparisonUnit> = cu1.iter().flat_map(group_contents).collect();
-            let mut right: Vec<ComparisonUnit> = cu2.iter().flat_map(group_contents).collect();
+            let mut left: Vec<ComparisonUnit> =
+                cu1.iter().flat_map(source_group_contents).collect();
+            let mut right: Vec<ComparisonUnit> =
+                cu2.iter().flat_map(source_group_contents).collect();
             // M329: raise product cap. highlight×bold is ~471×580 ≈ 273k which
             // exceeded the old 250k cap → free-mesh returned None → pure-I/D
             // (MIX≈14 vs Word≈25). 600k covers OOXML rstyle demos; still size-
@@ -7960,8 +7985,8 @@ fn detect_unrelated_sources_word_mode_inner(
             .any(|t| t.eq_ignore_ascii_case("and"))
         && residual_looks_like_colon_list(dom, &cu1[1..])
     {
-        let mut left: Vec<ComparisonUnit> = cu1.iter().flat_map(group_contents).collect();
-        let mut right: Vec<ComparisonUnit> = cu2.iter().flat_map(group_contents).collect();
+        let mut left: Vec<ComparisonUnit> = cu1.iter().flat_map(source_group_contents).collect();
+        let mut right: Vec<ComparisonUnit> = cu2.iter().flat_map(source_group_contents).collect();
         rehash_words_by_text_content(dom, &mut left);
         rehash_words_by_text_content(dom, &mut right);
         let mut residual_settings = settings.clone();
@@ -18366,9 +18391,20 @@ mod coverage_real_source_route_matrix_tests {
                     "{label}: absorbed revised pilcrow requires its original carrier mark Deleted"
                 );
             } else {
-                assert_eq!(
-                    &actual, authored,
-                    "{label}: revised={revised}; text, pPr, rPr, geometry and ownership must all survive"
+                let difference = actual
+                    .iter()
+                    .zip(authored)
+                    .position(|(a, b)| a != b)
+                    .or_else(|| {
+                        (actual.len() != authored.len()).then_some(actual.len().min(authored.len()))
+                    });
+                assert!(
+                    &actual == authored,
+                    "{label}: revised={revised}; text, pPr, rPr, geometry and ownership must all survive; lengths actual={} expected={}; first difference={difference:?}; actual={:?}; expected={:?}",
+                    actual.len(),
+                    authored.len(),
+                    difference.and_then(|index| actual.get(index)),
+                    difference.and_then(|index| authored.get(index))
                 );
             }
         }
@@ -18586,6 +18622,232 @@ mod coverage_real_source_route_matrix_tests {
         }
     }
 
+    // These are related short stories with different residual paragraph
+    // shapes. The unrelated 20-family sweeps do not exercise their vocabulary,
+    // overlap, title or first/last residual guards.
+    fn related_residual_pair(
+        family: usize,
+    ) -> (
+        &'static str,
+        &'static str,
+        &'static [&'static str],
+        &'static [&'static str],
+    ) {
+        match family {
+            0 => (
+                "Large Font Demo",
+                "Small Font Demo",
+                &[
+                    "This document demonstrates font size in ordinary body text",
+                    "Larger font sizes improve readability for the final clause",
+                ],
+                &[
+                    "This document demonstrates font size with a revised caption",
+                    "This text uses a larger font size of eighteen points",
+                    "Font size impacts spacing and readability",
+                ],
+            ),
+            1 => (
+                "Text Highlight Demo",
+                "Blue Underline Demo",
+                &[
+                    "This text combines bold and underline",
+                    "Underline remains visible in the concluding body clause",
+                ],
+                &[
+                    "This document demonstrates a blue underline",
+                    "Blue formatting remains visible in a different body clause",
+                ],
+            ),
+            2 => (
+                "Paragraph Heading Demo",
+                "Paragraph Body Demo",
+                &[
+                    "This paragraph demonstrates an original heading style",
+                    "This text follows the original heading",
+                    "The original final paragraph closes the story",
+                ],
+                &[
+                    "This paragraph demonstrates revised heading text",
+                    "The revised final paragraph closes the story",
+                ],
+            ),
+            3 => (
+                "Bold Formatting Demo",
+                "Italic Formatting Demo",
+                &[
+                    "This document demonstrates bold text",
+                    "Bold formatting marks the original final body",
+                ],
+                &[
+                    "This document demonstrates italic text with additional words",
+                    "Italic formatting changes the revised final body",
+                ],
+            ),
+            4 => (
+                "Numbered List Demo",
+                "Numbered Intro Demo",
+                &["First item", "Second item"],
+                &[
+                    "This document introduces the numbered list",
+                    "First italic item",
+                    "Second italic item",
+                ],
+            ),
+            5 => (
+                "Font Family Demo",
+                "Font Colour Demo",
+                &[
+                    "This document demonstrates several different font families",
+                    "This text is rendered using a selected font",
+                    "The last original clause records the body style",
+                ],
+                &[
+                    "This document demonstrates several different font colours",
+                    "Different colours improve distinction across the body text",
+                    "The last revised clause records the updated body style",
+                ],
+            ),
+            _ => unreachable!("closed deterministic family table"),
+        }
+    }
+
+    fn related_residual_story(
+        title: &str,
+        paragraphs: &[&str],
+        revised: bool,
+        family: usize,
+        blanks: usize,
+    ) -> String {
+        let mut xml = String::new();
+        if blanks & 1 != 0 {
+            xml.push_str(&paragraph("", "OpeningLayout", None, revised));
+        }
+        xml.push_str(&paragraph(title, "Title", None, revised));
+        for (index, text) in paragraphs.iter().enumerate() {
+            let level = (family == 4 && !text.starts_with("This")).then_some(u32::from(index > 0));
+            xml.push_str(&paragraph(
+                text,
+                if index == 0 { "FirstBody" } else { "LaterBody" },
+                level,
+                revised,
+            ));
+        }
+        if blanks & 2 != 0 {
+            xml.push_str(&paragraph("", "ClosingLayout", None, revised));
+        }
+        xml
+    }
+
+    fn exercise_related_residual_boundaries(family: usize) {
+        let (title_a, title_b, body_a, body_b) = related_residual_pair(family);
+        for blanks in 0..4 {
+            for word in [false, true] {
+                for threshold in [0.0, 0.15, 1.0] {
+                    for reverse in [false, true] {
+                        let settings = WmlComparerSettings {
+                            merge_replaced_paragraphs: word,
+                            detail_threshold: threshold,
+                            ..WmlComparerSettings::default()
+                        };
+                        let a = related_residual_story(title_a, body_a, false, family, blanks);
+                        let b = related_residual_story(title_b, body_b, true, family, blanks);
+                        let (a, b) = if reverse { (&b, &a) } else { (&a, &b) };
+                        let mut dom = Dom::new();
+                        let left = source(&mut dom, a, &settings);
+                        let right = source(&mut dom, b, &settings);
+                        let expected = (frozen(&mut dom, &left), frozen(&mut dom, &right));
+                        let label = format!(
+                            "related family={family} blanks={blanks} Word={word} threshold={threshold} reverse={reverse}"
+                        );
+                        let out = step_h(&mut dom, &left, &right, &settings);
+                        assert_owned(
+                            &mut dom,
+                            &out,
+                            &expected,
+                            &format!("block dispatch {label}"),
+                        );
+                        let left_words = flatten_groups_one_level(&left);
+                        let right_words = flatten_groups_one_level(&right);
+                        let expected_words = (
+                            frozen(&mut dom, &left_words),
+                            frozen(&mut dom, &right_words),
+                        );
+                        let out = step_h(&mut dom, &left_words, &right_words, &settings);
+                        assert_owned(
+                            &mut dom,
+                            &out,
+                            &expected_words,
+                            &format!("word dispatch {label}"),
+                        );
+                        let out = do_lcs_algorithm(
+                            &mut dom,
+                            CorrelatedSequence::paired(
+                                CorrelationStatus::Unknown,
+                                left.clone(),
+                                right.clone(),
+                            ),
+                            &settings,
+                        );
+                        assert_owned(
+                            &mut dom,
+                            &out,
+                            &expected,
+                            &format!("complete LCS step {label}"),
+                        );
+                        // Resolve the actual caller worklist, not only the first
+                        // structural dispatch. Both authored streams remain
+                        // independent frozen oracles across recursive windows.
+                        let out = resolve_correlated_sequences(
+                            &mut dom,
+                            vec![CorrelatedSequence::paired(
+                                CorrelationStatus::Unknown,
+                                left,
+                                right,
+                            )],
+                            &settings,
+                        );
+                        assert!(
+                            out.iter()
+                                .all(|s| s.correlation_status != CorrelationStatus::Unknown)
+                        );
+                        assert_owned(
+                            &mut dom,
+                            &out,
+                            &expected,
+                            &format!("resolved worklist {label}"),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn related_font_size_residuals_keep_every_authored_owner_at_each_dispatch() {
+        exercise_related_residual_boundaries(0);
+    }
+    #[test]
+    fn related_highlight_underline_residuals_keep_every_authored_owner_at_each_dispatch() {
+        exercise_related_residual_boundaries(1);
+    }
+    #[test]
+    fn related_heading_body_residuals_keep_every_authored_owner_at_each_dispatch() {
+        exercise_related_residual_boundaries(2);
+    }
+    #[test]
+    fn related_bold_italic_residuals_keep_every_authored_owner_at_each_dispatch() {
+        exercise_related_residual_boundaries(3);
+    }
+    #[test]
+    fn related_numbered_intro_residuals_keep_every_authored_owner_at_each_dispatch() {
+        exercise_related_residual_boundaries(4);
+    }
+    #[test]
+    fn related_font_family_colour_residuals_keep_every_authored_owner_at_each_dispatch() {
+        exercise_related_residual_boundaries(5);
+    }
+
     fn exercise(family: &str) {
         for other in [
             "plain",
@@ -18687,6 +18949,910 @@ mod coverage_real_source_route_matrix_tests {
                 }
             }
         }
+    }
+
+    fn structured_guard_table(revised: bool, columns: usize, nested: bool) -> String {
+        let width = 5400 / columns;
+        let mut grid = String::new();
+        let mut cells = String::new();
+        for column in 0..columns {
+            grid.push_str(&format!("<w:gridCol w:w='{width}'/>"));
+            let text = if revised {
+                format!("revised cell {column} value")
+            } else {
+                format!("original cell {column} value")
+            };
+            let inner = if nested && column == 0 {
+                structured_guard_table(revised, 1, false)
+            } else {
+                String::new()
+            };
+            cells.push_str(&format!("<w:tc><w:tcPr><w:tcW w:w='{width}' w:type='dxa'/><w:shd w:val='clear' w:fill='{}'/></w:tcPr>{}{inner}<w:p><w:pPr><w:spacing w:after='80'/></w:pPr></w:p></w:tc>",if revised {"ABCDEF"} else {"123456"},paragraph(&text,"CellBody",None,revised)));
+        }
+        format!(
+            "<w:tbl><w:tblPr><w:tblW w:w='5400' w:type='dxa'/><w:tblBorders><w:top w:val='single' w:sz='8' w:color='445566'/></w:tblBorders></w:tblPr><w:tblGrid>{grid}</w:tblGrid><w:tr><w:trPr><w:trHeight w:val='320'/></w:trPr>{cells}</w:tr></w:tbl>"
+        )
+    }
+
+    fn structured_guard_story(
+        family: usize,
+        revised: bool,
+        root_math: usize,
+        layout: usize,
+    ) -> String {
+        let (title, texts): (&str, Vec<&str>) = match (family, revised) {
+            (0, false) => (
+                "OOXML w:b Property Tester",
+                vec!["A) Bold sample", "B) Plain sample"],
+            ),
+            (0, true) => (
+                "Table alignment document",
+                vec!["Aligned cell contents follow"],
+            ),
+            (1, false) => ("ST_OnOff property tester", vec!["w:b true sample"]),
+            (1, true) => (
+                "Here is some text about a comment",
+                vec!["A revised comment anchors this ordinary body"],
+            ),
+            (2, false) => (
+                "OOXML w:color tester",
+                vec![
+                    "A) Red colour sample",
+                    "B) Blue colour sample",
+                    "C) Plain colour sample",
+                ],
+            ),
+            (2, true) => (
+                "OOXML w:highlight tester",
+                vec![
+                    "A) Yellow highlight sample",
+                    "B) Green highlight sample",
+                    "C) Plain highlight sample",
+                ],
+            ),
+            (3, false) => ("Cell table document", vec!["Short cell vocabulary"]),
+            (3, true) => (
+                "Review table document",
+                vec![
+                    "Department review follows the original introduction",
+                    "A second paragraph explains the updated review process",
+                ],
+            ),
+            (4, false) => (
+                "Long table inventory document",
+                vec!["Multiple independently owned tables follow"],
+            ),
+            (4, true) => (
+                "Short table inventory document",
+                vec!["A revised table follows"],
+            ),
+            (5, false) => (
+                "Original sectioned document",
+                vec![
+                    "A) First original clause",
+                    "B) Second original clause",
+                    "C) Third original clause",
+                ],
+            ),
+            (5, true) => (
+                "Revised sectioned document",
+                vec![
+                    "A) First revised clause",
+                    "B) Second revised clause",
+                    "C) Third revised clause",
+                ],
+            ),
+            (6, false) => (
+                "Original lettered list document",
+                vec![
+                    "A) Original list lead",
+                    "a) Original nested item",
+                    "B) Original second item",
+                ],
+            ),
+            (6, true) => (
+                "Revised lettered list document",
+                vec![
+                    "A) Revised list lead",
+                    "b) Revised nested item",
+                    "B) Revised second item",
+                ],
+            ),
+            (7, false) => (
+                "Original mathematics document",
+                vec![
+                    "This document describes m:borderbox and m:box notation",
+                    "Original mathematics follows the description",
+                ],
+            ),
+            (7, true) => (
+                "Revised mathematics document",
+                vec![
+                    "This document describes m:box notation and a revised calculation",
+                    "Revised mathematics follows the description",
+                ],
+            ),
+            _ => unreachable!("closed structured source family"),
+        };
+        let blank = paragraph("", "LayoutBoundary", None, revised);
+        let math = match root_math {
+            1 => "<m:oMath><m:r><m:rPr><m:sty m:val='p'/></m:rPr><m:t>x+y</m:t></m:r></m:oMath>",
+            2 => {
+                "<m:oMathPara><m:oMathParaPr><m:jc m:val='center'/></m:oMathParaPr><m:oMath><m:r><m:rPr><m:sty m:val='p'/></m:rPr><m:t>x+y</m:t></m:r></m:oMath></m:oMathPara>"
+            }
+            _ => "",
+        };
+        let mut xml = String::new();
+        if layout & 1 != 0 {
+            xml.push_str(&blank);
+        }
+        xml.push_str(&paragraph(title, "Title", None, revised));
+        // A direct equation is a legitimate body unit alongside paragraph
+        // groups. Unlike a paragraph containing math, it exercises mixed
+        // Word/Group caller guards without inventing impossible empty groups.
+        xml.push_str(math);
+        for (index, text) in texts.iter().enumerate() {
+            if index == 1 && layout & 2 != 0 {
+                xml.push_str(&blank);
+            }
+            let level = (family == 6).then_some(if index == 1 { 1 } else { 0 });
+            let para = paragraph(
+                text,
+                if index == 0 { "FirstBody" } else { "LaterBody" },
+                level,
+                revised,
+            );
+            if family == 2 && index == 1 {
+                xml.push_str(&format!("<w:sdt><w:sdtPr><w:id w:val='42'/><w:tag w:val='SampleClause'/><w:alias w:val='Property sample'/></w:sdtPr><w:sdtEndPr><w:rPr><w:color w:val='778899'/></w:rPr></w:sdtEndPr><w:sdtContent>{para}</w:sdtContent></w:sdt>"));
+            } else {
+                xml.push_str(&para);
+            }
+        }
+        let table_count = match family {
+            0 => usize::from(revised),
+            3 => {
+                if revised {
+                    2
+                } else {
+                    1
+                }
+            }
+            4 => {
+                if revised {
+                    1
+                } else {
+                    4
+                }
+            }
+            _ => 0,
+        };
+        for index in 0..table_count {
+            xml.push_str(&structured_guard_table(
+                revised,
+                if revised { 3 } else { 2 },
+                index == 0 && family == 3,
+            ));
+            xml.push_str(&paragraph(
+                &format!(
+                    "Independent {} table tail {index}",
+                    if revised { "revised" } else { "original" }
+                ),
+                "TableTail",
+                None,
+                revised,
+            ));
+        }
+        if layout & 2 != 0 {
+            xml.push_str(&blank);
+        }
+        xml
+    }
+
+    fn exercise_structured_caller_guards(family: usize) {
+        for root_math in 0..3 {
+            for layout in 0..4 {
+                for word in [false, true] {
+                    for reverse in [false, true] {
+                        let settings = WmlComparerSettings {
+                            merge_replaced_paragraphs: word,
+                            ..WmlComparerSettings::default()
+                        };
+                        let a = structured_guard_story(family, false, root_math, layout);
+                        let b = structured_guard_story(family, true, root_math, layout);
+                        let (a, b) = if reverse { (&b, &a) } else { (&a, &b) };
+                        let mut dom = Dom::new();
+                        let left = source(&mut dom, a, &settings);
+                        let right = source(&mut dom, b, &settings);
+                        let expected = (frozen(&mut dom, &left), frozen(&mut dom, &right));
+                        let label = format!(
+                            "structured family={family}, root_math={root_math}, layout={layout}, Word={word}, reverse={reverse}"
+                        );
+                        if word
+                            && let Some(out) = detect_unrelated_sources_word_mode_inner(
+                                &mut dom, &left, &right, &settings,
+                            )
+                        {
+                            assert_owned(&mut dom, &out, &expected, &format!("detector {label}"));
+                        }
+                        let out = step_h(&mut dom, &left, &right, &settings);
+                        assert_owned(
+                            &mut dom,
+                            &out,
+                            &expected,
+                            &format!("block dispatcher {label}"),
+                        );
+                        let flat_left = flatten_groups_one_level(&left);
+                        let flat_right = flatten_groups_one_level(&right);
+                        let flat_expected =
+                            (frozen(&mut dom, &flat_left), frozen(&mut dom, &flat_right));
+                        assert_eq!(
+                            flat_expected, expected,
+                            "one-level expansion {label}: every source atom retains its owner"
+                        );
+                        let out = step_h(&mut dom, &flat_left, &flat_right, &settings);
+                        assert_owned(
+                            &mut dom,
+                            &out,
+                            &flat_expected,
+                            &format!("mixed word/row dispatcher {label}"),
+                        );
+                        let out = resolve_correlated_sequences(
+                            &mut dom,
+                            vec![CorrelatedSequence::paired(
+                                CorrelationStatus::Unknown,
+                                left,
+                                right,
+                            )],
+                            &settings,
+                        );
+                        assert!(
+                            out.iter()
+                                .all(|s| s.correlation_status != CorrelationStatus::Unknown)
+                        );
+                        assert_owned(
+                            &mut dom,
+                            &out,
+                            &expected,
+                            &format!("resolved caller {label}"),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    fn opaque_source_events(bytes: &[u8], faithful: bool) -> Vec<String> {
+        fn canonical(dom: &Dom, node: NodeId) -> String {
+            let mut attrs = dom
+                .attributes(node)
+                .into_iter()
+                .filter(|(name, _)| !dom.is_namespace_declaration(name))
+                .map(|(name, value)| {
+                    (
+                        name.namespace_name().to_owned(),
+                        name.local_name().to_owned(),
+                        value,
+                    )
+                })
+                .collect::<Vec<_>>();
+            attrs.sort();
+            let mut out = format!("{:?}:{attrs:?}:{:?}", dom.name(node), dom.text_value(node));
+            for child in dom.nodes(node) {
+                if dom.name_is(child, &W::r_pr())
+                    && dom
+                        .attributes(child)
+                        .iter()
+                        .all(|(name, _)| dom.is_namespace_declaration(name))
+                    && dom.nodes(child).is_empty()
+                {
+                    continue;
+                }
+                let value = canonical(dom, child);
+                out.push_str(&format!("{}:{value}", value.len()));
+            }
+            out
+        }
+        fn walk(dom: &Dom, node: NodeId, faithful: bool, out: &mut Vec<String>) {
+            if dom.name_is(node, &M::name("oMath")) || dom.name_is(node, &M::name("oMathPara")) {
+                out.push(format!("math:{}", canonical(dom, node)));
+                return;
+            }
+            if dom.name_is(node, &W::t()) {
+                let props = if faithful {
+                    dom.ancestors(node, Some(&W::r()))
+                        .first()
+                        .and_then(|&run| dom.element(run, &W::r_pr()))
+                        .map(|node| canonical(dom, node))
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                out.extend(
+                    dom.value(node)
+                        .chars()
+                        .map(|ch| format!("text:{ch}:{props}")),
+                );
+                return;
+            }
+            let structural = [W::tbl(), W::tr(), W::tc(), W::p()]
+                .into_iter()
+                .find(|name| dom.name_is(node, name));
+            if faithful && let Some(name) = &structural {
+                out.push(format!(
+                    "begin:{{{}}}{}",
+                    name.namespace_name(),
+                    name.local_name()
+                ));
+                for property in [
+                    W::tbl_pr(),
+                    W::name("tblGrid"),
+                    W::tr_pr(),
+                    W::tc_pr(),
+                    W::p_pr(),
+                ] {
+                    if let Some(property) = dom.element(node, &property) {
+                        out.push(canonical(dom, property));
+                    }
+                }
+            }
+            for child in dom.elements(node, None) {
+                if [
+                    W::tbl_pr(),
+                    W::name("tblGrid"),
+                    W::tr_pr(),
+                    W::tc_pr(),
+                    W::p_pr(),
+                    W::r_pr(),
+                    W::sect_pr(),
+                ]
+                .iter()
+                .any(|name| dom.name_is(child, name))
+                {
+                    continue;
+                }
+                walk(dom, child, faithful, out);
+            }
+            if faithful && let Some(name) = structural {
+                out.push(format!(
+                    "end:{{{}}}{}",
+                    name.namespace_name(),
+                    name.local_name()
+                ));
+            }
+        }
+        let package = crate::opc::PartFs::open(bytes).unwrap();
+        let mut dom = Dom::new();
+        let document = dom.parse_xdocument(&package.part_string("word/document.xml").unwrap());
+        let root = dom.root(document).unwrap();
+        let mut out = Vec::new();
+        walk(
+            &dom,
+            dom.element(root, &W::body()).unwrap(),
+            faithful,
+            &mut out,
+        );
+        out
+    }
+
+    #[test]
+    fn public_table_comparison_keeps_body_equations_and_every_source_payload_in_order() {
+        let package = |fragment: String| {
+            let mut package = crate::opc::PartFs::open(include_bytes!(
+                "../../tests/fixtures/relids/image_doc.docx"
+            ))
+            .unwrap();
+            package.set_part("word/document.xml",format!("<w:document xmlns:w='{}' xmlns:m='{}'><w:body>{fragment}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>",W::URI,M::URI).into_bytes());
+            // The source pStyle values have real, identical definitions in
+            // both packages; undefined styles are deliberately normalized by
+            // the public Word pipeline and are not a source-fidelity fixture.
+            let styles = [
+                "Normal",
+                "Title",
+                "BodyText",
+                "FirstBody",
+                "LaterBody",
+                "CellBody",
+                "TableTail",
+            ]
+            .into_iter()
+            .map(|id| {
+                format!(
+                    "<w:style w:type='paragraph' w:styleId='{id}'><w:name w:val='{id}'/></w:style>"
+                )
+            })
+            .collect::<String>();
+            package.set_part(
+                "word/styles.xml",
+                format!("<w:styles xmlns:w='{}'>{styles}</w:styles>", W::URI).into_bytes(),
+            );
+            package.to_zip().unwrap()
+        };
+        for family in [0, 3, 4] {
+            for root_math in [1, 2] {
+                let explicit = |fragment: String| {
+                    fragment.replace("<m:sty m:val='p'/></m:rPr>","<m:sty m:val='p'/></m:rPr><w:rPr><w:rFonts w:ascii='Cambria Math' w:hAnsi='Cambria Math'/></w:rPr>")
+                };
+                let a = package(explicit(structured_guard_story(
+                    family, false, root_math, 0,
+                )));
+                let b = package(explicit(structured_guard_story(family, true, root_math, 0)));
+                for word in [false, true] {
+                    for reverse in [false, true] {
+                        let (a, b) = if reverse { (&b, &a) } else { (&a, &b) };
+                        let settings = WmlComparerSettings {
+                            merge_replaced_paragraphs: word,
+                            ..WmlComparerSettings::default()
+                        };
+                        let compared = crate::document_comparer::compare_documents_with_settings(
+                            a, b, &settings,
+                        )
+                        .unwrap();
+                        let accepted =
+                            crate::document_comparer::accept_revisions(&compared).unwrap();
+                        let rejected =
+                            crate::document_comparer::reject_revisions(&compared).unwrap();
+                        assert_eq!(
+                            opaque_source_events(&accepted, !word),
+                            opaque_source_events(b, !word),
+                            "accepted family={family} math={root_math} Word={word} reverse={reverse}"
+                        );
+                        assert_eq!(
+                            opaque_source_events(&rejected, !word),
+                            opaque_source_events(a, !word),
+                            "rejected family={family} math={root_math} Word={word} reverse={reverse}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn public_justified_reverse_residual_keeps_complete_original_and_revised_paragraph_properties()
+    {
+        let package = |lines: &[&str], revised| {
+            let fragment = lines
+                .iter()
+                .enumerate()
+                .map(|(index, text)| {
+                    paragraph(
+                        text,
+                        if index == 0 { "Title" } else { "BodyText" },
+                        None,
+                        revised,
+                    )
+                })
+                .collect::<String>();
+            let mut package = crate::opc::PartFs::open(include_bytes!(
+                "../../tests/fixtures/relids/image_doc.docx"
+            ))
+            .unwrap();
+            package.set_part("word/document.xml",format!("<w:document xmlns:w='{}'><w:body>{fragment}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>",W::URI).into_bytes());
+            package.set_part("word/styles.xml",format!("<w:styles xmlns:w='{}'><w:style w:type='paragraph' w:styleId='Title'><w:name w:val='Title'/></w:style><w:style w:type='paragraph' w:styleId='BodyText'><w:name w:val='BodyText'/></w:style></w:styles>",W::URI).into_bytes());
+            package.to_zip().unwrap()
+        };
+        let original = package(
+            &[
+                "Justified Alignment Demo",
+                "This document demonstrates revised conclusion",
+            ],
+            true,
+        );
+        let revised = package(
+            &[
+                "Justified Alignment Demo",
+                "This document demonstrates",
+                "Original trailing phrase",
+            ],
+            false,
+        );
+        for word in [false, true] {
+            let settings = WmlComparerSettings {
+                merge_replaced_paragraphs: word,
+                ..WmlComparerSettings::default()
+            };
+            let compared = crate::document_comparer::compare_documents_with_settings(
+                &original, &revised, &settings,
+            )
+            .unwrap();
+            let rejected = crate::document_comparer::reject_revisions(&compared).unwrap();
+            let accepted = crate::document_comparer::accept_revisions(&compared).unwrap();
+            assert_eq!(
+                opaque_source_events(&rejected, true),
+                opaque_source_events(&original, true),
+                "original complete paragraph ownership Word={word}"
+            );
+            assert_eq!(
+                opaque_source_events(&accepted, true),
+                opaque_source_events(&revised, true),
+                "revised complete paragraph ownership Word={word}"
+            );
+        }
+    }
+
+    #[test]
+    fn one_level_source_expansion_keeps_standalone_equations_in_their_authored_position() {
+        for math in ["oMath", "oMathPara"] {
+            let equation =
+                "<m:oMath><m:r><m:rPr><m:sty m:val='p'/></m:rPr><m:t>x+y</m:t></m:r></m:oMath>";
+            let equation = if math == "oMathPara" {
+                format!(
+                    "<m:oMathPara><m:oMathParaPr><m:jc m:val='center'/></m:oMathParaPr>{equation}</m:oMathPara>"
+                )
+            } else {
+                equation.to_owned()
+            };
+            for before_table in [false, true] {
+                let paragraph = paragraph("Authored property sample", "BodyText", None, false);
+                let table = structured_guard_table(false, 2, false);
+                let fragment = if before_table {
+                    format!("{paragraph}{equation}{table}")
+                } else {
+                    format!("{table}{equation}{paragraph}")
+                };
+                let settings = WmlComparerSettings::default();
+                let mut dom = Dom::new();
+                let source = source(&mut dom, &fragment, &settings);
+                let expected = frozen(&mut dom, &source);
+                assert!(
+                    source
+                        .iter()
+                        .any(|unit| matches!(unit, ComparisonUnit::Word(_)))
+                );
+                assert!(
+                    source
+                        .iter()
+                        .any(|unit| matches!(unit, ComparisonUnit::Group(_)))
+                );
+                let expanded = flatten_groups_one_level(&source);
+                assert_eq!(
+                    frozen(&mut dom, &expanded),
+                    expected,
+                    "{math}/before_table={before_table}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn paragraph_window_structured_shells_and_fragment_marks_keep_exact_source_owners() {
+        let old_text = "amber bronze cedar delta elm fern granite hazel iris jade kiln lime moss nickel oak pine quartz reed silver thyme umber violet willow xenon yarrow zinc";
+        let new_text = "apple birch copper dune earth flint grove harbor indigo jasper kelp linen maple north olive pearl river stone tulip union valley wheat yellow zephyr";
+        for family in 0..8 {
+            for explicit_properties in [false, true] {
+                for word in [false, true] {
+                    for fragment in [false, true] {
+                        let settings = WmlComparerSettings {
+                            merge_replaced_paragraphs: word,
+                            in_word_level_paragraph: fragment,
+                            ..WmlComparerSettings::default()
+                        };
+                        let story = |text: &str, revised: bool| {
+                            let rpr = if explicit_properties {
+                                if revised {
+                                    "<w:rPr><w:i/><w:color w:val='345678'/></w:rPr>"
+                                } else {
+                                    "<w:rPr><w:b/><w:color w:val='123456'/></w:rPr>"
+                                }
+                            } else {
+                                ""
+                            };
+                            let run = format!("<w:r>{rpr}<w:t>{text}</w:t></w:r>");
+                            let content = match family {
+                                0 => run,
+                                1 => {
+                                    format!("<w:r>{rpr}<w:tab/></w:r>{run}<w:r>{rpr}<w:tab/></w:r>")
+                                }
+                                2 => format!(
+                                    "<w:r>{rpr}<w:br w:type='page'/></w:r>{run}<w:r>{rpr}<w:br/></w:r>"
+                                ),
+                                3 => format!(
+                                    "<w:bookmarkStart w:id='31' w:name='Clause'/>{run}<w:bookmarkEnd w:id='31'/>"
+                                ),
+                                4 => format!(
+                                    "<w:r>{rpr}<w:fldChar w:fldCharType='begin'/></w:r><w:r>{rpr}<w:instrText xml:space='preserve'> REF Clause </w:instrText></w:r><w:r>{rpr}<w:fldChar w:fldCharType='separate'/></w:r>{run}<w:r>{rpr}<w:fldChar w:fldCharType='end'/></w:r><w:bookmarkStart w:id='31' w:name='Clause'/><w:bookmarkEnd w:id='31'/>"
+                                ),
+                                5 => format!("<w:fldSimple w:instr=' DATE '>{run}</w:fldSimple>"),
+                                6 => format!(
+                                    "<w:sdt><w:sdtPr><w:alias w:val='Clause'/><w:tag w:val='stable-clause'/><w:id w:val='11'/></w:sdtPr><w:sdtContent>{run}</w:sdtContent></w:sdt>"
+                                ),
+                                _ => format!(
+                                    "<w:sdt><w:sdtPr><w:tag w:val='outer-owner'/><w:id w:val='12'/></w:sdtPr><w:sdtContent><w:sdt><w:sdtPr><w:tag w:val='inner-owner'/><w:id w:val='13'/></w:sdtPr><w:sdtContent>{run}<w:r>{rpr}<w:tab/></w:r></w:sdtContent></w:sdt></w:sdtContent></w:sdt>"
+                                ),
+                            };
+                            let ppr = if explicit_properties {
+                                if revised {
+                                    "<w:pPr><w:spacing w:after='240'/><w:ind w:left='360'/></w:pPr>"
+                                } else {
+                                    "<w:pPr><w:spacing w:after='120'/><w:ind w:left='180'/></w:pPr>"
+                                }
+                            } else {
+                                ""
+                            };
+                            format!("<w:p>{ppr}{content}</w:p>")
+                        };
+                        let mut dom = Dom::new();
+                        let left_groups = source(&mut dom, &story(old_text, false), &settings);
+                        let right_groups = source(&mut dom, &story(new_text, true), &settings);
+                        let mut left = flatten_groups_one_level(&left_groups);
+                        let right = flatten_groups_one_level(&right_groups);
+                        // A judged paragraph can recursively expose a fragment
+                        // after consuming its original closing mark. This is
+                        // the supported in_word_level_paragraph caller state.
+                        if fragment {
+                            let removed = take_paragraph_mark(&dom, &mut left);
+                            assert!(removed.is_some());
+                        }
+                        let expected = (frozen(&mut dom, &left), frozen(&mut dom, &right));
+                        let unknown =
+                            CorrelatedSequence::paired(CorrelationStatus::Unknown, left, right);
+                        let attempt = resolve_paragraph_window(&mut dom, unknown, &settings);
+                        if !word {
+                            assert!(attempt.is_err());
+                        }
+                        let sequences = match attempt {
+                            Ok(sequences) => sequences,
+                            Err(unknown) => vec![unknown],
+                        };
+                        let label = format!(
+                            "structured paragraph shell={family} properties={explicit_properties} Word={word} fragment={fragment}"
+                        );
+                        assert_owned(&mut dom, &sequences, &expected, &label);
+                        let resolved = resolve_correlated_sequences(&mut dom, sequences, &settings);
+                        assert!(
+                            resolved
+                                .iter()
+                                .all(|seq| seq.correlation_status != CorrelationStatus::Unknown)
+                        );
+                        assert_owned(&mut dom, &resolved, &expected, &label);
+                    }
+                }
+            }
+        }
+    }
+
+    fn exercise_known_word_guard_window(left: &[String], right: &[String], label: &str) {
+        for word in [false, true] {
+            for reverse in [false, true] {
+                let settings = WmlComparerSettings {
+                    merge_replaced_paragraphs: word,
+                    ..WmlComparerSettings::default()
+                };
+                let story = |lines: &[String], revised| {
+                    lines
+                        .iter()
+                        .enumerate()
+                        .map(|(index, text)| {
+                            paragraph(
+                                text,
+                                if index == 0 { "Title" } else { "BodyText" },
+                                None,
+                                revised,
+                            )
+                        })
+                        .collect::<String>()
+                };
+                let left_xml = story(left, false);
+                let right_xml = story(right, true);
+                let (left_xml, right_xml) = if reverse {
+                    (&right_xml, &left_xml)
+                } else {
+                    (&left_xml, &right_xml)
+                };
+                let mut dom = Dom::new();
+                let left = source(&mut dom, left_xml, &settings);
+                let right = source(&mut dom, right_xml, &settings);
+                let mut expected = (frozen(&mut dom, &left), frozen(&mut dom, &right));
+                let label = format!("{label} Word={word} reverse={reverse}");
+                let proposed = step_h(&mut dom, &left, &right, &settings);
+                // M166/M178 deliberately absorbs only the original closing
+                // pilcrow of the longer first body when its tail is meshed
+                // against B's second body. The public complete-projection
+                // regression above independently proves its source restoration.
+                // This is the exact existing detector boundary, not a general
+                // permission to lose paragraph marks in other routes.
+                let absorbs_original_closing_mark = word
+                    && left.len() == 2
+                    && right.len() == 3
+                    && first_paras_share_last_sig(&dom, &left, &right)
+                    && residual_para_starts_this(&dom, &left[1])
+                    && residual_para_starts_this(&dom, &right[1])
+                    && {
+                        let a = para_text_token_list(&dom, &left[1]);
+                        let b = para_text_token_list(&dom, &right[1]);
+                        ordered_shared_prefix_sig(&a, &b) >= 3
+                            && a.get(2)
+                                .is_some_and(|t| t.eq_ignore_ascii_case("demonstrates"))
+                            && b.get(2)
+                                .is_some_and(|t| t.eq_ignore_ascii_case("demonstrates"))
+                            && b.len() <= 8
+                            && a.len() > b.len()
+                    };
+                if absorbs_original_closing_mark {
+                    let closing = expected.0.last().unwrap().node;
+                    assert!(dom.name_is(closing, &W::p_pr()));
+                    let still_present = proposed
+                        .iter()
+                        .flat_map(|seq| seq.com_units_1.as_deref().unwrap_or_default())
+                        .flat_map(ComparisonUnit::descendant_atoms)
+                        .any(|atom| atom.content_element == closing);
+                    if !still_present {
+                        expected.0.pop();
+                    }
+                }
+                assert_owned(&mut dom, &proposed, &expected, &format!("StepH {label}"));
+                let resolved = resolve_correlated_sequences(&mut dom, proposed, &settings);
+                assert!(
+                    resolved
+                        .iter()
+                        .all(|seq| seq.correlation_status != CorrelationStatus::Unknown)
+                );
+                assert_owned(
+                    &mut dom,
+                    &resolved,
+                    &expected,
+                    &format!("resolved StepH {label}"),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn shared_demo_unrelated_residuals_keep_source_when_style_keyword_changes_eligibility() {
+        for keyword in ["quartz", "heading", "paragraph", "style"] {
+            for side in [false, true] {
+                let mut left = vec![
+                    "Justified Alignment Demo".to_owned(),
+                    "walnut bronze orchard".to_owned(),
+                    "harvest copper meadow".to_owned(),
+                ];
+                let mut right = vec![
+                    "Centered Alignment Demo".to_owned(),
+                    "violet cobalt glacier".to_owned(),
+                    "silver harbor summit".to_owned(),
+                ];
+                if side {
+                    right[1] = format!("{keyword} cobalt glacier");
+                } else {
+                    left[1] = format!("{keyword} bronze orchard");
+                }
+                exercise_known_word_guard_window(
+                    &left,
+                    &right,
+                    &format!("M149 style={keyword} revised={side}"),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn this_text_document_role_guards_preserve_full_sources_when_each_prefix_operand_changes() {
+        for left_start in ["This text", "This prose", "That text"] {
+            for right_start in ["This document", "This text", "That document"] {
+                let left = vec![
+                    "Justified Alignment Demo".to_owned(),
+                    format!("{left_start} quartz bronze orchard"),
+                    "Quartz trailing original clause".to_owned(),
+                ];
+                let right = vec![
+                    "Centered Alignment Demo".to_owned(),
+                    format!("{right_start} cobalt violet harbor"),
+                    "Cobalt trailing revised clause".to_owned(),
+                ];
+                exercise_known_word_guard_window(
+                    &left,
+                    &right,
+                    &format!("M151 {left_start}/{right_start}"),
+                );
+                exercise_known_word_guard_window(
+                    &left[1..],
+                    &right[1..],
+                    &format!("M151 title-peeled {left_start}/{right_start}"),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn unequal_justified_residual_prefix_boundaries_keep_every_word_and_paragraph_owner() {
+        let prefix = [
+            "This",
+            "document",
+            "demonstrates",
+            "justified",
+            "paragraph",
+            "alignment",
+            "across",
+            "each",
+        ];
+        for count in [3usize, 6, 7, 8] {
+            for original_suffix in ["", " original"] {
+                for revised_suffix in [" revised conclusion", " revised", ""] {
+                    let prefix = prefix[..count].join(" ");
+                    let left = vec![
+                        "Justified Alignment Demo".to_owned(),
+                        format!("{prefix}{original_suffix}"),
+                        "Original trailing phrase".to_owned(),
+                    ];
+                    let right = vec![
+                        "Justified Alignment Demo".to_owned(),
+                        format!("{prefix}{revised_suffix}"),
+                    ];
+                    exercise_known_word_guard_window(
+                        &left,
+                        &right,
+                        &format!(
+                            "M152 prefix={count} original={original_suffix:?} revised={revised_suffix:?}"
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn related_first_residual_and_last_body_overlap_guards_conserve_full_payloads_and_formats() {
+        for first_start in ["This document", "That document"] {
+            for shared_last_words in [0usize, 1, 2, 4, 6] {
+                let last = ["quartz", "bronze", "orchard", "harvest", "copper", "meadow"];
+                let revised_tail = if shared_last_words == 6 {
+                    last.join(" ")
+                } else {
+                    format!(
+                        "{} violet cobalt glacier silver harbor summit",
+                        last[..shared_last_words].join(" ")
+                    )
+                };
+                let left = vec![
+                    "Font Size Alignment Demo".to_owned(),
+                    "This document describes purple font size using common styles".to_owned(),
+                    last.join(" "),
+                ];
+                let right = vec![
+                    "Font Colour Alignment Demo".to_owned(),
+                    format!("{first_start} describes green font size using common styles"),
+                    revised_tail,
+                ];
+                exercise_known_word_guard_window(
+                    &left,
+                    &right,
+                    &format!("M165/M180 first={first_start} last_overlap={shared_last_words}"),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn structured_property_table_guards_preserve_actual_source_geometry() {
+        exercise_structured_caller_guards(0);
+    }
+    #[test]
+    fn structured_property_prose_guards_preserve_actual_source_ownership() {
+        exercise_structured_caller_guards(1);
+    }
+    #[test]
+    fn structured_property_control_guards_preserve_original_metadata_and_effects() {
+        exercise_structured_caller_guards(2);
+    }
+    #[test]
+    fn structured_nested_cell_tables_preserve_independent_row_and_cell_owners() {
+        exercise_structured_caller_guards(3);
+    }
+    #[test]
+    fn structured_multitable_guards_preserve_every_original_and_revised_table() {
+        exercise_structured_caller_guards(4);
+    }
+    #[test]
+    fn structured_parallel_section_guards_preserve_authored_labels_and_marks() {
+        exercise_structured_caller_guards(5);
+    }
+    #[test]
+    fn structured_lettered_cluster_guards_preserve_list_levels_and_root_payloads() {
+        exercise_structured_caller_guards(6);
+    }
+    #[test]
+    fn structured_math_guards_preserve_direct_equations_and_descriptive_text() {
+        exercise_structured_caller_guards(7);
     }
 
     macro_rules! family_test {

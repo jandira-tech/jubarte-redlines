@@ -870,3 +870,222 @@ mod tests {
         assert!(has_red, "the RGB image was painted");
     }
 }
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod raster_payload_boundary_tests {
+    use super::*;
+
+    fn white() -> Pixmap {
+        let mut p = Pixmap::new(40, 40).unwrap();
+        p.fill(Color::WHITE);
+        p
+    }
+    fn sample(p: &Pixmap, x: u32, y: u32) -> [u8; 4] {
+        let i = ((y * p.width() + x) * 4) as usize;
+        p.data()[i..i + 4].try_into().unwrap()
+    }
+
+    #[test]
+    fn authored_image_crop_rotation_and_oval_keep_owned_center_and_clip_corners() {
+        let bytes: Vec<_> = std::iter::repeat_n([255, 0, 0, 255], 4).flatten().collect();
+        for crop in [None, Some([0.0; 4]), Some([0.25; 4])] {
+            for rotate_deg in [0.0, 0.01, 180.0] {
+                for oval in [false, true] {
+                    let mut p = white();
+                    paint_image(
+                        &mut p,
+                        (2, 2),
+                        &bytes,
+                        &Placement {
+                            rect: [10.0, 10.0, 20.0, 20.0],
+                            crop,
+                            rotate_deg,
+                            oval,
+                        },
+                        Transform::identity(),
+                    );
+                    assert_eq!(sample(&p, 20, 20), [255, 0, 0, 255]);
+                    assert_eq!(sample(&p, 2, 2), [255; 4]);
+                    if oval {
+                        assert_eq!(sample(&p, 10, 10), [255; 4]);
+                    } else {
+                        assert_eq!(sample(&p, 12, 12), [255, 0, 0, 255]);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn image_alpha_composites_into_white_and_degenerate_placement_is_identity() {
+        for alpha in [0, 128, 255] {
+            let mut p = white();
+            paint_image(
+                &mut p,
+                (1, 1),
+                &[255, 0, 0, alpha],
+                &Placement {
+                    rect: [10.0, 10.0, 20.0, 20.0],
+                    crop: None,
+                    rotate_deg: 0.0,
+                    oval: false,
+                },
+                Transform::identity(),
+            );
+            assert_eq!(sample(&p, 20, 20), [255, 255 - alpha, 255 - alpha, 255]);
+        }
+        for (w, h, dw, dh) in [
+            (0, 1, 20.0, 20.0),
+            (1, 0, 20.0, 20.0),
+            (1, 1, 0.0, 20.0),
+            (1, 1, 20.0, 0.0),
+            (1, 1, -1.0, 20.0),
+        ] {
+            let mut p = white();
+            let before = p.data().to_vec();
+            paint_image(
+                &mut p,
+                (w, h),
+                &[255, 0, 0, 255],
+                &Placement {
+                    rect: [10.0, 10.0, dw, dh],
+                    crop: None,
+                    rotate_deg: 0.0,
+                    oval: false,
+                },
+                Transform::identity(),
+            );
+            assert_eq!(p.data(), before);
+        }
+    }
+
+    #[test]
+    fn rgb_missing_alpha_defaults_only_missing_pixels_to_opaque() {
+        let fonts = Fonts::new();
+        for alpha in [None, Some(vec![]), Some(vec![0]), Some(vec![0, 128])] {
+            let mut p = white();
+            let mut faces = HashMap::new();
+            let op = Op::Rgb {
+                x: 10.0,
+                y: 10.0,
+                dw: 20.0,
+                dh: 20.0,
+                width: 2,
+                height: 1,
+                bytes: vec![255, 0, 0, 255, 0, 0],
+                alpha: alpha.clone(),
+                crop: None,
+                rotate_deg: 0.0,
+                oval: false,
+            };
+            paint_op(&mut p, &fonts, &mut faces, &op, Transform::identity());
+            let left = alpha
+                .as_ref()
+                .and_then(|a| a.first())
+                .copied()
+                .unwrap_or(255);
+            let right = alpha
+                .as_ref()
+                .and_then(|a| a.get(1))
+                .copied()
+                .unwrap_or(255);
+            assert_eq!(sample(&p, 13, 20), [255, 255 - left, 255 - left, 255]);
+            assert_eq!(sample(&p, 27, 20), [255, 255 - right, 255 - right, 255]);
+        }
+        let mut p = white();
+        let before = p.data().to_vec();
+        let mut faces = HashMap::new();
+        paint_op(
+            &mut p,
+            &fonts,
+            &mut faces,
+            &Op::Rgb {
+                x: 0.0,
+                y: 0.0,
+                dw: 20.0,
+                dh: 20.0,
+                width: 2,
+                height: 1,
+                bytes: vec![255, 0, 0],
+                alpha: None,
+                crop: None,
+                rotate_deg: 0.0,
+                oval: false,
+            },
+            Transform::identity(),
+        );
+        assert_eq!(p.data(), before);
+    }
+
+    #[test]
+    fn page_allocation_limit_rejects_before_large_raster_allocation() {
+        let fonts = Fonts::new();
+        let page = Page::new(20_000.0, 20_000.0);
+        assert!(paint_page(&fonts, &page, 72.0).is_none());
+    }
+
+    #[test]
+    fn empty_shape_payloads_preserve_pixels_and_negative_rectangle_extents_are_normalized() {
+        let fonts = Fonts::new();
+        let mut faces = HashMap::new();
+        let mut p = white();
+        let before = p.data().to_vec();
+        let ops = [
+            Op::FillPoly {
+                points: vec![],
+                color: [0.0; 3],
+            },
+            Op::StrokePoly {
+                points: vec![],
+                width: 1.0,
+                color: [0.0; 3],
+            },
+            Op::FillPath {
+                contours: vec![vec![]],
+                color: [0.0; 3],
+                even_odd: true,
+            },
+            Op::StrokePath {
+                subpaths: vec![(vec![], true)],
+                width: 1.0,
+                color: [0.0; 3],
+            },
+            Op::FillRect {
+                x: 10.0,
+                y: 10.0,
+                w: 0.0,
+                h: 20.0,
+                color: [0.0; 3],
+            },
+        ];
+        for (index, op) in ops.into_iter().enumerate() {
+            paint_op(&mut p, &fonts, &mut faces, &op, Transform::identity());
+            assert!(p.data() == before, "empty shape {index} changed pixels");
+        }
+        // A zero-width stroked rectangle is a vertical line; its fill is empty.
+        let line = Op::StrokeRect {
+            x: 10.0,
+            y: 10.0,
+            w: 0.0,
+            h: 20.0,
+            width: 2.0,
+            color: [0.0; 3],
+        };
+        paint_op(&mut p, &fonts, &mut faces, &line, Transform::identity());
+        assert_eq!(sample(&p, 9, 20), [0, 0, 0, 255]);
+        assert_eq!(sample(&p, 10, 20), [0, 0, 0, 255]);
+        assert_eq!(sample(&p, 8, 20), [255; 4]);
+        assert_eq!(sample(&p, 11, 20), [255; 4]);
+        fill_rect(
+            &mut p,
+            30.0,
+            30.0,
+            -20.0,
+            -20.0,
+            [1.0, 0.0, 0.0],
+            Transform::identity(),
+        );
+        assert_eq!(sample(&p, 20, 20), [255, 0, 0, 255]);
+        assert_eq!(sample(&p, 2, 2), [255; 4]);
+    }
+}

@@ -809,11 +809,15 @@ pub struct BlockContentInfo {
     pub next_block_content_element: Option<NodeId>,
 }
 
-/// First `w:p`/`w:tbl` among `roots`' descendants-and-self, document order.
+/// First paragraph, table, or opaque equation block among `roots`' descendants-and-self, document order.
 /// DOM-ITER-04: early-exit iterative walk (no full `descendants_and_self` Vec).
 fn first_block_content(dom: &Dom, roots: &[NodeId]) -> Option<NodeId> {
     let (p, tbl) = (W::p(), W::tbl());
-    let is_block = |e: NodeId| dom.name(e).is_some_and(|n| n == p || n == tbl);
+    let is_block = |e: NodeId| {
+        dom.name(e).is_some_and(|n| {
+            n == p || n == tbl || n == M::name("oMath") || n == M::name("oMathPara")
+        })
+    };
     for &r in roots {
         if is_block(r) {
             return Some(r);
@@ -848,7 +852,7 @@ fn elements_after_self(dom: &Dom, id: NodeId) -> Vec<NodeId> {
 }
 
 /// A.0 — `IterateBlockContentElements` (:1909) + `AnnotateBlockContentElements`
-/// (:1855): the doc-order chain of block content (`w:p`/`w:tbl`) under
+/// (:1855): the doc-order chain of paragraphs, tables, and equation blocks under
 /// `element`, linked prev/this/next. FAITHFUL: the next-search starts at the
 /// current element's FOLLOWING siblings (climbing ancestors up to `element`),
 /// so a table's inner paragraphs never appear once the table itself matched.
@@ -1743,6 +1747,16 @@ pub fn accept_deleted_and_move_from_paragraph_marks_transform(
     dom: &mut Dom,
     node: NodeId,
 ) -> NodeId {
+    accept_paragraph_marks_with_owners(dom, node, &mut HashMap::new())
+}
+
+// Original paragraph owners are private reconstruction evidence. Keeping them
+// in Rust avoids adding scratch attributes to the public transform's output.
+fn accept_paragraph_marks_with_owners(
+    dom: &mut Dom,
+    node: NodeId,
+    paragraph_owners: &mut HashMap<NodeId, Vec<NodeId>>,
+) -> NodeId {
     if !dom.is_element(node) {
         return dom.clone_subtree(node);
     }
@@ -1753,8 +1767,11 @@ pub fn accept_deleted_and_move_from_paragraph_marks_transform(
             dom.set_attribute_value(ne, &an, Some(&av));
         }
         for c in dom.nodes(node) {
-            let tc = accept_deleted_and_move_from_paragraph_marks_transform(dom, c);
+            let tc = accept_paragraph_marks_with_owners(dom, c, paragraph_owners);
             dom.add(ne, tc);
+        }
+        if dom.name_is(node, &W::p()) {
+            paragraph_owners.insert(ne, vec![node]);
         }
         return ne;
     }
@@ -1851,13 +1868,31 @@ pub fn accept_deleted_and_move_from_paragraph_marks_transform(
                     dom.add(np, collapsed);
                 }
             }
+            paragraph_owners.insert(
+                np,
+                orig_ids
+                    .iter()
+                    .copied()
+                    .filter(|&source| dom.name_is(source, &W::p()))
+                    .collect(),
+            );
             // Word also drops an emptied moved-away paragraph before a table
             // (its Reject All of 30f20e787b's moved heading).
             let last_mark_goes = paragraph_mark_is_deleted_or_moved_from(dom, last_this);
             let next = group.last().unwrap().0.next_block_content_element;
-            let next_is_none_or_tbl =
-                next.is_none() || next.is_some_and(|n| dom.name(n) == Some(W::tbl()));
-            if all_para_content_is_deleted(dom, np) && last_mark_goes && next_is_none_or_tbl {
+            // An opaque equation also ends the paragraph-mark merge chain.
+            // A fully deleted carrier before that barrier has no surviving
+            // mark or content to own an empty paragraph in the projection.
+            let next_is_end_or_block_barrier = next.is_none()
+                || next.is_some_and(|n| {
+                    dom.name(n).is_some_and(|name| {
+                        name == W::tbl() || name == M::name("oMath") || name == M::name("oMathPara")
+                    })
+                });
+            if all_para_content_is_deleted(dom, np)
+                && last_mark_goes
+                && next_is_end_or_block_barrier
+            {
                 // Nuke empty deleted para, but keep comment anchors that lived
                 // and bookmarks that lived inside its w:del runs (starts 9/10
                 // between delText).
@@ -1875,8 +1910,11 @@ pub fn accept_deleted_and_move_from_paragraph_marks_transform(
                     dom.set_attribute_value(re, &an, Some(&av));
                 }
                 for c in dom.nodes(this) {
-                    let tc = accept_deleted_and_move_from_paragraph_marks_transform(dom, c);
+                    let tc = accept_paragraph_marks_with_owners(dom, c, paragraph_owners);
                     dom.add(re, tc);
+                }
+                if dom.name_is(this, &W::p()) {
+                    paragraph_owners.insert(re, vec![this]);
                 }
                 rebuilt.push((vec![this], Some(re), Vec::new()));
             }
@@ -2082,6 +2120,15 @@ pub fn add_block_level_content_controls(
     new_document: NodeId,
     original: NodeId,
 ) -> NodeId {
+    add_content_controls_with_owners(dom, new_document, original, None)
+}
+
+fn add_content_controls_with_owners(
+    dom: &mut Dom,
+    new_document: NodeId,
+    original: NodeId,
+    paragraph_owners: Option<&HashMap<NodeId, Vec<NodeId>>>,
+) -> NodeId {
     use std::collections::HashSet;
 
     let sdt = W::sdt();
@@ -2143,6 +2190,7 @@ pub fn add_block_level_content_controls(
         // their marks merged into. A control whose text alone is deleted
         // keeps its mark and so stays, emptied.
         let paragraphs = dom.descendants(cc, Some(&W::p()));
+        let owned_paragraphs = paragraphs.iter().copied().collect::<HashSet<_>>();
         let block_removed = !paragraphs.is_empty()
             && paragraphs.iter().all(|&p| {
                 dom.element(p, &W::p_pr())
@@ -2251,10 +2299,36 @@ pub fn add_block_level_content_controls(
                             .take_while(|&n| n != top)
                             .filter(|&n| dom.name(n).as_ref() == Some(&name))
                             .count();
-                        dom.ancestors(run, None)
+                        let owner = dom
+                            .ancestors(run, None)
                             .into_iter()
                             .filter(|&n| dom.name(n).as_ref() == Some(&name))
-                            .nth(nested)
+                            .nth(nested)?;
+                        if name == W::p() {
+                            if let Some(paragraph_owners) = paragraph_owners {
+                                // Every contributing source pilcrow must belong
+                                // to this control, including runless successors.
+                                let owners = paragraph_owners.get(&owner)?;
+                                if owners
+                                    .iter()
+                                    .any(|source| !owned_paragraphs.contains(source))
+                                {
+                                    return None;
+                                }
+                            } else {
+                                // The standalone public rewrap helper has no
+                                // merge map. Only an unchanged paragraph ID can
+                                // prove complete ownership; otherwise keep its
+                                // established run-range reconstruction.
+                                let owner_id = dom.attribute(owner, &unique_id)?;
+                                if !paragraphs.iter().any(|&source| {
+                                    dom.attribute(source, &unique_id) == Some(owner_id)
+                                }) {
+                                    return None;
+                                }
+                            }
+                        }
+                        Some(owner)
                     })
                     .unwrap_or(run);
                 if !anchors.contains(&owned) {
@@ -2303,7 +2377,15 @@ pub fn add_block_level_content_controls(
                     && n != W::name("commentRangeEnd")
             })
             .collect();
+        let foreign_pilcrow_owner = paragraph_owners
+            .and_then(|owners| owners.get(&common_ancestor))
+            .is_some_and(|owners| {
+                owners
+                    .iter()
+                    .any(|source| !owned_paragraphs.contains(source))
+            });
         if dom.name(common_ancestor) == Some(W::p())
+            && !foreign_pilcrow_owner
             && significant.first() == Some(&first_run_child)
             && significant.last() == Some(&last_run_child)
         {
@@ -2382,8 +2464,9 @@ pub fn accept_deleted_and_move_from_paragraph_marks(dom: &mut Dom, element: Node
     annotate_run_elements_with_id(dom, element);
     annotate_paragraph_elements_with_id(dom, element);
     annotate_content_controls_with_run_ids(dom, element);
-    let new_element = accept_deleted_and_move_from_paragraph_marks_transform(dom, element);
-    add_block_level_content_controls(dom, new_element, element)
+    let mut paragraph_owners = HashMap::new();
+    let new_element = accept_paragraph_marks_with_owners(dom, element, &mut paragraph_owners);
+    add_content_controls_with_owners(dom, new_element, element, Some(&paragraph_owners))
 }
 
 // ─────────────── A.6 — rows left empty by moveFrom ──────────────────────────
@@ -4471,6 +4554,289 @@ mod public_block_control_ownership_tests {
                 assert_eq!(
                     dom.attribute(dom.element(props, &W::name("id")).unwrap(), &W::val()),
                     Some(id)
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod body_equation_paragraph_mark_ownership_tests {
+    use super::*;
+    use crate::opc::PartFs;
+
+    fn equation(display: bool) -> String {
+        let inner = "<m:oMath><m:f><m:fPr><m:type m:val='lin'/></m:fPr><m:num><m:r><m:rPr><m:sty m:val='p'/></m:rPr><w:rPr><w:rFonts w:ascii='Cambria Math' w:hAnsi='Cambria Math'/><w:color w:val='234567'/></w:rPr><m:t>x</m:t></m:r></m:num><m:den><m:r><m:t>y</m:t></m:r></m:den></m:f></m:oMath>";
+        if display {
+            format!(
+                "<m:oMathPara><m:oMathParaPr><m:jc m:val='center'/></m:oMathParaPr>{inner}</m:oMathPara>"
+            )
+        } else {
+            inner.into()
+        }
+    }
+    fn semantic(dom: &Dom, node: NodeId) -> String {
+        if !dom.is_element(node) {
+            return dom.text_value(node).unwrap_or_default().into();
+        }
+        let name = dom.name(node).unwrap();
+        let mut attrs = dom
+            .attributes(node)
+            .into_iter()
+            .filter(|(n, _)| {
+                n.namespace_name() != "http://www.w3.org/2000/xmlns/" && n.local_name() != "xmlns"
+            })
+            .collect::<Vec<_>>();
+        attrs.sort_by_key(|(n, v)| {
+            (
+                n.namespace_name().to_string(),
+                n.local_name().to_string(),
+                v.clone(),
+            )
+        });
+        format!(
+            "{:?}{attrs:?}[{}]",
+            name,
+            dom.nodes(node)
+                .into_iter()
+                .map(|n| semantic(dom, n))
+                .collect::<Vec<_>>()
+                .join("|")
+        )
+    }
+    fn parse(content: &str) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!("<w:document xmlns:w='{}' xmlns:m='{}'><w:body>{content}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>", W::URI, M::URI));
+        let root = dom.root(doc).unwrap();
+        (dom, root)
+    }
+    fn assert_math(dom: &Dom, root: NodeId, expected: &str, display: bool) {
+        let body = dom.element(root, &W::body()).unwrap();
+        let math = dom.elements(
+            body,
+            Some(&M::name(if display { "oMathPara" } else { "oMath" })),
+        );
+        assert_eq!(math.len(), 1);
+        assert_eq!(semantic(dom, math[0]), expected);
+        let kids = dom.elements(body, None);
+        assert_eq!(
+            kids.iter()
+                .map(|&n| dom.name(n).unwrap())
+                .collect::<Vec<_>>(),
+            vec![
+                W::p(),
+                M::name(if display { "oMathPara" } else { "oMath" }),
+                W::p(),
+                W::sect_pr()
+            ]
+        );
+        assert_eq!(dom.value(kids[0]), "before");
+        assert_eq!(dom.value(kids[2]), "after");
+    }
+    #[test]
+    fn equation_is_an_opaque_block_barrier_for_deleted_paragraph_marks() {
+        for display in [false, true] {
+            let math = equation(display);
+            let (mut dom, root) = parse(&format!(
+                "<w:p><w:pPr><w:rPr><w:del w:id='7' w:author='Comparer'/></w:rPr></w:pPr><w:r><w:t>before</w:t></w:r></w:p>{math}<w:p><w:r><w:t>after</w:t></w:r></w:p>"
+            ));
+            let body = dom.element(root, &W::body()).unwrap();
+            let source_math = dom.elements(body, None)[1];
+            let expected = semantic(&dom, source_math);
+            let chain = iterate_block_content_elements(&dom, body);
+            assert_eq!(chain.len(), 3);
+            assert_eq!(chain[1].this_block_content_element, Some(source_math));
+            let result = accept_deleted_and_move_from_paragraph_marks_transform(&mut dom, root);
+            assert_math(&dom, result, &expected, display);
+        }
+    }
+    #[test]
+    fn public_accept_and_reject_preserve_unchanged_body_math_among_revised_marks() {
+        for display in [false, true] {
+            for reject in [false, true] {
+                let mark = if reject { "ins" } else { "del" };
+                let math = equation(display);
+                let content = format!(
+                    "<w:p><w:pPr><w:rPr><w:{mark} w:id='7' w:author='Comparer' w:date='2001-02-03T04:05:06Z'/></w:rPr></w:pPr><w:r><w:t>before</w:t></w:r></w:p>{math}<w:p><w:r><w:t>after</w:t></w:r></w:p>"
+                );
+                let (dom, root) = parse(&content);
+                let body = dom.element(root, &W::body()).unwrap();
+                let expected = semantic(&dom, dom.elements(body, None)[1]);
+                let xml = dom.serialize_element(root);
+                let mut pkg = PartFs::open(include_bytes!(
+                    "../tests/fixtures/word_probes/tokens/cell_a.docx"
+                ))
+                .unwrap();
+                pkg.set_part("word/document.xml", xml.into_bytes());
+                let bytes = pkg.to_zip().unwrap();
+                let result = if reject {
+                    crate::document_comparer::reject_revisions(&bytes)
+                } else {
+                    crate::document_comparer::accept_revisions(&bytes)
+                }
+                .unwrap();
+                let pkg = PartFs::open(&result).unwrap();
+                let mut result_dom = Dom::new();
+                let doc =
+                    result_dom.parse_xdocument(&pkg.part_string("word/document.xml").unwrap());
+                let result_root = result_dom.root(doc).unwrap();
+                assert_math(&result_dom, result_root, &expected, display);
+                assert!(!has_deleted_or_moved_from_paragraph_mark(
+                    &result_dom,
+                    result_root
+                ));
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod deleted_title_equation_barrier_tests {
+    use super::*;
+    use crate::opc::PartFs;
+    fn equation(text: &str, marker: Option<&str>, display: bool) -> String {
+        let content = format!(
+            "<m:rPr><m:sty m:val='p'/></m:rPr><w:rPr><w:rFonts w:ascii='Cambria Math' w:hAnsi='Cambria Math'/><w:color w:val='234567'/></w:rPr><m:t>{text}</m:t>"
+        );
+        let content = marker.map_or_else(|| content.clone(), |m| format!("<w:{m} w:id='8' w:author='Comparer' w:date='2001-02-03T04:05:06Z'>{content}</w:{m}>"));
+        // The producer tracks the complete mathematical run payload,
+        // including m:rPr. Leaving those properties outside the marker
+        // authors an independent empty run that resolution must preserve.
+        let math = format!("<m:oMath><m:r>{content}</m:r></m:oMath>");
+        if display {
+            format!(
+                "<m:oMathPara><m:oMathParaPr><m:jc m:val='center'/></m:oMathParaPr>{math}</m:oMathPara>"
+            )
+        } else {
+            math
+        }
+    }
+    fn title(text: &str, marker: Option<&str>, revised: bool) -> String {
+        let mark = marker.map_or(String::new(), |m| {
+            format!(
+                "<w:rPr><w:{m} w:id='7' w:author='Comparer' w:date='2001-02-03T04:05:06Z'/></w:rPr>"
+            )
+        });
+        let text_tag = if marker == Some("del") {
+            "delText"
+        } else {
+            "t"
+        };
+        let run = format!(
+            "<w:r><w:rPr><w:b/><w:color w:val='123456'/></w:rPr><w:{text_tag}>{text}</w:{text_tag}></w:r>"
+        );
+        let run = marker.map_or_else(|| run.clone(), |m| format!("<w:{m} w:id='9' w:author='Comparer' w:date='2001-02-03T04:05:06Z'>{run}</w:{m}>"));
+        format!(
+            "<w:p><w:pPr><w:spacing w:after='{}'/><w:ind w:left='{}'/>{mark}</w:pPr>{run}</w:p>",
+            if revised { 240 } else { 120 },
+            if revised { 360 } else { 180 }
+        )
+    }
+    fn parse(content: &str) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!("<w:document xmlns:w='{}' xmlns:m='{}'><w:body>{content}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>", W::URI, M::URI));
+        let root = dom.root(doc).unwrap();
+        (dom, root)
+    }
+    fn semantic(dom: &Dom, node: NodeId) -> String {
+        if !dom.is_element(node) {
+            return dom.text_value(node).unwrap_or_default().into();
+        }
+        let name = dom.name(node).unwrap();
+        let mut attrs = dom
+            .attributes(node)
+            .into_iter()
+            .filter(|(n, _)| {
+                n.namespace_name() != "http://www.w3.org/2000/xmlns/" && n.local_name() != "xmlns"
+            })
+            .collect::<Vec<_>>();
+        attrs.sort_by_key(|(n, v)| {
+            (
+                n.namespace_name().to_string(),
+                n.local_name().to_string(),
+                v.clone(),
+            )
+        });
+        format!(
+            "{:?}{attrs:?}[{}]",
+            name,
+            dom.nodes(node)
+                .into_iter()
+                .map(|n| semantic(dom, n))
+                .collect::<Vec<_>>()
+                .join("|")
+        )
+    }
+    #[test]
+    fn deleted_title_before_equation_is_removed_without_consuming_the_equation() {
+        for display in [false, true] {
+            let math = equation("old-equation", Some("del"), display);
+            let (mut dom, root) =
+                parse(&format!("{}{math}", title("old-title", Some("del"), false)));
+            let body = dom.element(root, &W::body()).unwrap();
+            let original_math = dom.elements(body, None)[1];
+            let expected_math = semantic(&dom, original_math);
+            let result = accept_deleted_and_move_from_paragraph_marks_transform(&mut dom, root);
+            let body = dom.element(result, &W::body()).unwrap();
+            let children = dom.elements(body, None);
+            assert_eq!(children.len(), 2);
+            assert_eq!(semantic(&dom, children[0]), expected_math);
+            assert!(dom.name_is(children[1], &W::sect_pr()));
+        }
+    }
+    #[test]
+    fn public_replaced_titles_and_equations_recover_complete_owned_sources() {
+        for display in [false, true] {
+            let content = format!(
+                "{}{}{}{}",
+                title("old-title", Some("del"), false),
+                equation("old-equation", Some("del"), display),
+                title("new-title", Some("ins"), true),
+                equation("new-equation", Some("ins"), display)
+            );
+            let (dom, root) = parse(&content);
+            let mut pkg = PartFs::open(include_bytes!(
+                "../tests/fixtures/word_probes/tokens/cell_a.docx"
+            ))
+            .unwrap();
+            pkg.set_part(
+                "word/document.xml",
+                dom.serialize_element(root).into_bytes(),
+            );
+            let bytes = pkg.to_zip().unwrap();
+            for reject in [false, true] {
+                let output = if reject {
+                    crate::document_comparer::reject_revisions(&bytes)
+                } else {
+                    crate::document_comparer::accept_revisions(&bytes)
+                }
+                .unwrap();
+                let output = PartFs::open(&output).unwrap();
+                let mut actual = Dom::new();
+                let doc = actual.parse_xdocument(&output.part_string("word/document.xml").unwrap());
+                let root = actual.root(doc).unwrap();
+                let body = actual.element(root, &W::body()).unwrap();
+                let source = if reject {
+                    format!(
+                        "{}{}",
+                        title("old-title", None, false),
+                        equation("old-equation", None, display)
+                    )
+                } else {
+                    format!(
+                        "{}{}",
+                        title("new-title", None, true),
+                        equation("new-equation", None, display)
+                    )
+                };
+                let (expected, root) = parse(&source);
+                let expected_body = expected.element(root, &W::body()).unwrap();
+                assert_eq!(
+                    semantic(&actual, body),
+                    semantic(&expected, expected_body),
+                    "display={display} reject={reject}"
                 );
             }
         }

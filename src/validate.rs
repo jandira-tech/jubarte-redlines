@@ -1995,3 +1995,111 @@ mod validation_boundary_tests {
         assert_eq!(pkg.part_bytes("empty.xml"), Some([].as_slice()));
     }
 }
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod validation_owner_boundary_tests {
+    use super::*;
+    fn package() -> PartFs {
+        PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap()
+    }
+    #[test]
+    fn relationship_target_diagnostics_distinguish_owned_payloads_from_unresolved_and_external_targets()
+     {
+        for (target, mode, present, missing) in [
+            ("media/picture.bin", false, true, false),
+            ("/word/media/picture.bin", false, true, false),
+            ("word/media/picture.bin", false, true, false),
+            ("media/missing.bin", false, false, true),
+            ("https://example.invalid/picture.bin", false, false, false),
+            ("http://example.invalid/picture.bin", false, false, false),
+            ("mailto:owner@example.invalid", false, false, false),
+            ("media/missing.bin", true, false, false),
+        ] {
+            let mut pkg = package();
+            let id = if mode {
+                pkg.add_document_relationship_external(
+                    "word/document.xml",
+                    "urn:test:payload",
+                    target,
+                )
+            } else {
+                pkg.add_document_relationship("word/document.xml", "urn:test:payload", target)
+            };
+            if present {
+                pkg.set_part("word/media/picture.bin", vec![1, 2, 3, 4]);
+            }
+            pkg.set_part("word/document.xml", format!("<w:document xmlns:w='{}' xmlns:r='{}'><w:body><w:p><w:r><w:drawing r:embed=\"{id}\"/></w:r></w:p></w:body></w:document>", W::URI, R::URI).into_bytes());
+            let before = pkg.to_zip().unwrap();
+            let mut findings = Vec::new();
+            check_relationship_integrity(&pkg, &mut findings);
+            assert_eq!(
+                findings
+                    .iter()
+                    .filter(|f| f.code == "MISSING_REL_TARGET")
+                    .count(),
+                usize::from(missing),
+                "{target} external={mode}"
+            );
+            assert!(findings.iter().all(|f| f.code != "DANGLING_RELATIONSHIP"));
+            if missing {
+                assert!(
+                    findings
+                        .iter()
+                        .any(|f| f.message.contains(&id) && f.message.contains(target))
+                );
+            }
+            assert_eq!(pkg.to_zip().unwrap(), before);
+        }
+    }
+    #[test]
+    fn orphan_comment_cleanup_preserves_live_references_and_neighbor_run_properties() {
+        for (content, remains) in [
+            ("", false),
+            ("<w:rPr><w:b/></w:rPr>", false),
+            ("<w:rPr><w:i/></w:rPr><w:t>Keep</w:t>", true),
+        ] {
+            let mut dom = Dom::new();
+            let doc = dom.parse_xdocument(&format!("<w:document xmlns:w='{}'><w:body><w:p><w:commentRangeStart w:id='3'/><w:r>{content}<w:commentReference w:id='3'/></w:r><w:commentRangeEnd w:id='3'/><w:r><w:rPr><w:color w:val='246810'/></w:rPr><w:commentReference w:id='4'/><w:t>Live</w:t></w:r></w:p></w:body></w:document>", W::URI));
+            let root = dom.root(doc).unwrap();
+            drop_orphan_comment_anchors(&mut dom, root, &HashSet::from(["4".to_string()]));
+            assert!(
+                dom.descendants(root, Some(&W::name("commentRangeStart")))
+                    .is_empty()
+            );
+            assert!(
+                dom.descendants(root, Some(&W::name("commentRangeEnd")))
+                    .is_empty()
+            );
+            let refs = dom.descendants(root, Some(&W::name("commentReference")));
+            assert_eq!(refs.len(), 1);
+            assert_eq!(dom.attribute(refs[0], &W::id()), Some("4"));
+            assert_eq!(
+                dom.descendants(root, Some(&W::r())).len(),
+                if remains { 2 } else { 1 }
+            );
+            let texts: Vec<_> = dom
+                .descendants(root, Some(&W::t()))
+                .into_iter()
+                .map(|n| dom.value(n))
+                .collect();
+            assert_eq!(
+                texts,
+                if remains {
+                    vec!["Keep", "Live"]
+                } else {
+                    vec!["Live"]
+                }
+            );
+            let live_pr = dom
+                .element(dom.parent(refs[0]).unwrap(), &W::r_pr())
+                .unwrap();
+            assert_eq!(
+                dom.attribute(dom.element(live_pr, &W::name("color")).unwrap(), &W::val()),
+                Some("246810")
+            );
+            let once = dom.serialize_element(root);
+            drop_orphan_comment_anchors(&mut dom, root, &HashSet::from(["4".to_string()]));
+            assert_eq!(dom.serialize_element(root), once);
+        }
+    }
+}

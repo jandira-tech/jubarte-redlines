@@ -1873,3 +1873,285 @@ mod boundary_coverage_tests {
         assert!(headings(&dom, body, &names, &(4..=9), true).is_empty());
     }
 }
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod field_story_ownership_tests {
+    use super::*;
+    fn body(xml: &str) -> (Dom, NodeId) {
+        let mut d = Dom::new();
+        let doc = d.parse_xdocument(&format!(
+            "<w:body xmlns:w='{}' xmlns:mc='{}' xmlns:v='urn:schemas-microsoft-com:vml'>{xml}</w:body>",
+            W::URI,
+            MC::URI
+        ));
+        let r = d.root(doc).unwrap();
+        (d, r)
+    }
+    const BEGIN: &str = "<w:r><w:rPr><w:b/></w:rPr><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText> REF Anchor </w:instrText></w:r>";
+    const SEP: &str = "<w:r><w:fldChar w:fldCharType='separate'/></w:r>";
+    const END: &str = "<w:r><w:fldChar w:fldCharType='end'/></w:r>";
+    const CACHE: &str = "<w:r><w:rPr><w:i/><w:color w:val='123456'/></w:rPr><w:t>Old</w:t><w:tab/><w:t>cache</w:t></w:r>";
+
+    #[test]
+    fn field_collector_skips_deleted_fallbacks_and_keeps_textbox_story_stacks_separate() {
+        for wrapper in ["del", "moveFrom", "mc:Fallback"] {
+            let tag = if wrapper.starts_with("mc:") {
+                wrapper.to_string()
+            } else {
+                format!("w:{wrapper}")
+            };
+            let xml = format!(
+                "<w:p>{BEGIN}{SEP}<w:fldSimple w:instr='SEQ Body'><w:r><w:t>Body cache</w:t></w:r></w:fldSimple><{tag}><w:fldSimple w:instr='SEQ Gone'><w:r><w:t>Gone cache</w:t></w:r></w:fldSimple></{tag}><w:r><w:pict><v:shape id='Box' style='width:100pt;height:100pt'><v:textbox><w:txbxContent><w:p><w:fldSimple w:instr='SEQ Box'><w:r><w:t>Box cache</w:t></w:r></w:fldSimple></w:p></w:txbxContent></v:textbox></v:shape></w:pict></w:r>{END}</w:p>"
+            );
+            let (d, r) = body(&xml);
+            let before = d.serialize_element(r);
+            let f = collect_fields(&d, r);
+            assert_eq!(
+                f.iter().map(|f| f.kind.as_str()).collect::<Vec<_>>(),
+                ["REF", "SEQ", "SEQ"]
+            );
+            assert_eq!(f[1].in_result_of, Some(0));
+            assert_eq!(f[2].in_result_of, None);
+            assert_eq!(result_text(&d, r, &f[1]), "Body cache");
+            assert_eq!(result_text(&d, r, &f[2]), "Box cache");
+            let mut results = HashMap::new();
+            results.insert(0, "replacement".into());
+            assert!(inside_rewritten_result(&f, 1, &results));
+            assert!(!inside_rewritten_result(&f, 2, &results));
+            assert_eq!(d.serialize_element(r), before);
+        }
+        let (d, r) = body(&format!(
+            "<w:p><w:r><w:fldChar w:fldCharType='separate'/><w:instrText>orphan</w:instrText><w:fldChar w:fldCharType='end'/><w:fldChar w:fldCharType='unknown'/></w:r>{BEGIN}<w:fldSimple><w:r><w:t>Empty code cache</w:t></w:r></w:fldSimple></w:p>"
+        ));
+        let f = collect_fields(&d, r);
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].kind, "");
+        assert_eq!(f[0].in_result_of, None);
+    }
+
+    #[test]
+    fn cached_result_writes_preserve_field_codes_run_format_and_outside_payload() {
+        for simple in [false, true] {
+            for replacement in ["", "New result", " leading & trailing "] {
+                let xml = if simple {
+                    format!(
+                        "<w:p><w:r><w:t>Before</w:t></w:r><w:fldSimple w:instr='REF Anchor'>{CACHE}</w:fldSimple><w:r><w:t>After</w:t></w:r></w:p>"
+                    )
+                } else {
+                    format!(
+                        "<w:p><w:r><w:t>Before</w:t></w:r>{BEGIN}{SEP}{CACHE}{END}<w:r><w:t>After</w:t></w:r></w:p>"
+                    )
+                };
+                let (mut d, r) = body(&xml);
+                let f = collect_fields(&d, r);
+                assert_eq!(f.len(), 1);
+                assert_eq!(result_text(&d, r, &f[0]), "Old\tcache");
+                assert!(write_result(&mut d, &f[0], replacement));
+                let f = collect_fields(&d, r);
+                assert_eq!(f[0].code.trim(), "REF Anchor");
+                assert_eq!(result_text(&d, r, &f[0]), replacement);
+                let texts: Vec<_> = d
+                    .descendants(r, Some(&W::t()))
+                    .into_iter()
+                    .map(|n| d.value(n))
+                    .collect();
+                assert_eq!(
+                    texts,
+                    if replacement.is_empty() {
+                        vec!["Before".to_string(), "After".to_string()]
+                    } else {
+                        vec![
+                            "Before".to_string(),
+                            replacement.to_string(),
+                            "After".to_string(),
+                        ]
+                    }
+                );
+                if !replacement.is_empty() {
+                    let t = d
+                        .descendants(r, Some(&W::t()))
+                        .into_iter()
+                        .find(|&n| d.value(n) == replacement)
+                        .unwrap();
+                    let run = d.parent(t).unwrap();
+                    let rp = d.element(run, &W::r_pr()).unwrap();
+                    assert!(d.element(rp, &W::name("i")).is_some());
+                    let color = d.element(rp, &W::name("color")).unwrap();
+                    assert_eq!(d.attribute(color, &W::val()), Some("123456"));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn multi_paragraph_result_is_readable_and_refuses_rewrite_without_mutating_source() {
+        let xml = format!(
+            "<w:p><w:pPr><w:keepNext/></w:pPr>{BEGIN}{SEP}{CACHE}</w:p><w:p><w:pPr><w:jc w:val='right'/></w:pPr><w:r><w:t>Second paragraph</w:t></w:r>{END}</w:p>"
+        );
+        let (mut d, r) = body(&xml);
+        let f = collect_fields(&d, r);
+        assert_eq!(f.len(), 1);
+        assert_eq!(result_text(&d, r, &f[0]), "Old\tcache\nSecond paragraph");
+        let before = d.serialize_element(r);
+        assert!(!write_result(&mut d, &f[0], "replacement"));
+        assert_eq!(d.serialize_element(r), before);
+    }
+
+    #[test]
+    fn bookmark_reference_owns_only_live_same_paragraph_text_and_run_tabs() {
+        for deleted in ["del", "moveFrom"] {
+            let xml = format!(
+                "<w:p><w:bookmarkStart w:name='Anchor' w:id='7'/><w:r><w:t>A</w:t><w:tab/><w:t>B</w:t></w:r><w:tab/><w:{deleted}><w:r><w:t>Gone</w:t></w:r></w:{deleted}><w:bookmarkEnd w:id='7'/></w:p>"
+            );
+            let (d, r) = body(&xml);
+            assert_eq!(bookmark_text(&d, r, "Anchor"), Some("A\tB".into()));
+            assert_eq!(bookmark_text(&d, r, "Missing"), None);
+        }
+        for xml in [
+            "<w:p><w:bookmarkStart w:name='Anchor'/><w:r><w:t>A</w:t></w:r><w:bookmarkEnd w:id='7'/></w:p>",
+            "<w:p><w:bookmarkStart w:name='Anchor' w:id='7'/><w:r><w:t>A</w:t></w:r><w:bookmarkEnd w:id='8'/></w:p>",
+            "<w:p><w:bookmarkStart w:name='Anchor' w:id='7'/><w:r><w:t>A</w:t></w:r></w:p><w:p><w:r><w:t>B</w:t></w:r><w:bookmarkEnd w:id='7'/></w:p>",
+        ] {
+            let (d, r) = body(xml);
+            assert_eq!(bookmark_text(&d, r, "Anchor"), None);
+        }
+    }
+}
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod field_cache_boundary_tests {
+    use super::*;
+    fn story(xml: &str) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let document = dom.parse_xdocument(&format!("<w:body xmlns:w='{}'>{xml}</w:body>", W::URI));
+        let root = dom.root(document).unwrap();
+        (dom, root)
+    }
+    #[test]
+    fn absent_and_shared_run_caches_rewrite_without_consuming_field_code_or_neighbor_text() {
+        for separate in [false, true] {
+            for replacement in ["", "New & spaced "] {
+                let cache = if separate {
+                    "<w:r><w:rPr><w:i/></w:rPr><w:fldChar w:fldCharType='separate'/><w:t>Old</w:t></w:r>"
+                } else {
+                    ""
+                };
+                let old_end = if separate { "<w:t>tail</w:t>" } else { "" };
+                let (mut dom, root) = story(&format!(
+                    "<w:p><w:r><w:t>Before</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText> REF Anchor </w:instrText></w:r>{cache}<w:r><w:rPr><w:color w:val='246810'/></w:rPr>{old_end}<w:fldChar w:fldCharType='end'/><w:t>After</w:t></w:r></w:p>"
+                ));
+                let f = collect_fields(&dom, root);
+                assert_eq!(f.len(), 1);
+                assert_eq!(
+                    result_text(&dom, root, &f[0]),
+                    if separate { "Oldtail" } else { "" }
+                );
+                assert!(write_result(&mut dom, &f[0], replacement));
+                let f = collect_fields(&dom, root);
+                assert_eq!(f[0].code, " REF Anchor ");
+                assert_eq!(result_text(&dom, root, &f[0]), replacement);
+                let texts: Vec<_> = dom
+                    .descendants(root, Some(&W::t()))
+                    .into_iter()
+                    .map(|n| dom.value(n))
+                    .collect();
+                let expected: Vec<String> = if replacement.is_empty() {
+                    vec!["Before".into(), "After".into()]
+                } else {
+                    vec!["Before".into(), replacement.into(), "After".into()]
+                };
+                assert_eq!(texts, expected);
+                assert_eq!(dom.descendants(root, Some(&W::name("fldChar"))).len(), 3);
+                let end_run = dom.parent(f[0].end).unwrap();
+                let rp = dom.element(end_run, &W::r_pr()).unwrap();
+                assert_eq!(
+                    dom.attribute(dom.element(rp, &W::name("color")).unwrap(), &W::val()),
+                    Some("246810")
+                );
+                if !replacement.is_empty() {
+                    let text = dom
+                        .descendants(root, Some(&W::t()))
+                        .into_iter()
+                        .find(|&n| dom.value(n) == replacement)
+                        .unwrap();
+                    let rp = dom.element(dom.parent(text).unwrap(), &W::r_pr()).unwrap();
+                    assert!(dom.element(rp, &W::name("b")).is_some());
+                    assert_eq!(
+                        dom.attribute(text, &XNamespace::xml().name("space")),
+                        Some("preserve")
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    fn uncached_toc_creates_entries_and_moves_only_the_original_closing_field_run() {
+        for links in [false, true] {
+            let (mut dom, root) = story(
+                "<w:p><w:pPr><w:pStyle w:val='Title'/><w:spacing w:after='120'/></w:pPr><w:r><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText> TOC </w:instrText></w:r><w:r><w:fldChar w:fldCharType='end'/></w:r><w:r><w:t>After</w:t></w:r></w:p>",
+            );
+            let f = collect_fields(&dom, root).remove(0);
+            let closing = dom.parent(f.end).unwrap();
+            let entries = vec![
+                (1, "First".into(), "_Toc1".into()),
+                (3, "Second".into(), "_Toc2".into()),
+            ];
+            assert!(write_toc(&mut dom, &f, &entries, links, 9350));
+            let ps = dom.elements(root, Some(&W::p()));
+            assert_eq!(ps.len(), 2);
+            assert_eq!(dom.parent(closing), Some(ps[1]));
+            let f = collect_fields(&dom, root);
+            assert_eq!(f.len(), 3);
+            assert_eq!(f[0].code, " TOC ");
+            assert_eq!(f[1].kind, "PAGEREF");
+            assert_eq!(f[2].kind, "PAGEREF");
+            assert_eq!(f[1].in_result_of, Some(0));
+            assert_eq!(f[2].in_result_of, Some(0));
+            let text: Vec<_> = dom
+                .descendants(root, Some(&W::t()))
+                .into_iter()
+                .map(|n| dom.value(n))
+                .collect();
+            assert_eq!(text, vec!["First", "Second", "After"]);
+            assert_eq!(
+                dom.descendants(root, Some(&W::name("hyperlink"))).len(),
+                if links { 2 } else { 0 }
+            );
+            for (i, p) in ps.into_iter().enumerate() {
+                let pr = dom.element(p, &W::p_pr()).unwrap();
+                assert_eq!(
+                    dom.attribute(dom.element(pr, &W::p_style()).unwrap(), &W::val()),
+                    Some(if i == 0 { "Title" } else { "TOC3" })
+                );
+                let tabs = dom.element(pr, &W::name("tabs")).unwrap();
+                let tab = dom.element(tabs, &W::name("tab")).unwrap();
+                assert_eq!(dom.attribute(tab, &W::name("pos")), Some("9350"));
+                assert_eq!(dom.attribute(tab, &W::name("leader")), Some("dot"));
+            }
+        }
+    }
+    #[test]
+    fn paragraph_style_projection_requires_ids_and_names_and_never_adopts_character_styles() {
+        let xml = format!(
+            "<w:styles xmlns:w='{}'><w:style w:type='paragraph' w:styleId='Custom'><w:name w:val='HeAdInG 2'/></w:style><w:style w:type='character' w:styleId='Character'><w:name w:val='Heading 1'/></w:style><w:style w:type='paragraph'><w:name w:val='Heading 3'/></w:style><w:style w:type='paragraph' w:styleId='Nameless'/><w:style w:type='paragraph' w:styleId='Valueless'><w:name/></w:style></w:styles>",
+            W::URI
+        );
+        assert_eq!(
+            paragraph_style_names(&xml),
+            HashMap::from([("Custom".to_string(), "heading 2".to_string())])
+        );
+        for invalid in ["", "TOC", "TOCx", "TOC0", "TOC10", "Heading1"] {
+            assert!(style_definition(invalid).is_none(), "{invalid}");
+        }
+        for level in 1..=9 {
+            let xml = style_definition(&format!("TOC{level}")).unwrap();
+            assert!(xml.contains(&format!("w:left=\"{}\"", (level - 1) * 220)));
+            assert!(xml.contains(&format!("w:styleId=\"TOC{level}\"")));
+        }
+        assert!(
+            style_definition("TOCHeading")
+                .unwrap()
+                .contains("w:val=\"9\"")
+        );
+    }
+}
