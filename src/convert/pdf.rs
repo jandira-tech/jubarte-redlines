@@ -2506,3 +2506,255 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod residual_byte_and_geometry_contract_tests {
+    use super::*;
+    use std::io::Read;
+
+    fn bundled_fonts() -> Fonts<'static> {
+        let mut fonts = Fonts::new();
+        fonts.insert_embedded(
+            "PDFContractCarlito",
+            false,
+            false,
+            FaceId::CarlitoRegular.bytes(),
+        );
+        fonts.insert_embedded("PDFContractMono", false, false, FaceId::MonoRegular.bytes());
+        fonts
+    }
+
+    fn stream(object: &[u8]) -> Vec<u8> {
+        let at = object.windows(8).position(|w| w == b"\nstream\n").unwrap() + 8;
+        let dictionary = std::str::from_utf8(&object[..at]).unwrap();
+        let length = dictionary
+            .split("/Length ")
+            .nth(1)
+            .unwrap()
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .parse::<usize>()
+            .unwrap();
+        let payload = &object[at..at + length];
+        assert_eq!(&object[at + length..], b"\nendstream");
+        if dictionary.contains("/FlateDecode") {
+            let mut out = Vec::new();
+            flate2::read::ZlibDecoder::new(payload)
+                .read_to_end(&mut out)
+                .unwrap();
+            out
+        } else {
+            payload.to_vec()
+        }
+    }
+
+    #[test]
+    fn large_signed_coordinates_and_sparse_cid_widths_have_exact_serialized_values() {
+        for (coordinate, expected) in [
+            (10_000_000.0, 1_000_000_000),
+            (-10_000_000.0, -1_000_000_000),
+            (10_000_001.0, 1_000_000_100),
+        ] {
+            assert_eq!(hundredths(coordinate), expected);
+        }
+        assert_eq!(
+            cid_widths(&[500, 600, 700, 800], &BTreeSet::from([1, 2, 3, 99])),
+            "1 [600 700 800]"
+        );
+        assert_eq!(cid_widths(&[500], &BTreeSet::from([99])), ""); // malformed unmapped CID declines safely
+        assert_eq!(cid_widths(&[], &BTreeSet::new()), "");
+        assert_eq!(hex_glyphs(&[0, 10, 65535]), "<0000000AFFFF>");
+    }
+
+    #[test]
+    fn text_string_encodings_preserve_ascii_controls_unicode_and_winansi_boundaries() {
+        assert_eq!(pdf_text_string("(a)\\\n\t"), "(\\(a\\)\\\\\\012\\011)");
+        assert_eq!(pdf_text_string("😀漢"), "<FEFFD83DDE006F22>");
+        assert_eq!(winansi_bytes(""), None);
+        assert_eq!(winansi_bytes("漢"), None);
+        assert_eq!(
+            winansi_bytes("A\u{2011}€ŒœŠšŸŽžƒˆ˜–—‘’‚“”„†‡•…‰‹›™"),
+            Some(vec![
+                65, 45, 128, 140, 156, 138, 154, 159, 142, 158, 131, 136, 152, 150, 151, 145, 146,
+                130, 147, 148, 132, 134, 135, 149, 133, 137, 139, 155, 153
+            ])
+        );
+        for byte in [0, 0x81, 0x8D, 0x8F, 0x90, 0x9D] {
+            assert_eq!(winansi_char(byte), ' ');
+        }
+    }
+
+    #[test]
+    fn unicode_cmap_chunks_preserve_every_cid_and_utf16_surrogate_exactly() {
+        let mut map = BTreeMap::new();
+        for g in 1..=101 {
+            map.insert(g, "A".into());
+        }
+        map.insert(102, "😀漢".into());
+        let before = map.clone();
+        for compress in [false, true] {
+            let decoded = String::from_utf8(stream(&to_unicode_obj(&map, compress))).unwrap();
+            assert!(decoded.contains("100 beginbfchar\n<0001> <0041>\n"));
+            assert!(decoded.contains("<0064> <0041>\nendbfchar\n2 beginbfchar\n<0065> <0041>\n<0066> <D83DDE006F22>\nendbfchar\n"));
+            assert_eq!(decoded.matches("> <").count(), 103); // 102 mappings + codespace
+            assert!(
+                decoded
+                    .ends_with("endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend")
+            );
+        }
+        assert_eq!(map, before);
+    }
+
+    #[test]
+    fn image_xobjects_keep_literal_color_spaces_masks_and_lossless_samples() {
+        let samples = [0, 1, 127, 128, 254, 255];
+        for compress in [false, true] {
+            for mask in [None, Some(7)] {
+                let object = rgb_xobject(2, 1, &samples, compress, mask);
+                assert_eq!(stream(&object), samples);
+                let dictionary = String::from_utf8_lossy(
+                    &object[..object.windows(8).position(|w| w == b"\nstream\n").unwrap()],
+                );
+                assert!(
+                    dictionary
+                        .contains("/Width 2 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8")
+                );
+                assert_eq!(dictionary.contains("/SMask 7 0 R"), mask.is_some());
+            }
+            assert_eq!(stream(&gray_xobject(6, 1, &samples, compress)), samples);
+            assert_eq!(stream(&font_file_obj(&samples, compress)), samples);
+            assert_eq!(stream(&stream_object("q\nQ\n", compress)), b"q\nQ\n");
+        }
+        // JPEG objects preserve the encoded bytes. Component metadata selects
+        // the declared PDF colorspace, with an explicit unknown fallback.
+        for (components, color, decode) in [
+            (1, "/DeviceGray", false),
+            (3, "/DeviceRGB", false),
+            (4, "/DeviceCMYK", true),
+            (2, "/DeviceRGB", false),
+        ] {
+            let object = jpeg_xobject(2, 1, &samples, components);
+            assert_eq!(stream(&object), samples);
+            let dict = String::from_utf8_lossy(
+                &object[..object.windows(8).position(|w| w == b"\nstream\n").unwrap()],
+            );
+            assert!(dict.contains(color));
+            assert_eq!(dict.contains("/Decode [1 0 1 0 1 0 1 0]"), decode);
+        }
+    }
+
+    #[test]
+    fn image_rotation_keeps_cardinal_matrices_and_subthreshold_rotation_is_identity() {
+        let literal = "owned\n";
+        for degrees in [-0.01, 0.0, 0.01] {
+            assert_eq!(
+                rotate_about_centre(10.0, 20.0, 80.0, 40.0, degrees, literal),
+                literal
+            );
+        }
+        for (degrees, matrix) in [
+            (90.0, "0.0000 1.0000 -1.0000 0.0000"),
+            (180.0, "-1.0000 0.0000 -0.0000 -1.0000"),
+            (-90.0, "0.0000 -1.0000 1.0000 0.0000"),
+        ] {
+            assert_eq!(
+                rotate_about_centre(10.0, 20.0, 80.0, 40.0, degrees, literal),
+                format!(
+                    "q 1 0 0 1 50.00 40.00 cm {matrix} 0 0 cm 1 0 0 1 -50.00 -40.00 cm owned\nQ\n"
+                )
+            );
+        }
+        for crop in [None, Some([0.0; 4]), Some([0.0001; 4])] {
+            assert_eq!(
+                paint_image(10.0, 20.0, 80.0, 40.0, crop, 3, 0.0),
+                "q 80.00 0 0 40.00 10.00 20.00 cm /Im3 Do Q\n"
+            );
+        }
+    }
+
+    #[test]
+    fn glyph_usage_and_unicode_maps_keep_face_ownership_and_ignore_nonpainting_source() {
+        let fonts = bundled_fonts();
+        let a = FaceRef::Embedded(0);
+        let b = FaceRef::Embedded(1);
+        let fa = fonts.get(a);
+        let fb = fonts.get(b);
+        let ag = fa.glyphs("A");
+        let bg = fb.glyphs("B");
+        let mut page = Page::new(40.0, 40.0);
+        page.ops = vec![
+            Op::text(a, 10.0, 1.0, 10.0, ag.clone(), [0.0; 3], "A"),
+            Op::text(b, 10.0, 1.0, 20.0, bg, [0.0; 3], "B"),
+            Op::text(a, 10.0, 1.0, 30.0, vec![], [0.0; 3], "not painted"),
+            Op::Pin(true),
+            Op::Pin(false),
+        ];
+        let map = face_unicode_map(fa, a, &[page]);
+        assert_eq!(map, BTreeMap::from([(ag[0], "A".into())]));
+        let mut page = Page::new(40.0, 40.0);
+        page.ops = vec![Op::text(a, 10.0, 1.0, 10.0, ag.clone(), [0.0; 3], "A")];
+        assert_eq!(face_used_glyphs(fa, a, &[page]), BTreeSet::from([0, ag[0]]));
+    }
+
+    #[test]
+    fn subset_declines_corrupt_sfnt_directory_but_keeps_valid_empty_and_out_of_range_usage() {
+        let original = FaceId::CarlitoRegular.bytes();
+        let full = ttf_parser::Face::parse(original, 0).unwrap();
+        let gid = full.glyph_index('A').unwrap();
+        for used in [BTreeSet::new(), BTreeSet::from([gid.0, u16::MAX])] {
+            let sub = subset_keep_gids(original, &used).unwrap();
+            let parsed = ttf_parser::Face::parse(&sub, 0).unwrap();
+            assert_eq!(parsed.number_of_glyphs(), full.number_of_glyphs());
+            if used.contains(&gid.0) {
+                assert_eq!(parsed.glyph_bounding_box(gid), full.glyph_bounding_box(gid));
+            } else {
+                assert!(parsed.glyph_bounding_box(gid).is_none());
+            }
+        }
+        // Deliberately malformed font directory, not a handcrafted fake font.
+        for bytes in [original[..3].to_vec(), original[..12].to_vec(), {
+            let mut b = original.to_vec();
+            b[20..24].copy_from_slice(&u32::MAX.to_be_bytes());
+            b
+        }] {
+            let before = bytes.clone();
+            assert!(subset_keep_gids(&bytes, &BTreeSet::from([gid.0])).is_none());
+            assert_eq!(bytes, before);
+        }
+        let mut missing = original.to_vec();
+        let tables = u16::from_be_bytes(missing[4..6].try_into().unwrap()) as usize;
+        let rec = (0..tables)
+            .map(|i| 12 + 16 * i)
+            .find(|&i| &missing[i..i + 4] == b"glyf")
+            .unwrap();
+        missing[rec..rec + 4].copy_from_slice(b"BAD!");
+        assert!(subset_keep_gids(&missing, &BTreeSet::from([gid.0])).is_none());
+    }
+
+    #[test]
+    fn pdf_cross_reference_offsets_point_to_exact_unmodified_binary_object_boundaries() {
+        let objects = vec![
+            b"<< /Type /Catalog >>\n".to_vec(),
+            b"binary\0\xff".to_vec(),
+            b"<< /Producer (test) >>".to_vec(),
+        ];
+        let before = objects.clone();
+        let bytes = finalize_pdf(&objects);
+        let xref = bytes.windows(5).position(|w| w == b"xref\n").unwrap();
+        let tail = std::str::from_utf8(&bytes[xref..]).unwrap();
+        assert!(tail.starts_with("xref\n0 4\n0000000000 65535 f \n"));
+        for (i, row) in tail.lines().skip(3).take(3).enumerate() {
+            let offset: usize = row[..10].parse().unwrap();
+            let head = format!("{} 0 obj\n", i + 1);
+            assert_eq!(&bytes[offset..offset + head.len()], head.as_bytes());
+            assert_eq!(
+                &bytes[offset + head.len()..offset + head.len() + objects[i].len()],
+                objects[i]
+            );
+        }
+        assert!(tail.ends_with(&format!("startxref\n{xref}\n%%EOF\n")));
+        assert_eq!(objects, before);
+    }
+}

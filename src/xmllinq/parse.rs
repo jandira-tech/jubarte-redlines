@@ -539,3 +539,66 @@ mod checked_xml_tests {
         }
     }
 }
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod xml_lexical_boundary_contract_tests {
+    use super::*;
+
+    #[test]
+    fn undecodable_character_references_remain_literal_and_uppercase_hex_decodes() {
+        for (input, expected) in [
+            ("&;", "&;"),
+            ("&#;", "&#;"),
+            ("&#X41;", "A"),
+            ("&#x1F433;", "🐳"),
+            ("&#1114112;", "&#1114112;"),
+            ("&#55296;", "&#55296;"),
+            ("&bad1;", "&bad1;"),
+            ("&é;", "&é;"),
+            ("&unknown;", "&unknown;"),
+            ("before &amp", "before &amp"),
+            ("A &lt; B &amp; C", "A < B & C"),
+        ] {
+            assert_eq!(unescape_xml_text(input), expected, "{input}");
+        }
+    }
+
+    #[test]
+    fn legacy_declaration_defaults_keep_readable_roots_without_inventing_metadata() {
+        for source in [
+            "<?xml",
+            "<?xml version=1.0?><p/>",
+            "<?xml version='1.0' encoding=bad?><p/>",
+        ] {
+            let mut dom = Dom::new();
+            let document = parse_xdocument(&mut dom, source);
+            let declaration = dom.declaration(document).unwrap();
+            assert_eq!(declaration.version.as_deref(), Some("1.0"));
+            assert_eq!(declaration.encoding, None);
+            assert_eq!(declaration.standalone, None);
+            if source.ends_with("<p/>") {
+                let root = dom.root(document).unwrap();
+                assert_eq!(dom.name(root).unwrap().local_name(), "p");
+                assert!(dom.elements(root, None).is_empty());
+            } else {
+                assert!(dom.root(document).is_none());
+                assert!(validate_xml(source).is_err());
+            }
+        }
+        let mut dom = Dom::new();
+        let document = parse_xdocument(
+            &mut dom,
+            "<?xml-stylesheet type='text/css'?>\n<p>owned</p><?tail?>",
+        );
+        assert_eq!(
+            dom.nodes(document)
+                .iter()
+                .filter(|&&node| dom.is_pi(node))
+                .count(),
+            2
+        );
+        let root = dom.root(document).unwrap();
+        assert_eq!(dom.value(root), "owned");
+        assert!(validate_xml("<?xml-stylesheet type='text/css'?>\n<p>owned</p><?tail?>").is_ok());
+    }
+}

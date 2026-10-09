@@ -2661,3 +2661,203 @@ mod tests {
         assert!(started.elapsed() < std::time::Duration::from_secs(2));
     }
 }
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod legacy_byte_source_boundary_tests {
+    use super::*;
+    const FIXTURE: &[u8] = include_bytes!("../tests/fixtures/legacy/services.doc");
+
+    #[test]
+    fn fib_classification_refuses_old_identifiers_and_both_password_flags() {
+        let file = CompoundFile::open(FIXTURE).unwrap();
+        let word = file.stream("WordDocument").unwrap();
+        let frozen = word.clone();
+        let baseline = Fib::parse(&word).unwrap();
+        for (at, value, expected) in [
+            (0, 0u16, "LEGACY_DOC: not a Word document (wIdent)"),
+            (
+                2,
+                NFIB_WORD97 - 1,
+                "LEGACY_DOC: a Word 6 or Word 95 document; open it in Word and save it as .docx",
+            ),
+            (
+                0x0A,
+                u16_at(&word, 0x0A).unwrap() | 0x0100,
+                "LEGACY_DOC: an encrypted Word 97-2003 document; open it in Word and save it as .docx without a password",
+            ),
+            (
+                0x0A,
+                (u16_at(&word, 0x0A).unwrap() & !0x0100) | 0x8000,
+                "LEGACY_DOC: an encrypted Word 97-2003 document; open it in Word and save it as .docx without a password",
+            ),
+        ] {
+            let mut variant = word.clone();
+            variant[at..at + 2].copy_from_slice(&value.to_le_bytes());
+            assert_eq!(Fib::parse(&variant).err().unwrap().to_string(), expected);
+            assert_eq!(word, frozen);
+        }
+        let mut alternate = word.clone();
+        alternate[0x0A..0x0C]
+            .copy_from_slice(&(u16_at(&word, 0x0A).unwrap() ^ 0x0200).to_le_bytes());
+        let changed = Fib::parse(&alternate).unwrap();
+        assert_eq!(changed.table_one, !baseline.table_one);
+        assert_eq!(
+            (
+                changed.ccp_text,
+                changed.fc_clx,
+                changed.lcb_clx,
+                changed.fc_stshf,
+                changed.lcb_stshf,
+                changed.plcf_sed
+            ),
+            (
+                baseline.ccp_text,
+                baseline.fc_clx,
+                baseline.lcb_clx,
+                baseline.fc_stshf,
+                baseline.lcb_stshf,
+                baseline.plcf_sed
+            )
+        );
+        assert_eq!(word, frozen);
+    }
+
+    #[test]
+    fn corrupt_compound_header_and_directory_cycles_are_bounded_without_touching_fixture_bytes() {
+        let frozen = FIXTURE.to_vec();
+        for shift in [0u16, 5, 7, 15] {
+            let mut bytes = frozen.clone();
+            bytes[0x20..0x22].copy_from_slice(&shift.to_le_bytes());
+            assert_eq!(
+                CompoundFile::open(&bytes).err().unwrap().to_string(),
+                "LEGACY_DOC: not a readable OLE compound file"
+            );
+        }
+        let sector_size = 1usize << u16_at(FIXTURE, 0x1E).unwrap();
+        let root_at = (u32_at(FIXTURE, 0x30).unwrap() as usize + 1) * sector_size;
+        let mut wrong_root = frozen.clone();
+        wrong_root[root_at + 66] = 2;
+        assert_eq!(
+            CompoundFile::open(&wrong_root).err().unwrap().to_string(),
+            "LEGACY_DOC: not a readable OLE compound file"
+        );
+        let mut cycle = frozen.clone();
+        cycle[root_at + 68..root_at + 72].copy_from_slice(&0u32.to_le_bytes());
+        cycle[root_at + 76..root_at + 80].copy_from_slice(&0u32.to_le_bytes());
+        let file = CompoundFile::open(&cycle).unwrap();
+        assert!(file.stream("WordDocument").is_none());
+        assert!(file.stream("absent").is_none());
+        assert_eq!(FIXTURE, frozen.as_slice());
+        assert!(read(FIXTURE).is_ok());
+    }
+
+    #[test]
+    fn main_story_stops_at_its_own_cp_boundary_before_unicode_later_story_pieces() {
+        let word = [b'A', 0xb2, 0x03];
+        let pieces = [
+            Piece {
+                cp_start: 0,
+                cp_end: 0,
+                fc: 0,
+                compressed: true,
+                modifier: CharModifier::default(),
+            },
+            Piece {
+                cp_start: 0,
+                cp_end: 1,
+                fc: 0,
+                compressed: true,
+                modifier: CharModifier {
+                    bold: Some(true),
+                    italic: Some(false),
+                },
+            },
+            Piece {
+                cp_start: 1,
+                cp_end: 2,
+                fc: 1,
+                compressed: false,
+                modifier: CharModifier::default(),
+            },
+        ];
+        for length in [0, 1] {
+            let chars = main_text(&word, &pieces, length).unwrap();
+            assert_eq!(chars.len(), length as usize);
+            if length == 1 {
+                assert_eq!((chars[0].ch, chars[0].cp, chars[0].fc), ('A', 0, 0));
+                assert_eq!(
+                    chars[0].modifier,
+                    CharModifier {
+                        bold: Some(true),
+                        italic: Some(false)
+                    }
+                );
+            }
+        }
+        let chars = main_text(&word, &pieces, 2).unwrap();
+        assert_eq!(chars.iter().map(|s| s.ch).collect::<String>(), "Aβ");
+        assert_eq!(
+            chars.iter().map(|s| (s.cp, s.fc)).collect::<Vec<_>>(),
+            vec![(0, 0), (1, 1)]
+        );
+        let error = piece_modifier(1, &[&[0x35, 0x08, 0x03, 0x36, 0x08, 0x01]])
+            .err()
+            .unwrap();
+        assert_eq!(
+            error.to_string(),
+            "LEGACY_DOC: a text piece's property modifier has a bold or italic toggle that is missing or invalid"
+        );
+        assert_eq!(word, [b'A', 0xb2, 0x03]);
+    }
+
+    #[test]
+    fn unterminated_story_tail_and_whitespace_spans_keep_all_authored_characters() {
+        let papx = FkpIndex { runs: Vec::new() };
+        let chpx = FkpIndex { runs: Vec::new() };
+        let lists = Lists::default();
+        let story = Story {
+            papx: &papx,
+            chpx: &chpx,
+            styles: &[],
+            lists: &lists,
+            section_marks: Vec::new(),
+        };
+        let chars = "owned tail"
+            .chars()
+            .enumerate()
+            .map(|(i, ch)| StoryChar {
+                ch,
+                cp: i as u32,
+                fc: i as u32,
+                modifier: CharModifier::default(),
+            })
+            .collect::<Vec<_>>();
+        let expected = vec![Block::Paragraph(Paragraph {
+            spans: vec![Span {
+                text: "owned tail".to_string(),
+                ..Span::default()
+            }],
+            ..Paragraph::default()
+        })];
+        assert_eq!(story.blocks(&chars), expected);
+        let spans = vec![
+            Span {
+                text: "owned".to_string(),
+                bold: true,
+                italic: false,
+            },
+            Span {
+                text: " \n ".to_string(),
+                ..Span::default()
+            },
+            Span {
+                text: "tail".to_string(),
+                bold: false,
+                italic: true,
+            },
+        ];
+        let frozen = spans.clone();
+        assert_eq!(render_spans(&spans), "**owned** \\\n *tail*");
+        assert_eq!(spans, frozen);
+    }
+}

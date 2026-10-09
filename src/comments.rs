@@ -1275,3 +1275,152 @@ mod people_and_text_boundary_tests {
         assert_eq!(family.added_authors, ["Alice"]);
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod public_memory_anchor_boundary_tests {
+    use super::*;
+
+    fn package(body: &str) -> PartFs {
+        let mut pkg =
+            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        pkg.set_part("word/document.xml",format!("<w:document xmlns:w='{}'><w:body>{body}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>",W::URI).into_bytes());
+        pkg
+    }
+    fn snapshot(pkg: &PartFs) -> Vec<(String, Vec<u8>)> {
+        let mut parts = pkg.parts();
+        parts.sort();
+        parts
+            .into_iter()
+            .map(|name| {
+                let bytes = pkg.part_bytes(&name).unwrap().to_vec();
+                (name, bytes)
+            })
+            .collect()
+    }
+
+    fn paragraph(text: &str) -> String {
+        format!(
+            "<w:p><w:pPr><w:spacing w:after='80'/></w:pPr><w:r><w:rPr><w:b/><w:color w:val='123456'/></w:rPr><w:t>{text}</w:t></w:r></w:p>"
+        )
+    }
+    #[test]
+    fn block_and_point_comments_preserve_exact_unicode_anchor_context_and_package() {
+        let first = paragraph("First ação");
+        let middle = paragraph("Middle café");
+        let last = paragraph("Last τέλος");
+        let cases = [
+            (
+                format!(
+                    "<w:commentRangeStart w:id='7'/>{first}{middle}{last}<w:commentRangeEnd w:id='7'/>"
+                ),
+                "First ação\nMiddle café\nLast τέλος",
+                "",
+                "",
+                "body:p:0",
+            ),
+            (
+                format!(
+                    "{first}<w:commentRangeStart w:id='7'/>{middle}<w:commentRangeEnd w:id='7'/>{last}"
+                ),
+                "Middle café",
+                "",
+                "",
+                "body:p:1",
+            ),
+            (
+                format!(
+                    "{first}<w:p><w:pPr><w:spacing w:after='80'/></w:pPr><w:r><w:t>Before </w:t></w:r><w:commentRangeStart w:id='7'/><w:r><w:t>ação</w:t></w:r></w:p>{middle}<w:p><w:r><w:t>τέλος</w:t></w:r><w:commentRangeEnd w:id='7'/><w:r><w:t xml:space='preserve'> after</w:t></w:r></w:p>"
+                ),
+                "ação\nMiddle café\nτέλος",
+                "Before ",
+                " after",
+                "body:p:1",
+            ),
+            (
+                format!(
+                    "{first}<w:p><w:r><w:t>Point location</w:t></w:r><w:r><w:rPr><w:rStyle w:val='CommentReference'/></w:rPr><w:commentReference w:id='7'/></w:r></w:p>{last}"
+                ),
+                "",
+                "",
+                "",
+                "body:p:1",
+            ),
+        ];
+        for (body, anchor, before, after, paragraph) in cases {
+            let mut pkg = package(&body);
+            pkg.set_part("word/comments.xml",format!("<w:comments xmlns:w='{}'><w:comment w:id='7' w:author='Source reviewer' w:initials='SR' w:date='2025-02-03T04:05:06Z'><w:p><w:r><w:t>Review ação</w:t></w:r></w:p><w:p><w:r><w:t>Second line</w:t></w:r></w:p></w:comment></w:comments>",W::URI).into_bytes());
+            pkg.add_content_type_override(
+                "/word/comments.xml",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+            );
+            pkg.add_document_relationship(
+                "word/document.xml",
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+                "comments.xml",
+            );
+            let source = snapshot(&pkg);
+            let bytes = pkg.to_zip().unwrap();
+            let expected = vec![CommentRecord {
+                id: 7,
+                author: "Source reviewer".into(),
+                initials: Some("SR".into()),
+                date: Some("2025-02-03T04:05:06Z".into()),
+                text: "Review ação\nSecond line".into(),
+                parent: None,
+                done: false,
+                paragraph: Some(paragraph.into()),
+                anchor_text: anchor.into(),
+                before: before.into(),
+                after: after.into(),
+            }];
+            assert_eq!(list_comments(&bytes).unwrap(), expected);
+            assert_eq!(
+                list_comments(&bytes).unwrap(),
+                expected,
+                "repeat must have identical anchor and author records"
+            );
+            assert_eq!(
+                snapshot(&PartFs::open(&bytes).unwrap()),
+                source,
+                "listing retains all source properties, relationships and comment history bytes"
+            );
+        }
+    }
+    #[test]
+    fn latest_thread_selection_preserves_complete_winning_source_records_and_thread_order() {
+        let record = |id, parent, author: &str, date: &str| CommentRecord {
+            id,
+            parent,
+            author: author.into(),
+            initials: Some("SR".into()),
+            date: Some(date.into()),
+            text: format!("Source comment {id}"),
+            done: false,
+            paragraph: Some(format!("body:p:{id}")),
+            anchor_text: format!("Owned anchor {id}"),
+            before: "before".into(),
+            after: "after".into(),
+        };
+        let records = vec![
+            record(1, None, "Alice", "2025-02-03T00:00:00Z"),
+            record(2, Some(1), "Bob", "2025-02-05T00:00:00Z"),
+            record(3, Some(2), "Alice", "2025-02-04T00:00:00Z"),
+            record(4, None, "Bob", "2025-02-02T00:00:00Z"),
+            record(5, Some(4), "Bob", "2025-02-02T00:00:00Z"),
+        ];
+        assert_eq!(
+            select_comments(records.clone(), None, true),
+            vec![records[1].clone(), records[4].clone()]
+        );
+        assert_eq!(
+            select_comments(records.clone(), Some("Alice"), true),
+            vec![records[2].clone()]
+        );
+        assert_eq!(
+            select_comments(records.clone(), Some("Nobody"), true),
+            Vec::new()
+        );
+        assert_eq!(select_comments(records.clone(), None, false), records);
+    }
+}

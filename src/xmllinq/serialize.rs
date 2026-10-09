@@ -982,3 +982,52 @@ mod tests {
         }
     }
 }
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod xml_structure_namespace_boundary_tests {
+    use super::*;
+
+    #[test]
+    fn structure_hash_keeps_mc_required_namespace_ownership_while_omitting_payload() {
+        use sha1::Digest as _;
+        let choice = format!(
+            r#"<mc:Choice xmlns:mc="{MC_NAMESPACE}" xmlns:wps="urn:shape" Requires="wps"><wps:shape code="A&amp;B">owned<!--note--><?paint data?></wps:shape></mc:Choice>"#
+        );
+        let mut dom = Dom::new();
+        let document = dom.parse_xdocument(&choice);
+        let root = dom.root(document).unwrap();
+        let full = serialize_element(&dom, root);
+        let shape = dom.elements(root, None)[0];
+        let frozen_shape = dom.serialize_element(shape);
+        let expected = format!(
+            r#"<mc:Choice xmlns:mc="{MC_NAMESPACE}" xmlns:wps="urn:shape" Requires="wps"><wps:shape code="A&amp;B" /></mc:Choice>"#
+        );
+        assert_eq!(
+            serialize_element_structure_sha1_hex(&dom, root),
+            sha1::Sha1::digest(expected.as_bytes())
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
+        );
+        assert_eq!(serialize_element(&dom, root), full);
+        assert_eq!(dom.serialize_element(shape), frozen_shape);
+        let mut roundtrip = Dom::new();
+        let parsed = roundtrip.parse_xdocument(&full);
+        let rtroot = roundtrip.root(parsed).unwrap();
+        assert_eq!(
+            roundtrip.attribute(rtroot, &crate::xmllinq::XNamespace::none().name("Requires")),
+            Some("wps")
+        );
+        assert_eq!(
+            roundtrip
+                .name(roundtrip.elements(rtroot, None)[0])
+                .unwrap()
+                .namespace_name(),
+            "urn:shape"
+        );
+        assert_eq!(
+            roundtrip.value(roundtrip.elements(rtroot, None)[0]),
+            "owned"
+        );
+    }
+}

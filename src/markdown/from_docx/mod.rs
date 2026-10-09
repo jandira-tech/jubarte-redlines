@@ -3005,3 +3005,102 @@ mod tests {
         assert!(convert(&truncated[..truncated.len() / 2], &Options::default()).is_err());
     }
 }
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod markdown_source_owner_boundary_tests {
+    use super::*;
+
+    fn docx(body: &str, extra: &[(&str, &str)]) -> Vec<u8> {
+        let document = format!(
+            r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:v="urn:schemas-microsoft-com:vml"><w:body>{body}</w:body></w:document>"#
+        );
+        let mut parts = vec![("word/document.xml", document.as_str())];
+        parts.extend_from_slice(extra);
+        super::tests::zip(&parts)
+    }
+
+    #[test]
+    fn style_title_outline_and_long_ancestry_follow_authored_nearest_properties() {
+        let mut xml = String::from(
+            "<w:styles xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'><w:style w:styleId='Report'><w:name w:val='Title'/></w:style><w:style w:styleId='Body'><w:name w:val='Body Text'/><w:pPr><w:outlineLvl w:val='9'/></w:pPr></w:style><w:style w:styleId='Deep'><w:name w:val='Custom Heading'/><w:pPr><w:outlineLvl w:val='8'/></w:pPr></w:style>",
+        );
+        for i in 0..17 {
+            xml.push_str(&format!(
+                "<w:style w:styleId='S{i}'><w:name w:val='Custom {i}'/>{}</w:style>",
+                if i == 16 {
+                    "<w:pPr><w:outlineLvl w:val='0'/></w:pPr><w:rPr><w:b/><w:i/></w:rPr>"
+                        .to_string()
+                } else {
+                    format!("<w:basedOn w:val='S{}'/>", i + 1)
+                }
+            ));
+        }
+        xml.push_str("</w:styles>");
+        let source = ooxml::parse_xml(xml.as_bytes()).unwrap();
+        let styles = Styles::parse(&source);
+        assert_eq!(styles.heading_level("Report"), Some(1));
+        assert_eq!(styles.heading_level("Body"), None);
+        assert_eq!(styles.heading_level("Deep"), Some(6));
+        assert_eq!(styles.chain("S0").len(), 16);
+        assert_eq!(styles.heading_level("S0"), None);
+        assert_eq!(styles.emphasis("S0"), (None, None));
+        assert_eq!(styles.heading_level("S1"), Some(1));
+        assert_eq!(styles.emphasis("S1"), (Some(true), Some(true)));
+        let body = "<w:p><w:pPr><w:pStyle w:val='Report'/></w:pPr><w:r><w:t>Report</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val='Report'/><w:outlineLvl w:val='9'/></w:pPr><w:r><w:t>Ordinary</w:t></w:r></w:p><w:p><w:pPr><w:outlineLvl w:val='8'/></w:pPr><w:r><w:t>Deep</w:t></w:r></w:p>";
+        let bytes = docx(body, &[("word/styles.xml", &xml)]);
+        let frozen = bytes.clone();
+        assert_eq!(
+            convert(&bytes, &Options::default()).unwrap().markdown,
+            "# Report\n\nOrdinary\n\n###### Deep\n"
+        );
+        assert_eq!(bytes, frozen);
+    }
+
+    #[test]
+    fn hidden_runs_cannot_leak_text_symbols_note_links_or_comment_markers() {
+        let body = "<w:p><w:r><w:t>Visible</w:t><w:noBreakHyphen/></w:r><w:r><w:rPr><w:vanish/></w:rPr><w:t>hidden</w:t><w:tab/><w:br/><w:noBreakHyphen/><w:footnoteReference w:id='1'/><w:commentReference w:id='1'/><w:pict><v:rect style='width:20pt;height:20pt'/></w:pict></w:r></w:p>";
+        let footnotes = "<w:footnotes xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'><w:footnote w:id='1'><w:p><w:r><w:t>hidden note</w:t></w:r></w:p></w:footnote></w:footnotes>";
+        let comments = "<w:comments xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'><w:comment w:id='1' w:author='Ada'><w:p><w:r><w:t>hidden comment</w:t></w:r></w:p></w:comment></w:comments>";
+        let bytes = docx(
+            body,
+            &[
+                ("word/footnotes.xml", footnotes),
+                ("word/comments.xml", comments),
+            ],
+        );
+        let frozen = bytes.clone();
+        for revisions in [Revisions::Markup, Revisions::Accept, Revisions::Reject] {
+            let result = convert(
+                &bytes,
+                &Options {
+                    revisions,
+                    media_dir: None,
+                },
+            )
+            .unwrap();
+            assert_eq!(result.markdown, "Visible-\n");
+            assert!(result.media.is_empty());
+        }
+        assert_eq!(bytes, frozen);
+    }
+
+    #[test]
+    fn numbering_zero_and_out_of_range_overrides_do_not_change_source_order() {
+        let numbering = "<w:numbering xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'><w:abstractNum w:abstractNumId='1'><w:lvl w:ilvl='0'><w:start w:val='1'/><w:numFmt w:val='decimal'/><w:lvlText w:val='%1.'/></w:lvl></w:abstractNum><w:num w:numId='7'><w:abstractNumId w:val='1'/><w:lvlOverride w:ilvl='9'><w:startOverride w:val='99'/></w:lvlOverride></w:num></w:numbering>";
+        let body = "<w:p><w:pPr><w:numPr><w:numId w:val='0'/></w:numPr></w:pPr><w:r><w:t>Unnumbered</w:t></w:r></w:p><w:p><w:pPr><w:numPr><w:ilvl w:val='0'/><w:numId w:val='7'/></w:numPr></w:pPr><w:r><w:t>First</w:t></w:r></w:p><w:p><w:pPr><w:numPr><w:ilvl w:val='0'/><w:numId w:val='7'/></w:numPr></w:pPr><w:r><w:t>Second</w:t></w:r></w:p>";
+        let bytes = docx(body, &[("word/numbering.xml", numbering)]);
+        let frozen = bytes.clone();
+        assert_eq!(
+            convert(&bytes, &Options::default()).unwrap().markdown,
+            "Unnumbered\n\n1. First\n2. Second\n"
+        );
+        assert_eq!(bytes, frozen);
+        assert_eq!(hyperlink_instruction(" HYPERLINK \\l bookmark "), None);
+        assert_eq!(
+            hyperlink_instruction(" HYPERLINK https://example.invalid "),
+            Some("https://example.invalid".to_string())
+        );
+        assert_eq!(group_always("(x)"), "(x)");
+        assert_eq!(group_always("[x]"), "[x]");
+    }
+}

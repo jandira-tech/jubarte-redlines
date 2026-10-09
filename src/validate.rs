@@ -2103,3 +2103,201 @@ mod validation_owner_boundary_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod public_memory_validator_owner_boundary_tests {
+    use super::*;
+    fn package(body: &str) -> PartFs {
+        let mut pkg =
+            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        pkg.set_part("word/document.xml",format!("<w:document xmlns:w=\"{}\" xmlns:w14=\"{}\" xmlns:mc=\"{}\" mc:Ignorable=\"w14\"><w:body>{body}<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/></w:sectPr></w:body></w:document>",W::URI,W14::URI,MC::URI).into_bytes());
+        pkg
+    }
+    fn snapshot(pkg: &PartFs) -> Vec<(String, Vec<u8>)> {
+        let mut parts = pkg.parts();
+        parts.sort();
+        parts
+            .into_iter()
+            .map(|name| {
+                let bytes = pkg.part_bytes(&name).unwrap().to_vec();
+                (name, bytes)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn missing_opaque_part_type_has_exact_public_diagnostics_and_no_speculative_repair() {
+        let mut pkg = package("<w:p><w:r><w:t>Owned source payload</w:t></w:r></w:p>");
+        assert!(
+            ring1(&pkg).is_empty(),
+            "the source fixture has no unrelated Ring1 defects"
+        );
+        pkg.set_part(
+            "customXml/source-owned.opaque",
+            b"Independent opaque payload".to_vec(),
+        );
+        let source = snapshot(&pkg);
+        let bytes = pkg.to_zip().unwrap();
+        let expected = Finding {
+            code: "MISSING_CONTENT_TYPE".into(),
+            part: "customXml/source-owned.opaque".into(),
+            path: String::new(),
+            message: "part 'customXml/source-owned.opaque' has no content type".into(),
+            word_fatal: true,
+            repairable: false,
+        };
+        assert_eq!(ring1(&pkg), vec![expected.clone()]);
+        let report = validate(&bytes).unwrap();
+        assert_eq!(report, vec![expected.clone()]);
+        let result = repair(&bytes).unwrap();
+        assert_eq!(
+            result.docx, bytes,
+            "an unknown opaque part requires a maintainer-selected type, not guessed rewriting"
+        );
+        assert!(result.repaired.is_empty());
+        assert_eq!(result.remaining, vec![expected]);
+        assert_eq!(snapshot(&PartFs::open(&result.docx).unwrap()), source);
+        let again = repair(&result.docx).unwrap();
+        assert_eq!(again, result);
+    }
+
+    #[test]
+    fn repairing_comment_paragraph_ids_retains_reply_graph_source_text_and_all_relationships() {
+        // Ring1 deliberately diagnoses a serialized Word range violation.
+        // The actual source package is otherwise complete: both comment
+        // definitions have balanced body anchors and a real acyclic reply
+        // graph. Identical paraId/textId aliases refer to the same source
+        // owner; masked collisions must choose a free ID exactly once.
+        for old in ["80000001", "00000000", "FFFFFFFF"] {
+            let body = "<w:p w14:paraId=\"00000003\"><w:pPr><w:spacing w:after=\"80\"/></w:pPr><w:commentRangeStart w:id=\"1\"/><w:r><w:rPr><w:b/></w:rPr><w:t>Root source ação</w:t></w:r><w:commentRangeEnd w:id=\"1\"/><w:r><w:commentReference w:id=\"1\"/></w:r></w:p><w:p w14:paraId=\"00000004\" w14:textId=\"7FFFFFFF\"><w:commentRangeStart w:id=\"2\"/><w:r><w:rPr><w:i/></w:rPr><w:t>Reply source café</w:t></w:r><w:commentRangeEnd w:id=\"2\"/><w:r><w:commentReference w:id=\"2\"/></w:r></w:p>";
+            let mut pkg = package(body);
+            let comments = format!(
+                "<w:comments xmlns:w=\"{}\" xmlns:w14=\"{}\" xmlns:mc=\"{}\" mc:Ignorable=\"w14\"><w:comment w:id=\"1\" w:author=\"Original reviewer\" w:initials=\"OR\" w:date=\"2025-02-03T04:05:06Z\"><w:p w14:paraId=\"00000001\"><w:pPr><w:spacing w:after=\"120\"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>Root comment ação</w:t></w:r></w:p></w:comment><w:comment w:id=\"2\" w:author=\"Reply reviewer\" w:initials=\"RR\" w:date=\"2025-03-04T05:06:07Z\"><w:p w14:paraId=\"{old}\" w14:textId=\"{old}\"><w:pPr><w:spacing w:after=\"240\"/></w:pPr><w:r><w:rPr><w:i/></w:rPr><w:t>Reply comment café</w:t></w:r></w:p></w:comment></w:comments>",
+                W::URI,
+                W14::URI,
+                MC::URI
+            );
+            let extended = format!(
+                "<w15:commentsEx xmlns:w15=\"http://schemas.microsoft.com/office/word/2012/wordml\"><w15:commentEx w15:paraId=\"00000001\" w15:done=\"0\"/><w15:commentEx w15:paraId=\"{old}\" w15:paraIdParent=\"00000001\" w15:done=\"1\"/></w15:commentsEx>"
+            );
+            pkg.set_part("word/comments.xml", comments.clone().into_bytes());
+            pkg.set_part("word/commentsExtended.xml", extended.clone().into_bytes());
+            for (part, content_type, relationship) in COMMENT_FAMILY.into_iter().take(2) {
+                pkg.add_content_type_override(&format!("/{part}"), content_type);
+                pkg.add_document_relationship(
+                    "word/document.xml",
+                    relationship,
+                    part.strip_prefix("word/").unwrap(),
+                );
+            }
+            let source = snapshot(&pkg);
+            let bytes = pkg.to_zip().unwrap();
+            let original_records = crate::comments::list_comments(&bytes).unwrap();
+            let before = validate(&bytes).unwrap();
+            let range = before
+                .iter()
+                .filter(|finding| finding.code == "PARA_ID_OUT_OF_RANGE")
+                .cloned()
+                .collect::<Vec<_>>();
+            let expected_range=["w14:paraId=\"","w14:textId=\""].map(|attribute|Finding {code:"PARA_ID_OUT_OF_RANGE".into(),part:"word/comments.xml".into(),path:String::new(),message:format!("{attribute} value '{old}' outside Word's range 1..0x7FFFFFFF (>= 0x80000000 or zero) in 'word/comments.xml' (id-paraid-overflow)"),word_fatal:true,repairable:true});
+            assert_eq!(range, expected_range);
+            let result = repair(&bytes).unwrap();
+            assert!(
+                result.remaining.is_empty(),
+                "{old}: every reported range or graph inconsistency must be resolved, got {:?}",
+                result.remaining
+            );
+            assert_eq!(result.repaired, expected_range);
+            let output = PartFs::open(&result.docx).unwrap();
+            let expected_comments = comments
+                .replace(&format!("paraId=\"{old}\""), "paraId=\"00000002\"")
+                .replace(&format!("textId=\"{old}\""), "textId=\"00000002\"");
+            let expected_extended =
+                extended.replace(&format!("paraId=\"{old}\""), "paraId=\"00000002\"");
+            let expected = source
+                .iter()
+                .map(|(name, contents)| {
+                    (
+                        name.clone(),
+                        match name.as_str() {
+                            "word/comments.xml" => expected_comments.as_bytes().to_vec(),
+                            "word/commentsExtended.xml" => expected_extended.as_bytes().to_vec(),
+                            _ => contents.clone(),
+                        },
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                snapshot(&output),
+                expected,
+                "{old}: repair must change only the owned identifier aliases, not source formats/text/history/relationships"
+            );
+            assert_eq!(
+                crate::comments::list_comments(&result.docx).unwrap(),
+                original_records,
+                "{old}: complete comment records and reply topology survive"
+            );
+            assert_eq!(snapshot(&PartFs::open(&bytes).unwrap()), source);
+            let again = repair(&result.docx).unwrap();
+            assert_eq!(again.docx, result.docx);
+            assert!(again.repaired.is_empty());
+            assert!(again.remaining.is_empty());
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod literal_revision_repair_contract_tests {
+    use super::*;
+
+    fn tree(source: &str) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(
+            r#"<w:document xmlns:w="{}" xmlns:r="{}"><w:body>{source}</w:body></w:document>"#,
+            W::URI,
+            R::URI
+        ));
+        (dom, doc)
+    }
+
+    #[test]
+    fn duplicate_move_ids_keep_exact_range_pairings_and_every_unrelated_source_node() {
+        let source = r#"<w:p><w:bookmarkStart w:id="40" w:name="owned"/><w:moveFromRangeStart w:id="7"/><w:r><w:t>first</w:t></w:r><w:moveFromRangeEnd w:id="7"/><w:moveFromRangeStart w:id="7"/><w:r><w:t>second</w:t></w:r><w:moveFromRangeEnd w:id="7"/><w:moveToRangeStart w:id="8"/><w:r><w:t>third</w:t></w:r><w:moveToRangeEnd w:id="8"/><w:moveToRangeStart w:id="8"/><w:r><w:t>fourth</w:t></w:r><w:moveToRangeEnd w:id="8"/><w:ins w:id="9" w:author="A" w:date="2026-10-09T00:00:00Z"><w:r><w:t>fifth</w:t></w:r></w:ins><w:ins w:id="9" w:author="B" w:date="2026-10-09T00:00:00Z"><w:r><w:t>sixth</w:t></w:r></w:ins><w:bookmarkEnd w:id="40"/></w:p>"#;
+        let (mut dom, doc) = tree(source);
+        let root = dom.root(doc).unwrap();
+        let expected=source.replacen(r#"<w:moveFromRangeStart w:id="7"/><w:r><w:t>second</w:t></w:r><w:moveFromRangeEnd w:id="7"/>"#,r#"<w:moveFromRangeStart w:id="41"/><w:r><w:t>second</w:t></w:r><w:moveFromRangeEnd w:id="41"/>"#,1)
+          .replacen(r#"<w:moveToRangeStart w:id="8"/><w:r><w:t>fourth</w:t></w:r><w:moveToRangeEnd w:id="8"/>"#,r#"<w:moveToRangeStart w:id="42"/><w:r><w:t>fourth</w:t></w:r><w:moveToRangeEnd w:id="42"/>"#,1)
+          .replacen(r#"<w:ins w:id="9" w:author="B""#,r#"<w:ins w:id="43" w:author="B""#,1);
+        let (expected_dom, expected_doc) = tree(&expected);
+        renumber_duplicate_revision_ids(&mut dom, root);
+        assert_eq!(
+            dom.serialize_document(doc),
+            expected_dom.serialize_document(expected_doc)
+        );
+        renumber_duplicate_revision_ids(&mut dom, root);
+        assert_eq!(
+            dom.serialize_document(doc),
+            expected_dom.serialize_document(expected_doc)
+        );
+    }
+
+    #[test]
+    fn repair_declines_missing_ids_and_unmatched_ranges_without_inventing_content() {
+        let source = r#"<w:p><w:ins><w:r><w:t>missing id</w:t></w:r></w:ins><w:moveFromRangeStart w:id="3"/><w:moveFromRangeStart w:id="3"/><w:moveToRangeEnd w:id="3"/><w:r><w:t>unmatched range retained</w:t></w:r></w:p>"#;
+        let expected = source.replacen(
+            r#"<w:moveFromRangeStart w:id="3"/><w:moveToRangeEnd"#,
+            r#"<w:moveFromRangeStart w:id="4"/><w:moveToRangeEnd"#,
+            1,
+        );
+        let (mut dom, doc) = tree(source);
+        let root = dom.root(doc).unwrap();
+        let (expected_dom, expected_doc) = tree(&expected);
+        renumber_duplicate_revision_ids(&mut dom, root);
+        assert_eq!(
+            dom.serialize_document(doc),
+            expected_dom.serialize_document(expected_doc)
+        );
+    }
+}

@@ -2155,3 +2155,96 @@ mod field_cache_boundary_tests {
         );
     }
 }
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod field_decline_source_boundary_tests {
+    use super::*;
+
+    fn story(body: &str) -> Story {
+        let mut dom = Dom::new();
+        let document =
+            dom.parse_xdocument(&format!(r#"<w:body xmlns:w="{}">{body}</w:body>"#, W::URI));
+        let root = dom.root(document).unwrap();
+        Story {
+            id: "body".to_string(),
+            part: "word/document.xml".to_string(),
+            dom,
+            document,
+            root,
+            body: true,
+            changed: false,
+        }
+    }
+
+    const BEGIN: &str = "<w:r><w:rPr><w:b/></w:rPr><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText> TOC </w:instrText></w:r>";
+    const SEPARATE: &str = "<w:r><w:fldChar w:fldCharType='separate'/></w:r>";
+    const CACHE: &str =
+        "<w:r><w:rPr><w:i/><w:color w:val='123456'/></w:rPr><w:t>owned cache</w:t></w:r>";
+    const END: &str =
+        "<w:r><w:rPr><w:u w:val='single'/></w:rPr><w:fldChar w:fldCharType='end'/></w:r>";
+
+    #[test]
+    fn toc_declines_unhandled_legal_marker_containers_without_changing_any_source_node() {
+        let cases=vec![
+            "<w:p><w:pPr><w:spacing w:after='120'/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:fldChar w:fldCharType='begin'/><w:instrText> TOC </w:instrText><w:fldChar w:fldCharType='separate'/><w:t>owned cache</w:t><w:fldChar w:fldCharType='end'/></w:r></w:p>".to_string(),
+            format!("<w:p>{BEGIN}</w:p><w:p><w:r><w:rPr><w:i/></w:rPr><w:fldChar w:fldCharType='separate'/><w:t>owned cache</w:t><w:fldChar w:fldCharType='end'/></w:r></w:p>"),
+            format!("<w:p><w:hyperlink w:anchor='target'>{BEGIN}</w:hyperlink>{SEPARATE}{CACHE}{END}<w:bookmarkStart w:id='3' w:name='target'/><w:bookmarkEnd w:id='3'/></w:p>"),
+            format!("<w:p>{BEGIN}{SEPARATE}{CACHE}<w:hyperlink w:anchor='target'>{END}</w:hyperlink><w:bookmarkStart w:id='3' w:name='target'/><w:bookmarkEnd w:id='3'/></w:p>"),
+            format!("<w:p>{BEGIN}</w:p><w:p>{SEPARATE}{CACHE}</w:p><w:p>{END}</w:p>"),
+        ];
+        let entries = vec![(1, "authored heading".to_string(), "_Toc1".to_string())];
+        for source in cases {
+            let mut story = story(&source);
+            let fields = collect_fields(&story.dom, story.root);
+            assert_eq!(fields.len(), 1);
+            assert_eq!(fields[0].kind, "TOC");
+            assert!(!fields[0].simple);
+            let frozen = story.dom.serialize_element(story.root);
+            assert!(
+                !write_toc(&mut story.dom, &fields[0], &entries, true, 9350),
+                "{source}"
+            );
+            assert_eq!(story.dom.serialize_element(story.root), frozen, "{source}");
+            assert_eq!(
+                result_text(&story.dom, story.root, &fields[0]),
+                "owned cache"
+            );
+        }
+    }
+
+    #[test]
+    fn unsupported_and_nested_tocs_preserve_cache_heading_properties_and_bookmark_ids() {
+        let heading = "<w:p><w:pPr><w:pStyle w:val='Heading1'/><w:spacing w:after='240'/></w:pPr><w:bookmarkStart w:id='4' w:name='owned'/><w:r><w:rPr><w:b/></w:rPr><w:t>authored heading</w:t></w:r><w:bookmarkEnd w:id='4'/></w:p>";
+        for field in [
+            format!("<w:p><w:fldSimple w:instr=' TOC '>{CACHE}</w:fldSimple></w:p>"),
+            format!(
+                "<w:p><w:r><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText> REF owned </w:instrText></w:r>{SEPARATE}{BEGIN}{SEPARATE}{CACHE}{END}<w:r><w:fldChar w:fldCharType='end'/></w:r></w:p>"
+            ),
+            format!(
+                "<w:p>{}{SEPARATE}{CACHE}{END}</w:p>",
+                BEGIN.replace(" TOC ", " TOC stray ")
+            ),
+            format!(
+                "<w:p>{}{SEPARATE}{CACHE}{END}</w:p>",
+                BEGIN.replace(" TOC ", " TOC \\t &quot;Heading 1,1&quot; ")
+            ),
+            format!(
+                "<w:p>{}{SEPARATE}{CACHE}{END}</w:p>",
+                BEGIN.replace(" TOC ", " TOC \\o &quot;9-1&quot; ")
+            ),
+        ] {
+            let mut story = story(&format!("{field}{heading}"));
+            let frozen = story.dom.serialize_element(story.root);
+            assert!(
+                collect_fields(&story.dom, story.root)
+                    .iter()
+                    .any(|field| field.kind == "TOC")
+            );
+            let result = rebuild_tocs(&mut story, &HashMap::new());
+            assert!(result.rebuilt.is_empty());
+            assert_eq!(result.max_level, 0);
+            assert!(!story.changed);
+            assert_eq!(story.dom.serialize_element(story.root), frozen);
+        }
+    }
+}

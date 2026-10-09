@@ -2416,6 +2416,25 @@ fn open_stand_in(family: &str) -> Option<&'static str> {
 
 /// `family`'s faces in `dirs` ((folder, whole folder is the family)).
 fn family_faces_in(family: &str, dirs: &[(PathBuf, bool)]) -> SourcedFaces {
+    family_faces_in_with(
+        family,
+        dirs,
+        sorted_dir_listing,
+        |path| fs::read(path),
+        font_name_index,
+    )
+}
+
+/// The discovery policy, with directory/cache reads supplied by the caller.
+/// Production forwards its existing sorted listings and cached name index;
+/// memory callers can supply the same records without reading host fonts.
+fn family_faces_in_with(
+    family: &str,
+    dirs: &[(PathBuf, bool)],
+    mut list: impl FnMut(&Path) -> Arc<Vec<PathBuf>>,
+    mut read: impl FnMut(&Path) -> std::io::Result<Vec<u8>>,
+    mut names: impl FnMut(&Path) -> FontNameIndex,
+) -> SourcedFaces {
     let norm = |s: &str| -> String {
         s.chars()
             .filter(|c| c.is_ascii_alphanumeric())
@@ -2436,7 +2455,7 @@ fn family_faces_in(family: &str, dirs: &[(PathBuf, bool)]) -> SourcedFaces {
     let mut collected: Vec<(u8, (bool, bool), SourcedBytes)> = Vec::new();
     for (dir, family_folder) in dirs {
         let family_folder = *family_folder;
-        for path in sorted_dir_listing(dir).iter() {
+        for path in list(dir).iter() {
             let path = path.clone();
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             let is_font = ext.eq_ignore_ascii_case("ttf") || ext.eq_ignore_ascii_case("otf");
@@ -2449,7 +2468,7 @@ fn family_faces_in(family: &str, dirs: &[(PathBuf, bool)]) -> SourcedFaces {
                     .as_deref()
                     .is_some_and(|s| s.len() >= 3 && key.starts_with(s))
             {
-                let Ok(bytes) = fs::read(&path) else {
+                let Ok(bytes) = read(&path) else {
                     continue;
                 };
                 let count = ttf_parser::fonts_in_collection(&bytes).unwrap_or(0);
@@ -2476,7 +2495,7 @@ fn family_faces_in(family: &str, dirs: &[(PathBuf, bool)]) -> SourcedFaces {
             if !is_font || !(family_folder || named) {
                 continue;
             }
-            let Ok(bytes) = fs::read(&path) else {
+            let Ok(bytes) = read(&path) else {
                 continue;
             };
             let Some((pass, style)) = face_family_style(&bytes, family) else {
@@ -2489,12 +2508,12 @@ fn family_faces_in(family: &str, dirs: &[(PathBuf, bool)]) -> SourcedFaces {
     // cour.ttf): a stem catches at most the regular face, so its folders
     // also answer by the family name inside each file.
     for (dir, _) in dirs.iter().filter(|(d, _)| latin && windows_fonts_dir(d)) {
-        for (path, names) in font_name_index(dir).iter() {
+        for (path, names) in names(dir).iter() {
             let source = FaceSource::new(path, None);
             if !names.contains(&key) || found.iter().any(|(_, _, (s, _))| *s == source) {
                 continue;
             }
-            let Ok(bytes) = fs::read(path) else {
+            let Ok(bytes) = read(path) else {
                 continue;
             };
             if let Some((pass, style)) = face_family_style(&bytes, family) {
@@ -2508,11 +2527,11 @@ fn family_faces_in(family: &str, dirs: &[(PathBuf, bool)]) -> SourcedFaces {
         // GARA.ttf / GARAIT.ttf): match its folder by internal family name
         // (fixtures_500 00dd36c7 painted Garamond Italic as Times).
         for (dir, _) in dirs.iter().filter(|(d, _)| d.ends_with("DFonts")) {
-            for (path, names) in font_name_index(dir).iter() {
+            for (path, names) in names(dir).iter() {
                 if !names.contains(&key) {
                     continue;
                 }
-                let Ok(bytes) = fs::read(path) else {
+                let Ok(bytes) = read(path) else {
                     continue;
                 };
                 if let Some((pass, style)) = face_family_style(&bytes, family) {
@@ -6492,5 +6511,516 @@ mod deeper_boundary_tests {
             ttc_face_bytes(&bad, 1).is_some(),
             "a corrupt neighboring face must not prevent extracting a valid face"
         );
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod residual_embedded_style_contract_tests {
+    use super::*;
+
+    #[test]
+    fn quartz_device_size_windows_keep_linear_glyph_advance_outside_the_window() {
+        let bytes = FaceId::CarlitoRegular.bytes();
+        let raw = ttf_parser::Face::parse(bytes, 0).unwrap();
+        let face = Face::from_bytes(FaceId::CarlitoRegular, bytes, "MemoryCarlito".into()).unwrap();
+        let gid = raw.glyph_index('M').unwrap();
+        let units = f32::from(raw.glyph_hor_advance(gid).unwrap());
+        for (center, ppem, tracking) in [(11.04_f32, 46.0, -0.0015), (16.08, 67.0, -0.0018)] {
+            for offset in [-0.03_f32, -0.01, 0.0, 0.01, 0.03] {
+                let size = center + offset;
+                let inside = offset.abs() < 0.02;
+                let expected_track = if inside { tracking * size } else { 0.0 };
+                assert_eq!(word_device_track(size), expected_track);
+                assert_eq!(word_device_paint(size), inside.then_some((ppem, tracking)));
+                let expected = units * size / f32::from(raw.units_per_em()) + expected_track;
+                assert!((face.advance_pt('M', size) - expected).abs() < 0.00001);
+            }
+        }
+        assert_eq!(face.pdf_name(), "MemoryCarlito");
+        assert_eq!(face.glyph('M'), gid.0);
+        assert_eq!(bytes, FaceId::CarlitoRegular.bytes());
+    }
+
+    #[test]
+    fn four_embedded_style_slots_preserve_requested_names_and_physical_font_identity() {
+        let mut fonts = Fonts::new();
+        let styles = [
+            (false, false, FaceId::CarlitoRegular, "Carlito"),
+            (true, false, FaceId::CarlitoBold, "Carlito-Bold"),
+            (false, true, FaceId::CarlitoItalic, "Carlito-Italic"),
+            (true, true, FaceId::CarlitoBoldItalic, "Carlito-BoldItalic"),
+        ];
+        for &(bold, italic, id, _) in &styles {
+            fonts.insert_embedded("Memory Stylist", bold, italic, id.bytes());
+        }
+        let table = super::super::font_table::FontTable::default();
+        for (index, &(bold, italic, id, physical)) in styles.iter().enumerate() {
+            let requested = "MeMoRy StYlIsT, ignored-family";
+            let (slot, report) = fonts.classify_in(requested, bold, italic, &table);
+            assert_eq!(slot, FaceRef::Embedded(index as u16));
+            assert_eq!(
+                report,
+                FontReportEntry {
+                    requested: requested.into(),
+                    step: FontStep::Embedded,
+                    physical: physical.into(),
+                    bold,
+                    italic,
+                    synthetic: false,
+                }
+            );
+            let quoted = "\"MeMoRy StYlIsT\"";
+            let (quoted_slot, quoted_report) = fonts.classify_in(quoted, bold, italic, &table);
+            assert_eq!(quoted_slot, slot);
+            assert_eq!(
+                quoted_report,
+                FontReportEntry {
+                    requested: quoted.into(),
+                    ..report.clone()
+                }
+            );
+            assert_eq!(
+                family_token("\"MeMoRy StYlIsT\", ignored-family"),
+                "\"MeMoRy StYlIsT\""
+            );
+            assert!(!report.substituted());
+            let raw = ttf_parser::Face::parse(id.bytes(), 0).unwrap();
+            assert_eq!(fonts.get(slot).glyph('g'), raw.glyph_index('g').unwrap().0);
+            assert_eq!(
+                face_family_style(id.bytes(), "carlito"),
+                Some((0, (bold, italic)))
+            );
+            assert!(face_family_style(id.bytes(), "Unrelated Family").is_none());
+        }
+    }
+
+    #[test]
+    fn a_single_embedded_style_answers_every_requested_style_without_host_lookup() {
+        let styles = [
+            (false, false, FaceId::MonoRegular, "LiberationMono"),
+            (true, false, FaceId::MonoBold, "LiberationMono-Bold"),
+            (false, true, FaceId::MonoItalic, "LiberationMono-Italic"),
+            (
+                true,
+                true,
+                FaceId::MonoBoldItalic,
+                "LiberationMono-BoldItalic",
+            ),
+        ];
+        let table = super::super::font_table::FontTable::default();
+        for &(available_bold, available_italic, id, physical) in &styles {
+            let mut fonts = Fonts::new();
+            fonts.insert_embedded("Only Memory", available_bold, available_italic, id.bytes());
+            for &(bold, italic, _, _) in &styles {
+                let (slot, report) = fonts.classify_in("Only Memory", bold, italic, &table);
+                assert_eq!(slot, FaceRef::Embedded(0));
+                assert_eq!(
+                    report,
+                    FontReportEntry {
+                        requested: "Only Memory".into(),
+                        step: FontStep::Embedded,
+                        physical: physical.into(),
+                        bold,
+                        italic,
+                        synthetic: (bold || italic)
+                            && (bold, italic) != (available_bold, available_italic),
+                    }
+                );
+                assert!(!report.substituted());
+                assert_eq!(fonts.get(slot).pdf_name(), physical);
+            }
+            // This pure lookup deliberately declines the unknown family;
+            // resolving it instead would enter the filesystem catalogue.
+            assert_eq!(fonts.embedded_index("Absent Memory", false, false), None);
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod memory_discovery_policy_contract_tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    #[derive(Clone, Debug, Default, PartialEq)]
+    struct MemoryFiles {
+        listings: HashMap<PathBuf, Arc<Vec<PathBuf>>>,
+        bytes: HashMap<PathBuf, Vec<u8>>,
+        names: HashMap<PathBuf, FontNameIndex>,
+    }
+
+    impl MemoryFiles {
+        fn directory(&mut self, dir: &str, files: &[&str]) {
+            let mut paths: Vec<_> = files.iter().map(|f| Path::new(dir).join(f)).collect();
+            paths.sort();
+            self.listings.insert(dir.into(), Arc::new(paths));
+        }
+
+        fn font(&mut self, dir: &str, file: &str, id: FaceId) {
+            self.bytes
+                .insert(Path::new(dir).join(file), id.bytes().to_vec());
+        }
+
+        fn indexed(&mut self, dir: &str, files: &[(&str, &[&str])]) {
+            self.names.insert(
+                dir.into(),
+                Arc::new(
+                    files
+                        .iter()
+                        .map(|(f, n)| {
+                            (
+                                Path::new(dir).join(f),
+                                n.iter().map(|s| s.to_string()).collect(),
+                            )
+                        })
+                        .collect(),
+                ),
+            );
+        }
+
+        fn discover(&self, family: &str, dirs: &[(&str, bool)]) -> (SourcedFaces, Vec<PathBuf>) {
+            let before = self.clone();
+            let reads = RefCell::new(Vec::new());
+            let dirs: Vec<_> = dirs
+                .iter()
+                .map(|(d, whole)| (PathBuf::from(d), *whole))
+                .collect();
+            let result = family_faces_in_with(
+                family,
+                &dirs,
+                |dir| self.listings.get(dir).cloned().unwrap_or_default(),
+                |path| {
+                    reads.borrow_mut().push(path.to_path_buf());
+                    self.bytes
+                        .get(path)
+                        .cloned()
+                        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+                },
+                |dir| self.names.get(dir).cloned().unwrap_or_default(),
+            );
+            assert_eq!(
+                self, &before,
+                "discovery mutated source records or payloads"
+            );
+            (result, reads.into_inner())
+        }
+    }
+
+    fn expected(
+        dir: &str,
+        file: &str,
+        id: FaceId,
+        style: (bool, bool),
+    ) -> ((bool, bool), FaceSource, Vec<u8>) {
+        (
+            style,
+            FaceSource::new(&Path::new(dir).join(file), None),
+            id.bytes().to_vec(),
+        )
+    }
+
+    #[test]
+    fn whole_family_folders_accept_numeric_names_but_still_validate_the_font_family() {
+        let mut fs = MemoryFiles::default();
+        fs.directory(
+            "/memory/cloud",
+            &["001.TTF", "002.oTf", "003.ttf", "004.bin"],
+        );
+        fs.font("/memory/cloud", "001.TTF", FaceId::CarlitoRegular);
+        fs.font("/memory/cloud", "002.oTf", FaceId::CarlitoBold);
+        fs.font("/memory/cloud", "003.ttf", FaceId::MonoItalic);
+        fs.font("/memory/cloud", "004.bin", FaceId::CarlitoItalic);
+        let (result, reads) = fs.discover("Carlito", &[("/memory/cloud", true)]);
+        assert_eq!(
+            result,
+            vec![
+                expected(
+                    "/memory/cloud",
+                    "001.TTF",
+                    FaceId::CarlitoRegular,
+                    (false, false)
+                ),
+                expected(
+                    "/memory/cloud",
+                    "002.oTf",
+                    FaceId::CarlitoBold,
+                    (true, false)
+                )
+            ]
+        );
+        assert_eq!(
+            reads,
+            ["001.TTF", "002.oTf", "003.ttf"].map(|f| Path::new("/memory/cloud").join(f))
+        );
+        let (result, reads) = fs.discover("Carlito", &[("/memory/cloud", false)]);
+        assert!(result.is_empty());
+        assert!(reads.is_empty());
+        let (result, reads) = fs.discover("漢字", &[("/memory/cloud", false)]);
+        assert!(result.is_empty());
+        assert!(reads.is_empty());
+        let (result, reads) = fs.discover("漢字", &[("/memory/cloud", true)]);
+        assert!(result.is_empty());
+        assert_eq!(reads.len(), 3);
+    }
+
+    #[test]
+    fn short_filename_matching_is_allowed_outside_word_but_not_inside_dfonts() {
+        for dir in ["/memory/system", "/memory/DFonts"] {
+            let mut fs = MemoryFiles::default();
+            fs.directory(dir, &["carl.ttf", "carli.ttf", "CarlitoMore.ttf"]);
+            for file in ["carl.ttf", "carli.ttf", "CarlitoMore.ttf"] {
+                fs.font(dir, file, FaceId::CarlitoRegular);
+            }
+            let (result, reads) = fs.discover("Carlito", &[(dir, false)]);
+            // Uppercase sorts first; a full key prefix remains eligible in
+            // Word's folder, whereas only the short candidate is excluded.
+            assert_eq!(
+                result,
+                vec![expected(
+                    dir,
+                    "CarlitoMore.ttf",
+                    FaceId::CarlitoRegular,
+                    (false, false)
+                )]
+            );
+            let mut expected_reads = vec![Path::new(dir).join("CarlitoMore.ttf")];
+            if dir.ends_with("system") {
+                expected_reads.push(Path::new(dir).join("carli.ttf"));
+            }
+            assert_eq!(reads, expected_reads);
+        }
+    }
+
+    #[test]
+    fn unreadable_malformed_and_foreign_fonts_cannot_displace_the_first_valid_style() {
+        let mut fs = MemoryFiles::default();
+        fs.directory(
+            "/memory/system",
+            &[
+                "Carlito0.ttf",
+                "Carlito1.ttf",
+                "Carlito2.ttf",
+                "Carlito3.ttf",
+                "Carlito4.ttf",
+            ],
+        );
+        fs.bytes.insert(
+            "/memory/system/Carlito1.ttf".into(),
+            b"deliberately invalid sfnt".to_vec(),
+        );
+        fs.font("/memory/system", "Carlito2.ttf", FaceId::MonoRegular);
+        fs.font("/memory/system", "Carlito3.ttf", FaceId::CarlitoRegular);
+        fs.font("/memory/system", "Carlito4.ttf", FaceId::CarlitoRegular);
+        let (result, reads) = fs.discover("Carlito", &[("/memory/system", false)]);
+        assert_eq!(
+            result,
+            vec![expected(
+                "/memory/system",
+                "Carlito3.ttf",
+                FaceId::CarlitoRegular,
+                (false, false)
+            )]
+        );
+        assert_eq!(
+            reads,
+            (0..5)
+                .map(|i| PathBuf::from(format!("/memory/system/Carlito{i}.ttf")))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn windows_name_records_add_abbreviated_styles_without_rereading_direct_matches() {
+        let dir = "/memory/Windows/Fonts";
+        let mut fs = MemoryFiles::default();
+        fs.directory(dir, &["Carlito.ttf", "cltbd.ttf", "notthis.ttf"]);
+        fs.font(dir, "Carlito.ttf", FaceId::CarlitoRegular);
+        fs.font(dir, "cltbd.ttf", FaceId::CarlitoBold);
+        fs.font(dir, "notthis.ttf", FaceId::MonoRegular);
+        fs.bytes
+            .insert(Path::new(dir).join("broken.ttf"), b"invalid font".to_vec());
+        fs.font(dir, "foreign.ttf", FaceId::MonoItalic);
+        fs.indexed(
+            dir,
+            &[
+                ("Carlito.ttf", &["carlito"]),
+                ("cltbd.ttf", &["carlito"]),
+                ("notthis.ttf", &["liberationmono"]),
+                ("denied.ttf", &["carlito"]),
+                ("broken.ttf", &["carlito"]),
+                ("foreign.ttf", &["carlito"]),
+            ],
+        );
+        let (result, reads) = fs.discover("Carlito", &[(dir, false)]);
+        assert_eq!(
+            result,
+            vec![
+                expected(dir, "Carlito.ttf", FaceId::CarlitoRegular, (false, false)),
+                expected(dir, "cltbd.ttf", FaceId::CarlitoBold, (true, false))
+            ]
+        );
+        assert_eq!(
+            reads,
+            [
+                "Carlito.ttf",
+                "cltbd.ttf",
+                "denied.ttf",
+                "broken.ttf",
+                "foreign.ttf"
+            ]
+            .map(|f| Path::new(dir).join(f))
+        );
+    }
+
+    #[test]
+    fn word_name_index_fallback_runs_only_after_all_direct_discovery_is_empty() {
+        let word = "/memory/DFonts";
+        let mut fs = MemoryFiles::default();
+        fs.directory(word, &["CLT.ttf"]);
+        fs.font(word, "CLT.ttf", FaceId::CarlitoBold);
+        fs.font(word, "FOREIGN.ttf", FaceId::MonoRegular);
+        fs.bytes
+            .insert(Path::new(word).join("BROKEN.ttf"), b"invalid font".to_vec());
+        fs.indexed(
+            word,
+            &[
+                ("CLT.ttf", &["carlito"]),
+                ("FOREIGN.ttf", &["carlito"]),
+                ("DENIED.ttf", &["carlito"]),
+                ("BROKEN.ttf", &["carlito"]),
+                ("OTHER.ttf", &["unrelated"]),
+            ],
+        );
+        let (result, reads) = fs.discover("Carlito", &[(word, false)]);
+        assert_eq!(
+            result,
+            vec![expected(
+                word,
+                "CLT.ttf",
+                FaceId::CarlitoBold,
+                (true, false)
+            )]
+        );
+        assert_eq!(
+            reads,
+            ["CLT.ttf", "FOREIGN.ttf", "DENIED.ttf", "BROKEN.ttf"].map(|f| Path::new(word).join(f))
+        );
+        fs.directory("/memory/system", &["Carlito.ttf"]);
+        fs.font("/memory/system", "Carlito.ttf", FaceId::CarlitoRegular);
+        let (result, reads) = fs.discover("Carlito", &[("/memory/system", false), (word, false)]);
+        assert_eq!(
+            result,
+            vec![expected(
+                "/memory/system",
+                "Carlito.ttf",
+                FaceId::CarlitoRegular,
+                (false, false)
+            )]
+        );
+        assert_eq!(reads, vec![PathBuf::from("/memory/system/Carlito.ttf")]);
+    }
+
+    fn collection(faces: &[FaceId]) -> Vec<u8> {
+        let mut out = b"ttcf".to_vec();
+        out.extend_from_slice(&0x00010000_u32.to_be_bytes());
+        out.extend_from_slice(&(faces.len() as u32).to_be_bytes());
+        out.resize(12 + 4 * faces.len(), 0);
+        for (index, id) in faces.iter().enumerate() {
+            while !out.len().is_multiple_of(4) {
+                out.push(0);
+            }
+            let start = out.len();
+            out[12 + 4 * index..16 + 4 * index].copy_from_slice(&(start as u32).to_be_bytes());
+            let mut sfnt = id.bytes().to_vec();
+            let count = u16::from_be_bytes([sfnt[4], sfnt[5]]) as usize;
+            for i in 0..count {
+                let at = 12 + 16 * i + 8;
+                let old = u32::from_be_bytes(sfnt[at..at + 4].try_into().unwrap());
+                sfnt[at..at + 4].copy_from_slice(&(old + start as u32).to_be_bytes());
+            }
+            out.extend_from_slice(&sfnt);
+        }
+        out
+    }
+
+    #[test]
+    fn collection_faces_keep_indices_and_rank_after_equivalent_single_face_files() {
+        let dir = "/memory/system";
+        let mut fs = MemoryFiles::default();
+        fs.directory(
+            dir,
+            &[
+                "Carlito.ttc",
+                "CarlitoRegular.ttf",
+                "Unrelated.ttc",
+                "Car.ttc",
+                "Carli.ttc",
+            ],
+        );
+        let ttc = collection(&[FaceId::CarlitoRegular, FaceId::CarlitoBold]);
+        assert_eq!(ttf_parser::fonts_in_collection(&ttc), Some(2));
+        for (i, id) in [FaceId::CarlitoRegular, FaceId::CarlitoBold]
+            .iter()
+            .enumerate()
+        {
+            let raw = ttf_parser::Face::parse(&ttc, i as u32).unwrap();
+            let bundled = ttf_parser::Face::parse(id.bytes(), 0).unwrap();
+            for ch in ['A', 'g', 'Ω'] {
+                assert_eq!(raw.glyph_index(ch), bundled.glyph_index(ch));
+                assert_eq!(
+                    raw.glyph_hor_advance(raw.glyph_index(ch).unwrap()),
+                    bundled.glyph_hor_advance(bundled.glyph_index(ch).unwrap())
+                );
+            }
+        }
+        fs.bytes
+            .insert(Path::new(dir).join("Carlito.ttc"), ttc.clone());
+        fs.bytes.insert(
+            Path::new(dir).join("Car.ttc"),
+            b"ttcf\0\x01\0\0\0\0\0\x01\xff\xff\xff\xff".to_vec(),
+        );
+        fs.font(dir, "CarlitoRegular.ttf", FaceId::CarlitoRegular);
+        let bold = ttc_face_bytes(&ttc, 1).unwrap();
+        let (result, reads) = fs.discover("Carlito", &[(dir, false)]);
+        assert_eq!(
+            result,
+            vec![
+                expected(
+                    dir,
+                    "CarlitoRegular.ttf",
+                    FaceId::CarlitoRegular,
+                    (false, false)
+                ),
+                (
+                    (true, false),
+                    FaceSource::new(&Path::new(dir).join("Carlito.ttc"), Some(1)),
+                    bold.clone()
+                )
+            ]
+        );
+        assert_eq!(
+            reads,
+            ["Car.ttc", "Carli.ttc", "Carlito.ttc", "CarlitoRegular.ttf"]
+                .map(|f| Path::new(dir).join(f))
+        );
+        fs.bytes.remove(&Path::new(dir).join("CarlitoRegular.ttf"));
+        let (result, _) = fs.discover("Carlito", &[(dir, false)]);
+        assert_eq!(
+            result,
+            vec![
+                (
+                    (false, false),
+                    FaceSource::new(&Path::new(dir).join("Carlito.ttc"), Some(0)),
+                    ttc_face_bytes(&ttc, 0).unwrap()
+                ),
+                (
+                    (true, false),
+                    FaceSource::new(&Path::new(dir).join("Carlito.ttc"), Some(1)),
+                    bold
+                )
+            ]
+        );
+        assert_eq!(fs.bytes[&Path::new(dir).join("Carlito.ttc")], ttc);
     }
 }

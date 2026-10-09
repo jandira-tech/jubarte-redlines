@@ -60602,3 +60602,994 @@ mod rendering_uncovered_contract_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod complete_coordinate_layout_contract_tests {
+    use super::*;
+
+    fn dom(fragment: &str) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(r#"<w:document xmlns:w="{}" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w10="urn:schemas-microsoft-com:office:word"><w:body>{fragment}</w:body></w:document>"#, W::URI));
+        let root = dom.root(doc).unwrap();
+        (dom, root)
+    }
+
+    fn sheet() -> StyleSheet {
+        StyleSheet {
+            defaults: Defaults::word(),
+            by_id: HashMap::new(),
+            tables: HashMap::new(),
+            theme: ThemeFonts::default(),
+            latent: true,
+            default_table: true,
+        }
+    }
+
+    fn table(fragment: &str) -> Block {
+        let (dom, root) = dom(fragment);
+        let tbl = first_named(&dom, root, "tbl").unwrap();
+        table_block(
+            &dom,
+            tbl,
+            &sheet(),
+            &mut Numbering::default(),
+            &mut AuthorColors::default(),
+            &HashMap::new(),
+            None,
+        )
+    }
+
+    fn geom() -> TableGeom {
+        let Block::Table { geom, .. } = table(
+            "<w:tbl><w:tblGrid><w:gridCol w:w='1000'/><w:gridCol w:w='1000'/></w:tblGrid><w:tr><w:tc><w:p/></w:tc><w:tc><w:p/></w:tc></w:tr></w:tbl>",
+        ) else {
+            panic!("table fixture")
+        };
+        *geom
+    }
+
+    fn fonts() -> Fonts<'static> {
+        let mut fonts = Fonts::new();
+        fonts.insert_embedded("Memory Mono", false, false, FaceId::MonoRegular.bytes());
+        fonts
+    }
+
+    fn run(text: &str) -> TextRun {
+        let mut style = Defaults::word().run;
+        style.family = "Memory Mono".into();
+        style.size = 12.0;
+        TextRun::new(text, style)
+    }
+
+    fn assert_watermark(fragment: &str, text: &str, size: f32, color: [f32; 3], angle: f32) {
+        let (dom, root) = dom(fragment);
+        let before = dom.serialize_element(root);
+        let mark = parse_header_watermark(&dom, root).expect("authored watermark");
+        assert_eq!(
+            (mark.text.as_str(), mark.size, mark.color, mark.rotate_deg),
+            (text, size, color, angle)
+        );
+        assert_eq!(dom.serialize_element(root), before);
+    }
+
+    #[test]
+    fn watermark_style_optional_components_keep_literal_default_and_authored_values() {
+        let marker = "<w:sdt><w:sdtPr><w:docPartObj><w:docPartGallery w:val='Watermarks'/></w:docPartObj></w:sdtPr><w:sdtContent>";
+        for (props, size, color) in [
+            ("", 36.0, [0.7529; 3]),
+            ("<w:rPr/>", 36.0, [0.7529; 3]),
+            ("<w:rPr><w:sz w:val='60'/></w:rPr>", 30.0, [0.7529; 3]),
+            (
+                "<w:rPr><w:color w:val='00FF00'/></w:rPr>",
+                36.0,
+                [0.0, 1.0, 0.0],
+            ),
+            (
+                "<w:rPr><w:sz w:val='60'/><w:color w:val='00FF00'/></w:rPr>",
+                30.0,
+                [0.0, 1.0, 0.0],
+            ),
+        ] {
+            assert_watermark(
+                &format!(
+                    "{marker}<w:p><w:r>{props}<w:t>DRAFT</w:t></w:r></w:p></w:sdtContent></w:sdt>"
+                ),
+                "DRAFT",
+                size,
+                color,
+                315.0,
+            );
+        }
+    }
+
+    #[test]
+    fn watermark_marker_routes_and_empty_textpath_candidates_do_not_steal_later_text() {
+        for marker in [
+            "<w:docPartGallery w:val='Cover Pages'/><wp:docPr id='1' name='PowerPlusWaterMarkObject'/>",
+            "<w:docPartGallery w:val='Watermarks'/><wp:docPr id='1' name='ordinary picture'/>",
+        ] {
+            assert_watermark(
+                &format!(
+                    "{marker}<w:p><w:r><w:t> \t </w:t></w:r></w:p><v:shape><v:textpath string=''/></v:shape><v:shape><v:textpath string='CONFIDENTIAL'/></v:shape>"
+                ),
+                "CONFIDENTIAL",
+                36.0,
+                [0.7529; 3],
+                315.0,
+            );
+        }
+        for marker in [
+            "<w:docPartGallery w:val='Cover Pages'/>",
+            "<wp:docPr id='1' name='ordinary picture'/>",
+        ] {
+            let (dom, root) = dom(&format!("{marker}<w:p><w:r><w:t>DRAFT</w:t></w:r></w:p>"));
+            let before = dom.serialize_element(root);
+            assert!(parse_header_watermark(&dom, root).is_none());
+            assert_eq!(dom.serialize_element(root), before);
+        }
+    }
+
+    #[test]
+    fn watermark_rotation_optional_metadata_and_drawing_text_have_exact_precedence() {
+        for (shape, xfrm, angle) in [
+            ("<v:shape/>", "", 315.0),
+            ("<v:shape style='width:100pt;height:100pt'/>", "", 315.0),
+            ("<v:shape style='rotation:0'/>", "", 0.0),
+            ("<v:shape style='rotation:-22.5'/>", "<a:xfrm/>", -22.5),
+            (
+                "<v:shape style='rotation:-22.5'/>",
+                "<a:xfrm rot='0'/>",
+                0.0,
+            ),
+            (
+                "<v:shape style='rotation:-22.5'/>",
+                "<a:xfrm rot='2700000'/>",
+                45.0,
+            ),
+        ] {
+            assert_watermark(
+                &format!(
+                    "<wp:docPr id='1' name='PowerPlusWaterMarkObject'/><a:p><a:r><a:rPr sz='6000'/><a:t>DRAFT</a:t></a:r></a:p>{shape}{xfrm}"
+                ),
+                "DRAFT",
+                36.0,
+                [0.7529; 3],
+                angle,
+            );
+        }
+    }
+
+    #[test]
+    fn intentionally_invalid_watermark_numbers_decline_only_the_malformed_property() {
+        for props in [
+            "<w:sz w:val='not-a-size'/>",
+            "<w:color w:val='not-a-color'/>",
+            "<w:sz w:val='not-a-size'/><w:color w:val='not-a-color'/>",
+        ] {
+            assert_watermark(
+                &format!(
+                    "<w:docPartGallery w:val='Watermarks'/><w:p><w:r><w:rPr>{props}</w:rPr><w:t>DRAFT</w:t></w:r></w:p><v:shape style='rotation:bad'/><a:xfrm rot='bad'/>"
+                ),
+                "DRAFT",
+                36.0,
+                [0.7529; 3],
+                315.0,
+            );
+        }
+    }
+
+    #[test]
+    fn table_percent_preferences_and_resolved_grid_have_independent_ownership() {
+        let mut geom = geom();
+        geom.fixed = false;
+        geom.pct_margins = 0.0;
+        geom.pct_rules = 0.0;
+        geom.grid_padded = false;
+        geom.width = TblWidth::Dxa(100.0);
+        for (prefs, expected) in [
+            (
+                vec![PrefWidth::Dxa(49.0), PrefWidth::Dxa(51.0)],
+                vec![50.0, 50.0],
+            ),
+            (
+                vec![PrefWidth::Pct(0.4), PrefWidth::Pct(0.6)],
+                vec![40.0, 60.0],
+            ),
+            (
+                vec![PrefWidth::Dxa(40.0), PrefWidth::Dxa(60.0)],
+                vec![40.0, 60.0],
+            ),
+            (
+                vec![PrefWidth::Dxa(0.0), PrefWidth::Pct(0.0)],
+                vec![50.0, 50.0],
+            ),
+            (vec![], vec![50.0, 50.0]),
+        ] {
+            geom.pref = prefs;
+            let widths = table_col_widths(&[50.0, 50.0], &geom, 100.0);
+            assert_eq!(widths.len(), expected.len());
+            for (actual, expected) in widths.iter().zip(&expected) {
+                assert!(
+                    (actual - expected).abs() < 0.00001,
+                    "{widths:?} vs {expected}"
+                );
+            }
+        }
+        geom.width = TblWidth::Pct(1.0);
+        geom.pref = vec![PrefWidth::Pct(0.49), PrefWidth::Pct(0.51)];
+        assert_eq!(table_col_widths(&[50.0, 50.0], &geom, 100.0), [50.0, 50.0]);
+        geom.grid_padded = true;
+        assert_eq!(table_col_widths(&[50.0, 50.0], &geom, 100.0), [49.0, 51.0]);
+    }
+
+    #[test]
+    fn table_zero_grid_and_nonpositive_preferences_preserve_authored_degenerate_geometry() {
+        let mut geom = geom();
+        geom.width = TblWidth::Grid;
+        geom.fixed = false;
+        geom.grid_padded = true;
+        assert_eq!(table_col_widths(&[0.0, 0.0], &geom, 100.0), [0.0, 0.0]);
+        geom.fixed = true;
+        geom.pref = vec![PrefWidth::Dxa(0.0), PrefWidth::Pct(0.0)];
+        assert_eq!(table_col_widths(&[20.0, 40.0], &geom, 100.0), [20.0, 40.0]);
+        geom.fixed = false;
+        geom.width = TblWidth::Dxa(100.0);
+        assert_eq!(table_col_widths(&[0.0, 0.0], &geom, 100.0), [0.0, 0.0]);
+    }
+
+    #[test]
+    fn header_tab_segments_keep_literal_right_center_and_left_endpoints() {
+        let fonts = fonts();
+        let raw = ttf_parser::Face::parse(FaceId::MonoRegular.bytes(), 0).unwrap();
+        let em = f32::from(
+            raw.glyph_hor_advance(raw.glyph_index('A').unwrap())
+                .unwrap(),
+        ) * 12.0
+            / f32::from(raw.units_per_em());
+        for (align, end) in [
+            (TabAlign::Left, 60.0 + 2.0 * em),
+            (TabAlign::Right, 60.0),
+            (TabAlign::Center, 60.0 + em),
+        ] {
+            let mut para = Defaults::word().para;
+            para.tab_stops = vec![TabStop {
+                pos: 60.0,
+                align,
+                leader: TabLeader::None,
+                numbering: false,
+            }];
+            let r = run("A\tAA");
+            assert!(
+                (hf_tab_piece_end(&fonts, std::slice::from_ref(&r), &para, 0.0) - end).abs()
+                    < 0.0001
+            );
+            let mut r = r;
+            r.hf_para = Some(std::rc::Rc::new(para));
+            assert!(hf_tab_line_breaks(&fonts, &[r], 100.0).is_empty());
+        }
+    }
+
+    #[test]
+    fn margin_tabs_move_only_trailing_glued_words_and_preserve_source_bookmark_metadata() {
+        let fonts = fonts();
+        let mut para = Defaults::word().para;
+        para.indent_left = 0.0;
+        para.indent_right = 0.0;
+        para.indent_first = 0.0;
+        para.tab_stops.clear();
+        for (source, width, expected) in [
+            ("A BB\t", 21.0, vec!["A ", "BB\t"]),
+            ("BB\t", 1.0, vec!["BB", "\t"]),
+            ("A\tBB\t", 1.0, vec!["A", "\tBB", "\t"]),
+        ] {
+            let mut r = run(source);
+            r.hf_para = Some(std::rc::Rc::new(para.clone()));
+            r.hf_tab_wrap = true;
+            r.rev = true;
+            r.ref_name = Some("OwnedAnchor".into());
+            r.style.bold = true;
+            let lines = hf_tab_line_breaks(&fonts, &[r], width);
+            assert_eq!(
+                lines
+                    .iter()
+                    .map(|line| line.iter().map(|r| r.text.as_str()).collect::<String>())
+                    .collect::<Vec<_>>(),
+                expected
+            );
+            assert_eq!(
+                lines
+                    .iter()
+                    .flatten()
+                    .map(|r| r.text.as_str())
+                    .collect::<String>(),
+                source
+            );
+            assert!(lines.iter().flatten().all(|r| r.rev
+                && r.style.bold
+                && r.ref_name.as_deref() == Some("OwnedAnchor")
+                && r.hf_tab_wrap));
+        }
+    }
+    #[test]
+    fn xml_blank_runs_keep_authored_tabs_newlines_and_nonbreaking_spaces() {
+        for (source, expected) in [
+            (" \n", "\n"),
+            ("\n \n", "\n\n"),
+            ("A  \n", "A \n"),
+            ("\t  \n", "\t \n"),
+            ("A\r \tB", "A\tB"),
+            ("  A", " A"),
+            ("A  ", "A "),
+            ("A  B", "A  B"),
+            ("A\u{00a0}\u{3000}B", "A\u{00a0}\u{3000}B"),
+        ] {
+            assert_eq!(collapse_ws(source), expected, "source={source:?}");
+        }
+    }
+
+    #[test]
+    fn content_autofit_skips_span_and_grid_before_placeholders_without_inventing_margins() {
+        let fonts = fonts();
+        let raw = ttf_parser::Face::parse(FaceId::MonoRegular.bytes(), 0).unwrap();
+        let em = f32::from(
+            raw.glyph_hor_advance(raw.glyph_index('A').unwrap())
+                .unwrap(),
+        ) * 12.0
+            / f32::from(raw.units_per_em());
+        for (rows_xml, expected) in [
+            (
+                "<w:tr><w:tc><w:tcPr><w:gridSpan w:val='2'/></w:tcPr><w:p><w:r><w:t>AAAAAAAAAAAAAAAA</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc></w:tr>",
+                vec![0.0, 0.0, em],
+            ),
+            (
+                "<w:tr><w:trPr><w:gridBefore w:val='1'/><w:gridAfter w:val='1'/></w:trPr><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc></w:tr>",
+                vec![0.0, em, 0.0],
+            ),
+        ] {
+            let Block::Table {
+                mut rows, mut geom, ..
+            } = table(&format!(
+                "<w:tbl><w:tblGrid><w:gridCol w:w='1000'/><w:gridCol w:w='1000'/><w:gridCol w:w='1000'/></w:tblGrid>{rows_xml}</w:tbl>"
+            ))
+            else {
+                panic!("authored table")
+            };
+            geom.pref.clear();
+            geom.cell_spacing = 0.0;
+            geom.pct_margins = 0.0;
+            let owned_text = rows
+                .iter()
+                .flatten()
+                .flat_map(|c| &c.paras)
+                .flat_map(|p| &p.runs)
+                .map(|r| r.text.as_str())
+                .collect::<String>();
+            for cell in rows.iter_mut().flatten() {
+                cell.pad_l = 0.0;
+                cell.pad_r = 0.0;
+                for para in &mut cell.paras {
+                    para.style.indent_left = 0.0;
+                    para.style.indent_right = 0.0;
+                    for r in &mut para.runs {
+                        r.style = run(&r.text).style;
+                    }
+                }
+            }
+            let widths = content_autofit_widths(&fonts, 3, &rows, &geom, 100.0, false);
+            for (actual, wanted) in widths.iter().zip(expected) {
+                assert!((actual - wanted).abs() < 0.0001);
+            }
+            assert_eq!(
+                rows.iter()
+                    .flatten()
+                    .flat_map(|c| &c.paras)
+                    .flat_map(|p| &p.runs)
+                    .map(|r| r.text.as_str())
+                    .collect::<String>(),
+                owned_text
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod complete_coordinate_vml_owner_contract_tests {
+    use super::*;
+
+    fn fixture(shape: &str) -> (Dom, NodeId, NodeId) {
+        let mut dom = Dom::new();
+        let doc=dom.parse_xdocument(&format!(r#"<w:document xmlns:w="{}" xmlns:v="urn:schemas-microsoft-com:vml"><w:body><w:p><w:r><w:pict>{shape}</w:pict></w:r></w:p></w:body></w:document>"#,W::URI));
+        let root = dom.root(doc).unwrap();
+        let image = descendants_local(&dom, root, "imagedata")[0];
+        (dom, root, image)
+    }
+
+    #[test]
+    fn inline_owner_ancestry_walk_uses_own_extent_and_never_a_sibling_float_slot() {
+        for (style, extent) in [
+            ("", (60.0, 70.0)),
+            ("width:30pt", (60.0, 70.0)),
+            ("height:40pt", (60.0, 70.0)),
+            ("width:30pt;height:40pt", (30.0, 40.0)),
+        ] {
+            let (dom, root, image) = fixture(&format!(
+                "<v:shape style='{style}'><v:imagedata/></v:shape><v:shape style='position:absolute;margin-left:90pt;margin-top:80pt;width:60pt;height:70pt'/>"
+            ));
+            let source = dom.serialize_element(root);
+            assert!(vml_owner_slot(&dom, image, root).is_none());
+            assert_eq!(vml_owner_extent_pt(&dom, image, root), extent);
+            assert_eq!(dom.serialize_element(root), source);
+        }
+    }
+
+    #[test]
+    fn group_owner_coordinates_add_child_origin_to_the_correct_page_or_paragraph_frame() {
+        for (relative, page_x, page_y, col_x, para_y) in [
+            ("page", Some(20.0), Some(30.0), None, None),
+            ("text", None, None, Some(20.0), Some(30.0)),
+        ] {
+            let (dom, root, image) = fixture(&format!(
+                "<v:group style='position:absolute;margin-left:10pt;margin-top:20pt;width:100pt;height:50pt;mso-position-horizontal-relative:{relative};mso-position-vertical-relative:{relative}' coordorigin='100,50' coordsize='1000,500'><v:shape style='left:200;top:150;width:300;height:100'><v:imagedata/></v:shape></v:group>"
+            ));
+            let source = dom.serialize_element(root);
+            assert_eq!(vml_owner_extent_pt(&dom, image, root), (30.0, 10.0));
+            let Some(ImageSlot::Float {
+                page_x: actual_x,
+                page_y: actual_y,
+                col_x: actual_col,
+                para_y: actual_para,
+                align,
+                v_align,
+                pct_x,
+                pct_y,
+                pct_w,
+                pct_h,
+                wrap_square,
+                wrap_top_bottom,
+                wrap_polygon,
+                dist_l,
+                dist_r,
+                dist_t,
+                dist_b,
+                effect_b,
+                col_in_column,
+                v_off,
+                ..
+            }) = vml_owner_slot(&dom, image, root)
+            else {
+                panic!("authored group float")
+            };
+            assert_eq!(
+                (actual_x, actual_y, actual_col, actual_para),
+                (page_x, page_y, col_x, para_y)
+            );
+            assert!(matches!(align, Align::Left) && matches!(v_align, Align::Left));
+            assert!(
+                pct_x.is_none()
+                    && pct_y.is_none()
+                    && pct_w.is_none()
+                    && pct_h.is_none()
+                    && v_off.is_none()
+            );
+            assert!(!wrap_square && !wrap_top_bottom && !wrap_polygon);
+            assert_eq!(
+                (dist_l, dist_r, dist_t, dist_b, effect_b),
+                (9.0, 9.0, 0.0, 0.0, 0.0)
+            );
+            assert_eq!(col_in_column, relative == "text");
+            assert_eq!(dom.serialize_element(root), source);
+        }
+    }
+
+    #[test]
+    fn a_flow_group_keeps_scaled_child_extent_and_declines_floating_owner_metadata() {
+        let (dom, root, image) = fixture(
+            "<v:group style='width:100pt;height:50pt' coordsize='1000,500'><v:shape style='left:200;top:100;width:300;height:100'><v:imagedata/></v:shape></v:group>",
+        );
+        let source = dom.serialize_element(root);
+        assert_eq!(vml_owner_extent_pt(&dom, image, root), (30.0, 10.0));
+        assert!(vml_owner_slot(&dom, image, root).is_none());
+        assert_eq!(dom.serialize_element(root), source);
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod field_group_coordinate_contract_tests {
+    use super::*;
+
+    fn dom(fragment: &str) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let doc=dom.parse_xdocument(&format!(r#"<w:root xmlns:w="{}" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">{fragment}</w:root>"#,W::URI));
+        let root = dom.root(doc).unwrap();
+        (dom, root)
+    }
+
+    fn fonts() -> Fonts<'static> {
+        let mut fonts = Fonts::new();
+        fonts.insert_embedded("Memory Mono", false, false, FaceId::MonoRegular.bytes());
+        fonts
+    }
+    fn run(text: &str) -> TextRun {
+        let mut style = Defaults::word().run;
+        style.family = "Memory Mono".into();
+        style.size = 12.0;
+        TextRun::new(text, style)
+    }
+    fn text(lines: &[Vec<TextRun>]) -> Vec<String> {
+        lines
+            .iter()
+            .map(|line| line.iter().map(|r| r.text.as_str()).collect())
+            .collect()
+    }
+    fn mono_em() -> f32 {
+        let raw = ttf_parser::Face::parse(FaceId::MonoRegular.bytes(), 0).unwrap();
+        f32::from(
+            raw.glyph_hor_advance(raw.glyph_index('1').unwrap())
+                .unwrap(),
+        ) * 12.0
+            / f32::from(raw.units_per_em())
+    }
+
+    #[test]
+    fn character_wrapping_retains_each_page_reference_bookmark_and_note_owner() {
+        let fonts = fonts();
+        let width = 2.1 * mono_em();
+        for owner in ["plain", "pageref", "ref", "footnote"] {
+            let mut source = run("1234");
+            match owner {
+                "pageref" => source.pageref = Some("OwnedPage".into()),
+                "ref" => source.ref_name = Some("OwnedReference".into()),
+                "footnote" => source.footnote_id = Some("OwnedNote".into()),
+                _ => {}
+            }
+            let lines = wrap_runs_segment(
+                &fonts,
+                std::slice::from_ref(&source),
+                width,
+                width,
+                false,
+                None,
+                LineFit {
+                    char_break: true,
+                    ..LineFit::default()
+                },
+            );
+            assert_eq!(text(&lines), ["12", "34"]);
+            assert_eq!(
+                lines
+                    .iter()
+                    .flatten()
+                    .map(|r| r.text.as_str())
+                    .collect::<String>(),
+                source.text
+            );
+            let expected_runs = if owner == "plain" { 2 } else { 4 };
+            assert_eq!(lines.iter().flatten().count(), expected_runs);
+            for r in lines.iter().flatten() {
+                assert_eq!(
+                    (&r.pageref, &r.ref_name, &r.footnote_id),
+                    (&source.pageref, &source.ref_name, &source.footnote_id)
+                );
+                assert!(style_eq(&r.style, &source.style));
+                assert!(r.field == FieldKind::None);
+            }
+        }
+    }
+
+    #[test]
+    fn wrapping_does_not_merge_different_field_kinds_or_comment_marker_ownership() {
+        let fonts = fonts();
+        for owner in ["field", "comment-marker", "character-style", "styleref"] {
+            let a = run("12");
+            let mut b = run("34");
+            match owner {
+                "field" => b.field = FieldKind::Page,
+                "comment-marker" => b.comment_marker = true,
+                "character-style" => b.char_style = Some(std::rc::Rc::from("OwnedChar")),
+                "styleref" => {
+                    b.styleref = Some(std::rc::Rc::new(StyleRef {
+                        id: "OwnedHeading".into(),
+                        last: false,
+                    }));
+                }
+                _ => unreachable!(),
+            }
+            let lines = wrap_runs_segment(
+                &fonts,
+                &[a.clone(), b.clone()],
+                100.0,
+                100.0,
+                false,
+                None,
+                LineFit::default(),
+            );
+            assert_eq!(text(&lines), ["1234"]);
+            assert_eq!(lines[0].len(), 2, "owner={owner}");
+            for (actual, source) in lines[0].iter().zip([&a, &b]) {
+                assert_eq!(actual.text, source.text);
+                assert!(actual.field == source.field);
+                assert_eq!(actual.comment_marker, source.comment_marker);
+                assert_eq!(actual.char_style, source.char_style);
+                assert_eq!(actual.styleref, source.styleref);
+                assert!(style_eq(&actual.style, &source.style));
+            }
+        }
+    }
+
+    #[test]
+    fn closing_punctuation_hangs_with_its_letter_but_cannot_exceed_a_narrower_than_glyph_line() {
+        let fonts = fonts();
+        let em = mono_em();
+        for (width, expected) in [
+            (1.1 * em, vec!["1’", "2’"]),
+            (0.5 * em, vec!["1", "’", "2", "’"]),
+        ] {
+            let source = run("1’2’");
+            let lines = wrap_runs_segment(
+                &fonts,
+                std::slice::from_ref(&source),
+                width,
+                width,
+                false,
+                None,
+                LineFit {
+                    char_break: true,
+                    ..LineFit::default()
+                },
+            );
+            assert_eq!(text(&lines), expected);
+            assert_eq!(
+                lines
+                    .iter()
+                    .flatten()
+                    .map(|r| r.text.as_str())
+                    .collect::<String>(),
+                source.text
+            );
+            assert!(
+                lines
+                    .iter()
+                    .flatten()
+                    .all(|r| style_eq(&r.style, &source.style))
+            );
+        }
+    }
+
+    #[test]
+    fn hanging_spaces_keep_their_authored_span_while_legacy_narrow_cells_stack_them() {
+        let fonts = fonts();
+        let width = 0.5 * mono_em();
+        for (hang, expected) in [(false, vec!["1", "  ", "2"]), (true, vec!["1  ", "2"])] {
+            let source = run("1  2");
+            let lines = wrap_runs_segment(
+                &fonts,
+                std::slice::from_ref(&source),
+                width,
+                width,
+                false,
+                None,
+                LineFit {
+                    char_break: true,
+                    hang_spaces: hang,
+                    ..LineFit::default()
+                },
+            );
+            assert_eq!(text(&lines), expected);
+            assert_eq!(
+                lines
+                    .iter()
+                    .flatten()
+                    .map(|r| r.text.as_str())
+                    .collect::<String>(),
+                source.text
+            );
+        }
+    }
+
+    fn sheet() -> StyleSheet {
+        StyleSheet {
+            defaults: Defaults::word(),
+            by_id: HashMap::new(),
+            tables: HashMap::new(),
+            theme: ThemeFonts::default(),
+            latent: true,
+            default_table: true,
+        }
+    }
+    fn word_mode(test: impl FnOnce()) {
+        struct Restore(RevisionStyle);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                REVISIONS.with(|v| v.set(self.0));
+            }
+        }
+        let _restore = Restore(REVISIONS.with(|v| v.replace(RevisionStyle::Word)));
+        test();
+    }
+
+    #[test]
+    fn revised_header_fields_keep_owned_cache_or_empty_placeholders_and_complete_run_style() {
+        word_mode(|| {
+            let sheet = sheet();
+            for (tag, kind) in [
+                ("PAGE", FieldKind::Page),
+                ("NUMPAGES", FieldKind::NumPages),
+                ("NUMWORDS", FieldKind::NumWords),
+            ] {
+                for (wrapper, deleted) in [("ins", false), ("del", true)] {
+                    for cache in ["", "IV"] {
+                        let text_tag = if deleted { "delText" } else { "t" };
+                        let instr_tag = if deleted { "delInstrText" } else { "instrText" };
+                        let cached = if cache.is_empty() {
+                            String::new()
+                        } else {
+                            format!(
+                                "<w:r><w:rPr><w:color w:val='008000'/><w:b/><w:sz w:val='24'/></w:rPr><w:{text_tag}>{cache}</w:{text_tag}></w:r>"
+                            )
+                        };
+                        let source = format!(
+                            "<w:p><w:{wrapper} w:id='1' w:author='Owner' w:date='2001-02-03T04:05:06Z'><w:r><w:rPr><w:color w:val='008000'/><w:b/><w:sz w:val='24'/></w:rPr><w:fldChar w:fldCharType='begin'/><w:{instr_tag}> {tag} </w:{instr_tag}><w:fldChar w:fldCharType='separate'/></w:r>{cached}<w:r><w:rPr><w:color w:val='008000'/><w:b/><w:sz w:val='24'/></w:rPr><w:fldChar w:fldCharType='end'/></w:r></w:{wrapper}></w:p>"
+                        );
+                        let (dom, root) = dom(&source);
+                        let unchanged = dom.serialize_element(root);
+                        let mut runs = Vec::new();
+                        collect_hf_rev(
+                            &dom,
+                            root,
+                            &sheet.defaults.run,
+                            &sheet,
+                            &mut FieldScan::default(),
+                            &mut runs,
+                            RevMark::None,
+                        );
+                        assert_eq!(runs.len(), 1, "field {tag}/{wrapper}/cache={cache:?}");
+                        let r = &runs[0];
+                        assert_eq!(r.text, cache);
+                        assert!(r.field == kind);
+                        assert!(r.rev);
+                        assert_eq!(r.style.color, [0.0, 128.0 / 255.0, 0.0]);
+                        assert!(r.style.bold);
+                        assert_eq!(r.style.size, 12.0);
+                        assert_eq!(r.style.strike, deleted);
+                        assert!(!r.style.underline);
+                        assert!(
+                            r.pageref.is_none() && r.ref_name.is_none() && r.styleref.is_none()
+                        );
+                        assert_eq!(dom.serialize_element(root), unchanged);
+                    }
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn revised_field_runs_skip_drawing_metadata_and_binary_field_data_without_leaking_text() {
+        word_mode(|| {
+            let sheet = sheet();
+            let (dom, root) = dom(
+                "<w:p><w:ins w:id='1' w:author='Owner' w:date='2001-02-03T04:05:06Z'><w:r><w:fldChar w:fldCharType='begin'><w:fldData>BASE64_METADATA</w:fldData></w:fldChar><w:instrText> UNHANDLED </w:instrText><w:drawing><wp:docPr id='4' name='NOT_VISIBLE'/></w:drawing><w:fldChar w:fldCharType='end'/></w:r><w:r><w:t>Owned visible text</w:t></w:r></w:ins></w:p>",
+            );
+            let unchanged = dom.serialize_element(root);
+            let mut runs = Vec::new();
+            collect_hf_rev(
+                &dom,
+                root,
+                &sheet.defaults.run,
+                &sheet,
+                &mut FieldScan::default(),
+                &mut runs,
+                RevMark::None,
+            );
+            assert_eq!(
+                runs.iter().map(|r| r.text.as_str()).collect::<String>(),
+                "Owned visible text"
+            );
+            assert_eq!(runs.len(), 1);
+            assert!(runs[0].rev && runs[0].style.underline);
+            assert_eq!(runs[0].style.color, HF_REV_COLOR);
+            assert!(runs[0].field == FieldKind::None);
+            assert_eq!(dom.serialize_element(root), unchanged);
+        });
+    }
+
+    #[test]
+    fn revised_left_position_tabs_after_field_cache_keep_field_scan_and_source_style() {
+        word_mode(|| {
+            let sheet = sheet();
+            let (dom, root) = dom(
+                "<w:p><w:ins w:id='1' w:author='Owner' w:date='2001-02-03T04:05:06Z'><w:r><w:fldChar w:fldCharType='begin'/><w:instrText> UNHANDLED </w:instrText><w:fldChar w:fldCharType='separate'/></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>One</w:t><w:ptab w:alignment='left' w:relativeTo='margin' w:leader='none'/><w:t>Two</w:t></w:r><w:r><w:fldChar w:fldCharType='end'/></w:r></w:ins></w:p>",
+            );
+            let unchanged = dom.serialize_element(root);
+            let mut runs = Vec::new();
+            collect_hf_rev(
+                &dom,
+                root,
+                &sheet.defaults.run,
+                &sheet,
+                &mut FieldScan::default(),
+                &mut runs,
+                RevMark::None,
+            );
+            assert_eq!(
+                runs.iter().map(|r| r.text.as_str()).collect::<String>(),
+                "One\nTwo"
+            );
+            assert_eq!(runs.len(), 3);
+            assert!(
+                runs.iter().all(|r| r.rev
+                    && r.style.bold
+                    && r.style.underline
+                    && r.field == FieldKind::None)
+            );
+            assert_eq!(dom.serialize_element(root), unchanged);
+        });
+    }
+
+    fn grouped_shape(text: &str, vert: &str) -> String {
+        format!(
+            "<wps:wsp><wps:spPr><a:xfrm flipH='1' flipV='1'><a:off x='127000' y='63500'/><a:ext cx='127000' cy='127000'/></a:xfrm><a:solidFill><a:srgbClr val='00FF00'/></a:solidFill><a:prstGeom prst='rect'/></wps:spPr><wps:txbx><w:txbxContent><w:p><w:pPr><w:ind w:left='180'/><w:spacing w:before='40'/></w:pPr><w:r><w:rPr><w:b/><w:color w:val='008000'/></w:rPr><w:t>{text}</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr vert='{vert}' anchor='ctr' lIns='25400' tIns='12700' rIns='38100' bIns='50800'/></wps:wsp>"
+        )
+    }
+
+    #[test]
+    fn drawing_canvas_and_explicit_group_frames_keep_identical_child_geometry_and_owned_text() {
+        let sheet = sheet();
+        for canvas in [false, true] {
+            for paragraphs in [false, true] {
+                for vert in ["horz", "vert"] {
+                    let child = grouped_shape("Owned label", vert);
+                    let group = if canvas {
+                        format!("<wpc:wpc>{child}</wpc:wpc>")
+                    } else {
+                        format!(
+                            "<wpg:wgp><wpg:grpSpPr><a:xfrm><a:off x='0' y='0'/><a:ext cx='508000' cy='254000'/><a:chOff x='0' y='0'/><a:chExt cx='508000' cy='254000'/></a:xfrm></wpg:grpSpPr>{child}</wpg:wgp>"
+                        )
+                    };
+                    let (dom, root) = dom(&format!(
+                        "<w:p><w:r><w:drawing><wp:inline><wp:extent cx='508000' cy='254000'/><wp:docPr id='1' name='Owned group'/><a:graphic><a:graphicData>{group}</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"
+                    ));
+                    let drawing = first_named(&dom, root, "drawing").unwrap();
+                    let unchanged = dom.serialize_element(root);
+                    let ctx = GroupText {
+                        theme: &sheet.theme,
+                        base: &sheet.defaults.run,
+                        sheet: paragraphs.then_some(&sheet),
+                    };
+                    let children = group_children(&dom, drawing, &ctx);
+                    assert_eq!(children.len(), 1);
+                    let child = &children[0];
+                    assert_eq!(child.frac, [0.25, 0.25, 0.25, 0.5]);
+                    let shape = &child.shape;
+                    assert_eq!(
+                        (shape.w, shape.h, shape.text_dx, shape.text_dy),
+                        (10.0, 10.0, 9.0, 2.0)
+                    );
+                    assert_eq!(shape.fill, Some([0.0, 1.0, 0.0]));
+                    assert!(shape.line.is_none() && !shape.stroke && shape.flip_h && shape.flip_v);
+                    assert_eq!(shape.insets, [2.0, 1.0, 3.0, 4.0]);
+                    assert!(matches!(shape.text_anchor, TextAnchor::Center));
+                    assert_eq!(
+                        shape
+                            .runs
+                            .iter()
+                            .map(|r| r.text.as_str())
+                            .collect::<String>(),
+                        "Owned label"
+                    );
+                    assert!(
+                        shape
+                            .runs
+                            .iter()
+                            .all(|r| r.style.bold && r.style.color == [0.0, 128.0 / 255.0, 0.0])
+                    );
+                    let stacked = paragraphs && vert == "horz";
+                    assert_eq!(shape.paras.len(), usize::from(stacked));
+                    assert!(shape.tables.is_empty());
+                    if stacked {
+                        assert_eq!(
+                            shape.paras[0]
+                                .0
+                                .iter()
+                                .map(|r| r.text.as_str())
+                                .collect::<String>(),
+                            "Owned label"
+                        );
+                        assert_eq!(shape.paras[0].1.indent_left, 9.0);
+                    }
+                    assert!(group_pictures(&dom, drawing).is_empty());
+                    assert_eq!(dom.serialize_element(root), unchanged);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn group_picture_members_keep_source_order_and_their_own_transform_boxes() {
+        let (dom, root) = dom(
+            "<w:drawing><wp:inline><wp:extent cx='508000' cy='254000'/><a:graphic><a:graphicData><wpc:wpc><pic:pic><pic:spPr><a:xfrm><a:off x='0' y='0'/><a:ext cx='127000' cy='63500'/></a:xfrm></pic:spPr></pic:pic><pic:pic><pic:spPr><a:xfrm><a:off x='254000' y='127000'/><a:ext cx='254000' cy='127000'/></a:xfrm></pic:spPr></pic:pic></wpc:wpc></a:graphicData></a:graphic></wp:inline></w:drawing>",
+        );
+        let drawing = first_named(&dom, root, "drawing").unwrap();
+        let unchanged = dom.serialize_element(root);
+        let nodes = descendants_local(&dom, drawing, "pic");
+        let pictures = group_pictures(&dom, drawing);
+        assert_eq!(
+            pictures,
+            vec![
+                ([0.0, 0.0, 0.25, 0.25], nodes[0]),
+                ([0.5, 0.5, 0.5, 0.5], nodes[1])
+            ]
+        );
+        assert_eq!(dom.serialize_element(root), unchanged);
+    }
+
+    #[test]
+    fn grouped_empty_text_keeps_flat_source_without_inventing_stacked_paragraphs() {
+        let sheet = sheet();
+        let (dom, root) = dom(&format!(
+            "<w:drawing><wp:inline><wp:extent cx='508000' cy='254000'/><a:graphic><a:graphicData><wpc:wpc>{}</wpc:wpc></a:graphicData></a:graphic></wp:inline></w:drawing>",
+            grouped_shape(" ", "horz")
+        ));
+        let drawing = first_named(&dom, root, "drawing").unwrap();
+        let ctx = GroupText {
+            theme: &sheet.theme,
+            base: &sheet.defaults.run,
+            sheet: Some(&sheet),
+        };
+        let unchanged = dom.serialize_element(root);
+        let children = group_children(&dom, drawing, &ctx);
+        assert_eq!(children.len(), 1);
+        assert!(children[0].shape.paras.is_empty());
+        assert_eq!(
+            children[0]
+                .shape
+                .runs
+                .iter()
+                .map(|r| r.text.as_str())
+                .collect::<String>(),
+            " "
+        );
+        assert_eq!(children[0].frac, [0.25, 0.25, 0.25, 0.5]);
+        assert_eq!(dom.serialize_element(root), unchanged);
+    }
+
+    #[test]
+    fn intentionally_incomplete_custom_beziers_do_not_drop_later_valid_path_commands() {
+        for broken in [
+            "<a:cubicBezTo><a:pt x='1' y='2'/><a:pt x='3' y='4'/></a:cubicBezTo>",
+            "<a:quadBezTo><a:pt x='1' y='2'/></a:quadBezTo>",
+        ] {
+            let (dom, root) = dom(&format!(
+                "<wps:wsp><wps:spPr><a:xfrm><a:ext cx='254000' cy='127000'/></a:xfrm><a:custGeom><a:avLst/><a:gdLst/><a:pathLst><a:path w='20' h='10' fill='none' stroke='true'><a:moveTo><a:pt x='0' y='0'/></a:moveTo>{broken}<a:lnTo><a:pt x='20' y='10'/></a:lnTo></a:path></a:pathLst></a:custGeom></wps:spPr></wps:wsp>"
+            ));
+            let unchanged = dom.serialize_element(root);
+            let custom = cust_geom(&dom, root).unwrap();
+            assert!(custom.av.is_empty() && custom.gd.is_empty());
+            assert_eq!(custom.paths.len(), 1);
+            assert_eq!(
+                (
+                    custom.paths[0].w,
+                    custom.paths[0].h,
+                    custom.paths[0].fill,
+                    custom.paths[0].stroke
+                ),
+                (20.0, 10.0, preset_geom::Fill::None, true)
+            );
+            assert_eq!(custom.paths[0].cmds.len(), 2);
+            assert!(
+                matches!(&custom.paths[0].cmds[0],preset_geom::OwnedCmd::M(x,y) if x=="0"&&y=="0")
+            );
+            assert!(
+                matches!(&custom.paths[0].cmds[1],preset_geom::OwnedCmd::L(x,y) if x=="20"&&y=="10")
+            );
+            let paths = preset_geom::evaluate_custom(&custom, 40.0, 20.0);
+            assert_eq!(paths.len(), 1);
+            assert_eq!(paths[0].subpaths.len(), 1);
+            assert_eq!(paths[0].subpaths[0].pts, vec![(0.0, 0.0), (40.0, 20.0)]);
+            assert!(!paths[0].subpaths[0].closed);
+            assert_eq!(dom.serialize_element(root), unchanged);
+        }
+    }
+}

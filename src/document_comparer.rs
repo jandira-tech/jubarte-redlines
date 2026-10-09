@@ -11247,3 +11247,466 @@ mod comparer_relationship_contract_tests {
         assert_eq!(b.to_zip().unwrap(), before);
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod authored_style_chain_boundary_tests {
+    use super::*;
+    use std::collections::{BTreeMap, HashMap};
+    fn parse(content: &str) -> (Dom, NodeId, HashMap<String, NodeId>) {
+        let mut dom = Dom::new();
+        let document = dom.parse_xdocument(&format!(
+            "<w:styles xmlns:w='{}'>{content}</w:styles>",
+            W::URI
+        ));
+        let root = dom.root(document).unwrap();
+        let ids = dom
+            .elements(root, Some(&W::name("style")))
+            .into_iter()
+            .map(|node| {
+                (
+                    dom.attribute(node, &W::name("styleId")).unwrap().to_owned(),
+                    node,
+                )
+            })
+            .collect();
+        (dom, root, ids)
+    }
+    fn leaf(local: &str, value: &str) -> String {
+        format!(
+            "{}\u{1}{}={value}",
+            W::name(local).clark(),
+            W::val().clark()
+        )
+    }
+    fn attrs(values: &[(&str, &str)]) -> String {
+        let mut values = values
+            .iter()
+            .map(|(name, value)| format!("{}={value}", W::name(name).clark()))
+            .collect::<Vec<_>>();
+        values.sort();
+        values.join("\u{1}")
+    }
+    #[test]
+    fn inherited_style_font_alternatives_and_missing_blocks_keep_exact_declarations() {
+        let defaults = "<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:asciiTheme='minorHAnsi' w:hAnsiTheme='minorHAnsi'/><w:sz w:val='22'/></w:rPr></w:rPrDefault></w:docDefaults>";
+        for has_parent_block in [false, true] {
+            let parent = if has_parent_block {
+                "<w:rPr><w:rFonts w:ascii='ParentFont'/><w:i/></w:rPr>"
+            } else {
+                ""
+            };
+            let (dom, root, ids) = parse(&format!(
+                "{defaults}<w:style w:type='paragraph' w:styleId='Base'><w:name w:val='Base'/>{parent}</w:style><w:style w:type='paragraph' w:styleId='Child'><w:name w:val='Child'/><w:basedOn w:val='Base'/><w:rPr><w:rFonts w:ascii='AuthoredFont'/><w:color w:val='123456'/><w:rPrChange w:id='7' w:author='Old owner' w:date='2001-02-03T04:05:06Z'><w:rPr><w:b/></w:rPr></w:rPrChange></w:rPr></w:style>"
+            ));
+            let before = dom.serialize_element(root);
+            let mut expected = BTreeMap::from([
+                (
+                    W::name("rFonts").clark(),
+                    attrs(&[("ascii", "AuthoredFont"), ("hAnsiTheme", "minorHAnsi")]),
+                ),
+                (W::name("sz").clark(), leaf("sz", "22")),
+                (W::name("color").clark(), leaf("color", "123456")),
+            ]);
+            if has_parent_block {
+                expected.insert(W::name("i").clark(), W::name("i").clark());
+            }
+            assert_eq!(
+                effective_chain_props(&dom, root, &ids, Some(ids["Child"]), "rPr", "rPrDefault"),
+                expected
+            );
+            assert_eq!(
+                effective_chain_props(&dom, root, &ids, None, "rPr", "rPrDefault"),
+                BTreeMap::from([
+                    (
+                        W::name("rFonts").clark(),
+                        attrs(&[("asciiTheme", "minorHAnsi"), ("hAnsiTheme", "minorHAnsi")])
+                    ),
+                    (W::name("sz").clark(), leaf("sz", "22"))
+                ])
+            );
+            assert_eq!(
+                dom.serialize_element(root),
+                before,
+                "resolving formatting may not mutate old history or source declarations"
+            );
+        }
+    }
+    #[test]
+    fn based_on_cycles_stop_after_unique_authored_owners_with_nearest_properties_winning() {
+        for cycle in [false, true] {
+            let base = if cycle {
+                "<w:basedOn w:val='Leaf'/>"
+            } else {
+                ""
+            };
+            let (dom, root, ids) = parse(&format!(
+                "<w:style w:type='paragraph' w:styleId='Leaf'><w:name w:val='Leaf'/><w:basedOn w:val='Base'/><w:rPr><w:color w:val='123456'/></w:rPr></w:style><w:style w:type='paragraph' w:styleId='Base'><w:name w:val='Base'/>{base}<w:rPr><w:i/><w:color w:val='ABCDEF'/></w:rPr></w:style>"
+            ));
+            let before = dom.serialize_element(root);
+            assert_eq!(
+                effective_chain_props(&dom, root, &ids, Some(ids["Leaf"]), "rPr", "rPrDefault"),
+                BTreeMap::from([
+                    (W::name("i").clark(), W::name("i").clark()),
+                    (W::name("color").clark(), leaf("color", "123456"))
+                ])
+            );
+            assert_eq!(dom.serialize_element(root), before);
+        }
+    }
+    #[test]
+    fn bounded_style_walk_reads_exactly_the_nearest_thirty_two_owners() {
+        for count in [31usize, 32, 33] {
+            let mut content = String::new();
+            for i in 0..count {
+                let base = if i + 1 < count {
+                    format!("<w:basedOn w:val='Owner{}'/>", i + 1)
+                } else {
+                    String::new()
+                };
+                let props = if i == 0 {
+                    "<w:color w:val='123456'/>"
+                } else if i == 31 {
+                    "<w:i/>"
+                } else if i == 32 {
+                    "<w:b/>"
+                } else {
+                    ""
+                };
+                content.push_str(&format!("<w:style w:type='paragraph' w:styleId='Owner{i}'><w:name w:val='Owner {i}'/>{base}<w:rPr>{props}</w:rPr></w:style>"));
+            }
+            let (dom, root, ids) = parse(&content);
+            let before = dom.serialize_element(root);
+            let mut expected =
+                BTreeMap::from([(W::name("color").clark(), leaf("color", "123456"))]);
+            if count >= 32 {
+                expected.insert(W::name("i").clark(), W::name("i").clark());
+            }
+            assert_eq!(
+                effective_chain_props(&dom, root, &ids, Some(ids["Owner0"]), "rPr", "rPrDefault"),
+                expected,
+                "chain count {count}"
+            );
+            assert_eq!(dom.serialize_element(root), before);
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod isolated_header_container_revision_boundary_tests {
+    use super::*;
+    fn semantic(dom: &Dom, node: NodeId) -> String {
+        if !dom.is_element(node) {
+            return dom.text_value(node).unwrap_or_default().into();
+        }
+        let name = dom.name(node).unwrap();
+        let mut attrs = dom
+            .attributes(node)
+            .into_iter()
+            .filter(|(n, _)| {
+                n.namespace_name() != "http://www.w3.org/2000/xmlns/" && n.local_name() != "xmlns"
+            })
+            .collect::<Vec<_>>();
+        if attrs.is_empty()
+            && dom.nodes(node).is_empty()
+            && (name == W::r_pr() || name == W::p_pr())
+        {
+            return String::new();
+        }
+        attrs.sort_by_key(|(n, v)| {
+            (
+                n.namespace_name().to_owned(),
+                n.local_name().to_owned(),
+                v.clone(),
+            )
+        });
+        format!(
+            "{:?}{attrs:?}[{}]",
+            name,
+            dom.nodes(node)
+                .into_iter()
+                .map(|n| semantic(dom, n))
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join("|")
+        )
+    }
+    fn parsed(xml: &str) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).unwrap();
+        (dom, root)
+    }
+    #[test]
+    fn pure_header_container_payloads_recover_every_authored_property_and_fallback() {
+        let run = "<w:r><w:rPr><w:b/><w:color w:val='123456'/></w:rPr><w:t>owned header payload</w:t><w:tab/><w:br/></w:r>";
+        let forms = [
+            format!(
+                "<w:hyperlink w:anchor='Clause'>{run}</w:hyperlink><w:bookmarkStart w:id='31' w:name='Clause'/><w:bookmarkEnd w:id='31'/>"
+            ),
+            format!(
+                "<w:sdt><w:sdtPr><w:alias w:val='Clause'/><w:tag w:val='header-owner'/><w:id w:val='32'/><w:richText/></w:sdtPr><w:sdtContent>{run}</w:sdtContent></w:sdt>"
+            ),
+            format!(
+                "<mc:AlternateContent><mc:Choice Requires='w14'>{run}</mc:Choice><mc:Fallback><w:r><w:rPr><w:i/></w:rPr><w:t>fallback payload</w:t></w:r></mc:Fallback></mc:AlternateContent>"
+            ),
+        ];
+        for form in forms {
+            for footer in [false, true] {
+                for mark_properties in [false, true] {
+                    for deleting in [false, true] {
+                        let kind = if footer { "ftr" } else { "hdr" };
+                        let part = if footer {
+                            "word/owned-footer.xml"
+                        } else {
+                            "word/owned-header.xml"
+                        };
+                        let mark = if mark_properties {
+                            "<w:rPr><w:b/><w:color w:val='345678'/></w:rPr>"
+                        } else {
+                            ""
+                        };
+                        let xml = format!(
+                            "<w:{kind} xmlns:w='{}' xmlns:mc='http://schemas.openxmlformats.org/markup-compatibility/2006' xmlns:w14='http://schemas.microsoft.com/office/word/2010/wordml'><w:p><w:pPr><w:spacing w:after='120'/><w:ind w:left='180'/>{mark}</w:pPr>{form}</w:p></w:{kind}>",
+                            W::URI
+                        );
+                        let (source, root) = parsed(&xml);
+                        let expected = semantic(&source, root);
+                        let mut pkg = PartFs::open(include_bytes!(
+                            "../tests/fixtures/word_probes/tokens/cell_a.docx"
+                        ))
+                        .unwrap();
+                        pkg.set_part(part, xml.into_bytes());
+                        pkg.add_content_type_override(&format!("/{part}"),if footer {"application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"} else {"application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"});
+                        let relationship = pkg.add_document_relationship(
+                            "word/document.xml",
+                            if footer {
+                                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer"
+                            } else {
+                                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header"
+                            },
+                            part.strip_prefix("word/").unwrap(),
+                        );
+                        let (mut main_dom, main_root) =
+                            parsed(&pkg.part_string("word/document.xml").unwrap());
+                        let body = main_dom.element(main_root, &W::body()).unwrap();
+                        let section = main_dom.element(body, &W::sect_pr()).unwrap();
+                        let reference = main_dom.new_element(W::name(if footer {
+                            "footerReference"
+                        } else {
+                            "headerReference"
+                        }));
+                        main_dom.set_attribute_value(reference, &W::name("type"), Some("default"));
+                        main_dom.set_attribute_value(
+                            reference,
+                            &R::name("id"),
+                            Some(&relationship),
+                        );
+                        main_dom.add_first(section, reference);
+                        pkg.set_part(
+                            "word/document.xml",
+                            main_dom.serialize_element(main_root).into_bytes(),
+                        );
+                        let settings = WmlComparerSettings {
+                            author_for_revisions: "New owner".into(),
+                            date_time_for_revisions: "2001-02-03T04:05:06Z".into(),
+                            ..WmlComparerSettings::default()
+                        };
+                        let main = pkg.part_bytes("word/document.xml").unwrap().to_vec();
+                        if deleting {
+                            mark_hf_part_content_as_deleted(&mut pkg, part, &settings);
+                        } else {
+                            mark_adopted_hf_content_as_inserted(&mut pkg, part, &settings);
+                        }
+                        assert_eq!(pkg.part_bytes("word/document.xml"), Some(main.as_slice()));
+                        let (mut dom, root) = parsed(&pkg.part_string(part).unwrap());
+                        let marker = if deleting { W::del() } else { W::ins() };
+                        let marks = dom.descendants(root, Some(&marker));
+                        assert!(!marks.is_empty());
+                        for mark in marks {
+                            assert_eq!(dom.attribute(mark, &W::author()), Some("New owner"));
+                            assert_eq!(
+                                dom.attribute(mark, &W::date()),
+                                Some("2001-02-03T04:05:06Z")
+                            );
+                        }
+                        let result = if deleting {
+                            crate::revision_processor::reject_revisions_document(&mut dom, root)
+                        } else {
+                            crate::revision_processor::accept_revisions_document(&mut dom, root)
+                        };
+                        assert_eq!(
+                            semantic(&dom, result),
+                            expected,
+                            "footer={footer} deleted={deleting} paragraph-mark-properties={mark_properties} form={form}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod redefined_style_chain_source_owner_tests {
+    use super::*;
+
+    fn stylesheet(
+        count: usize,
+        cycle: bool,
+        revised: bool,
+        default: Option<&str>,
+        leaf_metrics: &str,
+    ) -> String {
+        let defaults = if revised { "DefaultB" } else { "DefaultA" };
+        let inherited = if revised { "InheritedB" } else { "InheritedA" };
+        let history = if revised {
+            ""
+        } else {
+            "<w:pPr><w:pPrChange w:id='91' w:author='Authored owner' w:date='2000-01-01T00:00:00Z'><w:pPr><w:keepNext/><w:spacing w:after='180'/></w:pPr></w:pPrChange></w:pPr>"
+        };
+        let mut xml = format!(
+            "<w:styles xmlns:w='{}'><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii='{defaults}' w:hAnsi='SharedFont'/><w:sz w:val='22'/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:type='paragraph' w:styleId='Leaf'{}><w:name w:val='Authored clause'/><w:basedOn w:val='Owner1'/>{history}{leaf_metrics}</w:style>",
+            W::URI,
+            default
+                .map(|v| format!(" w:default='{v}'"))
+                .unwrap_or_default()
+        );
+        for index in 1..count {
+            let based = if index + 1 < count {
+                format!("<w:basedOn w:val='Owner{}'/>", index + 1)
+            } else if cycle {
+                "<w:basedOn w:val='Leaf'/>".to_owned()
+            } else {
+                String::new()
+            };
+            let metrics = if index + 1 == count {
+                format!(
+                    "<w:rPr><w:rFonts w:ascii='{inherited}'/><w:i/><w:color w:val='123456'/></w:rPr>"
+                )
+            } else {
+                String::new()
+            };
+            xml.push_str(&format!("<w:style w:type='paragraph' w:styleId='Owner{index}'><w:name w:val='Parent{index}'/>{based}{metrics}</w:style>"));
+        }
+        xml.push_str("</w:styles>");
+        xml
+    }
+
+    fn root(dom: &mut Dom, xml: &str) -> NodeId {
+        let document = dom.parse_xdocument(xml);
+        dom.root(document).unwrap()
+    }
+
+    #[test]
+    fn redefined_style_metrics_bound_cycles_depth_and_default_owners_without_source_history_loss() {
+        for (count, cycle, default) in [
+            (11, false, None),
+            (12, false, None),
+            (13, false, None),
+            (3, true, None),
+            (3, false, Some("1")),
+            (3, false, Some("true")),
+            (3, false, Some("0")),
+        ] {
+            let mut dom = Dom::new();
+            let output = root(&mut dom, &stylesheet(count, cycle, false, default, ""));
+            let revised = root(&mut dom, &stylesheet(count, cycle, true, default, ""));
+            let revised_before = dom.serialize_element(revised);
+            let excluded_default = matches!(default, Some("1" | "true"));
+            assert_eq!(
+                resolve_redefined_style_metrics(&mut dom, output, revised),
+                !excluded_default,
+                "depth={count} cycle={cycle} default={default:?}"
+            );
+            // The twelve-owner walk includes Leaf. A thirteenth owner's
+            // authored declaration therefore remains outside the lookup;
+            // the actual revised docDefaults supply the effective font.
+            let font = if count > 12 { "DefaultB" } else { "InheritedB" };
+            let leaf_metrics = if excluded_default {
+                String::new()
+            } else {
+                format!("<w:rPr><w:rFonts w:ascii='{font}'/></w:rPr>")
+            };
+            let expected = root(
+                &mut dom,
+                &stylesheet(count, cycle, false, default, &leaf_metrics),
+            );
+            assert_eq!(
+                dom.serialize_element(output),
+                dom.serialize_element(expected),
+                "all original parents, exact authored history and revised effective font delta must survive"
+            );
+            assert_eq!(
+                dom.serialize_element(revised),
+                revised_before,
+                "revised source stylesheet must remain byte-stable"
+            );
+            if !cycle {
+                let once = dom.serialize_element(output);
+                assert!(!resolve_redefined_style_metrics(&mut dom, output, revised));
+                assert_eq!(
+                    dom.serialize_element(output),
+                    once,
+                    "no duplicate history or repeated metric writes"
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod namespace_declared_default_property_owner_tests {
+    use super::*;
+
+    #[test]
+    fn locally_declared_namespace_metadata_never_becomes_a_paragraph_property_delta() {
+        for own_spacing in [false, true] {
+            let mut dom = Dom::new();
+            let source_doc = dom.parse_xdocument(&format!("<w:styles xmlns:w='{}'><w:docDefaults><w:pPrDefault><w:pPr><w:ind xmlns:source='urn:authored:source' w:left='300' w:right='120'/><w:spacing xmlns:source='urn:authored:spacing' w:beforeLines='2' w:afterLines='1'/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type='paragraph' w:styleId='Normal'><w:name w:val='Normal'/></w:style></w:styles>", W::URI));
+            let revised_doc = dom.parse_xdocument(&format!("<w:styles xmlns:w='{}'><w:style w:type='paragraph' w:styleId='Normal'><w:name w:val='Normal'/>{}</w:style></w:styles>", W::URI, if own_spacing { "<w:pPr><w:spacing xmlns:revision='urn:authored:revision' w:beforeLines='1'/></w:pPr>" } else { "" }));
+            let source = dom.root(source_doc).unwrap();
+            let revised = dom.root(revised_doc).unwrap();
+            let before = (
+                dom.serialize_element(source),
+                dom.serialize_element(revised),
+            );
+            let revised_normal = find_normal_style(&dom, revised);
+            let delta = doc_default_ppr_delta(&mut dom, source, revised, revised_normal);
+            assert_eq!(delta.elements.len(), 1);
+            let (name, neutralizer) = &delta.elements[0];
+            assert_eq!(name, "ind");
+            let mut attributes = dom.attributes(*neutralizer);
+            attributes.sort_by_key(|a| a.0.clark());
+            assert_eq!(
+                attributes,
+                vec![
+                    (W::name("left"), "0".to_owned()),
+                    (W::name("right"), "0".to_owned())
+                ]
+            );
+            assert!(dom.nodes(*neutralizer).is_empty());
+            assert_eq!(
+                delta.spacing,
+                vec![
+                    (
+                        "beforeLines".to_owned(),
+                        if own_spacing { "1" } else { "0" }.to_owned()
+                    ),
+                    ("afterLines".to_owned(), "0".to_owned())
+                ]
+            );
+            assert_eq!(
+                (
+                    dom.serialize_element(source),
+                    dom.serialize_element(revised)
+                ),
+                before,
+                "all authored namespace declarations and source property values remain unchanged"
+            );
+        }
+    }
+}

@@ -1587,6 +1587,12 @@ fn accept_deleted_and_moved_from_content_controls_transform(
 /// A.5a — `IsRunContent` (:2356): `Some(true)` = run-level content,
 /// `Some(false)` = marker/non-content, `None` = unknown (C# throws).
 fn is_run_content(name: &XName) -> Option<bool> {
+    // An authored compatibility wrapper carries its complete presentation
+    // alternatives, like math or a field wrapper. Capability selection belongs
+    // to consumers; paragraph-mark resolution must preserve both alternatives.
+    if *name == crate::namespaces::MC::name("AlternateContent") {
+        return Some(true);
+    }
     if name.namespace_name() == crate::namespaces::M::URI {
         return Some(true);
     }
@@ -4838,6 +4844,214 @@ mod deleted_title_equation_barrier_tests {
                     semantic(&expected, expected_body),
                     "display={display} reject={reject}"
                 );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod complete_field_instruction_metadata_boundary_tests {
+    use super::*;
+    #[test]
+    fn repaired_complete_field_codes_preserve_source_comments_processing_instructions_and_formats()
+    {
+        for marker in ["ins", "del"] {
+            for code_pieces in [1usize, 2] {
+                let mut dom = Dom::new();
+                let codes = if code_pieces == 1 {
+                    vec![" REF Clause "]
+                } else {
+                    vec![" REF ", "Clause "]
+                };
+                let codes=codes.iter().map(|code|format!("<w:r><w:rPr><!--authored run format--><?owner keep?><w:b/><w:color w:val='123456'/></w:rPr><w:instrText xml:space='preserve'>{code}</w:instrText></w:r>")).collect::<String>();
+                let doc=dom.parse_xdocument(&format!("<w:p xmlns:w='{}'><w:pPr><w:spacing w:after='120'/></w:pPr><w:{marker} w:id='11' w:author='Field owner' w:date='2001-02-03T04:05:06Z'><w:r><w:fldChar w:fldCharType='begin'/></w:r></w:{marker}>{codes}<w:{marker} w:id='12' w:author='Field owner' w:date='2001-02-03T04:05:06Z'><w:r><w:fldChar w:fldCharType='separate'/></w:r><w:r><w:{}>cached clause</w:{}></w:r><w:r><w:fldChar w:fldCharType='end'/></w:r></w:{marker}><w:bookmarkStart w:id='31' w:name='Clause'/><w:bookmarkEnd w:id='31'/></w:p>",W::URI,if marker=="del" {"delText"} else {"t"},if marker=="del" {"delText"} else {"t"}));
+                let root = dom.root(doc).unwrap();
+                let source = dom.serialize_element(root);
+                let source_codes = dom
+                    .elements(root, Some(&W::r()))
+                    .iter()
+                    .map(|&run| dom.serialize_element(run))
+                    .collect::<Vec<_>>();
+                let children = dom.elements(root, None);
+                let first = dom.serialize_element(children[1]);
+                let last = dom.serialize_element(children[children.len() - 3]);
+                // Transform helpers may transfer clean child nodes. As the
+                // package pipeline does, repair an independent working copy.
+                let working = dom.clone_subtree(root);
+                let result = fix_up_deleted_or_inserted_field_codes_transform(&mut dom, working);
+                let wrappers = dom.elements(result, Some(&W::name(marker)));
+                assert_eq!(wrappers.len(), 3);
+                assert_eq!(dom.serialize_element(wrappers[0]), first);
+                assert_eq!(dom.serialize_element(wrappers[2]), last);
+                assert!(
+                    dom.attributes(wrappers[1]).is_empty(),
+                    "A.1 generated field-code wrapper has no invented attribution"
+                );
+                let actual_codes = dom
+                    .elements(wrappers[1], Some(&W::r()))
+                    .iter()
+                    .map(|&run| dom.serialize_element(run))
+                    .collect::<Vec<_>>();
+                let expected_codes = if marker == "del" {
+                    source_codes
+                        .iter()
+                        .map(|s| s.replace("instrText", "delInstrText"))
+                        .collect::<Vec<_>>()
+                } else {
+                    source_codes
+                };
+                assert_eq!(
+                    actual_codes, expected_codes,
+                    "only the field instruction tag changes; all mixed source nodes and formats survive"
+                );
+                assert_eq!(
+                    dom.descendants(result, Some(&W::fld_char()))
+                        .iter()
+                        .map(|&node| dom.attribute(node, &W::name("fldCharType")).unwrap())
+                        .collect::<Vec<_>>(),
+                    vec!["begin", "separate", "end"]
+                );
+                assert_eq!(
+                    dom.attribute(
+                        dom.element(result, &W::bookmark_start()).unwrap(),
+                        &W::name("name")
+                    ),
+                    Some("Clause")
+                );
+                assert_eq!(
+                    dom.serialize_element(root),
+                    source,
+                    "repair uses independent nodes, leaving source owners intact"
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod alternate_content_paragraph_owner_tests {
+    use super::*;
+    use crate::namespaces::{A, MC, W14};
+
+    fn root(dom: &mut Dom, body: &str) -> NodeId {
+        let doc = dom.parse_xdocument(&format!("<w:document xmlns:w='{}' xmlns:mc='{}' xmlns:w14='{}' xmlns:a='{}' mc:Ignorable='w14'><w:body>{body}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>", W::URI, MC::URI, W14::URI, A::URI));
+        dom.root(doc).unwrap()
+    }
+
+    fn semantic(dom: &Dom, node: NodeId, out: &mut Vec<String>) {
+        if dom.is_element(node) {
+            let name = dom.name(node).unwrap();
+            let mut attrs = dom
+                .attributes(node)
+                .into_iter()
+                .filter(|(n, _)| !dom.is_namespace_declaration(n))
+                .map(|(n, v)| (n.clark(), v))
+                .collect::<Vec<_>>();
+            attrs.sort();
+            if [W::p_pr(), W::r_pr()].contains(&name)
+                && attrs.is_empty()
+                && dom.nodes(node).is_empty()
+            {
+                return;
+            }
+            out.push(format!("begin:{}:{attrs:?}", name.clark()));
+            for child in dom.nodes(node) {
+                semantic(dom, child, out);
+            }
+            out.push(format!("end:{}", name.clark()));
+        } else if dom.is_text(node) {
+            out.push(format!("text:{:?}", dom.text_value(node)));
+        } else {
+            out.push(dom.serialize_element(node));
+        }
+    }
+
+    #[test]
+    fn authored_property_only_alternatives_survive_but_wholly_deleted_wrappers_do_not() {
+        let payload = "<mc:AlternateContent><mc:Choice Requires='w14'><w:r><w:rPr><w:b/><w14:textFill><a:solidFill><a:srgbClr val='123456'/></a:solidFill></w14:textFill></w:rPr></w:r></mc:Choice><mc:Fallback><w:r><w:rPr><w:lang w:val='fr-FR'/></w:rPr></w:r></mc:Fallback></mc:AlternateContent>";
+        let first_props = "<w:pPr><w:spacing w:before='120'/></w:pPr>";
+        let closing_props = "<w:pPr><w:spacing w:after='240'/><w:jc w:val='right'/></w:pPr>";
+        let tail = "<w:r><w:rPr><w:i/></w:rPr><w:t>Independent tail</w:t></w:r>";
+        for wholly_deleted in [false, true] {
+            for reject in [false, true] {
+                let content = if wholly_deleted {
+                    format!(
+                        "<w:del w:id='42' w:author='Original owner' w:date='2000-01-01T00:00:00Z'>{payload}</w:del>"
+                    )
+                } else {
+                    payload.to_owned()
+                };
+                let input = format!(
+                    "<w:p><w:pPr><w:spacing w:before='120'/><w:rPr><w:del w:id='41' w:author='Original owner' w:date='2000-01-01T00:00:00Z'/></w:rPr></w:pPr>{content}</w:p><w:p>{closing_props}{tail}</w:p>"
+                );
+                let expected = if reject {
+                    format!("<w:p>{first_props}{payload}</w:p><w:p>{closing_props}{tail}</w:p>")
+                } else {
+                    format!(
+                        "<w:p>{closing_props}{}{tail}</w:p>",
+                        if wholly_deleted { "" } else { payload }
+                    )
+                };
+                let mut dom = Dom::new();
+                let authored = root(&mut dom, &input);
+                let actual = if reject {
+                    reject_revisions_document(&mut dom, authored)
+                } else {
+                    accept_revisions_document(&mut dom, authored)
+                };
+                let expected = root(&mut dom, &expected);
+                let mut actual_events = Vec::new();
+                let mut expected_events = Vec::new();
+                semantic(&dom, actual, &mut actual_events);
+                semantic(&dom, expected, &mut expected_events);
+                assert_eq!(
+                    actual_events, expected_events,
+                    "wholly_deleted={wholly_deleted} reject={reject}: authored alternatives preserve exact effects/language even without text; outer revision remains authoritative"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn surviving_alternate_content_keeps_both_presentations_across_deleted_paragraph_marks() {
+        let payload = "<mc:AlternateContent><mc:Choice Requires='w14'><w:r><w:rPr><w:b/><w14:textFill><a:solidFill><a:srgbClr val='123456'/></a:solidFill></w14:textFill></w:rPr><w:t>Native presentation</w:t><w:tab/></w:r></mc:Choice><mc:Fallback><w:r><w:rPr><w:color w:val='654321'/></w:rPr><w:t>Fallback presentation</w:t><w:br/></w:r></mc:Fallback></mc:AlternateContent>";
+        let closing_props = "<w:pPr><w:spacing w:after='240'/><w:jc w:val='right'/></w:pPr>";
+        let tail = "<w:r><w:rPr><w:i/></w:rPr><w:t>Independent tail</w:t></w:r>";
+        for moved in [false, true] {
+            for reject in [false, true] {
+                let marker = if moved { "moveFrom" } else { "del" };
+                let first_props = "<w:pPr><w:spacing w:before='120'/></w:pPr>";
+                let marked_props = format!(
+                    "<w:pPr><w:spacing w:before='120'/><w:rPr><w:{marker} w:id='41' w:author='Original owner' w:date='2000-01-01T00:00:00Z'/></w:rPr></w:pPr>"
+                );
+                let input =
+                    format!("<w:p>{marked_props}{payload}</w:p><w:p>{closing_props}{tail}</w:p>");
+                let expected = if reject {
+                    format!("<w:p>{first_props}{payload}</w:p><w:p>{closing_props}{tail}</w:p>")
+                } else {
+                    format!("<w:p>{closing_props}{payload}{tail}</w:p>")
+                };
+                let mut dom = Dom::new();
+                let authored = root(&mut dom, &input);
+                let independent = dom.clone_subtree(authored);
+                let snapshot = dom.serialize_element(independent);
+                let actual = if reject {
+                    reject_revisions_document(&mut dom, authored)
+                } else {
+                    accept_revisions_document(&mut dom, authored)
+                };
+                let expected = root(&mut dom, &expected);
+                let mut actual_events = Vec::new();
+                let mut expected_events = Vec::new();
+                semantic(&dom, actual, &mut actual_events);
+                semantic(&dom, expected, &mut expected_events);
+                assert_eq!(
+                    actual_events, expected_events,
+                    "moved={moved} reject={reject}: exact source alternatives, authored effects and final paragraph owner"
+                );
+                assert_eq!(dom.serialize_element(independent), snapshot);
             }
         }
     }

@@ -823,3 +823,116 @@ mod tests {
         assert_eq!(max_attribute(xml, "w:lvl", "w:ilvl"), None);
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod literal_package_metadata_contract_tests {
+    use super::*;
+
+    #[test]
+    fn front_matter_preserves_exact_core_property_owners_for_every_authored_shape() {
+        let root = r#"<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/">"#;
+        for (body, changed) in [
+            (
+                "<dc:title>old title</dc:title><dc:creator>old author</dc:creator><dc:description>untouched</dc:description>",
+                "<dc:title>Ω &amp; &lt;Title&gt;</dc:title><dc:creator>Ada &amp; Bo</dc:creator><dc:description>untouched</dc:description>",
+            ),
+            (
+                "<dc:title/><dc:creator/><dc:description>untouched</dc:description>",
+                "<dc:title>Ω &amp; &lt;Title&gt;</dc:title><dc:creator>Ada &amp; Bo</dc:creator><dc:description>untouched</dc:description>",
+            ),
+            (
+                "<dc:description>untouched</dc:description>",
+                "<dc:description>untouched</dc:description><dc:title>Ω &amp; &lt;Title&gt;</dc:title><dc:creator>Ada &amp; Bo</dc:creator>",
+            ),
+        ] {
+            let mut package =
+                PartFs::open(include_bytes!("../../tests/fixtures/redline/original.docx")).unwrap();
+            package.set_part(
+                "docProps/core.xml",
+                format!("{root}{body}</cp:coreProperties>").into_bytes(),
+            );
+            let main = package.part_bytes("word/document.xml").unwrap().to_vec();
+            let document = Document {
+                title: Some("Ω & <Title>".into()),
+                author: Some("Ada & Bo".into()),
+                ..Document::default()
+            };
+            core_properties(&mut package, &document);
+            assert_eq!(
+                package.part_string("docProps/core.xml").unwrap(),
+                format!("{root}{changed}</cp:coreProperties>")
+            );
+            assert_eq!(package.part_bytes("word/document.xml").unwrap(), main);
+            let again = package.part_string("docProps/core.xml").unwrap();
+            core_properties(&mut package, &document);
+            assert_eq!(package.part_string("docProps/core.xml").unwrap(), again);
+        }
+    }
+
+    #[test]
+    fn absent_front_matter_fields_preserve_every_existing_core_property() {
+        let source = r#"<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>owned title</dc:title><dc:creator>owned author</dc:creator></cp:coreProperties>"#;
+        for (title, author, expected) in [
+            (None, None, source.to_string()),
+            (
+                Some("new title"),
+                None,
+                source.replace("owned title", "new title"),
+            ),
+            (
+                None,
+                Some("new author"),
+                source.replace("owned author", "new author"),
+            ),
+        ] {
+            let mut package =
+                PartFs::open(include_bytes!("../../tests/fixtures/redline/original.docx")).unwrap();
+            package.set_part("docProps/core.xml", source.as_bytes().to_vec());
+            core_properties(
+                &mut package,
+                &Document {
+                    title: title.map(str::to_string),
+                    author: author.map(str::to_string),
+                    ..Document::default()
+                },
+            );
+            assert_eq!(package.part_string("docProps/core.xml").unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn separator_notes_keep_complete_authored_markup_without_ordinary_notes() {
+        for kind in ["footnote", "endnote"] {
+            for separator in ["separator", "continuationSeparator", "continuationNotice"] {
+                for short in [false, true] {
+                    let retained = if short {
+                        format!("<w:{kind} w:type=\"{separator}\" w:id=\"-1\"/>")
+                    } else {
+                        format!(
+                            "<w:{kind} w:type=\"{separator}\" w:id=\"-1\"><w:p><w:r><w:t>owned separator</w:t></w:r></w:p></w:{kind}>"
+                        )
+                    };
+                    let root = format!("<w:{kind}s xmlns:w=\"{W_NS}\">");
+                    let end = format!("</w:{kind}s>");
+                    let source = format!(
+                        "{root}{retained}<w:{kind} w:id=\"1\"><w:p><w:r><w:t>ordinary source note</w:t></w:r></w:p></w:{kind}>{end}"
+                    );
+                    assert_eq!(separators_only(&source), format!("{root}{retained}{end}"));
+                }
+            }
+        }
+        assert_eq!(
+            max_attribute(
+                r#"<w:num w:other="1"/><w:num w:numId="invalid"/><w:num w:numId="3"/><w:num w:numId="-5"/>"#,
+                "w:num",
+                "w:numId"
+            ),
+            Some(3)
+        );
+        assert_eq!(
+            max_attribute(r#"<w:num w:other="1"/>"#, "w:num", "w:numId"),
+            None
+        );
+    }
+}

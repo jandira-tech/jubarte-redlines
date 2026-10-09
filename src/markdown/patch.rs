@@ -853,3 +853,152 @@ mod tests {
         assert_eq!(rewritten(&paragraph, &block("4. Payment")), "3.\tPayment");
     }
 }
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod markdown_pairing_boundary_tests {
+    use super::*;
+
+    fn block(text: &str, kind: Kind) -> Block {
+        Block {
+            kind,
+            runs: vec![RunSpec {
+                text: text.to_string(),
+                ..RunSpec::default()
+            }],
+        }
+    }
+
+    fn edit_view(edits: &[Edit]) -> Vec<(char, usize, Option<usize>)> {
+        edits
+            .iter()
+            .map(|e| match e {
+                Edit::Pair(p, b) => ('P', *p, Some(*b)),
+                Edit::Insert(b, after) => ('I', *b, *after),
+                Edit::Delete(p) => ('D', *p, None),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn ordered_pairing_boundaries_keep_every_authored_index_once() {
+        let a = (0..50)
+            .map(|i| Paragraph {
+                index: i,
+                text: format!("old-{i}"),
+                kind: Kind::Plain,
+            })
+            .collect::<Vec<_>>();
+        for count in [0, 49, 50, 51] {
+            let b = (0..count)
+                .map(|i| block(&format!("new-{i}"), Kind::Plain))
+                .collect::<Vec<_>>();
+            let edits = align(&a, &b);
+            let mut expected = (0..count.min(50))
+                .map(|i| ('P', i, Some(i)))
+                .collect::<Vec<_>>();
+            if count < 50 {
+                expected.extend((count..50).map(|i| ('D', i, None)));
+            }
+            if count > 50 {
+                expected.push(('I', 50, Some(49)));
+            }
+            assert_eq!(edit_view(&edits), expected, "count {count}");
+            assert_eq!(
+                a.iter().map(|p| p.text.as_str()).collect::<Vec<_>>(),
+                (0..50)
+                    .map(|i| format!("old-{i}"))
+                    .collect::<Vec<_>>()
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+            );
+        }
+        assert_eq!(
+            edit_view(&align(&[], &[block("new", Kind::Plain)])),
+            vec![('I', 0, None)]
+        );
+        let paragraphs = vec![
+            Paragraph {
+                index: 0,
+                text: "old cell".to_string(),
+                kind: Kind::Cell,
+            },
+            Paragraph {
+                index: 1,
+                text: "anchor".to_string(),
+                kind: Kind::Plain,
+            },
+        ];
+        assert_eq!(
+            edit_view(&align(
+                &paragraphs,
+                &[block("new body", Kind::Plain), block("anchor", Kind::Plain)]
+            )),
+            vec![('D', 0, None), ('I', 0, None), ('P', 1, Some(1))]
+        );
+    }
+
+    #[test]
+    fn weighted_pairing_skips_weaker_conflicts_without_crossing_source_owners() {
+        let indices = [0, 1, 2];
+        let score = |a: usize, b: usize| match (a, b) {
+            (0, 0) => Some(0.4),
+            (0, 1) => Some(0.9),
+            (1, 1) => Some(0.2),
+            (2, 2) => Some(1.0),
+            _ => None,
+        };
+        assert_eq!(pair(&indices, &indices, score), vec![(0, 1), (2, 2)]);
+        assert_eq!(
+            pair(&indices, &indices, |a, b| if a == 1 && b == 0 {
+                Some(1.0)
+            } else {
+                None
+            }),
+            vec![(1, 0)]
+        );
+        assert_eq!(
+            pair(&indices, &indices, |_, _| None),
+            Vec::<(usize, usize)>::new()
+        );
+        assert_eq!(pair(&[], &indices, score), Vec::<(usize, usize)>::new());
+        assert_eq!(pair(&indices, &[], score), Vec::<(usize, usize)>::new());
+    }
+
+    #[test]
+    fn malformed_numbering_remains_literal_and_normalized_line_breaks_keep_run_formatting() {
+        for text in [
+            "1234567890123. text",
+            "1.x",
+            "1. ",
+            "(a. text",
+            "(1.2 text",
+            "vvvvvvv. text",
+        ] {
+            assert_eq!(enumerator_len(text), 0, "{text}");
+            let p = Paragraph {
+                index: 0,
+                text: text.to_string(),
+                kind: Kind::Plain,
+            };
+            assert_eq!(
+                rewritten(&p, &block("replacement", Kind::Plain)),
+                "replacement"
+            );
+        }
+        for (source, expected) in [
+            ("left  \nright", "left right"),
+            ("left<br>right", "left right"),
+            ("**left<br>right**", "left right"),
+        ] {
+            let (parsed, notes) = blocks(source);
+            assert!(!notes);
+            assert_eq!(parsed.len(), 1);
+            assert_eq!(parsed[0].kind, Kind::Plain);
+            assert_eq!(parsed[0].text(), expected);
+            if source.starts_with("**") {
+                assert!(parsed[0].runs.iter().all(|run| run.bold == Some(true)));
+            }
+        }
+    }
+}

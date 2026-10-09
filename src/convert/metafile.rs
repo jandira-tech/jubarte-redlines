@@ -2109,3 +2109,185 @@ mod coverage_boundary_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod residual_current_point_contract_tests {
+    use super::*;
+
+    fn header() -> Vec<u8> {
+        let mut d = vec![0; 108];
+        d[0..4].copy_from_slice(&1_u32.to_le_bytes());
+        d[4..8].copy_from_slice(&108_u32.to_le_bytes());
+        d[16..20].copy_from_slice(&100_i32.to_le_bytes());
+        d[20..24].copy_from_slice(&100_i32.to_le_bytes());
+        d[40..44].copy_from_slice(b" EMF");
+        d
+    }
+
+    fn record(d: &mut Vec<u8>, typ: u32, body: &[u8]) {
+        d.extend_from_slice(&typ.to_le_bytes());
+        d.extend_from_slice(&((8 + body.len()) as u32).to_le_bytes());
+        d.extend_from_slice(body);
+    }
+
+    fn ints(values: &[i32]) -> Vec<u8> {
+        values.iter().flat_map(|v| v.to_le_bytes()).collect()
+    }
+
+    fn points(values: &[(i16, i16)], short: bool) -> Vec<u8> {
+        let mut data = ints(&[0, 0, 0, 0, values.len() as i32]);
+        for &(x, y) in values {
+            if short {
+                data.extend_from_slice(&x.to_le_bytes());
+                data.extend_from_slice(&y.to_le_bytes());
+            } else {
+                data.extend_from_slice(&i32::from(x).to_le_bytes());
+                data.extend_from_slice(&i32::from(y).to_le_bytes());
+            }
+        }
+        data
+    }
+
+    fn pixel(rgb: &[u8], w: u32, x: u32, y: u32) -> &[u8] {
+        let i = ((y * w + x) * 3) as usize;
+        &rgb[i..i + 3]
+    }
+
+    #[test]
+    fn clipped_corner_misses_paint_no_pixels_in_either_endpoint_order() {
+        let mut canvas = Canvas::new(8, 8);
+        for (a, b) in [
+            ((-10, 0), (0, -10)),
+            ((10, -10), (20, 0)),
+            ((-10, 10), (0, 20)),
+        ] {
+            for (start, end) in [(a, b), (b, a)] {
+                canvas.stroke_line(start.0, start.1, end.0, end.1, [12, 34, 56], 1);
+                assert!(canvas.px.iter().all(|&v| v == 255));
+            }
+        }
+        canvas.stroke_line(-10, -10, 20, 20, [12, 34, 56], 1);
+        for y in 0..8 {
+            for x in 0..8 {
+                assert_eq!(
+                    pixel(&canvas.px, 8, x, y),
+                    if x == y {
+                        &[12, 34, 56][..]
+                    } else {
+                        &WHITE[..]
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn path_line_and_polyline_to_start_at_the_default_current_point() {
+        // A device context starts at (0,0); BEGINPATH does not require MOVETO.
+        for typ in [54, 6, 89] {
+            let mut source = header();
+            record(&mut source, 59, &[]);
+            let body = if typ == 54 {
+                ints(&[20, 0])
+            } else {
+                points(&[(10, 0), (20, 0)], typ == 89)
+            };
+            record(&mut source, typ, &body);
+            record(&mut source, 60, &[]);
+            record(&mut source, 64, &[]);
+            let original = source.clone();
+            let (w, h, rgb, text) = render(&source).unwrap();
+            assert_eq!((w, h), (100, 100));
+            assert!(text.is_empty());
+            for y in 0..h {
+                for x in 0..w {
+                    assert_eq!(
+                        pixel(&rgb, w, x, y),
+                        if y == 0 && x <= 20 {
+                            &[0, 0, 0][..]
+                        } else {
+                            &WHITE[..]
+                        },
+                        "record {typ}, pixel {x},{y}"
+                    );
+                }
+            }
+            assert_eq!(source, original);
+        }
+    }
+
+    #[test]
+    fn path_bezier_to_retains_the_current_origin_without_an_initial_move_record() {
+        for typ in [5, 88] {
+            let mut source = header();
+            record(&mut source, 59, &[]);
+            record(
+                &mut source,
+                typ,
+                &points(&[(0, 20), (20, 20), (20, 0)], typ == 88),
+            );
+            record(&mut source, 60, &[]);
+            record(&mut source, 64, &[]);
+            let original = source.clone();
+            let (w, h, rgb, text) = render(&source).unwrap();
+            assert_eq!((w, h), (100, 100));
+            assert!(text.is_empty());
+            // The independent cubic midpoint is (10,15); the endpoints
+            // remain at (0,0) and (20,0), with no fill below the open curve.
+            for (x, y) in [(0, 0), (10, 15), (20, 0)] {
+                assert_eq!(pixel(&rgb, w, x, y), &[0, 0, 0]);
+            }
+            for (x, y) in [(10, 0), (0, 15), (20, 15), (10, 16), (21, 0)] {
+                assert_eq!(pixel(&rgb, w, x, y), &WHITE);
+            }
+            for y in 0..h {
+                for x in 0..w {
+                    if x > 20 || y > 15 {
+                        assert_eq!(pixel(&rgb, w, x, y), &WHITE);
+                    }
+                }
+            }
+            assert_eq!(source, original);
+        }
+    }
+
+    #[test]
+    fn closing_a_figure_restarts_polyline_to_at_the_closed_figures_origin() {
+        for typ in [6, 89] {
+            let mut source = header();
+            record(&mut source, 59, &[]);
+            record(&mut source, 27, &ints(&[10, 10]));
+            record(
+                &mut source,
+                89,
+                &points(&[(20, 10), (20, 20), (10, 20)], true),
+            );
+            record(&mut source, 61, &[]);
+            record(&mut source, typ, &points(&[(30, 30)], typ == 89));
+            record(&mut source, 60, &[]);
+            record(&mut source, 64, &[]);
+            let original = source.clone();
+            let (w, h, rgb, text) = render(&source).unwrap();
+            assert_eq!((w, h), (100, 100));
+            assert!(text.is_empty());
+            for y in 0..h {
+                for x in 0..w {
+                    let edge = ((x == 10 || x == 20) && (10..=20).contains(&y))
+                        || ((y == 10 || y == 20) && (10..=20).contains(&x));
+                    let diagonal = x == y && (10..=30).contains(&x);
+                    assert_eq!(
+                        pixel(&rgb, w, x, y),
+                        if edge || diagonal {
+                            &[0, 0, 0][..]
+                        } else {
+                            &WHITE[..]
+                        },
+                        "record {typ}, pixel {x},{y}"
+                    );
+                }
+            }
+            assert_eq!(source, original);
+        }
+    }
+}

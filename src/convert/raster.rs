@@ -1089,3 +1089,292 @@ mod raster_payload_boundary_tests {
         assert_eq!(sample(&p, 2, 2), [255; 4]);
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod residual_display_contract_tests {
+    use super::*;
+    use crate::convert::font::FaceId;
+
+    fn bundled_fonts() -> Fonts<'static> {
+        let mut fonts = Fonts::new();
+        fonts.insert_embedded(
+            "ResidualBundledCarlito",
+            false,
+            false,
+            FaceId::CarlitoRegular.bytes(),
+        );
+        fonts
+    }
+
+    fn white() -> Pixmap {
+        let mut p = Pixmap::new(40, 40).unwrap();
+        p.fill(Color::WHITE);
+        p
+    }
+
+    fn pixel(p: &Pixmap, x: u32, y: u32) -> [u8; 4] {
+        let offset = ((y * p.width() + x) * 4) as usize;
+        p.data()[offset..offset + 4].try_into().unwrap()
+    }
+
+    #[test]
+    fn empty_glyphs_and_nonpositive_display_sizes_never_load_or_paint_a_face() {
+        let fonts = bundled_fonts();
+        let face = FaceRef::Embedded(0);
+        let owned = fonts.get(face).glyphs("A");
+        for (size, glyphs) in [
+            (12.0, Vec::new()),
+            (0.0, owned.clone()),
+            (-1.0, owned.clone()),
+        ] {
+            // Nonpositive display sizes are explicit rejected display input;
+            // empty glyph payload also occurs for nonpainting source runs.
+            let mut p = white();
+            let before = p.data().to_vec();
+            let mut faces = HashMap::new();
+            paint_text(
+                &mut p,
+                &fonts,
+                &mut faces,
+                &TextRun {
+                    face,
+                    size,
+                    x: 10.0,
+                    y: 10.0,
+                    glyphs: &glyphs,
+                    color: [0.0; 3],
+                    hscale: 1.0,
+                    rotate_deg: 0.0,
+                },
+                Transform::identity(),
+            );
+            assert_eq!(p.data(), before);
+            assert!(faces.is_empty());
+            assert_eq!(
+                glyphs,
+                if size > 0.0 {
+                    Vec::new()
+                } else {
+                    owned.clone()
+                }
+            );
+        }
+        // A space has a real advance and no outline: no ink is fabricated.
+        let space = fonts.get(face).glyphs(" ");
+        let mut p = white();
+        let before = p.data().to_vec();
+        let mut faces = HashMap::new();
+        paint_text(
+            &mut p,
+            &fonts,
+            &mut faces,
+            &TextRun {
+                face,
+                size: 12.0,
+                x: 10.0,
+                y: 10.0,
+                glyphs: &space,
+                color: [0.0; 3],
+                hscale: 1.0,
+                rotate_deg: 0.0,
+            },
+            Transform::identity(),
+        );
+        assert_eq!(p.data(), before);
+        assert_eq!(faces.len(), 1);
+        assert!(fonts.get(face).width_pt(" ", 12.0) > 0.0);
+    }
+
+    #[test]
+    fn source_text_extraction_keeps_owned_spaces_watermarks_and_scaled_gap_thresholds() {
+        let fonts = bundled_fonts();
+        let face = FaceRef::Embedded(0);
+        let f = fonts.get(face);
+        let text = |x, y, s: &str, hscale| Op::Text {
+            face,
+            size: 10.0,
+            x,
+            y,
+            glyphs: f.glyphs(s),
+            color: [0.0; 3],
+            text: s.into(),
+            hscale,
+        };
+        for (left, right, expected) in [
+            ("A ", "B", "A B\n"),
+            ("A", " B", "A B\n"),
+            ("A", "B", "A B\n"),
+        ] {
+            let scaled_advance = f.width_pt(left, 10.0) * 0.5;
+            let mut page = Page::new(40.0, 40.0);
+            // Paint order is intentionally reversed; source pieces share a
+            // baseline and are reconstructed in x order with one separator.
+            page.ops = vec![
+                text(5.0 + scaled_advance + 3.0, 20.0, right, 1.0),
+                text(5.0, 20.0, left, 0.5),
+                text(0.0, 30.0, "", 1.0),
+                Op::Pin(true),
+                Op::Pin(false),
+            ];
+            assert_eq!(page_text(&fonts, &page), expected);
+            assert_eq!(page.ops.len(), 5);
+        }
+        let mut page = Page::new(40.0, 40.0);
+        page.ops = vec![
+            Op::Watermark {
+                face,
+                size: 10.0,
+                x: 2.0,
+                y: 30.0,
+                glyphs: f.glyphs("Draft"),
+                color: [0.5; 3],
+                text: "Draft".into(),
+                rotate_deg: 30.0,
+            },
+            text(2.0, 10.0, "Body ", 1.0),
+        ];
+        assert_eq!(page_text(&fonts, &page), "Draft\nBody\n");
+    }
+
+    #[test]
+    fn collapsed_vector_subpaths_and_rejected_encoded_picture_payloads_preserve_all_pixels() {
+        let fonts = bundled_fonts();
+        let mut faces = HashMap::new();
+        let mut p = white();
+        let before = p.data().to_vec();
+        let ops = [
+            Op::FillPoly {
+                points: vec![(12.0, 12.0)],
+                color: [1.0, 0.0, 0.0],
+            },
+            Op::StrokePoly {
+                points: vec![(12.0, 12.0)],
+                width: 1.0,
+                color: [1.0, 0.0, 0.0],
+            },
+            Op::FillPath {
+                contours: vec![vec![(12.0, 12.0)]],
+                color: [1.0, 0.0, 0.0],
+                even_odd: false,
+            },
+            Op::StrokePath {
+                subpaths: vec![(vec![(12.0, 12.0)], false)],
+                width: 1.0,
+                color: [1.0, 0.0, 0.0],
+            },
+            Op::Cubic {
+                start: (12.0, 12.0),
+                segments: Vec::new(),
+                width: 1.0,
+                color: [1.0, 0.0, 0.0],
+            },
+            Op::Pin(true),
+            Op::Pin(false),
+        ];
+        for (index, op) in ops.iter().enumerate() {
+            paint_op(&mut p, &fonts, &mut faces, op, Transform::identity());
+            assert_eq!(p.data(), before, "collapsed display path {index}");
+        }
+        for bytes in [
+            Vec::new(),
+            b"not an encoded image".to_vec(),
+            vec![0x89, b'P', b'N', b'G'],
+        ] {
+            // Explicit malformed encoded-image diagnostic, not fake RGBA.
+            let op = Op::Jpeg {
+                x: 10.0,
+                y: 10.0,
+                dw: 20.0,
+                dh: 20.0,
+                width: 1,
+                height: 1,
+                bytes: bytes.clone(),
+                components: 3,
+                crop: None,
+                rotate_deg: 0.0,
+                oval: false,
+            };
+            paint_op(&mut p, &fonts, &mut faces, &op, Transform::identity());
+            assert_eq!(p.data(), before);
+            if let Op::Jpeg { bytes: after, .. } = op {
+                assert_eq!(after, bytes);
+            }
+        }
+    }
+
+    #[test]
+    fn compound_fill_rules_and_open_or_closed_strokes_have_independent_literal_geometry() {
+        let fonts = bundled_fonts();
+        let outer = vec![(5.0, 5.0), (35.0, 5.0), (35.0, 35.0), (5.0, 35.0)];
+        let inner = vec![(15.0, 15.0), (25.0, 15.0), (25.0, 25.0), (15.0, 25.0)];
+        for even_odd in [false, true] {
+            let mut p = white();
+            let mut faces = HashMap::new();
+            paint_op(
+                &mut p,
+                &fonts,
+                &mut faces,
+                &Op::FillPath {
+                    contours: vec![outer.clone(), inner.clone()],
+                    color: [1.0, 0.0, 0.0],
+                    even_odd,
+                },
+                Transform::identity(),
+            );
+            assert_eq!(pixel(&p, 10, 20), [255, 0, 0, 255]);
+            assert_eq!(
+                pixel(&p, 20, 20),
+                if even_odd { [255; 4] } else { [255, 0, 0, 255] }
+            );
+            assert_eq!(pixel(&p, 2, 2), [255; 4]);
+        }
+        for close in [false, true] {
+            let mut p = white();
+            let mut faces = HashMap::new();
+            paint_op(
+                &mut p,
+                &fonts,
+                &mut faces,
+                &Op::StrokePath {
+                    subpaths: vec![(vec![(10.0, 10.0), (30.0, 10.0), (30.0, 30.0)], close)],
+                    width: 2.0,
+                    color: [0.0; 3],
+                },
+                Transform::identity(),
+            );
+            assert_eq!(pixel(&p, 20, 10), [0, 0, 0, 255]);
+            assert_eq!(pixel(&p, 30, 20), [0, 0, 0, 255]);
+            assert_eq!(
+                pixel(&p, 20, 20),
+                if close { [0, 0, 0, 255] } else { [255; 4] }
+            );
+            assert_eq!(pixel(&p, 2, 2), [255; 4]);
+        }
+    }
+
+    #[test]
+    fn memory_png_roundtrip_preserves_exact_unrotated_page_size_and_pixels() {
+        let fonts = bundled_fonts();
+        let mut page = Page::new(40.0, 20.0);
+        page.ops = vec![Op::FillRect {
+            x: 5.0,
+            y: 5.0,
+            w: 10.0,
+            h: 5.0,
+            color: [1.0, 0.0, 0.0],
+        }];
+        let painted = paint_page(&fonts, &page, 72.0).unwrap();
+        assert_eq!((painted.width(), painted.height()), (40, 20));
+        assert_eq!(pixel(&painted, 8, 12), [255, 0, 0, 255]);
+        assert_eq!(pixel(&painted, 8, 2), [255; 4]);
+        let png = encode_png(&painted);
+        let before = png.clone();
+        assert_eq!(&png[..8], &[137, 80, 78, 71, 13, 10, 26, 10]);
+        let decoded = image::load_from_memory(&png).unwrap().to_rgba8();
+        assert_eq!((decoded.width(), decoded.height()), (40, 20));
+        assert_eq!(decoded.as_raw(), painted.data());
+        assert_eq!(png, before);
+        assert_eq!(page.ops.len(), 1);
+    }
+}

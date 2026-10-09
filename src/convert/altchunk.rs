@@ -1323,3 +1323,81 @@ mod imported_source_contract_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod residual_import_contract_tests {
+    use super::*;
+
+    const RPR: &str = "<w:rPr><w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\" w:cs=\"Times New Roman\"/><w:sz w:val=\"24\"/><w:szCs w:val=\"24\"/></w:rPr>";
+    const SPACING: &str = "<w:spacing w:beforeAutospacing=\"1\" w:afterAutospacing=\"1\" w:line=\"240\" w:lineRule=\"auto\"/>";
+
+    fn plain(text: &str) -> String {
+        format!(
+            "<w:p><w:pPr>{SPACING}</w:pPr><w:r>{RPR}<w:t xml:space=\"preserve\">{text}</w:t></w:r></w:p>"
+        )
+    }
+
+    #[test]
+    fn paragraph_line_height_percentage_and_declined_numeric_forms_keep_exact_source_spacing() {
+        for (height, line) in [
+            ("normal", 240),
+            ("1.5", 240),
+            ("100%", 240),
+            ("125% ", 300),
+            ("0%", 0),
+            ("invalid%", 240),
+        ] {
+            // invalid% is explicitly malformed CSS; it declines to the same
+            // import default as a normal/numeric non-percentage line-height.
+            let source = format!(
+                "<p style='line-height:{height};margin-top:auto;margin-bottom:0pt'>Source</p>"
+            );
+            let before = source.clone();
+            let spacing = format!(
+                "<w:spacing w:beforeAutospacing=\"1\" w:after=\"0\" w:line=\"{line}\" w:lineRule=\"auto\"/>"
+            );
+            let expected = format!(
+                "<w:p><w:pPr>{spacing}</w:pPr><w:r>{RPR}<w:t xml:space=\"preserve\">Source</w:t></w:r></w:p>"
+            );
+            assert_eq!(html_to_wml(&source), expected, "{height}");
+            assert_eq!(source, before);
+        }
+    }
+
+    #[test]
+    fn class_list_and_inline_override_preserve_complete_font_properties_and_owned_xml_text() {
+        let source = "<style>.first {font-weight:bold}.second {font-style:italic}</style><p class='FIRST unknown SECOND' style='font-family: A&B; text-decoration:underline'>A&amp;B &lt;C&gt; &quot;D&quot;</p><p>After</p>";
+        let before = source.to_owned();
+        // A literal ampersand in the font family is XML-escaped in every
+        // font slot; HTML entities in source text become the same XML text.
+        let rpr = "<w:rPr><w:rFonts w:ascii=\"A&amp;B\" w:hAnsi=\"A&amp;B\" w:cs=\"A&amp;B\"/><w:b/><w:i/><w:u w:val=\"single\"/><w:sz w:val=\"24\"/><w:szCs w:val=\"24\"/></w:rPr>";
+        let expected = format!(
+            "<w:p><w:pPr>{SPACING}</w:pPr><w:r>{rpr}<w:t xml:space=\"preserve\">A&amp;B &lt;C&gt; &quot;D&quot;</w:t></w:r></w:p>{}",
+            plain("After")
+        );
+        assert_eq!(html_to_wml(source), expected);
+        assert_eq!(source, before);
+    }
+
+    #[test]
+    fn ragged_authored_rows_share_one_grid_without_inventing_filler_cells_or_reordering_payload() {
+        let source = "<table><tr><td>A</td></tr><tr><td>B</td><td>C</td></tr></table><p>After</p>";
+        let before = source.to_owned();
+        let cell = |text: &str| {
+            format!(
+                "<w:tc><w:tcPr><w:tcW w:w=\"4680\" w:type=\"dxa\"/></w:tcPr>{}</w:tc>",
+                plain(text)
+            )
+        };
+        let expected = format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"0\" w:type=\"auto\"/><w:tblLayout w:type=\"fixed\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"4680\"/><w:gridCol w:w=\"4680\"/></w:tblGrid><w:tr>{}</w:tr><w:tr>{}{}</w:tr></w:tbl>{}",
+            cell("A"),
+            cell("B"),
+            cell("C"),
+            plain("After")
+        );
+        assert_eq!(html_to_wml(source), expected);
+        assert_eq!(source, before);
+    }
+}

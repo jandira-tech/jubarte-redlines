@@ -471,3 +471,74 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod residual_font_payload_contract_tests {
+    use super::*;
+    use crate::convert::font::FaceId;
+
+    #[test]
+    fn missing_xml_root_has_no_font_entries_or_aliases() {
+        for xml in ["", " \n\t", "<?xml version=\"1.0\"?>"] {
+            let source = xml.to_string();
+            let table = parse_font_table_xml(xml);
+            assert_eq!(table.iter().count(), 0);
+            assert!(table.get("Carlito").is_none());
+            assert!(table.alt_name("Carlito").is_none());
+            assert_eq!(xml, source);
+        }
+    }
+
+    #[test]
+    fn invalid_guid_does_not_guess_a_key_or_corrupt_obfuscated_font_bytes() {
+        let plain = FaceId::CarlitoRegular.bytes();
+        let key = parse_font_key("{00112233-4455-6677-8899-AABBCCDDEEFF}").unwrap();
+        assert_eq!(
+            key,
+            [
+                255, 238, 221, 204, 187, 170, 153, 136, 102, 119, 68, 85, 0, 17, 34, 51
+            ]
+        );
+        let mut encoded = plain.to_vec();
+        deobfuscate_font(&mut encoded, &key);
+        assert_ne!(&encoded[..32], &plain[..32]);
+        assert_eq!(&encoded[32..], &plain[32..]);
+        for guid in [
+            "",
+            "xyz",
+            "00112233445566778899AABBCCDDEEF",
+            "00112233445566778899AABBCCDDEEFF0",
+            "λ漢字",
+        ] {
+            assert_eq!(parse_font_key(guid), None, "{guid}");
+            let decoded = deobfuscate_odttf(&encoded, guid);
+            assert_eq!(decoded, encoded);
+            assert!(ttf_parser::Face::parse(&decoded, 0).is_err());
+        }
+        assert_eq!(
+            deobfuscate_odttf(&encoded, "{00112233-4455-6677-8899-AABBCCDDEEFF}"),
+            plain
+        );
+        assert_eq!(&encoded[32..], &plain[32..]);
+    }
+
+    #[test]
+    fn recognized_plain_sfnt_signatures_never_apply_document_obfuscation() {
+        // These truncated signatures are deliberately invalid font payloads:
+        // sniffing prevents XOR, while the actual font parser still rejects.
+        for tag in [
+            &[0, 1, 0, 0][..],
+            &b"OTTO"[..],
+            &b"true"[..],
+            &b"typ1"[..],
+            &b"ttcf"[..],
+        ] {
+            let source = tag.to_vec();
+            let decoded = deobfuscate_odttf(tag, "00112233-4455-6677-8899-AABBCCDDEEFF");
+            assert_eq!(decoded, source);
+            assert!(ttf_parser::Face::parse(&decoded, 0).is_err());
+            assert_eq!(tag, source);
+        }
+    }
+}

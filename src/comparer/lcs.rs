@@ -18443,6 +18443,62 @@ mod coverage_real_source_route_matrix_tests {
         }
     }
 
+    #[test]
+    fn opaque_math_groups_do_not_invent_textual_demo_titles_or_list_items() {
+        for display in [false, true] {
+            for title in [false, true] {
+                for reverse in [false, true] {
+                    let equation = if display {
+                        "<m:oMathPara><m:oMath><m:r><m:rPr><m:sty m:val='p'/></m:rPr><m:t>x+y</m:t></m:r></m:oMath></m:oMathPara>"
+                    } else {
+                        "<m:oMath><m:r><m:rPr><m:sty m:val='p'/></m:rPr><m:t>x+y</m:t></m:r></m:oMath>"
+                    };
+                    let math_para = format!(
+                        "<w:p><w:pPr><w:jc w:val='center'/><w:spacing w:after='180'/></w:pPr>{equation}</w:p>"
+                    );
+                    let opaque = format!(
+                        "{}{}",
+                        if title {
+                            paragraph("Slate Demo", "Title", None, true)
+                        } else {
+                            math_para.clone()
+                        },
+                        math_para
+                    );
+                    let listed = format!(
+                        "{}{}{}",
+                        paragraph("Azure Demo", "Title", None, false),
+                        paragraph("First violet item", "BodyText", Some(0), false),
+                        paragraph("Second kapok item", "BodyText", Some(0), false)
+                    );
+                    let settings = WmlComparerSettings::default();
+                    let mut dom = Dom::new();
+                    let (a, b) = if reverse {
+                        (&listed, &opaque)
+                    } else {
+                        (&opaque, &listed)
+                    };
+                    let left = source(&mut dom, a, &settings);
+                    let right = source(&mut dom, b, &settings);
+                    let before = (frozen(&mut dom, &left), frozen(&mut dom, &right));
+                    // These are the actual caller's counts: math carries source
+                    // content although it supplies neither a lexical title nor
+                    // a list item. The titled side has only one w:t paragraph.
+                    let n1 = contentful_group_sha1s(&dom, &left).len();
+                    let n2 = contentful_group_sha1s(&dom, &right).len();
+                    assert_eq!((n1, n2), if reverse { (3, 2) } else { (2, 3) });
+                    assert_eq!(short_demo_list_x_prose(&dom, &left, &right, n1, n2), title);
+                    assert!(!titles_share_last_sig(&dom, &left, &right));
+                    assert_eq!(
+                        (frozen(&mut dom, &left), frozen(&mut dom, &right)),
+                        before,
+                        "classification must preserve every source math property, paragraph mark and owner"
+                    );
+                }
+            }
+        }
+    }
+
     fn exact_window_ownership(
         dom: &mut Dom,
         seqs: &[CorrelatedSequence],
@@ -19611,6 +19667,370 @@ mod coverage_real_source_route_matrix_tests {
         }
     }
 
+    #[test]
+    fn stamped_short_title_nesting_reaches_both_vocabulary_gates_without_residual_pairs() {
+        for short_count in [2usize, 3, 6] {
+            for long_count in [8usize, 20, 21] {
+                for relation in 0..3 {
+                    for explicit_properties in [false, true] {
+                        let settings = WmlComparerSettings::default();
+                        let (old_title, subtitle) = match relation {
+                            0 => (
+                                "Copper Ledger Overview".to_owned(),
+                                "Violet Glacier Items".to_owned(),
+                            ),
+                            1 => (
+                                "Copper Ledger Overview".to_owned(),
+                                "Violet Copper Items".to_owned(),
+                            ),
+                            _ => (
+                                format!(
+                                    "Copper {} Overview",
+                                    (0..25)
+                                        .map(|i| format!("oldword{i}"))
+                                        .collect::<Vec<_>>()
+                                        .join(" ")
+                                ),
+                                format!(
+                                    "Violet Copper {} Items",
+                                    (0..25)
+                                        .map(|i| format!("newword{i}"))
+                                        .collect::<Vec<_>>()
+                                        .join(" ")
+                                ),
+                            ),
+                        };
+                        let mut a = vec!["file_130.docx".to_owned(), old_title];
+                        let mut b = vec![
+                            "file_7.docx".to_owned(),
+                            "Independent revised main heading".to_owned(),
+                            subtitle,
+                        ];
+                        for i in 1..short_count {
+                            a.push(format!("ancient walnut clause source{i}"));
+                        }
+                        for i in 2..long_count {
+                            b.push(format!("modern violet inventory revision{i}"));
+                        }
+                        let story = |lines: &[String], revised| {
+                            lines
+                                .iter()
+                                .map(|text| {
+                                    if explicit_properties {
+                                        paragraph(text, "BodyText", None, revised)
+                                    } else {
+                                        format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>")
+                                    }
+                                })
+                                .collect::<String>()
+                        };
+                        let mut dom = Dom::new();
+                        let a = source(&mut dom, &story(&a, false), &settings);
+                        let b = source(&mut dom, &story(&b, true), &settings);
+                        let expected = (frozen(&mut dom, &a), frozen(&mut dom, &b));
+                        assert!(stamp_residual_pairs(&dom, &a[1..], &b[1..]).is_empty());
+                        let title_words = para_text_tokens_joined(&dom, &a[1]);
+                        let subtitle_words = para_text_tokens_joined(&dom, &b[2]);
+                        let j = token_jaccard(&title_words, &subtitle_words);
+                        let shared = significant_tokens(&title_words)
+                            .intersection(&significant_tokens(&subtitle_words))
+                            .count();
+                        assert_eq!(j + 1e-12 >= 0.08, relation == 1);
+                        assert_eq!(shared > 0, relation != 0);
+                        let out = stamp_confetti_then_replace(&mut dom, &a, &b, &settings).unwrap();
+                        assert!(out.iter().any(|seq| {
+                            seq.correlation_status == CorrelationStatus::Inserted
+                                && seq
+                                    .com_units_2
+                                    .as_deref()
+                                    .unwrap_or_default()
+                                    .iter()
+                                    .any(|unit| unit.sha1() == b[1].sha1())
+                        }));
+                        let label = format!(
+                            "short stamp title nesting {short_count}/{long_count} vocabulary={relation} explicit={explicit_properties}"
+                        );
+                        assert_owned(&mut dom, &out, &expected, &label);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn residual_forward_body_pair_respects_short_document_and_word_count_boundaries() {
+        for original_count in [4usize, 5] {
+            for body_words in [16usize, 17] {
+                for reverse in [false, true] {
+                    let settings = WmlComparerSettings::default();
+                    let body = format!(
+                        "{} needle",
+                        (0..body_words - 1)
+                            .map(|i| format!("oldword{i}"))
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    );
+                    let mut a = vec![
+                        paragraph("Original lexical heading", "Title", None, false),
+                        paragraph(&body, "BodyText", None, false),
+                    ];
+                    for i in 2..original_count {
+                        a.push(paragraph(
+                            &format!("ancient walnut sourceend{i}"),
+                            "BodyText",
+                            None,
+                            false,
+                        ));
+                    }
+                    let b = [
+                        "Revised inventory catalog",
+                        "violet glacier firstend",
+                        "needle quartz lastend",
+                        "modern copper finalend",
+                    ]
+                    .iter()
+                    .map(|text| paragraph(text, "BodyText", None, true))
+                    .collect::<String>();
+                    let a = a.concat();
+                    let mut dom = Dom::new();
+                    let a = source(&mut dom, &a, &settings);
+                    let b = source(&mut dom, &b, &settings);
+                    let expected = (frozen(&mut dom, &a), frozen(&mut dom, &b));
+                    let pairs = if reverse {
+                        stamp_residual_pairs(&dom, &b, &a)
+                    } else {
+                        stamp_residual_pairs(&dom, &a, &b)
+                    };
+                    assert_eq!(
+                        pairs,
+                        if !reverse && original_count == 4 && body_words == 16 {
+                            vec![(1, 2)]
+                        } else {
+                            Vec::new()
+                        },
+                        "count={original_count} words={body_words} reverse={reverse}"
+                    );
+                    assert_eq!(
+                        (frozen(&mut dom, &a), frozen(&mut dom, &b)),
+                        expected,
+                        "classification must not mutate source properties or payload"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn residual_pair_conflicts_keep_the_strongest_unique_authored_owner() {
+        for (left_texts, right_texts, expected_pairs) in [
+            (
+                vec!["Copper Demo"],
+                vec!["Copper Demo", "Cobalt Demo"],
+                vec![(0, 0)],
+            ),
+            (
+                vec!["Copper Demo", "Cobalt Demo"],
+                vec!["Copper Demo"],
+                vec![(0, 0)],
+            ),
+            (
+                vec!["Copper Demo", "Cobalt Demo"],
+                vec!["Copper Demo", "Copper Demo", "Cobalt Demo"],
+                vec![(0, 0), (1, 2)],
+            ),
+        ] {
+            let settings = WmlComparerSettings::default();
+            let story = |lines: &[&str], revised| {
+                lines
+                    .iter()
+                    .map(|text| paragraph(text, "Title", None, revised))
+                    .collect::<String>()
+            };
+            let mut dom = Dom::new();
+            let a = source(&mut dom, &story(&left_texts, false), &settings);
+            let b = source(&mut dom, &story(&right_texts, true), &settings);
+            let expected = (frozen(&mut dom, &a), frozen(&mut dom, &b));
+            assert_eq!(stamp_residual_pairs(&dom, &a, &b), expected_pairs);
+            assert_eq!(
+                (frozen(&mut dom, &a), frozen(&mut dom, &b)),
+                expected,
+                "greedy classification cannot rewrite duplicated title owners or formatting"
+            );
+        }
+    }
+
+    #[test]
+    fn multilingual_and_short_content_tokens_keep_every_authored_payload_in_demo_routes() {
+        for (original_tail, revised_tail) in [
+            (
+                "租赁条款 合同附件 原始章节 支付条件 法律责任 文件签署",
+                "更新目录 修订章节 新增清单 生效日期 交付地点 客户登记",
+            ),
+            (
+                "عقد أصلي شروط تفاصيل توقيع مسؤولية",
+                "قائمة جديدة بنود تحديث موعد مكان",
+            ),
+            ("a b c d e f", "g h i j k l"),
+            (
+                "Δ42 oldalpha oldbeta oldgamma olddelta oldepsilon",
+                "Δ42 newalpha newbeta newgamma newdelta newepsilon",
+            ),
+        ] {
+            let left = vec![
+                "Original Alignment Demo".to_owned(),
+                "This document obsolete copper walnut archival chapters".to_owned(),
+                original_tail.to_owned(),
+            ];
+            let right = vec![
+                "Revised Alignment Demo".to_owned(),
+                "This document replacement violet glacier current inventory".to_owned(),
+                revised_tail.to_owned(),
+            ];
+            // The same M180 admission shape is retained: shared significant
+            // title, three real paragraphs and related This-document bodies.
+            // Only the final content tokens vary at the ASCII/length gate.
+            exercise_known_word_guard_window(
+                &left,
+                &right,
+                &format!("M180 authored multilingual content {original_tail:?}/{revised_tail:?}"),
+            );
+        }
+    }
+
+    #[test]
+    fn cell_only_short_table_vocabulary_limits_preserve_complete_source_geometry() {
+        for vocabulary in [3usize, 4, 40, 41] {
+            for prose_titles in 0..=2 {
+                for overlapping in [false, true] {
+                    let labels = (0..vocabulary)
+                        .map(|i| format!("label{i}"))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    let mut short = String::new();
+                    for index in 0..prose_titles {
+                        short.push_str(&paragraph(
+                            if index == 0 { "Clause" } else { "Appendix" },
+                            "Title",
+                            None,
+                            false,
+                        ));
+                    }
+                    short.push_str(&format!("<w:tbl><w:tblPr><w:tblW w:w='2400' w:type='dxa'/></w:tblPr><w:tblGrid><w:gridCol w:w='2400'/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w='2400' w:type='dxa'/><w:shd w:val='clear' w:fill='ABCDEF'/></w:tcPr>{}</w:tc></w:tr></w:tbl>", paragraph(&labels, "BodyText", None, false)));
+                    let mut long = String::new();
+                    for index in 0..14 {
+                        let text = if overlapping && index == 0 {
+                            labels.clone()
+                        } else {
+                            format!("reportword{index} narrativepiece{index}")
+                        };
+                        long.push_str(&paragraph(&text, "BodyText", None, true));
+                    }
+                    long.push_str(&table("report", 19, false));
+                    for reverse in [false, true] {
+                        let settings = WmlComparerSettings::default();
+                        let mut dom = Dom::new();
+                        let (a, b) = if reverse {
+                            (&long, &short)
+                        } else {
+                            (&short, &long)
+                        };
+                        let left = source(&mut dom, a, &settings);
+                        let right = source(&mut dom, b, &settings);
+                        let before = (frozen(&mut dom, &left), frozen(&mut dom, &right));
+                        let n1 = contentful_group_sha1s(&dom, &left).len();
+                        let n2 = contentful_group_sha1s(&dom, &right).len();
+                        assert_eq!(
+                            (n1, n2),
+                            if reverse {
+                                (15, prose_titles + 1)
+                            } else {
+                                (prose_titles + 1, 15)
+                            }
+                        );
+                        let words =
+                            para_text_tokens_from_units(&dom, if reverse { &right } else { &left });
+                        assert_eq!(words.len(), vocabulary + prose_titles);
+                        let j = token_jaccard(
+                            &para_text_tokens_from_units(&dom, &left),
+                            &para_text_tokens_from_units(&dom, &right),
+                        );
+                        let expected = prose_titles <= 1
+                            && (4..=40).contains(&words.len())
+                            && j + 1e-12 < 0.12;
+                        assert_eq!(
+                            short_cell_table_x_long_table_doc(&dom, &left, &right, n1, n2),
+                            expected,
+                            "vocabulary={vocabulary} prose={prose_titles} overlapping={overlapping} reverse={reverse}"
+                        );
+                        assert_eq!((frozen(&mut dom, &left), frozen(&mut dom, &right)), before);
+                        let label = format!(
+                            "cell-only vocabulary={vocabulary} prose={prose_titles} overlap={overlapping} reverse={reverse}"
+                        );
+                        let proposed = step_h(&mut dom, &left, &right, &settings);
+                        assert_owned(&mut dom, &proposed, &before, &label);
+                        let resolved = resolve_correlated_sequences(&mut dom, proposed, &settings);
+                        assert!(
+                            resolved
+                                .iter()
+                                .all(|seq| seq.correlation_status != CorrelationStatus::Unknown)
+                        );
+                        assert_owned(&mut dom, &resolved, &before, &label);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn short_version_annotations_keep_significant_prefix_but_change_raw_body_operands() {
+        for (original_version, revised_version) in [("", "(II) "), ("(I) ", ""), ("(v1) ", "(v2) ")]
+        {
+            let left = vec![
+                "Original Alignment Demo".to_owned(),
+                format!(
+                    "This document {original_version}demonstrates justified paragraph alignment across original archival sections independently"
+                ),
+            ];
+            let right = vec![
+                "Revised Alignment Demo".to_owned(),
+                format!(
+                    "This document {revised_version}demonstrates justified paragraph alignment"
+                ),
+                "Violet copper distinct tail".to_owned(),
+            ];
+            let settings = WmlComparerSettings::default();
+            let mut dom = Dom::new();
+            let a = source(
+                &mut dom,
+                &paragraph(&left[1], "BodyText", None, false),
+                &settings,
+            );
+            let b = source(
+                &mut dom,
+                &paragraph(&right[1], "BodyText", None, true),
+                &settings,
+            );
+            let at = para_text_token_list(&dom, &a[0]);
+            let bt = para_text_token_list(&dom, &b[0]);
+            assert!(ordered_shared_prefix_sig(&at, &bt) >= 6);
+            assert_eq!(
+                at.get(2).map(String::as_str) == Some("demonstrates"),
+                original_version.is_empty()
+            );
+            assert_eq!(
+                bt.get(2).map(String::as_str) == Some("demonstrates"),
+                revised_version.is_empty()
+            );
+            exercise_known_word_guard_window(
+                &left,
+                &right,
+                &format!(
+                    "M166 actual version annotations {original_version:?}/{revised_version:?}"
+                ),
+            );
+        }
+    }
+
     fn exercise_known_word_guard_window(left: &[String], right: &[String], label: &str) {
         for word in [false, true] {
             for reverse in [false, true] {
@@ -19693,6 +20113,40 @@ mod coverage_real_source_route_matrix_tests {
                     &expected,
                     &format!("resolved StepH {label}"),
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn short_demonstration_body_route_preserves_sources_at_each_reachable_prefix_boundary() {
+        for verb in ["demonstrates", "illustrates"] {
+            for revised_words in [8usize, 9] {
+                for changed_prefix in [false, true] {
+                    let original = format!(
+                        "This document {verb} justified paragraph alignment across each original archival section retained independently"
+                    );
+                    let revised = format!(
+                        "This {} {verb} justified paragraph alignment across each{}",
+                        if changed_prefix { "report" } else { "document" },
+                        if revised_words == 9 { " revised" } else { "" }
+                    );
+                    let left = vec!["Original Alignment Demo".to_owned(), original];
+                    let right = vec![
+                        "Revised Alignment Demo".to_owned(),
+                        revised,
+                        "Violet copper distinct tail".to_owned(),
+                    ];
+                    // This is the existing M166/M178 two-to-three paragraph
+                    // caller shape. Only a lexical operand or the documented
+                    // eight-word cap changes; no atom or source mark is removed.
+                    exercise_known_word_guard_window(
+                        &left,
+                        &right,
+                        &format!(
+                            "M166 verb={verb} words={revised_words} changed_prefix={changed_prefix}"
+                        ),
+                    );
+                }
             }
         }
     }
