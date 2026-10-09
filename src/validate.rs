@@ -1787,3 +1787,211 @@ pub fn audit_tracked(
     }
     Ok(out)
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod validation_boundary_tests {
+    use super::*;
+
+    fn pkg() -> PartFs {
+        PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap()
+    }
+
+    fn xml(dom: &mut Dom, body: &str) -> NodeId {
+        let doc = dom.parse_xdocument(&format!(
+            r#"<w:document xmlns:w="{}" xmlns:mc="{}"><w:body>{body}</w:body></w:document>"#,
+            W::URI,
+            MC::URI
+        ));
+        dom.root(doc).unwrap()
+    }
+
+    #[test]
+    fn metadata_ids_check_width_hex_digits_and_the_word_boundary_independently() {
+        for (value, bound, expected) in [
+            ("12345678", true, None),
+            ("abcdef01", false, None),
+            ("7FFFFFFF", true, None),
+            ("80000000", true, Some("outside Word")),
+            ("80000000", false, None),
+            ("1234567", true, Some("not an 8-digit")),
+            ("123456789", false, Some("not an 8-digit")),
+            ("1234567z", true, Some("not an 8-digit")),
+            ("é234567", false, Some("not an 8-digit")),
+        ] {
+            let mut findings = Vec::new();
+            check_hex_id("test", value, bound, "part", &mut findings);
+            assert_eq!(findings.len(), usize::from(expected.is_some()), "{value}");
+            if let Some(message) = expected {
+                assert_eq!(findings[0].code, "COMMENT_PARTS_INCONSISTENT");
+                assert!(findings[0].message.contains(message));
+                assert!(findings[0].word_fatal);
+            }
+        }
+    }
+
+    #[test]
+    fn paragraph_ids_ignore_invalid_or_unterminated_values_and_find_both_attributes() {
+        let source = r#"w14:paraId="7fffffff" w14:textId="80000000" w14:paraId="ZZZZZZZZ" w14:textId="00000000" w14:paraId="FFFFFFFF" w14:textId="unfinished"#;
+        assert_eq!(
+            para_id_values(source),
+            vec![0x7fffffff, u32::MAX, 0x80000000, 0]
+        );
+        assert_eq!(
+            out_of_range_para_ids(source),
+            vec![
+                ("w14:paraId=\"", "FFFFFFFF".into()),
+                ("w14:textId=\"", "80000000".into()),
+                ("w14:textId=\"", "00000000".into())
+            ]
+        );
+    }
+
+    #[test]
+    fn deletion_scope_stops_at_textboxes_and_nested_insertions_stay_live() {
+        let mut dom = Dom::new();
+        let root = xml(
+            &mut dom,
+            "<w:p><w:del><w:r><w:t>deleted</w:t></w:r><w:ins><w:r><w:t>inserted</w:t></w:r></w:ins><w:r><w:txbxContent><w:p><w:r><w:delText>uncovered</w:delText></w:r></w:p></w:txbxContent></w:r></w:del></w:p><w:p><w:moveFrom><w:r><w:delText>moved</w:delText></w:r></w:moveFrom><w:r><w:delText>stranded</w:delText></w:r></w:p>",
+        );
+        let texts = dom.descendants(root, Some(&W::name("delText")));
+        assert!(!covered_by_deletion(&dom, texts[0]));
+        assert!(covered_by_deletion(&dom, texts[1]));
+        assert!(!covered_by_deletion(&dom, texts[2]));
+        fix_deleted_text(&mut dom, root);
+        let live = dom
+            .descendants(root, Some(&W::t()))
+            .into_iter()
+            .map(|n| dom.value(n))
+            .collect::<Vec<_>>();
+        assert_eq!(live, ["inserted", "uncovered", "moved", "stranded"]);
+        assert_eq!(
+            dom.value(dom.descendants(root, Some(&W::name("delText")))[0]),
+            "deleted"
+        );
+    }
+
+    #[test]
+    fn bookmarks_are_forbidden_in_each_single_value_control_but_allowed_in_rich_text() {
+        for control in SINGLE_VALUE_CONTROLS.into_iter().chain(["richText"]) {
+            let mut dom = Dom::new();
+            let root = xml(
+                &mut dom,
+                &format!(
+                    "<w:sdt><w:sdtPr><w:{control}/></w:sdtPr><w:sdtContent><w:p><w:bookmarkStart w:id=\"1\"/><w:r><w:t>value</w:t></w:r><w:bookmarkEnd w:id=\"1\"/></w:p></w:sdtContent></w:sdt><w:p><w:bookmarkStart w:id=\"2\"/></w:p>"
+                ),
+            );
+            let forbidden = bookmarks_in_single_value_controls(&dom, root);
+            assert_eq!(forbidden.len(), if control == "richText" { 0 } else { 2 });
+            drop_bookmarks_in_single_value_controls(&mut dom, root);
+            assert_eq!(
+                dom.descendants(root, Some(&W::name("bookmarkStart"))).len(),
+                if control == "richText" { 2 } else { 1 }
+            );
+            assert_eq!(dom.value(root), "value");
+        }
+    }
+
+    #[test]
+    fn comment_auxiliary_parts_reject_missing_duplicate_and_unmatched_ids() {
+        let mut pkg = pkg();
+        let expected = HashSet::from(["11111111".to_string()]);
+        pkg.set_part("word/commentsExtended.xml", br#"<root><row/><row paraId="11111111" paraIdParent="11111111"/><row paraId="11111111"/><row paraId="22222222"/></root>"#.to_vec());
+        let mut out = Vec::new();
+        let graph = check_comments_extended(&pkg, &expected, &mut out).unwrap();
+        assert_eq!(
+            graph.keys,
+            HashSet::from(["11111111".into(), "22222222".into()])
+        );
+        assert_eq!(out.len(), 4);
+        assert!(out.iter().any(|f| f.code == "COMMENT_PARENT_CYCLE"));
+        assert!(out.iter().any(|f| f.message.contains("has no paraId")));
+        assert!(out.iter().any(|f| f.message.contains("duplicate")));
+        assert!(out.iter().any(|f| f.message.contains("no matching")));
+        pkg.set_part("word/commentsIds.xml", br#"<root><row/><row paraId="11111111"/><row paraId="11111111" durableId="22222222"/><row paraId="33333333" durableId="22222222"/></root>"#.to_vec());
+        out.clear();
+        assert_eq!(
+            check_comments_ids(&pkg, &expected, &mut out),
+            Some(HashSet::from(["22222222".into()]))
+        );
+        assert_eq!(out.len(), 5);
+        pkg.set_part(
+            "word/commentsExtensible.xml",
+            br#"<root><row/><row durableId="22222222"/><row durableId="22222222"/></root>"#
+                .to_vec(),
+        );
+        out.clear();
+        check_comments_extensible(&pkg, Some(&HashSet::from(["22222222".into()])), &mut out);
+        assert_eq!(out.len(), 2);
+        out.clear();
+        check_comments_extensible(&pkg, None, &mut out);
+        assert_eq!(out.len(), 3);
+        assert!(
+            out.iter()
+                .any(|f| f.message.contains("without commentsIds"))
+        );
+    }
+
+    #[test]
+    fn graph_cycles_are_reported_without_confusing_acyclic_chains() {
+        let mut out = Vec::new();
+        check_parent_cycles(
+            &HashMap::from([("a".into(), "b".into()), ("b".into(), "c".into())]),
+            &mut out,
+        );
+        assert!(out.is_empty());
+        check_parent_cycles(
+            &HashMap::from([
+                ("a".into(), "b".into()),
+                ("b".into(), "a".into()),
+                ("tail".into(), "a".into()),
+            ]),
+            &mut out,
+        );
+        assert_eq!(out.len(), 3);
+        assert!(out.iter().all(|f| f.code == "COMMENT_PARENT_CYCLE"));
+    }
+
+    #[test]
+    fn namespace_prefix_lists_distinguish_application_data_bound_and_unknown_prefixes() {
+        let mut pkg = pkg();
+        pkg.set_part("custom.xml", format!(r#"<root xmlns:mc="{}" xmlns:known="urn:known" Requires="application" mc:Ignorable="known xml w14 unknown"><mc:Choice Requires="known"/><child mc:PreserveElements="known:thing unknown:thing"/></root>"#, MC::URI).into_bytes());
+        let mut out = Vec::new();
+        check_namespace_qname_context(&pkg, "custom.xml", &mut out);
+        assert_eq!(out.len(), 3);
+        assert_eq!(out.iter().filter(|f| f.repairable).count(), 1);
+        assert!(out.iter().all(|f| f.code == "MC_UNBOUND_PREFIX"));
+        for attribute in [
+            "Ignorable",
+            "PreserveAttributes",
+            "PreserveElements",
+            "ProcessContent",
+            "MustUnderstand",
+        ] {
+            assert!(is_namespace_qname_list(&W::p(), &MC::name(attribute)));
+        }
+        assert!(!is_namespace_qname_list(&W::p(), &MC::name("other")));
+        assert!(!is_namespace_qname_list(
+            &W::p(),
+            &XName::get("Requires", "")
+        ));
+        assert!(is_namespace_qname_list(
+            &MC::name("Choice"),
+            &XName::get("Requires", "")
+        ));
+    }
+
+    #[test]
+    fn absent_or_unreadable_parts_are_not_modified_by_edit_part() {
+        let mut pkg = pkg();
+        edit_part(&mut pkg, "absent.xml", |_, _| {
+            panic!("missing part must not call editor")
+        });
+        assert!(pkg.part_bytes("absent.xml").is_none());
+        pkg.set_part("empty.xml", Vec::new());
+        edit_part(&mut pkg, "empty.xml", |_, _| {
+            panic!("empty part must not call editor")
+        });
+        assert_eq!(pkg.part_bytes("empty.xml"), Some([].as_slice()));
+    }
+}

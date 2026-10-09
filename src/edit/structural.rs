@@ -480,6 +480,7 @@ fn definition(dom: &mut Dom, id: &str) -> Option<NodeId> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

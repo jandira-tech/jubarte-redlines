@@ -1216,12 +1216,12 @@ fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMa
         .max()
         .unwrap_or(0)
         + 1;
-    let b_comment_text: HashMap<String, String> = dom
+    let b_comment_fingerprints: HashMap<String, String> = dom
         .elements(br, Some(&W::name("comment")))
         .into_iter()
         .filter_map(|c| {
             dom.attribute(c, &id_name)
-                .map(|id| (id.to_string(), dom.value(c)))
+                .map(|id| (id.to_string(), comment_definition_fingerprint(&dom, c)))
         })
         .collect();
     // A's own ids that will be KEPT as-is (non-colliding, distinct-text comments).
@@ -1243,7 +1243,7 @@ fn union_comments_xml(out: &mut PartFs, out_main: &str, pkg1: &PartFs) -> HashMa
         let Some(id) = dom.attribute(c, &id_name).map(str::to_string) else {
             continue;
         };
-        if b_comment_text.get(&id) == Some(&dom.value(c)) {
+        if b_comment_fingerprints.get(&id) == Some(&comment_definition_fingerprint(&dom, c)) {
             continue; // same comment carried on both sides; B's copy wins
         }
         let clone = dom.clone_subtree(c);
@@ -1631,6 +1631,7 @@ fn strip_unanchored_comment_markers(dom: &mut Dom, result_root: NodeId, keep: &H
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -1751,6 +1752,871 @@ mod tests {
         assert_eq!(
             texts_and_markers(&dom, root),
             ["Alpha ", "[1", "beta", "Gamma ", "[2", "delta"]
+        );
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod deeper_boundary_tests {
+    use super::*;
+
+    const MAIN: &str = "word/document.xml";
+    // The same bundled, in-memory package used by comparer::parts tests.
+    const PACKAGE: &[u8] = include_bytes!("../../tests/fixtures/relids/image_doc.docx");
+
+    fn xml(local: &str, contents: &str) -> String {
+        format!(
+            "<w:{local} xmlns:w=\"{}\" xmlns:w14=\"{}\" xmlns:mc=\"{}\" xmlns:x=\"urn:comment-test\">{contents}</w:{local}>",
+            W::URI,
+            W14::URI,
+            MC::URI,
+        )
+    }
+
+    fn package(comments: Option<&str>, body: Option<&str>) -> PartFs {
+        let mut pkg = PartFs::open(PACKAGE).unwrap();
+        for (part, _, rel) in FAMILY {
+            remove_family_part(&mut pkg, MAIN, part, rel);
+        }
+        pkg.remove_part(MAIN);
+        if let Some(body) = body {
+            pkg.set_part(
+                MAIN,
+                xml("document", &format!("<w:body>{body}</w:body>")).into_bytes(),
+            );
+        }
+        if let Some(comments) = comments {
+            pkg.set_part("word/comments.xml", xml("comments", comments).into_bytes());
+        }
+        pkg
+    }
+
+    fn parse(contents: &str) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml("document", &format!("<w:body>{contents}</w:body>")));
+        let root = dom.root(doc).unwrap();
+        (dom, root)
+    }
+
+    fn set(values: &[&str]) -> HashSet<String> {
+        values.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    fn comment(id: &str, body: &str) -> String {
+        format!("<w:comment w:id=\"{id}\"><w:p><w:r><w:t>{body}</w:t></w:r></w:p></w:comment>")
+    }
+
+    fn range(start: usize, end: usize) -> Range {
+        Range {
+            id: "7".into(),
+            start,
+            end,
+            seq: 0,
+        }
+    }
+
+    fn chars(text: &str) -> Vec<char> {
+        text.chars().collect()
+    }
+
+    fn children(dom: &Dom, parent: NodeId) -> Vec<String> {
+        dom.elements(parent, None)
+            .into_iter()
+            .map(|n| {
+                let name = dom.name(n).unwrap();
+                format!("{}:{}", name.local_name(), dom.value(n))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn missing_and_rootless_parts_are_distinct_empty_boundaries() {
+        for contents in [None, Some(""), Some("<!-- no document element -->")] {
+            let mut pkg = package(None, None);
+            if let Some(contents) = contents {
+                pkg.set_part("word/comments.xml", contents.as_bytes().to_vec());
+                pkg.set_part(MAIN, contents.as_bytes().to_vec());
+            }
+            assert!(comment_ids_of(&pkg).is_empty());
+            assert!(comment_id_fingerprint_of(&pkg).is_empty());
+            assert!(extract_events(&pkg, MAIN).is_none());
+            assert!(b_carries_same_comments_as_a(&pkg, &package(None, None)));
+            assert!(b_covers_comment_identities_of_a(
+                &pkg,
+                MAIN,
+                &package(None, None),
+                MAIN
+            ));
+            let anchors = HashMap::from([("7".into(), (2, 3))]);
+            assert_eq!(
+                select_anchor_aware_comments(&pkg, &anchors, &HashSet::new()),
+                set(&["7"])
+            );
+            let before = pkg.part_bytes("word/comments.xml").map(<[u8]>::to_vec);
+            drop_orphans(&mut pkg, MAIN, &HashSet::new());
+            assert_eq!(pkg.part_bytes("word/comments.xml"), before.as_deref());
+            let (mut dom, root) = parse("<w:p><w:r><w:t>Kept</w:t></w:r></w:p>");
+            assert!(
+                inject_side(
+                    &mut dom,
+                    root,
+                    (&pkg, MAIN),
+                    true,
+                    "R",
+                    &HashMap::new(),
+                    None
+                )
+                .is_empty()
+            );
+            assert_eq!(collect_segments(&dom, root, true, "R", true).0, "Kept\n");
+        }
+    }
+
+    #[test]
+    fn fingerprints_preserve_metadata_and_join_only_visible_text() {
+        let definition = "<w:comment w:id=\"7\" w:author=\"Ada\" w:date=\"fixed\" w:initials=\"AL\"><w:p><w:r><w:t>  one </w:t><w:delText>ignored</w:delText><w:t> two\tthree </w:t></w:r></w:p></w:comment><w:comment><w:p/></w:comment>";
+        let pkg = package(Some(definition), None);
+        assert_eq!(comment_ids_of(&pkg), set(&["7"]));
+        assert_eq!(
+            comment_id_fingerprint_of(&pkg),
+            HashMap::from([("7".into(), "one two three\0Ada\0fixed\0AL".into())])
+        );
+        for (attribute, value) in [("author", "Grace"), ("date", "other"), ("initials", "GH")] {
+            let changed = definition.replace(
+                &format!(
+                    "w:{attribute}=\"{}\"",
+                    match attribute {
+                        "author" => "Ada",
+                        "date" => "fixed",
+                        _ => "AL",
+                    }
+                ),
+                &format!("w:{attribute}=\"{value}\""),
+            );
+            assert!(
+                !b_carries_same_comments_as_a(&pkg, &package(Some(&changed), None)),
+                "{attribute}"
+            );
+        }
+    }
+
+    #[test]
+    fn unanchored_identity_includes_id_and_live_ranges_supersede_points() {
+        let defs = format!(
+            "{}{}{}",
+            comment("7", "same"),
+            comment("8", "same"),
+            comment("9", "same")
+        );
+        for body in [None, Some("<w:p><w:r><w:t>abc</w:t></w:r></w:p>")] {
+            let pkg = package(Some(&defs), body);
+            let identities = comment_anchor_identities(&pkg, MAIN);
+            assert_eq!(identities.len(), 3);
+            for id in ["7", "8", "9"] {
+                assert_eq!(identities[id], format!("same\0\0\0\0<unanchored:{id}>"));
+            }
+        }
+        let body = "<w:p><w:commentRangeStart w:id=\"7\"/><w:r><w:t>abc</w:t></w:r><w:commentRangeEnd w:id=\"7\"/><w:r><w:commentReference w:id=\"8\"/></w:r></w:p>";
+        let pkg = package(Some(&defs), Some(body));
+        assert_eq!(
+            comment_anchor_identities(&pkg, MAIN),
+            HashMap::from([("7".into(), "same\0\0\0\0\0abc\0".into())])
+        );
+        assert!(!b_covers_comment_identities_of_a(
+            &package(Some(&comment("7", "same")), None),
+            MAIN,
+            &package(Some(&comment("8", "same")), None),
+            MAIN
+        ));
+    }
+
+    #[test]
+    fn extraction_ignores_idless_markers_and_deduplicates_reference_points() {
+        let body = "<!-- non-text node --><w:p><w:commentRangeStart/><w:commentRangeEnd/><w:commentRangeEnd w:id=\"missing\"/><w:r><w:commentReference/><w:commentReference w:id=\"p\"/><w:commentReference w:id=\"p\"/><w:t>é🐋</w:t></w:r><w:commentRangeStart w:id=\"r\"/><w:commentRangeStart w:id=\"r\"/><w:r><w:t>x</w:t></w:r><w:commentRangeEnd w:id=\"r\"/><w:r><w:commentReference w:id=\"r\"/></w:r></w:p><w:p/>";
+        let (text, ranges) = extract_events(&package(None, Some(body)), MAIN).unwrap();
+        assert_eq!(text, "é🐋x\n\n");
+        assert_eq!(
+            ranges
+                .iter()
+                .map(|r| (r.id.as_str(), r.start, r.end, r.seq))
+                .collect::<Vec<_>>(),
+            [("r", 2, 3, 0), ("p", 0, 0, usize::MAX)]
+        );
+    }
+
+    #[test]
+    fn character_search_truth_table_includes_empty_needles_and_ties() {
+        for (hay, needle, from, want) in [
+            ("abc", "", 0, Some(0)),
+            ("abc", "", 3, Some(3)),
+            ("abc", "", 4, None),
+            ("abc", "bc", 1, Some(1)),
+            ("abc", "bc", 2, None),
+            ("a", "aa", 0, None),
+            ("", "a", 0, None),
+            ("abc", "x", 0, None),
+        ] {
+            assert_eq!(
+                find_chars_from(&chars(hay), &chars(needle), from),
+                want,
+                "{hay:?}/{needle:?}/{from}"
+            );
+        }
+        assert_eq!(find_chars_nearest(&chars("x-x"), &chars("x"), 1), Some(0));
+        assert_eq!(find_chars_nearest(&chars("x-x-x"), &chars("x"), 3), Some(2));
+        assert_eq!(expected(&[], &chars("abc"), 8, 1), 0);
+        assert_eq!(expected(&chars("abcd"), &chars("abcdefgh"), 3, 1), 5);
+        assert_eq!(expected(&chars("abcd"), &chars("a"), 1, 9), 0);
+        assert_eq!(map_range(&[], &[], &range(0, 0)), None);
+        assert_eq!(map_range(&chars("abc"), &chars("xyz"), &range(1, 1)), None);
+        assert_eq!(
+            map_range_ends(&chars(&"x".repeat(80)), &[], &range(0, 80)),
+            None
+        );
+    }
+
+    #[test]
+    fn end_mapping_checks_both_inclusive_span_limits() {
+        let source = chars(&format!(
+            "{}{}{}",
+            "H".repeat(40),
+            "I".repeat(320),
+            "T".repeat(40)
+        ));
+        for (span, want) in [
+            (119, None),
+            (120, Some((0, 120))),
+            (880, Some((0, 880))),
+            (881, None),
+        ] {
+            let merged = chars(&format!(
+                "{}{}{}",
+                "H".repeat(40),
+                "M".repeat(span - 80),
+                "T".repeat(40)
+            ));
+            assert_eq!(
+                map_range_ends(&source, &merged, &range(0, 400)),
+                want,
+                "span={span}"
+            );
+        }
+        assert_eq!(
+            map_range_ends(&source, &chars(&"H".repeat(40)), &range(0, 400)),
+            None
+        );
+    }
+
+    #[test]
+    fn projection_filters_foreign_deletions_and_retains_empty_paragraph_marks() {
+        let (dom, root) = parse(
+            "<w:p><w:del w:author=\"R\"><w:r><w:t>hidden</w:t><w:delText>ours</w:delText></w:r></w:del><w:del w:author=\"Other\"><w:r><w:delText>foreign</w:delText></w:r></w:del><w:r><w:t>kept</w:t></w:r></w:p><w:p/>",
+        );
+        assert_eq!(collect_segments(&dom, root, true, "R", true).0, "kept\n\n");
+        assert_eq!(
+            collect_segments(&dom, root, false, "R", true).0,
+            "hiddenourskept\n\n"
+        );
+        for (change, a, b) in [
+            ("ins", false, true),
+            ("moveTo", false, true),
+            ("del", true, false),
+            ("moveFrom", true, false),
+        ] {
+            let (dom, root) = parse(&format!(
+                "<w:p><w:pPr><w:rPr><w:{change}/></w:rPr></w:pPr></w:p>"
+            ));
+            let p = dom.descendants(root, Some(&W::p()))[0];
+            assert_eq!(mark_on_side(&dom, p, false), a, "{change}");
+            assert_eq!(mark_on_side(&dom, p, true), b, "{change}");
+        }
+    }
+
+    #[test]
+    fn styled_unicode_split_preserves_properties_and_trailing_nodes() {
+        let (mut dom, root) = parse(
+            "<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>é🐋Z</w:t><w:tab/><w:t>tail</w:t></w:r></w:p>",
+        );
+        let (_, mut segs) = collect_segments(&dom, root, true, "R", false);
+        split_seg(&mut dom, &mut segs, 0, 2);
+        let p = dom.descendants(root, Some(&W::p()))[0];
+        assert_eq!(children(&dom, p), ["r:é🐋", "r:Ztail"]);
+        assert_eq!(
+            children(&dom, segs[1].run),
+            ["rPr:", "t:Z", "tab:", "t:tail"]
+        );
+        assert_eq!(
+            segs.iter().map(|s| (s.start, s.len)).collect::<Vec<_>>(),
+            [(0, 2), (2, 1), (3, 4)]
+        );
+        assert_eq!(segs[1].run, segs[2].run);
+        for s in &segs[..2] {
+            assert!(
+                dom.element(dom.element(s.run, &W::r_pr()).unwrap(), &W::name("b"))
+                    .is_some()
+            );
+            assert_eq!(
+                dom.attribute(s.leaf, &XNamespace::xml().name("space")),
+                Some("preserve")
+            );
+        }
+        split_run_before_leaf(&mut dom, &mut segs, 2);
+        assert_eq!(children(&dom, p), ["r:é🐋", "r:Z", "r:tail"]);
+        assert!(dom.element(segs[2].run, &W::r_pr()).is_some());
+    }
+
+    #[test]
+    fn placement_empty_start_and_past_last_boundaries() {
+        for (body, offset, after, want) in [
+            ("<w:p/>", 1, false, true),
+            ("<w:p/>", 0, true, true),
+            ("<w:p><w:r><w:t>x</w:t></w:r></w:p>", 2, false, true),
+            ("", 0, false, false),
+            ("", 0, true, false),
+        ] {
+            let (mut dom, root) = parse(body);
+            let (_, mut segs) = collect_segments(&dom, root, true, "R", true);
+            if let Some(i) = segs.iter().position(Seg::is_mark) {
+                let leaf = segs[i].leaf;
+                split_run_before_leaf(&mut dom, &mut segs, i);
+                assert_eq!(segs[i].leaf, leaf);
+            }
+            let anchor = new_anchor(&mut dom, false, "7");
+            if after {
+                place_after_offset(&mut dom, &mut segs, offset, anchor);
+            } else {
+                place_before_offset(&mut dom, &mut segs, offset, anchor);
+            }
+            assert_eq!(
+                dom.parent(anchor).is_some(),
+                want,
+                "{body}/{offset}/{after}"
+            );
+            if want {
+                let p = dom.descendants(root, Some(&W::p()))[0];
+                if after && offset == 0 {
+                    let body = dom.element(root, &W::body()).unwrap();
+                    assert_eq!(dom.parent(anchor), Some(body));
+                    assert_eq!(children(&dom, body), ["commentRangeEnd:", "p:"]);
+                } else {
+                    assert_eq!(dom.parent(anchor), Some(p));
+                    let names = children(&dom, p);
+                    assert_eq!(names.last().unwrap(), "commentRangeEnd:");
+                }
+            }
+        }
+        let (mut dom, root) = parse("<w:p><w:r><w:t>x</w:t></w:r></w:p>");
+        let (_, mut segs) = collect_segments(&dom, root, true, "R", false);
+        let anchor = new_anchor(&mut dom, false, "7");
+        place_before_offset(&mut dom, &mut segs, 2, anchor);
+        assert_eq!(
+            children(&dom, dom.descendants(root, Some(&W::p()))[0]),
+            ["r:x", "commentRangeEnd:"]
+        );
+    }
+
+    #[test]
+    fn point_after_normal_mark_does_not_clone_next_deleted_mark() {
+        let (mut dom, root) =
+            parse("<w:p/><w:p><w:pPr><w:rPr><w:del w:author=\"R\"/></w:rPr></w:pPr></w:p>");
+        let (_, mut segs) = collect_segments(&dom, root, false, "R", true);
+        let anchor = new_anchor(&mut dom, false, "7");
+        place_after_offset(&mut dom, &mut segs, 1, anchor);
+        let p = dom.descendants(root, Some(&W::p()))[1];
+        assert_eq!(children(&dom, p), ["pPr:", "commentRangeEnd:"]);
+        assert_eq!(dom.parent(anchor), Some(p));
+    }
+
+    #[test]
+    fn injection_filters_ids_and_rejects_unmappable_ranges() {
+        let source = package(
+            None,
+            Some(
+                "<w:p><w:commentRangeStart w:id=\"7\"/><w:r><w:t>abc</w:t></w:r><w:commentRangeEnd w:id=\"7\"/></w:p>",
+            ),
+        );
+        for (text, filter, want) in [
+            ("abc", set(&["other"]), None),
+            ("xyz", set(&["7"]), None),
+            ("abc", set(&["7"]), Some((0, 3))),
+        ] {
+            let (mut dom, root) = parse(&format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>"));
+            let map = HashMap::from([("7".into(), "42".into())]);
+            let anchored = inject_side(
+                &mut dom,
+                root,
+                (&source, MAIN),
+                true,
+                "R",
+                &map,
+                Some(&filter),
+            );
+            assert_eq!(anchored.get("42").copied(), want);
+            assert_eq!(anchored.len(), usize::from(want.is_some()));
+            assert_eq!(
+                dom.descendants(root, Some(&W::name("commentReference")))
+                    .len(),
+                usize::from(want.is_some())
+            );
+            assert_eq!(collect_segments(&dom, root, true, "R", false).0, text);
+        }
+    }
+
+    #[test]
+    fn deletion_exit_requires_only_markers_after_the_end() {
+        for (tail, moves) in [
+            ("<w:commentRangeStart w:id=\"8\"/>", true),
+            ("<w:r><w:commentReference w:id=\"7\"/></w:r>", true),
+            ("<w:r><w:t>tail</w:t></w:r>", false),
+            ("<w:bookmarkEnd w:id=\"3\"/>", false),
+        ] {
+            let (mut dom, root) = parse(&format!(
+                "<w:p><w:del><w:r><w:delText>x</w:delText></w:r><w:commentRangeStart w:id=\"7\"/><w:commentRangeEnd w:id=\"7\"/>{tail}</w:del></w:p>"
+            ));
+            let end = dom.descendants(root, Some(&W::name("commentRangeEnd")))[0];
+            let old_parent = dom.parent(end).unwrap();
+            step_out_of_deletion_end(&mut dom, end);
+            assert_eq!(dom.parent(end) != Some(old_parent), moves, "{tail}");
+            if moves {
+                let p = dom.descendants(root, Some(&W::p()))[0];
+                assert_eq!(dom.parent(end), Some(p));
+                assert_eq!(children(&dom, old_parent), ["r:x"]);
+            } else {
+                assert_eq!(dom.parent(end), Some(old_parent));
+            }
+        }
+    }
+
+    #[test]
+    fn allocation_wrap_and_collision_truth_tables() {
+        for initial in [0, 1, 0x8000_0000, u32::MAX] {
+            let mut used = set(&["00000001", "00000002"]);
+            let mut next = initial;
+            assert_eq!(allocate_para_id(&mut used, &mut next), "00000003");
+            assert_eq!(next, 4);
+            assert_eq!(used, set(&["00000001", "00000002", "00000003"]));
+        }
+        let mut used = set(&["FFFFFFFF", "00000001"]);
+        let mut next = u32::MAX;
+        assert_eq!(allocate_durable_id(&mut used, &mut next), "00000002");
+        assert_eq!(next, 3);
+        let mut next = 0;
+        assert_eq!(
+            allocate_durable_id(&mut HashSet::new(), &mut next),
+            "00000001"
+        );
+        assert_eq!(next, 2);
+    }
+
+    #[test]
+    fn reference_rewriting_changes_only_matching_identity_attributes() {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument("<root paraId=\"aa\" paraIdParent=\"bb\" durableId=\"aa\" other=\"aa\"><child paraId=\"cc\" durableId=\"cc\"/></root>");
+        let root = dom.root(doc).unwrap();
+        let map = HashMap::from([("AA".into(), "00000001".into())]);
+        rewrite_para_id_references(&mut dom, root, &map);
+        rewrite_durable_id_references(&mut dom, root, &map);
+        assert_eq!(
+            dom.attribute(root, &XName::get("paraId", "")),
+            Some("00000001")
+        );
+        assert_eq!(
+            dom.attribute(root, &XName::get("durableId", "")),
+            Some("00000001")
+        );
+        assert_eq!(
+            dom.attribute(root, &XName::get("paraIdParent", "")),
+            Some("bb")
+        );
+        assert_eq!(dom.attribute(root, &XName::get("other", "")), Some("aa"));
+        let child = dom.elements(root, None)[0];
+        assert_eq!(dom.attribute(child, &XName::get("paraId", "")), Some("cc"));
+        assert_eq!(
+            dom.attribute(child, &XName::get("durableId", "")),
+            Some("cc")
+        );
+        assert_eq!(rewrite_qname_token("missing:item", &map), "missing:item");
+        assert_eq!(rewrite_qname_token("AA:item", &map), "00000001:item");
+        assert_eq!(rewrite_qname_token("AA", &map), "00000001");
+        assert!(!is_namespace_qname_list(None, &MC::name("Ignorable")));
+        assert!(!is_namespace_qname_list(
+            Some(&W::p()),
+            &XName::get("Requires", "")
+        ));
+        assert!(is_namespace_qname_list(
+            Some(&MC::name("Choice")),
+            &XName::get("Requires", "")
+        ));
+    }
+
+    #[test]
+    fn namespace_conflicts_reuse_aliases_or_skip_occupied_generated_prefixes() {
+        for (destination, chosen) in [
+            (
+                "xmlns:x=\"urn:other\" xmlns:a=\"urn:source\" xmlns:z=\"urn:source\"",
+                "a",
+            ),
+            ("xmlns:x=\"urn:other\" xmlns:ns0=\"urn:occupied\"", "ns1"),
+        ] {
+            let mut dom = Dom::new();
+            let source = dom.parse_xdocument(&format!("<root xmlns:mc=\"{}\" xmlns:x=\"urn:source\" mc:Ignorable=\"x missing\"><child xmlns:local=\"urn:local\" mc:PreserveElements=\"x:item unbound:item\" plain=\"v\"><x:item/></child></root>", MC::URI));
+            let dest = dom.parse_xdocument(&format!("<root {destination}/>"));
+            let source = dom.root(source).unwrap();
+            let dest = dom.root(dest).unwrap();
+            let child = dom.elements(source, None)[0];
+            let clone = dom.clone_subtree(child);
+            preserve_cloned_namespace_context(&mut dom, source, dest, clone);
+            assert_eq!(
+                namespace_declarations(&dom, dest)
+                    .get(chosen)
+                    .map(String::as_str),
+                Some("urn:source")
+            );
+            assert_eq!(dom.attribute(dest, &MC::name("Ignorable")), Some(chosen));
+            assert_eq!(
+                dom.attribute(clone, &MC::name("PreserveElements")),
+                Some(format!("{chosen}:item unbound:item").as_str())
+            );
+            assert_eq!(dom.attribute(clone, &XName::get("plain", "")), Some("v"));
+            assert_eq!(
+                namespace_declarations(&dom, clone)
+                    .get("local")
+                    .map(String::as_str),
+                Some("urn:local")
+            );
+            assert_eq!(
+                dom.name(dom.elements(clone, None)[0])
+                    .unwrap()
+                    .namespace_name(),
+                "urn:source"
+            );
+            assert!(!namespace_declarations(&dom, dest).contains_key("unbound"));
+        }
+    }
+
+    #[test]
+    fn union_missing_or_rootless_primary_parts_preserve_output() {
+        for (a_xml, b_xml) in [
+            (None, Some("<w:comments/>")),
+            (Some("<w:comments/>"), None),
+            (Some(""), Some("<w:comments/>")),
+            (Some("<w:comments/>"), Some("")),
+        ] {
+            let mut a = package(None, None);
+            let mut b = package(None, None);
+            for (pkg, contents) in [(&mut a, a_xml), (&mut b, b_xml)] {
+                if let Some(contents) = contents {
+                    pkg.set_part("word/comments.xml", contents.as_bytes().to_vec());
+                }
+            }
+            let before = b.part_bytes("word/comments.xml").map(<[u8]>::to_vec);
+            assert!(union_comments_xml(&mut b, MAIN, &a).is_empty());
+            assert_eq!(b.part_bytes("word/comments.xml"), before.as_deref());
+        }
+    }
+
+    #[test]
+    fn union_skips_idless_and_identical_comments_and_duplicate_auxiliary_keys() {
+        let defs = format!("{}<w:comment><w:p/></w:comment>", comment("7", "same"));
+        let mut a = package(Some(&defs), None);
+        let mut b = package(Some(&comment("7", "same")), None);
+        let aux = "<root><entry paraId=\"aa\" durableId=\"10\"/><entry other=\"idless\"/></root>";
+        for (part, _, _) in &FAMILY[1..] {
+            a.set_part(part, aux.as_bytes().to_vec());
+            b.set_part(part, aux.as_bytes().to_vec());
+        }
+        assert!(union_comments_xml(&mut b, MAIN, &a).is_empty());
+        assert_eq!(comment_ids_of(&b), set(&["7"]));
+        for (part, _, _) in &FAMILY[1..] {
+            assert_eq!(b.part_string(part).as_deref(), Some(aux));
+        }
+    }
+
+    #[test]
+    fn auxiliary_rootless_and_seeded_relationship_boundaries() {
+        for mode in [0, 1, 2, 3] {
+            let mut a = package(Some(&comment("8", "A")), None);
+            let mut b = package(Some(&comment("7", "B")), None);
+            let (part, ct, rel) = FAMILY[1];
+            a.set_part(
+                part,
+                if mode == 0 || mode == 1 {
+                    Vec::new()
+                } else {
+                    b"<root><entry paraId=\"aa\"/></root>".to_vec()
+                },
+            );
+            if mode == 1 || mode == 2 {
+                b.set_part(part, Vec::new());
+            }
+            if mode == 3 {
+                b.add_document_relationship(MAIN, rel, "commentsExtended.xml");
+            }
+            let map = union_comments_xml(&mut b, MAIN, &a);
+            assert_eq!(map, HashMap::from([("8".into(), "8".into())]));
+            match mode {
+                0 => assert!(b.part_bytes(part).is_none()),
+                1 | 2 => assert_eq!(b.part_bytes(part), Some(&b""[..])),
+                _ => {
+                    assert_eq!(
+                        b.part_string(part).as_deref(),
+                        Some("<root><entry paraId=\"aa\" /></root>")
+                    );
+                    assert_eq!(b.content_type_for(part).as_deref(), Some(ct));
+                    assert_eq!(
+                        b.read_rels_for(MAIN)
+                            .unwrap()
+                            .items
+                            .iter()
+                            .filter(|r| r.rel_type == rel)
+                            .count(),
+                        1
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn comments_ids_accepts_missing_durable_id_without_inventing_one() {
+        let mut a = package(Some(&comment("8", "A")), None);
+        let mut b = package(Some(&comment("7", "B")), None);
+        a.set_part(
+            FAMILY[2].0,
+            b"<root><entry paraId=\"bb\"/><entry paraId=\"aa\" durableId=\"99\"/><entry/></root>"
+                .to_vec(),
+        );
+        b.set_part(
+            FAMILY[2].0,
+            b"<root><entry paraId=\"aa\" durableId=\"10\"/></root>".to_vec(),
+        );
+        assert_eq!(
+            union_comments_xml(&mut b, MAIN, &a),
+            HashMap::from([("8".into(), "8".into())])
+        );
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&b.part_string(FAMILY[2].0).unwrap());
+        let entries = dom.elements(dom.root(doc).unwrap(), None);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(
+            dom.attribute(entries[1], &XName::get("paraId", "")),
+            Some("bb")
+        );
+        assert_eq!(
+            dom.attribute(entries[1], &XName::get("durableId", "")),
+            None
+        );
+        assert_eq!(
+            dom.attribute(entries[0], &XName::get("durableId", "")),
+            Some("10")
+        );
+    }
+
+    #[test]
+    fn orphan_cleanup_leaves_live_parent_links_and_unchanged_aux_parts() {
+        for aux in [
+            None,
+            Some(""),
+            Some("<root><entry paraId=\"bb\" paraIdParent=\"bb\"/></root>"),
+        ] {
+            let defs = format!(
+                "{}<w:comment w:id=\"8\"><w:p w14:paraId=\"aa\" plain=\"ignored\"><w:r><w:t>dead</w:t></w:r></w:p></w:comment>",
+                comment("7", "live")
+            );
+            let mut pkg = package(Some(&defs), None);
+            if let Some(aux) = aux {
+                pkg.set_part(FAMILY[1].0, aux.as_bytes().to_vec());
+            }
+            drop_orphans(&mut pkg, MAIN, &set(&["7"]));
+            assert_eq!(comment_ids_of(&pkg), set(&["7"]));
+            assert_eq!(pkg.part_string(FAMILY[1].0).as_deref(), aux);
+        }
+    }
+
+    #[test]
+    fn selection_truth_table_distinguishes_points_ranges_and_side_duplicates() {
+        let defs = format!(
+            "{}{}{}<w:comment><w:p/></w:comment>{}",
+            comment("7", "same"),
+            comment("8", "same"),
+            comment("9", "same"),
+            comment("10", "unanchored")
+        );
+        let pkg = package(Some(&defs), None);
+        for (ranges, a_side, want) in [
+            ([(0, 0), (0, 0), (0, 0)], set(&[]), set(&["7", "8", "9"])),
+            ([(0, 1), (0, 0), (2, 3)], set(&[]), set(&["7", "9"])),
+            ([(0, 1), (0, 1), (2, 3)], set(&["8", "9"]), set(&["7", "9"])),
+            ([(0, 1), (0, 1), (0, 1)], set(&[]), set(&["7", "8", "9"])),
+        ] {
+            let anchors = ["7", "8", "9"]
+                .into_iter()
+                .zip(ranges)
+                .map(|(id, r)| (id.to_string(), r))
+                .collect();
+            assert_eq!(select_anchor_aware_comments(&pkg, &anchors, &a_side), want);
+        }
+    }
+
+    #[test]
+    fn stripping_keeps_only_defined_ids_in_each_marker_kind() {
+        let (mut dom, root) = parse(
+            "<w:p><w:commentRangeStart w:id=\"7\"/><w:commentRangeStart/><w:commentRangeEnd w:id=\"8\"/><w:commentRangeEnd w:id=\"7\"/><w:r><w:commentReference/><w:commentReference w:id=\"7\"/><w:t>kept</w:t></w:r></w:p>",
+        );
+        strip_unanchored_comment_markers(&mut dom, root, &set(&["7"]));
+        for name in ["commentRangeStart", "commentRangeEnd", "commentReference"] {
+            let markers = dom.descendants(root, Some(&W::name(name)));
+            assert_eq!(markers.len(), 1, "{name}");
+            assert_eq!(dom.attribute(markers[0], &W::name("id")), Some("7"));
+        }
+        assert_eq!(collect_segments(&dom, root, true, "R", false).0, "kept");
+    }
+
+    #[test]
+    fn projection_rejects_document_text_and_a_detached_leaf_without_a_run() {
+        let mut dom = Dom::new();
+        let document = dom.new_document();
+        let text = dom.new_text("outside any element");
+        dom.add(document, text);
+        let leaf = dom.new_element(W::t());
+        dom.add_text(leaf, "outside any run");
+        for root in [document, leaf] {
+            for b_side in [false, true] {
+                let (text, segments) = collect_segments(&dom, root, b_side, "R", true);
+                assert_eq!(text, "");
+                assert!(segments.is_empty());
+            }
+        }
+        assert_eq!(dom.parent(text), Some(document));
+        assert_eq!(dom.parent(leaf), None);
+        assert_eq!(dom.value(leaf), "outside any run");
+    }
+
+    #[test]
+    fn same_id_and_body_with_different_authors_requires_two_union_definitions() {
+        // Equal body text does not collapse comments from different authors.
+        let a_definition =
+            comment("7", "same").replace("w:id=\"7\"", "w:id=\"7\" w:author=\"Alice\"");
+        let b_definition =
+            comment("7", "same").replace("w:id=\"7\"", "w:id=\"7\" w:author=\"Bob\"");
+        let a = package(Some(&a_definition), None);
+        let mut b = package(Some(&b_definition), None);
+        assert!(!b_carries_same_comments_as_a(&a, &b));
+        assert!(!b_covers_comment_identities_of_a(&a, MAIN, &b, MAIN));
+        assert_eq!(
+            union_comments_xml(&mut b, MAIN, &a),
+            HashMap::from([("7".into(), "8".into())])
+        );
+        assert_eq!(comment_ids_of(&b), set(&["7", "8"]));
+        assert_eq!(
+            comment_id_fingerprint_of(&b),
+            HashMap::from([
+                ("7".into(), "same\0Bob\0\0".into()),
+                ("8".into(), "same\0Alice\0\0".into())
+            ])
+        );
+    }
+
+    #[test]
+    fn equal_comment_bodies_keep_distinct_dates_and_initials() {
+        for (attribute, a_value, b_value) in [
+            ("date", "2026-10-07T00:00:00Z", "2026-10-08T00:00:00Z"),
+            ("initials", "AA", "BB"),
+        ] {
+            let definition = |value: &str| {
+                comment("7", "same").replace(
+                    "w:id=\"7\"",
+                    &format!("w:id=\"7\" w:{attribute}=\"{value}\""),
+                )
+            };
+            let a = package(Some(&definition(a_value)), None);
+            let mut b = package(Some(&definition(b_value)), None);
+            assert_eq!(
+                union_comments_xml(&mut b, MAIN, &a),
+                HashMap::from([("7".into(), "8".into())]),
+                "{attribute}",
+            );
+            let expected = |value: &str| {
+                let (date, initials) = if attribute == "date" {
+                    (value, "")
+                } else {
+                    ("", value)
+                };
+                format!("same\0\0{date}\0{initials}")
+            };
+            assert_eq!(
+                comment_id_fingerprint_of(&b),
+                HashMap::from([
+                    ("7".into(), expected(b_value)),
+                    ("8".into(), expected(a_value))
+                ]),
+                "{attribute}",
+            );
+        }
+    }
+
+    #[test]
+    fn carry_comments_remaps_colliding_anchor_ids_and_preserves_definition_metadata() {
+        let source_body = concat!(
+            "<w:p><w:commentRangeStart w:id=\"7\"/>",
+            "<w:r><w:t>same</w:t></w:r><w:commentRangeEnd w:id=\"7\"/>",
+            "<w:r><w:commentReference w:id=\"7\"/></w:r></w:p>",
+        );
+        let definition = |author: &str, date: &str, initials: &str| {
+            comment("7", "same").replace(
+                "w:id=\"7\"",
+                &format!(
+                    "w:id=\"7\" w:author=\"{author}\" w:date=\"{date}\" w:initials=\"{initials}\""
+                ),
+            )
+        };
+        let a = package(
+            Some(&definition("Alice", "2026-10-07T00:00:00Z", "AA")),
+            Some(source_body),
+        );
+        let b = package(
+            Some(&definition("Bob", "2026-10-08T00:00:00Z", "BB")),
+            Some(source_body),
+        );
+        let mut out = package(None, None);
+        let (mut dom, root) = parse("<w:p><w:r><w:t>same</w:t></w:r></w:p>");
+        carry_comments(
+            &mut dom,
+            root,
+            (&a, MAIN),
+            (&b, MAIN),
+            (&mut out, MAIN),
+            "Redline",
+        );
+        assert_eq!(comment_ids_of(&out), set(&["7", "8"]));
+        assert_eq!(
+            comment_id_fingerprint_of(&out),
+            HashMap::from([
+                ("7".into(), "same\0Bob\x002026-10-08T00:00:00Z\0BB".into()),
+                ("8".into(), "same\0Alice\x002026-10-07T00:00:00Z\0AA".into()),
+            ]),
+        );
+        for marker in ["commentRangeStart", "commentRangeEnd", "commentReference"] {
+            let ids: Vec<_> = dom
+                .descendants(root, Some(&W::name(marker)))
+                .into_iter()
+                .map(|node| dom.attribute(node, &W::name("id")).unwrap().to_string())
+                .collect();
+            assert_eq!(ids.len(), 2, "{marker}");
+            assert_eq!(
+                ids.into_iter().collect::<HashSet<_>>(),
+                set(&["7", "8"]),
+                "{marker}"
+            );
+        }
+        assert_eq!(
+            collect_segments(&dom, root, true, "Redline", false).0,
+            "same"
+        );
+        assert_eq!(
+            collect_segments(&dom, root, false, "Redline", false).0,
+            "same"
         );
     }
 }

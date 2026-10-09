@@ -92,10 +92,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master branch, pinned 2026-10-01
         with:
-          # LLVM source-based coverage needs llvm-profdata/llvm-cov, which ship
-          # in this component rather than the default toolchain.
+          toolchain: nightly
+          # Branch instrumentation and doctest coverage require nightly.
+          # Production remains supported by the separate stable/MSRV jobs.
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # Downloads a prebuilt binary instead of `cargo install` (minutes → seconds).
@@ -106,10 +107,9 @@ jobs:
           tool: cargo-llvm-cov
 
       - name: Generate coverage (lcov)
-        # Source-based coverage via -Cinstrument-coverage. Doctests are excluded:
-        # instrumenting them still requires nightly, and this crate is stable-only
-        # (see the MSRV job) — so the number is honest about what it measures.
-        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+        # Run every test, including doctests. Only cfg(test) implementation
+        # is excluded from instrumentation; all production code is counted.
+        run: cargo llvm-cov --all-features --workspace --branch --doctests --lcov --output-path lcov.info
 
       - name: Upload to Codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
@@ -123,11 +123,18 @@ jobs:
           fail_ci_if_error: true
           verbose: true
 
-      - name: Line coverage floor (80%)
-        # Codecov reads ~88% lines; the floor turns a silent collapse into a red
-        # build. `report` reuses the profiles above, and running after the
-        # upload keeps a failing floor's report on Codecov.
-        run: cargo llvm-cov report --summary-only --fail-under-lines 80
+      - name: Production coverage floors (95% lines, 90% branches)
+        run: |
+          cargo llvm-cov report --branch --json --output-path coverage.json
+          python3 - <<'PY'
+          import json
+          totals = json.load(open("coverage.json"))["data"][0]["totals"]
+          print(f"Coverage: {totals['lines']['percent']:.2f}% lines, {totals['branches']['percent']:.2f}% branches")
+          for metric, minimum in (("lines", 95), ("branches", 90)):
+              result = totals[metric]
+              if result["count"] == 0 or result["covered"] * 100 < minimum * result["count"]:
+                  raise SystemExit(f"{metric} coverage is below {minimum}%")
+          PY
 
   msrv:
     name: MSRV (1.94)

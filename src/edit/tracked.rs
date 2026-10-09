@@ -954,6 +954,7 @@ fn clean_rpr(dom: &mut Dom, rpr: NodeId) -> NodeId {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

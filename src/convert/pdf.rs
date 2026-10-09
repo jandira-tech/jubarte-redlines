@@ -1279,6 +1279,7 @@ fn hundredths(v: f32) -> i64 {
 
 /// Hundredths as the shortest decimal: `0`, `6`, `-12.5`, `0.07`.
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn fmt_hundredths(h: i64) -> String {
     let mut out = String::new();
     push_hundredths(&mut out, h);
@@ -2064,6 +2065,7 @@ fn stands_upright(c: char) -> bool {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::uniquify;
 

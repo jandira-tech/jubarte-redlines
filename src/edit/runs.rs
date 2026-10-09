@@ -107,6 +107,7 @@ pub(super) fn format_overlaps_edit(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::format_overlaps_edit;
 

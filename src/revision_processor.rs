@@ -135,7 +135,10 @@ pub fn accept_move_from_move_to_transform(dom: &mut Dom, node: NodeId) -> Vec<No
         return if is_mark {
             take_subtree(dom, node)
         } else {
-            vec![]
+            // The bookmark range pass already removed wholly moved-away
+            // spans. Preserve empty or partially surviving anchors exactly
+            // as the ordinary deletion transform does.
+            hoist_range_markers_from(dom, node)
         };
     }
     let ne = dom.new_element(name);
@@ -330,7 +333,9 @@ pub fn accept_all_other_revisions_transform(dom: &mut Dom, node: NodeId) -> Vec<
         return if has_run_content(dom, ne) {
             vec![ne]
         } else {
-            vec![]
+            // Discard the empty link while retaining surviving range anchors
+            // hoisted from its deleted content.
+            hoist_range_markers_from(dom, ne)
         };
     }
 
@@ -1020,6 +1025,18 @@ pub fn fix_up_deleted_or_inserted_field_codes_transform(dom: &mut Dom, node: Nod
 /// returned unchanged (identity, like C#). The range markers themselves are
 /// never collected (AcceptAllOtherRevisions strips them later).
 pub fn accept_move_from_ranges(dom: &mut Dom, document: NodeId) -> NodeId {
+    let to_delete = move_from_range_deleted_elements(dom, document);
+    if to_delete.is_empty() {
+        return document;
+    }
+    accept_move_from_ranges_transform(dom, document, &to_delete)
+        .expect("the document root is never in a moveFrom range")
+}
+
+/// Elements wholly removed by completed move-from ranges. The bookmark
+/// prepass uses the same deletion set before wrappers/anchors are hoisted,
+/// so range-only moved characters count as deleted just like wrapped ones.
+fn move_from_range_deleted_elements(dom: &Dom, document: NodeId) -> HashSet<NodeId> {
     use std::collections::{HashMap, HashSet};
 
     let mfrs = W::move_from_range_start();
@@ -1079,22 +1096,21 @@ pub fn accept_move_from_ranges(dom: &mut Dom, document: NodeId) -> NodeId {
     // A paragraph's pPr inside the range is its mark, not moved text: its
     // deleted or moved-from state is what A.5a joins paragraphs by (Word),
     // and a paragraph that survives keeps its formatting.
-    let to_delete: HashSet<NodeId> = start_tags_in_range
+    start_tags_in_range
         .into_iter()
         .filter(|&e| {
             end_set.contains(&e)
+                // Empty/partially surviving range anchors were hoisted from
+                // moveFrom after wholly deleted bookmarks were removed.
+                // The move range must not discard those anchors a second time.
+                && !dom.name(e).is_some_and(|name| is_comment_or_bookmark_range_marker(&name))
                 && !is_container_property(dom, e)
                 && !dom
                     .ancestors(e, None)
                     .into_iter()
                     .any(|a| is_container_property(dom, a))
         })
-        .collect();
-    if to_delete.is_empty() {
-        return document;
-    }
-    accept_move_from_ranges_transform(dom, document, &to_delete)
-        .expect("the document root is never in a moveFrom range")
+        .collect()
 }
 
 /// Is `e` the property element of its container (a paragraph's pPr, a
@@ -1130,6 +1146,12 @@ fn accept_move_from_ranges_transform(
     for c in dom.nodes(node) {
         if let Some(tc) = accept_move_from_ranges_transform(dom, c, to_delete) {
             dom.add(ne, tc);
+        } else {
+            // A whole inline/block container can fall inside the move range;
+            // preserve its surviving anchors without keeping the container.
+            for marker in hoist_range_markers_from(dom, c) {
+                dom.add(ne, marker);
+            }
         }
     }
     Some(ne)
@@ -1875,6 +1897,14 @@ fn is_body_level_range_marker(name: &XName) -> bool {
         )
 }
 
+fn is_comment_or_bookmark_range_marker(name: &XName) -> bool {
+    name.namespace_name() == W::URI
+        && matches!(
+            name.local_name(),
+            "commentRangeStart" | "commentRangeEnd" | "bookmarkStart" | "bookmarkEnd"
+        )
+}
+
 /// Pull comment range and bookmark markers out of a subtree being discarded
 /// (e.g. accepted `w:del`) so anchors between delText runs are not lost.
 fn hoist_range_markers_from(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
@@ -1883,12 +1913,7 @@ fn hoist_range_markers_from(dom: &mut Dom, node: NodeId) -> Vec<NodeId> {
         let Some(n) = dom.name(e) else {
             continue;
         };
-        if n.namespace_name() == W::URI
-            && matches!(
-                n.local_name(),
-                "commentRangeStart" | "commentRangeEnd" | "bookmarkStart" | "bookmarkEnd"
-            )
-        {
+        if is_comment_or_bookmark_range_marker(&n) {
             out.push(dom.clone_subtree(e));
         }
     }
@@ -3277,4 +3302,611 @@ fn story_parts(parts: &[(String, bool)]) -> Vec<String> {
         .filter(|(_, is_styles)| !is_styles)
         .map(|(p, _)| p.clone())
         .collect()
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod revision_boundary_coverage_tests {
+    use super::*;
+
+    fn parse(body: &str) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(
+            "<w:body xmlns:w='{}' xmlns:x='urn:fixture' x:owner='story'>{body}</w:body>",
+            W::URI
+        ));
+        let root = dom.root(doc).unwrap();
+        (dom, root)
+    }
+
+    fn paragraph(text: &str) -> String {
+        format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>")
+    }
+
+    fn cell(text: &str, properties: &str) -> String {
+        format!(
+            "<w:tc><w:tcPr>{properties}</w:tcPr>{}</w:tc>",
+            paragraph(text)
+        )
+    }
+
+    fn table(properties: &str, widths: &[i64], row_properties: &str, cells: &str) -> String {
+        let grid: String = widths
+            .iter()
+            .map(|w| format!("<w:gridCol w:w='{w}'/>"))
+            .collect();
+        format!(
+            "<w:tbl><w:tblPr>{properties}</w:tblPr><w:tblGrid>{grid}</w:tblGrid><w:tr x:owner='row'>{row_properties}{cells}</w:tr></w:tbl>"
+        )
+    }
+
+    fn local_children(dom: &Dom, node: NodeId) -> Vec<String> {
+        dom.elements(node, None)
+            .into_iter()
+            .map(|n| dom.name(n).unwrap().local_name().to_string())
+            .collect()
+    }
+
+    fn widths(dom: &Dom, table: NodeId) -> Vec<String> {
+        let grid = dom.element(table, &W::name("tblGrid")).unwrap();
+        dom.elements(grid, Some(&W::name("gridCol")))
+            .into_iter()
+            .map(|n| dom.attribute(n, &W::name("w")).unwrap().to_string())
+            .collect()
+    }
+
+    fn span(dom: &Dom, cell: NodeId) -> Option<String> {
+        dom.element(cell, &W::tc_pr())
+            .and_then(|p| dom.element(p, &W::grid_span()))
+            .and_then(|s| dom.attribute(s, &W::val()))
+            .map(str::to_string)
+    }
+
+    #[test]
+    fn revised_table_union_preserves_rows_payload_and_unrelated_clean_groups() {
+        let a = table(
+            "<w:tblStyle w:val='A'/>",
+            &[1000, 2000],
+            "<w:trPr><w:ins w:id='7'/></w:trPr>",
+            &(cell("A", "<w:tcW w:w='9' w:type='dxa'/>")
+                + &cell("B", "<w:shd w:fill='123456'/><w:tcW w:w='8' w:type='dxa'/>")),
+        );
+        let b = table(
+            "<w:tblStyle w:val='B'/>",
+            &[1500, 1500],
+            "<w:trPr><w:cantSplit/></w:trPr>",
+            &(cell("C", "<w:tcW w:w='7'/>")
+                + &cell("D", "<w:tcW w:w='6'/><w:gridSpan w:val='1'/>")),
+        );
+        let clean = table("", &[3000], "", &cell("clean", "<w:tcW w:w='3000'/>"));
+        let (mut dom, root) = parse(&(a + &b + &paragraph("separator") + &clean + &clean));
+        let original = dom.serialize_element(root);
+        let result = merge_adjacent_tables_transform(&mut dom, root);
+        assert_ne!(result, root);
+        assert_eq!(dom.serialize_element(root), original);
+        assert_eq!(
+            dom.attribute(result, &XName::get("owner", "urn:fixture")),
+            Some("story")
+        );
+        assert_eq!(local_children(&dom, result), ["tbl", "p", "tbl", "tbl"]);
+        let merged = dom.elements(result, Some(&W::tbl()))[0];
+        assert_eq!(widths(&dom, merged), ["1000", "500", "1500"]);
+        let style = dom
+            .element(
+                dom.element(merged, &W::tbl_pr()).unwrap(),
+                &W::name("tblStyle"),
+            )
+            .unwrap();
+        assert_eq!(dom.attribute(style, &W::val()), Some("A"));
+        let rows = dom.elements(merged, Some(&W::tr()));
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            dom.attribute(rows[1], &XName::get("owner", "urn:fixture")),
+            Some("row")
+        );
+        let cells: Vec<NodeId> = rows
+            .iter()
+            .flat_map(|&r| dom.elements(r, Some(&W::tc())))
+            .collect();
+        assert_eq!(
+            cells.iter().map(|&c| dom.value(c)).collect::<Vec<_>>(),
+            ["A", "B", "C", "D"]
+        );
+        assert_eq!(
+            cells.iter().map(|&c| span(&dom, c)).collect::<Vec<_>>(),
+            [None, Some("2".into()), Some("2".into()), None]
+        );
+        assert_eq!(
+            local_children(&dom, dom.element(cells[1], &W::tc_pr()).unwrap()),
+            ["tcW", "gridSpan", "shd"]
+        );
+        assert_eq!(dom.descendants(merged, Some(&W::ins())).len(), 1);
+        assert_eq!(
+            dom.descendants(merged, Some(&W::name("cantSplit"))).len(),
+            1
+        );
+        assert_eq!(dom.value(result), "ABCDseparatorcleanclean");
+    }
+
+    #[test]
+    fn fix_widths_clamps_spans_and_leaves_widthless_cells_out_of_cursor() {
+        let cells = cell("no-width", "<w:shd w:fill='ABABAB'/>")
+            + &cell(
+                "wide",
+                "<w:tcW w:w='17' w:type='dxa'/><w:gridSpan w:val='2'/>",
+            )
+            + &cell("last", "<w:tcW w:w='18'/><w:gridSpan w:val='bad'/>")
+            + &cell("past-grid", "<w:tcW w:w='19'/><w:gridSpan w:val='5'/>");
+        let (mut dom, root) = parse(&table("", &[1000, 2000, 3000], "", &cells));
+        let source = dom.element(root, &W::tbl()).unwrap();
+        let original = dom.serialize_element(source);
+        let fixed = fix_widths(&mut dom, source);
+        let row = dom.element(fixed, &W::tr()).unwrap();
+        let cells = dom.elements(row, Some(&W::tc()));
+        let actual: Vec<Option<String>> = cells
+            .iter()
+            .map(|&c| {
+                dom.element(c, &W::tc_pr())
+                    .and_then(|p| dom.element(p, &W::name("tcW")))
+                    .and_then(|w| dom.attribute(w, &W::name("w")))
+                    .map(str::to_string)
+            })
+            .collect();
+        assert_eq!(
+            actual,
+            [
+                None,
+                Some("3000".into()),
+                Some("3000".into()),
+                Some("0".into())
+            ]
+        );
+        let width = dom
+            .element(dom.element(cells[1], &W::tc_pr()).unwrap(), &W::name("tcW"))
+            .unwrap();
+        assert_eq!(dom.attribute(width, &W::name("type")), Some("dxa"));
+        assert_eq!(dom.value(fixed), "no-widthwidelastpast-grid");
+        assert_eq!(dom.serialize_element(source), original);
+    }
+
+    #[test]
+    fn nested_merge_clones_widthless_cell_and_keeps_control_identity() {
+        let cells = cell("opaque", "<w:shd w:fill='101010'/><w:cellIns w:id='8'/>")
+            + &cell("sized", "<w:tcW w:w='100'/>");
+        let a = table("", &[100], "", &cells);
+        let b = table("", &[100], "", &cell("second", "<w:tcW w:w='100'/>"));
+        let (mut dom, root) = parse(&format!(
+            "<w:sdt><w:sdtPr><w:tag w:val='owner'/></w:sdtPr><w:sdtContent>{a}{b}</w:sdtContent></w:sdt>{}",
+            paragraph("tail")
+        ));
+        let opaque = dom.descendants(root, Some(&W::tc()))[0];
+        let expected = dom.serialize_element(opaque);
+        let result = merge_adjacent_tables_transform(&mut dom, root);
+        assert_eq!(dom.descendants(result, Some(&W::tbl())).len(), 1);
+        assert_eq!(dom.descendants(result, Some(&W::sdt())).len(), 1);
+        let tag = dom.descendants(result, Some(&W::name("tag")))[0];
+        assert_eq!(dom.attribute(tag, &W::val()), Some("owner"));
+        assert_eq!(
+            dom.serialize_element(dom.descendants(result, Some(&W::tc()))[0]),
+            expected
+        );
+        assert_eq!(dom.value(result), "opaquesizedsecondtail");
+    }
+
+    #[test]
+    fn word_save_merges_row_exceptions_with_row_values_taking_precedence() {
+        let a = table(
+            "<w:tblStyle w:val='same'/><w:jc w:val='center'/><w:tblW w:w='100'/><w:shd w:fill='AAAAAA'/>",
+            &[100],
+            "",
+            &cell("first", "<w:tcW w:w='100'/>"),
+        );
+        let b = table(
+            "<w:tblStyle w:val='same'/><w:jc w:val='center'/><w:tblW w:w='200'/><w:shd w:fill='BBBBBB'/><w:tblLayout w:type='fixed'/>",
+            &[100],
+            "<w:tblPrEx><w:shd w:fill='CCCCCC'/><x:payload x:owner='exception'/></w:tblPrEx><w:trPr><w:cantSplit/></w:trPr>",
+            &cell("second", "<w:tcW w:w='100'/>"),
+        );
+        let (mut dom, root) = parse(&(a + &b));
+        let result = merge_adjacent_tables_like_word(&mut dom, root);
+        let tables = dom.elements(result, Some(&W::tbl()));
+        assert_eq!(tables.len(), 1);
+        let rows = dom.elements(tables[0], Some(&W::tr()));
+        assert!(dom.element(rows[0], &W::name("tblPrEx")).is_none());
+        let ex = dom.element(rows[1], &W::name("tblPrEx")).unwrap();
+        assert_eq!(
+            local_children(&dom, ex),
+            ["tblW", "shd", "tblLayout", "payload"]
+        );
+        assert_eq!(
+            dom.attribute(dom.element(ex, &W::name("tblW")).unwrap(), &W::name("w")),
+            Some("200")
+        );
+        assert_eq!(
+            dom.attribute(dom.element(ex, &W::name("shd")).unwrap(), &W::name("fill")),
+            Some("CCCCCC")
+        );
+        assert_eq!(dom.elements(rows[1], Some(&W::name("tblPrEx"))).len(), 1);
+        assert_eq!(
+            dom.descendants(rows[1], Some(&W::name("cantSplit"))).len(),
+            1
+        );
+        assert_eq!(dom.value(result), "firstsecond");
+    }
+
+    #[test]
+    fn table_merge_identity_respects_whole_properties_grid_history_and_bidi() {
+        let plain = table("", &[100], "", &cell("plain", "<w:tcW w:w='100'/>"));
+        let marked = table(
+            "<w:bidiVisual/>",
+            &[100],
+            "<w:trPr><w:del/></w:trPr>",
+            &cell("marked", "<w:tcW w:w='100'/>"),
+        );
+        for body in [
+            plain.clone() + &plain,
+            plain.clone() + &marked,
+            marked.clone() + &paragraph("break") + &marked,
+        ] {
+            let (mut dom, root) = parse(&body);
+            let before = dom.serialize_element(root);
+            assert_eq!(merge_adjacent_tables_transform(&mut dom, root), root);
+            assert_eq!(dom.serialize_element(root), before);
+        }
+        let other_style = table(
+            "<w:tblStyle w:val='different'/>",
+            &[100],
+            "",
+            &cell("style", "<w:tcW w:w='100'/>"),
+        );
+        let changed_grid = plain.replacen("</w:tblGrid>", "<w:tblGridChange w:id='2'><w:tblGrid><w:gridCol w:w='50'/></w:tblGrid></w:tblGridChange></w:tblGrid>", 1);
+        let foreign = table(
+            "<x:payload x:owner='whole'/>",
+            &[100],
+            "",
+            &cell("foreign", "<w:tcW w:w='100'/>"),
+        );
+        for body in [
+            plain.clone() + &other_style,
+            plain.clone() + &changed_grid,
+            plain + &foreign,
+        ] {
+            let (mut dom, root) = parse(&body);
+            assert_eq!(merge_adjacent_tables_like_word(&mut dom, root), root);
+        }
+    }
+
+    #[test]
+    fn accepting_deleted_cells_keeps_anchor_payload_and_expands_existing_span() {
+        let cells = cell("leading-deletion", "<w:cellDel/>")
+            + &cell(
+                "anchor",
+                "<w:shd w:fill='EEEEEE'/><w:gridSpan w:val='2'/><w:tcW w:w='700'/><x:payload x:owner='cell'/>",
+            )
+            + &cell("deleted-one", "<w:cellDel/>")
+            + &cell("deleted-two", "<w:cellDel/>")
+            + &cell("tail", "<w:tcW w:w='300'/>");
+        let (mut dom, root) = parse(&table(
+            "",
+            &[100, 100, 100, 100, 100, 100],
+            "<w:trPr><w:cantSplit/></w:trPr>",
+            &cells,
+        ));
+        let original = dom.serialize_element(root);
+        let result = accept_deleted_cells_transform(&mut dom, root);
+        let row = dom.descendants(result, Some(&W::tr()))[0];
+        assert_eq!(
+            dom.attribute(row, &XName::get("owner", "urn:fixture")),
+            Some("row")
+        );
+        let cells = dom.elements(row, Some(&W::tc()));
+        assert_eq!(cells.len(), 2);
+        assert_eq!(dom.value(result), "anchortail");
+        assert_eq!(span(&dom, cells[0]), Some("4".into()));
+        assert_eq!(span(&dom, cells[1]), None);
+        assert_eq!(
+            local_children(&dom, dom.element(cells[0], &W::tc_pr()).unwrap()),
+            ["tcW", "gridSpan", "shd", "payload"]
+        );
+        assert!(dom.descendants(result, Some(&W::cell_del())).is_empty());
+        assert_eq!(dom.serialize_element(root), original);
+    }
+
+    #[test]
+    fn deleted_cell_anchor_defaults_bad_span_and_orders_all_schema_properties() {
+        let property_names = [
+            "headers",
+            "hideMark",
+            "vAlign",
+            "tcFitText",
+            "textDirection",
+            "tcMar",
+            "noWrap",
+            "shd",
+            "tcBorders",
+            "vMerge",
+            "hMerge",
+            "tcW",
+            "cnfStyle",
+        ];
+        let properties: String = property_names.iter().map(|p| format!("<w:{p}/>")).collect();
+        let cells = cell(
+            "anchor",
+            &(properties + "<w:gridSpan w:val='not-an-integer'/><x:gridSpan x:owner='foreign'/>"),
+        ) + &cell("deleted", "<w:cellDel/>");
+        let (mut dom, root) = parse(&table("", &[100, 100], "", &cells));
+        let result = accept_deleted_cells_transform(&mut dom, root);
+        let cell = dom.descendants(result, Some(&W::tc()))[0];
+        let pr = dom.element(cell, &W::tc_pr()).unwrap();
+        assert_eq!(span(&dom, cell), Some("2".into()));
+        assert_eq!(
+            local_children(&dom, pr),
+            [
+                "cnfStyle",
+                "tcW",
+                "gridSpan",
+                "hMerge",
+                "vMerge",
+                "tcBorders",
+                "shd",
+                "noWrap",
+                "tcMar",
+                "textDirection",
+                "tcFitText",
+                "vAlign",
+                "hideMark",
+                "headers",
+                "gridSpan"
+            ]
+        );
+        assert_eq!(
+            dom.descendants(result, Some(&XName::get("gridSpan", "urn:fixture")))
+                .len(),
+            1
+        );
+        assert_eq!(dom.value(result), "anchor");
+    }
+
+    #[test]
+    fn custom_xml_deleted_control_unwraps_nested_controls_but_retains_order_and_anchors() {
+        let (mut dom, root) = parse(
+            "<w:customXmlDelRangeStart w:id='4'/><w:sdt><w:sdtPr><w:tag w:val='outer'/></w:sdtPr><w:sdtContent><w:bookmarkStart w:id='3' w:name='kept'/><w:p><w:r><w:t>before</w:t></w:r><w:sdt><w:sdtPr><w:tag w:val='inner'/></w:sdtPr><w:sdtContent><w:r><w:t>inside</w:t></w:r><x:payload x:owner='run'/></w:sdtContent></w:sdt><w:r><w:t>after</w:t></w:r></w:p><w:bookmarkEnd w:id='3'/></w:sdtContent></w:sdt><w:customXmlDelRangeEnd w:id='4'/><w:p><w:r><w:t>tail</w:t></w:r></w:p>",
+        );
+        let result = accept_deleted_and_moved_from_content_controls(&mut dom, root);
+        assert!(dom.descendants(result, Some(&W::sdt())).is_empty());
+        assert_eq!(dom.value(result), "beforeinsideaftertail");
+        assert_eq!(
+            local_children(&dom, result),
+            [
+                "customXmlDelRangeStart",
+                "bookmarkStart",
+                "p",
+                "bookmarkEnd",
+                "customXmlDelRangeEnd",
+                "p"
+            ]
+        );
+        assert_eq!(
+            dom.descendants(result, Some(&W::name("bookmarkStart")))
+                .len(),
+            1
+        );
+        assert_eq!(
+            dom.descendants(result, Some(&XName::get("payload", "urn:fixture")))
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn custom_xml_move_deletes_whole_control_and_plain_content_but_keeps_outside_control() {
+        let (mut dom, root) = parse(
+            "<w:customXmlMoveFromRangeStart w:id='9'/><w:sdt><w:sdtPr><w:tag w:val='deleted'/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>gone</w:t></w:r></w:p></w:sdtContent></w:sdt><w:p><w:r><w:t>also-gone</w:t></w:r></w:p><w:customXmlMoveFromRangeEnd w:id='9'/><w:sdt><w:sdtPr><w:tag w:val='kept'/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>retained</w:t></w:r></w:p></w:sdtContent></w:sdt>",
+        );
+        let result = accept_deleted_and_moved_from_content_controls(&mut dom, root);
+        assert_eq!(dom.value(result), "retained");
+        assert_eq!(
+            local_children(&dom, result),
+            [
+                "customXmlMoveFromRangeStart",
+                "customXmlMoveFromRangeEnd",
+                "sdt"
+            ]
+        );
+        let controls = dom.descendants(result, Some(&W::sdt()));
+        assert_eq!(controls.len(), 1);
+        let tag = dom.descendants(controls[0], Some(&W::name("tag")))[0];
+        assert_eq!(dom.attribute(tag, &W::val()), Some("kept"));
+    }
+
+    #[test]
+    fn unmatched_custom_ranges_leave_control_payload_and_parent_links_untouched() {
+        for kind in ["customXmlDelRange", "customXmlMoveFromRange"] {
+            for end in [String::new(), format!("<w:{kind}End w:id='other'/>")] {
+                let (mut dom, root) = parse(&format!(
+                    "<w:{kind}Start w:id='unmatched'/><w:sdt><w:sdtPr/><w:sdtContent>{}</w:sdtContent></w:sdt>{end}",
+                    paragraph("retained")
+                ));
+                let before = dom.serialize_element(root);
+                let control = dom.element(root, &W::sdt()).unwrap();
+                assert_eq!(
+                    accept_deleted_and_moved_from_content_controls(&mut dom, root),
+                    root
+                );
+                assert_eq!(dom.parent(control), Some(root));
+                assert_eq!(dom.serialize_element(root), before);
+            }
+        }
+    }
+
+    #[test]
+    fn move_range_that_enters_table_keeps_container_properties_and_surviving_content() {
+        let (mut dom, root) = parse(
+            "<w:moveFromRangeStart w:id='7'/><w:p><w:r><w:t>heading-gone</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblStyle w:val='retained'/></w:tblPr><w:tblGrid><w:gridCol w:w='2400'/></w:tblGrid><w:tr><w:trPr><w:cantSplit/></w:trPr><w:tc><w:tcPr><w:tcW w:w='2400'/></w:tcPr><w:p><w:pPr><w:keepNext/></w:pPr><w:r><w:t>prefix-gone</w:t></w:r><w:moveFromRangeEnd w:id='7'/><w:r><w:t>remaining</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+        );
+        let result = accept_move_from_ranges(&mut dom, root);
+        assert_eq!(dom.value(result), "remaining");
+        assert_eq!(dom.descendants(result, Some(&W::tbl())).len(), 1);
+        assert_eq!(dom.descendants(result, Some(&W::name("tblStyle"))).len(), 1);
+        assert_eq!(dom.descendants(result, Some(&W::name("gridCol"))).len(), 1);
+        assert_eq!(
+            dom.descendants(result, Some(&W::name("cantSplit"))).len(),
+            1
+        );
+        assert_eq!(dom.descendants(result, Some(&W::name("tcW"))).len(), 1);
+        assert_eq!(dom.descendants(result, Some(&W::name("keepNext"))).len(), 1);
+        assert_eq!(
+            dom.descendants(result, Some(&W::move_from_range_end()))
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn accept_cell_merge_converts_restart_and_continue_only_inside_cell_properties() {
+        for (value, expected) in [
+            ("rest", Some("restart")),
+            ("cont", Some("continue")),
+            ("unknown", None),
+        ] {
+            let (mut dom, root) = parse(&format!(
+                "<w:tc><w:tcPr><w:cellMerge w:id='4' w:vMerge='{value}' w:vMergeOrig='cont'/></w:tcPr>{}</w:tc>",
+                paragraph("cell")
+            ));
+            let output = accept_all_other_revisions_transform(&mut dom, root);
+            assert_eq!(output.len(), 1);
+            let result = output[0];
+            let merges = dom.descendants(result, Some(&W::v_merge()));
+            match expected {
+                Some(expected) => {
+                    assert_eq!(merges.len(), 1);
+                    assert_eq!(dom.attribute(merges[0], &W::val()), Some(expected));
+                    assert!(dom.descendants(result, Some(&W::cell_merge())).is_empty());
+                }
+                None => {
+                    assert!(merges.is_empty());
+                    let marker = dom.descendants(result, Some(&W::cell_merge()))[0];
+                    assert_eq!(dom.attribute(marker, &W::v_merge()), Some("unknown"));
+                }
+            }
+            assert_eq!(dom.value(result), "cell");
+        }
+        let (mut dom, root) =
+            parse("<x:payload><w:cellMerge w:id='5' w:vMerge='rest'/></x:payload>");
+        let output = accept_all_other_revisions_transform(&mut dom, root);
+        assert_eq!(dom.descendants(output[0], Some(&W::cell_merge())).len(), 1);
+        assert!(dom.descendants(output[0], Some(&W::v_merge())).is_empty());
+    }
+
+    #[test]
+    fn accept_deleted_fraction_drops_its_math_payload_and_preserves_live_fraction() {
+        let (mut dom, root) = parse(&format!(
+            "<m:oMath xmlns:m='{}'><m:f><m:fPr><m:ctrlPr><w:del w:id='1'/></m:ctrlPr></m:fPr><m:num><m:r><m:t>deleted-numerator</m:t></m:r></m:num><m:den><m:r><m:t>deleted-denominator</m:t></m:r></m:den></m:f><m:f><m:fPr><m:ctrlPr><w:ins w:id='2'/></m:ctrlPr></m:fPr><m:num><m:r><m:t>live-numerator</m:t></m:r></m:num><m:den><m:r><m:t>live-denominator</m:t></m:r></m:den></m:f></m:oMath>",
+            M::URI
+        ));
+        let output = accept_all_other_revisions_transform(&mut dom, root);
+        assert_eq!(output.len(), 1);
+        assert_eq!(dom.descendants(output[0], Some(&M::name("f"))).len(), 1);
+        assert_eq!(dom.value(output[0]), "live-numeratorlive-denominator");
+        assert!(dom.descendants(output[0], Some(&W::del())).is_empty());
+        assert!(dom.descendants(output[0], Some(&W::ins())).is_empty());
+    }
+
+    #[test]
+    fn rejecting_structural_markers_drops_inserted_numbering_and_cell_without_losing_neighbors() {
+        let (mut dom, root) = parse(
+            "<w:p><w:pPr><w:keepNext/><w:numPr><w:ilvl w:val='1'/><w:numId w:val='8'/><w:ins w:id='3'/></w:numPr></w:pPr><w:r><w:t>paragraph</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:tcPr><w:cellIns w:id='4'/></w:tcPr><w:p><w:r><w:t>inserted-cell</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:cellDel w:id='5'/><w:cellMerge w:id='6'/></w:tcPr><w:p><w:pPr><w:numPr><w:numId w:val='9'/><w:numberingChange w:id='7'/></w:numPr></w:pPr><w:r><w:t>original-cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+        );
+        let result = reject_revisions_for_part_transform(&mut dom, root).unwrap();
+        assert_eq!(dom.value(result), "paragraphoriginal-cell");
+        assert_eq!(dom.descendants(result, Some(&W::tc())).len(), 1);
+        assert_eq!(dom.descendants(result, Some(&W::num_pr())).len(), 1);
+        assert_eq!(dom.descendants(result, Some(&W::name("keepNext"))).len(), 1);
+        let num_id = dom.descendants(result, Some(&W::name("numId")))[0];
+        assert_eq!(dom.attribute(num_id, &W::val()), Some("9"));
+        for name in [
+            W::ins(),
+            W::cell_ins(),
+            W::cell_del(),
+            W::cell_merge(),
+            W::numbering_change(),
+        ] {
+            assert!(dom.descendants(result, Some(&name)).is_empty());
+        }
+    }
+
+    #[test]
+    fn missing_saved_style_properties_drop_changed_block_while_accept_keeps_live_properties() {
+        let (mut dom, root) = parse(
+            "<w:style w:styleId='owner'><w:name w:val='style-name'/><w:pPr><w:keepNext/><w:pPrChange w:id='1'/></w:pPr><w:rPr><w:b/><w:rPrChange w:id='2'/></w:rPr><x:payload x:owner='retained'>style-payload</x:payload></w:style>",
+        );
+        let accepted = accept_revisions_for_styles_transform(&mut dom, root).unwrap();
+        let rejected = reject_revisions_for_styles_transform(&mut dom, root).unwrap();
+        assert_eq!(
+            dom.descendants(accepted, Some(&W::name("keepNext"))).len(),
+            1
+        );
+        assert_eq!(dom.descendants(accepted, Some(&W::name("b"))).len(), 1);
+        assert!(
+            dom.descendants(accepted, Some(&W::p_pr_change()))
+                .is_empty()
+        );
+        assert!(
+            dom.descendants(accepted, Some(&W::r_pr_change()))
+                .is_empty()
+        );
+        assert!(dom.descendants(rejected, Some(&W::p_pr())).is_empty());
+        assert!(dom.descendants(rejected, Some(&W::r_pr())).is_empty());
+        for result in [accepted, rejected] {
+            let style = dom.element(result, &W::name("style")).unwrap();
+            assert_eq!(dom.attribute(style, &W::name("styleId")), Some("owner"));
+            assert_eq!(dom.value(result), "style-payload");
+            assert_eq!(
+                dom.descendants(result, Some(&XName::get("payload", "urn:fixture")))
+                    .len(),
+                1
+            );
+        }
+    }
+
+    #[test]
+    fn acceptance_removes_empty_numbering_but_keeps_live_numbering_and_clears_atom_annotations() {
+        let (mut dom, root) = parse(
+            "<w:p><w:pPr><w:numPr/></w:pPr><w:r><w:t>plain</w:t></w:r></w:p><w:p><w:pPr><w:numPr><w:numId w:val='4'/></w:numPr></w:pPr><w:r><w:t>numbered</w:t></w:r></w:p>",
+        );
+        let run = dom.descendants(root, Some(&W::r()))[0];
+        dom.set_attribute_value(root, &PT::unique_id(), Some("body-id"));
+        dom.set_attribute_value(run, &PT::run_ids(), Some("run-id"));
+        let result = accept_revisions_for_element(&mut dom, root);
+        assert_eq!(dom.value(result), "plainnumbered");
+        assert_eq!(dom.descendants(result, Some(&W::num_pr())).len(), 1);
+        assert_eq!(
+            dom.attribute(
+                dom.descendants(result, Some(&W::name("numId")))[0],
+                &W::val()
+            ),
+            Some("4")
+        );
+        for node in dom.descendants_and_self(result, None) {
+            assert!(dom.attribute(node, &PT::unique_id()).is_none());
+            assert!(dom.attribute(node, &PT::run_ids()).is_none());
+        }
+    }
+
+    #[test]
+    fn unmatched_or_contentless_move_ranges_preserve_identity_and_properties() {
+        for body in [
+            "<w:moveFromRangeEnd w:id='missing'/><w:p><w:r><w:t>retained</w:t></w:r></w:p>",
+            "<w:moveFromRangeStart w:id='open'/><w:p><w:r><w:t>retained</w:t></w:r></w:p>",
+            "<w:moveFromRangeStart w:id='empty'/><w:p><w:pPr><w:keepNext/></w:pPr><w:moveFromRangeEnd w:id='empty'/><w:r><w:t>retained</w:t></w:r></w:p>",
+        ] {
+            let (mut dom, root) = parse(body);
+            let before = dom.serialize_element(root);
+            let paragraph = dom.element(root, &W::p()).unwrap();
+            assert_eq!(accept_move_from_ranges(&mut dom, root), root);
+            assert_eq!(dom.parent(paragraph), Some(root));
+            assert_eq!(dom.serialize_element(root), before);
+            assert_eq!(dom.value(root), "retained");
+        }
+    }
 }

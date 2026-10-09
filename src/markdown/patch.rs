@@ -776,6 +776,7 @@ fn push_run(block: &mut Block, text: &str, bold: bool, italic: bool) {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

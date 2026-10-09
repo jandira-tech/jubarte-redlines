@@ -263,6 +263,177 @@ pub fn flatten_to_comparison_unit_atom_list(
     out
 }
 
+/// Authored control identifiers distinguish an existing inner control from a
+/// newly introduced outer wrapper. Prefer a stable tag, then id, then alias;
+/// Word can regenerate ids without changing the authored tag. QName alone
+/// pairs the old inner control with the new outer one and discards its metadata.
+fn same_authored_control(dom: &Dom, a: NodeId, b: NodeId) -> bool {
+    let properties = W::name("sdtPr");
+    let (Some(a), Some(b)) = (dom.element(a, &properties), dom.element(b, &properties)) else {
+        return false;
+    };
+    for name in [W::name("tag"), W::id(), W::name("alias")] {
+        let value = |node| {
+            dom.element(node, &name)
+                .and_then(|child| dom.attribute(child, &W::val()))
+        };
+        if let (Some(a), Some(b)) = (value(a), value(b))
+            && !a.is_empty()
+            && !b.is_empty()
+        {
+            return a == b;
+        }
+    }
+    false
+}
+
+/// Resolve repeated authored tags by preferring the retained control's exact
+/// id within the same transparent ancestry segment. A tag-only match remains
+/// valid when Word regenerated the id and no stronger candidate exists.
+fn authored_control_match_strength(dom: &Dom, a: NodeId, b: NodeId) -> u8 {
+    if !same_authored_control(dom, a, b) {
+        return 0;
+    }
+    let control_id = |node| {
+        dom.element(node, &W::name("sdtPr"))
+            .and_then(|pr| dom.element(pr, &W::id()))
+            .and_then(|id| dom.attribute(id, &W::val()))
+            .filter(|id| !id.is_empty())
+    };
+    if let (Some(a), Some(b)) = (control_id(a), control_id(b))
+        && a == b
+    {
+        2
+    } else {
+        1
+    }
+}
+
+/// Flatten only unmatched content-control ancestry in correlated paragraphs.
+/// Equal atoms otherwise use B's control bucket while A's deletion islands use
+/// a separate paragraph bucket, which moves every deleted word to the end.
+/// Keep aligned controls intact, and require every non-control ancestor to
+/// match so table, cell and text-box boundaries cannot be crossed.
+fn align_content_control_ancestry(dom: &Dom, atoms: &mut [ComparisonUnitAtom]) {
+    let sdt = W::sdt();
+    let content = W::sdt_content();
+    let paragraph = W::p();
+    let is_control = |node| dom.name_is(node, &sdt) || dom.name_is(node, &content);
+    let mut unmatched = std::collections::HashSet::new();
+    for atom in atoms.iter() {
+        if atom.correlation_status != CorrelationStatus::Equal {
+            continue;
+        }
+        let Some(before) = &atom.comparison_unit_atom_before else {
+            continue;
+        };
+        let after_path = &atom.ancestor_elements;
+        let before_path = &before.ancestor_elements;
+        let (mut a, mut b) = (0, 0);
+        let mut pending = Vec::new();
+        let mut matched_paragraph = false;
+        while a < after_path.len() && b < before_path.len() {
+            if dom.name_is(after_path[a], &sdt) && dom.name_is(before_path[b], &sdt) {
+                let current_match =
+                    authored_control_match_strength(dom, after_path[a], before_path[b]);
+                // Look only within this transparent-control segment. Crossing
+                // a paragraph, cell or text-box ancestor would erase structure.
+                let after_match = after_path[a + 1..]
+                    .iter()
+                    .copied()
+                    .take_while(|&node| is_control(node))
+                    .filter(|&node| dom.name_is(node, &sdt))
+                    .map(|node| authored_control_match_strength(dom, node, before_path[b]))
+                    .max()
+                    .unwrap_or(0);
+                let before_match = before_path[b + 1..]
+                    .iter()
+                    .copied()
+                    .take_while(|&node| is_control(node))
+                    .filter(|&node| dom.name_is(node, &sdt))
+                    .map(|node| authored_control_match_strength(dom, node, after_path[a]))
+                    .max()
+                    .unwrap_or(0);
+                // Equally strong matches in both directions can be the same
+                // retained controls in a different nesting order. Neither is
+                // surplus. A stronger unilateral match still beats a weaker
+                // regenerated-id/tag-only candidate on the opposite side.
+                if after_match > current_match && after_match > before_match {
+                    pending.push(after_path[a]);
+                    a += 1;
+                    // Skip the wrapper and its own content as one unit;
+                    // otherwise the opposite side's matched sdt is mistaken
+                    // for the unmatched sdtContent on the next iteration.
+                    if after_path
+                        .get(a)
+                        .is_some_and(|&node| dom.name_is(node, &content))
+                    {
+                        pending.push(after_path[a]);
+                        a += 1;
+                    }
+                    continue;
+                }
+                if before_match > current_match && before_match > after_match {
+                    pending.push(before_path[b]);
+                    b += 1;
+                    // Skip the wrapper and its own content as one unit;
+                    // otherwise the opposite side's matched sdt is mistaken
+                    // for the unmatched sdtContent on the next iteration.
+                    if before_path
+                        .get(b)
+                        .is_some_and(|&node| dom.name_is(node, &content))
+                    {
+                        pending.push(before_path[b]);
+                        b += 1;
+                    }
+                    continue;
+                }
+            }
+            if dom.name(after_path[a]) == dom.name(before_path[b]) {
+                matched_paragraph |= dom.name_is(after_path[a], &paragraph);
+                a += 1;
+                b += 1;
+            } else if is_control(after_path[a]) {
+                pending.push(after_path[a]);
+                a += 1;
+            } else if is_control(before_path[b]) {
+                pending.push(before_path[b]);
+                b += 1;
+            } else {
+                break;
+            }
+        }
+        if a == after_path.len() && b == before_path.len() && matched_paragraph {
+            unmatched.extend(pending);
+        }
+    }
+    if unmatched.is_empty() {
+        return;
+    }
+    let strip = |atom: &mut ComparisonUnitAtom| {
+        if atom
+            .ancestor_elements
+            .iter()
+            .any(|node| unmatched.contains(node))
+        {
+            atom.ancestor_elements = atom
+                .ancestor_elements
+                .iter()
+                .copied()
+                .filter(|node| !unmatched.contains(node))
+                .collect::<Vec<_>>()
+                .into();
+            atom.ancestor_unids = None;
+        }
+    };
+    for atom in atoms {
+        strip(atom);
+        if let Some(before) = &mut atom.comparison_unit_atom_before {
+            strip(std::sync::Arc::make_mut(before));
+        }
+    }
+}
+
 fn is_ppr_atom(dom: &Dom, atom: &ComparisonUnitAtom) -> bool {
     dom.name_is(atom.content_element, &W::p_pr())
 }
@@ -281,6 +452,7 @@ type UnidChainMemo = Option<(std::sync::Arc<[NodeId]>, std::sync::Arc<[String]>)
 /// B seed ancestor_unids from the paragraph mark (reverse walk, minting missing);
 /// C fix text boxes in a second reverse pass.
 pub fn assemble_ancestor_unids(dom: &mut Dom, atoms: &mut [ComparisonUnitAtom]) {
+    align_content_control_ancestry(dom, atoms);
     let unid = PT::unid();
     let footnote = W::footnote();
     let endnote = W::endnote();
@@ -782,7 +954,26 @@ pub fn coalesce_recurse(
             } else {
                 status_str(gc.correlation_status)
             };
-            (key, st)
+            // One revised run can correlate with several differently
+            // formatted original runs. Preserve each old rPr boundary so
+            // finalize records the right history instead of the first atom's.
+            let old_run_properties = if aname == W::p()
+                && gc.correlation_status == CorrelationStatus::FormatChanged
+                && gc
+                    .ancestor_elements
+                    .get(level + 1)
+                    .is_some_and(|&node| dom.name_is(node, &W::r()))
+            {
+                // Split direct runs only. A formatted run below an inline
+                // container is split inside that container's reconstruction;
+                // splitting it here would duplicate the entire SDT/link.
+                gc.format_change
+                    .as_ref()
+                    .and_then(|change| change.old_run_properties)
+            } else {
+                None
+            };
+            (key, st, old_run_properties)
         });
 
         // w:p
@@ -1035,7 +1226,42 @@ fn reconstruct_element(
     id_gen: &mut u32,
 ) -> NodeId {
     let aname = dom.name(ancestor).unwrap();
-    let new_children = coalesce_recurse(dom, g, level + 1, settings, id_gen);
+    // Generic inline containers (hyperlink, sdtContent, smartTag, ...) also
+    // need separate reconstructed runs for each original formatting boundary.
+    // Restrict segmentation to direct run children: splitting block-container
+    // groups here would duplicate paragraphs or table structure.
+    let split_run_formats = g
+        .iter()
+        .any(|atom| atom.correlation_status == CorrelationStatus::FormatChanged)
+        && g.iter().all(|atom| {
+            atom.ancestor_elements
+                .get(level + 1)
+                .is_some_and(|&node| dom.name_is(node, &W::r()))
+        });
+    let new_children = if split_run_formats {
+        let groups = group_adjacent(g.iter().copied(), |atom| {
+            let run = atom
+                .ancestor_unids
+                .as_ref()
+                .and_then(|unids| unids.get(level + 1))
+                .cloned();
+            let old = if atom.correlation_status == CorrelationStatus::FormatChanged {
+                atom.format_change
+                    .as_ref()
+                    .and_then(|change| change.old_run_properties)
+            } else {
+                None
+            };
+            (run, atom.correlation_status, old)
+        });
+        let mut children = Vec::new();
+        for (_, atoms) in groups {
+            children.extend(coalesce_recurse(dom, &atoms, level + 1, settings, id_gen));
+        }
+        children
+    } else {
+        coalesce_recurse(dom, g, level + 1, settings, id_gen)
+    };
     let ne = dom.new_element(aname.clone());
     for (an, av) in dom.attributes(ancestor) {
         dom.set_attribute_value(ne, &an, Some(&av));
@@ -1173,7 +1399,7 @@ fn reconstruct_element(
     for c in new_children {
         dom.add(ne, c);
     }
-    if settings.merge_replaced_paragraphs && (aname == W::tr() || aname == W::tc()) {
+    if settings.detect_format_changes && (aname == W::tr() || aname == W::tc()) {
         record_revised_row_cell_props(dom, ne, g, ancestor, level, settings, id_gen);
     }
     // Word-alignment (M-TBL rule 4, parity/_scratch/table_class_forensics.md):
@@ -1188,7 +1414,7 @@ fn reconstruct_element(
     ne
 }
 
-/// Word-alignment: a merged row or cell shows the revision's `trPr` /
+/// A merged row or cell shows the revision's `trPr` /
 /// `tcPr` and records the original's in `trPrChange` / `tcPrChange`
 /// (ff42b4a7a3's rewritten header row; 117 of the 300 table-bearing Word
 /// redlines of 500_extra carry a `tcPrChange`). The container is rebuilt
@@ -1483,6 +1709,7 @@ pub fn produce_new_wml_markup_from_correlated_sequence(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod opaque_text_tests {
     //! Direct coverage for `delete_text_in_opaque` (private). Pins the
     //! status→text-kind contract — in particular that `MovedSource` renames `w:t`
@@ -1580,6 +1807,7 @@ mod opaque_text_tests {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tblpr_order_tests {
     //! Word-validity regression: a synthesized `w:tblW` must land in its
     //! `CT_TblPrBase` schema slot (after tblpPr/bidiVisual/...), not pinned
@@ -1609,6 +1837,592 @@ mod tblpr_order_tests {
         assert!(
             pos("tblW") > pos("tblpPr") && pos("tblW") > pos("bidiVisual"),
             "tblW must follow tblpPr and bidiVisual (CT_TblPrBase), got: {order:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod content_control_source_order_regressions {
+    use crate::comparer::{WmlComparerSettings, compare_bodies_faithful};
+    use crate::namespaces::W;
+    use crate::revision_processor::{accept_revisions_document, reject_revisions_document};
+    use crate::xmllinq::{Dom, NodeId};
+
+    fn document(dom: &mut Dom, body: &str) -> (NodeId, NodeId) {
+        let document = dom.parse_xdocument(&format!(
+            "<w:document xmlns:w=\"{}\"><w:body>{body}<w:sectPr/></w:body></w:document>",
+            W::URI
+        ));
+        let root = dom.root(document).unwrap();
+        (root, dom.element(root, &W::body()).unwrap())
+    }
+
+    fn paragraph(text: &str) -> String {
+        format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>")
+    }
+
+    fn control(text: &str, block: bool) -> String {
+        let content = if block {
+            paragraph(text)
+        } else {
+            format!("<w:r><w:t>{text}</w:t></w:r>")
+        };
+        let control = format!(
+            "<w:sdt><w:sdtPr><w:alias w:val=\"Clause\"/><w:id w:val=\"11\"/></w:sdtPr><w:sdtContent>{content}</w:sdtContent></w:sdt>"
+        );
+        if block {
+            control
+        } else {
+            format!("<w:p>{control}</w:p>")
+        }
+    }
+
+    fn text(dom: &Dom, root: NodeId) -> String {
+        dom.descendants(root, Some(&W::t()))
+            .into_iter()
+            .map(|node| dom.value(node))
+            .collect()
+    }
+
+    #[test]
+    fn introducing_or_removing_a_control_keeps_replacement_words_in_both_source_positions() {
+        let before = "The second party shall deliver the updated report within sixty days after receiving the signed request from the first party.";
+        let after = "The first party shall deliver the complete report within thirty days after receiving the written request from the other party.";
+        for block in [false, true] {
+            for reverse in [false, true] {
+                let (left, right, old_text, new_text) = if reverse {
+                    (control(after, block), paragraph(before), after, before)
+                } else {
+                    (paragraph(before), control(after, block), before, after)
+                };
+                let mut dom = Dom::new();
+                let (a_root, a_body) = document(&mut dom, &left);
+                let (b_root, b_body) = document(&mut dom, &right);
+                let compared = compare_bodies_faithful(
+                    &mut dom,
+                    a_root,
+                    b_root,
+                    a_body,
+                    b_body,
+                    &WmlComparerSettings::default(),
+                );
+                let accept_root = dom.clone_subtree(compared);
+                let accepted = accept_revisions_document(&mut dom, accept_root);
+                let rejected = reject_revisions_document(&mut dom, compared);
+                assert_eq!(
+                    text(&dom, accepted),
+                    new_text,
+                    "accept, block={block}, reverse={reverse}"
+                );
+                assert_eq!(
+                    text(&dom, rejected),
+                    old_text,
+                    "reject, block={block}, reverse={reverse}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn equal_control_ancestry_keeps_its_wrapper_and_authored_properties() {
+        for block in [false, true] {
+            let body = control("Unchanged controlled clause", block);
+            let mut dom = Dom::new();
+            let (a_root, a_body) = document(&mut dom, &body);
+            let (b_root, b_body) = document(&mut dom, &body);
+            let compared = compare_bodies_faithful(
+                &mut dom,
+                a_root,
+                b_root,
+                a_body,
+                b_body,
+                &WmlComparerSettings::default(),
+            );
+            assert_eq!(text(&dom, compared), "Unchanged controlled clause");
+            let controls = dom.descendants(compared, Some(&W::sdt()));
+            assert_eq!(
+                controls.len(),
+                1,
+                "aligned equal controls must not be flattened"
+            );
+            let properties = dom.element(controls[0], &W::name("sdtPr")).unwrap();
+            assert_eq!(
+                dom.attribute(
+                    dom.element(properties, &W::name("alias")).unwrap(),
+                    &W::val()
+                ),
+                Some("Clause")
+            );
+            assert_eq!(
+                dom.attribute(dom.element(properties, &W::id()).unwrap(), &W::val()),
+                Some("11")
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod run_format_history_regressions {
+    use super::*;
+    use crate::comparer::atoms::FormatChangeInfo;
+    use crate::comparer::finalize::mark_content_transform;
+    use crate::revision_processor::{accept_revisions_document, reject_revisions_document};
+    use std::sync::Arc;
+
+    fn run_snapshot(dom: &Dom, p: NodeId) -> Vec<(String, bool, bool, Option<String>)> {
+        dom.descendants(p, Some(&W::r()))
+            .into_iter()
+            .map(|r| {
+                let props = dom.element(r, &W::r_pr());
+                let has = |name| props.is_some_and(|pr| dom.element(pr, &W::name(name)).is_some());
+                let highlight = props
+                    .and_then(|pr| dom.element(pr, &W::name("highlight")))
+                    .and_then(|h| dom.attribute(h, &W::val()))
+                    .map(str::to_string);
+                let text = dom
+                    .descendants(r, Some(&W::t()))
+                    .into_iter()
+                    .map(|t| dom.value(t))
+                    .collect();
+                (text, has("b"), has("i"), highlight)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn one_new_run_preserves_each_original_format_boundary_when_rejected() {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!(r#"<w:p xmlns:w="{}"><w:r><w:rPr><w:i/><w:highlight w:val="yellow"/></w:rPr><w:t>left party right</w:t></w:r></w:p>"#, W::URI));
+        let new_p = dom.root(doc).unwrap();
+        let new_r = dom.element(new_p, &W::r()).unwrap();
+        let new_t = dom.element(new_r, &W::t()).unwrap();
+        let new_props = dom.element(new_r, &W::r_pr()).unwrap();
+        let old_props = dom.new_element(W::r_pr());
+        let bold = dom.new_element(W::name("b"));
+        dom.add(old_props, bold);
+        let ancestry: Arc<[NodeId]> = vec![new_p, new_r, new_t].into();
+        let unids: Arc<[String]> = vec![
+            "paragraph".into(),
+            "one-new-run".into(),
+            "one-new-text".into(),
+        ]
+        .into();
+        let mut atoms = Vec::new();
+        for (text, original) in [
+            ("left ", None),
+            ("party", Some(old_props)),
+            (" right", None),
+        ] {
+            for character in text.chars() {
+                let leaf = dom.new_element(W::t());
+                dom.add_text(leaf, &character.to_string());
+                let mut atom =
+                    ComparisonUnitAtom::new(leaf, Arc::clone(&ancestry), "format-regression");
+                atom.ancestor_unids = Some(Arc::clone(&unids));
+                atom.correlation_status = CorrelationStatus::FormatChanged;
+                atom.format_change = Some(FormatChangeInfo {
+                    old_run_properties: original,
+                    new_run_properties: Some(new_props),
+                    old_para_properties: None,
+                    changed_properties: vec!["italic".into(), "highlight".into()],
+                });
+                atoms.push(atom);
+            }
+        }
+        let settings = WmlComparerSettings::default();
+        let refs: Vec<_> = atoms.iter().collect();
+        let mut revision_id = 1;
+        let assembled = coalesce_recurse(&mut dom, &refs, 0, &settings, &mut revision_id);
+        assert_eq!(assembled.len(), 1);
+        let marked = mark_content_transform(&mut dom, assembled[0], &settings, &mut revision_id);
+        assert_eq!(marked.len(), 1);
+        let redline = marked[0];
+        assert_eq!(dom.descendants(redline, Some(&W::r_pr_change())).len(), 3);
+        let accept_root = dom.clone_subtree(redline);
+        let accepted = accept_revisions_document(&mut dom, accept_root);
+        assert_eq!(
+            run_snapshot(&dom, accepted),
+            [
+                ("left ".into(), false, true, Some("yellow".into())),
+                ("party".into(), false, true, Some("yellow".into())),
+                (" right".into(), false, true, Some("yellow".into())),
+            ]
+        );
+        let reject_root = dom.clone_subtree(redline);
+        let rejected = reject_revisions_document(&mut dom, reject_root);
+        assert_eq!(
+            run_snapshot(&dom, rejected),
+            [
+                ("left ".into(), false, false, None),
+                ("party".into(), true, false, None),
+                (" right".into(), false, false, None),
+            ]
+        );
+        assert!(
+            dom.descendants(accepted, Some(&W::r_pr_change()))
+                .is_empty()
+        );
+        assert!(
+            dom.descendants(rejected, Some(&W::r_pr_change()))
+                .is_empty()
+        );
+        assert_eq!(dom.value(old_props), "");
+        assert!(dom.element(old_props, &W::name("b")).is_some());
+    }
+
+    #[test]
+    fn inline_containers_preserve_each_original_format_boundary_when_rejected() {
+        for wrapper in ["sdt", "hyperlink"] {
+            let mut dom = Dom::new();
+            let run = "<w:r><w:rPr><w:i/><w:highlight w:val=\"yellow\"/></w:rPr><w:t>left party right</w:t></w:r>";
+            let content = if wrapper == "sdt" {
+                format!(
+                    "<w:sdt><w:sdtPr><w:id w:val=\"11\"/><w:alias w:val=\"Clause\"/><w:tag w:val=\"authored-clause\"/></w:sdtPr><w:sdtContent>{run}</w:sdtContent></w:sdt>"
+                )
+            } else {
+                format!("<w:hyperlink w:anchor=\"Clause\">{run}</w:hyperlink>")
+            };
+            let doc = dom.parse_xdocument(&format!("<w:p xmlns:w=\"{}\">{content}</w:p>", W::URI));
+            let new_p = dom.root(doc).unwrap();
+            let new_r = dom.descendants(new_p, Some(&W::r()))[0];
+            let new_t = dom.element(new_r, &W::t()).unwrap();
+            let new_props = dom.element(new_r, &W::r_pr()).unwrap();
+            let old_props = dom.new_element(W::r_pr());
+            let bold = dom.new_element(W::name("b"));
+            dom.add(old_props, bold);
+            let container = dom.descendants(new_p, Some(&W::name(wrapper)))[0];
+            let mut ancestry = vec![new_p, container];
+            if wrapper == "sdt" {
+                ancestry.push(dom.element(container, &W::sdt_content()).unwrap());
+            }
+            ancestry.extend([new_r, new_t]);
+            let unids: Arc<[String]> = (0..ancestry.len())
+                .map(|i| format!("ancestor-{i}"))
+                .collect::<Vec<_>>()
+                .into();
+            let ancestry: Arc<[NodeId]> = ancestry.into();
+            let mut atoms = Vec::new();
+            for (text, original) in [
+                ("left ", None),
+                ("party", Some(old_props)),
+                (" right", None),
+            ] {
+                for character in text.chars() {
+                    let leaf = dom.new_element(W::t());
+                    dom.add_text(leaf, &character.to_string());
+                    let mut atom =
+                        ComparisonUnitAtom::new(leaf, Arc::clone(&ancestry), "format-regression");
+                    atom.ancestor_unids = Some(Arc::clone(&unids));
+                    atom.correlation_status = CorrelationStatus::FormatChanged;
+                    atom.format_change = Some(FormatChangeInfo {
+                        old_run_properties: original,
+                        new_run_properties: Some(new_props),
+                        old_para_properties: None,
+                        changed_properties: vec!["italic".into(), "highlight".into()],
+                    });
+                    atoms.push(atom);
+                }
+            }
+            let settings = WmlComparerSettings::default();
+            let refs: Vec<_> = atoms.iter().collect();
+            let mut revision_id = 1;
+            let assembled = coalesce_recurse(&mut dom, &refs, 0, &settings, &mut revision_id);
+            assert_eq!(assembled.len(), 1);
+            let marked =
+                mark_content_transform(&mut dom, assembled[0], &settings, &mut revision_id);
+            assert_eq!(marked.len(), 1);
+            let redline = marked[0];
+            assert_eq!(dom.descendants(redline, Some(&W::r_pr_change())).len(), 3);
+            let accept_root = dom.clone_subtree(redline);
+            let accepted = accept_revisions_document(&mut dom, accept_root);
+            assert_eq!(
+                run_snapshot(&dom, accepted),
+                [
+                    ("left ".into(), false, true, Some("yellow".into())),
+                    ("party".into(), false, true, Some("yellow".into())),
+                    (" right".into(), false, true, Some("yellow".into())),
+                ]
+            );
+            let reject_root = dom.clone_subtree(redline);
+            let rejected = reject_revisions_document(&mut dom, reject_root);
+            assert_eq!(
+                run_snapshot(&dom, rejected),
+                [
+                    ("left ".into(), false, false, None),
+                    ("party".into(), true, false, None),
+                    (" right".into(), false, false, None),
+                ]
+            );
+            assert!(
+                dom.descendants(accepted, Some(&W::r_pr_change()))
+                    .is_empty()
+            );
+            assert!(
+                dom.descendants(rejected, Some(&W::r_pr_change()))
+                    .is_empty()
+            );
+            assert_eq!(dom.value(old_props), "");
+            assert!(dom.element(old_props, &W::name("b")).is_some());
+            for output in [redline, accepted, rejected] {
+                assert_eq!(
+                    dom.descendants(output, Some(&W::p())).len(),
+                    0,
+                    "root is the only paragraph, wrapper={wrapper}"
+                );
+                let containers = dom.descendants(output, Some(&W::name(wrapper)));
+                assert_eq!(containers.len(), 1, "wrapper={wrapper}");
+                if wrapper == "hyperlink" {
+                    assert_eq!(
+                        dom.attribute(containers[0], &W::name("anchor")),
+                        Some("Clause")
+                    );
+                } else {
+                    let properties = dom.element(containers[0], &W::name("sdtPr")).unwrap();
+                    for (name, value) in [
+                        ("id", "11"),
+                        ("alias", "Clause"),
+                        ("tag", "authored-clause"),
+                    ] {
+                        assert_eq!(
+                            dom.attribute(
+                                dom.element(properties, &W::name(name)).unwrap(),
+                                &W::val()
+                            ),
+                            Some(value)
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod authored_control_identity_regressions {
+    use super::same_authored_control;
+    use crate::namespaces::W;
+    use crate::xmllinq::Dom;
+
+    #[test]
+    fn nonempty_tags_override_regenerated_ids_and_empty_tags_allow_fallbacks() {
+        for (left, right, expected) in [
+            (
+                "<w:tag w:val=\"Clause\"/><w:id w:val=\"11\"/>",
+                "<w:tag w:val=\"Clause\"/><w:id w:val=\"13\"/>",
+                true,
+            ),
+            (
+                "<w:tag w:val=\"\"/><w:id w:val=\"11\"/>",
+                "<w:tag w:val=\"\"/><w:id w:val=\"11\"/>",
+                true,
+            ),
+            (
+                "<w:tag w:val=\"\"/><w:alias w:val=\"Clause\"/>",
+                "<w:tag w:val=\"\"/><w:alias w:val=\"Clause\"/>",
+                true,
+            ),
+            (
+                "<w:tag w:val=\"Clause\"/><w:id w:val=\"11\"/>",
+                "<w:tag w:val=\"Wrapper\"/><w:id w:val=\"11\"/>",
+                false,
+            ),
+        ] {
+            let mut dom = Dom::new();
+            let document = dom.parse_xdocument(&format!(
+                "<w:document xmlns:w=\"{}\"><w:sdt><w:sdtPr>{left}</w:sdtPr></w:sdt><w:sdt><w:sdtPr>{right}</w:sdtPr></w:sdt></w:document>", W::URI
+            ));
+            let root = dom.root(document).unwrap();
+            let controls = dom.descendants(root, Some(&W::sdt()));
+            assert_eq!(
+                same_authored_control(&dom, controls[0], controls[1]),
+                expected,
+                "left={left}, right={right}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod repeated_control_tag_regressions {
+    use crate::comparer::{WmlComparerSettings, compare_bodies_faithful};
+    use crate::namespaces::W;
+    use crate::revision_processor::{accept_revisions_document, reject_revisions_document};
+    use crate::xmllinq::{Dom, NodeId};
+
+    fn document(dom: &mut Dom, body: &str) -> (NodeId, NodeId) {
+        let doc = dom.parse_xdocument(&format!(
+            "<w:document xmlns:w='{}'><w:body>{body}<w:sectPr/></w:body></w:document>",
+            W::URI
+        ));
+        let root = dom.root(doc).unwrap();
+        (root, dom.element(root, &W::body()).unwrap())
+    }
+
+    fn controlled(content: &str, id: &str, alias: &str) -> String {
+        format!(
+            "<w:sdt><w:sdtPr><w:alias w:val='{alias}'/><w:tag w:val='Clause'/><w:id w:val='{id}'/></w:sdtPr><w:sdtContent>{content}</w:sdtContent></w:sdt>"
+        )
+    }
+
+    fn text(dom: &Dom, root: NodeId) -> String {
+        dom.descendants(root, Some(&W::t()))
+            .into_iter()
+            .map(|n| dom.value(n))
+            .collect()
+    }
+
+    #[test]
+    fn repeated_tag_outer_wrapper_never_replaces_retained_inner_control_metadata() {
+        for block in [false, true] {
+            for reverse in [false, true] {
+                for settings in [
+                    WmlComparerSettings::default(),
+                    WmlComparerSettings::powertools_faithful(),
+                ] {
+                    let words = "The retained clause shall remain in its authored control.";
+                    let run = format!("<w:r><w:t>{words}</w:t></w:r>");
+                    let content = if block {
+                        format!("<w:p>{run}</w:p>")
+                    } else {
+                        run
+                    };
+                    let inner = controlled(&content, "11", "Inner");
+                    let outer = controlled(&inner, "22", "Outer");
+                    let wrap = |body: &str| {
+                        if block {
+                            body.to_string()
+                        } else {
+                            format!("<w:p>{body}</w:p>")
+                        }
+                    };
+                    let (left, right) = if reverse {
+                        (wrap(&outer), wrap(&inner))
+                    } else {
+                        (wrap(&inner), wrap(&outer))
+                    };
+                    let mut dom = Dom::new();
+                    let (ar, ab) = document(&mut dom, &left);
+                    let (br, bb) = document(&mut dom, &right);
+                    let compared = compare_bodies_faithful(&mut dom, ar, br, ab, bb, &settings);
+                    let ac = dom.clone_subtree(compared);
+                    let accepted = accept_revisions_document(&mut dom, ac);
+                    let rc = dom.clone_subtree(compared);
+                    let rejected = reject_revisions_document(&mut dom, rc);
+                    for projection in [compared, accepted, rejected] {
+                        assert_eq!(
+                            text(&dom, projection),
+                            words,
+                            "block={block}, reverse={reverse}"
+                        );
+                        let controls = dom.descendants(projection, Some(&W::sdt()));
+                        assert_eq!(
+                            controls.len(),
+                            1,
+                            "only the retained control is correlated; block={block}, reverse={reverse}"
+                        );
+                        let props = dom.element(controls[0], &W::name("sdtPr")).unwrap();
+                        for (name, expected) in
+                            [("id", "11"), ("tag", "Clause"), ("alias", "Inner")]
+                        {
+                            let property = dom.element(props, &W::name(name)).unwrap();
+                            assert_eq!(
+                                dom.attribute(property, &W::val()),
+                                Some(expected),
+                                "block={block}, reverse={reverse}, property={name}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod reordered_retained_control_identity_regression {
+    use super::*;
+    use std::sync::Arc;
+
+    fn source(dom: &mut Dom, outer: &str, inner: &str) -> ComparisonUnitAtom {
+        let doc = dom.parse_xdocument(&format!(
+            "<w:p xmlns:w='{}'><w:sdt><w:sdtPr><w:tag w:val='Clause'/><w:id w:val='{outer}'/><w:alias w:val='Control-{outer}'/></w:sdtPr><w:sdtContent><w:sdt><w:sdtPr><w:tag w:val='Clause'/><w:id w:val='{inner}'/><w:alias w:val='Control-{inner}'/></w:sdtPr><w:sdtContent><w:r><w:t>shared</w:t></w:r></w:sdtContent></w:sdt></w:sdtContent></w:sdt></w:p>", W::URI
+        ));
+        let root = dom.root(doc).unwrap();
+        let leaf = dom.descendants(root, Some(&W::t()))[0];
+        let mut path = dom.ancestors(leaf, None);
+        path.reverse();
+        path.push(leaf);
+        let mut atom = ComparisonUnitAtom::new(leaf, path, "shared");
+        atom.correlation_status = CorrelationStatus::Equal;
+        atom
+    }
+
+    fn ids(dom: &Dom, atom: &ComparisonUnitAtom) -> Vec<String> {
+        atom.ancestor_elements
+            .iter()
+            .copied()
+            .filter(|&node| dom.name_is(node, &W::sdt()))
+            .map(|sdt| {
+                let pr = dom.element(sdt, &W::name("sdtPr")).unwrap();
+                let id = dom.element(pr, &W::id()).unwrap();
+                dom.attribute(id, &W::val()).unwrap().to_string()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn both_retained_controls_cannot_be_stripped_when_their_nesting_order_changes() {
+        let mut dom = Dom::new();
+        let before = source(&mut dom, "11", "22");
+        let mut after = source(&mut dom, "22", "11");
+        after.comparison_unit_atom_before = Some(Arc::new(before));
+        let mut atoms = [after];
+        align_content_control_ancestry(&dom, &mut atoms);
+        assert_eq!(
+            ids(&dom, &atoms[0]),
+            ["22", "11"],
+            "both after-side IDs also exist before; neither wrapper is surplus"
+        );
+        assert_eq!(
+            ids(&dom, atoms[0].comparison_unit_atom_before.as_ref().unwrap()),
+            ["11", "22"],
+            "both before-side IDs also exist after; neither wrapper is surplus"
+        );
+    }
+
+    #[test]
+    fn stronger_unilateral_id_match_beats_opposite_regenerated_id_tag_match() {
+        let mut dom = Dom::new();
+        let before = source(&mut dom, "11", "99");
+        let mut after = source(&mut dom, "22", "11");
+        for (atom, id) in [(&before, "99"), (&after, "22")] {
+            let controls: Vec<_> = atom
+                .ancestor_elements
+                .iter()
+                .copied()
+                .filter(|&node| dom.name_is(node, &W::sdt()))
+                .collect();
+            for control in controls {
+                let pr = dom.element(control, &W::name("sdtPr")).unwrap();
+                let identifier = dom.element(pr, &W::id()).unwrap();
+                if dom.attribute(identifier, &W::val()) == Some(id) {
+                    let tag = dom.element(pr, &W::name("tag")).unwrap();
+                    dom.set_attribute_value(tag, &W::val(), Some("Wrapper"));
+                }
+            }
+        }
+        after.comparison_unit_atom_before = Some(Arc::new(before));
+        let mut atoms = [after];
+        align_content_control_ancestry(&dom, &mut atoms);
+        assert_eq!(ids(&dom, &atoms[0]), ["11"]);
+        assert_eq!(
+            ids(&dom, atoms[0].comparison_unit_atom_before.as_ref().unwrap()),
+            ["11"]
         );
     }
 }

@@ -161,6 +161,21 @@ fn atom_hash(dom: &Dom, content: NodeId, settings: &WmlComparerSettings) -> Atom
     {
         text.push_str(ty);
     }
+    // Break kind and clearance carry visible/layout semantics, unlike run
+    // formatting handled separately. Equal-correlating all empty br leaves
+    // copied B's page break into A's rejected text-wrapping break.
+    if dom.name_is(content, &W::name("br")) {
+        for (attribute, default) in [("type", "textWrapping"), ("clear", "none")] {
+            if let Some(value) = dom.attribute(content, &W::name(attribute))
+                && value != default
+            {
+                text.push('|');
+                text.push_str(attribute);
+                text.push('=');
+                text.push_str(value);
+            }
+        }
+    }
     AtomHash::of_bytes(format!("{local}{text}").as_bytes())
 }
 
@@ -633,4 +648,43 @@ fn group_by_ancestor_unid(
         map.entry(key).or_default().push(atom.clone());
     }
     order.into_iter().map(|k| map.remove(&k).unwrap()).collect()
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod break_payload_identity_regressions {
+    use super::atom_hash;
+    use crate::comparer::WmlComparerSettings;
+    use crate::namespaces::W;
+    use crate::xmllinq::Dom;
+
+    #[test]
+    fn break_defaults_match_but_authored_kind_and_clearance_do_not() {
+        let mut dom = Dom::new();
+        let document = dom.parse_xdocument(&format!(
+            "<w:r xmlns:w=\"{}\"><w:br/><w:br w:type=\"textWrapping\" w:clear=\"none\"/><w:br w:type=\"page\"/><w:br w:type=\"column\"/><w:br w:clear=\"left\"/><w:br w:clear=\"right\"/></w:r>", W::URI
+        ));
+        let root = dom.root(document).unwrap();
+        let breaks = dom.elements(root, Some(&W::name("br")));
+        for settings in [
+            WmlComparerSettings::default(),
+            WmlComparerSettings::powertools_faithful(),
+        ] {
+            let hashes = breaks
+                .iter()
+                .map(|&node| atom_hash(&dom, node, &settings))
+                .collect::<Vec<_>>();
+            assert_eq!(hashes[0], hashes[1]);
+            assert_eq!(
+                hashes[0],
+                super::AtomHash::of_bytes(b"br"),
+                "bare/default break identity stays compatible"
+            );
+            for i in 2..hashes.len() {
+                for j in 0..i {
+                    assert_ne!(hashes[i], hashes[j]);
+                }
+            }
+        }
+    }
 }

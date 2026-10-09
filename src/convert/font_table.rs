@@ -232,6 +232,7 @@ pub(crate) fn load_embedded_fonts(pkg: &PartFs, table: &FontTable) -> super::fon
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

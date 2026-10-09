@@ -22,6 +22,7 @@
 //! flags, and validation are handled by clap (gated behind the default `cli`
 //! feature).
 
+#![cfg_attr(all(coverage_nightly, test), feature(coverage_attribute))]
 #![forbid(unsafe_code)]
 
 use std::path::{Path, PathBuf};
@@ -2300,6 +2301,7 @@ fn run_fields_update(file: &Path, output: &Path, force: bool, json: bool) -> Res
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use jubarte::convert::{MarkLines, RevisionStyle};

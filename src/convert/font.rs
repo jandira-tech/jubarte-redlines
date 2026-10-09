@@ -937,6 +937,7 @@ impl<'a> Face<'a> {
 
     /// The slot's bundled face, whatever this machine has installed.
     #[cfg(test)]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     pub(crate) fn bundled(id: FaceId) -> Self {
         Self::load(id)
     }
@@ -1678,6 +1679,7 @@ impl<'a> Fonts<'a> {
 
     /// The unremembered lookup `catalogue_slot` must agree with.
     #[cfg(test)]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     pub(crate) fn get_key(&self, key: &FaceKey) -> &Face<'a> {
         if let Some(idx) = self.embedded_index(&key.family, key.bold, key.italic) {
             return self
@@ -1771,6 +1773,7 @@ impl<'a> Fonts<'a> {
     /// then the entry's generic. Unknown names use the evidence table's
     /// Cambria row (plan Step 2d).
     #[cfg(test)]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     pub(crate) fn resolve_in(
         &self,
         family: &str,
@@ -1782,6 +1785,7 @@ impl<'a> Fonts<'a> {
     }
 
     #[cfg(test)]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     fn resolve_in_step(
         &self,
         family: &str,
@@ -3589,6 +3593,7 @@ fn sanitize_pdf_name(name: &str) -> String {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -5386,5 +5391,1026 @@ mod tests {
                 FaceId::CarlitoBoldItalic
             );
         }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod pure_font_boundary_tests {
+    use super::*;
+
+    #[test]
+    fn family_aliases_keep_all_four_requested_styles() {
+        let groups: &[(&[&str], [FaceId; 4])] = &[
+            (
+                &[
+                    "courier",
+                    "monaco",
+                    "menlo",
+                    "cousine",
+                    "nimbusmono",
+                    "custommono",
+                ],
+                [
+                    FaceId::MonoRegular,
+                    FaceId::MonoBold,
+                    FaceId::MonoItalic,
+                    FaceId::MonoBoldItalic,
+                ],
+            ),
+            (
+                &[
+                    "arial",
+                    "helvetica",
+                    "liberationsans",
+                    "opensans",
+                    "roboto",
+                    "tahoma",
+                    "trebuchet",
+                    "geneva",
+                    "sansserif",
+                ],
+                [
+                    FaceId::SansRegular,
+                    FaceId::SansBold,
+                    FaceId::SansItalic,
+                    FaceId::SansBoldItalic,
+                ],
+            ),
+            (
+                &["times", "caladea", "liberationserif", "customserif"],
+                [
+                    FaceId::SerifRegular,
+                    FaceId::SerifBold,
+                    FaceId::SerifItalic,
+                    FaceId::SerifBoldItalic,
+                ],
+            ),
+            (
+                &["aptosdisplay", "aptoscustomdisplay"],
+                [
+                    FaceId::AptosDisplayRegular,
+                    FaceId::AptosDisplayBold,
+                    FaceId::AptosDisplayItalic,
+                    FaceId::AptosDisplayBoldItalic,
+                ],
+            ),
+            (
+                &["aptos"],
+                [
+                    FaceId::AptosRegular,
+                    FaceId::AptosBold,
+                    FaceId::AptosItalic,
+                    FaceId::AptosBoldItalic,
+                ],
+            ),
+            (
+                &["verdana"],
+                [
+                    FaceId::VerdanaRegular,
+                    FaceId::VerdanaBold,
+                    FaceId::VerdanaItalic,
+                    FaceId::VerdanaBoldItalic,
+                ],
+            ),
+            (
+                &["cambria", "inter"],
+                [
+                    FaceId::CambriaRegular,
+                    FaceId::CambriaBold,
+                    FaceId::CambriaItalic,
+                    FaceId::CambriaBoldItalic,
+                ],
+            ),
+            (
+                &["consolas"],
+                [
+                    FaceId::ConsolasRegular,
+                    FaceId::ConsolasBold,
+                    FaceId::ConsolasItalic,
+                    FaceId::ConsolasBoldItalic,
+                ],
+            ),
+            (
+                &["georgia"],
+                [
+                    FaceId::GeorgiaRegular,
+                    FaceId::GeorgiaBold,
+                    FaceId::GeorgiaItalic,
+                    FaceId::GeorgiaBoldItalic,
+                ],
+            ),
+            (
+                &["bookantiqua", "palatino"],
+                [
+                    FaceId::BookAntiquaRegular,
+                    FaceId::BookAntiquaBold,
+                    FaceId::BookAntiquaItalic,
+                    FaceId::BookAntiquaBoldItalic,
+                ],
+            ),
+            (
+                &["calibri", "carlito"],
+                [
+                    FaceId::CarlitoRegular,
+                    FaceId::CarlitoBold,
+                    FaceId::CarlitoItalic,
+                    FaceId::CarlitoBoldItalic,
+                ],
+            ),
+        ];
+        for (families, expected) in groups {
+            for family in *families {
+                for (index, (bold, italic)) in
+                    [(false, false), (true, false), (false, true), (true, true)]
+                        .into_iter()
+                        .enumerate()
+                {
+                    assert_eq!(
+                        Fonts::mapped_face(family, bold, italic),
+                        Some(expected[index]),
+                        "{family} {bold} {italic}"
+                    );
+                }
+            }
+        }
+        for family in ["calibrilight", "calibricustomlight"] {
+            assert_eq!(
+                Fonts::mapped_face(family, true, false),
+                Some(FaceId::CalibriLightRegular)
+            );
+            assert_eq!(
+                Fonts::mapped_face(family, false, true),
+                Some(FaceId::CalibriLightItalic)
+            );
+        }
+        assert_eq!(
+            Fonts::mapped_face("symbol", false, true),
+            Some(FaceId::Symbol)
+        );
+        assert_eq!(Fonts::mapped_face("dejavumono", false, false), None);
+        assert_eq!(Fonts::mapped_face("unknownsans", false, false), None);
+    }
+
+    #[test]
+    fn font_without_shaping_support_preserves_unicode_and_uses_glyph_advances() {
+        let mut face = Face::from_bytes(
+            FaceId::SansRegular,
+            FaceId::SansRegular.bytes(),
+            "BoundarySans".into(),
+        )
+        .unwrap();
+        face.buzz = None;
+        let text = "A\u{2011}é";
+        let shaped = face.shape_kern(text, 12.0, true);
+        assert_eq!(shaped.len(), 3);
+        assert_eq!(shaped[1].0, face.glyph('-'));
+        for (ch, (_, width)) in text.chars().zip(&shaped) {
+            assert_eq!(*width, face.advance_pt(ch, 12.0));
+        }
+        assert_eq!(face.glyph_texts(text, true), ["A", "-", "é"]);
+        assert_eq!(face.shape("", 12.0), []);
+        assert_eq!(face.glyph_texts("", false), Vec::<String>::new());
+        assert_eq!(
+            face.width_pt_kern(text, 12.0, true),
+            shaped.iter().map(|(_, w)| *w).sum::<f32>()
+        );
+        assert_eq!(face.advance_pt('漢', 12.0), 12.0 + word_device_track(12.0));
+        assert_eq!(face.symbol_stand_in('A'), None);
+        assert_eq!(face.symbol_stand_in('\u{f001}'), None);
+        assert_eq!(face.symbol_stand_in('\u{f09f}'), Some('•'));
+        face.symbol_slot = true;
+        assert_eq!(face.symbol_stand_in('\u{f061}'), Some('α'));
+        assert_eq!(face.symbol_stand_in('\u{f060}'), None);
+        assert!(Face::from_bytes(FaceId::SansRegular, b"not a font", "bad".into()).is_none());
+    }
+
+    #[test]
+    fn extraction_refuses_invalid_collection_offsets_and_preserves_table_padding() {
+        assert_eq!(ttc_face_bytes(b"", 0), None);
+        assert_eq!(ttc_face_bytes(b"not a collection", 0), None);
+        let mut ttc = b"ttcf".to_vec();
+        ttc.extend_from_slice(&0x00010000u32.to_be_bytes());
+        ttc.extend_from_slice(&1u32.to_be_bytes());
+        ttc.extend_from_slice(&16u32.to_be_bytes());
+        ttc.extend_from_slice(&0x00010000u32.to_be_bytes());
+        ttc.extend_from_slice(&1u16.to_be_bytes());
+        ttc.extend_from_slice(&[0; 6]);
+        ttc.extend_from_slice(b"test");
+        ttc.extend_from_slice(&0u32.to_be_bytes());
+        ttc.extend_from_slice(&44u32.to_be_bytes());
+        ttc.extend_from_slice(&3u32.to_be_bytes());
+        ttc.extend_from_slice(&[1, 2, 3]);
+        let extracted = ttc_face_bytes(&ttc, 0).unwrap();
+        assert_eq!(&extracted[12..16], b"test");
+        assert_eq!(
+            u32::from_be_bytes(extracted[20..24].try_into().unwrap()),
+            28
+        );
+        assert_eq!(&extracted[28..], &[1, 2, 3, 0]);
+        assert_eq!(ttc_face_bytes(&ttc[..46], 0), None);
+        ttc[12..16].copy_from_slice(&u32::MAX.to_be_bytes());
+        assert_eq!(ttc_face_bytes(&ttc, 0), None);
+    }
+
+    #[test]
+    fn windows_font_directories_use_injected_environment_and_ignore_empty_values() {
+        use std::ffi::OsString;
+        assert_eq!(
+            windows_font_dirs_from(|_| None),
+            [PathBuf::from(r"C:\Windows").join("Fonts")]
+        );
+        let env = |key: &str| match key {
+            "WINDIR" => Some(OsString::new()),
+            "SystemRoot" => Some(OsString::from("system")),
+            "LOCALAPPDATA" => Some(OsString::from("user")),
+            _ => None,
+        };
+        assert_eq!(
+            windows_font_dirs_from(env),
+            [
+                PathBuf::from("system/Fonts"),
+                PathBuf::from("user/Microsoft/Windows/Fonts")
+            ]
+        );
+        assert!(windows_fonts_dir(Path::new("some/WINDOWS/fonts")));
+        assert!(!windows_fonts_dir(Path::new("some/fonts")));
+        assert!(!windows_fonts_dir(Path::new("Windows/Other")));
+        assert!(!windows_fonts_dir(Path::new("")));
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod deeper_boundary_tests {
+    use super::*;
+
+    // Coverage: not measured for lines or branches (execution prohibited).
+    // Missed outcomes targeted in the supplied audit, after summing duplicate rows:
+    // 356:F, 400:T, 1002/29:F, 1137/34:F, 1235:T, 1348:T,
+    // 1514/35:F, 1519:T, 1523:T, 1611:T, 1623:T, 1624:T, 1682:T,
+    // 1878/12:T, 1878/40:T, 1952:F, 3076/16:T, 3188/12:T,
+    // 3188/27:T, 3188/60:F, 3271:F, 3478:F, 3494:T, 3518/44:T,
+    // 3582/46:F, 3582/59:T, 3582/59:F. These are targets, not measured gains.
+    // These fixtures mutate bundled bytes in memory; no catalogue or file lookup.
+    fn table_record(bytes: &[u8], tag: &[u8; 4]) -> usize {
+        let count = usize::from(u16::from_be_bytes(bytes[4..6].try_into().unwrap()));
+        (0..count)
+            .map(|i| 12 + 16 * i)
+            .find(|&at| &bytes[at..at + 4] == tag)
+            .expect("bundled fixture table")
+    }
+
+    fn table_offset(bytes: &[u8], tag: &[u8; 4]) -> usize {
+        let at = table_record(bytes, tag);
+        u32::from_be_bytes(bytes[at + 8..at + 12].try_into().unwrap()) as usize
+    }
+
+    fn replace_table(bytes: &mut Vec<u8>, tag: &[u8; 4], data: &[u8]) {
+        let at = table_record(bytes, tag);
+        while !bytes.len().is_multiple_of(4) {
+            bytes.push(0);
+        }
+        let offset = u32::try_from(bytes.len()).unwrap();
+        bytes.extend_from_slice(data);
+        bytes[at + 8..at + 12].copy_from_slice(&offset.to_be_bytes());
+        bytes[at + 12..at + 16].copy_from_slice(&u32::try_from(data.len()).unwrap().to_be_bytes());
+    }
+
+    fn utf16(text: &str) -> Vec<u8> {
+        text.encode_utf16().flat_map(u16::to_be_bytes).collect()
+    }
+
+    // OpenType name records use the dependency's documented UTF-16BE encoding.
+    fn set_names(bytes: &mut Vec<u8>, records: &[(u16, u16, u16, Vec<u8>)]) {
+        let mut table = vec![0, 0];
+        table.extend_from_slice(&u16::try_from(records.len()).unwrap().to_be_bytes());
+        table.extend_from_slice(&u16::try_from(6 + 12 * records.len()).unwrap().to_be_bytes());
+        let mut strings = Vec::new();
+        for (platform, encoding, id, text) in records {
+            for value in [
+                *platform,
+                *encoding,
+                0,
+                *id,
+                u16::try_from(text.len()).unwrap(),
+                u16::try_from(strings.len()).unwrap(),
+            ] {
+                table.extend_from_slice(&value.to_be_bytes());
+            }
+            strings.extend_from_slice(text);
+        }
+        table.extend_from_slice(&strings);
+        replace_table(bytes, b"name", &table);
+    }
+
+    fn metric_fixture() -> Vec<u8> {
+        let mut bytes = FaceId::SansRegular.bytes().to_vec();
+        let head = table_offset(&bytes, b"head");
+        bytes[head + 18..head + 20].copy_from_slice(&1000u16.to_be_bytes());
+        for (offset, value) in [(36, 0i16), (38, -300), (40, 1100), (42, 1400)] {
+            bytes[head + offset..head + offset + 2].copy_from_slice(&value.to_be_bytes());
+        }
+        let hhea = table_offset(&bytes, b"hhea");
+        for (offset, value) in [(4, 1000i16), (6, -200), (8, 100)] {
+            bytes[hhea + offset..hhea + offset + 2].copy_from_slice(&value.to_be_bytes());
+        }
+        let os2 = table_offset(&bytes, b"OS/2");
+        for (offset, value) in [
+            (0, 4u16),
+            (2, 500),
+            (4, 400),
+            (6, 5),
+            (62, 64),
+            (68, 900),
+            (70, (-100i16) as u16),
+            (72, 50),
+            (74, 900),
+            (76, 200),
+        ] {
+            bytes[os2 + offset..os2 + offset + 2].copy_from_slice(&value.to_be_bytes());
+        }
+        bytes[os2 + 78..os2 + 82].copy_from_slice(&0u32.to_be_bytes());
+        let post = table_offset(&bytes, b"post");
+        bytes[post + 4..post + 8].copy_from_slice(&0i32.to_be_bytes());
+        set_names(
+            &mut bytes,
+            &[
+                (3, 1, 1, utf16("BoundaryFamily")),
+                (3, 1, 2, utf16("Regular")),
+                (3, 1, 6, utf16("BoundaryFamily-Regular")),
+            ],
+        );
+        bytes
+    }
+
+    fn report(requested: &str, physical: &str, step: FontStep) -> FontReportEntry {
+        FontReportEntry {
+            requested: requested.into(),
+            physical: physical.into(),
+            step,
+            bold: false,
+            italic: false,
+            synthetic: false,
+        }
+    }
+
+    #[test]
+    fn open_fallback_reports_require_a_nonempty_matching_family() {
+        for (requested, physical, substituted) in [
+            ("", "Carlito", true),
+            (" - ", "Carlito", true),
+            ("''", "Carlito", true),
+            ("Carlito", "LiberationSans-Regular", true),
+            (" ' CaR LiTo ' ", "Carlito-BoldItalic", false),
+            ("Carlito, serif", "Carlito-Regular", false),
+            ("\"Carlito\", serif", "Carlito-Regular", true),
+            ("Carlito", "", true),
+        ] {
+            let entry = report(requested, physical, FontStep::OpenFallback);
+            assert_eq!(
+                entry.substituted(),
+                substituted,
+                "{requested:?} {physical:?}"
+            );
+            assert_eq!(entry.physical_is_requested_family(), !substituted);
+        }
+    }
+
+    #[test]
+    fn json_escapes_controls_without_corrupting_unicode_or_punctuation() {
+        assert_eq!(
+            json_string("\0\u{0008}\u{000b}\u{000c}\u{001f}\u{007f}\u{0085}\"\\\n\r\t漢"),
+            r#""\u0000\u0008\u000b\u000c\u001f\u007f\u0085\"\\\n\r\t漢""#,
+        );
+        assert_eq!(sanitize_pdf_name("A-Z+9 /#é\0"), "A-Z+9-----");
+        let entries = [
+            report("\u{001f}", "A+B", FontStep::OpenFallback),
+            report("\n", "X-Y", FontStep::Embedded),
+        ];
+        assert_eq!(
+            font_report_json(&entries),
+            concat!(
+                "[{\"requested\":\"\\u001f\",\"step\":\"open_fallback\",\"physical\":\"A+B\",",
+                "\"bold\":false,\"italic\":false,\"synthetic\":false,\"substituted\":true},",
+                "{\"requested\":\"\\n\",\"step\":\"embedded\",\"physical\":\"X-Y\",",
+                "\"bold\":false,\"italic\":false,\"synthetic\":false,\"substituted\":false}]",
+            )
+        );
+    }
+
+    #[test]
+    fn unmatched_single_quotes_and_quoted_lists_stop_before_font_discovery() {
+        for (input, token) in [
+            ("'", "'"),
+            ("\"", "\""),
+            (" '' ", ""),
+            ("\"\"", ""),
+            ("'Arial\", serif", "'Arial\""),
+            ("\"Arial', serif", "\"Arial'"),
+        ] {
+            assert_eq!(family_token(input), token, "{input:?}");
+        }
+        for input in ["'", "\"", "'Arial', serif", "\"Arial\", serif"] {
+            assert!(!Fonts::is_installed_family(input), "{input:?}");
+        }
+    }
+
+    #[test]
+    fn east_asian_width_ranges_include_only_their_documented_endpoints() {
+        for (start, end) in [
+            (0x1100, 0x115f),
+            (0x2e80, 0x303e),
+            (0x3041, 0x33ff),
+            (0x3400, 0x4dbf),
+            (0x4e00, 0x9fff),
+            (0xa960, 0xa97f),
+            (0xac00, 0xd7a3),
+            (0xf900, 0xfaff),
+            (0xfe30, 0xfe4f),
+            (0xff01, 0xff60),
+            (0xffe0, 0xffe6),
+            (0x20000, 0x3fffd),
+        ] {
+            assert!(east_asian_wide(char::from_u32(start).unwrap()));
+            assert!(east_asian_wide(char::from_u32(end).unwrap()));
+        }
+        // 33ff/3400 touch, so their shared boundary is deliberately wide.
+        for outside in [
+            0x10ff, 0x1160, 0x2e7f, 0x303f, 0x3040, 0x4dc0, 0x4dff, 0xa000, 0xa95f, 0xa980, 0xabff,
+            0xd7a4, 0xf8ff, 0xfb00, 0xfe2f, 0xfe50, 0xff00, 0xff61, 0xffdf, 0xffe7, 0x1ffff,
+            0x3fffe,
+        ] {
+            assert!(
+                !east_asian_wide(char::from_u32(outside).unwrap()),
+                "{outside:x}"
+            );
+        }
+        let face = Face::bundled(FaceId::SansRegular);
+        assert_eq!(face.glyph('🦀'), 0);
+        assert_eq!(
+            face.advance_pt('🦀', 12.0),
+            f32::from(face.widths[0]) * 12.0 / face.upem
+        );
+    }
+
+    #[test]
+    fn repeated_shaping_clusters_attach_text_to_the_first_glyph_only() {
+        let face = Face::bundled(FaceId::SansRegular);
+        let a = face.glyph('A');
+        let e = face.glyph('é');
+        let units: ShapedUnits = vec![(e, 100, 0), (a, 0, 0), (a, 100, 2)].into();
+        face.shaped
+            .lock()
+            .unwrap()
+            .insert(("éA".into(), false), units);
+        assert_eq!(face.glyph_texts("éA", false), ["é", "", "A"]);
+        let rtl: ShapedUnits = vec![(a, 100, 2), (e, 100, 0), (a, 0, 0)].into();
+        face.shaped.lock().unwrap().insert(("éA".into(), true), rtl);
+        assert_eq!(face.glyph_texts("éA", true), ["A", "é", ""]);
+    }
+
+    #[test]
+    fn shaping_cache_clears_only_above_fifty_thousand_entries() {
+        for (initial, expected) in [(49_999, 50_000), (50_000, 50_001), (50_001, 1)] {
+            let face = Face::bundled(FaceId::SansRegular);
+            let empty: ShapedUnits = Vec::new().into();
+            let entries =
+                (0..initial).map(|i| ((format!("reserved-{i}"), false), Arc::clone(&empty)));
+            face.shaped.lock().unwrap().extend(entries);
+            let shaped = face.shape("A", 12.0);
+            assert_eq!(
+                shaped,
+                vec![(
+                    face.glyph('A'),
+                    f32::from(face.widths[usize::from(face.glyph('A'))]) / face.upem * 12.0
+                )]
+            );
+            let cache = face.shaped.lock().unwrap();
+            assert_eq!(cache.len(), expected, "initial={initial}");
+            assert_eq!(
+                cache.contains_key(&("reserved-0".into(), false)),
+                initial <= 50_000
+            );
+            assert_eq!(cache[&("A".into(), false)].len(), 1);
+        }
+    }
+
+    #[test]
+    fn name_record_decoding_obeys_the_library_platform_and_encoding_contract() {
+        for (platform, encoding, bytes, expected) in [
+            (
+                ttf_parser::PlatformId::Macintosh,
+                0,
+                b"Boundary".as_slice(),
+                Some("Boundary"),
+            ),
+            (
+                ttf_parser::PlatformId::Macintosh,
+                1,
+                b"Boundary".as_slice(),
+                None,
+            ),
+            (ttf_parser::PlatformId::Macintosh, 0, &[0x80], None),
+            (
+                ttf_parser::PlatformId::Windows,
+                1,
+                &[0, b'A', 0x6f, 0x22],
+                Some("A漢"),
+            ),
+            (ttf_parser::PlatformId::Unicode, 0, &[0, b'B'], Some("B")),
+            (ttf_parser::PlatformId::Windows, 1, &[0xd8, 0], None),
+            (
+                ttf_parser::PlatformId::Windows,
+                2,
+                b"Boundary".as_slice(),
+                None,
+            ),
+        ] {
+            let record = ttf_parser::name::Name {
+                platform_id: platform,
+                encoding_id: encoding,
+                language_id: 0,
+                name_id: ttf_parser::name_id::FAMILY,
+                name: bytes,
+            };
+            assert_eq!(name_text(&record).as_deref(), expected);
+        }
+    }
+
+    #[test]
+    fn family_ranking_distinguishes_typographic_names_and_weight_boundaries() {
+        for (weight, bold, width, expected) in [
+            (349, false, 5, 1),
+            (350, false, 5, 0),
+            (450, false, 5, 0),
+            (451, false, 5, 1),
+            (649, true, 5, 1),
+            (650, true, 5, 0),
+            (750, true, 5, 0),
+            (751, true, 5, 1),
+            (400, false, 4, 2),
+            (400, false, 6, 2),
+            (451, false, 4, 3),
+        ] {
+            let mut bytes = metric_fixture();
+            let os2 = table_offset(&bytes, b"OS/2");
+            bytes[os2 + 4..os2 + 6].copy_from_slice(&u16::to_be_bytes(weight));
+            bytes[os2 + 6..os2 + 8].copy_from_slice(&u16::to_be_bytes(width));
+            bytes[os2 + 62..os2 + 64]
+                .copy_from_slice(&(if bold { 32u16 } else { 64 }).to_be_bytes());
+            set_names(
+                &mut bytes,
+                &[
+                    (3, 1, 1, utf16("BoundaryFamily")),
+                    (3, 1, 16, utf16("TypographicBoundary")),
+                ],
+            );
+            assert_eq!(
+                face_family_style(&bytes, "boundaryfamily"),
+                Some((expected, (bold, false)))
+            );
+            assert_eq!(
+                face_family_style(&bytes, "TypographicBoundary"),
+                Some((expected + 4, (bold, false)))
+            );
+            assert_eq!(face_family_style(&bytes, "MissingBoundary"), None);
+        }
+    }
+
+    #[test]
+    fn slant_requires_an_italic_name_or_absent_os2_when_style_bits_are_clear() {
+        for (name, angle, os2_present, italic) in [
+            ("Regular", 0i32, true, false),
+            ("Regular", -16, true, false),
+            ("Italic", 0, true, false),
+            ("Italic", -16, true, true),
+            ("OBLIQUE", -16, true, true),
+            ("Regular", -16, false, true),
+            ("Regular", 0, false, false),
+        ] {
+            let mut bytes = metric_fixture();
+            let post = table_offset(&bytes, b"post");
+            bytes[post + 4..post + 8].copy_from_slice(&(angle * 65_536).to_be_bytes());
+            if !os2_present {
+                replace_table(&mut bytes, b"OS/2", &[]);
+            }
+            set_names(
+                &mut bytes,
+                &[(3, 1, 1, utf16("BoundaryFamily")), (3, 1, 17, utf16(name))],
+            );
+            assert_eq!(
+                face_family_style(&bytes, "BoundaryFamily"),
+                Some((0, (false, italic))),
+                "{name} {angle} {os2_present}"
+            );
+        }
+    }
+
+    #[test]
+    fn metric_tables_select_hhea_typo_helvetica_and_east_asian_lines() {
+        for (name, os2_present, typo, page, cloud, expected) in [
+            (
+                "BoundaryFamily",
+                true,
+                false,
+                0,
+                false,
+                (1300.0, 200.0, 1100.0),
+            ),
+            ("Helvetica", false, false, 0, false, (1300.0, 200.0, 1000.0)),
+            (
+                "Helvetica-Bold",
+                true,
+                false,
+                0,
+                false,
+                (1200.0, 200.0, 1000.0),
+            ),
+            (
+                "BoundaryFamily",
+                true,
+                true,
+                0,
+                false,
+                (1050.0, 100.0, 950.0),
+            ),
+            (
+                "BoundaryFamily",
+                true,
+                false,
+                1 << 17,
+                false,
+                (1560.0, 380.0, 1180.0),
+            ),
+            (
+                "BoundaryFamily",
+                true,
+                false,
+                1 << 17,
+                true,
+                (2210.0, 555.0, 1655.0),
+            ),
+        ] {
+            let mut bytes = metric_fixture();
+            let os2 = table_offset(&bytes, b"OS/2");
+            bytes[os2 + 62..os2 + 64]
+                .copy_from_slice(&(if typo { 192u16 } else { 64 }).to_be_bytes());
+            bytes[os2 + 78..os2 + 82].copy_from_slice(&u32::to_be_bytes(page));
+            if cloud {
+                set_names(&mut bytes, &[(3, 1, 5, utf16("Version 1.03;O365"))]);
+            }
+            if !os2_present {
+                replace_table(&mut bytes, b"OS/2", &[]);
+            }
+            let face = Face::from_bytes(FaceId::SansRegular, &bytes, name.into()).unwrap();
+            assert_eq!(
+                (
+                    face.single_line_pt(1000.0),
+                    face.line_descent_pt(1000.0),
+                    face.ascent_pt(1000.0)
+                ),
+                expected,
+                "{name} {os2_present} {typo} {page} {cloud}"
+            );
+            assert_eq!(face.east_asian, page != 0);
+            assert_eq!(face.pdf_bbox_1000(), [0, -300, 1100, 1400]);
+            assert_eq!(face.pdf_ascent_1000(), expected.2 as i32);
+        }
+    }
+
+    #[test]
+    fn panose_average_width_and_code_pages_have_exact_numeric_boundaries() {
+        for (family, serif, expected) in [
+            (1, 2, false),
+            (2, 1, false),
+            (2, 2, true),
+            (2, 10, true),
+            (2, 11, false),
+            (3, 10, false),
+        ] {
+            let mut bytes = metric_fixture();
+            let os2 = table_offset(&bytes, b"OS/2");
+            bytes[os2 + 32..os2 + 34].copy_from_slice(&[family, serif]);
+            let parsed = ttf_parser::Face::parse(&bytes, 0).unwrap();
+            assert_eq!(panose_serif(&parsed), expected);
+        }
+        for (width, expected) in [
+            (-1i16, None),
+            (0, None),
+            (1, Some(1.0)),
+            (i16::MAX, Some(32767.0)),
+        ] {
+            let mut bytes = metric_fixture();
+            let os2 = table_offset(&bytes, b"OS/2");
+            bytes[os2 + 2..os2 + 4].copy_from_slice(&width.to_be_bytes());
+            assert_eq!(
+                avg_char_width(&ttf_parser::Face::parse(&bytes, 0).unwrap()),
+                expected
+            );
+            let face =
+                Face::from_bytes(FaceId::SansRegular, &bytes, "BoundaryFamily".into()).unwrap();
+            assert_eq!(face.avg_char_width, expected.map_or(0.5, |w| w / 1000.0));
+        }
+        for bit in [16, 17, 18, 19, 20, 21, 22] {
+            let mut bytes = metric_fixture();
+            let os2 = table_offset(&bytes, b"OS/2");
+            bytes[os2 + 78..os2 + 82].copy_from_slice(&(1u32 << bit).to_be_bytes());
+            assert_eq!(
+                cjk_code_pages(&ttf_parser::Face::parse(&bytes, 0).unwrap()),
+                (17..=21).contains(&bit)
+            );
+        }
+    }
+
+    #[test]
+    fn embedded_faces_answer_family_properties_and_invalidate_catalogue_slots() {
+        let mut bytes = metric_fixture();
+        let os2 = table_offset(&bytes, b"OS/2");
+        bytes[os2 + 78..os2 + 82].copy_from_slice(&(1u32 << 17).to_be_bytes());
+        let mut fonts = Fonts::new();
+        fonts.insert_embedded("LatinBoundary", false, false, FaceId::SansRegular.bytes());
+        fonts.insert_embedded("AsianBoundary", false, false, &bytes);
+        assert!(fonts.family_is_latin_only("LatinBoundary"));
+        assert!(!fonts.family_is_east_asian("LatinBoundary"));
+        assert!(!fonts.family_is_latin_only("AsianBoundary"));
+        assert!(fonts.family_is_east_asian("AsianBoundary"));
+        assert_eq!(fonts.east_asia_avg_em("AsianBoundary"), Some(0.5));
+        let key = FaceKey {
+            family: "ASIANBOUNDARY".into(),
+            bold: true,
+            italic: true,
+        };
+        assert_eq!(fonts.get_key(&key).pdf_name(), "BoundaryFamily-Regular");
+        fonts
+            .catalogue_slots
+            .lock()
+            .unwrap()
+            .insert(FaceId::CarlitoRegular, FaceRef::Embedded(0));
+        fonts.insert_embedded("Calibri", false, false, &bytes);
+        assert!(fonts.catalogue_slots.lock().unwrap().is_empty());
+        assert_eq!(
+            fonts.catalogue_slot(FaceId::CarlitoRegular),
+            FaceRef::Embedded(2)
+        );
+        assert_eq!(
+            fonts.catalogue_slot(FaceId::CarlitoRegular),
+            FaceRef::Embedded(2)
+        );
+        assert_eq!(
+            fonts.get(FaceId::CarlitoRegular).pdf_name(),
+            "BoundaryFamily-Regular"
+        );
+    }
+
+    #[test]
+    fn cjk_name_boundaries_and_charsets_choose_the_matching_in_memory_fallback() {
+        let mut fonts = Fonts::new();
+        for (i, family) in [
+            CJK_FALLBACK,
+            CJK_FALLBACK_JA,
+            CJK_FALLBACK_KO,
+            CJK_FALLBACK_KO_SERIF,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            fonts.extra_index.insert(
+                FaceKey {
+                    family: family.into(),
+                    bold: false,
+                    italic: false,
+                },
+                u16::try_from(i).unwrap(),
+            );
+        }
+        let empty = super::super::font_table::FontTable::default();
+        for (family, expected) in [
+            ("LatinBoundary", None),
+            ("漢", Some(0)),
+            ("漢\u{303f}", Some(0)),
+            ("漢\u{3040}", Some(1)),
+            ("漢\u{30ff}", Some(1)),
+            ("漢\u{3100}", Some(0)),
+            ("漢\u{ff65}", Some(0)),
+            ("漢\u{ff66}", Some(1)),
+            ("漢\u{ff9f}", Some(1)),
+            ("漢\u{ffa0}", Some(0)),
+            ("漢\u{abff}", Some(0)),
+            ("漢\u{ac00}", Some(2)),
+            ("漢\u{d7a3}", Some(2)),
+            ("漢\u{d7a4}", Some(0)),
+            ("漢\u{10ff}", Some(0)),
+            ("漢\u{1100}", Some(2)),
+            ("漢\u{11ff}", Some(2)),
+            ("漢\u{1200}", Some(0)),
+            ("漢\u{3040}\u{ac00}", Some(1)),
+        ] {
+            assert_eq!(
+                fonts.cjk_fallback_index(family, false, &empty),
+                expected,
+                "{family}"
+            );
+            assert_eq!(
+                fonts.cjk_fallback_index(family, true, &empty),
+                expected,
+                "bold {family}"
+            );
+        }
+        for (charset, class, expected) in [
+            ("80", "roman", 1),
+            ("81", "roman", 3),
+            ("81", "swiss", 2),
+            ("86", "roman", 0),
+            ("88", "swiss", 0),
+        ] {
+            let xml = format!(
+                r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:font w:name="LatinBoundary"><w:charset w:val="{charset}"/><w:family w:val="{class}"/></w:font></w:fonts>"#
+            );
+            let table = super::super::font_table::parse_font_table_xml(&xml);
+            assert_eq!(
+                fonts.cjk_fallback_index("LatinBoundary", false, &table),
+                Some(expected)
+            );
+        }
+    }
+
+    fn empty_entry() -> IndexEntry {
+        IndexEntry {
+            dirs: Vec::new(),
+            faces: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn index_serialization_rejects_unrepresentable_keys_and_paths() {
+        let header = format!("{FONT_INDEX_HEADER}\n");
+        for bad in ['\t', '\n', '\r', ITEM_SEP] {
+            let entries = HashMap::from([(format!("a{bad}b"), empty_entry())]);
+            assert_eq!(format_font_index(&entries), header);
+        }
+        for bad in ['\t', '\n', '\r', ITEM_SEP, FIELD_SEP] {
+            let path = PathBuf::from(format!("a{bad}b"));
+            for entry in [
+                IndexEntry {
+                    dirs: vec![(path.clone(), None)],
+                    faces: Vec::new(),
+                },
+                IndexEntry {
+                    dirs: Vec::new(),
+                    faces: vec![IndexedFace {
+                        style: (false, false),
+                        source: FaceSource {
+                            path: path.clone(),
+                            index: None,
+                        },
+                        stamp: None,
+                    }],
+                },
+            ] {
+                assert_eq!(
+                    format_font_index(&HashMap::from([("clean".into(), entry)])),
+                    header
+                );
+            }
+        }
+        let entries = HashMap::from([("z".into(), empty_entry()), ("a".into(), empty_entry())]);
+        assert_eq!(
+            format_font_index(&entries),
+            format!("{FONT_INDEX_HEADER}\na\t\t\nz\t\t\n")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn index_serialization_omits_non_unicode_paths_instead_of_lossy_encoding() {
+        use std::os::unix::ffi::OsStringExt;
+        let path = PathBuf::from(std::ffi::OsString::from_vec(vec![b'a', 0xff]));
+        let entries = HashMap::from([(
+            "clean".into(),
+            IndexEntry {
+                dirs: vec![(path, None)],
+                faces: Vec::new(),
+            },
+        )]);
+        assert_eq!(
+            format_font_index(&entries),
+            format!("{FONT_INDEX_HEADER}\n")
+        );
+    }
+
+    #[test]
+    fn malformed_index_records_do_not_discard_other_valid_records() {
+        for malformed in [
+            "bad",
+            "bad\t",
+            "bad\t\t\textra",
+            "bad\tdir\t",
+            "bad\tdir\u{1f}1\u{1f}extra\t",
+            "bad\t\tfile\u{1f}0",
+            "bad\t\tfile\u{1f}0\u{1f}1\u{1f}0\u{1f}10\u{1f}20\u{1f}extra",
+        ] {
+            let text = format!("{FONT_INDEX_HEADER}\n{malformed}\ngood\t\t\n");
+            assert_eq!(
+                parse_font_index(&text),
+                HashMap::from([("good".into(), empty_entry())]),
+                "{malformed:?}"
+            );
+        }
+        for (index, length, time, expected_index, expected_stamp) in [
+            (
+                "4294967295",
+                "18446744073709551615",
+                "20",
+                Some(u32::MAX),
+                Some((u64::MAX, 20)),
+            ),
+            ("4294967296", "10", "20", None, Some((10, 20))),
+            ("-", "18446744073709551616", "20", None, None),
+            ("bad", "10", "bad", None, None),
+        ] {
+            let text = format!(
+                "{FONT_INDEX_HEADER}\nk\t\tf\u{1f}{index}\u{1f}1\u{1f}0\u{1f}{length}\u{1f}{time}\n"
+            );
+            let entries = parse_font_index(&text);
+            assert_eq!(
+                entries["k"].faces,
+                vec![IndexedFace {
+                    style: (true, false),
+                    source: FaceSource {
+                        path: "f".into(),
+                        index: expected_index
+                    },
+                    stamp: expected_stamp,
+                }]
+            );
+        }
+    }
+
+    #[test]
+    fn unstamped_index_faces_are_rejected_before_any_filesystem_access() {
+        let entry = IndexEntry {
+            dirs: Vec::new(),
+            faces: vec![IndexedFace {
+                style: (true, true),
+                source: FaceSource {
+                    path: "never-accessed.ttf".into(),
+                    index: None,
+                },
+                stamp: None,
+            }],
+        };
+        assert_eq!(entry.load(), None);
+        assert_eq!(empty_entry().load(), Some(Vec::new()));
+        let mut index = FontIndex::load(None);
+        index.record("empty", &[], &Vec::new());
+        assert_eq!(index.path, None);
+        assert_eq!(
+            index.entries,
+            HashMap::from([("empty".into(), empty_entry())])
+        );
+    }
+
+    #[test]
+    fn embedded_rejection_preserves_existing_faces_and_slot_cache() {
+        let mut fonts = Fonts::new();
+        fonts.insert_embedded("KeepBoundary", false, false, FaceId::SansRegular.bytes());
+        fonts
+            .catalogue_slots
+            .lock()
+            .unwrap()
+            .insert(FaceId::CarlitoRegular, FaceRef::Embedded(0));
+        let mut missing_outlines = metric_fixture();
+        let record = table_record(&missing_outlines, b"glyf");
+        missing_outlines[record + 8..record + 12].copy_from_slice(&u32::MAX.to_be_bytes());
+        for rejected in [b"invalid sfnt".as_slice(), missing_outlines.as_slice()] {
+            fonts.insert_embedded("RejectedBoundary", true, true, rejected);
+            assert_eq!(fonts.extra.len(), 1);
+            assert_eq!(fonts.extra_index.len(), 1);
+            assert_eq!(fonts.embedded_index("RejectedBoundary", true, true), None);
+            assert_eq!(
+                fonts
+                    .catalogue_slots
+                    .lock()
+                    .unwrap()
+                    .get(&FaceId::CarlitoRegular),
+                Some(&FaceRef::Embedded(0))
+            );
+        }
+    }
+
+    #[test]
+    fn absent_name_table_uses_the_embedded_family_as_a_sanitized_pdf_name() {
+        let mut bytes = metric_fixture();
+        replace_table(&mut bytes, b"name", &[]);
+        assert_eq!(ttf_postscript_name(&bytes), None);
+        let mut fonts = Fonts::new();
+        fonts.insert_embedded("Boundary + Face", false, false, &bytes);
+        assert_eq!(
+            fonts.embedded_index("Boundary + Face", false, false),
+            Some(0)
+        );
+        assert_eq!(fonts.extra[0].pdf_name(), "Boundary-+-Face");
+        assert_eq!(fonts.extra[0].bytes(), bytes.as_slice());
     }
 }

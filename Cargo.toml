@@ -64,6 +64,7 @@ all-features = true
 # Workspace lint policy (plan A1). Groups at priority = -1; pedantic is NOT
 # enabled as a group — only individually chosen low-hit pedantic lints.
 [lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage, coverage_nightly)'] }
 unsafe_code = "deny" # the library and CLI forbid it outright; the allocation-counting examples and tests need it
 
 [lints.clippy]

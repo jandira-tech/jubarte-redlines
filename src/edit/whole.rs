@@ -439,6 +439,7 @@ fn side_text(dom: &Dom, items: &[Item], side: Kind) -> String {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

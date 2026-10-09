@@ -5843,7 +5843,7 @@ fn adopt_b_notes_when_a_lacks_separators(
                             out.set_part(&t_out, tb);
                         }
                         if t_out != t {
-                            rel_target_out = t_out.rsplit('/').next().unwrap_or(&t_out).to_string();
+                            rel_target_out = crate::opc::relative_rel_target(part, &t_out);
                         }
                     }
                 }
@@ -7860,9 +7860,11 @@ fn compare_documents_impl(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod based_style_record_tests;
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     //! Word-validity regressions for synthesized revision records. Word treats
     //! a colliding `w:id` on two `w:*Change` records as the same revision and
@@ -8588,5 +8590,1514 @@ mod tests {
                 ("bottom".to_string(), Some("nil".to_string()), 1)
             ]
         );
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod coverage_boundary_tests {
+    use super::*;
+    use std::collections::{HashMap, HashSet};
+
+    const MAIN: &str = "word/document.xml";
+    const REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/";
+
+    fn xml(local: &str, content: &str) -> String {
+        format!(
+            "<w:{local} xmlns:w=\"{}\" xmlns:r=\"{}\" xmlns:w14=\"{}\">{content}</w:{local}>",
+            W::URI,
+            R::URI,
+            W14::URI
+        )
+    }
+
+    fn root(dom: &mut Dom, source: &str) -> NodeId {
+        let doc = dom.parse_xdocument(source);
+        dom.root(doc).expect("fixture root")
+    }
+
+    fn child(dom: &Dom, node: NodeId, local: &str) -> NodeId {
+        dom.element(node, &W::name(local)).expect(local)
+    }
+
+    fn children(dom: &Dom, node: NodeId) -> Vec<String> {
+        dom.elements(node, None)
+            .into_iter()
+            .map(|n| dom.name(n).unwrap().local_name().to_string())
+            .collect()
+    }
+
+    fn style(dom: &Dom, styles: NodeId, id: &str) -> NodeId {
+        dom.elements(styles, Some(&W::name("style")))
+            .into_iter()
+            .find(|&n| dom.attribute(n, &W::name("styleId")) == Some(id))
+            .expect(id)
+    }
+
+    fn index(dom: &Dom, styles: NodeId) -> HashMap<String, NodeId> {
+        dom.elements(styles, Some(&W::name("style")))
+            .into_iter()
+            .filter_map(|n| Some((dom.attribute(n, &W::name("styleId"))?.to_string(), n)))
+            .collect()
+    }
+
+    fn package(content: &str) -> PartFs {
+        let mut pkg = PartFs::open(include_bytes!(
+            "../tests/fixtures/word_probes/tokens/cell_a.docx"
+        ))
+        .unwrap();
+        for part in pkg.parts() {
+            pkg.remove_part(&part);
+        }
+        let empty = b"<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"/>";
+        pkg.set_part("_rels/.rels", empty.to_vec());
+        pkg.set_part("word/_rels/document.xml.rels", empty.to_vec());
+        pkg.add_package_relationship(&format!("{REL}officeDocument"), MAIN);
+        pkg.set_part(MAIN, xml("document", content).into_bytes());
+        pkg
+    }
+
+    fn part_root(pkg: &PartFs, part: &str) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let node = root(&mut dom, &pkg.part_string(part).unwrap());
+        (dom, node)
+    }
+
+    fn settings() -> WmlComparerSettings {
+        WmlComparerSettings {
+            author_for_revisions: "Boundary author".to_string(),
+            date_time_for_revisions: "2001-02-03T04:05:06Z".to_string(),
+            ..WmlComparerSettings::default()
+        }
+    }
+
+    fn assert_revision(dom: &Dom, node: NodeId, id: &str) {
+        assert_eq!(dom.attribute(node, &W::id()), Some(id));
+        assert_eq!(dom.attribute(node, &W::author()), Some("Boundary author"));
+        assert_eq!(
+            dom.attribute(node, &W::date()),
+            Some("2001-02-03T04:05:06Z")
+        );
+    }
+
+    #[test]
+    fn merged_bodies_preserve_content_order_and_only_last_section_properties() {
+        let mut dom = Dom::new();
+        let r = root(
+            &mut dom,
+            &xml(
+                "document",
+                "<w:body><w:p><w:r><w:t>first</w:t></w:r></w:p><w:sectPr><w:pgSz w:w=\"100\"/></w:sectPr></w:body><w:body><w:tbl/><w:p><w:r><w:t>second</w:t></w:r></w:p><w:sectPr><w:pgSz w:w=\"200\"/></w:sectPr></w:body>",
+            ),
+        );
+        let b = merged_body(&mut dom, r).unwrap();
+        assert_eq!(dom.elements(r, Some(&W::body())), vec![b]);
+        assert_eq!(children(&dom, b), ["p", "tbl", "p", "sectPr"]);
+        assert_eq!(dom.value(b), "firstsecond");
+        assert_eq!(
+            dom.attribute(child(&dom, child(&dom, b, "sectPr"), "pgSz"), &W::name("w")),
+            Some("200")
+        );
+        let before = dom.serialize_element(r);
+        assert_eq!(merged_body(&mut dom, r), Some(b));
+        assert_eq!(dom.serialize_element(r), before);
+        let empty = root(&mut dom, &xml("document", ""));
+        assert_eq!(merged_body(&mut dom, empty), None);
+        let no_sections = root(
+            &mut dom,
+            &xml(
+                "document",
+                "<w:body><w:p/></w:body><w:body><w:tbl/></w:body>",
+            ),
+        );
+        let b = merged_body(&mut dom, no_sections).unwrap();
+        assert_eq!(children(&dom, b), ["p", "tbl"]);
+    }
+
+    #[test]
+    fn section_pairing_accounts_for_inserted_deleted_and_recorded_breaks() {
+        let source = xml(
+            "document",
+            "<w:body><w:p><w:pPr><w:rPr><w:del/></w:rPr><w:sectPr/></w:pPr></w:p><w:p><w:pPr><w:rPr><w:ins/></w:rPr><w:sectPr/></w:pPr></w:p><w:sectPr><w:sectPrChange><w:sectPr/></w:sectPrChange></w:sectPr></w:body>",
+        );
+        assert_eq!(section_pairing(&source, 2, 2), Some(vec![None, Some(1)]));
+        assert_eq!(section_pairing(&source, 3, 2), None);
+        assert_eq!(section_pairing(&source, 2, 3), None);
+        assert_eq!(section_pairing("", 0, 0), None);
+        assert_eq!(
+            section_pairing(&xml("document", "<w:body/>"), 0, 0),
+            Some(vec![])
+        );
+    }
+
+    #[test]
+    fn paragraph_spacing_tracks_table_precedence_and_missing_ancestors() {
+        let mut dom = Dom::new();
+        let r = root(
+            &mut dom,
+            &xml(
+                "styles",
+                "<w:docDefaults><w:pPrDefault><w:pPr><w:spacing w:before=\"10\" w:lineRule=\"exact\"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type=\"paragraph\" w:default=\"true\" w:styleId=\"Normal\"><w:pPr><w:spacing w:after=\"200\" w:line=\"276\"/></w:pPr></w:style><w:style w:styleId=\"Body\"><w:basedOn w:val=\"Normal\"/><w:pPr><w:spacing w:before=\"30\"/></w:pPr></w:style><w:style w:type=\"table\" w:styleId=\"Grid\"><w:pPr><w:spacing w:after=\"0\" w:line=\"240\"/></w:pPr></w:style><w:style w:styleId=\"Broken\"><w:basedOn w:val=\"Missing\"/></w:style>",
+            ),
+        );
+        let ids = index(&dom, r);
+        let (vals, declared, table) = effective_para_spacing(&dom, r, &ids, "Normal", Some("Grid"));
+        assert_eq!(vals, ["0", "10", "240", "exact"]);
+        assert_eq!(declared, [false, true, false, true]);
+        assert_eq!(table, [true, false, true, false]);
+        let (vals, declared, table) = effective_para_spacing(&dom, r, &ids, "Body", Some("Grid"));
+        assert_eq!(vals, ["200", "30", "276", "exact"]);
+        assert_eq!(declared, [true; 4]);
+        assert_eq!(table, [false; 4]);
+        let (vals, declared, table) =
+            effective_para_spacing(&dom, r, &ids, "Broken", Some("Missing"));
+        assert_eq!(vals, ["0", "10", "240", "exact"]);
+        assert_eq!(declared, [false, true, false, true]);
+        assert_eq!(table, [false; 4]);
+    }
+
+    #[test]
+    fn effective_run_properties_merge_independent_slots_and_clear_alternatives() {
+        let mut dom = Dom::new();
+        let r = root(
+            &mut dom,
+            &xml(
+                "styles",
+                "<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:asciiTheme=\"minorHAnsi\" w:hAnsiTheme=\"minorHAnsi\" w:eastAsia=\"OldEast\" w:cs=\"OldCS\"/><w:lang w:val=\"en-US\" w:bidi=\"ar-SA\"/><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:styleId=\"Parent\"><w:rPr><w:rFonts w:ascii=\"Arial\" w:eastAsiaTheme=\"majorEastAsia\"/><w:lang w:eastAsia=\"ja-JP\"/></w:rPr></w:style><w:style w:styleId=\"Child\"><w:basedOn w:val=\"Parent\"/><w:rPr><w:rFonts w:hAnsi=\"Times\" w:cstheme=\"majorBidi\" w:rsidR=\"ignored\"/><w:sz w:val=\"30\"/><w:rPrChange><w:rPr><w:b/></w:rPr></w:rPrChange></w:rPr></w:style>",
+            ),
+        );
+        let ids = index(&dom, r);
+        let props = effective_style_props(&dom, r, &ids, ids["Child"], "rPr", "rPrDefault");
+        let fonts = &props[&W::name("rFonts").clark()];
+        let expected = [
+            ("ascii", "Arial"),
+            ("cstheme", "majorBidi"),
+            ("eastAsiaTheme", "majorEastAsia"),
+            ("hAnsi", "Times"),
+        ]
+        .map(|(n, v)| format!("{}={v}", W::name(n).clark()))
+        .join("\u{1}");
+        assert_eq!(fonts, &expected);
+        let lang = [("bidi", "ar-SA"), ("eastAsia", "ja-JP"), ("val", "en-US")]
+            .map(|(n, v)| format!("{}={v}", W::name(n).clark()))
+            .join("\u{1}");
+        assert_eq!(props[&W::name("lang").clark()], lang);
+        assert_eq!(props.len(), 3);
+        assert_eq!(
+            props[&W::name("sz").clark()],
+            format!("{}\u{1}{}=30", W::name("sz").clark(), W::val().clark())
+        );
+        assert_eq!(
+            own_style_props(&dom, r, &ids, ids["Child"], "rPr", "rPrDefault").len(),
+            2
+        );
+    }
+
+    #[test]
+    fn style_cycles_stop_and_self_based_style_does_not_hide_own_properties() {
+        let mut dom = Dom::new();
+        let r = root(
+            &mut dom,
+            &xml(
+                "styles",
+                "<w:style w:styleId=\"A\"><w:basedOn w:val=\"B\"/><w:rPr><w:b/></w:rPr></w:style><w:style w:styleId=\"B\"><w:basedOn w:val=\"A\"/><w:rPr><w:i/></w:rPr></w:style><w:style w:styleId=\"Self\"><w:basedOn w:val=\"Self\"/><w:rPr><w:sz w:val=\"40\"/></w:rPr></w:style>",
+            ),
+        );
+        let ids = index(&dom, r);
+        let props = effective_style_props(&dom, r, &ids, ids["A"], "rPr", "rPrDefault");
+        assert_eq!(
+            props.keys().cloned().collect::<Vec<_>>(),
+            vec![W::name("b").clark(), W::name("i").clark()]
+        );
+        let own = own_style_props(&dom, r, &ids, ids["Self"], "rPr", "rPrDefault");
+        assert_eq!(own.len(), 1);
+        assert!(own[&W::name("sz").clark()].ends_with("=40"));
+        let text = dom.new_text("not formatting");
+        assert_eq!(style_prop_signature(&dom, text), "");
+    }
+
+    #[test]
+    fn inherited_only_records_are_suppressed_but_inbound_history_survives() {
+        let mut dom = Dom::new();
+        let sheet = |size: &str, inbound: bool| {
+            xml(
+                "styles",
+                &format!(
+                    "<w:style w:type=\"paragraph\" w:styleId=\"Normal\"><w:rPr><w:sz w:val=\"{size}\"/></w:rPr></w:style><w:style w:styleId=\"Body\"><w:basedOn w:val=\"Normal\"/><w:rPr><w:sz w:val=\"{size}\"/>{}</w:rPr></w:style><w:style/><w:style w:styleId=\"Unpaired\"/>",
+                    if inbound {
+                        "<w:rPrChange w:id=\"9\"><w:rPr/></w:rPrChange>"
+                    } else {
+                        ""
+                    }
+                ),
+            )
+        };
+        let a = root(&mut dom, &sheet("20", false));
+        let b = root(&mut dom, &sheet("30", false));
+        let out = root(&mut dom, &sheet("20", false));
+        let body = style(&dom, out, "Body");
+        let suppressed = inherited_only_style_changes(&dom, out, a, b);
+        assert_eq!(suppressed, HashSet::from([(body, "rPr")]));
+        let block = child(&dom, body, "rPr");
+        let old = dom.new_element(W::r_pr());
+        append_style_change_record(&mut dom, out, block, old, "rPrChange", &settings());
+        assert!(remove_inherited_only_style_records(&mut dom, &suppressed));
+        assert_eq!(children(&dom, block), ["sz"]);
+        assert!(!remove_inherited_only_style_records(&mut dom, &suppressed));
+        let b_inbound = root(&mut dom, &sheet("30", true));
+        assert!(inherited_only_style_changes(&dom, out, a, b_inbound).is_empty());
+        let empty = HashSet::from([(body, "pPr")]);
+        assert!(!remove_inherited_only_style_records(&mut dom, &empty));
+    }
+
+    #[test]
+    fn recorded_defaults_complete_slots_without_overwriting_explicit_values() {
+        let mut dom = Dom::new();
+        let defaults = root(
+            &mut dom,
+            &xml(
+                "pPr",
+                "<w:keepNext/><w:spacing w:beforeAutospacing=\"1\" w:afterLines=\"2\" w:line=\"300\"/><w:jc w:val=\"right\"/><w:sectPr/><w:pPrChange/>",
+            ),
+        );
+        let old = root(
+            &mut dom,
+            &xml(
+                "pPr",
+                "<w:spacing w:before=\"120\" w:afterAutospacing=\"0\"/><w:jc w:val=\"left\"/>",
+            ),
+        );
+        assert!(complete_from_defaults(&mut dom, old, defaults, "pPr"));
+        assert_eq!(children(&dom, old), ["keepNext", "spacing", "jc"]);
+        let spacing = child(&dom, old, "spacing");
+        assert_eq!(dom.attribute(spacing, &W::name("before")), Some("120"));
+        assert_eq!(dom.attribute(spacing, &W::name("beforeAutospacing")), None);
+        assert_eq!(dom.attribute(spacing, &W::name("afterLines")), None);
+        assert_eq!(dom.attribute(spacing, &W::name("line")), Some("300"));
+        assert_eq!(
+            dom.attribute(child(&dom, old, "jc"), &W::val()),
+            Some("left")
+        );
+        assert!(!complete_from_defaults(&mut dom, old, defaults, "pPr"));
+        let default_run = root(
+            &mut dom,
+            &xml(
+                "rPr",
+                "<w:rFonts w:asciiTheme=\"minorHAnsi\" w:hAnsiTheme=\"minorHAnsi\"/><w:lang w:val=\"en-US\" w:eastAsia=\"ja-JP\"/><w:sz w:val=\"24\"/>",
+            ),
+        );
+        let old_run = root(
+            &mut dom,
+            &xml(
+                "rPr",
+                "<w:rFonts w:ascii=\"Arial\"/><w:lang w:val=\"es-ES\"/>",
+            ),
+        );
+        assert!(complete_from_defaults(
+            &mut dom,
+            old_run,
+            default_run,
+            "rPr"
+        ));
+        assert_eq!(children(&dom, old_run), ["rFonts", "sz", "lang"]);
+        let fonts = child(&dom, old_run, "rFonts");
+        assert_eq!(dom.attribute(fonts, &W::name("asciiTheme")), None);
+        assert_eq!(
+            dom.attribute(fonts, &W::name("hAnsiTheme")),
+            Some("minorHAnsi")
+        );
+        let lang = child(&dom, old_run, "lang");
+        assert_eq!(dom.attribute(lang, &W::val()), Some("es-ES"));
+        assert_eq!(dom.attribute(lang, &W::name("eastAsia")), Some("ja-JP"));
+    }
+
+    #[test]
+    fn root_records_gain_missing_companion_and_keep_recorded_original() {
+        let mut dom = Dom::new();
+        let r = root(
+            &mut dom,
+            &xml(
+                "styles",
+                "<w:docDefaults><w:pPrDefault><w:pPr><w:spacing w:line=\"240\"/></w:pPr></w:pPrDefault><w:rPrDefault><w:rPr><w:sz w:val=\"22\"/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:styleId=\"Root\"><w:pPr><w:jc w:val=\"right\"/><w:pPrChange w:id=\"7\"><w:pPr><w:jc w:val=\"left\"/></w:pPr></w:pPrChange></w:pPr></w:style><w:style w:type=\"character\" w:styleId=\"Char\"><w:rPr><w:rPrChange w:id=\"8\"><w:rPr/></w:rPrChange></w:rPr></w:style><w:style w:styleId=\"Based\"><w:basedOn w:val=\"Root\"/><w:pPr><w:pPrChange w:id=\"9\"><w:pPr/></w:pPrChange></w:pPr></w:style>",
+            ),
+        );
+        assert!(complete_root_style_change_records(&mut dom, r, &settings()));
+        let s = style(&dom, r, "Root");
+        assert_eq!(children(&dom, s), ["pPr", "rPr"]);
+        let old_p = child(&dom, child(&dom, child(&dom, s, "pPr"), "pPrChange"), "pPr");
+        assert_eq!(
+            dom.attribute(child(&dom, old_p, "jc"), &W::val()),
+            Some("left")
+        );
+        assert_eq!(
+            dom.attribute(child(&dom, old_p, "spacing"), &W::name("line")),
+            Some("240")
+        );
+        let change = child(&dom, child(&dom, s, "rPr"), "rPrChange");
+        assert_revision(&dom, change, "10");
+        assert_eq!(
+            dom.attribute(child(&dom, child(&dom, change, "rPr"), "sz"), &W::val()),
+            Some("22")
+        );
+        let char_old = child(
+            &dom,
+            child(
+                &dom,
+                child(&dom, style(&dom, r, "Char"), "rPr"),
+                "rPrChange",
+            ),
+            "rPr",
+        );
+        assert!(children(&dom, char_old).is_empty());
+        assert!(!complete_root_style_change_records(
+            &mut dom,
+            r,
+            &settings()
+        ));
+    }
+
+    #[test]
+    fn absent_revised_styles_restore_distinct_twins_and_skip_removed_targets() {
+        let mut dom = Dom::new();
+        let out = root(
+            &mut dom,
+            &xml(
+                "styles",
+                "<w:style w:styleId=\"A\"><w:name w:val=\"Heading 1\"/><w:rPr><w:b/></w:rPr></w:style><w:style w:styleId=\"B\"><w:name w:val=\"heading 1\"/><w:rPr><w:i/></w:rPr></w:style><w:style w:styleId=\"Gone\"/><w:style/>",
+            ),
+        );
+        let b = root(&mut dom, &xml("styles", "<w:style w:styleId=\"New\"/>"));
+        let saved = styles_the_revision_lacks(&mut dom, out, b);
+        assert_eq!(saved.len(), 3);
+        let first = style(&dom, out, "A");
+        let rpr = child(&dom, first, "rPr");
+        let bold = child(&dom, rpr, "b");
+        dom.remove(bold);
+        let gone = style(&dom, out, "Gone");
+        dom.remove(gone);
+        assert!(restore_styles(&mut dom, out, saved));
+        assert_eq!(
+            children(&dom, child(&dom, style(&dom, out, "A"), "rPr")),
+            ["b"]
+        );
+        assert_eq!(
+            children(&dom, child(&dom, style(&dom, out, "B"), "rPr")),
+            ["i"]
+        );
+        assert_eq!(dom.elements(out, Some(&W::name("style"))).len(), 3);
+        let saved = styles_the_revision_lacks(&mut dom, out, b);
+        assert!(!restore_styles(&mut dom, out, saved));
+    }
+
+    #[test]
+    fn canonical_style_ids_refuse_collisions_and_remap_only_known_references() {
+        let mut dom = Dom::new();
+        let r = root(
+            &mut dom,
+            &xml(
+                "styles",
+                "<w:style w:styleId=\"Taken\"><w:name w:val=\"Taken\"/></w:style><w:style w:styleId=\"Collision\"><w:name w:val=\"Taken\"/></w:style><w:style w:styleId=\"Old\"><w:name w:val=\"New Name\"/><w:basedOn w:val=\"Old\"/><w:next/><w:link w:val=\"Missing\"/></w:style><w:style w:styleId=\"Race\"><w:name w:val=\"New Name\"/></w:style><w:style w:styleId=\"NoName\"/><w:style><w:name w:val=\"Unnamed\"/></w:style><w:style w:styleId=\"Punctuation\"><w:name w:val=\"!!!\"/></w:style>",
+            ),
+        );
+        let changes = canonicalize_style_ids(&mut dom, r);
+        assert_eq!(
+            changes,
+            HashMap::from([("Old".to_string(), "NewName".to_string())])
+        );
+        assert_eq!(
+            dom.attribute(child(&dom, style(&dom, r, "NewName"), "basedOn"), &W::val()),
+            Some("NewName")
+        );
+        assert_eq!(
+            dom.attribute(style(&dom, r, "Collision"), &W::name("styleId")),
+            Some("Collision")
+        );
+        assert_eq!(
+            dom.attribute(style(&dom, r, "Race"), &W::name("styleId")),
+            Some("Race")
+        );
+        let body = root(
+            &mut dom,
+            &xml(
+                "body",
+                "<w:pStyle w:val=\"Old\"/><w:rStyle w:val=\"Missing\"/><w:tblStyle/><w:rStyle w:val=\"Old\"/>",
+            ),
+        );
+        assert_eq!(remap_style_refs(&mut dom, body, &changes), 2);
+        assert_eq!(
+            dom.attribute(child(&dom, body, "pStyle"), &W::val()),
+            Some("NewName")
+        );
+        assert_eq!(
+            dom.attribute(child(&dom, body, "rStyle"), &W::val()),
+            Some("Missing")
+        );
+        assert_eq!(remap_style_refs(&mut dom, body, &HashMap::new()), 0);
+    }
+
+    #[test]
+    fn style_structure_adoption_preserves_existing_defaults_and_empty_explicit_spacing() {
+        let mut dom = Dom::new();
+        let out = root(&mut dom, &xml("styles", "<w:style w:styleId=\"Keep\"/>"));
+        let b = root(
+            &mut dom,
+            &xml(
+                "styles",
+                "<w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val=\"30\"/></w:rPr></w:rPrDefault></w:docDefaults><w:latentStyles w:count=\"12\"/>",
+            ),
+        );
+        assert!(adopt_missing_styles_structure(&mut dom, out, b));
+        assert_eq!(
+            children(&dom, out),
+            ["docDefaults", "latentStyles", "style"]
+        );
+        assert!(materialize_builtin_paragraph_defaults(&mut dom, out));
+        let spacing = child(
+            &dom,
+            child(
+                &dom,
+                child(&dom, child(&dom, out, "docDefaults"), "pPrDefault"),
+                "pPr",
+            ),
+            "spacing",
+        );
+        assert_eq!(dom.attribute(spacing, &W::name("after")), Some("160"));
+        assert_eq!(dom.attribute(spacing, &W::name("line")), Some("278"));
+        assert!(!adopt_missing_styles_structure(&mut dom, out, b));
+        assert!(!materialize_builtin_paragraph_defaults(&mut dom, out));
+        let explicit = root(
+            &mut dom,
+            &xml("styles", "<w:docDefaults><w:pPrDefault/></w:docDefaults>"),
+        );
+        assert!(!materialize_builtin_paragraph_defaults(&mut dom, explicit));
+        assert!(
+            children(
+                &dom,
+                child(&dom, child(&dom, explicit, "docDefaults"), "pPrDefault")
+            )
+            .is_empty()
+        );
+        let empty = root(&mut dom, &xml("styles", ""));
+        assert!(!materialize_builtin_paragraph_defaults(&mut dom, empty));
+        assert!(adopt_missing_styles_structure(&mut dom, empty, explicit));
+        assert_eq!(children(&dom, empty), ["docDefaults"]);
+    }
+
+    #[test]
+    fn adopted_header_marks_content_and_paragraph_properties_with_pinned_provenance() {
+        let mut pkg = package("<w:body/>");
+        pkg.set_part("word/header.xml", xml("hdr", "<w:p><w:pPr><w:jc w:val=\"right\"/><w:pPrChange><w:pPr/></w:pPrChange></w:pPr><w:r><w:t>Page </w:t></w:r><w:hyperlink><w:r><w:t>link</w:t></w:r></w:hyperlink></w:p><w:p><w:pPr><w:rPr><w:rStyle w:val=\"Label\"/></w:rPr></w:pPr><w:sdt><w:sdtContent><w:r><w:t>control</w:t></w:r></w:sdtContent></w:sdt></w:p><w:p><w:bookmarkStart w:id=\"20\"/></w:p><w:p/><w:p><w:del w:id=\"99\"><w:r><w:delText>old</w:delText></w:r></w:del></w:p>").into_bytes());
+        mark_adopted_hf_content_as_inserted(&mut pkg, "word/header.xml", &settings());
+        let (dom, r) = part_root(&pkg, "word/header.xml");
+        let paras = dom.elements(r, Some(&W::p()));
+        let ppr = child(&dom, paras[0], "pPr");
+        assert_eq!(children(&dom, ppr), ["jc", "rPr", "pPrChange"]);
+        let content = child(&dom, paras[0], "ins");
+        assert_revision(&dom, content, "1");
+        assert_eq!(children(&dom, content), ["r", "hyperlink"]);
+        assert_eq!(dom.value(content), "Page link");
+        assert_revision(&dom, child(&dom, child(&dom, ppr, "rPr"), "ins"), "2");
+        assert_revision(&dom, child(&dom, paras[1], "ins"), "3");
+        let mark = child(&dom, child(&dom, paras[1], "pPr"), "rPr");
+        assert_eq!(children(&dom, mark), ["ins", "rStyle"]);
+        assert_revision(&dom, child(&dom, mark, "ins"), "4");
+        assert_eq!(children(&dom, paras[2]), ["bookmarkStart"]);
+        assert!(children(&dom, paras[3]).is_empty());
+        assert_eq!(children(&dom, paras[4]), ["del"]);
+        let before = pkg.part_string("word/header.xml").unwrap();
+        mark_adopted_hf_content_as_inserted(&mut pkg, "word/header.xml", &settings());
+        assert_eq!(pkg.part_string("word/header.xml").unwrap(), before);
+    }
+
+    #[test]
+    fn deleted_footer_preserves_last_mark_and_records_original_properties() {
+        let mut pkg = package("<w:body/>");
+        pkg.set_part("word/footer.xml", xml("ftr", "<w:p><w:r><w:t>First</w:t></w:r></w:p><w:sdt><w:sdtContent><w:p><w:r><w:t>Control</w:t></w:r></w:p></w:sdtContent></w:sdt><w:p><w:pPr><w:pStyle w:val=\"Footer\"/><w:spacing w:after=\"300\"/><w:rPr><w:b/><w:sz w:val=\"28\"/></w:rPr><w:sectPr/></w:pPr><w:r><w:t>Last</w:t></w:r></w:p>").into_bytes());
+        mark_hf_part_content_as_deleted(&mut pkg, "word/footer.xml", &settings());
+        let (dom, r) = part_root(&pkg, "word/footer.xml");
+        let paras = dom.descendants(r, Some(&W::p()));
+        let first = child(&dom, paras[0], "del");
+        assert_revision(&dom, first, "1");
+        assert_eq!(dom.value(first), "First");
+        assert!(dom.descendants(r, Some(&W::t())).is_empty());
+        assert_eq!(dom.descendants(r, Some(&W::name("delText"))).len(), 3);
+        assert_revision(
+            &dom,
+            child(
+                &dom,
+                child(&dom, child(&dom, paras[0], "pPr"), "rPr"),
+                "del",
+            ),
+            "2",
+        );
+        assert!(
+            dom.element(paras[1], &W::p_pr()).is_none(),
+            "last control paragraph keeps its mark"
+        );
+        let ppr = child(&dom, paras[2], "pPr");
+        assert_eq!(
+            children(&dom, ppr),
+            ["pStyle", "rPr", "sectPr", "pPrChange"]
+        );
+        let old = child(&dom, child(&dom, ppr, "pPrChange"), "pPr");
+        assert_eq!(children(&dom, old), ["pStyle", "spacing"]);
+        assert_eq!(
+            dom.attribute(child(&dom, old, "spacing"), &W::name("after")),
+            Some("300")
+        );
+        let rpr = child(&dom, ppr, "rPr");
+        assert_eq!(children(&dom, rpr), ["rPrChange"]);
+        assert_eq!(
+            children(&dom, child(&dom, child(&dom, rpr, "rPrChange"), "rPr")),
+            ["b", "sz"]
+        );
+        assert!(
+            dom.element(rpr, &W::del()).is_none(),
+            "story closing mark stays live"
+        );
+    }
+
+    #[test]
+    fn deletion_skips_inbound_changes_and_preserves_existing_blank_history() {
+        let mut pkg = package("<w:body/>");
+        pkg.set_part("word/header.xml", xml("hdr", "<w:p><w:ins w:id=\"90\"><w:r><w:t>pending</w:t></w:r></w:ins></w:p><w:p><w:pPr><w:rPr><w:i/><w:rPrChange w:id=\"91\"><w:rPr><w:b/></w:rPr></w:rPrChange></w:rPr><w:jc w:val=\"right\"/><w:pPrChange w:id=\"92\"><w:pPr/></w:pPrChange></w:pPr><w:bookmarkStart w:id=\"2\"/></w:p>").into_bytes());
+        mark_hf_part_content_as_deleted(&mut pkg, "word/header.xml", &settings());
+        let (dom, r) = part_root(&pkg, "word/header.xml");
+        assert_eq!(dom.descendants(r, Some(&W::ins())).len(), 1);
+        assert!(dom.descendants(r, Some(&W::del())).is_empty());
+        let last = dom.elements(r, Some(&W::p()))[1];
+        let ppr = child(&dom, last, "pPr");
+        assert_eq!(
+            dom.attribute(child(&dom, ppr, "jc"), &W::val()),
+            Some("right")
+        );
+        assert_eq!(children(&dom, child(&dom, ppr, "rPr")), ["i", "rPrChange"]);
+        assert_eq!(dom.descendants(r, Some(&W::name("pPrChange"))).len(), 1);
+        assert_eq!(dom.value(r), "pending");
+    }
+
+    #[test]
+    fn story_closing_mark_restores_original_props_and_does_not_double_mark() {
+        let mut dom = Dom::new();
+        let story = root(
+            &mut dom,
+            &xml(
+                "hdr",
+                "<w:tbl/><w:p><w:pPr><w:jc w:val=\"left\"/><w:rPr><w:i/></w:rPr><w:pPrChange w:id=\"40\"><w:pPr><w:spacing w:after=\"120\"/></w:pPr></w:pPrChange></w:pPr><w:del w:id=\"60\"><w:r><w:delText>gone</w:delText></w:r></w:del></w:p>",
+            ),
+        );
+        delete_story_closing_mark(&mut dom, story, &settings());
+        let ppr = child(&dom, child(&dom, story, "p"), "pPr");
+        assert_eq!(children(&dom, ppr), ["spacing", "rPr"]);
+        let mark = child(&dom, ppr, "rPr");
+        assert_eq!(children(&dom, mark), ["del", "i"]);
+        assert_revision(&dom, child(&dom, mark, "del"), "61");
+        assert_eq!(
+            dom.attribute(child(&dom, ppr, "spacing"), &W::name("after")),
+            Some("120")
+        );
+        let before = dom.serialize_element(story);
+        delete_story_closing_mark(&mut dom, story, &settings());
+        assert_eq!(dom.serialize_element(story), before);
+    }
+
+    #[test]
+    fn closing_mark_refuses_live_content_and_handles_empty_or_unformatted_stories() {
+        for content in [
+            "",
+            "<w:tbl/>",
+            "<w:p><w:r><w:t>live</w:t></w:r></w:p>",
+            "<w:p><w:r><w:drawing/></w:r></w:p>",
+            "<w:p><w:r><w:pict/></w:r></w:p>",
+            "<w:p><w:r><w:object/></w:r></w:p>",
+            "<w:p><w:pPr><w:rPr><w:ins w:id=\"3\"/></w:rPr></w:pPr></w:p>",
+        ] {
+            let mut dom = Dom::new();
+            let story = root(&mut dom, &xml("ftr", content));
+            let before = dom.serialize_element(story);
+            delete_story_closing_mark(&mut dom, story, &settings());
+            assert_eq!(dom.serialize_element(story), before, "{content}");
+        }
+        let mut dom = Dom::new();
+        let story = root(&mut dom, &xml("ftr", "<w:tbl/><w:p/>"));
+        delete_story_closing_mark(&mut dom, story, &settings());
+        let del = child(
+            &dom,
+            child(&dom, child(&dom, child(&dom, story, "p"), "pPr"), "rPr"),
+            "del",
+        );
+        assert_revision(&dom, del, "1");
+        let malformed_old = root(
+            &mut dom,
+            &xml(
+                "hdr",
+                "<w:p><w:pPr><w:jc w:val=\"right\"/><w:pPrChange/></w:pPr></w:p>",
+            ),
+        );
+        delete_story_closing_mark(&mut dom, malformed_old, &settings());
+        assert_eq!(
+            children(&dom, child(&dom, child(&dom, malformed_old, "p"), "pPr")),
+            ["rPr"]
+        );
+    }
+
+    #[test]
+    fn child_creation_places_properties_before_schema_successors_and_reuses_nodes() {
+        let mut dom = Dom::new();
+        let p = root(&mut dom, &xml("p", "<w:r/>"));
+        let ppr = child_or_first(&mut dom, p, W::p_pr());
+        assert_eq!(children(&dom, p), ["pPr", "r"]);
+        assert_eq!(child_or_first(&mut dom, p, W::p_pr()), ppr);
+        let sect = dom.new_element(W::sect_pr());
+        dom.add(ppr, sect);
+        let rpr = child_before(&mut dom, ppr, W::r_pr(), &["sectPr", "pPrChange"]);
+        assert_eq!(children(&dom, ppr), ["rPr", "sectPr"]);
+        assert_eq!(child_before(&mut dom, ppr, W::r_pr(), &["sectPr"]), rpr);
+        let blank = root(&mut dom, &xml("p", ""));
+        let bp = child_or_first(&mut dom, blank, W::p_pr());
+        let br = child_before(&mut dom, bp, W::r_pr(), &["sectPr"]);
+        assert_eq!(dom.elements(bp, None), vec![br]);
+    }
+
+    #[test]
+    fn final_header_slots_strip_only_inherited_non_revised_references() {
+        let source = "<w:body><w:p><w:pPr><w:sectPr><w:headerReference r:id=\"old\"/><w:footerReference w:type=\"even\" r:id=\"oldFooter\"/><w:pgSz/></w:sectPr></w:pPr></w:p><w:sectPr><w:headerReference r:id=\"duplicate\"/><w:footerReference w:type=\"even\" r:id=\"keep\"/><w:headerReference w:type=\"first\" r:id=\"first\"/><w:pgMar/></w:sectPr></w:body>";
+        let pkg = package(source);
+        assert_eq!(
+            final_header_footer_slots(&pkg),
+            HashSet::from([
+                (true, "default".to_string()),
+                (false, "even".to_string()),
+                (true, "first".to_string())
+            ])
+        );
+        let mut dom = Dom::new();
+        let r = root(&mut dom, &xml("document", source));
+        strip_final_sectpr_inherited_header_footer(
+            &mut dom,
+            r,
+            &HashSet::from([(false, "even".to_string())]),
+        );
+        let final_sect = child(&dom, child(&dom, r, "body"), "sectPr");
+        assert_eq!(
+            children(&dom, final_sect),
+            ["footerReference", "headerReference", "pgMar"]
+        );
+        assert_eq!(
+            dom.attribute(child(&dom, final_sect, "headerReference"), &W::name("type")),
+            Some("first")
+        );
+        assert_eq!(
+            dom.descendants(r, Some(&W::name("headerReference"))).len(),
+            2
+        );
+        for content in [
+            "",
+            "<w:body/>",
+            "<w:body><w:sectPr><w:headerReference/></w:sectPr></w:body>",
+        ] {
+            let node = root(&mut dom, &xml("document", content));
+            let before = dom.serialize_element(node);
+            strip_final_sectpr_inherited_header_footer(&mut dom, node, &HashSet::new());
+            assert_eq!(dom.serialize_element(node), before);
+        }
+    }
+
+    #[test]
+    fn header_pairing_uses_surviving_section_inheritance_and_content_identity() {
+        let mut a = package("<w:body/>");
+        let mut b = package("<w:body/>");
+        a.set_part("word/a.xml", b"original".to_vec());
+        b.set_part("word/b0.xml", b"first".to_vec());
+        b.set_part("word/b2.xml", b"second".to_vec());
+        let refs = vec![
+            (
+                0,
+                "header".to_string(),
+                "default".to_string(),
+                "word/b0.xml".to_string(),
+            ),
+            (
+                2,
+                "header".to_string(),
+                "default".to_string(),
+                "word/b2.xml".to_string(),
+            ),
+        ];
+        let slot = ("header", "default", "word/a.xml");
+        assert_eq!(
+            pair_header_footer(&a, &b, &refs, slot, 0, Some(Some(1))),
+            Some("word/b0.xml".to_string())
+        );
+        assert_eq!(
+            pair_header_footer(&a, &b, &refs, slot, 0, Some(Some(2))),
+            Some("word/b2.xml".to_string())
+        );
+        assert_eq!(
+            pair_header_footer(&a, &b, &refs, slot, 10, None),
+            Some("word/b2.xml".to_string())
+        );
+        assert_eq!(pair_header_footer(&a, &b, &refs, slot, 0, Some(None)), None);
+        assert_eq!(
+            pair_header_footer(&a, &b, &refs, ("footer", "first", "word/a.xml"), 0, None),
+            None
+        );
+        b.set_part("word/b2.xml", b"original".to_vec());
+        assert_eq!(pair_header_footer(&a, &b, &refs, slot, 0, None), None);
+    }
+
+    #[test]
+    fn unique_part_names_handle_binary_collisions_reuse_and_flat_names() {
+        let mut pkg = package("<w:body/>");
+        assert_eq!(
+            unique_part_name(&pkg, "word/media/a.png", &[0, 255]),
+            "word/media/a.png"
+        );
+        pkg.set_part("word/media/a.png", vec![0, 255]);
+        assert_eq!(
+            unique_part_name(&pkg, "word/media/a.png", &[0, 255]),
+            "word/media/a.png"
+        );
+        pkg.set_part("word/media/redlineB_a.png", vec![1]);
+        pkg.set_part("word/media/redlineB_1_a.png", vec![2]);
+        assert_eq!(
+            unique_part_name(&pkg, "word/media/a.png", &[2]),
+            "word/media/redlineB_1_a.png"
+        );
+        assert_eq!(
+            unique_part_name(&pkg, "word/media/a.png", &[3]),
+            "word/media/redlineB_2_a.png"
+        );
+        pkg.set_part("flat.bin", vec![1]);
+        assert_eq!(
+            unique_part_name(&pkg, "flat.bin", &[2]),
+            "word/redlineB_flat.bin"
+        );
+        assert_eq!(
+            pkg.part_bytes("word/media/a.png"),
+            Some([0, 255].as_slice())
+        );
+    }
+
+    #[test]
+    fn relationship_agreement_refuses_missing_mismatched_and_dangling_targets() {
+        let mut a = package("<w:body/>");
+        let mut b = package("<w:body/>");
+        let no_refs = xml("hdr", "<w:p/>");
+        assert!(part_rels_agree(
+            (&a, "word/a.xml"),
+            (&b, "word/b.xml"),
+            &no_refs
+        ));
+        assert!(!part_rels_agree((&a, MAIN), (&b, MAIN), ""));
+        let id = a.add_document_relationship(MAIN, &format!("{REL}image"), "media/a.png");
+        let source = xml("hdr", &format!("<w:drawing r:embed=\"{id}\"/>"));
+        assert!(!part_rels_agree(
+            (&a, MAIN),
+            (&b, "word/missing.xml"),
+            &source
+        ));
+        assert!(!part_rels_agree((&a, MAIN), (&b, MAIN), &source));
+        b.add_document_relationship(MAIN, &format!("{REL}image"), "media/b.png");
+        assert!(!part_rels_agree((&a, MAIN), (&b, MAIN), &source));
+        a.set_part("word/media/a.png", vec![1, 2]);
+        b.set_part("word/media/b.png", vec![1, 2]);
+        assert!(part_rels_agree((&a, MAIN), (&b, MAIN), &source));
+        b.set_part("word/media/b.png", vec![9]);
+        assert!(!part_rels_agree((&a, MAIN), (&b, MAIN), &source));
+        b.set_rel_target_mode_external(MAIN, &id);
+        assert!(!part_rels_agree((&a, MAIN), (&b, MAIN), &source));
+        a.set_rel_target_mode_external(MAIN, &id);
+        assert!(!part_rels_agree((&a, MAIN), (&b, MAIN), &source));
+        let id2 = a.add_document_relationship_external(
+            MAIN,
+            &format!("{REL}hyperlink"),
+            "https://example.invalid/?a=1&b=2",
+        );
+        b.add_document_relationship_external(
+            MAIN,
+            &format!("{REL}hyperlink"),
+            "https://example.invalid/?a=1&b=2",
+        );
+        let link = xml("hdr", &format!("<w:hyperlink r:id=\"{id2}\"/>"));
+        assert!(part_rels_agree((&a, MAIN), (&b, MAIN), &link));
+    }
+
+    #[test]
+    fn carry_relationships_reuses_minted_id_and_refuses_unresolved_references() {
+        let mut out = package("<w:body/>");
+        let mut b = package("<w:body/>");
+        let id = b.add_document_relationship_external(
+            MAIN,
+            &format!("{REL}hyperlink"),
+            "https://example.invalid/?a=1&b=2",
+        );
+        let source = xml(
+            "hdr",
+            &format!(
+                "<w:p><w:hyperlink r:id=\"{id}\"><w:r><w:t>one</w:t></w:r></w:hyperlink><w:hyperlink r:id=\"{id}\"><w:r><w:t>two</w:t></w:r></w:hyperlink></w:p>"
+            ),
+        );
+        let carried =
+            carry_revised_part_relationships(&mut out, "word/header.xml", (&b, MAIN), &source)
+                .unwrap();
+        let mut dom = Dom::new();
+        let r = root(&mut dom, &carried);
+        let links = dom.descendants(r, Some(&W::hyperlink()));
+        assert_eq!(
+            dom.attribute(links[0], &R::name("id")),
+            dom.attribute(links[1], &R::name("id"))
+        );
+        assert_eq!(dom.value(r), "onetwo");
+        let rels = out.read_rels_for("word/header.xml").unwrap();
+        assert_eq!(rels.items.len(), 1);
+        assert_eq!(rels.items[0].target, "https://example.invalid/?a=1&b=2");
+        assert_eq!(rels.items[0].target_mode.as_deref(), Some("External"));
+        assert_eq!(
+            carry_revised_part_relationships(&mut out, MAIN, (&b, MAIN), ""),
+            None
+        );
+        assert_eq!(
+            carry_revised_part_relationships(
+                &mut out,
+                MAIN,
+                (&b, MAIN),
+                &xml("hdr", "<w:hyperlink r:id=\"absent\"/>")
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn notes_merge_only_structural_definitions_ahead_of_rectified_content() {
+        for (local, note) in [("footnotes", "footnote"), ("endnotes", "endnote")] {
+            let a = package("<w:body/>");
+            let mut b = package("<w:body/>");
+            let mut out = package("<w:body/>");
+            let part = format!("word/{local}.xml");
+            b.set_part(&part, xml(local, &format!("<w:{note} w:type='separator' w:id='-1'><w:p><w:r><w:separator/></w:r></w:p></w:{note}><w:{note} w:type='continuationSeparator' w:id='0'><w:p/></w:{note}><w:{note} w:id='2001'><w:p><w:r><w:t>unrectified</w:t></w:r></w:p></w:{note}>")).into_bytes());
+            out.set_part(
+                &part,
+                xml(
+                    local,
+                    &format!(
+                        "<w:{note} w:id='1'><w:p><w:r><w:t>rectified</w:t></w:r></w:p></w:{note}>"
+                    ),
+                )
+                .into_bytes(),
+            );
+            adopt_b_notes_when_a_lacks_separators(&mut out, &a, &b, MAIN);
+            let (dom, r) = part_root(&out, &part);
+            let notes = dom.elements(r, Some(&W::name(note)));
+            assert_eq!(
+                notes
+                    .iter()
+                    .map(|&n| dom.attribute(n, &W::id()).unwrap())
+                    .collect::<Vec<_>>(),
+                ["-1", "0", "1"]
+            );
+            assert_eq!(dom.value(r), "rectified");
+            let before = out.part_string(&part).unwrap();
+            adopt_b_notes_when_a_lacks_separators(&mut out, &a, &b, MAIN);
+            assert_eq!(out.part_string(&part).unwrap(), before);
+            let mut empty_out = package("<w:body/>");
+            empty_out.set_part(&part, xml(local, "").into_bytes());
+            adopt_b_notes_when_a_lacks_separators(&mut empty_out, &a, &b, MAIN);
+            let (dom, r) = part_root(&empty_out, &part);
+            assert_eq!(dom.elements(r, Some(&W::name(note))).len(), 2);
+            assert_eq!(dom.value(r), "");
+        }
+    }
+
+    #[test]
+    fn notes_copy_preserves_media_and_escapes_external_links_without_io() {
+        let a = package("<w:body/>");
+        let mut b = package("<w:body/>");
+        let mut out = package("<w:body/>");
+        let part = "word/footnotes.xml";
+        b.set_part(
+            part,
+            xml(
+                "footnotes",
+                "<w:footnote w:type=\"separator\" w:id=\"-1\"><w:p/></w:footnote>",
+            )
+            .into_bytes(),
+        );
+        b.set_part("word/media/a.png", vec![8, 9]);
+        b.add_document_relationship(part, &format!("{REL}image"), "media/a.png");
+        b.add_document_relationship_external(
+            part,
+            &format!("{REL}hyperlink"),
+            "https://example.invalid/?a=1&b=2",
+        );
+        adopt_b_notes_when_a_lacks_separators(&mut out, &a, &b, MAIN);
+        assert_eq!(out.part_bytes("word/media/a.png"), Some([8, 9].as_slice()));
+        assert_eq!(out.part_string(part), b.part_string(part));
+        let rels = out.read_rels_for(part).unwrap();
+        assert_eq!(rels.items.len(), 2);
+        assert_eq!(rels.items[0].target, "media/a.png");
+        assert_eq!(rels.items[1].target, "https://example.invalid/?a=1&b=2");
+        assert_eq!(rels.items[1].target_mode.as_deref(), Some("External"));
+        assert_eq!(
+            out.read_rels_for(MAIN)
+                .unwrap()
+                .items
+                .iter()
+                .filter(|r| r.rel_type.ends_with("/footnotes"))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn notes_adoption_refuses_missing_separator_and_preserves_original_separator() {
+        let mut a = package("<w:body/>");
+        let mut b = package("<w:body/>");
+        let mut out = package("<w:body/>");
+        b.set_part(
+            "word/footnotes.xml",
+            xml("footnotes", "<w:footnote w:id=\"1\"><w:p/></w:footnote>").into_bytes(),
+        );
+        adopt_b_notes_when_a_lacks_separators(&mut out, &a, &b, MAIN);
+        assert!(out.part_bytes("word/footnotes.xml").is_none());
+        a.set_part(
+            "word/footnotes.xml",
+            xml("footnotes", "<w:footnote w:type='separator' w:id='-1'/>").into_bytes(),
+        );
+        b.set_part(
+            "word/footnotes.xml",
+            xml(
+                "footnotes",
+                "<w:footnote w:type='separator' w:id='-1'><w:p/></w:footnote>",
+            )
+            .into_bytes(),
+        );
+        adopt_b_notes_when_a_lacks_separators(&mut out, &a, &b, MAIN);
+        assert!(out.part_bytes("word/footnotes.xml").is_none());
+    }
+
+    #[test]
+    fn custom_property_merge_is_case_insensitive_original_wins_and_new_ids_are_unique() {
+        let mut out = package("<w:body/>");
+        let mut b = package("<w:body/>");
+        out.add_package_relationship(CUSTOM_PROPS_REL, "/docProps/custom.xml");
+        b.add_package_relationship(CUSTOM_PROPS_REL, "docProps/custom.xml");
+        let props = |body: &str| {
+            format!(
+                "<Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/custom-properties\" xmlns:vt=\"http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes\">{body}</Properties>"
+            )
+        };
+        out.set_part("docProps/custom.xml", props("<property name='Actno' pid='7'><vt:lpwstr>original</vt:lpwstr></property><property name='BadPid' pid='bad'><vt:i4>5</vt:i4></property>").into_bytes());
+        b.set_part("docProps/custom.xml", props("<property name='ActNo' pid='2'><vt:lpwstr>replacement</vt:lpwstr></property><property pid='3'><vt:i4>8</vt:i4></property><property name='New' pid='4'><vt:bool>true</vt:bool></property><property name='NEW' pid='5'><vt:bool>false</vt:bool></property>").into_bytes());
+        merge_custom_properties(&mut out, &b);
+        let (dom, r) = part_root(&out, "docProps/custom.xml");
+        let nodes = dom.elements(r, None);
+        assert_eq!(nodes.len(), 3);
+        assert_eq!(dom.value(nodes[0]), "original");
+        assert_eq!(dom.attribute(nodes[2], &XName::get("pid", "")), Some("8"));
+        assert_eq!(
+            dom.attribute(nodes[2], &XName::get("name", "")),
+            Some("New")
+        );
+        assert_eq!(dom.value(nodes[2]), "true");
+        let before = out.part_string("docProps/custom.xml").unwrap();
+        merge_custom_properties(&mut out, &b);
+        assert_eq!(out.part_string("docProps/custom.xml").unwrap(), before);
+    }
+
+    #[test]
+    fn custom_property_adoption_refuses_unrelated_collision_and_malformed_xml() {
+        let mut out = package("<w:body/>");
+        let mut b = package("<w:body/>");
+        b.add_package_relationship(CUSTOM_PROPS_REL, "docProps/custom.xml");
+        b.set_part(
+            "docProps/custom.xml",
+            b"<Properties><property name='B' pid='2'/></Properties>".to_vec(),
+        );
+        out.set_part("docProps/custom.xml", b"unrelated bytes".to_vec());
+        merge_custom_properties(&mut out, &b);
+        assert_eq!(
+            out.part_bytes("docProps/custom.xml"),
+            Some(b"unrelated bytes".as_slice())
+        );
+        assert_eq!(custom_props_part(&out), None);
+        out.remove_part("docProps/custom.xml");
+        merge_custom_properties(&mut out, &b);
+        assert_eq!(
+            custom_props_part(&out),
+            Some("docProps/custom.xml".to_string())
+        );
+        assert_eq!(
+            out.part_string("docProps/custom.xml"),
+            b.part_string("docProps/custom.xml")
+        );
+        b.set_part("docProps/custom.xml", Vec::new());
+        let before = out.part_string("docProps/custom.xml").unwrap();
+        merge_custom_properties(&mut out, &b);
+        assert_eq!(out.part_string("docProps/custom.xml").unwrap(), before);
+        b.set_part("docProps/custom.xml", vec![255]);
+        merge_custom_properties(&mut out, &b);
+        assert_eq!(out.part_string("docProps/custom.xml").unwrap(), before);
+    }
+
+    #[test]
+    fn empty_missing_and_non_xml_package_parts_are_safe_noops() {
+        let mut pkg = package("<w:body/>");
+        pkg.remove_part(MAIN);
+        assert_eq!(header_footer_refs_by_section(&pkg), (0, vec![]));
+        assert!(final_header_footer_slots(&pkg).is_empty());
+        assert!(pre_process_markup(&mut pkg, 1).unwrap().is_empty());
+        for part in ["word/absent.xml", "word/empty.xml"] {
+            if part.ends_with("empty.xml") {
+                pkg.set_part(part, Vec::new());
+            }
+            mark_adopted_hf_content_as_inserted(&mut pkg, part, &settings());
+            mark_hf_part_content_as_deleted(&mut pkg, part, &settings());
+            assert_eq!(
+                pkg.part_bytes(part),
+                if part.ends_with("empty.xml") {
+                    Some([].as_slice())
+                } else {
+                    None
+                }
+            );
+        }
+        pkg.set_part(MAIN, Vec::new());
+        assert_eq!(header_footer_refs_by_section(&pkg), (0, vec![]));
+        assert!(pre_process_markup(&mut pkg, 1).unwrap().is_empty());
+        assert!(!has_default_table_style(""));
+        assert_eq!(default_paragraph_line(""), "240");
+        assert_eq!(merge_revised_font_table("", &xml("fonts", "")), None);
+        assert_eq!(restore_deleted_paragraph_spacing("", ""), None);
+    }
+
+    #[test]
+    fn preprocessing_refuses_orphan_notes_before_mutating_package() {
+        for local in ["footnoteReference", "endnoteReference"] {
+            let mut pkg = package(&format!(
+                "<w:body><w:p><w:r><w:{local} w:id='88'/></w:r></w:p></w:body>"
+            ));
+            let before = pkg.part_string(MAIN).unwrap();
+            let err = pre_process_markup(&mut pkg, 1).unwrap_err();
+            assert!(err.to_string().contains("88"), "{err}");
+            assert_eq!(pkg.part_string(MAIN).unwrap(), before);
+            assert!(pkg.part_bytes("word/footnotes.xml").is_none());
+            assert!(pkg.part_bytes("word/endnotes.xml").is_none());
+        }
+    }
+
+    #[test]
+    fn admission_preserves_typed_refusal_and_identifies_document_side() {
+        let limits = crate::admission::InputLimits {
+            max_compressed_bytes: 0,
+            ..crate::admission::InputLimits::compare()
+        };
+        let err = admit_input("revised", &[1], limits).unwrap_err();
+        assert!(err.to_string().contains("revised document:"), "{err}");
+        assert!(err.to_string().contains("INPUT_LIMIT"), "{err}");
+        let OpcError::Io(io) = &err else {
+            panic!("typed I/O refusal expected")
+        };
+        assert_eq!(io.kind(), std::io::ErrorKind::InvalidData);
+        let refusal = io
+            .get_ref()
+            .unwrap()
+            .downcast_ref::<crate::admission::AdmissionError>()
+            .unwrap();
+        assert_eq!(refusal.code(), "INPUT_LIMIT");
+        assert!(admit_package(b"not a ZIP").is_err());
+        let bytes = include_bytes!("../tests/fixtures/word_probes/tokens/cell_a.docx");
+        assert!(admit_package(bytes).is_ok());
+        assert!(!docx_has_tracked_changes(b"not a ZIP"));
+        assert_eq!(main_part_xml(b"not a ZIP"), None);
+    }
+
+    #[test]
+    fn strict_namespace_normalization_rewrites_only_the_three_ooxml_families() {
+        let source = "<w:p xmlns:w='http://purl.oclc.org/ooxml/wordprocessingml/main' xmlns:r='http://purl.oclc.org/ooxml/officeDocument/relationships' xmlns:a='http://purl.oclc.org/ooxml/drawingml/main'/>";
+        let fixed = normalize_strict_namespaces(source);
+        assert!(matches!(fixed, std::borrow::Cow::Owned(_)));
+        assert_eq!(
+            fixed,
+            "<w:p xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main' xmlns:r='http://schemas.openxmlformats.org/officeDocument/2006/relationships' xmlns:a='http://schemas.openxmlformats.org/drawingml/2006/main'/>"
+        );
+        let transitional = xml("p", "");
+        assert!(matches!(
+            normalize_strict_namespaces(&transitional),
+            std::borrow::Cow::Borrowed(_)
+        ));
+        let other = "http://purl.oclc.org/ooxml/unrelated/main";
+        assert_eq!(normalize_strict_namespaces(other), other);
+    }
+
+    #[test]
+    fn header_adoption_preserves_colliding_media_and_uses_correct_content_types() {
+        for (ext, mime) in [
+            ("PNG", "image/png"),
+            ("jpeg", "image/jpeg"),
+            ("jpg", "image/jpeg"),
+            ("gif", "image/gif"),
+            ("tiff", "image/tiff"),
+            ("tif", "image/tiff"),
+            ("bmp", "image/bmp"),
+            ("svg", "image/svg+xml"),
+            ("ico", "image/x-icon"),
+            ("emf", "image/x-emf"),
+            ("wmf", "image/x-wmf"),
+        ] {
+            let mut b = package("<w:body/>");
+            let mut out = package("<w:body><w:sectPr/></w:body>");
+            let hf = "word/header.xml";
+            let media = format!("word/media/image.{ext}");
+            let renamed_media = format!("word/media/redlineB_image.{ext}");
+            b.set_part(
+                hf,
+                xml("hdr", "<w:p><w:r><w:t>New header</w:t></w:r></w:p>").into_bytes(),
+            );
+            b.set_part(&media, vec![8, 9]);
+            out.set_part(
+                hf,
+                xml("hdr", "<w:p><w:r><w:t>Original header</w:t></w:r></w:p>").into_bytes(),
+            );
+            out.set_part(&media, vec![1, 2]);
+            b.add_document_relationship(hf, &format!("{REL}image"), &format!("media/image.{ext}"));
+            b.add_document_relationship_external(
+                hf,
+                &format!("{REL}hyperlink"),
+                "https://example.invalid/?a=1&b=2",
+            );
+            b.add_document_relationship(hf, &format!("{REL}image"), "media/missing.bin");
+            let id = b.add_document_relationship(MAIN, &format!("{REL}header"), "header.xml");
+            b.set_part(
+                MAIN,
+                xml(
+                    "document",
+                    &format!(
+                        "<w:body><w:sectPr><w:headerReference r:id='{id}'/></w:sectPr></w:body>"
+                    ),
+                )
+                .into_bytes(),
+            );
+            let mut dom = Dom::new();
+            let r = root(&mut dom, &out.part_string(MAIN).unwrap());
+            adopt_revised_header_footer(&mut dom, r, &b, &mut out, MAIN, &settings());
+            assert_eq!(out.part_bytes(&media), Some([1, 2].as_slice()), "{ext}");
+            assert_eq!(
+                out.part_bytes(&renamed_media),
+                Some([8, 9].as_slice()),
+                "{ext}"
+            );
+            assert_eq!(
+                out.content_type_for(&renamed_media).as_deref(),
+                Some(mime),
+                "{ext}"
+            );
+            let adopted = "word/redlineB_header.xml";
+            let (hd, hr) = part_root(&out, adopted);
+            assert_eq!(hd.value(hr), "New header");
+            assert_revision(&hd, hd.descendants(hr, Some(&W::ins()))[0], "1");
+            let (ad, ar) = part_root(&out, hf);
+            assert_eq!(ad.value(ar), "Original header");
+            assert!(ad.descendants(ar, Some(&W::ins())).is_empty());
+            let rels = out.read_rels_for(adopted).unwrap();
+            assert_eq!(rels.items.len(), 3);
+            assert_eq!(
+                out.resolve_rel_target(adopted, &rels.items[0].target),
+                renamed_media
+            );
+            assert_eq!(rels.items[1].target, "https://example.invalid/?a=1&b=2");
+            assert_eq!(rels.items[1].target_mode.as_deref(), Some("External"));
+            assert_eq!(rels.items[2].target, "media/missing.bin");
+            let reference = child(
+                &dom,
+                child(&dom, child(&dom, r, "body"), "sectPr"),
+                "headerReference",
+            );
+            assert_eq!(dom.attribute(reference, &W::name("type")), Some("default"));
+            let id = dom.attribute(reference, &R::name("id")).unwrap();
+            let rel = out
+                .read_rels_for(MAIN)
+                .unwrap()
+                .items
+                .iter()
+                .find(|rel| rel.id == id)
+                .unwrap();
+            assert_eq!(out.resolve_rel_target(MAIN, &rel.target), adopted);
+            let before = dom.serialize_element(r);
+            adopt_revised_header_footer(&mut dom, r, &b, &mut out, MAIN, &settings());
+            assert_eq!(dom.serialize_element(r), before, "{ext}");
+        }
+    }
+
+    #[test]
+    fn header_adoption_refuses_unresolvable_references_and_missing_story_structure() {
+        let mut b = package(
+            "<w:body><w:sectPr><w:headerReference/><w:headerReference w:type='even' r:id='absent'/><w:footerReference r:id='dangling'/></w:sectPr></w:body>",
+        );
+        b.set_part("word/_rels/document.xml.rels", b"<Relationships xmlns='http://schemas.openxmlformats.org/package/2006/relationships'><Relationship Id='dangling' Type='http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer' Target='missing.xml'/></Relationships>".to_vec());
+        let mut out = package("<w:body><w:sectPr/></w:body>");
+        let mut dom = Dom::new();
+        let r = root(&mut dom, &out.part_string(MAIN).unwrap());
+        let before = dom.serialize_element(r);
+        adopt_revised_header_footer(&mut dom, r, &b, &mut out, MAIN, &settings());
+        assert_eq!(dom.serialize_element(r), before);
+        assert!(out.read_rels_for(MAIN).unwrap().items.is_empty());
+        for original in ["", "<w:body/>"] {
+            let r = root(&mut dom, &xml("document", original));
+            let before = dom.serialize_element(r);
+            adopt_revised_header_footer(&mut dom, r, &b, &mut out, MAIN, &settings());
+            assert_eq!(dom.serialize_element(r), before);
+        }
+        for revised in ["", "<w:body/>", "<w:body><w:p/></w:body>"] {
+            b.set_part(MAIN, xml("document", revised).into_bytes());
+            let r = root(&mut dom, &xml("document", "<w:body><w:sectPr/></w:body>"));
+            let before = dom.serialize_element(r);
+            adopt_revised_header_footer(&mut dom, r, &b, &mut out, MAIN, &settings());
+            assert_eq!(dom.serialize_element(r), before);
+        }
+        b.remove_part(MAIN);
+        let r = root(&mut dom, &xml("document", "<w:body><w:sectPr/></w:body>"));
+        adopt_revised_header_footer(&mut dom, r, &b, &mut out, MAIN, &settings());
+        assert!(children(&dom, child(&dom, child(&dom, r, "body"), "sectPr")).is_empty());
+        b.set_part(MAIN, Vec::new());
+        adopt_revised_header_footer(&mut dom, r, &b, &mut out, MAIN, &settings());
+        assert!(children(&dom, child(&dom, child(&dom, r, "body"), "sectPr")).is_empty());
+    }
+
+    #[test]
+    fn original_footer_deletion_is_per_kind_and_duplicate_references_are_processed_once() {
+        let mut a = package("<w:body/>");
+        let mut b = package("<w:body/>");
+        let h = a.add_document_relationship(MAIN, &format!("{REL}header"), "header.xml");
+        let f = a.add_document_relationship(MAIN, &format!("{REL}footer"), "footer.xml");
+        a.set_part(MAIN, xml("document", &format!("<w:body><w:p><w:pPr><w:sectPr><w:footerReference r:id='{f}'/></w:sectPr></w:pPr></w:p><w:sectPr><w:headerReference r:id='{h}'/><w:footerReference r:id='{f}'/></w:sectPr></w:body>")).into_bytes());
+        a.set_part(
+            "word/header.xml",
+            xml("hdr", "<w:p><w:r><w:t>Header</w:t></w:r></w:p>").into_bytes(),
+        );
+        a.set_part(
+            "word/footer.xml",
+            xml("ftr", "<w:p><w:r><w:t>Footer</w:t></w:r></w:p>").into_bytes(),
+        );
+        let bh = b.add_document_relationship(MAIN, &format!("{REL}header"), "other.xml");
+        b.set_part(
+            MAIN,
+            xml(
+                "document",
+                &format!("<w:body><w:sectPr><w:headerReference r:id='{bh}'/></w:sectPr></w:body>"),
+            )
+            .into_bytes(),
+        );
+        let mut out = PartFs::open(&a.to_zip().unwrap()).unwrap();
+        mark_a_only_hf_content_as_deleted(&mut out, &a, &b, &settings());
+        assert_eq!(
+            out.part_string("word/header.xml"),
+            a.part_string("word/header.xml")
+        );
+        let (dom, r) = part_root(&out, "word/footer.xml");
+        assert_eq!(dom.descendants(r, Some(&W::del())).len(), 1);
+        assert_eq!(dom.value(r), "Footer");
+        assert!(dom.descendants(r, Some(&W::t())).is_empty());
+    }
+
+    #[test]
+    fn revised_chrome_preserves_existing_parts_and_repairs_relationships_idempotently() {
+        let mut out = package("<w:body/>");
+        let mut b = package("<w:body/>");
+        out.set_part("word/settings.xml", b"original settings".to_vec());
+        b.set_part("word/settings.xml", b"revised settings".to_vec());
+        b.set_part("word/people.xml", b"revised people".to_vec());
+        out.add_document_relationship(
+            MAIN,
+            "http://schemas.microsoft.com/office/2011/relationships/people",
+            "people.xml",
+        );
+        adopt_revised_styles_chrome(&mut out, &b, MAIN);
+        assert_eq!(
+            out.part_bytes("word/settings.xml"),
+            Some(b"original settings".as_slice())
+        );
+        assert_eq!(
+            out.part_bytes("word/people.xml"),
+            Some(b"revised people".as_slice())
+        );
+        assert_eq!(
+            out.read_rels_for(MAIN)
+                .unwrap()
+                .items
+                .iter()
+                .filter(|r| r.rel_type.ends_with("/people"))
+                .count(),
+            1
+        );
+        out.add_document_relationship(MAIN, THEME_REL, "theme/missing.xml");
+        ensure_factory_package_chrome(&mut out, MAIN);
+        assert_eq!(
+            referenced_theme_part(&out, MAIN),
+            Some("word/theme/theme1.xml".to_string())
+        );
+        assert_eq!(
+            out.part_string("word/theme/theme1.xml").unwrap(),
+            crate::word_default_theme::WORD_DEFAULT_THEME
+        );
+        repair_missing_core_relationships(&mut out, MAIN);
+        let before = out.read_rels_for(MAIN).unwrap().items.len();
+        repair_missing_core_relationships(&mut out, MAIN);
+        ensure_factory_package_chrome(&mut out, MAIN);
+        assert_eq!(out.read_rels_for(MAIN).unwrap().items.len(), before);
+        assert_eq!(
+            out.part_bytes("word/settings.xml"),
+            Some(b"original settings".as_slice())
+        );
+        let rels = out.read_rels_for(MAIN).unwrap();
+        for suffix in ["settings", "webSettings", "fontTable", "theme"] {
+            assert_eq!(
+                rels.items
+                    .iter()
+                    .filter(|r| r.rel_type.ends_with(&format!("/{suffix}")))
+                    .count(),
+                1,
+                "{suffix}"
+            );
+        }
+    }
+
+    #[test]
+    fn revision_ids_ignore_missing_and_nonnumeric_values_and_saturate() {
+        let mut dom = Dom::new();
+        let r = root(
+            &mut dom,
+            &xml(
+                "styles",
+                "<w:ins/><w:del w:id='bad'/><w:rPrChange w:id='-1'/><w:cellDel w:id='4294967295'/>",
+            ),
+        );
+        assert_eq!(next_free_revision_id(&dom, r), u32::MAX);
+        let r = root(&mut dom, &xml("styles", "<w:ins/><w:del w:id='bad'/>"));
+        assert_eq!(next_free_revision_id(&dom, r), 1);
+    }
+
+    #[test]
+    fn revised_style_merge_tracks_both_blocks_without_copying_revised_history() {
+        let mut dom = Dom::new();
+        let out = root(
+            &mut dom,
+            &xml(
+                "styles",
+                "<w:style w:type='paragraph' w:styleId='Custom'><w:name w:val='Custom'/><w:pPr><w:jc w:val='left'/></w:pPr><w:rPr><w:color w:val='FF0000'/></w:rPr></w:style><w:style w:styleId='Unpaired'/><w:style/>",
+            ),
+        );
+        let b = root(
+            &mut dom,
+            &xml(
+                "styles",
+                "<w:style w:type='paragraph' w:styleId='RevisedId'><w:name w:val='Custom'/><w:pPr><w:jc w:val='right'/><w:sectPr/></w:pPr><w:rPr><w:color w:val='0000FF'/><w:rPrChange w:id='100'><w:rPr><w:b/></w:rPr></w:rPrChange></w:rPr></w:style>",
+            ),
+        );
+        let keys = HashSet::from([
+            ("paragraph".to_string(), "Custom".to_string()),
+            ("paragraph".to_string(), "Unpaired".to_string()),
+        ]);
+        assert!(merge_revised_style_definitions(
+            &mut dom,
+            out,
+            b,
+            &settings(),
+            &keys,
+            &HashSet::new()
+        ));
+        let s = style(&dom, out, "Custom");
+        let ppr = child(&dom, s, "pPr");
+        assert_eq!(children(&dom, ppr), ["jc", "pPrChange"]);
+        assert_eq!(
+            dom.attribute(child(&dom, ppr, "jc"), &W::val()),
+            Some("right")
+        );
+        let change = child(&dom, ppr, "pPrChange");
+        assert_revision(&dom, change, "1");
+        assert_eq!(
+            dom.attribute(child(&dom, child(&dom, change, "pPr"), "jc"), &W::val()),
+            Some("left")
+        );
+        let rpr = child(&dom, s, "rPr");
+        assert_eq!(children(&dom, rpr), ["color", "rPrChange"]);
+        assert_eq!(
+            dom.attribute(child(&dom, rpr, "color"), &W::val()),
+            Some("0000FF")
+        );
+        let change = child(&dom, rpr, "rPrChange");
+        assert_revision(&dom, change, "2");
+        assert_eq!(
+            dom.attribute(child(&dom, child(&dom, change, "rPr"), "color"), &W::val()),
+            Some("FF0000")
+        );
+        assert!(dom.descendants(out, Some(&W::name("b"))).is_empty());
+        let before = dom.serialize_element(out);
+        assert!(!merge_revised_style_definitions(
+            &mut dom,
+            out,
+            b,
+            &settings(),
+            &keys,
+            &HashSet::new()
+        ));
+        assert_eq!(dom.serialize_element(out), before);
+    }
+
+    #[test]
+    fn deleted_spacing_restoration_refuses_unmarked_missing_and_already_spaced_paragraphs() {
+        let a = xml(
+            "document",
+            "<w:body><w:p/><w:p w14:paraId='noPr'/><w:p w14:paraId='noSpacing'><w:pPr/></w:p><w:p w14:paraId='foreign'><w:pPr><w:spacing r:id='ignore'/></w:pPr></w:p><w:p w14:paraId='found'><w:pPr><w:spacing w:before='120' w:line='300'/></w:pPr></w:p></w:body>",
+        );
+        let out = xml(
+            "document",
+            "<w:body><w:p/><w:p w14:paraId='unknown'><w:pPr><w:rPr><w:del/></w:rPr></w:pPr></w:p><w:p w14:paraId='found'/><w:p w14:paraId='found'><w:pPr><w:rPr/></w:pPr></w:p><w:p w14:paraId='found'><w:pPr><w:spacing w:line='240'/><w:rPr><w:del/></w:rPr></w:pPr></w:p></w:body>",
+        );
+        assert_eq!(restore_deleted_paragraph_spacing(&a, &out), None);
+        assert_eq!(
+            restore_deleted_paragraph_spacing(
+                &xml(
+                    "document",
+                    "<w:body><w:p w14:paraId='foreign'><w:pPr><w:spacing r:id='ignore'/></w:pPr></w:p></w:body>"
+                ),
+                &out
+            ),
+            None
+        );
+        assert_eq!(restore_deleted_paragraph_spacing(&a, ""), None);
+    }
+    #[test]
+    fn separator_media_collisions_keep_a_resolvable_relative_relationship() {
+        for (local, note) in [("footnotes", "footnote"), ("endnotes", "endnote")] {
+            let a = package("<w:body/>");
+            let mut b = package("<w:body/>");
+            let mut out = package("<w:body/>");
+            let part = format!("word/{local}.xml");
+            b.set_part(
+                &part,
+                xml(
+                    local,
+                    &format!("<w:{note} w:type='separator' w:id='-1'><w:p/></w:{note}>"),
+                )
+                .into_bytes(),
+            );
+            b.set_part("word/media/a.png", vec![8, 9]);
+            b.add_content_type_default("png", "image/png");
+            b.add_document_relationship(&part, &format!("{REL}image"), "media/a.png");
+            out.set_part("word/media/a.png", vec![1, 2]);
+            out.add_content_type_default("png", "image/png");
+            adopt_b_notes_when_a_lacks_separators(&mut out, &a, &b, MAIN);
+            let rels = out.read_rels_for(&part).unwrap();
+            assert_eq!(rels.items.len(), 1);
+            let resolved = out.resolve_rel_target(&part, &rels.items[0].target);
+            assert_eq!(resolved, "word/media/redlineB_a.png");
+            assert_eq!(out.part_bytes(&resolved), Some([8, 9].as_slice()));
+            assert_eq!(
+                out.content_type_for(&resolved).as_deref(),
+                Some("image/png")
+            );
+            assert_eq!(out.part_bytes("word/media/a.png"), Some([1, 2].as_slice()));
+        }
     }
 }
