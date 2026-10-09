@@ -261,6 +261,8 @@ struct ConvertJob<'a> {
     fail_on_substitution: bool,
     /// Comment placement and page selection.
     page: PageOptions,
+    /// Say what was written on stderr: stdout carries a patch.
+    status_to_stderr: bool,
 }
 
 /// `convert --timeout`: the deadline passed.
@@ -388,23 +390,29 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), ConvertFailure> {
     }
     if let Some(pdf) = &rendered.pdf {
         std::fs::write(&output, pdf).map_err(|e| format!("writing {}: {e}", output.display()))?;
-        println!(
-            "wrote {} ({} bytes, {pages} page{})",
-            output.display(),
-            pdf.len(),
-            if pages == 1 { "" } else { "s" }
+        say(
+            job.status_to_stderr,
+            format_args!(
+                "wrote {} ({} bytes, {pages} page{})",
+                output.display(),
+                pdf.len(),
+                if pages == 1 { "" } else { "s" }
+            ),
         );
     }
     if job.png {
         for (path, png) in png_paths.iter().zip(&rendered.pngs) {
             std::fs::write(path, png).map_err(|e| format!("writing {}: {e}", path.display()))?;
         }
-        println!(
-            "wrote {} PNG page{} ({}-page-NN.png, {} dpi)",
-            rendered.pngs.len(),
-            if rendered.pngs.len() == 1 { "" } else { "s" },
-            dir.join(&stem).display(),
-            job.dpi
+        say(
+            job.status_to_stderr,
+            format_args!(
+                "wrote {} PNG page{} ({}-page-NN.png, {} dpi)",
+                rendered.pngs.len(),
+                if rendered.pngs.len() == 1 { "" } else { "s" },
+                dir.join(&stem).display(),
+                job.dpi
+            ),
         );
     }
     if let Some(report) = job.font_report {
@@ -444,6 +452,15 @@ fn run_convert(job: &ConvertJob<'_>) -> Result<(), ConvertFailure> {
         }
     }
     Ok(())
+}
+
+/// A status line: on stdout, or on stderr when stdout carries a patch.
+fn say(to_stderr: bool, line: std::fmt::Arguments<'_>) {
+    if to_stderr {
+        eprintln!("{line}");
+    } else {
+        println!("{line}");
+    }
 }
 
 /// `<stem>-page-NN.png`, zero-padded to the page count's width (at least 2).
@@ -1391,53 +1408,68 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), String> {
             &options,
         )?
     };
-    if let Some(columns) = job.patch {
-        // A refused output prints no patch.
-        if let (Format::Md | Format::Docx, Some(path)) = (to, &output) {
-            ensure_writable(path, job.force)?;
-        }
-        let name = |path: &Path| path.display().to_string();
-        let patch = jubarte::markdown::patch_documents(
-            old.source(),
-            new.source(),
-            &options,
-            &jubarte::markdown::PatchOptions {
-                old_name: name(job.old),
-                new_name: name(job.new),
-                owner: jubarte::markdown::Attribution {
-                    author: job.settings.author_for_revisions.clone(),
-                    date: job.settings.date_time_for_revisions.clone(),
+    // The patch is printed only once the output is written, so a refused
+    // output prints no patch.
+    let patch = match job.patch {
+        Some(columns) => {
+            let name = |path: &Path| path.display().to_string();
+            let patch = jubarte::markdown::patch_documents(
+                old.source(),
+                new.source(),
+                &options,
+                &jubarte::markdown::PatchOptions {
+                    old_name: name(job.old),
+                    new_name: name(job.new),
+                    owner: jubarte::markdown::Attribution {
+                        author: job.settings.author_for_revisions.clone(),
+                        date: job.settings.date_time_for_revisions.clone(),
+                    },
                 },
-            },
-        )
-        .map_err(|e| format!("compare failed: {e}"))?;
-        print!("{}", patch.render(columns));
-        if output.is_none() {
-            return Ok(());
+            )
+            .map_err(|e| format!("compare failed: {e}"))?;
+            Some(patch.render(columns))
         }
+        None => None,
+    };
+    if let (Some(patch), None) = (&patch, &output) {
+        print!("{patch}");
+        return Ok(());
     }
+    write_diff_output(job, to, output, &out, patch.is_some())?;
+    if let Some(patch) = patch {
+        print!("{patch}");
+    }
+    Ok(())
+}
+
+/// Write `diff`'s Markdown, Word, PDF or PNG output. With a patch on
+/// stdout (`patch_on_stdout`), what was written is said on stderr.
+fn write_diff_output(
+    job: &DiffJob<'_>,
+    to: Format,
+    output: Option<PathBuf>,
+    out: &[u8],
+    patch_on_stdout: bool,
+) -> Result<(), String> {
     match (to, output) {
         (Format::Md, None) => {
             use std::io::Write as _;
             std::io::stdout()
-                .write_all(&out)
+                .write_all(out)
                 .map_err(|e| format!("writing to stdout: {e}"))
         }
         (Format::Md | Format::Docx, Some(path)) => {
             ensure_writable(&path, job.force)?;
-            std::fs::write(&path, &out).map_err(|e| format!("writing {}: {e}", path.display()))?;
-            let wrote = format!("wrote {} ({} bytes)", path.display(), out.len());
-            // With the patch on stdout, the rest goes to stderr.
-            if job.patch.is_some() {
-                eprintln!("{wrote}");
-            } else {
-                println!("{wrote}");
-            }
+            std::fs::write(&path, out).map_err(|e| format!("writing {}: {e}", path.display()))?;
+            say(
+                patch_on_stdout,
+                format_args!("wrote {} ({} bytes)", path.display(), out.len()),
+            );
             Ok(())
         }
         (Format::Pdf | Format::Png, output) => run_convert(&ConvertJob {
             file: job.old,
-            bytes: Some(&out),
+            bytes: Some(out),
             output: output.as_deref(),
             force: job.force,
             compress: false,
@@ -1450,6 +1482,7 @@ fn run_diff(job: &DiffJob<'_>) -> Result<(), String> {
             pages: None,
             fail_on_substitution: false,
             page: job.page,
+            status_to_stderr: patch_on_stdout,
         })
         .map_err(|f| f.message),
         (Format::Docx, None) => unreachable!("a Word output always has a path"),
@@ -1952,6 +1985,7 @@ fn cli_main() -> ExitCode {
                 pages: selected.as_deref(),
                 fail_on_substitution,
                 page,
+                status_to_stderr: false,
             };
             return convert_exit_code(run_convert_any(&job, &markdown));
         }
@@ -2854,6 +2888,7 @@ mod tests {
             pages: None,
             fail_on_substitution: false,
             page: PageOptions::default(),
+            status_to_stderr: false,
         })
         .expect_err("report over the PDF must be refused");
         assert!(
@@ -2877,6 +2912,7 @@ mod tests {
             pages: None,
             fail_on_substitution: false,
             page: PageOptions::default(),
+            status_to_stderr: false,
         })
         .expect_err("report over the input must be refused");
         assert!(
@@ -2947,6 +2983,7 @@ mod tests {
             pages: None,
             fail_on_substitution: true,
             page: PageOptions::default(),
+            status_to_stderr: false,
         })
         .expect_err("a substituted font fails the run");
         assert_eq!(err.code, EXIT_FONT_SUBSTITUTED);
@@ -2986,6 +3023,7 @@ mod tests {
             pages: None,
             fail_on_substitution: false,
             page: PageOptions::default(),
+            status_to_stderr: false,
         })
         .expect("convert");
         assert!(pdf.exists());
@@ -3199,6 +3237,7 @@ mod tests {
             pages,
             fail_on_substitution: false,
             page: PageOptions::default(),
+            status_to_stderr: false,
         }
     }
 

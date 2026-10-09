@@ -557,6 +557,48 @@ fn diff_writes_a_word_redline_or_a_pdf() {
     );
 }
 
+/// A patch printed beside a PDF or PNG output is printed only once the
+/// output is written: a refused output prints no patch, and what was
+/// written is said on stderr so stdout holds the patch alone.
+#[test]
+fn diff_prints_the_patch_only_after_its_pdf_or_png_is_written() {
+    let dir = tempfile::tempdir().unwrap();
+    seed(
+        dir.path(),
+        &[
+            ("old.md", OLD),
+            ("new.md", NEW),
+            ("taken.pdf", "keep"),
+            ("pages-page-01.png", "keep"),
+        ],
+    );
+    for output in ["taken.pdf", "pages.png"] {
+        let out = jubarte(&["diff", "old.md", "new.md", "-o", output], dir.path());
+        assert!(failed(&out).contains("already exists"), "{output}");
+        assert!(out.stdout.is_empty(), "{output}: {:?}", out.stdout);
+    }
+    assert_eq!(
+        std::fs::read(dir.path().join("taken.pdf")).unwrap(),
+        b"keep"
+    );
+
+    for (output, written) in [
+        ("fresh.pdf", "fresh.pdf"),
+        ("fresh.png", "fresh-page-01.png"),
+    ] {
+        let out = jubarte(&["diff", "old.md", "new.md", "-o", output], dir.path());
+        let stdout = ok(&out);
+        assert!(
+            stdout.starts_with("--- a/old.md\n+++ b/new.md\t"),
+            "{stdout}"
+        );
+        assert!(!stdout.contains("wrote"), "{stdout}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("wrote"), "{output}: {stderr}");
+        assert!(dir.path().join(written).exists(), "{written}");
+    }
+}
+
 #[test]
 fn diff_and_compare_take_word_against_markdown() {
     let dir = tempfile::tempdir().unwrap();
