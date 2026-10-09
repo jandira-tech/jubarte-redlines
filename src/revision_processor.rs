@@ -1687,6 +1687,23 @@ fn all_para_content_is_deleted(dom: &mut Dom, p: NodeId) -> bool {
     let test_p = collapsed[0];
     !dom.elements(test_p, None).into_iter().any(|ce| {
         let n = dom.name(ce).unwrap();
+        if n == M::name("oMath") || n == M::name("oMathPara") {
+            // Word stores math revisions inside the equation. A.5 runs before
+            // A.7 removes those internal revisions; probe that same transform
+            // on this already-cloned CollapseTransform tree so a fully removed
+            // equation cannot keep an otherwise deleted terminal pilcrow alive.
+            // Authored empty equations, mixed owners and independent anchors
+            // retain the ownership decisions of the ordinary math transform.
+            return accept_all_other_revisions_transform(dom, ce)
+                .into_iter()
+                .any(|node| {
+                    dom.name(node).is_some_and(|name| {
+                        is_run_content(&name).unwrap_or_else(|| {
+                            panic!("Internal error 20, found element {}", name.clark())
+                        })
+                    })
+                });
+        }
         is_run_content(&n)
             .unwrap_or_else(|| panic!("Internal error 20, found element {}", n.clark()))
     })
@@ -4692,6 +4709,96 @@ mod body_equation_paragraph_mark_ownership_tests {
                     &result_dom,
                     result_root
                 ));
+            }
+        }
+    }
+
+    #[test]
+    fn terminal_internal_equation_revisions_preserve_exact_surviving_paragraph_owners() {
+        fn normalize_empty_properties(dom: &mut Dom, root: NodeId) {
+            for node in dom.descendants(root, None).into_iter().rev() {
+                if [W::p_pr(), W::r_pr()]
+                    .iter()
+                    .any(|name| dom.name_is(node, name))
+                    && dom.nodes(node).is_empty()
+                    && dom
+                        .attributes(node)
+                        .iter()
+                        .all(|(name, _)| dom.is_namespace_declaration(name))
+                {
+                    dom.remove(node);
+                }
+            }
+        }
+        let prefix = "<w:p><w:pPr><w:spacing w:after='360'/></w:pPr><w:r><w:rPr><w:b/><w:color w:val='123456'/></w:rPr><w:t>Authored prefix</w:t></w:r></w:p>";
+        let live_equation = "<m:oMath><m:r><w:rPr><w:rFonts w:ascii='Cambria Math' w:hAnsi='Cambria Math'/><w:i/></w:rPr><m:t>live</m:t></m:r></m:oMath>";
+        for reject in [false, true] {
+            let mark = if reject { "ins" } else { "del" };
+            let changed = format!(
+                "<m:r><w:{mark} w:id='71' w:author='Equation editor' w:date='2026-01-02T03:04:05Z'><w:rPr><w:rFonts w:ascii='Cambria Math' w:hAnsi='Cambria Math'/><w:color w:val='234567'/></w:rPr><m:t>changed</m:t></w:{mark}></m:r>"
+            );
+            for (label, equation, surviving) in [
+                (
+                    "only revised equation",
+                    format!("<m:oMath>{changed}</m:oMath>"),
+                    String::new(),
+                ),
+                (
+                    "independent live equation",
+                    format!("<m:oMath>{changed}</m:oMath>{live_equation}"),
+                    live_equation.to_string(),
+                ),
+                (
+                    "independent empty equation",
+                    format!("<m:oMath>{changed}</m:oMath><m:oMath/>"),
+                    "<m:oMath/>".to_string(),
+                ),
+                (
+                    "authored empty run",
+                    format!("<m:oMath>{changed}<m:r/></m:oMath>"),
+                    "<m:oMath><m:r/><m:r/></m:oMath>".to_string(),
+                ),
+            ] {
+                let input = format!(
+                    "{prefix}<w:p><w:pPr><w:rPr><w:{mark} w:id='72' w:author='Equation editor' w:date='2026-01-02T03:04:05Z'/></w:rPr></w:pPr>{equation}</w:p>"
+                );
+                let expected = if surviving.is_empty() {
+                    prefix.to_string()
+                } else {
+                    format!("{prefix}<w:p>{surviving}</w:p>")
+                };
+                let (mut dom, root) = parse(&input);
+                let independent = dom.clone_subtree(root);
+                let source = dom.serialize_element(independent);
+                let result = if reject {
+                    reject_revisions_document(&mut dom, root)
+                } else {
+                    accept_revisions_document(&mut dom, root)
+                };
+                normalize_empty_properties(&mut dom, result);
+                let (mut expected_dom, expected_root) = parse(&expected);
+                normalize_empty_properties(&mut expected_dom, expected_root);
+                assert_eq!(
+                    semantic(&dom, result),
+                    semantic(&expected_dom, expected_root),
+                    "{label}/reject={reject}: full surviving paragraph, run properties and equation owners"
+                );
+                assert_eq!(
+                    dom.serialize_element(independent),
+                    source,
+                    "independent authored source remains unchanged"
+                );
+                let repeated = if reject {
+                    reject_revisions_document(&mut dom, result)
+                } else {
+                    accept_revisions_document(&mut dom, result)
+                };
+                normalize_empty_properties(&mut dom, repeated);
+                assert_eq!(
+                    semantic(&dom, repeated),
+                    semantic(&expected_dom, expected_root),
+                    "idempotent {label}/reject={reject}"
+                );
             }
         }
     }

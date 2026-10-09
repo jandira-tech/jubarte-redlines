@@ -2401,3 +2401,297 @@ mod paragraph_id_collision_owner_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod authored_comment_family_validation_contract_tests {
+    use super::*;
+
+    fn package() -> PartFs {
+        let mut pkg =
+            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        pkg.set_part("word/document.xml",format!("<w:document xmlns:w='{}'><w:body><w:p><w:r><w:t>Owned body</w:t></w:r></w:p></w:body></w:document>",W::URI).into_bytes());
+        pkg
+    }
+    fn frozen(pkg: &PartFs) -> Vec<(String, Vec<u8>)> {
+        let mut parts = pkg.parts();
+        parts.sort();
+        parts
+            .into_iter()
+            .map(|part| {
+                let bytes = pkg.part_bytes(&part).unwrap().to_vec();
+                (part, bytes)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn auxiliary_comment_parts_without_their_source_definition_are_reported_individually() {
+        for (part, content_type, rel_type) in &COMMENT_FAMILY[1..] {
+            let mut pkg = package();
+            pkg.set_part(part, b"<root/>".to_vec());
+            pkg.add_content_type_override(part, content_type);
+            pkg.add_document_relationship("word/document.xml", rel_type, &format!("/{part}"));
+            let before = frozen(&pkg);
+            let mut findings = Vec::new();
+            check_comment_graph(&pkg, &mut findings);
+            assert_eq!(
+                findings,
+                vec![Finding::new(
+                    "COMMENT_PARTS_INCONSISTENT",
+                    part,
+                    "",
+                    format!("'{part}' exists without word/comments.xml")
+                )]
+            );
+            assert!(ring1(&pkg).contains(&findings[0]));
+            assert_eq!(frozen(&pkg), before);
+        }
+    }
+
+    #[test]
+    fn each_comment_family_relationship_requires_its_exact_owned_part_and_content_type() {
+        for (part, content_type, rel_type) in COMMENT_FAMILY {
+            for case in 0..6 {
+                let mut pkg = package();
+                if case != 5 {
+                    pkg.set_part(part, b"<root/>".to_vec());
+                }
+                pkg.add_content_type_override(
+                    part,
+                    if case == 0 {
+                        "application/wrong"
+                    } else {
+                        content_type
+                    },
+                );
+                let mut rid = None;
+                let target = if case == 4 {
+                    "wrong.xml".to_string()
+                } else {
+                    format!("/{part}")
+                };
+                if case != 1 {
+                    rid = Some(if case == 3 {
+                        pkg.add_document_relationship_external(
+                            "word/document.xml",
+                            rel_type,
+                            &format!("/{part}"),
+                        )
+                    } else {
+                        pkg.add_document_relationship("word/document.xml", rel_type, &target)
+                    });
+                }
+                if case == 2 {
+                    pkg.add_document_relationship(
+                        "word/document.xml",
+                        rel_type,
+                        &format!("/{part}"),
+                    );
+                }
+                let before = frozen(&pkg);
+                let mut findings = Vec::new();
+                check_comment_family_packaging(&pkg, "word/document.xml", &mut findings);
+                let expected = match case {
+                    0 => Finding::new(
+                        "COMMENT_PARTS_INCONSISTENT",
+                        part,
+                        "",
+                        format!("'{part}' has the wrong content type (expected '{content_type}')"),
+                    ),
+                    1 | 2 => Finding::new(
+                        "COMMENT_PARTS_INCONSISTENT",
+                        "word/document.xml",
+                        "",
+                        format!(
+                            "'word/document.xml' needs exactly one relationship to '{part}', found {}",
+                            if case == 1 { 0 } else { 2 }
+                        ),
+                    ),
+                    3 | 4 => Finding::new(
+                        "COMMENT_PARTS_INCONSISTENT",
+                        "word/document.xml",
+                        "",
+                        format!(
+                            "comment relationship '{}' on 'word/document.xml' resolves to '{}' instead of '{part}'",
+                            rid.unwrap(),
+                            if case == 3 {
+                                format!("/{part}")
+                            } else {
+                                "wrong.xml".into()
+                            }
+                        ),
+                    ),
+                    _ => Finding::new(
+                        "COMMENT_PARTS_INCONSISTENT",
+                        "word/document.xml",
+                        "",
+                        format!(
+                            "'word/document.xml' has a relationship for missing comment part '{part}'"
+                        ),
+                    ),
+                };
+                assert_eq!(findings, vec![expected], "{part}/case{case}");
+                assert_eq!(frozen(&pkg), before);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod retained_namespace_finding_source_contract_tests {
+    use super::*;
+
+    #[test]
+    fn repair_reports_unbound_unknown_prefixes_without_discarding_owned_story_content() {
+        for known in [false, true] {
+            let ignorable = if known {
+                "w14 UnknownFoo UnknownBar"
+            } else {
+                "UnknownFoo UnknownBar"
+            };
+            let mut pkg =
+                PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+            let body = format!(
+                "<w:document xmlns:w='{}' xmlns:mc='{}' mc:Ignorable='{ignorable}'><w:body><w:p><w:pPr><w:spacing w:after='120'/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>Owned body</w:t></w:r></w:p></w:body></w:document>",
+                W::URI,
+                MC::URI
+            );
+            let header = format!(
+                "<w:hdr xmlns:w='{}' xmlns:mc='{}' mc:Ignorable='UnknownFoo'><w:p><w:r><w:rPr><w:i/></w:rPr><w:t>Owned header</w:t></w:r></w:p></w:hdr>",
+                W::URI,
+                MC::URI
+            );
+            pkg.set_part("word/document.xml", body.into_bytes());
+            pkg.set_part("word/header1.xml", header.into_bytes());
+            pkg.add_content_type_override(
+                "word/header1.xml",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+            );
+            pkg.add_document_relationship(
+                "word/document.xml",
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+                "header1.xml",
+            );
+            let source = pkg.to_zip().unwrap();
+            let before = validate(&source).unwrap();
+            assert_eq!(before.len(), 3 + usize::from(known), "{before:?}");
+            assert!(before.iter().all(|f| f.code == "MC_UNBOUND_PREFIX"));
+            assert_eq!(
+                before
+                    .iter()
+                    .filter(|f| f.part == "word/document.xml")
+                    .count(),
+                2 + usize::from(known)
+            );
+            assert_eq!(
+                before
+                    .iter()
+                    .filter(|f| f.part == "word/header1.xml")
+                    .count(),
+                1
+            );
+            let out = repair(&source).unwrap();
+            assert_eq!(
+                out.repaired,
+                before
+                    .iter()
+                    .filter(|finding| finding.repairable)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(out.repaired.len(), usize::from(known));
+            assert_eq!(
+                out.remaining,
+                before
+                    .iter()
+                    .filter(|finding| !finding.repairable)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            );
+            let after = PartFs::open(&out.docx).unwrap();
+            for part in pkg.parts() {
+                let old = pkg.part_bytes(&part).unwrap();
+                let new = after.part_bytes(&part).unwrap();
+                if matches!(part.as_str(), "word/document.xml" | "word/header1.xml") {
+                    let mut dom = Dom::new();
+                    let old_document = dom.parse_xdocument(std::str::from_utf8(old).unwrap());
+                    let old_root = dom.root(old_document).unwrap();
+                    if known && part == "word/document.xml" {
+                        dom.set_attribute_value(
+                            old_root,
+                            &crate::xmllinq::XNamespace::xmlns().name("w14"),
+                            Some(crate::namespaces::W14::URI),
+                        );
+                    }
+                    let expected = dom.serialize_element(old_root);
+                    let new_document = dom.parse_xdocument(std::str::from_utf8(new).unwrap());
+                    let new_root = dom.root(new_document).unwrap();
+                    assert_eq!(dom.serialize_element(new_root), expected, "{part}");
+                } else {
+                    assert_eq!(new, old, "{part}");
+                }
+            }
+            assert_eq!(pkg.to_zip().unwrap(), source);
+            let again = repair(&out.docx).unwrap();
+            assert_eq!(again.remaining, out.remaining);
+            assert!(again.repaired.is_empty());
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod duplicate_drawing_owned_repair_contract_tests {
+    use super::*;
+
+    #[test]
+    fn duplicate_drawing_repair_renumbers_only_ids_and_preserves_every_shape_owner() {
+        let mut pkg =
+            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        let drawing = |id, name, color| {
+            format!(
+                "<w:r><w:rPr><w:b/></w:rPr><w:drawing><wp:inline><wp:extent cx='914400' cy='457200'/><wp:docPr id='{id}' name='{name}' descr='Owned shape'/><a:graphic><a:graphicData uri='http://schemas.microsoft.com/office/word/2010/wordprocessingShape'><wps:wsp><wps:cNvSpPr/><wps:spPr><a:xfrm><a:off x='0' y='0'/><a:ext cx='914400' cy='457200'/></a:xfrm><a:prstGeom prst='rect'><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val='{color}'/></a:solidFill></wps:spPr><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"
+            )
+        };
+        let xml = |first, second| {
+            format!(
+                "<w:document xmlns:w='{}' xmlns:wp='http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing' xmlns:a='http://schemas.openxmlformats.org/drawingml/2006/main' xmlns:wps='http://schemas.microsoft.com/office/word/2010/wordprocessingShape'><w:body><w:p><w:pPr><w:spacing w:after='80'/></w:pPr><w:r><w:rPr><w:i/></w:rPr><w:t>Owned prefix</w:t></w:r>{}{}<w:r><w:t>Owned suffix</w:t></w:r></w:p><w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>",
+                W::URI,
+                drawing(first, "First", "123456"),
+                drawing(second, "Second", "987654")
+            )
+        };
+        pkg.set_part("word/document.xml", xml(7, 7).into_bytes());
+        let source = pkg.to_zip().unwrap();
+        let findings = validate(&source).unwrap();
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_eq!(findings[0].code, "DUPLICATE_DOCPR_ID");
+        assert!(findings[0].repairable);
+        assert!(!findings[0].word_fatal);
+        let repaired = repair(&source).unwrap();
+        assert_eq!(repaired.repaired, findings);
+        assert!(repaired.remaining.is_empty(), "{:?}", repaired.remaining);
+        let output = PartFs::open(&repaired.docx).unwrap();
+        let mut dom = Dom::new();
+        let expected = dom.parse_xdocument(&xml(1, 2));
+        let expected_root = dom.root(expected).unwrap();
+        let expected = dom.serialize_element(expected_root);
+        let actual = dom.parse_xdocument(&output.part_string("word/document.xml").unwrap());
+        let actual_root = dom.root(actual).unwrap();
+        assert_eq!(dom.serialize_element(actual_root), expected);
+        for part in pkg
+            .parts()
+            .into_iter()
+            .filter(|part| part != "word/document.xml")
+        {
+            assert_eq!(output.part_bytes(&part), pkg.part_bytes(&part), "{part}");
+        }
+        assert_eq!(pkg.to_zip().unwrap(), source);
+        let again = repair(&repaired.docx).unwrap();
+        assert!(again.repaired.is_empty());
+        assert!(again.remaining.is_empty());
+        assert_eq!(again.docx, repaired.docx);
+    }
+}

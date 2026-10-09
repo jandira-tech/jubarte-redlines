@@ -3236,4 +3236,176 @@ mod public_option_source_ownership_tests {
             }
         }
     }
+    #[test]
+    fn sourced_cross_paragraph_windows_decline_quadratic_tables_without_mutating_owners() {
+        fn member(
+            dom: &mut Dom,
+            count: usize,
+            reverse: bool,
+            settings: &WmlComparerSettings,
+        ) -> (NodeId, Vec<Tok>) {
+            let indices: Vec<_> = if reverse {
+                (0..count).rev().collect()
+            } else {
+                (0..count).collect()
+            };
+            let text = indices
+                .iter()
+                .map(|index| format!("lexical{index}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let doc = dom.parse_xdocument(&format!("<w:document xmlns:w='{}'><w:body><w:p><w:pPr><w:spacing w:before='120' w:after='80'/><w:ind w:left='180'/></w:pPr><w:r><w:rPr><w:rFonts w:ascii='Calibri' w:hAnsi='Calibri'/><w:color w:val='123456'/><w:sz w:val='22'/></w:rPr><w:t>{text}</w:t></w:r></w:p></w:body></w:document>", W::URI));
+            let body = dom.element(dom.root(doc).unwrap(), &W::body()).unwrap();
+            super::super::preprocess::add_sha1_hash_to_block_level_content(
+                dom,
+                body,
+                settings,
+                &super::super::preprocess::null_rel_resolver,
+            );
+            let atoms =
+                super::super::atomize::create_comparison_unit_atom_list(dom, body, settings);
+            let units = super::super::units::get_comparison_unit_list(dom, &atoms, settings);
+            let [ComparisonUnit::Group(group)] = units.as_slice() else {
+                panic!("one actual paragraph owner")
+            };
+            assert_eq!(group.group_type, ComparisonUnitGroupType::Paragraph);
+            let tokens = group
+                .contents
+                .iter()
+                .filter(|unit| {
+                    !unit
+                        .descendant_atoms()
+                        .iter()
+                        .any(|atom| dom.name_is(atom.content_element, &W::p_pr()))
+                })
+                .map(|unit| token(dom, unit, settings))
+                .collect();
+            (body, tokens)
+        }
+        let settings = WmlComparerSettings {
+            merge_replaced_paragraphs: true,
+            ..WmlComparerSettings::default()
+        };
+        for ending_story in [false, true] {
+            let mut dom = Dom::new();
+            let (a, left) = member(&mut dom, 1001, false, &settings);
+            let (b, right) = member(&mut dom, 1001, true, &settings);
+            let owned = (canonical(&dom, a), canonical(&dom, b));
+            let left_flat = left.iter().collect::<Vec<_>>();
+            let right_flat = right.iter().collect::<Vec<_>>();
+            let left_units = build_units(&left_flat, &[0, left.len()], 0, left.len());
+            let right_units = build_units(&right_flat, &[0, right.len()], 0, right.len());
+            assert_eq!((left_units.len(), right_units.len()), (1001, 1001));
+            assert!(left_units.len() * right_units.len() > LCS_CELL_CAP);
+            // These are two real paragraph members with the same lexical bag.
+            // The ordinary pair exceeds pass 1's cap; the story-final pair's
+            // unequal first word leaves the whole capped pass-2 residue.
+            assert!(segment_region(&[left], &[right], &[(0, 0)], ending_story).is_none());
+            assert_eq!((canonical(&dom, a), canonical(&dom, b)), owned);
+        }
+    }
+
+    #[test]
+    fn public_compound_and_one_sided_paragraph_windows_preserve_complete_sources() {
+        let families: Vec<(Vec<&str>, Vec<&str>)> = vec![
+            (
+                vec!["alpha-copper walnut", "violet glacier closing"],
+                vec!["alpha", "copper walnut violet glacier closing"],
+            ),
+            (
+                vec!["alpha walnut", "copper-violet glacier closing"],
+                vec!["alpha walnut copper", "violet glacier closing"],
+            ),
+            (
+                vec!["alpha:copper walnut", "violet glacier closing"],
+                vec!["alpha", "copper walnut violet glacier closing"],
+            ),
+            (
+                vec!["alpha walnut the", "and copper violet glacier"],
+                vec!["alpha walnut", "the and copper violet glacier"],
+            ),
+            (
+                vec![
+                    "alpha walnut copper",
+                    "violet glacier closing",
+                    "independent archival original tail",
+                ],
+                vec!["alpha walnut", "copper violet glacier closing"],
+            ),
+            (
+                vec!["alpha walnut copper", "violet glacier closing"],
+                vec![
+                    "alpha walnut",
+                    "copper violet glacier closing",
+                    "independent revised botanical tail",
+                ],
+            ),
+            (
+                vec![
+                    "alpha walnut copper",
+                    "violet glacier closing",
+                    "same authored terminal witness",
+                ],
+                vec![
+                    "alpha walnut",
+                    "copper violet glacier closing",
+                    "same authored terminal witness",
+                ],
+            ),
+            (
+                vec!["alpha\u{a0}walnut copper", "violet glacier closing"],
+                vec!["alpha\u{a0}walnut", " copper violet glacier closing"],
+            ),
+        ];
+        let package = |paragraphs: &[&str]| {
+            let mut pkg = crate::opc::PartFs::open(include_bytes!(
+                "../../tests/fixtures/relids/image_doc.docx"
+            ))
+            .unwrap();
+            pkg.set_part("word/styles.xml", format!("<w:styles xmlns:w='{}'><w:style w:type='paragraph' w:default='1' w:styleId='Normal'><w:name w:val='Normal'/></w:style></w:styles>", W::URI).into_bytes());
+            let body = paragraphs.iter().map(|text| format!("<w:p><w:pPr><w:spacing w:before='120' w:after='80'/><w:ind w:left='180'/></w:pPr><w:r><w:rPr><w:rFonts w:ascii='Calibri' w:hAnsi='Calibri'/><w:color w:val='123456'/><w:sz w:val='22'/><w:lang w:val='en-US'/></w:rPr><w:t xml:space='preserve'>{text}</w:t></w:r></w:p>")).collect::<String>();
+            pkg.set_part("word/document.xml", format!("<w:document xmlns:w='{}'><w:body>{body}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>", W::URI).into_bytes());
+            pkg.to_zip().unwrap()
+        };
+        for (family, (left, right)) in families.iter().enumerate() {
+            let a = package(left);
+            let b = package(right);
+            for word in [false, true] {
+                for reverse in [false, true] {
+                    let (a, b) = if reverse { (&b, &a) } else { (&a, &b) };
+                    let settings = WmlComparerSettings {
+                        merge_replaced_paragraphs: word,
+                        detect_moves: false,
+                        ..WmlComparerSettings::default()
+                    };
+                    let label =
+                        format!("compound/tail family={family} Word={word} reverse={reverse}");
+                    let compared =
+                        crate::document_comparer::compare_documents_with_settings(a, b, &settings)
+                            .unwrap_or_else(|error| panic!("{label}: {error:?}"));
+                    let accepted = crate::document_comparer::accept_revisions(&compared).unwrap();
+                    let rejected = crate::document_comparer::reject_revisions(&compared).unwrap();
+                    if source_events(&accepted) != source_events(b)
+                        || source_events(&rejected) != source_events(a)
+                    {
+                        for (owner, bytes) in [
+                            ("original", a),
+                            ("revised", b),
+                            ("compared", &compared),
+                            ("accepted", &accepted),
+                            ("rejected", &rejected),
+                        ] {
+                            let pkg = crate::opc::PartFs::open(bytes).unwrap();
+                            eprintln!(
+                                "COMPOUND OWNER {owner} {label}={}",
+                                pkg.part_string("word/document.xml").unwrap()
+                            );
+                        }
+                    }
+                    assert_source_projection(&accepted, b, &format!("accept {label}"));
+                    assert_source_projection(&rejected, a, &format!("reject {label}"));
+                }
+            }
+        }
+    }
 }

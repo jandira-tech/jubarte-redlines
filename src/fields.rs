@@ -2248,3 +2248,160 @@ mod field_decline_source_boundary_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod authored_field_projection_contract_tests {
+    use super::*;
+
+    fn story(source: &str, body: bool) -> Story {
+        let mut dom = Dom::new();
+        let document =
+            dom.parse_xdocument(&format!("<w:body xmlns:w='{}'>{source}</w:body>", W::URI));
+        let root = dom.root(document).unwrap();
+        Story {
+            id: if body { "body" } else { "header1" }.into(),
+            part: if body {
+                "word/document.xml"
+            } else {
+                "word/header1.xml"
+            }
+            .into(),
+            dom,
+            document,
+            root,
+            body,
+            changed: false,
+        }
+    }
+
+    #[test]
+    fn unsupported_field_arguments_keep_their_complete_authored_cache() {
+        let facts = crate::convert::LayoutFacts {
+            page_count: 7,
+            ..Default::default()
+        };
+        let defined = BTreeSet::from(["anchor".to_string()]);
+        let context = Context {
+            facts: &facts,
+            defined: &defined,
+        };
+        for body in [false, true] {
+            for (code, expected) in [
+                ("NUMPAGES", Some("7")),
+                ("NUMPAGES extra", None),
+                ("NUMPAGES \\x", None),
+                ("PAGEREF", None),
+                ("PAGEREF anchor extra", None),
+                ("REF", None),
+                ("REF anchor extra", None),
+                ("SEQ owned", if body { Some("1") } else { None }),
+            ] {
+                let source = format!(
+                    "<w:p><w:pPr><w:spacing w:after='120'/></w:pPr><w:fldSimple w:instr='{code}'><w:r><w:rPr><w:i/><w:color w:val='246810'/></w:rPr><w:t>owned cache</w:t><w:tab/><w:t>tail</w:t></w:r></w:fldSimple><w:r><w:t>outside</w:t></w:r></w:p>"
+                );
+                let story = story(&source, body);
+                let frozen = story.dom.serialize_element(story.root);
+                let fields = collect_fields(&story.dom, story.root);
+                assert_eq!(fields.len(), 1, "{code}");
+                let results = results_for(&story, &fields, &context);
+                assert_eq!(
+                    results.get(&0).map(String::as_str),
+                    expected,
+                    "body={body}, {code}"
+                );
+                assert_eq!(
+                    result_text(&story.dom, story.root, &fields[0]),
+                    "owned cache\ttail"
+                );
+                assert_eq!(story.dom.serialize_element(story.root), frozen);
+            }
+        }
+    }
+
+    #[test]
+    fn nested_field_results_belong_to_the_outer_replacement_only() {
+        let source = "<w:p><w:r><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText> NUMPAGES </w:instrText></w:r><w:r><w:fldChar w:fldCharType='separate'/></w:r><w:r><w:t>outer</w:t></w:r><w:r><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText> NUMPAGES </w:instrText></w:r><w:r><w:fldChar w:fldCharType='separate'/></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>inner</w:t></w:r><w:r><w:fldChar w:fldCharType='end'/></w:r><w:r><w:t>tail</w:t></w:r><w:r><w:fldChar w:fldCharType='end'/></w:r><w:r><w:t>outside</w:t></w:r></w:p>";
+        let mut story = story(source, true);
+        let fields = collect_fields(&story.dom, story.root);
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[1].in_result_of, Some(0));
+        let results = HashMap::from([(0, "7".to_string()), (1, "7".to_string())]);
+        assert!(!inside_rewritten_result(&fields, 0, &results));
+        assert!(inside_rewritten_result(&fields, 1, &results));
+        assert!(!inside_rewritten_result(
+            &fields,
+            1,
+            &HashMap::from([(1, "7".to_string())])
+        ));
+        assert!(write_result(&mut story.dom, &fields[0], "7"));
+        let remaining = collect_fields(&story.dom, story.root);
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].code, " NUMPAGES ");
+        assert_eq!(result_text(&story.dom, story.root, &remaining[0]), "7");
+        let text: Vec<_> = story
+            .dom
+            .descendants(story.root, Some(&W::t()))
+            .into_iter()
+            .map(|n| story.dom.value(n))
+            .collect();
+        assert_eq!(text, ["7", "outside"]);
+    }
+
+    #[test]
+    fn splitting_combined_mark_runs_keeps_consecutive_code_and_result_nodes_in_order() {
+        let mut story = story(
+            "<w:p><w:r w:rsidR='01234567'><w:rPr><w:b/><w:color w:val='135790'/></w:rPr><w:fldChar w:fldCharType='begin'/><w:instrText> REF </w:instrText><w:instrText>anchor </w:instrText><w:fldChar w:fldCharType='separate'/><w:t>first</w:t><w:tab/><w:t>last</w:t><w:fldChar w:fldCharType='end'/></w:r></w:p>",
+            true,
+        );
+        assert!(split_mark_runs(&mut story.dom, story.root));
+        let fields = collect_fields(&story.dom, story.root);
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].code, " REF anchor ");
+        assert_eq!(
+            result_text(&story.dom, story.root, &fields[0]),
+            "first\tlast"
+        );
+        let runs = story.dom.descendants(story.root, Some(&W::r()));
+        assert_eq!(runs.len(), 5);
+        for run in runs {
+            assert_eq!(
+                story.dom.attribute(run, &W::name("rsidR")),
+                Some("01234567")
+            );
+            let properties = story.dom.element(run, &W::r_pr()).unwrap();
+            assert!(story.dom.element(properties, &W::name("b")).is_some());
+            let color = story.dom.element(properties, &W::name("color")).unwrap();
+            assert_eq!(story.dom.attribute(color, &W::val()), Some("135790"));
+        }
+        let frozen = story.dom.serialize_element(story.root);
+        assert!(!split_mark_runs(&mut story.dom, story.root));
+        assert_eq!(story.dom.serialize_element(story.root), frozen);
+    }
+
+    #[test]
+    fn missing_style_insertion_preserves_existing_and_alternate_prefix_parts() {
+        for source in [
+            None,
+            Some(
+                "<w:styles xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'><w:style w:styleId=\"TOC1\" w:type='paragraph'><w:name w:val='owned custom TOC'/></w:style></w:styles>",
+            ),
+            Some(
+                "<x:styles xmlns:x='http://schemas.openxmlformats.org/wordprocessingml/2006/main'><x:style x:styleId='Owned'/></x:styles>",
+            ),
+        ] {
+            let mut pkg = PartFs::open(&tests::tiny_docx("<w:p/>")).unwrap();
+            if let Some(source) = source {
+                pkg.set_part("word/styles.xml", source.as_bytes().to_vec());
+            }
+            let frozen = pkg.part_bytes("word/document.xml").unwrap().to_vec();
+            add_missing_styles(
+                &mut pkg,
+                "word/styles.xml",
+                &BTreeSet::from(["TOC1".into()]),
+            );
+            assert_eq!(pkg.part_string("word/styles.xml").as_deref(), source);
+            assert_eq!(pkg.part_bytes("word/document.xml").unwrap(), frozen);
+        }
+    }
+}

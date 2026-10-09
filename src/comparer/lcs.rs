@@ -19007,6 +19007,293 @@ mod coverage_real_source_route_matrix_tests {
         }
     }
 
+    fn numbered_admission_story(
+        count: usize,
+        words: usize,
+        numbered: usize,
+        nested_at: Option<usize>,
+        revised: bool,
+        uniform: Option<&str>,
+        shared_filler: bool,
+    ) -> String {
+        let vocabulary = if revised {
+            [
+                "violet", "cobalt", "silver", "glacier", "harbor", "mariner", "sapphire", "summit",
+            ]
+        } else {
+            [
+                "amber", "bronze", "copper", "saffron", "orchard", "walnut", "meadow", "harvest",
+            ]
+        };
+        (0..count)
+            .map(|index| {
+                let text = uniform.map(str::to_string).unwrap_or_else(|| {
+                    let mut tokens = vec![vocabulary[index % vocabulary.len()]];
+                    tokens.extend(std::iter::repeat_n(
+                        if shared_filler {
+                            "amber"
+                        } else if revised {
+                            "revised"
+                        } else {
+                            "former"
+                        },
+                        words.saturating_sub(1),
+                    ));
+                    tokens.join(" ")
+                });
+                paragraph(
+                    &text,
+                    "ListParagraph",
+                    (index < numbered).then_some(if nested_at == Some(index) { 1 } else { 0 }),
+                    revised,
+                )
+            })
+            .collect()
+    }
+
+    fn assert_public_numbered_admission_sources(left: &str, right: &str, label: &str) {
+        let package = |story: &str| {
+            let mut package = crate::opc::PartFs::open(include_bytes!(
+                "../../tests/fixtures/relids/image_doc.docx"
+            ))
+            .unwrap();
+            package.set_part(
+                "word/document.xml",
+                format!("<w:document xmlns:w='{}'><w:body>{story}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>", W::URI).into_bytes(),
+            );
+            package.set_part(
+                "word/styles.xml",
+                format!("<w:styles xmlns:w='{}'><w:style w:type='paragraph' w:default='1' w:styleId='Normal'><w:name w:val='Normal'/></w:style><w:style w:type='paragraph' w:styleId='ListParagraph'><w:name w:val='ListParagraph'/></w:style></w:styles>", W::URI).into_bytes(),
+            );
+            package.set_part(
+                "word/numbering.xml",
+                format!("<w:numbering xmlns:w='{}'><w:abstractNum w:abstractNumId='1'><w:multiLevelType w:val='multilevel'/><w:lvl w:ilvl='0'><w:start w:val='1'/><w:numFmt w:val='decimal'/><w:lvlText w:val='%1.'/><w:lvlJc w:val='left'/></w:lvl><w:lvl w:ilvl='1'><w:start w:val='1'/><w:numFmt w:val='lowerLetter'/><w:lvlText w:val='%2.'/><w:lvlJc w:val='left'/></w:lvl></w:abstractNum><w:num w:numId='9'><w:abstractNumId w:val='1'/></w:num></w:numbering>", W::URI).into_bytes(),
+            );
+            package.to_zip().unwrap()
+        };
+        let a = package(left);
+        let b = package(right);
+        for word in [false, true] {
+            let mut settings = if word {
+                WmlComparerSettings::default()
+            } else {
+                WmlComparerSettings::powertools_faithful()
+            };
+            settings.author_for_revisions = "Numbered admission editor".into();
+            settings.date_time_for_revisions = "2026-01-02T03:04:05Z".into();
+            let compared =
+                crate::document_comparer::compare_documents_with_settings(&a, &b, &settings)
+                    .unwrap();
+            for (accept, source) in [(false, &a), (true, &b)] {
+                let projection = if accept {
+                    crate::document_comparer::accept_revisions(&compared)
+                } else {
+                    crate::document_comparer::reject_revisions(&compared)
+                }
+                .unwrap();
+                let events = |bytes: &[u8]| {
+                    let events = opaque_source_events(bytes, true);
+                    if word {
+                        // Word may absorb/reassign carrier paragraph properties;
+                        // ordered characters and their complete authored run
+                        // properties remain independent source owners.
+                        events
+                            .into_iter()
+                            .filter(|event| event.starts_with("text:"))
+                            .collect::<Vec<_>>()
+                    } else {
+                        // Faithful keeps the complete paragraph/property tree,
+                        // including every revised closing paragraph mark.
+                        events
+                    }
+                };
+                assert_eq!(
+                    events(&projection),
+                    events(source),
+                    "public complete source {label}/word={word}/accept={accept}"
+                );
+                let repeated = if accept {
+                    crate::document_comparer::accept_revisions(&projection)
+                } else {
+                    crate::document_comparer::reject_revisions(&projection)
+                }
+                .unwrap();
+                assert_eq!(
+                    events(&repeated),
+                    events(&projection),
+                    "public repeat {label}/word={word}/accept={accept}"
+                );
+            }
+        }
+    }
+
+    fn exercise_numbered_admission_sources(
+        left_xml: &str,
+        right_xml: &str,
+        label: &str,
+        expected_statuses: Option<&[CorrelationStatus]>,
+    ) {
+        let settings = WmlComparerSettings {
+            author_for_revisions: "Numbered admission editor".to_string(),
+            date_time_for_revisions: "2026-01-02T03:04:05Z".to_string(),
+            ..WmlComparerSettings::default()
+        };
+        let mut dom = Dom::new();
+        // These are the actual preprocess + atomizer + group-builder units;
+        // no source hashes, statuses, ancestry or PT flags are invented.
+        let left = source(&mut dom, left_xml, &settings);
+        let right = source(&mut dom, right_xml, &settings);
+        let expected = (frozen(&mut dom, &left), frozen(&mut dom, &right));
+        let decision = detect_unrelated_sources_word_mode(&mut dom, &left, &right, &settings);
+        let proposed = match decision {
+            Some((proposed, _)) => proposed,
+            None => vec![CorrelatedSequence::paired(
+                CorrelationStatus::Unknown,
+                left,
+                right,
+            )],
+        };
+        if let Some(expected_statuses) = expected_statuses {
+            assert_eq!(
+                proposed
+                    .iter()
+                    .map(|s| s.correlation_status)
+                    .collect::<Vec<_>>(),
+                expected_statuses,
+                "documented Word list shape {label}"
+            );
+        }
+        assert_owned(
+            &mut dom,
+            &proposed,
+            &expected,
+            &format!("admission {label}"),
+        );
+        let resolved = resolve_correlated_sequences(&mut dom, proposed, &settings);
+        assert!(
+            resolved
+                .iter()
+                .all(|s| s.correlation_status != CorrelationStatus::Unknown),
+            "complete public worklist resolution {label}"
+        );
+        assert_owned(
+            &mut dom,
+            &resolved,
+            &expected,
+            &format!("resolved admission {label}"),
+        );
+        // Word's documented interior carrier transfers the revised final
+        // pilcrow to an original carrier. assert_owned checks its exact node
+        // identity and all remaining properties; a public faithful projection
+        // below independently retains every authored paragraph and property.
+        assert_public_numbered_admission_sources(left_xml, right_xml, label);
+    }
+
+    #[test]
+    fn public_numbered_stub_admission_keeps_source_owners_at_real_density_and_prefix_edges() {
+        for base_count in [5usize, 6, 7] {
+            for numbered in [(base_count - 1) / 2, base_count.div_ceil(2), base_count] {
+                for labels in [
+                    &["ONE", "a", "b", "c"][..],
+                    &["a", "b", "c", "d"][..],
+                    &["ONE", "TWO", "TEN", "SIX"][..],
+                    &["ONE", "a", "b"][..],
+                    &["ONE", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j"][..],
+                ] {
+                    let left =
+                        numbered_admission_story(base_count, 3, numbered, None, false, None, false);
+                    let right = labels
+                        .iter()
+                        .map(|text| paragraph(text, "ListParagraph", Some(0), true))
+                        .collect::<String>();
+                    exercise_numbered_admission_sources(
+                        &left,
+                        &right,
+                        &format!("M429 count={base_count}/numbered={numbered}/labels={labels:?}"),
+                        None,
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn public_nested_list_admission_keeps_exact_sources_when_one_earlier_operand_changes() {
+        type Case = (&'static str, usize, usize, usize, usize, Option<usize>);
+        let cases: &[Case] = &[
+            ("documented interior cluster", 12, 12, 8, 5, Some(1)),
+            ("old item one word beyond cap", 13, 12, 8, 5, Some(1)),
+            ("new item one word beyond cap", 12, 13, 8, 5, Some(1)),
+            ("old list below half", 12, 12, 3, 5, Some(1)),
+            ("old list exactly half", 12, 12, 4, 5, Some(1)),
+            ("new list below half", 12, 12, 8, 2, Some(1)),
+            ("new list above half", 12, 12, 8, 3, Some(1)),
+            (
+                "nested first item closes cluster at one",
+                12,
+                12,
+                8,
+                5,
+                Some(0),
+            ),
+            (
+                "nested last item has no following cluster",
+                12,
+                12,
+                8,
+                5,
+                Some(7),
+            ),
+            ("no authored nested item", 12, 12, 8, 5, None),
+        ];
+        for &(label, old_words, new_words, old_numbered, new_numbered, nested_at) in cases {
+            let left =
+                numbered_admission_story(8, old_words, old_numbered, nested_at, false, None, false);
+            let right =
+                numbered_admission_story(5, new_words, new_numbered, None, true, None, false);
+            let expected = if label == "documented interior cluster" {
+                Some(
+                    &[
+                        CorrelationStatus::Inserted,
+                        CorrelationStatus::Deleted,
+                        CorrelationStatus::Inserted,
+                        CorrelationStatus::Deleted,
+                    ][..],
+                )
+            } else {
+                None
+            };
+            exercise_numbered_admission_sources(&left, &right, label, expected);
+        }
+    }
+
+    #[test]
+    fn public_uniform_numbered_items_distinguish_disjoint_and_shared_cluster_ownership() {
+        for &(label, uniform, shared_filler, expected) in &[
+            (
+                "disjoint uniform list uses wholesale ownership",
+                "test",
+                false,
+                &[CorrelationStatus::Inserted, CorrelationStatus::Deleted][..],
+            ),
+            (
+                "shared uniform list retains interior cluster",
+                "amber",
+                true,
+                &[
+                    CorrelationStatus::Inserted,
+                    CorrelationStatus::Deleted,
+                    CorrelationStatus::Inserted,
+                    CorrelationStatus::Deleted,
+                ][..],
+            ),
+        ] {
+            let left = numbered_admission_story(8, 3, 8, Some(1), false, None, shared_filler);
+            let right = numbered_admission_story(5, 1, 5, None, true, Some(uniform), false);
+            exercise_numbered_admission_sources(&left, &right, label, Some(expected));
+        }
+    }
+
     fn structured_guard_table(revised: bool, columns: usize, nested: bool) -> String {
         let width = 5400 / columns;
         let mut grid = String::new();
@@ -20603,6 +20890,81 @@ mod coverage_real_source_route_matrix_tests {
                     }
                     assert_eq!(frozen(&mut dom, left), expected.0);
                     assert_eq!(frozen(&mut dom, right), expected.1);
+                }
+            }
+        }
+    }
+    #[test]
+    fn compound_endpoint_boundary_correlation_keeps_every_original_character_before_production() {
+        let paragraph = |text: &str| {
+            format!(
+                "<w:p><w:pPr><w:spacing w:before='120' w:after='80'/><w:ind w:left='180'/></w:pPr><w:r><w:rPr><w:rFonts w:ascii='Calibri' w:hAnsi='Calibri'/><w:color w:val='123456'/><w:sz w:val='22'/><w:lang w:val='en-US'/></w:rPr><w:t xml:space='preserve'>{text}</w:t></w:r></w:p>"
+            )
+        };
+        let a = format!(
+            "{}{}",
+            paragraph("alpha-copper walnut"),
+            paragraph("violet glacier closing")
+        );
+        let b = format!(
+            "{}{}",
+            paragraph("alpha"),
+            paragraph("copper walnut violet glacier closing")
+        );
+        for reverse in [false, true] {
+            let settings = WmlComparerSettings {
+                merge_replaced_paragraphs: true,
+                detect_moves: false,
+                ..WmlComparerSettings::default()
+            };
+            let (a, b) = if reverse { (&b, &a) } else { (&a, &b) };
+            let mut dom = Dom::new();
+            let left = source(&mut dom, a, &settings);
+            let right = source(&mut dom, b, &settings);
+            let expected = (frozen(&mut dom, &left), frozen(&mut dom, &right));
+            let mut sequences =
+                detect_unrelated_sources_word_mode(&mut dom, &left, &right, &settings)
+                    .map(|(out, _)| out)
+                    .unwrap_or_else(|| lcs(&mut dom, left, right, &settings));
+            assert_owned(
+                &mut dom,
+                &sequences,
+                &expected,
+                &format!("compound LCS reverse={reverse}"),
+            );
+            pair_story_final_marks(&dom, &mut sequences);
+            super::super::cross_para::restream_cross_paragraph_regions(
+                &mut dom,
+                &mut sequences,
+                &settings,
+            );
+            assert_owned(
+                &mut dom,
+                &sequences,
+                &expected,
+                &format!("compound restream reverse={reverse}"),
+            );
+            for seq in &sequences {
+                if seq.correlation_status == CorrelationStatus::Equal {
+                    let before = seq
+                        .com_units_1
+                        .as_deref()
+                        .unwrap_or_default()
+                        .iter()
+                        .flat_map(ComparisonUnit::descendant_atoms)
+                        .collect::<Vec<_>>();
+                    let after = seq
+                        .com_units_2
+                        .as_deref()
+                        .unwrap_or_default()
+                        .iter()
+                        .flat_map(ComparisonUnit::descendant_atoms)
+                        .collect::<Vec<_>>();
+                    assert_eq!(
+                        before.len(),
+                        after.len(),
+                        "compound Equal zip must retain both complete sources reverse={reverse}"
+                    );
                 }
             }
         }

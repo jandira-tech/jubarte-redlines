@@ -1424,3 +1424,103 @@ mod public_memory_anchor_boundary_tests {
         assert_eq!(select_comments(records.clone(), None, false), records);
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod authored_thread_reference_contract_tests {
+    use super::*;
+
+    fn family(parents: [Option<usize>; 3]) -> (PartFs, CommentFamily) {
+        let mut pkg =
+            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        let comments = (0..3).map(|i| format!("<w:comment w:id='{i}' w:author='Owner{i}' w:date='2025-01-0{}T00:00:00Z'><w:p w14:paraId='{:08X}'><w:pPr><w:spacing w:after='{}'/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>Comment owner {i}</w:t></w:r></w:p></w:comment>",i+1,i+1,80+i)).collect::<String>();
+        let extended = parents
+            .iter()
+            .enumerate()
+            .map(|(i, parent)| {
+                format!(
+                    "<w15:commentEx w15:paraId='{:08X}'{} w15:done='0'/>",
+                    i + 1,
+                    parent
+                        .map(|p| format!(" w15:paraIdParent='{:08X}'", p + 1))
+                        .unwrap_or_default()
+                )
+            })
+            .collect::<String>();
+        for (index, xml) in [
+            (
+                0,
+                format!(
+                    "<w:comments xmlns:w='{}' xmlns:w14='{}'>{comments}</w:comments>",
+                    W::URI,
+                    W14::URI
+                ),
+            ),
+            (
+                1,
+                format!(
+                    "<w15:commentsEx xmlns:w15='{}'>{extended}</w15:commentsEx>",
+                    W15::URI
+                ),
+            ),
+        ] {
+            let (part, content_type, rel_type) = FAMILY[index];
+            pkg.set_part(&format!("word/{part}"), xml.into_bytes());
+            pkg.add_content_type_override(&format!("/word/{part}"), content_type);
+            pkg.add_document_relationship("word/document.xml", rel_type, part);
+        }
+        let family = CommentFamily::load(&pkg, "word/document.xml").unwrap();
+        (pkg, family)
+    }
+
+    #[test]
+    fn cyclic_and_missing_parent_metadata_terminate_without_discarding_comment_owners() {
+        for (parents, roots, replies) in [
+            ([Some(1), Some(0), None], [0, 1, 2], vec![0, 1]),
+            ([Some(1), Some(2), Some(0)], [0, 1, 2], vec![0, 2, 1]),
+            ([Some(2), Some(2), None], [2, 2, 2], vec![0]),
+            ([Some(0), Some(3), None], [0, 1, 2], vec![0]),
+        ] {
+            let (pkg, family) = family(parents);
+            let source = pkg.to_zip().unwrap();
+            let records = list_comments(&source).unwrap();
+            assert_eq!(records.len(), 3);
+            for i in 0..3 {
+                assert_eq!(family.thread_root(i), roots[i as usize]);
+                assert_eq!(records[i as usize].author, format!("Owner{i}"));
+                assert_eq!(records[i as usize].text, format!("Comment owner {i}"));
+                let expected = parents[i as usize]
+                    .filter(|&p| p < 3 && p != i as usize)
+                    .map(|p| p as u32);
+                assert_eq!(records[i as usize].parent, expected);
+            }
+            assert_eq!(family.with_replies(0), replies);
+            let selected = select_comments(records.clone(), None, true);
+            if roots == [2, 2, 2] {
+                assert_eq!(selected, vec![records[2].clone()]);
+            } else {
+                assert_eq!(selected, records);
+            }
+            assert_eq!(pkg.to_zip().unwrap(), source);
+        }
+    }
+
+    #[test]
+    fn paragraph_id_scan_reserves_only_complete_hex_ids_from_other_xml_parts() {
+        let mut pkg =
+            PartFs::open(include_bytes!("../tests/fixtures/redline/original.docx")).unwrap();
+        pkg.set_part("word/document.xml",b"<w:document xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'><w:body/></w:document>".to_vec());
+        pkg.set_part(
+            "word/owned.xml",
+            b"<root paraId=\"abcdef12\"><node paraId=\"NOTHEX12\"/><node paraId=\"short\"/></root>"
+                .to_vec(),
+        );
+        pkg.set_part("word/skipped.xml", b"<root paraId=\"13579024\"/>".to_vec());
+        pkg.set_part("word/image.bin", b"paraId=\"12345678\"".to_vec());
+        pkg.set_part("word/non_utf8.xml", vec![255, 254]);
+        let frozen = pkg.to_zip().unwrap();
+        let used = package_para_ids(&pkg, "word/skipped.xml");
+        assert_eq!(used, HashSet::from(["ABCDEF12".to_string()]));
+        assert_eq!(pkg.to_zip().unwrap(), frozen);
+    }
+}

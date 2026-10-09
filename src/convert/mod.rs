@@ -55636,6 +55636,545 @@ mod rendering_uncovered_contract_tests {
         fonts
     }
 
+    // Wire records follow metafile::wmf_object_tests, using a genuine
+    // placeable WMF with one filled rectangle and one font/text record.
+    fn source_effect_wmf() -> Vec<u8> {
+        let mut font = vec![0_u8; 50];
+        font[..2].copy_from_slice(&(-2_i16).to_le_bytes());
+        font[8..10].copy_from_slice(&400_u16.to_le_bytes());
+        font[18..29].copy_from_slice(b"Memory Mono");
+        let words = |bytes: &[u8]| {
+            bytes
+                .chunks_exact(2)
+                .map(|p| u16::from_le_bytes([p[0], p[1]]))
+                .collect::<Vec<_>>()
+        };
+        let records: [(u16, Vec<u16>); 13] = [
+            (0x020B, vec![0, 0]),
+            (0x020C, vec![4, 4]),
+            (0x02FC, vec![0, 0, 0, 0]),
+            (0x012D, vec![0]),
+            (0x02FA, vec![5, 0, 0, 0, 0]),
+            (0x012D, vec![1]),
+            (0x041B, vec![4, 4, 0, 0]),
+            (0x02FB, words(&font)),
+            (0x012D, vec![2]),
+            (0x0209, vec![0x0201, 3]),
+            (0x012E, vec![24]),
+            (0x0A32, vec![2, 1, 2, 0, u16::from_le_bytes(*b"AB")]),
+            (0, vec![]),
+        ];
+        let mut bytes = vec![0_u8; 40];
+        bytes[..4].copy_from_slice(&[0xD7, 0xCD, 0xC6, 0x9A]);
+        bytes[10..12].copy_from_slice(&4_i16.to_le_bytes());
+        bytes[12..14].copy_from_slice(&4_i16.to_le_bytes());
+        bytes[14..16].copy_from_slice(&1440_u16.to_le_bytes());
+        let checksum = bytes[..20]
+            .chunks_exact(2)
+            .fold(0_u16, |a, p| a ^ u16::from_le_bytes([p[0], p[1]]));
+        bytes[20..22].copy_from_slice(&checksum.to_le_bytes());
+        bytes[22..24].copy_from_slice(&1_u16.to_le_bytes());
+        bytes[24..26].copy_from_slice(&9_u16.to_le_bytes());
+        bytes[26..28].copy_from_slice(&0x0300_u16.to_le_bytes());
+        bytes[32..34].copy_from_slice(&3_u16.to_le_bytes());
+        let max_record = records
+            .iter()
+            .map(|(_, p)| 3 + p.len() as u32)
+            .max()
+            .unwrap();
+        bytes[34..38].copy_from_slice(&max_record.to_le_bytes());
+        for (function, params) in records {
+            bytes.extend_from_slice(&(3 + params.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(&function.to_le_bytes());
+            for word in params {
+                bytes.extend_from_slice(&word.to_le_bytes());
+            }
+        }
+        let file_words = ((bytes.len() - 22) / 2) as u32;
+        bytes[28..32].copy_from_slice(&file_words.to_le_bytes());
+        bytes
+    }
+
+    #[test]
+    fn source_metafile_picture_effects_preserve_every_pixel_and_owned_text_record() {
+        let payload = source_effect_wmf();
+        let mut pkg = package();
+        pkg.set_part("word/media/owned.wmf", payload.clone());
+        let relationships = br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="owned" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/owned.wmf"/></Relationships>"#.to_vec();
+        pkg.set_part("word/_rels/document.xml.rels", relationships.clone());
+        let mut fonts = embedded_fonts();
+        fonts.insert_embedded("Memory Mono", false, false, FaceId::MonoRegular.bytes());
+        let expected_record = metafile::MetaText {
+            text: "AB".into(),
+            x: 0.25,
+            y: 0.5,
+            size: 0.5,
+            cell: false,
+            family: "Memory Mono".into(),
+            bold: false,
+            italic: false,
+            color: [1, 2, 3],
+            align: 24,
+            aspect: 1.0,
+        };
+        // Supported color sources, declined incomplete/unknown color pairs,
+        // and recursive effects all retain the independent WMF text layer.
+        for (name, colors, soft, wash, expected) in [
+            ("plain", "", false, false, [0_u8, 0, 0]),
+            ("soft", "", true, false, [0, 0, 0]),
+            (
+                "srgb",
+                "<a:srgbClr val=\"FF0000\"/><a:srgbClr val=\"FFFFFF\"/>",
+                false,
+                false,
+                [255, 0, 0],
+            ),
+            (
+                "scheme",
+                "<a:schemeClr val=\"accent1\"/><a:prstClr val=\"white\"/>",
+                true,
+                false,
+                [79, 129, 189],
+            ),
+            (
+                "system",
+                "<a:sysClr val=\"windowText\" lastClr=\"00FF00\"/><a:prstClr val=\"white\"/>",
+                false,
+                false,
+                [0, 255, 0],
+            ),
+            (
+                "preset",
+                "<a:prstClr val=\"white\"/><a:prstClr val=\"black\"/>",
+                false,
+                false,
+                [255, 255, 255],
+            ),
+            (
+                "incomplete",
+                "<a:srgbClr val=\"FF0000\"/>",
+                false,
+                false,
+                [0, 0, 0],
+            ),
+            (
+                "unsupported",
+                "<a:prstClr val=\"red\"/><a:prstClr val=\"white\"/>",
+                false,
+                false,
+                [0, 0, 0],
+            ),
+            ("washout", "", false, true, [207, 207, 207]),
+        ] {
+            let fragment = if wash {
+                r#"<w:p><w:r><w:pict><v:shape style="width:40pt;height:20pt"><v:imagedata xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="owned" gain=".3" blacklevel=".35"/></v:shape></w:pict></w:r></w:p>"#.to_string()
+            } else {
+                let effect = if soft {
+                    "<a:effectLst><a:softEdge rad=\"12700\"/></a:effectLst>"
+                } else {
+                    ""
+                };
+                let duotone = if colors.is_empty() {
+                    String::new()
+                } else {
+                    format!("<a:duotone>{colors}</a:duotone>")
+                };
+                format!(
+                    r#"<w:p><w:r><w:drawing><wp:inline><wp:extent cx="508000" cy="254000"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="owned">{duotone}</a:blip></pic:blipFill><pic:spPr><a:xfrm/><a:prstGeom prst="rect"/>{effect}</pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#
+                )
+            };
+            let (dom, root) = drawing_dom(&fragment);
+            let before = dom.serialize_element(root);
+            let images = collect_images(&pkg, "word/document.xml", &dom, root, &|_| None);
+            assert_eq!(images.len(), 1, "{name}");
+            let img = &images[0];
+            let (dw, dh) = if wash { (39.8, 20.15) } else { (40.0, 20.0) };
+            assert_eq!((img.w, img.h), (dw, dh), "{name}");
+            assert_eq!(img.inset, [0.0; 4]);
+            assert_eq!(img.crop, None);
+            assert_eq!(img.rotate_deg, 0.0);
+            assert!(!img.oval);
+            let ImageKind::Metafile { raster, texts } = &img.kind else {
+                panic!("{name}: owned WMF text layer")
+            };
+            assert_eq!(
+                texts.as_ref(),
+                std::slice::from_ref(&expected_record),
+                "{name}"
+            );
+            let ImageKind::Rgb {
+                width,
+                height,
+                bytes,
+                alpha,
+            } = raster.as_ref()
+            else {
+                panic!("{name}: WMF raster layer")
+            };
+            assert_eq!((*width, *height), (4, 4));
+            assert_eq!(bytes, &expected.repeat(16), "{name}");
+            let expected_alpha = soft.then(|| {
+                vec![
+                    128, 128, 128, 128, 128, 255, 255, 128, 128, 255, 255, 128, 128, 128, 128, 128,
+                ]
+            });
+            assert_eq!(alpha, &expected_alpha, "{name}");
+            let mut layout = Layout::new(&fonts, compact_page(), HfChrome::default(), 15);
+            layout.emit_image_in(img, &Defaults::word().para);
+            assert_eq!(layout.pages.len(), 1);
+            assert_eq!(layout.pages[0].ops.len(), 2, "{name}: raster then text");
+            let Op::Rgb {
+                x,
+                y,
+                dw: pw,
+                dh: ph,
+                width: rw,
+                height: rh,
+                bytes: painted,
+                alpha: painted_alpha,
+                crop,
+                rotate_deg,
+                oval,
+            } = &layout.pages[0].ops[0]
+            else {
+                panic!("raster paint")
+            };
+            assert_eq!((*x, *y, *pw, *ph), (24.0, 276.0 - dh, dw, dh));
+            assert_eq!((*rw, *rh), (4, 4));
+            assert_eq!(painted, bytes);
+            assert_eq!(painted_alpha, alpha);
+            assert_eq!(*crop, None);
+            assert_eq!(*rotate_deg, 0.0);
+            assert!(!*oval);
+            let Op::Text {
+                face,
+                size,
+                x,
+                y,
+                glyphs,
+                color,
+                text,
+                hscale,
+            } = &layout.pages[0].ops[1]
+            else {
+                panic!("text paint")
+            };
+            assert_eq!(*face, fonts.resolve("Memory Mono", false, false));
+            assert!((*size - dh * 0.5).abs() < 0.001);
+            assert!((*x - (24.0 + dw * 0.25)).abs() < 0.001);
+            assert!((*y - (276.0 - dh * 0.5)).abs() < 0.001);
+            assert!((*hscale - dw / dh).abs() < 0.001);
+            let raw = ttf_parser::Face::parse(FaceId::MonoRegular.bytes(), 0).unwrap();
+            assert_eq!(
+                glyphs,
+                &"AB"
+                    .chars()
+                    .map(|c| raw.glyph_index(c).unwrap().0)
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(text, "AB");
+            assert_eq!(*color, [1.0 / 255.0, 2.0 / 255.0, 3.0 / 255.0]);
+            assert_eq!(dom.serialize_element(root), before);
+            assert_eq!(
+                pkg.part_bytes("word/media/owned.wmf"),
+                Some(payload.as_slice())
+            );
+            // Relationship parts are parsed into PartFs' relationship store;
+            // ordinary part_bytes deliberately does not expose their raw XML.
+            let rels = pkg.read_rels_for("word/document.xml").unwrap();
+            assert_eq!(rels.items.len(), 1);
+            let rel = &rels.items[0];
+            assert_eq!(rel.id, "owned");
+            assert_eq!(
+                rel.rel_type,
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+            );
+            assert_eq!(rel.target, "media/owned.wmf");
+            assert_eq!(rel.target_mode, None);
+        }
+    }
+
+    #[test]
+    fn hide_mark_retains_authored_terminal_media_and_nested_table_carriers() {
+        let payload = source_effect_wmf();
+        let mut pkg = package();
+        pkg.set_part("word/media/owned.wmf", payload.clone());
+        pkg.set_part("word/_rels/document.xml.rels", br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="owned" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/owned.wmf"/></Relationships>"#.to_vec());
+        let mut fonts = embedded_fonts();
+        fonts.insert_embedded("Memory Mono", false, false, FaceId::MonoRegular.bytes());
+        let picture = r#"<w:r><w:drawing><wp:inline><wp:extent cx="508000" cy="254000"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="owned"/></pic:blipFill><pic:spPr><a:xfrm/><a:prstGeom prst="rect"/></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#;
+        let textbox = format!(
+            r#"<w:r><w:drawing><wp:anchor><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="762000" cy="254000"/><wp:wrapNone/><a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp><wps:spPr><a:xfrm/><a:prstGeom prst="rect"/><a:noFill/><a:ln><a:noFill/></a:ln></wps:spPr><wps:txbx><w:txbxContent>{}</w:txbxContent></wps:txbx><wps:bodyPr lIns="0" rIns="0" tIns="0" bIns="0"/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>"#,
+            cell_paragraph("Box", "")
+        );
+        let nested = one_cell_table(
+            &cell_paragraph("Nested", ""),
+            r#"<w:trHeight w:val="400" w:hRule="exact"/>"#,
+        )
+        .replace("4000", "2000");
+        for kind in ["blank", "picture", "textbox", "nested"] {
+            for hide in [false, true] {
+                for hidden in [false, true] {
+                    for later_row in [false, true] {
+                        let content = match kind {
+                            "picture" => picture,
+                            "textbox" => textbox.as_str(),
+                            _ => "",
+                        };
+                        let tail = format!(
+                            r#"<w:p><w:pPr><w:spacing w:before="0" w:after="0" w:line="400" w:lineRule="exact"/>{}</w:pPr>{content}</w:p>"#,
+                            if hidden {
+                                "<w:rPr><w:vanish/></w:rPr>"
+                            } else {
+                                ""
+                            }
+                        );
+                        let contents = format!(
+                            "<w:tcPr>{}</w:tcPr>{}{}{tail}",
+                            if hide { "<w:hideMark/>" } else { "" },
+                            cell_paragraph("Owned", ""),
+                            if kind == "nested" {
+                                nested.as_str()
+                            } else {
+                                ""
+                            }
+                        );
+                        let mut source = one_cell_table(
+                            &contents,
+                            r#"<w:trHeight w:val="1600" w:hRule="exact"/>"#,
+                        );
+                        if later_row {
+                            let lead = format!(
+                                "<w:tr><w:trPr><w:trHeight w:val=\"1600\" w:hRule=\"exact\"/></w:trPr><w:tc>{}</w:tc></w:tr>",
+                                cell_paragraph("Lead", "")
+                            );
+                            source = source.replacen("<w:tr>", &format!("{lead}<w:tr>"), 1);
+                        }
+                        let (dom, root) = drawing_dom(&source);
+                        let before = dom.serialize_element(root);
+                        let block = table_block(
+                            &dom,
+                            dom.element(root, &W::tbl()).unwrap(),
+                            &sheet(),
+                            &mut Numbering::default(),
+                            &mut AuthorColors::default(),
+                            &HashMap::new(),
+                            Some((&pkg, "word/document.xml")),
+                        );
+                        let Block::Table {
+                            cols,
+                            rows,
+                            style,
+                            borders,
+                            geom,
+                            ..
+                        } = &block
+                        else {
+                            panic!("authored cell table")
+                        };
+                        assert_eq!(cols, &[200.0]);
+                        assert_eq!(rows.len(), if later_row { 2 } else { 1 });
+                        let cell = &rows[usize::from(later_row)][0];
+                        assert_eq!(cell.hide_mark, hide);
+                        assert_eq!(run_text(&cell.paras[0].runs), "Owned");
+                        // hideMark suppresses only an actually empty trailing
+                        // paragraph. A picture, floating textbox, or nested
+                        // table remains an independently owned carrier.
+                        assert_eq!(
+                            cell.paras.len(),
+                            if kind == "blank" && hide { 1 } else { 2 },
+                            "{kind} hide={hide} hidden={hidden} later={later_row}"
+                        );
+                        assert_eq!(cell.nested.len(), usize::from(kind == "nested"));
+                        assert_eq!(
+                            cell.nested_at,
+                            if kind == "nested" { vec![1] } else { vec![] }
+                        );
+                        if cell.paras.len() == 2 {
+                            let tail = &cell.paras[1];
+                            assert_eq!(
+                                tail.style.line_exact,
+                                Some(if hidden && matches!(kind, "blank" | "nested") {
+                                    0.0
+                                } else {
+                                    20.0
+                                })
+                            );
+                            assert_eq!(tail.images.len(), usize::from(kind == "picture"));
+                            assert_eq!(tail.boxes.len(), usize::from(kind == "textbox"));
+                            if kind == "picture" {
+                                let img = &tail.images[0];
+                                assert_eq!((img.w, img.h), (40.0, 20.0));
+                                let ImageKind::Metafile { raster, texts } = &img.kind else {
+                                    panic!("retained source picture")
+                                };
+                                assert_eq!(texts[0].text, "AB");
+                                let ImageKind::Rgb { bytes, .. } = raster.as_ref() else {
+                                    panic!("WMF raster")
+                                };
+                                assert_eq!(bytes, &vec![0_u8; 48]);
+                            }
+                            if kind == "textbox" {
+                                let box_ = &tail.boxes[0];
+                                assert_eq!((box_.w, box_.h), (60.0, 20.0));
+                                assert_eq!(run_text(&box_.runs), "Box");
+                            }
+                        }
+                        if kind == "nested" {
+                            let Block::Table { cols, rows, .. } = cell.nested[0].as_ref() else {
+                                panic!("nested source table")
+                            };
+                            assert_eq!(cols, &[100.0]);
+                            assert_eq!(rows.len(), 1);
+                            assert_eq!(cell_text(&rows[0][0]), "Nested");
+                        }
+                        let mut layout =
+                            Layout::new(&fonts, compact_page(), HfChrome::default(), 15);
+                        layout.emit_table(cols, rows, style, *borders, geom);
+                        assert_eq!(layout.pages.len(), 1);
+                        let painted = layout.pages[0]
+                            .ops
+                            .iter()
+                            .filter_map(|op| match op {
+                                Op::Text { text, .. } => Some(text.as_str()),
+                                _ => None,
+                            })
+                            .collect::<String>();
+                        let visible = painted
+                            .chars()
+                            .filter(|c| !c.is_whitespace())
+                            .collect::<String>();
+                        assert_eq!(
+                            visible,
+                            format!(
+                                "{}Owned{}",
+                                if later_row { "Lead" } else { "" },
+                                match kind {
+                                    "picture" => "AB",
+                                    "textbox" => "Box",
+                                    "nested" => "Nested",
+                                    _ => "",
+                                }
+                            ),
+                            "{kind} hide={hide} hidden={hidden} later={later_row}"
+                        );
+                        for op in &layout.pages[0].ops {
+                            if let Op::Text {
+                                face,
+                                size,
+                                x,
+                                y,
+                                glyphs,
+                                color,
+                                text,
+                                hscale,
+                            } = op
+                                && !text.trim().is_empty()
+                            {
+                                let metafile = text == "AB";
+                                let family = if metafile { "Memory Mono" } else { "Arial" };
+                                assert_eq!(*face, fonts.resolve(family, false, false));
+                                // Authored 10pt cell/textbox runs paint at 42
+                                // pixels per em on Word's 300dpi grid: 10.08pt.
+                                // WMF's independent text layer uses its 10pt
+                                // LOGFONT extent directly, without that snap.
+                                assert_eq!(
+                                    *size,
+                                    if metafile { 10.0 } else { 10.08 },
+                                    "{kind}: source font paint size for {text}"
+                                );
+                                assert_eq!(*hscale, if metafile { 2.0 } else { 1.0 });
+                                assert_eq!(
+                                    *color,
+                                    if metafile {
+                                        [1.0 / 255.0, 2.0 / 255.0, 3.0 / 255.0]
+                                    } else {
+                                        [0.0; 3]
+                                    }
+                                );
+                                assert!(
+                                    (24.0..=224.0).contains(x),
+                                    "{kind}: cell horizontal ink ownership x={x}"
+                                );
+                                assert!(
+                                    (116.0..=276.0).contains(y),
+                                    "{kind}: authored row ink ownership y={y}"
+                                );
+                                let raw = ttf_parser::Face::parse(
+                                    if metafile {
+                                        FaceId::MonoRegular.bytes()
+                                    } else {
+                                        FaceId::SansRegular.bytes()
+                                    },
+                                    0,
+                                )
+                                .unwrap();
+                                assert_eq!(
+                                    glyphs,
+                                    &text
+                                        .chars()
+                                        .map(|c| raw.glyph_index(c).unwrap().0)
+                                        .collect::<Vec<_>>()
+                                );
+                            }
+                        }
+                        let raster_ops = layout.pages[0]
+                            .ops
+                            .iter()
+                            .filter_map(|op| {
+                                if let Op::Rgb {
+                                    x,
+                                    dw,
+                                    dh,
+                                    width,
+                                    height,
+                                    bytes,
+                                    alpha,
+                                    crop,
+                                    rotate_deg,
+                                    oval,
+                                    ..
+                                } = op
+                                {
+                                    Some((
+                                        *x,
+                                        *dw,
+                                        *dh,
+                                        *width,
+                                        *height,
+                                        bytes,
+                                        alpha,
+                                        *crop,
+                                        *rotate_deg,
+                                        *oval,
+                                    ))
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<Vec<_>>();
+                        assert_eq!(raster_ops.len(), usize::from(kind == "picture"));
+                        if let Some((x, dw, dh, w, h, bytes, alpha, crop, rot, oval)) =
+                            raster_ops.first()
+                        {
+                            assert_eq!((*x, *dw, *dh, *w, *h), (24.0, 40.0, 20.0, 4, 4));
+                            assert_eq!(*bytes, &vec![0_u8; 48]);
+                            assert_eq!(**alpha, None);
+                            assert_eq!(*crop, None);
+                            assert_eq!(*rot, 0.0);
+                            assert!(!*oval);
+                        }
+                        assert_eq!(dom.serialize_element(root), before);
+                        assert_eq!(
+                            pkg.part_bytes("word/media/owned.wmf"),
+                            Some(payload.as_slice())
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     fn preset_box(
         preset: &str,
         fill: bool,
@@ -63513,6 +64052,308 @@ mod automatic_column_source_matrix_tests {
                 assert_eq!(
                     runs.iter().map(|run| run.text.as_str()).collect::<String>(),
                     logical
+                );
+                assert_eq!(dom.serialize_element(root), before);
+            }
+        }
+    }
+
+    #[test]
+    fn source_horizontal_rule_bevel_width_and_alignment_keep_owned_baseline_and_text() {
+        let fonts = fonts();
+        for (width, pct, expected_width) in [
+            ("width:30pt;", "0", 30.0),
+            ("width:300pt;", "0", 65.0),
+            ("width:0pt;", "0", 65.0),
+            ("width:30pt;", "500", 32.5),
+            ("width:30pt;", "1500", 65.0),
+            ("", "0", 65.0),
+        ] {
+            for (alignment, offset) in [("left", 0.0), ("center", 0.5), ("right", 1.0)] {
+                for solid in [false, true] {
+                    let source = format!(
+                        "<w:p><w:pPr><w:ind w:left='200' w:right='100'/><w:spacing w:before='0' w:after='0' w:line='400' w:lineRule='exact'/></w:pPr><w:bookmarkStart w:id='7' w:name='RuleOwner'/><w:r><w:rPr><w:color w:val='FF0000'/></w:rPr><w:t>AB</w:t><w:pict><v:rect xmlns:v='urn:schemas-microsoft-com:vml' xmlns:o='urn:schemas-microsoft-com:office:office' o:hr='t' o:hrnoshade='{}' o:hrpct='{pct}' o:hralign='{alignment}' style='{width}height:2pt' fillcolor='#123'/></w:pict></w:r><w:bookmarkEnd w:id='7'/></w:p><w:sectPr><w:pgSz w:w='2400' w:h='2800'/><w:pgMar w:top='400' w:bottom='400' w:left='400' w:right='400' w:header='0' w:footer='0'/></w:sectPr>",
+                        if solid { "t" } else { "f" }
+                    );
+                    let (dom, root, blocks, page) = parsed(&source);
+                    let before = dom.serialize_element(root);
+                    let Block::Paragraph {
+                        runs,
+                        style,
+                        bookmarks,
+                        images,
+                        ..
+                    } = &blocks[0]
+                    else {
+                        panic!("authored rule paragraph")
+                    };
+                    assert_eq!(
+                        runs.iter().map(|run| run.text.as_str()).collect::<String>(),
+                        "AB"
+                    );
+                    assert_eq!(bookmarks, &["RuleOwner"]);
+                    assert!(images.is_empty(), "a horizontal rule is not a picture");
+                    assert_eq!(
+                        (style.indent_left, style.indent_right, style.line_exact),
+                        (10.0, 5.0, Some(20.0))
+                    );
+                    let color = if solid {
+                        [17.0 / 255.0, 34.0 / 255.0, 51.0 / 255.0]
+                    } else {
+                        [136.0 / 255.0, 144.5 / 255.0, 153.0 / 255.0]
+                    };
+                    let rule = style.hrule.unwrap();
+                    assert_eq!(rule.color, color);
+                    assert_eq!(rule.h, 2.0);
+                    assert_eq!(
+                        rule.frac,
+                        if pct == "500" {
+                            0.5
+                        } else if pct == "1500" {
+                            1.5
+                        } else {
+                            1.0
+                        }
+                    );
+                    let (pages, facts) = layout_with_facts(
+                        &fonts,
+                        &page,
+                        &HfChrome::default(),
+                        &blocks,
+                        15,
+                        FootnoteCatalog::default(),
+                    );
+                    assert_eq!(pages.len(), 1);
+                    assert_eq!(facts.bookmark_pages["RuleOwner"], "1");
+                    let raw = ttf_parser::Face::parse(FaceId::MonoRegular.bytes(), 0).unwrap();
+                    let mut painted = String::new();
+                    let mut fills = 0;
+                    for op in &pages[0].ops {
+                        match op {
+                            Op::Text {
+                                text,
+                                x,
+                                y,
+                                size,
+                                color,
+                                face,
+                                glyphs,
+                                ..
+                            } => {
+                                let c = "AB".chars().nth(painted.len()).unwrap();
+                                assert_eq!(text, &c.to_string());
+                                close(*x, 29.92 + mono_prefix_width("AB", painted.len()));
+                                close(*y, 104.0);
+                                assert_eq!(
+                                    (*size, *color, *face),
+                                    (
+                                        12.0,
+                                        [1.0, 0.0, 0.0],
+                                        fonts.resolve("Memory Mono", false, false)
+                                    )
+                                );
+                                assert_eq!(glyphs, &[raw.glyph_index(c).unwrap().0]);
+                                painted.push_str(text);
+                            }
+                            Op::FillRect {
+                                x,
+                                y,
+                                w,
+                                h,
+                                color: painted_color,
+                            } => {
+                                fills += 1;
+                                close(*x, 30.0 + (65.0 - expected_width) * offset);
+                                close(*y, 104.0);
+                                close(*w, expected_width);
+                                close(*h, 2.0);
+                                assert_eq!(*painted_color, color);
+                            }
+                            _ => panic!(
+                                "rule keeps only authored text and fill: {:?}",
+                                std::mem::discriminant(op)
+                            ),
+                        }
+                    }
+                    assert_eq!(painted, "AB");
+                    assert_eq!(fills, 1);
+                    assert_eq!(dom.serialize_element(root), before);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn source_autofit_counts_horizontal_words_but_not_vertical_or_skipped_cell_owners() {
+        let fonts = fonts();
+        let word = "ABCDEFGHIJ";
+        let word_width = mono_prefix_width(word, word.len());
+        for (direction, skipped) in [("", false), ("btLr", false), ("tbRl", false), ("", true)] {
+            for fixed in [false, true] {
+                let word = if fixed { "A" } else { word };
+                let first = if skipped {
+                    String::new()
+                } else {
+                    format!(
+                        "<w:tc><w:tcPr><w:tcW w:w='200' w:type='dxa'/><w:shd w:fill='00FF00'/>{}</w:tcPr><w:p><w:pPr>{}<w:spacing w:before='0' w:after='0' w:line='400' w:lineRule='exact'/></w:pPr><w:bookmarkStart w:id='1' w:name='FirstCell'/><w:r><w:rPr><w:color w:val='FF0000'/></w:rPr><w:t>{word}</w:t></w:r><w:bookmarkEnd w:id='1'/></w:p></w:tc>",
+                        if direction.is_empty() {
+                            String::new()
+                        } else {
+                            format!("<w:textDirection w:val='{direction}'/>")
+                        },
+                        // A vertical word deliberately cannot widen its column.
+                        // Author explicit ink overflow so all ten characters can
+                        // paint: the negative right indent expands the clip room,
+                        // but contributes zero to the autofit minimum. Without it
+                        // a 10pt cell legitimately clips the long cached word.
+                        if direction.is_empty() {
+                            ""
+                        } else {
+                            "<w:ind w:right='-1600'/>"
+                        }
+                    )
+                };
+                let source = format!(
+                    "<w:tbl><w:tblPr><w:tblW w:w='2000' w:type='dxa'/><w:tblLayout w:type='{}'/><w:tblBorders><w:top w:val='nil'/><w:left w:val='nil'/><w:bottom w:val='nil'/><w:right w:val='nil'/><w:insideH w:val='nil'/><w:insideV w:val='nil'/></w:tblBorders><w:tblCellMar><w:top w:w='0' w:type='dxa'/><w:left w:w='0' w:type='dxa'/><w:bottom w:w='0' w:type='dxa'/><w:right w:w='0' w:type='dxa'/></w:tblCellMar></w:tblPr><w:tblGrid><w:gridCol w:w='200'/><w:gridCol w:w='1800'/></w:tblGrid><w:tr><w:trPr><w:trHeight w:val='2000' w:hRule='exact'/>{}</w:trPr>{first}<w:tc><w:tcPr><w:tcW w:w='1800' w:type='dxa'/><w:shd w:fill='0000FF'/></w:tcPr><w:p><w:pPr><w:spacing w:before='0' w:after='0' w:line='400' w:lineRule='exact'/></w:pPr><w:bookmarkStart w:id='2' w:name='SecondCell'/><w:r><w:rPr><w:color w:val='FF0000'/></w:rPr><w:t>B</w:t></w:r><w:bookmarkEnd w:id='2'/></w:p></w:tc></w:tr></w:tbl><w:sectPr><w:pgSz w:w='4000' w:h='4000'/><w:pgMar w:top='400' w:bottom='400' w:left='400' w:right='400' w:header='0' w:footer='0'/></w:sectPr>",
+                    if fixed { "fixed" } else { "autofit" },
+                    if skipped {
+                        "<w:gridBefore w:val='1'/><w:wBefore w:w='200' w:type='dxa'/>"
+                    } else {
+                        ""
+                    }
+                );
+                let (dom, root, blocks, page) = parsed(&source);
+                let before = dom.serialize_element(root);
+                let Block::Table {
+                    cols, rows, geom, ..
+                } = &blocks[0]
+                else {
+                    panic!("source table")
+                };
+                assert_eq!(cols, &[10.0, 90.0]);
+                assert_eq!(
+                    (
+                        geom.fixed,
+                        geom.cell_spacing,
+                        geom.row_min.as_slice(),
+                        geom.row_exact.as_slice()
+                    ),
+                    (fixed, 0.0, &[100.0][..], &[true][..])
+                );
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0].len(), 2);
+                assert_eq!(
+                    (rows[0][0].grid_skip, rows[0][0].vertical),
+                    (skipped, !direction.is_empty())
+                );
+                assert_eq!(
+                    rows[0][1].paras[0]
+                        .runs
+                        .iter()
+                        .map(|r| r.text.as_str())
+                        .collect::<String>(),
+                    "B"
+                );
+                assert_eq!(rows[0][1].paras[0].bookmarks, &["SecondCell"]);
+                if !skipped {
+                    assert_eq!(
+                        rows[0][0].paras[0]
+                            .runs
+                            .iter()
+                            .map(|r| r.text.as_str())
+                            .collect::<String>(),
+                        word
+                    );
+                    assert_eq!(rows[0][0].paras[0].bookmarks, &["FirstCell"]);
+                    assert_eq!(
+                        rows[0][0].paras[0].style.indent_right,
+                        if direction.is_empty() { 0.0 } else { -80.0 }
+                    );
+                }
+                // Horizontal unbroken text takes its raw hmtx word width;
+                // vertical text runs along the row and a skipped grid slot
+                // has no authored text that could demand column width.
+                let widths = if fixed || skipped || !direction.is_empty() {
+                    [10.0, 90.0]
+                } else {
+                    [word_width, 100.0 - word_width]
+                };
+                let resolved = resolved_col_widths(&fonts, cols, rows, geom, 160.0);
+                for (actual, expected) in resolved.iter().zip(widths) {
+                    close(*actual, expected);
+                }
+                let (pages, facts) = layout_with_facts(
+                    &fonts,
+                    &page,
+                    &HfChrome::default(),
+                    &blocks,
+                    15,
+                    FootnoteCatalog::default(),
+                );
+                assert_eq!(pages.len(), 1);
+                assert_eq!(facts.bookmark_pages["SecondCell"], "1");
+                if !skipped {
+                    assert_eq!(facts.bookmark_pages["FirstCell"], "1");
+                }
+                let mut first_fills = Vec::new();
+                let mut second_fills = Vec::new();
+                let mut text = String::new();
+                for op in &pages[0].ops {
+                    match op {
+                        Op::FillRect { x, y, w, h, color } if *color == [0.0, 1.0, 0.0] => {
+                            first_fills.push((*y, *h));
+                            close(*x, 20.0);
+                            assert!(
+                                (*y == 80.0 && *h == 100.0) || (*y == 160.0 && *h == 20.0),
+                                "authored row fill or its sole line fill: {:?}",
+                                (x, y, w, h, color)
+                            );
+                            close(*w, widths[0]);
+                        }
+                        Op::FillRect { x, y, w, h, color } if *color == [0.0, 0.0, 1.0] => {
+                            second_fills.push((*y, *h));
+                            close(*x, 20.0 + widths[0]);
+                            assert!(
+                                (*y == 80.0 && *h == 100.0) || (*y == 160.0 && *h == 20.0),
+                                "authored row fill or its sole line fill: {:?}",
+                                (x, y, w, h, color)
+                            );
+                            close(*w, widths[1]);
+                        }
+                        Op::Text {
+                            text: shown,
+                            color,
+                            size,
+                            face,
+                            ..
+                        } => {
+                            assert_eq!(*color, [1.0, 0.0, 0.0]);
+                            assert_eq!(*size, 12.0);
+                            assert_eq!(*face, fonts.resolve("Memory Mono", false, false));
+                            text.push_str(shown);
+                        }
+                        _ => panic!("unexpected table paint: {:?}", std::mem::discriminant(op)),
+                    }
+                }
+                first_fills.sort_by(|a, b| a.0.total_cmp(&b.0));
+                second_fills.sort_by(|a, b| a.0.total_cmp(&b.0));
+                assert_eq!(
+                    first_fills,
+                    if skipped {
+                        vec![]
+                    } else {
+                        vec![(80.0, 100.0), (160.0, 20.0)]
+                    }
+                );
+                assert_eq!(second_fills, vec![(80.0, 100.0), (160.0, 20.0)]);
+                assert_eq!(
+                    text,
+                    if skipped {
+                        "B".to_string()
+                    } else {
+                        format!("{word}B")
+                    },
+                    "direction={direction}, skipped={skipped}, fixed={fixed}"
                 );
                 assert_eq!(dom.serialize_element(root), before);
             }

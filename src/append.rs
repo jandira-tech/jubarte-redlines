@@ -1588,4 +1588,213 @@ mod public_memory_append_owner_boundary_tests {
             }
         }
     }
+    #[test]
+    fn append_resolves_inherited_lists_and_style_collisions_through_both_numbering_serializations()
+    {
+        let paragraph = |style: &str, text: &str| {
+            format!(
+                "<w:p><w:pPr><w:pStyle w:val='{style}'/><w:spacing w:before='120' w:after='80'/></w:pPr><w:r><w:rPr><w:rStyle w:val='RunB'/><w:rFonts w:ascii='Calibri' w:hAnsi='Calibri'/><w:color w:val='123456'/><w:sz w:val='22'/></w:rPr><w:t>{text}</w:t><w:tab/><w:br w:type='column'/></w:r></w:p>"
+            )
+        };
+        let original = "<w:p><w:pPr><w:pStyle w:val='Shared'/><w:ind w:left='180'/></w:pPr><w:r><w:rPr><w:rFonts w:ascii='Arial' w:hAnsi='Arial'/><w:b/></w:rPr><w:t>Original independently owned body</w:t></w:r></w:p>";
+        let section = "<w:sectPr><w:pgSz w:w='12240' w:h='15840'/><w:pgMar w:top='720' w:right='900' w:bottom='720' w:left='900'/></w:sectPr>";
+        let base = "<w:style w:type='paragraph' w:styleId='BaseB'><w:name w:val='Revised inherited base'/><w:pPr><w:spacing w:after='240'/></w:pPr><w:rPr><w:i/></w:rPr></w:style>";
+        let run = "<w:style w:type='character' w:styleId='RunB'><w:name w:val='Revised run owner'/><w:rPr><w:color w:val='654321'/><w:i/></w:rPr></w:style>";
+        let styles_root =
+            |children: &str| format!("<w:styles xmlns:w='{}'>{children}</w:styles>", W::URI);
+        let canonical_xml = |xml: &str| {
+            let mut dom = Dom::new();
+            let doc = dom.parse_xdocument(xml);
+            semantic(&dom, dom.root(doc).unwrap())
+        };
+        for alternate_prefix in [false, true] {
+            for disabled_list in [false, true] {
+                for second_collision in [false, true] {
+                    for collision_nsid in [false, true] {
+                        let num_id = if disabled_list { "0" } else { "1" };
+                        let b_style = format!(
+                            "<w:style w:type='paragraph' w:default='1' w:styleId='Shared'><w:name w:val='Revised paragraph owner'/><w:basedOn w:val='BaseB'/><w:next w:val='BaseB'/><w:pPr><w:numPr><w:ilvl w:val='0'/><w:numId w:val='{num_id}'/></w:numPr><w:ind w:left='360'/></w:pPr><w:rPr><w:color w:val='ABCDEF'/></w:rPr></w:style>"
+                        );
+                        let a_styles = format!(
+                            "<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii='Arial' w:hAnsi='Arial'/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:type='paragraph' w:default='1' w:styleId='Shared'><w:name w:val='Original paragraph owner'/><w:pPr><w:keepNext/></w:pPr></w:style>{}",
+                            if second_collision {
+                                "<w:style w:type='paragraph' w:styleId='SharedB'><w:name w:val='Independent reserved style id'/><w:rPr><w:u w:val='single'/></w:rPr></w:style>"
+                            } else {
+                                ""
+                            }
+                        );
+                        let a_numbering = format!(
+                            "<w:numbering xmlns:w='{}'><w:abstractNum w:abstractNumId='3'><w:nsid w:val='FFFFFFFF'/><w:multiLevelType w:val='singleLevel'/><w:lvl w:ilvl='0'><w:start w:val='1'/><w:numFmt w:val='decimal'/><w:lvlText w:val='%1.'/></w:lvl></w:abstractNum><w:abstractNum w:abstractNumId='4'><w:nsid w:val='00000000'/><w:multiLevelType w:val='singleLevel'/><w:lvl w:ilvl='0'><w:start w:val='1'/><w:numFmt w:val='lowerLetter'/><w:lvlText w:val='%1.'/></w:lvl></w:abstractNum><w:num w:numId='5'><w:abstractNumId w:val='3'/><w:lvlOverride w:ilvl='0'><w:startOverride w:val='4'/></w:lvlOverride></w:num></w:numbering>",
+                            W::URI
+                        );
+                        let nsid = if collision_nsid {
+                            "FFFFFFFF"
+                        } else {
+                            "12345678"
+                        };
+                        let b_numbering = format!(
+                            "<w:numbering xmlns:w='{}'><w:abstractNum w:abstractNumId='1'><w:nsid w:val='{nsid}'/><w:multiLevelType w:val='singleLevel'/><w:lvl w:ilvl='0'><w:start w:val='3'/><w:numFmt w:val='upperRoman'/><w:pStyle w:val='BaseB'/><w:lvlText w:val='%1.'/><w:lvlJc w:val='right'/><w:pPr><w:tabs><w:tab w:val='num' w:pos='720'/></w:tabs><w:ind w:left='720' w:hanging='360'/></w:pPr><w:rPr><w:rFonts w:ascii='Calibri' w:hAnsi='Calibri'/></w:rPr></w:lvl></w:abstractNum><w:num w:numId='1'><w:abstractNumId w:val='1'/><w:lvlOverride w:ilvl='0'><w:startOverride w:val='7'/></w:lvlOverride></w:num></w:numbering>",
+                            W::URI
+                        );
+                        let mut a = package(&format!("{original}{section}"));
+                        let mut b = package(&format!(
+                            "{}{section}",
+                            paragraph("Shared", "Revised source keeps inherited list formatting")
+                        ));
+                        a.set_part("word/styles.xml", styles_root(&a_styles).into_bytes());
+                        b.set_part(
+                            "word/styles.xml",
+                            styles_root(&format!("{b_style}{base}{run}")).into_bytes(),
+                        );
+                        let actual_a_numbering = if alternate_prefix {
+                            a_numbering
+                                .replace("w:", "n:")
+                                .replace("xmlns:w=", "xmlns:n=")
+                        } else {
+                            a_numbering.clone()
+                        };
+                        a.set_part(
+                            "word/numbering.xml",
+                            actual_a_numbering.replace('\'', "\"").into_bytes(),
+                        );
+                        b.set_part("word/numbering.xml", b_numbering.clone().into_bytes());
+                        for pkg in [&mut a, &mut b] {
+                            pkg.add_content_type_override("/word/numbering.xml","application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml");
+                            if !pkg.read_rels_for("word/document.xml").is_some_and(|rels| {
+                                rels.items
+                                    .iter()
+                                    .any(|r| r.rel_type.ends_with("/numbering"))
+                            }) {
+                                pkg.add_document_relationship(
+                                    "word/document.xml",
+                                    &format!("{RELS}/numbering"),
+                                    "numbering.xml",
+                                );
+                            }
+                        }
+                        let a_bytes = a.to_zip().unwrap();
+                        let b_bytes = b.to_zip().unwrap();
+                        let output = append_documents(
+                            &a_bytes,
+                            &b_bytes,
+                            &AppendOptions {
+                                section_break: SectionBreak::None,
+                                keep_sections: false,
+                                comments: AppendComments::Drop,
+                            },
+                        )
+                        .unwrap();
+                        assert!(output.warnings.is_empty());
+                        let out = PartFs::open(&output.docx).unwrap();
+                        let renamed = if second_collision {
+                            "SharedB2"
+                        } else {
+                            "SharedB"
+                        };
+                        assert_eq!(
+                            view(&out.part_string("word/document.xml").unwrap()),
+                            view(&document(&format!(
+                                "{original}{}{section}",
+                                paragraph(
+                                    renamed,
+                                    "Revised source keeps inherited list formatting"
+                                )
+                            )))
+                        );
+                        let mut dom = Dom::new();
+                        let doc = dom.parse_xdocument(&out.part_string("word/styles.xml").unwrap());
+                        let root = dom.root(doc).unwrap();
+                        let by_id = |id: &str| {
+                            dom.elements(root, Some(&W::name("style")))
+                                .into_iter()
+                                .find(|&style| {
+                                    dom.attribute(style, &W::name("styleId")) == Some(id)
+                                })
+                                .unwrap()
+                        };
+                        let expected_style = b_style
+                            .replace(" w:default='1'", "")
+                            .replace("w:styleId='Shared'", &format!("w:styleId='{renamed}'"))
+                            .replace("w:numId w:val='1'", "w:numId w:val='6'");
+                        let mut expected_dom = Dom::new();
+                        let expected_doc = expected_dom.parse_xdocument(&styles_root(&format!(
+                            "{a_styles}{expected_style}{base}{run}"
+                        )));
+                        let expected_root = expected_dom.root(expected_doc).unwrap();
+                        for style in dom.elements(root, Some(&W::name("style"))) {
+                            let id = dom.attribute(style, &W::name("styleId")).unwrap();
+                            let expected = expected_dom
+                                .elements(expected_root, Some(&W::name("style")))
+                                .into_iter()
+                                .find(|&s| {
+                                    expected_dom.attribute(s, &W::name("styleId")) == Some(id)
+                                })
+                                .unwrap();
+                            assert_eq!(
+                                semantic(&dom, style),
+                                semantic(&expected_dom, expected),
+                                "entire style owner {id}"
+                            );
+                        }
+                        assert_eq!(
+                            dom.elements(root, Some(&W::name("style"))).len(),
+                            expected_dom
+                                .elements(expected_root, Some(&W::name("style")))
+                                .len()
+                        );
+                        assert_eq!(dom.attribute(by_id(renamed), &W::name("default")), None);
+                        assert_eq!(
+                            semantic(&dom, dom.element(root, &W::name("docDefaults")).unwrap()),
+                            semantic(
+                                &expected_dom,
+                                expected_dom
+                                    .element(expected_root, &W::name("docDefaults"))
+                                    .unwrap()
+                            )
+                        );
+                        let numbering = out.part_string("word/numbering.xml").unwrap();
+                        if disabled_list {
+                            assert_eq!(canonical_xml(&numbering), canonical_xml(&a_numbering));
+                        } else {
+                            let copied = b_numbering
+                                .replace("w:abstractNumId='1'", "w:abstractNumId='5'")
+                                .replace("w:numId='1'", "w:numId='6'")
+                                .replace("w:abstractNumId w:val='1'", "w:abstractNumId w:val='5'")
+                                .replace(
+                                    &format!("w:val='{nsid}'"),
+                                    &format!(
+                                        "w:val='{}'",
+                                        if collision_nsid { "00000001" } else { nsid }
+                                    ),
+                                );
+                            let copied_inner = copied
+                                .split_once('>')
+                                .unwrap()
+                                .1
+                                .strip_suffix("</w:numbering>")
+                                .unwrap();
+                            let a_abstract_end = a_numbering.find("<w:num ").unwrap();
+                            let a_close = a_numbering.find("</w:numbering>").unwrap();
+                            let copied_num_start = copied_inner.find("<w:num ").unwrap();
+                            let expected = format!(
+                                "{}{}{}{}{}",
+                                &a_numbering[..a_abstract_end],
+                                &copied_inner[..copied_num_start],
+                                &a_numbering[a_abstract_end..a_close],
+                                &copied_inner[copied_num_start..],
+                                "</w:numbering>"
+                            );
+                            assert_eq!(
+                                canonical_xml(&numbering),
+                                canonical_xml(&expected),
+                                "all A/B abstract and concrete properties, prefix={alternate_prefix} collision={collision_nsid}"
+                            );
+                        }
+                        assert_eq!(snapshot(&PartFs::open(&a_bytes).unwrap()), snapshot(&a));
+                        assert_eq!(snapshot(&PartFs::open(&b_bytes).unwrap()), snapshot(&b));
+                    }
+                }
+            }
+        }
+    }
 }

@@ -268,6 +268,24 @@ fn project_jc_only_from(dom: &mut Dom, ppr: NodeId) -> Option<NodeId> {
     Some(out)
 }
 
+/// Paragraph properties such as numPr, tabs and pBdr own nested values.
+/// Keep the established leaf normalization, and include each nested child;
+/// run-property normalization retains its separate compatibility contract.
+fn para_property_signature(dom: &mut Dom, property: NodeId) -> String {
+    let mut signature = prop_signature(dom, property);
+    for child in dom.elements(property, None) {
+        if dom
+            .name(child)
+            .is_some_and(|name| name.namespace_name() == PT::URI)
+        {
+            continue;
+        }
+        let part = para_property_signature(dom, child);
+        signature.push_str(&format!("{}:{part}", part.len()));
+    }
+    signature
+}
+
 /// Signature of projected pPr with jc children ignored (for partial-removal gate).
 fn normalize_para_properties_without_jc(dom: &mut Dom, ppr: NodeId) -> String {
     let mut parts: Vec<String> = Vec::new();
@@ -278,7 +296,7 @@ fn normalize_para_properties_without_jc(dom: &mut Dom, ppr: NodeId) -> String {
         if dom.name_is(c, &W::name("jc")) {
             continue;
         }
-        parts.push(prop_signature(dom, c));
+        parts.push(para_property_signature(dom, c));
     }
     parts.sort();
     parts.join("\u{1}")
@@ -317,7 +335,7 @@ pub(crate) fn normalize_para_properties(dom: &mut Dom, ppr: NodeId) -> String {
                 continue;
             }
         }
-        parts.push(prop_signature(dom, c));
+        parts.push(para_property_signature(dom, c));
     }
     parts.sort();
     parts.join("\u{1}")
@@ -714,5 +732,95 @@ mod format_change_cache_tests {
                 .any(|a| a.correlation_status == CorrelationStatus::Equal),
             "expected at least one unchanged Equal"
         );
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod nested_paragraph_property_source_history_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn owned_mark(
+        dom: &mut Dom,
+        props: &str,
+        settings: &WmlComparerSettings,
+    ) -> ComparisonUnitAtom {
+        let doc = dom.parse_xdocument(&format!("<w:document xmlns:w='{}'><w:body><w:p><w:pPr>{props}</w:pPr><w:r><w:t>Independent paragraph owner</w:t></w:r></w:p><w:p/><w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>", W::URI));
+        let body = dom.element(dom.root(doc).unwrap(), &W::body()).unwrap();
+        crate::comparer::atomize::create_comparison_unit_atom_list(dom, body, settings)
+            .into_iter()
+            .find(|atom| dom.name_is(atom.content_element, &W::p_pr()))
+            .unwrap()
+    }
+
+    fn clean(dom: &mut Dom, node: NodeId) -> String {
+        let copy = dom.clone_subtree(node);
+        crate::comparer::finalize::remove_powertools_scratch_markup(dom, copy);
+        dom.serialize_element(copy)
+    }
+
+    #[test]
+    fn nested_list_tab_and_border_values_record_complete_original_paragraph_properties() {
+        let cases = [
+            (
+                "<w:numPr><w:ilvl w:val='0'/><w:numId w:val='1'/></w:numPr>",
+                "<w:numPr><w:ilvl w:val='0'/><w:numId w:val='7'/></w:numPr>",
+            ),
+            (
+                "<w:numPr><w:ilvl w:val='0'/><w:numId w:val='1'/></w:numPr>",
+                "<w:numPr><w:ilvl w:val='1'/><w:numId w:val='1'/></w:numPr>",
+            ),
+            (
+                "<w:tabs><w:tab w:val='left' w:pos='720'/></w:tabs>",
+                "<w:tabs><w:tab w:val='right' w:pos='1440'/></w:tabs>",
+            ),
+            (
+                "<w:pBdr><w:bottom w:val='single' w:sz='8' w:color='123456'/></w:pBdr>",
+                "<w:pBdr><w:bottom w:val='single' w:sz='8' w:color='654321'/></w:pBdr>",
+            ),
+        ];
+        for (case, (before, after)) in cases.iter().enumerate() {
+            for enabled in [false, true] {
+                for same in [false, true] {
+                    let settings = WmlComparerSettings {
+                        detect_format_changes: enabled,
+                        ..WmlComparerSettings::default()
+                    };
+                    let mut dom = Dom::new();
+                    let before = owned_mark(&mut dom, before, &settings);
+                    let mut after = owned_mark(
+                        &mut dom,
+                        if same { cases[case].0 } else { after },
+                        &settings,
+                    );
+                    let source_before = clean(&mut dom, before.content_element);
+                    let source_after = clean(&mut dom, after.content_element);
+                    after.correlation_status = CorrelationStatus::Equal;
+                    after.comparison_unit_atom_before = Some(Arc::new(before.clone()));
+                    let mut atoms = vec![after];
+                    detect_format_changes_in_atom_list(&mut dom, &mut atoms, &settings);
+                    if enabled && !same {
+                        assert_eq!(
+                            atoms[0].correlation_status,
+                            CorrelationStatus::FormatChanged,
+                            "nested case={case}"
+                        );
+                        let change = atoms[0].format_change.as_ref().unwrap();
+                        assert_eq!(change.changed_properties, ["paragraphFormatting"]);
+                        assert_eq!(
+                            clean(&mut dom, change.old_para_properties.unwrap()),
+                            source_before,
+                            "complete original nested properties case={case}"
+                        );
+                    } else {
+                        assert_eq!(atoms[0].correlation_status, CorrelationStatus::Equal);
+                        assert!(atoms[0].format_change.is_none());
+                    }
+                    assert_eq!(clean(&mut dom, before.content_element), source_before);
+                    assert_eq!(clean(&mut dom, atoms[0].content_element), source_after);
+                }
+            }
+        }
     }
 }

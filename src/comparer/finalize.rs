@@ -12697,6 +12697,13 @@ pub fn strip_leading_del_echoing_prev_pure_i(dom: &mut Dom, root: NodeId) {
         if !para_is_pure_inserted(dom, prev) || !para_is_mixed_revision(dom, p) {
             continue;
         }
+        // A deleted pilcrow still owns this original paragraph. Its leading
+        // deletion is source content, even when the previous B-only paragraph
+        // repeats that word. Dropping it would change rejection (compound
+        // boundary moves such as alpha-copper -> alpha / copper).
+        if para_mark_revision(dom, p, &W::del()) {
+            continue;
+        }
         let prev_text = para_revision_body_text(dom, prev);
         let prev_tok = prev_text
             .split(|c: char| !c.is_alphanumeric())
@@ -26409,6 +26416,435 @@ mod coverage_real_revision_merge_matrix_tests {
         );
     }
 
+    fn terminal_layout_paragraph(kind: &str, properties: &str) -> String {
+        let format = "<w:rPr><w:rFonts w:ascii='Calibri' w:hAnsi='Calibri'/><w:i/><w:color w:val='654321'/><w:sz w:val='22'/></w:rPr>";
+        let body = match kind {
+            "empty" => String::new(),
+            "spaces" => format!("<w:r>{format}<w:t xml:space='preserve'>  </w:t></w:r>"),
+            "field" => format!(
+                "<w:r>{format}<w:fldChar w:fldCharType='begin'/></w:r><w:r>{format}<w:instrText xml:space='preserve'> PAGE </w:instrText></w:r><w:r>{format}<w:fldChar w:fldCharType='separate'/></w:r><w:r>{format}<w:t xml:space='preserve'>  </w:t></w:r><w:r>{format}<w:fldChar w:fldCharType='end'/></w:r>"
+            ),
+            "field-no-cache" => format!(
+                "<w:r>{format}<w:fldChar w:fldCharType='begin'/></w:r><w:r>{format}<w:instrText xml:space='preserve'> PAGE </w:instrText></w:r><w:r>{format}<w:fldChar w:fldCharType='end'/></w:r>"
+            ),
+            "math" => {
+                "<m:oMath><m:r><m:rPr><m:sty m:val='p'/></m:rPr><w:rPr><w:rFonts w:ascii='Cambria Math' w:hAnsi='Cambria Math'/></w:rPr><m:t>x+y</m:t></m:r></m:oMath>"
+                    .to_string()
+            }
+            "page-break" => format!("<w:r>{format}<w:br w:type='page'/></w:r>"),
+            "line-break" => format!("<w:r>{format}<w:br/></w:r>"),
+            _ => panic!("terminal layout fixture kind"),
+        };
+        let ppr = if properties.is_empty() {
+            String::new()
+        } else {
+            format!("<w:pPr>{properties}</w:pPr>")
+        };
+        format!("<w:p>{ppr}{body}</w:p>")
+    }
+
+    // M360 field residues and M431 layout breaks have source payload even
+    // without cached text. Their distinction must come from real atomization,
+    // not artificial mark/status flags. Each case uses a clean complete package
+    // and invokes the public comparison and projection pipeline.
+    #[test]
+    fn public_terminal_field_math_and_break_boundaries_preserve_all_source_owners() {
+        type Case = (
+            &'static str,
+            &'static str,
+            &'static str,
+            usize,
+            usize,
+            usize,
+            &'static str,
+        );
+        const OLD: &str = "Amber original confidential obligations";
+        const LONG_OLD: &str = "Amber original confidential manuscript imposes former archival obligations upon bronze custodians throughout perpetuity";
+        const HEADING: &str = "<w:pStyle w:val='Heading1'/>";
+        const LIST: &str = "<w:pStyle w:val='ListParagraph'/><w:numPr><w:ilvl w:val='0'/><w:numId w:val='9'/></w:numPr>";
+        const SPACING: &str = "<w:spacing w:before='120' w:after='240'/>";
+        const CENTER: &str = "<w:jc w:val='center'/>";
+        let mut cases = Vec::<Case>::new();
+        for kind in [
+            "empty",
+            "spaces",
+            "field",
+            "field-no-cache",
+            "math",
+            "page-break",
+            "line-break",
+        ] {
+            for properties in ["", HEADING, LIST, SPACING] {
+                cases.push((kind, properties, "", 2, 2, 1, OLD));
+            }
+        }
+        cases.extend([
+            ("field", HEADING, CENTER, 2, 2, 1, OLD),
+            ("field", HEADING, LIST, 2, 2, 1, OLD),
+            ("field", LIST, SPACING, 2, 2, 1, OLD),
+            ("field-no-cache", HEADING, CENTER, 2, 2, 1, OLD),
+            ("spaces", SPACING, CENTER, 2, 2, 1, OLD),
+            ("math", HEADING, LIST, 2, 2, 1, OLD),
+            ("field", HEADING, "", 1, 2, 1, OLD),
+            ("field", HEADING, "", 3, 2, 1, OLD),
+            ("field", HEADING, "", 2, 1, 1, OLD),
+            ("field", HEADING, "", 2, 3, 1, OLD),
+            ("field", HEADING, "", 2, 5, 1, OLD),
+            ("empty", HEADING, "", 2, 2, 2, OLD),
+            ("empty", HEADING, "", 2, 2, 3, OLD),
+            ("spaces", HEADING, "", 2, 2, 2, OLD),
+            ("spaces", HEADING, "", 2, 2, 3, OLD),
+            ("math", HEADING, "", 2, 2, 3, OLD),
+            ("page-break", HEADING, "", 2, 2, 3, OLD),
+        ]);
+        // A thirteen-word first-original paragraph satisfies the M359 guard
+        // that leaves whitespace/field carriers for the later merge pass.
+        // Three original and five contentful revised paragraphs avoid the
+        // local (<3) document-scale shortcut before the shell override.
+        for kind in [
+            "spaces",
+            "field",
+            "field-no-cache",
+            "math",
+            "page-break",
+            "line-break",
+        ] {
+            for properties in ["", HEADING] {
+                cases.push((kind, properties, "", 3, 5, 1, LONG_OLD));
+            }
+        }
+        let mut failures = Vec::new();
+        let mut comparisons = 0usize;
+        for (
+            index,
+            &(
+                kind,
+                old_properties,
+                new_properties,
+                old_count,
+                content_count,
+                shell_count,
+                first_original,
+            ),
+        ) in cases.iter().enumerate()
+        {
+            let old = (0..old_count)
+                .map(|paragraph| {
+                    wholesale_boundary_paragraph(
+                        if paragraph == 0 {
+                            first_original
+                        } else {
+                            "Bronze previous archival manuscript duties"
+                        },
+                        old_properties,
+                        "original",
+                    )
+                })
+                .collect::<String>();
+            let new = (0..content_count)
+                .map(|paragraph| {
+                    wholesale_boundary_paragraph(
+                        if paragraph % 2 == 0 {
+                            "Violet revised instrument counsel responsibilities"
+                        } else {
+                            "Cobalt next signed delivery provisions"
+                        },
+                        "",
+                        "revised",
+                    )
+                })
+                .collect::<String>()
+                + &terminal_layout_paragraph(kind, new_properties).repeat(shell_count);
+            let a = wholesale_boundary_package(&old);
+            let b = wholesale_boundary_package(&new);
+            let original = organic_source_snapshot(&a);
+            let revised = organic_source_snapshot(&b);
+            for word in [false, true] {
+                let label = format!(
+                    "layout case={index}/kind={kind}/oldprops={old_properties}/newprops={new_properties}/D={old_count}/contentI={content_count}/shellI={shell_count}/word={word}"
+                );
+                let settings = WmlComparerSettings {
+                    author_for_revisions: "Terminal layout owner editor".to_string(),
+                    date_time_for_revisions: DATE.to_string(),
+                    ..if word {
+                        WmlComparerSettings::default()
+                    } else {
+                        WmlComparerSettings::powertools_faithful()
+                    }
+                };
+                let compared =
+                    crate::document_comparer::compare_documents_with_settings(&a, &b, &settings)
+                        .expect("public literal layout comparison");
+                comparisons += 1;
+                let package = crate::opc::PartFs::open(&compared).expect("compared memory package");
+                let mut dom = Dom::new();
+                let document = dom
+                    .parse_xdocument(&package.part_string("word/document.xml").expect("main part"));
+                let root = dom.root(document).expect("document");
+                for name in ["ins", "del", "pPrChange", "rPrChange"] {
+                    for revision in dom.descendants(root, Some(&W::name(name))) {
+                        assert_eq!(
+                            dom.attribute(revision, &W::author()),
+                            Some("Terminal layout owner editor"),
+                            "{label}/{name} provenance"
+                        );
+                        assert_eq!(
+                            dom.attribute(revision, &W::date()),
+                            Some(DATE),
+                            "{label}/{name} date"
+                        );
+                        assert!(
+                            dom.attribute(revision, &W::id())
+                                .is_some_and(|id| id.parse::<u32>().is_ok()),
+                            "{label}/{name} id"
+                        );
+                    }
+                }
+                for (accept, expected) in [(false, &original), (true, &revised)] {
+                    let projection = if accept {
+                        crate::document_comparer::accept_revisions(&compared)
+                    } else {
+                        crate::document_comparer::reject_revisions(&compared)
+                    }
+                    .expect("public layout source projection");
+                    let actual = organic_source_snapshot(&projection);
+                    let matches = if word {
+                        actual
+                            .owned
+                            .formatted_characters
+                            .iter()
+                            .map(|(c, _, r)| (c, r))
+                            .eq(expected
+                                .owned
+                                .formatted_characters
+                                .iter()
+                                .map(|(c, _, r)| (c, r)))
+                            && actual.owned.nontext_payloads == expected.owned.nontext_payloads
+                            && actual.owned.table_geometry == expected.owned.table_geometry
+                            && actual.annotations == expected.annotations
+                            && actual.controls == expected.controls
+                            && actual.row_properties == expected.row_properties
+                            && actual.comments == expected.comments
+                    } else {
+                        actual == *expected
+                    };
+                    if !matches {
+                        failures.push(format!(
+                            "{label}/accept={accept}: {}; emptyparagraphs={} actual_empty={:?} expected_empty={:?} actual_nontext={:?} expected_nontext={:?}",
+                            compact_source_difference(&actual.owned, &expected.owned),
+                            actual.empty_paragraph_properties
+                                == expected.empty_paragraph_properties,
+                            actual.empty_paragraph_properties, expected.empty_paragraph_properties,
+                            actual.owned.nontext_payloads, expected.owned.nontext_payloads
+                        ));
+                    }
+                    let repeat = if accept {
+                        crate::document_comparer::accept_revisions(&projection)
+                    } else {
+                        crate::document_comparer::reject_revisions(&projection)
+                    }
+                    .expect("repeat layout source projection");
+                    assert_eq!(
+                        organic_source_snapshot(&repeat),
+                        actual,
+                        "repeat {label}/accept={accept}"
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            comparisons, 114,
+            "all fifty-seven semantic layout boundaries in both complete modes"
+        );
+        assert!(
+            failures.is_empty(),
+            "{} exact terminal-owner failures:\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
+    }
+
+    // TOC-style complex fields legitimately cross paragraph boundaries. The
+    // unchanged field lead owns begin/instruction/separate; the original end
+    // belongs to its first replacement paragraph, while the revised end
+    // belongs to a later replacement paragraph. This is the caller input for
+    // the field-crossing fold guard, unlike balanced single-paragraph fields.
+    #[test]
+    fn public_cross_paragraph_field_ends_keep_exact_source_instruction_and_cache_owners() {
+        let field_run = |body: &str| {
+            format!(
+                "<w:r><w:rPr><w:rFonts w:ascii='Calibri' w:hAnsi='Calibri'/><w:color w:val='345678'/><w:lang w:val='en-US'/></w:rPr>{body}</w:r>"
+            )
+        };
+        let mut failures = Vec::new();
+        let mut comparisons = 0;
+        for nested in [false, true] {
+            for related_head in [false, true] {
+                for (old_count, new_count) in [(2usize, 2usize), (2, 3), (3, 2), (3, 3)] {
+                    for blank_tail in [false, true] {
+                        let field_begin = field_run("<w:fldChar w:fldCharType='begin'/>")
+                            + &field_run(
+                                "<w:instrText xml:space='preserve'> TOC \\o &quot;1-3&quot; \\h </w:instrText>",
+                            )
+                            + &field_run("<w:fldChar w:fldCharType='separate'/>");
+                        let inner_begin = if nested {
+                            field_run("<w:fldChar w:fldCharType='begin'/>")
+                                + &field_run(
+                                    "<w:instrText xml:space='preserve'> REF Archive \\h </w:instrText>",
+                                )
+                                + &field_run("<w:fldChar w:fldCharType='separate'/>")
+                        } else {
+                            String::new()
+                        };
+                        let common_prefix = format!(
+                            "<w:p><w:pPr><w:pStyle w:val='Normal'/><w:jc w:val='center'/></w:pPr>{field_begin}{inner_begin}{}</w:p>",
+                            field_run("<w:t>Unchanged contents field lead</w:t>")
+                        );
+                        let end = field_run("<w:fldChar w:fldCharType='end'/>");
+                        let ends = if nested { end.clone() + &end } else { end };
+                        let old = (0..old_count).map(|index| {
+                            let text = if index == 0 {
+                                if related_head { "TIFF source archive".to_string() } else { "Bronze source archive".to_string() }
+                            } else { format!("Amber former manuscript obligations amber{index}") };
+                            let paragraph = wholesale_boundary_paragraph(&text, "<w:pStyle w:val='Heading1'/><w:spacing w:before='120' w:after='240'/>", "original");
+                            if index == 0 { paragraph.replacen("</w:p>", &format!("{ends}</w:p>"), 1) } else { paragraph }
+                        }).collect::<String>();
+                        let new = (0..new_count)
+                            .map(|index| {
+                                let text = if index == 0 {
+                                    if related_head {
+                                        "TIFF revised exhibit".to_string()
+                                    } else {
+                                        "Violet revised exhibit".to_string()
+                                    }
+                                } else {
+                                    format!(
+                                        "Cobalt maritime instrument responsibilities cobalt{index}"
+                                    )
+                                };
+                                let paragraph = wholesale_boundary_paragraph(
+                                    &text,
+                                    "<w:pStyle w:val='BodyText'/><w:jc w:val='right'/>",
+                                    "revised",
+                                );
+                                if index + 1 == new_count {
+                                    paragraph.replacen("</w:p>", &format!("{ends}</w:p>"), 1)
+                                } else {
+                                    paragraph
+                                }
+                            })
+                            .collect::<String>();
+                        let tail = if blank_tail { "<w:p/>" } else { "" };
+                        let a = wholesale_boundary_package(&(common_prefix.clone() + &old + tail));
+                        let b = wholesale_boundary_package(&(common_prefix + &new + tail));
+                        let expected_a = organic_source_snapshot(&a);
+                        let expected_b = organic_source_snapshot(&b);
+                        for word in [false, true] {
+                            comparisons += 1;
+                            let label = format!(
+                                "cross-field/nested={nested}/head={related_head}/{old_count}x{new_count}/blank={blank_tail}/word={word}"
+                            );
+                            let mut settings = if word {
+                                crate::comparer::WmlComparerSettings::default()
+                            } else {
+                                crate::comparer::WmlComparerSettings::powertools_faithful()
+                            };
+                            settings.author_for_revisions = "Field boundary editor".into();
+                            settings.date_time_for_revisions = DATE.into();
+                            let compared =
+                                crate::document_comparer::compare_documents_with_settings(
+                                    &a, &b, &settings,
+                                )
+                                .unwrap();
+                            let package = crate::opc::PartFs::open(&compared).unwrap();
+                            let mut dom = Dom::new();
+                            let document = dom.parse_xdocument(
+                                &package.part_string("word/document.xml").unwrap(),
+                            );
+                            let root = dom.root(document).unwrap();
+                            for node in dom.descendants(root, None) {
+                                if [W::ins(), W::del(), W::p_pr_change(), W::r_pr_change()]
+                                    .iter()
+                                    .any(|name| dom.name_is(node, name))
+                                {
+                                    assert_eq!(
+                                        dom.attribute(node, &W::author()),
+                                        Some(settings.author_for_revisions.as_str()),
+                                        "revision author {label}"
+                                    );
+                                    assert_eq!(
+                                        dom.attribute(node, &W::date()),
+                                        Some(DATE),
+                                        "revision date {label}"
+                                    );
+                                    assert!(
+                                        dom.attribute(node, &W::id())
+                                            .is_some_and(|id| id.parse::<u32>().is_ok()),
+                                        "numeric revision ID {label}"
+                                    );
+                                }
+                            }
+                            for (accept, expected) in [(false, &expected_a), (true, &expected_b)] {
+                                let projection = if accept {
+                                    crate::document_comparer::accept_revisions(&compared)
+                                } else {
+                                    crate::document_comparer::reject_revisions(&compared)
+                                }
+                                .unwrap();
+                                let actual = organic_source_snapshot(&projection);
+                                let exact = if word {
+                                    actual
+                                        .owned
+                                        .formatted_characters
+                                        .iter()
+                                        .map(|(c, _, r)| (c, r))
+                                        .eq(expected
+                                            .owned
+                                            .formatted_characters
+                                            .iter()
+                                            .map(|(c, _, r)| (c, r)))
+                                        && actual.owned.nontext_payloads
+                                            == expected.owned.nontext_payloads
+                                        && actual.owned.table_geometry
+                                            == expected.owned.table_geometry
+                                        && actual.annotations == expected.annotations
+                                        && actual.controls == expected.controls
+                                        && actual.row_properties == expected.row_properties
+                                        && actual.comments == expected.comments
+                                } else {
+                                    actual == *expected
+                                };
+                                if !exact {
+                                    failures.push(format!("{label}/accept={accept}: {}; empty={:?}/{:?}; field payloads={:?}/{:?}", compact_source_difference(&actual.owned, &expected.owned), actual.empty_paragraph_properties, expected.empty_paragraph_properties, actual.owned.nontext_payloads, expected.owned.nontext_payloads));
+                                }
+                                let repeated = if accept {
+                                    crate::document_comparer::accept_revisions(&projection)
+                                } else {
+                                    crate::document_comparer::reject_revisions(&projection)
+                                }
+                                .unwrap();
+                                assert_eq!(
+                                    organic_source_snapshot(&repeated),
+                                    actual,
+                                    "idempotent exact field owners {label}/accept={accept}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            comparisons, 64,
+            "all thirty-two legitimate field source pairs in both modes"
+        );
+        assert!(
+            failures.is_empty(),
+            "{} exact cross-field owner failures:\n{}",
+            failures.len(),
+            failures.into_iter().take(32).collect::<Vec<_>>().join("\n")
+        );
+    }
     fn organic_table(revised_geometry: bool, profile: usize) -> String {
         organic_table_with_rows(revised_geometry, revised_geometry, profile)
     }
@@ -33096,6 +33532,146 @@ mod live_opaque_row_source_boundary_tests {
                         assert_eq!(next_id, 100);
                     }
                 }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod deleted_carrier_echo_source_owner_tests {
+    use super::*;
+    const DATE: &str = "1970-01-01T00:00:00Z";
+    const PROPS: &str = "<w:spacing w:before='120' w:after='80'/><w:ind w:left='180'/>";
+    const RUN: &str = "<w:rPr><w:rFonts w:ascii='Calibri' w:hAnsi='Calibri'/><w:color w:val='123456'/><w:sz w:val='22'/><w:lang w:val='en-US'/></w:rPr>";
+
+    fn parse(body: &str) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&format!("<w:document xmlns:w='{}'><w:body>{body}<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr></w:body></w:document>",W::URI));
+        let root = dom.root(doc).unwrap();
+        (dom, root)
+    }
+    fn paragraph(text: &str) -> String {
+        format!(
+            "<w:p><w:pPr>{PROPS}</w:pPr><w:r>{RUN}<w:t xml:space='preserve'>{text}</w:t></w:r></w:p>"
+        )
+    }
+    fn canonical(dom: &Dom, node: NodeId) -> String {
+        let mut attrs = dom
+            .attributes(node)
+            .into_iter()
+            .filter(|(name, _)| !dom.is_namespace_declaration(name))
+            .collect::<Vec<_>>();
+        attrs.sort_by_key(|(name, value)| {
+            (
+                name.namespace_name().to_owned(),
+                name.local_name().to_owned(),
+                value.clone(),
+            )
+        });
+        if attrs.is_empty()
+            && dom.nodes(node).is_empty()
+            && [W::p_pr(), W::r_pr()]
+                .iter()
+                .any(|name| dom.name_is(node, name))
+        {
+            return String::new();
+        }
+        let mut result = format!("{:?}:{attrs:?}:{:?}", dom.name(node), dom.text_value(node));
+        for child in dom.nodes(node) {
+            let part = canonical(dom, child);
+            if !part.is_empty() {
+                result.push_str(&format!("{}:{part}", part.len()));
+            }
+        }
+        result
+    }
+    fn events(dom: &Dom, root: NodeId) -> Vec<String> {
+        let body = dom.element(root, &W::body()).unwrap();
+        let mut events = Vec::new();
+        for child in dom.elements(body, None) {
+            if !dom.name_is(child, &W::p()) {
+                events.push(canonical(dom, child));
+                continue;
+            }
+            events.push("begin paragraph".into());
+            if let Some(ppr) = dom.element(child, &W::p_pr()) {
+                events.push(canonical(dom, ppr));
+            }
+            for run in dom.elements(child, Some(&W::r())) {
+                let props = dom
+                    .element(run, &W::r_pr())
+                    .map(|p| canonical(dom, p))
+                    .unwrap_or_default();
+                for payload in dom.elements(run, None) {
+                    if dom.name_is(payload, &W::r_pr()) {
+                        continue;
+                    }
+                    if dom.name_is(payload, &W::t()) {
+                        events.extend(
+                            dom.value(payload)
+                                .chars()
+                                .map(|ch| format!("text:{ch}:{props}")),
+                        );
+                    } else {
+                        events.push(format!("payload:{}:{props}", canonical(dom, payload)));
+                    }
+                }
+            }
+            assert!(
+                dom.elements(child, None)
+                    .iter()
+                    .all(|&node| dom.name_is(node, &W::p_pr()) || dom.name_is(node, &W::r()))
+            );
+            events.push("end paragraph".into());
+        }
+        events
+    }
+    #[test]
+    fn deleted_original_carrier_keeps_echo_prefix_and_both_complete_source_projections() {
+        for (inserted, deleted) in [
+            ("alpha", "alpha-"),
+            ("alpha", "alpha:"),
+            ("Alpha", "Alpha "),
+        ] {
+            let body = format!(
+                "<w:p><w:pPr>{PROPS}<w:rPr><w:ins w:id='1' w:author='Open-Xml-PowerTools' w:date='{DATE}'/></w:rPr></w:pPr><w:ins w:id='2' w:author='Open-Xml-PowerTools' w:date='{DATE}'><w:r>{RUN}<w:t>{inserted}</w:t></w:r></w:ins></w:p><w:p><w:pPr>{PROPS}<w:rPr><w:del w:id='3' w:author='Open-Xml-PowerTools' w:date='{DATE}'/></w:rPr></w:pPr><w:del w:id='4' w:author='Open-Xml-PowerTools' w:date='{DATE}'><w:r>{RUN}<w:delText xml:space='preserve'>{deleted}</w:delText></w:r></w:del><w:r>{RUN}<w:t>copper walnut</w:t></w:r><w:ins w:id='5' w:author='Open-Xml-PowerTools' w:date='{DATE}'><w:r>{RUN}<w:t xml:space='preserve'> </w:t></w:r></w:ins></w:p>{}",
+                paragraph("violet glacier closing")
+            );
+            let (mut dom, root) = parse(&body);
+            let before = canonical(&dom, root);
+            strip_leading_del_echoing_prev_pure_i(&mut dom, root);
+            assert_eq!(
+                canonical(&dom, root),
+                before,
+                "original deleted carrier owns prefix {deleted:?}"
+            );
+            for accept in [false, true] {
+                let copy = dom.clone_subtree(root);
+                let projected = if accept {
+                    crate::revision_processor::accept_revisions_document(&mut dom, copy)
+                } else {
+                    crate::revision_processor::reject_revisions_document(&mut dom, copy)
+                };
+                let expected = if accept {
+                    format!(
+                        "{}{}",
+                        paragraph(inserted),
+                        paragraph("copper walnut violet glacier closing")
+                    )
+                } else {
+                    format!(
+                        "{}{}",
+                        paragraph(&format!("{deleted}copper walnut")),
+                        paragraph("violet glacier closing")
+                    )
+                };
+                let (expected_dom, expected_root) = parse(&expected);
+                assert_eq!(
+                    events(&dom, projected),
+                    events(&expected_dom, expected_root),
+                    "complete source accept={accept} prefix={deleted:?}"
+                );
             }
         }
     }

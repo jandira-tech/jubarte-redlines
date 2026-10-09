@@ -2759,6 +2759,142 @@ mod residual_byte_and_geometry_contract_tests {
     }
 
     #[test]
+    fn authored_width_scales_close_text_objects_without_leaking_into_following_glyphs() {
+        let fonts = bundled_fonts();
+        let face = fonts.resolve("PDFContractMono", false, false);
+        let raw = ttf_parser::Face::parse(FaceId::MonoRegular.bytes(), 0).unwrap();
+        for (size, ppem, tracking) in [
+            (10.0, None, ""),
+            (11.04, Some(46), "-0.0015"),
+            (16.08, Some(67), "-0.0018"),
+        ] {
+            for scale in [0.5, 1.0, 1.5] {
+                let mut page = Page::new(200.0, 300.0);
+                // These are the real writer operations emitted for w:w=50/100/150.
+                // Unscaled owners before and after the scaled run must retain
+                // their own text state rather than inheriting its transform.
+                for (c, x, sx) in [('A', 10.0, 1.0), ('B', 20.0, scale), ('C', 30.0, 1.0)] {
+                    page.ops.push(
+                        Op::text(
+                            face,
+                            size,
+                            x,
+                            200.0,
+                            vec![raw.glyph_index(c).unwrap().0],
+                            [1.0, 0.0, 0.0],
+                            c.to_string(),
+                        )
+                        .scaled(sx),
+                    );
+                }
+                let signature = |page: &Page| {
+                    page.ops
+                        .iter()
+                        .map(|op| match op {
+                            Op::Text {
+                                face,
+                                size,
+                                x,
+                                y,
+                                glyphs,
+                                color,
+                                text,
+                                hscale,
+                            } => (
+                                *face,
+                                *size,
+                                *x,
+                                *y,
+                                glyphs.clone(),
+                                *color,
+                                text.clone(),
+                                *hscale,
+                            ),
+                            _ => panic!(
+                                "source owns only text operations: {:?}",
+                                std::mem::discriminant(op)
+                            ),
+                        })
+                        .collect::<Vec<_>>()
+                };
+                let original = signature(&page);
+                for compress in [false, true] {
+                    let pdf = emit(
+                        &fonts,
+                        std::slice::from_ref(&page),
+                        PdfOptions {
+                            compress,
+                            ..PdfOptions::default()
+                        },
+                    );
+                    let xref = pdf.windows(6).rposition(|w| w == b"\nxref\n").unwrap() + 1;
+                    let tail = std::str::from_utf8(&pdf[xref..]).unwrap();
+                    let count = tail
+                        .lines()
+                        .nth(1)
+                        .unwrap()
+                        .split_whitespace()
+                        .nth(1)
+                        .unwrap()
+                        .parse::<usize>()
+                        .unwrap();
+                    let offsets = tail
+                        .lines()
+                        .skip(3)
+                        .take(count - 1)
+                        .map(|row| row[..10].parse::<usize>().unwrap())
+                        .collect::<Vec<_>>();
+                    let mut contents = Vec::new();
+                    for (i, &at) in offsets.iter().enumerate() {
+                        let end = offsets.get(i + 1).copied().unwrap_or(xref);
+                        let prefix = format!("{} 0 obj\n", i + 1);
+                        let object = pdf[at..end]
+                            .strip_prefix(prefix.as_bytes())
+                            .unwrap()
+                            .strip_suffix(b"\nendobj\n")
+                            .unwrap();
+                        if object.windows(8).any(|w| w == b"\nstream\n") {
+                            let decoded = stream(object);
+                            if decoded.windows(3).any(|w| w == b" Tj") {
+                                contents.push(String::from_utf8(decoded).unwrap());
+                            }
+                        }
+                    }
+                    assert_eq!(contents.len(), 1);
+                    let content = &contents[0];
+                    assert_eq!(content.matches(" Tj").count(), 3);
+                    if let Some(ppem) = ppem {
+                        // Device paint always isolates each glyph; 300 - 200
+                        // snaps from 100pt down to 100.08pt down, hence y199.92.
+                        for (c, x, a) in [
+                            ('A', 10, "0.24".to_string()),
+                            ('B', 20, format!("{:.4}", 0.24 * scale)),
+                            ('C', 30, "0.24".to_string()),
+                        ] {
+                            let a = if c == 'B' && scale == 1.0 {
+                                "0.24".to_string()
+                            } else {
+                                a
+                            };
+                            assert!(content.contains(&format!("q {a} 0 0 0.24 {x}.00 199.92 cm BT /LiberationMono {ppem} Tf 1.000 0.000 0.000 rg {tracking} Tc 0 0 Td ({c}) Tj ET Q")), "size={size}, scale={scale}, content={content}");
+                        }
+                    } else if scale == 1.0 {
+                        assert!(content.contains("BT /LiberationMono 10.00 Tf 1.000 0.000 0.000 rg 10.00 200.00 Td (A) Tj\n10 0 Td (B) Tj\n10 0 Td (C) Tj\nET\n"), "{content}");
+                    } else {
+                        assert!(
+                            content.contains("10.00 200.00 Td (A) Tj\nET\n"),
+                            "{content}"
+                        );
+                        assert!(content.contains(&format!("q {scale:.4} 0 0 1 20.00 200.00 cm BT /LiberationMono 10.00 Tf 1.000 0.000 0.000 rg 0 0 Td (B) Tj ET Q\n")), "{content}");
+                        assert!(content.contains("BT /LiberationMono 10.00 Tf 1.000 0.000 0.000 rg 30.00 200.00 Td (C) Tj\nET\n"), "{content}");
+                    }
+                    assert_eq!(signature(&page), original);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn repeated_image_objects_share_only_identical_encoded_samples_and_alpha_owners() {
         let mut jpeg = Vec::new();
         image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 90)

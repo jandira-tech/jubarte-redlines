@@ -2848,13 +2848,34 @@ fn windows_font_dirs_from(env: impl Fn(&str) -> Option<std::ffi::OsString>) -> V
 
 /// `cjk_family_faces` read from disk.
 fn scan_cjk_family_faces(family: &str, stems: &[&str]) -> SourcedFaces {
+    scan_cjk_family_faces_with(
+        family,
+        stems,
+        &cjk_dirs(),
+        &|dir| {
+            fs::read_dir(dir)
+                .ok()
+                .map(|entries| entries.flatten().map(|entry| entry.path()).collect())
+        },
+        &|path| fs::read(path).ok(),
+    )
+}
+
+/// The discovery policy shared by disk and deterministic in-memory font sources.
+fn scan_cjk_family_faces_with(
+    family: &str,
+    stems: &[&str],
+    dirs: &[PathBuf],
+    listing: &impl Fn(&Path) -> Option<Vec<PathBuf>>,
+    read: &impl Fn(&Path) -> Option<Vec<u8>>,
+) -> SourcedFaces {
     let want = fold_family(family);
     let mut files: Vec<(usize, PathBuf)> = Vec::new();
-    for dir in cjk_dirs() {
-        let Ok(entries) = fs::read_dir(&dir) else {
+    for dir in dirs {
+        let Some(entries) = listing(dir) else {
             continue;
         };
-        for path in entries.flatten().map(|e| e.path()) {
+        for path in entries {
             let ext_ok = path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
                 ["ttf", "otf", "ttc"]
                     .iter()
@@ -2873,7 +2894,7 @@ fn scan_cjk_family_faces(family: &str, stems: &[&str]) -> SourcedFaces {
     // (pass, style, bytes): pass 0 = ID 1 match, 1 = ID 16, 2 = fallback.
     let mut found: Vec<(u8, (bool, bool), SourcedBytes)> = Vec::new();
     for (rank, path) in &files {
-        let Ok(bytes) = fs::read(path) else {
+        let Some(bytes) = read(path) else {
             continue;
         };
         let count = ttf_parser::fonts_in_collection(&bytes).unwrap_or(1);
@@ -5698,7 +5719,7 @@ mod deeper_boundary_tests {
     // 3188/27:T, 3188/60:F, 3271:F, 3478:F, 3494:T, 3518/44:T,
     // 3582/46:F, 3582/59:T, 3582/59:F. These are targets, not measured gains.
     // These fixtures mutate bundled bytes in memory; no catalogue or file lookup.
-    fn table_record(bytes: &[u8], tag: &[u8; 4]) -> usize {
+    pub(super) fn table_record(bytes: &[u8], tag: &[u8; 4]) -> usize {
         let count = usize::from(u16::from_be_bytes(bytes[4..6].try_into().unwrap()));
         (0..count)
             .map(|i| 12 + 16 * i)
@@ -5727,7 +5748,7 @@ mod deeper_boundary_tests {
     }
 
     // OpenType name records use the dependency's documented UTF-16BE encoding.
-    fn set_names(bytes: &mut Vec<u8>, records: &[(u16, u16, u16, Vec<u8>)]) {
+    pub(super) fn set_names(bytes: &mut Vec<u8>, records: &[(u16, u16, u16, Vec<u8>)]) {
         let mut table = vec![0, 0];
         table.extend_from_slice(&u16::try_from(records.len()).unwrap().to_be_bytes());
         table.extend_from_slice(&u16::try_from(6 + 12 * records.len()).unwrap().to_be_bytes());
@@ -6947,7 +6968,7 @@ mod memory_discovery_policy_contract_tests {
         assert_eq!(reads, vec![PathBuf::from("/memory/system/Carlito.ttf")]);
     }
 
-    fn collection(faces: &[FaceId]) -> Vec<u8> {
+    pub(super) fn collection(faces: &[FaceId]) -> Vec<u8> {
         let mut out = b"ttcf".to_vec();
         out.extend_from_slice(&0x00010000_u32.to_be_bytes());
         out.extend_from_slice(&(faces.len() as u32).to_be_bytes());
@@ -7232,5 +7253,141 @@ mod cloud_font_memory_owner_tests {
             "font name extraction retains every owned font byte"
         );
         assert_eq!(listing[&root], folders, "no folder is reordered or renamed");
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod cjk_memory_discovery_source_contract_tests {
+    use super::*;
+
+    #[test]
+    fn cjk_font_discovery_preserves_ranked_source_faces_without_host_fonts() {
+        for (names, family, expected) in [
+            (vec![(1, "Owned CJK")], "Owned CJK", true),
+            (vec![(1, "Other"), (16, "Owned CJK")], "Owned CJK", true),
+            (vec![(1, "Other")], "Owned CJK", false),
+        ] {
+            for rank in [0, 1] {
+                for available in [false, true] {
+                    let dir = PathBuf::from("/memory/cjk");
+                    let path = dir.join(if rank == 0 {
+                        "primary.ttf"
+                    } else {
+                        "secondary.OTF"
+                    });
+                    let mut bytes = FaceId::CarlitoBoldItalic.bytes().to_vec();
+                    let records: Vec<_> = names
+                        .iter()
+                        .map(|&(id, text)| {
+                            (
+                                3,
+                                1,
+                                id,
+                                text.encode_utf16().flat_map(u16::to_be_bytes).collect(),
+                            )
+                        })
+                        .collect();
+                    deeper_boundary_tests::set_names(&mut bytes, &records);
+                    let frozen = bytes.clone();
+                    let listing = |folder: &Path| (folder == dir).then(|| vec![path.clone()]);
+                    let read = |source: &Path| (available && source == path).then(|| bytes.clone());
+                    let faces = scan_cjk_family_faces_with(
+                        family,
+                        &["primary", "secondary"],
+                        std::slice::from_ref(&dir),
+                        &listing,
+                        &read,
+                    );
+                    if available && (expected || rank == 0) {
+                        assert_eq!(
+                            faces,
+                            vec![((true, true), FaceSource::new(&path, None), bytes.clone())]
+                        );
+                        let raw = ttf_parser::Face::parse(&faces[0].2, 0).unwrap();
+                        let authored = ttf_parser::Face::parse(&frozen, 0).unwrap();
+                        for character in ['A', 'g', 'Ω'] {
+                            assert_eq!(raw.glyph_index(character), authored.glyph_index(character));
+                        }
+                    } else {
+                        assert!(faces.is_empty());
+                    }
+                    assert_eq!(bytes, frozen);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cjk_collection_discovery_keeps_face_indices_and_skips_invalid_duplicate_sources() {
+        let first = PathBuf::from("/memory/first");
+        let second = PathBuf::from("/memory/second");
+        let missing = PathBuf::from("/memory/missing");
+        let collection = memory_discovery_policy_contract_tests::collection(&[
+            FaceId::CarlitoRegular,
+            FaceId::CarlitoBold,
+        ]);
+        let mut no_outlines = FaceId::CarlitoItalic.bytes().to_vec();
+        let offset = deeper_boundary_tests::table_record(&no_outlines, b"glyf");
+        no_outlines[offset..offset + 4].copy_from_slice(b"none");
+        let paths = [
+            first.join("fallback.ttc"),
+            first.join("corrupt.ttf"),
+            first.join("missing.ttf"),
+            first.join("nooutline.ttf"),
+            first.join("unrelated.ttf"),
+            first.join("fallback.bin"),
+            second.join("fallback.ttc"),
+        ];
+        let bytes = HashMap::from([
+            (paths[0].clone(), collection.clone()),
+            (paths[1].clone(), b"invalid sfnt".to_vec()),
+            (paths[3].clone(), no_outlines),
+            (paths[4].clone(), FaceId::MonoRegular.bytes().to_vec()),
+            (paths[5].clone(), FaceId::CarlitoRegular.bytes().to_vec()),
+            (paths[6].clone(), FaceId::MonoRegular.bytes().to_vec()),
+        ]);
+        let reads = std::cell::RefCell::new(Vec::new());
+        let listing = |dir: &Path| {
+            if dir == missing {
+                None
+            } else {
+                Some(
+                    paths
+                        .iter()
+                        .filter(|path| path.parent() == Some(dir))
+                        .cloned()
+                        .collect(),
+                )
+            }
+        };
+        let read = |path: &Path| {
+            reads.borrow_mut().push(path.to_path_buf());
+            bytes.get(path).cloned()
+        };
+        let found = scan_cjk_family_faces_with(
+            "Carlito",
+            &["fallback", "corrupt", "missing", "nooutline"],
+            &[missing.clone(), first, second],
+            &listing,
+            &read,
+        );
+        assert_eq!(
+            found,
+            vec![
+                (
+                    (false, false),
+                    FaceSource::new(&paths[0], Some(0)),
+                    ttc_face_bytes(&collection, 0).unwrap()
+                ),
+                (
+                    (true, false),
+                    FaceSource::new(&paths[0], Some(1)),
+                    ttc_face_bytes(&collection, 1).unwrap()
+                ),
+            ]
+        );
+        assert_eq!(*reads.borrow(), paths[..4]);
+        assert_eq!(bytes[&paths[0]], collection);
     }
 }
