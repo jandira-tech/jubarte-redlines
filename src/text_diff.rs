@@ -423,21 +423,6 @@ fn context_view(diff: &TextDiff<'_, '_, str>, options: &TextOptions, context: us
     out
 }
 
-fn first_critic(text: &str) -> usize {
-    let mut backslashes = 0;
-    for (scalar, (byte, ch)) in text.char_indices().enumerate() {
-        if backslashes % 2 == 0
-            && ["{++", "{--", "{~~"]
-                .iter()
-                .any(|mark| text[byte..].starts_with(mark))
-        {
-            return scalar;
-        }
-        backslashes = if ch == '\\' { backslashes + 1 } else { 0 };
-    }
-    0
-}
-
 /// Escape literal text before surrounding it with generated revision marks.
 /// Backslashes must be doubled before the renderer escapes mark delimiters.
 pub(crate) fn critic_literal(text: &str) -> String {
@@ -445,31 +430,141 @@ pub(crate) fn critic_literal(text: &str) -> String {
     crate::markdown::diff_markdown(&text, &text)
 }
 
-fn word_change(old: &str, new: &str) -> String {
+/// One stretch of a word-level change line.
+enum Piece {
+    Same(String),
+    Delete(String),
+    Insert(String),
+    Replace(String, String),
+}
+
+impl Piece {
+    /// The texts the line shows, in order: one, or the old and new text.
+    fn texts(&self) -> [&str; 2] {
+        match self {
+            Self::Same(t) | Self::Delete(t) | Self::Insert(t) => [t, ""],
+            Self::Replace(a, b) => [a, b],
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.texts().iter().map(|t| t.chars().count()).sum()
+    }
+}
+
+fn word_pieces(old: &str, new: &str) -> Vec<Piece> {
     let old_tokens = crate::util::word_tokens(old);
     let new_tokens = crate::util::word_tokens(new);
     let diff = TextDiff::from_slices(&old_tokens, &new_tokens);
-    let mut out = String::new();
-    for op in diff.ops() {
-        let a = old_tokens[op.old_range()].concat();
-        let b = new_tokens[op.new_range()].concat();
-        match op.tag() {
-            DiffTag::Equal => out.push_str(&critic_literal(&a)),
-            DiffTag::Delete => {
-                let _ = write!(out, "{{--{}--}}", critic_literal(&a));
+    diff.ops()
+        .iter()
+        .map(|op| {
+            let a = old_tokens[op.old_range()].concat();
+            let b = new_tokens[op.new_range()].concat();
+            match op.tag() {
+                DiffTag::Equal => Piece::Same(a),
+                DiffTag::Delete => Piece::Delete(a),
+                DiffTag::Insert => Piece::Insert(b),
+                DiffTag::Replace => Piece::Replace(a, b),
             }
-            DiffTag::Insert => {
-                let _ = write!(out, "{{++{}++}}", critic_literal(&b));
-            }
-            DiffTag::Replace => {
-                let _ = write!(
-                    out,
-                    "{{~~{}~>{}~~}}",
-                    critic_literal(&a),
-                    critic_literal(&b)
-                );
-            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+fn word_change(old: &str, new: &str) -> String {
+    critic_line(&word_pieces(old, new), None)
+}
+
+/// The pieces as CriticMarkup, keeping `window` scalars of text around the
+/// first change. The window counts text, never delimiters: a mark it
+/// reaches keeps its delimiters and loses only text, so every mark the
+/// line opens, it closes. Text left out becomes `…`.
+fn critic_line(pieces: &[Piece], window: Option<usize>) -> String {
+    let len: usize = pieces.iter().map(Piece::len).sum();
+    let shown = match window {
+        Some(width) if len > width => {
+            let at: usize = pieces
+                .iter()
+                .take_while(|p| matches!(p, Piece::Same(_)))
+                .map(Piece::len)
+                .sum();
+            let start = at.saturating_sub(width / 2).min(len);
+            start..start.saturating_add(width).min(len)
         }
+        _ => 0..len,
+    };
+    // The visible part of the text at `offset`, as scalar offsets into it.
+    let visible = |offset: usize, n: usize| {
+        let from = shown.start.clamp(offset, offset + n) - offset;
+        let to = shown.end.clamp(offset, offset + n) - offset;
+        (from < to).then_some((from, to))
+    };
+    let slice = |text: &str, (from, to): (usize, usize)| {
+        critic_literal(&text.chars().skip(from).take(to - from).collect::<String>())
+    };
+    let mut out = String::new();
+    let mut offset = 0;
+    // Text up to here is written or stands behind a `…`.
+    let mut covered = 0;
+    for piece in pieces {
+        let end = offset + piece.len();
+        let (open, close) = match piece {
+            Piece::Same(text) => {
+                let n = text.chars().count();
+                if let Some(part) = visible(offset, n) {
+                    if offset + part.0 > covered {
+                        out.push('…');
+                    }
+                    out.push_str(&slice(text, part));
+                    covered = offset + part.1;
+                }
+                offset = end;
+                continue;
+            }
+            Piece::Delete(_) => ("{--", "--}"),
+            Piece::Insert(_) => ("{++", "++}"),
+            Piece::Replace(..) => ("{~~", "~~}"),
+        };
+        if shown.start >= end || offset >= shown.end {
+            offset = end;
+            continue;
+        }
+        if offset > covered {
+            out.push('…');
+        }
+        out.push_str(open);
+        let texts = piece.texts();
+        let parts = if matches!(piece, Piece::Replace(..)) {
+            2
+        } else {
+            1
+        };
+        for (i, text) in texts.iter().take(parts).enumerate() {
+            if i == 1 {
+                out.push_str("~>");
+            }
+            let n = text.chars().count();
+            match visible(offset, n) {
+                Some(part) => {
+                    if part.0 > 0 {
+                        out.push('…');
+                    }
+                    out.push_str(&slice(text, part));
+                    if part.1 < n {
+                        out.push('…');
+                    }
+                }
+                None if n > 0 => out.push('…'),
+                None => {}
+            }
+            offset += n;
+        }
+        out.push_str(close);
+        covered = end;
+    }
+    if covered < len {
+        out.push('…');
     }
     out
 }
@@ -477,14 +572,17 @@ fn word_change(old: &str, new: &str) -> String {
 fn rows_view(diff: &TextDiff<'_, '_, str>, options: &TextOptions, context: usize) -> String {
     let word = options.format == TextFormat::Word;
     let mut out = String::new();
+    // Side-by-side rows: the old cell, the gutter mark, the new cell.
+    let mut side: Vec<(String, char, String)> = Vec::new();
+    let cut = |text: &str, at: usize| clip(text, at, options.window);
     for ops in diff.grouped_ops(if word { 0 } else { context }) {
         for op in &ops {
             let (old, new) = op_lines(diff, op);
             if op.tag() == DiffTag::Equal {
                 if !word {
                     for text in old {
-                        let text = clip(text, 0, options.window);
-                        let _ = writeln!(out, "{text}   {text}");
+                        let text = cut(text, 0);
+                        side.push((text.clone(), ' ', text));
                     }
                 }
                 continue;
@@ -496,33 +594,32 @@ fn rows_view(diff: &TextDiff<'_, '_, str>, options: &TextOptions, context: usize
                     Row::Insert(j) => ("", new[j]),
                 };
                 if word {
-                    let text = word_change(a, b);
-                    let at = if options.window.is_some() {
-                        first_critic(&text)
-                    } else {
-                        0
-                    };
-                    let _ = writeln!(out, "{}", clip(&text, at, options.window));
-                } else {
-                    match row {
-                        Row::Pair(..) => {
-                            let at = first_difference(a, b);
-                            let _ = writeln!(
-                                out,
-                                "{} | {}",
-                                clip(a, at, options.window),
-                                clip(b, at, options.window)
-                            );
-                        }
-                        Row::Delete(..) => {
-                            let _ = writeln!(out, "{} <", clip(a, 0, options.window));
-                        }
-                        Row::Insert(..) => {
-                            let _ = writeln!(out, " > {}", clip(b, 0, options.window));
-                        }
-                    }
+                    let _ = writeln!(out, "{}", critic_line(&word_pieces(a, b), options.window));
+                    continue;
                 }
+                side.push(match row {
+                    Row::Pair(..) => {
+                        let at = first_difference(a, b);
+                        (cut(a, at), '|', cut(b, at))
+                    }
+                    Row::Delete(..) => (cut(a, 0), '<', String::new()),
+                    Row::Insert(..) => (String::new(), '>', cut(b, 0)),
+                });
             }
+        }
+    }
+    // Pad the old column to its widest cell, in scalars like the window, so
+    // every gutter mark and every new cell starts in the same column.
+    let width = side
+        .iter()
+        .map(|(a, ..)| a.chars().count())
+        .max()
+        .unwrap_or(0);
+    for (a, mark, b) in side {
+        if b.is_empty() {
+            let _ = writeln!(out, "{}", format!("{a:<width$} {mark}").trim_end());
+        } else {
+            let _ = writeln!(out, "{a:<width$} {mark} {b}");
         }
     }
     out
@@ -609,14 +706,113 @@ mod tests {
             .docx
     }
 
+    fn word_view(old: &str, new: &str, window: Option<usize>) -> String {
+        let options = TextOptions {
+            format: TextFormat::Word,
+            window,
+            ..Default::default()
+        };
+        diff_text_view(old, new, &options)
+    }
+
+    /// Every mark a line opens, it closes, in CriticMarkup order.
+    fn marks_close(line: &str) -> bool {
+        let mut rest = line;
+        while let Some(at) = ["{++", "{--", "{~~"]
+            .iter()
+            .filter_map(|open| rest.find(open))
+            .min()
+        {
+            let close: &[&str] = match &rest[at..at + 3] {
+                "{++" => &["++}"],
+                "{--" => &["--}"],
+                _ => &["~>", "~~}"],
+            };
+            rest = &rest[at + 3..];
+            for delimiter in close {
+                let Some(end) = rest.find(delimiter) else {
+                    return false;
+                };
+                if ["{++", "{--", "{~~"]
+                    .iter()
+                    .any(|o| rest[..end].contains(o))
+                {
+                    return false;
+                }
+                rest = &rest[end + delimiter.len()..];
+            }
+        }
+        !["++}", "--}", "~~}", "~>"].iter().any(|c| rest.contains(c))
+    }
+
     #[test]
-    fn first_markup_position_handles_long_backslash_prefix_in_one_pass() {
-        let prefix = "\\".repeat(100_000);
+    fn a_word_window_keeps_every_mark_closed() {
+        let tail = "and the tail of an inserted clause that runs well past the window";
+        let cases = [
+            (
+                "Pay within thirty days.".to_string(),
+                format!("Pay within thirty days {tail}."),
+            ),
+            (format!("Pay {tail} now."), "Pay now.".to_string()),
+            ("Keep old wording here".to_string(), format!("Keep {tail}")),
+            (
+                format!("A {tail} B one C"),
+                format!("A {tail} B two C three D four"),
+            ),
+            (
+                format!("{} lead then old", "\\".repeat(2_000)),
+                format!("{} lead then new", "\\".repeat(2_000)),
+            ),
+        ];
+        for (old, new) in &cases {
+            for width in 0..90 {
+                let out = word_view(old, new, Some(width));
+                assert!(marks_close(&out), "width {width}: {out}");
+                // Any window wider than nothing shows the first change.
+                assert_eq!(out.contains('{'), width > 0, "width {width}: {out}");
+            }
+            assert!(marks_close(&word_view(old, new, None)));
+        }
+        // Text is cut, never a delimiter: the window counts text only.
         assert_eq!(
-            first_critic(&format!("{prefix} plain {{~~30~>45~~}}")),
-            100_007
+            word_view("a b", "a b c d e f g h i j", Some(10)),
+            "a b{++ c d e …++}\n"
         );
-        assert_eq!(first_critic(r"\{++literal++} {~~30~>45~~}"), 15);
+        assert_eq!(
+            word_view("keep one two three four five", "keep six", Some(10)),
+            "keep {~~one t…~>…~~}\n"
+        );
+        assert_eq!(
+            word_view(
+                "lead words here, then old",
+                "lead words here, then new",
+                Some(12)
+            ),
+            "… then {~~old~>new~~}\n"
+        );
+        assert_eq!(word_view("a b", "a b c d e f g h i j", Some(0)), "…\n");
+    }
+
+    #[test]
+    fn side_by_side_columns_line_up_on_every_row() {
+        let options = TextOptions {
+            format: TextFormat::SideBySide,
+            ..Default::default()
+        };
+        let view = |old: &str, new: &str| diff_text_view(old, new, &options);
+        assert_eq!(
+            view("same\nold\nend\n", "same\nnew\nend\n"),
+            "same   same\nold  | new\nend    end\n"
+        );
+        assert_eq!(
+            view("a\nlong line\n", "a\n"),
+            "a           a\nlong line <\n"
+        );
+        assert_eq!(view("a\n", "a\nadded\n"), "a   a\n  > added\n");
+        // Widths count scalars, as windows do.
+        assert_eq!(view("é界\nx\n", "é界\ny\n"), "é界   é界\nx  | y\n");
+        // An empty unchanged line leaves no trailing spaces.
+        assert_eq!(view("\nold\n", "\nnew\n"), "\nold | new\n");
     }
 
     #[test]
@@ -671,9 +867,11 @@ mod tests {
         assert_eq!(word_change("", "new"), "{++new++}");
         assert_eq!(word_change("old", ""), "{--old--}");
         assert_eq!(word_change("same", "same"), "same");
-        assert_eq!(first_critic("é {~~x~>y~~}"), 2);
-        assert_eq!(first_critic(r"\{++literal++} {--old--}"), 15);
-        assert_eq!(first_critic("no tokens"), 0);
+        // Literal markup is text, escaped.
+        assert_eq!(
+            word_change("{++literal++} old", "{++literal++} new"),
+            r"\{++literal++\} {~~old~>new~~}"
+        );
         assert_eq!(
             critic_literal("{+literal+}[-literal-]"),
             "{+literal+}[-literal-]"
@@ -697,7 +895,7 @@ mod tests {
         };
         assert_eq!(
             diff_text_view("same\nold\nend\n", "same\nnew\nend\n", &options),
-            "same   same\nold | new\nend   end\n"
+            "same   same\nold  | new\nend    end\n"
         );
         let options = TextOptions {
             format: TextFormat::Context,
