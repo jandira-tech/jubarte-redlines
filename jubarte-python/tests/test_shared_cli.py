@@ -106,3 +106,41 @@ def test_text_track_changes_modes_and_convert_output(tmp_path, capsys):
     out = tmp_path / "changes.pdf"
     assert main(["diff", str(source), str(source), "-o", str(out)]) == 0
     assert out.read_bytes().startswith(b"%PDF-")
+
+
+@pytest.mark.integration
+def test_diff_and_compare_follow_the_native_output_contract(tmp_path, capsys):
+    a, b = (tmp_path / name for name in ("a.md", "b.md"))
+    a.write_text("Due in 30 days.\n")
+    b.write_text("Due in 45 days.\n")
+    word = tmp_path / "a.docx"
+    assert main(["convert", str(a), "-o", str(word)]) == 0
+    capsys.readouterr()
+
+    # Page flags with a text result are refused by the shared parser.
+    for flag in ("--move-comments", "--changed-only"):
+        with pytest.raises(SystemExit) as exit:
+            main(["diff", str(a), str(b), flag])
+        assert exit.value.code == 2
+        assert f"{flag} applies to PDF or PNG output only" in capsys.readouterr().err
+
+    # Markdown output needs both documents in Markdown, in diff and compare.
+    for argv in (["diff", str(word), str(b), "-o", str(tmp_path / "d.md")],
+                 ["compare", str(word), str(b), "-o", str(tmp_path / "c.md")]):
+        assert main(argv) == 1
+        assert "Markdown output needs both documents in Markdown" in capsys.readouterr().err
+        assert not Path(argv[-1]).exists()
+
+    # --format critic writing a redline says so and prints no CriticMarkup.
+    redline = tmp_path / "critic.docx"
+    assert main(["diff", str(word), str(b), "--format", "critic", "-o", str(redline)]) == 0
+    out = capsys.readouterr().out
+    assert redline.read_bytes().startswith(b"PK")
+    assert "{~~" not in out and f"wrote {redline}" in out
+
+    # A PNG output's path only names its pages; an existing file there is no conflict.
+    base = tmp_path / "pages.png"
+    base.write_bytes(b"keep")
+    assert main(["diff", str(a), str(b), "-o", str(base)]) == 0
+    assert (tmp_path / "pages-page-01.png").read_bytes().startswith(b"\x89PNG")
+    assert base.read_bytes() == b"keep"

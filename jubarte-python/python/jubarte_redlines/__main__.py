@@ -383,12 +383,22 @@ def cmd_diff_render(args: argparse.Namespace) -> int:
     return EXIT_PAGES_DIFFER if changed else EXIT_OK
 
 
+def _markdown_needs_both(old: object, new: object, old_path: Path, new_path: Path) -> None:
+    """Markdown output is CriticMarkup of two Markdown documents, as in the native CLI."""
+    if not isinstance(old, str) or not isinstance(new, str):
+        word = old_path if not isinstance(old, str) else new_path
+        raise CliError(f"Markdown output needs both documents in Markdown ({word} is Word): "
+                       "write a Word redline (-o FILE.docx) or a PDF (-o FILE.pdf) instead")
+
+
 def cmd_compare(args: argparse.Namespace) -> int:
     from .document import diff
 
     original = _read_side(args.original, args.old_format)
     modified = _read_side(args.modified, args.new_format)
     output: Path = args.output or args.original.with_name(f"{args.original.stem}_v_{args.modified.stem}.docx")
+    if args.output_format == "md":
+        _markdown_needs_both(original, modified, args.original, args.modified)
     _ensure_writable(output, args.force)
     from . import _native
 
@@ -414,7 +424,10 @@ def cmd_diff(args: argparse.Namespace) -> int:
     to = args.to or args.output_format or ("md" if both_markdown else "docx")
     if not view and output is None and to != "md":
         output = args.old.with_name(f"{args.old.stem}_v_{args.new.stem}.{'pdf' if to == 'png' else to}")
-    if output is not None:
+    if not view and output is not None and to == "md":
+        _markdown_needs_both(old, new, args.old, args.new)
+    # A PNG output's path only names its pages, which are checked once counted.
+    if output is not None and (view or to != "png"):
         _ensure_writable(output, args.force)
     # Unified snapshots are pure: no git author lookup or wall-clock default.
     author = args.author if args.author is not None else ("Redline" if view else _default_author())
@@ -447,12 +460,24 @@ def cmd_diff(args: argparse.Namespace) -> int:
                     _ensure_writable(path, args.force)
                 for path, png in zip(png_paths, rendered.pngs):
                     _write(path, png)
-                sys.stdout.write(result.text)
+                _diff_done(args, f"wrote {len(png_paths)} PNG page{'' if len(png_paths) == 1 else 's'}", result.text)
                 return EXIT_OK
     if output is not None:
         _write(output, data)
-    sys.stdout.write(result.text)
+        _diff_done(args, f"wrote {output} ({len(data.encode() if isinstance(data, str) else data)} bytes)", result.text)
+    else:
+        sys.stdout.write(result.text)
     return EXIT_OK
+
+
+def _diff_done(args: argparse.Namespace, wrote: str, patch: str) -> None:
+    """Report a written diff output as the native CLI does: the patch on stdout
+    with the status on stderr, or, for ``--format critic``, only the status."""
+    if args.format == "critic":
+        print(wrote)
+    else:
+        print(wrote, file=sys.stderr)
+        sys.stdout.write(patch)
 
 
 def cmd_revisions(args: argparse.Namespace) -> int:
