@@ -1,0 +1,23 @@
+--- a/received.docx
++++ b/received.docx	Agent	2026-10-02T15:00:00Z
+@@ [body:p:3] @@
+Consultant will deliver the services in each Statement of Work,
+including quarterly {==route-cost reports==}{>>Agent
+(2026-10-02T15:00:00Z): Do the reports cover cross-border lanes?<<} and
+a monthly review call.
+
+@@ [body:p:5] @@
+Client shall pay each invoice within forty-five days of receipt. {==Late
+amounts accrue interest at one percent per month.==}{>>Ann Counsel
+(2026-10-01T09:00:00Z): Is one percent the statutory cap in
+Delaware?<<}{>>Agent (2026-10-02T15:00:00Z): Delaware has no cap for
+commercial contracts; one percent stands.<<}
+
+@@ [body:p:7] @@
+This Agreement begins on [-March 1, 2026-]{+April 1, 2026+} and
+continues until either party ends it with sixty days written notice.
+
+@@ [body:p:18] @@
+Each party shall keep the other's Confidential Information secret{+ for
+three years after this Agreement ends+}{>>Ann Counsel
+(2026-10-01T09:00:00Z): Add a three-year survival period?<<}.
