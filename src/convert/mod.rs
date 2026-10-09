@@ -57935,4 +57935,923 @@ mod rendering_uncovered_contract_tests {
             );
         }
     }
+    fn matrix_styles(styles: &str) -> StyleSheet {
+        let mut pkg = package();
+        pkg.set_part("word/styles.xml", format!("<w:styles xmlns:w='{}'><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii='Arial'/><w:sz w:val='20'/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:before='0' w:after='0' w:line='240' w:lineRule='auto'/></w:pPr></w:pPrDefault></w:docDefaults>{styles}</w:styles>", W::URI).into_bytes());
+        load_stylesheet(&pkg)
+    }
+
+    #[test]
+    fn table_paragraph_indentation_and_alignment_follow_complete_style_ownership_matrix() {
+        for normal_ind in [false, true] {
+            for normal_jc in [false, true] {
+                for named_ind in [false, true] {
+                    for named_jc in [false, true] {
+                        let styles = format!(
+                            "<w:style w:type='paragraph' w:default='1' w:styleId='Normal'><w:pPr>{}{}</w:pPr></w:style><w:style w:type='paragraph' w:styleId='Named'><w:basedOn w:val='Normal'/><w:pPr>{}{}</w:pPr></w:style><w:style w:type='table' w:styleId='Grid'><w:pPr><w:ind w:left='360'/><w:jc w:val='both'/><w:spacing w:before='80' w:after='100' w:line='400' w:lineRule='exact'/></w:pPr></w:style>",
+                            if normal_ind {
+                                "<w:ind w:left='120'/>"
+                            } else {
+                                ""
+                            },
+                            if normal_jc {
+                                "<w:jc w:val='left'/>"
+                            } else {
+                                ""
+                            },
+                            if named_ind {
+                                "<w:ind w:left='540'/>"
+                            } else {
+                                ""
+                            },
+                            if named_jc {
+                                "<w:jc w:val='center'/>"
+                            } else {
+                                ""
+                            }
+                        );
+                        let sheet = matrix_styles(&styles);
+                        for named in [false, true] {
+                            for direct_ind in [false, true] {
+                                for direct_jc in [false, true] {
+                                    let source = format!(
+                                        "<w:tbl><w:tblPr><w:tblStyle w:val='Grid'/><w:tblLayout w:type='fixed'/></w:tblPr><w:tblGrid><w:gridCol w:w='4000'/></w:tblGrid><w:tr><w:tc><w:p><w:pPr>{}{}{}</w:pPr><w:r><w:rPr><w:rFonts w:ascii='Arial'/><w:sz w:val='20'/></w:rPr><w:t>Owned table text</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+                                        if named {
+                                            "<w:pStyle w:val='Named'/>"
+                                        } else {
+                                            ""
+                                        },
+                                        if direct_ind {
+                                            "<w:ind w:left='820'/>"
+                                        } else {
+                                            ""
+                                        },
+                                        if direct_jc {
+                                            "<w:jc w:val='right'/>"
+                                        } else {
+                                            ""
+                                        }
+                                    );
+                                    let (dom, root) = xml(&source);
+                                    let unchanged = dom.serialize_element(root);
+                                    let Block::Table { rows, .. } = table_block(
+                                        &dom,
+                                        dom.element(root, &W::tbl()).unwrap(),
+                                        &sheet,
+                                        &mut Numbering::default(),
+                                        &mut AuthorColors::default(),
+                                        &HashMap::new(),
+                                        None,
+                                    ) else {
+                                        panic!("owned cell")
+                                    };
+                                    let para = &rows[0][0].paras[0];
+                                    let expected_left = if direct_ind {
+                                        41.0
+                                    } else if named && named_ind {
+                                        27.0
+                                    } else if normal_ind {
+                                        6.0
+                                    } else {
+                                        18.0
+                                    };
+                                    let expected_align = if direct_jc {
+                                        Align::Right
+                                    } else if named && named_jc {
+                                        Align::Center
+                                    } else if normal_jc {
+                                        Align::Left
+                                    } else {
+                                        Align::Justify
+                                    };
+                                    assert_eq!(
+                                        para.style.indent_left, expected_left,
+                                        "normal={normal_ind}, named={named}/{named_ind}, direct={direct_ind}"
+                                    );
+                                    assert_eq!(
+                                        para.style.align, expected_align,
+                                        "normal={normal_jc}, named={named}/{named_jc}, direct={direct_jc}"
+                                    );
+                                    assert_eq!(
+                                        (
+                                            para.style.before,
+                                            para.style.after,
+                                            para.style.line_exact
+                                        ),
+                                        (4.0, 5.0, Some(20.0))
+                                    );
+                                    assert_eq!(run_text(&para.runs), "Owned table text");
+                                    assert!(
+                                        para.runs
+                                            .iter()
+                                            .all(|r| r.style.family == "Arial"
+                                                && r.style.size == 10.0)
+                                    );
+                                    assert_eq!(dom.serialize_element(root), unchanged);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn table_auto_spacing_and_explicit_fallbacks_have_independent_before_after_ownership() {
+        let fonts = embedded_fonts();
+        for table_before in [false, true] {
+            for table_after in [false, true] {
+                let sheet = matrix_styles(&format!(
+                    "<w:style w:type='paragraph' w:default='1' w:styleId='Normal'/><w:style w:type='table' w:styleId='Grid'><w:pPr><w:spacing w:before='80' w:after='100' w:beforeAutospacing='{}' w:afterAutospacing='{}' w:line='400' w:lineRule='exact'/></w:pPr></w:style>",
+                    usize::from(table_before),
+                    usize::from(table_after)
+                ));
+                for before in [None, Some(false), Some(true)] {
+                    for after in [None, Some(false), Some(true)] {
+                        let direct_before = before
+                            .map(|on| format!(" w:beforeAutospacing='{}'", usize::from(on)))
+                            .unwrap_or_default();
+                        let direct_after = after
+                            .map(|on| format!(" w:afterAutospacing='{}'", usize::from(on)))
+                            .unwrap_or_default();
+                        let source = format!(
+                            "<w:tbl><w:tblPr><w:tblStyle w:val='Grid'/></w:tblPr><w:tblGrid><w:gridCol w:w='4000'/></w:tblGrid><w:tr><w:tc><w:p><w:pPr><w:spacing w:before='80' w:after='100'{direct_before}{direct_after}/></w:pPr><w:r><w:rPr><w:rFonts w:ascii='Arial'/><w:sz w:val='20'/></w:rPr><w:t>Spacing</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"
+                        );
+                        let (dom, root) = xml(&source);
+                        let Block::Table { rows, .. } = table_block(
+                            &dom,
+                            dom.element(root, &W::tbl()).unwrap(),
+                            &sheet,
+                            &mut Numbering::default(),
+                            &mut AuthorColors::default(),
+                            &HashMap::new(),
+                            None,
+                        ) else {
+                            panic!("spacing cell")
+                        };
+                        let p = &rows[0][0].paras[0];
+                        let expected_before = match before {
+                            Some(true) => 0.0,
+                            Some(false) => 4.0,
+                            None if table_before => 0.0,
+                            None => 4.0,
+                        };
+                        let expected_after = match after {
+                            Some(true) => 0.0,
+                            Some(false) => 5.0,
+                            None if table_after => 0.0,
+                            None => 5.0,
+                        };
+                        assert_eq!(
+                            (p.style.before, p.style.after),
+                            (expected_before, expected_after),
+                            "table={table_before}/{table_after}, direct={before:?}/{after:?}"
+                        );
+                        assert_eq!(
+                            (p.style.before_auto, p.style.after_auto),
+                            (before.unwrap_or(table_before), after.unwrap_or(table_after))
+                        );
+                        assert_eq!((p.style.before_spec, p.style.after_spec), (4.0, 5.0));
+                        assert_eq!(p.style.line_exact, Some(20.0));
+                        assert!(
+                            (cell_para_height(&fonts, p, 200.0)
+                                - (20.0 + expected_before + expected_after))
+                                .abs()
+                                < 0.001
+                        );
+                        assert_eq!(run_text(&p.runs), "Spacing");
+
+                        // The same authored spacing inside the cell keeps its
+                        // auto value. Explicit zero-gap neighbours independently
+                        // remove edge suppression and stacked-gap subtraction.
+                        let neighbour = |text: &str| {
+                            format!(
+                                "<w:p><w:pPr><w:spacing w:before='0' w:after='0' w:beforeAutospacing='0' w:afterAutospacing='0' w:line='400' w:lineRule='exact'/></w:pPr><w:r><w:rPr><w:rFonts w:ascii='Arial'/><w:sz w:val='20'/></w:rPr><w:t>{text}</w:t></w:r></w:p>"
+                            )
+                        };
+                        let interior_source = source
+                            .replace("<w:tc>", &format!("<w:tc>{}", neighbour("Lead")))
+                            .replace("</w:tc>", &format!("{}</w:tc>", neighbour("Tail")));
+                        let (interior_dom, interior_root) = xml(&interior_source);
+                        let unchanged = interior_dom.serialize_element(interior_root);
+                        let Block::Table { rows, .. } = table_block(
+                            &interior_dom,
+                            interior_dom.element(interior_root, &W::tbl()).unwrap(),
+                            &sheet,
+                            &mut Numbering::default(),
+                            &mut AuthorColors::default(),
+                            &HashMap::new(),
+                            None,
+                        ) else {
+                            panic!("interior spacing cell")
+                        };
+                        assert_eq!(rows[0][0].paras.len(), 3);
+                        let middle = &rows[0][0].paras[1];
+                        let interior_before = match before {
+                            Some(true) => 14.0,
+                            Some(false) => 4.0,
+                            None if table_before => 0.0,
+                            None => 4.0,
+                        };
+                        let interior_after = match after {
+                            Some(true) => 14.0,
+                            Some(false) => 5.0,
+                            None if table_after => 0.0,
+                            None => 5.0,
+                        };
+                        assert_eq!(
+                            (middle.style.before, middle.style.after),
+                            (interior_before, interior_after),
+                            "interior table={table_before}/{table_after}, direct={before:?}/{after:?}"
+                        );
+                        assert_eq!(
+                            (middle.style.before_auto, middle.style.after_auto),
+                            (before.unwrap_or(table_before), after.unwrap_or(table_after))
+                        );
+                        assert_eq!(
+                            (middle.style.before_spec, middle.style.after_spec),
+                            (4.0, 5.0)
+                        );
+                        assert_eq!(middle.style.line_exact, Some(20.0));
+                        assert!(
+                            (cell_para_height(&fonts, middle, 200.0)
+                                - (20.0 + interior_before + interior_after))
+                                .abs()
+                                < 0.001
+                        );
+                        assert_eq!(
+                            rows[0][0]
+                                .paras
+                                .iter()
+                                .map(|p| run_text(&p.runs))
+                                .collect::<Vec<_>>(),
+                            ["Lead", "Spacing", "Tail"]
+                        );
+                        assert_eq!(rows[0][0].paras[0].style.after, 0.0);
+                        assert_eq!(rows[0][0].paras[2].style.before, 0.0);
+                        assert_eq!(interior_dom.serialize_element(interior_root), unchanged);
+                    }
+                }
+            }
+        }
+    }
+
+    fn linked_matrix_numbering(linked: bool) -> Numbering {
+        parse_numbering_xml(
+            &format!(
+                "<w:numbering xmlns:w='{}'><w:abstractNum w:abstractNumId='1'><w:lvl w:ilvl='0'><w:start w:val='3'/><w:numFmt w:val='decimal'/><w:lvlText w:val='%1.'/><w:lvlJc w:val='right'/>{}<w:pPr><w:ind w:left='720' w:hanging='360'/><w:jc w:val='center'/><w:tabs><w:tab w:val='num' w:pos='720'/></w:tabs></w:pPr><w:rPr><w:rFonts w:ascii='Arial'/><w:sz w:val='28'/><w:u w:val='single'/><w:b/><w:i/></w:rPr></w:lvl></w:abstractNum><w:num w:numId='4'><w:abstractNumId w:val='1'/></w:num><w:abstractNum w:abstractNumId='2'><w:lvl w:ilvl='0'><w:start w:val='8'/><w:numFmt w:val='decimal'/><w:lvlText w:val='%1.'/></w:lvl></w:abstractNum><w:num w:numId='5'><w:abstractNumId w:val='2'/></w:num></w:numbering>",
+                W::URI,
+                if linked {
+                    "<w:pStyle w:val='Primary'/>"
+                } else {
+                    ""
+                }
+            ),
+            |_| None,
+        )
+    }
+
+    #[test]
+    fn list_level_geometry_respects_style_and_each_direct_indent_attribute_independently() {
+        for direct_num in [false, true] {
+            for style_left in [false, true] {
+                for style_first in [false, true] {
+                    let sheet = matrix_styles(&format!(
+                        "<w:style w:type='paragraph' w:styleId='List'><w:pPr><w:numPr><w:ilvl w:val='0'/><w:numId w:val='4'/></w:numPr><w:ind{}{} /></w:pPr></w:style>",
+                        if style_left { " w:left='180'" } else { "" },
+                        if style_first { " w:hanging='90'" } else { "" }
+                    ));
+                    for (indent, want_left, want_first) in [
+                        ("", None, None),
+                        ("<w:ind w:left='820'/>", Some(41.0), None),
+                        ("<w:ind w:start='900'/>", Some(45.0), None),
+                        ("<w:ind w:hanging='120'/>", None, Some(-6.0)),
+                        ("<w:ind w:firstLine='100'/>", None, Some(5.0)),
+                    ] {
+                        for (jc, align) in [
+                            ("", None),
+                            ("<w:jc w:val='right'/>", Some(Align::Right)),
+                            ("<w:jc w:val='left'/>", Some(Align::Left)),
+                        ] {
+                            let (dom, root) = xml(&format!(
+                                "<w:p><w:pPr><w:pStyle w:val='List'/>{}{indent}{jc}<w:rPr><w:rFonts w:ascii='Times New Roman'/><w:sz w:val='18'/></w:rPr></w:pPr><w:r><w:t>Owned item</w:t></w:r></w:p>",
+                                if direct_num {
+                                    "<w:numPr><w:numId w:val='4'/></w:numPr>"
+                                } else {
+                                    ""
+                                }
+                            ));
+                            let p = dom.element(root, &W::p()).unwrap();
+                            let (mut para, run) = para_base(&dom, p, &sheet, None);
+                            let numbering = linked_matrix_numbering(false);
+                            let marker = apply_list_level(
+                                &dom,
+                                p,
+                                &sheet,
+                                numbering.level("4", 0),
+                                &run,
+                                &mut para,
+                            );
+                            assert_eq!(
+                                para.indent_left,
+                                want_left.unwrap_or(if !direct_num && style_left {
+                                    9.0
+                                } else {
+                                    36.0
+                                })
+                            );
+                            assert_eq!(
+                                para.indent_first,
+                                want_first.unwrap_or(if !direct_num && style_first {
+                                    -4.5
+                                } else {
+                                    -18.0
+                                })
+                            );
+                            assert_eq!(
+                                para.align,
+                                align.unwrap_or(if direct_num {
+                                    Align::Center
+                                } else {
+                                    Align::Left
+                                })
+                            );
+                            assert!(para.list_jc_right);
+                            assert_eq!(para.tab_stops.len(), 1);
+                            assert_eq!(para.tab_stops[0].pos, 36.0);
+                            assert_eq!(
+                                (
+                                    marker.family.as_str(),
+                                    marker.size,
+                                    marker.bold,
+                                    marker.italic,
+                                    marker.underline
+                                ),
+                                ("Arial", 14.0, true, true, true)
+                            );
+                            assert_eq!(
+                                element_text(&dom, dom.descendants(p, Some(&W::t()))[0]),
+                                "Owned item"
+                            );
+                            assert_eq!(
+                                run.family, "Arial",
+                                "the paragraph mark styles only the number"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn linked_numbering_style_skips_foreign_style_labels_without_advancing_the_counter() {
+        let sheet = matrix_styles(
+            "<w:style w:type='paragraph' w:styleId='Primary'><w:pPr><w:numPr><w:numId w:val='4'/></w:numPr></w:pPr></w:style><w:style w:type='paragraph' w:styleId='Other'><w:pPr><w:numPr><w:numId w:val='4'/></w:numPr></w:pPr></w:style>",
+        );
+        for direct in [false, true] {
+            let (dom, root) = xml(&format!(
+                "<w:p><w:pPr><w:pStyle w:val='Other'/>{}</w:pPr><w:r><w:t>Foreign styled item</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val='Primary'/></w:pPr><w:r><w:t>Linked item</w:t></w:r></w:p>",
+                if direct {
+                    "<w:numPr><w:numId w:val='4'/></w:numPr>"
+                } else {
+                    ""
+                }
+            ));
+            let paragraphs = dom.elements(root, Some(&W::p()));
+            let mut numbering = linked_matrix_numbering(true);
+            assert_eq!(
+                list_marker(&dom, paragraphs[0], &sheet, &mut numbering),
+                (
+                    if direct { "3.\t" } else { "" }.to_string(),
+                    "4".to_string(),
+                    0
+                )
+            );
+            assert_eq!(
+                list_marker(&dom, paragraphs[1], &sheet, &mut numbering).0,
+                if direct { "4.\t" } else { "3.\t" }
+            );
+            assert!(para_mark_rev(&dom, paragraphs[0]).is_none());
+            assert!(para_mark_rev(&dom, paragraphs[1]).is_none());
+        }
+    }
+
+    #[test]
+    fn numbering_format_history_counts_original_and_revised_lists_without_revising_unchanged_labels()
+     {
+        let sheet = sheet();
+        for (old, new, expected_label, expected_rev, expected_following, expected_old_following) in [
+            (None, "4", "3.\t", true, "4.\t", Some("3.\t")),
+            (Some("4"), "4", "3.\t", false, "4.\t", None),
+            (Some("5"), "4", "3.\t", true, "4.\t", Some("3.\t")),
+            (Some("4"), "0", "", true, "3.\t", Some("4.\t")),
+        ] {
+            let old_properties = old
+                .map(|id| format!("<w:numPr><w:numId w:val='{id}'/></w:numPr>"))
+                .unwrap_or_default();
+            let (dom, root) = xml(&format!(
+                "<w:p><w:pPr><w:numPr><w:numId w:val='{new}'/></w:numPr><w:pPrChange w:id='19' w:author='List editor' w:date='2026-01-01T00:00:00Z'><w:pPr>{old_properties}</w:pPr></w:pPrChange></w:pPr><w:r><w:t>Changed item</w:t></w:r></w:p><w:p><w:pPr><w:numPr><w:numId w:val='4'/></w:numPr></w:pPr><w:r><w:t>Following item</w:t></w:r></w:p>"
+            ));
+            let ps = dom.elements(root, Some(&W::p()));
+            let mut numbering = linked_matrix_numbering(false);
+            assert_eq!(
+                list_marker(&dom, ps[0], &sheet, &mut numbering).0,
+                expected_label
+            );
+            assert!(
+                label_rev(&dom, ps[0], &sheet, new, 0)
+                    == expected_rev.then_some((RevMark::Ins, "List editor"))
+            );
+            assert_eq!(
+                list_marker(&dom, ps[1], &sheet, &mut numbering).0,
+                expected_following
+            );
+            assert_eq!(numbering.old_label.as_deref(), expected_old_following);
+            assert!(label_rev(&dom, ps[1], &sheet, "4", 0).is_none());
+        }
+    }
+
+    #[test]
+    fn recursive_cell_field_resolution_keeps_targets_source_order_styles_and_actual_word_count() {
+        let source = format!(
+            "<w:p><w:bookmarkStart w:id='1' w:name='Top'/><w:r><w:t>Top words</w:t></w:r><w:bookmarkEnd w:id='1'/></w:p>{}",
+            one_cell_table(
+                &format!(
+                    "<w:p><w:bookmarkStart w:id='2' w:name='Outer'/><w:r><w:t>Alpha Beta</w:t></w:r><w:bookmarkEnd w:id='2'/></w:p>{}<w:p><w:r><w:t>Tail end</w:t></w:r></w:p>",
+                    one_cell_table(
+                        "<w:p><w:bookmarkStart w:id='3' w:name='Deep'/><w:r><w:t>Inner source</w:t></w:r><w:bookmarkEnd w:id='3'/></w:p><w:p><w:fldSimple w:instr='REF Outer'><w:r><w:rPr><w:i/><w:color w:val='123456'/></w:rPr><w:t>old words</w:t></w:r></w:fldSimple><w:fldSimple w:instr='PAGEREF Top'><w:r><w:t>1</w:t></w:r></w:fldSimple><w:fldSimple w:instr='NUMWORDS'><w:r><w:rPr><w:b/></w:rPr><w:t>999</w:t></w:r></w:fldSimple></w:p>",
+                        ""
+                    )
+                ),
+                ""
+            )
+        );
+        let (mut blocks, _) = walk_memory(&source);
+        assert_eq!(
+            document_word_count(&blocks),
+            11,
+            "NUMWORDS excludes its own cached result"
+        );
+        let names = document_bookmark_names(&blocks);
+        assert_eq!(
+            names,
+            ["Top", "Outer", "Deep"]
+                .into_iter()
+                .map(str::to_string)
+                .collect()
+        );
+        let texts = document_bookmark_texts(&blocks);
+        assert_eq!(texts.get("Top").map(String::as_str), Some("Top words"));
+        assert_eq!(texts.get("Outer").map(String::as_str), Some("Alpha Beta"));
+        assert_eq!(texts.get("Deep").map(String::as_str), Some("Inner source"));
+        resolve_cell_fields(&mut blocks);
+        let Block::Table { rows, .. } = &blocks[1] else {
+            panic!("outer table")
+        };
+        let cell = &rows[0][0];
+        assert_eq!(cell.nested_at, [1]);
+        assert_eq!(
+            cell.paras
+                .iter()
+                .map(|p| run_text(&p.runs))
+                .collect::<Vec<_>>(),
+            ["Alpha Beta", "Tail end"]
+        );
+        let Block::Table { rows: inner, .. } = &*cell.nested[0] else {
+            panic!("nested table")
+        };
+        let runs = &inner[0][0].paras[1].runs;
+        assert_eq!(run_text(runs), "Alpha Beta111");
+        let reference = runs
+            .iter()
+            .find(|r| r.ref_name.as_deref() == Some("Outer"))
+            .unwrap();
+        assert_eq!(reference.text, "Alpha Beta");
+        assert!(reference.style.italic);
+        assert_eq!(
+            reference.style.color,
+            [18.0 / 255.0, 52.0 / 255.0, 86.0 / 255.0]
+        );
+        assert_eq!(
+            runs.iter()
+                .find(|r| r.pageref.is_some())
+                .unwrap()
+                .pageref
+                .as_deref(),
+            Some("Top")
+        );
+        let words = runs
+            .iter()
+            .find(|r| r.field == FieldKind::NumWords)
+            .unwrap();
+        assert_eq!(words.text, "11");
+        assert!(words.style.bold);
+        assert_eq!(
+            document_bookmark_texts(&blocks),
+            texts,
+            "fields never become their bookmark's source payload"
+        );
+    }
+
+    #[test]
+    fn missing_and_empty_bookmark_field_results_keep_cached_switches_and_all_run_properties() {
+        for (instruction, known, text, expected, error) in [
+            (
+                "REF Present",
+                true,
+                Some("Source words"),
+                "Source words",
+                false,
+            ),
+            ("REF Present", true, Some(""), "Cached", false),
+            ("REF Present", true, None, "Cached", false),
+            (
+                "REF Present \\n",
+                true,
+                Some("Source words"),
+                "Cached",
+                false,
+            ),
+            (
+                "REF Present \\p",
+                true,
+                Some("Source words"),
+                "Cached",
+                false,
+            ),
+            ("REF Missing", false, None, REF_NOT_FOUND, true),
+            ("PAGEREF Present", true, None, "Cached", false),
+            ("PAGEREF Missing", false, None, BOOKMARK_NOT_DEFINED, true),
+        ] {
+            let (dom, root) = xml(&format!(
+                "<w:p><w:fldSimple w:instr='{instruction}'><w:r><w:rPr><w:i/><w:color w:val='123456'/><w:sz w:val='28'/></w:rPr><w:t>Cached</w:t></w:r></w:fldSimple></w:p>"
+            ));
+            let original = collect_runs(&dom, root, &Defaults::word().run, &ThemeFonts::default());
+            assert_eq!(original.len(), 1);
+            let known_names = if known {
+                ["Present".to_string()].into_iter().collect()
+            } else {
+                HashSet::new()
+            };
+            let texts = text
+                .map(|value| {
+                    [("Present".to_string(), value.to_string())]
+                        .into_iter()
+                        .collect()
+                })
+                .unwrap_or_default();
+            let result = apply_field_results(&original, &known_names, &texts, 13);
+            assert_eq!(result.len(), 1);
+            assert_eq!(result[0].text, expected, "{instruction}, target={text:?}");
+            assert_eq!(result[0].style.bold, error);
+            assert!(result[0].style.italic);
+            assert_eq!(result[0].style.size, 14.0);
+            assert_eq!(
+                result[0].style.color,
+                [18.0 / 255.0, 52.0 / 255.0, 86.0 / 255.0]
+            );
+            assert_eq!(result[0].ref_name, original[0].ref_name);
+            assert_eq!(result[0].pageref, original[0].pageref);
+            assert_eq!(original[0].text, "Cached");
+        }
+    }
+
+    #[test]
+    fn old_fixed_table_layout_uses_only_its_own_row_or_cell_history_in_word_mode() {
+        for mode in [RevisionStyle::Word, RevisionStyle::Conventional] {
+            with_options(
+                PdfOptions {
+                    revisions: mode,
+                    ..PdfOptions::default()
+                },
+                || {
+                    for (live, old, own_history, nested_history, expected_word) in [
+                        ("", "fixed", "", "", false),
+                        ("", "fixed", "tr", "", true),
+                        ("", "fixed", "tc", "", true),
+                        ("", "fixed", "", "tr", false),
+                        ("", "fixed", "", "tc", false),
+                        (
+                            "<w:tblLayout w:type='autofit'/>",
+                            "fixed",
+                            "tr",
+                            "tc",
+                            false,
+                        ),
+                        ("<w:tblLayout w:type='fixed'/>", "autofit", "", "tr", true),
+                        ("", "autofit", "tr", "tc", false),
+                    ] {
+                        let history = |kind: &str, owner: &str| {
+                            if kind == owner {
+                                format!(
+                                    "<w:{owner}PrChange w:id='7' w:author='Editor' w:date='2026-01-01T00:00:00Z'><w:{owner}Pr/></w:{owner}PrChange>"
+                                )
+                            } else {
+                                String::new()
+                            }
+                        };
+                        let nested = format!(
+                            "<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w='1000'/></w:tblGrid><w:tr><w:trPr>{}</w:trPr><w:tc><w:tcPr>{}</w:tcPr><w:p><w:r><w:t>Nested</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
+                            history(nested_history, "tr"),
+                            history(nested_history, "tc")
+                        );
+                        let (dom, root) = xml(&format!(
+                            "<w:tbl><w:tblPr>{live}<w:tblPrChange w:id='1' w:author='Editor' w:date='2026-01-01T00:00:00Z'><w:tblPr><w:tblLayout w:type='{old}'/></w:tblPr></w:tblPrChange></w:tblPr><w:tblGrid><w:gridCol w:w='4000'/></w:tblGrid><w:tr><w:trPr>{}</w:trPr><w:tc><w:tcPr><w:tcW w:w='4000' w:type='dxa'/>{}</w:tcPr><w:p><w:r><w:t>Outer</w:t></w:r></w:p>{nested}<w:p/></w:tc></w:tr></w:tbl>",
+                            history(own_history, "tr"),
+                            history(own_history, "tc")
+                        ));
+                        let table = dom.element(root, &W::tbl()).unwrap();
+                        let expected = if live.contains("type='fixed'") {
+                            true
+                        } else {
+                            mode == RevisionStyle::Word && expected_word
+                        };
+                        assert_eq!(
+                            table_layout_fixed(&dom, table),
+                            expected,
+                            "live={live}, old={old}, own={own_history}, nested={nested_history}"
+                        );
+                        let source = dom.serialize_element(root);
+                        let Block::Table { rows, geom, .. } = table_block(
+                            &dom,
+                            table,
+                            &sheet(),
+                            &mut Numbering::default(),
+                            &mut AuthorColors::default(),
+                            &HashMap::new(),
+                            None,
+                        ) else {
+                            panic!("owned history table")
+                        };
+                        assert_eq!(geom.fixed, expected);
+                        assert_eq!(cell_text(&rows[0][0]), "Outer ");
+                        let Block::Table { rows: inner, .. } = &*rows[0][0].nested[0] else {
+                            panic!("nested ownership")
+                        };
+                        assert_eq!(cell_text(&inner[0][0]), "Nested");
+                        assert_eq!(dom.serialize_element(root), source);
+                    }
+                },
+            );
+        }
+    }
+    #[test]
+    fn direct_num_id_zero_removes_only_the_inherited_list_geometry() {
+        let sheet = matrix_styles(
+            "<w:style w:type='paragraph' w:styleId='List'><w:pPr><w:numPr><w:numId w:val='4'/></w:numPr><w:ind w:left='720' w:hanging='360'/></w:pPr></w:style>",
+        );
+        let pkg = package();
+        let fonts = embedded_fonts();
+        for (indent, left, first) in [
+            ("", 0.0, 0.0),
+            ("<w:ind w:left='270'/>", 13.5, 0.0),
+            ("<w:ind w:start='540'/>", 27.0, 0.0),
+            ("<w:ind w:hanging='120'/>", 0.0, -6.0),
+            ("<w:ind w:firstLine='100'/>", 0.0, 5.0),
+            ("<w:ind w:left='270' w:hanging='120'/>", 13.5, -6.0),
+        ] {
+            let (dom, root) = xml(&format!(
+                "<w:p><w:pPr><w:pStyle w:val='List'/><w:numPr><w:numId w:val='0'/></w:numPr><w:spacing w:before='0' w:after='0' w:line='400' w:lineRule='exact'/>{indent}</w:pPr><w:r><w:t>Reset list</w:t></w:r></w:p>"
+            ));
+            let ctx = WalkCtx {
+                pkg: &pkg,
+                main: "word/document.xml",
+                sheet: &sheet,
+                sects: &[],
+                authors: RefCell::new(AuthorColors::default()),
+                comments: HashMap::new(),
+                open_comments: RefCell::new(Vec::new()),
+            };
+            let block = paragraph_block(
+                &ctx,
+                &dom,
+                dom.element(root, &W::p()).unwrap(),
+                false,
+                &mut linked_matrix_numbering(false),
+            );
+            let Block::Paragraph {
+                ref runs,
+                ref style,
+                list,
+                ..
+            } = block
+            else {
+                panic!("reset paragraph")
+            };
+            assert!(!list);
+            assert_eq!(run_text(runs), "Reset list");
+            assert_eq!((style.indent_left, style.indent_first), (left, first));
+            assert_eq!(style.style_id, "List");
+            assert!(style.list_num.is_empty());
+            assert!(
+                runs.iter()
+                    .all(|r| !r.list_marker && r.style.family == "Arial" && r.style.size == 10.0)
+            );
+            let pages = layout(
+                &fonts,
+                &compact_page(),
+                &HfChrome::default(),
+                &[block],
+                15,
+                FootnoteCatalog::default(),
+            );
+            assert_eq!(pages.len(), 1);
+            assert_eq!(
+                pages[0]
+                    .ops
+                    .iter()
+                    .filter_map(|op| match op {
+                        Op::Text { text, .. } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<String>(),
+                "Reset list"
+            );
+        }
+    }
+
+    #[test]
+    fn actual_compatibility_settings_choose_cell_squeeze_and_preserve_text_at_the_fit_boundary() {
+        let fonts = embedded_fonts();
+        for mode in [14, 15] {
+            for wp in [false, true] {
+                for punct in [false, true] {
+                    let mut pkg = package();
+                    pkg.set_part("word/settings.xml", format!("<w:settings xmlns:w='{}'><w:characterSpacingControl w:val='{}'/><w:compat><w:compatSetting w:name='compatibilityMode' w:uri='http://schemas.microsoft.com/office/word' w:val='{mode}'/><w:wpJustification w:val='{}'/></w:compat></w:settings>", W::URI, if punct { "compressPunctuation" } else { "doNotCompress" }, usize::from(wp)).into_bytes());
+                    pkg.set_part("word/styles.xml", format!("<w:styles xmlns:w='{}'><w:docDefaults><w:rPrDefault><w:rPr/></w:rPrDefault><w:pPrDefault><w:pPr/></w:pPrDefault></w:docDefaults></w:styles>", W::URI).into_bytes());
+                    let sheet = load_stylesheet(&pkg);
+                    assert_eq!(sheet.defaults.legacy_compat, mode == 14);
+                    assert_eq!(sheet.defaults.wp_justify, wp);
+                    assert_eq!(sheet.defaults.punct_squeeze, mode == 14 && punct);
+                    for justified in [false, true] {
+                        let (dom, root) = xml(&one_cell_table(
+                            &cell_paragraph(
+                                "AB CD",
+                                if justified {
+                                    "<w:jc w:val='both'/>"
+                                } else {
+                                    "<w:jc w:val='left'/>"
+                                },
+                            ),
+                            "",
+                        ));
+                        let Block::Table { rows, .. } = table_block(
+                            &dom,
+                            dom.element(root, &W::tbl()).unwrap(),
+                            &sheet,
+                            &mut Numbering::default(),
+                            &mut AuthorColors::default(),
+                            &HashMap::new(),
+                            None,
+                        ) else {
+                            panic!("compatibility cell")
+                        };
+                        let p = &rows[0][0].paras[0];
+                        let (share, line_share, word_cap, face_bound) = if mode == 15 && justified {
+                            (0.25, 0.0, true, false)
+                        } else if mode == 14 && wp && justified {
+                            (0.0, 0.04, false, false)
+                        } else if mode == 14 && !wp && punct {
+                            (0.2, 0.0, false, true)
+                        } else {
+                            (0.0, 0.0, false, false)
+                        };
+                        assert_eq!(
+                            (
+                                p.squeeze.share,
+                                p.squeeze.line_share,
+                                p.squeeze.word_cap,
+                                p.squeeze.face_bound
+                            ),
+                            (share, line_share, word_cap, face_bound)
+                        );
+                        assert_eq!(p.hang_spaces, mode == 15);
+                        let r = &p.runs[0];
+                        let face = fonts.get(fonts.resolve("Arial", false, false));
+                        let measure = face.width_pt("AB CD", 10.0) - 0.25;
+                        let (lines, _) = wrap_cell_runs(&fonts, p, measure, measure, (0, 0.0));
+                        assert_eq!(
+                            lines.len(),
+                            if share > 0.0 || line_share > 0.0 {
+                                1
+                            } else {
+                                2
+                            },
+                            "mode={mode}, wp={wp}, punct={punct}, justified={justified}"
+                        );
+                        assert_eq!(
+                            lines
+                                .iter()
+                                .flat_map(|line| line.iter())
+                                .flat_map(|run| run.text.chars())
+                                .filter(|c| !c.is_whitespace())
+                                .collect::<String>(),
+                            "ABCD"
+                        );
+                        assert!(
+                            lines
+                                .iter()
+                                .flatten()
+                                .all(|run| run.style.family == r.style.family
+                                    && run.style.size == 10.0
+                                    && run.style.color == r.style.color)
+                        );
+                        assert_eq!(run_text(&p.runs), "AB CD");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn section_grid_reaches_nested_cells_but_exact_and_disabled_paragraphs_keep_their_line_model() {
+        let fonts = embedded_fonts();
+        for (property, exact, snap) in [
+            ("", false, true),
+            ("<w:snapToGrid w:val='0'/>", false, false),
+            ("", true, true),
+        ] {
+            let paragraph = |text: &str| {
+                format!(
+                    "<w:p><w:pPr><w:spacing w:before='0' w:after='0' w:line='{}' w:lineRule='{}'/>{property}</w:pPr><w:r><w:rPr><w:rFonts w:ascii='Arial'/><w:sz w:val='20'/></w:rPr><w:t>{text}</w:t></w:r></w:p>",
+                    if exact { 280 } else { 240 },
+                    if exact { "exact" } else { "auto" }
+                )
+            };
+            let table = |text: &str, nested: &str| {
+                one_cell_table(
+                    &(paragraph(text) + &one_cell_table(&paragraph(nested), "") + "<w:p/>"),
+                    "",
+                )
+            };
+            let section = |pitch: u32| {
+                format!(
+                    "<w:sectPr><w:type w:val='nextPage'/><w:pgSz w:w='6000' w:h='6000'/><w:pgMar w:left='480' w:right='480' w:top='480' w:bottom='480'/><w:docGrid w:type='lines' w:linePitch='{pitch}'/></w:sectPr>"
+                )
+            };
+            let source = table("First", "Nested first")
+                + &format!(
+                    "<w:p><w:pPr>{}</w:pPr><w:r><w:t>Boundary</w:t></w:r></w:p>",
+                    section(240)
+                )
+                + &table("Second", "Nested second")
+                + &section(360);
+            let (mut blocks, page) = walk_memory(&source);
+            assert_eq!(page.grid_pitch, 12.0);
+            assert_eq!(
+                blocks
+                    .iter()
+                    .filter(|b| matches!(b, Block::PageBreak { next: Some(_), .. }))
+                    .count(),
+                1
+            );
+            grid_table_cells(&mut blocks, page.grid_pitch);
+            let tables = blocks
+                .iter()
+                .filter_map(|b| match b {
+                    Block::Table { rows, .. } => Some(rows),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(tables.len(), 2);
+            for (index, grid) in [(0, 12.0), (1, 18.0)] {
+                let cell = &tables[index][0][0];
+                let Block::Table { rows: inner, .. } = &*cell.nested[0] else {
+                    panic!("nested grid table")
+                };
+                for p in [&cell.paras[0], &inner[0][0].paras[0]] {
+                    assert_eq!(p.style.cell_grid, grid);
+                    assert_eq!(p.style.snap_to_grid, snap);
+                    assert_eq!(p.style.line_exact, exact.then_some(14.0));
+                    let expected = if exact {
+                        14.0
+                    } else if !snap {
+                        fonts
+                            .get(fonts.resolve("Arial", false, false))
+                            .single_line_pt(10.0)
+                    } else {
+                        grid
+                    };
+                    assert!(
+                        (cell_para_line_box(&fonts, p).1 - expected).abs() < 0.001,
+                        "section={index}, exact={exact}, snap={snap}"
+                    );
+                }
+                assert_eq!(
+                    run_text(&cell.paras[0].runs),
+                    if index == 0 { "First" } else { "Second" }
+                );
+                assert_eq!(
+                    run_text(&inner[0][0].paras[0].runs),
+                    if index == 0 {
+                        "Nested first"
+                    } else {
+                        "Nested second"
+                    }
+                );
+            }
+        }
+    }
 }
