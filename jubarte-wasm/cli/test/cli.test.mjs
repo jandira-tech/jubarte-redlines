@@ -363,11 +363,13 @@ test("Markdown conversion supports a reference, inferred output and PDF (integra
   assert.equal(fs.readFileSync(path.join(tmp, "reference-draft.pdf")).subarray(0, 5).toString(), "%PDF-");
 });
 
-test("comparison infers Markdown output and sniffs unknown input suffixes (integration)", () => {
+test("comparison refuses Markdown output of Word inputs and sniffs unknown input suffixes (integration)", () => {
+  // As natively, a .md output is CriticMarkup of two Markdown documents.
   const markdown = path.join(tmp, "compare-output.md");
   const result = run("compare", path.join(pair, "base.docx"), path.join(pair, "next.docx"), "-o", markdown);
-  assert.equal(result.code, 0, result.err);
-  assert.ok(fs.readFileSync(markdown, "utf8").includes("{~~"));
+  assert.equal(result.code, 1, result.out);
+  assert.match(result.err, /Markdown output needs both documents in Markdown/);
+  assert.ok(!fs.existsSync(markdown));
   const a = copy(path.join(pair, "base.docx"), "sniff-a.bin");
   const b = copy(path.join(pair, "next.docx"), "sniff-b.bin");
   const inferred = run("diff", a, b);
@@ -424,4 +426,52 @@ test("unsupported host options are rejected before input I/O (integration)", () 
     assert.equal(result.code, 2, `${flags}: ${result.err}`);
     assert.doesNotMatch(result.err, /reading/);
   }
+});
+
+test("diff, compare and convert follow the native input and output contract (integration)", () => {
+  const a = path.join(tmp, "contract-a.md"), b = path.join(tmp, "contract-b.md");
+  fs.writeFileSync(a, "Due in 30 days.\n");
+  fs.writeFileSync(b, "Due in 45 days.\n");
+  const word = path.join(tmp, "contract-a.docx");
+  assert.equal(run("convert", a, "--to", "docx", "-o", word).code, 0);
+
+  // Markdown output needs both documents in Markdown, in diff and compare.
+  for (const args of [["diff", word, b, "-o", path.join(tmp, "contract-d.md")], ["compare", word, b, "-o", path.join(tmp, "contract-c.md")]]) {
+    const result = run(...args);
+    assert.equal(result.code, 1, result.out);
+    assert.match(result.err, /Markdown output needs both documents in Markdown/);
+    assert.ok(!fs.existsSync(args.at(-1)));
+  }
+
+  // --format critic writing a redline says so and prints no CriticMarkup;
+  // the patch keeps stdout to itself.
+  const redline = path.join(tmp, "contract-critic.docx");
+  const critic = run("diff", word, b, "--format", "critic", "-o", redline);
+  assert.equal(critic.code, 0, critic.err);
+  assert.doesNotMatch(critic.out, /\{~~/);
+  assert.match(critic.out, /^wrote /);
+  const patch = run("diff", word, b, "-o", path.join(tmp, "contract-patch.docx"));
+  assert.equal(patch.code, 0, patch.err);
+  assert.doesNotMatch(patch.out, /wrote/);
+  assert.match(patch.err, /wrote/);
+
+  // --from md holds for the paragraph patch: Word bytes are not UTF-8.
+  const forced = run("diff", word, word, "--from", "md");
+  assert.equal(forced.code, 1, forced.out);
+  assert.match(forced.err, /Markdown must be UTF-8/);
+  assert.equal(forced.out, "");
+
+  // Markdown is told from the bytes when the name says nothing.
+  const notes = path.join(tmp, "NOTES");
+  fs.writeFileSync(notes, "Plain notes.\n");
+  const converted = run("convert", notes, "-o", path.join(tmp, "notes.pdf"));
+  assert.equal(converted.code, 0, converted.err);
+
+  // Malformed UTF-8 is refused, not replaced.
+  const broken = path.join(tmp, "broken.md");
+  fs.writeFileSync(broken, Buffer.from([0x41, 0xff, 0x42, 0x0a]));
+  const refused = run("convert", broken, "-o", path.join(tmp, "broken.pdf"));
+  assert.equal(refused.code, 1, refused.out);
+  assert.match(refused.err, /Markdown must be UTF-8/);
+  assert.ok(!fs.existsSync(path.join(tmp, "broken.pdf")));
 });

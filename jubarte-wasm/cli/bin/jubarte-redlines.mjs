@@ -68,6 +68,31 @@ function ensureWritable(file, force) {
   }
 }
 
+const ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+
+/** The input's kind: the declared or named format, else a ZIP is Word. */
+function kindOf(file, bytes, declared) {
+  const named = declared ?? JSON.parse(wasm.parseCli(JSON.stringify(["diff", "--", file, file]))).args.old_format;
+  return named ?? (bytes.subarray(0, 4).equals(ZIP_MAGIC) ? "docx" : "md");
+}
+
+/** Markdown bytes as text; malformed UTF-8 is refused, never replaced. */
+function markdownText(file, bytes) {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new CliError(`${file}: Markdown must be UTF-8`);
+  }
+}
+
+/** Markdown output is CriticMarkup of two Markdown documents. */
+function markdownNeedsBoth(sides) {
+  const word = sides.find(([, kind]) => kind !== "md");
+  if (word) {
+    throw new CliError(`Markdown output needs both documents in Markdown (${word[0]} is Word): write a Word redline (-o FILE.docx) or a PDF (-o FILE.pdf) instead`);
+  }
+}
+
 function write(file, data) {
   try {
     fs.writeFileSync(file, data);
@@ -89,6 +114,7 @@ const COMMANDS = {
     run(name, [original, modified], o) {
       const output = o.output ?? path.join(path.dirname(original), `${stem(original)}_v_${stem(modified)}.docx`);
       const [a, b] = [read(original, o.old_format), read(modified, o.new_format)];
+      if (o.output_format === "md") markdownNeedsBoth([[original, kindOf(original, a, o.old_format)], [modified, kindOf(modified, b, o.new_format)]]);
       ensureWritable(output, o.force);
       const redline = o.output_format === "md"
         ? wasm.diffDocumentsCritic(a, b, o.author, o.date)
@@ -101,11 +127,15 @@ const COMMANDS = {
     run(_, [old, next], o) {
       const view = ["github", "word", "normal", "context", "side-by-side"].includes(o.format);
       const a = read(old, o.old_format), b = read(next, o.new_format);
-      const kind = (declared, bytes) => declared ?? (bytes.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04])) ? "docx" : "md");
+      const kind = (declared, bytes) => declared ?? (bytes.subarray(0, 4).equals(ZIP_MAGIC) ? "docx" : "md");
       const oldFormat = kind(o.old_format, a), newFormat = kind(o.new_format, b);
+      // A side read as Markdown must be text, whichever engine call follows.
+      if (oldFormat === "md") markdownText(old, a);
+      if (newFormat === "md") markdownText(next, b);
       let output = o.output;
       const to = o.to ?? o.output_format ?? (oldFormat === "md" && newFormat === "md" ? "md" : "docx");
       if (!view && output == null && to !== "md") output = path.join(path.dirname(old), `${stem(old)}_v_${stem(next)}.${to}`);
+      if (!view && output != null && to === "md") markdownNeedsBoth([[old, oldFormat], [next, newFormat]]);
       if (output != null) ensureWritable(output, o.force);
       if (view) {
         const text = wasm.diffDocumentsView(a, b, JSON.stringify({
@@ -130,6 +160,10 @@ const COMMANDS = {
           if (to === "pdf") data = wasm.docxToPdf(data, false, o.revisions, paletteOf(o), Boolean(o.move_comments), Boolean(o.changed_only));
         }
         write(output, data);
+        // As natively: critic says only what it wrote; a patch keeps stdout.
+        const wrote = `wrote ${output} (${typeof data === "string" ? Buffer.byteLength(data, "utf8") : data.length} bytes)`;
+        if (o.format === "critic") return void console.log(wrote);
+        console.error(wrote);
       }
       process.stdout.write(text);
     },
@@ -189,8 +223,8 @@ const COMMANDS = {
     run(_, [file], o) {
       const palette = paletteOf(o);
       let docx = read(file);
-      if (isMarkdown(file)) {
-        docx = wasm.markdownToDocx(docx.toString("utf8"), JSON.stringify({ page: o.page, author: o.author, date: o.date, critic: !o.no_critic, track_changes: o.track_changes }), o.reference_doc == null ? undefined : read(o.reference_doc));
+      if (kindOf(file, docx) === "md") {
+        docx = wasm.markdownToDocx(markdownText(file, docx), JSON.stringify({ page: o.page, author: o.author, date: o.date, critic: !o.no_critic, track_changes: o.track_changes }), o.reference_doc == null ? undefined : read(o.reference_doc));
         if (!o.pdf && (o.to === "docx" || (o.to == null && (o.output == null || path.extname(o.output).toLowerCase() === ".docx")))) {
           if (o.move_comments || o.changed_only) {
             throw new CliError("--move-comments / --changed-only applies to PDF or PNG output only");
