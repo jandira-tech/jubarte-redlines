@@ -659,6 +659,7 @@ Old is `received.docx`, new is the agent's `redline.docx`. Each view keeps both 
 
 ```console
 $ jubarte diff out/received.docx out/edited/redline.docx -a Agent -d 2026-10-02T15:00:00Z
+wrote out/received_v_redline.docx (11720 bytes)
 --- a/out/received.docx
 +++ b/out/edited/redline.docx	Agent	2026-10-02T15:00:00Z
 @@ [body:p:3] @@
@@ -682,7 +683,6 @@ either party ends it with sixty days written notice.
 Each party shall keep the other's Confidential Information secret{+ for
 three years after this Agreement ends+}{>>Ann Counsel
 (2026-10-01T09:00:00Z): Add a three-year survival period?<<}.
-wrote out/received_v_redline.docx (11720 bytes)
 ```
 
 With a Word document on either side, `patch` and `critic` also write a Word redline (`<old>_v_<new>.docx` beside the old document unless `-o` names another path), so the next run needs `--force`.
@@ -918,6 +918,7 @@ $ jubarte diff out/received.docx out/edited/redline.docx --format side-by-side -
 
 ```console
 $ jubarte diff out/received.docx out/edited/redline.docx -o out/diff.docx --force -a Agent -d 2026-10-02T15:00:00Z
+wrote out/diff.docx (11720 bytes)
 --- a/out/received.docx
 +++ b/out/edited/redline.docx	Agent	2026-10-02T15:00:00Z
 @@ [body:p:3] @@
@@ -941,7 +942,6 @@ either party ends it with sixty days written notice.
 Each party shall keep the other's Confidential Information secret{+ for
 three years after this Agreement ends+}{>>Ann Counsel
 (2026-10-01T09:00:00Z): Add a three-year survival period?<<}.
-wrote out/diff.docx (11720 bytes)
 ```
 
 
@@ -974,6 +974,7 @@ body:rev:8	insertion	text	Agent	" for three years after this Agreement ends"
 
 ```console
 $ jubarte diff out/received.docx out/edited/redline.docx -o out/diff.png --force --revisions word --move-comments -a Agent -d 2026-10-02T15:00:00Z
+wrote 2 PNG pages (out/diff-page-NN.png, 96 dpi)
 --- a/out/received.docx
 +++ b/out/edited/redline.docx	Agent	2026-10-02T15:00:00Z
 @@ [body:p:3] @@
@@ -997,7 +998,6 @@ either party ends it with sixty days written notice.
 Each party shall keep the other's Confidential Information secret{+ for
 three years after this Agreement ends+}{>>Ann Counsel
 (2026-10-01T09:00:00Z): Add a three-year survival period?<<}.
-wrote 2 PNG pages (out/diff-page-NN.png, 96 dpi)
 ```
 
 ![diff -o diff.png --revisions word --move-comments, page 1](out/diff-page-01.png)
@@ -1006,6 +1006,7 @@ wrote 2 PNG pages (out/diff-page-NN.png, 96 dpi)
 
 ```console
 $ jubarte diff out/received.docx out/edited/redline.docx -o out/diff-changed.pdf --force --changed-only -a Agent -d 2026-10-02T15:00:00Z
+wrote out/diff-changed.pdf (169872 bytes, 1 page)
 --- a/out/received.docx
 +++ b/out/edited/redline.docx	Agent	2026-10-02T15:00:00Z
 @@ [body:p:3] @@
@@ -1029,7 +1030,6 @@ either party ends it with sixty days written notice.
 Each party shall keep the other's Confidential Information secret{+ for
 three years after this Agreement ends+}{>>Ann Counsel
 (2026-10-01T09:00:00Z): Add a three-year survival period?<<}.
-wrote out/diff-changed.pdf (169872 bytes, 1 page)
 ```
 
 `debug A B --check text`: the two packages' paragraphs, only the lines that differ, with `{+inserted+}` and `[-deleted-]` runs.
@@ -1088,6 +1088,7 @@ This Agreement begins on {~~March~>April~~} 1, 2026 and continues unti…
 
 ```console
 $ jubarte diff out/received.docx out/agent.md -o out/from-markdown.docx --force -a Agent -d 2026-10-02T15:00:00Z
+wrote out/from-markdown.docx (10314 bytes)
 --- a/out/received.docx
 +++ b/out/agent.md	Agent	2026-10-02T15:00:00Z
 @@ [body:p:3] @@
@@ -1114,7 +1115,6 @@ written notice.
 Each party shall keep the other's Confidential Information secret{+ for
 three years after this Agreement ends+}{>>Ann Counsel
 (2026-10-01T09:00:00Z): Add a three-year survival period?<<}.
-wrote out/from-markdown.docx (10314 bytes)
 ```
 
 ## 4. Every visualization and its options
