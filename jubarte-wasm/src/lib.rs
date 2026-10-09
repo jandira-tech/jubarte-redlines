@@ -581,7 +581,7 @@ pub fn diff_documents_unified(
 
 #[wasm_bindgen(typescript_custom_section)]
 const UNIFIED_TYPES: &str = r#"
-export function diffDocumentsUnified(old: Uint8Array, new: Uint8Array, oldName?: string, newName?: string, context?: number): string;
+export function diffDocumentsUnified(old: Uint8Array, _new: Uint8Array, oldName?: string, newName?: string, context?: number): string;
 "#;
 
 /// Shared clap parsing, with no filesystem, clock or process access.

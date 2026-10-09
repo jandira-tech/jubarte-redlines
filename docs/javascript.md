@@ -73,7 +73,7 @@ Reflects `jubarte-wasm/npm/node/jubarte_wasm.d.ts` (the full Node build; the sli
 ### `diffDocumentsUnified`
 
 ```typescript
-diffDocumentsUnified(old: Uint8Array, new: Uint8Array, oldName?: string, newName?: string, context?: number): string
+diffDocumentsUnified(old: Uint8Array, _new: Uint8Array, oldName?: string, newName?: string, context?: number): string
 ```
 
 ### `AppendOutput`
