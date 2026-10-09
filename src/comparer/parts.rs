@@ -777,4 +777,245 @@ mod tests {
         )));
         assert!(!has_relationship_attribute("<w:hdr><w:p/></w:hdr>"));
     }
+
+    #[test]
+    fn relationship_uri_schemes_and_malformed_rows_have_explicit_classification() {
+        for target in [
+            "https://host/path",
+            "mailto:a@host",
+            "a+b.c-d:opaque",
+            "A1:payload",
+        ] {
+            assert!(
+                is_external_relationship("urn:part/image", target),
+                "{target}"
+            );
+        }
+        for target in [
+            "",
+            "media/p.png",
+            "/a:part",
+            ":missing",
+            "1bad:part",
+            "a b:part",
+            "é:part",
+        ] {
+            assert!(
+                !is_external_relationship("urn:part/image", target),
+                "{target}"
+            );
+            assert!(is_external_relationship("urn:part/hyperlink", target));
+        }
+        for row in [
+            "<Relationship Id=unquoted Type=\"x\" Target=\"y\"/>",
+            "<Relationship Id=\"x\" Type=\"y\"/>",
+            "<Relationship Id=\"x\" Target=\"y\"/>",
+            "<Relationship Type=\"x\" Target=\"y\"/>",
+            "<Relationship Id=\"x\" Type=\"y\" Target=\"unterminated/>",
+            "<Relationship Id=\"x\" Type=\"y\" Target=\"z\"",
+            "<Relationships Id=\"x\" Type=\"y\" Target=\"z\"/>",
+        ] {
+            assert!(parse_relationship_rows(row).is_empty(), "{row}");
+        }
+        let rows = parse_relationship_rows(
+            "<Relationships><Relationship ExtraId=\"bad\" Id = \"good\" ExtraTarget=\"ignored\" Target = \"media/a&amp;b.png\" Type = \"urn:part/image\"/></Relationships>",
+        );
+        assert_eq!(
+            rows,
+            vec![RelationshipRow {
+                id: "good".into(),
+                rel_type: "urn:part/image".into(),
+                target: "media/a&b.png".into(),
+                external: false
+            }]
+        );
+    }
+
+    #[test]
+    fn carried_images_reuse_only_matching_bytes_content_type_and_internal_type() {
+        let source_part = "word/headerGap.xml";
+        let dest_part = "word/footerGap.xml";
+        for matching_type in [false, true] {
+            for matching_bytes in [false, true] {
+                let mut src = PartFs::open(PACKAGE).unwrap();
+                src.set_part("word/media/source.opaque", b"original image bytes".to_vec());
+                src.add_content_type_override("word/media/source.opaque", "image/png");
+                let rid = src.add_document_relationship(
+                    source_part,
+                    "urn:part/image",
+                    "media/source.opaque",
+                );
+                let mut dest = PartFs::open(PACKAGE).unwrap();
+                dest.set_part(
+                    "word/media/existing.opaque",
+                    if matching_bytes {
+                        b"original image bytes".to_vec()
+                    } else {
+                        b"different image bytes".to_vec()
+                    },
+                );
+                dest.add_content_type_override(
+                    "word/media/existing.opaque",
+                    if matching_type {
+                        "image/png"
+                    } else {
+                        "image/jpeg"
+                    },
+                );
+                let old_id = dest.add_document_relationship(
+                    dest_part,
+                    "urn:part/image",
+                    "media/existing.opaque",
+                );
+                dest.add_document_relationship_external(
+                    dest_part,
+                    "urn:part/image",
+                    "https://host/image.png",
+                );
+                dest.add_document_relationship(
+                    dest_part,
+                    "urn:part/chart",
+                    "media/existing.opaque",
+                );
+                let new_id =
+                    carry_relationship(&mut dest, dest_part, &src, source_part, &rid, |ty| {
+                        ty.ends_with("/image")
+                    })
+                    .unwrap();
+                assert_eq!(new_id == old_id, matching_type && matching_bytes);
+                let rel = dest
+                    .read_rels_for(dest_part)
+                    .unwrap()
+                    .items
+                    .iter()
+                    .find(|r| r.id == new_id)
+                    .unwrap();
+                assert_eq!(rel.rel_type, "urn:part/image");
+                assert_eq!(rel.target_mode, None);
+                let target = dest.resolve_rel_target(dest_part, &rel.target);
+                assert_eq!(
+                    dest.part_bytes(&target),
+                    Some(b"original image bytes".as_slice())
+                );
+                assert_eq!(dest.content_type_for(&target).as_deref(), Some("image/png"));
+                assert_eq!(
+                    src.part_bytes("word/media/source.opaque"),
+                    Some(b"original image bytes".as_slice())
+                );
+                assert_eq!(
+                    carry_relationship(&mut dest, dest_part, &src, source_part, &rid, |_| true),
+                    Some(new_id)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn carried_external_links_and_missing_internal_targets_do_not_create_media() {
+        let mut src = PartFs::open(PACKAGE).unwrap();
+        let mut dest = PartFs::open(PACKAGE).unwrap();
+        let before = dest.parts();
+        for (ty, target, explicit) in [
+            ("urn:part/hyperlink", "https://host/a?x=1&y=2", false),
+            ("urn:part/attachment", "custom+scheme:payload", false),
+            ("urn:part/attachment", "relative-but-external.bin", true),
+        ] {
+            let rid = if explicit {
+                src.add_document_relationship_external("word/headerGap.xml", ty, target)
+            } else {
+                src.add_document_relationship("word/headerGap.xml", ty, target)
+            };
+            let copied = carry_relationship(
+                &mut dest,
+                "word/footerGap.xml",
+                &src,
+                "word/headerGap.xml",
+                &rid,
+                |_| true,
+            )
+            .unwrap();
+            let rel = dest
+                .read_rels_for("word/footerGap.xml")
+                .unwrap()
+                .items
+                .iter()
+                .find(|r| r.id == copied)
+                .unwrap();
+            assert_eq!(rel.target, target);
+            assert_eq!(rel.target_mode.as_deref(), Some("External"));
+            assert_eq!(dest.parts(), before);
+        }
+        let missing = src.add_document_relationship(
+            "word/headerGap.xml",
+            "urn:part/image",
+            "media/missing.opaque",
+        );
+        assert_eq!(
+            carry_relationship(
+                &mut dest,
+                "word/footerGap.xml",
+                &src,
+                "word/headerGap.xml",
+                &missing,
+                |_| true
+            ),
+            None
+        );
+        assert_eq!(
+            carry_relationship(
+                &mut dest,
+                "word/footerGap.xml",
+                &src,
+                "word/headerGap.xml",
+                &missing,
+                |_| false
+            ),
+            None
+        );
+        assert_eq!(
+            carry_relationship(
+                &mut dest,
+                "word/footerGap.xml",
+                &src,
+                "word/headerGap.xml",
+                "absent",
+                |_| true
+            ),
+            None
+        );
+        assert_eq!(
+            carry_relationship(
+                &mut dest,
+                "word/footerGap.xml",
+                &src,
+                "word/noRelationships.xml",
+                "absent",
+                |_| true
+            ),
+            None
+        );
+        assert_eq!(dest.parts(), before);
+    }
+
+    #[test]
+    fn markup_collision_names_reuse_bytes_without_overwriting_original_parts() {
+        for source_name in [
+            "word/headerGap.xml",
+            "rootGap.xml",
+            "word/noextension",
+            "folder/with.dot/noextension",
+        ] {
+            let mut dest = PartFs::open(PACKAGE).unwrap();
+            dest.set_part(source_name, b"A".to_vec());
+            let first = dest_uri_for_reconciled_part(&dest, source_name, b"B");
+            assert_ne!(first, source_name);
+            dest.set_part(&first, b"C".to_vec());
+            let next = dest_uri_for_reconciled_part(&dest, source_name, b"B");
+            assert_ne!(first, next);
+            dest.set_part(&next, b"B".to_vec());
+            assert_eq!(dest_uri_for_reconciled_part(&dest, source_name, b"B"), next);
+            assert_eq!(dest.part_bytes(source_name), Some(b"A".as_slice()));
+            assert_eq!(dest.part_bytes(&first), Some(b"C".as_slice()));
+        }
+    }
 }

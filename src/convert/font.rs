@@ -6413,4 +6413,84 @@ mod deeper_boundary_tests {
         assert_eq!(fonts.extra[0].pdf_name(), "Boundary-+-Face");
         assert_eq!(fonts.extra[0].bytes(), bytes.as_slice());
     }
+
+    #[test]
+    fn poisoned_shape_caches_do_not_change_glyphs_or_character_ownership() {
+        for poison_plan in [false, true] {
+            for poison_shape in [false, true] {
+                let face = Face::bundled(FaceId::SansRegular);
+                if poison_plan {
+                    assert!(
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            let _guard = face.plans.lock().unwrap();
+                            panic!("interrupted plan insertion");
+                        }))
+                        .is_err()
+                    );
+                }
+                if poison_shape {
+                    assert!(
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            let _guard = face.shaped.lock().unwrap();
+                            panic!("interrupted shape insertion");
+                        }))
+                        .is_err()
+                    );
+                }
+                for text in ["ABC", "éßΩ", "A漢🙂Z"] {
+                    for kern in [false, true] {
+                        let expected =
+                            Face::bundled(FaceId::SansRegular).shape_kern(text, 12.0, kern);
+                        assert_eq!(face.shape_kern(text, 12.0, kern), expected);
+                        assert_eq!(face.shape_kern(text, 12.0, kern), expected);
+                        assert_eq!(face.glyph_texts(text, kern).concat(), text);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn collections_preserve_independent_tables_and_reject_truncated_directories() {
+        let mut collection = b"ttcf".to_vec();
+        collection.extend_from_slice(&0x00010000u32.to_be_bytes());
+        collection.extend_from_slice(&2u32.to_be_bytes());
+        collection.extend_from_slice(&20u32.to_be_bytes());
+        collection.extend_from_slice(&64u32.to_be_bytes());
+        // Two sfnt records share an odd-length table; extraction must align
+        // each standalone result without changing its original bytes.
+        for offset in [20usize, 64] {
+            collection.resize(offset, 0);
+            collection.extend_from_slice(&0x00010000u32.to_be_bytes());
+            collection.extend_from_slice(&1u16.to_be_bytes());
+            collection.extend_from_slice(&[0; 6]);
+            collection.extend_from_slice(b"test");
+            collection.extend_from_slice(&123u32.to_be_bytes());
+            collection.extend_from_slice(&100u32.to_be_bytes());
+            collection.extend_from_slice(&3u32.to_be_bytes());
+        }
+        collection.resize(100, 0);
+        collection.extend_from_slice(&[8, 9, 10]);
+        for index in [0, 1] {
+            let out = ttc_face_bytes(&collection, index).unwrap();
+            assert_eq!(out.len(), 32);
+            assert_eq!(&out[12..20], b"test\0\0\0{");
+            assert_eq!(&out[20..24], &28u32.to_be_bytes());
+            assert_eq!(&out[28..], &[8, 9, 10, 0]);
+        }
+        for length in [0, 3, 12, 15, 19, 23, 25, 31, 39, 43, 47, 99, 100, 102] {
+            assert_eq!(
+                ttc_face_bytes(&collection[..length], 0),
+                None,
+                "truncated at {length}"
+            );
+        }
+        let mut bad = collection.clone();
+        bad[40..44].copy_from_slice(&u32::MAX.to_be_bytes());
+        assert_eq!(ttc_face_bytes(&bad, 0), None);
+        assert!(
+            ttc_face_bytes(&bad, 1).is_some(),
+            "a corrupt neighboring face must not prevent extracting a valid face"
+        );
+    }
 }

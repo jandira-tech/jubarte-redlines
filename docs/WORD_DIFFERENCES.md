@@ -366,3 +366,52 @@ different revision states, or crossed fields. jubarte never emits either.
 python3 tools/parity_ladder.py sweep      # compare against tools/parity_baseline.tsv
 uv run --project ../neurotic_docx_bench python tools/redline40/redline40.py run --label NAME --against baseline-0.9.3
 ```
+
+### M337: Word retains an extra empty cell after horizontal table replacement
+
+For `sd_2766_pirates_tracked_changes_3285d875` →
+`sd_1494_table_left_indent_11bb24c7`, the Word reference
+`737a91c72fe6eb78743835a3566c7af356c29f5b1915734a3b48a5ba142b85d4`
+retains four physical cells in each of the first revised table's two rows.
+The revised source authored three cells per row. Word records cell-property
+changes and deletes the old text, but records no cell deletion for the fourth
+cell. Accepting its redline therefore produces table cell counts
+`[[4, 4], [3, 3]]` rather than the source's `[[3, 3], [3, 3]]`.
+
+Word mode preserves that observed paragraph and table shape only within the
+M337 unrelated-source route: one original five-row, four-cell table facing two
+revised two-row, three-cell tables, with the first revised table empty. This
+can be worse than preserving the revised source: acceptance keeps an extra
+empty column. `--mode powertools` uses separate inserted/deleted row lifetimes
+and restores the authored cell counts on both acceptance and rejection. Use
+that mode when exact source table reconstruction matters. Other horizontal
+partition changes retain the conservative row lifecycle fallback in both modes.
+
+The public M337 regression checks both projections and the Word paragraph
+shape; the reference is indexed by `corpus/word/notices/RENAMED.csv` in
+`neurotic_docx_bench`.
+
+The same bounded Word free-mesh exception covers three further observed
+references. `pirates × table_border_widths` (`28d97cb1f1`) accepts the first
+revised table with four cells instead of its authored two.
+`eigenpal_docx_editor_suggesting_mixed_edits × employee_directory_table_2`
+(`b351836b34`) rejects the first original table with three cells instead of
+its authored two. `rFonts_rstyle_linked_combos × rtl_table` (`b26364fa4f`)
+rejects the original's first two rows with three cells instead of two. Each
+exception is authorized only inside that family's existing Word free-mesh
+route and requires its observed complete source table geometry. The original
+Word mixed-cell assertions remain in place. Faithful mode keeps exact authored
+cell partitions, spans and text on both projections for all four families.
+
+### Folded demo title paragraph history (M465)
+
+The saved Word redline `615a0006cf` folds deleted “Double Spacing Bold Demo”
+into the inserted “1. What this is” heading. The heading keeps the revised
+bottom border and paragraph spacing live, but Word saves an empty
+`pPrChange` rather than the original title's `spacing line="276"`.
+
+Jubarte keeps that mixed paragraph shape and the revised heading layout.
+When format tracking is enabled, its history contains the complete original
+paragraph properties so rejection restores the authored title spacing.
+Disabling format tracking retains the existing behavior without a property
+history. This improves source reconstruction over Word's empty snapshot.

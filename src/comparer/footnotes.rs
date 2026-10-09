@@ -1231,3 +1231,427 @@ pub fn process_footnote_endnote(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod deterministic_note_boundary_tests {
+    use super::*;
+
+    fn parse(dom: &mut Dom, xml: &str) -> NodeId {
+        let document = dom.parse_xdocument(&format!(
+            "<w:root xmlns:w=\"{}\" xmlns:r=\"{}\" xmlns:v=\"urn:schemas-microsoft-com:vml\">{xml}</w:root>",
+            W::URI, crate::namespaces::R::URI,
+        ));
+        dom.elements(dom.root(document).unwrap(), None)[0]
+    }
+    fn properties(dom: &Dom, node: NodeId) -> String {
+        let mut attributes: Vec<_> = dom
+            .attributes(node)
+            .into_iter()
+            .filter(|(name, _)| !dom.is_namespace_declaration(name))
+            .map(|(name, value)| format!("{}:{}={value}", name.namespace_name(), name.local_name()))
+            .collect();
+        attributes.sort();
+        let children: String = dom
+            .elements(node, None)
+            .into_iter()
+            .map(|child| properties(dom, child))
+            .collect();
+        format!(
+            "{}:{attributes:?}:{}[{children}]",
+            dom.name(node).unwrap().local_name(),
+            if dom.has_elements(node) {
+                String::new()
+            } else {
+                dom.value(node)
+            }
+        )
+    }
+    fn settings() -> WmlComparerSettings {
+        WmlComparerSettings {
+            author_for_revisions: "Note Editor".into(),
+            date_time_for_revisions: "2026-10-08T12:00:00Z".into(),
+            ..WmlComparerSettings::default()
+        }
+    }
+
+    #[test]
+    fn both_separator_kinds_keep_exact_ids_spacing_and_marker_payload() {
+        for footnote in [false, true] {
+            let mut dom = Dom::new();
+            let separators = mandatory_separator_notes(&mut dom, footnote);
+            for (index, &note) in separators.iter().enumerate() {
+                assert_eq!(
+                    dom.name(note),
+                    Some(if footnote {
+                        W::footnote()
+                    } else {
+                        W::endnote()
+                    })
+                );
+                assert_eq!(
+                    dom.attribute(note, &W::id()),
+                    Some(if index == 0 { "-1" } else { "0" })
+                );
+                let kind = if index == 0 {
+                    "separator"
+                } else {
+                    "continuationSeparator"
+                };
+                assert_eq!(dom.attribute(note, &W::name("type")), Some(kind));
+                let paragraph = dom.element(note, &W::p()).unwrap();
+                let paragraph_properties = dom.element(paragraph, &W::p_pr()).unwrap();
+                let spacing = dom
+                    .element(paragraph_properties, &W::name("spacing"))
+                    .unwrap();
+                assert_eq!(dom.attribute(spacing, &W::name("after")), Some("0"));
+                assert_eq!(dom.attribute(spacing, &W::name("line")), Some("240"));
+                assert_eq!(dom.attribute(spacing, &W::name("lineRule")), Some("auto"));
+                let run = dom.element(paragraph, &W::r()).unwrap();
+                assert_eq!(dom.elements(run, None).len(), 1);
+                assert!(dom.element(run, &W::name(kind)).is_some());
+                assert!(is_structural_note(&dom, note));
+            }
+        }
+    }
+
+    #[test]
+    fn referenced_endnote_deletion_counts_but_unreferenced_note_revisions_do_not() {
+        for kind in ["footnote", "endnote"] {
+            let mut dom = Dom::new();
+            let main = parse(
+                &mut dom,
+                &format!(
+                    "<w:body><w:p><w:r><w:t>Body</w:t><w:{kind}Reference w:id=\"7\"/></w:r></w:p></w:body>"
+                ),
+            );
+            let notes = parse(
+                &mut dom,
+                &format!(
+                    "<w:{kind}s><w:{kind} w:id=\"7\"><w:p><w:r><w:t>Unchanged note</w:t></w:r></w:p></w:{kind}><w:{kind} w:id=\"8\"><w:p><w:ins w:id=\"30\" w:author=\"Editor\"><w:r><w:t>Unreferenced revision</w:t></w:r></w:ins></w:p></w:{kind}></w:{kind}s>"
+                ),
+            );
+            let roots = if kind == "footnote" {
+                (Some(notes), None)
+            } else {
+                (None, Some(notes))
+            };
+            assert!(
+                !content_contains_footnote_endnote_references_that_have_revisions(
+                    &dom, main, roots.0, roots.1
+                )
+            );
+            let referenced = lookup_def(&dom, Some(notes), &W::name(kind), "7").unwrap();
+            let paragraph = dom.element(referenced, &W::p()).unwrap();
+            let deletion = parse(
+                &mut dom,
+                "<w:del w:id=\"31\" w:author=\"Editor\"><w:r><w:delText>Old note phrase</w:delText></w:r></w:del>",
+            );
+            dom.add(paragraph, deletion);
+            let before = properties(&dom, notes);
+            assert!(
+                content_contains_footnote_endnote_references_that_have_revisions(
+                    &dom, main, roots.0, roots.1
+                )
+            );
+            assert_eq!(
+                properties(&dom, notes),
+                before,
+                "the predicate is read-only"
+            );
+        }
+    }
+
+    #[test]
+    fn custom_markers_move_one_leaf_only_with_matching_revision_ownership() {
+        for (kind, revision, leaf) in [("footnote", "ins", "t"), ("endnote", "del", "delText")] {
+            for scenario in ["matching", "opposite", "ordinary", "already", "last"] {
+                let mut dom = Dom::new();
+                let own = if scenario == "already" {
+                    format!("<w:{leaf}>Existing marker</w:{leaf}>")
+                } else {
+                    String::new()
+                };
+                let next_revision = if scenario == "opposite" {
+                    if revision == "ins" { "del" } else { "ins" }
+                } else {
+                    revision
+                };
+                let following = if scenario == "last" {
+                    String::new()
+                } else if scenario == "ordinary" {
+                    "<w:r><w:t>Unrelated live body</w:t></w:r>".into()
+                } else {
+                    format!(
+                        "<w:{next_revision} w:id=\"11\" w:author=\"Other Editor\"><w:r><w:rPr><w:b/></w:rPr><w:{leaf} xml:space=\"preserve\"> * </w:{leaf}></w:r><w:r><w:{leaf}>Unrelated tail</w:{leaf}></w:r></w:{next_revision}>"
+                    )
+                };
+                let root = parse(
+                    &mut dom,
+                    &format!(
+                        "<w:p><w:{revision} w:id=\"10\" w:author=\"Reference Editor\"><w:r><w:rPr><w:i/></w:rPr><w:{kind}Reference w:id=\"7\" w:customMarkFollows=\"1\"/>{own}</w:r></w:{revision}>{following}</w:p>"
+                    ),
+                );
+                let before = properties(&dom, root);
+                let reference =
+                    dom.descendants(root, Some(&W::name(&format!("{kind}Reference"))))[0];
+                let run = dom.parent(reference).unwrap();
+                fix_up_footnotes_endnotes_with_custom_markers(&mut dom, root);
+                assert_eq!(dom.attribute(reference, &W::id()), Some("7"));
+                assert_eq!(
+                    dom.attribute(dom.parent(run).unwrap(), &W::author()),
+                    Some("Reference Editor")
+                );
+                if scenario == "matching" {
+                    let marker = dom.element(run, &W::name(leaf)).unwrap();
+                    assert_eq!(dom.value(marker), " * ");
+                    assert_eq!(
+                        dom.attribute(marker, &crate::xmllinq::XNamespace::xml().name("space")),
+                        Some("preserve")
+                    );
+                    assert_eq!(
+                        dom.descendants(root, Some(&W::name(leaf)))
+                            .iter()
+                            .filter(|&&text| dom.value(text) == " * ")
+                            .count(),
+                        1
+                    );
+                    let following = dom.elements(root, Some(&W::name(revision)))[1];
+                    assert_eq!(dom.value(following), "Unrelated tail");
+                    assert_eq!(
+                        dom.descendants(following, Some(&W::name("b"))).len(),
+                        1,
+                        "source run formatting is not moved"
+                    );
+                } else {
+                    assert_eq!(properties(&dom, root), before);
+                }
+                let once = properties(&dom, root);
+                fix_up_footnotes_endnotes_with_custom_markers(&mut dom, root);
+                assert_eq!(properties(&dom, root), once);
+            }
+        }
+    }
+
+    #[test]
+    fn existing_note_reference_marker_and_nested_run_boundaries_are_respected() {
+        for (body, direct, added) in [
+            (
+                "<w:p><w:r><w:rPr><w:rStyle w:val=\"FootnoteReference\"/></w:rPr><w:footnoteRef/></w:r><w:r><w:t>Payload</w:t></w:r></w:p>",
+                true,
+                false,
+            ),
+            (
+                "<w:p><w:r><w:footnoteRef/></w:r><w:r><w:t>Payload</w:t></w:r></w:p>",
+                false,
+                false,
+            ),
+            (
+                "<w:p><w:ins w:id=\"1\" w:author=\"Editor\"><w:r><w:t>Payload</w:t></w:r></w:ins></w:p>",
+                true,
+                false,
+            ),
+            (
+                "<w:p><w:ins w:id=\"1\" w:author=\"Editor\"><w:r><w:t>Payload</w:t></w:r></w:ins></w:p>",
+                false,
+                true,
+            ),
+        ] {
+            let mut dom = Dom::new();
+            let root = parse(&mut dom, &format!("<w:body>{body}</w:body>"));
+            let before = properties(&dom, root);
+            let marker_count = dom.descendants(root, Some(&W::name("footnoteRef"))).len();
+            ensure_reference_marker(&mut dom, root, true, direct);
+            assert_eq!(
+                dom.descendants(root, Some(&W::name("footnoteRef"))).len(),
+                marker_count + usize::from(added)
+            );
+            if !added {
+                assert_eq!(properties(&dom, root), before);
+            }
+            assert_eq!(
+                dom.descendants(root, Some(&W::t()))
+                    .iter()
+                    .map(|&text| dom.value(text))
+                    .collect::<String>(),
+                "Payload"
+            );
+        }
+    }
+
+    #[test]
+    fn rectification_reserves_notice_id_and_preserves_each_definition_payload() {
+        for kind in ["footnote", "endnote"] {
+            let mut dom = Dom::new();
+            let main = parse(
+                &mut dom,
+                &format!(
+                    "<w:body><w:p><w:r><w:{kind}Reference w:id=\"7\"/><w:{kind}Reference w:id=\"8\"/></w:r></w:p></w:body>"
+                ),
+            );
+            let before = parse(
+                &mut dom,
+                &format!(
+                    "<w:{kind}s><w:{kind} w:id=\"7\"><w:p><w:r><w:t>Original definition</w:t></w:r></w:p></w:{kind}><w:{kind} w:id=\"8\"><w:p><w:pPr><w:spacing w:line=\"276\"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>Original-only definition</w:t></w:r></w:p></w:{kind}></w:{kind}s>"
+                ),
+            );
+            let after = parse(
+                &mut dom,
+                &format!(
+                    "<w:{kind}s><w:{kind} w:id=\"7\"><w:p><w:pPr><w:ind w:left=\"720\"/></w:pPr><w:r><w:rPr><w:i/></w:rPr><w:t>Revised definition</w:t></w:r></w:p></w:{kind}></w:{kind}s>"
+                ),
+            );
+            let output = parse(
+                &mut dom,
+                &format!(
+                    "<w:{kind}s><w:{kind} w:id=\"1\" w:type=\"continuationNotice\"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:{kind}><w:{kind} w:id=\"90\"><w:p><w:r><w:t>Stale content</w:t></w:r></w:p></w:{kind}></w:{kind}s>"
+                ),
+            );
+            let notice = lookup_def(&dom, Some(output), &W::name(kind), "1").unwrap();
+            let notice_before = properties(&dom, notice);
+            let expected_revised = properties(
+                &dom,
+                dom.element(
+                    lookup_def(&dom, Some(after), &W::name(kind), "7").unwrap(),
+                    &W::p(),
+                )
+                .unwrap(),
+            );
+            let expected_original = properties(
+                &dom,
+                dom.element(
+                    lookup_def(&dom, Some(before), &W::name(kind), "8").unwrap(),
+                    &W::p(),
+                )
+                .unwrap(),
+            );
+            let set = NotesSet {
+                before: Some(before),
+                after: Some(after),
+                with_revisions: Some(output),
+            };
+            let (footnotes, endnotes) = if kind == "footnote" {
+                (set, NotesSet::default())
+            } else {
+                (NotesSet::default(), set)
+            };
+            let mut id = 100;
+            rectify_footnote_endnote_ids(&mut dom, main, footnotes, endnotes, &settings(), &mut id)
+                .unwrap();
+            let refs = dom.descendants(main, Some(&W::name(&format!("{kind}Reference"))));
+            assert_eq!(
+                refs.iter()
+                    .map(|&reference| dom.attribute(reference, &W::id()).unwrap())
+                    .collect::<Vec<_>>(),
+                ["2", "3"]
+            );
+            assert_eq!(dom.elements(output, Some(&W::name(kind))).len(), 3);
+            assert_eq!(
+                properties(
+                    &dom,
+                    lookup_def(&dom, Some(output), &W::name(kind), "1").unwrap()
+                ),
+                notice_before
+            );
+            for (id, expected) in [("2", expected_revised), ("3", expected_original)] {
+                let definition = lookup_def(&dom, Some(output), &W::name(kind), id).unwrap();
+                let paragraph = dom.element(definition, &W::p()).unwrap();
+                assert_eq!(properties(&dom, paragraph), expected);
+            }
+            assert!(lookup_def(&dom, Some(output), &W::name(kind), "90").is_none());
+        }
+    }
+
+    #[test]
+    fn picture_bullet_copies_reuse_source_identity_and_advance_collision_watermark() {
+        let mut dom = Dom::new();
+        let before = parse(
+            &mut dom,
+            "<w:numbering><w:numPicBullet w:numPicBulletId=\"1\"><w:pict><v:shape id=\"OriginalPicture\"><v:imagedata r:id=\"rIdOriginal\"/></v:shape></w:pict></w:numPicBullet><w:abstractNum w:abstractNumId=\"1\"><w:lvl w:ilvl=\"0\"><w:numFmt w:val=\"decimal\"/><w:lvlText w:val=\"%1.\"/></w:lvl></w:abstractNum><w:abstractNum w:abstractNumId=\"11\"><w:lvl w:ilvl=\"0\"><w:numFmt w:val=\"lowerLetter\"/><w:lvlText w:val=\"%1)\"/></w:lvl></w:abstractNum><w:num w:numId=\"1\"><w:abstractNumId w:val=\"1\"/></w:num><w:numIdMacAtCleanup w:val=\"1\"/></w:numbering>",
+        );
+        let mut revised = String::from(
+            "<w:numbering><w:numPicBullet w:numPicBulletId=\"9\"><w:pict><v:shape id=\"RetainedPicture\"><v:imagedata r:id=\"rIdNine\"/></v:shape></w:pict></w:numPicBullet><w:numPicBullet w:numPicBulletId=\"1\"><w:pict><v:shape id=\"CollidingPicture\"><v:imagedata r:id=\"rIdOne\"/></v:shape></w:pict></w:numPicBullet>",
+        );
+        for (id, picture, format) in [
+            (10, 9, "bullet"),
+            (11, 1, "decimal"),
+            (12, 1, "upperLetter"),
+        ] {
+            revised.push_str(&format!("<w:abstractNum w:abstractNumId=\"{id}\"><w:lvl w:ilvl=\"0\"><w:numFmt w:val=\"{format}\"/><w:lvlText w:val=\"%1.\"/><w:lvlPicBulletId w:val=\"{picture}\"/></w:lvl><w:lvl w:ilvl=\"1\"><w:numFmt w:val=\"{format}\"/><w:lvlText w:val=\"%2.\"/><w:lvlPicBulletId w:val=\"{picture}\"/></w:lvl></w:abstractNum><w:num w:numId=\"{id}\"><w:abstractNumId w:val=\"{id}\"/></w:num>"));
+        }
+        revised.push_str("</w:numbering>");
+        let after = parse(&mut dom, &revised);
+        let before_xml = properties(&dom, before);
+        let after_xml = properties(&dom, after);
+        let (remap, copied) = copy_missing_numbering(&mut dom, before, after);
+        assert!(
+            remap.is_empty(),
+            "noncolliding num identities stay authored"
+        );
+        assert_eq!(
+            copied.len(),
+            2,
+            "each source picture is copied once despite multiple referencing levels"
+        );
+        assert_eq!(
+            copied
+                .iter()
+                .map(|&node| dom.attribute(node, &W::name("numPicBulletId")).unwrap())
+                .collect::<Vec<_>>(),
+            ["9", "10"]
+        );
+        assert_eq!(
+            dom.descendants(copied[0], Some(&crate::namespaces::VML::name("imagedata")))
+                .len(),
+            1
+        );
+        for (id, expected) in [("10", "9"), ("12", "10"), ("13", "10")] {
+            let abstract_num = dom
+                .elements(before, Some(&W::name("abstractNum")))
+                .into_iter()
+                .find(|&node| dom.attribute(node, &W::name("abstractNumId")) == Some(id))
+                .unwrap();
+            assert!(
+                dom.descendants(abstract_num, Some(&W::name("lvlPicBulletId")))
+                    .into_iter()
+                    .all(|level| dom.attribute(level, &W::val()) == Some(expected))
+            );
+        }
+        for (num_id, abstract_id) in [("10", "10"), ("11", "12"), ("12", "13")] {
+            let number = dom
+                .elements(before, Some(&W::name("num")))
+                .into_iter()
+                .find(|&node| dom.attribute(node, &W::name("numId")) == Some(num_id))
+                .unwrap();
+            let reference = dom.element(number, &W::name("abstractNumId")).unwrap();
+            assert_eq!(
+                dom.attribute(reference, &W::val()),
+                Some(abstract_id),
+                "retained number IDs resolve to the copied abstract definitions"
+            );
+        }
+        assert_eq!(
+            properties(&dom, after),
+            after_xml,
+            "source definition/relationship payload is never mutated"
+        );
+        assert!(before_xml.contains("rIdOriginal"));
+        for (node, relationship) in [(copied[0], "rIdNine"), (copied[1], "rIdOne")] {
+            let image = dom.descendants(node, Some(&crate::namespaces::VML::name("imagedata")))[0];
+            assert_eq!(
+                dom.attribute(image, &XName::get("id", crate::namespaces::R::URI)),
+                Some(relationship)
+            );
+        }
+        let names: Vec<_> = dom
+            .elements(before, None)
+            .into_iter()
+            .map(|node| dom.name(node).unwrap().local_name().to_string())
+            .collect();
+        assert_eq!(
+            &names[..3],
+            ["numPicBullet", "numPicBullet", "numPicBullet"]
+        );
+        assert_eq!(names.last().unwrap(), "numIdMacAtCleanup");
+    }
+}

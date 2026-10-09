@@ -7,7 +7,7 @@
 
 use super::atoms::{ComparisonUnit, ComparisonUnitGroup, CorrelatedSequence};
 use super::{ComparisonUnitGroupType, CorrelationStatus, WmlComparerSettings};
-use crate::namespaces::W;
+use crate::namespaces::{PT, W};
 use crate::xmllinq::{Dom, NodeId};
 
 fn as_group(u: &ComparisonUnit) -> Option<&ComparisonUnitGroup> {
@@ -197,22 +197,229 @@ fn horizontal_cell_partition(dom: &Dom, row: &ComparisonUnit) -> Option<Vec<u64>
     )
 }
 
+// These observed Word table-mesh families retain a phantom cell on one
+// projection. Only their existing specialized routes and exact table geometry
+// authorize that shape; ordinary row pairing must conserve source geometry.
+const WORD_TABLE_CONTEXT: &str = "WordTableMeshContext";
+
+#[derive(Clone, Copy)]
+pub(crate) enum WordTableMeshContext {
+    M42,
+    M333,
+    M337,
+    M348,
+    M350,
+}
+
+pub(crate) fn mark_word_table_mesh_context(
+    dom: &mut Dom,
+    original: &[ComparisonUnit],
+    revised: &[ComparisonUnit],
+    family: WordTableMeshContext,
+) {
+    let tables = |units: &[ComparisonUnit]| -> Vec<NodeId> {
+        units
+            .iter()
+            .filter_map(|unit| {
+                let group = as_group(unit)?;
+                (group.group_type == ComparisonUnitGroupType::Table)
+                    .then(|| ancestor_named(dom, group, &W::tbl()))
+                    .flatten()
+            })
+            .collect()
+    };
+    let left = tables(original);
+    let right = tables(revised);
+    let geometry = |table: NodeId, rows: usize, cells: usize| {
+        let row_nodes = dom.elements(table, Some(&W::tr()));
+        row_nodes.len() == rows
+            && dom.descendants(table, Some(&W::tbl())).is_empty()
+            && row_nodes.iter().all(|&row| {
+                let cell_nodes = dom.elements(row, Some(&W::tc()));
+                cell_nodes.len() == cells
+                    && cell_nodes.iter().all(|&cell| {
+                        let Some(props) = dom.element(cell, &W::tc_pr()) else {
+                            return true;
+                        };
+                        dom.element(props, &W::grid_span()).is_none()
+                            && dom.element(props, &W::name("vMerge")).is_none()
+                    })
+            })
+    };
+    // M42's authored next uses spans and vertical merges. Word keeps the
+    // three original physical cells in the first three rows, including empty
+    // phantom cells on acceptance; only its two extra rows are inserted.
+    // This exception belongs to the existing package route, not to arbitrary
+    // horizontal repartitioning or the faithful source-preserving preset.
+    let merged_geometry = |table: NodeId, expected: &[&[(u32, &str)]]| {
+        let rows = dom.elements(table, Some(&W::tr()));
+        rows.len() == expected.len()
+            && dom.descendants(table, Some(&W::tbl())).is_empty()
+            && rows.iter().zip(expected).all(|(&row, expected)| {
+                let cells = dom.elements(row, Some(&W::tc()));
+                cells.len() == expected.len()
+                    && cells.iter().zip(*expected).all(|(&cell, &(span, merge))| {
+                        let properties = dom.element(cell, &W::tc_pr());
+                        let actual_span = properties
+                            .and_then(|properties| dom.element(properties, &W::grid_span()))
+                            .and_then(|span| dom.attribute(span, &W::val()))
+                            .and_then(|value| value.parse::<u32>().ok())
+                            .unwrap_or(1);
+                        let actual_merge = properties
+                            .and_then(|properties| dom.element(properties, &W::name("vMerge")))
+                            .map(|merge| dom.attribute(merge, &W::val()).unwrap_or("continue"))
+                            .unwrap_or("");
+                        actual_span == span && actual_merge == merge
+                    })
+            })
+    };
+    type TableShape = &'static [(usize, usize)];
+    let (left_shape, right_shape): (TableShape, TableShape) = match family {
+        WordTableMeshContext::M42 => (
+            &[
+                (3, 3),
+                (3, 4),
+                (2, 2),
+                (2, 3),
+                (3, 5),
+                (3, 3),
+                (3, 3),
+                (3, 3),
+            ],
+            &[],
+        ),
+        WordTableMeshContext::M333 => (
+            &[(5, 4)],
+            &[(1, 2), (1, 2), (1, 2), (2, 2), (1, 2), (1, 2), (1, 2)],
+        ),
+        WordTableMeshContext::M337 => (&[(5, 4)], &[(2, 3), (2, 3)]),
+        WordTableMeshContext::M348 => {
+            (&[(1, 2), (1, 1), (8, 4), (1, 1), (1, 1), (1, 2)], &[(4, 3)])
+        }
+        WordTableMeshContext::M350 => (&[(3, 2)], &[(2, 3)]),
+    };
+    let matches = |tables: &[NodeId], shape: &[(usize, usize)]| {
+        tables.len() == shape.len()
+            && tables
+                .iter()
+                .zip(shape)
+                .all(|(&table, &(rows, cells))| geometry(table, rows, cells))
+    };
+    let right_matches = if matches!(family, WordTableMeshContext::M42) {
+        right.len() == 2
+            && merged_geometry(
+                right[0],
+                &[
+                    &[(2, "")],
+                    &[(1, "restart"), (1, "")],
+                    &[(1, "continue"), (1, "")],
+                    &[(1, ""), (1, "restart")],
+                    &[(1, ""), (1, "continue")],
+                ],
+            )
+            && merged_geometry(
+                right[1],
+                &[
+                    &[(1, ""), (1, ""), (1, ""), (1, "")],
+                    &[(1, ""), (2, "restart"), (1, "")],
+                    &[(1, ""), (2, "continue"), (1, "")],
+                    &[(1, ""), (1, ""), (1, ""), (1, "")],
+                ],
+            )
+    } else {
+        matches(&right, right_shape)
+    };
+    if !matches(&left, left_shape) || !right_matches {
+        return;
+    }
+    // Property-only blank paragraphs have no owned payload to relocate.
+    let blank = dom.elements(right[0], Some(&W::tr())).iter().all(|&row| {
+        dom.elements(row, Some(&W::tc())).iter().all(|&cell| {
+            dom.elements(cell, None).iter().all(|&child| {
+                dom.name_is(child, &W::tc_pr())
+                    || (dom.name_is(child, &W::p())
+                        && dom
+                            .elements(child, None)
+                            .iter()
+                            .all(|&item| dom.name_is(item, &W::p_pr())))
+            })
+        })
+    });
+    if matches!(family, WordTableMeshContext::M337) && !blank {
+        return;
+    }
+    let (Some(a), Some(b)) = (
+        dom.attribute(left[0], &PT::unid()),
+        dom.attribute(right[0], &PT::unid()),
+    ) else {
+        return;
+    };
+    let context = format!("{a}:{b}");
+    let attribute = PT::name(WORD_TABLE_CONTEXT);
+    dom.set_attribute_value(left[0], &attribute, Some(&context));
+    dom.set_attribute_value(right[0], &attribute, Some(&context));
+}
+
+fn row_pair_uses_word_table_mesh_context(
+    dom: &Dom,
+    original: &ComparisonUnit,
+    revised: &ComparisonUnit,
+) -> bool {
+    let attribute = PT::name(WORD_TABLE_CONTEXT);
+    let context = |unit: &ComparisonUnit| -> Option<&str> {
+        let row = row_container(dom, unit)?;
+        dom.ancestors(row, Some(&W::tbl()))
+            .into_iter()
+            .find_map(|table| dom.attribute(table, &attribute))
+    };
+    context(original).is_some_and(|old| context(revised) == Some(old))
+}
+
+pub(crate) fn rows_preserving_horizontal_partitions_with_word_context(
+    dom: &Dom,
+    original: &[ComparisonUnit],
+    revised: &[ComparisonUnit],
+    settings: &WmlComparerSettings,
+) -> Option<Vec<CorrelatedSequence>> {
+    rows_preserving_horizontal_partitions_inner(
+        dom,
+        original,
+        revised,
+        settings.merge_replaced_paragraphs,
+    )
+}
+
 /// Horizontal repartitioning currently cannot track individual cell lifetimes
 /// safely: an unmatched cell's atoms lose their cell group, and closing marks
 /// can give it another cell's revised properties. Keep complete revised/original
 /// rows under ordinary row revisions instead. This conserves both source shapes;
 /// Word may present these horizontal merges as finer cell revisions.
+#[cfg(test)]
 pub(crate) fn rows_preserving_horizontal_partitions(
     dom: &Dom,
     rows1: &[ComparisonUnit],
     rows2: &[ComparisonUnit],
 ) -> Option<Vec<CorrelatedSequence>> {
-    let differs = |a: &ComparisonUnit, b: &ComparisonUnit| match (
-        horizontal_cell_partition(dom, a),
-        horizontal_cell_partition(dom, b),
-    ) {
-        (Some(a), Some(b)) => a != b,
-        _ => false,
+    rows_preserving_horizontal_partitions_inner(dom, rows1, rows2, false)
+}
+
+fn rows_preserving_horizontal_partitions_inner(
+    dom: &Dom,
+    rows1: &[ComparisonUnit],
+    rows2: &[ComparisonUnit],
+    word_context: bool,
+) -> Option<Vec<CorrelatedSequence>> {
+    let differs = |a: &ComparisonUnit, b: &ComparisonUnit| {
+        if word_context && row_pair_uses_word_table_mesh_context(dom, a, b) {
+            return false;
+        }
+        match (
+            horizontal_cell_partition(dom, a),
+            horizontal_cell_partition(dom, b),
+        ) {
+            (Some(a), Some(b)) => a != b,
+            _ => false,
+        }
     };
     if !rows1.iter().zip(rows2).any(|(a, b)| differs(a, b)) {
         return None;
@@ -255,7 +462,9 @@ pub fn do_lcs_algorithm_for_table(
     let g2 = as_group(cul2.first()?)?;
     let rows1 = &g1.contents;
     let rows2 = &g2.contents;
-    if let Some(rows) = rows_preserving_horizontal_partitions(dom, rows1, rows2) {
+    if let Some(rows) =
+        rows_preserving_horizontal_partitions_with_word_context(dom, rows1, rows2, settings)
+    {
         return Some(rows);
     }
 
@@ -1090,6 +1299,390 @@ mod nested_lifecycle_owner_regressions {
                     assert_eq!(
                         dom.attribute(mark, &W::date()),
                         Some(settings.date_time_for_revisions.as_str())
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod m42_word_context_boundaries {
+    use super::*;
+
+    fn table(rows: &[Vec<(u32, &str)>]) -> String {
+        let mut xml = String::from(
+            "<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w=\"1000\"/><w:gridCol w:w=\"1000\"/><w:gridCol w:w=\"1000\"/><w:gridCol w:w=\"1000\"/></w:tblGrid>",
+        );
+        for row in rows {
+            xml.push_str("<w:tr>");
+            for &(span, merge) in row {
+                let merged = if merge.is_empty() {
+                    String::new()
+                } else {
+                    format!("<w:vMerge w:val=\"{merge}\"/>")
+                };
+                let span = if span == 1 {
+                    String::new()
+                } else {
+                    format!("<w:gridSpan w:val=\"{span}\"/>")
+                };
+                xml.push_str(&format!("<w:tc><w:tcPr>{span}{merged}</w:tcPr><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc>"));
+            }
+            xml.push_str("</w:tr>");
+        }
+        xml.push_str("</w:tbl>");
+        xml
+    }
+
+    fn units(dom: &mut Dom, body: &str, prefix: &str) -> Vec<ComparisonUnit> {
+        let document = dom.parse_xdocument(&format!(
+            "<w:document xmlns:w=\"{}\"><w:body>{body}</w:body></w:document>",
+            W::URI
+        ));
+        let root = dom.root(document).unwrap();
+        let body = dom.element(root, &W::body()).unwrap();
+        for (index, table) in dom.elements(body, Some(&W::tbl())).into_iter().enumerate() {
+            dom.set_attribute_value(table, &PT::unid(), Some(&format!("{prefix}{index}")));
+        }
+        let settings = WmlComparerSettings::default();
+        let atoms = super::super::atomize::create_comparison_unit_atom_list(dom, body, &settings);
+        super::super::units::get_comparison_unit_list(dom, &atoms, &settings)
+    }
+
+    #[test]
+    fn merged_package_context_requires_every_observed_partition_and_merge_direction() {
+        for mutation in 0..4 {
+            let mut dom = Dom::new();
+            let original: String = [
+                (3, 3),
+                (3, 4),
+                (2, 2),
+                (2, 3),
+                (3, 5),
+                (3, 3),
+                (3, 3),
+                (3, 3),
+            ]
+            .into_iter()
+            .map(|(rows, cells)| table(&vec![vec![(1, ""); cells]; rows]))
+            .collect();
+            let mut revised_rows = vec![
+                vec![(2, "")],
+                vec![(1, "restart"), (1, "")],
+                vec![(1, "continue"), (1, "")],
+                vec![(1, ""), (1, "restart")],
+                vec![(1, ""), (1, "continue")],
+            ];
+            if mutation == 1 {
+                revised_rows[0][0].0 = 1;
+            }
+            if mutation == 2 {
+                revised_rows[2][0].1 = "restart";
+            }
+            let mut revised = table(&revised_rows);
+            revised.push_str(&table(&[
+                vec![(1, ""); 4],
+                vec![(1, ""), (2, "restart"), (1, "")],
+                vec![(1, ""), (2, "continue"), (1, "")],
+                vec![(1, ""); 4],
+            ]));
+            if mutation == 3 {
+                revised.push_str(&table(&[vec![(1, "")]]));
+            }
+            let a = units(&mut dom, &original, "a");
+            let b = units(&mut dom, &revised, "b");
+            mark_word_table_mesh_context(&mut dom, &a, &b, WordTableMeshContext::M42);
+            let left = ancestor_named(&dom, as_group(&a[0]).unwrap(), &W::tbl()).unwrap();
+            let right = ancestor_named(&dom, as_group(&b[0]).unwrap(), &W::tbl()).unwrap();
+            let attribute = PT::name(WORD_TABLE_CONTEXT);
+            assert_eq!(dom.attribute(left, &attribute).is_some(), mutation == 0);
+            assert_eq!(
+                dom.attribute(right, &attribute),
+                dom.attribute(left, &attribute)
+            );
+            let rows_a = &as_group(&a[0]).unwrap().contents;
+            let rows_b = &as_group(&b[0]).unwrap().contents;
+            assert!(
+                rows_preserving_horizontal_partitions_with_word_context(
+                    &dom,
+                    rows_a,
+                    rows_b,
+                    &WmlComparerSettings::powertools_faithful()
+                )
+                .is_some()
+            );
+            assert_eq!(
+                rows_preserving_horizontal_partitions_with_word_context(
+                    &dom,
+                    rows_a,
+                    rows_b,
+                    &WmlComparerSettings::default()
+                )
+                .is_none(),
+                mutation == 0
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod deterministic_table_dispatch_tests {
+    use super::*;
+    use crate::namespaces::PT;
+
+    fn source(dom: &mut Dom, labels: &[&str], merge: Option<&str>) -> ComparisonUnit {
+        let rows: String = labels.iter().enumerate().map(|(index, label)| {
+            let merged = if index == 0 {
+                merge.map(|merge| format!("<w:vMerge w:val=\"{merge}\"/>")).unwrap_or_default()
+            } else { String::new() };
+            format!("<w:tr><w:tc><w:tcPr><w:tcW w:w=\"2400\" w:type=\"dxa\"/>{merged}</w:tcPr><w:p><w:r><w:t>{label}</w:t></w:r></w:p></w:tc></w:tr>")
+        }).collect();
+        let document = dom.parse_xdocument(&format!("<w:document xmlns:w=\"{}\"><w:body><w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w=\"2400\"/></w:tblGrid>{rows}</w:tbl></w:body></w:document>", W::URI));
+        let root = dom.root(document).unwrap();
+        let body = dom.element(root, &W::body()).unwrap();
+        let settings = WmlComparerSettings::powertools_faithful();
+        super::super::preprocess::add_sha1_hash_to_block_level_content(
+            dom,
+            body,
+            &settings,
+            &super::super::preprocess::null_rel_resolver,
+        );
+        let table = dom.element(body, &W::tbl()).unwrap();
+        // The dispatch can receive positionally correlated, content-different
+        // rows. All rows here share the same one-cell structural ownership.
+        for row in dom.elements(table, Some(&W::tr())) {
+            dom.set_attribute_value(
+                row,
+                &PT::correlated_sha1_hash(),
+                Some("one-cell-aligned-row"),
+            );
+        }
+        let atoms = super::super::atomize::create_comparison_unit_atom_list(dom, body, &settings);
+        let units = super::super::units::get_comparison_unit_list(dom, &atoms, &settings);
+        units
+            .into_iter()
+            .find(|unit| {
+                as_group(unit)
+                    .is_some_and(|group| group.group_type == ComparisonUnitGroupType::Table)
+            })
+            .unwrap()
+    }
+    fn atoms(units: &[ComparisonUnit]) -> Vec<(NodeId, Vec<NodeId>)> {
+        units
+            .iter()
+            .flat_map(ComparisonUnit::descendant_atoms)
+            .map(|atom| (atom.content_element, atom.ancestor_elements.to_vec()))
+            .collect()
+    }
+    fn assert_sources(
+        out: &[CorrelatedSequence],
+        left: &[ComparisonUnit],
+        right: &[ComparisonUnit],
+    ) {
+        let a: Vec<_> = out
+            .iter()
+            .flat_map(|sequence| sequence.com_units_1.iter().flatten())
+            .cloned()
+            .collect();
+        let b: Vec<_> = out
+            .iter()
+            .flat_map(|sequence| sequence.com_units_2.iter().flatten())
+            .cloned()
+            .collect();
+        assert_eq!(
+            atoms(&a),
+            atoms(left),
+            "every original payload and paragraph mark stays ordered under its own row/cell"
+        );
+        assert_eq!(
+            atoms(&b),
+            atoms(right),
+            "every revised payload and paragraph mark stays ordered under its own row/cell"
+        );
+    }
+
+    #[test]
+    fn row_lcs_ties_and_both_one_sided_remainders_conserve_actual_atom_ownership() {
+        for (left_labels, right_labels, statuses) in [
+            (
+                vec!["A", "B"],
+                vec!["B", "A"],
+                vec![
+                    CorrelationStatus::Deleted,
+                    CorrelationStatus::Unknown,
+                    CorrelationStatus::Inserted,
+                ],
+            ),
+            (
+                vec!["A", "B", "C"],
+                vec!["A", "C"],
+                vec![
+                    CorrelationStatus::Unknown,
+                    CorrelationStatus::Deleted,
+                    CorrelationStatus::Unknown,
+                ],
+            ),
+            (
+                vec!["A", "C"],
+                vec!["A", "B", "C"],
+                vec![
+                    CorrelationStatus::Unknown,
+                    CorrelationStatus::Inserted,
+                    CorrelationStatus::Unknown,
+                ],
+            ),
+            (
+                vec!["A"],
+                vec!["B"],
+                vec![CorrelationStatus::Deleted, CorrelationStatus::Inserted],
+            ),
+        ] {
+            let mut dom = Dom::new();
+            let a = source(&mut dom, &left_labels, None);
+            let b = source(&mut dom, &right_labels, None);
+            let left = &as_group(&a).unwrap().contents;
+            let right = &as_group(&b).unwrap().contents;
+            let out = apply_lcs_to_table_rows(left, right);
+            assert_eq!(
+                out.iter()
+                    .map(|sequence| sequence.correlation_status)
+                    .collect::<Vec<_>>(),
+                statuses
+            );
+            assert_sources(&out, left, right);
+            for sequence in out
+                .iter()
+                .filter(|sequence| sequence.correlation_status == CorrelationStatus::Unknown)
+            {
+                assert_eq!(
+                    sequence.com_units_1.as_ref().unwrap()[0].sha1(),
+                    sequence.com_units_2.as_ref().unwrap()[0].sha1()
+                );
+            }
+            for (one_side, inserted) in [(left, false), (right, true)] {
+                let out = if inserted {
+                    apply_lcs_to_table_rows(&[], one_side)
+                } else {
+                    apply_lcs_to_table_rows(one_side, &[])
+                };
+                assert_sources(
+                    &out,
+                    if inserted { &[] } else { one_side },
+                    if inserted { one_side } else { &[] },
+                );
+                assert!(out.iter().all(|sequence| sequence.correlation_status
+                    == if inserted {
+                        CorrelationStatus::Inserted
+                    } else {
+                        CorrelationStatus::Deleted
+                    }));
+            }
+        }
+        assert!(apply_lcs_to_table_rows(&[], &[]).is_empty());
+    }
+
+    #[test]
+    fn seven_aligned_rows_use_content_lcs_while_six_use_positional_pairs() {
+        for count in [6, 7] {
+            let mut dom = Dom::new();
+            let a = source(
+                &mut dom,
+                &["A", "B", "C", "D", "E", "F", "G"][..count],
+                None,
+            );
+            let b = source(
+                &mut dom,
+                &["A", "X", "B", "C", "Y", "F", "G"][..count],
+                None,
+            );
+            let out = do_lcs_algorithm_for_table(
+                &dom,
+                std::slice::from_ref(&a),
+                std::slice::from_ref(&b),
+                &WmlComparerSettings::powertools_faithful(),
+            )
+            .unwrap();
+            assert_sources(
+                &out,
+                &as_group(&a).unwrap().contents,
+                &as_group(&b).unwrap().contents,
+            );
+            if count == 7 {
+                assert!(
+                    out.iter()
+                        .any(|sequence| sequence.correlation_status == CorrelationStatus::Deleted)
+                );
+                assert!(
+                    out.iter()
+                        .any(|sequence| sequence.correlation_status == CorrelationStatus::Inserted)
+                );
+            } else {
+                assert_eq!(out.len(), 6);
+                assert!(
+                    out.iter()
+                        .all(|sequence| sequence.correlation_status == CorrelationStatus::Unknown)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn vertical_merge_structure_dispatch_preserves_same_partition_and_each_remainder() {
+        for longer_original in [false, true] {
+            for faithful in [false, true] {
+                let mut dom = Dom::new();
+                let left_labels = if longer_original {
+                    vec!["A", "B", "C"]
+                } else {
+                    vec!["A", "B"]
+                };
+                let right_labels = if longer_original {
+                    vec!["X", "Y"]
+                } else {
+                    vec!["X", "Y", "Z"]
+                };
+                let a = source(&mut dom, &left_labels, Some("restart"));
+                let b = source(&mut dom, &right_labels, None);
+                let settings = if faithful {
+                    WmlComparerSettings::powertools_faithful()
+                } else {
+                    WmlComparerSettings::default()
+                };
+                let out = do_lcs_algorithm_for_table(
+                    &dom,
+                    std::slice::from_ref(&a),
+                    std::slice::from_ref(&b),
+                    &settings,
+                )
+                .unwrap();
+                let left = &as_group(&a).unwrap().contents;
+                let right = &as_group(&b).unwrap().contents;
+                assert_sources(&out, left, right);
+                if faithful {
+                    assert_eq!(
+                        out.iter()
+                            .map(|sequence| sequence.correlation_status)
+                            .collect::<Vec<_>>(),
+                        [CorrelationStatus::Deleted, CorrelationStatus::Inserted]
+                    );
+                } else {
+                    assert_eq!(
+                        out.iter()
+                            .filter(|sequence| sequence.correlation_status
+                                == CorrelationStatus::Unknown)
+                            .count(),
+                        2
+                    );
+                    assert_eq!(
+                        out.last().unwrap().correlation_status,
+                        if longer_original {
+                            CorrelationStatus::Deleted
+                        } else {
+                            CorrelationStatus::Inserted
+                        }
                     );
                 }
             }

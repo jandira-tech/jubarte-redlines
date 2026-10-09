@@ -831,6 +831,11 @@ pub fn try_compare_bodies_faithful_with_notes(
     // w:pPr must be the first child of w:p, else Word ignores all paragraph
     // formatting (centering/spacing/indent/numbering). Our reassembly emits it last.
     finalize::move_paragraph_properties_first(dom, root);
+    let demo_title_properties = if settings.merge_replaced_paragraphs {
+        finalize::capture_deleted_demo_title_properties(dom, root)
+    } else {
+        std::collections::HashMap::new()
+    };
     // Word-mode: drop body spacing that only restates demo pPrDefault (line=276).
     if settings.merge_replaced_paragraphs {
         let default_line = |dom: &Dom, r: NodeId| {
@@ -940,7 +945,13 @@ pub fn try_compare_bodies_faithful_with_notes(
         finalize::split_digits_ins_from_mixed_title(dom, root);
         // M143: mid pure-D Demo title → fold into first numbered pure-I heading
         // (double_spacing×eigenpal: Word MIX on `1. What this is` + del title).
-        finalize::fold_midstream_demo_title_into_numbered_heading(dom, root);
+        finalize::fold_midstream_demo_title_into_numbered_heading_with_source_properties(
+            dom,
+            root,
+            settings,
+            &mut id,
+            &demo_title_properties,
+        );
         finalize::drop_sectpr_from_deleted_marks(dom, root, &genuine_mid_sectprs);
         finalize::drop_hoisted_sectpr_artifacts(dom, root, &genuine_mid_sectprs);
         finalize::mark_fully_revised_rows(dom, root, settings, &mut id);
@@ -1075,7 +1086,7 @@ pub fn try_compare_bodies_faithful_with_notes(
         // M369: residual short pure-I labels ("a"/"b") × pure-D list items ending
         // with the same token (ordered_list×sublist Word MIX). After mix peels
         // so fold_leading_ins does not steal the label onto a preceding Item.
-        finalize::residual_short_label_zip(dom, root);
+        finalize::residual_short_label_zip_with_settings(dom, root, settings);
         // M377: short-title MIX free-mesh shared sig token as EQ (tiff×h_f
         // "document" −3.4 vs wholesale ins+del).
         finalize::free_mesh_shared_title_token_in_mix(dom, root);

@@ -824,4 +824,161 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn document_serialization_preserves_declarations_comments_and_processing_instructions() {
+        use crate::xmllinq::XDeclaration;
+        for encoding in [None, Some("UTF-8")] {
+            for standalone in [None, Some("yes"), Some("no")] {
+                let mut dom = Dom::new();
+                let document=dom.parse_xdocument("<?before value?><!--outside--><root>Text &amp; &lt; &gt; é<?empty?><?inside payload?><!--inside--><child /></root><?after?>");
+                dom.set_declaration(
+                    document,
+                    Some(XDeclaration {
+                        version: None,
+                        encoding: encoding.map(str::to_string),
+                        standalone: standalone.map(str::to_string),
+                    }),
+                );
+                let xml = serialize_document(&dom, document);
+                assert!(xml.starts_with("<?xml version=\"1.0\""));
+                assert_eq!(xml.contains("encoding=\"UTF-8\""), encoding.is_some());
+                assert_eq!(xml.contains("standalone="), standalone.is_some());
+                if let Some(value) = standalone {
+                    assert!(xml.contains(&format!("standalone=\"{value}\"")));
+                }
+                assert!(xml.contains("<?before value?><!--outside-->"), "{xml}");
+                assert!(
+                    xml.contains(
+                        "Text &amp; &lt; &gt; é<?empty?><?inside payload?><!--inside--><child />"
+                    ),
+                    "{xml}"
+                );
+                assert!(xml.ends_with("<?after?>"), "{xml}");
+                let mut parsed = Dom::new();
+                let again = parsed.parse_xdocument(&xml);
+                let pis = parsed
+                    .descendant_nodes(again)
+                    .into_iter()
+                    .filter(|&n| parsed.is_pi(n))
+                    .map(|n| {
+                        (
+                            parsed.pi_target(n).unwrap().to_string(),
+                            parsed.pi_data(n).unwrap().to_string(),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    pis,
+                    vec![
+                        ("before".into(), " value".into()),
+                        ("empty".into(), "".into()),
+                        ("inside".into(), " payload".into()),
+                        ("after".into(), "".into())
+                    ]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rebound_prefixes_generate_unoccupied_names_and_preserve_expanded_names() {
+        use crate::namespaces::W;
+        let mut dom = Dom::new();
+        let document=dom.parse_xdocument("<root xmlns:w=\"urn:foreign\" xmlns:ns0=\"urn:occupied-zero\" xmlns:ns1=\"urn:occupied-one\"><w:foreign /></root>");
+        let root = dom.root(document).unwrap();
+        let paragraph = dom.new_element(W::p());
+        dom.set_attribute_value(
+            paragraph,
+            &XNamespace::get(XML_NAMESPACE).name("space"),
+            Some("preserve"),
+        );
+        dom.set_attribute_value(
+            paragraph,
+            &XNamespace::get("urn:another").name("quoted"),
+            Some("<&>\"é"),
+        );
+        dom.add(root, paragraph);
+        let xml = serialize_element(&dom, root);
+        assert!(xml.contains("<ns2:p"), "{xml}");
+        assert!(xml.contains("xml:space=\"preserve\""), "{xml}");
+        assert!(xml.contains("&lt;&amp;&gt;&quot;é"), "{xml}");
+        let mut parsed = Dom::new();
+        let doc = parsed.parse_xdocument(&xml);
+        let r = parsed.root(doc).unwrap();
+        assert_eq!(
+            parsed
+                .elements(r, None)
+                .iter()
+                .map(|&n| parsed.name(n).unwrap().clone())
+                .collect::<Vec<_>>(),
+            vec![XNamespace::get("urn:foreign").name("foreign"), W::p()]
+        );
+        let p = parsed.elements(r, Some(&W::p()))[0];
+        assert_eq!(
+            parsed.attribute(p, &XNamespace::get("urn:another").name("quoted")),
+            Some("<&>\"é")
+        );
+    }
+
+    #[test]
+    fn streamed_structure_hash_drops_only_non_element_payload() {
+        use sha1::Digest;
+        for body in [
+            "",
+            "text &amp; é",
+            "<!--comment-->",
+            "<?empty?><?value payload?>",
+            "<child>text</child><!--tail-->",
+        ] {
+            let mut dom = Dom::new();
+            let document = dom.parse_xdocument(&format!("<root>{body}</root>"));
+            let root = dom.root(document).unwrap();
+            let expected = if body.contains("<child>") {
+                "<root><child /></root>"
+            } else {
+                "<root />"
+            };
+            assert_eq!(
+                serialize_element_structure_sha1_hex(&dom, root),
+                sha1::Sha1::digest(expected.as_bytes())
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>()
+            );
+            let full = serialize_element(&dom, root);
+            assert_eq!(
+                serialize_element_sha1_hex(&dom, root),
+                sha1::Sha1::digest(full.as_bytes())
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>()
+            );
+        }
+    }
+
+    #[test]
+    fn reserved_namespace_rebindings_cannot_corrupt_xml_attributes() {
+        for (prefix, uri) in [
+            ("xml", "urn:wrong"),
+            ("xmlns", "urn:wrong"),
+            ("illegal", "http://www.w3.org/2000/xmlns/"),
+            ("empty", ""),
+        ] {
+            let mut dom = Dom::new();
+            let root = dom.new_element(XName::get("root", ""));
+            dom.set_attribute_value(
+                root,
+                &XNamespace::get("http://www.w3.org/2000/xmlns/").name(prefix),
+                Some(uri),
+            );
+            dom.set_attribute_value(
+                root,
+                &XNamespace::get(XML_NAMESPACE).name("space"),
+                Some("preserve"),
+            );
+            let xml = serialize_element(&dom, root);
+            assert_eq!(xml, "<root xml:space=\"preserve\" />", "{prefix}={uri}");
+        }
+    }
 }

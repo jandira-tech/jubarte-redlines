@@ -6187,6 +6187,16 @@ fn detect_unrelated_sources_word_mode_inner(
         std::cell::OnceCell::new();
     let full_tokens_2: std::cell::OnceCell<std::collections::HashSet<String>> =
         std::cell::OnceCell::new();
+    // The existing M42 merged-table route follows Word's physical-cell mesh.
+    // Tag its observed package geometry before row windows lose table context.
+    if settings.merge_replaced_paragraphs {
+        lcs_table::mark_word_table_mesh_context(
+            dom,
+            cu1,
+            cu2,
+            lcs_table::WordTableMeshContext::M42,
+        );
+    }
     let groups1 = contentful_group_sha1s(dom, cu1);
     let groups2 = contentful_group_sha1s(dom, cu2);
     // C# used >3 groups on BOTH sides. Word also collapses short-vs-long
@@ -6942,14 +6952,13 @@ fn detect_unrelated_sources_word_mode_inner(
             .is_some_and(|u| unit_text_token_count(dom, u) >= 8);
         let next_stubs =
             !right_c.is_empty() && right_c.iter().all(|u| unit_text_token_count(dom, u) <= 2);
-        // This peel works on contentful groups only. Decline it if filtering
-        // would remove a source paragraph; the generic path keeps its layout.
+        // Contentful groups choose the lexical route, while original CU
+        // windows below retain every layout blank and its paragraph mark.
         if base_long
             && next_stubs
             && !left_c.is_empty()
             && right_c.len() >= 2
-            && left_c.len() == cu1.len()
-            && right_c.len() == cu2.len()
+            && cu1.iter().chain(cu2).all(|u| as_group(u).is_some())
         {
             let first_tok = |u: &ComparisonUnit| -> Option<String> {
                 para_text_token_list(dom, u)
@@ -6971,17 +6980,22 @@ fn detect_unrelated_sources_word_mode_inner(
             let b2 = tokens_once(&full_tokens_2, dom, cu2);
             if titles_differ && token_jaccard(b1, b2) + 1e-12 < 0.25 {
                 // Peel first next contentful as pure-I (Word pure-I "Text").
-                let peel_r = 1usize.min(right_c.len().saturating_sub(1));
+                let peel_r = cu2
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, u)| as_group(u).is_some() && unit_has_text_token(dom, u))
+                    .nth(1)
+                    .map(|(i, _)| i)
+                    .unwrap_or(cu2.len());
                 let mut out = Vec::new();
-                for u in &right_c[..peel_r] {
+                for u in &cu2[..peel_r] {
                     out.push(CorrelatedSequence::inserted(vec![u.clone()]));
                 }
                 // Also pure-I empties between peeled titles if present on next.
                 // Free-mesh residual next with all base.
-                let mut left: Vec<ComparisonUnit> =
-                    left_c.iter().flat_map(group_contents).collect();
+                let mut left: Vec<ComparisonUnit> = cu1.iter().flat_map(group_contents).collect();
                 let mut right: Vec<ComparisonUnit> =
-                    right_c[peel_r..].iter().flat_map(group_contents).collect();
+                    cu2[peel_r..].iter().flat_map(group_contents).collect();
                 if !left.is_empty()
                     && !right.is_empty()
                     && left.len().saturating_mul(right.len()) <= 50_000
@@ -6993,10 +7007,10 @@ fn detect_unrelated_sources_word_mode_inner(
                     out.extend(lcs(dom, left, right, &residual_settings));
                     return Some(out);
                 }
-                for u in &right_c[peel_r..] {
+                for u in &cu2[peel_r..] {
                     out.push(CorrelatedSequence::inserted(vec![u.clone()]));
                 }
-                for u in &left_c {
+                for u in cu1 {
                     out.push(CorrelatedSequence::deleted(vec![u.clone()]));
                 }
                 if !out.is_empty() {
@@ -7124,6 +7138,12 @@ fn detect_unrelated_sources_word_mode_inner(
                 })
                 .count();
             if n_tbl_next >= 2 {
+                lcs_table::mark_word_table_mesh_context(
+                    dom,
+                    cu1,
+                    cu2,
+                    lcs_table::WordTableMeshContext::M337,
+                );
                 return None;
             }
         }
@@ -7289,12 +7309,24 @@ fn detect_unrelated_sources_word_mode_inner(
             };
             let left_c = contentful(cu1);
             let right_c = contentful(cu2);
-            // M346/M349 emit only these contentful groups. If any source group
-            // was filtered out, retain it through the generic free mesh below.
+            // Lexical eligibility ignores blanks; emission must not. Each
+            // contentful ordinal maps to a boundary in the original CU stream,
+            // retaining leading, interstitial and trailing source layout.
+            let boundaries = |cu: &[ComparisonUnit]| -> Vec<usize> {
+                cu.iter()
+                    .enumerate()
+                    .filter(|(_, u)| as_group(u).is_some() && unit_has_text_token(dom, u))
+                    .map(|(i, _)| i)
+                    .collect()
+            };
+            let left_boundaries = boundaries(cu1);
+            let right_boundaries = boundaries(cu2);
+            let cut = |bounds: &[usize], ordinal: usize, len: usize| {
+                bounds.get(ordinal).copied().unwrap_or(len)
+            };
             if left_c.len() >= 2
                 && right_c.len() >= 2
-                && left_c.len() == cu1.len()
-                && right_c.len() == cu2.len()
+                && cu1.iter().chain(cu2).all(|u| as_group(u).is_some())
             {
                 // First significant token (≥3 chars).
                 // M346: bold_vals×color "This" vs "OOXML" → peel pure-I titles.
@@ -7367,17 +7399,19 @@ fn detect_unrelated_sources_word_mode_inner(
                     peel_r = peel_r.max(1).min(right_c.len().saturating_sub(1));
                     // Peel first base title only (demo intro) as pure-D.
                     let peel_l = 1usize.min(left_c.len().saturating_sub(1));
+                    let left_cut = cut(&left_boundaries, peel_l, cu1.len());
+                    let right_cut = cut(&right_boundaries, peel_r, cu2.len());
                     let mut out = Vec::new();
-                    for u in &right_c[..peel_r] {
+                    for u in &cu2[..right_cut] {
                         out.push(CorrelatedSequence::inserted(vec![u.clone()]));
                     }
-                    for u in &left_c[..peel_l] {
+                    for u in &cu1[..left_cut] {
                         out.push(CorrelatedSequence::deleted(vec![u.clone()]));
                     }
                     let mut left: Vec<ComparisonUnit> =
-                        left_c[peel_l..].iter().flat_map(group_contents).collect();
+                        cu1[left_cut..].iter().flat_map(group_contents).collect();
                     let mut right: Vec<ComparisonUnit> =
-                        right_c[peel_r..].iter().flat_map(group_contents).collect();
+                        cu2[right_cut..].iter().flat_map(group_contents).collect();
                     if !left.is_empty()
                         && !right.is_empty()
                         && left.len().saturating_mul(right.len()) <= 600_000
@@ -7387,10 +7421,10 @@ fn detect_unrelated_sources_word_mode_inner(
                         out.extend(lcs(dom, left, right, &residual_settings));
                         return Some(out);
                     }
-                    for u in &right_c[peel_r..] {
+                    for u in &cu2[right_cut..] {
                         out.push(CorrelatedSequence::inserted(vec![u.clone()]));
                     }
-                    for u in &left_c[peel_l..] {
+                    for u in &cu1[left_cut..] {
                         out.push(CorrelatedSequence::deleted(vec![u.clone()]));
                     }
                     if !out.is_empty() {
@@ -7414,8 +7448,18 @@ fn detect_unrelated_sources_word_mode_inner(
                     let z = 2usize.min(left_c.len()).min(right_c.len());
                     let mut out = Vec::new();
                     for i in 0..z {
-                        let mut left: Vec<ComparisonUnit> = group_contents(&left_c[i]);
-                        let mut right: Vec<ComparisonUnit> = group_contents(&right_c[i]);
+                        let left_start = if i == 0 { 0 } else { left_boundaries[i] };
+                        let right_start = if i == 0 { 0 } else { right_boundaries[i] };
+                        let left_end = cut(&left_boundaries, i + 1, cu1.len());
+                        let right_end = cut(&right_boundaries, i + 1, cu2.len());
+                        let mut left: Vec<ComparisonUnit> = cu1[left_start..left_end]
+                            .iter()
+                            .flat_map(group_contents)
+                            .collect();
+                        let mut right: Vec<ComparisonUnit> = cu2[right_start..right_end]
+                            .iter()
+                            .flat_map(group_contents)
+                            .collect();
                         rehash_words_by_text_content(dom, &mut left);
                         rehash_words_by_text_content(dom, &mut right);
                         if left.is_empty() && right.is_empty() {
@@ -7436,8 +7480,8 @@ fn detect_unrelated_sources_word_mode_inner(
                                 .any(|t| t.eq_ignore_ascii_case("sample"))
                         })
                     };
-                    let left_res = &left_c[z..];
-                    let right_res = &right_c[z..];
+                    let left_res = &cu1[cut(&left_boundaries, z, cu1.len())..];
+                    let right_res = &cu2[cut(&right_boundaries, z, cu2.len())..];
                     let both_sample =
                         residual_has_sample(left_res) && residual_has_sample(right_res);
                     if both_sample && !left_res.is_empty() && !right_res.is_empty() {
@@ -7489,6 +7533,12 @@ fn detect_unrelated_sources_word_mode_inner(
             let peel_r = peel_leading_nontbl(cu2);
             // Only peel when next has leading non-table prose (border titles).
             if peel_r >= 2 {
+                lcs_table::mark_word_table_mesh_context(
+                    dom,
+                    cu1,
+                    cu2,
+                    lcs_table::WordTableMeshContext::M333,
+                );
                 let mut residual_settings = settings.clone();
                 residual_settings.detail_threshold = 0.0;
                 let mut out = Vec::new();
@@ -7572,6 +7622,21 @@ fn detect_unrelated_sources_word_mode_inner(
                 let both_tbl = both_tables_unrelated_free_mesh(dom, cu1, cu2, n1, n2);
                 let cell_tbl = short_cell_table_x_long_table_doc(dom, cu1, cu2, n1, n2);
                 let long_mt = long_multitable_x_short_table_free_mesh(dom, cu1, cu2, n1, n2);
+                if long_mt {
+                    lcs_table::mark_word_table_mesh_context(
+                        dom,
+                        cu1,
+                        cu2,
+                        lcs_table::WordTableMeshContext::M348,
+                    );
+                } else if ooxml_tbl {
+                    lcs_table::mark_word_table_mesh_context(
+                        dom,
+                        cu1,
+                        cu2,
+                        lcs_table::WordTableMeshContext::M350,
+                    );
+                }
                 residual_settings.detail_threshold =
                     if short_prop || ooxml_tbl || both_tbl || cell_tbl || long_mt {
                         0.0
@@ -8414,7 +8479,31 @@ fn positional_title_token_zip(
     let mut residual_settings = settings.clone();
     residual_settings.detail_threshold = 0.0;
     let mut out = Vec::new();
+    let indices = |cu: &[ComparisonUnit]| {
+        cu.iter()
+            .enumerate()
+            .filter(|(_, u)| as_group(u).is_some() && unit_has_text_token(dom, u))
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>()
+    };
+    let left_indices = indices(cu1);
+    let right_indices = indices(cu2);
+    let (mut left_cursor, mut right_cursor) = (0, 0);
     for i in 0..z {
+        // Lexical pairing ignores textless groups; emission must preserve
+        // their source positions, including math/drawing-only paragraphs.
+        if right_cursor < right_indices[i] {
+            out.push(CorrelatedSequence::inserted(
+                cu2[right_cursor..right_indices[i]].to_vec(),
+            ));
+        }
+        if left_cursor < left_indices[i] {
+            out.push(CorrelatedSequence::deleted(
+                cu1[left_cursor..left_indices[i]].to_vec(),
+            ));
+        }
+        left_cursor = left_indices[i] + 1;
+        right_cursor = right_indices[i] + 1;
         let mut left = group_contents(&left_c[i]);
         let mut right = group_contents(&right_c[i]);
         let left_mark = take_paragraph_mark(dom, &mut left);
@@ -8439,23 +8528,11 @@ fn positional_title_token_zip(
             (None, None) => {}
         }
     }
-    for u in &right_c[z..] {
-        out.push(CorrelatedSequence::inserted(vec![u.clone()]));
+    if right_cursor < cu2.len() {
+        out.push(CorrelatedSequence::inserted(cu2[right_cursor..].to_vec()));
     }
-    for u in &left_c[z..] {
-        out.push(CorrelatedSequence::deleted(vec![u.clone()]));
-    }
-    for u in cu2
-        .iter()
-        .filter(|u| as_group(u).is_some() && !unit_has_text_token(dom, u))
-    {
-        out.push(CorrelatedSequence::inserted(vec![u.clone()]));
-    }
-    for u in cu1
-        .iter()
-        .filter(|u| as_group(u).is_some() && !unit_has_text_token(dom, u))
-    {
-        out.push(CorrelatedSequence::deleted(vec![u.clone()]));
+    if left_cursor < cu1.len() {
+        out.push(CorrelatedSequence::deleted(cu1[left_cursor..].to_vec()));
     }
     (!out.is_empty()).then_some(out)
 }
@@ -9879,7 +9956,9 @@ pub fn resolve_correlated_sequences(
                     as_group(u).is_some_and(|g| g.group_type == ComparisonUnitGroupType::Row)
                 }) =>
             {
-                lcs_table::rows_preserving_horizontal_partitions(dom, a, b)
+                lcs_table::rows_preserving_horizontal_partitions_with_word_context(
+                    dom, a, b, settings,
+                )
             }
             _ => None,
         };
@@ -16681,6 +16760,72 @@ mod deep_lcs_source_conservation_tests {
     }
 
     #[test]
+    fn property_routes_keep_blank_marks_without_changing_title_or_sample_ownership() {
+        for shared_title in [false, true] {
+            for leading_blank in [false, true] {
+                let mut dom = Dom::new();
+                let mut old = vec![
+                    "OOXML bold settings",
+                    "",
+                    "Legacy switch enabled",
+                    "",
+                    "Original report panel",
+                    "",
+                ];
+                let mut new = if shared_title {
+                    vec![
+                        "OOXML colour controls",
+                        "",
+                        "Revised panel active",
+                        "",
+                        "Revised gamma delta",
+                        "Fresh epsilon zeta",
+                        "",
+                    ]
+                } else {
+                    vec![
+                        "ST_OnOff colour settings",
+                        "",
+                        "B) colour controls",
+                        "",
+                        "Sample text amber",
+                        "Width navy pale",
+                        "",
+                    ]
+                };
+                if leading_blank {
+                    old.insert(0, "");
+                    new.insert(0, "");
+                }
+                let left = document(&mut dom, &old);
+                let right = document(&mut dom, &new);
+                let out = detected(&mut dom, &left, &right);
+                let target_index = usize::from(leading_blank) + if shared_title { 4 } else { 0 };
+                let target = right[target_index].first_atom().unwrap().content_element;
+                let owner = out
+                    .iter()
+                    .find(|sequence| {
+                        sequence
+                            .com_units_2
+                            .as_deref()
+                            .unwrap_or_default()
+                            .iter()
+                            .any(|u| {
+                                u.descendant_atoms()
+                                    .iter()
+                                    .any(|a| a.content_element == target)
+                            })
+                    })
+                    .unwrap();
+                assert_eq!(
+                    owner.correlation_status, Inserted,
+                    "shared={shared_title}, leading={leading_blank}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn document_statistics_peel_handles_all_empty_residual_and_empty_original_cases() {
         for original_empty in [false, true] {
             for remainder in [0, 1, 2] {
@@ -16997,6 +17142,28 @@ mod deep_lcs_source_conservation_tests {
                     "B) colour controls",
                     "Sample text amber",
                     "Width navy pale",
+                    "",
+                ],
+                false,
+            ),
+            (
+                vec![
+                    "",
+                    "OOXML bold settings",
+                    "",
+                    "Legacy switch enabled",
+                    "",
+                    "Original report panel",
+                    "",
+                ],
+                vec![
+                    "",
+                    "OOXML colour controls",
+                    "",
+                    "Revised panel active",
+                    "",
+                    "Revised gamma delta",
+                    "Fresh epsilon zeta",
                     "",
                 ],
                 false,
@@ -17611,4 +17778,940 @@ mod deep_lcs_source_conservation_tests {
             before.1.last().unwrap().node
         );
     }
+}
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod coverage_final_batch_lcs_tests {
+    use super::*;
+    use crate::comparer::atoms::{ComparisonUnitGroup, ComparisonUnitWord, Sha1Keyed};
+
+    fn group(
+        kind: ComparisonUnitGroupType,
+        contents: Vec<ComparisonUnit>,
+        key: &str,
+    ) -> ComparisonUnit {
+        ComparisonUnit::Group(ComparisonUnitGroup {
+            correlation_status: CorrelationStatus::Nil,
+            group_type: kind,
+            contents,
+            level: 0,
+            sha1: Sha1Keyed::new(key.to_string()),
+            correlated_sha1_hash: None,
+            structure_sha1_hash: None,
+            atom_count_memo: std::cell::Cell::new(usize::MAX),
+        })
+    }
+
+    fn paragraph(dom: &mut Dom, parent: NodeId, text: &str, marked: bool) -> ComparisonUnit {
+        let p = dom.new_element(W::p());
+        dom.add(parent, p);
+        let ppr = dom.new_element(W::p_pr());
+        dom.add(p, ppr);
+        let mut contents = Vec::new();
+        for text in text.split_inclusive(' ') {
+            let r = dom.new_element(W::r());
+            dom.add(p, r);
+            let t = dom.new_element(W::t());
+            dom.add(r, t);
+            dom.add_text(t, text);
+            contents.push(ComparisonUnit::Word(ComparisonUnitWord::new(vec![
+                ComparisonUnitAtom::new(t, vec![p, r], text),
+            ])));
+        }
+        if marked {
+            contents.push(ComparisonUnit::Word(ComparisonUnitWord::new(vec![
+                ComparisonUnitAtom::new(ppr, vec![p], "paragraph-mark"),
+            ])));
+        }
+        group(
+            ComparisonUnitGroupType::Paragraph,
+            contents,
+            &format!("para:{text}:{marked}"),
+        )
+    }
+
+    fn document(dom: &mut Dom, texts: &[&str], marked: bool) -> Vec<ComparisonUnit> {
+        let body = dom.new_element(W::body());
+        texts
+            .iter()
+            .map(|text| paragraph(dom, body, text, marked))
+            .collect()
+    }
+
+    fn atom_ids(units: &[ComparisonUnit]) -> Vec<NodeId> {
+        units
+            .iter()
+            .flat_map(ComparisonUnit::descendant_atoms)
+            .map(|a| a.content_element)
+            .collect()
+    }
+
+    fn side_ids(seqs: &[CorrelatedSequence], revised: bool) -> Vec<NodeId> {
+        seqs.iter()
+            .flat_map(|s| {
+                if revised {
+                    s.com_units_2.as_deref().unwrap_or_default()
+                } else {
+                    s.com_units_1.as_deref().unwrap_or_default()
+                }
+            })
+            .flat_map(ComparisonUnit::descendant_atoms)
+            .map(|a| a.content_element)
+            .collect()
+    }
+
+    #[test]
+    fn seam_matrix_preserves_every_source_atom_once_in_source_order() {
+        for left_count in 0..=4 {
+            for right_count in 0..=4 {
+                for left_mark in [false, true] {
+                    for right_mark in [false, true] {
+                        let mut dom = Dom::new();
+                        let left =
+                            document(&mut dom, &vec!["original text"; left_count], left_mark)
+                                .iter()
+                                .flat_map(group_contents)
+                                .collect::<Vec<_>>();
+                        let right =
+                            document(&mut dom, &vec!["revised text"; right_count], right_mark)
+                                .iter()
+                                .flat_map(group_contents)
+                                .collect::<Vec<_>>();
+                        let mut seqs = Vec::new();
+                        seam_region(&dom, &left, &right, &mut seqs);
+                        assert_eq!(side_ids(&seqs, false), atom_ids(&left));
+                        let mut expected_right = atom_ids(&right);
+                        let original_carrier =
+                            left.iter().position(|u| unit_is_single_atom_ppr(&dom, u));
+                        let absorbs_revised_mark = original_carrier
+                            .is_some_and(|i| i + 1 < left.len())
+                            && right
+                                .last()
+                                .is_some_and(|u| unit_is_single_atom_ppr(&dom, u));
+                        if absorbs_revised_mark {
+                            let mark = expected_right.pop().unwrap();
+                            assert!(dom.name_is(mark, &W::p_pr()));
+                            let carrier = left[original_carrier.unwrap()]
+                                .first_atom()
+                                .unwrap()
+                                .content_element;
+                            assert!(seqs.iter().any(|seq| seq.correlation_status
+                                == CorrelationStatus::Deleted
+                                && side_ids(std::slice::from_ref(seq), false).contains(&carrier)));
+                        }
+                        assert_eq!(side_ids(&seqs, true), expected_right);
+                        for seq in &seqs {
+                            if seq.correlation_status == CorrelationStatus::Equal {
+                                assert_eq!(seq.com_units_1.as_ref().unwrap().len(), 1);
+                                assert_eq!(seq.com_units_2.as_ref().unwrap().len(), 1);
+                                assert!(unit_is_single_atom_ppr(
+                                    &dom,
+                                    &seq.com_units_1.as_ref().unwrap()[0]
+                                ));
+                                assert!(unit_is_single_atom_ppr(
+                                    &dom,
+                                    &seq.com_units_2.as_ref().unwrap()[0]
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn title_page_and_math_fingerprints_follow_tokenization_and_respect_bounds() {
+        // The detector sees normalized alphanumeric tokens: punctuation alone
+        // cannot manufacture an email or bracket marker after normalization.
+        for marker in [
+            "agreement",
+            "apprenticeship",
+            "January 2026",
+            "report@example.test",
+            "[Client Name]",
+            "routine heading",
+        ] {
+            for count in [3, 4, 12, 13, 15] {
+                let mut dom = Dom::new();
+                let mut texts = vec!["ordinary heading"; count];
+                texts[0] = marker;
+                texts[1] = "Prepared by Alice";
+                let units = document(&mut dom, &texts, true);
+                assert_eq!(
+                    looks_like_short_title_page(&dom, &units),
+                    (4..=12).contains(&count)
+                        && ["agreement", "apprenticeship", "January 2026"].contains(&marker),
+                    "{marker} {count}"
+                );
+            }
+        }
+        for marker in [
+            "m:box",
+            "m:borderbox",
+            "border math box",
+            "borderBox",
+            "border box",
+            "math alone",
+        ] {
+            for blank_prefix in [0, 29, 30] {
+                let mut dom = Dom::new();
+                let mut texts = vec![""; blank_prefix];
+                texts.push(marker);
+                let units = document(&mut dom, &texts, true);
+                assert_eq!(
+                    looks_like_math_borderbox_doc(&dom, &units),
+                    blank_prefix < 30
+                        && ["m:borderbox", "border math box", "borderBox"].contains(&marker),
+                    "{marker} {blank_prefix}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn junction_seam_declines_equal_counts_nonparagraph_carriers_and_blank_revised_tail() {
+        for left_count in [1, 2, 3] {
+            for right_count in [1, 2, 3] {
+                for blank_tail in [false, true] {
+                    for table_first in [false, true] {
+                        let mut dom = Dom::new();
+                        let mut left = document(
+                            &mut dom,
+                            &vec!["original contract provisions"; left_count],
+                            true,
+                        );
+                        let mut right_texts = vec!["new regional instructions"; right_count];
+                        if blank_tail {
+                            right_texts[right_count - 1] = "";
+                        }
+                        let right = document(&mut dom, &right_texts, true);
+                        if table_first {
+                            left[0] = group(
+                                ComparisonUnitGroupType::Table,
+                                vec![left[0].clone()],
+                                "table",
+                            );
+                        }
+                        let seqs = junction_seam(&dom, &left, &right, left_count, right_count);
+                        let eligible = left_count != right_count && !blank_tail && !table_first;
+                        assert_eq!(
+                            seqs.is_some(),
+                            eligible,
+                            "{left_count} {right_count} {blank_tail} {table_first}"
+                        );
+                        if let Some(seqs) = seqs {
+                            assert_eq!(side_ids(&seqs, false), atom_ids(&left));
+                            // Junction pairs only a one-paragraph original's closing mark.
+                            let mut expected_right = atom_ids(&right);
+                            if left_count > 1 {
+                                expected_right.pop();
+                            }
+                            assert_eq!(side_ids(&seqs, true), expected_right);
+                            assert_eq!(
+                                seqs.iter()
+                                    .filter(|s| s.correlation_status == CorrelationStatus::Equal)
+                                    .count(),
+                                usize::from(left_count == 1)
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn grouped_blank_closing_runs_peel_only_matching_kinds_and_closing_stories() {
+        for left_blank in [false, true] {
+            for right_blank in [false, true] {
+                for matching_kind in [false, true] {
+                    for left_closes in [false, true] {
+                        for right_closes in [false, true] {
+                            let mut dom = Dom::new();
+                            let body_a = dom.new_element(W::body());
+                            let body_b = dom.new_element(W::body());
+                            let a0 = paragraph(&mut dom, body_a, "earlier source", true);
+                            let a1 = paragraph(
+                                &mut dom,
+                                body_a,
+                                if left_blank { "" } else { "source tail" },
+                                true,
+                            );
+                            let b0 = paragraph(&mut dom, body_b, "earlier revision", true);
+                            let b1 = paragraph(&mut dom, body_b, "middle revision", true);
+                            let b2 = paragraph(
+                                &mut dom,
+                                body_b,
+                                if right_blank { "" } else { "revision tail" },
+                                true,
+                            );
+                            if !left_closes {
+                                let _ = paragraph(&mut dom, body_a, "following live source", true);
+                            }
+                            if !right_closes {
+                                let _ =
+                                    paragraph(&mut dom, body_b, "following live revision", true);
+                            }
+                            let mut a = vec![(0, vec![a0]), (1, vec![a1])];
+                            let mut b = vec![
+                                (0, vec![b0]),
+                                (0, vec![b1]),
+                                (if matching_kind { 1 } else { 2 }, vec![b2]),
+                            ];
+                            let original_a = a.clone();
+                            let original_b = b.clone();
+                            let tail = peel_story_final_groups(&dom, &mut a, &mut b);
+                            let eligible = matching_kind
+                                && left_closes
+                                && right_closes
+                                && (left_blank || right_blank);
+                            assert_eq!(tail.is_some(), eligible);
+                            if let Some((a_tail, b_tail)) = tail {
+                                assert_eq!(a.len(), 1);
+                                assert_eq!(b.len(), 2);
+                                assert_eq!(atom_ids(&a_tail), atom_ids(&original_a[1].1));
+                                assert_eq!(atom_ids(&b_tail), atom_ids(&original_b[2].1));
+                            } else {
+                                assert_eq!(a.len(), original_a.len());
+                                assert_eq!(b.len(), original_b.len());
+                                assert_eq!(atom_ids(&a[1].1), atom_ids(&original_a[1].1));
+                                assert_eq!(atom_ids(&b[2].1), atom_ids(&original_b[2].1));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod coverage_real_source_route_matrix_tests {
+    use super::*;
+    use crate::namespaces::{M, R};
+
+    fn paragraph(text: &str, style: &str, numbered: Option<u32>, alternate: bool) -> String {
+        let num = numbered.map_or_else(String::new, |level| {
+            format!("<w:numPr><w:ilvl w:val=\"{level}\"/><w:numId w:val=\"9\"/></w:numPr>")
+        });
+        format!(
+            "<w:p><w:pPr><w:pStyle w:val=\"{style}\"/>{num}<w:spacing w:before=\"120\" w:after=\"80\"/><w:ind w:left=\"240\"/></w:pPr><w:r><w:rPr>{}<w:color w:val=\"{}\"/><w:lang w:val=\"en-US\"/></w:rPr><w:t xml:space=\"preserve\">{text}</w:t></w:r></w:p>",
+            if alternate { "<w:b/>" } else { "<w:i/>" },
+            if alternate { "123456" } else { "654321" }
+        )
+    }
+
+    fn table(side: &str, index: usize, digits: bool) -> String {
+        let mut cells = String::new();
+        for column in 0..2 {
+            let text = if digits {
+                format!("{}", index * 2 + column + 1)
+            } else {
+                format!("{side} cell{} item{}", column + 1, index + 1)
+            };
+            cells.push_str(&format!(
+                "<w:tc><w:tcPr><w:tcW w:w=\"{}\" w:type=\"dxa\"/></w:tcPr>{}</w:tc>",
+                1800 + column * 600,
+                paragraph(&text, "BodyText", None, column == 0)
+            ));
+        }
+        format!(
+            "<w:tbl><w:tblPr><w:tblW w:w=\"4200\" w:type=\"dxa\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"1800\"/><w:gridCol w:w=\"2400\"/></w:tblGrid><w:tr>{cells}</w:tr></w:tbl>"
+        )
+    }
+
+    fn body(family: &str, side: &str, count: usize, shared: usize, blank: bool) -> String {
+        let vocab = if side == "original" {
+            [
+                "quartz", "bronze", "saffron", "walnut", "orchard", "harvest", "copper", "meadow",
+            ]
+        } else {
+            [
+                "violet", "cobalt", "glacier", "silver", "harbor", "mariner", "sapphire", "summit",
+            ]
+        };
+        let mut out = String::new();
+        if blank {
+            out.push_str(&paragraph("", "Normal", None, false));
+        }
+        for i in 0..count {
+            let text = match family {
+                "stamped" if i == 0 => {
+                    format!("file_{}.docx", if side == "original" { 137 } else { 138 })
+                }
+                "demo" if i == 0 => format!("{} Alignment Demo", vocab[0]),
+                "demo" => format!(
+                    "This document demonstrates {} {} controls",
+                    vocab[i % 8],
+                    vocab[(i + 1) % 8]
+                ),
+                "labels" => ["ONE", "a", "b", "TWO", "c", "d", "THREE", "e"][i % 8].to_string(),
+                "nested" | "numbered" => format!("{} {}", vocab[i % 8], i + 1),
+                "html" if i == 1 => "html input type text".to_string(),
+                "annotation" if i == 0 => {
+                    format!("Oftentimes {} authors suggest amendments", vocab[0])
+                }
+                "cover" => match i % 5 {
+                    0 => "Service agreement".to_string(),
+                    1 => "Prepared by Alice".to_string(),
+                    2 => "January 2026".to_string(),
+                    3 => "Client Name".to_string(),
+                    _ => "March 2040".to_string(),
+                },
+                "wrap" if i == count - 1 => (0..5)
+                    .map(|_| format!("{} tightly wraps every {} line ", vocab[0], vocab[1]))
+                    .collect(),
+                "math" if i == 0 => "Math borderbox formulas".to_string(),
+                "sectioned" => format!(
+                    "{}) {} section {}",
+                    (b'A' + (i % 5) as u8) as char,
+                    vocab[i % 8],
+                    i + 1
+                ),
+                "statistics" if i < 3 => {
+                    format!("Num {} {}", ["words", "chars", "pages"][i], 20 + i)
+                }
+                "table" if i == 0 => format!("{} table report", vocab[0]),
+                _ => format!(
+                    "{} {} {} record{}",
+                    vocab[i % 8],
+                    vocab[(i + 1) % 8],
+                    vocab[(i + 2) % 8],
+                    i
+                ),
+            };
+            let text = if shared == 0 {
+                text
+            } else {
+                format!(
+                    "{} {text}",
+                    [
+                        "shared", "retained", "common", "contract", "report", "review", "document",
+                        "context"
+                    ][..shared]
+                        .join(" ")
+                )
+            };
+            let numbered = if family == "nested" {
+                Some(if i % 4 == 1 || i % 4 == 2 { 1 } else { 0 })
+            } else if family == "numbered" {
+                Some(0)
+            } else {
+                None
+            };
+            let style = if family == "cover" && i == 0 {
+                "Title"
+            } else {
+                "BodyText"
+            };
+            out.push_str(&paragraph(&text, style, numbered, side == "original"));
+            if family == "math" && i == 1 {
+                out.push_str("<w:p><m:oMath><m:r><m:t>x+y</m:t></m:r></m:oMath></w:p>");
+            }
+            if ["table", "digits", "tableprose", "multitable"].contains(&family)
+                && (i == 0 || family == "multitable" && i % 4 == 1)
+            {
+                out.push_str(&table(side, i, family == "digits"));
+            }
+            if blank && i == count / 2 {
+                out.push_str(&paragraph("", "Normal", None, false));
+            }
+        }
+        out
+    }
+
+    fn source(
+        dom: &mut Dom,
+        fragment: &str,
+        settings: &WmlComparerSettings,
+    ) -> Vec<ComparisonUnit> {
+        let doc = dom.parse_xdocument(&format!("<w:document xmlns:w=\"{}\" xmlns:m=\"{}\" xmlns:r=\"{}\"><w:body>{fragment}<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/></w:sectPr></w:body></w:document>", W::URI, M::URI, R::URI));
+        let root = dom.root(doc).unwrap();
+        let body = dom.element(root, &W::body()).unwrap();
+        super::super::preprocess::add_sha1_hash_to_block_level_content(
+            dom,
+            body,
+            settings,
+            &super::super::preprocess::null_rel_resolver,
+        );
+        let atoms = super::super::atomize::create_comparison_unit_atom_list(dom, body, settings);
+        super::super::units::get_comparison_unit_list(dom, &atoms, settings)
+    }
+
+    fn clean_xml(dom: &mut Dom, node: NodeId) -> String {
+        let copy = dom.clone_subtree(node);
+        super::super::finalize::remove_powertools_scratch_markup(dom, copy);
+        dom.serialize_element(copy)
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct OwnedAtom {
+        node: NodeId,
+        ancestry: Vec<NodeId>,
+        text_or_payload: String,
+        paragraph_properties: Option<String>,
+        run_properties: Option<String>,
+        geometry: Vec<String>,
+    }
+
+    fn frozen(dom: &mut Dom, units: &[ComparisonUnit]) -> Vec<OwnedAtom> {
+        let mut xml_cache = std::collections::HashMap::<NodeId, String>::new();
+        let mut clean = |dom: &mut Dom, node: NodeId| {
+            xml_cache
+                .entry(node)
+                .or_insert_with(|| clean_xml(dom, node))
+                .clone()
+        };
+        units
+            .iter()
+            .flat_map(ComparisonUnit::descendant_atoms)
+            .map(|a| {
+                let ancestors = a.ancestor_elements.to_vec();
+                let para = ancestors
+                    .iter()
+                    .rev()
+                    .find(|&&n| dom.name_is(n, &W::p()))
+                    .copied();
+                let run = ancestors
+                    .iter()
+                    .rev()
+                    .find(|&&n| dom.name_is(n, &W::r()))
+                    .copied();
+                let paragraph_properties = para
+                    .and_then(|p| dom.element(p, &W::p_pr()))
+                    .map(|n| clean(dom, n));
+                let run_properties = run
+                    .and_then(|r| dom.element(r, &W::r_pr()))
+                    .map(|n| clean(dom, n));
+                let mut geometry = Vec::new();
+                for ancestor in ancestors {
+                    for (parent, child) in [
+                        (W::tbl(), W::name("tblGrid")),
+                        (W::tbl(), W::tbl_pr()),
+                        (W::name("tc"), W::tc_pr()),
+                        (W::sdt(), W::sdt_pr()),
+                        (W::sdt(), W::name("sdtEndPr")),
+                    ] {
+                        if dom.name_is(ancestor, &parent)
+                            && let Some(n) = dom.element(ancestor, &child)
+                        {
+                            geometry.push(clean(dom, n));
+                        }
+                    }
+                }
+                OwnedAtom {
+                    node: a.content_element,
+                    ancestry: a.ancestor_elements.to_vec(),
+                    text_or_payload: clean(dom, a.content_element),
+                    paragraph_properties,
+                    run_properties,
+                    geometry,
+                }
+            })
+            .collect()
+    }
+
+    fn assert_owned(
+        dom: &mut Dom,
+        seqs: &[CorrelatedSequence],
+        expected: &(Vec<OwnedAtom>, Vec<OwnedAtom>),
+        label: &str,
+    ) {
+        for revised in [false, true] {
+            let units = seqs
+                .iter()
+                .flat_map(|s| {
+                    if revised {
+                        s.com_units_2.as_deref().unwrap_or_default()
+                    } else {
+                        s.com_units_1.as_deref().unwrap_or_default()
+                    }
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            let actual = frozen(dom, &units);
+            let authored = if revised { &expected.1 } else { &expected.0 };
+            // The documented interior Word carrier consumes exactly B's
+            // final pilcrow while deleting A's first carrier pilcrow. Its
+            // other atoms retain their authored pPr/rPr/geometry snapshots.
+            // This exception never applies to text, math, drawings or an
+            // interior revised mark, nor to a missing original atom.
+            let absorbed_final_mark = revised
+                && !authored.is_empty()
+                && actual.len() + 1 == authored.len()
+                && actual == authored[..authored.len() - 1]
+                && dom.name_is(authored.last().unwrap().node, &W::p_pr());
+            if absorbed_final_mark {
+                let carrier_index = expected
+                    .0
+                    .iter()
+                    .position(|atom| dom.name_is(atom.node, &W::p_pr()))
+                    .unwrap();
+                assert!(
+                    carrier_index + 1 < expected.0.len(),
+                    "{label}: carrier must be interior"
+                );
+                let carrier = expected.0[carrier_index].node;
+                assert!(
+                    seqs.iter()
+                        .any(|seq| seq.correlation_status == CorrelationStatus::Deleted
+                            && seq
+                                .com_units_1
+                                .as_deref()
+                                .unwrap_or_default()
+                                .iter()
+                                .flat_map(ComparisonUnit::descendant_atoms)
+                                .any(|atom| atom.content_element == carrier)),
+                    "{label}: absorbed revised pilcrow requires its original carrier mark Deleted"
+                );
+            } else {
+                assert_eq!(
+                    &actual, authored,
+                    "{label}: revised={revised}; text, pPr, rPr, geometry and ownership must all survive"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn positional_title_zip_keeps_interior_textless_payloads_and_properties_in_source_order() {
+        for gap in [
+            "<w:p><w:pPr><w:spacing w:after='240'/></w:pPr></w:p>",
+            "<w:p><w:pPr><w:jc w:val='center'/></w:pPr><m:oMath><m:r><m:t>x+y</m:t></m:r></m:oMath></w:p>",
+            "<w:p><w:pPr><w:ind w:left='360'/></w:pPr><w:r><w:tab/><w:br w:type='page'/></w:r></w:p>",
+        ] {
+            for reverse in [false, true] {
+                let a = format!(
+                    "{}{}{}{}",
+                    paragraph("shared original first", "Title", None, true),
+                    gap,
+                    paragraph("shared original second", "BodyText", None, true),
+                    gap
+                );
+                let b = format!(
+                    "{gap}{}{}{}",
+                    paragraph("shared revised first", "Title", None, false),
+                    paragraph("shared revised second", "BodyText", None, false),
+                    paragraph("revised residual", "Normal", None, false)
+                );
+                let settings = WmlComparerSettings::default();
+                let mut dom = Dom::new();
+                let (left_xml, right_xml) = if reverse { (&b, &a) } else { (&a, &b) };
+                let left = source(&mut dom, left_xml, &settings);
+                let right = source(&mut dom, right_xml, &settings);
+                let expected = (frozen(&mut dom, &left), frozen(&mut dom, &right));
+                let out = positional_title_token_zip(&mut dom, &left, &right, &settings).unwrap();
+                assert_owned(&mut dom, &out, &expected, "textless positional gap");
+            }
+        }
+    }
+
+    fn exact_window_ownership(
+        dom: &mut Dom,
+        seqs: &[CorrelatedSequence],
+        expected: &(Vec<OwnedAtom>, Vec<OwnedAtom>),
+        label: &str,
+    ) {
+        for revised in [false, true] {
+            let units = seqs
+                .iter()
+                .flat_map(|seq| {
+                    if revised {
+                        seq.com_units_2.as_deref().unwrap_or_default()
+                    } else {
+                        seq.com_units_1.as_deref().unwrap_or_default()
+                    }
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            let actual = frozen(dom, &units);
+            let authored = if revised { &expected.1 } else { &expected.0 };
+            assert_eq!(
+                actual.len(),
+                authored.len(),
+                "{label}: revised={revised} atom count"
+            );
+            let difference = actual.iter().zip(authored).position(|(a, b)| a != b);
+            assert_eq!(
+                difference, None,
+                "{label}: revised={revised}, source atom/properties/geometry order"
+            );
+        }
+    }
+
+    #[test]
+    fn production_field_control_windows_keep_authored_payloads_under_supported_options() {
+        let field = |instruction: &str, result: &str| {
+            format!(
+                "<w:r><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText xml:space='preserve'> {instruction} </w:instrText></w:r><w:r><w:fldChar w:fldCharType='separate'/></w:r><w:r><w:rPr><w:i/></w:rPr><w:t>{result}</w:t></w:r><w:r><w:fldChar w:fldCharType='end'/></w:r>"
+            )
+        };
+        let old_body = "obsolete zoological vocabulary distinguishes archived chapters";
+        let new_body = "replacement mechanical wording describes brandnew sections";
+        for family in [
+            "date",
+            "ref",
+            "changed-ref",
+            "simple-ref",
+            "inline-control",
+            "tabs",
+            "space-case",
+        ] {
+            let contents = |revised: bool| {
+                let text = if revised { new_body } else { old_body };
+                let payload = match family {
+                    "date" => field("DATE", text),
+                    "ref" => field("REF Clause", text),
+                    "changed-ref" => field(if revised { "REF Other" } else { "REF Clause" }, text),
+                    "simple-ref" => format!(
+                        "<w:fldSimple w:instr='REF Clause'><w:r><w:rPr><w:b/></w:rPr><w:t>{text}</w:t></w:r></w:fldSimple>"
+                    ),
+                    "inline-control" => format!(
+                        "<w:sdt><w:sdtPr><w:id w:val='42'/><w:tag w:val='Clause'/><w:alias w:val='Clause owner'/></w:sdtPr><w:sdtContent><w:r><w:rPr><w:u w:val='single'/></w:rPr><w:t>{text}</w:t></w:r></w:sdtContent></w:sdt>"
+                    ),
+                    "tabs" => format!(
+                        "<w:r><w:tab/><w:br w:type='page'/><w:t>{text}</w:t><w:br w:clear='all'/><w:tab/></w:r>"
+                    ),
+                    "space-case" => format!(
+                        "<w:r><w:t>{}</w:t></w:r>",
+                        if revised {
+                            "SHARED anchor replacement"
+                        } else {
+                            "shared anchor obsolete"
+                        }
+                    ),
+                    _ => unreachable!(),
+                };
+                format!(
+                    "<w:p><w:pPr><w:spacing w:after='120'/></w:pPr><w:bookmarkStart w:id='1' w:name='Clause'/><w:bookmarkEnd w:id='1'/><w:bookmarkStart w:id='2' w:name='Other'/><w:bookmarkEnd w:id='2'/>{payload}</w:p>"
+                )
+            };
+            for option in 0..5 {
+                let mut settings = if option == 0 {
+                    WmlComparerSettings::powertools_faithful()
+                } else {
+                    WmlComparerSettings::default()
+                };
+                settings.case_insensitive = option >= 3;
+                settings.conflate_breaking_and_nonbreaking_spaces = option == 4;
+                settings.detail_threshold = if option == 2 {
+                    1.0
+                } else if option == 3 {
+                    0.0
+                } else {
+                    super::super::DEFAULT_DETAIL_THRESHOLD
+                };
+                if option == 4 {
+                    settings.word_separators.push(' ');
+                }
+                for fragment in [false, true] {
+                    let mut dom = Dom::new();
+                    let mut left = source(&mut dom, &contents(false), &settings)
+                        .iter()
+                        .flat_map(group_contents)
+                        .collect::<Vec<_>>();
+                    let mut right = source(&mut dom, &contents(true), &settings)
+                        .iter()
+                        .flat_map(group_contents)
+                        .collect::<Vec<_>>();
+                    if fragment {
+                        left.retain(|u| !unit_is_single_atom_ppr(&dom, u));
+                        right.retain(|u| !unit_is_single_atom_ppr(&dom, u));
+                        settings.in_word_level_paragraph = true;
+                    }
+                    let expected = (frozen(&mut dom, &left), frozen(&mut dom, &right));
+                    let unknown =
+                        CorrelatedSequence::paired(CorrelationStatus::Unknown, left, right);
+                    let resolved = resolve_paragraph_window(&mut dom, unknown, &settings);
+                    let out = match resolved {
+                        Ok(out) => out,
+                        Err(original) => vec![original],
+                    };
+                    exact_window_ownership(
+                        &mut dom,
+                        &out,
+                        &expected,
+                        &format!("{family} option={option} fragment={fragment}"),
+                    );
+                    if option == 0 {
+                        assert_eq!(out.len(), 1);
+                        assert_eq!(out[0].correlation_status, CorrelationStatus::Unknown);
+                    } else {
+                        assert!(
+                            out.iter()
+                                .all(|seq| seq.correlation_status != CorrelationStatus::Unknown)
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn instruction_only_and_nontext_only_windows_decline_without_losing_field_boundaries() {
+        for payload in [
+            "<w:r><w:fldChar w:fldCharType='begin'/><w:instrText xml:space='preserve'> DATE </w:instrText><w:fldChar w:fldCharType='separate'/><w:fldChar w:fldCharType='end'/></w:r>",
+            "<w:r><w:tab/><w:br w:type='page'/></w:r>",
+            "<m:oMath><m:r><m:t>x+y</m:t></m:r></m:oMath>",
+        ] {
+            let mut dom = Dom::new();
+            let settings = WmlComparerSettings::default();
+            let left = source(&mut dom, &format!("<w:p>{payload}</w:p>"), &settings)
+                .iter()
+                .flat_map(group_contents)
+                .collect::<Vec<_>>();
+            let right = source(
+                &mut dom,
+                &paragraph("Actual revised words", "Normal", None, false),
+                &settings,
+            )
+            .iter()
+            .flat_map(group_contents)
+            .collect::<Vec<_>>();
+            let expected = (frozen(&mut dom, &left), frozen(&mut dom, &right));
+            let original = resolve_paragraph_window(
+                &mut dom,
+                CorrelatedSequence::paired(CorrelationStatus::Unknown, left, right),
+                &settings,
+            )
+            .unwrap_err();
+            assert_eq!(original.correlation_status, CorrelationStatus::Unknown);
+            exact_window_ownership(
+                &mut dom,
+                &[original],
+                &expected,
+                "wordless instruction/nontext window",
+            );
+        }
+    }
+
+    fn exercise(family: &str) {
+        for other in [
+            "plain",
+            "demo",
+            "stamped",
+            "labels",
+            "numbered",
+            "nested",
+            "html",
+            "annotation",
+            "cover",
+            "wrap",
+            "math",
+            "table",
+            "digits",
+            "tableprose",
+            "multitable",
+            "sectioned",
+            "statistics",
+        ] {
+            for count in [5, 8, 12, 21, 31] {
+                for shared in [0, 3, 8] {
+                    for reverse in [false, true] {
+                        let left_xml = body(
+                            family,
+                            "original",
+                            if family == "wrap" { 1 } else { 3 },
+                            shared,
+                            false,
+                        );
+                        let right_xml = body(other, "revised", count, shared, false);
+                        let (a, b) = if reverse {
+                            (&right_xml, &left_xml)
+                        } else {
+                            (&left_xml, &right_xml)
+                        };
+                        let settings = WmlComparerSettings::default();
+                        let mut dom = Dom::new();
+                        let left = source(&mut dom, a, &settings);
+                        let right = source(&mut dom, b, &settings);
+                        assert!(!left.is_empty() && !right.is_empty());
+                        let expected = (frozen(&mut dom, &left), frozen(&mut dom, &right));
+                        let label = format!(
+                            "{family} x {other}, n={count}, shared={shared}, reverse={reverse}"
+                        );
+                        if let Some(out) = detect_unrelated_sources_word_mode_inner(
+                            &mut dom, &left, &right, &settings,
+                        ) {
+                            assert_owned(&mut dom, &out, &expected, &format!("unrelated {label}"));
+                        }
+                        let out = step_h(&mut dom, &left, &right, &settings);
+                        assert_owned(&mut dom, &out, &expected, &format!("step_h {label}"));
+                        // These are the production recursion's structural windows:
+                        // paragraphs flatten to words, tables to rows, rows to cells.
+                        // Keep each window's independently frozen source oracle.
+                        let flat_left = flatten_groups_one_level(&left);
+                        let flat_right = flatten_groups_one_level(&right);
+                        let expected_flat =
+                            (frozen(&mut dom, &flat_left), frozen(&mut dom, &flat_right));
+                        let out = step_h(&mut dom, &flat_left, &flat_right, &settings);
+                        assert_owned(
+                            &mut dom,
+                            &out,
+                            &expected_flat,
+                            &format!("word/row window {label}"),
+                        );
+                        let tables = |units: &[ComparisonUnit]| {
+                            units
+                                .iter()
+                                .filter(|u| {
+                                    as_group(u).is_some_and(|g| {
+                                        g.group_type == ComparisonUnitGroupType::Table
+                                    })
+                                })
+                                .cloned()
+                                .collect::<Vec<_>>()
+                        };
+                        let mut table_left = tables(&left);
+                        let mut table_right = tables(&right);
+                        for depth in 0..3 {
+                            if table_left.is_empty() || table_right.is_empty() {
+                                break;
+                            }
+                            let expected_window = (
+                                frozen(&mut dom, &table_left),
+                                frozen(&mut dom, &table_right),
+                            );
+                            let out = step_h(&mut dom, &table_left, &table_right, &settings);
+                            assert_owned(
+                                &mut dom,
+                                &out,
+                                &expected_window,
+                                &format!("table recursion depth={depth} {label}"),
+                            );
+                            table_left = flatten_groups_one_level(&table_left);
+                            table_right = flatten_groups_one_level(&table_right);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    macro_rules! family_test {
+        ($name:ident, $family:literal) => {
+            #[test]
+            fn $name() {
+                exercise($family);
+            }
+        };
+    }
+    family_test!(ordinary_source_windows, "plain");
+    family_test!(demo_source_windows, "demo");
+    family_test!(stamped_source_windows, "stamped");
+    family_test!(alpha_label_source_windows, "labels");
+    family_test!(numbered_source_windows, "numbered");
+    family_test!(nested_list_source_windows, "nested");
+    family_test!(html_field_demo_source_windows, "html");
+    family_test!(annotation_source_windows, "annotation");
+    family_test!(title_page_source_windows, "cover");
+    family_test!(repeated_wrap_source_windows, "wrap");
+    family_test!(math_source_windows, "math");
+    family_test!(single_table_source_windows, "table");
+    family_test!(digit_table_source_windows, "digits");
+    family_test!(prose_table_source_windows, "tableprose");
+    family_test!(multiple_table_source_windows, "multitable");
+    family_test!(sectioned_source_windows, "sectioned");
+    family_test!(statistics_source_windows, "statistics");
 }
